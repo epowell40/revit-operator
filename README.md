@@ -14,9 +14,13 @@ OPERATOR_HOSTED_ENABLED=false
 
 Copy `.env.example` to a local `.env` file and fill only local values. Do not commit real `.env` files.
 
+See [docs/LOCAL_SETUP.md](docs/LOCAL_SETUP.md) for the current local setup notes and [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) for self-hosting guidance.
+
 ## Repository Status
 
-This is a prepared migration skeleton. Source code should be copied from the current private `RevitOperator` repo only after public/private review and secret scanning.
+This public repository is in its initial migration phase. BIMTools has published the open-core repository, license, configuration examples, and boundary docs first. Source packages will be migrated from the private development repo after public/private review and secret scanning.
+
+Until the first source migration lands, the hosted BIMTools product remains the usable production path. This repository is the permanent home for the local/self-host core.
 
 ## License
 
@@ -31,3 +35,7 @@ Public sample skills belong under `skills/`. Machine-local private skills should
 ## Hosted BIMTools Mode
 
 Hosted/commercial deployment code, production config, billing/license gates, customer data, private skills, and deployment automation belong in `revit-operator-private`, not this repo.
+
+## Contributions
+
+During the migration phase, BIMTools welcomes bug reports, documentation suggestions, and issue discussion. Substantial external code contributions are paused until the contributor licensing process is finalized. See [CONTRIBUTING.md](CONTRIBUTING.md).
