@@ -23,3 +23,5 @@ REVIT_OPERATOR_MODE=development
 ```
 
 If a change touches hosted auth, billing, licensing, customer data, production deployments, telemetry, file storage, or secrets, default to the private repo unless the user explicitly says to open-source it.
+
+This public core is AGPL-3.0-or-later. Commercial licensing is handled separately by BIMTools and should not be implemented by adding proprietary restrictions to the public license.

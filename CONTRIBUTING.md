@@ -9,3 +9,5 @@ Before opening a PR:
 - Run relevant tests/builds.
 - Run `scripts/check-secrets.sh`.
 - Confirm any config changes are represented only as safe examples.
+
+Substantial contributions may require a contribution policy compatible with BIMTools' dual-license strategy.

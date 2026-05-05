@@ -18,6 +18,12 @@ Copy `.env.example` to a local `.env` file and fill only local values. Do not co
 
 This is a prepared migration skeleton. Source code should be copied from the current private `RevitOperator` repo only after public/private review and secret scanning.
 
+## License
+
+The public core is licensed under the GNU Affero General Public License v3.0 or later.
+
+BIMTools may offer separate commercial licenses for proprietary embedding, redistribution, hosted/commercial services, or closed-source integrations that do not want AGPL obligations.
+
 ## Custom Skills
 
 Public sample skills belong under `skills/`. Machine-local private skills should live outside the repo, for example under `%LOCALAPPDATA%\RevitOperator\Skills\`.
