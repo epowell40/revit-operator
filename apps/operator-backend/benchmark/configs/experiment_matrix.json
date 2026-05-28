@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "baseline_config_id": "single_55_medium",
+  "acceptable_success_rate_threshold": 0.95,
+  "unacceptable_failure_rate_threshold": 0.2,
+  "default_phase1_task_ids": [
+    "demo_sheet_export",
+    "demo_takeoff_receptacles",
+    "demo_parameter_edit",
+    "demo_redline_receptacles"
+  ],
+  "default_phase1_repeat_count": 1,
+  "phase1_config_ids": [
+    "single_55_medium",
+    "split_55_high__55_low",
+    "split_55_medium__55_instant",
+    "split_55_medium__54mini_low",
+    "deterministic_skill_only"
+  ],
+  "broader_config_ids": [
+    "single_54_medium",
+    "split_54_medium__54mini_low",
+    "split_54_medium__54mini_none",
+    "single_54mini_low",
+    "single_54mini_none"
+  ],
+  "configs": [
+    {
+      "id": "single_55_medium",
+      "planner_model": "gpt-5.5",
+      "planner_reasoning": "medium",
+      "executor_model": "gpt-5.5",
+      "executor_reasoning": "medium",
+      "mode": "single_loop",
+      "description": "GPT-5.5 medium for planning and execution."
+    },
+    {
+      "id": "split_55_high__55_low",
+      "planner_model": "gpt-5.5",
+      "planner_reasoning": "high",
+      "executor_model": "gpt-5.5",
+      "executor_reasoning": "low",
+      "mode": "split_planner_executor",
+      "description": "GPT-5.5 high planner with GPT-5.5 low executor."
+    },
+    {
+      "id": "split_55_medium__55_instant",
+      "planner_model": "gpt-5.5",
+      "planner_reasoning": "medium",
+      "executor_model": "gpt-5.5-instant",
+      "executor_reasoning": "low",
+      "mode": "split_planner_executor",
+      "description": "GPT-5.5 medium planner with lowest-latency GPT-5.5 execution slot when available."
+    },
+    {
+      "id": "split_55_medium__54mini_low",
+      "planner_model": "gpt-5.5",
+      "planner_reasoning": "medium",
+      "executor_model": "gpt-5.4-mini",
+      "executor_reasoning": "low",
+      "mode": "split_planner_executor",
+      "description": "GPT-5.5 medium planner with fast mini executor."
+    },
+    {
+      "id": "deterministic_skill_only",
+      "planner_model": "deterministic",
+      "planner_reasoning": "none",
+      "executor_model": "deterministic",
+      "executor_reasoning": "none",
+      "mode": "deterministic_skill",
+      "description": "No model calls; directly executes deterministic Revit workflow adapter."
+    },
+    {
+      "id": "single_54_medium",
+      "planner_model": "gpt-5.4",
+      "planner_reasoning": "medium",
+      "executor_model": "gpt-5.4",
+      "executor_reasoning": "medium",
+      "mode": "single_loop",
+      "description": "Baseline single-model loop."
+    },
+    {
+      "id": "split_54_medium__54mini_low",
+      "planner_model": "gpt-5.4",
+      "planner_reasoning": "medium",
+      "executor_model": "gpt-5.4-mini",
+      "executor_reasoning": "medium",
+      "mode": "split_planner_executor",
+      "description": "Frontier planner with medium-reasoning mini executor."
+    },
+    {
+      "id": "split_54_medium__54mini_none",
+      "planner_model": "gpt-5.4",
+      "planner_reasoning": "medium",
+      "executor_model": "gpt-5.4-mini",
+      "executor_reasoning": "medium",
+      "mode": "split_planner_executor",
+      "description": "Frontier planner with medium-reasoning mini executor."
+    },
+    {
+      "id": "single_54mini_low",
+      "planner_model": "gpt-5.4-mini",
+      "planner_reasoning": "medium",
+      "executor_model": "gpt-5.4-mini",
+      "executor_reasoning": "medium",
+      "mode": "single_loop",
+      "description": "Mini-only baseline with medium reasoning."
+    },
+    {
+      "id": "single_54mini_none",
+      "planner_model": "gpt-5.4-mini",
+      "planner_reasoning": "medium",
+      "executor_model": "gpt-5.4-mini",
+      "executor_reasoning": "medium",
+      "mode": "single_loop",
+      "description": "Mini-only medium-reasoning experiment."
+    }
+  ]
+}

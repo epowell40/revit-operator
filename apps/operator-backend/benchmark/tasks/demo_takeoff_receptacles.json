@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_takeoff_receptacles",
+  "name": "Demo B: Receptacle Takeoff CSV",
+  "description": "Count electrical receptacles by category, type, level, and room/space, then export a verified CSV summary.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "metadata": {
+      "workflow": "takeoff_csv"
+    }
+  },
+  "setup_instructions": [
+    "Open the known Revit demo model.",
+    "Use /revit/quantify with room_resolution enabled."
+  ],
+  "success_criteria": [
+    "The raw API total equals the grouped report total.",
+    "A CSV summary is saved.",
+    "The result can be rendered as a readable table in the Operator UI."
+  ],
+  "failure_criteria": [
+    "Grouped totals do not match the raw total.",
+    "CSV output is missing.",
+    "Room/space association failures are not reported."
+  ],
+  "max_time_seconds": 30,
+  "max_steps": 4,
+  "requires_manual_grade": false,
+  "grader_notes": [],
+  "tags": ["revit", "demo", "takeoff", "deterministic", "receptacles"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "takeoff_csv",
+    "request": {
+      "intent": "count_and_list",
+      "scope": "host",
+      "categories": ["OST_ElectricalFixtures"],
+      "filters": {
+        "keywords_include": ["receptacle"]
+      },
+      "group_by": ["Category", "Type", "Level", "Room"],
+      "room_resolution": true
+    },
+    "mock": {
+      "/revit/quantify": {
+        "summary": {
+          "total": 3,
+          "groups": {
+            "Electrical Fixtures | Duplex Receptacle | Level 1 | 101 Office": 2,
+            "Electrical Fixtures | Duplex Receptacle | Level 1 | 102 Conference": 1
+          }
+        },
+        "rows": [
+          { "id": 201, "category": "Electrical Fixtures", "type": "Duplex Receptacle", "level": "Level 1", "room": "101 Office" },
+          { "id": 202, "category": "Electrical Fixtures", "type": "Duplex Receptacle", "level": "Level 1", "room": "101 Office" },
+          { "id": 203, "category": "Electrical Fixtures", "type": "Duplex Receptacle", "level": "Level 1", "room": "102 Conference" }
+        ],
+        "warnings": []
+      }
+    }
+  }
+}

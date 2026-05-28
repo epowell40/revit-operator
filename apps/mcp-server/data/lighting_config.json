@@ -1,0 +1,9 @@
+{
+  "ies_source_directory": "C:\\ProgramData\\Autodesk\\RVT 2024\\IES\\",
+  "space_types": [
+    { "type": "Office", "target_fc": 30, "max_lpd": 0.90 },
+    { "type": "Corridor", "target_fc": 10, "max_lpd": 0.60 },
+    { "type": "Restroom", "target_fc": 15, "max_lpd": 0.80 },
+    { "type": "Conference", "target_fc": 40, "max_lpd": 1.10 }
+  ]
+}

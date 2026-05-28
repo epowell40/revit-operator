@@ -1,0 +1,40 @@
+{
+  "roomMappings": {
+    "patient_room": ["PAT RM", "PATIENT ROOM", "PT ROOM"],
+    "corridor": ["CORR", "CORRIDOR", "HALL"],
+    "nurse_station": ["NURSE STATION", "TEAM STATION"],
+    "toilet_room": ["TOILET", "RESTROOM", "WC"],
+    "shower": ["SHOWER", "SHWR", "BATH"],
+    "staff_area": ["WORKROOM", "STAFF", "TEAM ROOM"]
+  },
+  "equipmentMappings": {
+    "bed": ["BED"],
+    "nurse_console": ["NURSE", "CONSOLE"],
+    "workstation_desk": ["WORKSTATION DESK", "WORKSTATION", "DESK"],
+    "workstation_computer": ["COMPUTER", "CPU", "PC", "TERMINAL", "MONITOR"],
+    "printer": ["PRINTER", "MFP", "COPIER"],
+    "tv_display": ["TV", "TELEVISION", "DISPLAY"],
+    "wall_display": ["WALL DISPLAY", "DISPLAY PANEL"],
+    "refrigerator": ["REFRIGERATOR", "FRIDGE", "ICE MAKER"],
+    "microwave": ["MICROWAVE"],
+    "breakroom_appliance": ["COFFEE", "TOASTER", "APPLIANCE", "VENDING"],
+    "nurse_station_equipment": ["NURSE STATION EQUIPMENT", "PYXIS", "MED STATION"],
+    "mobile_equipment_dock": ["DOCK", "CHARGING CART", "MOBILE CART"],
+    "medical_equipment_powered": ["MEDICAL EQUIPMENT", "INFUSION", "MONITOR CART", "IMAGING"],
+    "nurse_station_it": ["NURSE WORKSTATION", "NURSE IT", "NURSE DESK"],
+    "kiosk": ["KIOSK", "CHECK-IN", "TERMINAL STATION"],
+    "medical_it_equipment": ["MEDICAL IT", "TELEMED", "PACS", "IMAGING WORKSTATION"],
+    "bed_placeholder": ["HEADWALL", "PATIENT BED"]
+  },
+  "fixtureMappings": {
+    "sink": ["SINK", "LAV"],
+    "toilet": ["TOILET", "WATER CLOSET"],
+    "exam_light": ["EXAM", "LIGHT"],
+    "shower_fixture": ["SHOWER", "SHWR", "BATH", "TUB"],
+    "wall_display": ["WALL DISPLAY", "DISPLAY PANEL", "TV"],
+    "kiosk": ["KIOSK", "CHECK-IN"],
+    "medical_it_equipment": ["TELEMED", "PACS"],
+    "mobile_equipment_dock": ["DOCK", "CHARGING CART"],
+    "medical_equipment_powered": ["MONITOR CART", "MEDICAL EQUIPMENT"]
+  }
+}

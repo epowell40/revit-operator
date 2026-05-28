@@ -1,0 +1,971 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Mechanical;
+using Autodesk.Revit.UI;
+using RevitBridge.Common;
+using RevitBridge.Logic.Handlers;
+
+namespace RevitBridge.Handlers
+{
+    public sealed partial class MepWorkflowsHandler
+    {
+        private static object ConnectElementsWithDuct(UIApplication app, Document doc, Params p, string intent)
+        {
+            var dryRun = p.dryRun ?? false;
+            var startId = p.startElementId.GetValueOrDefault(0);
+            var endId = p.endElementId.GetValueOrDefault(0);
+            if (startId <= 0 || endId <= 0)
+            {
+                var ids = (p.sourceElementIds ?? new List<long>()).Where(x => x > 0).Distinct().ToList();
+                if (startId <= 0 && ids.Count > 0) startId = ids[0];
+                if (endId <= 0 && ids.Count > 1) endId = ids[1];
+            }
+
+            if (startId <= 0 || endId <= 0)
+                throw new InvalidOperationException("connect_elements_with_* requires startElementId and endElementId (or two sourceElementIds).");
+
+            var start = doc.GetElement(ElementIdCompat.Create(startId));
+            var end = doc.GetElement(ElementIdCompat.Create(endId));
+            if (start == null || end == null) throw new InvalidOperationException("Start or end element not found.");
+
+            var hasConnectorPair = TryResolveClosestConnectorPair(start, end, out var startConnector, out var endConnector, out var connectorSummary);
+            var startPoint = startConnector?.Origin ?? ResolveElementPoint(start);
+            var endPoint = endConnector?.Origin ?? ResolveElementPoint(end);
+            if (startPoint == null || endPoint == null)
+                throw new InvalidOperationException("Unable to resolve connector/point locations for start/end elements.");
+
+            var length = startPoint.DistanceTo(endPoint);
+            var maxLen = p.maxLengthFeet.GetValueOrDefault(0.0);
+            var lengthExceeded = maxLen > 0 && length > maxLen;
+            var requestedDuctSize = (p.ductSize ?? "").Trim();
+
+            var systemType = ResolveSystemType(doc, (p.systemTypeName ?? "").Trim()) ?? ResolveDefaultMechanicalSystemType(doc);
+            var ductType = ResolveDuctType(doc, p.ductTypeName) ?? ResolveDefaultDuctType(doc);
+            var levels = new FilteredElementCollector(doc).OfClass(typeof(Level)).Cast<Level>().ToList();
+            var level = ResolveLevel(doc, p.levelId, p.levelName) ?? ResolveNearestLevel(levels, (startPoint.Z + endPoint.Z) * 0.5) ?? levels.FirstOrDefault();
+            if (systemType == null || ductType == null || level == null)
+                throw new InvalidOperationException("Unable to resolve system type, duct type, or level for duct creation.");
+
+            if (dryRun)
+            {
+                return new
+                {
+                    status = "Dry Run",
+                    action = $"connect_elements_with_{intent}",
+                    dryRun = true,
+                    intent,
+                    startElementId = startId,
+                    endElementId = endId,
+                    connectorSummary,
+                    geometry = new
+                    {
+                        start = new[] { startPoint.X, startPoint.Y, startPoint.Z },
+                        end = new[] { endPoint.X, endPoint.Y, endPoint.Z },
+                        distanceFeet = length
+                    },
+                    limits = new
+                    {
+                        maxLengthFeet = maxLen > 0 ? maxLen : (double?)null,
+                        exceedsMaxLength = lengthExceeded
+                    },
+                    selected = new
+                    {
+                        systemType = new { id = ElementIdCompat.GetValue(systemType.Id), name = systemType.Name },
+                        ductType = new { id = ElementIdCompat.GetValue(ductType.Id), name = ductType.Name },
+                        level = new { id = ElementIdCompat.GetValue(level.Id), name = level.Name }
+                    },
+                    requestedDuctSize = requestedDuctSize.Length == 0 ? null : requestedDuctSize,
+                    warnings = BuildIntentWarnings(intent, p.maxElbowsPerBranch, lengthExceeded)
+                };
+            }
+
+            if (lengthExceeded)
+                throw new InvalidOperationException($"Connection length {length:F3}ft exceeds maxLengthFeet {maxLen:F3}.");
+
+            Duct? created = null;
+            var connectWarnings = new List<string>();
+            object? sizeWrite = null;
+
+            using (var tx = new Transaction(doc, "MEP Workflows - Connect Elements With Duct"))
+            {
+                tx.Start();
+
+                created = Duct.Create(doc, systemType.Id, ductType.Id, level.Id, startPoint, endPoint);
+                doc.Regenerate();
+                if (created != null && requestedDuctSize.Length > 0)
+                {
+                    sizeWrite = TryApplyDuctSize(doc, created, requestedDuctSize);
+                }
+
+                if (created != null && hasConnectorPair && startConnector != null && endConnector != null)
+                {
+                    var createdConnectors = GetElementConnectors(created);
+                    var nearStart = FindClosestConnector(createdConnectors, startPoint);
+                    var nearEnd = FindClosestConnector(createdConnectors, endPoint);
+                    if (!TryConnectTo(startConnector, nearStart, out var e1) && !string.IsNullOrWhiteSpace(e1)) connectWarnings.Add($"Start connect warning: {e1}");
+                    if (!TryConnectTo(endConnector, nearEnd, out var e2) && !string.IsNullOrWhiteSpace(e2)) connectWarnings.Add($"End connect warning: {e2}");
+                }
+
+                tx.Commit();
+            }
+
+            var connectedByTrace = IsConnectedByTrace(app, startId, endId);
+            var warnings = BuildIntentWarnings(intent, p.maxElbowsPerBranch, false);
+            if (!connectedByTrace) warnings.Add("Trace verification did not find end element in connected network from start element.");
+            warnings.AddRange(connectWarnings);
+
+            return new
+            {
+                status = "Applied",
+                action = $"connect_elements_with_{intent}",
+                intent,
+                startElementId = startId,
+                endElementId = endId,
+                ductId = created == null ? (long?)null : ElementIdCompat.GetValue(created.Id),
+                connectedByTrace,
+                connectorSummary,
+                requestedDuctSize = requestedDuctSize.Length == 0 ? null : requestedDuctSize,
+                sizeWrite,
+                geometry = new
+                {
+                    start = new[] { startPoint.X, startPoint.Y, startPoint.Z },
+                    end = new[] { endPoint.X, endPoint.Y, endPoint.Z },
+                    distanceFeet = length
+                },
+                warnings
+            };
+        }
+
+        private static object RouteTerminalsToEquipment(UIApplication app, Document doc, Params p)
+        {
+            var equipmentId = p.equipmentElementId.GetValueOrDefault(0);
+            if (equipmentId <= 0) throw new InvalidOperationException("route_terminals_to_equipment requires equipmentElementId.");
+            var dryRun = p.dryRun ?? false;
+            var maxBranches = ClampInt(p.maxBranches ?? 200, 1, 5000);
+
+            var terminals = (p.terminalElementIds ?? new List<long>())
+                .Where(x => x > 0 && x != equipmentId)
+                .Distinct()
+                .Take(maxBranches)
+                .ToList();
+            if (terminals.Count == 0)
+            {
+                terminals = (p.sourceElementIds ?? new List<long>())
+                    .Where(x => x > 0 && x != equipmentId)
+                    .Distinct()
+                    .Take(maxBranches)
+                    .ToList();
+            }
+            if (terminals.Count == 0)
+            {
+                terminals = ResolveTargetElements(doc, p, new[] { BuiltInCategory.OST_DuctTerminal }, maxBranches + 10)
+                    .Select(x => ElementIdCompat.GetValue(x.Id))
+                    .Where(x => x > 0 && x != equipmentId)
+                    .Distinct()
+                    .Take(maxBranches)
+                    .ToList();
+            }
+            if (terminals.Count == 0) throw new InvalidOperationException("route_terminals_to_equipment found no terminal elements to route.");
+
+            var rows = new List<object>();
+            var success = 0;
+            foreach (var tid in terminals)
+            {
+                var sub = new Params
+                {
+                    action = "connect_elements_with_duct",
+                    dryRun = dryRun,
+                    startElementId = equipmentId,
+                    endElementId = tid,
+                    systemTypeName = p.systemTypeName,
+                    ductTypeName = p.ductTypeName,
+                    ductSize = p.ductSize,
+                    levelId = p.levelId,
+                    levelName = p.levelName,
+                    maxLengthFeet = p.maxLengthFeet,
+                    maxElbowsPerBranch = p.maxElbowsPerBranch
+                };
+
+                object result;
+                try
+                {
+                    result = ConnectElementsWithDuct(app, doc, sub, "duct");
+                    if (dryRun || TryReadLong(result, "ductId") > 0) success++;
+                }
+                catch (Exception ex)
+                {
+                    result = new { status = "Error", message = ex.Message };
+                }
+
+                rows.Add(new
+                {
+                    equipmentElementId = equipmentId,
+                    terminalElementId = tid,
+                    result
+                });
+            }
+
+            var warnings = new List<string>();
+            if (p.maxElbowsPerBranch.HasValue)
+                warnings.Add("maxElbowsPerBranch is currently best-effort metadata; branch routing is direct connector-to-connector.");
+
+            return new
+            {
+                status = dryRun ? "Dry Run" : "Applied",
+                action = "route_terminals_to_equipment",
+                dryRun,
+                equipmentElementId = equipmentId,
+                requestedTerminalCount = terminals.Count,
+                successfulCount = success,
+                routed = rows,
+                warnings
+            };
+        }
+
+        private static object PlaceEquipmentAndConnect(UIApplication app, Document doc, Params p)
+        {
+            var dryRun = p.dryRun ?? false;
+            var symbol = (p.symbolName ?? "").Trim();
+            if (symbol.Length == 0) throw new InvalidOperationException("place_equipment_and_connect requires symbolName.");
+            if (!p.x.HasValue || !p.y.HasValue) throw new InvalidOperationException("place_equipment_and_connect requires x and y.");
+
+            var level = ResolveLevel(doc, p.levelId, p.levelName);
+            var levelName = level?.Name ?? p.levelName ?? "";
+            var z = p.z ?? level?.Elevation ?? 0.0;
+
+            var createRequest = new
+            {
+                familyName = string.IsNullOrWhiteSpace(p.familyName) ? null : p.familyName!.Trim(),
+                symbolName = symbol,
+                levelName,
+                x = p.x.Value,
+                y = p.y.Value,
+                z = z
+            };
+
+            if (dryRun)
+            {
+                return new
+                {
+                    status = "Dry Run",
+                    action = "place_equipment_and_connect",
+                    dryRun = true,
+                    createRequest,
+                    routePlanned = (p.terminalElementIds?.Count ?? 0) > 0
+                };
+            }
+
+            var created = new CreateFamilyInstanceHandler().Handle(app, JsonSerializer.Serialize(createRequest)).GetAwaiter().GetResult();
+            var equipmentId = TryReadLong(created, "id");
+            object? routeResult = null;
+            if (equipmentId > 0 && (p.terminalElementIds?.Count ?? 0) > 0)
+            {
+                var routeParams = new Params
+                {
+                    dryRun = false,
+                    equipmentElementId = equipmentId,
+                    terminalElementIds = p.terminalElementIds,
+                    systemTypeName = p.systemTypeName,
+                    ductTypeName = p.ductTypeName,
+                    ductSize = p.ductSize,
+                    levelId = p.levelId,
+                    levelName = p.levelName,
+                    maxLengthFeet = p.maxLengthFeet,
+                    maxElbowsPerBranch = p.maxElbowsPerBranch,
+                    maxBranches = p.maxBranches
+                };
+                routeResult = RouteTerminalsToEquipment(app, doc, routeParams);
+            }
+
+            return new
+            {
+                status = "Applied",
+                action = "place_equipment_and_connect",
+                equipmentElementId = equipmentId > 0 ? equipmentId : (long?)null,
+                createResult = created,
+                routeResult
+            };
+        }
+
+        private static object CreateRiserOffset(UIApplication app, Document doc, Params p)
+        {
+            var dryRun = p.dryRun ?? false;
+            var startId = p.startElementId.GetValueOrDefault(0);
+            var endId = p.endElementId.GetValueOrDefault(0);
+            if (startId <= 0 || endId <= 0) throw new InvalidOperationException("create_riser_offset requires startElementId and endElementId.");
+
+            var start = doc.GetElement(ElementIdCompat.Create(startId));
+            var end = doc.GetElement(ElementIdCompat.Create(endId));
+            if (start == null || end == null) throw new InvalidOperationException("Start or end element not found.");
+
+            TryResolveClosestConnectorPair(start, end, out var startConnector, out var endConnector, out var connectorSummary);
+            var p1 = startConnector?.Origin ?? ResolveElementPoint(start);
+            var p2 = endConnector?.Origin ?? ResolveElementPoint(end);
+            if (p1 == null || p2 == null) throw new InvalidOperationException("Unable to resolve connection points for riser offset.");
+
+            var rise = Math.Max(1.0, p.sectionHeightFeet ?? p.paddingFeet ?? 3.0);
+            var highZ = Math.Max(p1.Z, p2.Z) + rise;
+            var m1 = new XYZ(p1.X, p1.Y, highZ);
+            var m2 = new XYZ(p2.X, p2.Y, highZ);
+
+            var points = new[]
+            {
+                new[] { p1.X, p1.Y, p1.Z },
+                new[] { m1.X, m1.Y, m1.Z },
+                new[] { m2.X, m2.Y, m2.Z },
+                new[] { p2.X, p2.Y, p2.Z }
+            };
+
+            if (dryRun)
+            {
+                return new
+                {
+                    status = "Dry Run",
+                    action = "create_riser_offset",
+                    dryRun = true,
+                    startElementId = startId,
+                    endElementId = endId,
+                    connectorSummary,
+                    riseFeet = rise,
+                    pathPoints = points
+                };
+            }
+
+            var level = ResolveLevel(doc, p.levelId, p.levelName) ?? ResolveNearestLevel(new FilteredElementCollector(doc).OfClass(typeof(Level)).Cast<Level>().ToList(), highZ);
+            var systemType = ResolveSystemType(doc, (p.systemTypeName ?? "").Trim()) ?? ResolveDefaultMechanicalSystemType(doc);
+            var ductType = ResolveDuctType(doc, p.ductTypeName) ?? ResolveDefaultDuctType(doc);
+            if (level == null || systemType == null || ductType == null) throw new InvalidOperationException("Unable to resolve level/system/duct type for riser offset.");
+
+            var createdIds = new List<long>();
+            using (var tx = new Transaction(doc, "MEP Workflows - Create Riser Offset"))
+            {
+                tx.Start();
+                var d1 = Duct.Create(doc, systemType.Id, ductType.Id, level.Id, p1, m1);
+                var d2 = Duct.Create(doc, systemType.Id, ductType.Id, level.Id, m1, m2);
+                var d3 = Duct.Create(doc, systemType.Id, ductType.Id, level.Id, m2, p2);
+                createdIds.Add(ElementIdCompat.GetValue(d1.Id));
+                createdIds.Add(ElementIdCompat.GetValue(d2.Id));
+                createdIds.Add(ElementIdCompat.GetValue(d3.Id));
+                tx.Commit();
+            }
+
+            return new
+            {
+                status = "Applied",
+                action = "create_riser_offset",
+                startElementId = startId,
+                endElementId = endId,
+                riseFeet = rise,
+                segmentIds = createdIds,
+                pathPoints = points
+            };
+        }
+
+        private static object EnsureSpacesAndTag(UIApplication app, Document doc, Params p)
+        {
+            var level = ResolveLevel(doc, p.levelId, p.levelName);
+            var levelName = level?.Name ?? (p.levelName ?? "").Trim();
+            if (levelName.Length == 0) throw new InvalidOperationException("ensure_spaces_and_tag requires levelName (or levelId).");
+            var dryRun = p.dryRun ?? false;
+            var shouldTag = p.createSpaceTags ?? true;
+
+            if (dryRun)
+            {
+                return new
+                {
+                    status = "Dry Run",
+                    action = "ensure_spaces_and_tag",
+                    dryRun = true,
+                    levelName,
+                    tagSpaces = shouldTag,
+                    viewId = p.viewId
+                };
+            }
+
+            var ensure = new EnsureSpacesHandler().Handle(app, JsonSerializer.Serialize(new { levelName })).GetAwaiter().GetResult();
+            object? tagResult = null;
+            if (shouldTag)
+            {
+                var tagReq = new
+                {
+                    viewId = p.viewId,
+                    categoryNames = new[] { "OST_MEPSpaces" },
+                    onlyUntagged = p.onlyTagUntagged ?? true,
+                    addLeader = p.addTagLeader ?? false,
+                    offsetX = p.tagOffsetFeet ?? 1.0,
+                    offsetY = p.tagOffsetFeet ?? 1.0,
+                    dryRun = false
+                };
+                try
+                {
+                    tagResult = new TagElementsHandler().Handle(app, JsonSerializer.Serialize(tagReq)).GetAwaiter().GetResult();
+                }
+                catch (Exception ex)
+                {
+                    tagResult = new { status = "Error", message = ex.Message };
+                }
+            }
+
+            return new
+            {
+                status = "Applied",
+                action = "ensure_spaces_and_tag",
+                levelName,
+                ensureSpaces = ensure,
+                tagResult
+            };
+        }
+
+        private static object CreateHvacSchematic(UIApplication app, Document doc, Params p)
+        {
+            var dryRun = p.dryRun ?? false;
+            var name = (p.name ?? "HVAC Schematic").Trim();
+            if (name.Length == 0) name = "HVAC Schematic";
+
+            var createReq = new CreateViewHandler.Params
+            {
+                action = "create_drafting",
+                name = name,
+                dryRun = dryRun
+            };
+            var createResult = new CreateViewHandler().Handle(app, JsonSerializer.Serialize(createReq)).GetAwaiter().GetResult();
+            var viewId = TryReadLong(createResult, "view.id");
+
+            var equipmentIds = (p.equipmentElementIds ?? p.sourceElementIds ?? new List<long>())
+                .Where(x => x > 0)
+                .Distinct()
+                .Take(100)
+                .ToList();
+            if (equipmentIds.Count == 0)
+            {
+                equipmentIds = ResolveTargetElements(doc, p, new[] { BuiltInCategory.OST_MechanicalEquipment }, 100)
+                    .Select(x => ElementIdCompat.GetValue(x.Id))
+                    .Distinct()
+                    .ToList();
+            }
+
+            var annotate = p.annotateEquipment ?? true;
+            var notes = new List<object>();
+            if (!dryRun && annotate && viewId > 0 && equipmentIds.Count > 0)
+            {
+                var y = 0.0;
+                foreach (var id in equipmentIds.Take(50))
+                {
+                    var e = doc.GetElement(ElementIdCompat.Create(id));
+                    var label = e == null ? $"Equipment {id}" : BuildEquipmentLabel(e);
+                    var textReq = new CreateTextNoteHandler.Params
+                    {
+                        action = "create",
+                        viewId = viewId,
+                        x = 0.0,
+                        y = y,
+                        text = label,
+                        dryRun = false
+                    };
+                    try
+                    {
+                        var note = new CreateTextNoteHandler().Handle(app, JsonSerializer.Serialize(textReq)).GetAwaiter().GetResult();
+                        notes.Add(new { equipmentId = id, text = label, result = note });
+                    }
+                    catch (Exception ex)
+                    {
+                        notes.Add(new { equipmentId = id, text = label, error = ex.Message });
+                    }
+                    y -= 0.75;
+                }
+            }
+
+            return new
+            {
+                status = dryRun ? "Dry Run" : "Applied",
+                action = "create_hvac_schematic",
+                dryRun,
+                viewId = viewId > 0 ? viewId : (long?)null,
+                equipmentCount = equipmentIds.Count,
+                annotateEquipment = annotate,
+                createResult,
+                notes
+            };
+        }
+
+        private static object Duplicate3dWithSectionBox(UIApplication app, Document doc, Params p)
+        {
+            var dryRun = p.dryRun ?? false;
+            var source = ResolveSource3dView(doc, p.sourceViewId) ?? throw new InvalidOperationException("duplicate_3d_with_section_box requires sourceViewId (or an active/default 3D view).");
+            var name = (p.name ?? $"{source.Name} - Sectioned").Trim();
+            if (name.Length == 0) name = $"{source.Name} - Sectioned";
+
+            var targetBox = ResolveCoordinationBox(doc, p, out var sourceSummary);
+            if (dryRun)
+            {
+                return new
+                {
+                    status = "Dry Run",
+                    action = "duplicate_3d_with_section_box",
+                    dryRun = true,
+                    sourceView = new { id = ElementIdCompat.GetValue(source.Id), name = source.Name },
+                    targetName = name,
+                    sourceSummary,
+                    hasSectionBox = targetBox != null
+                };
+            }
+
+            var dupReq = new
+            {
+                viewId = ElementIdCompat.GetValue(source.Id),
+                newName = name,
+                withDetailing = false
+            };
+            var dupResult = new DuplicateViewHandler().Handle(app, JsonSerializer.Serialize(dupReq)).GetAwaiter().GetResult();
+            var duplicatedViewId = TryReadLong(dupResult, "viewId");
+            if (duplicatedViewId <= 0) throw new InvalidOperationException("Failed to duplicate source 3D view.");
+
+            object? sectionResult = null;
+            if (targetBox != null)
+            {
+                var padding = Math.Max(0.0, p.paddingFeet ?? 1.0);
+                var min = new XYZ(targetBox.Min.X - padding, targetBox.Min.Y - padding, targetBox.Min.Z - padding);
+                var max = new XYZ(targetBox.Max.X + padding, targetBox.Max.Y + padding, targetBox.Max.Z + padding);
+                var visReq = new ViewVisibilityHandler.Params
+                {
+                    action = "set_section_box",
+                    viewId = duplicatedViewId,
+                    boxMin = new ViewVisibilityHandler.Point3 { x = min.X, y = min.Y, z = min.Z },
+                    boxMax = new ViewVisibilityHandler.Point3 { x = max.X, y = max.Y, z = max.Z }
+                };
+                sectionResult = new ViewVisibilityHandler().Handle(app, JsonSerializer.Serialize(visReq)).GetAwaiter().GetResult();
+            }
+
+            return new
+            {
+                status = "Applied",
+                action = "duplicate_3d_with_section_box",
+                sourceViewId = ElementIdCompat.GetValue(source.Id),
+                duplicatedViewId,
+                sourceSummary,
+                duplicateResult = dupResult,
+                sectionResult
+            };
+        }
+
+        private static object CreateDependentWithCrop(UIApplication app, Document doc, Params p)
+        {
+            var sourceViewId = p.sourceViewId.GetValueOrDefault(0);
+            if (sourceViewId <= 0) throw new InvalidOperationException("create_dependent_with_crop requires sourceViewId.");
+            var dryRun = p.dryRun ?? false;
+
+            var createReq = new CreateViewHandler.Params
+            {
+                action = "create_dependent",
+                sourceViewId = sourceViewId,
+                name = p.name,
+                dryRun = dryRun
+            };
+            var createResult = new CreateViewHandler().Handle(app, JsonSerializer.Serialize(createReq)).GetAwaiter().GetResult();
+            var dependentViewId = TryReadLong(createResult, "view.id");
+
+            var targetBox = ResolveCoordinationBox(doc, p, out var sourceSummary);
+            if (dryRun || dependentViewId <= 0 || targetBox == null)
+            {
+                return new
+                {
+                    status = dryRun ? "Dry Run" : "AppliedWithWarnings",
+                    action = "create_dependent_with_crop",
+                    sourceViewId,
+                    dependentViewId = dependentViewId > 0 ? dependentViewId : (long?)null,
+                    sourceSummary,
+                    hasCropBox = targetBox != null,
+                    createResult
+                };
+            }
+
+            var padding = Math.Max(0.0, p.paddingFeet ?? 1.0);
+            var min = new XYZ(targetBox.Min.X - padding, targetBox.Min.Y - padding, targetBox.Min.Z - padding);
+            var max = new XYZ(targetBox.Max.X + padding, targetBox.Max.Y + padding, targetBox.Max.Z + padding);
+            var visReq = new ViewVisibilityHandler.Params
+            {
+                action = "set_crop_box",
+                viewId = dependentViewId,
+                boxMin = new ViewVisibilityHandler.Point3 { x = min.X, y = min.Y, z = min.Z },
+                boxMax = new ViewVisibilityHandler.Point3 { x = max.X, y = max.Y, z = max.Z }
+            };
+            object cropResult;
+            try
+            {
+                cropResult = new ViewVisibilityHandler().Handle(app, JsonSerializer.Serialize(visReq)).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                cropResult = new { status = "Error", message = ex.Message };
+            }
+
+            return new
+            {
+                status = "Applied",
+                action = "create_dependent_with_crop",
+                sourceViewId,
+                dependentViewId,
+                sourceSummary,
+                createResult,
+                cropResult
+            };
+        }
+
+        private static List<string> BuildIntentWarnings(string intent, int? maxElbowsPerBranch, bool lengthExceeded)
+        {
+            var warnings = new List<string>();
+            if (intent == "flex")
+                warnings.Add("connect_elements_with_flex currently uses rigid duct geometry with flex-intent metadata.");
+            if (intent == "elbow" || intent == "transition")
+                warnings.Add($"connect_elements_with_{intent} relies on connector attachment and Revit auto-fitting behavior.");
+            if (maxElbowsPerBranch.HasValue)
+                warnings.Add("maxElbowsPerBranch is currently best-effort metadata.");
+            if (lengthExceeded)
+                warnings.Add("Planned connection exceeds maxLengthFeet.");
+            return warnings;
+        }
+
+        private static MEPSystemType? ResolveDefaultMechanicalSystemType(Document doc)
+        {
+            var all = new FilteredElementCollector(doc)
+                .OfClass(typeof(MEPSystemType))
+                .Cast<MEPSystemType>()
+                .ToList();
+            var preferred = all.FirstOrDefault(x => (x.Name ?? "").IndexOf("supply", StringComparison.OrdinalIgnoreCase) >= 0);
+            return preferred ?? all.FirstOrDefault();
+        }
+
+        private static DuctType? ResolveDefaultDuctType(Document doc)
+        {
+            return new FilteredElementCollector(doc)
+                .OfClass(typeof(DuctType))
+                .Cast<DuctType>()
+                .FirstOrDefault();
+        }
+
+        private static DuctType? ResolveDuctType(Document doc, string? token)
+        {
+            var all = new FilteredElementCollector(doc)
+                .OfClass(typeof(DuctType))
+                .Cast<DuctType>()
+                .ToList();
+            var q = (token ?? "").Trim();
+            if (q.Length == 0) return all.FirstOrDefault();
+            var exact = all.FirstOrDefault(x => string.Equals((x.Name ?? "").Trim(), q, StringComparison.OrdinalIgnoreCase));
+            if (exact != null) return exact;
+            return all.FirstOrDefault(x => (x.Name ?? "").IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0) ?? all.FirstOrDefault();
+        }
+
+        private static object TryApplyDuctSize(Document doc, Duct duct, string requested)
+        {
+            var raw = (requested ?? "").Trim();
+            if (raw.Length == 0)
+            {
+                return new { ok = false, applied = false, error = "No ductSize provided." };
+            }
+
+            // Rectangular input like "24x12" or "24 x 12".
+            var pair = raw.Split(new[] { 'x', 'X' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => x.Trim())
+                .Where(x => x.Length > 0)
+                .ToList();
+            if (pair.Count == 2)
+            {
+                var width = TrySetAnySizeParameter(doc, duct, pair[0], new[] { "Width", "Duct Width", "W" }, new[] { "RBS_CURVE_WIDTH_PARAM" });
+                var height = TrySetAnySizeParameter(doc, duct, pair[1], new[] { "Height", "Duct Height", "H" }, new[] { "RBS_CURVE_HEIGHT_PARAM" });
+                return new
+                {
+                    ok = width.ok || height.ok,
+                    applied = width.applied || height.applied,
+                    mode = "rectangular",
+                    requested = raw,
+                    width,
+                    height
+                };
+            }
+
+            var diameter = TrySetAnySizeParameter(doc, duct, raw, new[] { "Diameter", "Duct Diameter", "Size" }, new[] { "RBS_CURVE_DIAMETER_PARAM" });
+            if (diameter.ok) return new { ok = true, applied = diameter.applied, mode = "round", requested = raw, diameter };
+
+            // Fallback for non-round shape: try width then height with single scalar.
+            var widthFallback = TrySetAnySizeParameter(doc, duct, raw, new[] { "Width", "Duct Width" }, new[] { "RBS_CURVE_WIDTH_PARAM" });
+            var heightFallback = TrySetAnySizeParameter(doc, duct, raw, new[] { "Height", "Duct Height" }, new[] { "RBS_CURVE_HEIGHT_PARAM" });
+            return new
+            {
+                ok = widthFallback.ok || heightFallback.ok,
+                applied = widthFallback.applied || heightFallback.applied,
+                mode = "fallback",
+                requested = raw,
+                width = widthFallback,
+                height = heightFallback
+            };
+        }
+
+        private static (bool ok, bool applied, object? before, object? after, string? parameterName, string? error) TrySetAnySizeParameter(
+            Document doc,
+            Duct duct,
+            string requested,
+            IEnumerable<string> nameCandidates,
+            IEnumerable<string> builtInCandidates)
+        {
+            foreach (var name in nameCandidates)
+            {
+                var p = duct.LookupParameter(name);
+                if (p == null || p.IsReadOnly) continue;
+                var before = ParameterValueUtil.SnapshotForWire(p);
+                if (TrySetParameterFromString(doc, p, requested, out var changed, out var err))
+                {
+                    var after = ParameterValueUtil.SnapshotForWire(p);
+                    return (true, changed, before, after, name, err);
+                }
+            }
+
+            foreach (var bipName in builtInCandidates)
+            {
+                try
+                {
+                    var bip = (BuiltInParameter)Enum.Parse(typeof(BuiltInParameter), bipName, ignoreCase: true);
+                    var p = duct.get_Parameter(bip);
+                    if (p == null || p.IsReadOnly) continue;
+                    var before = ParameterValueUtil.SnapshotForWire(p);
+                    if (TrySetParameterFromString(doc, p, requested, out var changed, out var err))
+                    {
+                        var after = ParameterValueUtil.SnapshotForWire(p);
+                        return (true, changed, before, after, bipName, err);
+                    }
+                }
+                catch
+                {
+                    // try next
+                }
+            }
+
+            return (false, false, null, null, null, "No writable size parameter was found on the created duct.");
+        }
+
+        private static List<Connector> GetElementConnectors(Element? e)
+        {
+            var outList = new List<Connector>();
+            if (e == null) return outList;
+
+            try
+            {
+                if (e is MEPCurve curve)
+                {
+                    var cm = curve.ConnectorManager;
+                    if (cm != null)
+                    {
+                        foreach (Connector c in cm.Connectors)
+                        {
+                            if (c != null) outList.Add(c);
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+
+            try
+            {
+                if (e is FamilyInstance fi)
+                {
+                    var cm = fi.MEPModel?.ConnectorManager;
+                    if (cm != null)
+                    {
+                        foreach (Connector c in cm.Connectors)
+                        {
+                            if (c != null) outList.Add(c);
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+
+            return outList;
+        }
+
+        private static bool TryResolveClosestConnectorPair(Element start, Element end, out Connector? startConnector, out Connector? endConnector, out object summary)
+        {
+            startConnector = null;
+            endConnector = null;
+            var startAll = GetElementConnectors(start);
+            var endAll = GetElementConnectors(end);
+            var startOpen = startAll.Where(c => IsConnectorOpen(c)).ToList();
+            var endOpen = endAll.Where(c => IsConnectorOpen(c)).ToList();
+            var startCandidates = startOpen.Count > 0 ? startOpen : startAll;
+            var endCandidates = endOpen.Count > 0 ? endOpen : endAll;
+
+            double best = double.MaxValue;
+            foreach (var s in startCandidates)
+            {
+                foreach (var t in endCandidates)
+                {
+                    var d = s.Origin.DistanceTo(t.Origin);
+                    if (d < best)
+                    {
+                        best = d;
+                        startConnector = s;
+                        endConnector = t;
+                    }
+                }
+            }
+
+            summary = new
+            {
+                startConnectorCount = startAll.Count,
+                startOpenConnectorCount = startOpen.Count,
+                endConnectorCount = endAll.Count,
+                endOpenConnectorCount = endOpen.Count,
+                pairDistanceFeet = best < double.MaxValue ? best : (double?)null
+            };
+            return startConnector != null && endConnector != null;
+        }
+
+        private static bool IsConnectorOpen(Connector c)
+        {
+            try
+            {
+                return !c.IsConnected;
+            }
+            catch
+            {
+                return true;
+            }
+        }
+
+        private static Connector? FindClosestConnector(IEnumerable<Connector> connectors, XYZ point)
+        {
+            Connector? best = null;
+            var bestDist = double.MaxValue;
+            foreach (var c in connectors ?? Enumerable.Empty<Connector>())
+            {
+                try
+                {
+                    var d = c.Origin.DistanceTo(point);
+                    if (d < bestDist)
+                    {
+                        bestDist = d;
+                        best = c;
+                    }
+                }
+                catch
+                {
+                    // ignore
+                }
+            }
+            return best;
+        }
+
+        private static bool TryConnectTo(Connector? a, Connector? b, out string? error)
+        {
+            error = null;
+            if (a == null || b == null) return false;
+            try
+            {
+                a.ConnectTo(b);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        private static bool IsConnectedByTrace(UIApplication app, long startElementId, long endElementId)
+        {
+            try
+            {
+                var trace = new TraceConnectedNetworkHandler().Handle(app, JsonSerializer.Serialize(new
+                {
+                    startElementId,
+                    maxElements = 5000,
+                    maxHops = 200
+                })).GetAwaiter().GetResult();
+
+                var ids = TryReadLongArray(trace, "elementIdsOrdered");
+                return ids.Contains(endElementId);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static HashSet<long> TryReadLongArray(object payload, string propertyName)
+        {
+            var set = new HashSet<long>();
+            try
+            {
+                using var doc = JsonDocument.Parse(JsonSerializer.Serialize(payload));
+                if (!doc.RootElement.TryGetProperty(propertyName, out var arr) || arr.ValueKind != JsonValueKind.Array) return set;
+                foreach (var item in arr.EnumerateArray())
+                {
+                    if (item.ValueKind == JsonValueKind.Number && item.TryGetInt64(out var v) && v > 0) set.Add(v);
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+            return set;
+        }
+
+        private static string BuildEquipmentLabel(Element e)
+        {
+            var family = "";
+            var type = "";
+            try
+            {
+                if (e is FamilyInstance fi)
+                {
+                    family = fi.Symbol?.FamilyName ?? "";
+                    type = fi.Symbol?.Name ?? "";
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+
+            var mark = "";
+            try
+            {
+                mark = e.LookupParameter("Mark")?.AsString() ?? "";
+            }
+            catch
+            {
+                // ignore
+            }
+
+            var parts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(mark)) parts.Add($"[{mark.Trim()}]");
+            parts.Add(string.IsNullOrWhiteSpace(family) ? e.Name : family);
+            if (!string.IsNullOrWhiteSpace(type)) parts.Add(type.Trim());
+            return string.Join(" ", parts.Where(x => !string.IsNullOrWhiteSpace(x)));
+        }
+
+        private static View3D? ResolveSource3dView(Document doc, long? sourceViewId)
+        {
+            if (sourceViewId.HasValue && sourceViewId.Value > 0)
+            {
+                return doc.GetElement(ElementIdCompat.Create(sourceViewId.Value)) as View3D;
+            }
+
+            if (doc.ActiveView is View3D active3d && !active3d.IsTemplate) return active3d;
+
+            return new FilteredElementCollector(doc)
+                .OfClass(typeof(View3D))
+                .Cast<View3D>()
+                .FirstOrDefault(v => !v.IsTemplate && !v.IsPerspective);
+        }
+    }
+}

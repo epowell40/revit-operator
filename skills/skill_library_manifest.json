@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "description": "Canonical repo-shipped docs injected into backend skill library prompts.",
+  "files": [
+    { "path": "prompts/system.md", "max_chars": 2600 },
+    { "path": "prompts/soul.md", "max_chars": 3200 },
+    { "path": "prompts/policies/privacy.md", "max_chars": 1400 },
+    { "path": "prompts/policies/file_io.md", "max_chars": 1800 },
+    { "path": "prompts/policies/revit_transactions.md", "max_chars": 1400 },
+    { "path": "prompts/policies/mep_resize.md", "max_chars": 2200 },
+    { "path": "prompts/policies/web_research.md", "max_chars": 2600 },
+    { "path": "prompts/templates/plan_execute_verify.md", "max_chars": 1200 },
+    { "path": "prompts/templates/plan_execute_verify_titleblock.md", "max_chars": 2200 },
+    { "path": "prompts/templates/tool_result_format.md", "max_chars": 1200 },
+    { "path": "skills/README.md", "max_chars": 2400 },
+    { "path": "skills/INDEX.md", "max_chars": 1600 },
+    { "path": "skills/runbooks/mep_resize_runbook.md", "max_chars": 2200 },
+    { "path": "skills/workflows/mep_resize_scope.md", "max_chars": 2200 },
+    { "path": "skills/workflows/mep_trace_connected_network.md", "max_chars": 2200 },
+    { "path": "skills/workflows/duct_resize_connected_run.md", "max_chars": 2200 },
+    { "path": "skills/workflows/sheet_titleblock_update.md", "max_chars": 2200 },
+    { "path": "skills/workflows/print_sheet_sets.md", "max_chars": 2200 },
+    { "path": "docs/AGENT_VISIBILITY_AND_SKILLS.md", "max_chars": 2600 },
+    { "path": "docs/PRIMITIVES_VS_SKILLS.md", "max_chars": 2200 }
+  ]
+}

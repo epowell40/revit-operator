@@ -27,3 +27,12 @@ build/
 coverage/
 logs/
 *.log
+
+apps/operator-backend/local-work/
+apps/mcp-server/eval/
+apps/mcp-server/work/
+apps/mcp-server/dimension_model*.json
+apps/mcp-server/training_set*.json
+apps/mcp-server/*_with_geo.json
+apps/mcp-server/rooms_level*.json
+apps/mcp-server/proposals.json

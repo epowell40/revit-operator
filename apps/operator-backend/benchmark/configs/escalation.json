@@ -1,0 +1,18 @@
+{
+  "executor_failures_before_escalation": 2,
+  "confidence_threshold": 0.55,
+  "high_impact_action_keywords": [
+    "send",
+    "submit",
+    "delete",
+    "overwrite",
+    "close_without_saving"
+  ],
+  "high_impact_target_keywords": [
+    "send",
+    "submit",
+    "delete",
+    "overwrite",
+    "close without saving"
+  ]
+}

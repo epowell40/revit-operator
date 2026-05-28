@@ -1,0 +1,170 @@
+{
+  "discipline": "power_outlets",
+  "occupancyProfile": "hospital_default",
+  "endpointRequirements": {
+    "refrigerator": {
+      "requiresOutlet": true,
+      "deviceCategory": "dedicated_receptacle",
+      "candidateStrategies": [ "endpoint_wall_host", "wall_host", "room_entry" ],
+      "hostPreference": "wall",
+      "minDistanceFt": 1.0,
+      "maxDistanceFt": 6.0,
+      "minSeparationFt": 4.0,
+      "clusterDistanceFt": 4.0,
+      "preferredElevationFt": 1.5,
+      "minElevationFt": 1.0,
+      "maxElevationFt": 2.0,
+      "preferredDirections": [ "back", "left", "right" ],
+      "reviewIfUnknownHost": true
+    },
+    "workstation_computer": {
+      "requiresOutlet": true,
+      "deviceCategory": "duplex_receptacle",
+      "candidateStrategies": [ "endpoint_wall_host", "room_entry", "wall_host" ],
+      "hostPreference": "wall",
+      "minDistanceFt": 1.0,
+      "maxDistanceFt": 8.0,
+      "minSeparationFt": 3.0,
+      "clusterDistanceFt": 4.0,
+      "preferredElevationFt": 1.5,
+      "minElevationFt": 1.0,
+      "maxElevationFt": 2.0,
+      "preferredDirections": [ "left", "right" ],
+      "reviewIfUnknownHost": true
+    },
+    "printer": {
+      "requiresOutlet": true,
+      "deviceCategory": "duplex_receptacle",
+      "candidateStrategies": [ "endpoint_wall_host", "wall_host", "room_entry" ],
+      "hostPreference": "wall",
+      "minDistanceFt": 1.0,
+      "maxDistanceFt": 8.0,
+      "minSeparationFt": 4.0,
+      "clusterDistanceFt": 5.0,
+      "preferredElevationFt": 1.5,
+      "minElevationFt": 1.0,
+      "maxElevationFt": 2.0,
+      "preferredDirections": [ "back", "left", "right" ],
+      "reviewIfUnknownHost": true
+    },
+    "tv_display": {
+      "requiresOutlet": true,
+      "deviceCategory": "clock_receptacle",
+      "candidateStrategies": [ "endpoint_wall_host", "wall_host" ],
+      "hostPreference": "wall",
+      "minDistanceFt": 0.5,
+      "maxDistanceFt": 5.0,
+      "minSeparationFt": 4.0,
+      "clusterDistanceFt": 4.0,
+      "preferredElevationFt": 5.0,
+      "minElevationFt": 4.0,
+      "maxElevationFt": 7.0,
+      "preferredDirections": [ "back" ],
+      "reviewIfUnknownHost": true
+    },
+    "microwave": {
+      "requiresOutlet": true,
+      "deviceCategory": "dedicated_receptacle",
+      "candidateStrategies": [ "endpoint_wall_host", "wall_host", "room_entry" ],
+      "hostPreference": "wall",
+      "minDistanceFt": 1.0,
+      "maxDistanceFt": 6.0,
+      "minSeparationFt": 4.0,
+      "clusterDistanceFt": 4.0,
+      "preferredElevationFt": 1.5,
+      "minElevationFt": 1.0,
+      "maxElevationFt": 2.0,
+      "preferredDirections": [ "back", "left", "right" ],
+      "reviewIfUnknownHost": true
+    },
+    "breakroom_appliance": {
+      "requiresOutlet": true,
+      "deviceCategory": "dedicated_receptacle",
+      "candidateStrategies": [ "endpoint_wall_host", "wall_host", "room_entry" ],
+      "hostPreference": "wall",
+      "minDistanceFt": 1.0,
+      "maxDistanceFt": 6.0,
+      "minSeparationFt": 4.0,
+      "clusterDistanceFt": 4.0,
+      "preferredElevationFt": 1.5,
+      "minElevationFt": 1.0,
+      "maxElevationFt": 2.0,
+      "preferredDirections": [ "back", "left", "right" ],
+      "reviewIfUnknownHost": true
+    },
+    "nurse_station_equipment": {
+      "requiresOutlet": true,
+      "deviceCategory": "duplex_receptacle",
+      "candidateStrategies": [ "endpoint_wall_host", "wall_host", "room_entry" ],
+      "hostPreference": "wall",
+      "minDistanceFt": 1.0,
+      "maxDistanceFt": 8.0,
+      "minSeparationFt": 4.0,
+      "clusterDistanceFt": 5.0,
+      "preferredElevationFt": 1.5,
+      "minElevationFt": 1.0,
+      "maxElevationFt": 2.0,
+      "preferredDirections": [ "front", "left", "right" ],
+      "reviewIfUnknownHost": true
+    },
+    "mobile_equipment_dock": {
+      "requiresOutlet": true,
+      "deviceCategory": "dedicated_receptacle",
+      "candidateStrategies": [ "endpoint_wall_host", "wall_host", "room_entry" ],
+      "hostPreference": "wall",
+      "minDistanceFt": 1.0,
+      "maxDistanceFt": 8.0,
+      "minSeparationFt": 4.0,
+      "clusterDistanceFt": 4.0,
+      "preferredElevationFt": 1.5,
+      "minElevationFt": 1.0,
+      "maxElevationFt": 2.0,
+      "preferredDirections": [ "back" ],
+      "reviewIfUnknownHost": true
+    },
+    "medical_equipment_powered": {
+      "requiresOutlet": true,
+      "deviceCategory": "dedicated_receptacle",
+      "candidateStrategies": [ "endpoint_wall_host", "wall_host", "room_entry" ],
+      "hostPreference": "wall",
+      "minDistanceFt": 1.0,
+      "maxDistanceFt": 8.0,
+      "minSeparationFt": 4.0,
+      "clusterDistanceFt": 4.0,
+      "preferredElevationFt": 1.5,
+      "minElevationFt": 1.0,
+      "maxElevationFt": 2.0,
+      "preferredDirections": [ "back", "left", "right" ],
+      "reviewIfUnknownHost": true
+    },
+    "unknown_power_endpoint": {
+      "requiresOutlet": false,
+      "deviceCategory": "duplex_receptacle",
+      "candidateStrategies": [],
+      "hostPreference": "wall",
+      "reviewIfUnknownHost": true
+    }
+  },
+  "receptacleTypePreferences": {
+    "duplex_receptacle": [ "power", "duplex", "receptacle", "device" ],
+    "dedicated_receptacle": [ "power", "dedicated", "receptacle", "device" ],
+    "clock_receptacle": [ "clock", "power", "receptacle", "device" ]
+  },
+  "duplicateSuppressionRules": {
+    "defaultClusterDistanceFt": 4.0,
+    "defaultMinSeparationFt": 4.0
+  },
+  "scoringParameters": {
+    "preferredStrategyBonus": 40.0,
+    "hostMatchBonus": 25.0,
+    "preferredDirectionBonus": 8.0,
+    "distancePenaltyWeight": 3.0,
+    "roomEntryBonus": 8.0
+  },
+  "reviewParameters": {
+    "missingFamilyRequiresReview": true,
+    "unknownEndpointRequiresReview": true,
+    "unknownEndpointKeywords": [ "fridge", "refrigerator", "microwave", "appliance", "printer", "computer", "dock", "charger", "equipment" ]
+  },
+  "reviewConditions": [ "unknown_power_endpoint", "missing_family_symbol", "host_ambiguity" ]
+}

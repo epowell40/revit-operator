@@ -1,0 +1,34 @@
+{
+  "profile": "MVP_Project",
+  "devices": ["STROBES_ROOMS", "STROBES_CORRIDORS"],
+  "placement": {
+    "strobeMount": "CEILING",
+    "corridorMaxSpacingFt": 80,
+    "corridorEndOffsetFt": 15,
+    "minCeilingHeightFt": 6,
+    "invalidCeilingFallback": "LEVEL_TO_LEVEL"
+  },
+  "classification": {
+    "corridorPatterns": ["corridor", "corr", "hall", "passage", "vestibule", "entry"],
+    "supportPatterns": ["mech", "mechanical", "electrical", "it", "telecom", "jan", "janitor", "closet", "shaft"],
+    "publicPatterns": ["lobby", "waiting", "conference", "restroom", "toilet", "classroom"]
+  },
+  "notificationRequirement": {
+    "default": "REVIEW",
+    "requireClasses": ["CORRIDOR", "PUBLIC"],
+    "excludeClasses": ["SUPPORT"],
+    "minRoomAreaFt2Exclude": 25
+  },
+  "coverage": {
+    "strobeRadiusFt": 20,
+    "sampleSpacingFt": 4,
+    "markerHalfSizeFt": 0.6,
+    "maxUncoveredMarkers": 2500
+  },
+  "deviceMappingsPath": "firealarm_device_mappings.example.json",
+  "visualizer": {
+    "enabled": true,
+    "layers": ["UNCOVERED"]
+  }
+}
+

@@ -1,0 +1,29 @@
+{
+  "name": "mcp-server",
+  "version": "1.0.0",
+  "description": "Revit Operator MCP Server",
+  "main": "dist/server.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "ts-node src/server.ts",
+    "test": "npm run build && node --test dist/**/*.test.js",
+    "acceptance:mep": "ts-node src/scripts/run_mep_continuity_acceptance.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.1",
+    "@types/pdf-parse": "^1.1.5",
+    "mammoth": "^1.11.0",
+    "ml-random-forest": "^2.1.0",
+    "pdf-lib": "^1.17.1",
+    "pdf-parse": "^2.4.5",
+    "xlsx": "^0.18.5",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}

@@ -18,9 +18,9 @@ See [docs/LOCAL_SETUP.md](docs/LOCAL_SETUP.md) for the current local setup notes
 
 ## Repository Status
 
-This public repository is in its initial migration phase. BIMTools has published the open-core repository, license, configuration examples, and boundary docs first. Source packages will be migrated from the private development repo after public/private review and secret scanning.
+This repository now carries the first source migration from the private development repo: the local backend, Revit add-in bridge, MCP bridge, prompts, sample skills, and native redline/spatial placement tooling. Private hosted deployment, admin, customer, billing, and production auth pieces remain in `revit-operator-private`.
 
-Until the first source migration lands, the hosted BIMTools product remains the usable production path. This repository is the permanent home for the local/self-host core.
+See [docs/PUBLIC_PRIVATE_BOUNDARY.md](docs/PUBLIC_PRIVATE_BOUNDARY.md) for the working split.
 
 ## License
 

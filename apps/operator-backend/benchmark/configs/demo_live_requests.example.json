@@ -1,0 +1,58 @@
+{
+  "tasks": {
+    "demo_sheet_export": {
+      "request": {
+        "sheetNumberPrefix": "E1",
+        "max": 2,
+        "combine": true,
+        "outputFolder": "C:\\Users\\User\\Desktop\\Operator Demo",
+        "baseFileName": "AEC_Demo_Selected_Sheets.pdf",
+        "colorMode": "BlackLine"
+      }
+    },
+    "demo_takeoff_receptacles": {
+      "request": {
+        "intent": "count_and_list",
+        "scope": "host",
+        "categories": ["OST_ElectricalFixtures"],
+        "filters": {
+          "keywords_include": ["receptacle"]
+        },
+        "group_by": ["Category", "Type", "Level", "Room"],
+        "room_resolution": true
+      }
+    },
+    "demo_parameter_edit": {
+      "request": {
+        "elementIds": [123456],
+        "parameterName": "Comments",
+        "value": "DEMO VERIFIED"
+      }
+    },
+    "demo_redline_receptacles": {
+      "request": {
+        "viewId": 123400,
+        "cleanupCreatedElements": true,
+        "placements": [
+          {
+            "exemplarElementId": 123401,
+            "hostElementId": 123402,
+            "targetChainageFt": 12.5,
+            "matchOrientationFromSource": true,
+            "matchElectricalCircuitFromSource": false,
+            "parameterOverrides": {
+              "Comments": "DEMO REDLINE",
+              "Mark": "R-DEM-01",
+              "Panel": "LP-1",
+              "Circuit Number": "12"
+            }
+          }
+        ],
+        "audit": {
+          "hostCategories": ["OST_Walls"],
+          "hostSearchRadiusFt": 2
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "revit-operator-backend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/src/index.js",
+    "triage:issues": "tsx src/tools/triage_issues.ts",
+    "upload:queue": "tsx src/tools/upload_queue.ts",
+    "test": "node --test dist/test/*.test.js",
+    "check:skills-manifest": "tsx src/tools/check_skill_library_manifest.ts",
+    "check:tool-contracts": "tsx src/tools/check_tool_contracts.ts",
+    "check:repo": "npm run check:skills-manifest && npm run check:tool-contracts",
+    "benchmark": "tsx src/tools/benchmark.ts",
+    "report:runs": "tsx src/tools/run_report.ts",
+    "prompts:scrub": "tsx src/tools/scrub_human_prompts.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "dotenv": "^16.6.1",
+    "mammoth": "^1.8.0",
+    "openai": "^5.13.1",
+    "pdfjs-dist": "^4.10.38",
+    "tesseract.js": "^5.1.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

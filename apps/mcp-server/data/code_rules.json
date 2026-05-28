@@ -1,0 +1,366 @@
+{
+  "rules": [
+    {
+      "id": "ADA_Toilet_Circle",
+      "citation": "ADA 2010 Section 604.3.1",
+      "description": "Clear floor space 60 inches diameter min.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Toilet", "Restroom", "WC"],
+      "check_type": "inscribed_circle",
+      "min_diameter_in": 60
+    },
+    {
+      "id": "ADA_Toilet_Centerline",
+      "citation": "ADA 2010 Section 604.2",
+      "description": "The water closet shall be positioned with a wall or partition to the rear and to one side. The centerline of the water closet shall be 16 inches (405 mm) minimum to 18 inches (455 mm) maximum from the side wall or partition.",
+      "category": "OST_PlumbingFixtures",
+      "filter_name_contains": ["Toilet", "Water Closet"],
+      "check_type": "distance_to_wall",
+      "min_dist_in": 16,
+      "max_dist_in": 18
+    },
+    {
+      "id": "ADA_Door_Width",
+      "citation": "ADA 2010 Section 404.2.3",
+      "description": "Door openings shall provide a clear width of 32 inches minimum.",
+      "category": "OST_Doors",
+      "check_type": "param_value",
+      "param_name": "Width", 
+      "min_val_ft": 2.66
+    },
+    {
+      "id": "FGI_Hosp_OR_General_Area",
+      "citation": "FGI 2022 Hospital 2.2-3.3.2.2",
+      "description": "General Operating Room minimum clear floor area.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Operating Room", "Operating", "OR"],
+      "check_type": "min_area",
+      "min_sf": 400
+    },
+    {
+      "id": "FGI_Hosp_OR_General_Dim",
+      "citation": "FGI 2022 Hospital 2.2-3.3.2.2",
+      "description": "General Operating Room minimum dimension.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Operating Room", "Operating", "OR"],
+      "check_type": "min_dimension",
+      "min_dim_ft": 20
+    },
+    {
+      "id": "FGI_Hosp_OR_Specialized_Area",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Hospitals > Operating Rooms & Interventional",
+      "description": "Specialized / image-guided operating room minimum area.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Hybrid", "Image-Guided", "Interventional", "Specialized", "Operating", "OR"],
+      "check_type": "min_area",
+      "min_sf": 600
+    },
+    {
+      "id": "FGI_Hosp_OR_Specialized_Dim",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Hospitals > Operating Rooms & Interventional",
+      "description": "Specialized / image-guided operating room minimum dimension.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Hybrid", "Image-Guided", "Interventional", "Specialized", "Operating", "OR"],
+      "check_type": "min_dimension",
+      "min_dim_ft": 20
+    },
+    {
+      "id": "FGI_Hosp_NICU_Single",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Hospitals > Patient Care Units",
+      "description": "NICU single-infant room minimum area.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["NICU", "Neonatal"],
+      "check_type": "min_area",
+      "min_sf": 165
+    },
+    {
+      "id": "FGI_Hosp_Hospice",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Hospitals > Patient Care Units",
+      "description": "Hospice / palliative care room minimum area.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Hospice", "Palliative"],
+      "check_type": "min_area",
+      "min_sf": 153
+    },
+    {
+      "id": "FGI_Hosp_LowAcuityPod_Area",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Hospitals > Emergency Services",
+      "description": "Low-acuity pod minimum area.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Low-Acuity", "Low Acuity", "Pod"],
+      "check_type": "min_area",
+      "min_sf": 40
+    },
+    {
+      "id": "FGI_Hosp_LowAcuityPod_Dim",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Hospitals > Emergency Services",
+      "description": "Low-acuity pod minimum dimension (5 ft 6 in).",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Low-Acuity", "Low Acuity", "Pod"],
+      "check_type": "min_dimension",
+      "min_dim_ft": 5.5
+    },
+    {
+      "id": "FGI_Hosp_Decon_Interior_Area",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Hospitals > Emergency Services",
+      "description": "Interior decontamination room minimum area.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Decontamination", "Decon"],
+      "check_type": "min_area",
+      "min_sf": 100
+    },
+    {
+      "id": "FGI_Hosp_CrisisUnit_Single_Area",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Hospitals > Behavioral Health",
+      "description": "Crisis unit single minimum area.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Crisis"],
+      "check_type": "min_area",
+      "min_sf": 100
+    },
+    {
+      "id": "FGI_Hosp_CrisisUnit_Single_Dim",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Hospitals > Behavioral Health",
+      "description": "Crisis unit single minimum dimension.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Crisis"],
+      "check_type": "min_dimension",
+      "min_dim_ft": 10
+    },
+    {
+      "id": "FGI_Outpt_Exam_Std",
+      "citation": "FGI 2022 Outpatient 2.1-3.2.2",
+      "description": "Standard Exam Room minimum area.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Exam"],
+      "check_type": "min_area",
+      "min_sf": 80
+    },
+    {
+      "id": "FGI_Outpt_Exam_DualEntry_Area",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Outpatient Facilities > Exam & Observation",
+      "description": "Dual-entry exam room minimum area.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Dual", "Dual-Entry", "Dual Entry", "Exam"],
+      "check_type": "min_area",
+      "min_sf": 100
+    },
+    {
+      "id": "FGI_Outpt_OR_ClassC_Area",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Outpatient Facilities > Surgery & Procedures",
+      "description": "Class C operating room (ASC) minimum area.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Class C", "ASC", "Operating", "Surgery", "OR"],
+      "check_type": "min_area",
+      "min_sf": 400
+    },
+    {
+      "id": "FGI_Outpt_Proc_Area",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Outpatient Facilities > Surgery & Procedures",
+      "description": "Procedure room minimum area.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Procedure"],
+      "check_type": "min_area",
+      "min_sf": 130
+    },
+    {
+      "id": "FGI_Outpt_Proc_Anesthesia_Area",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Outpatient Facilities > Surgery & Procedures",
+      "description": "Procedure room (with anesthesia machine) minimum area.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Procedure", "Anesthesia"],
+      "check_type": "min_area",
+      "min_sf": 160
+    },
+    {
+      "id": "FGI_Outpt_Proc_Anesthesia_HeadClearance",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Outpatient Facilities > Surgery & Procedures",
+      "description": "Procedure room (with anesthesia machine) head clearance at procedure table (6 ft).",
+      "category": "OST_Furniture",
+      "filter_name_contains": ["Procedure Table", "Table"],
+      "filter_room_name_contains": ["Procedure", "Anesthesia"],
+      "check_type": "clearance_box",
+      "clearance_depth_ft": 6.0,
+      "clearance_width_ratio": 1.0,
+      "direction": "head"
+    },
+    {
+      "id": "FGI_Outpt_OR_Office_Area",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Outpatient Facilities > Surgery & Procedures",
+      "description": "Operating room in doctor's office minimum area.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Office", "Doctor", "Surgery", "Operating", "OR"],
+      "check_type": "min_area",
+      "min_sf": 255
+    },
+    {
+      "id": "FGI_Outpt_OR_Office_Anesthesia_Area",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Outpatient Facilities > Surgery & Procedures",
+      "description": "Operating room in doctor's office (with anesthesia machine) minimum area.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Office", "Doctor", "Surgery", "Operating", "OR", "Anesthesia"],
+      "check_type": "min_area",
+      "min_sf": 270
+    },
+    {
+      "id": "FGI_Img_XRay",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Imaging",
+      "description": "Radiography (X-Ray) Room minimum area.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["X-Ray", "Radiography"],
+      "check_type": "min_area",
+      "min_sf": 180
+    },
+    {
+      "id": "FGI_Img_CT",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Imaging",
+      "description": "CT / Fluoroscopy Room minimum area.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["CT", "Fluoroscopy", "R&F"],
+      "check_type": "min_area",
+      "min_sf": 250
+    },
+    {
+      "id": "FGI_Img_Mammography",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Imaging",
+      "description": "Mammography room minimum area.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Mammo", "Mammography"],
+      "check_type": "min_area",
+      "min_sf": 100
+    },
+    {
+      "id": "FGI_Img_MRI_Control",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Imaging",
+      "description": "MRI control room minimum area.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["MRI Control", "Control"],
+      "check_type": "min_area",
+      "min_sf": 150
+    },
+    {
+      "id": "FGI_Img_MRI_Cryogen_Storage",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Imaging",
+      "description": "MRI cryogen storage minimum area (if provided).",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Cryogen", "Cryogenic", "MRI Cryogen"],
+      "check_type": "min_area",
+      "min_sf": 50
+    },
+    {
+      "id": "FGI_Outpt_LowAcuityStation_Area",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Outpatient Facilities > Pre-Op / Post-Op / Recovery",
+      "description": "Low-acuity station minimum area.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Low-Acuity", "Low Acuity", "Station"],
+      "check_type": "min_area",
+      "min_sf": 40
+    },
+    {
+      "id": "FGI_Outpt_PACU_Bay_Area",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Outpatient Facilities > Pre-Op / Post-Op / Recovery",
+      "description": "PACU bay minimum area (planning baseline).",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["PACU", "Recovery", "Post-Op", "Post Op", "Post Anesthesia"],
+      "check_type": "min_area",
+      "min_sf": 80
+    },
+    {
+      "id": "NFPA_Hosp_Corridor",
+      "citation": "NFPA 101 / FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Corridors & Circulation",
+      "description": "General Hospital Corridor minimum width.",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Corridor", "Hall"],
+      "check_type": "min_dimension",
+      "min_dim_ft": 8.0
+    },
+    {
+      "id": "FGI_Outpt_Corridor",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Corridors & Circulation",
+      "description": "Outpatient corridor minimum width (planning baseline).",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Corridor", "Hall"],
+      "check_type": "min_dimension",
+      "min_dim_ft": 5.0
+    },
+    {
+      "id": "FGI_MobileUnit_Corridor",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Corridors & Circulation",
+      "description": "Mobile unit corridor minimum width (32 in).",
+      "category": "OST_Rooms",
+      "filter_name_contains": ["Mobile", "Unit", "Corridor"],
+      "check_type": "min_dimension",
+      "min_dim_ft": 2.67
+    },
+    {
+      "id": "FGI_Bed_Clearance_Foot",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Implementation Notes",
+      "description": "Bed clearance at foot (baseline planning clearance).",
+      "category": "OST_SpecialityEquipment",
+      "filter_name_contains": ["Bed", "Stretcher"],
+      "check_type": "clearance_box",
+      "clearance_depth_ft": 4.0,
+      "clearance_width_ratio": 1.0,
+      "direction": "foot"
+    },
+    {
+      "id": "FGI_Bed_Clearance_Side",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Implementation Notes",
+      "description": "Bed clearance at sides (baseline planning clearance).",
+      "category": "OST_SpecialityEquipment",
+      "filter_name_contains": ["Bed", "Stretcher"],
+      "check_type": "clearance_box",
+      "clearance_depth_ft": 3.0,
+      "clearance_width_ratio": 1.0, 
+      "direction": "sides"
+    },
+    {
+      "id": "FGI_ICU_Bed_Clearance_Foot",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Hospitals > Patient Care Units",
+      "description": "Critical care (ICU) patient station bed clearance at foot.",
+      "category": "OST_SpecialityEquipment",
+      "filter_name_contains": ["Bed", "Stretcher"],
+      "filter_room_name_contains": ["ICU", "Critical"],
+      "check_type": "clearance_box",
+      "clearance_depth_ft": 5.0,
+      "clearance_width_ratio": 1.0,
+      "direction": "foot"
+    },
+    {
+      "id": "FGI_Hospice_Bed_Clearance_Head",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Hospitals > Patient Care Units",
+      "description": "Hospice / palliative bed clearance at head (10 ft).",
+      "category": "OST_SpecialityEquipment",
+      "filter_name_contains": ["Bed", "Stretcher"],
+      "filter_room_name_contains": ["Hospice", "Palliative"],
+      "check_type": "clearance_box",
+      "clearance_depth_ft": 10.0,
+      "clearance_width_ratio": 1.0,
+      "direction": "head"
+    },
+    {
+      "id": "FGI_DualEntryExam_Table_Clearance_Sides",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Outpatient Facilities > Exam & Observation",
+      "description": "Dual-entry exam room: clearance at sides of exam table (2 ft 8 in).",
+      "category": "OST_Furniture",
+      "filter_name_contains": ["Exam Table", "Table"],
+      "filter_room_name_contains": ["Dual", "Dual-Entry", "Dual Entry", "Exam"],
+      "check_type": "clearance_box",
+      "clearance_depth_ft": 2.67,
+      "clearance_width_ratio": 1.0,
+      "direction": "sides"
+    },
+    {
+      "id": "FGI_DualEntryExam_Table_Clearance_Foot",
+      "citation": "FGI Guidelines 2022 (Feature Request/FGI_Detailed_Requirements.md) - Outpatient Facilities > Exam & Observation",
+      "description": "Dual-entry exam room: clearance at foot of exam table (2 ft 8 in).",
+      "category": "OST_Furniture",
+      "filter_name_contains": ["Exam Table", "Table"],
+      "filter_room_name_contains": ["Dual", "Dual-Entry", "Dual Entry", "Exam"],
+      "check_type": "clearance_box",
+      "clearance_depth_ft": 2.67,
+      "clearance_width_ratio": 1.0,
+      "direction": "foot"
+    }
+  ]
+}

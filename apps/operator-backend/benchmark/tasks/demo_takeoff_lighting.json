@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_takeoff_lighting",
+  "name": "Supplemental Demo B: Lighting Fixture Takeoff CSV",
+  "description": "Count lighting fixtures by category, type, level, and room/space when present, then export a verified CSV summary.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "metadata": {
+      "workflow": "takeoff_csv"
+    }
+  },
+  "setup_instructions": [
+    "Open the known Revit demo model.",
+    "Use /revit/quantify with room_resolution enabled.",
+    "Run this supplemental case when the model contains lighting fixtures."
+  ],
+  "success_criteria": [
+    "The raw API total equals the grouped report total.",
+    "A CSV summary is saved.",
+    "The result can be rendered as a readable table in the Operator UI.",
+    "Missing room/space associations are visible in warnings or grouped output."
+  ],
+  "failure_criteria": [
+    "Grouped totals do not match the raw total.",
+    "CSV output is missing.",
+    "Room/space association failures are hidden."
+  ],
+  "max_time_seconds": 30,
+  "max_steps": 4,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This is a supplemental takeoff benchmark case, not one of the four demo readiness gates."
+  ],
+  "tags": ["revit", "demo", "takeoff", "deterministic", "lighting"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "takeoff_csv",
+    "request": {
+      "intent": "count_and_list",
+      "scope": "host",
+      "categories": ["OST_LightingFixtures"],
+      "group_by": ["Category", "Type", "Level", "Room"],
+      "room_resolution": true
+    },
+    "mock": {
+      "/revit/quantify": {
+        "summary": {
+          "total": 3,
+          "groups": {
+            "Lighting Fixtures | 2x4 Troffer | Level 1 | 101 Office": 2,
+            "Lighting Fixtures | Downlight | Level 1 | Unassigned": 1
+          }
+        },
+        "rows": [
+          { "id": 401, "category": "Lighting Fixtures", "type": "2x4 Troffer", "level": "Level 1", "room": "101 Office" },
+          { "id": 402, "category": "Lighting Fixtures", "type": "2x4 Troffer", "level": "Level 1", "room": "101 Office" },
+          { "id": 403, "category": "Lighting Fixtures", "type": "Downlight", "level": "Level 1", "room": "Unassigned" }
+        ],
+        "warnings": ["1 lighting fixture did not resolve to a room or space."]
+      }
+    }
+  }
+}

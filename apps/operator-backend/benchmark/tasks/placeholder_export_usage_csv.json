@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "task_id": "placeholder_export_usage_csv",
+  "name": "Export the usage report as CSV",
+  "description": "Open the reporting area, navigate to usage, and trigger a CSV export.",
+  "environment": {
+    "adapter_id": "scripted_demo",
+    "app": "Placeholder SaaS admin console",
+    "website": "https://placeholder.invalid/reports"
+  },
+  "setup_instructions": [
+    "Assume the user is on the admin home screen.",
+    "No filters are currently applied."
+  ],
+  "success_criteria": [
+    "Usage report page is open.",
+    "CSV export is triggered and a success banner is visible."
+  ],
+  "failure_criteria": [
+    "The agent opens the wrong report.",
+    "The agent submits a destructive action instead of exporting."
+  ],
+  "max_time_seconds": 240,
+  "max_steps": 10,
+  "requires_manual_grade": true,
+  "grader_notes": [
+    "For a live adapter, confirm the downloaded file name and the success banner."
+  ],
+  "tags": [
+    "computer-use",
+    "placeholder",
+    "reporting",
+    "manual-grade"
+  ],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [
+    "Clear the download tray if needed."
+  ],
+  "adapter_config": {
+    "initial_state_summary": "Admin dashboard is visible with a left navigation rail containing Reports.",
+    "completion_state_summary": "Usage report is open and the CSV export confirmation banner is visible.",
+    "steps": [
+      {
+        "accepted_action_types": ["click"],
+        "target_contains": ["reports"],
+        "resulting_state_summary": "Reports landing page is visible with tiles for Usage, Errors, and Activity.",
+        "action_result_summary": "Opened Reports."
+      },
+      {
+        "accepted_action_types": ["click"],
+        "target_contains": ["usage"],
+        "resulting_state_summary": "Usage report is open with a toolbar containing date range and Export CSV.",
+        "action_result_summary": "Opened the Usage report."
+      },
+      {
+        "accepted_action_types": ["click"],
+        "target_contains": ["export csv", "csv"],
+        "resulting_state_summary": "A confirmation banner says the CSV export has started and will download shortly.",
+        "action_result_summary": "Triggered CSV export."
+      }
+    ]
+  }
+}
