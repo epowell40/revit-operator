@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_sheet_export",
+  "name": "Demo A: Export Selected Sheets To PDF",
+  "description": "Export the requested Revit sheets to an exact combined PDF filename in the demo output folder and verify the file exists.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "metadata": {
+      "workflow": "sheet_export"
+    }
+  },
+  "setup_instructions": [
+    "Open the known Revit demo model.",
+    "Use deterministic /revit/export-pdf before any GUI or computer-use fallback."
+  ],
+  "success_criteria": [
+    "Requested sheets are resolved before export.",
+    "Only requested sheets are included.",
+    "A non-empty PDF exists at the requested output path.",
+    "The completion message includes the output path and included sheets."
+  ],
+  "failure_criteria": [
+    "No sheets are selected.",
+    "Output path is outside an allowed folder.",
+    "The PDF file is missing or empty."
+  ],
+  "max_time_seconds": 60,
+  "max_steps": 4,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "Live runs should replace mock fixtures with REVIT_BRIDGE_URL and real sheet selectors."
+  ],
+  "tags": ["revit", "demo", "sheet_export", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "sheet_export",
+    "request": {
+      "sheetNumberPrefix": "E",
+      "max": 2,
+      "combine": true,
+      "outputFolder": "artifacts/demo-readiness/prints",
+      "baseFileName": "AEC_Demo_Selected_Sheets.pdf",
+      "colorMode": "BlackLine"
+    },
+    "mock": {
+      "/revit/export-pdf:1": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "selectedCount": 2,
+        "selectedSheets": [
+          { "viewId": 101, "sheetNumber": "E101", "name": "Power Plan", "display": "E101 - Power Plan" },
+          { "viewId": 102, "sheetNumber": "E102", "name": "Lighting Plan", "display": "E102 - Lighting Plan" }
+        ],
+        "outputs": ["C:\\Users\\User\\AppData\\Local\\RevitOperator\\Workspace\\artifacts\\demo-readiness\\prints\\AEC_Demo_Selected_Sheets.pdf"]
+      },
+      "/revit/export-pdf:2": {
+        "status": "Success",
+        "dryRun": false,
+        "selectedCount": 2,
+        "selectedSheets": [
+          { "viewId": 101, "sheetNumber": "E101", "name": "Power Plan", "display": "E101 - Power Plan" },
+          { "viewId": 102, "sheetNumber": "E102", "name": "Lighting Plan", "display": "E102 - Lighting Plan" }
+        ],
+        "outputs": ["C:\\Users\\User\\AppData\\Local\\RevitOperator\\Workspace\\artifacts\\demo-readiness\\prints\\AEC_Demo_Selected_Sheets.pdf"],
+        "verification": {
+          "path": "C:\\Users\\User\\AppData\\Local\\RevitOperator\\Workspace\\artifacts\\demo-readiness\\prints\\AEC_Demo_Selected_Sheets.pdf",
+          "exists": true,
+          "isFile": true,
+          "sizeBytes": 245760,
+          "ok": true
+        }
+      }
+    }
+  }
+}

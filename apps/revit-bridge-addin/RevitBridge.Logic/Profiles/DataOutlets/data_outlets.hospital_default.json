@@ -1,0 +1,149 @@
+{
+  "discipline": "data_outlets",
+  "occupancyProfile": "hospital_default",
+  "endpointTypeRequirements": {
+    "workstation_computer": {
+      "requiresOutlet": true,
+      "deviceCategory": "data_outlet",
+      "candidateStrategies": [ "endpoint_wall_host", "room_entry", "wall_host" ],
+      "hostPreference": "wall",
+      "minDistanceFt": 1.0,
+      "maxDistanceFt": 8.0,
+      "minSeparationFt": 3.0,
+      "clusterDistanceFt": 4.0,
+      "preferredElevationFt": 1.5,
+      "minElevationFt": 1.0,
+      "maxElevationFt": 2.0,
+      "preferredDirections": [ "left", "right" ],
+      "reviewIfUnknownHost": true
+    },
+    "printer": {
+      "requiresOutlet": true,
+      "deviceCategory": "data_outlet",
+      "candidateStrategies": [ "endpoint_wall_host", "wall_host", "room_entry" ],
+      "hostPreference": "wall",
+      "minDistanceFt": 1.0,
+      "maxDistanceFt": 10.0,
+      "minSeparationFt": 4.0,
+      "clusterDistanceFt": 5.0,
+      "preferredElevationFt": 1.5,
+      "minElevationFt": 1.0,
+      "maxElevationFt": 2.0,
+      "preferredDirections": [ "left", "right", "back" ],
+      "reviewIfUnknownHost": true
+    },
+    "tv_display": {
+      "requiresOutlet": true,
+      "deviceCategory": "data_outlet",
+      "candidateStrategies": [ "endpoint_wall_host", "wall_host" ],
+      "hostPreference": "wall",
+      "minDistanceFt": 1.0,
+      "maxDistanceFt": 6.0,
+      "minSeparationFt": 4.0,
+      "clusterDistanceFt": 4.0,
+      "preferredElevationFt": 5.0,
+      "minElevationFt": 4.0,
+      "maxElevationFt": 7.0,
+      "preferredDirections": [ "back" ],
+      "reviewIfUnknownHost": true
+    },
+    "wall_display": {
+      "requiresOutlet": true,
+      "deviceCategory": "data_outlet",
+      "candidateStrategies": [ "endpoint_wall_host", "wall_host" ],
+      "hostPreference": "wall",
+      "minDistanceFt": 0.5,
+      "maxDistanceFt": 5.0,
+      "minSeparationFt": 4.0,
+      "clusterDistanceFt": 4.0,
+      "preferredElevationFt": 5.0,
+      "minElevationFt": 4.0,
+      "maxElevationFt": 7.0,
+      "preferredDirections": [ "back" ],
+      "reviewIfUnknownHost": true
+    },
+    "workstation_desk": {
+      "requiresOutlet": true,
+      "deviceCategory": "data_outlet",
+      "candidateStrategies": [ "endpoint_wall_host", "room_entry", "wall_host" ],
+      "hostPreference": "wall",
+      "minDistanceFt": 1.0,
+      "maxDistanceFt": 10.0,
+      "minSeparationFt": 4.0,
+      "clusterDistanceFt": 5.0,
+      "preferredElevationFt": 1.5,
+      "minElevationFt": 1.0,
+      "maxElevationFt": 2.0,
+      "preferredDirections": [ "left", "right" ],
+      "reviewIfUnknownHost": true
+    },
+    "nurse_station_it": {
+      "requiresOutlet": true,
+      "deviceCategory": "data_outlet",
+      "candidateStrategies": [ "endpoint_wall_host", "wall_host", "room_entry" ],
+      "hostPreference": "wall",
+      "minDistanceFt": 1.0,
+      "maxDistanceFt": 10.0,
+      "minSeparationFt": 4.0,
+      "clusterDistanceFt": 5.0,
+      "preferredElevationFt": 1.5,
+      "minElevationFt": 1.0,
+      "maxElevationFt": 2.0,
+      "preferredDirections": [ "front", "left", "right" ],
+      "reviewIfUnknownHost": true
+    },
+    "kiosk": {
+      "requiresOutlet": true,
+      "deviceCategory": "data_outlet",
+      "candidateStrategies": [ "endpoint_wall_host", "wall_host" ],
+      "hostPreference": "wall",
+      "minDistanceFt": 1.0,
+      "maxDistanceFt": 8.0,
+      "minSeparationFt": 4.0,
+      "clusterDistanceFt": 4.0,
+      "preferredElevationFt": 1.5,
+      "minElevationFt": 1.0,
+      "maxElevationFt": 2.0,
+      "preferredDirections": [ "back" ],
+      "reviewIfUnknownHost": true
+    },
+    "medical_it_equipment": {
+      "requiresOutlet": true,
+      "deviceCategory": "data_outlet",
+      "candidateStrategies": [ "endpoint_wall_host", "wall_host", "room_entry" ],
+      "hostPreference": "wall",
+      "minDistanceFt": 1.0,
+      "maxDistanceFt": 8.0,
+      "minSeparationFt": 4.0,
+      "clusterDistanceFt": 4.0,
+      "preferredElevationFt": 1.5,
+      "minElevationFt": 1.0,
+      "maxElevationFt": 2.0,
+      "preferredDirections": [ "back", "left", "right" ],
+      "reviewIfUnknownHost": true
+    },
+    "unknown_it_endpoint": {
+      "requiresOutlet": false,
+      "deviceCategory": "data_outlet",
+      "candidateStrategies": [],
+      "hostPreference": "wall",
+      "reviewIfUnknownHost": true
+    }
+  },
+  "familySymbolPreferences": {
+    "data_outlet": [ "data", "communication", "telecom", "outlet", "device" ]
+  },
+  "scoringParameters": {
+    "preferredStrategyBonus": 40.0,
+    "hostMatchBonus": 25.0,
+    "preferredDirectionBonus": 8.0,
+    "distancePenaltyWeight": 3.0,
+    "roomEntryBonus": 8.0
+  },
+  "reviewParameters": {
+    "missingFamilyRequiresReview": true,
+    "unknownEndpointRequiresReview": true,
+    "unknownEndpointKeywords": [ "computer", "printer", "monitor", "display", "tv", "kiosk", "terminal", "telemed" ]
+  },
+  "reviewConditions": [ "unknown_endpoint", "missing_family_symbol", "host_ambiguity" ]
+}

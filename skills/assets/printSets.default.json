@@ -1,0 +1,6 @@
+{
+  "Mechanical": { "sheetNumberPrefixes": ["M"], "nameIncludes": ["Mechanical"] },
+  "Lighting": { "sheetNumberPrefixes": ["E"], "nameIncludes": ["Lighting"] },
+  "SitePlan": { "nameIncludes": ["Site Plan"] }
+}
+

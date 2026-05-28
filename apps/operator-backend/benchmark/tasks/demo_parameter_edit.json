@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_parameter_edit",
+  "name": "Demo C: Parameter Edit And Verify",
+  "description": "Find target Revit elements, update a specified parameter, and verify the committed value by reading it back.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "metadata": {
+      "workflow": "parameter_edit"
+    }
+  },
+  "setup_instructions": [
+    "Open the known Revit demo model.",
+    "Prefer explicit element ids for the demo; use /revit/find-elements only when ids are not provided."
+  ],
+  "success_criteria": [
+    "Targets and old values are captured before write.",
+    "The write runs through /revit/set-parameter with dry-run and apply passes.",
+    "The requested parameter value is verified after commit."
+  ],
+  "failure_criteria": [
+    "Targets are ambiguous or missing.",
+    "Parameter is read-only or missing.",
+    "Read-back does not match the requested value."
+  ],
+  "max_time_seconds": 30,
+  "max_steps": 4,
+  "requires_manual_grade": false,
+  "grader_notes": [],
+  "tags": ["revit", "demo", "parameter", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "parameter_edit",
+    "request": {
+      "elementIds": [301],
+      "parameterName": "Comments",
+      "value": "DEMO VERIFIED"
+    },
+    "mock": {
+      "/revit/get-parameters:1": {
+        "items": [
+          { "id": 301, "name": "Duplex Receptacle", "category": "Electrical Fixtures", "parameters": { "Comments": "" } }
+        ]
+      },
+      "/revit/set-parameter:1": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "changedCount": 1,
+        "diffs": [
+          { "elementId": 301, "parameterName": "Comments", "ok": true, "changed": true, "before": { "value": "" }, "after": { "value": "DEMO VERIFIED" } }
+        ]
+      },
+      "/revit/set-parameter:2": {
+        "status": "Applied",
+        "dryRun": false,
+        "changedCount": 1,
+        "diffs": [
+          { "elementId": 301, "parameterName": "Comments", "ok": true, "changed": true, "before": { "value": "" }, "after": { "value": "DEMO VERIFIED" } }
+        ]
+      },
+      "/revit/get-parameters:2": {
+        "items": [
+          { "id": 301, "name": "Duplex Receptacle", "category": "Electrical Fixtures", "parameters": { "Comments": "DEMO VERIFIED" } }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "task_id": "placeholder_open_settings_panel",
+  "name": "Open settings and land on notifications",
+  "description": "Navigate from the app home screen to the settings panel and open the notifications section.",
+  "environment": {
+    "adapter_id": "scripted_demo",
+    "app": "Placeholder SaaS desktop shell",
+    "website": "https://placeholder.invalid"
+  },
+  "setup_instructions": [
+    "Assume the user is already signed in.",
+    "Start from the home dashboard."
+  ],
+  "success_criteria": [
+    "Settings panel is open.",
+    "Notifications section is visible."
+  ],
+  "failure_criteria": [
+    "Wrong menu path is opened.",
+    "The agent loops without reaching settings."
+  ],
+  "max_time_seconds": 180,
+  "max_steps": 8,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "For a live adapter, verify the notifications section is actually visible."
+  ],
+  "tags": [
+    "computer-use",
+    "placeholder",
+    "settings"
+  ],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [
+    "Close the settings panel if it remains open."
+  ],
+  "adapter_config": {
+    "initial_state_summary": "Home dashboard is visible with a top-right profile menu.",
+    "completion_state_summary": "Settings is open and the Notifications section is active.",
+    "steps": [
+      {
+        "accepted_action_types": ["click"],
+        "target_contains": ["profile", "avatar"],
+        "resulting_state_summary": "The profile menu is open with entries for Settings, Billing, and Sign out.",
+        "action_result_summary": "Opened the profile menu."
+      },
+      {
+        "accepted_action_types": ["click"],
+        "target_contains": ["settings"],
+        "resulting_state_summary": "The settings panel is open with tabs for General, Notifications, and Security.",
+        "action_result_summary": "Opened the settings panel."
+      },
+      {
+        "accepted_action_types": ["click"],
+        "target_contains": ["notifications"],
+        "resulting_state_summary": "Notifications settings are visible with email and desktop toggles.",
+        "action_result_summary": "Opened the Notifications section."
+      }
+    ]
+  }
+}

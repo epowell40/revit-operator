@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-04-12",
+  "source_notes": "Seeded from official OpenAI model pages for GPT-5.4 and GPT-5.4 mini on 2026-04-12. GPT-5.5 placeholder entries should be refreshed from official pricing before cost-sensitive decisions.",
+  "models": {
+    "gpt-5.5": {
+      "input_per_1m_tokens_usd": 0,
+      "cached_input_per_1m_tokens_usd": 0,
+      "output_per_1m_tokens_usd": 0
+    },
+    "gpt-5.5-instant": {
+      "input_per_1m_tokens_usd": 0,
+      "cached_input_per_1m_tokens_usd": 0,
+      "output_per_1m_tokens_usd": 0
+    },
+    "gpt-5.4": {
+      "input_per_1m_tokens_usd": 2.5,
+      "cached_input_per_1m_tokens_usd": 0.25,
+      "output_per_1m_tokens_usd": 15.0
+    },
+    "gpt-5.4-mini": {
+      "input_per_1m_tokens_usd": 0.75,
+      "cached_input_per_1m_tokens_usd": 0.075,
+      "output_per_1m_tokens_usd": 4.5
+    }
+  }
+}

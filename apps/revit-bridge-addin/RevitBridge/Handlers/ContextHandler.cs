@@ -1,0 +1,51 @@
+using System;
+using System.Linq;
+using System.Threading.Tasks;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+
+namespace RevitBridge.Handlers
+{
+    public class ContextHandler : IRequestHandler
+    {
+        public Task<object> Handle(UIApplication app, string jsonData)
+        {
+            var uidoc = app.ActiveUIDocument;
+            var doc = uidoc?.Document;
+            var view = doc?.ActiveView;
+            var documentLoaded = doc != null && !string.IsNullOrWhiteSpace(doc.Title);
+            var activeViewReady = view != null && view.IsValidObject;
+
+            return Task.FromResult<object>(new
+            {
+                version = app.Application.VersionName,
+                username = app.Application.Username,
+                readiness = new
+                {
+                    revit_launched = true,
+                    has_active_uidocument = uidoc != null,
+                    document_loaded = documentLoaded,
+                    active_document_name = doc?.Title,
+                    active_document_path = doc?.PathName,
+                    active_view_ready = activeViewReady,
+                    active_view_name = view?.Name,
+                    active_view_type = view == null ? null : view.ViewType.ToString(),
+                    selection_count = uidoc?.Selection.GetElementIds().Count ?? 0
+                },
+                document = doc == null ? null : new
+                {
+                    title = doc.Title,
+                    path = doc.PathName,
+                    isWorkshared = doc.IsWorkshared,
+                    activeView = view == null ? null : new
+                    {
+                        id = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
+                        name = view.Name,
+                        type = view.ViewType.ToString()
+                    },
+                    selection = uidoc?.Selection.GetElementIds().Select(id => RevitBridge.Common.ElementIdCompat.GetValue(id)).ToList()
+                }
+            });
+        }
+    }
+}

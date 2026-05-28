@@ -1,0 +1,1157 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+using System.Text.Json;
+
+namespace RevitBridge.Operator
+{
+    internal static class OperatorToolIntrospection
+    {
+        public const string RegistryVersion = "operator.tool_registry.v1";
+        public const string SearchVersion = "operator.tool_search.v1";
+        public const string DocVersion = "operator.tool_doc.v1";
+        public const string ExamplesVersion = "operator.tool_examples.v1";
+
+        private static readonly object _lock = new object();
+        private static JsonDocument? _examplesDoc;
+
+        public static object GetRegistry()
+        {
+            var tools = new List<object>();
+            foreach (var t in OperatorToolManifest.Tools)
+            {
+                var contract = DescribeTool(t.Method, t.Path, includeSchemas: true, includeExamples: false);
+                tools.Add(contract);
+            }
+
+            return new
+            {
+                version = RegistryVersion,
+                generated_at = DateTime.UtcNow.ToString("o"),
+                tools
+            };
+        }
+
+        public static object GetToolDoc(string method, string path)
+        {
+            return DescribeTool(method, path, includeSchemas: true, includeExamples: true);
+        }
+
+        public static object SearchTools(string query, string? group = null, string? risk = null, string? method = null, int? max = null)
+        {
+            var normalizedQuery = (query ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(normalizedQuery)) throw new InvalidOperationException("tool-search.query is required.");
+
+            var normalizedGroup = NormalizeOptionalFilter(group);
+            var normalizedRisk = NormalizeOptionalFilter(risk);
+            var normalizedMethod = NormalizeOptionalFilter(method)?.ToUpperInvariant();
+            var maxResults = Math.Max(1, Math.Min(12, max ?? 8));
+            var queryTokens = Tokenize(normalizedQuery);
+
+            var matches = OperatorToolManifest.Tools
+                .Where(t => normalizedGroup == null || string.Equals(t.Group, normalizedGroup, StringComparison.OrdinalIgnoreCase))
+                .Where(t => normalizedRisk == null || string.Equals(t.Risk, normalizedRisk, StringComparison.OrdinalIgnoreCase))
+                .Where(t => normalizedMethod == null || string.Equals(t.Method, normalizedMethod, StringComparison.OrdinalIgnoreCase))
+                .Select(t => ScoreTool(t, normalizedQuery, queryTokens))
+                .Where(m => m.Score > 0)
+                .OrderByDescending(m => m.Score)
+                .ThenBy(m => m.Tool.RiskLevel)
+                .ThenBy(m => m.Tool.Path, StringComparer.OrdinalIgnoreCase)
+                .Take(maxResults)
+                .Select(m => new
+                {
+                    group = m.Tool.Group,
+                    method = m.Tool.Method,
+                    path = m.Tool.Path,
+                    title = m.Tool.Title,
+                    risk = m.Tool.Risk,
+                    description = m.Tool.Description,
+                    example = m.Tool.Example,
+                    score = m.Score,
+                    match_reasons = m.MatchReasons
+                })
+                .ToList();
+
+            return new
+            {
+                version = SearchVersion,
+                generated_at = DateTime.UtcNow.ToString("o"),
+                query = normalizedQuery,
+                filters = new
+                {
+                    group = normalizedGroup,
+                    risk = normalizedRisk,
+                    method = normalizedMethod
+                },
+                returned = matches.Count,
+                matches
+            };
+        }
+
+        public static object GetToolExamples(string method, string path)
+        {
+            var ex = FindExamples(method, path);
+            return new
+            {
+                version = ExamplesVersion,
+                generated_at = DateTime.UtcNow.ToString("o"),
+                method = (method ?? "").Trim().ToUpperInvariant(),
+                path = (path ?? "").Trim(),
+                examples = ex ?? new List<object>(),
+                warning = ex == null ? "No examples found for this tool." : null
+            };
+        }
+
+        private sealed class ToolSearchMatch
+        {
+            public OperatorToolInfo Tool { get; set; } = null!;
+            public int Score { get; set; }
+            public List<string> MatchReasons { get; set; } = new List<string>();
+        }
+
+        private static ToolSearchMatch ScoreTool(OperatorToolInfo tool, string normalizedQuery, IReadOnlyList<string> queryTokens)
+        {
+            var reasons = new List<string>();
+            var score = 0;
+
+            score += ScoreField(tool.Path, normalizedQuery, queryTokens, exactMatchScore: 140, tokenMatchScore: 28, reason: "path");
+            if (score > 0 && FieldContains(tool.Path, normalizedQuery, queryTokens))
+            {
+                reasons.Add("path");
+            }
+
+            var titleScore = ScoreField(tool.Title, normalizedQuery, queryTokens, exactMatchScore: 120, tokenMatchScore: 30, reason: "title");
+            score += titleScore;
+            if (titleScore > 0) reasons.Add("title");
+
+            var groupScore = ScoreField(tool.Group, normalizedQuery, queryTokens, exactMatchScore: 80, tokenMatchScore: 24, reason: "group");
+            score += groupScore;
+            if (groupScore > 0) reasons.Add("group");
+
+            var descriptionScore = ScoreField(tool.Description, normalizedQuery, queryTokens, exactMatchScore: 55, tokenMatchScore: 12, reason: "description");
+            score += descriptionScore;
+            if (descriptionScore > 0) reasons.Add("description");
+
+            var exampleScore = ScoreField(tool.Example, normalizedQuery, queryTokens, exactMatchScore: 45, tokenMatchScore: 10, reason: "example");
+            score += exampleScore;
+            if (exampleScore > 0) reasons.Add("example");
+
+            var methodScore = ScoreField(tool.Method, normalizedQuery, queryTokens, exactMatchScore: 25, tokenMatchScore: 8, reason: "method");
+            score += methodScore;
+            if (methodScore > 0) reasons.Add("method");
+
+            return new ToolSearchMatch
+            {
+                Tool = tool,
+                Score = score,
+                MatchReasons = reasons.Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+            };
+        }
+
+        private static int ScoreField(string? field, string normalizedQuery, IReadOnlyList<string> queryTokens, int exactMatchScore, int tokenMatchScore, string reason)
+        {
+            var value = (field ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(value)) return 0;
+
+            var score = 0;
+            if (value.IndexOf(normalizedQuery, StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                score += exactMatchScore;
+            }
+
+            var matchedTokens = 0;
+            foreach (var token in queryTokens)
+            {
+                if (token.Length < 2) continue;
+                if (value.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    matchedTokens++;
+                }
+            }
+
+            if (matchedTokens > 0)
+            {
+                score += matchedTokens * tokenMatchScore;
+            }
+
+            return score;
+        }
+
+        private static bool FieldContains(string? field, string normalizedQuery, IReadOnlyList<string> queryTokens)
+        {
+            var value = (field ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(value)) return false;
+            if (value.IndexOf(normalizedQuery, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            return queryTokens.Any(token => token.Length >= 2 && value.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        private static string? NormalizeOptionalFilter(string? value)
+        {
+            var trimmed = (value ?? "").Trim();
+            return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
+        }
+
+        private static List<string> Tokenize(string value)
+        {
+            return (value ?? "")
+                .Split(new[] { ' ', '\t', '\r', '\n', '-', '_', '/', '\\', '.', ':', ',' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(token => token.Trim())
+                .Where(token => token.Length >= 2)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static object DescribeTool(string method, string path, bool includeSchemas, bool includeExamples)
+        {
+            var m = (method ?? "").Trim().ToUpperInvariant();
+            var p = (path ?? "").Trim();
+
+            var info = OperatorToolManifest.Tools.FirstOrDefault(x =>
+                string.Equals(x.Method, m, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(x.Path, p, StringComparison.OrdinalIgnoreCase));
+
+            var risk = info?.Risk ?? OperatorApprovalPolicy.GetRisk(m, p).ToString().ToLowerInvariant();
+
+            var requestSchema = includeSchemas ? ToolSchemaBuilder.BuildRequestSchema(m, p) : null;
+            var responseSchema = includeSchemas ? ToolSchemaBuilder.BuildResponseSchema(m, p) : null;
+
+            var examples = includeExamples ? (FindExamples(m, p) ?? new List<object>()) : new List<object>();
+            if (includeExamples && examples.Count > 3) examples = examples.Take(3).ToList();
+
+            var (required, optional, enums, units, commonErrors, notes) = ToolSchemaBuilder.SummarizeContract(m, p, requestSchema);
+
+            return new
+            {
+                version = DocVersion,
+                method = m,
+                path = p,
+                risk,
+                title = info?.Title ?? "",
+                description = info?.Description ?? "",
+                required_fields = required,
+                optional_fields = optional,
+                enums,
+                units,
+                common_errors = commonErrors,
+                notes,
+                request_schema = requestSchema,
+                response_schema = responseSchema,
+                examples
+            };
+        }
+
+        private static List<object>? FindExamples(string method, string path)
+        {
+            try
+            {
+                var doc = GetExamplesDoc();
+                if (doc == null) return null;
+                if (!doc.RootElement.TryGetProperty("tools", out var tools) || tools.ValueKind != JsonValueKind.Array) return null;
+
+                foreach (var t in tools.EnumerateArray())
+                {
+                    if (t.ValueKind != JsonValueKind.Object) continue;
+                    var tm = t.TryGetProperty("method", out var mEl) && mEl.ValueKind == JsonValueKind.String ? (mEl.GetString() ?? "") : "";
+                    var tp = t.TryGetProperty("path", out var pEl) && pEl.ValueKind == JsonValueKind.String ? (pEl.GetString() ?? "") : "";
+
+                    if (!string.Equals(tm, method, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!string.Equals(tp, path, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    if (!t.TryGetProperty("examples", out var ex) || ex.ValueKind != JsonValueKind.Array) return new List<object>();
+
+                    // Convert JsonElements into plain objects (via raw JSON) so we can safely return them.
+                    var outList = new List<object>();
+                    foreach (var e in ex.EnumerateArray())
+                    {
+                        outList.Add(JsonSerializer.Deserialize<object>(e.GetRawText(), OperatorUiProtocol.JsonOptions) ?? new object());
+                    }
+                    return outList;
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+            return null;
+        }
+
+        private static JsonDocument? GetExamplesDoc()
+        {
+            lock (_lock)
+            {
+                if (_examplesDoc != null) return _examplesDoc;
+                try
+                {
+                    var asm = typeof(OperatorToolIntrospection).Assembly;
+                    var name = asm.GetManifestResourceNames().FirstOrDefault(n => n.EndsWith("tool_examples.json", StringComparison.OrdinalIgnoreCase));
+                    if (string.IsNullOrWhiteSpace(name)) return null;
+                    using var s = asm.GetManifestResourceStream(name);
+                    if (s == null) return null;
+                    using var r = new StreamReader(s, Encoding.UTF8);
+                    var json = r.ReadToEnd();
+                    _examplesDoc = JsonDocument.Parse(json);
+                    return _examplesDoc;
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+        }
+
+        private static class ToolSchemaBuilder
+        {
+            private static readonly Dictionary<string, Type> RequestTypesByPath = new Dictionary<string, Type>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "/revit/query", typeof(RevitBridge.Handlers.QueryElementsHandler.Params) },
+                { "/revit/resolve", typeof(RevitBridge.Handlers.ResolveHandler.ResolveRequest) },
+                { "/revit/get-parameters", typeof(RevitBridge.Handlers.GetElementParametersHandler.Params) },
+                { "/revit/export-image", typeof(RevitBridge.Handlers.ExportViewImageHandler.Params) },
+                { "/revit/export-images", typeof(RevitBridge.Handlers.ExportImagesBatchHandler.Params) },
+                { "/revit/export-dwg", typeof(RevitBridge.Handlers.ExportDwgHandler.Params) },
+                { "/revit/export-ifc", typeof(RevitBridge.Handlers.ExportIfcHandler.Params) },
+                { "/revit/open-model", typeof(RevitBridge.Handlers.OpenModelHandler.Params) },
+                { "/revit/save-as", typeof(RevitBridge.Handlers.SaveAsModelHandler.Params) },
+                { "/revit/sync", typeof(RevitBridge.Handlers.SyncModelHandler.Params) },
+                { "/revit/worksets", typeof(RevitBridge.Handlers.WorksetsHandler.Params) },
+                { "/revit/project-parameters", typeof(RevitBridge.Handlers.ProjectParametersHandler.Params) },
+                { "/revit/purge-unused", typeof(RevitBridge.Handlers.PurgeUnusedHandler.Params) },
+                { "/revit/transfer-view-templates", typeof(RevitBridge.Handlers.TransferViewTemplatesHandler.Params) },
+                { "/revit/create-sheet", typeof(RevitBridge.Handlers.CreateSheetHandler.Params) },
+                { "/revit/create-sheets", typeof(RevitBridge.Handlers.CreateSheetsBatchHandler.Params) },
+                { "/revit/place-view", typeof(RevitBridge.Handlers.PlaceViewOnSheetHandler.Params) },
+                { "/revit/place-views", typeof(RevitBridge.Handlers.PlaceViewsBatchHandler.Params) },
+                { "/revit/align-viewports", typeof(RevitBridge.Handlers.AlignViewportsHandler.Params) },
+                { "/revit/renumber-sheets", typeof(RevitBridge.Handlers.RenumberSheetsHandler.Params) },
+                { "/revit/sync-sheet-names", typeof(RevitBridge.Handlers.SyncSheetNamesHandler.Params) },
+                { "/revit/visibility", typeof(RevitBridge.Handlers.ViewVisibilityHandler.Params) },
+                { "/revit/datums", typeof(RevitBridge.Handlers.DatumsHandler.Params) },
+                { "/revit/create-text", typeof(RevitBridge.Handlers.CreateTextNoteHandler.Params) },
+                { "/revit/delete", typeof(RevitBridge.Handlers.DeleteElementsHandler.Params) },
+                { "/revit/set-parameter", typeof(RevitBridge.Handlers.SetParameterHandler.Params) },
+                { "/revit/create-duct", typeof(RevitBridge.Handlers.CreateDuctHandler.Params) },
+                { "/revit/create-pipe", typeof(RevitBridge.Handlers.CreatePipeHandler.Params) },
+                { "/revit/create-family-instance", typeof(RevitBridge.Handlers.CreateFamilyInstanceHandler.Params) },
+                { "/revit/link-cad", typeof(RevitBridge.Handlers.LinkCadHandler.Params) },
+                { "/revit/place-image", typeof(RevitBridge.Handlers.PlaceImageHandler.Params) },
+                { "/revit/place-pdf-underlay", typeof(RevitBridge.Handlers.PlacePdfUnderlayHandler.Params) },
+                { "/revit/import-zippybim-geometry", typeof(RevitBridge.Handlers.ImportZippyBimGeometryHandler.Params) },
+                { "/revit/import-drawing-spec", typeof(RevitBridge.Handlers.ImportDrawingSpecHandler.Params) },
+                { "/revit/import-excel-table", typeof(RevitBridge.Handlers.ImportExcelTableHandler.Params) },
+                { "/revit/export-elements-xlsx", typeof(RevitBridge.Handlers.ExportElementsXlsxHandler.Params) },
+                { "/revit/import-elements-xlsx-updates", typeof(RevitBridge.Handlers.ImportElementsXlsxUpdatesHandler.Params) },
+                { "/revit/create-view", typeof(RevitBridge.Handlers.CreateViewHandler.Params) },
+                { "/revit/keynotes", typeof(RevitBridge.Handlers.KeynotesHandler.Params) },
+
+                // Logic handlers (proxies)
+                { "/revit/rooms", typeof(RevitBridge.Logic.Handlers.RoomHandler.RoomRequest) },
+                { "/revit/renumber-rooms", typeof(RevitBridge.Handlers.RenumberRoomsHandler.Params) },
+                { "/revit/room-contents", typeof(RevitBridge.Logic.Handlers.RoomContentsHandler.Params) },
+                { "/revit/spatial-context", typeof(RevitBridge.Handlers.SpatialContextHandler.Params) },
+                { "/revit/find-elements", typeof(RevitBridge.Logic.Handlers.FindElementsHandler.Params) },
+                { "/revit/update-parameter-by-query", typeof(RevitBridge.Logic.Handlers.UpdateParameterByQueryHandler.Params) },
+                { "/revit/update-panel-parameter", typeof(RevitBridge.Logic.Handlers.UpdatePanelParameterHandler.Params) },
+                { "/revit/locate-elements", typeof(RevitBridge.Logic.Handlers.LocateElementsHandler.Params) },
+                { "/revit/get-placement-context", typeof(RevitBridge.Logic.Handlers.GetPlacementContextHandler.Params) },
+                { "/revit/resolve-room-wall", typeof(RevitBridge.Logic.Handlers.ResolveRoomWallHandler.Params) },
+                { "/revit/rank-similar-devices-on-wall", typeof(RevitBridge.Logic.Handlers.RankSimilarDevicesOnWallHandler.Params) },
+                { "/revit/pick-candidate-cluster", typeof(RevitBridge.Logic.Handlers.PickCandidateClusterHandler.Params) },
+                { "/revit/project-point-to-host-frame", typeof(RevitBridge.Logic.Handlers.ProjectPointToHostFrameHandler.Params) },
+                { "/revit/audit-hosted-instance-placement", typeof(RevitBridge.Logic.Handlers.AuditHostedInstancePlacementHandler.Params) },
+                { "/revit/resolve-redline-target", typeof(RevitBridge.Logic.Handlers.ResolveRedlineTargetHandler.Params) },
+                { "/revit/propose-fix", typeof(RevitBridge.Logic.Handlers.ProposeFixHandler.Params) },
+                { "/revit/find-duplicate-marks", typeof(RevitBridge.Handlers.FindDuplicateMarksHandler.Params) },
+                { "/revit/airflow-qa", typeof(RevitBridge.Handlers.AirflowQaHandler.Params) },
+                { "/revit/mep-workflows", typeof(RevitBridge.Handlers.MepWorkflowsHandler.Params) },
+                { "/revit/arch-workflows", typeof(RevitBridge.Handlers.ArchWorkflowsHandler.Params) },
+                { "/revit/trace-connected-network", typeof(RevitBridge.Logic.Handlers.MEP.TraceConnectedNetworkHandler.Params) },
+                { "/revit/find-elements-by-parameter", typeof(RevitBridge.Logic.Handlers.MEP.FindElementsByParameterHandler.Params) },
+                { "/revit/room_mep_intersect", typeof(RevitBridge.Logic.Handlers.MEP.RoomMepIntersectHandler.Params) },
+                { "/revit/ducts-by-spatial-scope", typeof(RevitBridge.Logic.Handlers.MEP.DuctsBySpatialScopeHandler.Params) },
+                { "/revit/sync-connected-sizes", typeof(RevitBridge.Logic.Handlers.MEP.SyncConnectedSizesHandler.Params) },
+                { "/revit/resize-duct-run", typeof(RevitBridge.Logic.Handlers.MEP.ResizeDuctRunHandler.Params) },
+                { "/revit/resize-ducts-by-scope", typeof(RevitBridge.Logic.Handlers.MEP.ResizeDuctsByScopeHandler.Params) },
+                { "/revit/resize-ducts-in-room", typeof(RevitBridge.Logic.Handlers.MEP.ResizeDuctsInRoomHandler.Params) },
+                { "/revit/resize-ductwork-by-scope", typeof(RevitBridge.Logic.Handlers.MEP.ResizeDuctworkByScopeHandler.Params) },
+                { "/revit/repair-duct-continuity-by-scope", typeof(RevitBridge.Logic.Handlers.MEP.RepairDuctContinuityByScopeHandler.Params) },
+                { "/revit/get-connectors", typeof(RevitBridge.Logic.Handlers.MEP.GetConnectorsHandler.Params) },
+                { "/revit/align-room-tops-to-ceilings", typeof(RevitBridge.Logic.Handlers.AlignRoomTopsToCeilingsHandler.Params) },
+                { "/revit/analyze-dimensions", typeof(RevitBridge.Logic.Handlers.AnalyzeDimensionsHandler.Params) },
+                { "/revit/export-dimensioning-v2", typeof(RevitBridge.Logic.Handlers.ExportDimensioningV2Handler.Params) },
+                { "/revit/quantify", typeof(RevitBridge.Logic.Handlers.QuantifyElementsHandler.QuantifyRequest) },
+                { "/revit/quantify-visualize", typeof(RevitBridge.Logic.Handlers.QuantifyVisualizeHandler.Params) },
+                { "/revit/ensure-spaces", typeof(RevitBridge.Logic.Handlers.EnsureSpacesHandler.Params) },
+                { "/revit/create-zones", typeof(RevitBridge.Logic.Handlers.CreateZonesHandler.Params) },
+                { "/revit/create-zone-visuals", typeof(RevitBridge.Logic.Handlers.CreateZoneVisualsHandler.Params) },
+                { "/revit/query-zone-data", typeof(RevitBridge.Logic.Handlers.QueryZoneDataHandler.Params) },
+                { "/revit/place-families", typeof(RevitBridge.Logic.Handlers.PlaceFamiliesHandler.PlacementRequest) },
+                { "/revit/place-family-instance-on-host", typeof(RevitBridge.Logic.Handlers.PlaceFamilyInstanceOnHostHandler.Params) },
+                { "/revit/create-similar-from-instance", typeof(RevitBridge.Logic.Handlers.CreateSimilarFromInstanceHandler.Params) },
+                { "/revit/adjust-hosted-instance-on-host", typeof(RevitBridge.Logic.Handlers.AdjustHostedInstanceOnHostHandler.Params) },
+                { "/revit/assign-electrical-circuit", typeof(RevitBridge.Logic.Handlers.AssignElectricalCircuitHandler.Params) },
+                { "/revit/load-family", typeof(RevitBridge.Logic.Handlers.LoadFamilyHandler.Params) },
+                { "/revit/create-family-from-template", typeof(RevitBridge.Logic.Handlers.CreateFamilyFromTemplateHandler.Params) },
+                { "/revit/tag-elements", typeof(RevitBridge.Logic.Handlers.TagElementsHandler.TagRequest) },
+                { "/revit/create-schedule", typeof(RevitBridge.Logic.Handlers.CreateScheduleHandler.ScheduleRequest) },
+                { "/revit/spatial-analysis", typeof(RevitBridge.Logic.Handlers.SpatialAnalysisHandler.Request) },
+                { "/revit/duplicate-view", typeof(RevitBridge.Logic.Handlers.DuplicateViewHandler.DuplicateRequest) },
+                { "/revit/get-element-summary", typeof(RevitBridge.Logic.Handlers.GetElementSummaryHandler.Params) },
+                { "/revit/transaction-plan", typeof(RevitBridge.Logic.Handlers.TransactionPlanHandler.Params) },
+                { "/revit/transaction-validate", typeof(RevitBridge.Logic.Handlers.TransactionValidateHandler.Params) },
+                { "/revit/transaction-apply", typeof(RevitBridge.Logic.Handlers.TransactionApplyHandler.Params) },
+                { "/revit/move-elements", typeof(RevitBridge.Logic.Handlers.MoveElementsHandler.Params) },
+                { "/revit/rotate-elements", typeof(RevitBridge.Logic.Handlers.RotateElementsHandler.Params) },
+                { "/revit/align-elements", typeof(RevitBridge.Logic.Handlers.AlignElementsHandler.Params) },
+                { "/revit/measure-gap", typeof(RevitBridge.Logic.Handlers.MeasureGapHandler.Params) },
+                { "/revit/model-health", typeof(RevitBridge.Handlers.ModelHealthHandler.Params) },
+                { "/revit/qa-checks", typeof(RevitBridge.Handlers.QaChecksHandler.Params) },
+                { "/revit/schedules", typeof(RevitBridge.Handlers.SchedulesHandler.Params) },
+                { "/revit/configure-schedule", typeof(RevitBridge.Handlers.ConfigureScheduleHandler.Params) },
+                { "/revit/export-schedule-csv", typeof(RevitBridge.Handlers.ExportScheduleCsvHandler.Params) },
+                { "/revit/export-warnings-report", typeof(RevitBridge.Handlers.ExportWarningsReportHandler.Params) },
+                { "/revit/warnings", typeof(RevitBridge.Handlers.ExportWarningsReportHandler.Params) },
+                { "/revit/print-sets", typeof(RevitBridge.Handlers.PrintSetsHandler.Params) },
+                { "/revit/print", typeof(RevitBridge.Handlers.PrintHandler.Params) },
+                { "/revit/create-print-set", typeof(RevitBridge.Handlers.CreatePrintSetHandler.Params) },
+                { "/revit/revisions", typeof(RevitBridge.Handlers.RevisionsHandler.Params) },
+                { "/revit/create-revision", typeof(RevitBridge.Handlers.CreateRevisionHandler.Params) },
+                { "/revit/apply-revision-to-sheets", typeof(RevitBridge.Handlers.ApplyRevisionToSheetsHandler.Params) },
+                { "/revit/room-align-wall-to-nearest-column", typeof(RevitBridge.Logic.Handlers.RoomAlignWallToNearestColumnHandler.Params) },
+                { "/revit/export-view-frame", typeof(RevitBridge.Logic.Handlers.ExportViewFrameHandler.Params) },
+                { "/revit/export-view-region", typeof(RevitBridge.Logic.Handlers.ExportViewRegionHandler.Params) },
+                { "/revit/export-visible-elements", typeof(RevitBridge.Logic.Handlers.ExportVisibleElementsHandler.Params) },
+                { "/revit/pick-at-pixel", typeof(RevitBridge.Logic.Handlers.PickAtPixelHandler.Params) },
+                { "/revit/set-selection", typeof(RevitBridge.Logic.Handlers.SetSelectionHandler.Params) },
+                { "/revit/highlight-and-export", typeof(RevitBridge.Logic.Handlers.HighlightAndExportHandler.Params) },
+                { "/revit/activate-view", typeof(RevitBridge.Logic.Handlers.ActivateViewHandler.Params) },
+                { "/revit/regenerate", typeof(RevitBridge.Logic.Handlers.RegenerateHandler.Params) },
+                { "/revit/computer-use-observe", typeof(RevitBridge.Operator.OperatorDialogComputerUse.ObserveParams) },
+                { "/revit/computer-use-act", typeof(RevitBridge.Operator.OperatorDialogComputerUse.ActParams) },
+                { "/revit/computer-use-guard", typeof(RevitBridge.Operator.OperatorDialogComputerUse.GuardParams) },
+                { "/revit/resolve-room-plan-view", typeof(RevitBridge.Logic.Handlers.ResolveRoomPlanViewHandler.Params) },
+                { "/revit/list-element-types", typeof(RevitBridge.Logic.Handlers.ListElementTypesHandler.Params) },
+                { "/revit/resolve-element-type", typeof(RevitBridge.Logic.Handlers.ResolveElementTypeHandler.Params) },
+                { "/revit/change-element-type", typeof(RevitBridge.Logic.Handlers.ChangeElementTypeHandler.Params) },
+                { "/revit/duplicate-element-type", typeof(RevitBridge.Logic.Handlers.DuplicateElementTypeHandler.Params) },
+                { "/revit/set-type-parameters", typeof(RevitBridge.Logic.Handlers.SetTypeParametersHandler.Params) },
+                { "/revit/duplicate-type-and-swap-instance", typeof(RevitBridge.Logic.Handlers.DuplicateTypeAndSwapInstanceHandler.Params) },
+                { "/revit/replace-door", typeof(RevitBridge.Logic.Handlers.ReplaceDoorHandler.Params) },
+                { "/revit/titleblock-label-map", typeof(RevitBridge.Logic.Handlers.TitleblockLabelMapHandler.Params) },
+                { "/revit/capture-sheet-region", typeof(RevitBridge.Logic.Handlers.CaptureSheetRegionHandler.Params) },
+                { "/revit/verify-parameter-on-sheet", typeof(RevitBridge.Logic.Handlers.VerifyParameterOnSheetHandler.Params) },
+                { "/revit/titleblock-family-update-text", typeof(RevitBridge.Logic.Handlers.TitleblockFamilyUpdateTextHandler.Params) },
+                { "/revit/titleblock-date-candidates", typeof(RevitBridge.Logic.Handlers.TitleblockDateCandidatesHandler.Params) },
+                { "/revit/titleblock-set-date-smart", typeof(RevitBridge.Logic.Handlers.TitleblockSetDateSmartHandler.Params) },
+                { "/revit/get-titleblock-info", typeof(RevitBridge.Logic.Handlers.GetTitleblockInfoHandler.Params) },
+                { "/revit/get-family-file-path", typeof(RevitBridge.Logic.Handlers.GetFamilyFilePathHandler.Params) },
+                { "/revit/open-family-doc", typeof(RevitBridge.Logic.Handlers.OpenFamilyDocHandler.Params) },
+                { "/revit/find-text-notes", typeof(RevitBridge.Logic.Handlers.FindTextNotesHandler.Params) },
+                { "/revit/replace-text-note", typeof(RevitBridge.Logic.Handlers.ReplaceTextNoteHandler.Params) },
+                { "/revit/save-family-doc", typeof(RevitBridge.Logic.Handlers.SaveFamilyDocHandler.Params) },
+                { "/revit/load-family-doc", typeof(RevitBridge.Logic.Handlers.LoadFamilyDocHandler.Params) },
+                { "/revit/close-doc", typeof(RevitBridge.Logic.Handlers.CloseDocHandler.Params) },
+                { "/revit/edit-family-from-instance", typeof(RevitBridge.Logic.Handlers.EditFamilyFromInstanceHandler.Params) },
+                { "/revit/find-family-text-notes", typeof(RevitBridge.Logic.Handlers.FindFamilyTextNotesHandler.Params) },
+                { "/revit/set-text-note-text", typeof(RevitBridge.Logic.Handlers.SetTextNoteTextHandler.Params) },
+                { "/revit/reload-family-edit-session", typeof(RevitBridge.Logic.Handlers.ReloadFamilyEditSessionHandler.Params) },
+            };
+
+            public static object? BuildRequestSchema(string method, string path)
+            {
+                var m = (method ?? "").Trim().ToUpperInvariant();
+                var p = (path ?? "").Trim();
+                if (m == "GET") return null;
+
+                // Introspection endpoints (POST) – keep small.
+                if (string.Equals(p, "/revit/tool-search", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "query", Str() },
+                            { "group", Str() },
+                            { "risk", Str(new[] { "low", "medium", "high" }) },
+                            { "method", Str(new[] { "GET", "POST" }) },
+                            { "max", Int() }
+                        },
+                        required: new[] { "query" });
+                }
+
+                if (string.Equals(p, "/revit/tool-doc", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(p, "/revit/tool-examples", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "method", Str(new[] { "GET", "POST" }) },
+                            { "path", Str() }
+                        },
+                        required: new[] { "method", "path" });
+                }
+
+                if (string.Equals(p, "/revit/self-test", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "include_export_image", Bool() },
+                            { "include_rooms", Bool() }
+                        },
+                        required: Array.Empty<string>());
+                }
+
+                if (string.Equals(p, "/revit/state-snapshot", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "include_dialogs", Bool() },
+                            { "include_selection_details", Bool() },
+                            { "include_sheet_viewports", Bool() },
+                            { "include_all_views_index", Bool() },
+                            { "include_warnings_summary", Bool() },
+                            { "include_warnings_detail", Bool() },
+                            { "include_element_bboxes", Bool() },
+                            { "max_items", Int() }
+                        },
+                        required: Array.Empty<string>(),
+                        additionalProps: false);
+                }
+                if (string.Equals(p, "/revit/capture-screenshare", StringComparison.OrdinalIgnoreCase))
+                {
+                    return OneOf(
+                        Null(),
+                        Obj(
+                            props: new Dictionary<string, object>
+                            {
+                                { "includeContext", Bool() }
+                            },
+                            required: Array.Empty<string>(),
+                            additionalProps: false));
+                }
+
+                // Sheets listing (paging + prefix matching).
+                if (string.Equals(p, "/revit/sheets", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "action", Str(new[] { "list", "count", "detail" }) },
+                            { "countOnly", Bool() }, // legacy alias for action=count
+                            { "sheetNumberPrefix", Str() },
+                            { "query", Str() },
+                            { "exact", Bool() },
+                            { "offset", Int() },
+                            { "limit", Int() },
+                            { "all", Bool() },
+                            { "max", Int() }, // legacy alias for limit
+                            { "sheetNumber", Str() }, // detail
+                            { "sheetId", Int() }, // detail
+                            { "viewId", Int() }, // detail
+                            { "includePlacedViews", Bool() }, // detail
+                            { "includeViewports", Bool() }, // detail
+                            { "includeTitleBlocks", Bool() }, // detail
+                            { "includeViewportGeometry", Bool() }, // detail
+                            { "includeSheetOutline", Bool() } // detail
+                        },
+                        required: Array.Empty<string>(),
+                        additionalProps: false);
+                }
+
+                // Export PDF (views/sheets). Supports viewIds OR selector OR sheetNumberPrefix/sheetQuery convenience.
+                if (string.Equals(p, "/revit/export-pdf", StringComparison.OrdinalIgnoreCase))
+                {
+                    var selectorSchema = Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "query", Str() },
+                            { "exact", Bool() },
+                            { "max", Int() },
+                            { "sheetNumberPrefixes", Arr(Str()) },
+                            { "nameIncludes", Arr(Str()) },
+                            { "semanticGroup", Str(new[] { "power", "lighting", "mechanical", "electrical", "plumbing", "cover", "fire_alarm" }) },
+                            { "semanticGroups", Arr(Str(new[] { "power", "lighting", "mechanical", "electrical", "plumbing", "cover", "fire_alarm" })) }
+                        },
+                        required: Array.Empty<string>(),
+                        additionalProps: true);
+
+                    var core = Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "viewIds", Arr(Int()) },
+                            { "fileName", Str() },
+                            { "sheetQuery", Str() },
+                            { "sheetNumberPrefix", Str() },
+                            { "sheetGroup", Str(new[] { "power", "lighting", "mechanical", "electrical", "plumbing", "cover", "fire_alarm" }) },
+                            { "semanticSheetGroup", Str(new[] { "power", "lighting", "mechanical", "electrical", "plumbing", "cover", "fire_alarm" }) },
+                            { "all", Bool() },
+                            { "max", Int() },
+                            { "printSetName", Str() },
+                            { "printSetExact", Bool() },
+                            { "selector", selectorSchema },
+                            { "combine", Bool() },
+                            { "outputFolder", Str() },
+                            { "baseFileName", Str() },
+                            { "perSheetFileNameTemplate", Str() },
+                            { "colorMode", Str(new[] { "Color", "Grayscale", "BlackLine" }) },
+                            { "dryRun", Bool() },
+                            { "preflight", Bool() },
+                            { "preflightOnly", Bool() }
+                        },
+                        required: Array.Empty<string>(),
+                        additionalProps: true);
+
+                    return OneOf(Null(), core);
+                }
+
+                // Some tools accept null bodies intentionally (back-compat and convenience).
+                if (string.Equals(p, "/revit/export-image", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(p, "/revit/export-view-frame", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(p, "/revit/export-visible-elements", StringComparison.OrdinalIgnoreCase))
+                {
+                    // null | object
+                    var core = SchemaFromType(RequestTypesByPath[p], depth: 0);
+                    return OneOf(Null(), core);
+                }
+
+                // Default: schema from request type when known, else generic object.
+                if (RequestTypesByPath.TryGetValue(p, out var t))
+                {
+                    return SchemaFromType(t, depth: 0);
+                }
+
+                return Obj(new Dictionary<string, object>(), required: Array.Empty<string>(), additionalProps: true);
+            }
+
+            public static object? BuildResponseSchema(string method, string path)
+            {
+                var m = (method ?? "").Trim().ToUpperInvariant();
+                var p = (path ?? "").Trim();
+                if (m == "GET") return Obj(new Dictionary<string, object>(), required: Array.Empty<string>(), additionalProps: true);
+
+                if (string.Equals(p, "/revit/tool-search", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "version", Str() },
+                            { "generated_at", Str() },
+                            { "query", Str() },
+                            {
+                                "filters",
+                                Obj(
+                                    props: new Dictionary<string, object>
+                                    {
+                                        { "group", OneOf(Str(), Null()) },
+                                        { "risk", OneOf(Str(), Null()) },
+                                        { "method", OneOf(Str(), Null()) }
+                                    },
+                                    required: Array.Empty<string>(),
+                                    additionalProps: false)
+                            },
+                            { "returned", Int() },
+                            {
+                                "matches",
+                                Arr(
+                                    Obj(
+                                        props: new Dictionary<string, object>
+                                        {
+                                            { "group", Str() },
+                                            { "method", Str(new[] { "GET", "POST" }) },
+                                            { "path", Str() },
+                                            { "title", Str() },
+                                            { "risk", Str(new[] { "low", "medium", "high" }) },
+                                            { "description", Str() },
+                                            { "example", OneOf(Str(), Null()) },
+                                            { "score", Int() },
+                                            { "match_reasons", Arr(Str()) }
+                                        },
+                                        required: new[] { "group", "method", "path", "title", "risk", "description", "score", "match_reasons" },
+                                        additionalProps: false))
+                            }
+                        },
+                        required: new[] { "version", "generated_at", "query", "filters", "returned", "matches" },
+                        additionalProps: false);
+                }
+
+                // Default: unknown shapes; we provide example payloads separately.
+                return Obj(new Dictionary<string, object>(), required: Array.Empty<string>(), additionalProps: true);
+            }
+
+            public static (List<string> required, List<string> optional, Dictionary<string, string[]> enums, List<object> units, List<string> commonErrors, List<string> notes)
+                SummarizeContract(string method, string path, object? requestSchema)
+            {
+                var req = new List<string>();
+                var opt = new List<string>();
+
+                var enumMap = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+                var unitNotes = new List<object>();
+                var commonErrors = new List<string>();
+                var notes = new List<string>();
+
+                var m = (method ?? "").Trim().ToUpperInvariant();
+                var p = (path ?? "").Trim();
+
+                if (m == "GET")
+                {
+                    notes.Add("GET tools do not accept request bodies.");
+                    return (req, opt, enumMap, unitNotes, commonErrors, notes);
+                }
+
+                // Enumerations + units contracts for common tokens.
+                if (p == "/revit/measure-gap" || p == "/revit/align-elements")
+                {
+                    enumMap["axis"] = new[] { "viewX", "viewY" };
+                    notes.Add("Axis is in the active view basis: viewX=RightDirection, viewY=UpDirection.");
+                    notes.Add("Side depends on axis: for axis=viewX use left|right; for axis=viewY use top|bottom.");
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "options.zeroToleranceFt", "options.minAbsNormalDot (unitless)", "gapFt" } });
+                }
+
+                if (p == "/revit/move-elements")
+                {
+                    enumMap["mode"] = new[] { "vector", "fromTo" };
+                    enumMap["behavior"] = new[] { "allOrNothing", "bestEffort" };
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "vectorX", "vectorY", "vectorZ", "fromX", "fromY", "fromZ", "toX", "toY", "toZ" } });
+                }
+
+                if (p == "/revit/rotate-elements")
+                {
+                    enumMap["behavior"] = new[] { "allOrNothing", "bestEffort" };
+                    enumMap["axis.mode"] = new[] { "zThroughPoint" };
+                    unitNotes.Add(new { unit = "degrees", fields = new[] { "angleDegrees" } });
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "axis.pointX", "axis.pointY", "axis.pointZ" } });
+                    notes.Add("Rotation axis v1: axis.mode=zThroughPoint creates a vertical axis line through (pointX,pointY,pointZ).");
+                }
+
+                if (p == "/revit/room-contents")
+                {
+                    enumMap["mode"] = new[] { "auto", "roomAware", "geometry" };
+                    enumMap["verticalScope"] = new[] { "room", "plenum", "room+plenum" };
+                    enumMap["spatialKindPreference"] = new[] { "auto", "room", "space" };
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "plenumMaxZ", "verticalRange.minZ", "verticalRange.maxZ" } });
+                    notes.Add("mode=auto uses roomAware first, then geometry fallback for categories that are not room-aware (common for MEP).");
+                    notes.Add("roomAware: elements with Room/Space association (mostly FamilyInstance). geometry: test element location/bbox points against Room/Space containment.");
+                    notes.Add("verticalScope=room uses true Room/Space containment. verticalScope=plenum projects XY into the room footprint and filters by Z between the room top and the next level (or plenumMaxZ).");
+                    notes.Add("verticalScope=room+plenum evaluates both scopes in one call.");
+                    notes.Add("Successful room-contents responses now include the resolved spatial location plus true boundaryLoops/boundary metadata for the resolved Room or Space.");
+                    notes.Add("includeLinked=true keeps link-scoped ids (link:<instanceId>:<elementId>) and transformed host/source metadata, but final inclusion still depends on Revit link visibility and accessible link documents.");
+                    notes.Add("Element rows now emit explicit hostingSurface.mode/surfaceType and hostLinkInstanceId/hostLinkedElementId fields when Revit exposes them, reducing downstream host inference.");
+                }
+
+                if (p == "/revit/rooms")
+                {
+                    enumMap["action"] = new[] { "list", "detail" };
+                    enumMap["spatialKindPreference"] = new[] { "auto", "room", "space" };
+                    notes.Add("Use spatialKindPreference=space when a room number is known to resolve to an MEP Space instead of an architectural Room.");
+                    notes.Add("detail with roomNumber + spatialKindPreference resolves deterministically without a separate /revit/spaces endpoint.");
+                }
+
+                if (p == "/revit/ducts-by-spatial-scope")
+                {
+                    enumMap["roomMode"] = new[] { "auto", "roomAware", "geometry" };
+                    enumMap["verticalScope"] = new[] { "room", "plenum", "room+plenum" };
+                    notes.Add("This endpoint performs fallback in order: room association, space association, then geometry checks.");
+                    notes.Add("Default ductwork categories are Duct Curves + Duct Fittings + Air Terminals.");
+                }
+
+                if (p == "/revit/resize-ductwork-by-scope")
+                {
+                    enumMap["scope.roomMode"] = new[] { "auto", "roomAware", "geometry" };
+                    enumMap["scope.verticalScope"] = new[] { "room", "plenum", "room+plenum" };
+                    enumMap["resolveTypeDriven"] = new[] { "auto", "duplicate", "skip" };
+                    notes.Add("One-shot ductwork resize by spatial scope; internally scopes elements then applies duct resize + connected fitting/terminal sync.");
+                }
+
+                if (p == "/revit/repair-duct-continuity-by-scope")
+                {
+                    enumMap["scope.roomMode"] = new[] { "auto", "roomAware", "geometry" };
+                    enumMap["scope.verticalScope"] = new[] { "room", "plenum", "room+plenum" };
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "maxGapFt", "inferredTargetDiameterFt", "preAudit.likelyMissingSegments[*].distanceFt" } });
+                    notes.Add("Repairs continuity in scoped duct networks without resizing target diameter.");
+                    notes.Add("When dryRun=false, the tool attempts direct connector reconnects first, then short bridge duct insertion for compatible nearby open connectors.");
+                    notes.Add("Post-apply status checks created repair segments for isolation and system-name mismatch (createdSegmentAudit).");
+                }
+
+                if (p == "/revit/resize-ducts-in-room")
+                {
+                    enumMap["roomMode"] = new[] { "auto", "roomAware", "geometry" };
+                    enumMap["verticalScope"] = new[] { "room", "plenum", "auto", "room+plenum" };
+                    enumMap["resolveTypeDriven"] = new[] { "auto", "duplicate", "skip" };
+                    notes.Add("verticalScope=room+plenum applies both scopes; verticalScope=auto attempts room first, then plenum if needed.");
+                }
+
+                if (p == "/revit/find-elements")
+                {
+                    notes.Add("Scope precedence: if viewId is provided it is used; otherwise sheetNumber scopes to views placed on that sheet (viewports).");
+                    notes.Add("For redline workflows, provide sheetRegions (sheet UV boxes) to return only elements overlapping mapped markup areas.");
+                    notes.Add("Categories are BuiltInCategory tokens like OST_Doors, OST_TitleBlocks, OST_GenericModel.");
+                }
+
+                if (p == "/revit/export-visible-elements")
+                {
+                    unitNotes.Add(new { unit = "pixels", fields = new[] { "imageSize", "items[*].anchor.image.x", "items[*].anchor.image.y", "items[*].bbox.image.minX", "items[*].bbox.image.minY", "items[*].bbox.image.maxX", "items[*].bbox.image.maxY" } });
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "items[*].anchor.model.x", "items[*].anchor.model.y", "items[*].anchor.model.z", "items[*].bbox.model.min.x", "items[*].bbox.model.min.y", "items[*].bbox.model.min.z", "items[*].bbox.model.max.x", "items[*].bbox.model.max.y", "items[*].bbox.model.max.z", "items[*].geometry.lengthFt" } });
+                    notes.Add("Use this when you need a full visible-element manifest tied to the same exported image and affine mapping basis.");
+                    notes.Add("Supported for crop-box-backed 2D views only; use sheet-aware tools for DrawingSheet workflows.");
+                    notes.Add("categories/excludeCategories accept BuiltInCategory tokens and exact category names when tokens are unavailable.");
+                    notes.Add("includeLinked=true keeps link-scoped ids and transformed source/host/hostingSurface payloads so linked rows can be consumed without re-deriving host coordinates.");
+                    notes.Add("Orientation payloads include facing/hand vectors plus plan-azimuth and basis vectors when available; linked rows are transformed into host coordinates.");
+                    notes.Add("Mapping corners are emitted from the saved raster frame; crop-box corners are included only as reference metadata when the raster aspect differs.");
+                }
+
+                if (p == "/revit/room_mep_intersect")
+                {
+                    enumMap["intersectMode"] = new[] { "bbox", "centerline" };
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "verticalTolerance" } });
+                    notes.Add("intersectMode='bbox' uses solid/solid-like bbox overlap; 'centerline' uses centerline (or sampled curve points) + bbox fallback.");
+                    notes.Add("Filters are applied after room lookup and plenum volume computation.");
+                }
+
+                if (p == "/revit/resize-ducts-by-scope")
+                {
+                    enumMap["scope.type"] = new[] { "equipment", "room", "view" };
+                    enumMap["scopeMode"] = new[] { "connectedRun", "bboxIntersect", "centerlineIntersect" };
+                    unitNotes.Add(new { unit = "length text or feet", fields = new[] { "fromDiameter", "toDiameter" } });
+                    notes.Add("Room scope uses room+plenum intersection with bbox/centerline modes; equipment scope traces connected run from Mark-resolved equipment.");
+                    notes.Add("When includeFittings/includeTerminals are true, the tool runs sync-connected-sizes and attempts type-driven duplicate+swap for scoped instances.");
+                }
+
+                if (p == "/revit/align-room-tops-to-ceilings")
+                {
+                    enumMap["behavior"] = new[] { "allOrNothing", "bestEffort" };
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "toleranceFt", "changes[*].baseZ", "changes[*].currentTopZ", "changes[*].newTopZ", "changes[*].ceilingBottomZ" } });
+                    notes.Add("Primary ceiling is selected by: largest computed area, then lowest bottom elevation, constrained to the room footprint (XY test at room base).");
+                    notes.Add("This tool modifies room height settings (UpperLimit/LimitOffset or UnboundedHeight) and requires approval when not dryRun.");
+                }
+
+                if (p == "/revit/link-cad")
+                {
+                    enumMap["placement"] = new[] { "origin", "center" };
+                    notes.Add("sourcePath can be Workspace-relative OR an external path under OPERATOR_ALLOWED_EXTERNAL_ROOTS.");
+                }
+
+                if (p == "/revit/visibility")
+                {
+                    enumMap["action"] = new[]
+                    {
+                        "get", "set_template", "hide_category", "show_category", "set_scale", "set_detail_level",
+                        "set_discipline", "set_phase", "set_phase_filter", "set_section_box", "clear_section_box",
+                        "set_crop_box", "clear_crop_box", "set_scope_box", "clear_scope_box", "set_underlay", "clear_underlay",
+                        "set_category_override", "clear_category_override",
+                        "apply_view_filter", "create_view_filter", "remove_view_filter", "clear_filter_override",
+                        "isolate_elements_temp", "isolate_categories_temp", "clear_temp_hide_isolate",
+                        "reveal_hidden_on", "reveal_hidden_off", "hide_elements", "unhide_elements"
+                    };
+                    enumMap["ruleOperator"] = new[] { "equals", "not_equals", "contains", "not_contains", "begins_with", "ends_with", "greater", "greater_or_equal", "less", "less_or_equal" };
+                    notes.Add("create_view_filter supports one-rule parameter filters and immediately applies the filter to the target view.");
+                }
+
+                if (p == "/revit/mep-workflows")
+                {
+                    notes.Add("connect_elements_with_duct supports optional ductSize (for example \"8\\\"\" or \"24x12\") to write size on the created segment.");
+                }
+
+                if (p == "/revit/arch-workflows")
+                {
+                    enumMap["action"] = new[]
+                    {
+                        "create_walls_from_polyline",
+                        "change_wall_type",
+                        "join_wall_geometry",
+                        "place_hosted_instances",
+                        "swap_family_type_in_view",
+                        "create_model_group_and_place",
+                        "array_elements",
+                        "mirror_elements",
+                        "copy_same_place",
+                        "create_reference_plane",
+                        "purge_duplicate_line_patterns",
+                        "create_floor_from_walls",
+                        "create_ceiling_in_room",
+                        "create_rooms_and_tags",
+                        "create_room_separation_lines"
+                    };
+                    notes.Add("Use place_hosted_instances for door/window hosted placement on selected walls; optional alignToElementId enables post-place alignment in the same call.");
+                    notes.Add("create_floor_from_walls and create_ceiling_in_room provide one-call architectural slab/ceiling authoring from existing model context.");
+                }
+
+                if (p == "/revit/list-element-types")
+                {
+                    enumMap["action"] = new[] { "list", "rename_types", "purge_unused_in_family" };
+                    notes.Add("Use action=rename_types for regex-based type rename plans/applies within a single family.");
+                    notes.Add("Use action=purge_unused_in_family to delete unused FamilySymbol types while retaining at least one type.");
+                }
+
+                if (p == "/revit/create-family-instance")
+                {
+                    notes.Add("symbolName or typeName is required.");
+                    notes.Add("viewId or sheetNumber can target view-specific/sheet annotation placement.");
+                    notes.Add("count + spacingX/Y/Z enables repeated placement in one call.");
+                }
+
+                if (p == "/revit/state-snapshot")
+                {
+                    unitNotes.Add(new { unit = "count", fields = new[] { "max_items" } });
+                    notes.Add("Core snapshot fields are always present; unsupported values resolve as null.");
+                    notes.Add("Defaults: include_dialogs=true, include_selection_details=true, include_sheet_viewports=true, include_all_views_index=false, include_warnings_summary=true, include_warnings_detail=false, include_element_bboxes=false.");
+                }
+                if (p == "/revit/computer-use-observe")
+                {
+                    unitNotes.Add(new { unit = "pixels", fields = new[] { "screenshotMaxSidePx" } });
+                    unitNotes.Add(new { unit = "count", fields = new[] { "maxDialogs" } });
+                    notes.Add("Dialog-scoped computer-use MVP for Revit-owned modal/top-level dialog windows only; this is not generic desktop automation.");
+                    notes.Add("When includeScreenshot=true, screenshot_path points to a saved dialog artifact that can be attached/viewed for model-side reasoning.");
+                }
+                if (p == "/revit/computer-use-act" || p == "/revit/computer-use-guard")
+                {
+                    enumMap["button"] = new[] { "default", "ok", "close", "yes", "no", "cancel", "retry", "continue" };
+                    enumMap["interactionMode"] = new[] { "message", "mouse", "message_then_mouse" };
+                    enumMap["cursorRestoreMode"] = new[] { "restore", "keep" };
+                    unitNotes.Add(new { unit = "milliseconds", fields = p == "/revit/computer-use-act" ? new[] { "waitForDialogMs" } : new[] { "ttlMs" } });
+                    if (p == "/revit/computer-use-act")
+                    {
+                        unitNotes.Add(new { unit = "pixels", fields = new[] { "screenshotMaxSidePx" } });
+                        notes.Add("Acts only on currently visible Revit-owned dialogs and prefers the default button when no selector is supplied.");
+                        notes.Add("interactionMode defaults to message_then_mouse: BM_CLICK first, then a physical cursor click only if the same dialog remains visible. Use message to forbid mouse movement or mouse to force the fallback.");
+                        notes.Add("cursorRestoreMode defaults to keep so follow-up screenshots/actions preserve pointer continuity. Use restore only after the click is verified or when no follow-up mouse precision is needed.");
+                    }
+                    else
+                    {
+                        unitNotes.Add(new { unit = "count", fields = new[] { "maxTriggers" } });
+                        unitNotes.Add(new { unit = "pixels", fields = new[] { "screenshotMaxSidePx" } });
+                        notes.Add("Guard is a short-lived auto-dismiss rule for the next matching dialog; event-time matching uses dialog/message metadata and live title matching happens during the actual click attempt.");
+                        notes.Add("interactionMode has the same semantics as computer-use-act; cursorRestoreMode controls whether mouse modes keep or restore the cursor after the click. The default is keep.");
+                    }
+                }
+                if (p == "/revit/place-image" || p == "/revit/place-pdf-underlay")
+                {
+                    enumMap["placement"] = new[] { "origin", "center" };
+                    unitNotes.Add(new { unit = "inches", fields = new[] { "xInches", "yInches", "widthInches", "heightInches" } });
+                }
+
+                if (p == "/revit/draw-detail-curves" || p == "/revit/create-filled-region" || p == "/revit/create-revision-cloud")
+                {
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "point.xyz" } });
+                    unitNotes.Add(new { unit = "pixels", fields = new[] { "point.xPx", "point.yPx" } });
+                    unitNotes.Add(new { unit = "inches", fields = new[] { "point.xIn", "point.yIn" } });
+                    notes.Add("Drafting point contract: provide ONE of xyz(feet), xPx/yPx(with frameId), or xIn/yIn(inches).");
+                }
+
+                // Common error reasons.
+                if (p == "/revit/pick-at-pixel")
+                {
+                    commonErrors.Add("Unknown or expired frameId (re-run export-view-frame).");
+                    commonErrors.Add("Missing required parameter: frameId.");
+                }
+                if (p == "/revit/export-view-region")
+                {
+                    commonErrors.Add("region is required and must be an object.");
+                    commonErrors.Add("region.mode must be one of: focusElements | center.");
+                }
+                if (p == "/revit/export-visible-elements")
+                {
+                    commonErrors.Add("View type is unsupported; export-visible-elements requires a crop-box-backed 2D view.");
+                    commonErrors.Add("Crop box activation failed; activate crop in the target view or use export-view-region.");
+                }
+
+                // Infer fields from schema for convenience.
+                try
+                {
+                    var json = JsonSerializer.Serialize(requestSchema, OperatorUiProtocol.JsonOptions);
+                    using var doc = JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+
+                    // If schema is oneOf(null, object) pick the object branch for field summaries.
+                    if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("oneOf", out var oneOf) && oneOf.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var branch in oneOf.EnumerateArray())
+                        {
+                            if (branch.ValueKind == JsonValueKind.Object &&
+                                branch.TryGetProperty("type", out var t) &&
+                                t.ValueKind == JsonValueKind.String &&
+                                string.Equals(t.GetString(), "object", StringComparison.OrdinalIgnoreCase))
+                            {
+                                root = branch;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("properties", out var props) && props.ValueKind == JsonValueKind.Object)
+                    {
+                        var all = props.EnumerateObject().Select(x => x.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                        var required = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        if (root.TryGetProperty("required", out var reqEl) && reqEl.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var r in reqEl.EnumerateArray())
+                            {
+                                if (r.ValueKind == JsonValueKind.String) required.Add(r.GetString() ?? "");
+                            }
+                        }
+
+                        foreach (var r in required.Where(x => !string.IsNullOrWhiteSpace(x))) req.Add(r);
+                        foreach (var f in all)
+                        {
+                            if (string.IsNullOrWhiteSpace(f)) continue;
+                            if (!required.Contains(f)) opt.Add(f);
+                        }
+                    }
+                }
+                catch
+                {
+                    // ignore schema parse issues
+                }
+
+                return (req, opt, enumMap, unitNotes, commonErrors, notes);
+            }
+
+            private static object SchemaFromType(Type t, int depth)
+            {
+                if (depth > 4) return Obj(new Dictionary<string, object>(), required: Array.Empty<string>(), additionalProps: true);
+
+                if (t == typeof(string)) return Str();
+                if (t == typeof(bool)) return Bool();
+                if (t == typeof(int) || t == typeof(long) || t == typeof(short)) return Int();
+                if (t == typeof(double) || t == typeof(float) || t == typeof(decimal)) return Num();
+
+                var nullable = Nullable.GetUnderlyingType(t);
+                if (nullable != null)
+                {
+                    return OneOf(Null(), SchemaFromType(nullable, depth + 1));
+                }
+
+                if (t.IsArray)
+                {
+                    var it = t.GetElementType() ?? typeof(object);
+                    return Arr(SchemaFromType(it, depth + 1));
+                }
+
+                if (IsListLike(t, out var itemType))
+                {
+                    return Arr(SchemaFromType(itemType, depth + 1));
+                }
+
+                // Complex objects.
+                var props = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+                var required = new List<string>();
+                object? instance = null;
+                try { instance = Activator.CreateInstance(t); } catch { instance = null; }
+
+                foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                {
+                    if (!p.CanRead) continue;
+                    if (p.GetIndexParameters().Length > 0) continue;
+
+                    var pt = p.PropertyType;
+                    var schema = SchemaFromType(pt, depth + 1);
+                    props[p.Name] = WithHeuristicDescription(p.Name, pt, schema);
+
+                    var defaultVal = instance != null ? SafeGet(p, instance) : null;
+                    var isNullable = !pt.IsValueType || Nullable.GetUnderlyingType(pt) != null;
+                    if (!isNullable && IsDefaultValue(pt, defaultVal))
+                    {
+                        // Non-nullable value type with default(T): require for correctness.
+                        required.Add(p.Name);
+                    }
+                    else if (pt == typeof(string) && defaultVal == null)
+                    {
+                        // Strings default to null when omitted; most handlers expect them.
+                        required.Add(p.Name);
+                    }
+                }
+
+                return Obj(props, required.ToArray(), additionalProps: false);
+            }
+
+            private static object WithHeuristicDescription(string name, Type t, object schema)
+            {
+                // Add lightweight units contract to property schema without making it verbose.
+                try
+                {
+                    if (schema is Dictionary<string, object> d)
+                    {
+                        var n = (name ?? "").Trim();
+                        var ln = n.ToLowerInvariant();
+
+                        string? desc = null;
+                        if (ln.EndsWith("id")) desc = "Revit element id (integer).";
+                        else if (ln.EndsWith("px") || ln.Contains("xpx") || ln.Contains("ypx")) desc = "Pixels in exported frame image.";
+                        else if (ln.EndsWith("inches") || ln.EndsWith("xin") || ln.EndsWith("yin")) desc = "Inches.";
+                        else if (ln.EndsWith("ft") || ln.Contains("vector") || ln.Contains("start") || ln.Contains("end") || ln.Contains("from") || ln.Contains("to"))
+                        {
+                            if (t == typeof(double) || t == typeof(float) || t == typeof(decimal) || Nullable.GetUnderlyingType(t) == typeof(double))
+                                desc = "Feet.";
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(desc))
+                            d["description"] = desc;
+                    }
+                }
+                catch
+                {
+                    // ignore
+                }
+                return schema;
+            }
+
+            private static bool IsListLike(Type t, out Type itemType)
+            {
+                itemType = typeof(object);
+                if (!t.IsGenericType) return false;
+                var def = t.GetGenericTypeDefinition();
+                if (def == typeof(List<>) || def == typeof(IReadOnlyList<>) || def == typeof(IList<>) || def == typeof(IEnumerable<>))
+                {
+                    itemType = t.GetGenericArguments()[0];
+                    return true;
+                }
+                return false;
+            }
+
+            private static object? SafeGet(PropertyInfo p, object instance)
+            {
+                try { return p.GetValue(instance); } catch { return null; }
+            }
+
+            private static bool IsDefaultValue(Type t, object? v)
+            {
+                try
+                {
+                    if (t == typeof(bool)) return (v is bool b) ? b == false : true;
+                    if (t == typeof(int)) return (v is int i) ? i == 0 : true;
+                    if (t == typeof(long)) return (v is long l) ? l == 0 : true;
+                    if (t == typeof(double)) return (v is double d) ? Math.Abs(d) < 1e-12 : true;
+                }
+                catch { }
+                return v == null;
+            }
+
+            private static object Obj(Dictionary<string, object> props, string[] required, bool additionalProps = false) =>
+                new Dictionary<string, object>
+                {
+                    { "type", "object" },
+                    { "additionalProperties", additionalProps },
+                    { "properties", props },
+                    { "required", required ?? Array.Empty<string>() }
+                };
+
+            private static object Arr(object items) =>
+                new Dictionary<string, object> { { "type", "array" }, { "items", items } };
+
+            private static object Str(string[]? enumVals = null) =>
+                enumVals == null
+                    ? new Dictionary<string, object> { { "type", "string" } }
+                    : new Dictionary<string, object> { { "type", "string" }, { "enum", enumVals } };
+
+            private static object Bool() => new Dictionary<string, object> { { "type", "boolean" } };
+            private static object Int() => new Dictionary<string, object> { { "type", "integer" } };
+            private static object Num() => new Dictionary<string, object> { { "type", "number" } };
+            private static object Null() => new Dictionary<string, object> { { "type", "null" } };
+
+            private static object OneOf(params object[] schemas) =>
+                new Dictionary<string, object> { { "oneOf", schemas } };
+        }
+    }
+}

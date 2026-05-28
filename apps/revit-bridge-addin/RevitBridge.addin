@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>RevitOperator</Name>
+    <Assembly>C:\Users\User\source\repos\RevitOperator\revit-bridge-addin\RevitBridge\bin\Debug\net48\win-x64\RevitBridge.dll</Assembly>
+    <FullClassName>RevitBridge.App</FullClassName>
+    <ClientId>B2883307-2852-4740-9833-281048674F77</ClientId>
+    <VendorId>com.revitoperator</VendorId>
+    <VendorDescription>Revit Operator</VendorDescription>
+  </AddIn>
+</RevitAddIns>

@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_receptacles",
+  "name": "Demo D: Simple Redline Receptacle Placement",
+  "description": "Run a bounded simple receptacle redline plan, place a small number of receptacles, assign metadata where feasible, and verify created elements.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "metadata": {
+      "workflow": "redline_receptacles"
+    }
+  },
+  "setup_instructions": [
+    "Open the known Revit demo model and target view.",
+    "Use a prepared simple redline/image analysis that resolves to a bounded placements array.",
+    "Use create-similar-from-instance or hosted placement, not free-form GUI clicks."
+  ],
+  "success_criteria": [
+    "Before/after visible-element captures are produced.",
+    "The expected number of receptacles is created.",
+    "Created elements are audited for placement and metadata."
+  ],
+  "failure_criteria": [
+    "The redline does not resolve to bounded placements.",
+    "Created element count does not match requested placement count.",
+    "Audit or after-capture fails."
+  ],
+  "max_time_seconds": 180,
+  "max_steps": 4,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "Full electrical circuit creation is intentionally behind a future capability flag; demo path verifies metadata/copy behavior first."
+  ],
+  "tags": ["revit", "demo", "redline", "receptacles", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "redline_receptacles",
+    "request": {
+      "viewId": 401,
+      "cleanupCreatedElements": false,
+      "placements": [
+        {
+          "exemplarElementId": 301,
+          "hostElementId": 501,
+          "roomSide": "left",
+          "targetChainageFt": 12.5,
+          "matchOrientationFromSource": true,
+          "matchElectricalCircuitFromSource": false,
+          "parameterOverrides": {
+            "Comments": "DEMO REDLINE",
+            "Mark": "R-DEM-01",
+            "Panel": "LP-1",
+            "Circuit Number": "12"
+          }
+        }
+      ],
+      "audit": {
+        "hostCategories": ["OST_Walls"],
+        "hostSearchRadiusFt": 2
+      }
+    },
+    "mock": {
+      "/revit/export-visible-elements:1": {
+        "viewId": 401,
+        "elements": [
+          { "id": 301, "category": "Electrical Fixtures", "type": "Duplex Receptacle" }
+        ]
+      },
+      "/revit/create-similar-from-instance": {
+        "status": "Applied",
+        "createdElementIds": [601],
+        "previewImagePath": "artifacts/demo-readiness/redline/preview_601.png"
+      },
+      "/revit/audit-hosted-instance-placement": {
+        "ok": true,
+        "items": [
+          { "elementId": 601, "visible": true, "hostOk": true, "parametersOk": true, "onRequestedRoomSide": true, "roomSide": "left" }
+        ]
+      },
+      "/revit/export-visible-elements:2": {
+        "viewId": 401,
+        "elements": [
+          { "id": 301, "category": "Electrical Fixtures", "type": "Duplex Receptacle" },
+          { "id": 601, "category": "Electrical Fixtures", "type": "Duplex Receptacle", "mark": "R-DEM-01" }
+        ]
+      }
+    }
+  }
+}

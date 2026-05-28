@@ -1,0 +1,150 @@
+{
+  "discipline": "fire_alarm",
+  "occupancyProfile": "hospital_default",
+  "corridorRules": {
+    "enabled": true,
+    "deviceCategories": [ "notification_strobe" ],
+    "candidateStrategies": [ "corridor_centerline", "corridor_end_offset", "ceiling_host", "corridor_offset" ],
+    "hostPreference": "ceiling",
+    "maxSpacingFt": 45.0,
+    "endOffsetFt": 10.0,
+    "minSeparationFt": 10.0,
+    "minClearanceFt": 2.0
+  },
+  "openAreaRules": {
+    "enabled": true,
+    "useOpenToCorridor": true,
+    "allowMixedBuckets": false,
+    "minRoomsForGroup": 2,
+    "eligibleBuckets": [ "nurse_station", "waiting", "exam_treatment", "office" ]
+  },
+  "roomTypeRules": {
+    "patient_room": {
+      "requireDevice": true,
+      "deviceCategories": [ "notification_strobe" ],
+      "candidateStrategies": [ "room_entry", "wall_host", "room_center" ],
+      "hostPreference": "wall",
+      "groupMode": "room",
+      "maxCoverageAreaFt2": 400.0,
+      "minSeparationFt": 6.0,
+      "minClearanceFt": 1.5
+    },
+    "patient_toilet": {
+      "requireDevice": true,
+      "deviceCategories": [ "notification_strobe" ],
+      "candidateStrategies": [ "room_entry", "wall_host", "room_center" ],
+      "hostPreference": "wall",
+      "groupMode": "room",
+      "maxCoverageAreaFt2": 150.0,
+      "minSeparationFt": 4.0,
+      "minClearanceFt": 1.0
+    },
+    "nurse_station": {
+      "requireDevice": true,
+      "deviceCategories": [ "notification_strobe" ],
+      "candidateStrategies": [ "ceiling_host", "room_center", "wall_host" ],
+      "hostPreference": "ceiling",
+      "groupMode": "open_area",
+      "maxCoverageAreaFt2": 600.0,
+      "minSeparationFt": 8.0,
+      "minClearanceFt": 2.0
+    },
+    "waiting": {
+      "requireDevice": true,
+      "deviceCategories": [ "notification_strobe" ],
+      "candidateStrategies": [ "ceiling_host", "room_center", "wall_host" ],
+      "hostPreference": "ceiling",
+      "groupMode": "open_area",
+      "maxCoverageAreaFt2": 600.0,
+      "minSeparationFt": 8.0,
+      "minClearanceFt": 2.0
+    },
+    "exam_treatment": {
+      "requireDevice": true,
+      "deviceCategories": [ "notification_strobe" ],
+      "candidateStrategies": [ "ceiling_host", "room_center", "wall_host" ],
+      "hostPreference": "ceiling",
+      "groupMode": "room",
+      "maxCoverageAreaFt2": 450.0,
+      "minSeparationFt": 8.0,
+      "minClearanceFt": 1.5
+    },
+    "office": {
+      "requireDevice": true,
+      "deviceCategories": [ "notification_strobe" ],
+      "candidateStrategies": [ "ceiling_host", "room_center", "wall_host" ],
+      "hostPreference": "ceiling",
+      "groupMode": "room",
+      "maxCoverageAreaFt2": 500.0,
+      "minSeparationFt": 8.0,
+      "minClearanceFt": 1.5
+    },
+    "support_room": {
+      "requireDevice": false,
+      "reviewRequired": true,
+      "candidateStrategies": [ "room_center" ],
+      "hostPreference": "ceiling",
+      "groupMode": "room",
+      "maxCoverageAreaFt2": 0.0
+    },
+    "utility_room": {
+      "requireDevice": false,
+      "reviewRequired": true,
+      "candidateStrategies": [ "room_center" ],
+      "hostPreference": "ceiling",
+      "groupMode": "room",
+      "maxCoverageAreaFt2": 0.0
+    },
+    "unknown": {
+      "requireDevice": false,
+      "reviewRequired": true,
+      "candidateStrategies": [ "room_center" ],
+      "hostPreference": "ceiling",
+      "groupMode": "room",
+      "maxCoverageAreaFt2": 0.0
+    }
+  },
+  "notificationDefaults": {
+    "unknownRequiresReview": true,
+    "missingFamilyRequiresReview": true,
+    "noValidCandidatesRequiresReview": true
+  },
+  "detectorDefaults": {
+    "enabled": false,
+    "candidateStrategies": [ "ceiling_host", "room_center" ],
+    "maxCoverageAreaFt2": 700.0,
+    "hostPreference": "ceiling"
+  },
+  "mountingDefaults": {
+    "defaultHostByDeviceCategory": {
+      "notification_strobe": "ceiling",
+      "smoke_detector": "ceiling",
+      "pull_station": "wall"
+    }
+  },
+  "familySymbolPreferences": {
+    "notification_strobe": [ "fire alarm", "strobe", "notification" ],
+    "smoke_detector": [ "fire alarm", "smoke", "detector" ],
+    "pull_station": [ "fire alarm", "pull", "station" ]
+  },
+  "reviewRequiredConditions": [ "unknown_room_type", "missing_family_symbol", "no_valid_candidates", "mixed_open_group" ],
+  "spaceTypeMappings": {
+    "corridor": [ "corridor", "hall" ],
+    "patient_room": [ "patient_room" ],
+    "patient_toilet": [ "toilet_room", "patient_toilet", "shower" ],
+    "nurse_station": [ "nurse_station" ],
+    "waiting": [ "waiting", "lobby" ],
+    "support_room": [ "support_room", "support" ],
+    "exam_treatment": [ "exam_treatment", "treatment", "exam" ],
+    "utility_room": [ "utility_room", "utility", "clean_utility", "soiled_utility" ],
+    "office": [ "office" ]
+  },
+  "candidateScoring": {
+    "preferredStrategyBonus": 25.0,
+    "hostMatchBonus": 20.0,
+    "centeredBonus": 10.0,
+    "entryBonus": 6.0,
+    "corridorBonus": 12.0,
+    "conflictPenaltyWeight": 4.0
+  }
+}
