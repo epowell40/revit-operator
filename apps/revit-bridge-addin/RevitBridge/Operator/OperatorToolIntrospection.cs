@@ -366,6 +366,10 @@ namespace RevitBridge.Operator
                 { "/revit/find-duplicate-marks", typeof(RevitBridge.Handlers.FindDuplicateMarksHandler.Params) },
                 { "/revit/airflow-qa", typeof(RevitBridge.Handlers.AirflowQaHandler.Params) },
                 { "/revit/mep-workflows", typeof(RevitBridge.Handlers.MepWorkflowsHandler.Params) },
+                { "/revit/resolve-mep-routing-context", typeof(RevitBridge.Logic.Handlers.MEP.ResolveMepRoutingContextHandler.Params) },
+                { "/revit/create-mep-route", typeof(RevitBridge.Logic.Handlers.MEP.CreateMepRouteHandler.Params) },
+                { "/revit/connect-mep-branch", typeof(RevitBridge.Logic.Handlers.MEP.ConnectMepBranchHandler.Params) },
+                { "/revit/mep-route-workflow", typeof(RevitBridge.Logic.Handlers.MEP.MepRouteWorkflowHandler.Params) },
                 { "/revit/arch-workflows", typeof(RevitBridge.Handlers.ArchWorkflowsHandler.Params) },
                 { "/revit/trace-connected-network", typeof(RevitBridge.Logic.Handlers.MEP.TraceConnectedNetworkHandler.Params) },
                 { "/revit/find-elements-by-parameter", typeof(RevitBridge.Logic.Handlers.MEP.FindElementsByParameterHandler.Params) },
@@ -846,12 +850,58 @@ namespace RevitBridge.Operator
                         "reveal_hidden_on", "reveal_hidden_off", "hide_elements", "unhide_elements"
                     };
                     enumMap["ruleOperator"] = new[] { "equals", "not_equals", "contains", "not_contains", "begins_with", "ends_with", "greater", "greater_or_equal", "less", "less_or_equal" };
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "annotationCropMarginFeet" } });
+                    notes.Add("set_crop_box accepts annotationCropActive and annotationCropMarginFeet; use them for sheet views so the viewport box does not include distant stray annotations.");
                     notes.Add("create_view_filter supports one-rule parameter filters and immediately applies the filter to the target view.");
                 }
 
                 if (p == "/revit/mep-workflows")
                 {
                     notes.Add("connect_elements_with_duct supports optional ductSize (for example \"8\\\"\" or \"24x12\") to write size on the created segment.");
+                }
+
+                if (p == "/revit/resolve-mep-routing-context")
+                {
+                    enumMap["systemKind"] = new[] { "duct", "pipe" };
+                    enumMap["routingMode"] = new[] { "auto", "above_ceiling", "plenum_midpoint", "level_offset" };
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "defaultOffsetFt", "ceilingOffsetFt", "recommendedElevation.zFt", "level.elevation", "ceiling.bottomZ" } });
+                    notes.Add("Use this before creating MEP redline routes when elevation is missing or likely plan-only.");
+                    notes.Add("Fallback elevations are explicit assumptions in the response; do not hide them from the user.");
+                }
+
+                if (p == "/revit/create-mep-route")
+                {
+                    enumMap["kind"] = new[] { "duct", "pipe" };
+                    enumMap["sizePolicy"] = new[] { "explicit_required", "use_default_with_warning" };
+                    enumMap["elevationPolicy"] = new[] { "explicit_required", "resolve_context_default" };
+                    enumMap["routingMode"] = new[] { "orthogonal", "polyline" };
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "points[*].x", "points[*].y", "points[*].z", "points[*].xyz", "defaultOffsetFt", "ceilingOffsetFt", "totalLengthFt" } });
+                    unitNotes.Add(new { unit = "pixels", fields = new[] { "points[*].xPx", "points[*].yPx" } });
+                    notes.Add("Always dry-run first. If size is omitted, default policy uses 8x8 duct or 1 inch pipe and returns a warning.");
+                    notes.Add("Internal route joints attempt Revit NewElbowFitting first and fall back to Connector.ConnectTo; fitting ids are returned when created.");
+                    notes.Add("Connector verification is conservative: created standalone routes normally report open endpoint connectors until connected to equipment or existing runs.");
+                }
+
+                if (p == "/revit/connect-mep-branch")
+                {
+                    enumMap["kind"] = new[] { "duct", "pipe" };
+                    enumMap["connectionMode"] = new[] { "tee", "tap", "auto" };
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "branchPoints[*].x", "branchPoints[*].y", "branchPoints[*].z", "mainIntersection.distanceToMainFt" } });
+                    notes.Add("Apply is implemented only when branch start is within tolerance of an existing open main connector; the branch snaps to that connector and creates branch segments/fittings.");
+                    notes.Add("Main splitting and tee/tap insertion away from an existing connector remain guarded. Run dry-run first and use nearest-main distance plus connector feasibility to decide the next bounded operation.");
+                }
+
+                if (p == "/revit/mep-route-workflow")
+                {
+                    enumMap["kind"] = new[] { "duct", "pipe" };
+                    enumMap["sizePolicy"] = new[] { "explicit_required", "use_default_with_warning" };
+                    enumMap["elevationPolicy"] = new[] { "explicit_required", "resolve_context_default" };
+                    enumMap["routingMode"] = new[] { "orthogonal", "polyline" };
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "points[*].x", "points[*].y", "points[*].z", "points[*].xyz", "defaultOffsetFt", "ceilingOffsetFt", "focusPaddingFt" } });
+                    unitNotes.Add(new { unit = "pixels", fields = new[] { "points[*].xPx", "points[*].yPx", "imageSize" } });
+                    notes.Add("Execution order is fixed: resolve context, dry-run route, apply route only if dry-run is not blocked, then highlight/export the applied elements for visual review.");
+                    notes.Add("When apply=false the workflow returns DryRunReady and no visual capture because dry-run elements are rolled back.");
+                    notes.Add("When apply=true and visualVerify=true, successful responses include visualVerification.capture.path plus AI review checklist text.");
                 }
 
                 if (p == "/revit/arch-workflows")

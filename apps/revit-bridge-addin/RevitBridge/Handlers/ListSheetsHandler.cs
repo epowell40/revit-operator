@@ -225,6 +225,22 @@ namespace RevitBridge.Handlers
 
                 if (includeViewportGeometry)
                 {
+                    object? viewportType = null;
+                    try
+                    {
+                        var typeId = vp.GetTypeId();
+                        var type = doc.GetElement(typeId) as ElementType;
+                        viewportType = new
+                        {
+                            id = RevitBridge.Common.ElementIdCompat.GetValue(typeId),
+                            name = type?.Name
+                        };
+                    }
+                    catch
+                    {
+                        viewportType = null;
+                    }
+
                     object? box = null;
                     try
                     {
@@ -257,6 +273,7 @@ namespace RevitBridge.Handlers
                     {
                         viewportId = vpid,
                         viewId = key,
+                        viewportType,
                         rotation = vp.Rotation.ToString(),
                         center,
                         box

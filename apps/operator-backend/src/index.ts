@@ -425,6 +425,26 @@ function buildDelegatedBatchPlannerRepairPrompt(originalPrompt: string, malforme
   ].join("\n");
 }
 
+function splitExplicitWorkItemHint(workItemHint: string, maxItems: number): string[] {
+  const hint = trimText(workItemHint, 800)
+    .replace(/[\r\n;]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!hint) return [];
+
+  const marker = /(?:^|(?:\s+(?:and|,)\s+))one\s+(?:work\s+)?item\s+for\s+/i;
+  if (!marker.test(hint)) return [];
+
+  const stripped = hint.replace(/^\s*one\s+(?:work\s+)?item\s+for\s+/i, "");
+  const parts = stripped
+    .split(/\s+(?:and|,)\s+one\s+(?:work\s+)?item\s+for\s+/i)
+    .map(part => trimText(part, 180))
+    .filter(Boolean)
+    .slice(0, Math.max(1, maxItems));
+
+  return parts.length > 1 ? parts : [];
+}
+
 function buildFallbackDelegatedBatchPlan(input: {
   title: string;
   taskPrompt: string;
@@ -435,27 +455,46 @@ function buildFallbackDelegatedBatchPlan(input: {
   const warnings = [trimText(reason, 400)];
   const assistantSnippet = trimText(assistantMessage, 600);
   if (assistantSnippet) warnings.push(`Planner raw response (truncated): ${assistantSnippet}`);
+  const hintedItems = splitExplicitWorkItemHint(input.workItemHint, input.maxItems);
   const label = trimText(input.workItemHint || input.scopeDescription || input.title || "Fallback batch item", 160);
   const planningNote = [
-    "Using a conservative single-item fallback because the delegated batch planner output was invalid or incomplete.",
+    hintedItems.length > 1
+      ? "Using a structured fallback split from the explicit work-item hint because the delegated batch planner output was invalid or incomplete."
+      : "Using a conservative single-item fallback because the delegated batch planner output was invalid or incomplete.",
     input.scopeDescription ? `Scope: ${input.scopeDescription}` : "",
     input.workItemHint ? `Preferred granularity: ${input.workItemHint}` : ""
   ].filter(Boolean).join(" ");
+  const fallbackItems = hintedItems.length > 1
+    ? hintedItems.map((item, index) => ({
+        label: trimText(item, 160) || `Fallback item ${index + 1}`,
+        item_key: `fallback_${index + 1}`,
+        task_prompt: trimText([
+          input.taskPrompt,
+          "",
+          `This fallback work item is limited to: ${item}.`,
+          "Do not perform the other hinted work items except as needed for verification."
+        ].join("\n"), 4000),
+        planning_note: trimText(planningNote, 600),
+        artifact_paths: []
+      }))
+    : [
+        {
+          label: label || "Fallback scope item",
+          item_key: "fallback_scope",
+          task_prompt: input.taskPrompt,
+          planning_note: trimText(planningNote, 600),
+          artifact_paths: []
+        }
+      ];
 
   return {
     title: input.title || "Run a repeated Revit task across a scope",
     planner_summary: "Planner fallback used because the delegated batch plan could not be validated.",
-    strategy_summary: "Run the repeated task as one bounded fallback item instead of failing batch setup outright.",
+    strategy_summary: hintedItems.length > 1
+      ? "Split the repeated task using the explicit work-item hint instead of failing batch setup outright."
+      : "Run the repeated task as one bounded fallback item instead of failing batch setup outright.",
     warnings,
-    work_items: [
-      {
-        label: label || "Fallback scope item",
-        item_key: "fallback_scope",
-        task_prompt: input.taskPrompt,
-        planning_note: trimText(planningNote, 600),
-        artifact_paths: []
-      }
-    ].slice(0, Math.max(1, input.maxItems))
+    work_items: fallbackItems.slice(0, Math.max(1, input.maxItems))
   };
 }
 
@@ -576,6 +615,7 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname === "/config/cloud-upload" ||
     pathname === "/notifications" ||
     pathname === "/voice/transcribe" ||
+    pathname === "/voice/realtime-token" ||
     pathname === "/voice/speak" ||
     pathname === "/desktop/computer/config" ||
     pathname === "/desktop/computer/respond" ||
@@ -1424,6 +1464,115 @@ const server = http.createServer(async (req, res) => {
         text = text.replace(/\s+/g, " ").trim();
         if (!text) return writeJson(res, 200, { text: "", model });
         return writeJson(res, 200, { text, model });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unknown OpenAI error";
+        return writeJson(res, 500, { error: message });
+      }
+    }
+
+    if (req.method === "POST" && url.pathname === "/voice/realtime-token") {
+      const apiKey = resolveOpenAiApiKey();
+      if (!apiKey) return writeJson(res, 400, { error: "OPERATOR_OPENAI_API_KEY (or OPENAI_API_KEY) is not set." });
+
+      const body = await readJson(req, 200_000);
+      const parsed = body as any;
+      if (!parsed || typeof parsed !== "object") return writeJson(res, 400, { error: "Invalid JSON body" });
+
+      const purposeRaw = typeof parsed.purpose === "string" ? parsed.purpose : "transcription";
+      const purpose = purposeRaw.trim().toLowerCase();
+      if (purpose !== "transcription") return writeJson(res, 400, { error: "purpose must be 'transcription'." });
+
+      const modelFromEnv = (process.env.OPERATOR_OPENAI_REALTIME_TRANSCRIBE_MODEL || "").trim();
+      const model = (typeof parsed.model === "string" ? parsed.model : "").trim() || modelFromEnv || "gpt-realtime-whisper";
+
+      const sessionConfigWithTurnDetection = {
+        session: {
+          type: "transcription",
+          audio: {
+            input: {
+              transcription: {
+                model
+              },
+              turn_detection: {
+                type: "server_vad",
+                silence_duration_ms: 650
+              }
+            }
+          }
+        }
+      };
+      const sessionConfigWithoutTurnDetection = {
+        session: {
+          type: "transcription",
+          audio: {
+            input: {
+              transcription: {
+                model
+              }
+            }
+          }
+        }
+      };
+
+      try {
+        const safetyId = auth.principal?.user_id || auth.principal?.license_id || "revit-operator-local";
+        const requestClientSecret = async (sessionConfig: unknown) => fetch("https://api.openai.com/v1/realtime/client_secrets", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+            "OpenAI-Safety-Identifier": safetyId
+          },
+          body: JSON.stringify(sessionConfig)
+        });
+
+        let response = await requestClientSecret(sessionConfigWithTurnDetection);
+        const text = await response.text();
+        let data: any = null;
+        try {
+          data = text ? JSON.parse(text) : null;
+        } catch {
+          data = null;
+        }
+
+        if (!response.ok && /turn[_ -]?detection/i.test(typeof data?.error?.message === "string" ? data.error.message : text)) {
+          response = await requestClientSecret(sessionConfigWithoutTurnDetection);
+          const retryText = await response.text();
+          try {
+            data = retryText ? JSON.parse(retryText) : null;
+          } catch {
+            data = null;
+          }
+          if (!response.ok) {
+            const message =
+              typeof data?.error?.message === "string"
+                ? data.error.message
+                : retryText || `OpenAI realtime token request failed (${response.status}).`;
+            return writeJson(res, response.status, { error: message });
+          }
+        }
+
+        if (!response.ok) {
+          const message =
+            typeof data?.error?.message === "string"
+              ? data.error.message
+              : text || `OpenAI realtime token request failed (${response.status}).`;
+          return writeJson(res, response.status, { error: message });
+        }
+
+        const value =
+          typeof data?.value === "string"
+            ? data.value
+            : typeof data?.client_secret?.value === "string"
+              ? data.client_secret.value
+              : "";
+        if (!value) return writeJson(res, 500, { error: "Realtime token response missing client secret." });
+
+        return writeJson(res, 200, {
+          value,
+          model,
+          expires_at: data?.expires_at ?? data?.client_secret?.expires_at ?? null
+        });
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unknown OpenAI error";
         return writeJson(res, 500, { error: message });
@@ -3524,12 +3673,14 @@ function summarizeToolResult(r: ToolResult): string {
         r.path === "/revit/export-view-frame" ||
         r.path === "/revit/export-view-region" ||
         r.path === "/revit/export-visible-elements" ||
-        r.path === "/revit/highlight-and-export") &&
+        r.path === "/revit/highlight-and-export" ||
+        r.path === "/revit/mep-route-workflow") &&
       r.result_json &&
       typeof r.result_json === "object"
     ) {
       const rr: any = r.result_json;
       if (typeof rr.path === "string") bits.push(`path=${rr.path}`);
+      if (typeof rr?.visualVerification?.capture?.path === "string") bits.push(`path=${rr.visualVerification.capture.path}`);
     }
 
     if (r.path === "/revit/export-visible-elements") {

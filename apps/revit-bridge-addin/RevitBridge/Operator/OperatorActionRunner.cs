@@ -72,6 +72,10 @@ namespace RevitBridge.Operator
                 { "/revit/find-duplicate-marks", new FindDuplicateMarksHandler() },
                 { "/revit/airflow-qa", new AirflowQaHandler() },
                 { "/revit/mep-workflows", new MepWorkflowsHandler() },
+                { "/revit/resolve-mep-routing-context", new ResolveMepRoutingContextHandler() },
+                { "/revit/create-mep-route", new CreateMepRouteHandler() },
+                { "/revit/connect-mep-branch", new ConnectMepBranchHandler() },
+                { "/revit/mep-route-workflow", new MepRouteWorkflowHandler() },
 
                 // MEP / connectivity helpers (read-only)
                 { "/revit/trace-connected-network", new TraceConnectedNetworkHandler() },

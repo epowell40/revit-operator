@@ -50,6 +50,7 @@ namespace RevitBridge.Operator
         private bool _proactivityStarted;
         private OperatorApprovalMode _approvalMode = OperatorApprovalMode.Yolo;
         private string _reasoningEffort = "medium";
+        private JsonNode? _speedSettings = DefaultSpeedSettingsNode();
         private readonly System.Collections.Generic.Dictionary<string, OperatorActionCall> _pendingApprovals =
             new System.Collections.Generic.Dictionary<string, OperatorActionCall>(StringComparer.OrdinalIgnoreCase);
         private readonly System.Collections.Generic.Dictionary<string, OperatorTurnState> _turnByApprovalActionId =
@@ -66,6 +67,11 @@ namespace RevitBridge.Operator
 
         private readonly HashSet<string> _activeChatScreenshareFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static readonly TimeSpan ScreenshareTtl = TimeSpan.FromHours(1);
+
+        private static JsonNode? DefaultSpeedSettingsNode()
+        {
+            return JsonNode.Parse("{\"speed_mode\":true,\"split_planner_executor\":true,\"planner_model\":\"gpt-5.5\",\"planner_reasoning_effort\":\"medium\",\"executor_model\":\"gpt-5.4-mini\",\"executor_reasoning_effort\":\"low\",\"force_planner\":false,\"force_executor\":false,\"context_diet\":true,\"max_recent_turns\":8,\"include_full_revit_state\":false,\"include_screenshot_every_turn\":false,\"verbose_tool_results\":false,\"batch_execution\":false,\"persistent_session_mode\":false}");
+        }
 
         // "Interrupt and continue" support: when the user sends a message during an active tool loop,
         // we cancel the in-flight step and then resume the same turn with this text as the next backend input.
@@ -533,6 +539,15 @@ namespace RevitBridge.Operator
                     }
                     catch { }
 
+                    try
+                    {
+                        if (env.Payload.TryGetProperty("speed_settings", out var ss) && ss.ValueKind == JsonValueKind.Object)
+                        {
+                            _speedSettings = JsonNode.Parse(ss.GetRawText());
+                        }
+                    }
+                    catch { }
+
                     if (!string.IsNullOrWhiteSpace(messageId) && (attachments != null && attachments.Count > 0 || !string.IsNullOrWhiteSpace(text)))
                     {
                         OnChatSend(messageId!, text ?? "", attachments, shareWithAgent, autoOpenLatestAttachment, reasoningEffort);
@@ -783,6 +798,18 @@ namespace RevitBridge.Operator
                     catch (Exception ex)
                     {
                         Ui(() => AppendChat("system", "Open folder failed: " + ex.Message, null));
+                    }
+                }
+                else if (env.Type == "shell.openPath")
+                {
+                    var p = env.Payload.TryGetProperty("path", out var pp) ? pp.GetString() : null;
+                    try
+                    {
+                        OpenAllowedOutputPath(p);
+                    }
+                    catch (Exception ex)
+                    {
+                        Ui(() => AppendChat("system", "Open file failed: " + ex.Message, null));
                     }
                 }
                 else if (env.Type == "file.pick")
@@ -2179,6 +2206,74 @@ namespace RevitBridge.Operator
             Process.Start(psi);
         }
 
+        private static void OpenAllowedOutputPath(string? userPath)
+        {
+            var p = (userPath ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(p)) throw new InvalidOperationException("path is required.");
+
+            try
+            {
+                if (p.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+                {
+                    p = new Uri(p).LocalPath;
+                }
+                else if (p.IndexOf('%') >= 0)
+                {
+                    p = Uri.UnescapeDataString(p);
+                }
+            }
+            catch { }
+
+            var full = Path.GetFullPath(p);
+            if (!IsAllowedOutputPath(full))
+            {
+                throw new UnauthorizedAccessException("path is outside allowed Operator output folders.");
+            }
+            if (!File.Exists(full) && !Directory.Exists(full))
+            {
+                throw new FileNotFoundException("path not found.", full);
+            }
+
+            if (Directory.Exists(full))
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = "\"" + full + "\"",
+                    UseShellExecute = true
+                });
+                return;
+            }
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = full,
+                UseShellExecute = true
+            });
+        }
+
+        private static bool IsAllowedOutputPath(string fullPath)
+        {
+            var roots = new[]
+            {
+                WorkspacePaths.GetWorkspaceRoot(),
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads")
+            };
+            return roots
+                .Where(r => !string.IsNullOrWhiteSpace(r))
+                .Any(r => IsSameOrUnder(fullPath, r));
+        }
+
+        private static bool IsSameOrUnder(string candidate, string root)
+        {
+            var normalizedRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var normalizedCandidate = Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return string.Equals(normalizedCandidate, normalizedRoot, StringComparison.OrdinalIgnoreCase) ||
+                   normalizedCandidate.StartsWith(normalizedRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        }
+
         private async Task HandleVoiceTranscribeAsync(string requestId, string audioBase64, string format)
         {
             try
@@ -2393,6 +2488,7 @@ namespace RevitBridge.Operator
                     {
                         cursor = cursorPacket,
                         reasoning_effort = normalizedReasoningEffort,
+                        speed_settings = SpeedSettingsForContext(),
                         attachment_policy = new { share_with_agent = shareWithAgent, auto_open_latest_attachment = autoOpenLatestAttachment },
                         approval_mode = UiModeString(_approvalMode),
                         native_api_policy = OperatorNativeApiPolicy.GetStatus(),
@@ -4423,6 +4519,7 @@ namespace RevitBridge.Operator
                 var ui = root["ui"] as JsonObject ?? new JsonObject();
                 ui["approval_mode"] = UiModeString(_approvalMode);
                 ui["reasoning_effort"] = NormalizeReasoningEffort(_reasoningEffort);
+                ui["speed_settings"] = CloneJsonNode(_speedSettings);
                 ui["native_api_policy"] = JsonNode.Parse(JsonSerializer.Serialize(OperatorNativeApiPolicy.GetStatus(), OperatorUiProtocol.JsonOptions));
 
                 if (writeGrantStatus == null)
@@ -4449,6 +4546,31 @@ namespace RevitBridge.Operator
             catch
             {
                 return existing;
+            }
+        }
+
+        private object? SpeedSettingsForContext()
+        {
+            try
+            {
+                var node = CloneJsonNode(_speedSettings);
+                return node == null ? null : JsonNodeToObject(node);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static JsonNode? CloneJsonNode(JsonNode? node)
+        {
+            try
+            {
+                return node == null ? null : JsonNode.Parse(node.ToJsonString());
+            }
+            catch
+            {
+                return null;
             }
         }
 

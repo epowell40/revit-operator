@@ -7,6 +7,7 @@ import { maybeBuildZippyBimToolDecision } from "./brains/zippybim_intent.js";
 import { enforceVerificationDisclaimer } from "./verification/titleblock_verify_guard.js";
 import { resolveOpenAiApiKey } from "./openai_client.js";
 import { applyEnvironmentPolicyToActions } from "./environment_profile.js";
+import { maybeRunDeterministicEnlargedPlanSheet } from "./deterministic/enlarged_plan_sheet.js";
 
 function maybeBuildZippyBimToolOpenedAck(req: ChatRequest): ChatResponse | null {
   const text = (req.user_text ?? "").trim();
@@ -60,6 +61,11 @@ export async function decide(req: ChatRequest): Promise<ChatResponse> {
     return finalizeDecision(req, zippyBimAck);
   }
 
+  const enlargedPlanDecision = await maybeRunDeterministicEnlargedPlanSheet(req);
+  if (enlargedPlanDecision) {
+    return finalizeDecision(req, enlargedPlanDecision);
+  }
+
   const forced = (process.env.OPERATOR_BRAIN || "").toLowerCase().trim();
   const hasOpenAiKey = !!resolveOpenAiApiKey();
 
@@ -97,6 +103,19 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks): Pr
     }
     cb.onDone?.(text);
     return finalizeDecision(req, zippyBimAck);
+  }
+
+  const enlargedPlanDecision = await maybeRunDeterministicEnlargedPlanSheet(req);
+  if (enlargedPlanDecision) {
+    const text = enlargedPlanDecision.assistant_message || "";
+    const chunkSize = 60;
+    const delayMs = Math.max(0, Number.parseInt(process.env.OPERATOR_STREAM_DELAY_MS ?? "0", 10) || 0);
+    for (let i = 0; i < text.length; i += chunkSize) {
+      cb.onDelta?.(text.slice(i, i + chunkSize));
+      if (delayMs > 0) await new Promise<void>(resolve => setTimeout(resolve, delayMs));
+    }
+    cb.onDone?.(text);
+    return finalizeDecision(req, enlargedPlanDecision);
   }
 
   const forced = (process.env.OPERATOR_BRAIN || "").toLowerCase().trim();

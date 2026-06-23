@@ -604,6 +604,7 @@ function isRevitVisualEvidencePath(pathName: string): boolean {
     pathName === "/revit/export-image" ||
     pathName === "/revit/export-visible-elements" ||
     pathName === "/revit/highlight-and-export" ||
+    pathName === "/revit/mep-route-workflow" ||
     pathName === "/revit/create-similar-from-instance" ||
     pathName === "/revit/place-family-instance-on-host" ||
     pathName === "/revit/adjust-hosted-instance-on-host"

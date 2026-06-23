@@ -56,6 +56,8 @@ namespace RevitBridge.Handlers
             public string? scopeBoxName { get; set; }
             public Point3? boxMin { get; set; }
             public Point3? boxMax { get; set; }
+            public double? annotationCropMarginFeet { get; set; }
+            public bool? annotationCropActive { get; set; }
             public bool? dryRun { get; set; }
         }
 
@@ -267,6 +269,11 @@ namespace RevitBridge.Handlers
 
                     view.CropBox = newCrop;
                     try { view.CropBoxActive = true; } catch { }
+                    if (p.annotationCropMarginFeet.HasValue || p.annotationCropActive.HasValue)
+                    {
+                        var margin = Math.Max(0, p.annotationCropMarginFeet ?? 0.15);
+                        TrySetAnnotationCrop(view, margin, p.annotationCropActive ?? true);
+                    }
                     return;
                 }
                 case "clear_crop_box":
@@ -1002,6 +1009,47 @@ namespace RevitBridge.Handlers
             catch
             {
                 return false;
+            }
+        }
+
+        private static void TrySetAnnotationCrop(View view, double marginFeet, bool active)
+        {
+            // Revit exposes annotation-crop offsets on the crop-region shape manager in modern versions.
+            // Use reflection so this handler remains loadable if an older API lacks one of these members.
+            TrySetBuiltInIntegerParameter(view, "VIEWER_ANNOTATION_CROP_ACTIVE", active ? 1 : 0);
+
+            object? manager = null;
+            try
+            {
+                manager = view.GetType().GetMethod("GetCropRegionShapeManager", Type.EmptyTypes)?.Invoke(view, null);
+            }
+            catch
+            {
+                manager = null;
+            }
+
+            if (manager == null) return;
+
+            foreach (var propertyName in new[]
+            {
+                "LeftAnnotationCropOffset",
+                "RightAnnotationCropOffset",
+                "TopAnnotationCropOffset",
+                "BottomAnnotationCropOffset"
+            })
+            {
+                try
+                {
+                    var property = manager.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
+                    if (property != null && property.CanWrite)
+                    {
+                        property.SetValue(manager, marginFeet);
+                    }
+                }
+                catch
+                {
+                    // Best effort: some view types/templates do not allow every annotation-crop edge.
+                }
             }
         }
 

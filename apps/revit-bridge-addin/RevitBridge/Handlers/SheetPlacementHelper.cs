@@ -3,11 +3,51 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Electrical;
 
 namespace RevitBridge.Handlers
 {
     internal static class SheetPlacementHelper
     {
+        public sealed class SchedulePlacementPoint
+        {
+            public XYZ Point { get; set; } = XYZ.Zero;
+            public string Strategy { get; set; } = "requested";
+            public object? PreviewBox { get; set; }
+        }
+
+        private sealed class SheetRect
+        {
+            public double MinX { get; set; }
+            public double MinY { get; set; }
+            public double MaxX { get; set; }
+            public double MaxY { get; set; }
+
+            public double Width => Math.Max(0.0, MaxX - MinX);
+            public double Height => Math.Max(0.0, MaxY - MinY);
+        }
+
+        private sealed class PlacementFootprint
+        {
+            public double MinDx { get; set; }
+            public double MinDy { get; set; }
+            public double MaxDx { get; set; }
+            public double MaxDy { get; set; }
+            public double Width => Math.Max(0.0, MaxDx - MinDx);
+            public double Height => Math.Max(0.0, MaxDy - MinDy);
+
+            public SheetRect At(double x, double y)
+            {
+                return new SheetRect
+                {
+                    MinX = x + MinDx,
+                    MinY = y + MinDy,
+                    MaxX = x + MaxDx,
+                    MaxY = y + MaxDy
+                };
+            }
+        }
+
         public static ViewSheet? ResolveSheet(Document doc, long? sheetId, string? sheetNumber, string? sheetQuery, bool exact)
         {
             if (sheetId.HasValue && sheetId.Value > 0)
@@ -92,6 +132,37 @@ namespace RevitBridge.Handlers
                 .FirstOrDefault(ssi => ssi.ScheduleId == scheduleViewId);
         }
 
+        public static List<ScheduleSheetInstance> FindScheduleInstances(Document doc, ElementId scheduleViewId)
+        {
+            return new FilteredElementCollector(doc)
+                .OfClass(typeof(ScheduleSheetInstance))
+                .Cast<ScheduleSheetInstance>()
+                .Where(ssi => ssi.ScheduleId == scheduleViewId)
+                .ToList();
+        }
+
+        public static bool IsPanelScheduleView(View view)
+        {
+            return view is PanelScheduleView || view.ViewType == ViewType.PanelSchedule;
+        }
+
+        public static PanelScheduleSheetInstance? FindPanelScheduleInstanceOnSheet(Document doc, ElementId sheetId, ElementId scheduleViewId)
+        {
+            return new FilteredElementCollector(doc, sheetId)
+                .OfClass(typeof(PanelScheduleSheetInstance))
+                .Cast<PanelScheduleSheetInstance>()
+                .FirstOrDefault(ssi => ssi.ScheduleId == scheduleViewId);
+        }
+
+        public static List<PanelScheduleSheetInstance> FindPanelScheduleInstances(Document doc, ElementId scheduleViewId)
+        {
+            return new FilteredElementCollector(doc)
+                .OfClass(typeof(PanelScheduleSheetInstance))
+                .Cast<PanelScheduleSheetInstance>()
+                .Where(ssi => ssi.ScheduleId == scheduleViewId)
+                .ToList();
+        }
+
         public static bool CanPlaceScheduleOnSheet(Document doc, ElementId sheetId, ElementId scheduleViewId)
         {
             if (sheetId == null || sheetId == ElementId.InvalidElementId) return false;
@@ -104,6 +175,73 @@ namespace RevitBridge.Handlers
             if (view == null || IsTitleblockRevisionSchedule(view)) return false;
 
             return FindScheduleInstanceOnSheet(doc, sheetId, scheduleViewId) == null;
+        }
+
+        public static SchedulePlacementPoint ResolveSchedulePlacementPoint(
+            Document doc,
+            ViewSheet sheet,
+            ElementId scheduleViewId,
+            double? requestedX,
+            double? requestedY,
+            bool avoidOverlap,
+            Element? sampleInstance = null,
+            ElementId? ignoreElementId = null)
+        {
+            var requested = requestedX.HasValue || requestedY.HasValue;
+            var x = requestedX ?? 0.0;
+            var y = requestedY ?? 0.0;
+
+            var footprint = BuildFootprint(sampleInstance, sheet) ?? new PlacementFootprint
+            {
+                MinDx = 0.0,
+                MaxDx = 1.35,
+                MinDy = -0.75,
+                MaxDy = 0.0
+            };
+
+            if (!avoidOverlap && requested)
+            {
+                return BuildPlacementPoint(x, y, "requested", footprint);
+            }
+
+            if (!avoidOverlap && !requested)
+            {
+                var existing = sampleInstance != null ? TryGetPoint(sampleInstance) : null;
+                if (existing != null) return BuildPlacementPoint(existing.X, existing.Y, "source-position", footprint);
+                return BuildPlacementPoint(0.0, 0.0, "default-origin", footprint);
+            }
+
+            var occupied = CollectSheetOccupancy(doc, sheet, ignoreElementId);
+            var start = requested
+                ? new XYZ(x, y, 0)
+                : (sampleInstance != null ? TryGetPoint(sampleInstance) : null);
+            if (start != null && IsPlacementUsable(footprint.At(start.X, start.Y), occupied, sheet))
+            {
+                return BuildPlacementPoint(start.X, start.Y, requested ? "requested-non-overlap" : "source-position-non-overlap", footprint);
+            }
+
+            var o = sheet.Outline;
+            const double margin = 0.18;
+            const double step = 0.22;
+            var usableMinX = o.Min.U + margin;
+            var usableMaxX = o.Max.U - margin;
+            var usableMinY = o.Min.V + margin;
+            var usableMaxY = o.Max.V - margin;
+
+            for (var yCursor = usableMaxY - Math.Max(0.0, footprint.MaxDy); yCursor >= usableMinY - footprint.MinDy; yCursor -= Math.Max(step, footprint.Height + 0.10))
+            {
+                for (var xCursor = usableMinX - footprint.MinDx; xCursor <= usableMaxX - footprint.MaxDx; xCursor += Math.Max(step, footprint.Width + 0.10))
+                {
+                    var rect = footprint.At(xCursor, yCursor);
+                    if (IsPlacementUsable(rect, occupied, sheet))
+                    {
+                        return BuildPlacementPoint(xCursor, yCursor, "auto-non-overlap", footprint);
+                    }
+                }
+            }
+
+            if (start != null) return BuildPlacementPoint(start.X, start.Y, "fallback-source-overlap-possible", footprint);
+            return BuildPlacementPoint(usableMinX - footprint.MinDx, usableMaxY - footprint.MaxDy, "fallback-sheet-corner-overlap-possible", footprint);
         }
 
         public static bool TrySetViewportCenter(Viewport viewport, double x, double y, out string? reason)
@@ -232,6 +370,134 @@ namespace RevitBridge.Handlers
             {
                 return false;
             }
+        }
+
+        private static SchedulePlacementPoint BuildPlacementPoint(double x, double y, string strategy, PlacementFootprint footprint)
+        {
+            var rect = footprint.At(x, y);
+            return new SchedulePlacementPoint
+            {
+                Point = new XYZ(x, y, 0),
+                Strategy = strategy,
+                PreviewBox = new
+                {
+                    minU = rect.MinX,
+                    minV = rect.MinY,
+                    maxU = rect.MaxX,
+                    maxV = rect.MaxY
+                }
+            };
+        }
+
+        private static XYZ? TryGetPoint(Element element)
+        {
+            try
+            {
+                if (element is ScheduleSheetInstance ssi) return ssi.Point;
+                if (element is PanelScheduleSheetInstance psi) return psi.Origin;
+            }
+            catch
+            {
+                return null;
+            }
+            return null;
+        }
+
+        private static PlacementFootprint? BuildFootprint(Element? sampleInstance, ViewSheet sheet)
+        {
+            if (sampleInstance == null) return null;
+            var p = TryGetPoint(sampleInstance);
+            var r = TryGetElementSheetRect(sampleInstance, sheet);
+            if (p == null || r == null) return null;
+            return new PlacementFootprint
+            {
+                MinDx = r.MinX - p.X,
+                MinDy = r.MinY - p.Y,
+                MaxDx = r.MaxX - p.X,
+                MaxDy = r.MaxY - p.Y
+            };
+        }
+
+        private static List<SheetRect> CollectSheetOccupancy(Document doc, ViewSheet sheet, ElementId? ignoreElementId)
+        {
+            var rects = new List<SheetRect>();
+            var ignore = ignoreElementId == null ? (long?)null : RevitBridge.Common.ElementIdCompat.GetValue(ignoreElementId);
+
+            foreach (var vpId in sheet.GetAllViewports())
+            {
+                if (ignore.HasValue && RevitBridge.Common.ElementIdCompat.GetValue(vpId) == ignore.Value) continue;
+                if (doc.GetElement(vpId) is not Viewport vp) continue;
+                try
+                {
+                    var o = vp.GetBoxOutline();
+                    rects.Add(new SheetRect
+                    {
+                        MinX = o.MinimumPoint.X,
+                        MinY = o.MinimumPoint.Y,
+                        MaxX = o.MaximumPoint.X,
+                        MaxY = o.MaximumPoint.Y
+                    });
+                }
+                catch
+                {
+                    // Ignore geometry Revit cannot report.
+                }
+            }
+
+            foreach (var el in new FilteredElementCollector(doc, sheet.Id).OfClass(typeof(ScheduleSheetInstance)).Cast<Element>()
+                .Concat(new FilteredElementCollector(doc, sheet.Id).OfClass(typeof(PanelScheduleSheetInstance)).Cast<Element>()))
+            {
+                if (ignore.HasValue && RevitBridge.Common.ElementIdCompat.GetValue(el.Id) == ignore.Value) continue;
+                var rect = TryGetElementSheetRect(el, sheet);
+                if (rect != null) rects.Add(rect);
+            }
+
+            return rects;
+        }
+
+        private static SheetRect? TryGetElementSheetRect(Element element, ViewSheet sheet)
+        {
+            try
+            {
+                var bb = element.get_BoundingBox(sheet);
+                if (bb == null) return null;
+                return new SheetRect
+                {
+                    MinX = Math.Min(bb.Min.X, bb.Max.X),
+                    MinY = Math.Min(bb.Min.Y, bb.Max.Y),
+                    MaxX = Math.Max(bb.Min.X, bb.Max.X),
+                    MaxY = Math.Max(bb.Min.Y, bb.Max.Y)
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool IsPlacementUsable(SheetRect candidate, List<SheetRect> occupied, ViewSheet sheet)
+        {
+            const double clearance = 0.05;
+            var o = sheet.Outline;
+            if (candidate.MinX < o.Min.U + clearance) return false;
+            if (candidate.MaxX > o.Max.U - clearance) return false;
+            if (candidate.MinY < o.Min.V + clearance) return false;
+            if (candidate.MaxY > o.Max.V - clearance) return false;
+
+            foreach (var rect in occupied)
+            {
+                if (Intersects(candidate, rect, clearance)) return false;
+            }
+
+            return true;
+        }
+
+        private static bool Intersects(SheetRect a, SheetRect b, double clearance)
+        {
+            return a.MinX < b.MaxX + clearance &&
+                   a.MaxX > b.MinX - clearance &&
+                   a.MinY < b.MaxY + clearance &&
+                   a.MaxY > b.MinY - clearance;
         }
     }
 }

@@ -726,7 +726,7 @@
             "action": "list",
             "items": [
               {
-                "name": "Sample_Status",
+                "name": "ClashPilot_Status",
                 "isInstance": true,
                 "categories": [
                   "Doors"
@@ -739,7 +739,7 @@
           "name": "Dry-run create text project parameter",
           "request": {
             "action": "create",
-            "name": "Sample_Status",
+            "name": "ClashPilot_Status",
             "categoryNames": [
               "Doors"
             ],
@@ -751,7 +751,7 @@
             "status": "Dry Run",
             "action": "create",
             "plan": {
-              "name": "Sample_Status",
+              "name": "ClashPilot_Status",
               "categoryCount": 1
             }
           }
@@ -4167,7 +4167,9 @@
               "x": 120,
               "y": 80,
               "z": 0
-            }
+            },
+            "annotationCropActive": true,
+            "annotationCropMarginFeet": 0.15
           },
           "expected_response_shape": {
             "status": "Success",
@@ -5593,6 +5595,45 @@
       "path": "/revit/align-viewports",
       "examples": [
         {
+          "name": "Align floor plan sheets by shared building location",
+          "request": {
+            "dryRun": true,
+            "referenceSheetNumber": "E102",
+            "sheetNumbers": [
+              "E100",
+              "E101",
+              "E102",
+              "E103",
+              "E104",
+              "E105",
+              "E106"
+            ],
+            "primaryOnly": true,
+            "viewNameContains": "POWER PLAN",
+            "options": {
+              "boundaryCheck": true,
+              "boundaryPolicy": "skip",
+              "boundaryMarginInches": 0.125
+            }
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "dryRun": true,
+            "mode": "modelAnchor",
+            "anchorStrategy": "referenceCropCenter",
+            "boundaryCheck": true,
+            "boundaryPolicy": "skip",
+            "modelAnchor": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "moved": [],
+            "errors": []
+          },
+          "notes": "For sheet flipping / stacking floors, omit mode. Sheet-number selectors plus a reference sheet default to model-coordinate alignment from the reference view crop center, so the same building location lands at the same sheet location even when viewport boxes differ. Boundary checking is enabled by default and blocks applies that would push the viewport outline outside the titleblock/sheet usable area; use options.boundaryPolicy:\"warn\" to allow with warnings or \"allow\" only when the user explicitly accepts the risk. Use mode:\"box\" only when the user explicitly wants viewport box centers aligned."
+        },
+        {
           "name": "Dry-run align viewports by model anchor",
           "request": {
             "dryRun": true,
@@ -5972,6 +6013,35 @@
       "path": "/revit/update-panel-parameter",
       "examples": [
         {
+          "name": "Apply a single named panel AIC rating update",
+          "request": {
+            "panelName": "P106/7",
+            "parameterName": "A.I.C. Rating",
+            "value": "10,000",
+            "onlyWhenBlank": false,
+            "targetScope": "panel",
+            "dryRun": false
+          },
+          "expected_response_shape": {
+            "status": "Applied",
+            "dryRun": false,
+            "requestedParameterName": "A.I.C. Rating",
+            "resolvedParameterName": "Short Circuit Rating",
+            "matchedCount": 1,
+            "updatedCount": 1,
+            "verifiedCount": 1,
+            "verificationFailedCount": 0,
+            "panelBuckets": {
+              "changed": [
+                "P106/7"
+              ],
+              "alreadyCorrect": [],
+              "skipped": [],
+              "failed": []
+            }
+          }
+        },
+        {
           "name": "Preflight and apply blank-only panel schedule parameter updates",
           "request": {
             "matchStartsWith": "P",
@@ -6103,6 +6173,218 @@
     },
     {
       "method": "POST",
+      "path": "/revit/resolve-mep-routing-context",
+      "examples": [
+        {
+          "name": "Resolve above-ceiling duct routing context",
+          "request": {
+            "roomNumber": "403",
+            "levelName": "Level 2",
+            "systemKind": "duct",
+            "routingMode": "auto",
+            "ceilingOffsetFt": 1,
+            "dryRun": true
+          },
+          "expected_response_shape": {
+            "status": "Ok",
+            "recommendedElevation": {
+              "zFt": 11,
+              "mode": "above_ceiling",
+              "confidence": "high",
+              "assumption": "Using ceiling bottom + 1 ft."
+            },
+            "warnings": []
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-mep-route",
+      "examples": [
+        {
+          "name": "Dry-run 10x12 duct route with one bend",
+          "request": {
+            "kind": "duct",
+            "levelName": "Level 1",
+            "systemType": "Supply Air",
+            "ductType": "Radius Elbows / Tees",
+            "ductSize": "10x12",
+            "points": [
+              { "x": 0, "y": 0, "z": 10 },
+              { "x": 12, "y": 0, "z": 10 },
+              { "x": 12, "y": 8, "z": 10 }
+            ],
+            "connectSegments": true,
+            "verify": true,
+            "dryRun": true
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "segmentCount": 2,
+            "chosenSize": {
+              "applied": "10x12"
+            },
+            "connectionAttempts": [
+              {
+                "method": "new_elbow_fitting",
+                "connected": true
+              }
+            ]
+          }
+        },
+        {
+          "name": "Dry-run 2 inch domestic cold water pipe route",
+          "request": {
+            "kind": "pipe",
+            "levelName": "Level 1",
+            "systemType": "Domestic Cold Water",
+            "pipeType": "Standard",
+            "diameter": "2",
+            "points": [
+              { "x": 5, "y": 5, "z": 9 },
+              { "x": 20, "y": 5, "z": 9 }
+            ],
+            "dryRun": true
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "kind": "pipe",
+            "segmentCount": 1,
+            "chosenSize": {
+              "applied": "2"
+            }
+          }
+        },
+        {
+          "name": "Dry-run unknown-size duct route with default warning",
+          "request": {
+            "kind": "duct",
+            "roomNumber": "403",
+            "levelName": "Level 2",
+            "sizePolicy": "use_default_with_warning",
+            "points": [
+              { "x": 0, "y": 0 },
+              { "x": 8, "y": 0 }
+            ],
+            "dryRun": true
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "chosenSize": {
+              "applied": "8x8",
+              "usedDefault": true
+            },
+            "warnings": [
+              "Duct size was missing; using conservative placeholder 8x8 inch rectangular duct."
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/connect-mep-branch",
+      "examples": [
+        {
+          "name": "Dry-run branch feasibility against a main duct",
+          "request": {
+            "kind": "duct",
+            "mainElementId": 12345,
+            "branchSize": "8x8",
+            "connectionMode": "auto",
+            "branchPoints": [
+              { "x": 10, "y": 2, "z": 10 },
+              { "x": 10, "y": 12, "z": 10 }
+            ],
+            "dryRun": true
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "scaffoldOnly": true,
+            "mainIntersection": {
+              "distanceToMainFt": 0.2
+            },
+            "existingConnectorFeasibility": {
+              "nearestOpenConnectorFound": true
+            },
+            "recommendedNextImplementationStep": "Safe apply path is available because the branch starts at an existing open main connector."
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/mep-route-workflow",
+      "examples": [
+        {
+          "name": "Dry-run route workflow before applying",
+          "request": {
+            "kind": "duct",
+            "roomNumber": "403",
+            "levelName": "Level 2",
+            "systemType": "Supply Air",
+            "ductSize": "10x12",
+            "points": [
+              { "x": 0, "y": 0 },
+              { "x": 12, "y": 0 },
+              { "x": 12, "y": 8 }
+            ],
+            "apply": false,
+            "visualVerify": true
+          },
+          "expected_response_shape": {
+            "status": "DryRunReady",
+            "executionOrder": [
+              "resolve-routing-context",
+              "dry-run-create-route"
+            ],
+            "dryRun": {
+              "status": "Dry Run",
+              "segmentCount": 2
+            },
+            "visualVerification": {
+              "status": "NotAvailableDryRun"
+            }
+          }
+        },
+        {
+          "name": "Apply route and export focused visual verification",
+          "request": {
+            "kind": "duct",
+            "roomNumber": "403",
+            "levelName": "Level 2",
+            "systemType": "Supply Air",
+            "ductSize": "10x12",
+            "points": [
+              { "x": 0, "y": 0 },
+              { "x": 12, "y": 0 },
+              { "x": 12, "y": 8 }
+            ],
+            "apply": true,
+            "visualVerify": true,
+            "imageSize": 2200,
+            "focusPaddingFt": 4
+          },
+          "expected_response_shape": {
+            "status": "AppliedVisualVerificationReady",
+            "applyResult": {
+              "createdElementIds": [101, 102],
+              "createdFittingIds": [103]
+            },
+            "visualVerification": {
+              "status": "CaptureReadyForAIReview",
+              "capture": {
+                "path": "C:\\\\Users\\\\...\\\\Revit_..._highlight.png"
+              },
+              "aiReviewChecklist": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/create-duct",
       "examples": [
         {
@@ -6180,11 +6462,49 @@
             "endZ": 10,
             "systemType": "Domestic Cold Water",
             "pipeType": "Standard",
+            "diameter": "2",
             "dryRun": true
           },
           "expected_response_shape": {
             "status": "Dry Run",
-            "id": 123
+            "id": 123,
+            "requestedDiameter": "2",
+            "sizeApplied": {
+              "diameter": true
+            }
+          }
+        },
+        {
+          "name": "Create pipe from frame pixel points (dry run)",
+          "request": {
+            "levelName": "Level 1",
+            "frameId": "frame_abc123",
+            "startPoint": {
+              "xPx": 620,
+              "yPx": 410
+            },
+            "endPoint": {
+              "xPx": 980,
+              "yPx": 420
+            },
+            "systemType": "Domestic Cold Water",
+            "pipeType": "Standard",
+            "pipeSize": "1.5",
+            "dryRun": true
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "id": 123,
+            "start": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "end": {
+              "x": 10,
+              "y": 0,
+              "z": 0
+            }
           }
         }
       ]

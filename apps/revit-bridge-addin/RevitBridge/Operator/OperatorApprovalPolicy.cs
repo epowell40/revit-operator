@@ -67,6 +67,10 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/find-duplicate-marks", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/airflow-qa", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/mep-workflows", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/resolve-mep-routing-context", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/create-mep-route", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/connect-mep-branch", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/mep-route-workflow", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/arch-workflows", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/trace-connected-network", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/room_mep_intersect", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;

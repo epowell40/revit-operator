@@ -35,6 +35,7 @@ import { knowledgeBaseOwnerIdForPrincipal, listKnowledgeBaseDocuments, searchKno
 import { formatActiveGoalContext, getActiveGoalForSession } from "../goals/service.js";
 import { formatEnvironmentSummaryForPrompt } from "../environment_profile.js";
 import { AGENT_RESPONSE_STYLE_LINES } from "../agent_response_policy.js";
+import { approxPayloadChars, resolveSpeedSettings, selectSpeedRoute } from "../speed_config.js";
 
 type OpenAiDecision = {
   assistant_message: string;
@@ -339,6 +340,46 @@ function inferImageAttachmentMime(localPath: string): string {
   return ext === ".png" ? "image/png" : "image/jpeg";
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function readNestedString(value: unknown, keys: string[]): string {
+  let cur: unknown = value;
+  for (const key of keys) {
+    const obj = asRecord(cur);
+    if (!obj) return "";
+    cur = obj[key];
+  }
+  return typeof cur === "string" ? cur.trim() : "";
+}
+
+function extractBridgeImageAttachmentPaths(pathname: string, data: unknown): string[] {
+  const p = (pathname ?? "").trim().toLowerCase();
+  const paths: string[] = [];
+  const add = (candidate: string) => {
+    const v = (candidate ?? "").trim();
+    if (v && !paths.includes(v)) paths.push(v);
+  };
+
+  if (
+    p === "/revit/export-view-frame" ||
+    p === "/revit/export-view-region" ||
+    p === "/revit/export-image" ||
+    p === "/revit/export-visible-elements" ||
+    p === "/revit/highlight-and-export"
+  ) {
+    add(readNestedString(data, ["path"]));
+  }
+
+  if (p === "/revit/mep-route-workflow") {
+    add(readNestedString(data, ["visualVerification", "capture", "path"]));
+    add(readNestedString(data, ["visualVerification", "capturePath"]));
+  }
+
+  return paths;
+}
+
 async function callBridgeActionDirect(
   sessionId: string,
   method: "GET" | "POST",
@@ -365,17 +406,13 @@ async function callBridgeActionDirect(
     const data = await requestBridgeJson(method, pathname, body);
     const durationMs = Date.now() - startedAt;
     const attachments: DirectBridgeResult["attachments"] = [];
-    if (pathname === "/revit/export-view-frame" && data && typeof data === "object") {
-      const rawPath = (data as Record<string, unknown>).path;
-      const localPath = typeof rawPath === "string" ? rawPath.trim() : "";
-      if (localPath) {
-        attachments.push({
-          kind: "image",
-          mime: inferImageAttachmentMime(localPath),
-          filename: path.basename(localPath),
-          local_path: localPath
-        });
-      }
+    for (const localPath of extractBridgeImageAttachmentPaths(pathname, data)) {
+      attachments.push({
+        kind: "image",
+        mime: inferImageAttachmentMime(localPath),
+        filename: path.basename(localPath),
+        local_path: localPath
+      });
     }
     try {
       persistence.appendToolOutput(sessionId, {
@@ -1016,6 +1053,7 @@ const READ_ONLY_PATHS = new Set<string>([
   "/revit/rooms",
   "/revit/room-contents",
   "/revit/find-elements",
+  "/revit/resolve-mep-routing-context",
   "/revit/trace-connected-network",
   "/revit/find-elements-by-parameter",
   "/revit/ducts-by-spatial-scope",
@@ -13337,8 +13375,11 @@ function defaultSystemPrompt(): string {
     "- If tool results include element IDs and you need to classify/filter by a parameter, your next action is usually POST /revit/get-parameters with elementIds + names.",
     "- If recent tool results say an element id is missing/not found after an apply, treat that id as stale. Do not keep querying it in a loop; re-resolve the live successor element from the active view, nearby exemplars, or the latest write payload before continuing.",
     "- If a parameter name is unclear, fetch parameters for 1 element/type to discover the correct name, then re-query in batch.",
-    "- For physical printing, prefer POST /revit/print with dryRun:true first to preflight the exact sheets and printer, then dryRun:false only after the intended target is clear. For PDF deliverables, use POST /revit/export-pdf with dryRun/preflight first when the sheet scope is ambiguous; inspect selectedSheets/preflight.outputs, then export with combine=true when the user asks for a single combined PDF and verify returned verification.ok before reporting success.",
+    "- For physical printing, prefer POST /revit/print with dryRun:true first to preflight the exact sheets and printer, then dryRun:false only after the intended target is clear. For PDF deliverables, use POST /revit/export-pdf with dryRun/preflight first when the sheet scope is ambiguous; inspect selectedSheets/preflight.outputs, then export with combine=true when the user asks for a single combined/bound PDF and combine=false when the user asks for individual PDFs. For requested individual naming conventions, set perSheetFileNameTemplate directly (for example \"36478953 - {sheetNumber} - {sheetName}\") rather than exporting default names and copying/renaming afterward. For black-and-white/monochrome output set colorMode:\"BlackLine\"; for grayscale set colorMode:\"Grayscale\"; for color set colorMode:\"Color\". Verify returned verification.ok before reporting success.",
     "- For common sheet categories, prefer /revit/export-pdf sheetGroup values (`power`, `lighting`, `mechanical`, `electrical`, `plumbing`, `cover`, `fire_alarm`) over ad hoc text matching.",
+    "- For creating new sheets, prefer /revit/create-sheet or /revit/create-sheets. Do not manually pick the first titleblock from a list; omit titleBlockId to let the bridge choose the most-used/adjacent titleblock, or provide referenceSheetNumber/titleBlockName when a nearby standard sheet clearly indicates the right titleblock.",
+    "- For aligning plan viewports across sheets so the building matches when flipping sheets, prefer one POST /revit/align-viewports call with sheetNumbers, referenceSheetNumber, primaryOnly:true, and viewNameContains such as \"POWER PLAN\". Let the default model-coordinate anchor align building content even when viewport/crop sizes differ, or provide modelAnchorElementId for a shared stair/core. Boundary checking is on by default; inspect boundaryStatus, blockedByBoundary, and applied before claiming completion, and if a larger/lower-floor viewport would leave the titleblock/sheet boundary, report the skipped sheet or choose a safer layout/crop strategy. Use mode:\"box\" only when the user specifically asks to align viewport boxes. Do not manually chase viewport ids through repeated /revit/sheets or native-api-search loops unless /revit/align-viewports fails with a concrete blocker.",
+    "- For moving regular schedules or panel schedules between sheets, prefer POST /revit/place-view or /revit/place-views with sheetNumber, viewName/viewQuery, moveIfAlreadyPlaced:true, and avoidOverlap:true. Do not fall back to computer-use unless the bridge returns a concrete placement failure.",
     "- For counting sheets, prefer POST /revit/sheets with {\"action\":\"count\"}. Do not infer totals from a limited items list.",
     "- For POST /revit/sheets with action:\"detail\", selectors are singular fields only: sheetNumber OR sheetId OR viewId OR query (not arrays like sheetIds).",
     "- Redline fallback: if /revit/sheets action=detail by sheetNumber returns NotFound, immediately retry action=detail using context.revit.document.activeView.id as viewId when the active view is a sheet.",
@@ -13348,7 +13389,7 @@ function defaultSystemPrompt(): string {
     "- For /revit/get-element-summary: prefer body {\"elementIds\":[123,456]} (legacy {\"ids\":...} may exist).",
     "- For /revit/set-parameter: body {\"changes\":[{\"elementId\":123,\"parameterName\":\"Mark\",\"value\":\"A\"}],\"apply\":true}.",
       "- For repetitive panel schedule parameter tasks like 'find all P* panels and set A.I.C. Rating to 10.000', prefer one POST /revit/update-panel-parameter call over delegated batch jobs when the tool can target the whole set. Treat A.I.C./AIC/interrupting-current wording as the same semantic target as Short Circuit Rating unless project evidence says otherwise.",
-      "- For /revit/update-panel-parameter, run a sample-first preflight/dry-run before applying: include samplePanelName when the user names an example such as P105, includeWritableFields:true when parameter ambiguity is likely, and inspect writePreflight.sample.status, resolvedParameterName, updateCandidateCount, alreadyCorrectCount, panelBuckets, and noChangeAlert. Then apply with onlyWhenBlank:true only when the sample is writable and the dry-run shows the intended panels.",
+      "- For /revit/update-panel-parameter, use dryRun:false for a direct user-requested write when the target is a single exact named panel and the write grant is active; then verify from updatedCount/verifiedCount/readback. Use sample-first dryRun only when the scope is broad/ambiguous (for example all P* panels) or parameter ambiguity is unresolved: include samplePanelName when the user names an example such as P105, includeWritableFields:true when needed, and inspect writePreflight.sample.status, resolvedParameterName, updateCandidateCount, alreadyCorrectCount, panelBuckets, and noChangeAlert before applying.",
       "- After POST /revit/update-panel-parameter or POST /revit/update-parameter-by-query with dryRun=false, treat verifiedCount/updatedCount plus panelBuckets.changed as the real success metric. Do not claim completion from backend status alone.",
       "- If an applied deterministic parameter update returns verificationFailedCount > 0, noChangeAlert:true, status 'No Changes', or 0 verified changes when updates were expected and alreadyCorrectCount does not explain it, treat the deterministic lane as blocked/stale. Report blockedReason clearly, avoid repeating the same write loop blindly, and pivot to a safer recovery or bounded manual/UI fallback path.",
     "- If get-element-summary returns category \"Panel Schedule Graphics\", that is a schedule graphic/annotation. Resolve the real panel first via POST /revit/find-elements with categories:[\"OST_ElectricalEquipment\"] and nameContains from the schedule name, then inspect/set parameters on those panel element ids.",
@@ -13360,14 +13401,14 @@ function defaultSystemPrompt(): string {
     "- For selector queries scoped to a sheet/view, prefer POST /revit/find-elements.",
     "- To fix rooms stopping at an arbitrary height, use POST /revit/align-room-tops-to-ceilings (dry-run first).",
     "- IMPORTANT: Maintain the user's original intent. If the user asked to move/align something, do not stop after exporting an image asking what to verify; continue the workflow until the move is dry-run'd (and applied if requested).",
-    "- UI links: You MAY include markdown links like [label](url). To open a Workspace folder in Windows Explorer, use: [Open folder](op://open-folder?path=artifacts/prints).",
+    "- UI links: You MAY include markdown links like [label](url). For verified PDF/file output, include the exact path and a convenient one-line markdown link when possible, for example [Open PDF](file:///C:/path/file.pdf). Keep the markdown link label and URL on the same line. To open a Workspace folder in Windows Explorer, use: [Open folder](op://open-folder?path=artifacts/prints).",
     "",
     "Web research (host-configured; do not guess):",
     "- You may request web evidence fetches by populating web_requests with URL(s).",
     "- The host will fetch and save evidence under Workspace/evidence/web/** and then re-call you with the extracted text + citations.",
     "- If web research mode is OFF or a domain is blocked, do NOT fabricate; ask the user to paste the relevant excerpt or provide a PDF.",
     "",
-    "Local workbench (interim backend compute/file steps):",
+    "EC2 workbench (interim backend compute/file steps):",
     "- You may request bounded backend work by populating workbench_actions.",
     "- Use workbench_actions for interim planning/calculation/transform steps before proposing final /revit/* actions.",
     "- Keep workbench operations inside Workspace paths. Prefer artifacts/* for generated outputs.",
@@ -13384,6 +13425,7 @@ function defaultSystemPrompt(): string {
     "- If you have a clean-underlay image, include baseline_file_path in gemini_redline_analyze so deterministic diff/crop prepass can focus only changed regions.",
     "- After /revit/export-pdf, prefer result_json.backend_path/backend_paths as baseline_file_path (backend-workspace paths).",
     "- When a sheet candidate is found, call /revit/sheets with action=detail and includeViewportGeometry=true to orient marks to placed views/titleblock.",
+    "- For new sheet/view placement work, completion requires a presentation QC pass: use /revit/sheets detail with viewport geometry, keep viewports inside the drawable sheet area, align related views left/right when they fit, use consistent viewport title types, tighten model/annotation crops so stray annotations do not dominate the viewport box, then export/capture the sheet before reporting success.",
     "- If workbench provides annotated redline preview/crop images, use those visuals to infer per-region intent before proposing write actions.",
     "- For attached redline screenshots/snippets, use image understanding to extract intent anchors such as room number, sheet/view label, panel/circuit text, wall/side, and marked target region. Treat those as planning context; do not expect vision to provide exact Revit pick coordinates before you query native room/view/device geometry.",
     "- If you have region boxes from diff/markup extraction, use workbench action map_sheet_regions with sheetOutline + viewportGeometry/titleBlocks to map each region to viewport/titleblock.",
@@ -13426,7 +13468,7 @@ function defaultSystemPrompt(): string {
     "- Treat sampled inventories as hints only. Prefer the server-provided placement_run_state, placement_work_item, resolved host context, and ranked exemplar candidates over raw inventory dumps.",
     "- For snippet-driven type changes, resolve candidate element IDs first, then use /revit/resolve-element-type or /revit/list-element-types and finally /revit/change-element-type.",
     "- Do not ask whether the attachment changed unless the user explicitly says it changed; default to reusing the session redline anchor and continue execution.",
-    "- For drawing MEP geometry from redlines, /revit/create-duct supports either XYZ points OR frame-linked points (frameId + startPoint/endPoint xPx/yPx) plus ductSize (e.g., \"10x12\" or \"12\").",
+    "- For drawing MEP geometry from redlines, prefer /revit/mep-route-workflow for route creation because it enforces resolve context -> dry-run -> optional apply -> post-change focused visual capture. A single line is two ordered points; connected path segments are one ordered point list. Use apply=false first when still uncertain, then apply=true with visualVerify=true once bounded. Inspect planned points, selected level/type/system, chosen size/elevation, connectionAttempts, createdFittingIds, openConnectorCount, and visualVerification.capture.path. If size/elevation is missing, use conservative defaults with explicit warnings (8x8 duct, 1 inch pipe, resolved routing elevation) instead of silently guessing or stopping before a useful draft. For branch/tee/tap requests, run /revit/connect-mep-branch dry-run first. Apply is only supported when the branch starts at an existing open main connector; do not claim branch/tap completion unless connector/fitting verification passes.",
     "",
     "Request body templates (use these exactly):",
     "- POST /revit/export-visible-elements:",
@@ -13992,8 +14034,24 @@ export async function __testOnlyBuildRedlineExecutionBridgeAsync(args: {
 async function buildPrompt(req: ChatRequest): Promise<string> {
   const history = getHistory(req.session_id);
   const lines: string[] = [];
+  const speedSettings = resolveSpeedSettings(req.context);
 
   lines.push(process.env.OPERATOR_OPENAI_SYSTEM_PROMPT || defaultSystemPrompt());
+  lines.push("");
+  if (speedSettings.speed_mode) {
+    lines.push(
+      `Speed mode: enabled; planner=${speedSettings.planner_model}/${speedSettings.planner_reasoning_effort}; executor=${speedSettings.executor_model}/${speedSettings.executor_reasoning_effort}; context_diet=${speedSettings.context_diet ? "on" : "off"}.`
+    );
+    if (speedSettings.context_diet) {
+      lines.push("Speed mode context diet is active: prefer targeted tool discovery over full registries and avoid unnecessary read-only loops.");
+    }
+    lines.push("");
+  }
+
+  lines.push("Fast Revit edit playbooks:");
+  lines.push("- Parameter edits: resolve the target element ID, read its relevant parameters with POST /revit/get-parameters, then write the exact resolved parameter with POST /revit/set-parameter or a purpose-built updater, then do one targeted readback. Do not guess parameter names when a quick parameter read can resolve them.");
+  lines.push("- For a named electrical panel AIC/SCCR edit, prefer one targeted POST /revit/update-panel-parameter using panelName, parameterName:\"A.I.C. Rating\" or \"Short Circuit Rating\", value, onlyWhenBlank:false, targetScope:\"panel\", dryRun:false when the user asked to make the change and write grant is active; avoid /revit/tool-doc or /revit/tool-examples unless that direct call fails.");
+  lines.push("- Avoid exploratory tool-doc/tool-examples calls for common parameter updates when /revit/find-elements, /revit/get-parameters, /revit/set-parameter, or /revit/update-panel-parameter are already available.");
   lines.push("");
 
   try {
@@ -14176,9 +14234,14 @@ async function buildPrompt(req: ChatRequest): Promise<string> {
       // Avoid bloating prompts with server-only blobs (e.g., web evidence text).
       const base = req.context && typeof req.context === "object" ? { ...(req.context as any) } : req.context;
       if (base && typeof base === "object" && "__server" in (base as any)) delete (base as any).__server;
-      const ctx = JSON.stringify(base);
-      const trimmed = ctx.length > 6000 ? ctx.slice(0, 6000) + "…(truncated)" : ctx;
-      lines.push("Revit context (JSON):");
+      const contextForPrompt =
+        speedSettings.context_diet && !speedSettings.include_full_revit_state
+          ? projectContextForSpeedDiet(base)
+          : base;
+      const maxContextChars = speedSettings.context_diet && !speedSettings.include_full_revit_state ? 2600 : 6000;
+      const ctx = JSON.stringify(contextForPrompt);
+      const trimmed = ctx.length > maxContextChars ? ctx.slice(0, maxContextChars) + "…(truncated)" : ctx;
+      lines.push(speedSettings.context_diet && !speedSettings.include_full_revit_state ? "Revit context (speed diet JSON):" : "Revit context (JSON):");
       lines.push(trimmed);
       lines.push("");
     } catch {
@@ -14307,7 +14370,9 @@ async function buildPrompt(req: ChatRequest): Promise<string> {
   lines.push("- Use POST /ui/open to launch a hosted tool UI when an interactive web UI is the best fit; use POST /ui/close to dismiss it.");
   lines.push("");
 
-  const maxPromptMessages = Math.max(6, Math.min(120, Number.parseInt(process.env.OPERATOR_PROMPT_MAX_MESSAGES ?? "28", 10) || 28));
+  const maxPromptMessages = speedSettings.context_diet
+    ? Math.max(2, Math.min(40, speedSettings.max_recent_turns))
+    : Math.max(6, Math.min(120, Number.parseInt(process.env.OPERATOR_PROMPT_MAX_MESSAGES ?? "28", 10) || 28));
   const recent = history.slice(Math.max(0, history.length - maxPromptMessages));
   const omittedCount = Math.max(0, history.length - recent.length);
   if (omittedCount > 0) {
@@ -14332,7 +14397,7 @@ async function buildPrompt(req: ChatRequest): Promise<string> {
     lines.push("Tool outputs are persisted in run bundles and SQLite; request specific follow-up reads instead of replaying full payloads.");
     lines.push("");
     lines.push("Tool results (reduced JSON; key IDs/fields only):");
-    lines.push(truncateJson(projectToolResultsForPrompt(toolResults), 4500));
+    lines.push(truncateJson(projectToolResultsForPrompt(toolResults), speedSettings.context_diet && !speedSettings.verbose_tool_results ? 2200 : 4500));
     const hints = buildToolLoopHints(toolResults);
     if (hints.length > 0) {
       lines.push("");
@@ -14345,6 +14410,37 @@ async function buildPrompt(req: ChatRequest): Promise<string> {
   if (userText) lines.push(`USER: ${userText}`);
 
   return lines.join("\n");
+}
+
+function projectContextForSpeedDiet(context: unknown): unknown {
+  const ctx = context && typeof context === "object" ? (context as any) : {};
+  const revit = ctx.revit && typeof ctx.revit === "object" ? ctx.revit : {};
+  const document = revit.document && typeof revit.document === "object" ? revit.document : {};
+  const activeView = revit.active_view && typeof revit.active_view === "object" ? revit.active_view : {};
+  const tools = Array.isArray(ctx.capabilities?.tools) ? ctx.capabilities.tools : [];
+  return {
+    ui: ctx.ui ?? null,
+    revit: {
+      document: {
+        title: document.title ?? document.name ?? null,
+        path: document.path ?? document.file_path ?? null,
+        is_workshared: document.is_workshared ?? null
+      },
+      active_view: {
+        id: activeView.id ?? activeView.element_id ?? null,
+        name: activeView.name ?? null,
+        type: activeView.type ?? activeView.view_type ?? null,
+        scale: activeView.scale ?? null
+      }
+    },
+    capabilities: ctx.capabilities
+      ? {
+          contract_version: ctx.capabilities.contract_version ?? ctx.capabilities.version ?? null,
+          tool_count: tools.length,
+          allowlist: ctx.capabilities.allowlist ?? null
+        }
+      : null
+  };
 }
 
 function projectToolResultsForPrompt(toolResults: ToolResult[]): unknown {
@@ -15108,6 +15204,184 @@ function normalizeComputerUseGuardBody(body: Record<string, unknown>): boolean {
   return changed;
 }
 
+function nonEmptyString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeUpdatePanelParameterBody(body: Record<string, unknown>): boolean {
+  let changed = false;
+
+  if (!nonEmptyString(body.parameterName)) {
+    const parameterAlias = nonEmptyString(body.requestedParameterName) || nonEmptyString(body.parameterSemantic);
+    if (parameterAlias) {
+      body.parameterName = parameterAlias;
+      changed = true;
+    }
+  }
+
+  if ("value" in body && typeof body.value !== "string") {
+    body.value = `${body.value ?? ""}`;
+    changed = true;
+  }
+
+  const parameterNameForValue = nonEmptyString(body.parameterName).toLowerCase();
+  const valueText = nonEmptyString(body.value);
+  if (
+    parameterNameForValue === "mcb rating" &&
+    /^\d+(?:\.\d+)?\s*a$/i.test(valueText)
+  ) {
+    body.value = valueText.replace(/\s*a$/i, "");
+    changed = true;
+  }
+
+  const matchExact = nonEmptyString(body.matchExact);
+  const panelName = nonEmptyString(body.panelName);
+  const panelNamePattern = nonEmptyString(body.panelNamePattern);
+  if (matchExact) {
+    if (body.scheduleQuery !== matchExact) {
+      body.scheduleQuery = matchExact;
+      changed = true;
+    }
+    if (body.exact !== true) {
+      body.exact = true;
+      changed = true;
+    }
+  } else if (!nonEmptyString(body.scheduleQuery) && panelName) {
+    body.scheduleQuery = panelName;
+    body.exact = true;
+    changed = true;
+  } else if (!nonEmptyString(body.scheduleQuery) && panelNamePattern) {
+    body.scheduleQuery = panelNamePattern;
+    changed = true;
+  }
+
+  if (!nonEmptyString(body.samplePanelName)) {
+    const sample = nonEmptyString(body.scheduleQuery) || panelName || panelNamePattern || matchExact;
+    if (sample) {
+      body.samplePanelName = sample;
+      changed = true;
+    }
+  }
+
+  if (typeof body.confirm === "boolean") {
+    delete body.confirm;
+    changed = true;
+  }
+  if (typeof body.apply === "boolean") {
+    delete body.apply;
+    changed = true;
+  }
+
+  return changed;
+}
+
+function latestRequiredConfirmForPath(toolResults: ToolResult[], pathName: string): string {
+  const normalizedPath = (pathName ?? "").trim().toLowerCase();
+  for (let i = toolResults.length - 1; i >= 0; i -= 1) {
+    const r = toolResults[i];
+    if (!r || (r.path ?? "").trim().toLowerCase() !== normalizedPath) continue;
+    const result = r.result_json;
+    if (!result || typeof result !== "object") continue;
+    const required = nonEmptyString((result as Record<string, unknown>).requiredConfirm);
+    if (required) return required;
+  }
+  return "";
+}
+
+function latestResolvedSheetElementId(toolResults: ToolResult[]): number | null {
+  for (let i = toolResults.length - 1; i >= 0; i -= 1) {
+    const r = toolResults[i];
+    if (!r || (r.path ?? "").trim().toLowerCase() !== "/revit/sheets") continue;
+    if ((r.status ?? "").trim().toLowerCase() !== "done") continue;
+    const result = r.result_json;
+    if (!result || typeof result !== "object") continue;
+    const row = result as Record<string, unknown>;
+    const action = nonEmptyString(row.action).toLowerCase();
+    if (action && action !== "detail") continue;
+    const id = toFiniteInt(row.sheetElementId) ?? toFiniteInt(row.sheetId) ?? toFiniteInt(row.viewId);
+    if (id !== null && id > 0) return id;
+  }
+  return null;
+}
+
+function normalizeSetParameterBody(body: Record<string, unknown>, toolResults: ToolResult[]): boolean {
+  if (!Array.isArray(body.changes)) return false;
+  let changed = false;
+  const latestSheetId = latestResolvedSheetElementId(toolResults);
+
+  body.changes = body.changes.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+    const row = { ...(entry as Record<string, unknown>) };
+    const parsedElementId = toFiniteInt(row.elementId ?? row.element_id ?? row.id);
+    if (parsedElementId !== null && parsedElementId > 0) {
+      if (row.elementId !== parsedElementId) {
+        row.elementId = parsedElementId;
+        delete row.element_id;
+        changed = true;
+      }
+      return row;
+    }
+
+    const parameterName = nonEmptyString(row.parameterName || row.parameter_name).toLowerCase();
+    const isSheetNameWrite = parameterName === "sheet name" || parameterName === "name";
+    if (isSheetNameWrite && latestSheetId !== null && latestSheetId > 0) {
+      row.elementId = latestSheetId;
+      delete row.element_id;
+      changed = true;
+    }
+    return row;
+  });
+
+  return changed;
+}
+
+function normalizeUpdateParameterByQueryBody(body: Record<string, unknown>, toolResults: ToolResult[]): boolean {
+  let changed = false;
+
+  if ("value" in body && typeof body.value !== "string") {
+    body.value = `${body.value ?? ""}`;
+    changed = true;
+  }
+
+  const query = body.query && typeof body.query === "object" && !Array.isArray(body.query)
+    ? (body.query as Record<string, unknown>)
+    : null;
+  if (query) {
+    const elementType = (nonEmptyString(query.elementType) || nonEmptyString(query.element_type) || nonEmptyString(query.category)).toLowerCase();
+    if (
+      (elementType === "sheets" || elementType === "sheet" || elementType === "viewsheet" || elementType === "view sheets") &&
+      !nonEmptyString(body.category) &&
+      !Array.isArray(body.categories)
+    ) {
+      body.category = "OST_Sheets";
+      changed = true;
+    }
+    delete body.query;
+    changed = true;
+  }
+
+  const categoryText = nonEmptyString(body.category).toLowerCase();
+  if (categoryText === "sheets" || categoryText === "sheet" || categoryText === "viewsheet" || categoryText === "view sheets") {
+    body.category = "OST_Sheets";
+    changed = true;
+  }
+
+  if (typeof body.confirm === "boolean") {
+    delete body.confirm;
+    changed = true;
+  }
+
+  if (!nonEmptyString(body.confirm) && body.dryRun === false) {
+    const requiredConfirm = latestRequiredConfirmForPath(toolResults, "/revit/update-parameter-by-query");
+    if (requiredConfirm) {
+      body.confirm = requiredConfirm;
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
 function objectTreeHasLinkedPlacementBasis(node: unknown, depth = 0): boolean {
   if (depth > 8 || node === null || node === undefined) return false;
   if (typeof node === "string") {
@@ -15242,6 +15516,18 @@ function normalizeNativeRevitActionBodiesForRouting(actions: ActionCall[], toolR
 
     if (pathName === "/revit/computer-use-guard") {
       changed = normalizeComputerUseGuardBody(body) || changed;
+    }
+
+    if (pathName === "/revit/update-panel-parameter") {
+      changed = normalizeUpdatePanelParameterBody(body) || changed;
+    }
+
+    if (pathName === "/revit/update-parameter-by-query") {
+      changed = normalizeUpdateParameterByQueryBody(body, toolResults) || changed;
+    }
+
+    if (pathName === "/revit/set-parameter") {
+      changed = normalizeSetParameterBody(body, toolResults) || changed;
     }
 
     if ((pathName === "/revit/tool-search" || pathName === "/revit/native-api-search") && !("max" in body)) {
@@ -15445,8 +15731,8 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
   }
 
   const client = createOpenAiClient(apiKey);
-  const model = process.env.OPERATOR_OPENAI_MODEL || "gpt-5.5";
-  const reasoningEffort = getRequestedReasoningEffort(req, normalizeReasoningEffort(process.env.OPERATOR_OPENAI_REASONING_EFFORT || "medium", "medium"));
+  const defaultModel = process.env.OPERATOR_OPENAI_MODEL || "gpt-5.5";
+  const defaultReasoningEffort = getRequestedReasoningEffort(req, normalizeReasoningEffort(process.env.OPERATOR_OPENAI_REASONING_EFFORT || "medium", "medium"));
   const textVerbosity = normalizeTextVerbosity(process.env.OPERATOR_OPENAI_TEXT_VERBOSITY || "low", "low");
   const serviceTier = getRequestedServiceTier();
   const maxOutputTokensRaw = (process.env.OPERATOR_OPENAI_MAX_OUTPUT_TOKENS || "").trim();
@@ -15643,14 +15929,49 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
   };
 
   async function callModel(r: ChatRequest): Promise<OpenAiDecision | { error: string }> {
+    const speedSettings = resolveSpeedSettings(r.context);
+    const route = selectSpeedRoute(r, speedSettings, { model: defaultModel, reasoning_effort: defaultReasoningEffort });
+    const promptStartedMs = Date.now();
+    const input = await buildInput(r);
+    const promptBuildMs = Date.now() - promptStartedMs;
+    const inputChars = approxPayloadChars(input);
+    try {
+      appendEvent(r.session_id, "assistant", "speed.route", {
+        route: route.route,
+        reason: route.reason,
+        model: route.model,
+        reasoning_effort: route.reasoning_effort,
+        speed_mode: speedSettings.speed_mode,
+        context_diet: speedSettings.context_diet,
+        prompt_build_ms: promptBuildMs,
+        input_chars: inputChars
+      });
+      if (speedSettings.speed_mode) {
+        appendNotification(
+          r.session_id,
+          "speed.route",
+          `Speed route=${route.route}, model=${route.model}, effort=${route.reasoning_effort}, prompt=${inputChars} chars, build=${promptBuildMs}ms`,
+          {
+            route: route.route,
+            reason: route.reason,
+            model: route.model,
+            reasoning_effort: route.reasoning_effort,
+            prompt_build_ms: promptBuildMs,
+            input_chars: inputChars
+          }
+        );
+      }
+    } catch {
+      // ignore speed telemetry errors
+    }
     const requestBody: any = {
-      model,
+      model: route.model,
       reasoning: {
-        effort: reasoningEffort
+        effort: route.reasoning_effort
       },
       ...(serviceTier ? { service_tier: serviceTier } : {}),
       ...(Number.isFinite(maxOutputTokens) && maxOutputTokens > 0 ? { max_output_tokens: maxOutputTokens } : {}),
-      input: await buildInput(r),
+      input,
       text: {
         verbosity: textVerbosity,
         format: {
@@ -15662,6 +15983,7 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
       }
     };
     let response: any;
+    const requestStartedMs = Date.now();
     try {
       if (abortSignal) {
         const stream = client.responses.stream(requestBody, { signal: abortSignal });
@@ -15673,6 +15995,7 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
       const message = err instanceof Error ? err.message : "Unknown OpenAI error";
       return { error: `Operator backend error while calling the model: ${message}` };
     }
+    const modelLatencyMs = Date.now() - requestStartedMs;
 
     const rawOutputText = extractResponsesApiOutputText(response);
 
@@ -15720,19 +16043,31 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
       const outputTokens = Number.isFinite(usage?.output_tokens) ? Number(usage.output_tokens) : null;
       const totalTokens = Number.isFinite(usage?.total_tokens) ? Number(usage.total_tokens) : null;
       if (openAiUsageNotificationsEnabled()) {
-        appendNotification(req.session_id, "openai.usage", `OpenAI usage: model=${model}${inputTokens !== null ? `, in=${inputTokens}` : ""}${outputTokens !== null ? `, out=${outputTokens}` : ""}${totalTokens !== null ? `, total=${totalTokens}` : ""}`, {
-          model,
+        appendNotification(req.session_id, "openai.usage", `OpenAI usage: model=${route.model}${inputTokens !== null ? `, in=${inputTokens}` : ""}${outputTokens !== null ? `, out=${outputTokens}` : ""}${totalTokens !== null ? `, total=${totalTokens}` : ""}`, {
+          model: route.model,
           input_tokens: inputTokens,
           output_tokens: outputTokens,
           total_tokens: totalTokens
         });
         appendEvent(req.session_id, "assistant", "openai.usage", {
-          model,
+          model: route.model,
           input_tokens: inputTokens,
           output_tokens: outputTokens,
           total_tokens: totalTokens
         });
       }
+      appendEvent(req.session_id, "assistant", "speed.timing", {
+        route: route.route,
+        reason: route.reason,
+        model: route.model,
+        reasoning_effort: route.reasoning_effort,
+        prompt_build_ms: promptBuildMs,
+        model_latency_ms: modelLatencyMs,
+        input_chars: inputChars,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        total_tokens: totalTokens
+      });
     } catch {
       // ignore usage telemetry errors
     }
