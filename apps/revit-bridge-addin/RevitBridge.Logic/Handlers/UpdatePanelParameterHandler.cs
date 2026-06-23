@@ -26,10 +26,15 @@ namespace RevitBridge.Logic.Handlers
             public string? scheduleQuery { get; set; }
             public string? matchStartsWith { get; set; }
             public string? matchContains { get; set; }
+            public string? panelName { get; set; }
+            public string? panelNamePattern { get; set; }
+            public string? matchExact { get; set; }
             public bool? exact { get; set; }
             public int? max { get; set; }
 
             public string? parameterName { get; set; }
+            public string? requestedParameterName { get; set; }
+            public string? parameterSemantic { get; set; }
             public string? value { get; set; }
             public bool? onlyWhenBlank { get; set; }
             public string? targetScope { get; set; } // auto | panel | schedule
@@ -57,6 +62,7 @@ namespace RevitBridge.Logic.Handlers
             var p = string.IsNullOrWhiteSpace(jsonData)
                 ? new Params()
                 : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
+            NormalizeAliases(p);
 
             var parameterName = $"{p.parameterName ?? ""}".Trim();
             if (parameterName.Length == 0) throw new InvalidOperationException("update-panel-parameter.parameterName is required.");
@@ -417,6 +423,37 @@ namespace RevitBridge.Logic.Handlers
                 .OrderBy(x => x.ScheduleName, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(x => x.PanelLabel, StringComparer.OrdinalIgnoreCase)
                 .ToList();
+        }
+
+        private static void NormalizeAliases(Params p)
+        {
+            if (p == null) return;
+
+            if (string.IsNullOrWhiteSpace(p.parameterName))
+            {
+                if (!string.IsNullOrWhiteSpace(p.requestedParameterName)) p.parameterName = p.requestedParameterName;
+                else if (!string.IsNullOrWhiteSpace(p.parameterSemantic)) p.parameterName = p.parameterSemantic;
+            }
+
+            if (!string.IsNullOrWhiteSpace(p.matchExact))
+            {
+                p.scheduleQuery = p.matchExact;
+                p.exact = true;
+            }
+            else if (string.IsNullOrWhiteSpace(p.scheduleQuery) && !string.IsNullOrWhiteSpace(p.panelName))
+            {
+                p.scheduleQuery = p.panelName;
+                p.exact = true;
+            }
+            else if (string.IsNullOrWhiteSpace(p.scheduleQuery) && !string.IsNullOrWhiteSpace(p.panelNamePattern))
+            {
+                p.scheduleQuery = p.panelNamePattern;
+            }
+
+            if (string.IsNullOrWhiteSpace(p.samplePanelName))
+            {
+                p.samplePanelName = p.scheduleQuery ?? p.panelName ?? p.panelNamePattern ?? p.matchExact;
+            }
         }
 
         private static bool TryMatchSchedule(

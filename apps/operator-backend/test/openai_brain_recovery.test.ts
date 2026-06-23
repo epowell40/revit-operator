@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   __testOnlyBuildCapabilityRecoveryResponse,
-  __testOnlyExtractResponsesApiOutputText
+  __testOnlyExtractResponsesApiOutputText,
+  __testOnlyNormalizeNativeRevitActionBodiesForRouting
 } from "../src/brains/openai_brain.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest } from "../src/contracts.js";
 import { getCodexBaseInstructionsForTest } from "../src/brains/codex_brain.js";
@@ -105,4 +106,165 @@ test("codex instructions explicitly tell the sidecar not to stop at missing comm
 test("responses api text extraction still exports a compact helper", () => {
   const extracted = __testOnlyExtractResponsesApiOutputText({ output_text: "ok" });
   assert.equal(extracted, "ok");
+});
+
+test("update-panel-parameter aliases are normalized before Revit routing", () => {
+  const [action] = __testOnlyNormalizeNativeRevitActionBodiesForRouting(
+    [
+      {
+        action_id: "a1",
+        method: "POST",
+        path: "/revit/update-panel-parameter",
+        body: {
+          panelName: "P106/7",
+          parameterSemantic: "A.I.C. Rating",
+          value: "10,000",
+          dryRun: false,
+          apply: true,
+          confirm: true
+        }
+      }
+    ],
+    []
+  );
+
+  assert.equal((action?.body as any)?.scheduleQuery, "P106/7");
+  assert.equal((action?.body as any)?.exact, true);
+  assert.equal((action?.body as any)?.samplePanelName, "P106/7");
+  assert.equal((action?.body as any)?.parameterName, "A.I.C. Rating");
+  assert.equal("apply" in ((action?.body as any) ?? {}), false);
+  assert.equal("confirm" in ((action?.body as any) ?? {}), false);
+});
+
+test("update-panel-parameter numeric MCB values are normalized before Revit routing", () => {
+  const [withUnitAction, numericAction] = __testOnlyNormalizeNativeRevitActionBodiesForRouting(
+    [
+      {
+        action_id: "a1",
+        method: "POST",
+        path: "/revit/update-panel-parameter",
+        body: {
+          panelName: "P105",
+          parameterName: "MCB Rating",
+          value: "400 A",
+          dryRun: false
+        }
+      },
+      {
+        action_id: "a2",
+        method: "POST",
+        path: "/revit/update-panel-parameter",
+        body: {
+          panelName: "P106",
+          parameterName: "MCB Rating",
+          value: 400,
+          dryRun: false
+        }
+      }
+    ],
+    []
+  );
+
+  assert.equal((withUnitAction?.body as any)?.value, "400");
+  assert.equal((numericAction?.body as any)?.value, "400");
+});
+
+test("update-parameter-by-query normalizes sheet query aliases and boolean confirms", () => {
+  const [action] = __testOnlyNormalizeNativeRevitActionBodiesForRouting(
+    [
+      {
+        action_id: "a1",
+        method: "POST",
+        path: "/revit/update-parameter-by-query",
+        body: {
+          query: { elementType: "Sheets" },
+          parameterName: "Checked By",
+          value: "EDP",
+          dryRun: false,
+          apply: true,
+          confirm: true
+        }
+      }
+    ],
+    []
+  );
+
+  assert.equal((action?.body as any)?.category, "OST_Sheets");
+  assert.equal("query" in ((action?.body as any) ?? {}), false);
+  assert.equal("confirm" in ((action?.body as any) ?? {}), false);
+});
+
+test("update-parameter-by-query carries forward required bulk confirmation", () => {
+  const [action] = __testOnlyNormalizeNativeRevitActionBodiesForRouting(
+    [
+      {
+        action_id: "a1",
+        method: "POST",
+        path: "/revit/update-parameter-by-query",
+        body: {
+          category: "Sheets",
+          parameterName: "Checked By",
+          value: "EDP",
+          dryRun: false,
+          apply: true
+        }
+      }
+    ],
+    [
+      {
+        action_id: "prior",
+        method: "POST",
+        path: "/revit/update-parameter-by-query",
+        status: "done",
+        result_json: {
+          ok: false,
+          code: "bulk_confirm_required",
+          requiredConfirm: "APPLY 26 CHANGES"
+        }
+      }
+    ] as any
+  );
+
+  assert.equal((action?.body as any)?.category, "OST_Sheets");
+  assert.equal((action?.body as any)?.confirm, "APPLY 26 CHANGES");
+});
+
+test("set-parameter fills sheet name element id from prior sheet detail", () => {
+  const [action] = __testOnlyNormalizeNativeRevitActionBodiesForRouting(
+    [
+      {
+        action_id: "sheet_update",
+        method: "POST",
+        path: "/revit/set-parameter",
+        body: {
+          changes: [
+            {
+              elementId: null,
+              parameterName: "Sheet Name",
+              value: "ELECTRICAL COVER SHEET"
+            }
+          ],
+          apply: true
+        }
+      }
+    ],
+    [
+      {
+        action_id: "sheet_detail",
+        method: "POST",
+        path: "/revit/sheets",
+        status: "done",
+        result_json: {
+          status: "Ok",
+          action: "detail",
+          sheetElementId: 1709383,
+          sheetId: 1709383,
+          sheetNumber: "E000",
+          sheetName: "COVER SHEET"
+        }
+      }
+    ] as any
+  );
+
+  assert.equal((action?.body as any)?.changes?.[0]?.elementId, 1709383);
 });

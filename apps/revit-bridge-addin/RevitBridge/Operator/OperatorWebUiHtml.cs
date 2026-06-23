@@ -670,6 +670,32 @@ namespace RevitBridge.Operator
                 <option value=""xhigh"">Max</option>
               </select>
             </div>
+            <div class=""controlRow controlRowPolicies"">
+              <label class=""policy"" title=""Route simple commands through the fast executor model."">
+                <span>Speed:</span>
+                <input id=""speedMode"" type=""checkbox"">
+              </label>
+              <label class=""policy"" title=""Send a smaller Revit context and shorter tool summaries."">
+                <span>Diet:</span>
+                <input id=""speedDiet"" type=""checkbox"">
+              </label>
+            </div>
+            <div class=""controlRow controlRowPolicies"">
+              <div class=""policy"">
+                <span>Planner:</span>
+                <select id=""speedPlanner"" title=""Model for ambiguous, visual, failed, or planning-heavy turns."">
+                  <option value=""gpt-5.5"" selected>GPT-5.5</option>
+                  <option value=""gpt-5.4-mini"">5.4 mini</option>
+                </select>
+              </div>
+              <div class=""policy"">
+                <span>Exec:</span>
+                <select id=""speedExecutor"" title=""Model for direct commands and tool-loop continuations."">
+                  <option value=""gpt-5.4-mini"" selected>5.4 mini</option>
+                  <option value=""gpt-5.5"">GPT-5.5</option>
+                </select>
+              </div>
+            </div>
             <div id=""runStatus"" class=""statusPill tone-neutral"" title=""Current run status"">
               <span id=""runStatusLabel"">Idle</span>
               <span class=""statusDots"" aria-hidden=""true""><span></span><span></span><span></span></span>
@@ -842,6 +868,10 @@ namespace RevitBridge.Operator
       const policySel = document.getElementById('policy');
       const nativeApiPolicySel = document.getElementById('nativeApiPolicy');
       const reasoningSel = document.getElementById('reasoning');
+      const speedModeEl = document.getElementById('speedMode');
+      const speedDietEl = document.getElementById('speedDiet');
+      const speedPlannerEl = document.getElementById('speedPlanner');
+      const speedExecutorEl = document.getElementById('speedExecutor');
       const newChatBtn = document.getElementById('newChat');
       const runStatusEl = document.getElementById('runStatus');
       const runStatusLabelEl = document.getElementById('runStatusLabel');
@@ -1071,6 +1101,34 @@ namespace RevitBridge.Operator
         return 'medium';
       }
 
+      function normalizeSpeedModel(value, fallback) {
+        const v = (value || '').toString().trim();
+        if (v === 'gpt-5.5' || v === 'gpt-5.4-mini') return v;
+        return fallback;
+      }
+
+      function getSpeedSettings() {
+        const speedMode = !!(speedModeEl && speedModeEl.checked);
+        const contextDiet = !!(speedDietEl ? speedDietEl.checked : true);
+        return {
+          speed_mode: speedMode,
+          split_planner_executor: true,
+          planner_model: normalizeSpeedModel(speedPlannerEl ? speedPlannerEl.value : '', 'gpt-5.5'),
+          planner_reasoning_effort: 'medium',
+          executor_model: normalizeSpeedModel(speedExecutorEl ? speedExecutorEl.value : '', 'gpt-5.4-mini'),
+          executor_reasoning_effort: 'low',
+          force_planner: false,
+          force_executor: false,
+          context_diet: contextDiet,
+          max_recent_turns: 8,
+          include_full_revit_state: !contextDiet,
+          include_screenshot_every_turn: false,
+          verbose_tool_results: !contextDiet,
+          batch_execution: false,
+          persistent_session_mode: false
+        };
+      }
+
       function setRunStatus(text, tone, busy) {
         if (!runStatusEl || !runStatusLabelEl) return;
         setToneClass(runStatusEl, tone || 'neutral');
@@ -1142,7 +1200,7 @@ namespace RevitBridge.Operator
       }
 
       function parseMarkdownLinks(text) {
-        // Minimal parser: [label](url)
+        // Minimal parser: [label](url), tolerant of line wraps between ] and (.
         const out = [];
         const s = (text || '').toString();
         let i = 0;
@@ -1150,9 +1208,14 @@ namespace RevitBridge.Operator
           const lb = s.indexOf('[', i);
           if (lb < 0) { out.push({ t: 'text', v: s.slice(i) }); break; }
           const rb = s.indexOf(']', lb + 1);
-          const lp = rb >= 0 ? s.indexOf('(', rb + 1) : -1;
+          let lp = -1;
+          if (rb >= 0) {
+            let k = rb + 1;
+            while (k < s.length && /\s/.test(s[k])) k++;
+            if (s[k] === '(') lp = k;
+          }
           const rp = lp >= 0 ? s.indexOf(')', lp + 1) : -1;
-          const isLink = rb >= 0 && lp === rb + 1 && rp >= 0;
+          const isLink = rb >= 0 && lp >= 0 && rp >= 0;
 
           if (!isLink) {
             out.push({ t: 'text', v: s.slice(i, lb + 1) });
@@ -1162,7 +1225,7 @@ namespace RevitBridge.Operator
 
           if (lb > i) out.push({ t: 'text', v: s.slice(i, lb) });
           const label = s.slice(lb + 1, rb);
-          const url = s.slice(lp + 1, rp);
+          const url = s.slice(lp + 1, rp).trim();
           out.push({ t: 'link', label, url });
           i = rp + 1;
         }
@@ -1269,6 +1332,10 @@ namespace RevitBridge.Operator
               return true;
             }
           }
+          if (proto === 'file:') {
+            post('shell.openPath', { path: raw });
+            return true;
+          }
         } catch { }
 
         // Fallback for unescaped spaces / non-URL-safe characters.
@@ -1282,6 +1349,10 @@ namespace RevitBridge.Operator
             if (amp >= 0) tail = tail.slice(0, amp);
             const p = decodeURIComponent(tail.replace(/\+/g, ' '));
             post('shell.openFolder', { path: p });
+            return true;
+          }
+          if (lower.startsWith('file:///')) {
+            post('shell.openPath', { path: raw });
             return true;
           }
         } catch { }
@@ -2360,7 +2431,7 @@ namespace RevitBridge.Operator
         const reasoningEffort = normalizeReasoningValue(reasoningSel ? reasoningSel.value : readStringPref('op.reasoningEffort', 'medium'));
         pendingAttachments = [];
         renderAttachStrip();
-        post('chat.send', { messageId, text, attachments, attachment_policy: policy, reasoning_effort: reasoningEffort });
+        post('chat.send', { messageId, text, attachments, attachment_policy: policy, reasoning_effort: reasoningEffort, speed_settings: getSpeedSettings() });
       }
 
       attachBtn.addEventListener('click', () => {
@@ -2435,6 +2506,42 @@ namespace RevitBridge.Operator
           post('reasoning.set', { effort });
         });
         post('reasoning.set', { effort: normalizeReasoningValue(reasoningSel.value) });
+      }
+      if (speedModeEl) {
+        try {
+          if (localStorage.getItem('op.speedDefaultsVersion') !== 'speed-on-54mini-v1') {
+            localStorage.setItem('op.speedMode', '1');
+            localStorage.setItem('op.speedDiet', '1');
+            localStorage.setItem('op.speedExecutor', 'gpt-5.4-mini');
+            localStorage.setItem('op.speedDefaultsVersion', 'speed-on-54mini-v1');
+          }
+        } catch {}
+        try { speedModeEl.checked = readBoolPref('op.speedMode', true); } catch {}
+        speedModeEl.addEventListener('change', () => {
+          writeBoolPref('op.speedMode', !!speedModeEl.checked);
+          if (speedModeEl.checked && speedDietEl && !speedDietEl.checked) {
+            speedDietEl.checked = true;
+            writeBoolPref('op.speedDiet', true);
+          }
+        });
+      }
+      if (speedDietEl) {
+        try { speedDietEl.checked = readBoolPref('op.speedDiet', true); } catch {}
+        speedDietEl.addEventListener('change', () => writeBoolPref('op.speedDiet', !!speedDietEl.checked));
+      }
+      if (speedPlannerEl) {
+        try { speedPlannerEl.value = normalizeSpeedModel(readStringPref('op.speedPlanner', 'gpt-5.5'), 'gpt-5.5'); } catch {}
+        speedPlannerEl.addEventListener('change', () => {
+          speedPlannerEl.value = normalizeSpeedModel(speedPlannerEl.value, 'gpt-5.5');
+          writeStringPref('op.speedPlanner', speedPlannerEl.value);
+        });
+      }
+      if (speedExecutorEl) {
+        try { speedExecutorEl.value = normalizeSpeedModel(readStringPref('op.speedExecutor', 'gpt-5.4-mini'), 'gpt-5.4-mini'); } catch {}
+        speedExecutorEl.addEventListener('change', () => {
+          speedExecutorEl.value = normalizeSpeedModel(speedExecutorEl.value, 'gpt-5.4-mini');
+          writeStringPref('op.speedExecutor', speedExecutorEl.value);
+        });
       }
 
       sendBtn.addEventListener('click', onSend);

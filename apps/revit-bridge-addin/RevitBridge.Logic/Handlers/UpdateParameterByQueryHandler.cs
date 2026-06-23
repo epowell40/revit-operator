@@ -29,6 +29,7 @@ namespace RevitBridge.Logic.Handlers
             public List<string>? matchParameterNames { get; set; }
             public string? familyNameContains { get; set; }
             public string? typeNameContains { get; set; }
+            public Dictionary<string, JsonElement>? query { get; set; }
 
             public string? parameterName { get; set; }
             public string? value { get; set; }
@@ -36,13 +37,14 @@ namespace RevitBridge.Logic.Handlers
 
             public bool? apply { get; set; }
             public bool? dryRun { get; set; }
-            public string? confirm { get; set; }
+            public object? confirm { get; set; }
             public int? limit { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
         {
             var p = string.IsNullOrWhiteSpace(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
+            ApplyQueryAliases(p);
             var parameterName = $"{p.parameterName ?? ""}".Trim();
             if (parameterName.Length == 0) throw new InvalidOperationException("update-parameter-by-query.parameterName is required.");
 
@@ -179,12 +181,13 @@ namespace RevitBridge.Logic.Handlers
 
             const int ConfirmThreshold = 25;
             var requestedUpdateCount = updateTargets.Count;
-            var confirmReceived = BulkConfirmUtil.Normalize(p.confirm);
+            var confirmText = CoerceConfirmText(p.confirm);
+            var confirmReceived = BulkConfirmUtil.Normalize(confirmText);
             string? requiredConfirm = null;
             if (apply && requestedUpdateCount > ConfirmThreshold)
             {
                 requiredConfirm = BulkConfirmUtil.ExpectedApplyChanges(requestedUpdateCount);
-                if (!BulkConfirmUtil.EqualsNormalized(p.confirm, requiredConfirm))
+                if (!BulkConfirmUtil.EqualsNormalized(confirmText, requiredConfirm))
                 {
                     throw new OperatorToolUserErrorException(
                         message: "Bulk query-based parameter update requires typed confirmation.",
@@ -374,6 +377,71 @@ namespace RevitBridge.Logic.Handlers
                 rows,
                 warnings
             });
+        }
+
+        private static void ApplyQueryAliases(Params p)
+        {
+            if (p == null) return;
+            if (string.IsNullOrWhiteSpace(p.category) && (p.categories == null || p.categories.Count == 0) && p.query != null)
+            {
+                var elementType = ReadQueryString(p.query, "elementType")
+                    ?? ReadQueryString(p.query, "element_type")
+                    ?? ReadQueryString(p.query, "category");
+                if (IsSheetsAlias(elementType))
+                {
+                    p.category = "OST_Sheets";
+                }
+            }
+
+            if (IsSheetsAlias(p.category))
+            {
+                p.category = "OST_Sheets";
+            }
+        }
+
+        private static string? ReadQueryString(Dictionary<string, JsonElement> query, string key)
+        {
+            if (query == null || !query.TryGetValue(key, out var value)) return null;
+            try
+            {
+                return value.ValueKind == JsonValueKind.String ? value.GetString() : value.ToString();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool IsSheetsAlias(string? value)
+        {
+            var text = $"{value ?? ""}".Trim().ToLowerInvariant();
+            return text == "sheets" || text == "sheet" || text == "viewsheet" || text == "view sheets";
+        }
+
+        private static string? CoerceConfirmText(object? confirm)
+        {
+            if (confirm == null) return null;
+            if (confirm is string s) return s;
+            if (confirm is bool b) return b ? "true" : "false";
+            if (confirm is JsonElement el)
+            {
+                try
+                {
+                    return el.ValueKind switch
+                    {
+                        JsonValueKind.String => el.GetString(),
+                        JsonValueKind.True => "true",
+                        JsonValueKind.False => "false",
+                        JsonValueKind.Number => el.GetRawText(),
+                        _ => null
+                    };
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+            return $"{confirm}".Trim();
         }
 
         private static bool TryMatchElement(Document doc, Element element, Params p, out string label, out string? matchSource, out string? familyName, out string? typeName)

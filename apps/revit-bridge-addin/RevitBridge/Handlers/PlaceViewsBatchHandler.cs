@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Electrical;
 using Autodesk.Revit.UI;
 
 namespace RevitBridge.Handlers
@@ -25,6 +26,7 @@ namespace RevitBridge.Handlers
             public double? x { get; set; }
             public double? y { get; set; }
             public bool? moveIfAlreadyPlaced { get; set; }
+            public bool? avoidOverlap { get; set; }
             public bool? lockViewport { get; set; }
             public long? viewportTypeId { get; set; }
             public string? viewportTypeName { get; set; }
@@ -49,6 +51,7 @@ namespace RevitBridge.Handlers
             public string? action { get; set; }
             public object? viewportType { get; set; }
             public object? lockViewport { get; set; }
+            public object? placement { get; set; }
             public string? error { get; set; }
             public double? x { get; set; }
             public double? y { get; set; }
@@ -79,6 +82,7 @@ namespace RevitBridge.Handlers
                     var x = pl.x ?? 0;
                     var y = pl.y ?? 0;
                     var moveIfAlreadyPlaced = pl.moveIfAlreadyPlaced ?? false;
+                    var coordinatesRequested = pl.x.HasValue || pl.y.HasValue;
 
                     if (resolvedSheet == null || resolvedView == null)
                     {
@@ -99,14 +103,38 @@ namespace RevitBridge.Handlers
                     var sheetId = resolvedSheet.Id;
                     var viewId = resolvedView.Id;
                     var view = resolvedView;
-                    var isSchedule = view is ViewSchedule;
+                    var isRegularSchedule = view is ViewSchedule;
+                    var isPanelSchedule = SheetPlacementHelper.IsPanelScheduleView(view);
+                    var isSchedule = isRegularSchedule || isPanelSchedule;
+                    var avoidOverlap = pl.avoidOverlap ?? (isSchedule && !coordinatesRequested);
                     var existingViewport = isSchedule ? null : SheetPlacementHelper.FindViewportOnSheet(doc, sheetId, viewId);
-                    var existingSchedule = isSchedule ? SheetPlacementHelper.FindScheduleInstanceOnSheet(doc, sheetId, viewId) : null;
-                    var can = isSchedule
-                        ? ((existingSchedule == null && SheetPlacementHelper.CanPlaceScheduleOnSheet(doc, sheetId, viewId)) ||
+                    var existingSchedule = isRegularSchedule ? SheetPlacementHelper.FindScheduleInstanceOnSheet(doc, sheetId, viewId) : null;
+                    var existingPanelSchedule = isPanelSchedule ? SheetPlacementHelper.FindPanelScheduleInstanceOnSheet(doc, sheetId, viewId) : null;
+                    var otherScheduleInstances = isRegularSchedule
+                        ? SheetPlacementHelper.FindScheduleInstances(doc, viewId).Where(ssi => ssi.OwnerViewId != sheetId).ToList()
+                        : new List<ScheduleSheetInstance>();
+                    var otherPanelInstances = isPanelSchedule
+                        ? SheetPlacementHelper.FindPanelScheduleInstances(doc, viewId).Where(ssi => ssi.OwnerViewId != sheetId).ToList()
+                        : new List<PanelScheduleSheetInstance>();
+                    var schedulePlacement = isSchedule
+                        ? SheetPlacementHelper.ResolveSchedulePlacementPoint(
+                            doc,
+                            resolvedSheet,
+                            viewId,
+                            pl.x,
+                            pl.y,
+                            avoidOverlap,
+                            (Element?)existingSchedule ?? existingPanelSchedule ?? otherScheduleInstances.Cast<Element>().Concat(otherPanelInstances.Cast<Element>()).FirstOrDefault(),
+                            existingSchedule?.Id ?? existingPanelSchedule?.Id)
+                        : null;
+                    var can = isRegularSchedule
+                        ? ((existingSchedule == null && (otherScheduleInstances.Count == 0 || moveIfAlreadyPlaced) && SheetPlacementHelper.CanPlaceScheduleOnSheet(doc, sheetId, viewId)) ||
                            (existingSchedule != null && moveIfAlreadyPlaced))
-                        : ((existingViewport == null && Viewport.CanAddViewToSheet(doc, sheetId, viewId)) ||
-                           (existingViewport != null && moveIfAlreadyPlaced));
+                        : isPanelSchedule
+                            ? ((existingPanelSchedule == null && (otherPanelInstances.Count == 0 || moveIfAlreadyPlaced)) ||
+                               (existingPanelSchedule != null && moveIfAlreadyPlaced))
+                            : ((existingViewport == null && Viewport.CanAddViewToSheet(doc, sheetId, viewId)) ||
+                               (existingViewport != null && moveIfAlreadyPlaced));
 
                     var viewportTypeRequested = !isSchedule && (pl.viewportTypeId.HasValue || !string.IsNullOrWhiteSpace(pl.viewportTypeName));
                     ElementId? resolvedViewportTypeId = null;
@@ -123,12 +151,15 @@ namespace RevitBridge.Handlers
                         ok = can,
                         sheetId = RevitBridge.Common.ElementIdCompat.GetValue(sheetId),
                         viewId = RevitBridge.Common.ElementIdCompat.GetValue(viewId),
-                        placementType = isSchedule ? "ScheduleSheetInstance" : "Viewport",
-                        action = (!isSchedule && existingViewport != null && moveIfAlreadyPlaced) || (isSchedule && existingSchedule != null && moveIfAlreadyPlaced)
+                        placementType = isPanelSchedule ? "PanelScheduleSheetInstance" : isRegularSchedule ? "ScheduleSheetInstance" : "Viewport",
+                        action = (!isSchedule && existingViewport != null && moveIfAlreadyPlaced) ||
+                                 (isRegularSchedule && (existingSchedule != null || otherScheduleInstances.Count > 0) && moveIfAlreadyPlaced) ||
+                                 (isPanelSchedule && (existingPanelSchedule != null || otherPanelInstances.Count > 0) && moveIfAlreadyPlaced)
                             ? "MoveExisting"
                             : "Create",
-                        x = x,
-                        y = y,
+                        x = schedulePlacement?.Point.X ?? x,
+                        y = schedulePlacement?.Point.Y ?? y,
+                        placement = schedulePlacement == null ? null : new { avoidOverlap, strategy = schedulePlacement.Strategy, box = schedulePlacement.PreviewBox },
                         viewportType = viewportTypeRequested
                             ? new
                             {
@@ -164,6 +195,7 @@ namespace RevitBridge.Handlers
                     var x = pl.x ?? 0;
                     var y = pl.y ?? 0;
                     var moveIfAlreadyPlaced = pl.moveIfAlreadyPlaced ?? false;
+                    var coordinatesRequested = pl.x.HasValue || pl.y.HasValue;
                     if (resolvedSheet == null || resolvedView == null)
                     {
                         results.Add(new ResultEntry
@@ -187,13 +219,20 @@ namespace RevitBridge.Handlers
                     var sheetId = resolvedSheet.Id;
                     var viewId = resolvedView.Id;
                     var view = resolvedView;
-                    var isSchedule = view is ViewSchedule;
+                    var isRegularSchedule = view is ViewSchedule;
+                    var isPanelSchedule = SheetPlacementHelper.IsPanelScheduleView(view);
+                    var isSchedule = isRegularSchedule || isPanelSchedule;
+                    var avoidOverlap = pl.avoidOverlap ?? (isSchedule && !coordinatesRequested);
 
                     try
                     {
-                        if (isSchedule)
+                        if (isRegularSchedule)
                         {
                             var existingSchedule = SheetPlacementHelper.FindScheduleInstanceOnSheet(doc, sheetId, viewId);
+                            var otherInstances = SheetPlacementHelper.FindScheduleInstances(doc, viewId)
+                                .Where(ssi => ssi.OwnerViewId != sheetId)
+                                .ToList();
+                            var placement = SheetPlacementHelper.ResolveSchedulePlacementPoint(doc, resolvedSheet, viewId, pl.x, pl.y, avoidOverlap, existingSchedule ?? otherInstances.FirstOrDefault(), existingSchedule?.Id);
                             if (existingSchedule != null)
                             {
                                 if (!moveIfAlreadyPlaced)
@@ -204,12 +243,13 @@ namespace RevitBridge.Handlers
                                         ok = false,
                                         sheetId = RevitBridge.Common.ElementIdCompat.GetValue(sheetId),
                                         viewId = RevitBridge.Common.ElementIdCompat.GetValue(viewId),
-                                        placementType = "ScheduleSheetInstance",
-                                        action = "Create",
-                                        x = x,
-                                        y = y,
-                                        error = "Schedule is already placed on this sheet. Set moveIfAlreadyPlaced=true to reposition it."
-                                    });
+                                    placementType = "ScheduleSheetInstance",
+                                    action = "Create",
+                                    x = placement.Point.X,
+                                    y = placement.Point.Y,
+                                    placement = new { avoidOverlap, strategy = placement.Strategy, box = placement.PreviewBox },
+                                    error = "Schedule is already placed on this sheet. Set moveIfAlreadyPlaced=true to reposition it."
+                                });
                                     if (allOrNothing)
                                     {
                                         t.RollBack();
@@ -218,7 +258,7 @@ namespace RevitBridge.Handlers
                                     continue;
                                 }
 
-                                existingSchedule.Point = new XYZ(x, y, 0);
+                                existingSchedule.Point = placement.Point;
                                 results.Add(new ResultEntry
                                 {
                                     index = i,
@@ -228,10 +268,19 @@ namespace RevitBridge.Handlers
                                     scheduleSheetInstanceId = RevitBridge.Common.ElementIdCompat.GetValue(existingSchedule.Id),
                                     placementType = "ScheduleSheetInstance",
                                     action = "MoveExisting",
-                                    x = x,
-                                    y = y
+                                    x = placement.Point.X,
+                                    y = placement.Point.Y,
+                                    placement = new { avoidOverlap, strategy = placement.Strategy, box = placement.PreviewBox }
                                 });
                                 continue;
+                            }
+
+                            if (otherInstances.Count > 0 && moveIfAlreadyPlaced)
+                            {
+                                foreach (var other in otherInstances)
+                                {
+                                    doc.Delete(other.Id);
+                                }
                             }
 
                             if (!SheetPlacementHelper.CanPlaceScheduleOnSheet(doc, sheetId, viewId))
@@ -244,8 +293,9 @@ namespace RevitBridge.Handlers
                                     viewId = RevitBridge.Common.ElementIdCompat.GetValue(viewId),
                                     placementType = "ScheduleSheetInstance",
                                     action = "Create",
-                                    x = x,
-                                    y = y,
+                                    x = placement.Point.X,
+                                    y = placement.Point.Y,
+                                    placement = new { avoidOverlap, strategy = placement.Strategy, box = placement.PreviewBox },
                                     error = "Cannot place schedule on sheet (already placed or invalid sheet/view)."
                                 });
                                 if (allOrNothing)
@@ -256,7 +306,7 @@ namespace RevitBridge.Handlers
                                 continue;
                             }
 
-                            var ssi = ScheduleSheetInstance.Create(doc, sheetId, viewId, new XYZ(x, y, 0));
+                            var ssi = ScheduleSheetInstance.Create(doc, sheetId, viewId, placement.Point);
                             results.Add(new ResultEntry
                             {
                                 index = i,
@@ -265,9 +315,109 @@ namespace RevitBridge.Handlers
                                 viewId = RevitBridge.Common.ElementIdCompat.GetValue(viewId),
                                 scheduleSheetInstanceId = RevitBridge.Common.ElementIdCompat.GetValue(ssi.Id),
                                 placementType = "ScheduleSheetInstance",
-                                action = "Create",
-                                x = x,
-                                y = y
+                                action = otherInstances.Count > 0 && moveIfAlreadyPlaced ? "MoveExisting" : "Create",
+                                x = placement.Point.X,
+                                y = placement.Point.Y,
+                                placement = new { avoidOverlap, strategy = placement.Strategy, box = placement.PreviewBox }
+                            });
+                            continue;
+                        }
+
+                        if (isPanelSchedule)
+                        {
+                            var existingPanelSchedule = SheetPlacementHelper.FindPanelScheduleInstanceOnSheet(doc, sheetId, viewId);
+                            var otherInstances = SheetPlacementHelper.FindPanelScheduleInstances(doc, viewId)
+                                .Where(ssi => ssi.OwnerViewId != sheetId)
+                                .ToList();
+                            var placement = SheetPlacementHelper.ResolveSchedulePlacementPoint(doc, resolvedSheet, viewId, pl.x, pl.y, avoidOverlap, existingPanelSchedule ?? otherInstances.FirstOrDefault(), existingPanelSchedule?.Id);
+
+                            if (existingPanelSchedule != null)
+                            {
+                                if (!moveIfAlreadyPlaced)
+                                {
+                                    results.Add(new ResultEntry
+                                    {
+                                        index = i,
+                                        ok = false,
+                                        sheetId = RevitBridge.Common.ElementIdCompat.GetValue(sheetId),
+                                        viewId = RevitBridge.Common.ElementIdCompat.GetValue(viewId),
+                                        placementType = "PanelScheduleSheetInstance",
+                                        action = "Create",
+                                        x = placement.Point.X,
+                                        y = placement.Point.Y,
+                                        placement = new { avoidOverlap, strategy = placement.Strategy, box = placement.PreviewBox },
+                                        error = "Panel schedule is already placed on this sheet. Set moveIfAlreadyPlaced=true to reposition it."
+                                    });
+                                    if (allOrNothing)
+                                    {
+                                        t.RollBack();
+                                        return Task.FromResult<object>(new { status = "Failed", dryRun = false, behavior = "allOrNothing", requestedCount = placements.Count, results });
+                                    }
+                                    continue;
+                                }
+
+                                existingPanelSchedule.Origin = placement.Point;
+                                results.Add(new ResultEntry
+                                {
+                                    index = i,
+                                    ok = true,
+                                    sheetId = RevitBridge.Common.ElementIdCompat.GetValue(sheetId),
+                                    viewId = RevitBridge.Common.ElementIdCompat.GetValue(viewId),
+                                    scheduleSheetInstanceId = RevitBridge.Common.ElementIdCompat.GetValue(existingPanelSchedule.Id),
+                                    placementType = "PanelScheduleSheetInstance",
+                                    action = "MoveExisting",
+                                    x = placement.Point.X,
+                                    y = placement.Point.Y,
+                                    placement = new { avoidOverlap, strategy = placement.Strategy, box = placement.PreviewBox }
+                                });
+                                continue;
+                            }
+
+                            if (otherInstances.Count > 0)
+                            {
+                                if (!moveIfAlreadyPlaced)
+                                {
+                                    results.Add(new ResultEntry
+                                    {
+                                        index = i,
+                                        ok = false,
+                                        sheetId = RevitBridge.Common.ElementIdCompat.GetValue(sheetId),
+                                        viewId = RevitBridge.Common.ElementIdCompat.GetValue(viewId),
+                                        placementType = "PanelScheduleSheetInstance",
+                                        action = "Create",
+                                        x = placement.Point.X,
+                                        y = placement.Point.Y,
+                                        placement = new { avoidOverlap, strategy = placement.Strategy, box = placement.PreviewBox },
+                                        error = "Panel schedule is already placed on another sheet. Set moveIfAlreadyPlaced=true to move it."
+                                    });
+                                    if (allOrNothing)
+                                    {
+                                        t.RollBack();
+                                        return Task.FromResult<object>(new { status = "Failed", dryRun = false, behavior = "allOrNothing", requestedCount = placements.Count, results });
+                                    }
+                                    continue;
+                                }
+
+                                foreach (var other in otherInstances)
+                                {
+                                    doc.Delete(other.Id);
+                                }
+                            }
+
+                            var psi = PanelScheduleSheetInstance.Create(doc, viewId, resolvedSheet);
+                            psi.Origin = placement.Point;
+                            results.Add(new ResultEntry
+                            {
+                                index = i,
+                                ok = true,
+                                sheetId = RevitBridge.Common.ElementIdCompat.GetValue(sheetId),
+                                viewId = RevitBridge.Common.ElementIdCompat.GetValue(viewId),
+                                scheduleSheetInstanceId = RevitBridge.Common.ElementIdCompat.GetValue(psi.Id),
+                                placementType = "PanelScheduleSheetInstance",
+                                action = otherInstances.Count > 0 && moveIfAlreadyPlaced ? "MoveExisting" : "Create",
+                                x = placement.Point.X,
+                                y = placement.Point.Y,
+                                placement = new { avoidOverlap, strategy = placement.Strategy, box = placement.PreviewBox }
                             });
                             continue;
                         }

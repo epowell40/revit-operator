@@ -49,6 +49,7 @@ namespace RevitBridge.Handlers
             public string? baseFileName { get; set; }
             public string? perSheetFileNameTemplate { get; set; }
             public string? colorMode { get; set; } // Color|Grayscale|BlackLine (best-effort)
+            public bool? cleanupDefaultIndividualOutputs { get; set; }
             public bool? dryRun { get; set; }
             public bool? preflight { get; set; } // alias for dryRun
             public bool? preflightOnly { get; set; } // alias for dryRun
@@ -92,7 +93,8 @@ namespace RevitBridge.Handlers
             var perTemplate = (p.perSheetFileNameTemplate ?? "{sheetNumber}_{sheetName}").Trim();
             if (string.IsNullOrWhiteSpace(perTemplate)) perTemplate = "{sheetNumber}_{sheetName}";
 
-            var colorMode = (p.colorMode ?? "").Trim();
+            var colorMode = NormalizePdfColorMode(p.colorMode);
+            var cleanupDefaultIndividualOutputs = p.cleanupDefaultIndividualOutputs ?? true;
 
             var planned = BuildPlan(folder, combine, baseName, perTemplate, views);
             var preflight = BuildPreflight(folder, combine, baseName, perTemplate, views, selectionMeta, planned);
@@ -107,6 +109,7 @@ namespace RevitBridge.Handlers
                     combine,
                     outputFolder = folder,
                     colorMode = string.IsNullOrWhiteSpace(colorMode) ? null : colorMode,
+                    cleanupDefaultIndividualOutputs,
                     selectedCount = views.Count,
                     selectedSheets,
                     selection = selectionMeta,
@@ -124,7 +127,7 @@ namespace RevitBridge.Handlers
                     Combine = true,
                     FileName = fileBase
                 };
-                TrySetPdfColorMode(options, colorMode);
+                var colorModeResult = TrySetPdfColorMode(options, colorMode);
 
                 doc.Export(folder, views.Select(v => v.ViewId).ToList(), options);
                 var outPath = Path.Combine(folder, outName);
@@ -139,6 +142,8 @@ namespace RevitBridge.Handlers
                     path = outPath,
                     outputs = new[] { outPath },
                     verification,
+                    colorMode = string.IsNullOrWhiteSpace(colorMode) ? null : colorMode,
+                    colorModeResult,
                     selectedCount = views.Count,
                     selectedSheets,
                     preflight,
@@ -147,10 +152,15 @@ namespace RevitBridge.Handlers
             }
 
             var outputs = new List<string>(capacity: Math.Min(views.Count, 2000));
+            var cleanedUnexpectedOutputs = new List<object>();
             foreach (var v in views)
             {
                 var fileBase = StripPdfExtension(SanitizeFileName(ApplyPerSheetTemplate(perTemplate, v)));
                 var outName = EnsurePdfExtension(fileBase);
+                var expectedPath = Path.Combine(folder, outName);
+                var defaultFileBase = StripPdfExtension(SanitizeFileName(ApplyPerSheetTemplate("{sheetNumber}_{sheetName}", v)));
+                var defaultPath = Path.Combine(folder, EnsurePdfExtension(defaultFileBase));
+                var defaultBefore = SnapshotFile(defaultPath);
 
                 var options = new PDFExportOptions
                 {
@@ -160,7 +170,12 @@ namespace RevitBridge.Handlers
                 TrySetPdfColorMode(options, colorMode);
 
                 doc.Export(folder, new List<ElementId> { v.ViewId }, options);
-                outputs.Add(Path.Combine(folder, outName));
+                outputs.Add(expectedPath);
+                if (cleanupDefaultIndividualOutputs)
+                {
+                    var cleaned = TryCleanupDefaultIndividualOutput(expectedPath, defaultPath, defaultBefore);
+                    if (cleaned != null) cleanedUnexpectedOutputs.Add(cleaned);
+                }
             }
             var verifications = outputs.Select(BuildFileVerification).ToArray();
             var verifiedCount = verifications.Count(x => x.ok);
@@ -175,6 +190,8 @@ namespace RevitBridge.Handlers
                 outputs,
                 verifiedCount,
                 verification = verifications,
+                cleanedUnexpectedOutputs = cleanedUnexpectedOutputs.ToArray(),
+                colorMode = string.IsNullOrWhiteSpace(colorMode) ? null : colorMode,
                 selectedCount = views.Count,
                 selectedSheets,
                 preflight,
@@ -657,41 +674,134 @@ namespace RevitBridge.Handlers
             }
         }
 
-        private static void TrySetPdfColorMode(PDFExportOptions options, string colorMode)
+        private sealed class FileSnapshot
         {
-            if (options == null) return;
-            var cm = (colorMode ?? "").Trim();
-            if (string.IsNullOrWhiteSpace(cm)) return;
-
-            TrySetEnumLikeProperty(options, "ColorMode", cm);
-            TrySetEnumLikeProperty(options, "ExportColorMode", cm);
-            TrySetEnumLikeProperty(options, "ColorDepth", cm);
+            public bool exists { get; set; }
+            public long sizeBytes { get; set; }
+            public DateTime lastWriteTimeUtc { get; set; }
         }
 
-        private static void TrySetEnumLikeProperty(object target, string propName, string value)
+        private static FileSnapshot SnapshotFile(string path)
+        {
+            try
+            {
+                var info = new FileInfo(path);
+                return new FileSnapshot
+                {
+                    exists = info.Exists,
+                    sizeBytes = info.Exists ? info.Length : 0L,
+                    lastWriteTimeUtc = info.Exists ? info.LastWriteTimeUtc : DateTime.MinValue
+                };
+            }
+            catch
+            {
+                return new FileSnapshot();
+            }
+        }
+
+        private static object? TryCleanupDefaultIndividualOutput(string expectedPath, string defaultPath, FileSnapshot before)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(expectedPath) || string.IsNullOrWhiteSpace(defaultPath)) return null;
+                var expectedFull = Path.GetFullPath(expectedPath);
+                var defaultFull = Path.GetFullPath(defaultPath);
+                if (string.Equals(expectedFull, defaultFull, StringComparison.OrdinalIgnoreCase)) return null;
+
+                var expected = new FileInfo(expectedFull);
+                var candidate = new FileInfo(defaultFull);
+                if (!expected.Exists || expected.Length <= 0 || !candidate.Exists || candidate.Length <= 0) return null;
+
+                var candidateWasWrittenNow =
+                    !before.exists ||
+                    candidate.Length != before.sizeBytes ||
+                    Math.Abs((candidate.LastWriteTimeUtc - before.lastWriteTimeUtc).TotalSeconds) > 1.0;
+                var matchesExpected =
+                    candidate.Length == expected.Length &&
+                    Math.Abs((candidate.LastWriteTimeUtc - expected.LastWriteTimeUtc).TotalSeconds) <= 5.0;
+
+                if (!candidateWasWrittenNow || !matchesExpected) return null;
+
+                File.Delete(defaultFull);
+                return new
+                {
+                    deleted = defaultFull,
+                    kept = expectedFull,
+                    reason = "Removed default individual PDF generated alongside requested per-sheet filename."
+                };
+            }
+            catch (Exception ex)
+            {
+                return new
+                {
+                    attempted = defaultPath,
+                    kept = expectedPath,
+                    error = ex.Message
+                };
+            }
+        }
+
+        private sealed class ColorModeResult
+        {
+            public string requested { get; set; } = "";
+            public string normalized { get; set; } = "";
+            public List<string> appliedProperties { get; set; } = new List<string>();
+        }
+
+        private static string NormalizePdfColorMode(string? colorMode)
+        {
+            var cm = (colorMode ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(cm)) return "";
+            var s = cm.Replace("_", " ").Replace("-", " ").Trim().ToLowerInvariant();
+            while (s.IndexOf("  ", StringComparison.Ordinal) >= 0) s = s.Replace("  ", " ");
+            if (s == "blackline" || s == "black line" || s == "black" || s == "black white" || s == "black and white" || s == "bw" || s == "b w" || s == "monochrome" || s == "mono")
+                return "BlackLine";
+            if (s == "grayscale" || s == "greyscale" || s == "gray" || s == "grey")
+                return "Grayscale";
+            if (s == "color" || s == "colour" || s == "full color" || s == "full colour")
+                return "Color";
+            return cm;
+        }
+
+        private static ColorModeResult TrySetPdfColorMode(PDFExportOptions options, string colorMode)
+        {
+            var result = new ColorModeResult { requested = colorMode ?? "", normalized = NormalizePdfColorMode(colorMode) };
+            if (options == null) return result;
+            var cm = result.normalized;
+            if (string.IsNullOrWhiteSpace(cm)) return result;
+
+            if (TrySetEnumLikeProperty(options, "ColorMode", cm)) result.appliedProperties.Add("ColorMode");
+            if (TrySetEnumLikeProperty(options, "ExportColorMode", cm)) result.appliedProperties.Add("ExportColorMode");
+            if (TrySetEnumLikeProperty(options, "ColorDepth", cm)) result.appliedProperties.Add("ColorDepth");
+            return result;
+        }
+
+        private static bool TrySetEnumLikeProperty(object target, string propName, string value)
         {
             try
             {
                 var prop = target.GetType().GetProperty(propName, BindingFlags.Instance | BindingFlags.Public);
-                if (prop == null || !prop.CanWrite) return;
+                if (prop == null || !prop.CanWrite) return false;
 
                 var t = prop.PropertyType;
                 if (t == typeof(string))
                 {
                     prop.SetValue(target, value);
-                    return;
+                    return true;
                 }
 
                 if (t.IsEnum)
                 {
                     var parsed = Enum.Parse(t, value, ignoreCase: true);
                     prop.SetValue(target, parsed);
+                    return true;
                 }
             }
             catch
             {
                 // ignore
             }
+            return false;
         }
     }
 }

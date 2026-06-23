@@ -24,6 +24,7 @@ namespace RevitBridge.Handlers
             public bool? isPlaceholder { get; set; }
             public bool? convertedFromPlaceholder { get; set; }
             public long? convertedFromSheetId { get; set; }
+            public object? titleBlock { get; set; }
             public string? error { get; set; }
         }
 
@@ -32,6 +33,8 @@ namespace RevitBridge.Handlers
             public string? name { get; set; }
             public string? number { get; set; }
             public long? titleBlockId { get; set; } // type id; -1 => auto-pick first titleblock type
+            public string? titleBlockName { get; set; }
+            public string? referenceSheetNumber { get; set; }
             public bool? placeholder { get; set; } // create placeholder sheet
             public long? convertPlaceholderSheetId { get; set; } // convert existing placeholder sheet to real sheet
         }
@@ -42,6 +45,8 @@ namespace RevitBridge.Handlers
             public string? sourceCsvPath { get; set; } // optional Workspace-relative CSV path
             public string? csvDelimiter { get; set; } // comma|tab|semicolon|pipe|single char
             public long? titleBlockIdDefault { get; set; } // optional default when spec.titleBlockId omitted
+            public string? titleBlockNameDefault { get; set; }
+            public string? referenceSheetNumberDefault { get; set; }
             public string? behavior { get; set; } // allOrNothing|bestEffort
             public bool? dryRun { get; set; }
         }
@@ -90,11 +95,24 @@ namespace RevitBridge.Handlers
                 var n = (s.number ?? "").Trim();
                 var name = RevitTextCasePolicy.NormalizeSheetName(s.name);
                 var tbId = s.titleBlockId ?? p.titleBlockIdDefault;
+                object? titleBlock = null;
                 var wantsPlaceholder = s.placeholder ?? false;
                 var convertPlaceholderSheetId = s.convertPlaceholderSheetId;
-
                 var ok = true;
                 string? error = null;
+                if (!wantsPlaceholder)
+                {
+                    try
+                    {
+                        titleBlock = ResolveTitleBlock(doc, tbId ?? -1, s.titleBlockName ?? p.titleBlockNameDefault, s.referenceSheetNumber ?? p.referenceSheetNumberDefault, n).ToResponse();
+                    }
+                    catch (Exception ex)
+                    {
+                        ok = false;
+                        error = ex.Message;
+                    }
+                }
+
                 if (convertPlaceholderSheetId.HasValue && convertPlaceholderSheetId.Value > 0)
                 {
                     var existing = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(convertPlaceholderSheetId.Value)) as ViewSheet;
@@ -131,6 +149,7 @@ namespace RevitBridge.Handlers
                     name = string.IsNullOrWhiteSpace(name) ? null : name,
                     number = string.IsNullOrWhiteSpace(n) ? null : n,
                     titleBlockId = tbId,
+                    titleBlock,
                     placeholder = wantsPlaceholder,
                     convertPlaceholderSheetId,
                     error
@@ -163,6 +182,7 @@ namespace RevitBridge.Handlers
                     var tbId = s.titleBlockId ?? p.titleBlockIdDefault ?? -1;
                     var wantsPlaceholder = s.placeholder ?? false;
                     var convertPlaceholderSheetId = s.convertPlaceholderSheetId;
+                    TitleBlockSelection? titleBlockSelection = null;
 
                     try
                     {
@@ -172,8 +192,8 @@ namespace RevitBridge.Handlers
                             var existing = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(convertPlaceholderSheetId.Value)) as ViewSheet;
                             if (existing == null) throw new InvalidOperationException($"Placeholder sheet {convertPlaceholderSheetId.Value} not found.");
                             if (!existing.IsPlaceholder) throw new InvalidOperationException($"Sheet {convertPlaceholderSheetId.Value} is not a placeholder.");
-                            var titleBlockTypeId = ResolveTitleBlockTypeId(doc, tbId);
-                            sheet = ConvertPlaceholderToReal(doc, existing, titleBlockTypeId);
+                            titleBlockSelection = ResolveTitleBlock(doc, tbId, s.titleBlockName ?? p.titleBlockNameDefault, s.referenceSheetNumber ?? p.referenceSheetNumberDefault, n);
+                            sheet = ConvertPlaceholderToReal(doc, existing, titleBlockSelection.TypeId);
                         }
                         else if (wantsPlaceholder)
                         {
@@ -181,8 +201,8 @@ namespace RevitBridge.Handlers
                         }
                         else
                         {
-                            var titleBlockTypeId = ResolveTitleBlockTypeId(doc, tbId);
-                            sheet = ViewSheet.Create(doc, titleBlockTypeId);
+                            titleBlockSelection = ResolveTitleBlock(doc, tbId, s.titleBlockName ?? p.titleBlockNameDefault, s.referenceSheetNumber ?? p.referenceSheetNumberDefault, n);
+                            sheet = ViewSheet.Create(doc, titleBlockSelection.TypeId);
                         }
 
                         if (!string.IsNullOrWhiteSpace(name)) sheet.Name = name;
@@ -197,7 +217,8 @@ namespace RevitBridge.Handlers
                             number = sheet.SheetNumber,
                             isPlaceholder = sheet.IsPlaceholder,
                             convertedFromPlaceholder = convertPlaceholderSheetId.HasValue && convertPlaceholderSheetId.Value > 0,
-                            convertedFromSheetId = convertPlaceholderSheetId
+                            convertedFromSheetId = convertPlaceholderSheetId,
+                            titleBlock = titleBlockSelection?.ToResponse()
                         });
                     }
                     catch (Exception ex)
@@ -405,17 +426,9 @@ namespace RevitBridge.Handlers
             return output;
         }
 
-        private static ElementId ResolveTitleBlockTypeId(Document doc, long titleBlockId)
+        private static TitleBlockSelection ResolveTitleBlock(Document doc, long titleBlockId, string? titleBlockName, string? referenceSheetNumber, string? sheetNumber)
         {
-            if (titleBlockId > 0) return RevitBridge.Common.ElementIdCompat.Create(titleBlockId);
-
-            var id = new FilteredElementCollector(doc)
-                .OfCategory(BuiltInCategory.OST_TitleBlocks)
-                .WhereElementIsElementType()
-                .FirstElementId();
-
-            if (id == null || id == ElementId.InvalidElementId) throw new InvalidOperationException("No titleblock types found in document.");
-            return id;
+            return SheetTitleBlockSelectionHelper.Resolve(doc, titleBlockId, titleBlockName, referenceSheetNumber, sheetNumber);
         }
 
         private static ViewSheet CreatePlaceholderSheet(Document doc)

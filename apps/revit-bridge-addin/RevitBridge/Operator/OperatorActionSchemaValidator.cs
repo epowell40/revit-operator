@@ -2412,12 +2412,12 @@ namespace RevitBridge.Operator
 
                 if (obj.Value.TryGetProperty("confirm", out var confirm) && confirm.ValueKind != JsonValueKind.Null)
                 {
-                    if (confirm.ValueKind != JsonValueKind.String)
+                    if (confirm.ValueKind != JsonValueKind.String && confirm.ValueKind != JsonValueKind.True && confirm.ValueKind != JsonValueKind.False)
                     {
-                        error = "update-parameter-by-query.confirm must be a string.";
+                        error = "update-parameter-by-query.confirm must be a string or boolean compatibility value.";
                         return false;
                     }
-                    var s = BulkConfirmUtil.Normalize(confirm.GetString());
+                    var s = BulkConfirmUtil.Normalize(confirm.ValueKind == JsonValueKind.String ? confirm.GetString() : confirm.GetRawText());
                     if (s.Length > 80)
                     {
                         error = "update-parameter-by-query.confirm is too long.";
@@ -2444,7 +2444,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/update-panel-parameter", StringComparison.OrdinalIgnoreCase))
             {
-                // { scheduleQuery?, matchStartsWith?, matchContains?, exact?, max?, parameterName, value, onlyWhenBlank?, targetScope?, samplePanelName?, includeWritableFields?, preflightOnly?, dryRun?, apply?, confirm? }
+                // { scheduleQuery?|panelName?|panelNamePattern?|matchExact?, matchStartsWith?, matchContains?, exact?, max?, parameterName|requestedParameterName|parameterSemantic, value, onlyWhenBlank?, targetScope?, samplePanelName?, includeWritableFields?, preflightOnly?, dryRun?, apply?, confirm? }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "update-panel-parameter body must be an object.";
@@ -2454,8 +2454,22 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalString(obj.Value, "scheduleQuery", maxLen: 256, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "matchStartsWith", maxLen: 256, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "matchContains", maxLen: 256, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "panelName", maxLen: 256, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "panelNamePattern", maxLen: 256, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "matchExact", maxLen: 256, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "exact", out error)) return false;
-                if (!ValidateRequiredString(obj.Value, "parameterName", maxLen: 128, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "parameterName", maxLen: 128, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "requestedParameterName", maxLen: 128, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "parameterSemantic", maxLen: 128, out error)) return false;
+                var hasParameterName =
+                    (obj.Value.TryGetProperty("parameterName", out var parameterNameEl) && parameterNameEl.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(parameterNameEl.GetString())) ||
+                    (obj.Value.TryGetProperty("requestedParameterName", out var requestedParameterNameEl) && requestedParameterNameEl.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(requestedParameterNameEl.GetString())) ||
+                    (obj.Value.TryGetProperty("parameterSemantic", out var parameterSemanticEl) && parameterSemanticEl.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(parameterSemanticEl.GetString()));
+                if (!hasParameterName)
+                {
+                    error = "update-panel-parameter requires parameterName (aliases accepted: requestedParameterName, parameterSemantic).";
+                    return false;
+                }
                 if (!ValidateRequiredString(obj.Value, "value", maxLen: 256, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "onlyWhenBlank", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "targetScope", maxLen: 32, out error)) return false;
@@ -3529,7 +3543,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/create-sheet", StringComparison.OrdinalIgnoreCase))
             {
-                // { name?, number?, titleBlockId?, placeholder?, convertPlaceholderSheetId? }
+                // { name?, number?, titleBlockId?, titleBlockName?, referenceSheetNumber?, placeholder?, convertPlaceholderSheetId? }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "create-sheet body must be an object.";
@@ -3538,6 +3552,8 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalString(obj.Value, "name", maxLen: 200, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "number", maxLen: 64, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "titleBlockId", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "titleBlockName", maxLen: 200, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "referenceSheetNumber", maxLen: 64, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "placeholder", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "convertPlaceholderSheetId", out error)) return false;
 
@@ -3556,7 +3572,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/create-sheets", StringComparison.OrdinalIgnoreCase))
             {
-                // { sheets?:[{name?,number?,titleBlockId?,placeholder?,convertPlaceholderSheetId?}], sourceCsvPath?, csvDelimiter?, titleBlockIdDefault?:number, behavior?:string, dryRun?:bool }
+                // { sheets?:[{name?,number?,titleBlockId?,titleBlockName?,referenceSheetNumber?,placeholder?,convertPlaceholderSheetId?}], sourceCsvPath?, csvDelimiter?, titleBlockIdDefault?:number, titleBlockNameDefault?, referenceSheetNumberDefault?, behavior?:string, dryRun?:bool }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "create-sheets body must be an object.";
@@ -3602,6 +3618,8 @@ namespace RevitBridge.Operator
                         if (!ValidateOptionalString(s, "name", maxLen: 200, out error)) return false;
                         if (!ValidateOptionalString(s, "number", maxLen: 64, out error)) return false;
                         if (!ValidateOptionalLong(s, "titleBlockId", out error)) return false;
+                        if (!ValidateOptionalString(s, "titleBlockName", maxLen: 200, out error)) return false;
+                        if (!ValidateOptionalString(s, "referenceSheetNumber", maxLen: 64, out error)) return false;
                         if (!ValidateOptionalBool(s, "placeholder", out error)) return false;
                         if (!ValidateOptionalLong(s, "convertPlaceholderSheetId", out error)) return false;
 
@@ -3633,6 +3651,8 @@ namespace RevitBridge.Operator
                     }
                 }
                 if (!ValidateOptionalLong(obj.Value, "titleBlockIdDefault", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "titleBlockNameDefault", maxLen: 200, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "referenceSheetNumberDefault", maxLen: 64, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "behavior", maxLen: 32, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
                 return true;
@@ -3640,7 +3660,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/place-view", StringComparison.OrdinalIgnoreCase))
             {
-                // { sheetId?|sheetNumber?|sheetQuery?, sheetExact?, viewId?|viewName?|viewQuery?, viewExact?, x?, y?, moveIfAlreadyPlaced?, lockViewport?, viewportTypeId?|viewportTypeName?, dryRun? }
+                // { sheetId?|sheetNumber?|sheetQuery?, sheetExact?, viewId?|viewName?|viewQuery?, viewExact?, x?, y?, moveIfAlreadyPlaced?, avoidOverlap?, lockViewport?, viewportTypeId?|viewportTypeName?, dryRun? }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "place-view body must be an object.";
@@ -3660,6 +3680,7 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalNumber(obj.Value, "x", out error)) return false;
                 if (!ValidateOptionalNumber(obj.Value, "y", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "moveIfAlreadyPlaced", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "avoidOverlap", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "lockViewport", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "viewportTypeId", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "viewportTypeName", maxLen: 128, out error)) return false;
@@ -3696,7 +3717,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/place-views", StringComparison.OrdinalIgnoreCase))
             {
-                // { placements:[{sheetId?|sheetNumber?|sheetQuery?,sheetExact?,viewId?|viewName?|viewQuery?,viewExact?,x?,y?,moveIfAlreadyPlaced?,lockViewport?,viewportTypeId?|viewportTypeName?}], behavior?:string, dryRun?:bool }
+                // { placements:[{sheetId?|sheetNumber?|sheetQuery?,sheetExact?,viewId?|viewName?|viewQuery?,viewExact?,x?,y?,moveIfAlreadyPlaced?,avoidOverlap?,lockViewport?,viewportTypeId?|viewportTypeName?}], behavior?:string, dryRun?:bool }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "place-views body must be an object.";
@@ -3734,6 +3755,7 @@ namespace RevitBridge.Operator
                     if (!ValidateOptionalNumber(pl, "x", out error)) return false;
                     if (!ValidateOptionalNumber(pl, "y", out error)) return false;
                     if (!ValidateOptionalBool(pl, "moveIfAlreadyPlaced", out error)) return false;
+                    if (!ValidateOptionalBool(pl, "avoidOverlap", out error)) return false;
                     if (!ValidateOptionalBool(pl, "lockViewport", out error)) return false;
                     if (!ValidateOptionalLong(pl, "viewportTypeId", out error)) return false;
                     if (!ValidateOptionalString(pl, "viewportTypeName", maxLen: 128, out error)) return false;
@@ -3771,17 +3793,25 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/align-viewports", StringComparison.OrdinalIgnoreCase))
             {
-                // { referenceSheetId?,referenceViewportId?, sheetIds?|viewportIds?, mode?, alignTo?, horizontal?, vertical?, offsetX?, offsetY?, modelAnchor?, dryRun?, options? }
+                // { referenceSheetId?|referenceSheetNumber?|referenceSheetQuery?,referenceViewportId?, sheetIds?|sheetNumbers?|sheetNumberPrefix?|sheetQuery?|viewportIds?, primaryOnly?, viewNameContains?, mode?, anchorStrategy?, alignTo?, horizontal?, vertical?, offsetX?, offsetY?, modelAnchor?, modelAnchorElementId?, modelAnchorElementPoint?, dryRun?, options? }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "align-viewports body must be an object.";
                     return false;
                 }
                 if (!ValidateOptionalLong(obj.Value, "referenceSheetId", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "referenceSheetNumber", maxLen: 64, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "referenceSheetQuery", maxLen: 160, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "referenceViewportId", out error)) return false;
                 if (!ValidateOptionalLongArray(obj.Value, "sheetIds", maxCount: 200, out error)) return false;
+                if (!ValidateOptionalStringArray(obj.Value, "sheetNumbers", maxCount: 200, maxLen: 64, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "sheetNumberPrefix", maxLen: 64, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "sheetQuery", maxLen: 160, out error)) return false;
                 if (!ValidateOptionalLongArray(obj.Value, "viewportIds", maxCount: 500, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "primaryOnly", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "viewNameContains", maxLen: 160, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "mode", maxLen: 32, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "anchorStrategy", maxLen: 64, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "alignTo", maxLen: 32, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "horizontal", maxLen: 32, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "vertical", maxLen: 32, out error)) return false;
@@ -3812,19 +3842,29 @@ namespace RevitBridge.Operator
                     }
                     if (!ValidateOptionalBool(opts, "failOnPinned", out error)) return false;
                     if (!ValidateOptionalBool(opts, "unpinIfAllowed", out error)) return false;
+                    if (!ValidateOptionalBool(opts, "boundaryCheck", out error)) return false;
+                    if (!ValidateOptionalString(opts, "boundaryPolicy", maxLen: 32, out error)) return false;
+                    if (!ValidateOptionalNumber(opts, "boundaryMarginInches", out error)) return false;
                 }
 
-                // If explicitly in modelAnchor mode, require an anchor source.
+                // If explicitly in modelAnchor mode, allow the handler's default referenceCropCenter
+                // anchor derivation; only explicit/element strategies require their matching source.
                 try
                 {
                     var m = obj.Value.TryGetProperty("mode", out var mm) && mm.ValueKind == JsonValueKind.String ? (mm.GetString() ?? "") : "";
                     if (m.Equals("modelAnchor", StringComparison.OrdinalIgnoreCase))
                     {
+                        var strategy = obj.Value.TryGetProperty("anchorStrategy", out var st) && st.ValueKind == JsonValueKind.String ? (st.GetString() ?? "") : "";
                         var hasAnchorObj = obj.Value.TryGetProperty("modelAnchor", out var ao) && ao.ValueKind == JsonValueKind.Object;
                         var hasAnchorEl = obj.Value.TryGetProperty("modelAnchorElementId", out var eid) && eid.ValueKind == JsonValueKind.Number;
-                        if (!hasAnchorObj && !hasAnchorEl)
+                        if (strategy.Equals("explicit", StringComparison.OrdinalIgnoreCase) && !hasAnchorObj)
                         {
-                            error = "align-viewports: mode=modelAnchor requires modelAnchor or modelAnchorElementId.";
+                            error = "align-viewports: anchorStrategy=explicit requires modelAnchor.";
+                            return false;
+                        }
+                        if (strategy.Equals("element", StringComparison.OrdinalIgnoreCase) && !hasAnchorEl)
+                        {
+                            error = "align-viewports: anchorStrategy=element requires modelAnchorElementId.";
                             return false;
                         }
                     }
@@ -3906,6 +3946,17 @@ namespace RevitBridge.Operator
                         return false;
                     }
                 }
+
+                if (obj.Value.TryGetProperty("annotationCropMarginFeet", out var acm) && acm.ValueKind != JsonValueKind.Null)
+                {
+                    if (acm.ValueKind != JsonValueKind.Number || !acm.TryGetDouble(out var av) || av < 0 || av > 10)
+                    {
+                        error = "visibility.annotationCropMarginFeet must be a number in range [0,10].";
+                        return false;
+                    }
+                }
+
+                if (!ValidateOptionalBool(obj.Value, "annotationCropActive", out error)) return false;
 
                 var visibilityAction = "get";
                 if (obj.Value.TryGetProperty("action", out var act) && act.ValueKind == JsonValueKind.String)

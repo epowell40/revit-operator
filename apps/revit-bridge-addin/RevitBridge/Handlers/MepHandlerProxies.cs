@@ -63,6 +63,30 @@ namespace RevitBridge.Handlers
             new RevitBridge.Logic.Handlers.MEP.GetConnectorsHandler().Handle(app, jsonData);
     }
 
+    public class ResolveMepRoutingContextHandler : IRequestHandler
+    {
+        public Task<object> Handle(UIApplication app, string jsonData) =>
+            new RevitBridge.Logic.Handlers.MEP.ResolveMepRoutingContextHandler().Handle(app, jsonData);
+    }
+
+    public class CreateMepRouteHandler : IRequestHandler
+    {
+        public Task<object> Handle(UIApplication app, string jsonData) =>
+            new RevitBridge.Logic.Handlers.MEP.CreateMepRouteHandler().Handle(app, jsonData);
+    }
+
+    public class ConnectMepBranchHandler : IRequestHandler
+    {
+        public Task<object> Handle(UIApplication app, string jsonData) =>
+            new RevitBridge.Logic.Handlers.MEP.ConnectMepBranchHandler().Handle(app, jsonData);
+    }
+
+    public class MepRouteWorkflowHandler : IRequestHandler
+    {
+        public Task<object> Handle(UIApplication app, string jsonData) =>
+            new RevitBridge.Logic.Handlers.MEP.MepRouteWorkflowHandler().Handle(app, jsonData);
+    }
+
     public class RepairDuctContinuityByScopeHandler : IRequestHandler
     {
         public Task<object> Handle(UIApplication app, string jsonData) =>
