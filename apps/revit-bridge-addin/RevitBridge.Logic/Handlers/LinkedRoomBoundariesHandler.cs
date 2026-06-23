@@ -12,22 +12,12 @@ namespace RevitBridge.Logic.Handlers
 {
     public sealed class LinkedRoomBoundariesHandler : IRequestHandler
     {
-        public sealed class Request
-        {
-            public string? levelName { get; set; }
-            public string? linkedModelNameContains { get; set; }
-            public string? roomNumber { get; set; }
-            public string? roomNameContains { get; set; }
-            public int? maxRooms { get; set; }
-            public bool includeBoundarySegmentMetadata { get; set; } = true;
-        }
-
         public Task<object> Handle(UIApplication app, string jsonData)
         {
             var doc = app.ActiveUIDocument.Document;
-            var req = JsonSerializer.Deserialize<Request>(
+            var req = JsonSerializer.Deserialize<LinkedRoomBoundariesRequest>(
                 string.IsNullOrWhiteSpace(jsonData) ? "{}" : jsonData,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new Request();
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new LinkedRoomBoundariesRequest();
 
             var maxRooms = req.maxRooms.HasValue && req.maxRooms.Value > 0
                 ? Math.Min(req.maxRooms.Value, 5000)
@@ -147,7 +137,7 @@ namespace RevitBridge.Logic.Handlers
             });
         }
 
-        private static bool PassesRoomFilters(Room room, Request req)
+        private static bool PassesRoomFilters(Room room, LinkedRoomBoundariesRequest req)
         {
             if (!string.IsNullOrWhiteSpace(req.levelName) &&
                 !MatchesLevel(room.Level?.Name ?? "", req.levelName))
