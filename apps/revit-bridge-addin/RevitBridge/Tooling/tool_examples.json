@@ -937,6 +937,60 @@
     },
     {
       "method": "POST",
+      "path": "/revit/linked-room-boundaries",
+      "examples": [
+        {
+          "name": "Extract linked room boundaries",
+          "request": {
+            "levelName": "LEVEL 03",
+            "linkedModelNameContains": "Architectural",
+            "roomNumber": "403",
+            "maxRooms": 5,
+            "includeBoundarySegmentMetadata": true
+          },
+          "expected_response_shape": {
+            "ok": true,
+            "endpoint": "/revit/linked-room-boundaries",
+            "readOnly": true,
+            "linkedRoomsFound": 1,
+            "roomsWithBoundaries": 1,
+            "rooms": [
+              {
+                "number": "403",
+                "source": {
+                  "scope": "linked",
+                  "linkInstanceId": 123
+                },
+                "boundaryLoops": [
+                  [
+                    {
+                      "x": 0,
+                      "y": 0,
+                      "z": 0
+                    },
+                    {
+                      "x": 10,
+                      "y": 0,
+                      "z": 0
+                    },
+                    {
+                      "x": 10,
+                      "y": 8,
+                      "z": 0
+                    }
+                  ]
+                ]
+              }
+            ]
+          },
+          "notes": [
+            "Reads linked architectural rooms through RevitLinkInstance transforms; no write grant is required."
+          ]
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/renumber-rooms",
       "examples": [
         {

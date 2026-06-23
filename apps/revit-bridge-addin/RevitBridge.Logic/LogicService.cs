@@ -36,6 +36,7 @@ namespace RevitBridge.Logic
                 { "/revit/open-model", new OpenModelHandler() },
                 { "/revit/resolve", new ResolveHandler() },
                 { "/revit/rooms", new RoomHandler() },
+                { "/revit/linked-room-boundaries", new LinkedRoomBoundariesHandler() },
                 { "/revit/room-contents", new RoomContentsHandler() },
                 { "/revit/resolve-mep-routing-context", new RevitBridge.Logic.Handlers.MEP.ResolveMepRoutingContextHandler() },
                 { "/revit/create-mep-route", new RevitBridge.Logic.Handlers.MEP.CreateMepRouteHandler() },

@@ -49,6 +49,7 @@ namespace RevitBridge.Operator
 
                 // Read-only helpers.
                 if (string.Equals(p, "/revit/rooms", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/linked-room-boundaries", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/renumber-rooms", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/room-contents", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/spatial-context", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
