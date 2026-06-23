@@ -32,6 +32,7 @@ const defaultAllowed: Allowlist = {
     "/revit/purge-unused",
     "/revit/transfer-view-templates",
     "/revit/rooms",
+    "/revit/linked-room-boundaries",
     "/revit/renumber-rooms",
     "/revit/room-contents",
     "/revit/spatial-context",
