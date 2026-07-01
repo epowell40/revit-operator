@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "task_id": "aec_mep_connected_duct_resize",
+  "name": "AEC-MEP V1 E: Connected Duct Resize Verification",
+  "description": "Replay a connected duct-run resize and verify dry-run, apply readback, connected network size convergence, and visual capture.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "metadata": {
+      "workflow": "aec_mep_eval",
+      "scenario_kind": "connected_duct_resize"
+    }
+  },
+  "setup_instructions": [
+    "Resolve a seed duct in a disposable model or copied test workset.",
+    "Dry-run /revit/resize-duct-run before apply.",
+    "Trace the connected network after apply and verify every affected duct reports the target size."
+  ],
+  "success_criteria": [
+    "Dry-run finds the connected run.",
+    "Apply changes expected duct ids.",
+    "Connected network trace reports the target size and no disconnected ids.",
+    "A highlighted post-change capture is returned."
+  ],
+  "failure_criteria": [
+    "Resize applies only to one segment when connected-run intent was required.",
+    "Readback sizes do not match the requested target.",
+    "The connected network contains disconnected ids after resize."
+  ],
+  "max_time_seconds": 180,
+  "max_steps": 4,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "Live apply should be run only on a throwaway model or with an agreed rollback path."
+  ],
+  "tags": ["revit", "aec-mep", "eval", "duct", "resize", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "aec_mep_eval",
+    "request": {
+      "scenarioId": "aec_mep_connected_duct_resize",
+      "scenarioKind": "connected_duct_resize",
+      "apply": true,
+      "visualVerify": true,
+      "resize": {
+        "startElementId": 31001,
+        "targetDiameter": "10\"",
+        "scope": "run"
+      },
+      "expected": {
+        "targetSize": "10in",
+        "minCandidateCount": 3,
+        "minChangedElementCount": 3,
+        "requiresConnectedSizeReadback": true,
+        "requiresPostChangeCapture": true
+      }
+    },
+    "mock": {
+      "/revit/resize-duct-run:1": {
+        "status": "DryRun",
+        "dryRun": true,
+        "affectedElementIds": [31001, 31002, 31003],
+        "plannedTargetSize": "10\""
+      },
+      "/revit/resize-duct-run:2": {
+        "status": "Applied",
+        "dryRun": false,
+        "changedElementIds": [31001, 31002, 31003],
+        "targetSize": "10\""
+      },
+      "/revit/trace-connected-network": {
+        "status": "Ok",
+        "items": [
+          { "elementId": 31001, "category": "Ducts", "size": "10\"" },
+          { "elementId": 31002, "category": "Ducts", "size": "10\"" },
+          { "elementId": 31003, "category": "Ducts", "size": "10\"" }
+        ],
+        "systemAudit": {
+          "disconnectedIds": []
+        }
+      },
+      "/revit/highlight-and-export": {
+        "path": "artifacts/aec-mep/connected-resize-after.jpg",
+        "widthPx": 2200,
+        "heightPx": 1223
+      }
+    }
+  }
+}

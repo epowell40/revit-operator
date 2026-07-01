@@ -48,6 +48,7 @@ function usage(): string {
     "  npm run benchmark -- run --all-tasks --all-configs [--repeat 1]",
     "  npm run benchmark -- report --artifacts-dir <dir> [--output <file>]",
     "  npm run benchmark -- demo-readiness --artifacts-dir <dir>",
+    "  npm run benchmark -- aec-mep-readiness --artifacts-dir <dir> [--allow-mock]",
     "  npm run benchmark -- grade-sheet --artifacts-dir <dir> [--output <file>]",
     "  npm run benchmark -- preflight-revit",
     "  npm run benchmark -- redline-routing-readiness",
@@ -56,6 +57,58 @@ function usage(): string {
     "  npm run benchmark -- discover-revit-demo [--output <file>]",
     "  npm run benchmark -- default-plan [--include-broader-phase]"
   ].join("\n");
+}
+
+const AEC_MEP_EVAL_V1_TASK_IDS = [
+  "aec_mep_duct_route_vector_pdf",
+  "aec_mep_pipe_route_labeled_redline",
+  "aec_mep_duct_callout_existing_model",
+  "aec_mep_wrong_bay_false_positive",
+  "aec_mep_connected_duct_resize",
+  "aec_mep_branch_tee_tap_feasibility"
+];
+
+function buildAecMepReadinessGate(report: ReturnType<typeof writeBenchmarkReportArtifacts>["report"], allowMock: boolean): {
+  ok: boolean;
+  require_live: boolean;
+  tasks: Array<{ task_id: string; runs: number; live_runs: number; passed: boolean; reason: string }>;
+  report: string;
+  gui_revit_test_required: boolean;
+} {
+  const tasks = AEC_MEP_EVAL_V1_TASK_IDS.map((taskId) => {
+    const group = report.revit_workflow_summaries.filter((entry) => entry.task_id === taskId && entry.workflow === "aec_mep_eval");
+    const eligible = allowMock ? group : group.filter((entry) => entry.execution_source === "live");
+    const liveRuns = group.filter((entry) => entry.execution_source === "live").length;
+    const reasons: string[] = [];
+    if (group.length === 0) reasons.push("no runs");
+    if (!allowMock && liveRuns === 0) reasons.push("no live Revit runs");
+    if (eligible.length === 0 && group.length > 0) reasons.push("no eligible runs");
+    if (eligible.some((entry) => !entry.success)) {
+      const failed = eligible.filter((entry) => !entry.success).slice(0, 3).map((entry) => entry.failure_classification ?? entry.failure_reason ?? entry.run_id);
+      reasons.push(`failed runs: ${failed.join(", ")}`);
+    }
+    if (eligible.some((entry) => entry.verification_total === 0 || entry.verification_passed !== entry.verification_total)) {
+      reasons.push("verification failures");
+    }
+    if (eligible.some((entry) => entry.failure_classification)) {
+      const classes = Array.from(new Set(eligible.map((entry) => entry.failure_classification).filter((value): value is string => !!value)));
+      reasons.push(`failure classifications present: ${classes.join(", ")}`);
+    }
+    return {
+      task_id: taskId,
+      runs: group.length,
+      live_runs: liveRuns,
+      passed: reasons.length === 0,
+      reason: reasons.length > 0 ? reasons.join("; ") : "passed"
+    };
+  });
+  return {
+    ok: tasks.every((entry) => entry.passed),
+    require_live: !allowMock,
+    tasks,
+    report: report.artifacts_dir,
+    gui_revit_test_required: true
+  };
 }
 
 async function fetchBridgeJson(pathname: string, method = "GET", body?: unknown, bridgeUrl = resolveRevitBridgeUrl()): Promise<{ ok: boolean; status: number; body: unknown }> {
@@ -345,6 +398,22 @@ async function main(): Promise<void> {
       gates: result.report.demo_readiness_gates
     }, null, 2));
     if (!passed) process.exitCode = 1;
+    return;
+  }
+
+  if (command === "aec-mep-readiness") {
+    const artifactsDir = typeof flags["artifacts-dir"] === "string" ? flags["artifacts-dir"] : "";
+    if (!artifactsDir) throw new Error("aec-mep-readiness requires --artifacts-dir.");
+    const result = writeBenchmarkReportArtifacts(artifactsDir, bundle);
+    const gate = buildAecMepReadinessGate(result.report, flags["allow-mock"] === true);
+    console.log(JSON.stringify({
+      ok: gate.ok,
+      report: result.markdown_path,
+      require_live: gate.require_live,
+      gui_revit_test_required: gate.gui_revit_test_required,
+      tasks: gate.tasks
+    }, null, 2));
+    if (!gate.ok) process.exitCode = 1;
     return;
   }
 

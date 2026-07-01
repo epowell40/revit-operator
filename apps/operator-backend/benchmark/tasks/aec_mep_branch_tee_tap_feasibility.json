@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "task_id": "aec_mep_branch_tee_tap_feasibility",
+  "name": "AEC-MEP V1 F: Branch Tee/Tap Feasibility",
+  "description": "Replay a branch/tee/tap dry-run feasibility case and verify guarded apply behavior.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "metadata": {
+      "workflow": "aec_mep_eval",
+      "scenario_kind": "branch_tee_tap_feasibility"
+    }
+  },
+  "setup_instructions": [
+    "Use /revit/connect-mep-branch with dryRun true before any branch write.",
+    "Treat V1 as feasibility/scaffold when the branch does not start at an existing open main connector."
+  ],
+  "success_criteria": [
+    "The dry-run returns a feasibility result.",
+    "Apply support is reported explicitly.",
+    "Unsupported apply paths remain guarded and do not write model elements."
+  ],
+  "failure_criteria": [
+    "The workflow writes a branch/tap when dry-run apply support is false.",
+    "No feasibility status is returned.",
+    "A completed branch is claimed without connector/fitting verification."
+  ],
+  "max_time_seconds": 120,
+  "max_steps": 4,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This V1 case verifies feasibility and guardrails, not full tee/tap creation."
+  ],
+  "tags": ["revit", "aec-mep", "eval", "branch", "tee", "tap", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "aec_mep_eval",
+    "request": {
+      "scenarioId": "aec_mep_branch_tee_tap_feasibility",
+      "scenarioKind": "branch_tee_tap_feasibility",
+      "apply": false,
+      "branch": {
+        "mainElementId": 42001,
+        "branchKind": "duct",
+        "targetSize": "8x8",
+        "connectionMode": "tap",
+        "dryRun": true
+      },
+      "expected": {
+        "feasible": true,
+        "applySupported": false
+      }
+    },
+    "mock": {
+      "/revit/connect-mep-branch": {
+        "status": "FeasibleDryRun",
+        "feasible": true,
+        "applySupported": false,
+        "reason": "Main route and branch route are geometrically feasible, but V1 apply is guarded because the branch does not start at an existing open main connector.",
+        "mainElementId": 42001,
+        "candidateTapPoint": { "x": 12.5, "y": 8.0, "z": 10.0 }
+      }
+    }
+  }
+}

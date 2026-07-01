@@ -24,6 +24,8 @@ The parameter-edit workflow writes `artifacts/parameter_change_summary.md` with 
 
 The redline receptacle workflow writes `artifacts/redline_receptacles_summary.json` and `artifacts/redline_receptacles_summary.md` with requested placements, created element ids, before/after visible counts, audit payload, and mark/panel/circuit metadata when provided. For repeated live reliability runs, set `cleanupCreatedElements: true` in the live request override; the workflow will delete created test elements after capture/audit and record a cleanup verification so later repeats are not biased by previous test devices.
 
+The AEC-MEP eval V1 tasks use the same `revit_workflow` adapter with `workflow: "aec_mep_eval"`. They cover duct route pickup from vector PDF geometry, pipe route pickup from labeled redline geometry, callout-only duct verification, wrong-bay/one-axis false positives, connected duct resize verification, and branch/tee/tap feasibility. Each run writes `artifacts/<scenario>_summary.json` and `artifacts/<scenario>_summary.md`, and failed runs include `failure_classification` in `revit_workflow_result.json` and the benchmark report.
+
 Live bridge calls also arm a bounded Revit-owned warning dialog dismiss guard. This is for modal recovery only, such as duplicate-schedule or warning dialogs that block the Revit API call. Dismissals are counted in each workflow result as `computer_use_actions` so benchmark evidence shows when computer-use recovery was needed.
 
 ## Task Definitions
@@ -96,9 +98,12 @@ npm run benchmark -- run --all-tasks --all-configs --repeat 1
 npm run benchmark -- run --tasks demo_sheet_export,demo_takeoff_receptacles,demo_parameter_edit,demo_redline_receptacles --config deterministic_skill_only --repeat 1
 $env:OPERATOR_BENCHMARK_USE_MOCKS="0"; npm run benchmark -- run --tasks demo_sheet_export,demo_takeoff_receptacles,demo_parameter_edit,demo_redline_receptacles --config deterministic_skill_only --repeat 5 --batch-id demo_readiness_live
 $env:OPERATOR_BENCHMARK_USE_MOCKS="0"; npm run benchmark -- run --tasks demo_redline_receptacles --config deterministic_skill_only --repeat 10 --batch-id redline_receptacle_live_repeat
+npm run benchmark -- run --tasks aec_mep_duct_route_vector_pdf,aec_mep_pipe_route_labeled_redline,aec_mep_duct_callout_existing_model,aec_mep_wrong_bay_false_positive,aec_mep_connected_duct_resize,aec_mep_branch_tee_tap_feasibility --config deterministic_skill_only --repeat 1 --batch-id aec_mep_eval_v1_mock
+npm run benchmark -- aec-mep-readiness --artifacts-dir artifacts/benchmark_runs/2026-04-12/<batch_id> --allow-mock
 npm run benchmark -- run --tasks demo_takeoff_lighting,demo_takeoff_mechanical_equipment --config deterministic_skill_only --repeat 1 --batch-id demo_takeoff_supplemental
 npm run benchmark -- report --artifacts-dir artifacts/benchmark_runs/2026-04-12/<batch_id>
 npm run benchmark -- demo-readiness --artifacts-dir artifacts/benchmark_runs/2026-04-12/<batch_id>
+npm run benchmark -- aec-mep-readiness --artifacts-dir artifacts/benchmark_runs/2026-04-12/<batch_id>
 npm run benchmark -- grade-sheet --artifacts-dir artifacts/benchmark_runs/2026-04-12/<batch_id>
 npm run benchmark -- default-plan
 ```
@@ -168,6 +173,20 @@ Set it before live runs:
 $env:OPERATOR_BENCHMARK_REVIT_REQUESTS_JSON="C:\Users\User\source\repos\RevitOperator\local-work\demo-live-requests.json"
 npm run benchmark -- preflight-revit
 ```
+
+### AEC-MEP Eval V1 Live Gate
+Live AEC-MEP overrides should live under `apps/operator-backend/local-work/` when running from this public checkout. Start from `apps/operator-backend/local-work/aec-mep-eval-live-requests.example.json`, replace ids/points with values from the open model, and keep the file uncommitted.
+
+```powershell
+cd C:\Users\User\source\repos\RevitOperator\public\apps\operator-backend
+$env:OPERATOR_BENCHMARK_USE_MOCKS="0"
+$env:OPERATOR_BENCHMARK_REVIT_REQUESTS_JSON="C:\Users\User\source\repos\RevitOperator\public\apps\operator-backend\local-work\aec-mep-eval-live-requests.json"
+npm run benchmark -- preflight-revit
+npm run benchmark -- run --tasks aec_mep_duct_route_vector_pdf,aec_mep_pipe_route_labeled_redline,aec_mep_duct_callout_existing_model,aec_mep_wrong_bay_false_positive,aec_mep_connected_duct_resize,aec_mep_branch_tee_tap_feasibility --config deterministic_skill_only --repeat 1 --batch-id aec_mep_eval_v1_live
+npm run benchmark -- aec-mep-readiness --artifacts-dir artifacts/benchmark_runs/<yyyy-mm-dd>/aec_mep_eval_v1_live
+```
+
+`aec-mep-readiness` fails unless all six tasks have passing `aec_mep_eval` workflow evidence. By default it requires live Revit workflow runs; use `--allow-mock` only for local replay smoke checks. The gate still does not replace the project rule requiring a real GUI Revit inspection before claiming the feature is ready for user testing.
 
 ## Default Experiment Plan
 `default-plan` runs the four demo-readiness workflows across the configured GPT-5.5, mini-executor, and deterministic skill-only matrix.

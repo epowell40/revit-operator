@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "task_id": "aec_mep_duct_callout_existing_model",
+  "name": "AEC-MEP V1 C: Callout-Only Duct Redline Existing Model Verification",
+  "description": "Replay a callout-only duct redline that must verify matching modeled ductwork instead of fabricating route geometry.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "metadata": {
+      "workflow": "aec_mep_eval",
+      "scenario_kind": "duct_callout_verify_existing"
+    }
+  },
+  "setup_instructions": [
+    "Use a PDF redline whose duct geometry is callout text or underline only.",
+    "Resolve the intended room/space and scope matching modeled ductwork before any route creation."
+  ],
+  "success_criteria": [
+    "The eval classifies the redline as callout-only.",
+    "Matching modeled ductwork is found by spatial scope and size.",
+    "Element summary and highlighted capture evidence are produced without route creation."
+  ],
+  "failure_criteria": [
+    "The workflow creates duct route geometry from callout-only markup.",
+    "No matching modeled ductwork is found and the case is not blocked.",
+    "A matching element is reported without visual capture evidence."
+  ],
+  "max_time_seconds": 120,
+  "max_steps": 4,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This is a verification/blocking eval, not a route creation eval."
+  ],
+  "tags": ["revit", "aec-mep", "eval", "redline", "duct", "callout-only", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "aec_mep_eval",
+    "request": {
+      "scenarioId": "aec_mep_duct_callout_existing_model",
+      "scenarioKind": "duct_callout_verify_existing",
+      "redline": {
+        "source": "vector_pdf_geometry",
+        "geometryRole": "callout_only",
+        "labelText": "12x10 supply duct"
+      },
+      "scope": {
+        "roomNumber": "405",
+        "levelName": "L4",
+        "roomMode": "auto",
+        "verticalScope": "room+plenum",
+        "systemClassification": "Supply",
+        "sizeFrom": "12x10",
+        "includeCategories": ["Ducts", "Duct Fittings", "Air Terminals"],
+        "max": 50
+      },
+      "capture": {
+        "viewId": 1363433
+      },
+      "expected": {
+        "size": "12x10",
+        "minExistingElementCount": 1
+      }
+    },
+    "mock": {
+      "/revit/ducts-by-spatial-scope": {
+        "status": "Ok",
+        "elementIds": [1542987],
+        "elements": [
+          { "id": 1542987, "category": "Ducts", "categoryToken": "OST_DuctCurves", "systemName": "Mechanical Supply Air 52", "size": "12\"x10\"" }
+        ]
+      },
+      "/revit/get-element-summary": [
+        {
+          "id": 1542987,
+          "found": true,
+          "category": "Ducts",
+          "location": {
+            "type": "curve",
+            "p0": { "x": -15.663, "y": -17.933, "z": 38.833 },
+            "p1": { "x": -2.273, "y": -17.933, "z": 38.833 }
+          }
+        }
+      ],
+      "/revit/highlight-and-export": {
+        "path": "artifacts/aec-mep/callout-existing-duct.jpg",
+        "widthPx": 2200,
+        "heightPx": 1223
+      }
+    }
+  }
+}
