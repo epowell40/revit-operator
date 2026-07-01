@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "task_id": "aec_mep_duct_route_vector_pdf",
+  "name": "AEC-MEP V1 A: Duct Route From Vector PDF Redline",
+  "description": "Replay a bounded duct-route pickup from explicit vector PDF redline geometry and verify the route workflow output.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "metadata": {
+      "workflow": "aec_mep_eval",
+      "scenario_kind": "duct_route_redline_vector_pdf"
+    }
+  },
+  "setup_instructions": [
+    "Use a prepared vector PDF redline whose route geometry is a target path, not a text underline.",
+    "Map the vector route endpoints into the target Revit view before model writes.",
+    "Use /revit/mep-route-workflow for dry-run/apply and post-change visual capture."
+  ],
+  "success_criteria": [
+    "The eval records vector redline geometry as the source of the route.",
+    "The route workflow returns the expected duct kind, size, created element evidence, and endpoint geometry.",
+    "Post-change capture and open-connector reporting are present when applying."
+  ],
+  "failure_criteria": [
+    "The route is derived from callout text or an underline instead of target path geometry.",
+    "Created or planned route endpoints are outside tolerance.",
+    "A model write is reported without post-change capture evidence."
+  ],
+  "max_time_seconds": 180,
+  "max_steps": 4,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "Live runs must inspect the returned visual capture before claiming user-ready completion."
+  ],
+  "tags": ["revit", "aec-mep", "eval", "redline", "duct", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [
+    "Delete benchmark-created route elements when cleanupCreatedElements is true."
+  ],
+  "adapter_config": {
+    "workflow": "aec_mep_eval",
+    "request": {
+      "scenarioId": "aec_mep_duct_route_vector_pdf",
+      "scenarioKind": "duct_route_redline_vector_pdf",
+      "cleanupCreatedElements": true,
+      "redline": {
+        "source": "vector_pdf_geometry",
+        "geometryRole": "target_path",
+        "labelText": "12x10 supply duct",
+        "verticesNorm": [
+          { "x": 0.3, "y": 0.4 },
+          { "x": 0.7, "y": 0.4 }
+        ]
+      },
+      "route": {
+        "kind": "duct",
+        "viewId": 1363433,
+        "visualViewId": 1363433,
+        "roomNumber": "405",
+        "levelName": "L4",
+        "systemType": "Supply Air",
+        "ductSize": "12x10",
+        "sizePolicy": "explicit_required",
+        "elevationPolicy": "resolve_context_default",
+        "routingMode": "polyline",
+        "connectSegments": true,
+        "verify": true,
+        "apply": true,
+        "visualVerify": true,
+        "points": [
+          { "x": 40, "y": 27 },
+          { "x": 58, "y": 27 }
+        ],
+        "imageSize": 2200,
+        "focusPaddingFt": 8
+      },
+      "expected": {
+        "kind": "duct",
+        "size": "12x10",
+        "minCreatedElementCount": 1,
+        "maxEndpointErrorFt": 1,
+        "requiresPostChangeCapture": true,
+        "requiresOpenConnectorReport": true
+      }
+    },
+    "mock": {
+      "/revit/mep-route-workflow": {
+        "status": "AppliedVisualVerificationReady",
+        "applyResult": {
+          "status": "CreatedWithOpenConnectors",
+          "plannedPoints": [
+            { "x": 40.1, "y": 27.0 },
+            { "x": 58.0, "y": 27.1 }
+          ],
+          "segmentCount": 1,
+          "chosenSize": { "requested": "12x10", "applied": "12x10" },
+          "createdElementIds": [1542929],
+          "createdFittingIds": [],
+          "openConnectorCount": 2
+        },
+        "visualVerification": {
+          "status": "CaptureReadyForAIReview",
+          "capturePath": "artifacts/aec-mep/duct-route-after.jpg",
+          "createdElementIds": [1542929]
+        }
+      },
+      "/revit/delete": {
+        "ok": true,
+        "deletedIds": [1542929]
+      }
+    }
+  }
+}

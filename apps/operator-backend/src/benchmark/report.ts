@@ -164,7 +164,8 @@ function loadRevitWorkflowSummaries(runs: BenchmarkRunRecord[]): BenchmarkRevitW
       verification_total: verifications.length,
       verification_names_passed: verificationNamesPassed,
       verification_names_failed: verificationNamesFailed,
-      failure_reason: typeof result.failure_reason === "string" ? result.failure_reason : null
+      failure_reason: typeof result.failure_reason === "string" ? result.failure_reason : null,
+      failure_classification: typeof result.failure_classification === "string" ? result.failure_classification : null
     });
   }
   return summaries.sort((a, b) => `${a.task_id}|${a.config_id}|${a.run_id}`.localeCompare(`${b.task_id}|${b.config_id}|${b.run_id}`));
@@ -376,6 +377,7 @@ export function writeBenchmarkReportArtifacts(
     String(entry.computer_use_actions),
     `${entry.verification_passed}/${entry.verification_total}`,
     String(entry.output_artifact_count),
+    entry.failure_classification ?? "",
     entry.failure_reason ?? ""
   ]);
   const readinessRows = report.demo_readiness_gates.map((entry) => [
@@ -419,7 +421,7 @@ export function writeBenchmarkReportArtifacts(
   if (revitRows.length > 0) {
     lines.push("## Revit Workflow Evidence");
     lines.push(markdownTable(
-      ["Task", "Config", "Workflow", "Source", "Success", "Elapsed (s)", "Tool calls", "Transactions", "Computer-use", "Verifications", "Artifacts", "Failure"],
+      ["Task", "Config", "Workflow", "Source", "Success", "Elapsed (s)", "Tool calls", "Transactions", "Computer-use", "Verifications", "Artifacts", "Failure class", "Failure"],
       revitRows
     ));
     lines.push("");

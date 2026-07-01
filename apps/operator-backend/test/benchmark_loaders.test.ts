@@ -29,3 +29,23 @@ test("benchmark task loader discovers demo Revit workflow tasks", () => {
     assert.equal(tasks.find((task) => task.task_id === id)?.environment.adapter_id, "revit_workflow");
   }
 });
+
+test("benchmark task loader discovers AEC-MEP eval V1 tasks", () => {
+  const tasks = loadBenchmarkTasks();
+  const expectedTaskIds = [
+    "aec_mep_duct_route_vector_pdf",
+    "aec_mep_pipe_route_labeled_redline",
+    "aec_mep_duct_callout_existing_model",
+    "aec_mep_wrong_bay_false_positive",
+    "aec_mep_connected_duct_resize",
+    "aec_mep_branch_tee_tap_feasibility"
+  ];
+
+  for (const id of expectedTaskIds) {
+    const task = tasks.find((entry) => entry.task_id === id);
+    assert.ok(task, `missing ${id}`);
+    assert.equal(task.environment.adapter_id, "revit_workflow");
+    assert.equal((task.adapter_config as Record<string, unknown> | undefined)?.workflow, "aec_mep_eval");
+    assert.equal(task.tags.includes("aec-mep"), true);
+  }
+});

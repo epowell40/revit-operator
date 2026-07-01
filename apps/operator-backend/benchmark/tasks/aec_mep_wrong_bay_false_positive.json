@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "task_id": "aec_mep_wrong_bay_false_positive",
+  "name": "AEC-MEP V1 D: Wrong-Bay One-Axis False Positive Guard",
+  "description": "Replay a route that matches one axis but lands in the wrong bay and verify that the eval blocks the false positive.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "metadata": {
+      "workflow": "aec_mep_eval",
+      "scenario_kind": "wrong_bay_false_positive"
+    }
+  },
+  "setup_instructions": [
+    "Use intended route endpoints and landmark relationships that distinguish the correct bay.",
+    "Do not count a one-axis-aligned route as correct when the cross-axis bay is wrong."
+  ],
+  "success_criteria": [
+    "The eval detects endpoint or landmark mismatch.",
+    "No model write is accepted for the wrong-bay route.",
+    "The blocked/dry-run status is recorded as evidence."
+  ],
+  "failure_criteria": [
+    "The route is accepted because only one axis matches.",
+    "Created element ids exist for the wrong-bay route.",
+    "No failure/blocking classification is recorded."
+  ],
+  "max_time_seconds": 90,
+  "max_steps": 4,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This is a negative eval: passing means the wrong-bay candidate was blocked."
+  ],
+  "tags": ["revit", "aec-mep", "eval", "redline", "false-positive", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "aec_mep_eval",
+    "request": {
+      "scenarioId": "aec_mep_wrong_bay_false_positive",
+      "scenarioKind": "wrong_bay_false_positive",
+      "route": {
+        "kind": "duct",
+        "viewId": 1363433,
+        "visualViewId": 1363433,
+        "roomNumber": "405",
+        "levelName": "L4",
+        "systemType": "Supply Air",
+        "ductSize": "12x10",
+        "apply": false,
+        "visualVerify": false,
+        "points": [
+          { "x": 40, "y": 27 },
+          { "x": 58, "y": 27 }
+        ]
+      },
+      "expected": {
+        "points": [
+          { "x": 40, "y": 27 },
+          { "x": 58, "y": 27 }
+        ],
+        "maxEndpointErrorFt": 1
+      },
+      "landmarkRelationships": [
+        {
+          "landmark": "target room/unit label band",
+          "relation": "route must stay in Unit 405 lower bay",
+          "status": "fail",
+          "reason": "Candidate route matches the x-span but is one bay north of the intended room band."
+        }
+      ]
+    },
+    "mock": {
+      "/revit/mep-route-workflow": {
+        "status": "BlockedByVisualGate",
+        "apply": false,
+        "plannedPoints": [
+          { "x": 40, "y": 39 },
+          { "x": 58, "y": 39 }
+        ],
+        "visualVerification": {
+          "status": "FailedOneAxisBayCheck",
+          "capturePath": "artifacts/aec-mep/wrong-bay-candidate.jpg"
+        }
+      }
+    }
+  }
+}

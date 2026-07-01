@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { loadBenchmarkConfigBundle } from "../src/benchmark/config.js";
 import { writeJsonFile } from "../src/benchmark/files.js";
 import { exportManualGradingSheet } from "../src/benchmark/grading.js";
-import { generateBenchmarkReport } from "../src/benchmark/report.js";
+import { generateBenchmarkReport, writeBenchmarkReportArtifacts } from "../src/benchmark/report.js";
 import type { BenchmarkRunRecord } from "../src/benchmark/types.js";
 
 function tempDir(name: string): string {
@@ -118,7 +118,8 @@ test("report generation surfaces Revit workflow evidence", () => {
     verification_total: 2,
     verification_names_passed: ["raw_total_matches_grouped_total", "csv_written"],
     verification_names_failed: [],
-    failure_reason: null
+    failure_reason: null,
+    failure_classification: null
   });
   const takeoffGate = report.demo_readiness_gates.find((entry) => entry.task_id === "demo_takeoff_receptacles");
   assert.equal(takeoffGate?.passed, false);
@@ -286,4 +287,42 @@ test("redline demo readiness passes with strong live room host and circuit evide
   const redlineGate = report.demo_readiness_gates.find((entry) => entry.task_id === "demo_redline_receptacles");
   assert.equal(redlineGate?.passed, true);
   assert.equal(redlineGate?.reason, "passed");
+});
+
+test("report generation surfaces Revit workflow failure classifications", () => {
+  const dir = tempDir("report-aec-mep-failure-classification");
+  const runDir = path.join(dir, "deterministic_skill_only", "aec_mep_duct_route_vector_pdf", "repeat-01");
+  writeJsonFile(path.join(runDir, "run.json"), sampleRun({
+    run_id: "run-aec-mep-fail",
+    task_id: "aec_mep_duct_route_vector_pdf",
+    config_id: "deterministic_skill_only",
+    artifact_dir: runDir,
+    success_label: "fail",
+    termination_reason: "AEC-MEP route eval failed"
+  }));
+  writeJsonFile(path.join(runDir, "revit_workflow_result.json"), {
+    workflow: "aec_mep_eval",
+    execution_source: "mock",
+    success: false,
+    elapsed_seconds: 4,
+    tool_calls: 1,
+    revit_transactions: 1,
+    computer_use_actions: 0,
+    output_artifacts: [path.join(runDir, "artifacts", "aec_mep_summary.json")],
+    verification_results: [
+      { name: "redline_vector_geometry_present", ok: true },
+      { name: "route_endpoint_error_within_tolerance", ok: false }
+    ],
+    failure_reason: "AEC-MEP route eval failed: route_endpoint_error_within_tolerance",
+    failure_classification: "route_geometry_mismatch"
+  });
+
+  const report = generateBenchmarkReport(dir, loadBenchmarkConfigBundle());
+  assert.equal(report.revit_workflow_summaries[0]?.failure_classification, "route_geometry_mismatch");
+  assert.deepEqual(report.revit_workflow_summaries[0]?.verification_names_failed, ["route_endpoint_error_within_tolerance"]);
+
+  const artifacts = writeBenchmarkReportArtifacts(dir, loadBenchmarkConfigBundle());
+  const markdown = fs.readFileSync(artifacts.markdown_path, "utf8");
+  assert.match(markdown, /Failure class/);
+  assert.match(markdown, /route_geometry_mismatch/);
 });
