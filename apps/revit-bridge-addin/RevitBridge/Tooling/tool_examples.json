@@ -5785,6 +5785,39 @@
     },
     {
       "method": "POST",
+      "path": "/revit/link-revit",
+      "examples": [
+        {
+          "name": "Dry-run and apply an RVT link at origin",
+          "request": {
+            "sourcePath": "P:\\\\Projects\\\\refs\\\\architectural.rvt",
+            "pin": true,
+            "dryRun": true
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "plan": {}
+          }
+        },
+        {
+          "name": "Link a workspace RVT with offset",
+          "request": {
+            "sourcePath": "benchmark/fixtures/revit/link-source.rvt",
+            "pin": true,
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "expected_response_shape": {
+            "status": "Success",
+            "linkTypeId": 123,
+            "linkInstanceId": 456
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/place-image",
       "examples": [
         {
@@ -6364,6 +6397,37 @@
             },
             "recommendedNextImplementationStep": "Safe apply path is available because the branch starts at an existing open main connector."
           }
+        },
+        {
+          "name": "Dry-run a named duct tap takeoff before applying",
+          "request": {
+            "kind": "duct",
+            "mainElementId": 12345,
+            "branchSize": "8x8",
+            "connectionMode": "tap",
+            "takeoffTypeName": "Tap - Rectangular",
+            "branchPoints": [
+              { "x": 10, "y": 2, "z": 10 },
+              { "x": 10, "y": 12, "z": 10 }
+            ],
+            "dryRun": true,
+            "verify": true,
+            "visualVerify": true
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "splitPlan": {
+              "mode": "tap",
+              "expectedFitting": "takeoff"
+            },
+            "selected": {
+              "takeoffRoutingPreference": {
+                "requestedFamilyName": null,
+                "requestedTypeName": "Tap - Rectangular",
+                "candidates": []
+              }
+            }
+          }
         }
       ]
     },
@@ -6433,6 +6497,177 @@
               },
               "aiReviewChecklist": []
             }
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/mep-branch-network-workflow",
+      "examples": [
+        {
+          "name": "Dry-run a main duct with two branch taps",
+          "request": {
+            "kind": "duct",
+            "levelName": "Level 2",
+            "systemType": "Supply Air",
+            "ductSize": "12x8",
+            "mainPoints": [
+              { "x": 0, "y": 0, "z": 10 },
+              { "x": 30, "y": 0, "z": 10 }
+            ],
+            "branches": [
+              {
+                "name": "branch-a",
+                "mainSegmentIndex": 0,
+                "connectionMode": "tap",
+                "connectionPoint": { "x": 10, "y": 0, "z": 10 },
+                "points": [
+                  { "x": 10, "y": 8, "z": 10 }
+                ],
+                "branchSize": "8x6"
+              },
+              {
+                "name": "branch-b",
+                "mainSegmentIndex": 0,
+                "connectionMode": "tap",
+                "connectionPoint": { "x": 20, "y": 0, "z": 10 },
+                "points": [
+                  { "x": 20, "y": -8, "z": 10 },
+                  { "x": 26, "y": -8, "z": 10 }
+                ],
+                "branchSize": "8x6",
+                "branchSegmentSizes": ["8x6", "6x6"]
+              }
+            ],
+            "apply": false,
+            "visualVerify": true
+          },
+          "expected_response_shape": {
+            "status": "DryRunReady",
+            "networkPlan": {
+              "main": {
+                "segmentCount": 1
+              },
+              "branches": [
+                {
+                  "splitPlan": {
+                    "mode": "tap",
+                    "expectedFitting": "takeoff"
+                  },
+                  "jointPlan": [
+                    {
+                      "expectedFitting": "transition"
+                    }
+                  ]
+                }
+              ]
+            },
+            "mainDryRun": {
+              "status": "Dry Run"
+            }
+          }
+        },
+        {
+          "name": "Accessory graph nodes block when a duct accessory symbol is not resolved",
+          "request": {
+            "kind": "duct",
+            "ductSize": "12x8",
+            "mainPoints": [
+              { "x": 0, "y": 0, "z": 10 },
+              { "x": 20, "y": 0, "z": 10 }
+            ],
+            "branches": [],
+            "accessories": [
+              {
+                "kind": "manual_balancing_damper",
+                "action": "insert",
+                "mainSegmentIndex": 0,
+                "chainageFt": 8
+              }
+            ],
+            "apply": true
+          },
+          "expected_response_shape": {
+            "status": "Blocked",
+            "reason": "One or more accessory/damper graph nodes are not safe to apply.",
+            "networkPlan": {
+              "accessories": [
+                {
+                  "applySupported": false,
+                  "blockCode": "accessory_symbol_not_found"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Dry-run a main pipe route while planning explicit pipe accessory delete",
+          "request": {
+            "kind": "pipe",
+            "levelName": "Level 2",
+            "pipeSize": "1\"",
+            "mainPoints": [
+              { "x": 0, "y": 0, "z": 10 },
+              { "x": 20, "y": 0, "z": 10 }
+            ],
+            "branches": [],
+            "accessories": [
+              {
+                "kind": "manual_balancing_valve",
+                "action": "delete",
+                "targetElementId": 12345
+              }
+            ],
+            "apply": false
+          },
+          "expected_response_shape": {
+            "status": "DryRunReady",
+            "networkPlan": {
+              "accessories": [
+                {
+                  "action": "delete",
+                  "targetElementIds": [
+                    12345
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Apply a duct accessory type change by explicit target and type ids",
+          "request": {
+            "kind": "duct",
+            "ductSize": "12x8",
+            "mainPoints": [
+              { "x": 0, "y": 0, "z": 10 },
+              { "x": 20, "y": 0, "z": 10 }
+            ],
+            "branches": [],
+            "accessories": [
+              {
+                "kind": "manual_balancing_damper",
+                "action": "type_change",
+                "targetElementId": 22222,
+                "typeId": 33333
+              }
+            ],
+            "apply": true,
+            "visualVerify": true
+          },
+          "expected_response_shape": {
+            "created": {
+              "changedAccessoryElementIds": [
+                22222
+              ]
+            },
+            "accessoryResults": [
+              {
+                "ok": true,
+                "status": "ChangedAccessoryType"
+              }
+            ]
           }
         }
       ]
@@ -8085,6 +8320,164 @@
             "applied": true,
             "mode": "parameter_fallback",
             "limitation": "When sourceElementId is supplied, the handler attempts real ElectricalSystem reassignment."
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/edit-mep-route-elements",
+      "examples": [
+        {
+          "name": "Dry-run explicit duct size and elevation edit",
+          "request": {
+            "kind": "duct",
+            "elementIds": [
+              12345
+            ],
+            "ductSize": "10x8",
+            "deltaZFt": -1.0,
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "plan": {
+              "changesSize": true,
+              "changesElevation": true,
+              "elevationPlan": []
+            },
+            "before": [],
+            "after": [],
+            "verification": {
+              "openConnectorCountBefore": 2,
+              "openConnectorCountAfter": 2
+            }
+          }
+        },
+        {
+          "name": "Apply explicit pipe size edit with focused capture",
+          "request": {
+            "kind": "pipe",
+            "elementIds": [
+              23456
+            ],
+            "diameter": "1.5 in",
+            "apply": true,
+            "dryRun": false,
+            "verify": true,
+            "visualVerify": true,
+            "visualViewId": 31309289,
+            "focusPaddingFt": 3.0
+          },
+          "expected_response_shape": {
+            "status": "Edited",
+            "appliedIds": [
+              23456
+            ],
+            "sizeResults": [
+              {
+                "ok": true
+              }
+            ],
+            "verification": {
+              "networkAudit": {}
+            },
+            "visualVerification": {
+              "capture": {
+                "path": "..."
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/reroute-mep-route-segment",
+      "examples": [
+        {
+          "name": "Dry-run isolated duct offset reroute",
+          "request": {
+            "kind": "duct",
+            "hostElementId": 12345,
+            "split1Normalized": 0.3,
+            "split2Normalized": 0.7,
+            "offsetVector": {
+              "x": 0,
+              "y": 0,
+              "z": -1
+            },
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "plan": {
+              "applySupported": true,
+              "segments": [],
+              "expectedFittings": []
+            },
+            "selected": {},
+            "size": {}
+          }
+        },
+        {
+          "name": "Apply isolated pipe reroute with focused trace capture",
+          "request": {
+            "kind": "pipe",
+            "hostElementId": 23456,
+            "split1ChainageFt": 4,
+            "split2ChainageFt": 10,
+            "offsetVector": {
+              "x": 0,
+              "y": 2,
+              "z": 0
+            },
+            "apply": true,
+            "dryRun": false,
+            "verify": true,
+            "visualVerify": true,
+            "visualViewId": 31309289,
+            "focusPaddingFt": 4.0
+          },
+          "expected_response_shape": {
+            "status": "Rerouted",
+            "createdElementIds": [],
+            "createdFittingIds": [],
+            "verification": {
+              "networkAudit": {}
+            },
+            "visualVerification": {
+              "path": "..."
+            }
+          }
+        },
+        {
+          "name": "Dry-run isolated duct size transition",
+          "request": {
+            "kind": "duct",
+            "hostElementId": 34567,
+            "transitionNormalized": 0.5,
+            "upstreamDuctSize": "12x8",
+            "downstreamDuctSize": "8x8",
+            "sizePolicy": "explicit_required",
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "operation": "size_transition",
+            "plan": {
+              "applySupported": true,
+              "transitionPoint": {},
+              "segments": [],
+              "expectedFitting": {
+                "expectedFitting": "transition"
+              }
+            },
+            "upstreamSize": {},
+            "downstreamSize": {}
           }
         }
       ]

@@ -5,6 +5,7 @@ Create deterministic duct or pipe route geometry from explicit model points or m
 
 ## Use when
 - The user asks to draw, create, route, or sketch ductwork or piping.
+- The user asks to edit explicit duct/pipe curve ids for size or simple elevation changes.
 - A redline, screenshot, active-view mark, or explicit start/end location describes one or more pathway segments.
 - The task is a single segment, a continuous multi-segment route, or an initial branch feasibility check.
 
@@ -26,9 +27,11 @@ Create deterministic duct or pipe route geometry from explicit model points or m
 4. A single line is just two ordered points; a path with bends is an ordered point list.
 5. Inspect planned points, selected level/system/type, chosen size, chosen elevation, segment count, total length, connection attempts, visualVerification, and warnings.
 6. If size is missing, prefer `sizePolicy:"use_default_with_warning"` for bounded drafts. The tool uses 8x8 duct or 1 inch pipe and reports the assumption. Use `explicit_required` only when applying without a placeholder would be unsafe.
+6a. For multi-section duct or pipe runs with size changes, pass `segmentSizes` with one size per segment. Dry-run reports `jointPlan`; adjacent segments with different normalized sizes should show `expectedFitting:"transition"`.
 7. If elevation is missing, prefer `elevationPolicy:"resolve_context_default"` and report the returned assumption. Do not pretend the elevation is known.
 8. Claim visual completion only after reviewing `visualVerification.capture.path` from an apply workflow or a follow-up `/revit/highlight-and-export` capture.
-9. For branch/tee/tap requests, run `/revit/connect-mep-branch` with `dryRun:true` first. Apply is available only when the branch starts at an existing open main connector; otherwise treat v1 as feasibility/scaffold until main splitting and tee/tap placement are implemented.
+9. For editing explicit existing duct/pipe curve ids, use `/revit/edit-mep-route-elements` with `dryRun:true` first. Supported first cases are size edits and simple level straight elevation moves. Elevation moves on connected elements are blocked by default; only set `allowConnectedElevationMove:true` when the affected connected run has been deliberately planned. For changing size part way down one isolated straight duct/pipe, use `/revit/reroute-mep-route-segment` size-transition mode with `transitionChainageFt` or `transitionNormalized` plus explicit upstream/downstream sizes; apply must create a transition fitting and pass connector/network verification.
+10. For branch/tee/tap requests, run `/revit/connect-mep-branch` with `dryRun:true` first. Apply is available when the branch starts at an existing open main connector, for projected non-connector split-tee cases on straight duct/pipe mains, for straight duct tap/takeoff when Revit creates the expected takeoff, and for pipe tap/takeoff only when dry-run reports an explicit tap/takeoff routing preference.
 
 ## Success criteria
 - Dry-run and apply return the intended pathway kind, size, level, ordered points, segment count, and created element ids.
@@ -42,7 +45,8 @@ Create deterministic duct or pipe route geometry from explicit model points or m
 - If frame mapping is missing or ambiguous, export a fresh view frame or request one explicit point pick rather than guessing.
 - If size cannot be applied, stop after dry-run and report the missing parameter/type issue unless the user explicitly approves a placeholder.
 - If connectors remain open after apply, report `CreatedWithOpenConnectors` and use connector/network tools for the next correction step.
-- If a branch requires splitting a main and placing a tee/tap away from an existing open connector, report that `/revit/connect-mep-branch` is guarded for that apply case and use its feasibility output to plan the next implementation/test.
+- If a requested route edit is really a reroute-by-offset or part-way size transition, do not fake it with a generic move or whole-element resize. Report that first-class reroute must split, reconnect with required fittings, and audit the connected network.
+- If a branch requires a pipe tap-specific fitting away from an existing open connector and dry-run does not report explicit tap/takeoff routing support, report the guarded block and use split tee or a pipe type with an explicit tap/takeoff preference.
 
 ## Examples
 - "Draw a 10x12 supply duct from this redline mark to that diffuser."

@@ -42,11 +42,30 @@ namespace RevitBridge.Logic.Handlers
             public OverrideStyle? overrideStyle { get; set; }
             public List<HighlightGroup>? highlightGroups { get; set; }
             public List<LabelSpec>? labels { get; set; }
+            public bool traceElementCurves { get; set; } = false;
 
             // Optional: export a focused image by temporarily cropping the view to the union of these elements' view bboxes.
             // (Rolled back after export.)
             public List<long>? focusElementIds { get; set; }
             public double focusPaddingFt { get; set; } = 2.0;
+        }
+
+        private class FocusCropResult
+        {
+            public bool requested { get; set; }
+            public bool applied { get; set; }
+            public int elementCount { get; set; }
+            public double paddingFt { get; set; }
+            public double? widthFt { get; set; }
+            public double? heightFt { get; set; }
+            public bool scopeBoxCleared { get; set; }
+        }
+
+        private class TraceResult
+        {
+            public bool requested { get; set; }
+            public int createdCount { get; set; }
+            public int failedCount { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -81,6 +100,8 @@ namespace RevitBridge.Logic.Handlers
 
             string path;
             var warnings = new List<string>();
+            FocusCropResult? focusCrop;
+            TraceResult? traceResult;
             using (var tg = new TransactionGroup(doc, "Highlight and Export"))
             {
                 tg.Start();
@@ -99,8 +120,9 @@ namespace RevitBridge.Logic.Handlers
                         }
                     }
 
+                    traceResult = TryCreateElementCurveTraces(doc, view, groups, p.overrideStyle, p.traceElementCurves, warnings);
                     TryCreateLabels(doc, view, p.labels);
-                    TryApplyFocusCrop(doc, view, p.focusElementIds, p.focusPaddingFt, warnings);
+                    focusCrop = TryApplyFocusCrop(doc, view, p.focusElementIds, p.focusPaddingFt, warnings);
                     t.Commit();
                 }
 
@@ -117,24 +139,109 @@ namespace RevitBridge.Logic.Handlers
                 path,
                 widthPx,
                 heightPx,
+                trace = traceResult,
+                focusCrop,
                 warnings
             });
         }
 
-        private static void TryApplyFocusCrop(Document doc, View view, List<long>? focusElementIds, double paddingFt, List<string> warnings)
+        private static TraceResult? TryCreateElementCurveTraces(Document doc, View view, List<HighlightGroup> groups, OverrideStyle? defaultStyle, bool requested, List<string> warnings)
         {
-            if (view == null) return;
-            if (focusElementIds == null || focusElementIds.Count == 0) return;
+            if (!requested) return null;
+
+            var result = new TraceResult { requested = true };
+            if (view.ViewType == ViewType.DrawingSheet)
+            {
+                warnings.Add("Element curve trace requested, but sheet views do not support detail-curve tracing.");
+                return result;
+            }
+
+            Plane? plane = null;
+            try { plane = view.SketchPlane?.GetPlane(); } catch { plane = null; }
+            if (plane == null)
+            {
+                warnings.Add("Element curve trace requested, but the view has no sketch plane.");
+                return result;
+            }
+
+            foreach (var group in groups)
+            {
+                if (group == null) continue;
+                var ogs = BuildOgs(group.overrideStyle ?? defaultStyle);
+                foreach (var id in (group.elementIds ?? new List<long>()).Where(x => x != 0).Distinct())
+                {
+                    try
+                    {
+                        var e = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(id));
+                        if (e?.Location is not LocationCurve lc || lc.Curve == null)
+                        {
+                            result.failedCount++;
+                            continue;
+                        }
+
+                        var p0 = ProjectToPlane(lc.Curve.GetEndPoint(0), plane);
+                        var p1 = ProjectToPlane(lc.Curve.GetEndPoint(1), plane);
+                        if (p0.DistanceTo(p1) < 1e-6)
+                        {
+                            result.failedCount++;
+                            continue;
+                        }
+
+                        var trace = doc.Create.NewDetailCurve(view, Line.CreateBound(p0, p1));
+                        if (trace != null)
+                        {
+                            view.SetElementOverrides(trace.Id, ogs);
+                            result.createdCount++;
+                        }
+                        else
+                        {
+                            result.failedCount++;
+                        }
+                    }
+                    catch
+                    {
+                        result.failedCount++;
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private static XYZ ProjectToPlane(XYZ point, Plane plane)
+        {
+            var delta = point - plane.Origin;
+            var distance = delta.DotProduct(plane.Normal);
+            return point - plane.Normal.Multiply(distance);
+        }
+
+        private static FocusCropResult? TryApplyFocusCrop(Document doc, View view, List<long>? focusElementIds, double paddingFt, List<string> warnings)
+        {
+            if (view == null) return null;
+            if (focusElementIds == null || focusElementIds.Count == 0) return null;
+
+            var result = new FocusCropResult
+            {
+                requested = true,
+                paddingFt = Math.Max(0, Math.Min(1000, paddingFt))
+            };
+
             if (view.ViewType == ViewType.DrawingSheet)
             {
                 warnings.Add("Focus crop requested, but sheet views do not support crop-box focusing. Exported full sheet.");
-                return;
+                return result;
             }
 
             var ids = focusElementIds.Where(x => x != 0).Distinct().Select(x => RevitBridge.Common.ElementIdCompat.Create(x)).ToList();
-            if (ids.Count == 0) return;
+            if (ids.Count == 0) return result;
 
-            BoundingBoxXYZ? union = null;
+            var existing = view.CropBox;
+            var cropTransform = existing != null ? existing.Transform : Transform.Identity;
+            var toCrop = cropTransform.Inverse;
+
+            XYZ? minLocal = null;
+            XYZ? maxLocal = null;
+            var counted = 0;
             foreach (var id in ids)
             {
                 var e = doc.GetElement(id);
@@ -143,59 +250,109 @@ namespace RevitBridge.Logic.Handlers
                 try { bb = e.get_BoundingBox(view); } catch { bb = null; }
                 if (bb == null) continue;
 
-                if (union == null)
+                var bbTransform = bb.Transform ?? Transform.Identity;
+                foreach (var p in EnumerateCorners(bb))
                 {
-                    union = new BoundingBoxXYZ();
-                    union.Min = bb.Min;
-                    union.Max = bb.Max;
+                    var local = toCrop.OfPoint(bbTransform.OfPoint(p));
+                    if (minLocal == null || maxLocal == null)
+                    {
+                        minLocal = local;
+                        maxLocal = local;
+                    }
+                    else
+                    {
+                        minLocal = new XYZ(Math.Min(minLocal.X, local.X), Math.Min(minLocal.Y, local.Y), Math.Min(minLocal.Z, local.Z));
+                        maxLocal = new XYZ(Math.Max(maxLocal.X, local.X), Math.Max(maxLocal.Y, local.Y), Math.Max(maxLocal.Z, local.Z));
+                    }
                 }
-                else
-                {
-                    union.Min = new XYZ(Math.Min(union.Min.X, bb.Min.X), Math.Min(union.Min.Y, bb.Min.Y), Math.Min(union.Min.Z, bb.Min.Z));
-                    union.Max = new XYZ(Math.Max(union.Max.X, bb.Max.X), Math.Max(union.Max.Y, bb.Max.Y), Math.Max(union.Max.Z, bb.Max.Z));
-                }
+                counted++;
             }
 
-            if (union == null)
+            result.elementCount = counted;
+            if (minLocal == null || maxLocal == null)
             {
                 warnings.Add("Focus crop requested, but no element bounding boxes were available in this view.");
-                return;
+                return result;
             }
 
-            var pad = Math.Max(0, Math.Min(1000, paddingFt));
-            var min = new XYZ(union.Min.X - pad, union.Min.Y - pad, union.Min.Z - pad);
-            var max = new XYZ(union.Max.X + pad, union.Max.Y + pad, union.Max.Z + pad);
+            var pad = result.paddingFt;
+            var min = new XYZ(minLocal.X - pad, minLocal.Y - pad, minLocal.Z - pad);
+            var max = new XYZ(maxLocal.X + pad, maxLocal.Y + pad, maxLocal.Z + pad);
 
             try
             {
-                var existing = view.CropBox;
+                result.scopeBoxCleared = TryClearScopeBox(view);
+
                 var newBox = new BoundingBoxXYZ();
-                newBox.Transform = existing != null ? existing.Transform : Transform.Identity;
+                newBox.Transform = cropTransform;
                 newBox.Min = min;
                 newBox.Max = max;
 
                 view.CropBoxActive = true;
                 view.CropBoxVisible = false;
                 view.CropBox = newBox;
+                result.applied = true;
+                result.widthFt = Math.Abs(max.X - min.X);
+                result.heightFt = Math.Abs(max.Y - min.Y);
             }
             catch (Exception ex)
             {
                 warnings.Add($"Focus crop failed: {ex.Message}");
             }
+
+            return result;
+        }
+
+        private static bool TryClearScopeBox(View view)
+        {
+            try
+            {
+                var p = view.get_Parameter(BuiltInParameter.VIEWER_VOLUME_OF_INTEREST_CROP);
+                if (p == null || p.IsReadOnly) return false;
+                var current = p.AsElementId();
+                if (current == null || current == ElementId.InvalidElementId) return false;
+                p.Set(ElementId.InvalidElementId);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static IEnumerable<XYZ> EnumerateCorners(BoundingBoxXYZ bb)
+        {
+            var min = bb.Min;
+            var max = bb.Max;
+            yield return new XYZ(min.X, min.Y, min.Z);
+            yield return new XYZ(min.X, min.Y, max.Z);
+            yield return new XYZ(min.X, max.Y, min.Z);
+            yield return new XYZ(min.X, max.Y, max.Z);
+            yield return new XYZ(max.X, min.Y, min.Z);
+            yield return new XYZ(max.X, min.Y, max.Z);
+            yield return new XYZ(max.X, max.Y, min.Z);
+            yield return new XYZ(max.X, max.Y, max.Z);
         }
 
         private static OverrideGraphicSettings BuildOgs(OverrideStyle? style)
         {
             var ogs = new OverrideGraphicSettings();
             if (style?.lineWeight != null)
-                ogs.SetProjectionLineWeight(Math.Max(1, style.lineWeight.Value));
+            {
+                var weight = Math.Max(1, Math.Min(16, style.lineWeight.Value));
+                ogs.SetProjectionLineWeight(weight);
+                ogs.SetCutLineWeight(weight);
+            }
             if (style?.r != null && style?.g != null && style?.b != null)
             {
                 var r = (byte)Math.Max(0, Math.Min(255, style.r.Value));
                 var g = (byte)Math.Max(0, Math.Min(255, style.g.Value));
                 var b = (byte)Math.Max(0, Math.Min(255, style.b.Value));
-                ogs.SetProjectionLineColor(new Color(r, g, b));
+                var color = new Color(r, g, b);
+                ogs.SetProjectionLineColor(color);
+                ogs.SetCutLineColor(color);
             }
+            ogs.SetHalftone(false);
             return ogs;
         }
 

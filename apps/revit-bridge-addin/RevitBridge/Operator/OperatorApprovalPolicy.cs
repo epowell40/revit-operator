@@ -49,6 +49,7 @@ namespace RevitBridge.Operator
 
                 // Read-only helpers.
                 if (string.Equals(p, "/revit/rooms", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                // POST is used for filter payload complexity; this endpoint only reads linked documents and boundary curves.
                 if (string.Equals(p, "/revit/linked-room-boundaries", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/renumber-rooms", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/room-contents", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
@@ -72,6 +73,9 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/create-mep-route", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/connect-mep-branch", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/mep-route-workflow", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/mep-branch-network-workflow", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/edit-mep-route-elements", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/reroute-mep-route-segment", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/arch-workflows", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/trace-connected-network", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/room_mep_intersect", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
