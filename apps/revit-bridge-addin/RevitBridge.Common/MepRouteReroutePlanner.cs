@@ -12,6 +12,9 @@ namespace RevitBridge.Common
         public double MainLengthFt { get; set; }
         public double Split1ChainageFt { get; set; }
         public double Split2ChainageFt { get; set; }
+        public string OffsetMode { get; set; } = "orthogonal";
+        public double? DoglegAngleDegrees { get; set; }
+        public double? DoglegSetbackFt { get; set; }
         public BranchPoint3d MainStart { get; set; }
         public BranchPoint3d MainEnd { get; set; }
         public BranchPoint3d Split1 { get; set; }
@@ -112,6 +115,7 @@ namespace RevitBridge.Common
             return new MepRouteReroutePlan
             {
                 ApplySupported = true,
+                OffsetMode = "orthogonal",
                 MainLengthFt = mainLength,
                 Split1ChainageFt = c1.Value,
                 Split2ChainageFt = c2.Value,
@@ -128,6 +132,100 @@ namespace RevitBridge.Common
                     Fitting("offset_leg_to_middle_a", offset1),
                     Fitting("middle_to_offset_leg_b", offset2),
                     Fitting("offset_leg_to_split2", split2)
+                }
+            };
+        }
+
+        public static MepRouteReroutePlan PlanDoglegOffsetReroute(
+            BranchPoint3d mainStart,
+            BranchPoint3d mainEnd,
+            double? split1ChainageFt,
+            double? split2ChainageFt,
+            double? split1Normalized,
+            double? split2Normalized,
+            BranchPoint3d offsetVector,
+            double angleDegrees = 45.0,
+            double minEndDistanceFt = 0.5,
+            double minMiddleLengthFt = 1.0,
+            double minOffsetFt = 0.25)
+        {
+            var mainLength = mainStart.DistanceTo(mainEnd);
+            if (mainLength <= 1e-6)
+                return Blocked("main_too_short", "Main route segment has zero length.");
+
+            var c1 = ResolveChainage(split1ChainageFt, split1Normalized, mainLength);
+            var c2 = ResolveChainage(split2ChainageFt, split2Normalized, mainLength);
+            if (!c1.HasValue || !c2.HasValue)
+                return Blocked("missing_split_positions", "Two split positions are required as chainage feet or normalized chainage values.");
+            if (c1.Value > c2.Value)
+            {
+                var tmp = c1;
+                c1 = c2;
+                c2 = tmp;
+            }
+
+            if (c1.Value < minEndDistanceFt || mainLength - c2.Value < minEndDistanceFt)
+                return Blocked("split_too_close_to_endpoint", $"Split points must leave at least {minEndDistanceFt:G6} ft at both original route ends.");
+
+            var offsetLength = offsetVector.DistanceTo(new BranchPoint3d(0, 0, 0));
+            if (offsetLength < minOffsetFt)
+                return Blocked("offset_too_small", $"Offset vector must be at least {minOffsetFt:G6} ft long.");
+
+            if (!IsFinite(angleDegrees) || angleDegrees < 15.0 || angleDegrees > 75.0)
+                return Blocked("dogleg_angle_out_of_range", "Dogleg angle must be between 15 and 75 degrees.");
+
+            var tangent = Unit(Subtract(mainEnd, mainStart), mainLength);
+            var offsetParallel = Math.Abs(Dot(offsetVector, tangent));
+            if (offsetParallel > 1e-4)
+                return Blocked("offset_not_perpendicular", "45-degree dogleg offset requires offsetVector to be perpendicular to the host route direction.");
+
+            var angleRadians = angleDegrees * Math.PI / 180.0;
+            var setback = offsetLength / Math.Tan(angleRadians);
+            if (setback < 1e-6)
+                return Blocked("dogleg_setback_too_small", "Dogleg setback is too small for the requested offset and angle.");
+
+            if (c2.Value - c1.Value < (2 * setback) + minMiddleLengthFt)
+                return Blocked("dogleg_span_too_short", $"Split span must be at least {(2 * setback) + minMiddleLengthFt:G6} ft for a {angleDegrees:G6}-degree dogleg with the requested offset.");
+
+            var split1 = PointAtChainage(mainStart, mainEnd, c1.Value / mainLength);
+            var split2 = PointAtChainage(mainStart, mainEnd, c2.Value / mainLength);
+            var offsetRunStart = Add(PointAtChainage(mainStart, mainEnd, (c1.Value + setback) / mainLength), offsetVector);
+            var offsetRunEnd = Add(PointAtChainage(mainStart, mainEnd, (c2.Value - setback) / mainLength), offsetVector);
+
+            var segments = new List<MepRouteRerouteSegmentPlan>
+            {
+                Segment("main_a", mainStart, split1),
+                Segment("dogleg_a", split1, offsetRunStart),
+                Segment("offset_middle", offsetRunStart, offsetRunEnd),
+                Segment("dogleg_b", offsetRunEnd, split2),
+                Segment("main_b", split2, mainEnd)
+            };
+
+            if (segments.Any(x => x.LengthFt <= 1e-6))
+                return Blocked("zero_length_segment", "Dogleg reroute plan produced a zero-length segment.");
+
+            return new MepRouteReroutePlan
+            {
+                ApplySupported = true,
+                OffsetMode = "dogleg45",
+                DoglegAngleDegrees = angleDegrees,
+                DoglegSetbackFt = setback,
+                MainLengthFt = mainLength,
+                Split1ChainageFt = c1.Value,
+                Split2ChainageFt = c2.Value,
+                MainStart = mainStart,
+                MainEnd = mainEnd,
+                Split1 = split1,
+                Split2 = split2,
+                OffsetSplit1 = offsetRunStart,
+                OffsetSplit2 = offsetRunEnd,
+                Segments = segments,
+                ExpectedFittings = new List<MepRouteRerouteFittingPlan>
+                {
+                    Fitting("split1_to_dogleg", split1),
+                    Fitting("dogleg_to_offset_middle_a", offsetRunStart),
+                    Fitting("offset_middle_to_dogleg_b", offsetRunEnd),
+                    Fitting("dogleg_to_split2", split2)
                 }
             };
         }
@@ -215,6 +313,21 @@ namespace RevitBridge.Common
         private static BranchPoint3d Add(BranchPoint3d point, BranchPoint3d vector)
         {
             return new BranchPoint3d(point.X + vector.X, point.Y + vector.Y, point.Z + vector.Z);
+        }
+
+        private static BranchPoint3d Subtract(BranchPoint3d a, BranchPoint3d b)
+        {
+            return new BranchPoint3d(a.X - b.X, a.Y - b.Y, a.Z - b.Z);
+        }
+
+        private static BranchPoint3d Unit(BranchPoint3d vector, double length)
+        {
+            return new BranchPoint3d(vector.X / length, vector.Y / length, vector.Z / length);
+        }
+
+        private static double Dot(BranchPoint3d a, BranchPoint3d b)
+        {
+            return a.X * b.X + a.Y * b.Y + a.Z * b.Z;
         }
 
         private static MepRouteRerouteSegmentPlan Segment(string role, BranchPoint3d start, BranchPoint3d end)

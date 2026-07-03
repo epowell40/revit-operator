@@ -205,6 +205,9 @@ namespace RevitBridge.Logic.Handlers
                 }
             }
 
+            if (result.failedCount > 0)
+                warnings.Add($"Element curve trace failed for {result.failedCount} highlighted element(s); the export may still show model overrides, but trace overlay evidence is incomplete.");
+
             return result;
         }
 

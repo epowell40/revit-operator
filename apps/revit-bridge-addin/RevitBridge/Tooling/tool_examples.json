@@ -8454,6 +8454,34 @@
           }
         },
         {
+          "name": "Dry-run isolated duct 45-degree dogleg offset",
+          "request": {
+            "kind": "duct",
+            "hostElementId": 34567,
+            "split1Normalized": 0.25,
+            "split2Normalized": 0.75,
+            "offsetVector": {
+              "x": 0,
+              "y": 0,
+              "z": -2
+            },
+            "offsetMode": "dogleg45",
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "operation": "offset_dogleg45",
+            "plan": {
+              "applySupported": true,
+              "offsetMode": "dogleg45",
+              "doglegSetbackFt": 2,
+              "segments": [],
+              "expectedFittings": []
+            }
+          }
+        },
+        {
           "name": "Dry-run isolated duct size transition",
           "request": {
             "kind": "duct",

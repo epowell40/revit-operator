@@ -25,6 +25,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             public double? split2Normalized { get; set; }
             public double? transitionChainageFt { get; set; }
             public double? transitionNormalized { get; set; }
+            public string? offsetMode { get; set; } = "orthogonal";
+            public double? doglegAngleDegrees { get; set; }
             public OffsetVector offsetVector { get; set; } = new OffsetVector();
             public string? upstreamDuctSize { get; set; }
             public string? downstreamDuctSize { get; set; }
@@ -83,14 +85,26 @@ namespace RevitBridge.Logic.Handlers.MEP
 
             var start = curve.GetEndPoint(0);
             var end = curve.GetEndPoint(1);
-            var plan = MepRouteReroutePlanner.PlanOffsetReroute(
-                ToPoint(start),
-                ToPoint(end),
-                p.split1ChainageFt,
-                p.split2ChainageFt,
-                p.split1Normalized,
-                p.split2Normalized,
-                new BranchPoint3d(p.offsetVector.x, p.offsetVector.y, p.offsetVector.z));
+            var offsetMode = NormalizeOffsetMode(p.offsetMode);
+            var offsetVector = new BranchPoint3d(p.offsetVector.x, p.offsetVector.y, p.offsetVector.z);
+            var plan = offsetMode == "dogleg45"
+                ? MepRouteReroutePlanner.PlanDoglegOffsetReroute(
+                    ToPoint(start),
+                    ToPoint(end),
+                    p.split1ChainageFt,
+                    p.split2ChainageFt,
+                    p.split1Normalized,
+                    p.split2Normalized,
+                    offsetVector,
+                    p.doglegAngleDegrees ?? 45.0)
+                : MepRouteReroutePlanner.PlanOffsetReroute(
+                    ToPoint(start),
+                    ToPoint(end),
+                    p.split1ChainageFt,
+                    p.split2ChainageFt,
+                    p.split1Normalized,
+                    p.split2Normalized,
+                    offsetVector);
 
             var selected = BuildSelected(doc, host, kind, p.systemType);
             var size = BuildExistingSizeChoice(host, kind);
@@ -112,6 +126,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     status = "Blocked",
                     dryRun = !shouldApply,
                     kind,
+                    operation = offsetMode == "dogleg45" ? "offset_dogleg45" : "offset_orthogonal",
                     blockCode = plan.BlockCode,
                     reason = plan.BlockReason,
                     host = hostSnapshot,
@@ -128,6 +143,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     status = "Dry Run",
                     dryRun = true,
                     kind,
+                    operation = offsetMode == "dogleg45" ? "offset_dogleg45" : "offset_orthogonal",
                     host = hostSnapshot,
                     selected = selected.response,
                     size = SizeResponse(size),
@@ -225,6 +241,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 status = "Rerouted",
                 dryRun = false,
                 kind,
+                operation = offsetMode == "dogleg45" ? "offset_dogleg45" : "offset_orthogonal",
                 host = hostSnapshot,
                 selected = selected.response,
                 size = SizeResponse(size),
@@ -531,6 +548,14 @@ namespace RevitBridge.Logic.Handlers.MEP
             var ductSize = upstream ? p.upstreamDuctSize : p.downstreamDuctSize;
             var ductDiameter = upstream ? p.upstreamDiameter : p.downstreamDiameter;
             return MepRoutingUtil.ChooseSize(kind, ductSize, ductDiameter, null, p.sizePolicy, warnings);
+        }
+
+        private static string NormalizeOffsetMode(string? mode)
+        {
+            var value = (mode ?? "orthogonal").Trim().ToLowerInvariant();
+            if (value == "45" || value == "dogleg" || value == "dogleg45" || value == "forty_five" || value == "forty-five")
+                return "dogleg45";
+            return "orthogonal";
         }
 
         private static bool SizesDiffer(string kind, MepRoutingUtil.SizeChoice a, MepRoutingUtil.SizeChoice b)
