@@ -8482,6 +8482,43 @@
           }
         },
         {
+          "name": "Dry-run connected endpoint pipe dogleg with endpoint preservation plan",
+          "request": {
+            "kind": "pipe",
+            "hostElementId": 45678,
+            "split1Normalized": 0.25,
+            "split2Normalized": 0.75,
+            "offsetVector": {
+              "x": 0,
+              "y": 0,
+              "z": -1
+            },
+            "offsetMode": "dogleg45",
+            "preserveConnectedEndpoints": true,
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "operation": "offset_dogleg45",
+            "endpointReconnectionPlan": [
+              {
+                "endpoint": "start",
+                "externalOwnerId": 123,
+                "externalCategory": "Pipes",
+                "hostConnectorOrigin": [],
+                "externalConnectorOrigin": []
+              }
+            ],
+            "plan": {
+              "applySupported": true,
+              "offsetMode": "dogleg45",
+              "segments": [],
+              "expectedFittings": []
+            }
+          }
+        },
+        {
           "name": "Dry-run isolated duct size transition",
           "request": {
             "kind": "duct",

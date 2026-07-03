@@ -39,6 +39,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             public bool apply { get; set; } = false;
             public bool verify { get; set; } = true;
             public bool visualVerify { get; set; } = false;
+            public bool preserveConnectedEndpoints { get; set; } = false;
             public long? visualViewId { get; set; }
             public int imageSize { get; set; } = 1800;
             public double focusPaddingFt { get; set; } = 4.0;
@@ -68,23 +69,39 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (host.Location is not LocationCurve lc || lc.Curve is not Line curve)
                 throw new InvalidOperationException("Reroute currently supports one straight duct or pipe curve.");
 
+            var start = curve.GetEndPoint(0);
+            var end = curve.GetEndPoint(1);
             var hostConnectors = MepRoutingUtil.GetConnectors(host);
+            var endpointConnections = CollectEndpointConnections(doc, host, hostConnectors, start, end);
             var connectedEndpointCount = hostConnectors.Count(c => SafeIsConnected(c));
-            if (shouldApply && connectedEndpointCount > 0)
+            if (connectedEndpointCount > 0 && endpointConnections.Count != connectedEndpointCount)
             {
                 return Task.FromResult<object>(new
                 {
                     status = "Blocked",
-                    blockCode = "connected_host_not_supported",
-                    reason = "This first reroute increment only applies to isolated straight route segments. Connected endpoint reconnection is a follow-up.",
+                    blockCode = "connected_host_endpoint_unresolved",
+                    reason = "Connected endpoint preservation requires every connected host connector to resolve to an external connector at the original start or end point.",
                     host = SnapshotElement(host),
                     connectedEndpointCount,
+                    endpointReconnectionPlan = endpointConnections.Select(x => x.ToResponse()).ToList(),
                     warnings
                 });
             }
 
-            var start = curve.GetEndPoint(0);
-            var end = curve.GetEndPoint(1);
+            if (shouldApply && connectedEndpointCount > 0 && !p.preserveConnectedEndpoints)
+            {
+                return Task.FromResult<object>(new
+                {
+                    status = "Blocked",
+                    blockCode = "connected_host_requires_preserve_connected_endpoints",
+                    reason = "The host has connected endpoints. Set preserveConnectedEndpoints:true to explicitly reconnect the replacement route to the original external endpoint connectors.",
+                    host = SnapshotElement(host),
+                    connectedEndpointCount,
+                    endpointReconnectionPlan = endpointConnections.Select(x => x.ToResponse()).ToList(),
+                    warnings
+                });
+            }
+
             var offsetMode = NormalizeOffsetMode(p.offsetMode);
             var offsetVector = new BranchPoint3d(p.offsetVector.x, p.offsetVector.y, p.offsetVector.z);
             var plan = offsetMode == "dogleg45"
@@ -149,6 +166,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     size = SizeResponse(size),
                     plan,
                     expectedFitting = "elbow",
+                    endpointReconnectionPlan = endpointConnections.Select(x => x.ToResponse()).ToList(),
                     warnings
                 });
             }
@@ -197,6 +215,31 @@ namespace RevitBridge.Logic.Handlers.MEP
                     doc.Regenerate();
                     var deleted = doc.Delete(host.Id);
                     deletedOriginalIds.AddRange(deleted.Select(ElementIdCompat.GetValue).Where(x => x > 0));
+                    doc.Regenerate();
+
+                    foreach (var endpoint in endpointConnections)
+                    {
+                        var replacement = endpoint.IsStart ? createdElements.FirstOrDefault() : createdElements.LastOrDefault();
+                        var replacementPoint = endpoint.IsStart ? start : end;
+                        var replacementConnector = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(replacement!), replacementPoint, 0.3);
+                        var external = endpoint.ResolveConnector(doc);
+                        var ok = MepRoutingUtil.TryCreateElbowOrConnect(doc, replacementConnector, external, out var fittingId, out var method, out var err);
+                        connectionAttempts.Add(new
+                        {
+                            fromId = ElementIdCompat.GetValue(replacement!.Id),
+                            toExternalId = endpoint.ExternalOwnerId,
+                            endpoint = endpoint.Endpoint,
+                            point = ToResponsePoint(replacementPoint),
+                            expectedFitting = "preserve_endpoint_connection",
+                            connected = ok,
+                            method,
+                            fittingId,
+                            error = err
+                        });
+                        if (!ok) throw new InvalidOperationException($"Could not reconnect reroute endpoint '{endpoint.Endpoint}' to original external connector: {err}");
+                        if (fittingId.HasValue) createdFittingIds.Add(fittingId.Value);
+                    }
+
                     doc.Regenerate();
                     tx.Commit();
                 }
@@ -250,6 +293,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 createdFittingIds = createdFittingIds.Distinct().ToList(),
                 deletedOriginalIds = deletedOriginalIds.Distinct().ToList(),
                 connectionAttempts,
+                endpointReconnectionPlan = endpointConnections.Select(x => x.ToResponse()).ToList(),
                 verification = new
                 {
                     openConnectorCount = MepRoutingUtil.CountOpenConnectors(createdElements),
@@ -277,6 +321,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (host.Location is not LocationCurve lc || lc.Curve is not Line curve)
                 throw new InvalidOperationException("Size transition currently supports one straight duct or pipe curve.");
 
+            var endpointConnections = CollectEndpointConnections(doc, host, MepRoutingUtil.GetConnectors(host), curve.GetEndPoint(0), curve.GetEndPoint(1));
             var transitionPlan = MepRouteReroutePlanner.PlanSizeTransition(
                 ToPoint(curve.GetEndPoint(0)),
                 ToPoint(curve.GetEndPoint(1)),
@@ -335,6 +380,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     downstreamSize = SizeResponse(downstreamSize),
                     plan = transitionPlan,
                     expectedFitting = "transition",
+                    endpointReconnectionPlan = endpointConnections.Select(x => x.ToResponse()).ToList(),
                     warnings
                 };
             }
@@ -379,6 +425,31 @@ namespace RevitBridge.Logic.Handlers.MEP
                     doc.Regenerate();
                     var deleted = doc.Delete(host.Id);
                     deletedOriginalIds.AddRange(deleted.Select(ElementIdCompat.GetValue).Where(x => x > 0));
+                    doc.Regenerate();
+
+                    foreach (var endpoint in endpointConnections)
+                    {
+                        var replacement = endpoint.IsStart ? createdElements.FirstOrDefault() : createdElements.LastOrDefault();
+                        var replacementPoint = endpoint.IsStart ? curve.GetEndPoint(0) : curve.GetEndPoint(1);
+                        var replacementConnector = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(replacement!), replacementPoint, 0.3);
+                        var external = endpoint.ResolveConnector(doc);
+                        var endpointOk = MepRoutingUtil.TryCreateElbowOrConnect(doc, replacementConnector, external, out var endpointFittingId, out var endpointMethod, out var endpointErr);
+                        connectionAttempts.Add(new
+                        {
+                            fromId = ElementIdCompat.GetValue(replacement!.Id),
+                            toExternalId = endpoint.ExternalOwnerId,
+                            endpoint = endpoint.Endpoint,
+                            point = ToResponsePoint(replacementPoint),
+                            expectedFitting = "preserve_endpoint_connection",
+                            connected = endpointOk,
+                            method = endpointMethod,
+                            fittingId = endpointFittingId,
+                            error = endpointErr
+                        });
+                        if (!endpointOk) throw new InvalidOperationException($"Could not reconnect size-transition endpoint '{endpoint.Endpoint}' to original external connector: {endpointErr}");
+                        if (endpointFittingId.HasValue) createdFittingIds.Add(endpointFittingId.Value);
+                    }
+
                     doc.Regenerate();
                     tx.Commit();
                 }
@@ -434,6 +505,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 createdFittingIds = createdFittingIds.Distinct().ToList(),
                 deletedOriginalIds = deletedOriginalIds.Distinct().ToList(),
                 connectionAttempts,
+                endpointReconnectionPlan = endpointConnections.Select(x => x.ToResponse()).ToList(),
                 verification = new
                 {
                     openConnectorCount = MepRoutingUtil.CountOpenConnectors(createdElements),
@@ -472,6 +544,32 @@ namespace RevitBridge.Logic.Handlers.MEP
             public object response { get; set; } = new { };
         }
 
+        private sealed class EndpointConnectionPlan
+        {
+            public string Endpoint { get; set; } = "";
+            public long ExternalOwnerId { get; set; }
+            public string ExternalCategory { get; set; } = "";
+            public XYZ HostConnectorOrigin { get; set; } = XYZ.Zero;
+            public XYZ ExternalConnectorOrigin { get; set; } = XYZ.Zero;
+            public bool IsStart => string.Equals(Endpoint, "start", StringComparison.OrdinalIgnoreCase);
+
+            public Connector? ResolveConnector(Document doc)
+            {
+                var owner = doc.GetElement(ElementIdCompat.Create(ExternalOwnerId));
+                if (owner == null) return null;
+                return MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(owner), ExternalConnectorOrigin, 0.35);
+            }
+
+            public object ToResponse() => new
+            {
+                endpoint = Endpoint,
+                externalOwnerId = ExternalOwnerId,
+                externalCategory = ExternalCategory,
+                hostConnectorOrigin = ToArray(HostConnectorOrigin),
+                externalConnectorOrigin = ToArray(ExternalConnectorOrigin)
+            };
+        }
+
         private static SelectedIds BuildSelected(Document doc, Element host, string kind, string? requestedSystemType)
         {
             var selected = new SelectedIds();
@@ -492,6 +590,54 @@ namespace RevitBridge.Logic.Handlers.MEP
                 level = DescribeElement(doc, selected.levelId)
             };
             return selected;
+        }
+
+        private static List<EndpointConnectionPlan> CollectEndpointConnections(Document doc, Element host, List<Connector> hostConnectors, XYZ start, XYZ end)
+        {
+            var plans = new List<EndpointConnectionPlan>();
+            var hostId = ElementIdCompat.GetValue(host.Id);
+            foreach (var c in hostConnectors ?? new List<Connector>())
+            {
+                if (!SafeIsConnected(c)) continue;
+
+                var endpoint = "";
+                var startDist = SafeDistance(c, start);
+                var endDist = SafeDistance(c, end);
+                if (startDist <= 0.35 && startDist <= endDist) endpoint = "start";
+                else if (endDist <= 0.35) endpoint = "end";
+                else continue;
+
+                Connector? external = null;
+                try
+                {
+                    var refs = c.AllRefs;
+                    foreach (Connector r in refs)
+                    {
+                        if (r == null) continue;
+                        var owner = r.Owner;
+                        if (owner == null) continue;
+                        if (ElementIdCompat.GetValue(owner.Id) == hostId) continue;
+                        external = r;
+                        break;
+                    }
+                }
+                catch { }
+
+                if (external == null || external.Owner == null) continue;
+                plans.Add(new EndpointConnectionPlan
+                {
+                    Endpoint = endpoint,
+                    ExternalOwnerId = ElementIdCompat.GetValue(external.Owner.Id),
+                    ExternalCategory = external.Owner.Category?.Name ?? "",
+                    HostConnectorOrigin = c.Origin,
+                    ExternalConnectorOrigin = external.Origin
+                });
+            }
+
+            return plans
+                .GroupBy(x => $"{x.Endpoint}|{x.ExternalOwnerId}|{Math.Round(x.ExternalConnectorOrigin.X, 6)}|{Math.Round(x.ExternalConnectorOrigin.Y, 6)}|{Math.Round(x.ExternalConnectorOrigin.Z, 6)}")
+                .Select(g => g.First())
+                .ToList();
         }
 
         private static ElementId ResolveSystemTypeId(Document doc, Element host, string kind, string? requestedSystemType)
@@ -612,6 +758,11 @@ namespace RevitBridge.Logic.Handlers.MEP
         private static bool SafeIsConnected(Connector c)
         {
             try { return c.IsConnected; } catch { return false; }
+        }
+
+        private static double SafeDistance(Connector c, XYZ point)
+        {
+            try { return c.Origin.DistanceTo(point); } catch { return double.MaxValue; }
         }
 
         private static double? GetBuiltinDouble(Element e, BuiltInParameter bip)
