@@ -50,6 +50,12 @@ namespace RevitBridge.Logic.Handlers
             public double? annotationCropMarginFeet { get; set; }
             public bool? annotationCropActive { get; set; }
             public bool? includeLinkedModels { get; set; }
+            public long? linkedModelInstanceId { get; set; }
+            public long? linkedModelId { get; set; }
+            public long? revitLinkInstanceId { get; set; }
+            public string? linkedModelName { get; set; }
+            public string? revitLinkName { get; set; }
+            public string? linkName { get; set; }
             public bool? dryRun { get; set; }
         }
 
@@ -69,6 +75,11 @@ namespace RevitBridge.Logic.Handlers
             if (action == "get")
             {
                 return Task.FromResult<object>(BuildViewState(doc, view, "Ok", "get", dryRun: false, p));
+            }
+
+            if (IsLinkedCategoryOverrideRequest(action, p))
+            {
+                return Task.FromResult<object>(BuildUnsupportedLinkedCategoryOverrideState(doc, view, action, p));
             }
 
             var dryRun = p.dryRun ?? false;
@@ -654,6 +665,45 @@ namespace RevitBridge.Logic.Handlers
                 "look_up" => "LookUp",
                 "up" => "LookUp",
                 _ => null
+            };
+        }
+
+        private static bool IsLinkedCategoryOverrideRequest(string action, Params p)
+        {
+            if (action != "set_category_override" && action != "clear_category_override") return false;
+            return (p.linkedModelInstanceId.HasValue && p.linkedModelInstanceId.Value > 0) ||
+                   (p.linkedModelId.HasValue && p.linkedModelId.Value > 0) ||
+                   (p.revitLinkInstanceId.HasValue && p.revitLinkInstanceId.Value > 0) ||
+                   !string.IsNullOrWhiteSpace(p.linkedModelName) ||
+                   !string.IsNullOrWhiteSpace(p.revitLinkName) ||
+                   !string.IsNullOrWhiteSpace(p.linkName);
+        }
+
+        private static object BuildUnsupportedLinkedCategoryOverrideState(Document doc, View view, string action, Params p)
+        {
+            return new
+            {
+                status = "Blocked",
+                action,
+                blockCode = "linked_model_category_override_not_supported",
+                message = "Revit 2024 exposes linked model visibility/phase inventory and link-level display overrides, but this handler cannot prove a per-linked-category lineweight override. Refusing to apply a host category override for a linked-model request.",
+                dryRun = p.dryRun ?? false,
+                input = new
+                {
+                    viewId = p.viewId ?? RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
+                    p.linkedModelInstanceId,
+                    p.linkedModelId,
+                    p.revitLinkInstanceId,
+                    p.linkedModelName,
+                    p.revitLinkName,
+                    p.linkName,
+                    p.categoryName,
+                    p.lineWeight,
+                    p.r,
+                    p.g,
+                    p.b
+                },
+                view = BuildViewState(doc, view, "Ok", "get", dryRun: false, new Params { categoryName = p.categoryName, includeLinkedModels = true })
             };
         }
 
