@@ -3915,6 +3915,7 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalString(obj.Value, "underlayOrientation", maxLen: 32, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "scopeBoxId", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "scopeBoxName", maxLen: 128, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "includeLinkedModels", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
 
                 if (obj.Value.TryGetProperty("boxMin", out var bmin) && bmin.ValueKind != JsonValueKind.Null)

@@ -854,6 +854,7 @@ namespace RevitBridge.Operator
                     };
                     enumMap["ruleOperator"] = new[] { "equals", "not_equals", "contains", "not_contains", "begins_with", "ends_with", "greater", "greater_or_equal", "less", "less_or_equal" };
                     unitNotes.Add(new { unit = "feet", fields = new[] { "annotationCropMarginFeet" } });
+                    notes.Add("Use get with includeLinkedModels:true before linked-model graphics or phase mapping work; it reports Revit link ids/names, loaded document titles, common linked categories, linked phases, and phase-map rows when available.");
                     notes.Add("set_crop_box accepts annotationCropActive and annotationCropMarginFeet; use them for sheet views so the viewport box does not include distant stray annotations.");
                     notes.Add("create_view_filter supports one-rule parameter filters and immediately applies the filter to the target view.");
                 }
