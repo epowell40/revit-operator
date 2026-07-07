@@ -4,6 +4,8 @@ using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Autodesk.Revit.DB.Architecture;
+using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
@@ -99,6 +101,7 @@ namespace RevitBridge.Logic.Handlers
             }
 
             var tagIds = new List<long>();
+            var tagReadback = new List<object>();
             var errors = new List<object>();
             var skippedNoLocation = 0;
 
@@ -122,14 +125,7 @@ namespace RevitBridge.Logic.Handlers
 
                     try
                     {
-                        var tag = IndependentTag.Create(
-                            doc,
-                            view.Id,
-                            new Reference(element),
-                            addLeader,
-                            TagMode.TM_ADDBY_CATEGORY,
-                            orientation,
-                            point);
+                        var tag = CreateTagElement(doc, view, element, addLeader, orientation, point);
 
                         var mappedTypeId = ResolveMappedTypeForElement(element, mapping);
                         var targetTypeId = mappedTypeId ?? defaultTypeId;
@@ -146,6 +142,7 @@ namespace RevitBridge.Logic.Handlers
                         }
 
                         tagIds.Add(ElementIdCompat.GetValue(tag.Id));
+                        tagReadback.Add(BuildTagReadback(doc, tag, element, view));
                         if (onlyUntagged) existingTagged.Add(elementId);
                     }
                     catch (Exception ex)
@@ -169,6 +166,8 @@ namespace RevitBridge.Logic.Handlers
                 unresolvedCategories,
                 mappingWarnings,
                 tagIds,
+                tags = tagReadback,
+                tagReadback,
                 errors = errors.Take(200).ToList()
             });
         }
@@ -298,6 +297,66 @@ namespace RevitBridge.Logic.Handlers
             if (bbox != null)
             {
                 return ((bbox.Min + bbox.Max) * 0.5) + offset;
+            }
+
+            return null;
+        }
+
+        private static Element CreateTagElement(Document doc, View view, Element element, bool addLeader, TagOrientation orientation, XYZ point)
+        {
+            if (element is Room room)
+            {
+                var tag = doc.Create.NewRoomTag(new LinkElementId(room.Id), new UV(point.X, point.Y), view.Id);
+                if (tag == null) throw new InvalidOperationException("Room tag creation returned null.");
+                return tag;
+            }
+
+            if (element is Space space)
+            {
+                var tag = doc.Create.NewSpaceTag(space, new UV(point.X, point.Y), view);
+                if (tag == null) throw new InvalidOperationException("Space tag creation returned null.");
+                return tag;
+            }
+
+            return IndependentTag.Create(
+                doc,
+                view.Id,
+                new Reference(element),
+                addLeader,
+                TagMode.TM_ADDBY_CATEGORY,
+                orientation,
+                point);
+        }
+
+        private static object BuildTagReadback(Document doc, Element tag, Element target, View view)
+        {
+            var type = doc.GetElement(tag.GetTypeId()) as ElementType;
+            var family = type is FamilySymbol fs ? fs.FamilyName : type?.FamilyName;
+            return new
+            {
+                tagId = ElementIdCompat.GetValue(tag.Id),
+                targetElementId = ElementIdCompat.GetValue(target.Id),
+                viewId = ElementIdCompat.GetValue(view.Id),
+                targetCategory = target.Category?.Name,
+                tagCategory = tag.Category?.Name,
+                tagTypeId = type == null ? (long?)null : ElementIdCompat.GetValue(type.Id),
+                tagTypeName = type?.Name,
+                tagFamilyName = family,
+                value = ReadTagDisplayValue(tag)
+            };
+        }
+
+        private static string? ReadTagDisplayValue(Element tag)
+        {
+            if (tag is IndependentTag independentTag)
+            {
+                return independentTag.TagText;
+            }
+
+            var tagText = tag.GetType().GetProperty("TagText", BindingFlags.Instance | BindingFlags.Public);
+            if (tagText != null && tagText.GetValue(tag, null) is string reflectedTagText)
+            {
+                return reflectedTagText;
             }
 
             return null;
