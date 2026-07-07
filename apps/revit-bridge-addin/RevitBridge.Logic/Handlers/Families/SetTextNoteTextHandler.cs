@@ -12,7 +12,7 @@ namespace RevitBridge.Logic.Handlers
     {
         public sealed class Params
         {
-            public string familyDocumentId { get; set; } = "";
+            public string? familyDocumentId { get; set; }
             public long textNoteId { get; set; }
             public string newText { get; set; } = "";
 
@@ -27,16 +27,31 @@ namespace RevitBridge.Logic.Handlers
             if (p.textNoteId == 0) throw new InvalidOperationException("set-text-note-text.textNoteId is required.");
             var nextText = NormalizeUserText(p.newText ?? "");
 
-            if (!FamilyEditSessionStore.TryGet(p.familyDocumentId, out var session, out var err))
-                throw new InvalidOperationException(err ?? "Family edit session not found.");
-
-            var famDoc = session.FamilyDoc;
+            Document targetDoc;
+            string scope;
+            string? familyDocumentId = null;
+            string? familyName = null;
+            if (!string.IsNullOrWhiteSpace(p.familyDocumentId))
+            {
+                if (!FamilyEditSessionStore.TryGet(p.familyDocumentId, out var session, out var err))
+                    throw new InvalidOperationException(err ?? "Family edit session not found.");
+                targetDoc = session.FamilyDoc;
+                scope = "family_session";
+                familyDocumentId = session.SessionId;
+                familyName = session.FamilyName;
+            }
+            else
+            {
+                var uidoc = app?.ActiveUIDocument;
+                targetDoc = uidoc?.Document ?? throw new InvalidOperationException("No active project document.");
+                scope = "active_project";
+            }
 
             var isDryRun = (p.dryRun ?? false) || (p.apply.HasValue && p.apply.Value == false);
             var apply = !isDryRun;
 
-            var tn = famDoc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.textNoteId)) as TextNote;
-            if (tn == null) throw new InvalidOperationException($"TextNote {p.textNoteId} not found in family document.");
+            var tn = targetDoc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.textNoteId)) as TextNote;
+            if (tn == null) throw new InvalidOperationException($"TextNote {p.textNoteId} not found.");
 
             var before = tn.Text ?? "";
             var changed = !string.Equals(before, nextText, StringComparison.Ordinal);
@@ -60,7 +75,7 @@ namespace RevitBridge.Logic.Handlers
 
             if (apply && changed)
             {
-                using (var tx = new Transaction(famDoc, "Operator Set TextNote Text"))
+                using (var tx = new Transaction(targetDoc, "Operator Set TextNote Text"))
                 {
                     tx.Start();
                     tn.Text = nextText;
@@ -73,11 +88,16 @@ namespace RevitBridge.Logic.Handlers
                 ok = true,
                 status = apply ? "Applied" : "Dry Run",
                 dryRun = !apply,
-                familyDocumentId = session.SessionId,
-                familyName = session.FamilyName,
+                scope,
+                familyDocumentId,
+                familyName,
                 textNoteId = p.textNoteId,
+                elementId = p.textNoteId,
+                ownerViewId = SafeOwnerViewId(tn),
                 before,
                 after = apply ? nextText : before,
+                text = apply ? nextText : before,
+                normalizedText = NormalizeUserText(apply ? nextText : before),
                 changed,
                 requiredConfirm,
                 confirmReceived
@@ -94,6 +114,21 @@ namespace RevitBridge.Logic.Handlers
                 t = t.Replace("\\r\\n", "\n").Replace("\\n", "\n").Replace("\\r", "\n");
             }
             return t.Replace("\r\n", "\n").Replace('\r', '\n');
+        }
+
+        private static long? SafeOwnerViewId(TextNote textNote)
+        {
+            try
+            {
+                var ownerViewId = textNote.OwnerViewId;
+                if (ownerViewId == null || ownerViewId == ElementId.InvalidElementId) return null;
+                var value = RevitBridge.Common.ElementIdCompat.GetValue(ownerViewId);
+                return value > 0 ? value : (long?)null;
+            }
+            catch
+            {
+                return null;
+            }
         }
     }
 }

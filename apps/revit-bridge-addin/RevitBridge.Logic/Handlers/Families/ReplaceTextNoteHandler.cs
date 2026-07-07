@@ -25,14 +25,13 @@ namespace RevitBridge.Logic.Handlers
         {
             var p = string.IsNullOrEmpty(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
             var sid = (p.docId ?? p.familyDocumentId ?? "").Trim();
-            if (string.IsNullOrWhiteSpace(sid)) throw new InvalidOperationException("replace-text-note.docId is required.");
 
             var id = p.textNoteId.HasValue && p.textNoteId.Value != 0 ? p.textNoteId.Value : p.elementId;
             if (id == 0) throw new InvalidOperationException("replace-text-note.elementId is required.");
 
             var req = new SetTextNoteTextHandler.Params
             {
-                familyDocumentId = sid,
+                familyDocumentId = string.IsNullOrWhiteSpace(sid) ? null : sid,
                 textNoteId = id,
                 newText = p.newText ?? "",
                 apply = p.apply,

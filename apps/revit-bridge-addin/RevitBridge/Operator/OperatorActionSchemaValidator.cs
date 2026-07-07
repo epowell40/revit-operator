@@ -8076,6 +8076,7 @@ namespace RevitBridge.Operator
             if (string.Equals(path, "/revit/replace-text-note", StringComparison.OrdinalIgnoreCase))
             {
                 // { docId?: string, familyDocumentId?: string, elementId: number, newText: string, dryRun?: bool, apply?: bool, confirm?: string }
+                // Omitting docId/familyDocumentId targets the active project document.
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "replace-text-note body must be an object.";
@@ -8083,13 +8084,6 @@ namespace RevitBridge.Operator
                 }
                 if (!ValidateOptionalString(obj.Value, "docId", maxLen: 64, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "familyDocumentId", maxLen: 64, out error)) return false;
-                var hasDocId = obj.Value.TryGetProperty("docId", out var did) && did.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace((did.GetString() ?? "").Trim());
-                var hasFamDocId = obj.Value.TryGetProperty("familyDocumentId", out var fdid) && fdid.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace((fdid.GetString() ?? "").Trim());
-                if (!hasDocId && !hasFamDocId)
-                {
-                    error = "replace-text-note requires docId (or familyDocumentId).";
-                    return false;
-                }
                 if (!ValidateRequiredLong(obj.Value, "elementId", out error)) return false;
                 if (!ValidateRequiredString(obj.Value, "newText", maxLen: 200, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
@@ -8189,13 +8183,14 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/set-text-note-text", StringComparison.OrdinalIgnoreCase))
             {
-                // { familyDocumentId: string, textNoteId: number, newText: string, dryRun?: bool, apply?: bool, confirm?: string }
+                // { familyDocumentId?: string, textNoteId: number, newText: string, dryRun?: bool, apply?: bool, confirm?: string }
+                // Omitting familyDocumentId targets the active project document.
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "set-text-note-text body must be an object.";
                     return false;
                 }
-                if (!ValidateRequiredString(obj.Value, "familyDocumentId", maxLen: 64, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "familyDocumentId", maxLen: 64, out error)) return false;
                 if (!ValidateRequiredLong(obj.Value, "textNoteId", out error)) return false;
                 if (!ValidateRequiredString(obj.Value, "newText", maxLen: 200, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
