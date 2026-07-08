@@ -16,6 +16,7 @@ namespace RevitBridge.Handlers
             public long elementId { get; set; }
             public string parameterName { get; set; }
             public string value { get; set; }
+            public bool? preserveTextCase { get; set; }
         }
 
         public class Params
@@ -32,6 +33,10 @@ namespace RevitBridge.Handlers
 
             // Optional UX helper: allow excluding some elements from the changes list.
             public List<long>? excludeElementIds { get; set; }
+
+            // Default false. Use true for exact-value restoration paths where the caller
+            // already verified the original mixed-case value and must preserve it.
+            public bool? preserveTextCase { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -112,7 +117,10 @@ namespace RevitBridge.Handlers
                     }
 
                     var before = ParameterValueUtil.SnapshotForWire(param);
-                    var requestedValue = RevitTextCasePolicy.NormalizeParameterValue(elem, param, entry.parameterName, entry.value);
+                    var preserveTextCase = entry.preserveTextCase ?? p.preserveTextCase ?? false;
+                    var requestedValue = preserveTextCase
+                        ? (entry.value ?? "")
+                        : RevitTextCasePolicy.NormalizeParameterValue(elem, param, entry.parameterName, entry.value);
                     if (!ParameterValueUtil.TrySetFromString(param, requestedValue, out var didChange, out var message))
                     {
                         diffs.Add(new
