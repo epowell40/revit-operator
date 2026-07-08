@@ -176,12 +176,16 @@ namespace RevitBridge.Logic.Handlers.MEP
             var connectionAttempts = new List<object>();
             var deletedOriginalIds = new List<long>();
             var createdElements = new List<Element>();
+            var nativeFailures = new List<CapturedFailure>();
+            var transactionStatus = "";
 
             using (var tx = new Transaction(doc, "Reroute MEP Route Segment"))
             {
-                tx.Start();
                 try
                 {
+                    tx.Start();
+                    tx.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(tx, nativeFailures, rollbackOnErrors: true, deleteWarnings: false));
+
                     foreach (var segment in plan.Segments)
                     {
                         var created = CreateLikeHost(doc, host, kind, selected, size, segment);
@@ -241,11 +245,57 @@ namespace RevitBridge.Logic.Handlers.MEP
                     }
 
                     doc.Regenerate();
-                    tx.Commit();
+                    var st = tx.Commit();
+                    transactionStatus = st.ToString();
+                    if (st != TransactionStatus.Committed)
+                    {
+                        return Task.FromResult<object>(new
+                        {
+                            status = "Blocked",
+                            dryRun = false,
+                            kind,
+                            operation = offsetMode == "dogleg45" ? "offset_dogleg45" : "offset_orthogonal",
+                            blockCode = "native_revit_failure",
+                            reason = "Revit rejected the reroute transaction; the transaction was rolled back before committing.",
+                            host = hostSnapshot,
+                            selected = selected.response,
+                            plan,
+                            transactionStatus,
+                            nativeFailures,
+                            attemptedCreatedElementIds = createdIds,
+                            attemptedCreatedFittingIds = createdFittingIds.Distinct().ToList(),
+                            connectionAttempts,
+                            endpointReconnectionPlan = endpointConnections.Select(x => x.ToResponse()).ToList(),
+                            warnings
+                        });
+                    }
                 }
-                catch
+                catch (Exception ex)
                 {
-                    try { tx.RollBack(); } catch { }
+                    try { if (tx.GetStatus() == TransactionStatus.Started) tx.RollBack(); } catch { }
+                    if (nativeFailures.Count > 0)
+                    {
+                        return Task.FromResult<object>(new
+                        {
+                            status = "Blocked",
+                            dryRun = false,
+                            kind,
+                            operation = offsetMode == "dogleg45" ? "offset_dogleg45" : "offset_orthogonal",
+                            blockCode = "native_revit_failure",
+                            reason = "Revit rejected the reroute transaction; the transaction was rolled back before committing.",
+                            host = hostSnapshot,
+                            selected = selected.response,
+                            plan,
+                            transactionStatus,
+                            nativeFailures,
+                            exceptionMessage = ex.Message,
+                            attemptedCreatedElementIds = createdIds,
+                            attemptedCreatedFittingIds = createdFittingIds.Distinct().ToList(),
+                            connectionAttempts,
+                            endpointReconnectionPlan = endpointConnections.Select(x => x.ToResponse()).ToList(),
+                            warnings
+                        });
+                    }
                     throw;
                 }
             }
