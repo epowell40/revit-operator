@@ -35,6 +35,13 @@ namespace RevitBridge.Handlers
             public double? widthFeet { get; set; }
         }
 
+        public sealed class RowHeightSpec
+        {
+            public string? section { get; set; } // header|body|summary|footer
+            public int? rowNumber { get; set; }
+            public double? heightFeet { get; set; }
+        }
+
         public sealed class CalculatedFieldSpec
         {
             public string? name { get; set; }
@@ -86,6 +93,7 @@ namespace RevitBridge.Handlers
             public bool? showGrandTotals { get; set; }
 
             public List<ColumnWidthSpec>? columnWidths { get; set; }
+            public List<RowHeightSpec>? rowHeights { get; set; }
             public List<CalculatedFieldSpec>? calculatedFields { get; set; }
             public List<FieldFormatSpec>? fieldFormats { get; set; }
             public List<ConditionalFormatSpec>? conditionalFormats { get; set; }
@@ -115,15 +123,16 @@ namespace RevitBridge.Handlers
             var hasFilters = p.filters != null;
             var hasSort = p.sortGroup != null || p.showGrandTotals.HasValue;
             var hasColumnWidths = p.columnWidths != null && p.columnWidths.Count > 0;
+            var hasRowHeights = p.rowHeights != null && p.rowHeights.Count > 0;
             var hasCalculatedFields = p.calculatedFields != null && p.calculatedFields.Count > 0;
             var hasFieldFormats = p.fieldFormats != null && p.fieldFormats.Count > 0;
             var hasConditionalFormats = p.conditionalFormats != null && p.conditionalFormats.Count > 0;
             var hasAppearance = p.appearance != null;
             var hasFilterBySheet = p.filterBySheet.HasValue;
 
-            if (!hasAddFields && !hasFilters && !hasSort && !hasColumnWidths && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet)
+            if (!hasAddFields && !hasFilters && !hasSort && !hasColumnWidths && !hasRowHeights && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet)
             {
-                throw new InvalidOperationException("configure-schedule requires at least one operation (addFields, filters, sortGroup/showGrandTotals, columnWidths, calculatedFields, fieldFormats, conditionalFormats, appearance, filterBySheet).");
+                throw new InvalidOperationException("configure-schedule requires at least one operation (addFields, filters, sortGroup/showGrandTotals, columnWidths, rowHeights, calculatedFields, fieldFormats, conditionalFormats, appearance, filterBySheet).");
             }
 
             var dryRun = p.dryRun ?? false;
@@ -215,6 +224,8 @@ namespace RevitBridge.Handlers
                 fieldFound = ScheduleSelectionHelper.FindFieldByName(schedule, doc, (c.field ?? "").Trim()) != null
             }).ToList();
 
+            var rowHeightPlan = (p.rowHeights ?? new List<RowHeightSpec>()).Select(h => BuildRowHeightPlanItem(schedule, h)).ToList();
+
             var calculatedPlan = (p.calculatedFields ?? new List<CalculatedFieldSpec>()).Select(c => new
             {
                 name = (c.name ?? "").Trim(),
@@ -271,6 +282,11 @@ namespace RevitBridge.Handlers
                     requestedCount = widthPlan.Count,
                     items = widthPlan
                 },
+                rowHeights = new
+                {
+                    requestedCount = rowHeightPlan.Count,
+                    items = rowHeightPlan
+                },
                 calculatedFields = new
                 {
                     requestedCount = calculatedPlan.Count,
@@ -303,6 +319,7 @@ namespace RevitBridge.Handlers
             var filterResults = new List<object>();
             var sortResults = new List<object>();
             var widthResults = new List<object>();
+            var rowHeightResults = new List<object>();
             var calculatedResults = new List<object>();
             var fieldFormatResults = new List<object>();
             var conditionalResults = new List<object>();
@@ -331,6 +348,11 @@ namespace RevitBridge.Handlers
                 if (p.columnWidths != null)
                 {
                     ApplyColumnWidths(doc, schedule, p.columnWidths, widthResults);
+                }
+
+                if (p.rowHeights != null)
+                {
+                    ApplyRowHeights(schedule, p.rowHeights, rowHeightResults);
                 }
 
                 if (p.calculatedFields != null)
@@ -367,6 +389,7 @@ namespace RevitBridge.Handlers
                 filters = filterResults,
                 sortGroup = sortResults,
                 columnWidths = widthResults,
+                rowHeights = rowHeightResults,
                 calculatedFields = calculatedResults,
                 fieldFormats = fieldFormatResults,
                 conditionalFormats = conditionalResults,
@@ -559,6 +582,129 @@ namespace RevitBridge.Handlers
                     widthFeet = width,
                     appliedTo = new { grid = setGrid, sheet = setSheet }
                 });
+            }
+        }
+
+        private static object BuildRowHeightPlanItem(ViewSchedule schedule, RowHeightSpec item)
+        {
+            var sectionName = NormalizeSectionName(item.section);
+            var validSection = TryParseSectionType(sectionName, out var sectionType);
+            var validHeight = item.heightFeet.HasValue && item.heightFeet.Value > 0 && item.heightFeet.Value <= 10;
+            var rowNumbers = new List<int>();
+            var reason = "";
+
+            if (validSection)
+            {
+                try
+                {
+                    var data = schedule.GetTableData().GetSectionData(sectionType);
+                    rowNumbers = TargetRowNumbers(data, item.rowNumber, out reason);
+                }
+                catch (Exception ex)
+                {
+                    reason = ex.Message;
+                }
+            }
+
+            return new
+            {
+                section = sectionName,
+                rowNumber = item.rowNumber,
+                heightFeet = item.heightFeet,
+                sectionFound = validSection,
+                validHeight,
+                targetRows = rowNumbers,
+                reason = string.IsNullOrWhiteSpace(reason) ? null : reason
+            };
+        }
+
+        private static void ApplyRowHeights(ViewSchedule schedule, List<RowHeightSpec> rowHeights, List<object> results)
+        {
+            foreach (var item in rowHeights)
+            {
+                var sectionName = NormalizeSectionName(item.section);
+                if (!TryParseSectionType(sectionName, out var sectionType))
+                {
+                    results.Add(new { section = sectionName, rowNumber = item.rowNumber, status = "Skipped", reason = "section must be header, body, summary, or footer" });
+                    continue;
+                }
+
+                if (!item.heightFeet.HasValue || item.heightFeet.Value <= 0 || item.heightFeet.Value > 10)
+                {
+                    results.Add(new { section = sectionName, rowNumber = item.rowNumber, status = "Skipped", reason = "heightFeet must be > 0 and <= 10" });
+                    continue;
+                }
+
+                if (sectionType == SectionType.Body && !item.rowNumber.HasValue)
+                {
+                    try
+                    {
+                        var beforeOverride = schedule.RowHeightOverride;
+                        double? before = null;
+                        if (beforeOverride != RowHeightOverrideOptions.None)
+                        {
+                            before = schedule.RowHeight;
+                        }
+                        schedule.RowHeightOverride = RowHeightOverrideOptions.All;
+                        schedule.RowHeight = item.heightFeet.Value;
+                        results.Add(new
+                        {
+                            section = sectionName,
+                            rowNumber = (int?)null,
+                            status = "Applied",
+                            beforeOverride = beforeOverride.ToString(),
+                            beforeHeightFeet = before,
+                            heightFeet = item.heightFeet.Value,
+                            afterHeightFeet = schedule.RowHeight,
+                            appliedTo = "schedule_body"
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        results.Add(new { section = sectionName, rowNumber = (int?)null, status = "Failed", heightFeet = item.heightFeet.Value, reason = ex.Message });
+                    }
+                    continue;
+                }
+
+                TableSectionData data;
+                try
+                {
+                    data = schedule.GetTableData().GetSectionData(sectionType);
+                }
+                catch (Exception ex)
+                {
+                    results.Add(new { section = sectionName, rowNumber = item.rowNumber, status = "Skipped", reason = ex.Message });
+                    continue;
+                }
+
+                var rowNumbers = TargetRowNumbers(data, item.rowNumber, out var rowReason);
+                if (rowNumbers.Count == 0)
+                {
+                    results.Add(new { section = sectionName, rowNumber = item.rowNumber, status = "Skipped", reason = rowReason.Length == 0 ? "no target rows" : rowReason });
+                    continue;
+                }
+
+                foreach (var rowNumber in rowNumbers)
+                {
+                    var before = TryGetRowHeight(data, rowNumber);
+                    try
+                    {
+                        data.SetRowHeight(rowNumber, item.heightFeet.Value);
+                        results.Add(new
+                        {
+                            section = sectionName,
+                            rowNumber,
+                            status = "Applied",
+                            beforeHeightFeet = before,
+                            heightFeet = item.heightFeet.Value,
+                            afterHeightFeet = TryGetRowHeight(data, rowNumber)
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        results.Add(new { section = sectionName, rowNumber, status = "Failed", beforeHeightFeet = before, heightFeet = item.heightFeet.Value, reason = ex.Message });
+                    }
+                }
             }
         }
 
@@ -1478,6 +1624,82 @@ namespace RevitBridge.Handlers
             }
 
             return false;
+        }
+
+        private static string NormalizeSectionName(string? raw)
+        {
+            var value = (raw ?? "body").Trim().ToLowerInvariant();
+            if (value.Length == 0) return "body";
+            return value;
+        }
+
+        private static bool TryParseSectionType(string sectionName, out SectionType sectionType)
+        {
+            switch (NormalizeSectionName(sectionName))
+            {
+                case "header":
+                    sectionType = SectionType.Header;
+                    return true;
+                case "body":
+                    sectionType = SectionType.Body;
+                    return true;
+                case "summary":
+                    sectionType = SectionType.Summary;
+                    return true;
+                case "footer":
+                    sectionType = SectionType.Footer;
+                    return true;
+                default:
+                    sectionType = SectionType.None;
+                    return false;
+            }
+        }
+
+        private static List<int> TargetRowNumbers(TableSectionData data, int? requestedRowNumber, out string reason)
+        {
+            reason = "";
+            var rows = new List<int>();
+
+            if (requestedRowNumber.HasValue)
+            {
+                var row = requestedRowNumber.Value;
+                if (data.IsValidRowNumber(row))
+                {
+                    rows.Add(row);
+                }
+                else
+                {
+                    reason = "rowNumber is not valid for this schedule section";
+                }
+                return rows;
+            }
+
+            for (var row = data.FirstRowNumber; row <= data.LastRowNumber; row++)
+            {
+                if (data.IsValidRowNumber(row))
+                {
+                    rows.Add(row);
+                }
+            }
+
+            if (rows.Count == 0)
+            {
+                reason = "schedule section has no valid rows";
+            }
+
+            return rows;
+        }
+
+        private static double? TryGetRowHeight(TableSectionData data, int rowNumber)
+        {
+            try
+            {
+                return data.GetRowHeight(rowNumber);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static bool TryParseColor(int[]? rgb, out Color color)

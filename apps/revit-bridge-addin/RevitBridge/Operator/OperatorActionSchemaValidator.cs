@@ -7141,7 +7141,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/configure-schedule", StringComparison.OrdinalIgnoreCase))
             {
-                // { scheduleId?|query?, exact?, addFields?, filters?, replaceFilters?, sortGroup?, replaceSortGroup?, showGrandTotals?, columnWidths?, calculatedFields?, fieldFormats?, conditionalFormats?, appearance?, filterBySheet?, dryRun? }
+                // { scheduleId?|query?, exact?, addFields?, filters?, replaceFilters?, sortGroup?, replaceSortGroup?, showGrandTotals?, columnWidths?, rowHeights?, calculatedFields?, fieldFormats?, conditionalFormats?, appearance?, filterBySheet?, dryRun? }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "configure-schedule body must be an object.";
@@ -7262,6 +7262,52 @@ namespace RevitBridge.Operator
                             if (v <= 0 || v > 100)
                             {
                                 error = "configure-schedule.columnWidths[].widthFeet out of range.";
+                                return false;
+                            }
+                        }
+                    }
+                }
+
+                var hasRowHeights = false;
+                if (obj.Value.TryGetProperty("rowHeights", out var rh) && rh.ValueKind != JsonValueKind.Null)
+                {
+                    if (rh.ValueKind != JsonValueKind.Array)
+                    {
+                        error = "configure-schedule.rowHeights must be an array.";
+                        return false;
+                    }
+                    if (rh.GetArrayLength() > 200)
+                    {
+                        error = "configure-schedule.rowHeights too many items (max 200).";
+                        return false;
+                    }
+                    hasRowHeights = rh.GetArrayLength() > 0;
+                    foreach (var item in rh.EnumerateArray())
+                    {
+                        if (item.ValueKind != JsonValueKind.Object)
+                        {
+                            error = "configure-schedule.rowHeights items must be objects.";
+                            return false;
+                        }
+                        if (!ValidateOptionalString(item, "section", maxLen: 32, out error)) return false;
+                        if (item.TryGetProperty("rowNumber", out var rn) && rn.ValueKind != JsonValueKind.Null)
+                        {
+                            if (rn.ValueKind != JsonValueKind.Number || !rn.TryGetInt32(out var row) || row < 0 || row > 100000)
+                            {
+                                error = "configure-schedule.rowHeights[].rowNumber must be an integer between 0 and 100000.";
+                                return false;
+                            }
+                        }
+                        if (item.TryGetProperty("heightFeet", out var hf) && hf.ValueKind != JsonValueKind.Null)
+                        {
+                            if (hf.ValueKind != JsonValueKind.Number || !hf.TryGetDouble(out var height))
+                            {
+                                error = "configure-schedule.rowHeights[].heightFeet must be a number.";
+                                return false;
+                            }
+                            if (height <= 0 || height > 10)
+                            {
+                                error = "configure-schedule.rowHeights[].heightFeet out of range.";
                                 return false;
                             }
                         }
@@ -7449,7 +7495,7 @@ namespace RevitBridge.Operator
 
                 var hasGrandTotals = obj.Value.TryGetProperty("showGrandTotals", out var gt) && gt.ValueKind != JsonValueKind.Null;
                 var hasFilterBySheet = obj.Value.TryGetProperty("filterBySheet", out var fbs) && fbs.ValueKind != JsonValueKind.Null;
-                if (!hasAddFields && !hasFilters && !hasSortGroup && !hasColumnWidths && !hasGrandTotals && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet)
+                if (!hasAddFields && !hasFilters && !hasSortGroup && !hasColumnWidths && !hasRowHeights && !hasGrandTotals && !hasCalculatedFields && !hasFieldFormats && !hasConditionalFormats && !hasAppearance && !hasFilterBySheet)
                 {
                     error = "configure-schedule requires at least one operation.";
                     return false;
