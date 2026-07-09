@@ -825,16 +825,24 @@ namespace RevitBridge.Handlers
 
             if (appearance.showTitle.HasValue)
             {
-                var applied = TrySetBoolProperty(schedule, new[] { "ShowTitle" }, appearance.showTitle.Value);
+                var applied = TrySetScheduleBoolProperty(
+                    schedule,
+                    new[] { "ShowTitle", "IsTitleVisible", "ShowScheduleTitle" },
+                    appearance.showTitle.Value,
+                    out var readback);
                 changed |= applied;
-                results.Add(new { setting = "showTitle", status = applied ? "Applied" : "Skipped", value = appearance.showTitle.Value });
+                results.Add(new { setting = "showTitle", status = applied ? "Applied" : "Skipped", value = appearance.showTitle.Value, readback });
             }
 
             if (appearance.showHeaders.HasValue)
             {
-                var applied = TrySetBoolProperty(schedule, new[] { "ShowHeaders" }, appearance.showHeaders.Value);
+                var applied = TrySetScheduleBoolProperty(
+                    schedule,
+                    new[] { "ShowHeaders", "IsHeaderVisible", "ShowColumnHeaders", "ShowHeadersOnSheet" },
+                    appearance.showHeaders.Value,
+                    out var readback);
                 changed |= applied;
-                results.Add(new { setting = "showHeaders", status = applied ? "Applied" : "Skipped", value = appearance.showHeaders.Value });
+                results.Add(new { setting = "showHeaders", status = applied ? "Applied" : "Skipped", value = appearance.showHeaders.Value, readback });
             }
 
             if (appearance.stripedRows.HasValue)
@@ -1133,6 +1141,38 @@ namespace RevitBridge.Handlers
             return false;
         }
 
+        private static bool TrySetScheduleBoolProperty(ViewSchedule schedule, IEnumerable<string> candidateNames, bool value, out bool? readback)
+        {
+            var names = candidateNames.ToArray();
+            var applied = TrySetBoolProperty(schedule, names, value);
+            if (!applied)
+            {
+                try
+                {
+                    applied = TrySetBoolProperty(schedule.Definition, names, value);
+                }
+                catch
+                {
+                    applied = false;
+                }
+            }
+
+            readback = TryGetBoolProperty(schedule, names);
+            if (!readback.HasValue)
+            {
+                try
+                {
+                    readback = TryGetBoolProperty(schedule.Definition, names);
+                }
+                catch
+                {
+                    readback = null;
+                }
+            }
+
+            return applied || readback == value;
+        }
+
         private static bool TrySetStringProperty(object target, IEnumerable<string> candidateNames, string? value)
         {
             if (value == null) return false;
@@ -1154,6 +1194,25 @@ namespace RevitBridge.Handlers
             }
 
             return false;
+        }
+
+        private static bool? TryGetBoolProperty(object target, IEnumerable<string> candidateNames)
+        {
+            foreach (var name in candidateNames)
+            {
+                try
+                {
+                    var p = target.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public);
+                    var raw = p?.GetValue(target, null);
+                    if (raw is bool value) return value;
+                }
+                catch
+                {
+                    // try next
+                }
+            }
+
+            return null;
         }
 
         private static bool TryParseEnumObject(Type enumType, string raw, out object? parsed)
