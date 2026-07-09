@@ -22,7 +22,13 @@ namespace RevitBridge.Logic.Handlers
         public Task<object> Handle(UIApplication app, string jsonData)
         {
             var p = JsonSerializer.Deserialize<Params>(jsonData);
+            if (p == null) throw new ArgumentException("create-text body is required.");
             var doc = app.ActiveUIDocument.Document;
+            long textNoteId;
+            long resolvedViewId;
+            long resolvedTypeId;
+            string resolvedTypeName;
+            string normalizedText = RevitTextCasePolicy.NormalizeDraftingText(p.text ?? "");
 
             using (var t = new Transaction(doc, "Create Text Note"))
             {
@@ -30,15 +36,19 @@ namespace RevitBridge.Logic.Handlers
 
                 var view = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.viewId)) as View;
                 if (view == null) throw new Exception($"View {p.viewId} not found");
+                resolvedViewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id);
 
                 // Default to first TextNoteType if not provided
-                ElementId textTypeId = p.typeId.HasValue 
-                    ? RevitBridge.Common.ElementIdCompat.Create(p.typeId.Value) 
+                var textType = p.typeId.HasValue
+                    ? doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.typeId.Value)) as TextNoteType
                     : new FilteredElementCollector(doc)
                         .OfClass(typeof(TextNoteType))
-                        .FirstElementId();
+                        .Cast<TextNoteType>()
+                        .FirstOrDefault();
 
-                if (textTypeId == null) throw new Exception("No TextNoteType found in project.");
+                if (textType == null) throw new Exception("No TextNoteType found in project.");
+                resolvedTypeId = RevitBridge.Common.ElementIdCompat.GetValue(textType.Id);
+                resolvedTypeName = textType.Name;
 
                 // Create the text note
                 // XYZ origin depends on view type. For sheets/plans, Z is usually 0 or matches level elevation.
@@ -46,12 +56,30 @@ namespace RevitBridge.Logic.Handlers
                 XYZ origin = new XYZ(p.x, p.y, 0); 
 
                 // Adjust creation for View vs Sheet if necessary, but TextNote.Create takes a viewId
-                TextNote.Create(doc, view.Id, origin, RevitTextCasePolicy.NormalizeDraftingText(p.text), textTypeId);
+                var created = TextNote.Create(doc, view.Id, origin, normalizedText, textType.Id);
+                textNoteId = RevitBridge.Common.ElementIdCompat.GetValue(created.Id);
 
                 t.Commit();
             }
 
-            return Task.FromResult<object>(new { status = "success" });
+            return Task.FromResult<object>(new
+            {
+                status = "Success",
+                action = "create",
+                id = textNoteId,
+                textNoteId,
+                elementId = textNoteId,
+                createdElementId = textNoteId,
+                viewId = resolvedViewId,
+                x = p.x,
+                y = p.y,
+                text = normalizedText,
+                textType = new
+                {
+                    id = resolvedTypeId,
+                    name = resolvedTypeName
+                }
+            });
         }
     }
 }

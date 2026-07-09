@@ -767,12 +767,14 @@ namespace RevitBridge.Logic.Handlers
                 .FirstOrDefault(ssi => ssi.ScheduleId == schedule.Id);
             if (existing != null)
             {
+                var existingBounds = TryGetSheetBoundingBox(existing, sheet);
                 return new
                 {
                     status = "AlreadyPlaced",
                     scheduleSheetInstanceId = ElementIdCompat.GetValue(existing.Id),
                     sheetId = ElementIdCompat.GetValue(sheet.Id),
-                    sheetNumber = sheet.SheetNumber
+                    sheetNumber = sheet.SheetNumber,
+                    boundingBox = existingBounds
                 };
             }
 
@@ -786,8 +788,29 @@ namespace RevitBridge.Logic.Handlers
                 sheetId = ElementIdCompat.GetValue(sheet.Id),
                 sheetNumber = sheet.SheetNumber,
                 x,
-                y
+                y,
+                boundingBox = TryGetSheetBoundingBox(placed, sheet)
             };
+        }
+
+        private static object? TryGetSheetBoundingBox(Element element, ViewSheet sheet)
+        {
+            try
+            {
+                var bbox = element.get_BoundingBox(sheet);
+                if (bbox == null) return null;
+                return new
+                {
+                    min = new { x = bbox.Min.X, y = bbox.Min.Y, z = bbox.Min.Z },
+                    max = new { x = bbox.Max.X, y = bbox.Max.Y, z = bbox.Max.Z },
+                    width = Math.Abs(bbox.Max.X - bbox.Min.X),
+                    height = Math.Abs(bbox.Max.Y - bbox.Min.Y)
+                };
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static ViewSheet? ResolveSheet(Document doc, SheetPlacement placement)
