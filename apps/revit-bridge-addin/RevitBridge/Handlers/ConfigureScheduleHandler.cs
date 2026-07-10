@@ -637,33 +637,13 @@ namespace RevitBridge.Handlers
 
                 if (sectionType == SectionType.Body && !item.rowNumber.HasValue)
                 {
-                    try
+                    // Revit 2024+ exposes schedule-wide body height properties. Resolve
+                    // them dynamically so the same net48 assembly still compiles against
+                    // the Revit 2023 API; older hosts fall back to per-row heights below.
+                    if (TryApplyScheduleBodyHeight(schedule, item.heightFeet.Value, sectionName, results))
                     {
-                        var beforeOverride = schedule.RowHeightOverride;
-                        double? before = null;
-                        if (beforeOverride != RowHeightOverrideOptions.None)
-                        {
-                            before = schedule.RowHeight;
-                        }
-                        schedule.RowHeightOverride = RowHeightOverrideOptions.All;
-                        schedule.RowHeight = item.heightFeet.Value;
-                        results.Add(new
-                        {
-                            section = sectionName,
-                            rowNumber = (int?)null,
-                            status = "Applied",
-                            beforeOverride = beforeOverride.ToString(),
-                            beforeHeightFeet = before,
-                            heightFeet = item.heightFeet.Value,
-                            afterHeightFeet = schedule.RowHeight,
-                            appliedTo = "schedule_body"
-                        });
+                        continue;
                     }
-                    catch (Exception ex)
-                    {
-                        results.Add(new { section = sectionName, rowNumber = (int?)null, status = "Failed", heightFeet = item.heightFeet.Value, reason = ex.Message });
-                    }
-                    continue;
                 }
 
                 TableSectionData data;
@@ -706,6 +686,52 @@ namespace RevitBridge.Handlers
                     }
                 }
             }
+        }
+
+        private static bool TryApplyScheduleBodyHeight(ViewSchedule schedule, double heightFeet, string sectionName, List<object> results)
+        {
+            var scheduleType = schedule.GetType();
+            var overrideProperty = scheduleType.GetProperty("RowHeightOverride");
+            var heightProperty = scheduleType.GetProperty("RowHeight");
+            if (overrideProperty == null || heightProperty == null ||
+                !overrideProperty.CanRead || !overrideProperty.CanWrite ||
+                !heightProperty.CanRead || !heightProperty.CanWrite)
+            {
+                return false;
+            }
+
+            try
+            {
+                var beforeOverride = overrideProperty.GetValue(schedule);
+                double? before = null;
+                if (!string.Equals(beforeOverride?.ToString(), "None", StringComparison.OrdinalIgnoreCase) &&
+                    heightProperty.GetValue(schedule) is double currentHeight)
+                {
+                    before = currentHeight;
+                }
+
+                var allRows = Enum.Parse(overrideProperty.PropertyType, "All", ignoreCase: true);
+                overrideProperty.SetValue(schedule, allRows);
+                heightProperty.SetValue(schedule, heightFeet);
+                var after = heightProperty.GetValue(schedule) is double appliedHeight ? appliedHeight : (double?)null;
+                results.Add(new
+                {
+                    section = sectionName,
+                    rowNumber = (int?)null,
+                    status = "Applied",
+                    beforeOverride = beforeOverride?.ToString(),
+                    beforeHeightFeet = before,
+                    heightFeet,
+                    afterHeightFeet = after,
+                    appliedTo = "schedule_body"
+                });
+            }
+            catch (Exception ex)
+            {
+                results.Add(new { section = sectionName, rowNumber = (int?)null, status = "Failed", heightFeet, reason = ex.Message });
+            }
+
+            return true;
         }
 
         private static void ApplyCalculatedFields(ViewSchedule schedule, List<CalculatedFieldSpec> calculatedFields, List<object> results)
