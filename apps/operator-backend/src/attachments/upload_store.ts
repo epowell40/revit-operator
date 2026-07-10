@@ -24,7 +24,7 @@ export type StoredAttachment = {
   created_at: string;
 };
 
-const DEFAULT_MAX_FILE_BYTES = 40 * 1024 * 1024;
+const DEFAULT_MAX_FILE_BYTES = 100 * 1024 * 1024;
 const REQUEST_OVERHEAD_FACTOR = 2.2;
 
 const ALLOWED_EXTENSIONS = new Set([".pdf", ".docx", ".xlsx", ".xls", ".txt", ".csv", ".jpg", ".jpeg", ".png", ".json"]);

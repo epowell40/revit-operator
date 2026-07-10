@@ -11,6 +11,7 @@ test("gemini normalize: parses structured regions and confidence coercion", () =
     global_confidence: 92,
     regions: [
       {
+        page_number: 63,
         region_index: 1,
         target_type: "viewport",
         intent: "Resize duct to 10x12",
@@ -36,6 +37,7 @@ test("gemini normalize: parses structured regions and confidence coercion", () =
   assert.equal(out.summary, "Two edits found.");
   assert.equal(out.regions.length, 2);
   assert.equal(out.regions[0]?.target_type, "viewport");
+  assert.equal(out.regions[0]?.page_number, 63);
   assert.equal(out.regions[1]?.target_type, "titleblock");
   assert.equal(out.regions[1]?.confidence, 0.74);
   assert.equal(out.global_confidence, 0.92);

@@ -5,6 +5,14 @@ import zlib from "node:zlib";
 import { ocrImage } from "../tools/ocr.js";
 import { ensureWorkspaceLayout, resolveExistingFileUnderWorkspace } from "../workspace.js";
 import { buildPdfJsDocumentOptions, loadPdfJsForNode } from "../pdf/pdfjs_node.js";
+import {
+  buildPdfPageBatches,
+  buildPdfPageCoverage,
+  resolvePdfPageBudget,
+  resolvePdfPageStart,
+  type PdfPageBatch,
+  type PdfPageCoverage
+} from "./pdf_intake_policy.js";
 
 export type RedlineSheetCandidate = {
   sheet_number: string;
@@ -19,6 +27,7 @@ export type RedlineAnalyzeRequest = {
   file_path: string;
   expected_sheet?: string;
   max_pages?: number;
+  page_start?: number;
   include_pdf_annotations?: boolean;
   include_ocr_for_images?: boolean;
   timeout_ms?: number;
@@ -110,6 +119,14 @@ export type RedlineAnalyzeResponse = {
   kind: "pdf" | "image" | "unknown";
   bytes: number;
   page_count?: number;
+  page_coverage?: PdfPageCoverage;
+  pdf_package?: {
+    native_comment_count: number;
+    native_comment_pages: number[];
+    visual_batch_size: number;
+    visual_batches: PdfPageBatch[];
+    visual_analysis_status: "pending" | "not_required";
+  };
   likely_sheet: boolean;
   primary_sheet_number: string | null;
   sheet_candidates: RedlineSheetCandidate[];
@@ -1742,6 +1759,7 @@ function redlinePdfDpi(): number {
 
 async function bestEffortConvertPdfToJpegPages(args: {
   fullPdfPath: string;
+  pageStart?: number;
   maxPages: number;
   dpi: number;
   timeoutMs: number;
@@ -1756,6 +1774,7 @@ async function bestEffortConvertPdfToJpegPages(args: {
   const nodeRendered = await bestEffortRenderPdfWithNodeCanvas({
     fullPdfPath: args.fullPdfPath,
     outDir,
+    pageStart: args.pageStart,
     maxPages: args.maxPages,
     dpi: args.dpi
   });
@@ -1780,6 +1799,7 @@ import site
 pdf_path = ${JSON.stringify(args.fullPdfPath)}
 out_dir = ${JSON.stringify(outDir)}
 max_pages = int(${JSON.stringify(Math.max(1, Math.min(8, args.maxPages)))})
+page_start = int(${JSON.stringify(Math.max(1, Math.floor(args.pageStart ?? 1)))})
 dpi = int(${JSON.stringify(Math.max(72, Math.min(300, args.dpi)))})
 allow_auto_install = ${args.allowAutoInstall ? "True" : "False"}
 user_base = os.environ.get("OPERATOR_PYTHON_USER_BASE", "/var/lib/revitoperator/python-user")
@@ -1828,11 +1848,13 @@ def render_fitz():
     add_user_site()
     import fitz
     doc = fitz.open(pdf_path)
-    count = min(max_pages, len(doc))
-    for i in range(count):
-        page = doc.load_page(i)
+    first = min(max(0, page_start - 1), len(doc))
+    count = min(max_pages, max(0, len(doc) - first))
+    for offset in range(count):
+        page_number = first + offset
+        page = doc.load_page(page_number)
         pix = page.get_pixmap(dpi=dpi, alpha=False)
-        p = os.path.join(out_dir, f"page_{i+1:02d}.jpg")
+        p = os.path.join(out_dir, f"page_{page_number+1:04d}.jpg")
         pix.save(p)
         paths.append(p)
     if paths:
@@ -1857,7 +1879,8 @@ if not paths:
         exe = shutil.which("pdftoppm")
         if exe:
             prefix = os.path.join(out_dir, "page")
-            r = subprocess.run([exe, "-jpeg", "-f", "1", "-l", str(max_pages), "-r", str(dpi), pdf_path, prefix], capture_output=True, text=True)
+            last_page = min(page_start + max_pages - 1, page_start + max(0, max_pages - 1))
+            r = subprocess.run([exe, "-jpeg", "-f", str(page_start), "-l", str(last_page), "-r", str(dpi), pdf_path, prefix], capture_output=True, text=True)
             if r.returncode == 0:
                 paths = sorted(glob.glob(prefix + "-*.jpg"))
                 if paths:
@@ -1901,6 +1924,7 @@ else:
 async function bestEffortRenderPdfWithNodeCanvas(args: {
   fullPdfPath: string;
   outDir: string;
+  pageStart?: number;
   maxPages: number;
   dpi: number;
 }): Promise<{ ok: boolean; page_paths: string[]; warning?: string }> {
@@ -1911,16 +1935,18 @@ async function bestEffortRenderPdfWithNodeCanvas(args: {
     const pdfjs = await loadPdfJsForNode();
     const bytes = fs.readFileSync(args.fullPdfPath);
     const doc = await pdfjs.getDocument(buildPdfJsDocumentOptions(new Uint8Array(bytes))).promise;
-    const count = Math.max(1, Math.min(8, args.maxPages, Number(doc.numPages ?? 0)));
+    const pageStart = Math.max(1, Math.min(Number(doc.numPages ?? 0) || 1, Math.floor(args.pageStart ?? 1)));
+    const count = Math.max(0, Math.min(8, args.maxPages, Number(doc.numPages ?? 0) - pageStart + 1));
     const scale = Math.max(72, Math.min(300, args.dpi)) / 72;
     const paths: string[] = [];
-    for (let i = 1; i <= count; i++) {
-      const page = await doc.getPage(i);
+    for (let offset = 0; offset < count; offset++) {
+      const pageNumber = pageStart + offset;
+      const page = await doc.getPage(pageNumber);
       const viewport = page.getViewport({ scale });
       const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
       const ctx = canvas.getContext("2d");
       await page.render({ canvasContext: ctx, viewport }).promise;
-      const out = path.join(args.outDir, `page_${String(i).padStart(2, "0")}.png`);
+      const out = path.join(args.outDir, `page_${String(pageNumber).padStart(4, "0")}.png`);
       fs.writeFileSync(out, canvas.toBuffer("image/png"));
       paths.push(out);
     }
@@ -2308,6 +2334,7 @@ async function analyzePdf(args: {
   relativePath: string;
   expectedSheet?: string;
   maxPages: number;
+  pageStart: number;
   includeAnnotations: boolean;
   baselinePath?: string;
 }): Promise<RedlineAnalyzeResponse> {
@@ -2316,7 +2343,9 @@ async function analyzePdf(args: {
   const pdfjs = await loadPdfJsForNode();
   const doc = await pdfjs.getDocument(buildPdfJsDocumentOptions(pdfData)).promise;
   const pageCount = Math.max(0, Number(doc.numPages ?? 0));
-  const pagesToRead = Math.max(0, Math.min(args.maxPages, pageCount));
+  const coverage = buildPdfPageCoverage(pageCount, args.pageStart, args.maxPages);
+  const firstPage = coverage.processed_page_count > 0 ? coverage.requested_page_start : 1;
+  const lastPage = coverage.processed_page_count > 0 ? firstPage + coverage.processed_page_count - 1 : 0;
 
   const pageSummaries: PdfPageSummary[] = [];
   const fileNameCandidates = extractSheetCandidatesFromFilename({
@@ -2350,7 +2379,7 @@ async function analyzePdf(args: {
   const pdfAnnotations: NonNullable<RedlineAnalyzeResponse["pdf_annotations"]> = [];
   let annotationMarkupCountPage1 = 0;
 
-  for (let p = 1; p <= pagesToRead; p++) {
+  for (let p = firstPage; p <= lastPage; p++) {
     const page = await doc.getPage(p);
     const textContent = await page.getTextContent();
     const text = (textContent?.items ?? [])
@@ -2381,7 +2410,7 @@ async function analyzePdf(args: {
       let deleteLikeTotal = 0;
       const sample: PdfAnnotationSummary["sample"] = [];
       const viewport = page.getViewport({ scale: 1.0 });
-      if (p === 1 && !pdfPageImageMeta) {
+      if (p === firstPage && !pdfPageImageMeta) {
         const w = Number((viewport as any)?.width);
         const h = Number((viewport as any)?.height);
         if (Number.isFinite(w) && Number.isFinite(h) && w > 1 && h > 1) {
@@ -2403,7 +2432,7 @@ async function analyzePdf(args: {
         const colorInfo = colorToName(a?.color);
         if (isMarkup) {
           markupTotal++;
-          if (p === 1) annotationMarkupCountPage1++;
+          if (p === firstPage) annotationMarkupCountPage1++;
           if (colorInfo.isRedLike) redMarkupTotal++;
           const contents =
             (typeof a?.contents === "string" && a.contents.trim()) ||
@@ -2449,7 +2478,7 @@ async function analyzePdf(args: {
             ...(inkListsNorm.length > 0 ? { ink_lists_norm: inkListsNorm } : {})
           };
           pdfAnnotations.push(annotationRecord);
-          if (p === 1) {
+          if (p === firstPage) {
             for (const norm of normBoxes) {
               const areaNorm = Math.max(0, (norm.maxX - norm.minX) * (norm.maxY - norm.minY));
               // Ignore gigantic page-spanning annotation bounds that usually indicate noisy metadata.
@@ -2667,6 +2696,7 @@ async function analyzePdf(args: {
 
   const converted = await bestEffortConvertPdfToJpegPages({
     fullPdfPath: args.fullPath,
+    pageStart: firstPage,
     maxPages: Math.max(1, Math.min(2, args.maxPages)),
     dpi: redlinePdfDpi(),
     timeoutMs: 45_000,
@@ -2714,6 +2744,7 @@ async function analyzePdf(args: {
         if (baselineExt === ".pdf") {
           const baselineConverted = await bestEffortConvertPdfToJpegPages({
             fullPdfPath: baselineFullPath,
+            pageStart: firstPage,
             maxPages: 1,
             dpi: redlinePdfDpi(),
             timeoutMs: 45_000,
@@ -2949,6 +2980,11 @@ async function analyzePdf(args: {
   }
 
   const hints: string[] = [];
+  hints.push(
+    coverage.complete
+      ? `PDF package coverage complete: processed ${coverage.processed_page_count}/${coverage.page_count} page(s).`
+      : `PDF package coverage partial: processed ${coverage.processed_ranges.join(", ") || "none"}; omitted ${coverage.omitted_ranges.join(", ") || "none"}.`
+  );
   if (primary) {
     hints.push(`Likely sheet candidate: ${primary}. Confirm with /revit/sheets action=detail.`);
     if (filenamePrimary && primary === filenamePrimary) {
@@ -3032,6 +3068,18 @@ async function analyzePdf(args: {
     kind: "pdf",
     bytes: bytes.length,
     page_count: pageCount,
+    page_coverage: coverage,
+    pdf_package: {
+      native_comment_count: pdfAnnotations.length,
+      native_comment_pages: Array.from(new Set(pdfAnnotations.map((annotation) => annotation.page))).sort((a, b) => a - b),
+      visual_batch_size: 8,
+      visual_batches: buildPdfPageBatches(coverage.processed_page_count, coverage.processed_page_count, 8).map((batch) => ({
+        ...batch,
+        page_start: batch.page_start + coverage.requested_page_start - 1,
+        page_end: batch.page_end + coverage.requested_page_start - 1
+      })),
+      visual_analysis_status: coverage.processed_page_count > 0 ? "pending" : "not_required"
+    },
     likely_sheet: likelySheet,
     primary_sheet_number: primary,
     sheet_candidates: merged,
@@ -3625,7 +3673,8 @@ export async function analyzeRedlineFile(req: RedlineAnalyzeRequest): Promise<Re
   }
 
   const ext = extLower(fullPath);
-  const maxPages = Math.max(1, Math.min(20, Number(req.max_pages ?? 6) || 6));
+  const maxPages = resolvePdfPageBudget(req.max_pages);
+  const pageStart = resolvePdfPageStart(req.page_start);
   const includePdfAnnotations = req.include_pdf_annotations !== false;
   const includeOcrForImages = req.include_ocr_for_images !== false;
   const timeoutMs = Math.max(1500, Math.min(180_000, Number(req.timeout_ms ?? 20_000) || 20_000));
@@ -3638,6 +3687,7 @@ export async function analyzeRedlineFile(req: RedlineAnalyzeRequest): Promise<Re
         relativePath: relative,
         expectedSheet: expectedSheet || undefined,
         maxPages,
+        pageStart,
         includeAnnotations: includePdfAnnotations,
         baselinePath: baselineFullPath || undefined
       });

@@ -28,6 +28,7 @@ import { compactIncomingToolResult, compactVisibleElementsResult, describeVisibl
 import { alignRedlineToView, type ViewAlignmentMark, type ViewAlignmentResult } from "../redline/view_alignment.js";
 import { orientRedlineFile } from "../redline/redline_orienter.js";
 import { analyzeRedlineFile } from "../redline/redline_analyzer.js";
+import { pdfDefaultPageBudget } from "../redline/pdf_intake_policy.js";
 import type { StreamCallbacks } from "./codex_brain.js";
 import { getRequestPrincipal } from "../request_context.js";
 import { knowledgeBaseOwnerIdForPrincipal, listKnowledgeBaseDocuments, searchKnowledgeBase } from "../knowledge_base/service.js";
@@ -49,6 +50,7 @@ import {
   toToolResultFromDirectBridgeResult,
   type DirectBridgeResult
 } from "./direct_revit_bridge.js";
+import { formatWorkbenchResultsForPrompt } from "./workbench_prompt_formatter.js";
 
 type OpenAiDecision = {
   assistant_message: string;
@@ -95,6 +97,7 @@ type OpenAiDecision = {
     max_bytes: number | null;
     expected_sheet: string | null;
     max_pages: number | null;
+    page_start: number | null;
     include_pdf_annotations: boolean | null;
     include_ocr_for_images: boolean | null;
     baseline_file_path: string | null;
@@ -2188,7 +2191,7 @@ function buildAutoAnalyzeRedlineAction(seed: { file_path: string; expected_sheet
     ...(expectedSheet ? { expected_sheet: expectedSheet } : {}),
     include_pdf_annotations: true,
     include_ocr_for_images: true,
-    max_pages: 2
+    max_pages: pdfDefaultPageBudget()
   };
 }
 
@@ -2393,7 +2396,7 @@ function maybeBuildAutoGeminiAction(sessionId: string, wbActions: WorkbenchActio
     ...(seed.image_paths ? { image_paths: seed.image_paths } : {}),
     ...(seed.expected_sheet ? { expected_sheet: seed.expected_sheet } : {}),
     ...(seed.region_boxes ? { region_boxes: seed.region_boxes } : {}),
-    max_pages: 2,
+    max_pages: pdfDefaultPageBudget(),
     max_regions: 80,
     min_confidence: 0.3,
     timeout_ms: 90_000,
@@ -13865,7 +13868,7 @@ async function maybeAutoMapRedlineSheetRegions(args: {
     const oriented = await orientRedlineFile({
       file_path: seed.file_path,
       ...(expected ? { expected_sheet: expected } : {}),
-      max_pages: 2,
+      max_pages: pdfDefaultPageBudget(),
       include_pdf_annotations: true,
       include_ocr_for_images: true,
       sheet_outline: sheet.sheet_outline,
@@ -14265,6 +14268,7 @@ function defaultSystemPrompt(): string {
     "- For snippet-driven type changes, resolve candidate element IDs first, then use /revit/resolve-element-type or /revit/list-element-types and finally /revit/change-element-type.",
     "- Do not ask whether the attachment changed unless the user explicitly says it changed; default to reusing the session redline anchor and continue execution.",
     "- For vague semantic MEP requests such as extending piping from a main to a sink or routing ductwork to diffusers, call /tools/mep/semantic-route-plan first and follow its read-only discovery actions or guarded dry-run action before any model write. For drawing MEP geometry from redlines, prefer /revit/mep-route-workflow for route creation because it enforces resolve context -> dry-run -> optional apply -> post-change focused visual capture. A single line is two ordered points; connected path segments are one ordered point list. Use apply=false first when still uncertain, then apply=true with visualVerify=true once bounded. Inspect planned points, selected level/type/system, chosen size/elevation, connectionAttempts, createdFittingIds, openConnectorCount, and visualVerification.capture.path. If size/elevation is missing, use conservative defaults with explicit warnings (8x8 duct, 1 inch pipe, resolved routing elevation) instead of silently guessing or stopping before a useful draft. Differing segmentSizes or branchSegmentSizes plan transition fittings for reducers. For editing existing explicit duct/pipe curve ids, use /revit/edit-mep-route-elements dryRun first for whole-element size or simple level-straight elevation edits; it blocks connected elevation moves unless allowConnectedElevationMove:true and returns before/after size, curve, connector, network-audit, and optional focused capture evidence. If the requested edit changes size part way down one straight curve, use /revit/reroute-mep-route-segment size-transition mode with transitionNormalized or transitionChainageFt plus explicit upstream/downstream sizes, and require a transition fitting in connectionAttempts before completion. If the requested edit offsets a middle section of one straight curve, use /revit/reroute-mep-route-segment offset mode; set offsetMode:\"dogleg45\" when diagonal 45-degree legs are required. Connected endpoints on /revit/reroute-mep-route-segment are blocked by default; only set preserveConnectedEndpoints:true after dry-run reports a concrete endpointReconnectionPlan, then require endpoint reconnection attempts plus connector/network audit before completion. For branch/tee/tap requests, dry-run /revit/connect-mep-branch for one branch or /revit/mep-branch-network-workflow for a main route plus multiple branches. Apply is supported for existing open connector branches, straight duct tap/takeoff at a projected non-connector point, pipe tap/takeoff only when dry-run tapApplyPrecheck confirms an explicit takeoff/tap routing preference, straight duct/pipe split tee cases, branch-level reducer transitions via branchSegmentSizes, explicit duct/pipe accessory insertion on created main or branch segments when a compatible familyPath/family/type and chainage/point preconditions pass, and explicit target-id duct/pipe accessory delete/type_change with compatible loaded types. When the user names a tap/takeoff family or type, pass takeoffFamilyName/takeoffTypeName, inspect selected.takeoffRoutingPreference and tapApplyPrecheck on dry-run, and require connectionAttempts[*].fitting to match on apply. Do not claim branch/tap/accessory completion unless connector/fitting/accessory verification passes.",
+    "- Large PDF package rule: analyze up to the configured package budget (default 150 pages) instead of silently stopping at page 2. Preserve native comment page/index provenance. For flattened or scanned comments, consume pdf_package.visual_batches with explicit gemini_redline_analyze page_start/max_pages batches of at most 8 pages, continue until every batch is accounted for, and report exact omitted page ranges or failed batches before proposing Revit writes.",
     "- Do not use /revit/create-similar-from-instance or wall-hosted family placement for duct/pipe redlines. Those tools are for hosted family instances such as receptacles/devices, not MEP curve geometry.",
     "",
     "Request body templates (use these exactly):",
@@ -15659,6 +15663,7 @@ function normalizeWorkbenchActions(raw: unknown): WorkbenchAction[] {
         file_path: typeof a.file_path === "string" ? a.file_path : "",
         expected_sheet: typeof a.expected_sheet === "string" ? a.expected_sheet : undefined,
         max_pages: typeof a.max_pages === "number" && Number.isFinite(a.max_pages) ? Math.floor(a.max_pages) : undefined,
+        page_start: typeof a.page_start === "number" && Number.isFinite(a.page_start) ? Math.floor(a.page_start) : undefined,
         include_pdf_annotations: typeof a.include_pdf_annotations === "boolean" ? a.include_pdf_annotations : undefined,
         include_ocr_for_images: typeof a.include_ocr_for_images === "boolean" ? a.include_ocr_for_images : undefined,
         timeout_ms: typeof a.timeout_ms === "number" && Number.isFinite(a.timeout_ms) ? Math.floor(a.timeout_ms) : undefined,
@@ -15686,6 +15691,7 @@ function normalizeWorkbenchActions(raw: unknown): WorkbenchAction[] {
         file_path: typeof a.file_path === "string" ? a.file_path : "",
         expected_sheet: typeof a.expected_sheet === "string" ? a.expected_sheet : undefined,
         max_pages: typeof a.max_pages === "number" && Number.isFinite(a.max_pages) ? Math.floor(a.max_pages) : undefined,
+        page_start: typeof a.page_start === "number" && Number.isFinite(a.page_start) ? Math.floor(a.page_start) : undefined,
         include_pdf_annotations: typeof a.include_pdf_annotations === "boolean" ? a.include_pdf_annotations : undefined,
         include_ocr_for_images: typeof a.include_ocr_for_images === "boolean" ? a.include_ocr_for_images : undefined,
         timeout_ms: typeof a.timeout_ms === "number" && Number.isFinite(a.timeout_ms) ? Math.floor(a.timeout_ms) : undefined,
@@ -15709,6 +15715,7 @@ function normalizeWorkbenchActions(raw: unknown): WorkbenchAction[] {
           : undefined,
         expected_sheet: typeof a.expected_sheet === "string" ? a.expected_sheet : undefined,
         max_pages: typeof a.max_pages === "number" && Number.isFinite(a.max_pages) ? Math.floor(a.max_pages) : undefined,
+        page_start: typeof a.page_start === "number" && Number.isFinite(a.page_start) ? Math.floor(a.page_start) : undefined,
         baseline_file_path: typeof a.baseline_file_path === "string" ? a.baseline_file_path : undefined,
         objective: typeof a.objective === "string" ? a.objective : undefined,
         region_boxes: Array.isArray(a.region_boxes) ? (a.region_boxes as Array<Record<string, unknown>>) : [],
@@ -15748,28 +15755,6 @@ function attachArtifactSharesToWorkbenchResults(results: WorkbenchActionResult[]
     }
   }
   return results;
-}
-
-function formatWorkbenchResultsForPrompt(results: WorkbenchActionResult[]): string {
-  const lines: string[] = [];
-  let i = 0;
-  for (const r of results) {
-    i++;
-    const head = `[B${i}] ${r.ok ? "OK" : "FAIL"} ${r.type}: ${r.summary}`;
-    lines.push(head);
-
-    try {
-      const details = r.details && typeof r.details === "object" ? r.details : null;
-      if (!details) continue;
-      const raw = JSON.stringify(details);
-      if (!raw) continue;
-      const clipped = raw.length > 3200 ? raw.slice(0, 3200) + "...(truncated)" : raw;
-      lines.push(`- details: ${clipped}`);
-    } catch {
-      // ignore
-    }
-  }
-  return lines.join("\n");
 }
 
 function collectWorkbenchInlineImagePaths(results: WorkbenchActionResult[]): string[] {
@@ -16676,6 +16661,7 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
             "max_bytes",
             "expected_sheet",
             "max_pages",
+            "page_start",
             "include_pdf_annotations",
             "include_ocr_for_images",
             "baseline_file_path",
@@ -16709,6 +16695,7 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
             max_bytes: { type: ["number", "null"] },
             expected_sheet: { type: ["string", "null"] },
             max_pages: { type: ["number", "null"] },
+            page_start: { type: ["number", "null"] },
             include_pdf_annotations: { type: ["boolean", "null"] },
             include_ocr_for_images: { type: ["boolean", "null"] },
             baseline_file_path: { type: ["string", "null"] },

@@ -2925,6 +2925,7 @@ const server = http.createServer(async (req, res) => {
             ? parsed.expectedSheet.trim()
             : undefined;
       const max_pages = typeof parsed.max_pages === "number" ? parsed.max_pages : typeof parsed.maxPages === "number" ? parsed.maxPages : undefined;
+      const page_start = typeof parsed.page_start === "number" ? parsed.page_start : typeof parsed.pageStart === "number" ? parsed.pageStart : undefined;
       const include_pdf_annotations =
         typeof parsed.include_pdf_annotations === "boolean"
           ? parsed.include_pdf_annotations
@@ -2949,6 +2950,7 @@ const server = http.createServer(async (req, res) => {
         file_path,
         expected_sheet,
         max_pages,
+        page_start,
         include_pdf_annotations,
         include_ocr_for_images,
         timeout_ms,
@@ -3021,6 +3023,7 @@ const server = http.createServer(async (req, res) => {
             ? parsed.expectedSheet.trim()
             : undefined;
       const max_pages = typeof parsed.max_pages === "number" ? parsed.max_pages : typeof parsed.maxPages === "number" ? parsed.maxPages : undefined;
+      const page_start = typeof parsed.page_start === "number" ? parsed.page_start : typeof parsed.pageStart === "number" ? parsed.pageStart : undefined;
       const include_pdf_annotations =
         typeof parsed.include_pdf_annotations === "boolean"
           ? parsed.include_pdf_annotations
@@ -3075,6 +3078,7 @@ const server = http.createServer(async (req, res) => {
         file_path,
         expected_sheet,
         max_pages,
+        page_start,
         include_pdf_annotations,
         include_ocr_for_images,
         timeout_ms,
@@ -3112,6 +3116,7 @@ const server = http.createServer(async (req, res) => {
             ? parsed.expectedSheet.trim()
             : undefined;
       const max_pages = typeof parsed.max_pages === "number" ? parsed.max_pages : typeof parsed.maxPages === "number" ? parsed.maxPages : undefined;
+      const page_start = typeof parsed.page_start === "number" ? parsed.page_start : typeof parsed.pageStart === "number" ? parsed.pageStart : undefined;
       const baseline_file_path =
         typeof parsed.baseline_file_path === "string"
           ? parsed.baseline_file_path.trim()
@@ -3144,6 +3149,7 @@ const server = http.createServer(async (req, res) => {
         image_paths,
         expected_sheet,
         max_pages,
+        page_start,
         baseline_file_path,
         objective,
         region_boxes,

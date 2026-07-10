@@ -42,6 +42,7 @@ export type WorkbenchAction =
       file_path: string;
       expected_sheet?: string;
       max_pages?: number;
+      page_start?: number;
       include_pdf_annotations?: boolean;
       include_ocr_for_images?: boolean;
       timeout_ms?: number;
@@ -61,6 +62,7 @@ export type WorkbenchAction =
       file_path: string;
       expected_sheet?: string;
       max_pages?: number;
+      page_start?: number;
       include_pdf_annotations?: boolean;
       include_ocr_for_images?: boolean;
       timeout_ms?: number;
@@ -78,6 +80,7 @@ export type WorkbenchAction =
       image_paths?: string[];
       expected_sheet?: string;
       max_pages?: number;
+      page_start?: number;
       baseline_file_path?: string;
       objective?: string;
       region_boxes?: Array<Record<string, unknown>>;
@@ -492,6 +495,7 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[]): Promi
           file_path: fp,
           expected_sheet: typeof action.expected_sheet === "string" ? action.expected_sheet : undefined,
           max_pages: typeof action.max_pages === "number" && Number.isFinite(action.max_pages) ? Math.floor(action.max_pages) : undefined,
+          page_start: typeof action.page_start === "number" && Number.isFinite(action.page_start) ? Math.floor(action.page_start) : undefined,
           include_pdf_annotations: typeof action.include_pdf_annotations === "boolean" ? action.include_pdf_annotations : undefined,
           include_ocr_for_images: typeof action.include_ocr_for_images === "boolean" ? action.include_ocr_for_images : undefined,
           timeout_ms: timeoutMs,
@@ -549,6 +553,7 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[]): Promi
           file_path: fp,
           expected_sheet: typeof action.expected_sheet === "string" ? action.expected_sheet : undefined,
           max_pages: typeof action.max_pages === "number" && Number.isFinite(action.max_pages) ? Math.floor(action.max_pages) : undefined,
+          page_start: typeof action.page_start === "number" && Number.isFinite(action.page_start) ? Math.floor(action.page_start) : undefined,
           include_pdf_annotations: typeof action.include_pdf_annotations === "boolean" ? action.include_pdf_annotations : undefined,
           include_ocr_for_images: typeof action.include_ocr_for_images === "boolean" ? action.include_ocr_for_images : undefined,
           timeout_ms: timeoutMs,
@@ -586,6 +591,7 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[]): Promi
           image_paths: imagePaths,
           expected_sheet: typeof action.expected_sheet === "string" ? action.expected_sheet : undefined,
           max_pages: typeof action.max_pages === "number" && Number.isFinite(action.max_pages) ? Math.floor(action.max_pages) : undefined,
+          page_start: typeof action.page_start === "number" && Number.isFinite(action.page_start) ? Math.floor(action.page_start) : undefined,
           baseline_file_path: typeof action.baseline_file_path === "string" ? action.baseline_file_path : undefined,
           objective: typeof action.objective === "string" ? action.objective : undefined,
           region_boxes: Array.isArray(action.region_boxes) ? action.region_boxes : [],
