@@ -13,15 +13,17 @@ import {
   type PdfPageBatch,
   type PdfPageCoverage
 } from "./pdf_intake_policy.js";
+import {
+  extractSheetCandidatesFromFilename,
+  extractSheetCandidatesFromText,
+  isLikelySheetPattern,
+  mergeSheetCandidates,
+  normalizeSheetNumber,
+  type RedlineSheetCandidate
+} from "./sheet_candidate_classifier.js";
 
-export type RedlineSheetCandidate = {
-  sheet_number: string;
-  score: number;
-  source: "text" | "filename";
-  page?: number;
-  hit_count: number;
-  evidence?: string;
-};
+export { extractSheetCandidatesFromFilename, extractSheetCandidatesFromText } from "./sheet_candidate_classifier.js";
+export type { RedlineSheetCandidate } from "./sheet_candidate_classifier.js";
 
 export type RedlineAnalyzeRequest = {
   file_path: string;
@@ -212,26 +214,6 @@ function toFiniteNumber(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function normalizeSheetNumber(raw: string): string {
-  const t = (raw ?? "").toUpperCase().trim();
-  if (!t) return "";
-  let n = t.replace(/\s+/g, "");
-  n = n.replace(/_/g, ".");
-  n = n.replace(/-+/g, "-");
-  n = n.replace(/[^\w.\-]/g, "");
-  return n;
-}
-
-function isLikelySheetPattern(normalized: string): boolean {
-  if (!normalized) return false;
-  if (/^\d{4}$/.test(normalized)) return false; // likely year
-  if (/^\d+(\.\d+)?$/.test(normalized)) return false; // pure numeric
-  if (!/[A-Z]/.test(normalized)) return false;
-  if (!/\d/.test(normalized)) return false;
-  if (normalized.length < 2 || normalized.length > 16) return false;
-  return true;
-}
-
 function colorToName(rgb: unknown): { name: string; isRedLike: boolean } {
   const values =
     Array.isArray(rgb)
@@ -340,151 +322,6 @@ function groupNearbyRegions(args: {
       reason: "nearby_annotation_marks"
     }));
   return out;
-}
-
-const SHEET_HINT_WORDS = /(?:sheet|sht|drawing|dwg|drg|detail|plan|elevation|section)/i;
-const PREFERRED_DISC_PREFIXES = new Set(["A", "M", "E", "P", "S", "C", "I", "FP", "G"]);
-const NON_SHEET_PREFIXES = new Set(["ROOM", "RM", "LEVEL"]);
-
-export function extractSheetCandidatesFromText(args: {
-  text: string;
-  expectedSheet?: string;
-  page?: number;
-  maxCandidates?: number;
-}): RedlineSheetCandidate[] {
-  const text = args.text ?? "";
-  if (!text.trim()) return [];
-
-  const expected = normalizeSheetNumber(args.expectedSheet ?? "");
-  const maxCandidates = Math.max(1, Math.min(40, Number(args.maxCandidates ?? 12) || 12));
-
-  const pattern = /\b([A-Z]{1,4}\s*[-_.]?\s*\d{1,4}(?:\s*[.-]\s*\d{1,3})?)\b/gi;
-  type Hit = { key: string; raw: string; score: number; evidence: string; count: number };
-  const hits = new Map<string, Hit>();
-  let m: RegExpExecArray | null;
-  while ((m = pattern.exec(text)) !== null) {
-    const raw = (m[1] ?? "").trim();
-    const normalized = normalizeSheetNumber(raw);
-    if (!isLikelySheetPattern(normalized)) continue;
-
-    const idx = typeof m.index === "number" ? m.index : 0;
-    const left = Math.max(0, idx - 28);
-    const right = Math.min(text.length, idx + raw.length + 28);
-    const context = text.slice(left, right);
-    const hasSheetHint = SHEET_HINT_WORDS.test(context);
-    const prefix = (normalized.match(/^[A-Z]+/)?.[0] ?? "").toUpperCase();
-    if (NON_SHEET_PREFIXES.has(prefix)) continue;
-    // Reject word-like prefixes (e.g., ROOM101) unless there is stronger sheet context.
-    if (prefix.length >= 3 && !PREFERRED_DISC_PREFIXES.has(prefix) && !normalized.includes(".") && !normalized.includes("-") && !hasSheetHint) {
-      continue;
-    }
-
-    let score = 20;
-    if (normalized.includes(".")) score += 8;
-    if (normalized.includes("-")) score += 4;
-    if (normalized.length >= 4 && normalized.length <= 9) score += 2;
-    if (hasSheetHint) score += 12;
-    if (PREFERRED_DISC_PREFIXES.has(prefix)) score += 6;
-    if (expected && normalized === expected) score += 25;
-
-    const prev = hits.get(normalized);
-    if (!prev) {
-      hits.set(normalized, {
-        key: normalized,
-        raw,
-        score,
-        evidence: truncate(context, 120),
-        count: 1
-      });
-    } else {
-      prev.count += 1;
-      prev.score = Math.max(prev.score, score) + 1; // repeated mentions matter
-      if (prev.evidence.length < 40) prev.evidence = truncate(context, 120);
-    }
-  }
-
-  return [...hits.values()]
-    .sort((a, b) => b.score - a.score || b.count - a.count || a.key.localeCompare(b.key))
-    .slice(0, maxCandidates)
-    .map(h => ({
-      sheet_number: h.key,
-      score: h.score,
-      source: "text",
-      page: args.page,
-      hit_count: h.count,
-      evidence: h.evidence
-    }));
-}
-
-export function extractSheetCandidatesFromFilename(args: {
-  filePath: string;
-  expectedSheet?: string;
-  maxCandidates?: number;
-}): RedlineSheetCandidate[] {
-  const filePath = args.filePath ?? "";
-  const base = path.basename(filePath);
-  const stem = base.replace(/\.[^.]+$/, "");
-  if (!stem.trim()) return [];
-
-  const expected = normalizeSheetNumber(args.expectedSheet ?? "");
-  const maxCandidates = Math.max(1, Math.min(20, Number(args.maxCandidates ?? 8) || 8));
-
-  const pattern = /(?:^|[^A-Z0-9])([A-Z]{1,4}\s*[-_.]?\s*\d{1,4}(?:\s*[.-]\s*\d{1,3})?)(?=$|[^A-Z0-9])/gi;
-  type Hit = { key: string; raw: string; score: number; count: number };
-  const hits = new Map<string, Hit>();
-
-  let m: RegExpExecArray | null;
-  while ((m = pattern.exec(stem)) !== null) {
-    const raw = (m[1] ?? "").trim();
-    const normalized = normalizeSheetNumber(raw);
-    if (!isLikelySheetPattern(normalized)) continue;
-
-    const prefix = (normalized.match(/^[A-Z]+/)?.[0] ?? "").toUpperCase();
-    if (NON_SHEET_PREFIXES.has(prefix)) continue;
-    if (prefix.length >= 3 && !PREFERRED_DISC_PREFIXES.has(prefix) && !normalized.includes(".") && !normalized.includes("-")) continue;
-
-    let score = 62; // filename is a high-confidence hint for sheet-targeted redline uploads
-    if (normalized.includes(".")) score += 4;
-    if (normalized.includes("-")) score += 2;
-    if (expected && normalized === expected) score += 18;
-
-    const prev = hits.get(normalized);
-    if (!prev) {
-      hits.set(normalized, { key: normalized, raw, score, count: 1 });
-    } else {
-      prev.count += 1;
-      prev.score = Math.max(prev.score, score) + 1;
-    }
-  }
-
-  return [...hits.values()]
-    .sort((a, b) => b.score - a.score || b.count - a.count || a.key.localeCompare(b.key))
-    .slice(0, maxCandidates)
-    .map((h) => ({
-      sheet_number: h.key,
-      score: h.score,
-      source: "filename",
-      hit_count: h.count,
-      evidence: truncate(`filename=${base}`, 120)
-    }));
-}
-
-function mergeCandidates(input: RedlineSheetCandidate[], max = 20): RedlineSheetCandidate[] {
-  const map = new Map<string, RedlineSheetCandidate>();
-  for (const c of input) {
-    const key = normalizeSheetNumber(c.sheet_number);
-    if (!key) continue;
-    const prev = map.get(key);
-    if (!prev) {
-      map.set(key, { ...c, sheet_number: key });
-    } else {
-      prev.score = Math.max(prev.score, c.score) + 1;
-      prev.hit_count += c.hit_count;
-      if (!prev.page && c.page) prev.page = c.page;
-      if (!prev.evidence && c.evidence) prev.evidence = c.evidence;
-    }
-  }
-  return [...map.values()].sort((a, b) => b.score - a.score || b.hit_count - a.hit_count).slice(0, max);
 }
 
 function readImageDimensionsFast(fullPath: string): { width: number; height: number } | null {
@@ -2555,7 +2392,7 @@ async function analyzePdf(args: {
     }
   }
 
-  const merged = mergeCandidates(allCandidates, 20);
+  const merged = mergeSheetCandidates(allCandidates, 20);
   const primary = merged.length > 0 ? merged[0]!.sheet_number : null;
   const likelySheet = merged.length > 0 && (merged[0]!.score >= 24 || merged[0]!.hit_count >= 2);
   const filenamePrimary = fileNameCandidates.length > 0 ? fileNameCandidates[0]!.sheet_number : null;
@@ -3470,7 +3307,7 @@ async function analyzeImage(args: {
     }
   }
 
-  const merged = mergeCandidates(textCandidates, 20);
+  const merged = mergeSheetCandidates(textCandidates, 20);
   const primary = merged.length > 0 ? merged[0]!.sheet_number : null;
   const likelySheet = merged.length > 0 && (merged[0]!.score >= 24 || merged[0]!.hit_count >= 2);
   const filenamePrimary = textCandidates.find((c) => c.source === "filename")?.sheet_number ?? null;
