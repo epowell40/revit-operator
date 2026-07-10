@@ -14,6 +14,15 @@ on:
         type: boolean
 
 jobs:
+  architecture:
+    name: Architecture Ratchets
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Backend module size ratchet
+        shell: pwsh
+        run: ./scripts/check_backend_module_size.ps1
+
   backend:
     name: Backend Build/Test/Contracts
     runs-on: ubuntu-latest

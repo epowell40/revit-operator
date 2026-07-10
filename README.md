@@ -25,6 +25,7 @@ From the repository root, run the backend build and test suite with:
 ```powershell
 npm --prefix apps/operator-backend run build
 npm --prefix apps/operator-backend test
+./scripts/check_backend_module_size.ps1
 ```
 
 On a Windows development machine with Revit installed, compile against all installed supported API versions with:
@@ -34,6 +35,8 @@ On a Windows development machine with Revit installed, compile against all insta
 ```
 
 Use `-SkipMissing` when intentionally validating a workstation that does not have every supported Revit version installed.
+
+The module-size check applies a 1,200-line default to new TypeScript modules and fixed, documented non-growth ceilings to legacy exceptions.
 
 ## Repository Status
 
