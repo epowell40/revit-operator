@@ -43,7 +43,7 @@ import { warmOcr } from "./tools/ocr.js";
 import { analyzeRedlineFile } from "./redline/redline_analyzer.js";
 import { mapSheetRegions } from "./redline/sheet_region_mapper.js";
 import { orientRedlineFile } from "./redline/redline_orienter.js";
-import { analyzeRedlineWithGemini } from "./vision/gemini_agentic_vision.js";
+import { analyzeRedlinePackageWithGemini } from "./vision/gemini_redline_package.js";
 import { buildEvidencePack } from "./evidence/evidence_pack.js";
 import { maybePersistAutoTurnMemory } from "./memory/auto_turn_memory.js";
 import { addProjectStandard, readProjectProfile } from "./memory/project_profile.js";
@@ -3144,7 +3144,7 @@ const server = http.createServer(async (req, res) => {
             : undefined;
       const timeout_ms = typeof parsed.timeout_ms === "number" ? parsed.timeout_ms : typeof parsed.timeoutMs === "number" ? parsed.timeoutMs : undefined;
 
-      const r = await analyzeRedlineWithGemini({
+      const r = await analyzeRedlinePackageWithGemini({
         file_path,
         image_paths,
         expected_sheet,

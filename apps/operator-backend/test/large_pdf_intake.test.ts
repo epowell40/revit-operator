@@ -10,7 +10,7 @@ function pdfString(value: string): string {
   return value.replace(/([\\()])/g, "\\$1");
 }
 
-function buildCommentedPdf(pageCount: number, comments: Map<number, string>): Buffer {
+function buildCommentedPdf(pageCount: number, comments: Map<number, string>, nativeAnnotations = true): Buffer {
   const objects = new Map<number, string>();
   const pageObjectIds: number[] = [];
   let nextId = 4;
@@ -19,7 +19,7 @@ function buildCommentedPdf(pageCount: number, comments: Map<number, string>): Bu
     const pageId = nextId++;
     const contentId = nextId++;
     const comment = comments.get(page);
-    const annotationId = comment ? nextId++ : null;
+    const annotationId = comment && nativeAnnotations ? nextId++ : null;
     pageObjectIds.push(pageId);
 
     const annots = annotationId ? ` /Annots [${annotationId} 0 R]` : "";
@@ -28,7 +28,10 @@ function buildCommentedPdf(pageCount: number, comments: Map<number, string>): Bu
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentId} 0 R${annots} >>`
     );
     const text = `SHEET A-${String(page).padStart(3, "0")} PAGE ${page}`;
-    const stream = `BT /F1 12 Tf 72 720 Td (${pdfString(text)}) Tj ET`;
+    const flattenedComment = comment && !nativeAnnotations
+      ? `\nBT /F1 14 Tf 1 0 0 rg 100 120 Td (${pdfString(comment)}) Tj ET`
+      : "";
+    const stream = `BT /F1 12 Tf 72 720 Td (${pdfString(text)}) Tj ET${flattenedComment}`;
     objects.set(contentId, `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`);
     if (annotationId && comment) {
       objects.set(
@@ -94,6 +97,45 @@ test("redline analyzer inventories comments across a 125-page PDF package", asyn
       [1, 63, 125]
     );
     assert.match(result.pdf_annotations?.find((annotation) => annotation.page === 125)?.contents ?? "", /DELETE EXISTING GRILLE/);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("redline analyzer inventories a 125-page flattened-comment package without native annotations", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-flat-pdf-"));
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const uploads = path.join(root, "artifacts", "uploads");
+    fs.mkdirSync(uploads, { recursive: true });
+    fs.writeFileSync(
+      path.join(uploads, "125-page-flattened.pdf"),
+      buildCommentedPdf(
+        125,
+        new Map([
+          [1, "FLATTENED EARLY: MOVE DIFFUSER"],
+          [63, "FLATTENED MIDDLE: ADD DUCT"],
+          [125, "FLATTENED LATE: DELETE GRILLE"]
+        ]),
+        false
+      )
+    );
+
+    const result = await analyzeRedlineFile({
+      file_path: "artifacts/uploads/125-page-flattened.pdf",
+      max_pages: 150,
+      include_pdf_annotations: true
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.page_coverage?.complete, true);
+    assert.equal(result.pdf_annotations?.length ?? 0, 0);
+    assert.match(result.pages?.find((page) => page.page === 1)?.text_excerpt ?? "", /FLATTENED EARLY/);
+    assert.match(result.pages?.find((page) => page.page === 63)?.text_excerpt ?? "", /FLATTENED MIDDLE/);
+    assert.match(result.pages?.find((page) => page.page === 125)?.text_excerpt ?? "", /FLATTENED LATE/);
   } finally {
     if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
