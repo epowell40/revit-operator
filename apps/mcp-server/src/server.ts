@@ -27,12 +27,14 @@ import { runPlaceVAVs } from "./skills/placeVAVs.js";
 import { runCodeCompliance } from "./skills/codeCompliance.js";
 import { runAutoDimFloorPlan } from "./skills/autoDimFloorPlanRunner.js";
 import { runFireAlarmLayout } from "./skills/fireAlarmLayoutRunner.js";
-import { fireDamperAudit, handleFireDamperAudit } from "./skills/fireDamperAudit.js";
+import { fireDamperAudit, fireDamperAuditInputSchema, handleFireDamperAudit } from "./skills/fireDamperAudit.js";
 import { lightingAuditTools, handleLightingAudit } from "./skills/lightingAudit.js";
 import { runPrintSheets } from "./skills/print_sheets.js";
 import { ensureWorkspaceLayout } from "./lib/workspace.js";
 import { fetchWebEvidenceToWorkspace, getWebResearchPolicyFromEnv } from "./lib/webResearch.js";
 import { bestLineReplacement, replaceLineRange, similarityScore } from "./lib/textMatch.js";
+import { registerSemanticMepRouteTool } from "./tools/semanticMepRouteTool.js";
+import { assertRevitBridgePath } from "./lib/revitPathPolicy.js";
 
 function redirectConsoleToStderr(): void {
   // This server communicates over stdio (JSON-RPC). Writing to stdout (even for logs)
@@ -103,6 +105,28 @@ const originalTool = server.tool.bind(server);
     }
   });
 };
+
+function registerAuditedZodTool(name: string, description: string, inputSchema: any, handler: (args: unknown) => Promise<unknown>): unknown {
+  return (server as any).registerTool(name, { description, inputSchema }, async (args: unknown) => {
+    const startedAt = Date.now();
+    auditLog("tool.call", { name, args: summarize(args) as any });
+    try {
+      const result = await handler(args as any);
+      const isError = !!(result && typeof result === "object" && (result as any).isError);
+      let outBytes = 0;
+      try { outBytes = JSON.stringify(result).length; } catch { /* ignore */ }
+      auditLog("tool.result", { name, ok: !isError, duration_ms: Date.now() - startedAt, out_bytes: outBytes });
+      return result;
+    } catch (error) {
+      auditLog("tool.result", { name, ok: false, duration_ms: Date.now() - startedAt, error: String(error) });
+      throw error;
+    }
+  });
+}
+
+registerSemanticMepRouteTool((name, description, inputSchema, handler) =>
+  registerAuditedZodTool(name, description, inputSchema, async (args) => await handler(args as any))
+);
 
 // --- Revit Tools ---
 
@@ -746,7 +770,7 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
       const method = normalizeRegistryMethod(args.method);
       const pathInput = String(args.path ?? "").trim();
       if (!method) throw new Error("method must be GET or POST.");
-      if (!pathInput || !pathInput.startsWith("/revit/")) throw new Error("path must start with /revit/.");
+      assertRevitBridgePath(pathInput);
 
       let registry: ToolRegistryPayload | null = null;
       let registryLookupError = "";
@@ -2664,10 +2688,10 @@ server.tool("revit_run_fire_alarm_layout", "Run Fire Alarm layout with artifacts
   }
 );
 
-server.tool(fireDamperAudit.name, fireDamperAudit.description || "", fireDamperAudit.inputSchema as any, handleFireDamperAudit);
+registerAuditedZodTool(fireDamperAudit.name, fireDamperAudit.description, fireDamperAuditInputSchema, handleFireDamperAudit);
 
 lightingAuditTools.forEach(tool => {
-  server.tool(tool.name, tool.description || "", tool.inputSchema as any, (args: any) => handleLightingAudit(tool.name, args));
+  registerAuditedZodTool(tool.name, tool.description, tool.inputSchema, (args: any) => handleLightingAudit(tool.name, args));
 });
 
 // --- Workspace Tools (artifacts only) ---

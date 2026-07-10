@@ -43,6 +43,7 @@ import { warmOcr } from "./tools/ocr.js";
 import { analyzeRedlineFile } from "./redline/redline_analyzer.js";
 import { mapSheetRegions } from "./redline/sheet_region_mapper.js";
 import { orientRedlineFile } from "./redline/redline_orienter.js";
+import { resolveMepSemanticRoutePlan } from "./deterministic/mep_semantic_route.js";
 import { analyzeRedlinePackageWithGemini } from "./vision/gemini_redline_package.js";
 import { buildEvidencePack } from "./evidence/evidence_pack.js";
 import { maybePersistAutoTurnMemory } from "./memory/auto_turn_memory.js";
@@ -642,6 +643,7 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname === "/tools/redline/orient" ||
     pathname === "/tools/redline/map-sheet-regions" ||
     pathname === "/tools/redline/gemini-analyze" ||
+    pathname === "/tools/mep/semantic-route-plan" ||
     pathname === "/tools/evidence-pack/build" ||
     pathname === "/artifacts/list" ||
     pathname === "/artifacts/share" ||
@@ -3001,6 +3003,21 @@ const server = http.createServer(async (req, res) => {
         sheet_outline,
         viewport_geometry,
         title_blocks
+      });
+      return writeJson(res, r.ok ? 200 : 400, r);
+    }
+
+    if (req.method === "POST" && url.pathname === "/tools/mep/semantic-route-plan") {
+      const body = await readJson(req);
+      const parsed = body as any;
+      if (!parsed || typeof parsed !== "object") return writeJson(res, 400, { error: "Invalid JSON body" });
+
+      const r = resolveMepSemanticRoutePlan({
+        user_text: typeof parsed.user_text === "string" ? parsed.user_text : typeof parsed.userText === "string" ? parsed.userText : "",
+        view_id: typeof parsed.view_id === "number" ? parsed.view_id : typeof parsed.viewId === "number" ? parsed.viewId : undefined,
+        room_number: typeof parsed.room_number === "string" ? parsed.room_number : typeof parsed.roomNumber === "string" ? parsed.roomNumber : undefined,
+        level_name: typeof parsed.level_name === "string" ? parsed.level_name : typeof parsed.levelName === "string" ? parsed.levelName : undefined,
+        tool_results: Array.isArray(parsed.tool_results) ? parsed.tool_results : Array.isArray(parsed.toolResults) ? parsed.toolResults : []
       });
       return writeJson(res, r.ok ? 200 : 400, r);
     }
