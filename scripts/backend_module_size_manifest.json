@@ -5,7 +5,7 @@
     { "path": "benchmark/revit_workflows.ts", "max_lines": 10838, "reason": "Legacy benchmark workflow dispatcher; extract one independently tested workflow family per batch." },
     { "path": "benchmark/redline_routing_readiness.ts", "max_lines": 6285, "reason": "Legacy readiness report aggregator awaiting report-section extraction." },
     { "path": "index.ts", "max_lines": 4146, "reason": "Backend composition root; private hosted routes make the integration variant larger than public. Added page-range forwarding for bounded large-PDF analysis." },
-    { "path": "redline/redline_analyzer.ts", "max_lines": 3740, "reason": "Legacy redline analysis pipeline awaiting classifier and geometry-stage extraction. Large-package page coverage and range-aware rendering remain coupled here pending that split." },
+    { "path": "redline/redline_analyzer.ts", "max_lines": 3577, "reason": "Sheet-candidate classification is extracted; PDF annotation geometry, page analysis, and image rendering remain coupled pending later bounded splits." },
     { "path": "deterministic/mep_route_redline.ts", "max_lines": 2914, "reason": "Deterministic MEP route resolver awaiting parsing and scoring extraction; one policy import aligns its PDF budget." },
     { "path": "redline/corpus_classifier.ts", "max_lines": 2876, "reason": "Corpus classification and promotion preparation remain coupled pending a focused split." },
     { "path": "tools/seed_redline_review_promotions.ts", "max_lines": 1903, "reason": "Offline migration tool; lower runtime risk but still size-ratcheted." },
