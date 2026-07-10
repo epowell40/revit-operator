@@ -1,4 +1,4 @@
-import { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 import { callRevit } from "../lib/revitClient.js";
 import * as fs from "fs";
 import * as path from "path";
@@ -14,44 +14,31 @@ try {
     console.error("Failed to load lighting config", e);
 }
 
-export const lightingAuditTools: Tool[] = [
+export const lightingAuditTools = [
     {
         name: "validate_ies_files",
         description: "Checks all lighting fixtures for valid IES files. Can optionally fix paths based on a map.",
-        inputSchema: {
-            type: "object",
-            properties: {
-                fix: { type: "boolean", description: "If true, attempts to fix invalid paths using provided corrections." },
-                corrections: { 
-                    type: "object", 
-                    description: "Map of FamilyName -> New IES Path (optional)" 
-                }
-            }
-        }
+        inputSchema: z.object({
+            fix: z.boolean().optional().describe("If true, attempts to fix invalid paths using provided corrections."),
+            corrections: z.record(z.unknown()).optional().describe("Map of FamilyName -> New IES Path (optional)")
+        }).passthrough()
     },
     {
         name: "check_photometrics",
         description: "Calculates Average Foot-candles (FC) for rooms or levels using Zonal Cavity Method approximation.",
-        inputSchema: {
-            type: "object",
-            properties: {
-                scope: { type: "string", description: "Scope of analysis: 'Level 1', 'Room 101', or 'Building'." },
-                visualize: { type: "boolean", description: "If true, creates Text Notes in the active view." },
-                cu: { type: "number", description: "Coefficient of Utilization (default 0.8)" },
-                llf: { type: "number", description: "Light Loss Factor (default 0.85)" }
-            },
-            required: ["scope"]
-        }
+        inputSchema: z.object({
+            scope: z.string().describe("Scope of analysis: 'Level 1', 'Room 101', or 'Building'."),
+            visualize: z.boolean().optional().describe("If true, creates Text Notes in the active view."),
+            cu: z.number().optional().describe("Coefficient of Utilization (default 0.8)"),
+            llf: z.number().optional().describe("Light Loss Factor (default 0.85)")
+        }).passthrough()
     },
     {
         name: "audit_lpd",
         description: "Audits Lighting Power Density (LPD) for Spaces.",
-        inputSchema: {
-            type: "object",
-            properties: {
-                scope: { type: "string", description: "Scope: 'Level 1' or 'Building' (default)" }
-            }
-        }
+        inputSchema: z.object({
+            scope: z.string().optional().describe("Scope: 'Level 1' or 'Building' (default)")
+        }).passthrough()
     }
 ];
 
