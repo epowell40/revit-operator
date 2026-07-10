@@ -21,9 +21,29 @@ import {
   normalizeSheetNumber,
   type RedlineSheetCandidate
 } from "./sheet_candidate_classifier.js";
+import {
+  buildPdfAnnotationCoordinateMapper,
+  clampPixelBoxToImage,
+  extractInkListsPdf,
+  extractPdfPointSequence,
+  mapInkListsToUnit,
+  mapPdfPointsToUnit,
+  normalizedRectToPixelBox,
+  normalizeInkListsToUnitBoxes,
+  normalizePdfMarkupAnnotationToUnitBox,
+  normBoxCenter,
+  normBoxDistance,
+  normBoxHeight,
+  normBoxIntersectionArea,
+  normBoxWidth,
+  unionPdfBoxes,
+  type PdfAnnotationBox,
+  type PdfAnnotationPoint
+} from "./pdf_annotation_geometry.js";
 
 export { extractSheetCandidatesFromFilename, extractSheetCandidatesFromText } from "./sheet_candidate_classifier.js";
 export type { RedlineSheetCandidate } from "./sheet_candidate_classifier.js";
+export { testOnlyNormalizePdfRectToUnit as __testOnlyNormalizePdfRectToUnit } from "./pdf_annotation_geometry.js";
 
 export type RedlineAnalyzeRequest = {
   file_path: string;
@@ -59,9 +79,6 @@ type PdfPageSummary = {
   sheet_candidates: RedlineSheetCandidate[];
   annotation_summary?: PdfAnnotationSummary;
 };
-
-type PdfAnnotationPoint = { x: number; y: number };
-type PdfAnnotationBox = { minX: number; minY: number; maxX: number; maxY: number };
 
 type PdfVectorAnnotation = {
   page: number;
@@ -544,140 +561,6 @@ function findLikelyPrintedBaselinePdf(args: {
   }
 }
 
-type PdfAnnotationCoordinateMapper = {
-  width: number;
-  height: number;
-  mapPoint: (x: number, y: number) => { x: number; y: number } | null;
-};
-
-function buildPdfAnnotationCoordinateMapper(args: {
-  viewport: any;
-  pageView: unknown;
-}): PdfAnnotationCoordinateMapper | null {
-  const viewportWidth = Number(args.viewport?.width);
-  const viewportHeight = Number(args.viewport?.height);
-  if (!Number.isFinite(viewportWidth) || !Number.isFinite(viewportHeight) || viewportWidth <= 0 || viewportHeight <= 0) return null;
-
-  const convert = typeof args.viewport?.convertToViewportPoint === "function" ? args.viewport.convertToViewportPoint.bind(args.viewport) : null;
-  if (convert) {
-    return {
-      width: viewportWidth,
-      height: viewportHeight,
-      mapPoint: (x: number, y: number) => {
-        const out = convert(x, y);
-        if (!Array.isArray(out) || out.length < 2) return null;
-        const px = Number(out[0]);
-        const py = Number(out[1]);
-        if (!Number.isFinite(px) || !Number.isFinite(py)) return null;
-        return { x: px, y: py };
-      }
-    };
-  }
-
-  const view = Array.isArray(args.pageView) && args.pageView.length >= 4 ? args.pageView : null;
-  if (!view) return null;
-  const x0 = Number(view[0]);
-  const y0 = Number(view[1]);
-  const x1 = Number(view[2]);
-  const y1 = Number(view[3]);
-  if (!Number.isFinite(x0) || !Number.isFinite(y0) || !Number.isFinite(x1) || !Number.isFinite(y1)) return null;
-  const minX = Math.min(x0, x1);
-  const maxX = Math.max(x0, x1);
-  const minY = Math.min(y0, y1);
-  const maxY = Math.max(y0, y1);
-  const spanX = maxX - minX;
-  const spanY = maxY - minY;
-  if (!Number.isFinite(spanX) || !Number.isFinite(spanY) || spanX <= 0 || spanY <= 0) return null;
-
-  return {
-    width: viewportWidth,
-    height: viewportHeight,
-    mapPoint: (x: number, y: number) => {
-      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-      const nx = (x - minX) / spanX;
-      const ny = (maxY - y) / spanY;
-      return { x: nx * viewportWidth, y: ny * viewportHeight };
-    }
-  };
-}
-
-function normalizePdfRectToUnit(
-  rect: [number, number, number, number],
-  mapper: PdfAnnotationCoordinateMapper
-): { minX: number; minY: number; maxX: number; maxY: number } | null {
-  if (!Number.isFinite(mapper.width) || !Number.isFinite(mapper.height) || mapper.width <= 0 || mapper.height <= 0) return null;
-  const x0 = Number(rect[0]);
-  const y0 = Number(rect[1]);
-  const x1 = Number(rect[2]);
-  const y1 = Number(rect[3]);
-  if (!Number.isFinite(x0) || !Number.isFinite(y0) || !Number.isFinite(x1) || !Number.isFinite(y1)) return null;
-
-  const corners = [
-    mapper.mapPoint(x0, y0),
-    mapper.mapPoint(x0, y1),
-    mapper.mapPoint(x1, y0),
-    mapper.mapPoint(x1, y1)
-  ].filter((p): p is { x: number; y: number } => !!p);
-  if (corners.length < 2) return null;
-
-  const rawLeft = Math.min(...corners.map((p) => p.x));
-  const rawRight = Math.max(...corners.map((p) => p.x));
-  const rawTop = Math.min(...corners.map((p) => p.y));
-  const rawBottom = Math.max(...corners.map((p) => p.y));
-  const left = Math.max(0, Math.min(mapper.width, rawLeft));
-  const right = Math.max(0, Math.min(mapper.width, rawRight));
-  const top = Math.max(0, Math.min(mapper.height, rawTop));
-  const bottom = Math.max(0, Math.min(mapper.height, rawBottom));
-  if (right <= left || bottom <= top) return null;
-
-  const minX = left / mapper.width;
-  const maxX = right / mapper.width;
-  const minY = top / mapper.height;
-  const maxY = bottom / mapper.height;
-  if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) return null;
-  if (maxX - minX <= 1e-6 || maxY - minY <= 1e-6) return null;
-  if (maxX <= 0 || minX >= 1 || maxY <= 0 || minY >= 1) return null;
-  return {
-    minX: Math.max(0, Math.min(1, minX)),
-    minY: Math.max(0, Math.min(1, minY)),
-    maxX: Math.max(0, Math.min(1, maxX)),
-    maxY: Math.max(0, Math.min(1, maxY))
-  };
-}
-
-function normalizedRectToPixelBox(args: {
-  norm: { minX: number; minY: number; maxX: number; maxY: number };
-  imageWidth: number;
-  imageHeight: number;
-  minMarginPx?: number;
-}): { x: number; y: number; w: number; h: number; area: number } | null {
-  const w = Math.max(1, Math.floor(args.imageWidth));
-  const h = Math.max(1, Math.floor(args.imageHeight));
-  const n = args.norm;
-  const minX = Math.max(0, Math.min(1, n.minX));
-  const minY = Math.max(0, Math.min(1, n.minY));
-  const maxX = Math.max(0, Math.min(1, n.maxX));
-  const maxY = Math.max(0, Math.min(1, n.maxY));
-  if (maxX <= minX || maxY <= minY) return null;
-
-  let x0 = Math.floor(minX * w);
-  let y0 = Math.floor(minY * h);
-  let x1 = Math.ceil(maxX * w);
-  let y1 = Math.ceil(maxY * h);
-  const baseW = Math.max(1, x1 - x0);
-  const baseH = Math.max(1, y1 - y0);
-  const margin = Math.max(args.minMarginPx ?? 10, Math.round(Math.max(baseW, baseH) * 0.12));
-  x0 = Math.max(0, x0 - margin);
-  y0 = Math.max(0, y0 - margin);
-  x1 = Math.min(w, x1 + margin);
-  y1 = Math.min(h, y1 + margin);
-  if (x1 <= x0 || y1 <= y0) return null;
-  const bw = x1 - x0;
-  const bh = y1 - y0;
-  if (bw * bh < 60) return null;
-  return { x: x0, y: y0, w: bw, h: bh, area: bw * bh };
-}
-
 function boxIntersectionArea(
   a: { x: number; y: number; w: number; h: number },
   b: { x: number; y: number; w: number; h: number }
@@ -1087,120 +970,6 @@ function sanitizeDiffBoxes(
   return { boxes: dedupePixelBoxes(usable, 24) };
 }
 
-function flattenNumericPairSequence(raw: unknown): number[] {
-  const out: number[] = [];
-  if (!raw || typeof raw !== "object") return out;
-  const len = toFiniteNumber((raw as any).length);
-  if (len === null || len <= 0) return out;
-  const n = Math.max(0, Math.min(50_000, Math.floor(len)));
-  for (let i = 0; i < n; i++) {
-    const v = toFiniteNumber((raw as any)[i]);
-    if (v !== null) out.push(v);
-  }
-  return out;
-}
-
-function extractPdfPointSequence(raw: unknown): PdfAnnotationPoint[] {
-  const out: PdfAnnotationPoint[] = [];
-  if (!raw || typeof raw !== "object") return out;
-  if (Array.isArray(raw)) {
-    if (raw.every((item) => item && typeof item === "object" && !Array.isArray(item))) {
-      for (const item of raw) {
-        const x = toFiniteNumber((item as any).x ?? (item as any).X);
-        const y = toFiniteNumber((item as any).y ?? (item as any).Y);
-        if (x !== null && y !== null) out.push({ x, y });
-      }
-      if (out.length > 0) return out.slice(0, 2000);
-    }
-  }
-  const coords = flattenNumericPairSequence(raw);
-  for (let i = 0; i + 1 < coords.length; i += 2) {
-    const x = coords[i]!;
-    const y = coords[i + 1]!;
-    if (Number.isFinite(x) && Number.isFinite(y)) out.push({ x, y });
-  }
-  return out.slice(0, 2000);
-}
-
-function mapPdfPointsToUnit(points: PdfAnnotationPoint[], mapper: PdfAnnotationCoordinateMapper): PdfAnnotationPoint[] {
-  if (!Number.isFinite(mapper.width) || !Number.isFinite(mapper.height) || mapper.width <= 0 || mapper.height <= 0) return [];
-  const out: PdfAnnotationPoint[] = [];
-  for (const p of points) {
-    const mapped = mapper.mapPoint(p.x, p.y);
-    if (!mapped) continue;
-    if (mapped.x < -10_000 || mapped.x > mapper.width + 10_000 || mapped.y < -10_000 || mapped.y > mapper.height + 10_000) continue;
-    out.push({
-      x: Math.max(0, Math.min(1, mapped.x / mapper.width)),
-      y: Math.max(0, Math.min(1, mapped.y / mapper.height))
-    });
-  }
-  return out;
-}
-
-function extractInkListsPdf(inkLists: unknown): PdfAnnotationPoint[][] {
-  if (!Array.isArray(inkLists) || inkLists.length === 0) return [];
-  const out: PdfAnnotationPoint[][] = [];
-  for (const stroke of inkLists) {
-    const points = extractPdfPointSequence(stroke);
-    if (points.length >= 2) out.push(points);
-  }
-  return out.slice(0, 200);
-}
-
-function mapInkListsToUnit(strokes: PdfAnnotationPoint[][], mapper: PdfAnnotationCoordinateMapper): PdfAnnotationPoint[][] {
-  return strokes
-    .map((stroke) => mapPdfPointsToUnit(stroke, mapper))
-    .filter((stroke) => stroke.length >= 2)
-    .slice(0, 200);
-}
-
-function unionNormBoxes(boxes: PdfAnnotationBox[]): PdfAnnotationBox | null {
-  if (boxes.length === 0) return null;
-  return {
-    minX: Math.min(...boxes.map((b) => b.minX)),
-    minY: Math.min(...boxes.map((b) => b.minY)),
-    maxX: Math.max(...boxes.map((b) => b.maxX)),
-    maxY: Math.max(...boxes.map((b) => b.maxY))
-  };
-}
-
-function normBoxCenter(box: PdfAnnotationBox): { x: number; y: number } {
-  return { x: (box.minX + box.maxX) * 0.5, y: (box.minY + box.maxY) * 0.5 };
-}
-
-function normBoxIntersectionArea(a: PdfAnnotationBox, b: PdfAnnotationBox): number {
-  const minX = Math.max(a.minX, b.minX);
-  const minY = Math.max(a.minY, b.minY);
-  const maxX = Math.min(a.maxX, b.maxX);
-  const maxY = Math.min(a.maxY, b.maxY);
-  if (maxX <= minX || maxY <= minY) return 0;
-  return (maxX - minX) * (maxY - minY);
-}
-
-function normBoxDistance(a: PdfAnnotationBox, b: PdfAnnotationBox): number {
-  const ca = normBoxCenter(a);
-  const cb = normBoxCenter(b);
-  return Math.hypot(ca.x - cb.x, ca.y - cb.y);
-}
-
-function normBoxWidth(box: PdfAnnotationBox): number {
-  return Math.max(0, box.maxX - box.minX);
-}
-
-function normBoxHeight(box: PdfAnnotationBox): number {
-  return Math.max(0, box.maxY - box.minY);
-}
-
-function unionPdfBoxes(boxes: PdfAnnotationBox[]): PdfAnnotationBox | null {
-  if (boxes.length === 0) return null;
-  return {
-    minX: Math.min(...boxes.map((b) => b.minX)),
-    minY: Math.min(...boxes.map((b) => b.minY)),
-    maxX: Math.max(...boxes.map((b) => b.maxX)),
-    maxY: Math.max(...boxes.map((b) => b.maxY))
-  };
-}
-
 function extractMepSizeText(text: string): string | undefined {
   const rectangular = text.match(/\b(\d{1,2})\s*(?:"|in|inch|inches)?\s*[x×]\s*(\d{1,2})\b/i);
   if (rectangular) return `${Number.parseInt(rectangular[1]!, 10)}x${Number.parseInt(rectangular[2]!, 10)}`;
@@ -1411,81 +1180,6 @@ function relatePdfAnnotations(annotations: PdfVectorAnnotation[]): void {
   }
 }
 
-function normalizeInkListsToUnit(
-  inkLists: unknown,
-  mapper: PdfAnnotationCoordinateMapper
-): { minX: number; minY: number; maxX: number; maxY: number } | null {
-  const boxes = normalizeInkListsToUnitBoxes(inkLists, mapper);
-  if (boxes.length === 0) return null;
-  return {
-    minX: Math.min(...boxes.map((b) => b.minX)),
-    minY: Math.min(...boxes.map((b) => b.minY)),
-    maxX: Math.max(...boxes.map((b) => b.maxX)),
-    maxY: Math.max(...boxes.map((b) => b.maxY))
-  };
-}
-
-function normalizeInkListsToUnitBoxes(
-  inkLists: unknown,
-  mapper: PdfAnnotationCoordinateMapper
-): Array<{ minX: number; minY: number; maxX: number; maxY: number }> {
-  if (!Array.isArray(inkLists) || inkLists.length === 0) return [];
-  const out: Array<{ minX: number; minY: number; maxX: number; maxY: number }> = [];
-  if (!Number.isFinite(mapper.width) || !Number.isFinite(mapper.height) || mapper.width <= 0 || mapper.height <= 0) return out;
-  for (const stroke of inkLists) {
-    const coords = flattenNumericPairSequence(stroke);
-    if (coords.length < 4) continue;
-    const xs: number[] = [];
-    const ys: number[] = [];
-    for (let i = 0; i + 1 < coords.length; i += 2) {
-      const x = coords[i]!;
-      const y = coords[i + 1]!;
-      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-      const mapped = mapper.mapPoint(x, y);
-      if (!mapped) continue;
-      if (mapped.x < -10_000 || mapped.x > mapper.width + 10_000 || mapped.y < -10_000 || mapped.y > mapper.height + 10_000) continue;
-      xs.push(mapped.x);
-      ys.push(mapped.y);
-    }
-    if (xs.length === 0 || ys.length === 0) continue;
-    const left = Math.max(0, Math.min(mapper.width, Math.min(...xs)));
-    const right = Math.max(0, Math.min(mapper.width, Math.max(...xs)));
-    const top = Math.max(0, Math.min(mapper.height, Math.min(...ys)));
-    const bottom = Math.max(0, Math.min(mapper.height, Math.max(...ys)));
-    if (right <= left || bottom <= top) continue;
-    out.push({
-      minX: left / mapper.width,
-      minY: top / mapper.height,
-      maxX: right / mapper.width,
-      maxY: bottom / mapper.height
-    });
-  }
-  return out;
-}
-
-function normalizePdfMarkupAnnotationToUnitBox(args: {
-  annotation: any;
-  mapper: PdfAnnotationCoordinateMapper;
-}): { minX: number; minY: number; maxX: number; maxY: number } | null {
-  const a = args.annotation;
-  const subtype = typeof a?.subtype === "string" ? a.subtype.trim() : "";
-  if (!subtype) return null;
-
-  // Reply-note markers are usually linked sidecars, not the edited geometry itself.
-  if (subtype === "Text" && typeof a?.inReplyTo === "string" && a.inReplyTo.trim()) return null;
-
-  if (subtype === "Ink") {
-    const fromInk = normalizeInkListsToUnit(a?.inkLists, args.mapper);
-    if (fromInk) return fromInk;
-  }
-
-  const rect = Array.isArray(a?.rect) && a.rect.length >= 4
-    ? [Number(a.rect[0]), Number(a.rect[1]), Number(a.rect[2]), Number(a.rect[3])] as [number, number, number, number]
-    : null;
-  if (!rect) return null;
-  return normalizePdfRectToUnit(rect, args.mapper);
-}
-
 function isPdfMarkupSubtype(subtype: string): boolean {
   const markSubtypes = new Set([
     "Highlight",
@@ -1504,39 +1198,6 @@ function isPdfMarkupSubtype(subtype: string): boolean {
     "Text"
   ]);
   return markSubtypes.has(subtype);
-}
-
-function clampPixelBoxToImage(
-  box: { x: number; y: number; w: number; h: number },
-  imageWidth: number,
-  imageHeight: number
-): { x: number; y: number; w: number; h: number; area: number } | null {
-  const x0 = Math.max(0, Math.floor(box.x));
-  const y0 = Math.max(0, Math.floor(box.y));
-  const x1 = Math.min(Math.max(1, imageWidth), Math.ceil(box.x + box.w));
-  const y1 = Math.min(Math.max(1, imageHeight), Math.ceil(box.y + box.h));
-  if (x1 <= x0 || y1 <= y0) return null;
-  const w = x1 - x0;
-  const h = y1 - y0;
-  if (w * h < 30) return null;
-  return { x: x0, y: y0, w, h, area: w * h };
-}
-
-export function __testOnlyNormalizePdfRectToUnit(args: {
-  rect: [number, number, number, number];
-  pageView: [number, number, number, number];
-  viewportWidth: number;
-  viewportHeight: number;
-}): { minX: number; minY: number; maxX: number; maxY: number } | null {
-  const mapper = buildPdfAnnotationCoordinateMapper({
-    viewport: {
-      width: args.viewportWidth,
-      height: args.viewportHeight
-    },
-    pageView: args.pageView
-  });
-  if (!mapper) return null;
-  return normalizePdfRectToUnit(args.rect, mapper);
 }
 
 export function __testOnlyIsDeleteLikeAnnotation(args: { subtype: string; contents: string }): boolean {
@@ -2297,7 +1958,7 @@ async function analyzePdf(args: {
                     return single ? [single] : [];
                   })()
               : [];
-          const boxNorm = unionNormBoxes(normBoxes);
+          const boxNorm = unionPdfBoxes(normBoxes);
           const annotationRecord: PdfVectorAnnotation = {
             page: p,
             annotation_index: annotationIndex,
