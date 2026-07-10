@@ -1,0 +1,72 @@
+name: Public Core CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      run_revit_addin:
+        description: "Run Revit add-in build on a Windows runner with Autodesk API references"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  backend:
+    name: Backend Build/Test/Contracts
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/operator-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/operator-backend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: npm run check:repo
+      - run: npm audit --omit=dev --audit-level=high
+
+  mcp-server:
+    name: MCP Build/Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mcp-server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/mcp-server/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm audit --omit=dev --audit-level=high
+
+  secret-scan:
+    name: Public Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/check-secrets.sh
+
+  revit-addin:
+    name: Revit Add-in Build
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_revit_addin == true }}
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: apps/revit-bridge-addin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet build RevitBridge.sln -c Release

@@ -6,6 +6,8 @@ import * as path from "path";
 import * as xlsx from "xlsx";
 import mammoth from "mammoth";
 import { createRequire } from "module";
+
+xlsx.set_fs(fs);
 import { callRevit } from "./lib/revitClient.js";
 import { getWorkspaceRoot, resolveExistingFileUnderWorkspace, resolveFileUnderWorkspace } from "./lib/workspace.js";
 import { auditLog, summarize } from "./lib/audit.js";
