@@ -72,3 +72,29 @@ test("large PDF workbench prompt keeps comment provenance ahead of bulky page de
   assert.match(formatted, /\"count\":16/);
   assert.doesNotMatch(formatted, /text_excerpt/);
 });
+
+test("large PDF visual prompt keeps package coverage and samples findings across the package", () => {
+  const formatted = formatWorkbenchResultsForPrompt([{
+    index: 1,
+    type: "gemini_redline_analyze",
+    ok: true,
+    summary: "Package complete.",
+    details: {
+      summary: "Package complete.",
+      package_coverage: { complete: true, processed_ranges: ["1-125"], failed_ranges: [], omitted_ranges: [] },
+      deduplication: { raw_region_count: 80, unique_region_count: 75, duplicates_removed: 5 },
+      batch_results: Array.from({ length: 16 }, (_, index) => ({ batch_index: index + 1, ok: true })),
+      regions: Array.from({ length: 75 }, (_, index) => ({
+        finding_id: `pdf_finding_${String(index + 1).padStart(4, "0")}`,
+        page_number: index + 1,
+        intent: index === 0 ? "EARLY VISUAL COMMENT" : index === 74 ? "LATE VISUAL COMMENT" : `COMMENT ${index + 1}`
+      }))
+    }
+  }]);
+
+  assert.match(formatted, /"complete":true/);
+  assert.match(formatted, /EARLY VISUAL COMMENT/);
+  assert.match(formatted, /LATE VISUAL COMMENT/);
+  assert.match(formatted, /"findings_omitted_from_prompt":39/);
+  assert.doesNotMatch(formatted, /batch_index":16/);
+});

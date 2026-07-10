@@ -6,7 +6,7 @@ import { ensureWorkspaceLayout, resolveExistingFileUnderWorkspace, resolveFileUn
 import { analyzeRedlineFile } from "../redline/redline_analyzer.js";
 import { mapSheetRegions } from "../redline/sheet_region_mapper.js";
 import { orientRedlineFile } from "../redline/redline_orienter.js";
-import { analyzeRedlineWithGemini } from "../vision/gemini_agentic_vision.js";
+import { analyzeRedlinePackageWithGemini } from "../vision/gemini_redline_package.js";
 
 export type WorkbenchAction =
   | {
@@ -586,7 +586,7 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[]): Promi
         }
 
         const timeoutMs = Math.max(2_000, Math.min(maxTimeoutMs, action.timeout_ms ?? 45_000));
-        const analyzed = await analyzeRedlineWithGemini({
+        const analyzed = await analyzeRedlinePackageWithGemini({
           file_path: fp,
           image_paths: imagePaths,
           expected_sheet: typeof action.expected_sheet === "string" ? action.expected_sheet : undefined,
@@ -607,7 +607,7 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[]): Promi
           ok: analyzed.ok,
           summary: analyzed.ok
             ? `Gemini redline analysis completed; regions=${analyzed.regions.length}, global_confidence=${analyzed.global_confidence.toFixed(2)}.`
-            : `Gemini redline analysis failed: ${analyzed.warning ?? "unknown error"}`,
+            : `Gemini redline analysis incomplete: ${analyzed.warning ?? analyzed.summary ?? "unknown error"}`,
           details: analyzed as unknown as Record<string, unknown>
         });
         continue;

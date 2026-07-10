@@ -23,6 +23,21 @@ export function formatWorkbenchResultsForPrompt(results: WorkbenchActionResult[]
 }
 
 function compactPdfWorkbenchDetailsForPrompt(type: WorkbenchActionResult["type"], details: Record<string, unknown>): Record<string, unknown> {
+  if (type === "gemini_redline_analyze" && details.package_coverage && typeof details.package_coverage === "object") {
+    const regions = Array.isArray(details.regions) ? (details.regions as Array<Record<string, unknown>>) : [];
+    const selected = sampleAcross(regions, 36);
+    const batches = Array.isArray(details.batch_results) ? (details.batch_results as Array<Record<string, unknown>>) : [];
+    return {
+      summary: details.summary,
+      package_coverage: details.package_coverage,
+      deduplication: details.deduplication,
+      failed_batches: batches.filter((batch) => batch.ok === false),
+      findings: selected,
+      findings_omitted_from_prompt: Math.max(0, regions.length - selected.length),
+      open_questions: Array.isArray(details.open_questions) ? details.open_questions.slice(0, 20) : [],
+      ...(details.warning ? { warning: details.warning } : {})
+    };
+  }
   if (type !== "analyze_redline" && type !== "redline_orient") return details;
   const analysis = type === "redline_orient" && details.analysis && typeof details.analysis === "object"
     ? (details.analysis as Record<string, unknown>)
@@ -57,7 +72,7 @@ function compactPdfWorkbenchDetailsForPrompt(type: WorkbenchActionResult["type"]
         batch_size: packageBlock?.visual_batch_size,
         first: batches[0],
         last: batches[batches.length - 1],
-        instruction: "Use gemini_redline_analyze with page_start/page count for each pending batch; continue until every batch is accounted for."
+        instruction: "Call gemini_redline_analyze once with the full desired page budget; the backend executes and aggregates the bounded batches."
       }
     : null;
 
@@ -76,4 +91,17 @@ function compactPdfWorkbenchDetailsForPrompt(type: WorkbenchActionResult["type"]
     orientation_hints: Array.isArray(analysis.orientation_hints) ? analysis.orientation_hints.slice(0, 12) : [],
     ...(analysis.warning ? { warning: analysis.warning } : {})
   };
+}
+
+function sampleAcross<T>(values: T[], maxItems: number): T[] {
+  if (values.length <= maxItems) return values;
+  const picked: T[] = [];
+  const seen = new Set<number>();
+  for (let index = 0; index < maxItems; index += 1) {
+    const sourceIndex = Math.round(index * (values.length - 1) / Math.max(1, maxItems - 1));
+    if (seen.has(sourceIndex)) continue;
+    seen.add(sourceIndex);
+    picked.push(values[sourceIndex]!);
+  }
+  return picked;
 }
