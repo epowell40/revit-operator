@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_move_tag",
+  "name": "Demo I2: Move-Like Redline Tag",
+  "description": "Exercise a move-like redline operation using a disposable tag target: create a bounded tag, prove it is visible, dry-run move, apply move, verify the model-space delta, and clean it up.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a model that can be closed without saving.",
+    "Use a view that supports tagging the configured element id.",
+    "Use a taggable target element in the same view so repeated live runs create, move, and delete only disposable tag elements."
+  ],
+  "success_criteria": [
+    "A disposable tag id is created in the requested view for the requested target element.",
+    "The created tag id is visible in the pre-move visible-element inventory.",
+    "The /revit/move-elements dry-run returns effect evidence covering the created tag id.",
+    "The applied /revit/move-elements response returns effect evidence covering the created tag id.",
+    "The post-move visible-element inventory still contains the created tag id at the requested model-space delta.",
+    "A deterministic move visual gate artifact passes using before/after capture evidence.",
+    "The created tag is cleaned up with native dry-run and applied delete effect evidence."
+  ],
+  "failure_criteria": [
+    "The tag target is not created or is created in the wrong view.",
+    "The move dry-run omits the tag id from effect evidence.",
+    "The applied move response omits the tag id from effect evidence.",
+    "The tag is not visible after move or moves by the wrong vector.",
+    "The cleanup delete dry-run/apply omits the tag id from effect evidence.",
+    "The move visual gate artifact is missing or fails."
+  ],
+  "max_time_seconds": 60,
+  "max_steps": 8,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task extends non-text redline mutation coverage from tag delete to tag move.",
+    "Do not count requestedIds-only move or cleanup responses as evidence; move must return movedIds/ids/impactedIds and cleanup must return ids/deletedIds/impactedIds."
+  ],
+  "tags": ["revit", "demo", "redline", "move", "tag", "annotation", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "redline_move",
+    "request": {
+      "viewId": 101,
+      "imageSize": 1800,
+      "targetKind": "tag",
+      "toleranceFt": 0.05,
+      "tag": {
+        "viewId": 101,
+        "elementIds": [9001],
+        "onlyUntagged": false,
+        "addLeader": false
+      },
+      "move": {
+        "vectorX": 1.0,
+        "vectorY": 0.0,
+        "vectorZ": 0.0
+      }
+    },
+    "mock": {
+      "/revit/tag-elements": {
+        "status": "Success",
+        "viewId": 101,
+        "targetCount": 1,
+        "taggedCount": 1,
+        "errorCount": 0,
+        "tagIds": [8201]
+      },
+      "/revit/export-visible-elements:1": {
+        "imagePath": "artifacts/captures/move-tag-before.png",
+        "items": [
+          { "id": 8201, "category": "Tags", "hostElementId": 9001, "anchor": { "model": { "x": 1, "y": 1, "z": 0 } } }
+        ]
+      },
+      "/revit/move-elements:1": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "movedIds": [8201],
+        "rolledBack": true
+      },
+      "/revit/move-elements:2": {
+        "status": "Moved",
+        "dryRun": false,
+        "movedIds": [8201],
+        "rolledBack": false
+      },
+      "/revit/export-visible-elements:2": {
+        "imagePath": "artifacts/captures/move-tag-after.png",
+        "items": [
+          { "id": 8201, "category": "Tags", "hostElementId": 9001, "anchor": { "model": { "x": 2, "y": 1, "z": 0 } } }
+        ]
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "requestedIds": [8201],
+        "impactedIds": [8201]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "requestedIds": [8201],
+        "impactedIds": [8201]
+      }
+    }
+  }
+}

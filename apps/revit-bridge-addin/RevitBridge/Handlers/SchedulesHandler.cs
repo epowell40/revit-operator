@@ -168,10 +168,17 @@ namespace RevitBridge.Handlers
                     var field = definition.GetField(i);
                     var name = ReadFieldName(field, doc);
                     var isHidden = TryGetBoolProperty(field, "IsHidden");
+                    var heading = TryGetStringProperty(field, "ColumnHeading")
+                        ?? TryGetStringProperty(field, "Heading");
+                    var headingOrientation = TryGetPropertyText(field, "HeadingOrientation");
+                    var horizontalAlignment = TryGetPropertyText(field, "HorizontalAlignment");
                     fields.Add(new
                     {
                         index = i,
                         name,
+                        heading,
+                        headingOrientation,
+                        horizontalAlignment,
                         isHidden
                     });
                 }
@@ -181,6 +188,9 @@ namespace RevitBridge.Handlers
                     {
                         index = i,
                         name = (string?)null,
+                        heading = (string?)null,
+                        headingOrientation = (string?)null,
+                        horizontalAlignment = (string?)null,
                         isHidden = (bool?)null
                     });
                 }
@@ -260,6 +270,36 @@ namespace RevitBridge.Handlers
             }
 
             return null;
+        }
+
+        private static string? TryGetStringProperty(object obj, string propName)
+        {
+            try
+            {
+                var p = obj.GetType().GetProperty(propName, BindingFlags.Instance | BindingFlags.Public);
+                var raw = p?.GetValue(obj, null);
+                var text = raw?.ToString();
+                return string.IsNullOrWhiteSpace(text) ? null : text;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string? TryGetPropertyText(object obj, string propName)
+        {
+            try
+            {
+                var p = obj.GetType().GetProperty(propName, BindingFlags.Instance | BindingFlags.Public);
+                var raw = p?.GetValue(obj, null);
+                var text = raw?.ToString();
+                return string.IsNullOrWhiteSpace(text) ? null : text;
+            }
+            catch
+            {
+                return null;
+            }
         }
     }
 }

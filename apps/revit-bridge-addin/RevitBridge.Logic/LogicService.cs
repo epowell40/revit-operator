@@ -57,6 +57,7 @@ namespace RevitBridge.Logic
                 { "/revit/create-zones", new CreateZonesHandler() },
                 { "/revit/create-zone-visuals", new CreateZoneVisualsHandler() },
                 { "/revit/query-zone-data", new QueryZoneDataHandler() },
+                { "/revit/link-revit", new LinkRevitHandler() },
                 { "/revit/place-families", new PlaceFamiliesHandler() },
                 { "/revit/place-family-instance-on-host", new PlaceFamilyInstanceOnHostHandler() },
                 { "/revit/create-similar-from-instance", new CreateSimilarFromInstanceHandler() },

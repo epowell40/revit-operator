@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_delete_tag",
+  "name": "Demo H2: Delete-Like Redline Tag",
+  "description": "Exercise a delete-like redline operation using a disposable tag target: create a bounded tag, prove it is visible, dry-run delete, apply delete, and verify it is absent afterward.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a model that can be closed without saving.",
+    "Use a view that supports tagging the configured element id.",
+    "Use a taggable target element in the same view so repeated live runs create and delete only disposable tag elements."
+  ],
+  "success_criteria": [
+    "A disposable tag id is created in the requested view for the requested target element.",
+    "The created tag id is visible in the pre-delete visible-element inventory.",
+    "The /revit/delete dry-run returns effect evidence covering the created tag id.",
+    "The applied /revit/delete response returns effect evidence covering the created tag id.",
+    "The post-delete visible-element inventory no longer contains the created tag id.",
+    "A deterministic delete visual gate artifact passes using before/after capture evidence."
+  ],
+  "failure_criteria": [
+    "The tag target is not created or is created in the wrong view.",
+    "The delete dry-run only echoes requested ids and does not return effect evidence.",
+    "The applied delete response omits the tag id from effect evidence.",
+    "The tag is still visible after delete.",
+    "The delete visual gate artifact is missing or fails."
+  ],
+  "max_time_seconds": 60,
+  "max_steps": 6,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task is the first non-text add/delete redline benchmark and intentionally creates a disposable tag before deleting it.",
+    "Do not count requestedIds-only delete responses as evidence; dry-run and apply must return ids, deletedIds, or impactedIds."
+  ],
+  "tags": ["revit", "demo", "redline", "delete", "tag", "annotation", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "redline_delete",
+    "request": {
+      "viewId": 101,
+      "imageSize": 1800,
+      "targetKind": "tag",
+      "tag": {
+        "viewId": 101,
+        "elementIds": [9001],
+        "onlyUntagged": false,
+        "addLeader": false
+      }
+    },
+    "mock": {
+      "/revit/tag-elements": {
+        "status": "Success",
+        "viewId": 101,
+        "targetCount": 1,
+        "taggedCount": 1,
+        "errorCount": 0,
+        "tagIds": [8101]
+      },
+      "/revit/export-visible-elements:1": {
+        "imagePath": "artifacts/captures/delete-tag-before.png",
+        "items": [
+          { "id": 8101, "category": "Tags", "hostElementId": 9001 }
+        ]
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "requestedIds": [8101],
+        "impactedIds": [8101]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "requestedIds": [8101],
+        "impactedIds": [8101]
+      },
+      "/revit/export-visible-elements:2": {
+        "imagePath": "artifacts/captures/delete-tag-after.png",
+        "items": []
+      }
+    }
+  }
+}

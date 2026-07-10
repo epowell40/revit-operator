@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_add_mep_accessory",
+  "name": "Demo G6: Add Manual Balancing Damper Redline",
+  "description": "Exercise an add-like redline operation for a modeled MEP accessory using the family-instance evidence contract: create a disposable manual balancing damper/accessory, prove its requested type, prove it is visible, write a deterministic visual gate, and clean it up.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a model that can be closed without saving.",
+    "Use a view, level, and MEP accessory family/type that can be safely placed and deleted.",
+    "For the first live smoke, use a low-risk level-hosted or non-hosted damper/accessory symbol. Host-aware duct accessory placement remains a later live hardening step if the active damper family requires duct hosting."
+  ],
+  "success_criteria": [
+    "A disposable MEP accessory family instance id is created in the model.",
+    "The native create result returns family/type/name evidence matching the requested manual balancing damper/accessory symbol.",
+    "The created accessory id is visible in the post-add visible-element inventory.",
+    "A deterministic add visual gate artifact passes using post-change capture evidence.",
+    "The created accessory is cleaned up with native dry-run and applied delete effect evidence."
+  ],
+  "failure_criteria": [
+    "The accessory is not created or is created as a different requested type.",
+    "The post-add visible-element inventory does not contain the created accessory id.",
+    "The add visual gate artifact is missing or fails.",
+    "The cleanup delete dry-run/apply omits the accessory id from effect evidence."
+  ],
+  "max_time_seconds": 60,
+  "max_steps": 5,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task is the first explicit MEP accessory add benchmark, targeted at manual balancing damper redlines.",
+    "Do not count requestedIds-only cleanup responses as evidence; cleanup must return ids, deletedIds, or impactedIds."
+  ],
+  "tags": ["revit", "demo", "redline", "add", "mep-accessory", "damper", "manual-balancing-damper", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "redline_add",
+    "request": {
+      "viewId": 101,
+      "imageSize": 1800,
+      "targetKind": "mep_accessory",
+      "familyInstance": {
+        "familyName": "Manual Balancing Damper",
+        "symbolName": "Manual Balancing Damper",
+        "levelName": "",
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "cleanupCreatedElements": true
+    },
+    "mock": {
+      "/revit/create-family-instance": {
+        "id": 9201,
+        "name": "Manual Balancing Damper",
+        "family": "Manual Balancing Damper",
+        "familyName": "Manual Balancing Damper",
+        "symbol": "Manual Balancing Damper",
+        "symbolName": "Manual Balancing Damper",
+        "typeName": "Manual Balancing Damper",
+        "category": "Duct Accessories"
+      },
+      "/revit/export-visible-elements": {
+        "imagePath": "artifacts/captures/add-mep-accessory-after.png",
+        "items": [
+          { "id": 9201, "category": "Duct Accessories", "familyName": "Manual Balancing Damper", "symbolName": "Manual Balancing Damper" }
+        ]
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "requestedIds": [9201],
+        "impactedIds": [9201]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "requestedIds": [9201],
+        "impactedIds": [9201]
+      }
+    }
+  }
+}

@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_model_edit_primitives",
+  "name": "Demo G: Add Move Delete and Link Model Primitives",
+  "description": "Create a benchmark family instance, move it with dry-run and apply evidence, delete it with dry-run and apply evidence, link an RVT model with dry-run and apply evidence, capture post-change visual proof, then clean up the linked instance and link type for repeat-safe live runs.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "metadata": {
+      "workflow": "model_edit_primitives"
+    }
+  },
+  "setup_instructions": [
+    "Open the target Revit model.",
+    "Use a disposable benchmark symbol that can be safely placed in the active model.",
+    "Prefer a generic annotation, detail item, or other low-risk non-hosted/level-hosted family symbol.",
+    "Provide a disposable RVT link source under the workspace or OPERATOR_ALLOWED_EXTERNAL_ROOTS.",
+    "The workflow deletes the created benchmark element, linked RVT instance, and RVT link type so repeated runs do not accumulate test elements or loaded links."
+  ],
+  "success_criteria": [
+    "/revit/create-family-instance returns a created element id.",
+    "/revit/create-family-instance returns family/type/name evidence matching the requested disposable symbol.",
+    "/revit/move-elements dry-run returns the requested benchmark id and rolls back.",
+    "/revit/move-elements apply returns the requested benchmark id.",
+    "/revit/delete dry-run returns the requested benchmark id as deletable.",
+    "/revit/delete apply returns the requested benchmark id as deleted.",
+    "/revit/link-revit dry-run returns a plan.",
+    "/revit/link-revit apply returns a link type id and link instance id.",
+    "/revit/link-revit apply proves the linked source path matches the requested source.",
+    "/revit/link-revit apply proves the pinned state matches the requested pin value.",
+    "A post-change capture is produced while the linked RVT instance is still present.",
+    "/revit/delete dry-run and apply remove the linked RVT instance after link evidence is captured.",
+    "/revit/delete dry-run and apply remove the linked RVT type after the instance is removed.",
+    "A model edit primitives summary artifact is written.",
+    "The summary records the linked RVT instance/type ids and cleanup ids."
+  ],
+  "failure_criteria": [
+    "Family instance creation returns no id.",
+    "Family instance creation returns an id for a different family/type/symbol than requested.",
+    "Move dry-run or apply does not report the benchmark id.",
+    "Delete dry-run or apply does not report the benchmark id.",
+    "The RVT link request is missing or link apply returns no instance id.",
+    "The RVT link apply evidence omits or mismatches the requested source path.",
+    "The RVT link apply evidence omits or mismatches the requested pin value.",
+    "The post-change visual capture is missing before linked-model cleanup.",
+    "The linked RVT instance cleanup does not report the linked instance id.",
+    "The linked RVT type cleanup does not report the linked type id.",
+    "Summary artifacts are missing."
+  ],
+  "max_time_seconds": 300,
+  "max_steps": 9,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This benchmark covers add/move/delete and RVT linking primitives. Live runs must use a disposable RVT link source and visually verify the linked model instance is present."
+  ],
+  "tags": ["revit", "demo", "model-edit", "add", "move", "delete", "link-revit", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "model_edit_primitives",
+    "request": {
+      "createFamilyInstance": {
+        "familyName": "",
+        "symbolName": "Generic Annotation",
+        "levelName": "",
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "move": {
+        "mode": "vector",
+        "vectorX": 1,
+        "vectorY": 0,
+        "vectorZ": 0,
+        "behavior": "allOrNothing"
+      },
+      "linkRevit": {
+        "sourcePath": "benchmark/fixtures/revit/link-source.rvt",
+        "pin": true
+      },
+      "visualVerify": true
+    },
+    "mock": {
+      "/revit/create-family-instance": {
+        "id": 9101,
+        "name": "Generic Annotation",
+        "family": "Generic Annotation",
+        "familyName": "Generic Annotation",
+        "symbol": "Generic Annotation",
+        "symbolName": "Generic Annotation",
+        "typeName": "Generic Annotation"
+      },
+      "/revit/move-elements:1": {
+        "status": "Dry Run",
+        "movedIds": [9101],
+        "skipped": [],
+        "warnings": [],
+        "rolledBack": true
+      },
+      "/revit/move-elements:2": {
+        "status": "Moved",
+        "movedIds": [9101],
+        "skipped": [],
+        "warnings": [],
+        "rolledBack": false
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "count": 1,
+        "ids": [9101]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "count": 1,
+        "ids": [9101]
+      },
+      "/revit/link-revit:1": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "plan": {
+          "sourcePath": "benchmark/fixtures/revit/link-source.rvt",
+          "placement": "origin"
+        }
+      },
+      "/revit/link-revit:2": {
+        "status": "Success",
+        "sourcePath": "benchmark/fixtures/revit/link-source.rvt",
+        "linkTypeId": 9201,
+        "linkInstanceId": 9202,
+        "placement": "origin",
+        "pinned": true
+      },
+      "/revit/export-image": {
+        "status": "Captured",
+        "path": "artifacts/demo-readiness/model-edit/model_edit_after.png"
+      },
+      "/revit/delete:3": {
+        "status": "Dry Run",
+        "count": 1,
+        "ids": [9202]
+      },
+      "/revit/delete:4": {
+        "status": "Deleted",
+        "count": 1,
+        "ids": [9202]
+      },
+      "/revit/delete:5": {
+        "status": "Dry Run",
+        "count": 1,
+        "ids": [9201]
+      },
+      "/revit/delete:6": {
+        "status": "Deleted",
+        "count": 1,
+        "ids": [9201]
+      }
+    }
+  }
+}

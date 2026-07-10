@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
@@ -21,7 +22,7 @@ namespace RevitBridge.Logic.Handlers
         public sealed class Params
         {
             public long? viewId { get; set; }
-            public string? action { get; set; } // get | set_template | hide_category | show_category | set_scale | set_detail_level | set_discipline | set_phase | set_phase_filter | set_section_box | clear_section_box | set_crop_box | clear_crop_box | set_underlay | clear_underlay | set_category_override | clear_category_override | apply_view_filter | remove_view_filter | clear_filter_override | isolate_elements_temp | isolate_categories_temp | clear_temp_hide_isolate | reveal_hidden_on | reveal_hidden_off | hide_elements | unhide_elements
+            public string? action { get; set; } // get | set_template | hide_category | show_category | set_scale | set_detail_level | set_discipline | set_phase | set_phase_filter | set_section_box | clear_section_box | set_crop_box | clear_crop_box | set_underlay | clear_underlay | set_category_override | clear_category_override | apply_view_filter | create_view_filter | remove_view_filter | clear_filter_override | isolate_elements_temp | isolate_categories_temp | clear_temp_hide_isolate | reveal_hidden_on | reveal_hidden_off | hide_elements | unhide_elements
             public string? categoryName { get; set; }
             public string[]? categoryNames { get; set; }
             public string? templateName { get; set; }
@@ -33,6 +34,10 @@ namespace RevitBridge.Logic.Handlers
             public int? r { get; set; } // projection line color red [0..255]
             public int? g { get; set; } // projection line color green [0..255]
             public int? b { get; set; } // projection line color blue [0..255]
+            public string? ruleParameterName { get; set; } // for create_view_filter
+            public string? ruleOperator { get; set; } // equals|not_equals|contains|not_contains|begins_with|ends_with|greater|greater_or_equal|less|less_or_equal
+            public string? ruleValue { get; set; } // for create_view_filter
+            public bool? ruleCaseSensitive { get; set; } // string rule matching mode
             public string? detailLevel { get; set; } // Coarse|Medium|Fine
             public string? discipline { get; set; } // Architectural|Structural|Mechanical|Electrical|Plumbing|Coordination
             public long? phaseId { get; set; }
@@ -103,6 +108,10 @@ namespace RevitBridge.Logic.Handlers
                         p.r,
                         p.g,
                         p.b,
+                        p.ruleParameterName,
+                        p.ruleOperator,
+                        p.ruleValue,
+                        p.ruleCaseSensitive,
                         p.detailLevel,
                         p.discipline,
                         p.phaseId,
@@ -363,6 +372,38 @@ namespace RevitBridge.Logic.Handlers
                     }
                     return;
                 }
+                case "create_view_filter":
+                {
+                    var created = CreateOrUpdateViewFilter(doc, view, p);
+                    if (p.filterVisible.HasValue)
+                    {
+                        view.SetFilterVisibility(created.Id, p.filterVisible.Value);
+                    }
+
+                    var changed = false;
+                    var ogs = view.GetFilterOverrides(created.Id);
+                    if (p.lineWeight.HasValue)
+                    {
+                        if (p.lineWeight.Value < 1 || p.lineWeight.Value > 16)
+                            throw new InvalidOperationException("visibility.lineWeight must be in range [1,16].");
+                        ogs.SetProjectionLineWeight(p.lineWeight.Value);
+                        changed = true;
+                    }
+                    if (p.r.HasValue || p.g.HasValue || p.b.HasValue)
+                    {
+                        if (!(p.r.HasValue && p.g.HasValue && p.b.HasValue))
+                            throw new InvalidOperationException("visibility.create_view_filter requires r, g, b together.");
+                        if (!IsByteRange(p.r.Value) || !IsByteRange(p.g.Value) || !IsByteRange(p.b.Value))
+                            throw new InvalidOperationException("visibility color channels r,g,b must be in range [0,255].");
+                        ogs.SetProjectionLineColor(new Color((byte)p.r.Value, (byte)p.g.Value, (byte)p.b.Value));
+                        changed = true;
+                    }
+                    if (changed)
+                    {
+                        view.SetFilterOverrides(created.Id, ogs);
+                    }
+                    return;
+                }
                 case "remove_view_filter":
                 {
                     var filter = ResolveViewFilter(doc, p.filterId, p.filterName);
@@ -472,7 +513,7 @@ namespace RevitBridge.Logic.Handlers
                     return;
                 }
                 default:
-                    throw new InvalidOperationException("visibility.action must be one of: get, set_template, hide_category, show_category, set_scale, set_detail_level, set_discipline, set_phase, set_phase_filter, set_section_box, clear_section_box, set_crop_box, clear_crop_box, set_underlay, clear_underlay, set_category_override, clear_category_override, apply_view_filter, remove_view_filter, clear_filter_override, isolate_elements_temp, isolate_categories_temp, clear_temp_hide_isolate, reveal_hidden_on, reveal_hidden_off, hide_elements, unhide_elements.");
+                    throw new InvalidOperationException("visibility.action must be one of: get, set_template, hide_category, show_category, set_scale, set_detail_level, set_discipline, set_phase, set_phase_filter, set_section_box, clear_section_box, set_crop_box, clear_crop_box, set_underlay, clear_underlay, set_category_override, clear_category_override, apply_view_filter, create_view_filter, remove_view_filter, clear_filter_override, isolate_elements_temp, isolate_categories_temp, clear_temp_hide_isolate, reveal_hidden_on, reveal_hidden_off, hide_elements, unhide_elements.");
             }
         }
 
@@ -492,6 +533,202 @@ namespace RevitBridge.Logic.Handlers
                 .OfClass(typeof(ParameterFilterElement))
                 .Cast<ParameterFilterElement>()
                 .FirstOrDefault(f => (f.Name ?? "").Trim().Equals(name, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static ParameterFilterElement CreateOrUpdateViewFilter(Document doc, View view, Params p)
+        {
+            var filterName = (p.filterName ?? "").Trim();
+            if (filterName.Length == 0)
+            {
+                throw new InvalidOperationException("visibility.create_view_filter requires filterName.");
+            }
+
+            var categoryIds = ResolveCategoryIds(doc, p.categoryName, p.categoryNames);
+            if (categoryIds.Count == 0)
+            {
+                throw new InvalidOperationException("visibility.create_view_filter requires categoryName or categoryNames.");
+            }
+
+            var ruleParamName = (p.ruleParameterName ?? "").Trim();
+            if (ruleParamName.Length == 0)
+            {
+                throw new InvalidOperationException("visibility.create_view_filter requires ruleParameterName.");
+            }
+
+            var existing = ResolveViewFilter(doc, null, filterName);
+            var filter = existing ?? ParameterFilterElement.Create(doc, filterName, categoryIds);
+            if (existing != null)
+            {
+                filter.SetCategories(categoryIds);
+            }
+
+            var resolvedRuleParameter = ResolveRuleParameter(doc, categoryIds, ruleParamName);
+            if (resolvedRuleParameter == null)
+            {
+                throw new InvalidOperationException($"visibility.create_view_filter could not resolve parameter '{ruleParamName}' in selected categories.");
+            }
+
+            var rule = BuildFilterRule(
+                resolvedRuleParameter.ParameterId,
+                resolvedRuleParameter.StorageType,
+                p.ruleOperator,
+                p.ruleValue,
+                p.ruleCaseSensitive ?? false);
+            var elementFilter = new ElementParameterFilter(rule);
+            filter.SetElementFilter(elementFilter);
+
+            if (!ViewHasFilter(view, filter.Id))
+            {
+                view.AddFilter(filter.Id);
+            }
+
+            return filter;
+        }
+
+        private sealed class ResolvedRuleParameter
+        {
+            public ElementId ParameterId { get; set; } = ElementId.InvalidElementId;
+            public StorageType StorageType { get; set; } = StorageType.String;
+        }
+
+        private static ResolvedRuleParameter? ResolveRuleParameter(Document doc, List<ElementId> categoryIds, string parameterNameOrBuiltIn)
+        {
+            var token = (parameterNameOrBuiltIn ?? "").Trim();
+            if (token.Length == 0) return null;
+
+            BuiltInParameter? builtIn = null;
+            if (Enum.TryParse(token, ignoreCase: true, out BuiltInParameter parsedBip))
+            {
+                builtIn = parsedBip;
+            }
+
+            foreach (var catId in categoryIds)
+            {
+                var sample = new FilteredElementCollector(doc)
+                    .OfCategoryId(catId)
+                    .WhereElementIsNotElementType()
+                    .Take(250);
+
+                foreach (var element in sample)
+                {
+                    var parameter = ResolveParameterFromElement(element, token, builtIn);
+                    if (parameter == null) continue;
+
+                    return new ResolvedRuleParameter
+                    {
+                        ParameterId = parameter.Id,
+                        StorageType = parameter.StorageType
+                    };
+                }
+            }
+
+            if (builtIn.HasValue)
+            {
+                return new ResolvedRuleParameter
+                {
+                    ParameterId = RevitBridge.Common.ElementIdCompat.Create((long)builtIn.Value),
+                    StorageType = StorageType.String
+                };
+            }
+
+            return null;
+        }
+
+        private static Parameter? ResolveParameterFromElement(Element element, string parameterName, BuiltInParameter? builtIn)
+        {
+            if (builtIn.HasValue)
+            {
+                try
+                {
+                    var bipParam = element.get_Parameter(builtIn.Value);
+                    if (bipParam != null) return bipParam;
+                }
+                catch
+                {
+                    // ignore
+                }
+            }
+
+            try
+            {
+                var byLookup = element.LookupParameter(parameterName);
+                if (byLookup != null) return byLookup;
+            }
+            catch
+            {
+                // ignore
+            }
+
+            try
+            {
+                return element.Parameters
+                    .Cast<Parameter>()
+                    .FirstOrDefault(x =>
+                        x.Definition != null &&
+                        (x.Definition.Name ?? "").Trim().Equals(parameterName, StringComparison.OrdinalIgnoreCase));
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static FilterRule BuildFilterRule(ElementId parameterId, StorageType storageType, string? ruleOperatorRaw, string? ruleValueRaw, bool caseSensitive)
+        {
+            var op = NormalizeRuleOperator(ruleOperatorRaw);
+            var value = (ruleValueRaw ?? "").Trim();
+
+            switch (storageType)
+            {
+                case StorageType.Integer:
+                {
+                    if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var iv))
+                        throw new InvalidOperationException("visibility.create_view_filter expected integer ruleValue for the selected parameter.");
+                    return op switch
+                    {
+                        "equals" => ParameterFilterRuleFactory.CreateEqualsRule(parameterId, iv),
+                        "not_equals" => ParameterFilterRuleFactory.CreateNotEqualsRule(parameterId, iv),
+                        "greater" => ParameterFilterRuleFactory.CreateGreaterRule(parameterId, iv),
+                        "greater_or_equal" => ParameterFilterRuleFactory.CreateGreaterOrEqualRule(parameterId, iv),
+                        "less" => ParameterFilterRuleFactory.CreateLessRule(parameterId, iv),
+                        "less_or_equal" => ParameterFilterRuleFactory.CreateLessOrEqualRule(parameterId, iv),
+                        _ => throw new InvalidOperationException($"visibility.create_view_filter does not support operator '{op}' for integer parameters.")
+                    };
+                }
+                case StorageType.ElementId:
+                {
+                    if (!long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var elementIdValue) || elementIdValue <= 0)
+                        throw new InvalidOperationException("visibility.create_view_filter expected positive integer ruleValue for an ElementId parameter.");
+                    var elementId = RevitBridge.Common.ElementIdCompat.Create(elementIdValue);
+                    return op switch
+                    {
+                        "equals" => ParameterFilterRuleFactory.CreateEqualsRule(parameterId, elementId),
+                        "not_equals" => ParameterFilterRuleFactory.CreateNotEqualsRule(parameterId, elementId),
+                        _ => throw new InvalidOperationException($"visibility.create_view_filter does not support operator '{op}' for ElementId parameters.")
+                    };
+                }
+                default:
+                {
+                    if (value.Length == 0)
+                        throw new InvalidOperationException("visibility.create_view_filter requires ruleValue for string rules.");
+                    return op switch
+                    {
+                        "equals" => ParameterFilterRuleFactory.CreateEqualsRule(parameterId, value, caseSensitive),
+                        "not_equals" => ParameterFilterRuleFactory.CreateNotEqualsRule(parameterId, value, caseSensitive),
+                        "contains" => ParameterFilterRuleFactory.CreateContainsRule(parameterId, value, caseSensitive),
+                        "not_contains" => ParameterFilterRuleFactory.CreateNotContainsRule(parameterId, value, caseSensitive),
+                        "begins_with" => ParameterFilterRuleFactory.CreateBeginsWithRule(parameterId, value, caseSensitive),
+                        "ends_with" => ParameterFilterRuleFactory.CreateEndsWithRule(parameterId, value, caseSensitive),
+                        _ => throw new InvalidOperationException($"visibility.create_view_filter does not support operator '{op}' for string parameters.")
+                    };
+                }
+            }
+        }
+
+        private static string NormalizeRuleOperator(string? raw)
+        {
+            var op = (raw ?? "contains").Trim().ToLowerInvariant().Replace("-", "_").Replace(" ", "_");
+            return op.Length == 0 ? "contains" : op;
         }
 
         private static bool ViewHasFilter(View view, ElementId filterId)
@@ -527,13 +764,36 @@ namespace RevitBridge.Logic.Handlers
 
             try
             {
-                return doc.Settings.Categories
-                    .Cast<Category>()
+                return EnumerateCategories(doc.Settings.Categories)
                     .FirstOrDefault(c => (c?.Name ?? "").Equals(input, StringComparison.OrdinalIgnoreCase));
             }
             catch
             {
                 return null;
+            }
+        }
+
+        private static IEnumerable<Category> EnumerateCategories(Categories categories)
+        {
+            foreach (Category category in categories)
+            {
+                if (category == null) continue;
+                foreach (var entry in EnumerateCategoryTree(category))
+                    yield return entry;
+            }
+        }
+
+        private static IEnumerable<Category> EnumerateCategoryTree(Category category)
+        {
+            yield return category;
+            CategoryNameMap? subCategories = null;
+            try { subCategories = category.SubCategories; } catch { }
+            if (subCategories == null) yield break;
+
+            foreach (Category sub in subCategories)
+            {
+                foreach (var nested in EnumerateCategoryTree(sub))
+                    yield return nested;
             }
         }
 
@@ -739,8 +999,6 @@ namespace RevitBridge.Logic.Handlers
 
         private static void TrySetAnnotationCrop(View view, double marginFeet, bool active)
         {
-            // Revit exposes annotation-crop offsets on the crop-region shape manager in modern versions.
-            // Use reflection so this handler remains loadable if an older API lacks one of these members.
             TrySetBuiltInIntegerParameter(view, "VIEWER_ANNOTATION_CROP_ACTIVE", active ? 1 : 0);
 
             object? manager = null;
@@ -987,7 +1245,8 @@ namespace RevitBridge.Logic.Handlers
                         {
                             id = RevitBridge.Common.ElementIdCompat.GetValue(id),
                             name = f?.Name,
-                            visible
+                            visible,
+                            @override = BuildFilterOverrideState(doc, view, id)
                         };
                     })
                     .ToArray();
@@ -996,6 +1255,7 @@ namespace RevitBridge.Logic.Handlers
             {
                 // Some view types do not support filters.
             }
+            var categoryOverride = BuildCategoryOverrideState(doc, view, p?.categoryName);
 
             return new
             {
@@ -1017,6 +1277,7 @@ namespace RevitBridge.Logic.Handlers
                     linkedModels,
                     temporaryModes,
                     viewFilters,
+                    categoryOverride,
                     viewTemplate = viewTemplate?.Name,
                     viewTemplateId = RevitBridge.Common.ElementIdCompat.GetValue(viewTemplate?.Id)
                 }
@@ -1144,6 +1405,144 @@ namespace RevitBridge.Logic.Handlers
             try
             {
                 return target.GetType().GetProperty(propName, BindingFlags.Instance | BindingFlags.Public)?.GetValue(target, null) as ElementId;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static object? BuildCategoryOverrideState(Document doc, View view, string? categoryName)
+        {
+            var category = ResolveCategory(doc, categoryName);
+            if (category == null) return null;
+            OverrideGraphicSettings? ogs = null;
+            try { ogs = view.GetCategoryOverrides(category.Id); } catch { }
+
+            var lineWeight = ogs == null ? null : TryReadInt(ogs, "ProjectionLineWeight", "GetProjectionLineWeight");
+            var color = ogs == null ? null : TryReadColor(ogs, "ProjectionLineColor", "GetProjectionLineColor");
+            var patternId = ogs == null ? null : TryReadElementId(ogs, "ProjectionLinePatternId", "GetProjectionLinePatternId");
+            LinePatternElement? pattern = null;
+            if (patternId.HasValue && patternId.Value > 0)
+            {
+                try { pattern = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(patternId.Value)) as LinePatternElement; } catch { }
+            }
+
+            return new
+            {
+                categoryId = RevitBridge.Common.ElementIdCompat.GetValue(category.Id),
+                categoryName = category.Name,
+                lineWeight,
+                linePatternId = patternId,
+                linePatternName = pattern?.Name,
+                color
+            };
+        }
+
+        private static object? BuildFilterOverrideState(Document doc, View view, ElementId filterId)
+        {
+            OverrideGraphicSettings? ogs = null;
+            try { ogs = view.GetFilterOverrides(filterId); } catch { }
+            if (ogs == null) return null;
+
+            var lineWeight = TryReadInt(ogs, "ProjectionLineWeight", "GetProjectionLineWeight");
+            var color = TryReadColor(ogs, "ProjectionLineColor", "GetProjectionLineColor");
+            var patternId = TryReadElementId(ogs, "ProjectionLinePatternId", "GetProjectionLinePatternId");
+            LinePatternElement? pattern = null;
+            if (patternId.HasValue && patternId.Value > 0)
+            {
+                try { pattern = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(patternId.Value)) as LinePatternElement; } catch { }
+            }
+
+            return new
+            {
+                lineWeight,
+                linePatternId = patternId,
+                linePatternName = pattern?.Name,
+                color
+            };
+        }
+
+        private static int? TryReadInt(object target, string propertyName, string methodName)
+        {
+            try
+            {
+                var prop = target.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
+                var raw = prop?.GetValue(target, null);
+                if (raw is int value) return value;
+            }
+            catch
+            {
+                // ignore
+            }
+            try
+            {
+                var method = target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public, Type.DefaultBinder, Type.EmptyTypes, null);
+                var raw = method?.Invoke(target, null);
+                if (raw is int value) return value;
+            }
+            catch
+            {
+                // ignore
+            }
+            return null;
+        }
+
+        private static long? TryReadElementId(object target, string propertyName, string methodName)
+        {
+            object? raw = null;
+            try
+            {
+                var prop = target.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
+                raw = prop?.GetValue(target, null);
+            }
+            catch
+            {
+                // ignore
+            }
+            if (raw == null)
+            {
+                try
+                {
+                    var method = target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public, Type.DefaultBinder, Type.EmptyTypes, null);
+                    raw = method?.Invoke(target, null);
+                }
+                catch
+                {
+                    // ignore
+                }
+            }
+            return raw is ElementId id ? RevitBridge.Common.ElementIdCompat.GetValue(id) : null;
+        }
+
+        private static object? TryReadColor(object target, string propertyName, string methodName)
+        {
+            object? raw = null;
+            try
+            {
+                var prop = target.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
+                raw = prop?.GetValue(target, null);
+            }
+            catch
+            {
+                // ignore
+            }
+            if (raw == null)
+            {
+                try
+                {
+                    var method = target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public, Type.DefaultBinder, Type.EmptyTypes, null);
+                    raw = method?.Invoke(target, null);
+                }
+                catch
+                {
+                    // ignore
+                }
+            }
+            if (raw is not Color color) return null;
+            try
+            {
+                return color.IsValid ? new { r = (int)color.Red, g = (int)color.Green, b = (int)color.Blue } : null;
             }
             catch
             {

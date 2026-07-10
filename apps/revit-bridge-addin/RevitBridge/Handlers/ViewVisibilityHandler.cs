@@ -853,13 +853,36 @@ namespace RevitBridge.Handlers
 
             try
             {
-                return doc.Settings.Categories
-                    .Cast<Category>()
+                return EnumerateCategories(doc.Settings.Categories)
                     .FirstOrDefault(c => (c?.Name ?? "").Equals(input, StringComparison.OrdinalIgnoreCase));
             }
             catch
             {
                 return null;
+            }
+        }
+
+        private static IEnumerable<Category> EnumerateCategories(Categories categories)
+        {
+            foreach (Category category in categories)
+            {
+                if (category == null) continue;
+                foreach (var entry in EnumerateCategoryTree(category))
+                    yield return entry;
+            }
+        }
+
+        private static IEnumerable<Category> EnumerateCategoryTree(Category category)
+        {
+            yield return category;
+            CategoryNameMap? subCategories = null;
+            try { subCategories = category.SubCategories; } catch { }
+            if (subCategories == null) yield break;
+
+            foreach (Category sub in subCategories)
+            {
+                foreach (var nested in EnumerateCategoryTree(sub))
+                    yield return nested;
             }
         }
 
@@ -1354,7 +1377,8 @@ namespace RevitBridge.Handlers
                         {
                             id = RevitBridge.Common.ElementIdCompat.GetValue(id),
                             name = f?.Name,
-                            visible
+                            visible,
+                            @override = BuildFilterOverrideState(doc, view, id)
                         };
                     })
                     .ToArray();
@@ -1363,6 +1387,7 @@ namespace RevitBridge.Handlers
             {
                 // Some view types do not support filters.
             }
+            var categoryOverride = BuildCategoryOverrideState(doc, view, p?.categoryName);
 
             return new
             {
@@ -1385,6 +1410,7 @@ namespace RevitBridge.Handlers
                     linkedModels,
                     temporaryModes,
                     viewFilters,
+                    categoryOverride,
                     viewTemplate = viewTemplate?.Name,
                     viewTemplateId = RevitBridge.Common.ElementIdCompat.GetValue(viewTemplate?.Id)
                 }
@@ -1512,6 +1538,144 @@ namespace RevitBridge.Handlers
             try
             {
                 return target.GetType().GetProperty(propName, BindingFlags.Instance | BindingFlags.Public)?.GetValue(target, null) as ElementId;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static object? BuildCategoryOverrideState(Document doc, View view, string? categoryName)
+        {
+            var category = ResolveCategory(doc, categoryName);
+            if (category == null) return null;
+            OverrideGraphicSettings? ogs = null;
+            try { ogs = view.GetCategoryOverrides(category.Id); } catch { }
+
+            var lineWeight = ogs == null ? null : TryReadInt(ogs, "ProjectionLineWeight", "GetProjectionLineWeight");
+            var color = ogs == null ? null : TryReadColor(ogs, "ProjectionLineColor", "GetProjectionLineColor");
+            var patternId = ogs == null ? null : TryReadElementId(ogs, "ProjectionLinePatternId", "GetProjectionLinePatternId");
+            LinePatternElement? pattern = null;
+            if (patternId.HasValue && patternId.Value > 0)
+            {
+                try { pattern = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(patternId.Value)) as LinePatternElement; } catch { }
+            }
+
+            return new
+            {
+                categoryId = RevitBridge.Common.ElementIdCompat.GetValue(category.Id),
+                categoryName = category.Name,
+                lineWeight,
+                linePatternId = patternId,
+                linePatternName = pattern?.Name,
+                color
+            };
+        }
+
+        private static object? BuildFilterOverrideState(Document doc, View view, ElementId filterId)
+        {
+            OverrideGraphicSettings? ogs = null;
+            try { ogs = view.GetFilterOverrides(filterId); } catch { }
+            if (ogs == null) return null;
+
+            var lineWeight = TryReadInt(ogs, "ProjectionLineWeight", "GetProjectionLineWeight");
+            var color = TryReadColor(ogs, "ProjectionLineColor", "GetProjectionLineColor");
+            var patternId = TryReadElementId(ogs, "ProjectionLinePatternId", "GetProjectionLinePatternId");
+            LinePatternElement? pattern = null;
+            if (patternId.HasValue && patternId.Value > 0)
+            {
+                try { pattern = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(patternId.Value)) as LinePatternElement; } catch { }
+            }
+
+            return new
+            {
+                lineWeight,
+                linePatternId = patternId,
+                linePatternName = pattern?.Name,
+                color
+            };
+        }
+
+        private static int? TryReadInt(object target, string propertyName, string methodName)
+        {
+            try
+            {
+                var prop = target.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
+                var raw = prop?.GetValue(target, null);
+                if (raw is int value) return value;
+            }
+            catch
+            {
+                // ignore
+            }
+            try
+            {
+                var method = target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public, Type.DefaultBinder, Type.EmptyTypes, null);
+                var raw = method?.Invoke(target, null);
+                if (raw is int value) return value;
+            }
+            catch
+            {
+                // ignore
+            }
+            return null;
+        }
+
+        private static long? TryReadElementId(object target, string propertyName, string methodName)
+        {
+            object? raw = null;
+            try
+            {
+                var prop = target.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
+                raw = prop?.GetValue(target, null);
+            }
+            catch
+            {
+                // ignore
+            }
+            if (raw == null)
+            {
+                try
+                {
+                    var method = target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public, Type.DefaultBinder, Type.EmptyTypes, null);
+                    raw = method?.Invoke(target, null);
+                }
+                catch
+                {
+                    // ignore
+                }
+            }
+            return raw is ElementId id ? RevitBridge.Common.ElementIdCompat.GetValue(id) : null;
+        }
+
+        private static object? TryReadColor(object target, string propertyName, string methodName)
+        {
+            object? raw = null;
+            try
+            {
+                var prop = target.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
+                raw = prop?.GetValue(target, null);
+            }
+            catch
+            {
+                // ignore
+            }
+            if (raw == null)
+            {
+                try
+                {
+                    var method = target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public, Type.DefaultBinder, Type.EmptyTypes, null);
+                    raw = method?.Invoke(target, null);
+                }
+                catch
+                {
+                    // ignore
+                }
+            }
+            if (raw is not Color color) return null;
+            try
+            {
+                return color.IsValid ? new { r = (int)color.Red, g = (int)color.Green, b = (int)color.Blue } : null;
             }
             catch
             {

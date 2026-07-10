@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_mep_pipe_tap_branch",
+  "name": "Demo E4: Modeled Pipe Tee Branch Redline",
+  "description": "Run one bounded disposable pipe branch redline through /revit/mep-branch-network-workflow and require dry-run proof, split main ids, branch and tee fitting model ids, visual gate, and cleanup evidence.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "metadata": {
+      "workflow": "redline_mep_tap_branch"
+    }
+  },
+  "setup_instructions": [
+    "Open the target Revit model and the sheet/view containing a smaller pipe branch redline into a main pipe.",
+    "Use a prepared deterministic request that creates a disposable main pipe from points, projects the branch point, creates the branch, verifies the tee fitting, and cleans up the created ids.",
+    "Use /revit/mep-branch-network-workflow with branchNetworkWorkflow=true, connectionMode=tee, apply=true, verify=true, and visualVerify=true; do not report completion from dry-run evidence alone."
+  ],
+  "success_criteria": [
+    "/revit/mep-branch-network-workflow returns a dry-run preview before writes and an applied/created status after writes.",
+    "The result reports split main pipe ids, created branch pipe ids, and tee fitting ids.",
+    "The projected tap point is reported and matches the requested point within tolerance.",
+    "Requested branch pipe size is read back after the model write.",
+    "The branch-network workflow reports the created fitting ids needed for connector/topology audit.",
+    "A focused post-change capture is returned and the redline visual gate passes.",
+    "Created disposable branch/fitting ids are proven in a cleanup dry-run and then deleted after verification evidence is recorded."
+  ],
+  "failure_criteria": [
+    "The workflow only dry-runs or returns no model write ids.",
+    "The projected tap point is missing or off target.",
+    "The requested branch pipe size readback is missing or mismatched.",
+    "No created tee fitting ids or branch-network audit evidence is reported.",
+    "The focused visual capture is missing.",
+    "The redline visual gate is fail or uncertain.",
+    "Cleanup is requested but created branch/fitting ids are missing from cleanup evidence."
+  ],
+  "max_time_seconds": 180,
+  "max_steps": 5,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This benchmark covers one safe disposable pipe tee branch-network case. It does not yet prove multi-pipe rack top taps, takeoff fittings, tee splitting across multiple mains, or arbitrary multi-branch routing."
+  ],
+  "tags": ["revit", "demo", "redline", "mep", "pipe", "tee-branch", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [
+    "Delete created branch/fitting ids after visual verification so repeated live reliability runs do not accumulate model clutter."
+  ],
+  "adapter_config": {
+    "workflow": "redline_mep_tap_branch",
+    "request": {
+      "kind": "pipe",
+      "branchNetworkWorkflow": true,
+      "viewId": 1363433,
+      "visualViewId": 1363433,
+      "levelName": "L4",
+      "systemType": "Domestic Cold Water",
+      "connectionMode": "tee",
+      "branchSize": "1 inch",
+      "pipeSize": "1 inch",
+      "projectedTapPoint": { "x": 97.5, "y": -82 },
+      "mainPoints": [
+        { "x": 90, "y": -82, "z": 43 },
+        { "x": 105, "y": -82, "z": 43 }
+      ],
+      "branches": [
+        {
+          "pipeSize": "1 inch",
+          "branchSize": "1 inch",
+          "points": [
+            { "x": 97.5, "y": -82, "z": 43 },
+            { "x": 97.5, "y": -75, "z": 43 }
+          ]
+        }
+      ],
+      "expectedFitting": "tee",
+      "verify": true,
+      "apply": true,
+      "visualVerify": true,
+      "cleanupCreatedElements": true,
+      "imageSize": 2200,
+      "focusPaddingFt": 8,
+      "toleranceFt": 1
+    },
+    "mock": {
+      "/revit/mep-branch-network-workflow:1": {
+        "status": "DryRunReady",
+        "dryRun": true,
+        "scaffoldOnly": false,
+        "kind": "pipe",
+        "networkPlan": {
+          "branches": [
+            {
+              "splitPlan": {
+                "projectedSplitPoint": { "x": 97.5, "y": -82, "z": 43 },
+                "applySupported": true,
+                "expectedFitting": "tee"
+              }
+            }
+          ]
+        }
+      },
+      "/revit/mep-branch-network-workflow:2": {
+        "status": "AppliedNetworkVisualVerificationReady",
+        "dryRun": false,
+        "scaffoldOnly": false,
+        "kind": "pipe",
+        "networkPlan": {
+          "branches": [
+            {
+              "points": [
+                { "x": 97.5, "y": -82, "z": 43 },
+                { "x": 97.5, "y": -75, "z": 43 }
+              ],
+              "branchSize": "1 inch",
+              "splitPlan": {
+                "projectedSplitPoint": { "x": 97.5, "y": -82, "z": 43 },
+                "applySupported": true,
+                "expectedFitting": "tee"
+              }
+            }
+          ]
+        },
+        "created": {
+          "mainElementIds": [1543037],
+          "splitMainSegmentIds": [1543037, 1543041],
+          "branchElementIds": [1543043],
+          "branchFittingIds": [1543046],
+          "allModelIds": [1543037, 1543041, 1543043, 1543046]
+        },
+        "visualVerification": {
+          "status": "CaptureReadyForAIReview",
+          "capturePath": "artifacts/demo-readiness/mep-route/pipe_tee_branch_after.jpg",
+          "capture": {
+            "path": "artifacts/demo-readiness/mep-route/pipe_tee_branch_after.jpg",
+            "widthPx": 2200,
+            "heightPx": 1119,
+            "focusCrop": { "requested": true, "applied": true }
+          }
+        }
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "count": 4,
+        "ids": [1543037, 1543041, 1543043, 1543046]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "count": 4,
+        "ids": [1543037, 1543041, 1543043, 1543046]
+      }
+    }
+  }
+}

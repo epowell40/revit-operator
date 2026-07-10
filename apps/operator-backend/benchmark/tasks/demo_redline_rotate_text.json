@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_rotate_text",
+  "name": "Demo J: Rotate-Like Redline Text Note",
+  "description": "Exercise a rotate-like redline operation using a disposable text note target: create a bounded target, prove it is visible, dry-run rotate, apply rotate, verify the target remains visible, and clean up the target.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a model that can be closed without saving.",
+    "Use a model or drafting view that supports text notes and visible-element export.",
+    "Keep the generated target text unique per run so repeated live runs cannot match stale notes."
+  ],
+  "success_criteria": [
+    "A disposable text note id is created in the requested view.",
+    "The created id is visible in the pre-rotate visible-element inventory.",
+    "The /revit/rotate-elements dry-run reports rotatedIds covering the created id.",
+    "The applied /revit/rotate-elements response reports rotatedIds covering the created id.",
+    "The post-rotate visible-element inventory still contains the created id.",
+    "Cleanup dry-run and applied delete evidence cover the created id."
+  ],
+  "failure_criteria": [
+    "The text note target is not created or is not visible before the rotate.",
+    "Rotate dry-run or apply omits the target id.",
+    "The target disappears after the rotate.",
+    "Cleanup is requested but native delete effect ids do not cover the target."
+  ],
+  "max_time_seconds": 60,
+  "max_steps": 8,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task intentionally uses a disposable created target so repeated live runs prove redline rotate mechanics without damaging project content.",
+    "Do not count generic rotate success without rotatedIds and post-rotate visible target evidence."
+  ],
+  "tags": ["revit", "demo", "redline", "rotate", "annotation", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [
+    "Delete the disposable text note after rotate evidence is recorded."
+  ],
+  "adapter_config": {
+    "workflow": "redline_rotate",
+    "request": {
+      "viewId": 101,
+      "imageSize": 1800,
+      "textNote": {
+        "x": 1.5,
+        "y": 1.0,
+        "text": "OPERATOR ROTATE REDLINE"
+      },
+      "rotate": {
+        "angleDegrees": 90,
+        "axis": {
+          "mode": "zThroughPoint",
+          "pointX": 1.5,
+          "pointY": 1.0,
+          "pointZ": 0.0
+        }
+      }
+    },
+    "mock": {
+      "/revit/create-text": {
+        "status": "success",
+        "id": 7301,
+        "viewId": 101
+      },
+      "/revit/export-visible-elements:1": {
+        "imagePath": "artifacts/captures/rotate-before.png",
+        "items": [
+          {
+            "id": 7301,
+            "category": "Text Notes",
+            "visibleText": "OPERATOR ROTATE REDLINE",
+            "anchor": { "model": { "x": 1.5, "y": 1.0, "z": 0.0 } }
+          }
+        ]
+      },
+      "/revit/rotate-elements:1": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "rotatedIds": [7301],
+        "rolledBack": true
+      },
+      "/revit/rotate-elements:2": {
+        "status": "Rotated",
+        "dryRun": false,
+        "rotatedIds": [7301],
+        "rolledBack": false
+      },
+      "/revit/export-visible-elements:2": {
+        "imagePath": "artifacts/captures/rotate-after.png",
+        "items": [
+          {
+            "id": 7301,
+            "category": "Text Notes",
+            "visibleText": "OPERATOR ROTATE REDLINE",
+            "anchor": { "model": { "x": 1.5, "y": 1.0, "z": 0.0 } }
+          }
+        ]
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "requestedIds": [7301],
+        "impactedIds": [7301]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "requestedIds": [7301],
+        "impactedIds": [7301]
+      }
+    }
+  }
+}

@@ -30,6 +30,9 @@ namespace RevitBridge.Handlers
             public bool? lockViewport { get; set; }
             public long? viewportTypeId { get; set; }
             public string? viewportTypeName { get; set; }
+            public string? layoutPolicy { get; set; }
+            public double? rightAnchorX { get; set; }
+            public double? stackSpacingFeet { get; set; }
         }
 
         public sealed class Params
@@ -52,9 +55,71 @@ namespace RevitBridge.Handlers
             public object? viewportType { get; set; }
             public object? lockViewport { get; set; }
             public object? placement { get; set; }
+            public object? actualBox { get; set; }
             public string? error { get; set; }
             public double? x { get; set; }
             public double? y { get; set; }
+        }
+
+        private sealed class StackState
+        {
+            public SheetPlacementHelper.SheetRect? LastRect { get; set; }
+        }
+
+        private static List<SheetPlacementHelper.SheetRect>? PlannedRectsForSheet(Dictionary<long, List<SheetPlacementHelper.SheetRect>> plannedBySheet, ElementId sheetId)
+        {
+            var key = RevitBridge.Common.ElementIdCompat.GetValue(sheetId);
+            return plannedBySheet.TryGetValue(key, out var rects) ? rects : null;
+        }
+
+        private static void AddPlannedRect(Dictionary<long, List<SheetPlacementHelper.SheetRect>> plannedBySheet, ElementId sheetId, SheetPlacementHelper.SheetRect rect)
+        {
+            var key = RevitBridge.Common.ElementIdCompat.GetValue(sheetId);
+            if (!plannedBySheet.TryGetValue(key, out var rects))
+            {
+                rects = new List<SheetPlacementHelper.SheetRect>();
+                plannedBySheet[key] = rects;
+            }
+            rects.Add(rect);
+        }
+
+        private static StackState? StackStateForPlacement(Dictionary<string, StackState> stackStates, ElementId sheetId, Placement placement)
+        {
+            var policy = (placement.layoutPolicy ?? "").Trim();
+            if (!policy.Equals("right_justified_vertical_stack", StringComparison.OrdinalIgnoreCase) &&
+                !policy.Equals("right-justified-vertical-stack", StringComparison.OrdinalIgnoreCase) &&
+                !placement.rightAnchorX.HasValue &&
+                !placement.stackSpacingFeet.HasValue)
+            {
+                return null;
+            }
+
+            var key = $"{RevitBridge.Common.ElementIdCompat.GetValue(sheetId)}:right_justified_vertical_stack";
+            if (!stackStates.TryGetValue(key, out var state))
+            {
+                state = new StackState();
+                stackStates[key] = state;
+            }
+            return state;
+        }
+
+        private static double? StackedYOverride(StackState? state, Placement placement)
+        {
+            if (state?.LastRect == null) return placement.y;
+            var spacing = placement.stackSpacingFeet ?? (1.0 / 12.0);
+            return state.LastRect.MinY - spacing;
+        }
+
+        private static object? BoxObject(SheetPlacementHelper.SheetRect? rect)
+        {
+            if (rect == null) return null;
+            return new
+            {
+                minU = rect.MinX,
+                minV = rect.MinY,
+                maxU = rect.MaxX,
+                maxV = rect.MaxY
+            };
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -74,6 +139,8 @@ namespace RevitBridge.Handlers
 
             if (dryRun)
             {
+                var plannedScheduleRectsBySheet = new Dictionary<long, List<SheetPlacementHelper.SheetRect>>();
+                var stackStatesBySheet = new Dictionary<string, StackState>();
                 for (int i = 0; i < placements.Count; i++)
                 {
                     var pl = placements[i];
@@ -110,6 +177,8 @@ namespace RevitBridge.Handlers
                     var existingViewport = isSchedule ? null : SheetPlacementHelper.FindViewportOnSheet(doc, sheetId, viewId);
                     var existingSchedule = isRegularSchedule ? SheetPlacementHelper.FindScheduleInstanceOnSheet(doc, sheetId, viewId) : null;
                     var existingPanelSchedule = isPanelSchedule ? SheetPlacementHelper.FindPanelScheduleInstanceOnSheet(doc, sheetId, viewId) : null;
+                    var stackState = isSchedule ? StackStateForPlacement(stackStatesBySheet, sheetId, pl) : null;
+                    var requestedY = StackedYOverride(stackState, pl);
                     var otherScheduleInstances = isRegularSchedule
                         ? SheetPlacementHelper.FindScheduleInstances(doc, viewId).Where(ssi => ssi.OwnerViewId != sheetId).ToList()
                         : new List<ScheduleSheetInstance>();
@@ -122,10 +191,11 @@ namespace RevitBridge.Handlers
                             resolvedSheet,
                             viewId,
                             pl.x,
-                            pl.y,
+                            requestedY,
                             avoidOverlap,
                             (Element?)existingSchedule ?? existingPanelSchedule ?? otherScheduleInstances.Cast<Element>().Concat(otherPanelInstances.Cast<Element>()).FirstOrDefault(),
-                            existingSchedule?.Id ?? existingPanelSchedule?.Id)
+                            existingSchedule?.Id ?? existingPanelSchedule?.Id,
+                            PlannedRectsForSheet(plannedScheduleRectsBySheet, sheetId))
                         : null;
                     var can = isRegularSchedule
                         ? ((existingSchedule == null && (otherScheduleInstances.Count == 0 || moveIfAlreadyPlaced) && SheetPlacementHelper.CanPlaceScheduleOnSheet(doc, sheetId, viewId)) ||
@@ -172,6 +242,15 @@ namespace RevitBridge.Handlers
                         lockViewport = (!isSchedule && pl.lockViewport.HasValue) ? new { requested = pl.lockViewport.Value } : null,
                         error = can ? null : "Cannot place or move view on sheet (already placed or invalid sheet/view)."
                     });
+                    if (can && schedulePlacement != null)
+                    {
+                        var plannedRect = SheetPlacementHelper.PlacementPreviewRect(schedulePlacement);
+                        AddPlannedRect(plannedScheduleRectsBySheet, sheetId, plannedRect);
+                        if (stackState != null)
+                        {
+                            stackState.LastRect = plannedRect;
+                        }
+                    }
                 }
 
                 return Task.FromResult<object>(new
@@ -187,6 +266,8 @@ namespace RevitBridge.Handlers
             using (var t = new Transaction(doc, "Place Views (Batch)"))
             {
                 t.Start();
+                var plannedScheduleRectsBySheet = new Dictionary<long, List<SheetPlacementHelper.SheetRect>>();
+                var stackStatesBySheet = new Dictionary<string, StackState>();
                 for (int i = 0; i < placements.Count; i++)
                 {
                     var pl = placements[i];
@@ -232,7 +313,9 @@ namespace RevitBridge.Handlers
                             var otherInstances = SheetPlacementHelper.FindScheduleInstances(doc, viewId)
                                 .Where(ssi => ssi.OwnerViewId != sheetId)
                                 .ToList();
-                            var placement = SheetPlacementHelper.ResolveSchedulePlacementPoint(doc, resolvedSheet, viewId, pl.x, pl.y, avoidOverlap, existingSchedule ?? otherInstances.FirstOrDefault(), existingSchedule?.Id);
+                            var stackState = StackStateForPlacement(stackStatesBySheet, sheetId, pl);
+                            var requestedY = StackedYOverride(stackState, pl);
+                            var placement = SheetPlacementHelper.ResolveSchedulePlacementPoint(doc, resolvedSheet, viewId, pl.x, requestedY, avoidOverlap, existingSchedule ?? otherInstances.FirstOrDefault(), existingSchedule?.Id, PlannedRectsForSheet(plannedScheduleRectsBySheet, sheetId));
                             if (existingSchedule != null)
                             {
                                 if (!moveIfAlreadyPlaced)
@@ -259,6 +342,14 @@ namespace RevitBridge.Handlers
                                 }
 
                                 existingSchedule.Point = placement.Point;
+                                doc.Regenerate();
+                                var actualRect = SheetPlacementHelper.TryGetSheetRect(existingSchedule, resolvedSheet);
+                                var plannedRect = actualRect ?? SheetPlacementHelper.PlacementPreviewRect(placement);
+                                AddPlannedRect(plannedScheduleRectsBySheet, sheetId, plannedRect);
+                                if (stackState != null)
+                                {
+                                    stackState.LastRect = plannedRect;
+                                }
                                 results.Add(new ResultEntry
                                 {
                                     index = i,
@@ -270,7 +361,8 @@ namespace RevitBridge.Handlers
                                     action = "MoveExisting",
                                     x = placement.Point.X,
                                     y = placement.Point.Y,
-                                    placement = new { avoidOverlap, strategy = placement.Strategy, box = placement.PreviewBox }
+                                    placement = new { avoidOverlap, strategy = placement.Strategy, box = placement.PreviewBox },
+                                    actualBox = BoxObject(actualRect)
                                 });
                                 continue;
                             }
@@ -307,6 +399,14 @@ namespace RevitBridge.Handlers
                             }
 
                             var ssi = ScheduleSheetInstance.Create(doc, sheetId, viewId, placement.Point);
+                            doc.Regenerate();
+                            var createdActualRect = SheetPlacementHelper.TryGetSheetRect(ssi, resolvedSheet);
+                            var createdPlannedRect = createdActualRect ?? SheetPlacementHelper.PlacementPreviewRect(placement);
+                            AddPlannedRect(plannedScheduleRectsBySheet, sheetId, createdPlannedRect);
+                            if (stackState != null)
+                            {
+                                stackState.LastRect = createdPlannedRect;
+                            }
                             results.Add(new ResultEntry
                             {
                                 index = i,
@@ -318,7 +418,8 @@ namespace RevitBridge.Handlers
                                 action = otherInstances.Count > 0 && moveIfAlreadyPlaced ? "MoveExisting" : "Create",
                                 x = placement.Point.X,
                                 y = placement.Point.Y,
-                                placement = new { avoidOverlap, strategy = placement.Strategy, box = placement.PreviewBox }
+                                placement = new { avoidOverlap, strategy = placement.Strategy, box = placement.PreviewBox },
+                                actualBox = BoxObject(createdActualRect)
                             });
                             continue;
                         }
@@ -329,7 +430,9 @@ namespace RevitBridge.Handlers
                             var otherInstances = SheetPlacementHelper.FindPanelScheduleInstances(doc, viewId)
                                 .Where(ssi => ssi.OwnerViewId != sheetId)
                                 .ToList();
-                            var placement = SheetPlacementHelper.ResolveSchedulePlacementPoint(doc, resolvedSheet, viewId, pl.x, pl.y, avoidOverlap, existingPanelSchedule ?? otherInstances.FirstOrDefault(), existingPanelSchedule?.Id);
+                            var stackState = StackStateForPlacement(stackStatesBySheet, sheetId, pl);
+                            var requestedY = StackedYOverride(stackState, pl);
+                            var placement = SheetPlacementHelper.ResolveSchedulePlacementPoint(doc, resolvedSheet, viewId, pl.x, requestedY, avoidOverlap, existingPanelSchedule ?? otherInstances.FirstOrDefault(), existingPanelSchedule?.Id, PlannedRectsForSheet(plannedScheduleRectsBySheet, sheetId));
 
                             if (existingPanelSchedule != null)
                             {
@@ -357,6 +460,14 @@ namespace RevitBridge.Handlers
                                 }
 
                                 existingPanelSchedule.Origin = placement.Point;
+                                doc.Regenerate();
+                                var actualRect = SheetPlacementHelper.TryGetSheetRect(existingPanelSchedule, resolvedSheet);
+                                var plannedRect = actualRect ?? SheetPlacementHelper.PlacementPreviewRect(placement);
+                                AddPlannedRect(plannedScheduleRectsBySheet, sheetId, plannedRect);
+                                if (stackState != null)
+                                {
+                                    stackState.LastRect = plannedRect;
+                                }
                                 results.Add(new ResultEntry
                                 {
                                     index = i,
@@ -368,7 +479,8 @@ namespace RevitBridge.Handlers
                                     action = "MoveExisting",
                                     x = placement.Point.X,
                                     y = placement.Point.Y,
-                                    placement = new { avoidOverlap, strategy = placement.Strategy, box = placement.PreviewBox }
+                                    placement = new { avoidOverlap, strategy = placement.Strategy, box = placement.PreviewBox },
+                                    actualBox = BoxObject(actualRect)
                                 });
                                 continue;
                             }
@@ -406,6 +518,14 @@ namespace RevitBridge.Handlers
 
                             var psi = PanelScheduleSheetInstance.Create(doc, viewId, resolvedSheet);
                             psi.Origin = placement.Point;
+                            doc.Regenerate();
+                            var createdActualRect = SheetPlacementHelper.TryGetSheetRect(psi, resolvedSheet);
+                            var createdPlannedRect = createdActualRect ?? SheetPlacementHelper.PlacementPreviewRect(placement);
+                            AddPlannedRect(plannedScheduleRectsBySheet, sheetId, createdPlannedRect);
+                            if (stackState != null)
+                            {
+                                stackState.LastRect = createdPlannedRect;
+                            }
                             results.Add(new ResultEntry
                             {
                                 index = i,
@@ -417,7 +537,8 @@ namespace RevitBridge.Handlers
                                 action = otherInstances.Count > 0 && moveIfAlreadyPlaced ? "MoveExisting" : "Create",
                                 x = placement.Point.X,
                                 y = placement.Point.Y,
-                                placement = new { avoidOverlap, strategy = placement.Strategy, box = placement.PreviewBox }
+                                placement = new { avoidOverlap, strategy = placement.Strategy, box = placement.PreviewBox },
+                                actualBox = BoxObject(createdActualRect)
                             });
                             continue;
                         }

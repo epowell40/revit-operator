@@ -30,7 +30,7 @@
   "max_steps": 4,
   "requires_manual_grade": false,
   "grader_notes": [
-    "This is a supplemental takeoff benchmark case, not one of the four demo readiness gates."
+    "This is a supplemental takeoff benchmark case, not one of the eight demo readiness gates."
   ],
   "tags": ["revit", "demo", "takeoff", "deterministic", "lighting"],
   "optional_ground_truth_artifact": null,

@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_delete_mep_accessory",
+  "name": "Demo G7: Delete Manual Balancing Damper Redline",
+  "description": "Exercise a delete-like redline operation for a modeled MEP accessory using the family-instance evidence contract: create a disposable manual balancing damper/accessory, prove its requested type and visibility, delete it with native dry-run/apply evidence, prove it is absent, and write a deterministic visual gate.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a model that can be closed without saving.",
+    "Use a view, level, and MEP accessory family/type that can be safely placed and deleted.",
+    "For the first live smoke, use a low-risk level-hosted or non-hosted damper/accessory symbol. Host-aware duct accessory placement remains a later live hardening step if the active damper family requires duct hosting."
+  ],
+  "success_criteria": [
+    "A disposable MEP accessory family instance id is created in the model.",
+    "The native create result returns family/type/name evidence matching the requested manual balancing damper/accessory symbol.",
+    "The created accessory id is visible in the pre-delete visible-element inventory.",
+    "Native delete dry-run and apply effect evidence include the created accessory id.",
+    "The post-delete visible-element inventory no longer contains the accessory id.",
+    "A deterministic delete visual gate artifact passes using before/after capture evidence."
+  ],
+  "failure_criteria": [
+    "The accessory is not created or is created as a different requested type.",
+    "The pre-delete visible-element inventory does not contain the created accessory id.",
+    "Delete dry-run or apply omits the accessory id from effect evidence.",
+    "The post-delete visible-element inventory still contains the accessory id.",
+    "The delete visual gate artifact is missing or fails."
+  ],
+  "max_time_seconds": 60,
+  "max_steps": 5,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task is the first explicit MEP accessory delete benchmark, targeted at manual balancing damper redlines.",
+    "Do not count requestedIds-only delete responses as evidence; delete must return ids, deletedIds, or impactedIds."
+  ],
+  "tags": ["revit", "demo", "redline", "delete", "mep-accessory", "damper", "manual-balancing-damper", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "redline_delete",
+    "request": {
+      "viewId": 101,
+      "imageSize": 1800,
+      "targetKind": "manual_balancing_damper",
+      "familyInstance": {
+        "familyName": "Manual Balancing Damper",
+        "symbolName": "Manual Balancing Damper",
+        "levelName": "",
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    },
+    "mock": {
+      "/revit/create-family-instance": {
+        "id": 9201,
+        "name": "Manual Balancing Damper",
+        "family": "Manual Balancing Damper",
+        "familyName": "Manual Balancing Damper",
+        "symbol": "Manual Balancing Damper",
+        "symbolName": "Manual Balancing Damper",
+        "typeName": "Manual Balancing Damper",
+        "category": "Duct Accessories"
+      },
+      "/revit/export-visible-elements:1": {
+        "imagePath": "artifacts/captures/delete-mep-accessory-before.png",
+        "items": [
+          { "id": 9201, "category": "Duct Accessories", "familyName": "Manual Balancing Damper", "symbolName": "Manual Balancing Damper" }
+        ]
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "requestedIds": [9201],
+        "impactedIds": [9201]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "requestedIds": [9201],
+        "impactedIds": [9201]
+      },
+      "/revit/export-visible-elements:2": {
+        "imagePath": "artifacts/captures/delete-mep-accessory-after.png",
+        "items": []
+      }
+    }
+  }
+}

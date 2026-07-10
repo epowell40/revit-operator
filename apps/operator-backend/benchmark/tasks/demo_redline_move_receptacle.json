@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_move_receptacle",
+  "name": "Demo G8: Move-Like Redline Receptacle",
+  "description": "Exercise a move-like redline operation using an explicit receptacle-like modeled family-instance target with strict type, movement-vector, visual-gate, and cleanup evidence.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a model that can be closed without saving.",
+    "Use a view, level, and receptacle family/type that can be safely placed, moved, and deleted.",
+    "If the model lacks a host-compatible receptacle type, keep this task out of the local live override until discovery finds one."
+  ],
+  "success_criteria": [
+    "A disposable receptacle family instance id is created in the model.",
+    "The native create result returns family/type/name evidence matching the requested receptacle symbol.",
+    "The created receptacle id is visible in the pre-move visible-element inventory with a model-space point.",
+    "Native move dry-run and apply evidence include the created receptacle id.",
+    "The post-move visible-element inventory contains the same id at the requested model-space delta.",
+    "A deterministic move visual gate artifact passes using before/after capture evidence.",
+    "The moved receptacle is cleaned up with native dry-run and applied delete effect evidence."
+  ],
+  "failure_criteria": [
+    "The receptacle is not created or is created as a different requested type.",
+    "The before/after visible-element inventory cannot prove the requested movement vector.",
+    "Move dry-run or apply omits the receptacle id from effect evidence.",
+    "The move visual gate artifact is missing or fails.",
+    "Cleanup delete dry-run/apply omits the receptacle id from effect evidence."
+  ],
+  "max_time_seconds": 60,
+  "max_steps": 5,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task makes receptacles a first-class move-like benchmark instead of relying only on the generic family-instance task.",
+    "Text-note or tag evidence must not satisfy this task; it requires modeled family-instance proof."
+  ],
+  "tags": ["revit", "demo", "redline", "move", "receptacle", "family-instance", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "redline_move",
+    "request": {
+      "viewId": 101,
+      "imageSize": 1800,
+      "targetKind": "receptacle",
+      "familyInstance": {
+        "familyName": "Duplex Receptacle",
+        "symbolName": "Duplex Receptacle",
+        "levelName": "",
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "move": {
+        "mode": "vector",
+        "vectorX": 1,
+        "vectorY": 0,
+        "vectorZ": 0,
+        "behavior": "allOrNothing"
+      },
+      "toleranceFt": 0.05
+    },
+    "mock": {
+      "/revit/create-family-instance": {
+        "id": 9301,
+        "name": "Duplex Receptacle",
+        "family": "Duplex Receptacle",
+        "familyName": "Duplex Receptacle",
+        "symbol": "Duplex Receptacle",
+        "symbolName": "Duplex Receptacle",
+        "typeName": "Duplex Receptacle"
+      },
+      "/revit/export-visible-elements:1": {
+        "imagePath": "artifacts/captures/move-receptacle-before.png",
+        "items": [
+          { "id": 9301, "category": "Electrical Fixtures", "anchor": { "model": { "x": 0, "y": 0, "z": 0 } } }
+        ]
+      },
+      "/revit/move-elements:1": {
+        "status": "Dry Run",
+        "movedIds": [9301],
+        "skipped": [],
+        "warnings": [],
+        "rolledBack": true
+      },
+      "/revit/move-elements:2": {
+        "status": "Moved",
+        "movedIds": [9301],
+        "skipped": [],
+        "warnings": [],
+        "rolledBack": false
+      },
+      "/revit/export-visible-elements:2": {
+        "imagePath": "artifacts/captures/move-receptacle-after.png",
+        "items": [
+          { "id": 9301, "category": "Electrical Fixtures", "anchor": { "model": { "x": 1, "y": 0, "z": 0 } } }
+        ]
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "requestedIds": [9301],
+        "impactedIds": [9301]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "requestedIds": [9301],
+        "impactedIds": [9301]
+      }
+    }
+  }
+}

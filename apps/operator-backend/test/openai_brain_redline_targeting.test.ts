@@ -9,6 +9,9 @@ import {
   __testOnlyBuildRedlineExecutionBridge,
   __testOnlyBuildRedlineExecutionBridgeAsync,
   __testOnlyBuildInitialRedlinePreflightAction,
+  __testOnlyBuildMepRedlineActionGuardResponse,
+  __testOnlyBuildMepRedlineDuctScopeRecoveryResponse,
+  __testOnlyBuildMepRedlineRouteRecoveryResponse,
   __testOnlyBuildPlacementRunState,
   __testOnlyBuildPlacementWorkItem,
   __testOnlyBuildSpatialRedlineRefinementBridge,
@@ -748,6 +751,388 @@ test("redline targeting keeps delete-like annotation intent in delete mode", () 
   assert.equal(profile.resolve_only, false);
 });
 
+test("redline execution bridge applies a dry-run-proven delete set", () => {
+  const response = __testOnlyBuildRedlineExecutionBridge({
+    userText: "delete the crossed-out keynote",
+    toolResults: [
+      {
+        action_id: "delete-preview",
+        method: "POST",
+        path: "/revit/delete",
+        status: "done",
+        result_json: {
+          status: "Dry Run",
+          requestedIds: [6101],
+          impactedIds: [6101]
+        }
+      }
+    ]
+  });
+
+  assert.ok(response);
+  assert.equal(response.actions.length, 1);
+  assert.equal(response.actions[0]?.path, "/revit/delete");
+  assert.deepEqual((response.actions[0]?.body as any)?.ids, [6101]);
+  assert.equal((response.actions[0]?.body as any)?.apply, true);
+  assert.match(response.assistant_message, /Dry-run delete verified/i);
+});
+
+test("redline execution bridge blocks delete apply when dry-run omits target ids", () => {
+  const response = __testOnlyBuildRedlineExecutionBridge({
+    userText: "delete the crossed-out keynote",
+    toolResults: [
+      {
+        action_id: "delete-preview",
+        method: "POST",
+        path: "/revit/delete",
+        status: "done",
+        result_json: {
+          status: "Dry Run",
+          requestedIds: [6101],
+          impactedIds: []
+        }
+      }
+    ]
+  });
+
+  assert.ok(response);
+  assert.equal(response.actions.length, 0);
+  assert.match(response.assistant_message, /stopped before applying/i);
+  assert.match(response.assistant_message, /6101/);
+});
+
+test("redline execution bridge finalizes delete only with prior dry-run evidence", () => {
+  const appliedWithoutPreview = __testOnlyBuildRedlineExecutionBridge({
+    userText: "delete the crossed-out keynote",
+    toolResults: [
+      {
+        action_id: "delete-apply",
+        method: "POST",
+        path: "/revit/delete",
+        status: "done",
+        result_json: {
+          status: "Deleted",
+          requestedIds: [6101],
+          deletedIds: [6101]
+        }
+      }
+    ]
+  });
+  assert.ok(appliedWithoutPreview);
+  assert.equal(appliedWithoutPreview.actions.length, 0);
+  assert.match(appliedWithoutPreview.assistant_message, /cannot prove a prior dry-run/i);
+
+  const appliedWithPreview = __testOnlyBuildRedlineExecutionBridge({
+    userText: "delete the crossed-out keynote",
+    toolResults: [
+      {
+        action_id: "delete-preview",
+        method: "POST",
+        path: "/revit/delete",
+        status: "done",
+        result_json: {
+          status: "Dry Run",
+          requestedIds: [6101],
+          impactedIds: [6101]
+        }
+      },
+      {
+        action_id: "delete-apply",
+        method: "POST",
+        path: "/revit/delete",
+        status: "done",
+        result_json: {
+          status: "Deleted",
+          requestedIds: [6101],
+          deletedIds: [6101]
+        }
+      }
+    ]
+  });
+
+  assert.ok(appliedWithPreview);
+  assert.equal(appliedWithPreview.actions.length, 0);
+  assert.match(appliedWithPreview.assistant_message, /Deleted the redline-targeted element id/i);
+});
+
+test("redline execution bridge applies a dry-run-proven move set", () => {
+  const response = __testOnlyBuildRedlineExecutionBridge({
+    userText: "move the selected redline target 1 foot right",
+    toolResults: [
+      {
+        action_id: "move-preview",
+        method: "POST",
+        path: "/revit/move-elements",
+        status: "done",
+        result_json: {
+          status: "Dry Run",
+          requestedIds: [6201],
+          movedIds: [6201],
+          request: {
+            ids: [6201],
+            mode: "vector",
+            vectorX: 1,
+            vectorY: 0,
+            vectorZ: 0,
+            behavior: "allOrNothing"
+          }
+        }
+      }
+    ]
+  });
+
+  assert.ok(response);
+  assert.equal(response.actions.length, 1);
+  assert.equal(response.actions[0]?.path, "/revit/move-elements");
+  assert.deepEqual((response.actions[0]?.body as any)?.ids, [6201]);
+  assert.equal((response.actions[0]?.body as any)?.vectorX, 1);
+  assert.equal((response.actions[0]?.body as any)?.vectorY, 0);
+  assert.equal((response.actions[0]?.body as any)?.apply, true);
+  assert.match(response.assistant_message, /Dry-run move verified/i);
+});
+
+test("redline execution bridge blocks move apply when dry-run omits target ids or vector", () => {
+  const omittedTarget = __testOnlyBuildRedlineExecutionBridge({
+    userText: "move the selected redline target 1 foot right",
+    toolResults: [
+      {
+        action_id: "move-preview",
+        method: "POST",
+        path: "/revit/move-elements",
+        status: "done",
+        result_json: {
+          status: "Dry Run",
+          requestedIds: [6201],
+          movedIds: [],
+          request: { ids: [6201], mode: "vector", vectorX: 1, vectorY: 0, vectorZ: 0 }
+        }
+      }
+    ]
+  });
+  assert.ok(omittedTarget);
+  assert.equal(omittedTarget.actions.length, 0);
+  assert.match(omittedTarget.assistant_message, /stopped before applying/i);
+  assert.match(omittedTarget.assistant_message, /6201/);
+
+  const missingVector = __testOnlyBuildRedlineExecutionBridge({
+    userText: "move the selected redline target 1 foot right",
+    toolResults: [
+      {
+        action_id: "move-preview",
+        method: "POST",
+        path: "/revit/move-elements",
+        status: "done",
+        result_json: {
+          status: "Dry Run",
+          requestedIds: [6201],
+          movedIds: [6201]
+        }
+      }
+    ]
+  });
+  assert.ok(missingVector);
+  assert.equal(missingVector.actions.length, 0);
+  assert.match(missingVector.assistant_message, /replayable model-space vector/i);
+});
+
+test("redline execution bridge finalizes move only with prior dry-run evidence", () => {
+  const appliedWithoutPreview = __testOnlyBuildRedlineExecutionBridge({
+    userText: "move the selected redline target 1 foot right",
+    toolResults: [
+      {
+        action_id: "move-apply",
+        method: "POST",
+        path: "/revit/move-elements",
+        status: "done",
+        result_json: {
+          status: "Moved",
+          requestedIds: [6201],
+          movedIds: [6201]
+        }
+      }
+    ]
+  });
+  assert.ok(appliedWithoutPreview);
+  assert.equal(appliedWithoutPreview.actions.length, 0);
+  assert.match(appliedWithoutPreview.assistant_message, /cannot prove a prior dry-run/i);
+
+  const appliedWithPreview = __testOnlyBuildRedlineExecutionBridge({
+    userText: "move the selected redline target 1 foot right",
+    toolResults: [
+      {
+        action_id: "move-preview",
+        method: "POST",
+        path: "/revit/move-elements",
+        status: "done",
+        result_json: {
+          status: "Dry Run",
+          requestedIds: [6201],
+          movedIds: [6201],
+          request: { ids: [6201], mode: "vector", vectorX: 1, vectorY: 0, vectorZ: 0 }
+        }
+      },
+      {
+        action_id: "move-apply",
+        method: "POST",
+        path: "/revit/move-elements",
+        status: "done",
+        result_json: {
+          status: "Moved",
+          requestedIds: [6201],
+          movedIds: [6201]
+        }
+      }
+    ]
+  });
+
+  assert.ok(appliedWithPreview);
+  assert.equal(appliedWithPreview.actions.length, 0);
+  assert.match(appliedWithPreview.assistant_message, /Moved the redline-targeted element id/i);
+});
+
+test("redline execution bridge applies a dry-run-proven rotate set", () => {
+  const response = __testOnlyBuildRedlineExecutionBridge({
+    userText: "rotate the selected redline target 90 degrees",
+    toolResults: [
+      {
+        action_id: "rotate-preview",
+        method: "POST",
+        path: "/revit/rotate-elements",
+        status: "done",
+        result_json: {
+          status: "Dry Run",
+          requestedIds: [6301],
+          rotatedIds: [6301],
+          request: {
+            ids: [6301],
+            angleDegrees: 90,
+            axis: { mode: "zThroughPoint", pointX: 1, pointY: 2, pointZ: 0 },
+            behavior: "allOrNothing"
+          }
+        }
+      }
+    ]
+  });
+
+  assert.ok(response);
+  assert.equal(response.actions.length, 1);
+  assert.equal(response.actions[0]?.path, "/revit/rotate-elements");
+  assert.deepEqual((response.actions[0]?.body as any)?.ids, [6301]);
+  assert.equal((response.actions[0]?.body as any)?.angleDegrees, 90);
+  assert.equal((response.actions[0]?.body as any)?.axis?.mode, "zThroughPoint");
+  assert.equal((response.actions[0]?.body as any)?.axis?.pointX, 1);
+  assert.equal((response.actions[0]?.body as any)?.axis?.pointY, 2);
+  assert.equal((response.actions[0]?.body as any)?.dryRun, false);
+  assert.match(response.assistant_message, /Dry-run rotate verified/i);
+});
+
+test("redline execution bridge blocks rotate apply when dry-run omits target ids or axis", () => {
+  const omittedTarget = __testOnlyBuildRedlineExecutionBridge({
+    userText: "rotate the selected redline target 90 degrees",
+    toolResults: [
+      {
+        action_id: "rotate-preview",
+        method: "POST",
+        path: "/revit/rotate-elements",
+        status: "done",
+        result_json: {
+          status: "Dry Run",
+          requestedIds: [6301],
+          rotatedIds: [],
+          request: {
+            ids: [6301],
+            angleDegrees: 90,
+            axis: { mode: "zThroughPoint", pointX: 1, pointY: 2, pointZ: 0 }
+          }
+        }
+      }
+    ]
+  });
+  assert.ok(omittedTarget);
+  assert.equal(omittedTarget.actions.length, 0);
+  assert.match(omittedTarget.assistant_message, /stopped before applying/i);
+  assert.match(omittedTarget.assistant_message, /6301/);
+
+  const missingAxis = __testOnlyBuildRedlineExecutionBridge({
+    userText: "rotate the selected redline target 90 degrees",
+    toolResults: [
+      {
+        action_id: "rotate-preview",
+        method: "POST",
+        path: "/revit/rotate-elements",
+        status: "done",
+        result_json: {
+          status: "Dry Run",
+          requestedIds: [6301],
+          rotatedIds: [6301],
+          request: { ids: [6301], angleDegrees: 90 }
+        }
+      }
+    ]
+  });
+  assert.ok(missingAxis);
+  assert.equal(missingAxis.actions.length, 0);
+  assert.match(missingAxis.assistant_message, /rotation axis and angle/i);
+});
+
+test("redline execution bridge finalizes rotate only with prior dry-run evidence", () => {
+  const appliedWithoutPreview = __testOnlyBuildRedlineExecutionBridge({
+    userText: "rotate the selected redline target 90 degrees",
+    toolResults: [
+      {
+        action_id: "rotate-apply",
+        method: "POST",
+        path: "/revit/rotate-elements",
+        status: "done",
+        result_json: {
+          status: "Rotated",
+          requestedIds: [6301],
+          rotatedIds: [6301]
+        }
+      }
+    ]
+  });
+  assert.ok(appliedWithoutPreview);
+  assert.equal(appliedWithoutPreview.actions.length, 0);
+  assert.match(appliedWithoutPreview.assistant_message, /cannot prove a prior dry-run/i);
+
+  const appliedWithPreview = __testOnlyBuildRedlineExecutionBridge({
+    userText: "rotate the selected redline target 90 degrees",
+    toolResults: [
+      {
+        action_id: "rotate-preview",
+        method: "POST",
+        path: "/revit/rotate-elements",
+        status: "done",
+        result_json: {
+          status: "Dry Run",
+          requestedIds: [6301],
+          rotatedIds: [6301],
+          request: {
+            ids: [6301],
+            angleDegrees: 90,
+            axis: { mode: "zThroughPoint", pointX: 1, pointY: 2, pointZ: 0 }
+          }
+        }
+      },
+      {
+        action_id: "rotate-apply",
+        method: "POST",
+        path: "/revit/rotate-elements",
+        status: "done",
+        result_json: {
+          status: "Rotated",
+          requestedIds: [6301],
+          rotatedIds: [6301]
+        }
+      }
+    ]
+  });
+
+  assert.ok(appliedWithPreview);
+  assert.equal(appliedWithPreview.actions.length, 0);
+  assert.match(appliedWithPreview.assistant_message, /Rotated the redline-targeted element id/i);
+});
 
 test("redline targeting captures spatial cues for mutation targeting", () => {
   const profile = __testOnlyInferRedlineTargetingProfile({
@@ -1018,6 +1403,673 @@ test("redline execution bridge resolves a room plan view for spatial additions b
   assert.ok(response);
   assert.equal(response.actions[0]?.path, "/revit/resolve-room-plan-view");
   assert.equal((response.actions[0]?.body as any)?.roomNumber, "403");
+});
+
+test("redline execution bridge leaves duct route redlines to MEP workflow instead of hosted placement", () => {
+  const response = __testOnlyBuildRedlineExecutionBridge({
+    userText: "pick up attached redline: 12x10 supply duct in room 405",
+    context: {
+      revit: {
+        document: {
+          activeView: {
+            id: 1363433,
+            name: "L4 - HVAC",
+            type: "FloorPlan"
+          }
+        }
+      }
+    }
+  });
+
+  assert.equal(response, null);
+});
+
+test("MEP redline guard blocks selected duct resize when PDF annotation is a new 12x10 duct", () => {
+  const response = __testOnlyBuildMepRedlineActionGuardResponse({
+    req: {
+      user_text:
+        "On sheet/view M104 Plan HVAC L4, pick up the attached redline note. The current active selection is a duct; update it to 11\" x 10\".",
+      user_attachments: [
+        {
+          id: "marked",
+          filename: "marked.pdf",
+          relative_path: "artifacts/uploads/marked.pdf",
+          mime: "application/pdf"
+        }
+      ]
+    },
+    workbenchResults: [
+      {
+        index: 1,
+        type: "analyze_redline",
+        ok: true,
+        summary: "Redline analyzed",
+        details: {
+          mark_regions: [
+            {
+              index: 1,
+              source: "pdf_annotation",
+              annotation_subtype: "PolyLine",
+              annotation_contents: "12x10 supply duct"
+            }
+          ]
+        }
+      }
+    ] as any,
+    actions: [
+      {
+        action_id: "bad-resize",
+        method: "POST",
+        path: "/revit/resize-ductwork-by-scope",
+        body: {
+          elementIds: [1465136],
+          sizeTo: "11x10",
+          apply: true
+        }
+      }
+    ]
+  });
+
+  assert.ok(response);
+  assert.equal(response.actions[0]?.path, "/revit/tool-search");
+  assert.match(response.assistant_message, /12x10 supply duct/i);
+  assert.match(response.assistant_message, /modify an existing duct/i);
+  assert.doesNotMatch(JSON.stringify(response.actions), /resize-ductwork-by-scope/i);
+});
+
+test("MEP redline guard allows a matching 12x10 duct route workflow", () => {
+  const response = __testOnlyBuildMepRedlineActionGuardResponse({
+    req: {
+      user_text: "pick up attached redline",
+      user_attachments: [
+        {
+          id: "marked",
+          filename: "marked.pdf",
+          relative_path: "artifacts/uploads/marked.pdf",
+          mime: "application/pdf"
+        }
+      ]
+    },
+    workbenchResults: [
+      {
+        index: 1,
+        type: "analyze_redline",
+        ok: true,
+        summary: "Redline analyzed",
+        details: {
+          mark_regions: [
+            {
+              index: 1,
+              source: "pdf_annotation",
+              annotation_subtype: "PolyLine",
+              annotation_contents: "12x10 supply duct"
+            }
+          ]
+        }
+      }
+    ] as any,
+    actions: [
+      {
+        action_id: "route",
+        method: "POST",
+        path: "/revit/mep-route-workflow",
+        body: {
+          discipline: "duct",
+          ductSize: "12x10",
+          apply: false,
+          points: [
+            { x: 0, y: 0, z: 0 },
+            { x: 4, y: 0, z: 0 }
+          ]
+        }
+      }
+    ]
+  });
+
+  assert.equal(response, null);
+});
+
+test("MEP redline recovery queries duct spatial scope before generic hosted-device recovery", () => {
+  const response = __testOnlyBuildMepRedlineDuctScopeRecoveryResponse({
+    req: {
+      user_text:
+        "Continue redline pickup for marked.pdf. The visible redline says \"12x10 supply duct\" near Live/Work Loft Unit 405. Do not use /revit/pick-at-pixel.",
+      user_attachments: [
+        {
+          id: "marked",
+          filename: "marked.pdf",
+          relative_path: "artifacts/uploads/marked.pdf",
+          mime: "application/pdf"
+        }
+      ]
+    },
+    redlineTargetProfile: { room_number: "405" },
+    workbenchResults: [
+      {
+        index: 1,
+        type: "analyze_redline",
+        ok: true,
+        summary: "Redline analyzed",
+        details: {
+          mark_regions: [
+            {
+              index: 1,
+              source: "pdf_annotation",
+              annotation_subtype: "PolyLine",
+              annotation_contents: "12x10 supply duct"
+            }
+          ]
+        }
+      }
+    ] as any,
+    toolResults: [
+      {
+        action_id: "resolve-room",
+        method: "POST",
+        path: "/revit/resolve-room-plan-view",
+        status: "done",
+        result_json: { roomNumber: "405", bestViewId: 1363433, bestViewName: "L4" }
+      }
+    ] as any
+  });
+
+  assert.ok(response);
+  assert.equal(response.actions[0]?.path, "/revit/ducts-by-spatial-scope");
+  const body = response.actions[0]?.body as any;
+  assert.equal(body.roomNumber, "405");
+  assert.equal(body.systemClassification, "Supply");
+  assert.equal(body.verticalScope, "room+plenum");
+  assert.deepEqual(body.includeCategories, ["Ducts", "Duct Fittings", "Air Terminals"]);
+});
+
+test("MEP redline route recovery resolves routing context when room 405 has no matching supply duct", () => {
+  const response = __testOnlyBuildMepRedlineRouteRecoveryResponse({
+    req: {
+      user_text:
+        "Pick up the redline from M104. The red markup reads \"12x10 supply\" near Live/Work Loft Unit 405. If no exact duct target is found, do not use pick-at-pixel.",
+      user_attachments: [
+        {
+          id: "marked",
+          filename: "marked.pdf",
+          relative_path: "artifacts/uploads/marked.pdf",
+          mime: "application/pdf"
+        }
+      ]
+    },
+    workbenchResults: [
+      {
+        index: 1,
+        type: "redline_orient",
+        ok: true,
+        summary: "Redline orientation completed; primary_sheet=M104, mapped_regions=1.",
+        details: {
+          analysis: {
+            mark_regions: [
+              {
+                index: 1,
+                source: "pdf_annotation",
+                annotation_subtype: "PolyLine",
+                annotation_contents: "12x10 supply duct"
+              }
+            ]
+          },
+          mapping: {
+            regions: [
+              {
+                index: 1,
+                primary_target: {
+                  kind: "viewport",
+                  view_id: 1363433,
+                  score: 1,
+                  view_hint: { normalized_x: 0.549, normalized_y: 0.68, rotation: "none" }
+                }
+              }
+            ]
+          }
+        }
+      }
+    ] as any,
+    actions: [],
+    toolResults: [
+      {
+        action_id: "duct_scope_405",
+        method: "POST",
+        path: "/revit/ducts-by-spatial-scope",
+        status: "done",
+        result_json: {
+          query: "405",
+          systemClassification: "Supply",
+          elementIds: [],
+          elements: [],
+          counts: { matchedCount: 0 }
+        }
+      }
+    ] as any
+  });
+
+  assert.ok(response);
+  assert.equal(response.actions[0]?.path, "/revit/resolve-mep-routing-context");
+  const body = response.actions[0]?.body as any;
+  assert.equal(body.viewId, 1363433);
+  assert.equal(body.roomNumber, "405");
+  assert.equal(body.systemKind, "duct");
+  assert.equal(body.systemClassification, "Supply");
+  assert.match(response.assistant_message, /No matching editable supply duct/i);
+});
+
+test("MEP redline route recovery redirects duct resize tool search to routing context", () => {
+  const response = __testOnlyBuildMepRedlineRouteRecoveryResponse({
+    req: {
+      user_text: "Continue the redline pickup for Unit 405. Apply the 12x10 supply duct markup.",
+      user_attachments: [
+        {
+          id: "marked",
+          filename: "marked.pdf",
+          relative_path: "artifacts/uploads/marked.pdf",
+          mime: "application/pdf"
+        }
+      ],
+      context: {
+        revit: {
+          document: {
+            activeView: { id: 1363433, name: "L4", type: "FloorPlan" }
+          }
+        }
+      }
+    },
+    workbenchResults: [
+      {
+        index: 1,
+        type: "analyze_redline",
+        ok: true,
+        summary: "Redline analyzed",
+        details: {
+          mark_regions: [
+            {
+              index: 1,
+              source: "pdf_annotation",
+              annotation_subtype: "PolyLine",
+              annotation_contents: "12x10 supply duct"
+            }
+          ]
+        }
+      }
+    ] as any,
+    actions: [
+      {
+        action_id: "wrong-search",
+        method: "POST",
+        path: "/revit/tool-search",
+        body: { query: "duct modify size set parameter supply duct dimensions change duct size resize ductwork" }
+      }
+    ]
+  });
+
+  assert.ok(response);
+  assert.equal(response.actions[0]?.path, "/revit/resolve-mep-routing-context");
+  assert.equal((response.actions[0]?.body as any).roomNumber, "405");
+  assert.doesNotMatch(JSON.stringify(response.actions), /resize ductwork/i);
+});
+
+test("MEP redline route recovery uses sheet detail view id before generic frame export", () => {
+  const response = __testOnlyBuildMepRedlineRouteRecoveryResponse({
+    req: {
+      user_text:
+        'The user asked to "pick up redline" and provided one reference attachment showing sheet M104 / Plan HVAC L4.',
+      user_attachments: [
+        {
+          id: "marked",
+          filename: "marked.pdf",
+          relative_path: "artifacts/uploads/marked.pdf",
+          mime: "application/pdf"
+        }
+      ]
+    },
+    workbenchResults: [
+      {
+        index: 1,
+        type: "analyze_redline",
+        ok: true,
+        summary: "Redline analyzed (pdf); primary_sheet=M104.",
+        details: {
+          mark_regions: [
+            {
+              index: 1,
+              source: "pdf_annotation",
+              annotation_subtype: "PolyLine",
+              annotation_contents: "12x10 supply duct"
+            }
+          ]
+        }
+      }
+    ] as any,
+    actions: [
+      {
+        action_id: "generic-frame-export",
+        method: "POST",
+        path: "/revit/export-view-frame",
+        body: { viewId: 1363433, imageSize: 2200, includeMapping: true }
+      }
+    ],
+    toolResults: [
+      {
+        action_id: "sheet-detail",
+        method: "POST",
+        path: "/revit/sheets",
+        status: "done",
+        result_json: {
+          status: "Ok",
+          action: "detail",
+          sheetNumber: "M104",
+          placedViews: [{ viewId: 1363433, name: "L4", viewType: "FloorPlan" }],
+          viewportGeometry: [{ viewportId: 1411539, viewId: 1363433 }]
+        }
+      }
+    ] as any
+  });
+
+  assert.ok(response);
+  assert.equal(response.actions[0]?.path, "/revit/resolve-mep-routing-context");
+  const body = response.actions[0]?.body as any;
+  assert.equal(body.viewId, 1363433);
+  assert.equal(body.systemKind, "duct");
+  assert.equal(body.systemClassification, "Supply");
+  assert.doesNotMatch(JSON.stringify(response.actions), /export-view-frame/i);
+});
+
+test("MEP redline route recovery creates workflow after route tool discovery and explicit unconnected apply", () => {
+  const response = __testOnlyBuildMepRedlineRouteRecoveryResponse({
+    req: {
+      user_text:
+        'Implement the explicit redline on marked.pdf: add a 12" x 10" rectangular SUPPLY AIR duct on L4/M104 following the red route in/above Live/Work Loft Unit 405. If exact existing-duct connectors cannot be resolved, place the duct segments unconnected.',
+      user_attachments: [
+        {
+          id: "marked",
+          filename: "marked.pdf",
+          relative_path: "artifacts/uploads/marked.pdf",
+          mime: "application/pdf"
+        }
+      ]
+    },
+    workbenchResults: [
+      {
+        index: 1,
+        type: "analyze_redline",
+        ok: true,
+        summary: "Redline analyzed (pdf); primary_sheet=M104.",
+        details: {
+          mark_regions: [
+            {
+              index: 1,
+              source: "pdf_annotation",
+              annotation_subtype: "PolyLine",
+              annotation_contents: "12x10 supply duct"
+            }
+          ]
+        }
+      }
+    ] as any,
+    actions: [
+      {
+        action_id: "repeat-search",
+        method: "POST",
+        path: "/revit/tool-search",
+        body: { query: "create 12x10 supply duct route workflow frame-linked points room 405" }
+      }
+    ],
+    toolResults: [
+      {
+        action_id: "frame",
+        method: "POST",
+        path: "/revit/export-view-frame",
+        status: "done",
+        result_json: { frameId: "frame-1", viewId: 1363433, widthPx: 2200, heightPx: 1223 }
+      },
+      {
+        action_id: "pick",
+        method: "POST",
+        path: "/revit/pick-at-pixel",
+        status: "done",
+        result_json: { pickPointXyz: [-2.718, -9.101, -467.883], best: null, hits: [] }
+      },
+      {
+        action_id: "context",
+        method: "POST",
+        path: "/revit/resolve-mep-routing-context",
+        status: "done",
+        result_json: {
+          status: "Ok",
+          view: { id: 1363433, name: "L4", type: "FloorPlan" },
+          level: { id: 1362791, name: "L4", elevation: 32.1667 },
+          recommendedElevation: { zFt: 38.8333, mode: "between_levels_midpoint", confidence: "low" }
+        }
+      },
+      {
+        action_id: "search",
+        method: "POST",
+        path: "/revit/tool-search",
+        status: "done",
+        result_json: {
+          matches: [
+            { method: "POST", path: "/revit/create-mep-route", title: "Create MEP Route" },
+            { method: "POST", path: "/revit/mep-route-workflow", title: "MEP Route Workflow" }
+          ]
+        }
+      }
+    ] as any
+  });
+
+  assert.ok(response);
+  assert.equal(response.actions[0]?.path, "/revit/mep-route-workflow");
+  const body = response.actions[0]?.body as any;
+  assert.equal(body.viewId, 1363433);
+  assert.equal(body.roomNumber, "405");
+  assert.equal(body.levelName, "L4");
+  assert.equal(body.systemType, "Supply Air");
+  assert.equal(body.ductSize, "12x10");
+  assert.equal(body.apply, true);
+  assert.equal(body.visualVerify, true);
+  assert.equal(body.points.length, 3);
+  assert.equal(body.points[0].z, undefined);
+  assert.equal(body.points[1].z, undefined);
+  assert.equal(body.points[2].z, undefined);
+  assert.doesNotMatch(JSON.stringify(response.actions), /tool-search/i);
+});
+
+test("MEP redline route recovery creates workflow directly once context and pick anchor exist", () => {
+  const response = __testOnlyBuildMepRedlineRouteRecoveryResponse({
+    req: {
+      user_text:
+        "Pick up the attached redline on M104. Add the 12x10 supply duct at Live/Work Loft Unit 405.",
+      user_attachments: [
+        {
+          id: "marked",
+          filename: "marked.pdf",
+          relative_path: "artifacts/uploads/marked.pdf",
+          mime: "application/pdf"
+        }
+      ]
+    },
+    workbenchResults: [
+      {
+        index: 1,
+        type: "analyze_redline",
+        ok: true,
+        summary: "Redline analyzed (pdf); primary_sheet=M104.",
+        details: {
+          mark_regions: [
+            {
+              index: 1,
+              source: "pdf_annotation",
+              annotation_subtype: "PolyLine",
+              annotation_contents: "12x10 supply duct"
+            }
+          ]
+        }
+      }
+    ] as any,
+    actions: [
+      {
+        action_id: "frame",
+        method: "POST",
+        path: "/revit/export-view-frame",
+        body: { viewId: 1363433, imageSize: 2200, includeMapping: true }
+      }
+    ],
+    toolResults: [
+      {
+        action_id: "sheet-detail",
+        method: "POST",
+        path: "/revit/sheets",
+        status: "done",
+        result_json: {
+          status: "Ok",
+          action: "detail",
+          sheetNumber: "M104",
+          placedViews: [{ viewId: 1363433, name: "L4", viewType: "FloorPlan" }]
+        }
+      },
+      {
+        action_id: "pick",
+        method: "POST",
+        path: "/revit/pick-at-pixel",
+        status: "done",
+        result_json: { pickPointXyz: [-2.718, -9.101, -467.883], best: null, hits: [] }
+      },
+      {
+        action_id: "context",
+        method: "POST",
+        path: "/revit/resolve-mep-routing-context",
+        status: "done",
+        result_json: {
+          status: "Ok",
+          view: { id: 1363433, name: "L4", type: "FloorPlan" },
+          level: { id: 1362791, name: "L4", elevation: 32.1667 }
+        }
+      }
+    ] as any
+  });
+
+  assert.ok(response);
+  assert.equal(response.actions[0]?.path, "/revit/mep-route-workflow");
+  const body = response.actions[0]?.body as any;
+  assert.equal(body.viewId, 1363433);
+  assert.equal(body.roomNumber, "405");
+  assert.equal(body.ductSize, "12x10");
+  assert.equal(body.apply, true);
+  assert.doesNotMatch(JSON.stringify(response.actions), /tool-search/i);
+});
+
+test("MEP redline route recovery stops repeated tool-search when endpoints are still missing", () => {
+  const response = __testOnlyBuildMepRedlineRouteRecoveryResponse({
+    req: {
+      user_text:
+        "Continue the attached M104 redline pickup for Live/Work Loft Unit 405. Add the 12x10 supply duct.",
+      user_attachments: [
+        {
+          id: "marked",
+          filename: "marked.pdf",
+          relative_path: "artifacts/uploads/marked.pdf",
+          mime: "application/pdf"
+        }
+      ]
+    },
+    workbenchResults: [
+      {
+        index: 1,
+        type: "analyze_redline",
+        ok: true,
+        summary: "Redline analyzed (pdf); primary_sheet=M104.",
+        details: {
+          mark_regions: [
+            {
+              index: 1,
+              source: "pdf_annotation",
+              annotation_subtype: "PolyLine",
+              annotation_contents: "12x10 supply duct"
+            }
+          ]
+        }
+      }
+    ] as any,
+    actions: [
+      {
+        action_id: "repeat-search",
+        method: "POST",
+        path: "/revit/tool-search",
+        body: { query: "create 12x10 supply duct route workflow frame-linked points room 405" }
+      }
+    ],
+    toolResults: [
+      {
+        action_id: "context",
+        method: "POST",
+        path: "/revit/resolve-mep-routing-context",
+        status: "done",
+        result_json: { status: "Ok", view: { id: 1363433 }, level: { name: "L4" } }
+      },
+      {
+        action_id: "search",
+        method: "POST",
+        path: "/revit/tool-search",
+        status: "done",
+        result_json: {
+          matches: [{ method: "POST", path: "/revit/mep-route-workflow", title: "MEP Route Workflow" }]
+        }
+      }
+    ] as any
+  });
+
+  assert.ok(response);
+  assert.equal(response.actions.length, 0);
+  assert.match(response.assistant_message, /stopping instead of repeating tool-search/i);
+});
+
+test("MEP redline route recovery does not override status-only no-discovery turns", () => {
+  const response = __testOnlyBuildMepRedlineRouteRecoveryResponse({
+    req: {
+      user_text:
+        "Do not make additional discovery calls. Based on the previous session, provide a concise status: did you find explicit redline instructions and were any Revit changes applied?",
+      user_attachments: [
+        {
+          id: "marked",
+          filename: "marked.pdf",
+          relative_path: "artifacts/uploads/marked.pdf",
+          mime: "application/pdf"
+        }
+      ]
+    },
+    workbenchResults: [
+      {
+        index: 1,
+        type: "analyze_redline",
+        ok: true,
+        summary: "Redline analyzed",
+        details: {
+          mark_regions: [
+            {
+              index: 1,
+              source: "pdf_annotation",
+              annotation_subtype: "PolyLine",
+              annotation_contents: "12x10 supply duct"
+            }
+          ]
+        }
+      }
+    ] as any,
+    actions: [],
+    toolResults: [
+      {
+        action_id: "context",
+        method: "POST",
+        path: "/revit/resolve-mep-routing-context",
+        status: "done",
+        result_json: { status: "Ok", view: { id: 1363433 }, level: { name: "L4" } }
+      }
+    ] as any
+  });
+
+  assert.equal(response, null);
 });
 
 test("redline execution bridge exports a resolved non-active plan view when no sheet or viewport anchor exists", () => {

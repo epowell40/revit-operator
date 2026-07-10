@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_delete_text",
+  "name": "Demo H: Delete-Like Redline Text Note",
+  "description": "Exercise a delete-like redline operation using a disposable text note target: create a bounded target, prove it is visible, dry-run delete, apply delete, and verify it is absent afterward.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a model that can be closed without saving.",
+    "Use a view or sheet that supports text notes.",
+    "Keep the generated target text unique per run so repeated live runs cannot match stale notes."
+  ],
+  "success_criteria": [
+    "A disposable text note id is created in the requested view.",
+    "The created id is visible in the pre-delete visible-element inventory.",
+    "The /revit/delete dry-run returns effect evidence covering the created id.",
+    "The applied /revit/delete response returns effect evidence covering the created id.",
+    "The post-delete visible-element inventory no longer contains the created id.",
+    "A deterministic delete visual gate artifact passes using before/after capture evidence."
+  ],
+  "failure_criteria": [
+    "The text note target is not created or is created in the wrong view.",
+    "The delete dry-run only echoes requested ids and does not return effect evidence.",
+    "The applied delete response omits the target id from effect evidence.",
+    "The target is still visible after delete.",
+    "The delete visual gate artifact is missing or fails."
+  ],
+  "max_time_seconds": 60,
+  "max_steps": 6,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task intentionally uses a disposable created target so repeated live runs prove delete mechanics without damaging project content.",
+    "Do not count requestedIds-only delete responses as evidence; dry-run and apply must return ids, deletedIds, or impactedIds."
+  ],
+  "tags": ["revit", "demo", "redline", "delete", "annotation", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "redline_delete",
+    "request": {
+      "viewId": 101,
+      "imageSize": 1800,
+      "textNote": {
+        "x": 1.5,
+        "y": 1.0,
+        "text": "OPERATOR DELETE REDLINE"
+      }
+    },
+    "mock": {
+      "/revit/create-text": {
+        "status": "success",
+        "id": 7101,
+        "viewId": 101
+      },
+      "/revit/export-visible-elements:1": {
+        "imagePath": "artifacts/captures/delete-before.png",
+        "items": [
+          { "id": 7101, "category": "Text Notes", "visibleText": "OPERATOR DELETE REDLINE" }
+        ]
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "requestedIds": [7101],
+        "impactedIds": [7101]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "requestedIds": [7101],
+        "impactedIds": [7101]
+      },
+      "/revit/export-visible-elements:2": {
+        "imagePath": "artifacts/captures/delete-after.png",
+        "items": []
+      }
+    }
+  }
+}

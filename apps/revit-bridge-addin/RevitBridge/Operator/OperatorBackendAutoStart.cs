@@ -15,9 +15,18 @@ namespace RevitBridge.Operator
         private static int _watchdogStarted;
         private static readonly SemaphoreSlim _ensureGate = new SemaphoreSlim(1, 1);
         private static long _lastEnsureAttemptTicksUtc;
+        private static readonly TimeSpan HealthyWatchdogInterval = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan UnhealthyWatchdogInterval = TimeSpan.FromSeconds(5);
 
         public static void TryStartInBackground()
         {
+            if (Volatile.Read(ref _watchdogStarted) == 1) return;
+            if (!IsEnabled()) return;
+
+            // This method is called from UI/status paths. Once the watchdog is running,
+            // it must be a true no-op: no file I/O, no health probe, no process scan.
+            if (Interlocked.Exchange(ref _watchdogStarted, 1) == 1) return;
+
             var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
             var logDir = WorkspacePaths.EnsureDir("logs");
             var tracePath = Path.Combine(logDir, "operator-backend-autostart-trace.log");
@@ -28,12 +37,9 @@ namespace RevitBridge.Operator
             }
 
             Trace("TryStartInBackground invoked");
-            if (!IsEnabled()) return;
 
             // Start a lightweight watchdog that can restart the backend if it dies mid-session.
             // The actual start attempts are gated by _ensureGate so multiple callers won't stampede.
-            if (Interlocked.Exchange(ref _watchdogStarted, 1) == 1) return;
-
             Task.Run(async () =>
             {
                 try
@@ -46,8 +52,13 @@ namespace RevitBridge.Operator
 
                     while (true)
                     {
-                        await Task.Delay(2000).ConfigureAwait(false);
-                        await EnsureHealthyAsync(baseUri, Trace, CancellationToken.None).ConfigureAwait(false);
+                        await Task.Delay(HealthyWatchdogInterval).ConfigureAwait(false);
+                        var healthy = await EnsureHealthyAsync(baseUri, Trace, CancellationToken.None).ConfigureAwait(false);
+                        if (!healthy)
+                        {
+                            await Task.Delay(UnhealthyWatchdogInterval).ConfigureAwait(false);
+                            await EnsureHealthyAsync(baseUri, Trace, CancellationToken.None).ConfigureAwait(false);
+                        }
                     }
                 }
                 catch (Exception ex)

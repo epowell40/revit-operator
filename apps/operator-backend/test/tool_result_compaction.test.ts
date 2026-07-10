@@ -329,6 +329,40 @@ test("compact visible-elements result preserves normalized spatial bbox evidence
   assert.deepEqual(compacted.summary.spaceCounts, [{ key: "405", count: 2 }]);
 });
 
+test("compact visible-elements result protects room and space anchors in crowded inventories", () => {
+  const clutter = Array.from({ length: 80 }, (_, i) => ({
+    elementId: 20000 + i,
+    category: "Electrical Fixtures",
+    builtInCategory: "OST_ElectricalFixtures",
+    name: `Duplex Receptacle ${i}`,
+    associatedSpatial: { number: `${400 + (i % 10)}`, name: "Live/Work Unit", type: "Space" },
+    anchor: { image: { normalizedX: 0.05 + (i % 20) * 0.04, normalizedY: 0.2 + Math.floor(i / 20) * 0.12, insideFrame: true } },
+    parameters: { Panel: `P${400 + (i % 10)}`, "Circuit Number": "1" }
+  }));
+  const compacted = compactVisibleElementsResult({
+    frameId: "frame-405",
+    count: clutter.length + 1,
+    items: [
+      ...clutter,
+      {
+        elementId: 1411041,
+        category: "Spaces",
+        builtInCategory: "OST_MEPSpaces",
+        categoryToken: "OST_MEPSpaces",
+        name: "Live/Work Loft Unit 405",
+        space: { id: 1411041, number: "405", name: "Live/Work Loft Unit" },
+        associatedSpatial: { id: 1411041, number: "405", name: "Live/Work Loft Unit", type: "Space" },
+        anchor: { image: { normalizedX: 0.523, normalizedY: 0.719, insideFrame: true } },
+        bbox: { image: { normalizedMinX: 0.469, normalizedMinY: 0.584, normalizedMaxX: 0.577, normalizedMaxY: 0.853, intersectsFrame: true } }
+      }
+    ]
+  }, { maxItems: 12, maxCountEntries: 6 }) as any;
+
+  const spatial = compacted.itemsSampled.find((item: any) => item.elementId === 1411041);
+  assert.equal(spatial?.associatedSpatial?.number, "405");
+  assert.equal(spatial?.bbox?.image?.normalizedMinY, 0.584);
+});
+
 test("compact visible-elements result normalizes snake-case image coordinates", () => {
   const compacted = compactVisibleElementsResult({
     frameId: "frame-405",

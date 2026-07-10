@@ -318,7 +318,7 @@ export type BenchmarkRevitWorkflowSummary = {
   verification_names_passed: string[];
   verification_names_failed: string[];
   failure_reason: string | null;
-  failure_classification: string | null;
+  failure_classification?: string;
 };
 
 export type BenchmarkDemoReadinessGate = {

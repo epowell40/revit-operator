@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task_id": "demo_parameter_edit",
   "name": "Demo C: Parameter Edit And Verify",
-  "description": "Find target Revit elements, update a specified parameter, and verify the committed value by reading it back.",
+  "description": "Find target Revit elements, update a specified parameter, verify the committed value by reading it back, then revert the parameter to its original value for repeated live runs.",
   "environment": {
     "adapter_id": "revit_workflow",
     "app": "Revit",
@@ -15,54 +15,88 @@
     "Prefer explicit element ids for the demo; use /revit/find-elements only when ids are not provided."
   ],
   "success_criteria": [
-    "Targets and old values are captured before write.",
+    "At least the requested minimum number of targets and old values are captured before write.",
     "The write runs through /revit/set-parameter with dry-run and apply passes.",
-    "The requested parameter value is verified after commit."
+    "The requested parameter value is verified after commit.",
+    "The original parameter value is restored with dry-run, apply, and readback evidence when revertAfterVerify is enabled."
   ],
   "failure_criteria": [
-    "Targets are ambiguous or missing.",
+    "Targets are ambiguous, missing, or below the requested minimum count.",
     "Parameter is read-only or missing.",
-    "Read-back does not match the requested value."
+    "Read-back does not match the requested value.",
+    "Revert is requested but the final read-back does not match the captured original value."
   ],
   "max_time_seconds": 30,
-  "max_steps": 4,
+  "max_steps": 7,
   "requires_manual_grade": false,
   "grader_notes": [],
   "tags": ["revit", "demo", "parameter", "deterministic"],
   "optional_ground_truth_artifact": null,
-  "optional_cleanup_steps": [],
+  "optional_cleanup_steps": [
+    "When revertAfterVerify is true, restore the captured original parameter values after verification."
+  ],
   "adapter_config": {
     "workflow": "parameter_edit",
     "request": {
-      "elementIds": [301],
+      "elementIds": [301, 302],
       "parameterName": "Comments",
-      "value": "DEMO VERIFIED"
+      "value": "DEMO VERIFIED",
+      "minTargetCount": 2,
+      "revertAfterVerify": true
     },
     "mock": {
       "/revit/get-parameters:1": {
         "items": [
-          { "id": 301, "name": "Duplex Receptacle", "category": "Electrical Fixtures", "parameters": { "Comments": "" } }
+          { "id": 301, "name": "Duplex Receptacle", "category": "Electrical Fixtures", "parameters": { "Comments": "" } },
+          { "id": 302, "name": "Duplex Receptacle", "category": "Electrical Fixtures", "parameters": { "Comments": "ORIGINAL-2" } }
         ]
       },
       "/revit/set-parameter:1": {
         "status": "Dry Run",
         "dryRun": true,
-        "changedCount": 1,
+        "changedCount": 2,
         "diffs": [
-          { "elementId": 301, "parameterName": "Comments", "ok": true, "changed": true, "before": { "value": "" }, "after": { "value": "DEMO VERIFIED" } }
+          { "elementId": 301, "parameterName": "Comments", "ok": true, "changed": true, "before": { "value": "" }, "after": { "value": "DEMO VERIFIED" } },
+          { "elementId": 302, "parameterName": "Comments", "ok": true, "changed": true, "before": { "value": "ORIGINAL-2" }, "after": { "value": "DEMO VERIFIED" } }
         ]
       },
       "/revit/set-parameter:2": {
         "status": "Applied",
         "dryRun": false,
-        "changedCount": 1,
+        "changedCount": 2,
         "diffs": [
-          { "elementId": 301, "parameterName": "Comments", "ok": true, "changed": true, "before": { "value": "" }, "after": { "value": "DEMO VERIFIED" } }
+          { "elementId": 301, "parameterName": "Comments", "ok": true, "changed": true, "before": { "value": "" }, "after": { "value": "DEMO VERIFIED" } },
+          { "elementId": 302, "parameterName": "Comments", "ok": true, "changed": true, "before": { "value": "ORIGINAL-2" }, "after": { "value": "DEMO VERIFIED" } }
         ]
       },
       "/revit/get-parameters:2": {
         "items": [
-          { "id": 301, "name": "Duplex Receptacle", "category": "Electrical Fixtures", "parameters": { "Comments": "DEMO VERIFIED" } }
+          { "id": 301, "name": "Duplex Receptacle", "category": "Electrical Fixtures", "parameters": { "Comments": "DEMO VERIFIED" } },
+          { "id": 302, "name": "Duplex Receptacle", "category": "Electrical Fixtures", "parameters": { "Comments": "DEMO VERIFIED" } }
+        ]
+      },
+      "/revit/set-parameter:3": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "changedCount": 2,
+        "diffs": [
+          { "elementId": 301, "parameterName": "Comments", "ok": true, "changed": true, "before": { "value": "DEMO VERIFIED" }, "after": { "value": "" } },
+          { "elementId": 302, "parameterName": "Comments", "ok": true, "changed": true, "before": { "value": "DEMO VERIFIED" }, "after": { "value": "ORIGINAL-2" } }
+        ]
+      },
+      "/revit/set-parameter:4": {
+        "status": "Applied",
+        "dryRun": false,
+        "changedCount": 2,
+        "diffs": [
+          { "elementId": 301, "parameterName": "Comments", "ok": true, "changed": true, "before": { "value": "DEMO VERIFIED" }, "after": { "value": "" } },
+          { "elementId": 302, "parameterName": "Comments", "ok": true, "changed": true, "before": { "value": "DEMO VERIFIED" }, "after": { "value": "ORIGINAL-2" } }
+        ]
+      },
+      "/revit/get-parameters:3": {
+        "items": [
+          { "id": 301, "name": "Duplex Receptacle", "category": "Electrical Fixtures", "parameters": { "Comments": "" } },
+          { "id": 302, "name": "Duplex Receptacle", "category": "Electrical Fixtures", "parameters": { "Comments": "ORIGINAL-2" } }
         ]
       }
     }

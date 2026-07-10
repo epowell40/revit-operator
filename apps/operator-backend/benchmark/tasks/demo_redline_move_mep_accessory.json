@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_move_mep_accessory",
+  "name": "Demo G8: Move Manual Balancing Damper Redline",
+  "description": "Exercise a move-like redline operation for a modeled MEP accessory using the family-instance evidence contract: create a disposable manual balancing damper/accessory, prove its requested type and initial location, move it with native dry-run/apply evidence, prove the model-space delta, write a deterministic visual gate, and clean it up.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a model that can be closed without saving.",
+    "Use a view, level, and MEP accessory family/type that can be safely placed, moved, and deleted.",
+    "For the first live smoke, use a low-risk level-hosted or non-hosted damper/accessory symbol. Host-aware duct accessory placement remains a later live hardening step if the active damper family requires duct hosting."
+  ],
+  "success_criteria": [
+    "A disposable MEP accessory family instance id is created in the model.",
+    "The native create result returns family/type/name evidence matching the requested manual balancing damper/accessory symbol.",
+    "The created accessory id is visible in the pre-move visible-element inventory with a model-space point.",
+    "Native move dry-run and apply evidence include the created accessory id.",
+    "The post-move visible-element inventory contains the same id at the requested model-space delta.",
+    "A deterministic move visual gate artifact passes using before/after capture evidence.",
+    "The moved accessory is cleaned up with native dry-run and applied delete effect evidence."
+  ],
+  "failure_criteria": [
+    "The accessory is not created or is created as a different requested type.",
+    "The before/after visible-element inventory cannot prove the requested movement vector.",
+    "Move dry-run or apply omits the accessory id from effect evidence.",
+    "The move visual gate artifact is missing or fails.",
+    "Cleanup delete dry-run/apply omits the accessory id from effect evidence."
+  ],
+  "max_time_seconds": 60,
+  "max_steps": 5,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task extends MEP accessory benchmark coverage from add/delete into move-like damper redlines.",
+    "Do not count requestedIds-only move or cleanup responses as evidence; move/delete must return ids, movedIds, deletedIds, or impactedIds as appropriate."
+  ],
+  "tags": ["revit", "demo", "redline", "move", "mep-accessory", "damper", "manual-balancing-damper", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "redline_move",
+    "request": {
+      "viewId": 101,
+      "imageSize": 1800,
+      "targetKind": "manual_balancing_damper",
+      "familyInstance": {
+        "familyName": "Manual Balancing Damper",
+        "symbolName": "Manual Balancing Damper",
+        "levelName": "",
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "move": {
+        "mode": "vector",
+        "vectorX": 1,
+        "vectorY": 0,
+        "vectorZ": 0,
+        "behavior": "allOrNothing"
+      },
+      "toleranceFt": 0.05
+    },
+    "mock": {
+      "/revit/create-family-instance": {
+        "id": 9202,
+        "name": "Manual Balancing Damper",
+        "family": "Manual Balancing Damper",
+        "familyName": "Manual Balancing Damper",
+        "symbol": "Manual Balancing Damper",
+        "symbolName": "Manual Balancing Damper",
+        "typeName": "Manual Balancing Damper",
+        "category": "Duct Accessories"
+      },
+      "/revit/export-visible-elements:1": {
+        "imagePath": "artifacts/captures/move-mep-accessory-before.png",
+        "items": [
+          {
+            "id": 9202,
+            "category": "Duct Accessories",
+            "familyName": "Manual Balancing Damper",
+            "symbolName": "Manual Balancing Damper",
+            "anchor": { "model": { "x": 0, "y": 0, "z": 0 } }
+          }
+        ]
+      },
+      "/revit/move-elements:1": {
+        "status": "Dry Run",
+        "movedIds": [9202],
+        "skipped": [],
+        "warnings": [],
+        "rolledBack": true
+      },
+      "/revit/move-elements:2": {
+        "status": "Moved",
+        "movedIds": [9202],
+        "skipped": [],
+        "warnings": [],
+        "rolledBack": false
+      },
+      "/revit/export-visible-elements:2": {
+        "imagePath": "artifacts/captures/move-mep-accessory-after.png",
+        "items": [
+          {
+            "id": 9202,
+            "category": "Duct Accessories",
+            "familyName": "Manual Balancing Damper",
+            "symbolName": "Manual Balancing Damper",
+            "anchor": { "model": { "x": 1, "y": 0, "z": 0 } }
+          }
+        ]
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "requestedIds": [9202],
+        "impactedIds": [9202]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "requestedIds": [9202],
+        "impactedIds": [9202]
+      }
+    }
+  }
+}

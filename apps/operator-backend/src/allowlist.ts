@@ -8,6 +8,9 @@ const defaultAllowed: Allowlist = {
     "/ui/open",
     "/ui/close",
 
+    "/tools/redline/verify-visual",
+    "/tools/mep/semantic-route-plan",
+
     "/revit/batch-job",
     "/revit/batch-control",
 

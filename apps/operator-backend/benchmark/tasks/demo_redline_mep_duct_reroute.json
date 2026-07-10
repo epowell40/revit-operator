@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_mep_duct_reroute",
+  "name": "Demo E5: Modeled Duct Reroute Offset Redline",
+  "description": "Run one bounded modeled duct reroute/offset redline through /revit/reroute-mep-route-segment and require split points, replacement segment ids, elbow fitting ids, connector/system audit, visual gate, and cleanup evidence.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "metadata": {
+      "workflow": "redline_mep_reroute"
+    }
+  },
+  "setup_instructions": [
+    "Open the target Revit model and the sheet/view containing a duct offset/drop or dogleg redline.",
+    "Use a prepared deterministic request with a verified host duct id, two projected split points or chainages, requested offset/drop, duct size, level, and system.",
+    "Use /revit/reroute-mep-route-segment with operation=reroute_offset, apply=true, verify=true, and visualVerify=true; do not report completion from a dry-run."
+  ],
+  "success_criteria": [
+    "/revit/reroute-mep-route-segment returns a rerouted/applied status and is not a dry-run.",
+    "The result reports replacement duct segment ids and elbow fitting ids.",
+    "The split and offset split points are reported and match the requested split points within tolerance when requested points are supplied.",
+    "The requested offset/drop is read back from the plan within tolerance.",
+    "Connected fitting attempts cover all expected fittings.",
+    "A connector/network/system audit reports a connected network.",
+    "A focused post-change capture is returned and the redline visual gate passes.",
+    "Created disposable segment/fitting ids are proven in a cleanup dry-run and then deleted after verification evidence is recorded."
+  ],
+  "failure_criteria": [
+    "The workflow only dry-runs or returns no replacement segment/fitting ids.",
+    "The split or offset split points are missing or off target.",
+    "The requested offset/drop is missing or mismatched.",
+    "Expected fittings are missing or connection attempts are disconnected.",
+    "No connected-network/system audit is reported.",
+    "The focused visual capture is missing.",
+    "The redline visual gate is fail or uncertain.",
+    "Cleanup is requested but created segment/fitting ids are missing from cleanup evidence."
+  ],
+  "max_time_seconds": 180,
+  "max_steps": 5,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This benchmark covers one safe duct reroute/drop case first. It does not yet prove pipe reroutes, 45 degree doglegs, or arbitrary clash-avoidance routing."
+  ],
+  "tags": ["revit", "demo", "redline", "mep", "duct", "reroute", "offset", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [
+    "Delete created replacement segment/fitting ids after visual verification so repeated live reliability runs do not accumulate model clutter."
+  ],
+  "adapter_config": {
+    "workflow": "redline_mep_reroute",
+    "request": {
+      "kind": "duct",
+      "viewId": 401,
+      "visualViewId": 401,
+      "hostElementId": 1542919,
+      "levelName": "L4",
+      "systemType": "Supply Air",
+      "operation": "reroute_offset",
+      "split1ChainageFt": 6,
+      "split2ChainageFt": 18,
+      "split1Point": { "x": 76, "y": -35 },
+      "split2Point": { "x": 88, "y": -35 },
+      "dropFt": 1,
+      "expectedFitting": "elbow",
+      "verify": true,
+      "apply": true,
+      "visualVerify": true,
+      "cleanupCreatedElements": true,
+      "imageSize": 2200,
+      "focusPaddingFt": 8,
+      "toleranceFt": 1,
+      "dropToleranceFt": 0.25
+    },
+    "mock": {
+      "/revit/reroute-mep-route-segment": {
+        "status": "Rerouted",
+        "dryRun": false,
+        "kind": "duct",
+        "operation": "reroute_offset",
+        "host": {
+          "id": 1542919,
+          "category": "Ducts",
+          "systemName": "Mechanical Supply Air 52"
+        },
+        "plan": {
+          "ApplySupported": true,
+          "MainLengthFt": 24,
+          "Split1ChainageFt": 6,
+          "Split2ChainageFt": 18,
+          "Split1": { "X": 76, "Y": -35, "Z": 43 },
+          "Split2": { "X": 88, "Y": -35, "Z": 43 },
+          "OffsetSplit1": { "X": 76, "Y": -35, "Z": 42 },
+          "OffsetSplit2": { "X": 88, "Y": -35, "Z": 42 },
+          "Segments": [
+            { "Role": "main_a", "Start": { "X": 70, "Y": -35, "Z": 43 }, "End": { "X": 76, "Y": -35, "Z": 43 } },
+            { "Role": "offset_leg_a", "Start": { "X": 76, "Y": -35, "Z": 43 }, "End": { "X": 76, "Y": -35, "Z": 42 } },
+            { "Role": "offset_middle", "Start": { "X": 76, "Y": -35, "Z": 42 }, "End": { "X": 88, "Y": -35, "Z": 42 } },
+            { "Role": "offset_leg_b", "Start": { "X": 88, "Y": -35, "Z": 42 }, "End": { "X": 88, "Y": -35, "Z": 43 } },
+            { "Role": "main_b", "Start": { "X": 88, "Y": -35, "Z": 43 }, "End": { "X": 94, "Y": -35, "Z": 43 } }
+          ],
+          "ExpectedFittings": [
+            { "ExpectedFitting": "elbow", "At": "split1_to_offset_leg", "Point": { "X": 76, "Y": -35, "Z": 43 } },
+            { "ExpectedFitting": "elbow", "At": "offset_leg_to_middle_a", "Point": { "X": 76, "Y": -35, "Z": 42 } },
+            { "ExpectedFitting": "elbow", "At": "middle_to_offset_leg_b", "Point": { "X": 88, "Y": -35, "Z": 42 } },
+            { "ExpectedFitting": "elbow", "At": "offset_leg_to_split2", "Point": { "X": 88, "Y": -35, "Z": 43 } }
+          ]
+        },
+        "createdElementIds": [1542921, 1542923, 1542925, 1542927, 1542929],
+        "createdFittingIds": [1542931, 1542933, 1542936, 1542937],
+        "deletedOriginalIds": [1542919],
+        "connectionAttempts": [
+          { "fromId": 1542921, "toId": 1542923, "connected": true, "expectedFitting": "elbow", "fittingId": 1542931 },
+          { "fromId": 1542923, "toId": 1542925, "connected": true, "expectedFitting": "elbow", "fittingId": 1542933 },
+          { "fromId": 1542925, "toId": 1542927, "connected": true, "expectedFitting": "elbow", "fittingId": 1542936 },
+          { "fromId": 1542927, "toId": 1542929, "connected": true, "expectedFitting": "elbow", "fittingId": 1542937 }
+        ],
+        "verification": {
+          "openConnectorCount": 2,
+          "connectedConnectorCount": 8,
+          "networkAudit": {
+            "status": "Ok",
+            "systemName": "Mechanical Supply Air 59",
+            "systemAudit": {
+              "pass": true,
+              "connectedCount": 9,
+              "disconnectedCount": 0
+            }
+          }
+        },
+        "visualVerification": {
+          "path": "artifacts/demo-readiness/mep-route/duct_reroute_after.jpg"
+        }
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "count": 9,
+        "ids": [1542921, 1542923, 1542925, 1542927, 1542929, 1542931, 1542933, 1542936, 1542937]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "count": 9,
+        "ids": [1542921, 1542923, 1542925, 1542927, 1542929, 1542931, 1542933, 1542936, 1542937]
+      }
+    }
+  }
+}

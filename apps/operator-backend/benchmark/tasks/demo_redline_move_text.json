@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_move_text",
+  "name": "Demo I: Move-Like Redline Text Note",
+  "description": "Exercise a move-like redline operation using a disposable text note target: create a bounded target, prove it is visible, dry-run move, apply move, verify the moved location, and clean up the target.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a model that can be closed without saving.",
+    "Use a model or drafting view that supports text notes and visible-element export.",
+    "Keep the generated target text unique per run so repeated live runs cannot match stale notes."
+  ],
+  "success_criteria": [
+    "A disposable text note id is created in the requested view.",
+    "The created id is visible in the pre-move visible-element inventory with a model-space point.",
+    "The /revit/move-elements dry-run reports movedIds covering the created id.",
+    "The applied /revit/move-elements response reports movedIds covering the created id.",
+    "The post-move visible-element inventory still contains the created id.",
+    "The observed model-space delta matches the requested vector within tolerance.",
+    "Cleanup dry-run and applied delete evidence cover the created id."
+  ],
+  "failure_criteria": [
+    "The text note target is not created or is not visible before the move.",
+    "Move dry-run or apply omits the target id.",
+    "The target disappears after the move.",
+    "The observed model-space delta does not match the requested vector.",
+    "Cleanup is requested but native delete effect ids do not cover the target."
+  ],
+  "max_time_seconds": 60,
+  "max_steps": 8,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task intentionally uses a disposable created target so repeated live runs prove redline move mechanics without damaging project content.",
+    "Do not count generic move success without movedIds or post-move location evidence."
+  ],
+  "tags": ["revit", "demo", "redline", "move", "annotation", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [
+    "Delete the disposable text note after move evidence is recorded."
+  ],
+  "adapter_config": {
+    "workflow": "redline_move",
+    "request": {
+      "viewId": 101,
+      "imageSize": 1800,
+      "toleranceFt": 0.05,
+      "textNote": {
+        "x": 1.5,
+        "y": 1.0,
+        "text": "OPERATOR MOVE REDLINE"
+      },
+      "move": {
+        "vectorX": 1.0,
+        "vectorY": 0.0,
+        "vectorZ": 0.0
+      }
+    },
+    "mock": {
+      "/revit/create-text": {
+        "status": "success",
+        "id": 7201,
+        "viewId": 101
+      },
+      "/revit/export-visible-elements:1": {
+        "imagePath": "artifacts/captures/move-before.png",
+        "items": [
+          {
+            "id": 7201,
+            "category": "Text Notes",
+            "visibleText": "OPERATOR MOVE REDLINE",
+            "anchor": { "model": { "x": 1.5, "y": 1.0, "z": 0.0 } }
+          }
+        ]
+      },
+      "/revit/move-elements:1": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "movedIds": [7201],
+        "rolledBack": true
+      },
+      "/revit/move-elements:2": {
+        "status": "Moved",
+        "dryRun": false,
+        "movedIds": [7201],
+        "rolledBack": false
+      },
+      "/revit/export-visible-elements:2": {
+        "imagePath": "artifacts/captures/move-after.png",
+        "items": [
+          {
+            "id": 7201,
+            "category": "Text Notes",
+            "visibleText": "OPERATOR MOVE REDLINE",
+            "anchor": { "model": { "x": 2.5, "y": 1.0, "z": 0.0 } }
+          }
+        ]
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "requestedIds": [7201],
+        "impactedIds": [7201]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "requestedIds": [7201],
+        "impactedIds": [7201]
+      }
+    }
+  }
+}

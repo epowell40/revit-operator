@@ -170,6 +170,7 @@ namespace RevitBridge.Operator
                 { "/revit/renumber-sheets", new RenumberSheetsHandler() },
                 { "/revit/sync-sheet-names", new SyncSheetNamesHandler() },
                 { "/revit/link-cad", new LinkCadHandler() },
+                { "/revit/link-revit", new RevitBridge.Logic.Handlers.LinkRevitHandler() },
                 { "/revit/place-image", new PlaceImageHandler() },
                 { "/revit/place-pdf-underlay", new PlacePdfUnderlayHandler() },
                 { "/revit/import-zippybim-geometry", new ImportZippyBimGeometryHandler() },

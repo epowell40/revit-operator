@@ -71,8 +71,6 @@ namespace RevitBridge.Logic.Handlers
                 elementId = textNoteId,
                 createdElementId = textNoteId,
                 viewId = resolvedViewId,
-                x = p.x,
-                y = p.y,
                 text = normalizedText,
                 textType = new
                 {

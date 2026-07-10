@@ -22,9 +22,13 @@ The takeoff workflow writes both `artifacts/takeoff_summary.csv` and `artifacts/
 
 The parameter-edit workflow writes `artifacts/parameter_change_summary.md` with target element ids, old values, requested values, and committed readback values before deciding whether verification passed.
 
-The redline receptacle workflow writes `artifacts/redline_receptacles_summary.json` and `artifacts/redline_receptacles_summary.md` with requested placements, created element ids, before/after visible counts, audit payload, and mark/panel/circuit metadata when provided. For repeated live reliability runs, set `cleanupCreatedElements: true` in the live request override; the workflow will delete created test elements after capture/audit and record a cleanup verification so later repeats are not biased by previous test devices.
+The redline receptacle workflow writes `artifacts/redline_receptacles_summary.json` and `artifacts/redline_receptacles_summary.md` with requested placements, created element ids, before/after visible counts, audit payload, and mark/panel/circuit metadata when provided. For repeated live reliability runs, set `cleanupCreatedElements: true` in the live request override; after capture/audit evidence is recorded, the workflow will dry-run deletion, delete created test elements, and require deleted-id evidence so later repeats are not biased by previous test devices.
 
-The AEC-MEP eval V1 tasks use the same `revit_workflow` adapter with `workflow: "aec_mep_eval"`. They cover duct route pickup from vector PDF geometry, pipe route pickup from labeled redline geometry, callout-only duct verification, wrong-bay/one-axis false positives, connected duct resize verification, and branch/tee/tap feasibility. Each run writes `artifacts/<scenario>_summary.json` and `artifacts/<scenario>_summary.md`, and failed runs include `failure_classification` in `revit_workflow_result.json` and the benchmark report.
+The MEP redline route workflow runs `/revit/mep-route-workflow` from a bounded ordered-point request and writes `artifacts/redline_mep_route_summary.json` plus `artifacts/redline_visual_gate.json`. It is stricter than a dry-run smoke test: success requires `AppliedVisualVerificationReady`, created duct/pipe element or fitting ids, planned points within tolerance, a focused post-change capture, and a passing redline visual gate. `demo_redline_mep_route` covers duct pickup and `demo_redline_mep_pipe_route` covers pipe pickup. For repeated live reliability runs, set `cleanupCreatedElements: true`; cleanup runs after the write and visual evidence are recorded, first proving the created route ids in a delete dry-run and then proving them again in the applied delete response.
+
+The documentation primitives workflow runs bounded schedule creation, schedule configuration, sheet creation, drafting-view creation, view-template creation, view placement, detail-curve annotation, view/template visibility, text note, and tag operations. It writes `artifacts/documentation_primitives_summary.json` plus a markdown table and requires dry-run evidence where supported before mutating calls. Schedule configuration must prove the applied result targeted the schedule created in the same run, and visibility changes must prove the applied result targeted the created view or template. Live runs must provide at least one taggable element id for tag verification. For repeated live reliability runs, set `cleanupCreatedElements: true`; cleanup runs after all evidence is recorded, first proving created documentation ids in a delete dry-run and then proving them again in the applied delete response.
+
+The model edit primitives workflow creates a disposable family instance, verifies move dry-run/apply evidence, verifies delete dry-run/apply evidence so repeated runs do not accumulate model clutter, then verifies `/revit/link-revit` dry-run/apply evidence and deletes the linked instance plus link type after capturing link ids. Live requests must provide a disposable RVT source path under the workspace or `OPERATOR_ALLOWED_EXTERNAL_ROOTS`; CAD linking does not satisfy the RVT-link requirement.
 
 Live bridge calls also arm a bounded Revit-owned warning dialog dismiss guard. This is for modal recovery only, such as duplicate-schedule or warning dialogs that block the Revit API call. Dismissals are counted in each workflow result as `computer_use_actions` so benchmark evidence shows when computer-use recovery was needed.
 
@@ -91,19 +95,23 @@ From `operator-backend`:
 npm run benchmark -- list-tasks
 npm run benchmark -- list-configs
 npm run benchmark -- preflight-revit
+npm run benchmark -- redline-hardening-scorecard
+npm run benchmark -- redline-hardening-scorecard --input artifacts\redline-corpus\redline_corpus_classification.json --output-dir ..\local-work\redline-hardening-eval\corpus-smoke
 npm run benchmark -- discover-revit-demo --output ..\local-work\demo-live-requests.json
 npm run benchmark -- run --task placeholder_open_settings_panel --config single_54_medium
 npm run benchmark -- run --task placeholder_open_settings_panel --all-configs
 npm run benchmark -- run --all-tasks --all-configs --repeat 1
-npm run benchmark -- run --tasks demo_sheet_export,demo_takeoff_receptacles,demo_parameter_edit,demo_redline_receptacles --config deterministic_skill_only --repeat 1
-$env:OPERATOR_BENCHMARK_USE_MOCKS="0"; npm run benchmark -- run --tasks demo_sheet_export,demo_takeoff_receptacles,demo_parameter_edit,demo_redline_receptacles --config deterministic_skill_only --repeat 5 --batch-id demo_readiness_live
+npm run benchmark -- run --tasks demo_sheet_export,demo_takeoff_receptacles,demo_parameter_edit,demo_redline_receptacles,demo_redline_mep_route,demo_redline_mep_pipe_route,demo_documentation_primitives,demo_model_edit_primitives --config deterministic_skill_only --repeat 1
+npm run benchmark -- run --tasks demo_redline_mep_route --config deterministic_skill_only --repeat 5 --batch-id mep_route_redline_live_repeat
+$env:OPERATOR_BENCHMARK_USE_MOCKS="0"; npm run benchmark -- run --tasks demo_sheet_export,demo_takeoff_receptacles,demo_parameter_edit,demo_redline_receptacles,demo_redline_mep_route,demo_redline_mep_pipe_route,demo_documentation_primitives,demo_model_edit_primitives --config deterministic_skill_only --repeat 5 --batch-id demo_readiness_live
 $env:OPERATOR_BENCHMARK_USE_MOCKS="0"; npm run benchmark -- run --tasks demo_redline_receptacles --config deterministic_skill_only --repeat 10 --batch-id redline_receptacle_live_repeat
-npm run benchmark -- run --tasks aec_mep_duct_route_vector_pdf,aec_mep_pipe_route_labeled_redline,aec_mep_duct_callout_existing_model,aec_mep_wrong_bay_false_positive,aec_mep_connected_duct_resize,aec_mep_branch_tee_tap_feasibility --config deterministic_skill_only --repeat 1 --batch-id aec_mep_eval_v1_mock
-npm run benchmark -- aec-mep-readiness --artifacts-dir artifacts/benchmark_runs/2026-04-12/<batch_id> --allow-mock
+$env:OPERATOR_BENCHMARK_USE_MOCKS="0"; npm run benchmark -- run --tasks demo_redline_mep_route --config deterministic_skill_only --repeat 10 --batch-id mep_route_redline_live_repeat
+$env:OPERATOR_BENCHMARK_USE_MOCKS="0"; npm run benchmark -- run --tasks demo_redline_mep_pipe_route --config deterministic_skill_only --repeat 10 --batch-id mep_pipe_route_redline_live_repeat
+$env:OPERATOR_BENCHMARK_USE_MOCKS="0"; npm run benchmark -- run --tasks demo_documentation_primitives --config deterministic_skill_only --repeat 10 --batch-id documentation_primitives_live_repeat
+$env:OPERATOR_BENCHMARK_USE_MOCKS="0"; npm run benchmark -- run --tasks demo_model_edit_primitives --config deterministic_skill_only --repeat 10 --batch-id model_edit_primitives_live_repeat
 npm run benchmark -- run --tasks demo_takeoff_lighting,demo_takeoff_mechanical_equipment --config deterministic_skill_only --repeat 1 --batch-id demo_takeoff_supplemental
 npm run benchmark -- report --artifacts-dir artifacts/benchmark_runs/2026-04-12/<batch_id>
 npm run benchmark -- demo-readiness --artifacts-dir artifacts/benchmark_runs/2026-04-12/<batch_id>
-npm run benchmark -- aec-mep-readiness --artifacts-dir artifacts/benchmark_runs/2026-04-12/<batch_id>
 npm run benchmark -- grade-sheet --artifacts-dir artifacts/benchmark_runs/2026-04-12/<batch_id>
 npm run benchmark -- default-plan
 ```
@@ -117,13 +125,51 @@ npm run benchmark -- run --tasks demo_sheet_export,demo_takeoff_receptacles,demo
 npm run benchmark -- demo-readiness --artifacts-dir artifacts\benchmark_runs\2026-05-15\demo_readiness_live_snowdon_electrical_modal_recovery
 ```
 
-That batch used the Snowdon Towers Sample Electrical model through the live Revit bridge on `http://localhost:5010` and passed all four readiness gates with 100% success and verification.
+That batch used the Snowdon Towers Sample Electrical model through the live Revit bridge on `http://localhost:5010` and passed the earlier four-gate readiness set with 100% success and verification. Current readiness also requires `demo_redline_mep_route`, `demo_redline_mep_pipe_route`, `demo_documentation_primitives`, and `demo_model_edit_primitives`.
 
 Live request overrides should live under an ignored path such as `local-work/demo-live-requests.json`. Generate a first pass from the open Revit model:
 
 ```powershell
 npm run benchmark -- preflight-revit
 npm run benchmark -- discover-revit-demo --output ..\local-work\demo-live-requests.json
+```
+
+Corpus-derived files named `redline_corpus_live_request_template.json` are fill-in scaffolds, not runnable overrides. Copy the generated template to a local override, replace every `__FILL_*` value with verified ids, points, types, levels, and paths from the currently open model, and only then use it as `OPERATOR_BENCHMARK_REVIT_REQUESTS_JSON`. The benchmark environment rejects override files marked `template_requires_verified_revit_ids`, `ready_to_run=false`, `placeholder_count > 0`, or containing any `__FILL_*` placeholder.
+
+Corpus classification also writes `redline_corpus_review.md`. Use that Markdown file as the first human triage surface for real PDF batches: review operation/target/context counts, evidence/model-write/visual-gate rollups, manual-review rows, the live queue preview, and the promotion rules before filling any local live override.
+
+### Redline Hardening Scorecard
+
+`redline-hardening-scorecard` evaluates corpus classification output without requiring a live Revit model. It reads the existing `redline_corpus_classification.json` shape, maps each classification row to a structured action record, checks whether the recommended benchmark task exists, and writes:
+
+- `redline_hardening_scorecard.json`
+- `redline_hardening_scorecard.md`
+
+Run the synthetic fixture smoke test:
+
+```powershell
+npm run benchmark -- redline-hardening-scorecard
+```
+
+Run against a corpus classification report:
+
+```powershell
+npm run benchmark -- redline-hardening-scorecard --input ..\local-work\redline-corpus\redline_corpus_classification.json --output-dir ..\local-work\redline-hardening-eval\my-corpus
+```
+
+The scorecard reports total evaluated, classified-with-confidence, actionable, structured-action-produced, routed-to-existing-skill-or-benchmark-task, dry-run-possible, backend-ready-without-missing-inputs, executable, needs-human-review, not-actionable, top failure clusters, and top missing skills. `dry_run_possible` means the row maps to an existing benchmark task or workflow that can be evaluated with fixtures/mocks. `backend_ready_without_missing_inputs` means the classification queue did not report missing live inputs, but the row still is not a runnable Revit override by itself. `executable` is reserved for promoted runnable overrides that explicitly report `ready_to_run:true`. This is backend eval evidence only; it is not live Revit GUI proof.
+
+Before a corpus-derived file is used for a live run, validate it without touching Revit:
+
+```powershell
+npm run benchmark -- validate-revit-requests --input ..\local-work\demo-live-requests-from-corpus.json
+```
+
+For add-tag redlines, fill compatible tag type evidence from the open model before validating or running. This command is read-only against Revit and writes a separate hydrated override; it does not mark the row executable:
+
+```powershell
+npm run benchmark -- hydrate-redline-add-tag-types --input ..\local-work\redline-hardening-eval\add-tag-space-live-requests-20260707.json --output ..\local-work\redline-hardening-eval\add-tag-space-live-requests-hydrated-20260707.json
+npm run benchmark -- validate-revit-requests --input ..\local-work\redline-hardening-eval\add-tag-space-live-requests-hydrated-20260707.json
 ```
 
 Set `REVIT_BRIDGE_URL` only when you intentionally need to override the bridge URL. If the add-in had to avoid an occupied `5000` port, it writes the fallback URL to `%LOCALAPPDATA%\RevitOperator\bridge_url.txt`, and the CLI will pick that up automatically.
@@ -138,7 +184,7 @@ On Windows localhost URLs, the report also includes `local_port_owner` when avai
 
 When `OPERATOR_BENCHMARK_USE_MOCKS=0`, `run` and `default-plan` fail fast if Revit workflow tasks are selected and `preflight-revit` is not healthy. Use `--skip-revit-preflight` only when intentionally collecting failure-mode evidence.
 
-After a live batch, run `demo-readiness` against the batch artifact directory. It regenerates the report and exits nonzero unless all four demo readiness gates pass. Each gate reports `live_sample_size` and `min_live_sample_size`, and the gate cannot pass unless at least 5 live Revit runs are present for that workflow.
+After a live batch, run `demo-readiness` against the batch artifact directory. It regenerates the report and exits nonzero unless all eight demo readiness gates pass. Each gate reports `live_sample_size` and `min_live_sample_size`, and the gate cannot pass unless at least 5 live Revit runs are present for that workflow.
 
 The Revit add-in writes the active bridge URL to `%LOCALAPPDATA%\RevitOperator\bridge_url.txt` after it starts. The benchmark CLI checks `REVIT_BRIDGE_URL`, then `OPERATOR_REVIT_BRIDGE_URL`, then that file, then `http://localhost:5000`. If port `5000` is occupied, the add-in tries fallback ports `5010-5014`; customize with `OPERATOR_REVIT_BRIDGE_FALLBACK_PORTS`.
 
@@ -174,22 +220,55 @@ $env:OPERATOR_BENCHMARK_REVIT_REQUESTS_JSON="C:\Users\User\source\repos\RevitOpe
 npm run benchmark -- preflight-revit
 ```
 
-### AEC-MEP Eval V1 Live Gate
-Live AEC-MEP overrides should live under `apps/operator-backend/local-work/` when running from this public checkout. Start from `apps/operator-backend/local-work/aec-mep-eval-live-requests.example.json`, replace ids/points with values from the open model, and keep the file uncommitted.
+### MEP Route Live GUI Test Plan
+Use this plan after the Revit GUI, target demo model, and Operator add-in are open. It verifies modeled duct/pipe redline pickup without letting repeated runs accumulate route elements.
 
-```powershell
-cd C:\Users\User\source\repos\RevitOperator\public\apps\operator-backend
-$env:OPERATOR_BENCHMARK_USE_MOCKS="0"
-$env:OPERATOR_BENCHMARK_REVIT_REQUESTS_JSON="C:\Users\User\source\repos\RevitOperator\public\apps\operator-backend\local-work\aec-mep-eval-live-requests.json"
-npm run benchmark -- preflight-revit
-npm run benchmark -- run --tasks aec_mep_duct_route_vector_pdf,aec_mep_pipe_route_labeled_redline,aec_mep_duct_callout_existing_model,aec_mep_wrong_bay_false_positive,aec_mep_connected_duct_resize,aec_mep_branch_tee_tap_feasibility --config deterministic_skill_only --repeat 1 --batch-id aec_mep_eval_v1_live
-npm run benchmark -- aec-mep-readiness --artifacts-dir artifacts/benchmark_runs/<yyyy-mm-dd>/aec_mep_eval_v1_live
-```
+1. In Revit, open the target model to the view or sheet referenced by the live request override. Confirm the redline route area is visible and no modal dialog or model-upgrade progress is blocking the canvas.
+2. Run:
+   ```powershell
+   npm run benchmark -- preflight-revit
+   ```
+   Continue only when `ok` is true.
+3. Generate or review `local-work/demo-live-requests.json`. The `demo_redline_mep_route` and `demo_redline_mep_pipe_route` requests must include real view ids, ordered model-space `points`, `apply: true`, `visualVerify: true`, and `cleanupCreatedElements: true`.
+4. Run at least five live repeats for duct and pipe:
+   ```powershell
+   $env:OPERATOR_BENCHMARK_USE_MOCKS="0"
+   $env:OPERATOR_BENCHMARK_REVIT_REQUESTS_JSON="C:\Users\User\source\repos\RevitOperator\local-work\demo-live-requests.json"
+   npm run benchmark -- run --tasks demo_redline_mep_route,demo_redline_mep_pipe_route --config deterministic_skill_only --repeat 5 --batch-id mep_route_live_repeat
+   ```
+5. As a human tester in the Revit GUI, inspect the active view after the batch. The temporary duct/pipe/fitting elements created by the benchmark should not remain after cleanup, and the view should not be left in a modal or failed transaction state.
+6. Inspect each `redline_mep_route_summary.json` and `redline_visual_gate.json`. Each run must include created model ids, focused capture path, passing visual gate, `cleanupDryRunIds`, and `cleanupDeletedIds` covering every created route/fitting id.
+7. Run:
+   ```powershell
+   npm run benchmark -- demo-readiness --artifacts-dir artifacts\benchmark_runs\<date>\mep_route_live_repeat
+   ```
+   The route gates are not ready unless they have at least five live Revit runs and all model-write, visual-gate, planned-point, cleanup dry-run, and applied cleanup checks pass.
 
-`aec-mep-readiness` fails unless all six tasks have passing `aec_mep_eval` workflow evidence. By default it requires live Revit workflow runs; use `--allow-mock` only for local replay smoke checks. The gate still does not replace the project rule requiring a real GUI Revit inspection before claiming the feature is ready for user testing.
+### Model Edit Primitives Live GUI Test Plan
+Use this plan after the Revit GUI, demo model, and Operator add-in are open. It verifies the model-edit benchmark without letting repeat runs accumulate linked models.
+
+1. Open Revit with the target demo model visible, confirm the Operator add-in bridge is running, and run:
+   ```powershell
+   npm run benchmark -- preflight-revit
+   ```
+   Continue only when `ok` is true.
+2. Configure `demo_model_edit_primitives` in `local-work\demo-live-requests.json` with a disposable family instance request and an RVT `linkRevit.sourcePath` under the workspace or `OPERATOR_ALLOWED_EXTERNAL_ROOTS`.
+3. Run the live repeat batch:
+   ```powershell
+   $env:OPERATOR_BENCHMARK_USE_MOCKS="0"
+   $env:OPERATOR_BENCHMARK_REVIT_REQUESTS_JSON="C:\Users\User\source\repos\RevitOperator\local-work\demo-live-requests.json"
+   npm run benchmark -- run --tasks demo_model_edit_primitives --config deterministic_skill_only --repeat 5 --batch-id model_edit_primitives_live_repeat
+   ```
+4. As a human tester in the Revit GUI, inspect Manage Links and the active/project views after the batch. The linked RVT instance and loaded RVT link type created during each run must not remain in the model. The disposable family instance should also be gone.
+5. Open one run artifact and confirm `model_edit_primitives_summary.json` includes `requestedFamilyInstanceType`, `createdFamilyInstanceLabels`, `linkInstanceId`, `linkTypeId`, `linkCleanupDeletedIds`, `linkTypeCleanupDeletedIds`, and `"revitLinkStatus": "linked_then_cleaned_up"`.
+6. Run:
+   ```powershell
+   npm run benchmark -- demo-readiness --artifacts-dir artifacts\benchmark_runs\<date>\model_edit_primitives_live_repeat
+   ```
+   The gate is not ready unless it has at least five live Revit runs and all required add/type-match/move/delete/link/cleanup checks pass.
 
 ## Default Experiment Plan
-`default-plan` runs the four demo-readiness workflows across the configured GPT-5.5, mini-executor, and deterministic skill-only matrix.
+`default-plan` runs the eight demo-readiness workflows across the configured GPT-5.5, mini-executor, and deterministic skill-only matrix.
 
 The supplemental takeoff tasks `demo_takeoff_lighting` and `demo_takeoff_mechanical_equipment` are not demo readiness gates. Run them when the current model contains lighting fixtures or mechanical equipment/VAV boxes to gather broader Demo B evidence.
 

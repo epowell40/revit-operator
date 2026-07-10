@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_type_change_mep_accessory",
+  "name": "Demo K3: Type/Family Change Redline MEP Accessory",
+  "description": "Exercise a type/family-change redline operation against a verified existing MEP accessory target: dry-run a compatible type change, apply it, prove readback, capture post-change evidence, then revert for repeat-safe live runs.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a copied model that can be closed without saving.",
+    "Provide an existing MEP accessory element id, its verified source family/type/category, and a compatible target type id or exact type name.",
+    "Use a low-risk target such as a damper or accessory in a copied sample model so the workflow can revert after verification."
+  ],
+  "success_criteria": [
+    "/revit/change-element-type dry-run returns old and new type evidence for every requested accessory element.",
+    "Dry-run readback proves the requested source accessory family/type/category and original type.",
+    "/revit/change-element-type apply returns changed element ids covering every requested accessory.",
+    "A post-apply readback proves the accessory now has the requested target type id or name.",
+    "A post-change visual capture is produced before reverting.",
+    "The workflow reverts the accessory to its original type and readback proves restoration.",
+    "A type-change summary artifact is written."
+  ],
+  "failure_criteria": [
+    "The dry-run cannot resolve the requested accessory target or compatible target type.",
+    "The dry-run source family/type/category does not match the reviewed accessory target.",
+    "The apply response omits any requested accessory element id.",
+    "Readback does not prove the requested target type after apply.",
+    "Post-change visual capture is missing.",
+    "The revert dry-run/apply/readback omits any requested accessory id or fails to restore the original type.",
+    "Summary artifacts are missing."
+  ],
+  "max_time_seconds": 60,
+  "max_steps": 8,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task is the accessory-specific type/family-change gate for high-volume Gemini damper/accessory rows.",
+    "Do not count a generic device type-change as accessory evidence unless source family/type/category grounding proves the target is the requested MEP accessory."
+  ],
+  "tags": ["revit", "demo", "redline", "type-change", "family-change", "mep-accessory", "damper", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "redline_type_change",
+    "request": {
+      "elementIds": [9701],
+      "category": "OST_DuctAccessory",
+      "targetTypeId": 9802,
+      "sourceFamilyGrounding": {
+        "expectedFamilyName": "Manual Balancing Damper",
+        "expectedTypeName": "12x12 Manual Balancing Damper",
+        "expectedCategory": "OST_DuctAccessory"
+      },
+      "sourceTypeGrounding": { "expectedCurrentTypeId": 9801 },
+      "dryRunPreflightReviewed": true,
+      "targetTypeCompatibilityReviewed": true,
+      "visualViewId": 101,
+      "visualVerify": true,
+      "revertAfterVerify": true
+    },
+    "mock": {
+      "/revit/change-element-type:1": {
+        "ok": true,
+        "dryRun": true,
+        "changes": [
+          { "elementId": 9701, "ok": true, "dryRun": true, "category": "OST_DuctAccessory", "familyName": "Manual Balancing Damper", "oldTypeId": 9801, "oldTypeName": "12x12 Manual Balancing Damper", "newTypeId": 9802, "newTypeName": "14x14 Manual Balancing Damper" }
+        ]
+      },
+      "/revit/change-element-type:2": {
+        "ok": true,
+        "count": 1,
+        "newTypeId": 9802,
+        "newTypeName": "14x14 Manual Balancing Damper",
+        "changedElementIds": [9701],
+        "changes": [
+          { "elementId": 9701, "ok": true, "category": "OST_DuctAccessory", "familyName": "Manual Balancing Damper", "oldTypeId": 9801, "oldTypeName": "12x12 Manual Balancing Damper", "newTypeId": 9802, "newTypeName": "14x14 Manual Balancing Damper" }
+        ]
+      },
+      "/revit/change-element-type:3": {
+        "ok": true,
+        "dryRun": true,
+        "changes": [
+          { "elementId": 9701, "ok": true, "dryRun": true, "category": "OST_DuctAccessory", "familyName": "Manual Balancing Damper", "oldTypeId": 9802, "oldTypeName": "14x14 Manual Balancing Damper", "newTypeId": 9802, "newTypeName": "14x14 Manual Balancing Damper" }
+        ]
+      },
+      "/revit/export-image": {
+        "status": "Captured",
+        "viewId": 101,
+        "path": "artifacts/captures/type-change-mep-accessory-after.png"
+      },
+      "/revit/change-element-type:4": {
+        "ok": true,
+        "dryRun": true,
+        "changes": [
+          { "elementId": 9701, "ok": true, "dryRun": true, "category": "OST_DuctAccessory", "familyName": "Manual Balancing Damper", "oldTypeId": 9802, "oldTypeName": "14x14 Manual Balancing Damper", "newTypeId": 9801, "newTypeName": "12x12 Manual Balancing Damper" }
+        ]
+      },
+      "/revit/change-element-type:5": {
+        "ok": true,
+        "count": 1,
+        "newTypeId": 9801,
+        "newTypeName": "12x12 Manual Balancing Damper",
+        "changedElementIds": [9701],
+        "changes": [
+          { "elementId": 9701, "ok": true, "category": "OST_DuctAccessory", "familyName": "Manual Balancing Damper", "oldTypeId": 9802, "oldTypeName": "14x14 Manual Balancing Damper", "newTypeId": 9801, "newTypeName": "12x12 Manual Balancing Damper" }
+        ]
+      },
+      "/revit/change-element-type:6": {
+        "ok": true,
+        "dryRun": true,
+        "changes": [
+          { "elementId": 9701, "ok": true, "dryRun": true, "category": "OST_DuctAccessory", "familyName": "Manual Balancing Damper", "oldTypeId": 9801, "oldTypeName": "12x12 Manual Balancing Damper", "newTypeId": 9801, "newTypeName": "12x12 Manual Balancing Damper" }
+        ]
+      }
+    }
+  }
+}

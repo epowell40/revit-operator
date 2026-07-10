@@ -6,12 +6,14 @@ import path from "node:path";
 import zlib from "node:zlib";
 import {
   __testOnlyEstimateWallLocalChainagesFromPng,
+  __testOnlyBuildRedlineRouteCandidates,
   __testOnlyGroupNearbyRegions,
   __testOnlyIsDeleteLikeAnnotation,
   __testOnlyNormalizePdfRectToUnit,
   analyzeRedlineFile,
   extractSheetCandidatesFromFilename,
-  extractSheetCandidatesFromText
+  extractSheetCandidatesFromText,
+  inferMepIntentFromRedlineText
 } from "../src/redline/redline_analyzer.js";
 
 function writeRgbPng(filePath: string, width: number, height: number, paint: (pixels: Uint8Array) => void): void {
@@ -161,6 +163,35 @@ test("redline analyzer: identifies delete-like annotation intent", () => {
   assert.equal(__testOnlyIsDeleteLikeAnnotation({ subtype: "Text", contents: "coordinate with sheet M201" }), false);
 });
 
+test("redline analyzer: extracts deterministic MEP facts from route text", () => {
+  const duct = inferMepIntentFromRedlineText({ text: "12x10 SA duct 450 CFM", hasRouteGeometry: true });
+  assert.equal(duct.geometryRole, "route_geometry");
+  assert.equal(duct.actionability, "actionable");
+  assert.equal(duct.kind, "duct");
+  assert.equal(duct.sizeText, "12x10");
+  assert.equal(duct.airflowCfm, 450);
+  assert.equal(duct.systemHint, "supply air");
+  assert.deepEqual(duct.blockers, []);
+  assert.ok(duct.confidence >= 0.85);
+
+  const pipe = inferMepIntentFromRedlineText({ text: "Route 6-inch domestic cold water pipe to fixture", hasRouteGeometry: true });
+  assert.equal(pipe.geometryRole, "route_geometry");
+  assert.equal(pipe.actionability, "actionable");
+  assert.equal(pipe.kind, "pipe");
+  assert.equal(pipe.sizeText, "6\"");
+  assert.equal(pipe.systemHint, "domestic cold water");
+});
+
+test("redline analyzer: classifies MEP label text without route geometry as callout-only", () => {
+  const intent = inferMepIntentFromRedlineText({ text: "12x10 supply duct 450 CFM" });
+  assert.equal(intent.geometryRole, "callout_only");
+  assert.equal(intent.actionability, "review");
+  assert.equal(intent.kind, "duct");
+  assert.equal(intent.sizeText, "12x10");
+  assert.equal(intent.airflowCfm, 450);
+  assert.ok(intent.blockers.includes("route_geometry_not_detected"));
+});
+
 test("redline analyzer: groups nearby annotation regions for shared context", () => {
   const groups = __testOnlyGroupNearbyRegions({
     regions: [
@@ -173,6 +204,69 @@ test("redline analyzer: groups nearby annotation regions for shared context", ()
   });
   assert.equal(groups.length, 1);
   assert.deepEqual(groups[0]?.region_indices, [1, 2]);
+});
+
+test("redline analyzer: route candidates carry MEP size airflow and system intent", () => {
+  const candidates = __testOnlyBuildRedlineRouteCandidates([
+    {
+      page: 1,
+      annotation_index: 1,
+      subtype: "PolyLine",
+      is_red_like: true,
+      box_norm: { minX: 0.2, minY: 0.2, maxX: 0.6, maxY: 0.24 },
+      vertices_norm: [{ x: 0.2, y: 0.22 }, { x: 0.6, y: 0.22 }]
+    },
+    {
+      page: 1,
+      annotation_index: 2,
+      subtype: "FreeText",
+      is_red_like: true,
+      contents: "12x10 SA duct 450 CFM",
+      box_norm: { minX: 0.22, minY: 0.26, maxX: 0.48, maxY: 0.32 }
+    }
+  ]);
+
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0]?.mep_kind_hint, "duct");
+  assert.equal(candidates[0]?.size_text, "12x10");
+  assert.equal(candidates[0]?.airflow_cfm, 450);
+  assert.equal(candidates[0]?.system_hint, "supply air");
+  assert.equal(candidates[0]?.geometry_role, "route_geometry");
+  assert.equal(candidates[0]?.actionability, "actionable");
+});
+
+test("redline analyzer: preserves marked.pdf PolyLine vertices and related FreeText label", async () => {
+  const source = "C:\\Users\\User\\Desktop\\marked.pdf";
+  if (!fs.existsSync(source)) return;
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-marked-vector-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const uploads = path.join(root, "artifacts", "uploads");
+  fs.mkdirSync(uploads, { recursive: true });
+  fs.copyFileSync(source, path.join(uploads, "marked.pdf"));
+
+  const r = await analyzeRedlineFile({
+    file_path: "artifacts/uploads/marked.pdf",
+    include_pdf_annotations: true,
+    max_pages: 1
+  });
+
+  assert.equal(r.ok, true);
+  const annotations = r.pdf_annotations ?? [];
+  const route = annotations.find(a => a.subtype === "PolyLine");
+  const label = annotations.find(a => a.subtype === "FreeText");
+  assert.ok(route);
+  assert.ok(label);
+  assert.ok((route?.vertices_pdf?.length ?? 0) > 10);
+  assert.ok((route?.vertices_norm?.length ?? 0) > 10);
+  assert.match(route?.related_text ?? "", /12x10 supply duct/i);
+  assert.deepEqual(route?.related_annotation_indices, [label?.annotation_index]);
+
+  const region = r.mark_regions?.find(x => x.annotation_subtype === "PolyLine");
+  assert.ok(region);
+  assert.match(region?.annotation_related_text ?? region?.annotation_contents ?? "", /12x10 supply duct/i);
+  assert.ok((region?.annotation_vertices_norm?.length ?? 0) > 10);
+  assert.ok(region?.annotation_box_norm);
 });
 
 test("redline analyzer: wall-local chainage ignores invalid local runs that start after the mark", () => {

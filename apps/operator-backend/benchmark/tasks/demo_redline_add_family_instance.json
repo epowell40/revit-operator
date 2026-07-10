@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_add_family_instance",
+  "name": "Demo G3: Add-Like Redline Family Instance",
+  "description": "Exercise an add-like redline operation using a disposable modeled family-instance target: create a bounded device/fixture-like element, prove its requested type, prove it is visible, write a deterministic visual gate, and clean it up.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a model that can be closed without saving.",
+    "Use a view, level, and non-hosted or level-hosted family type that can be safely placed and deleted.",
+    "Prefer a generic annotation, receptacle, light fixture, or other disposable benchmark symbol available in the active model."
+  ],
+  "success_criteria": [
+    "A disposable family instance id is created in the model.",
+    "The native create result returns family/type/name evidence matching the requested disposable symbol.",
+    "The created family instance id is visible in the post-add visible-element inventory.",
+    "A deterministic add visual gate artifact passes using post-change capture evidence.",
+    "The created family instance is cleaned up with native dry-run and applied delete effect evidence."
+  ],
+  "failure_criteria": [
+    "The family instance is not created or is created as a different requested type.",
+    "The post-add visible-element inventory does not contain the created family instance id.",
+    "The add visual gate artifact is missing or fails.",
+    "The cleanup delete dry-run/apply omits the family instance id from effect evidence."
+  ],
+  "max_time_seconds": 60,
+  "max_steps": 5,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task generalizes add-like redline evidence beyond text and tags into actual modeled family instances.",
+    "Do not count requestedIds-only cleanup responses as evidence; cleanup must return ids, deletedIds, or impactedIds."
+  ],
+  "tags": ["revit", "demo", "redline", "add", "family-instance", "device", "fixture", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "redline_add",
+    "request": {
+      "viewId": 101,
+      "imageSize": 1800,
+      "targetKind": "family_instance",
+      "familyInstance": {
+        "familyName": "",
+        "symbolName": "Generic Annotation",
+        "levelName": "",
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "cleanupCreatedElements": true
+    },
+    "mock": {
+      "/revit/create-family-instance": {
+        "id": 9101,
+        "name": "Generic Annotation",
+        "family": "Generic Annotation",
+        "familyName": "Generic Annotation",
+        "symbol": "Generic Annotation",
+        "symbolName": "Generic Annotation",
+        "typeName": "Generic Annotation"
+      },
+      "/revit/export-visible-elements": {
+        "imagePath": "artifacts/captures/add-family-instance-after.png",
+        "items": [
+          { "id": 9101, "category": "Generic Annotations", "familyName": "Generic Annotation", "symbolName": "Generic Annotation" }
+        ]
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "requestedIds": [9101],
+        "impactedIds": [9101]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "requestedIds": [9101],
+        "impactedIds": [9101]
+      }
+    }
+  }
+}

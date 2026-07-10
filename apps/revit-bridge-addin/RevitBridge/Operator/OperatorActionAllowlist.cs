@@ -162,6 +162,7 @@ namespace RevitBridge.Operator
                     "/revit/renumber-sheets",
                     "/revit/sync-sheet-names",
                     "/revit/link-cad",
+                    "/revit/link-revit",
                     "/revit/place-image",
                     "/revit/place-pdf-underlay",
                     "/revit/import-zippybim-geometry",

@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_move_pipe_route",
+  "name": "Demo G15: Move-Like Redline Pipe Route",
+  "description": "Exercise a move-like redline operation using a disposable modeled pipe route: create the route, move every created id, prove the model-space delta, and clean it up.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a model that can be closed without saving.",
+    "Use a view and ordered model-space points where a short unconnected pipe route can be created, moved, and deleted safely."
+  ],
+  "success_criteria": [
+    "A disposable pipe route is created through /revit/mep-route-workflow with created model ids.",
+    "Native move dry-run and apply effect evidence include every created pipe/fitting id.",
+    "Visible inventory proves the requested model-space movement vector.",
+    "A deterministic move visual gate artifact passes using before/after capture evidence.",
+    "The moved pipe route is cleaned up with native dry-run and applied delete effect evidence."
+  ],
+  "failure_criteria": [
+    "The disposable pipe route is not created or returns no model ids.",
+    "Move dry-run or apply omits any created pipe/fitting id from effect evidence.",
+    "The before/after visible-element inventory cannot prove the requested movement vector.",
+    "Cleanup delete dry-run/apply omits any created pipe/fitting id from effect evidence."
+  ],
+  "max_time_seconds": 180,
+  "max_steps": 7,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task covers move-like pipe redlines using real model-write evidence.",
+    "All created pipe/fitting ids must be represented in move and cleanup evidence."
+  ],
+  "tags": ["revit", "demo", "redline", "move", "pipe", "mep-route", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "redline_move",
+    "request": {
+      "viewId": 401,
+      "imageSize": 2200,
+      "targetKind": "pipe_route",
+      "kind": "pipe",
+      "roomNumber": "405",
+      "levelName": "L4",
+      "systemType": "Domestic Cold Water",
+      "pipeSize": "2\"",
+      "routingMode": "polyline",
+      "connectSegments": true,
+      "verify": true,
+      "routeVisualVerify": false,
+      "focusPaddingFt": 8,
+      "toleranceFt": 0.05,
+      "points": [
+        { "x": 42, "y": 24 },
+        { "x": 55, "y": 24 },
+        { "x": 55, "y": 31 }
+      ],
+      "move": {
+        "mode": "vector",
+        "vectorX": 1,
+        "vectorY": 0,
+        "vectorZ": 0,
+        "behavior": "allOrNothing"
+      }
+    },
+    "mock": {
+      "/revit/mep-route-workflow": {
+        "status": "AppliedVisualVerificationReady",
+        "applyResult": {
+          "status": "CreatedWithOpenConnectors",
+          "createdElementIds": [1645929, 1645930],
+          "createdFittingIds": [1645931]
+        }
+      },
+      "/revit/export-visible-elements:1": {
+        "imagePath": "artifacts/captures/move-pipe-route-before.png",
+        "items": [
+          { "id": 1645929, "category": "Pipes", "anchor": { "model": { "x": 48.5, "y": 24, "z": 38.8333 } } },
+          { "id": 1645930, "category": "Pipes", "anchor": { "model": { "x": 55, "y": 27.5, "z": 38.8333 } } },
+          { "id": 1645931, "category": "Pipe Fittings", "anchor": { "model": { "x": 55, "y": 24, "z": 38.8333 } } }
+        ]
+      },
+      "/revit/move-elements:1": {
+        "status": "Dry Run",
+        "movedIds": [1645929, 1645930, 1645931],
+        "skipped": [],
+        "rolledBack": true
+      },
+      "/revit/move-elements:2": {
+        "status": "Moved",
+        "movedIds": [1645929, 1645930, 1645931],
+        "skipped": [],
+        "rolledBack": false
+      },
+      "/revit/export-visible-elements:2": {
+        "imagePath": "artifacts/captures/move-pipe-route-after.png",
+        "items": [
+          { "id": 1645929, "category": "Pipes", "anchor": { "model": { "x": 49.5, "y": 24, "z": 38.8333 } } },
+          { "id": 1645930, "category": "Pipes", "anchor": { "model": { "x": 56, "y": 27.5, "z": 38.8333 } } },
+          { "id": 1645931, "category": "Pipe Fittings", "anchor": { "model": { "x": 56, "y": 24, "z": 38.8333 } } }
+        ]
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "ids": [1645929, 1645930, 1645931]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "ids": [1645929, 1645930, 1645931]
+      }
+    }
+  }
+}

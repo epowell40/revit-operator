@@ -336,6 +336,7 @@ namespace RevitBridge.Operator
                 { "/revit/create-pipe", typeof(RevitBridge.Handlers.CreatePipeHandler.Params) },
                 { "/revit/create-family-instance", typeof(RevitBridge.Handlers.CreateFamilyInstanceHandler.Params) },
                 { "/revit/link-cad", typeof(RevitBridge.Handlers.LinkCadHandler.Params) },
+                { "/revit/link-revit", typeof(RevitBridge.Logic.Handlers.LinkRevitHandler.Params) },
                 { "/revit/place-image", typeof(RevitBridge.Handlers.PlaceImageHandler.Params) },
                 { "/revit/place-pdf-underlay", typeof(RevitBridge.Handlers.PlacePdfUnderlayHandler.Params) },
                 { "/revit/import-zippybim-geometry", typeof(RevitBridge.Handlers.ImportZippyBimGeometryHandler.Params) },
@@ -838,6 +839,15 @@ namespace RevitBridge.Operator
                 {
                     enumMap["placement"] = new[] { "origin", "center" };
                     notes.Add("sourcePath can be Workspace-relative OR an external path under OPERATOR_ALLOWED_EXTERNAL_ROOTS.");
+                }
+
+                if (p == "/revit/link-revit")
+                {
+                    enumMap["action"] = new[] { "link", "unload" };
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "x", "y", "z" } });
+                    notes.Add("sourcePath can be Workspace-relative OR an external path under OPERATOR_ALLOWED_EXTERNAL_ROOTS.");
+                    notes.Add("Run dryRun:true first; apply creates a RevitLinkType plus RevitLinkInstance and returns both ids.");
+                    notes.Add("Use action:'unload' with linkTypeId before deleting the last link instance when strict cleanup must remove the RevitLinkType.");
                 }
 
                 if (p == "/revit/visibility")

@@ -49,6 +49,60 @@ type PdfPageSummary = {
   annotation_summary?: PdfAnnotationSummary;
 };
 
+type PdfAnnotationPoint = { x: number; y: number };
+type PdfAnnotationBox = { minX: number; minY: number; maxX: number; maxY: number };
+
+type PdfVectorAnnotation = {
+  page: number;
+  annotation_index: number;
+  id?: string;
+  subtype: string;
+  color?: string;
+  is_red_like: boolean;
+  is_delete_like?: boolean;
+  contents?: string;
+  rect_pdf?: [number, number, number, number];
+  box_norm?: PdfAnnotationBox;
+  vertices_pdf?: PdfAnnotationPoint[];
+  vertices_norm?: PdfAnnotationPoint[];
+  ink_lists_pdf?: PdfAnnotationPoint[][];
+  ink_lists_norm?: PdfAnnotationPoint[][];
+  related_annotation_indices?: number[];
+  related_text?: string;
+  related_group?: number;
+};
+
+export type RedlineRouteCandidate = {
+  candidate_index: number;
+  label_text: string;
+  mep_kind_hint?: "duct" | "pipe";
+  size_text?: string;
+  airflow_cfm?: number;
+  system_hint?: string;
+  geometry_role?: "route_geometry" | "callout_only" | "unknown";
+  actionability?: "actionable" | "reference_only" | "review";
+  intent_blockers?: string[];
+  target_annotation_indices: number[];
+  label_annotation_indices: number[];
+  vertices_norm: PdfAnnotationPoint[];
+  box_norm: PdfAnnotationBox;
+  alignment_image_path?: string;
+  alignment_crop_norm?: PdfAnnotationBox;
+  confidence: number;
+  reason: string;
+};
+
+export type RedlineMepIntentHint = {
+  geometryRole: "route_geometry" | "callout_only" | "unknown";
+  actionability: "actionable" | "reference_only" | "review";
+  kind?: "duct" | "pipe";
+  sizeText?: string;
+  airflowCfm?: number;
+  systemHint?: string;
+  confidence: number;
+  blockers: string[];
+};
+
 export type RedlineAnalyzeResponse = {
   ok: boolean;
   file_path: string;
@@ -93,6 +147,15 @@ export type RedlineAnalyzeResponse = {
     annotation_is_red_like?: boolean;
     annotation_is_delete_like?: boolean;
     annotation_contents?: string;
+    annotation_page?: number;
+    annotation_index?: number;
+    annotation_id?: string;
+    annotation_rect_pdf?: [number, number, number, number];
+    annotation_box_norm?: PdfAnnotationBox;
+    annotation_vertices_pdf?: PdfAnnotationPoint[];
+    annotation_vertices_norm?: PdfAnnotationPoint[];
+    annotation_related_indices?: number[];
+    annotation_related_text?: string;
     related_group?: number;
   }>;
   annotation_groups?: Array<{
@@ -100,6 +163,8 @@ export type RedlineAnalyzeResponse = {
     region_indices: number[];
     reason: string;
   }>;
+  route_candidates?: RedlineRouteCandidate[];
+  pdf_annotations?: PdfVectorAnnotation[];
   vision_artifacts?: {
     preview_image_path?: string;
     annotated_image_path?: string;
@@ -150,11 +215,19 @@ function isLikelySheetPattern(normalized: string): boolean {
   return true;
 }
 
-function colorToName(rgb: number[] | null): { name: string; isRedLike: boolean } {
-  if (!rgb || rgb.length < 3) return { name: "unknown", isRedLike: false };
-  const rRaw = Number(rgb[0]);
-  const gRaw = Number(rgb[1]);
-  const bRaw = Number(rgb[2]);
+function colorToName(rgb: unknown): { name: string; isRedLike: boolean } {
+  const values =
+    Array.isArray(rgb)
+      ? rgb
+      : ArrayBuffer.isView(rgb)
+        ? Array.from(rgb as unknown as ArrayLike<number>)
+        : rgb && typeof rgb === "object" && typeof (rgb as any).length === "number"
+          ? Array.from(rgb as ArrayLike<number>)
+          : null;
+  if (!values || values.length < 3) return { name: "unknown", isRedLike: false };
+  const rRaw = Number(values[0]);
+  const gRaw = Number(values[1]);
+  const bRaw = Number(values[2]);
   if (!Number.isFinite(rRaw) || !Number.isFinite(gRaw) || !Number.isFinite(bRaw)) return { name: "unknown", isRedLike: false };
 
   const normalize = (x: number) => {
@@ -1173,6 +1246,317 @@ function flattenNumericPairSequence(raw: unknown): number[] {
   return out;
 }
 
+function extractPdfPointSequence(raw: unknown): PdfAnnotationPoint[] {
+  const out: PdfAnnotationPoint[] = [];
+  if (!raw || typeof raw !== "object") return out;
+  if (Array.isArray(raw)) {
+    if (raw.every((item) => item && typeof item === "object" && !Array.isArray(item))) {
+      for (const item of raw) {
+        const x = toFiniteNumber((item as any).x ?? (item as any).X);
+        const y = toFiniteNumber((item as any).y ?? (item as any).Y);
+        if (x !== null && y !== null) out.push({ x, y });
+      }
+      if (out.length > 0) return out.slice(0, 2000);
+    }
+  }
+  const coords = flattenNumericPairSequence(raw);
+  for (let i = 0; i + 1 < coords.length; i += 2) {
+    const x = coords[i]!;
+    const y = coords[i + 1]!;
+    if (Number.isFinite(x) && Number.isFinite(y)) out.push({ x, y });
+  }
+  return out.slice(0, 2000);
+}
+
+function mapPdfPointsToUnit(points: PdfAnnotationPoint[], mapper: PdfAnnotationCoordinateMapper): PdfAnnotationPoint[] {
+  if (!Number.isFinite(mapper.width) || !Number.isFinite(mapper.height) || mapper.width <= 0 || mapper.height <= 0) return [];
+  const out: PdfAnnotationPoint[] = [];
+  for (const p of points) {
+    const mapped = mapper.mapPoint(p.x, p.y);
+    if (!mapped) continue;
+    if (mapped.x < -10_000 || mapped.x > mapper.width + 10_000 || mapped.y < -10_000 || mapped.y > mapper.height + 10_000) continue;
+    out.push({
+      x: Math.max(0, Math.min(1, mapped.x / mapper.width)),
+      y: Math.max(0, Math.min(1, mapped.y / mapper.height))
+    });
+  }
+  return out;
+}
+
+function extractInkListsPdf(inkLists: unknown): PdfAnnotationPoint[][] {
+  if (!Array.isArray(inkLists) || inkLists.length === 0) return [];
+  const out: PdfAnnotationPoint[][] = [];
+  for (const stroke of inkLists) {
+    const points = extractPdfPointSequence(stroke);
+    if (points.length >= 2) out.push(points);
+  }
+  return out.slice(0, 200);
+}
+
+function mapInkListsToUnit(strokes: PdfAnnotationPoint[][], mapper: PdfAnnotationCoordinateMapper): PdfAnnotationPoint[][] {
+  return strokes
+    .map((stroke) => mapPdfPointsToUnit(stroke, mapper))
+    .filter((stroke) => stroke.length >= 2)
+    .slice(0, 200);
+}
+
+function unionNormBoxes(boxes: PdfAnnotationBox[]): PdfAnnotationBox | null {
+  if (boxes.length === 0) return null;
+  return {
+    minX: Math.min(...boxes.map((b) => b.minX)),
+    minY: Math.min(...boxes.map((b) => b.minY)),
+    maxX: Math.max(...boxes.map((b) => b.maxX)),
+    maxY: Math.max(...boxes.map((b) => b.maxY))
+  };
+}
+
+function normBoxCenter(box: PdfAnnotationBox): { x: number; y: number } {
+  return { x: (box.minX + box.maxX) * 0.5, y: (box.minY + box.maxY) * 0.5 };
+}
+
+function normBoxIntersectionArea(a: PdfAnnotationBox, b: PdfAnnotationBox): number {
+  const minX = Math.max(a.minX, b.minX);
+  const minY = Math.max(a.minY, b.minY);
+  const maxX = Math.min(a.maxX, b.maxX);
+  const maxY = Math.min(a.maxY, b.maxY);
+  if (maxX <= minX || maxY <= minY) return 0;
+  return (maxX - minX) * (maxY - minY);
+}
+
+function normBoxDistance(a: PdfAnnotationBox, b: PdfAnnotationBox): number {
+  const ca = normBoxCenter(a);
+  const cb = normBoxCenter(b);
+  return Math.hypot(ca.x - cb.x, ca.y - cb.y);
+}
+
+function normBoxWidth(box: PdfAnnotationBox): number {
+  return Math.max(0, box.maxX - box.minX);
+}
+
+function normBoxHeight(box: PdfAnnotationBox): number {
+  return Math.max(0, box.maxY - box.minY);
+}
+
+function unionPdfBoxes(boxes: PdfAnnotationBox[]): PdfAnnotationBox | null {
+  if (boxes.length === 0) return null;
+  return {
+    minX: Math.min(...boxes.map((b) => b.minX)),
+    minY: Math.min(...boxes.map((b) => b.minY)),
+    maxX: Math.max(...boxes.map((b) => b.maxX)),
+    maxY: Math.max(...boxes.map((b) => b.maxY))
+  };
+}
+
+function extractMepSizeText(text: string): string | undefined {
+  const rectangular = text.match(/\b(\d{1,2})\s*(?:"|in|inch|inches)?\s*[x×]\s*(\d{1,2})\b/i);
+  if (rectangular) return `${Number.parseInt(rectangular[1]!, 10)}x${Number.parseInt(rectangular[2]!, 10)}`;
+  const round = text.match(/\b(\d{1,2}(?:\.\d+)?)\s*-?\s*(?:"|in|inch|inches)\b/i);
+  if (!round) return undefined;
+  const n = Number.parseFloat(round[1]!);
+  return Number.isInteger(n) ? `${n}"` : `${n}"`;
+}
+
+function extractAirflowCfm(text: string): number | undefined {
+  const match = /\b(\d{2,6})\s*cfm\b/i.exec(text);
+  if (!match?.[1]) return undefined;
+  const value = Number.parseInt(match[1], 10);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function systemHintFromMepText(text: string): string | undefined {
+  const lower = text.toLowerCase();
+  if (/\bsupply\s+air\b|\bsa\b|\bsupply\b/.test(lower)) return "supply air";
+  if (/\breturn\s+air\b|\bra\b|\breturn\b/.test(lower)) return "return air";
+  if (/\bexhaust\s+air\b|\bea\b|\bexhaust\b/.test(lower)) return "exhaust air";
+  if (/\boutside\s+air\b|\boa\b/.test(lower)) return "outside air";
+  if (/\bdomestic\s+cold\s+water\b|\bdcw\b|\bcold\s+water\b/.test(lower)) return "domestic cold water";
+  if (/\bdomestic\s+hot\s+water\b|\bdhw\b|\bhot\s+water\b/.test(lower)) return "domestic hot water";
+  if (/\bsanitary\b|\bsan\b/.test(lower)) return "sanitary";
+  if (/\bvent\b/.test(lower)) return "vent";
+  if (/\bchw\b|\bchilled\s+water\b/.test(lower)) return "chilled water";
+  if (/\bhhw\b|\bheating\s+hot\s+water\b/.test(lower)) return "heating hot water";
+  return undefined;
+}
+
+export function inferMepIntentFromRedlineText(args: { text: string; hasRouteGeometry?: boolean }): RedlineMepIntentHint {
+  const text = truncate(args.text, 2000);
+  const kind = mepKindHintFromText(text);
+  const sizeText = extractMepSizeText(text);
+  const airflowCfm = extractAirflowCfm(text);
+  const systemHint = systemHintFromMepText(text);
+  const hasRouteGeometry = args.hasRouteGeometry === true;
+  const hasMepFact = !!kind || !!sizeText || airflowCfm !== undefined || !!systemHint;
+  const explicitAction = /\b(add|provide|install|route|run|extend|connect|tap|take\s*off|branch|reroute|offset|resize|size|change|revise|update|move|delete|remove)\b/i.test(text);
+  const referenceOnly = /\b(no\s+action\s+required|for\s+reference\s+only|reference\s+only|highlight\s+only|status\s+only|already\s+(?:done|complete|completed|reviewed)|existing\s+only)\b/i.test(text);
+  const blockers: string[] = [];
+  if (!hasMepFact) blockers.push("no_mep_size_airflow_system_or_kind_detected");
+  if (hasMepFact && !hasRouteGeometry && !explicitAction) blockers.push("route_geometry_not_detected");
+
+  const geometryRole = hasRouteGeometry
+    ? "route_geometry"
+    : hasMepFact && !explicitAction
+      ? "callout_only"
+      : "unknown";
+  const actionability = referenceOnly ? "reference_only" : explicitAction || hasRouteGeometry ? "actionable" : "review";
+  let confidence = 0.35;
+  if (hasMepFact) confidence += 0.2;
+  if (kind) confidence += 0.12;
+  if (sizeText) confidence += 0.12;
+  if (airflowCfm !== undefined) confidence += 0.08;
+  if (systemHint) confidence += 0.08;
+  if (hasRouteGeometry) confidence += 0.15;
+  if (referenceOnly) confidence = Math.min(confidence, 0.72);
+  if (blockers.length > 0) confidence = Math.min(confidence, 0.68);
+
+  return {
+    geometryRole,
+    actionability,
+    ...(kind ? { kind } : {}),
+    ...(sizeText ? { sizeText } : {}),
+    ...(airflowCfm !== undefined ? { airflowCfm } : {}),
+    ...(systemHint ? { systemHint } : {}),
+    confidence: Math.max(0.05, Math.min(0.95, Number(confidence.toFixed(2)))),
+    blockers
+  };
+}
+
+function textLooksMepRouteLabel(text: string): boolean {
+  const hasSize = !!extractMepSizeText(text);
+  return hasSize && /\b(duct|supply|return|exhaust|lined|pipe|piping|water|sanitary|vent)\b/i.test(text);
+}
+
+function mepKindHintFromText(text: string): "duct" | "pipe" | undefined {
+  const lower = text.toLowerCase();
+  const pipeLike = /\b(pipe|piping|domestic|sanitary|vent|water)\b/.test(lower);
+  const explicitDuctLike = /\b(duct|ductwork|supply\s+air|return\s+air|exhaust\s+air|hvac)\b/.test(lower) || /\b\d{1,2}\s*(?:x|×)\s*\d{1,2}\b/i.test(text);
+  const ductLike = explicitDuctLike || /\b(supply|return|exhaust)\b/.test(lower);
+  if (pipeLike && !explicitDuctLike) return "pipe";
+  if (ductLike) return "duct";
+  return undefined;
+}
+
+function isTrueTextUnderline(routeBox: PdfAnnotationBox, labelBox: PdfAnnotationBox): boolean {
+  const routeWidth = normBoxWidth(routeBox);
+  const routeHeight = normBoxHeight(routeBox);
+  const labelWidth = normBoxWidth(labelBox);
+  const labelHeight = normBoxHeight(labelBox);
+  if (routeWidth <= 0 || labelWidth <= 0 || labelHeight <= 0) return false;
+  const thinHorizontal = routeWidth > routeHeight * 4 && routeHeight <= 0.02;
+  const vectorCenterY = (routeBox.minY + routeBox.maxY) * 0.5;
+  const lowerBandMin = labelBox.minY + labelHeight * 0.58;
+  const inLowerBand = vectorCenterY >= lowerBandMin && vectorCenterY <= labelBox.maxY + labelHeight * 0.2;
+  return thinHorizontal && inLowerBand && routeWidth / labelWidth >= 0.55;
+}
+
+function routeCandidateVertices(annotation: PdfVectorAnnotation): PdfAnnotationPoint[] {
+  if (Array.isArray(annotation.vertices_norm) && annotation.vertices_norm.length >= 2) return annotation.vertices_norm;
+  if (Array.isArray(annotation.ink_lists_norm)) {
+    const longest = [...annotation.ink_lists_norm].sort((a, b) => b.length - a.length)[0];
+    if (longest && longest.length >= 2) return longest;
+  }
+  if (!annotation.box_norm) return [];
+  const box = annotation.box_norm;
+  return [
+    { x: box.minX, y: (box.minY + box.maxY) * 0.5 },
+    { x: box.maxX, y: (box.minY + box.maxY) * 0.5 }
+  ];
+}
+
+function buildRedlineRouteCandidates(annotations: PdfVectorAnnotation[]): RedlineRouteCandidate[] {
+  const labels = annotations.filter((a) => annotationSubtypeLooksText(a.subtype) && !!a.box_norm && textLooksMepRouteLabel(a.contents ?? ""));
+  const vectors = annotations.filter((a) => annotationSubtypeLooksRoute(a.subtype) && !!a.box_norm);
+  const candidates: RedlineRouteCandidate[] = [];
+  for (const vector of vectors) {
+    const vbox = vector.box_norm!;
+    const relatedLabels = labels
+      .map((label) => {
+        const lbox = label.box_norm!;
+        const explicit = Array.isArray(vector.related_annotation_indices) && vector.related_annotation_indices.includes(label.annotation_index);
+        const labelText = label.contents ?? "";
+        const centerDist = normBoxDistance(vbox, lbox);
+        const yDist = Math.abs(normBoxCenter(vbox).y - normBoxCenter(lbox).y);
+        const xOverlap = normBoxIntersectionArea(
+          { minX: vbox.minX, minY: 0, maxX: vbox.maxX, maxY: 1 },
+          { minX: lbox.minX, minY: 0, maxX: lbox.maxX, maxY: 1 }
+        );
+        const nearby = explicit || centerDist <= 0.2 || (xOverlap > 0 && yDist <= 0.18);
+        if (!nearby) return null;
+        const underline = isTrueTextUnderline(vbox, lbox);
+        const score = (explicit ? 0.3 : 0) + Math.max(0, 0.35 - centerDist) + (xOverlap > 0 ? 0.1 : 0) - (underline ? 0.7 : 0);
+        return { label, labelText, centerDist, underline, score };
+      })
+      .filter((r): r is NonNullable<typeof r> => !!r)
+      .sort((a, b) => b.score - a.score);
+    const best = relatedLabels[0];
+    const fallbackLabel = vector.related_text && textLooksMepRouteLabel(vector.related_text)
+      ? { labelText: vector.related_text, label: null as PdfVectorAnnotation | null, centerDist: 0.12, underline: false, score: 0.42 }
+      : null;
+    const chosen = best ?? fallbackLabel;
+    if (!chosen || chosen.underline) continue;
+    const vertices = routeCandidateVertices(vector);
+    if (vertices.length < 2) continue;
+    const boxes = [vbox, ...(chosen.label?.box_norm ? [chosen.label.box_norm] : [])];
+    const box = unionPdfBoxes(boxes);
+    if (!box) continue;
+    const intent = inferMepIntentFromRedlineText({ text: chosen.labelText, hasRouteGeometry: true });
+    candidates.push({
+      candidate_index: candidates.length + 1,
+      label_text: chosen.labelText,
+      ...(intent.kind ? { mep_kind_hint: intent.kind } : {}),
+      ...(intent.sizeText ? { size_text: intent.sizeText } : {}),
+      ...(intent.airflowCfm !== undefined ? { airflow_cfm: intent.airflowCfm } : {}),
+      ...(intent.systemHint ? { system_hint: intent.systemHint } : {}),
+      geometry_role: intent.geometryRole,
+      actionability: intent.actionability,
+      ...(intent.blockers.length > 0 ? { intent_blockers: intent.blockers } : {}),
+      target_annotation_indices: [vector.annotation_index],
+      label_annotation_indices: chosen.label ? [chosen.label.annotation_index] : [],
+      vertices_norm: vertices,
+      box_norm: box,
+      confidence: Math.max(0.55, Math.min(0.94, 0.55 + chosen.score)),
+      reason:
+        chosen.label
+          ? "Route vector is spatially associated with nearby MEP callout text; the text labels the route geometry."
+          : "Route vector has MEP callout text embedded as related annotation metadata."
+    });
+  }
+  return candidates.sort((a, b) => b.confidence - a.confidence).slice(0, 12);
+}
+
+function annotationSubtypeLooksRoute(subtype: string): boolean {
+  return /^(ink|line|polyline|polygon)$/i.test(subtype);
+}
+
+function annotationSubtypeLooksText(subtype: string): boolean {
+  return /^(freetext|text|typewriter)$/i.test(subtype);
+}
+
+function relatePdfAnnotations(annotations: PdfVectorAnnotation[]): void {
+  for (const route of annotations) {
+    if (!annotationSubtypeLooksRoute(route.subtype) || !route.box_norm) continue;
+    const related = annotations
+      .filter((candidate) => {
+        if (candidate.annotation_index === route.annotation_index || candidate.page !== route.page || !candidate.box_norm) return false;
+        if (!annotationSubtypeLooksText(candidate.subtype) || !candidate.contents) return false;
+        const overlap = normBoxIntersectionArea(route.box_norm!, candidate.box_norm);
+        if (overlap > 0) return true;
+        return normBoxDistance(route.box_norm!, candidate.box_norm) <= 0.08;
+      })
+      .sort((a, b) => {
+        const ao = normBoxIntersectionArea(route.box_norm!, a.box_norm!);
+        const bo = normBoxIntersectionArea(route.box_norm!, b.box_norm!);
+        return bo - ao || normBoxDistance(route.box_norm!, a.box_norm!) - normBoxDistance(route.box_norm!, b.box_norm!);
+      });
+    if (related.length === 0) continue;
+    route.related_annotation_indices = related.map((r) => r.annotation_index);
+    route.related_text = related.map((r) => r.contents).filter(Boolean).join("; ");
+    for (const label of related) {
+      label.related_annotation_indices = Array.from(new Set([...(label.related_annotation_indices ?? []), route.annotation_index]));
+      if (!label.related_text && route.contents) label.related_text = route.contents;
+    }
+  }
+}
+
 function normalizeInkListsToUnit(
   inkLists: unknown,
   mapper: PdfAnnotationCoordinateMapper
@@ -1313,6 +1697,10 @@ export function __testOnlyGroupNearbyRegions(args: {
   return groupNearbyRegions(args);
 }
 
+export function __testOnlyBuildRedlineRouteCandidates(annotations: PdfVectorAnnotation[]): RedlineRouteCandidate[] {
+  return buildRedlineRouteCandidates(annotations);
+}
+
 function boxCenter(box: { x: number; y: number; w: number; h: number }): { x: number; y: number } {
   return { x: box.x + box.w * 0.5, y: box.y + box.h * 0.5 };
 }
@@ -1364,6 +1752,21 @@ async function bestEffortConvertPdfToJpegPages(args: {
   const rid = Math.random().toString(36).slice(2, 8);
   const outDir = path.join(ws.root, "artifacts", "redline", `${stamp}_${rid}_pdf`);
   fs.mkdirSync(outDir, { recursive: true });
+
+  const nodeRendered = await bestEffortRenderPdfWithNodeCanvas({
+    fullPdfPath: args.fullPdfPath,
+    outDir,
+    maxPages: args.maxPages,
+    dpi: args.dpi
+  });
+  if (nodeRendered.ok && nodeRendered.page_paths.length > 0) {
+    return {
+      ok: true,
+      page_paths: nodeRendered.page_paths
+        .map((p) => toWorkspaceRelativePath(p))
+        .filter((p): p is string => !!p)
+    };
+  }
 
   const py = `
 import json
@@ -1492,6 +1895,42 @@ else:
     };
   } catch {
     return { ok: false, page_paths: [], warning: truncate(r.stdout || r.stderr || "PDF conversion parse failed.", 320) };
+  }
+}
+
+async function bestEffortRenderPdfWithNodeCanvas(args: {
+  fullPdfPath: string;
+  outDir: string;
+  maxPages: number;
+  dpi: number;
+}): Promise<{ ok: boolean; page_paths: string[]; warning?: string }> {
+  try {
+    const canvasMod = await (Function("specifier", "return import(specifier)")("@napi-rs/canvas") as Promise<any>);
+    const createCanvas = canvasMod?.createCanvas;
+    if (typeof createCanvas !== "function") return { ok: false, page_paths: [], warning: "@napi-rs/canvas createCanvas is unavailable." };
+    const pdfjs = await loadPdfJsForNode();
+    const bytes = fs.readFileSync(args.fullPdfPath);
+    const doc = await pdfjs.getDocument(buildPdfJsDocumentOptions(new Uint8Array(bytes))).promise;
+    const count = Math.max(1, Math.min(8, args.maxPages, Number(doc.numPages ?? 0)));
+    const scale = Math.max(72, Math.min(300, args.dpi)) / 72;
+    const paths: string[] = [];
+    for (let i = 1; i <= count; i++) {
+      const page = await doc.getPage(i);
+      const viewport = page.getViewport({ scale });
+      const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+      const ctx = canvas.getContext("2d");
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      const out = path.join(args.outDir, `page_${String(i).padStart(2, "0")}.png`);
+      fs.writeFileSync(out, canvas.toBuffer("image/png"));
+      paths.push(out);
+    }
+    return { ok: paths.length > 0, page_paths: paths };
+  } catch (err) {
+    return {
+      ok: false,
+      page_paths: [],
+      warning: err instanceof Error ? err.message : "Node PDF rasterization failed."
+    };
   }
 }
 
@@ -1664,6 +2103,14 @@ async function bestEffortRenderImageRegions(args: {
   fs.mkdirSync(outDir, { recursive: true });
   const annotatedAbs = path.join(outDir, "marked_regions.png");
 
+  const nodeRendered = await bestEffortRenderImageRegionsWithNodeCanvas({
+    fullPath: args.fullPath,
+    regions: safeRegions,
+    outDir,
+    annotatedAbs
+  });
+  if (nodeRendered.crop_paths.length > 0 || nodeRendered.annotated_path) return nodeRendered;
+
   const py = `
 import json
 import os
@@ -1747,9 +2194,6 @@ for i, b in enumerate(regions, start=1):
         continue
     x2 = x + w
     y2 = y + h
-    draw.rectangle([x, y, x2, y2], outline=(255, 0, 0), width=4)
-    draw.text((max(0, x + 2), max(0, y - 18)), f"#{i}", fill=(255, 0, 0))
-
     margin = max(8, int(max(w, h) * 0.12))
     l = max(0, x - margin)
     t = max(0, y - margin)
@@ -1761,6 +2205,9 @@ for i, b in enumerate(regions, start=1):
     crop_abs = os.path.join(out_dir, f"region_{i:02d}.png")
     crop.save(crop_abs)
     crop_paths.append(crop_abs)
+
+    draw.rectangle([x, y, x2, y2], outline=(255, 0, 0), width=4)
+    draw.text((max(0, x + 2), max(0, y - 18)), f"#{i}", fill=(255, 0, 0))
 
 img.save(annotated_abs)
 print(json.dumps({"ok": True, "annotated_path": annotated_abs, "crop_paths": crop_paths}))
@@ -1793,6 +2240,69 @@ print(json.dumps({"ok": True, "annotated_path": annotated_abs, "crop_paths": cro
   }
 }
 
+async function bestEffortRenderImageRegionsWithNodeCanvas(args: {
+  fullPath: string;
+  regions: Array<{ x: number; y: number; w: number; h: number; area: number }>;
+  outDir: string;
+  annotatedAbs: string;
+}): Promise<{ annotated_path?: string; crop_paths: string[]; warning?: string }> {
+  try {
+    const canvasMod = await (Function("specifier", "return import(specifier)")("@napi-rs/canvas") as Promise<any>);
+    const createCanvas = canvasMod?.createCanvas;
+    const loadImage = canvasMod?.loadImage;
+    if (typeof createCanvas !== "function" || typeof loadImage !== "function") return { crop_paths: [] };
+    const image = await loadImage(args.fullPath);
+    const width = Number(image.width);
+    const height = Number(image.height);
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return { crop_paths: [] };
+
+    const annotated = createCanvas(width, height);
+    const annotatedCtx = annotated.getContext("2d");
+    annotatedCtx.drawImage(image, 0, 0, width, height);
+    const cropPaths: string[] = [];
+    for (let i = 0; i < args.regions.length; i++) {
+      const b = args.regions[i]!;
+      const x = Math.max(0, Math.round(b.x));
+      const y = Math.max(0, Math.round(b.y));
+      const w = Math.max(1, Math.round(b.w));
+      const h = Math.max(1, Math.round(b.h));
+      const x2 = Math.min(width, x + w);
+      const y2 = Math.min(height, y + h);
+      const margin = Math.max(8, Math.round(Math.max(w, h) * 0.12));
+      const l = Math.max(0, x - margin);
+      const t = Math.max(0, y - margin);
+      const r = Math.min(width, x2 + margin);
+      const btm = Math.min(height, y2 + margin);
+      if (r <= l || btm <= t) continue;
+
+      const crop = createCanvas(r - l, btm - t);
+      const cropCtx = crop.getContext("2d");
+      cropCtx.drawImage(image, l, t, r - l, btm - t, 0, 0, r - l, btm - t);
+      const cropAbs = path.join(args.outDir, `region_${String(i + 1).padStart(2, "0")}.png`);
+      fs.writeFileSync(cropAbs, crop.toBuffer("image/png"));
+      const cropRel = toWorkspaceRelativePath(cropAbs);
+      if (cropRel) cropPaths.push(cropRel);
+
+      annotatedCtx.strokeStyle = "rgb(255,0,0)";
+      annotatedCtx.lineWidth = 4;
+      annotatedCtx.strokeRect(x, y, x2 - x, y2 - y);
+      annotatedCtx.fillStyle = "rgb(255,0,0)";
+      annotatedCtx.font = "18px sans-serif";
+      annotatedCtx.fillText(`#${i + 1}`, Math.max(0, x + 2), Math.max(18, y - 4));
+    }
+    fs.writeFileSync(args.annotatedAbs, annotated.toBuffer("image/png"));
+    return {
+      ...(toWorkspaceRelativePath(args.annotatedAbs) ? { annotated_path: toWorkspaceRelativePath(args.annotatedAbs)! } : {}),
+      crop_paths: cropPaths
+    };
+  } catch (err) {
+    return {
+      crop_paths: [],
+      warning: err instanceof Error ? truncate(err.message, 240) : "Node image region rendering failed."
+    };
+  }
+}
+
 async function analyzePdf(args: {
   fullPath: string;
   relativePath: string;
@@ -1815,7 +2325,11 @@ async function analyzePdf(args: {
     maxCandidates: 6
   });
   const allCandidates: RedlineSheetCandidate[] = [...fileNameCandidates];
+  let pdfPageImageMeta: { width: number; height: number } | undefined;
   const annotationNormBoxesPage1: Array<{
+    page: number;
+    annotationIndex: number;
+    annotationId?: string;
     minX: number;
     minY: number;
     maxX: number;
@@ -1826,7 +2340,14 @@ async function analyzePdf(args: {
     isRedLike: boolean;
     isDeleteLike: boolean;
     contents?: string;
+    rectPdf?: [number, number, number, number];
+    boxNorm?: PdfAnnotationBox;
+    verticesPdf?: PdfAnnotationPoint[];
+    verticesNorm?: PdfAnnotationPoint[];
+    relatedAnnotationIndices?: number[];
+    relatedText?: string;
   }> = [];
+  const pdfAnnotations: NonNullable<RedlineAnalyzeResponse["pdf_annotations"]> = [];
   let annotationMarkupCountPage1 = 0;
 
   for (let p = 1; p <= pagesToRead; p++) {
@@ -1860,17 +2381,26 @@ async function analyzePdf(args: {
       let deleteLikeTotal = 0;
       const sample: PdfAnnotationSummary["sample"] = [];
       const viewport = page.getViewport({ scale: 1.0 });
+      if (p === 1 && !pdfPageImageMeta) {
+        const w = Number((viewport as any)?.width);
+        const h = Number((viewport as any)?.height);
+        if (Number.isFinite(w) && Number.isFinite(h) && w > 1 && h > 1) {
+          pdfPageImageMeta = { width: Math.round(w), height: Math.round(h) };
+        }
+      }
       const coordMapper = buildPdfAnnotationCoordinateMapper({
         viewport,
         pageView: (page as any)?.view
       });
 
-      for (const a of annRaw) {
+      for (let annotationIndex0 = 0; annotationIndex0 < annRaw.length; annotationIndex0++) {
+        const a = annRaw[annotationIndex0];
+        const annotationIndex = annotationIndex0 + 1;
         const subtype = typeof a?.subtype === "string" ? a.subtype : "Unknown";
         bySubtype.set(subtype, (bySubtype.get(subtype) ?? 0) + 1);
 
         const isMarkup = isPdfMarkupSubtype(subtype);
-        const colorInfo = Array.isArray(a?.color) ? colorToName(a.color as number[]) : { name: "unknown", isRedLike: false };
+        const colorInfo = colorToName(a?.color);
         if (isMarkup) {
           markupTotal++;
           if (p === 1) annotationMarkupCountPage1++;
@@ -1885,31 +2415,60 @@ async function analyzePdf(args: {
           const rect = Array.isArray(a?.rect) && a.rect.length >= 4
             ? [Number(a.rect[0]), Number(a.rect[1]), Number(a.rect[2]), Number(a.rect[3])] as [number, number, number, number]
             : undefined;
+          const verticesPdf = extractPdfPointSequence(a?.vertices ?? a?.lineCoordinates ?? a?.quadPoints);
+          const verticesNorm = coordMapper && verticesPdf.length > 0 ? mapPdfPointsToUnit(verticesPdf, coordMapper) : [];
+          const inkListsPdf = subtype === "Ink" ? extractInkListsPdf(a?.inkLists) : [];
+          const inkListsNorm = coordMapper && inkListsPdf.length > 0 ? mapInkListsToUnit(inkListsPdf, coordMapper) : [];
+          const normBoxes =
+            coordMapper
+              ? subtype === "Ink"
+                ? normalizeInkListsToUnitBoxes(a?.inkLists, coordMapper)
+                : (() => {
+                    const single = normalizePdfMarkupAnnotationToUnitBox({
+                      annotation: a,
+                      mapper: coordMapper
+                    });
+                    return single ? [single] : [];
+                  })()
+              : [];
+          const boxNorm = unionNormBoxes(normBoxes);
+          const annotationRecord: PdfVectorAnnotation = {
+            page: p,
+            annotation_index: annotationIndex,
+            ...(typeof a?.id === "string" && a.id.trim() ? { id: a.id.trim() } : {}),
+            subtype,
+            color: colorInfo.name,
+            is_red_like: colorInfo.isRedLike,
+            ...(isDeleteLike ? { is_delete_like: true } : {}),
+            ...(contents ? { contents: truncate(contents, 240) } : {}),
+            ...(rect ? { rect_pdf: rect } : {}),
+            ...(boxNorm ? { box_norm: boxNorm } : {}),
+            ...(verticesPdf.length > 0 ? { vertices_pdf: verticesPdf } : {}),
+            ...(verticesNorm.length > 0 ? { vertices_norm: verticesNorm } : {}),
+            ...(inkListsPdf.length > 0 ? { ink_lists_pdf: inkListsPdf } : {}),
+            ...(inkListsNorm.length > 0 ? { ink_lists_norm: inkListsNorm } : {})
+          };
+          pdfAnnotations.push(annotationRecord);
           if (p === 1) {
-            const normBoxes =
-              coordMapper
-                ? subtype === "Ink"
-                  ? normalizeInkListsToUnitBoxes(a?.inkLists, coordMapper)
-                  : (() => {
-                      const single = normalizePdfMarkupAnnotationToUnitBox({
-                        annotation: a,
-                        mapper: coordMapper
-                      });
-                      return single ? [single] : [];
-                    })()
-                : [];
             for (const norm of normBoxes) {
               const areaNorm = Math.max(0, (norm.maxX - norm.minX) * (norm.maxY - norm.minY));
               // Ignore gigantic page-spanning annotation bounds that usually indicate noisy metadata.
               if (areaNorm > 0 && areaNorm <= 0.45) {
                 annotationNormBoxesPage1.push({
+                  page: p,
+                  annotationIndex,
+                  ...(typeof a?.id === "string" && a.id.trim() ? { annotationId: a.id.trim() } : {}),
                   ...norm,
                   areaNorm,
                   subtype,
                   color: colorInfo.name,
                   isRedLike: colorInfo.isRedLike,
                   isDeleteLike,
-                  ...(contents ? { contents: truncate(contents, 240) } : {})
+                  ...(contents ? { contents: truncate(contents, 240) } : {}),
+                  ...(rect ? { rectPdf: rect } : {}),
+                  boxNorm: norm,
+                  ...(verticesPdf.length > 0 ? { verticesPdf } : {}),
+                  ...(verticesNorm.length > 0 ? { verticesNorm } : {})
                 });
               }
             }
@@ -1949,6 +2508,24 @@ async function analyzePdf(args: {
     });
   }
 
+  relatePdfAnnotations(pdfAnnotations);
+  const routeCandidates = buildRedlineRouteCandidates(pdfAnnotations);
+  const pdfAnnotationByPageIndex = new Map<string, PdfVectorAnnotation>();
+  for (const ann of pdfAnnotations) {
+    pdfAnnotationByPageIndex.set(`${ann.page}:${ann.annotation_index}`, ann);
+  }
+  for (const box of annotationNormBoxesPage1) {
+    const ann = pdfAnnotationByPageIndex.get(`${box.page}:${box.annotationIndex}`);
+    if (!ann) continue;
+    if (Array.isArray(ann.related_annotation_indices) && ann.related_annotation_indices.length > 0) {
+      box.relatedAnnotationIndices = ann.related_annotation_indices;
+    }
+    if (ann.related_text) {
+      box.relatedText = ann.related_text;
+      if (!box.contents) box.contents = ann.related_text;
+    }
+  }
+
   const merged = mergeCandidates(allCandidates, 20);
   const primary = merged.length > 0 ? merged[0]!.sheet_number : null;
   const likelySheet = merged.length > 0 && (merged[0]!.score >= 24 || merged[0]!.hit_count >= 2);
@@ -1978,6 +2555,116 @@ async function analyzePdf(args: {
     }
   }
 
+  type AnnotationPixelRegion = {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    area: number;
+    page: number;
+    annotationIndex: number;
+    annotationId?: string;
+    subtype: string;
+    color: string;
+    isRedLike: boolean;
+    isDeleteLike: boolean;
+    contents?: string;
+    rectPdf?: [number, number, number, number];
+    boxNorm?: PdfAnnotationBox;
+    verticesPdf?: PdfAnnotationPoint[];
+    verticesNorm?: PdfAnnotationPoint[];
+    relatedAnnotationIndices?: number[];
+    relatedText?: string;
+  };
+
+  const mergeAnnotationRegion = (kept: AnnotationPixelRegion, duplicate: AnnotationPixelRegion) => {
+    if (duplicate.contents) {
+      kept.contents = kept.contents && kept.contents !== duplicate.contents
+        ? `${kept.contents}; ${duplicate.contents}`
+        : duplicate.contents;
+    }
+    kept.isRedLike = kept.isRedLike || duplicate.isRedLike;
+    kept.isDeleteLike = kept.isDeleteLike || duplicate.isDeleteLike;
+    if (kept.color === "unknown" && duplicate.color !== "unknown") kept.color = duplicate.color;
+    const related = [...(kept.relatedAnnotationIndices ?? []), duplicate.annotationIndex, ...(duplicate.relatedAnnotationIndices ?? [])]
+      .filter((n) => Number.isFinite(n));
+    if (related.length > 0) kept.relatedAnnotationIndices = Array.from(new Set(related)).sort((a, b) => a - b);
+    if (duplicate.relatedText) {
+      kept.relatedText = kept.relatedText && kept.relatedText !== duplicate.relatedText
+        ? `${kept.relatedText}; ${duplicate.relatedText}`
+        : duplicate.relatedText;
+    } else if (duplicate.contents && duplicate.annotationIndex !== kept.annotationIndex) {
+      kept.relatedText = kept.relatedText && kept.relatedText !== duplicate.contents
+        ? `${kept.relatedText}; ${duplicate.contents}`
+        : duplicate.contents;
+    }
+    if (!kept.rectPdf && duplicate.rectPdf) kept.rectPdf = duplicate.rectPdf;
+    if (!kept.boxNorm && duplicate.boxNorm) kept.boxNorm = duplicate.boxNorm;
+    if (!kept.verticesPdf && duplicate.verticesPdf) kept.verticesPdf = duplicate.verticesPdf;
+    if (!kept.verticesNorm && duplicate.verticesNorm) kept.verticesNorm = duplicate.verticesNorm;
+  };
+
+  const dedupeAnnotationPixelRegions = (boxes: AnnotationPixelRegion[], maxBoxes: number): AnnotationPixelRegion[] => {
+    const sorted = [...boxes].sort((a, b) => a.area - b.area);
+    const out: AnnotationPixelRegion[] = [];
+    for (const box of sorted) {
+      let duplicateOf: AnnotationPixelRegion | null = null;
+      for (const kept of out) {
+        const inter = boxIntersectionArea(box, kept);
+        if (inter <= 0) continue;
+        const minArea = Math.max(1, Math.min(box.w * box.h, kept.w * kept.h));
+        if (inter / minArea >= 0.9) {
+          duplicateOf = kept;
+          break;
+        }
+      }
+      if (duplicateOf) {
+        mergeAnnotationRegion(duplicateOf, box);
+      } else {
+        out.push({ ...box });
+      }
+      if (out.length >= maxBoxes) break;
+    }
+    return out.sort((a, b) => b.area - a.area);
+  };
+
+  const buildAnnotationPixelRegions = (meta: { width: number; height: number }) =>
+    annotationNormBoxesPage1.length > 0
+      ? dedupeAnnotationPixelRegions(
+          annotationNormBoxesPage1
+            .map((n): AnnotationPixelRegion | null => {
+              const raw = normalizedRectToPixelBox({
+                norm: { minX: n.minX, minY: n.minY, maxX: n.maxX, maxY: n.maxY },
+                imageWidth: meta.width,
+                imageHeight: meta.height,
+                minMarginPx: 10
+              });
+              if (!raw) return null;
+              const clamped = clampPixelBoxToImage(raw, meta.width, meta.height);
+              if (!clamped) return null;
+              return {
+                ...clamped,
+                page: n.page,
+                annotationIndex: n.annotationIndex,
+                ...(n.annotationId ? { annotationId: n.annotationId } : {}),
+                subtype: n.subtype,
+                color: n.color,
+                isRedLike: n.isRedLike,
+                isDeleteLike: n.isDeleteLike,
+                ...(n.contents ? { contents: n.contents } : {}),
+                ...(n.rectPdf ? { rectPdf: n.rectPdf } : {}),
+                ...(n.boxNorm ? { boxNorm: n.boxNorm } : {}),
+                ...(n.verticesPdf ? { verticesPdf: n.verticesPdf } : {}),
+                ...(n.verticesNorm ? { verticesNorm: n.verticesNorm } : {}),
+                ...(n.relatedAnnotationIndices ? { relatedAnnotationIndices: n.relatedAnnotationIndices } : {}),
+                ...(n.relatedText ? { relatedText: n.relatedText } : {})
+              };
+            })
+            .filter((b): b is AnnotationPixelRegion => !!b),
+          24
+        )
+      : [];
+
   const converted = await bestEffortConvertPdfToJpegPages({
     fullPdfPath: args.fullPath,
     maxPages: Math.max(1, Math.min(2, args.maxPages)),
@@ -1992,48 +2679,7 @@ async function analyzePdf(args: {
       const dims = readImageDimensionsFast(previewFull);
       if (dims) imageMeta = dims;
       const meta = imageMeta;
-      const annotationPixelRegions =
-        meta && annotationNormBoxesPage1.length > 0
-          ? dedupePixelBoxesPreferDetail(
-              annotationNormBoxesPage1
-                .map((n) => {
-                  const raw = normalizedRectToPixelBox({
-                    norm: { minX: n.minX, minY: n.minY, maxX: n.maxX, maxY: n.maxY },
-                    imageWidth: meta.width,
-                    imageHeight: meta.height,
-                    minMarginPx: 10
-                  });
-                  if (!raw) return null;
-                  const clamped = clampPixelBoxToImage(raw, meta.width, meta.height);
-                  if (!clamped) return null;
-                  return {
-                    ...clamped,
-                    subtype: n.subtype,
-                    color: n.color,
-                    isRedLike: n.isRedLike,
-                    isDeleteLike: n.isDeleteLike,
-                    ...(n.contents ? { contents: n.contents } : {})
-                  };
-                })
-                .filter(
-                  (
-                    b
-                  ): b is {
-                    x: number;
-                    y: number;
-                    w: number;
-                    h: number;
-                    area: number;
-                    subtype: string;
-                    color: string;
-                    isRedLike: boolean;
-                    isDeleteLike: boolean;
-                    contents?: string;
-                  } => !!b
-                ),
-              24
-            )
-          : [];
+      const annotationPixelRegions = meta ? buildAnnotationPixelRegions(meta) : [];
       const annotationPixelBoxes = annotationPixelRegions.map((r) => ({
         x: r.x,
         y: r.y,
@@ -2138,7 +2784,16 @@ async function analyzePdf(args: {
             annotation_color: b.color,
             annotation_is_red_like: b.isRedLike,
             annotation_is_delete_like: b.isDeleteLike,
+            annotation_page: b.page,
+            annotation_index: b.annotationIndex,
+            ...(b.annotationId ? { annotation_id: b.annotationId } : {}),
+            ...(b.rectPdf ? { annotation_rect_pdf: b.rectPdf } : {}),
+            ...(b.boxNorm ? { annotation_box_norm: b.boxNorm } : {}),
+            ...(b.verticesPdf ? { annotation_vertices_pdf: b.verticesPdf } : {}),
+            ...(b.verticesNorm ? { annotation_vertices_norm: b.verticesNorm } : {}),
             ...(b.contents ? { annotation_contents: b.contents } : {}),
+            ...(b.relatedAnnotationIndices ? { annotation_related_indices: b.relatedAnnotationIndices } : {}),
+            ...(b.relatedText ? { annotation_related_text: b.relatedText } : {}),
             ...(annotationGroupByRegion.has(idx + 1) ? { related_group: annotationGroupByRegion.get(idx + 1)! } : {})
           }));
         }
@@ -2178,6 +2833,53 @@ async function analyzePdf(args: {
           : { crop_paths: [] as string[] };
       if (rendered.warning) preprocessingWarnings.push(rendered.warning);
 
+      if (meta && routeCandidates.length > 0) {
+        const routeCropPairs = routeCandidates
+          .map((candidate, candidateIndex) => {
+            const raw = normalizedRectToPixelBox({
+              norm: candidate.box_norm,
+              imageWidth: meta.width,
+              imageHeight: meta.height,
+              minMarginPx: Math.round(Math.max(meta.width, meta.height) * 0.08)
+            });
+            if (!raw) return null;
+            const expanded = {
+              x: raw.x,
+              y: raw.y,
+              w: raw.w,
+              h: raw.h,
+              area: raw.w * raw.h
+            };
+            const clamped = clampPixelBoxToImage(expanded, meta.width, meta.height);
+            if (!clamped) return null;
+            return { candidateIndex, region: clamped };
+          })
+          .filter((r): r is { candidateIndex: number; region: { x: number; y: number; w: number; h: number; area: number } } => !!r)
+          .slice(0, 6);
+        const routeCropRegions = routeCropPairs.map((p) => p.region);
+        if (routeCropRegions.length > 0) {
+          const routeRendered = await bestEffortRenderImageRegions({
+            fullPath: previewFull,
+            regions: routeCropRegions,
+            timeoutMs: 20_000,
+            allowAutoInstall
+          });
+          if (routeRendered.warning) preprocessingWarnings.push(routeRendered.warning);
+          for (let i = 0; i < routeRendered.crop_paths.length && i < routeCropPairs.length; i++) {
+            const pair = routeCropPairs[i]!;
+            const candidate = routeCandidates[pair.candidateIndex];
+            if (!candidate) continue;
+            candidate.alignment_image_path = routeRendered.crop_paths[i];
+            candidate.alignment_crop_norm = {
+              minX: pair.region.x / meta.width,
+              minY: pair.region.y / meta.height,
+              maxX: (pair.region.x + pair.region.w) / meta.width,
+              maxY: (pair.region.y + pair.region.h) / meta.height
+            };
+          }
+        }
+      }
+
       visionArtifacts = {
         preview_image_path: previewPath,
         ...(rendered.annotated_path ? { annotated_image_path: rendered.annotated_path } : {}),
@@ -2189,6 +2891,60 @@ async function analyzePdf(args: {
       visionArtifacts = {
         preview_image_path: previewPath
       };
+    }
+  }
+
+  if (!imageMeta && pdfPageImageMeta) {
+    imageMeta = pdfPageImageMeta;
+  }
+
+  if (markRegions.length === 0 && imageMeta && annotationNormBoxesPage1.length > 0) {
+    const annotationPixelRegions = buildAnnotationPixelRegions(imageMeta);
+    if (annotationPixelRegions.length > 1 && annotationGroups.length === 0) {
+      annotationGroups = groupNearbyRegions({
+        regions: annotationPixelRegions.map((r, idx) => ({
+          index: idx + 1,
+          x: r.x,
+          y: r.y,
+          w: r.w,
+          h: r.h
+        })),
+        imageWidth: imageMeta.width,
+        imageHeight: imageMeta.height
+      });
+    }
+    const annotationGroupByRegion = new Map<number, number>();
+    for (const g of annotationGroups) {
+      for (const idx of g.region_indices) {
+        if (!annotationGroupByRegion.has(idx)) annotationGroupByRegion.set(idx, g.group_index);
+      }
+    }
+    markRegions = annotationPixelRegions.map((b, idx) => ({
+      index: idx + 1,
+      source: "pdf_annotation" as const,
+      x: b.x,
+      y: b.y,
+      w: b.w,
+      h: b.h,
+      area: b.area,
+      annotation_subtype: b.subtype,
+      annotation_color: b.color,
+      annotation_is_red_like: b.isRedLike,
+      annotation_is_delete_like: b.isDeleteLike,
+      annotation_page: b.page,
+      annotation_index: b.annotationIndex,
+      ...(b.annotationId ? { annotation_id: b.annotationId } : {}),
+      ...(b.rectPdf ? { annotation_rect_pdf: b.rectPdf } : {}),
+      ...(b.boxNorm ? { annotation_box_norm: b.boxNorm } : {}),
+      ...(b.verticesPdf ? { annotation_vertices_pdf: b.verticesPdf } : {}),
+      ...(b.verticesNorm ? { annotation_vertices_norm: b.verticesNorm } : {}),
+      ...(b.contents ? { annotation_contents: b.contents } : {}),
+      ...(b.relatedAnnotationIndices ? { annotation_related_indices: b.relatedAnnotationIndices } : {}),
+      ...(b.relatedText ? { annotation_related_text: b.relatedText } : {}),
+      ...(annotationGroupByRegion.has(idx + 1) ? { related_group: annotationGroupByRegion.get(idx + 1)! } : {})
+    }));
+    if (!converted.ok && converted.warning) {
+      preprocessingWarnings.push(`Using PDF annotation geometry fallback because raster conversion failed: ${converted.warning}`);
     }
   }
 
@@ -2284,6 +3040,8 @@ async function analyzePdf(args: {
     ...(imageMeta ? { image_meta: imageMeta } : {}),
     ...(markRegions.length > 0 ? { mark_regions: markRegions } : {}),
     ...(annotationGroups.length > 0 ? { annotation_groups: annotationGroups } : {}),
+    ...(routeCandidates.length > 0 ? { route_candidates: routeCandidates } : {}),
+    ...(pdfAnnotations.length > 0 ? { pdf_annotations: pdfAnnotations } : {}),
     ...(visionArtifacts ? { vision_artifacts: visionArtifacts } : {}),
     orientation_hints: hints,
     suggested_revit_calls: calls

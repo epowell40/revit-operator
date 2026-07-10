@@ -2009,7 +2009,7 @@ function resultLooksDryRun(r: ToolResult): boolean {
   const obj = r.result_json as Record<string, unknown>;
   const dryRun = obj.dryRun;
   if (typeof dryRun === "boolean") return dryRun;
-  if (p === "/revit/delete") {
+  if (p === "/revit/delete" || p === "/revit/move-elements" || p === "/revit/rotate-elements") {
     const status = typeof obj.status === "string" ? obj.status.toLowerCase() : "";
     if (status.includes("dry run")) return true;
   }
@@ -3158,7 +3158,13 @@ function extractViewportPickHintsFromMapping(mapping: Record<string, unknown> | 
     if (!region || typeof region !== "object") continue;
     const primaryKind = extractRegionPrimaryTargetKind(region);
     const primaryIsSheetLike = primaryKind === "titleblock" || primaryKind === "sheet";
-    const targets = Array.isArray(region.targets) ? (region.targets as Array<Record<string, unknown>>) : [];
+    const primaryTarget = region.primary_target && typeof region.primary_target === "object"
+      ? (region.primary_target as Record<string, unknown>)
+      : null;
+    const targets = [
+      ...(primaryTarget ? [primaryTarget] : []),
+      ...(Array.isArray(region.targets) ? (region.targets as Array<Record<string, unknown>>) : [])
+    ];
     for (const t of targets) {
       if (!t || typeof t !== "object") continue;
       const kind = typeof t.kind === "string" ? t.kind.trim().toLowerCase() : "";
@@ -6971,6 +6977,248 @@ function getLatestToolResult(toolResults: ToolResult[], pathName: string): ToolR
   return null;
 }
 
+function asPositiveIdArray(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  const ids = value
+    .map((entry) => toFiniteInt(entry))
+    .filter((id): id is number => id !== null && id > 0);
+  return [...new Set(ids)];
+}
+
+function extractDeleteEffectIds(resultJson: unknown): number[] {
+  if (!resultJson || typeof resultJson !== "object" || Array.isArray(resultJson)) return [];
+  const obj = resultJson as Record<string, unknown>;
+  return [
+    ...asPositiveIdArray(obj.ids),
+    ...asPositiveIdArray(obj.deletedIds),
+    ...asPositiveIdArray(obj.impactedIds)
+  ].filter((id, index, all) => all.indexOf(id) === index);
+}
+
+function extractDeletePrimaryIds(resultJson: unknown): number[] {
+  if (!resultJson || typeof resultJson !== "object" || Array.isArray(resultJson)) return [];
+  const obj = resultJson as Record<string, unknown>;
+  const primary = [
+    ...asPositiveIdArray(obj.requestedIds),
+    ...asPositiveIdArray(obj.ids),
+    ...asPositiveIdArray(obj.deletedIds)
+  ];
+  return primary.filter((id, index, all) => all.indexOf(id) === index);
+}
+
+function extractMoveEffectIds(resultJson: unknown): number[] {
+  if (!resultJson || typeof resultJson !== "object" || Array.isArray(resultJson)) return [];
+  const obj = resultJson as Record<string, unknown>;
+  return [
+    ...asPositiveIdArray(obj.ids),
+    ...asPositiveIdArray(obj.movedIds),
+    ...asPositiveIdArray(obj.impactedIds)
+  ].filter((id, index, all) => all.indexOf(id) === index);
+}
+
+function extractMovePrimaryIds(resultJson: unknown): number[] {
+  if (!resultJson || typeof resultJson !== "object" || Array.isArray(resultJson)) return [];
+  const obj = resultJson as Record<string, unknown>;
+  const primary = [
+    ...asPositiveIdArray(obj.requestedIds),
+    ...asPositiveIdArray(obj.ids),
+    ...asPositiveIdArray(obj.movedIds)
+  ];
+  return primary.filter((id, index, all) => all.indexOf(id) === index);
+}
+
+function extractRotateEffectIds(resultJson: unknown): number[] {
+  if (!resultJson || typeof resultJson !== "object" || Array.isArray(resultJson)) return [];
+  const obj = resultJson as Record<string, unknown>;
+  return [
+    ...asPositiveIdArray(obj.ids),
+    ...asPositiveIdArray(obj.rotatedIds),
+    ...asPositiveIdArray(obj.impactedIds)
+  ].filter((id, index, all) => all.indexOf(id) === index);
+}
+
+function extractRotatePrimaryIds(resultJson: unknown): number[] {
+  if (!resultJson || typeof resultJson !== "object" || Array.isArray(resultJson)) return [];
+  const obj = resultJson as Record<string, unknown>;
+  const primary = [
+    ...asPositiveIdArray(obj.requestedIds),
+    ...asPositiveIdArray(obj.ids),
+    ...asPositiveIdArray(obj.rotatedIds)
+  ];
+  return primary.filter((id, index, all) => all.indexOf(id) === index);
+}
+
+function extractReplayableMoveBody(resultJson: unknown, ids: number[]): Record<string, unknown> | null {
+  if (!resultJson || typeof resultJson !== "object" || Array.isArray(resultJson)) return null;
+  const obj = resultJson as Record<string, unknown>;
+  const request = obj.request && typeof obj.request === "object" && !Array.isArray(obj.request)
+    ? obj.request as Record<string, unknown>
+    : {};
+  const candidates = [request, obj];
+  for (const candidate of candidates) {
+    const vectorX = toFiniteNumber(candidate.vectorX ?? candidate.vector_x);
+    const vectorY = toFiniteNumber(candidate.vectorY ?? candidate.vector_y);
+    const vectorZ = toFiniteNumber(candidate.vectorZ ?? candidate.vector_z) ?? 0;
+    if (vectorX === null || vectorY === null) continue;
+    return {
+      mode: typeof candidate.mode === "string" ? candidate.mode : "vector",
+      vectorX,
+      vectorY,
+      vectorZ,
+      behavior: typeof candidate.behavior === "string" ? candidate.behavior : "allOrNothing",
+      ids,
+      apply: true
+    };
+  }
+  return null;
+}
+
+function extractReplayableRotateBody(resultJson: unknown, ids: number[]): Record<string, unknown> | null {
+  if (!resultJson || typeof resultJson !== "object" || Array.isArray(resultJson)) return null;
+  const obj = resultJson as Record<string, unknown>;
+  const request = obj.request && typeof obj.request === "object" && !Array.isArray(obj.request)
+    ? obj.request as Record<string, unknown>
+    : {};
+  const candidates = [request, obj];
+  for (const candidate of candidates) {
+    const angleDegrees = toFiniteNumber(candidate.angleDegrees ?? candidate.angle_degrees ?? candidate.degrees);
+    const rawAxis = candidate.axis && typeof candidate.axis === "object" && !Array.isArray(candidate.axis)
+      ? candidate.axis as Record<string, unknown>
+      : {};
+    const axisSource = Object.keys(rawAxis).length > 0 ? rawAxis : candidate;
+    const mode = typeof axisSource.mode === "string"
+      ? axisSource.mode
+      : typeof candidate.axisMode === "string"
+        ? candidate.axisMode
+        : "zThroughPoint";
+    const pointX = toFiniteNumber(axisSource.pointX ?? axisSource.point_x ?? candidate.pointX ?? candidate.point_x);
+    const pointY = toFiniteNumber(axisSource.pointY ?? axisSource.point_y ?? candidate.pointY ?? candidate.point_y);
+    const pointZ = toFiniteNumber(axisSource.pointZ ?? axisSource.point_z ?? candidate.pointZ ?? candidate.point_z) ?? 0;
+    if (angleDegrees === null || pointX === null || pointY === null) continue;
+    return {
+      ids,
+      angleDegrees,
+      axis: {
+        mode,
+        pointX,
+        pointY,
+        pointZ
+      },
+      behavior: typeof candidate.behavior === "string" ? candidate.behavior : "allOrNothing",
+      dryRun: false
+    };
+  }
+  return null;
+}
+
+function latestDeleteDryRunForApply(toolResults: ToolResult[]): { requestedIds: number[]; dryRunIds: number[]; result: ToolResult } | null {
+  const latest = getLatestToolResult(toolResults, "/revit/delete");
+  if (!latest || (latest.status ?? "").trim().toLowerCase() !== "done") return null;
+  if (!resultLooksDryRun(latest)) return null;
+  const requestedIds = extractDeletePrimaryIds(latest.result_json);
+  if (requestedIds.length === 0) return null;
+  const dryRunIds = extractDeleteEffectIds(latest.result_json);
+  return { requestedIds, dryRunIds, result: latest };
+}
+
+function latestDeleteApplyEvidence(toolResults: ToolResult[]): { requestedIds: number[]; deletedIds: number[]; result: ToolResult } | null {
+  const latest = getLatestToolResult(toolResults, "/revit/delete");
+  if (!latest || (latest.status ?? "").trim().toLowerCase() !== "done") return null;
+  if (resultLooksDryRun(latest)) return null;
+  const requestedIds = extractDeletePrimaryIds(latest.result_json);
+  if (requestedIds.length === 0) return null;
+  const deletedIds = extractDeleteEffectIds(latest.result_json);
+  return { requestedIds, deletedIds, result: latest };
+}
+
+function latestMoveDryRunForApply(toolResults: ToolResult[]): { requestedIds: number[]; dryRunIds: number[]; result: ToolResult } | null {
+  const latest = getLatestToolResult(toolResults, "/revit/move-elements");
+  if (!latest || (latest.status ?? "").trim().toLowerCase() !== "done") return null;
+  if (!resultLooksDryRun(latest)) return null;
+  const requestedIds = extractMovePrimaryIds(latest.result_json);
+  if (requestedIds.length === 0) return null;
+  const dryRunIds = extractMoveEffectIds(latest.result_json);
+  return { requestedIds, dryRunIds, result: latest };
+}
+
+function latestMoveApplyEvidence(toolResults: ToolResult[]): { requestedIds: number[]; movedIds: number[]; result: ToolResult } | null {
+  const latest = getLatestToolResult(toolResults, "/revit/move-elements");
+  if (!latest || (latest.status ?? "").trim().toLowerCase() !== "done") return null;
+  if (resultLooksDryRun(latest)) return null;
+  const requestedIds = extractMovePrimaryIds(latest.result_json);
+  if (requestedIds.length === 0) return null;
+  const movedIds = extractMoveEffectIds(latest.result_json);
+  return { requestedIds, movedIds, result: latest };
+}
+
+function latestRotateDryRunForApply(toolResults: ToolResult[]): { requestedIds: number[]; dryRunIds: number[]; result: ToolResult } | null {
+  const latest = getLatestToolResult(toolResults, "/revit/rotate-elements");
+  if (!latest || (latest.status ?? "").trim().toLowerCase() !== "done") return null;
+  if (!resultLooksDryRun(latest)) return null;
+  const requestedIds = extractRotatePrimaryIds(latest.result_json);
+  if (requestedIds.length === 0) return null;
+  const dryRunIds = extractRotateEffectIds(latest.result_json);
+  return { requestedIds, dryRunIds, result: latest };
+}
+
+function latestRotateApplyEvidence(toolResults: ToolResult[]): { requestedIds: number[]; rotatedIds: number[]; result: ToolResult } | null {
+  const latest = getLatestToolResult(toolResults, "/revit/rotate-elements");
+  if (!latest || (latest.status ?? "").trim().toLowerCase() !== "done") return null;
+  if (resultLooksDryRun(latest)) return null;
+  const requestedIds = extractRotatePrimaryIds(latest.result_json);
+  if (requestedIds.length === 0) return null;
+  const rotatedIds = extractRotateEffectIds(latest.result_json);
+  return { requestedIds, rotatedIds, result: latest };
+}
+
+function hasPriorDeleteDryRunCovering(toolResults: ToolResult[], requestedIds: number[], applyResult: ToolResult): boolean {
+  const applyIndex = toolResults.lastIndexOf(applyResult);
+  if (applyIndex <= 0) return false;
+  for (let i = applyIndex - 1; i >= 0; i--) {
+    const result = toolResults[i];
+    if (!result || (result.path ?? "").trim().toLowerCase() !== "/revit/delete") continue;
+    if ((result.status ?? "").trim().toLowerCase() !== "done") continue;
+    if (!resultLooksDryRun(result)) continue;
+    const dryRequested = extractDeletePrimaryIds(result.result_json);
+    if (!requestedIds.every((id) => dryRequested.includes(id))) continue;
+    const dryIds = extractDeleteEffectIds(result.result_json);
+    return requestedIds.every((id) => dryIds.includes(id));
+  }
+  return false;
+}
+
+function hasPriorMoveDryRunCovering(toolResults: ToolResult[], requestedIds: number[], applyResult: ToolResult): boolean {
+  const applyIndex = toolResults.lastIndexOf(applyResult);
+  if (applyIndex <= 0) return false;
+  for (let i = applyIndex - 1; i >= 0; i--) {
+    const result = toolResults[i];
+    if (!result || (result.path ?? "").trim().toLowerCase() !== "/revit/move-elements") continue;
+    if ((result.status ?? "").trim().toLowerCase() !== "done") continue;
+    if (!resultLooksDryRun(result)) continue;
+    const dryRequested = extractMovePrimaryIds(result.result_json);
+    if (!requestedIds.every((id) => dryRequested.includes(id))) continue;
+    const dryIds = extractMoveEffectIds(result.result_json);
+    return requestedIds.every((id) => dryIds.includes(id));
+  }
+  return false;
+}
+
+function hasPriorRotateDryRunCovering(toolResults: ToolResult[], requestedIds: number[], applyResult: ToolResult): boolean {
+  const applyIndex = toolResults.lastIndexOf(applyResult);
+  if (applyIndex <= 0) return false;
+  for (let i = applyIndex - 1; i >= 0; i--) {
+    const result = toolResults[i];
+    if (!result || (result.path ?? "").trim().toLowerCase() !== "/revit/rotate-elements") continue;
+    if ((result.status ?? "").trim().toLowerCase() !== "done") continue;
+    if (!resultLooksDryRun(result)) continue;
+    const dryRequested = extractRotatePrimaryIds(result.result_json);
+    if (!requestedIds.every((id) => dryRequested.includes(id))) continue;
+    const dryIds = extractRotateEffectIds(result.result_json);
+    return requestedIds.every((id) => dryIds.includes(id));
+  }
+  return false;
+}
+
 function hasSuccessfulToolPath(toolResults: ToolResult[], pathName: string): boolean {
   const result = getLatestToolResult(toolResults, pathName);
   if (!result) return false;
@@ -9061,6 +9309,26 @@ function scoreSummaryForAssistant(selection: SheetDeleteSelection): string {
   return `score diagnostics: ${formatSheetScoreDiagnostics(selection.diagnostics, 5)}`;
 }
 
+function redlineTextAllowsDeleteApply(req: ChatRequest): boolean {
+  const text = getRecentUserTextForRedline(req).toLowerCase();
+  if (/\b(dry[\s-]*run|preview|do\s+not\s+(?:apply|write|delete|remove)|no\s+model\s+change)\b/.test(text)) return false;
+  return true;
+}
+
+function hasExplicitMoveRedlineContinuation(req: ChatRequest, toolResults: ToolResult[]): boolean {
+  if (!hasToolPath(toolResults, "/revit/move-elements")) return false;
+  const text = getRecentUserTextForRedline(req).toLowerCase();
+  if (!/\b(move|moved|moving|nudge|shift|relocate|drag)\b/.test(text)) return false;
+  return /\b(redline|mark(?:up)?|selected|target|annotation|note|keynote|text\s*note|this|indicated)\b/.test(text);
+}
+
+function hasExplicitRotateRedlineContinuation(req: ChatRequest, toolResults: ToolResult[]): boolean {
+  if (!hasToolPath(toolResults, "/revit/rotate-elements")) return false;
+  const text = getRecentUserTextForRedline(req).toLowerCase();
+  if (!/\b(rotate|rotated|rotation|reorient|turn)\b/.test(text)) return false;
+  return /\b(redline|mark(?:up)?|selected|target|annotation|note|keynote|text\s*note|this|indicated)\b/.test(text);
+}
+
 const DEFAULT_REDLINE_ANNOTATION_CATEGORIES = [
   "OST_TextNotes",
   "OST_Lines",
@@ -9333,6 +9601,643 @@ function buildRedlineSemanticCorpus(req: ChatRequest, workbenchResults: Workbenc
   }
 
   return parts.join("\n");
+}
+
+function isMepRouteRedlineIntent(text: string): boolean {
+  const lower = (text ?? "").toLowerCase();
+  if (!lower.trim()) return false;
+  const hasMepRouteSubject =
+    /\b(duct|ductwork|supply\s+duct|return\s+duct|exhaust\s+duct|pipe|piping|conduit)\b/.test(lower);
+  if (!hasMepRouteSubject) return false;
+  const hasRedlineOrRouteCue =
+    /\b(redline|markup|mark-up|marked|attached|pdf|note|callout|draw|route|create|add|new|extend|span|segment|run)\b/.test(lower) ||
+    /\b\d+(?:\.\d+)?\s*(?:in|inch|\"|')?\s*[x×]\s*\d+(?:\.\d+)?\s*(?:in|inch|\"|')?\b/.test(lower);
+  return hasRedlineOrRouteCue;
+}
+
+type MepRedlineSpec = {
+  kind: "duct" | "pipe" | "conduit";
+  size_text: string;
+  width_in: number;
+  height_in: number;
+  operation: "create" | "modify" | "unknown";
+  source: "annotation" | "gemini" | "user" | "semantic";
+  room_number: string | null;
+  evidence: string;
+};
+
+function normalizeMepSizeNumber(value: number): string {
+  if (Math.abs(value - Math.round(value)) < 0.0001) return String(Math.round(value));
+  return String(Number(value.toFixed(3))).replace(/\.?0+$/, "");
+}
+
+function normalizeMepSizeText(widthIn: number, heightIn: number): string {
+  return `${normalizeMepSizeNumber(widthIn)}x${normalizeMepSizeNumber(heightIn)}`;
+}
+
+function parseRectangularMepSize(text: string): { width_in: number; height_in: number; size_text: string } | null {
+  const raw = (text ?? "").trim();
+  if (!raw) return null;
+  const rx =
+    /\b(\d+(?:\.\d+)?)\s*(?:"|in(?:ches?)?)?\s*(?:wide|w)?\s*[x×]\s*(\d+(?:\.\d+)?)\s*(?:"|in(?:ches?)?)?\s*(?:high|h)?\b/i;
+  const m = rx.exec(raw);
+  if (!m) return null;
+  const width = Number.parseFloat(m[1] ?? "");
+  const height = Number.parseFloat(m[2] ?? "");
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+  return { width_in: width, height_in: height, size_text: normalizeMepSizeText(width, height) };
+}
+
+function inferMepRedlineKind(text: string): MepRedlineSpec["kind"] | null {
+  const lower = (text ?? "").toLowerCase();
+  if (/\bduct|ductwork|supply\s+duct|return\s+duct|exhaust\s+duct\b/.test(lower)) return "duct";
+  if (/\bpipe|piping\b/.test(lower)) return "pipe";
+  if (/\bconduit\b/.test(lower)) return "conduit";
+  return null;
+}
+
+function textHasExistingMepModificationCue(text: string): boolean {
+  return /\b(resize|change|update|modify|edit|replace|existing|selected|current|incorrect|round|round\/incorrect|from\s+\d+(?:\.\d+)?)\b/i.test(text ?? "");
+}
+
+function textHasNewMepRouteCue(text: string): boolean {
+  return /\b(add|new|create|route|draw|run|extend|branch|tap|supply\s+duct|return\s+duct|exhaust\s+duct)\b/i.test(text ?? "");
+}
+
+function extractMepRedlineSpecFromText(
+  text: string,
+  source: MepRedlineSpec["source"],
+  options: { authoritativeLabel?: boolean } = {}
+): MepRedlineSpec | null {
+  const size = parseRectangularMepSize(text);
+  if (!size) return null;
+  const kind = inferMepRedlineKind(text);
+  if (!kind) return null;
+  const modifyCue = textHasExistingMepModificationCue(text);
+  const createCue = textHasNewMepRouteCue(text);
+  const operation: MepRedlineSpec["operation"] =
+    options.authoritativeLabel && !modifyCue
+      ? "create"
+      : modifyCue
+        ? "modify"
+        : createCue
+          ? "create"
+          : "unknown";
+  return {
+    kind,
+    size_text: size.size_text,
+    width_in: size.width_in,
+    height_in: size.height_in,
+    operation,
+    source,
+    room_number: extractSpatialRoomNumber(text),
+    evidence: text.trim().slice(0, 240)
+  };
+}
+
+function betterMepSpec(existing: MepRedlineSpec | null, candidate: MepRedlineSpec | null): MepRedlineSpec | null {
+  if (!candidate) return existing;
+  if (!existing) return candidate;
+  const sameAuthoritativeSize =
+    existing.source === "annotation" &&
+    candidate.kind === existing.kind &&
+    mepSizesMatch(existing, candidate);
+  if (sameAuthoritativeSize && !existing.room_number && candidate.room_number) {
+    return { ...existing, room_number: candidate.room_number };
+  }
+  const score = (spec: MepRedlineSpec): number => {
+    let s = 0;
+    if (spec.source === "annotation") s += 100;
+    else if (spec.source === "gemini") s += 40;
+    else if (spec.source === "user") s += 30;
+    else s += 10;
+    if (spec.operation === "create") s += 8;
+    if (spec.operation === "modify") s += 4;
+    if (spec.room_number) s += 2;
+    return s;
+  };
+  return score(candidate) > score(existing) ? candidate : existing;
+}
+
+function extractMepRedlineSpec(req: ChatRequest, workbenchResults: WorkbenchActionResult[]): MepRedlineSpec | null {
+  if (req.session_id) rehydrateRedlineVisionProgressFromRunBundle(req.session_id);
+  let best: MepRedlineSpec | null = null;
+
+  const annotationHints = [
+    ...getPersistedAnnotationRegionHints(req.session_id),
+    ...workbenchResults.flatMap((r) => extractAnnotationRegionHintsFromDetails((r.details as Record<string, unknown> | undefined) ?? null))
+  ];
+  for (const ann of annotationHints) {
+    if (!ann?.contents) continue;
+    best = betterMepSpec(best, extractMepRedlineSpecFromText(ann.contents, "annotation", { authoritativeLabel: true }));
+  }
+
+  const geminiHints = [
+    ...getPersistedGeminiIntentHints(req.session_id),
+    ...workbenchResults.flatMap((r) => extractGeminiIntentHintsFromDetails((r.details as Record<string, unknown> | undefined) ?? null))
+  ];
+  for (const gem of geminiHints) {
+    best = betterMepSpec(best, extractMepRedlineSpecFromText(`${gem.intent ?? ""}\n${gem.proposed_action ?? ""}`, "gemini"));
+  }
+
+  best = betterMepSpec(best, extractMepRedlineSpecFromText(getRecentUserTextForRedline(req), "user"));
+  best = betterMepSpec(best, extractMepRedlineSpecFromText(buildRedlineSemanticCorpus(req, workbenchResults), "semantic"));
+  return best;
+}
+
+function isExistingMepModificationPath(pathName: string): boolean {
+  const p = (pathName ?? "").trim().toLowerCase();
+  return (
+    p === "/revit/set-parameter" ||
+    p === "/revit/update-parameter-by-query" ||
+    p === "/revit/change-element-type" ||
+    p === "/revit/duplicate-type-and-swap-instance" ||
+    p === "/revit/set-type-parameters" ||
+    p === "/revit/sync-connected-sizes" ||
+    p === "/revit/resize-duct-run" ||
+    p === "/revit/resize-ducts-by-scope" ||
+    p === "/revit/resize-ducts-in-room" ||
+    p === "/revit/resize-ductwork-by-scope" ||
+    p === "/revit/edit-mep-route-elements" ||
+    p === "/revit/reroute-mep-route-segment" ||
+    p === "/revit/move-elements" ||
+    p === "/revit/rotate-elements" ||
+    p === "/revit/delete"
+  );
+}
+
+function isMepRouteCreationPath(pathName: string): boolean {
+  const p = (pathName ?? "").trim().toLowerCase();
+  return p === "/revit/mep-route-workflow" || p === "/revit/mep-branch-network-workflow" || p === "/revit/edit-mep-route-elements" || p === "/revit/reroute-mep-route-segment" || p === "/revit/create-mep-route" || p === "/revit/create-duct" || p === "/revit/connect-mep-branch";
+}
+
+function dimensionFieldToInches(key: string, value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
+  const k = (key ?? "").toLowerCase();
+  if (/\b(ft|feet)\b|ft$|feet$/.test(k)) return value * 12;
+  if (value > 0 && value <= 3 && !/\b(in|inch|inches)\b|in$|inch$|inches$/.test(k)) return value * 12;
+  return value;
+}
+
+function collectMepActionSizes(node: unknown, out: Array<{ width_in: number; height_in: number; size_text: string }>, depth = 0): void {
+  if (depth > 6 || out.length >= 20) return;
+  if (typeof node === "string") {
+    const parsed = parseRectangularMepSize(node);
+    if (parsed) out.push(parsed);
+    return;
+  }
+  if (Array.isArray(node)) {
+    for (const item of node) collectMepActionSizes(item, out, depth + 1);
+    return;
+  }
+  if (!node || typeof node !== "object") return;
+  const record = node as Record<string, unknown>;
+  for (const value of Object.values(record)) collectMepActionSizes(value, out, depth + 1);
+
+  const entries = Object.entries(record);
+  const widthEntry = entries.find(([key]) => /\b(width|ductwidth|widthin|widthinches|widthft|wide)\b/i.test(key));
+  const heightEntry = entries.find(([key]) => /\b(height|ductheight|heightin|heightinches|heightft|high)\b/i.test(key));
+  if (!widthEntry || !heightEntry) return;
+  const width = dimensionFieldToInches(widthEntry[0], widthEntry[1]);
+  const height = dimensionFieldToInches(heightEntry[0], heightEntry[1]);
+  if (width === null || height === null) return;
+  out.push({ width_in: width, height_in: height, size_text: normalizeMepSizeText(width, height) });
+}
+
+function mepSizesMatch(spec: MepRedlineSpec, candidate: { width_in: number; height_in: number }): boolean {
+  return Math.abs(candidate.width_in - spec.width_in) < 0.05 && Math.abs(candidate.height_in - spec.height_in) < 0.05;
+}
+
+function mepActionSizeMismatch(action: ActionCall, spec: MepRedlineSpec): boolean {
+  const sizes: Array<{ width_in: number; height_in: number; size_text: string }> = [];
+  collectMepActionSizes(action.body, sizes);
+  if (sizes.length === 0) return isMepRouteCreationPath(action.path);
+  return !sizes.some((size) => mepSizesMatch(spec, size));
+}
+
+function buildMepRedlineActionGuardResponse(args: {
+  req: ChatRequest;
+  workbenchResults: WorkbenchActionResult[];
+  actions: ActionCall[];
+}): ChatResponse | null {
+  if (!isRedlineFocusedTurn(args.req)) return null;
+  const spec = extractMepRedlineSpec(args.req, args.workbenchResults);
+  if (!spec || spec.kind !== "duct") return null;
+  const writes = args.actions.filter((action) => {
+    if (action.method !== "POST") return false;
+    return pathLooksWrite(action.path) || isExistingMepModificationPath(action.path) || isMepRouteCreationPath(action.path);
+  });
+  if (writes.length === 0) return null;
+
+  const blocked = writes.find((action) => {
+    if (spec.operation === "create" && isExistingMepModificationPath(action.path)) return true;
+    if ((isExistingMepModificationPath(action.path) || isMepRouteCreationPath(action.path)) && mepActionSizeMismatch(action, spec)) return true;
+    return false;
+  });
+  if (!blocked) return null;
+
+  const pathName = (blocked.path ?? "").trim() || "the proposed write";
+  const room = spec.room_number ? ` in/near room ${spec.room_number}` : "";
+  return {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    assistant_message:
+      `I stopped before writing because the authoritative redline annotation reads "${spec.size_text} supply duct"${room}. ` +
+      `The proposed action (${pathName}) would ${isExistingMepModificationPath(pathName) ? "modify an existing duct/element" : "use a missing or mismatched duct size"}, which conflicts with the markup. ` +
+      `I’ll continue through the MEP duct route creation workflow using ${spec.size_text} as the required size.`,
+    actions: [
+      {
+        action_id: randomUUID(),
+        method: "POST",
+        path: "/revit/tool-search",
+        body: {
+          query: `MEP redline create ${spec.size_text} supply duct route workflow${spec.room_number ? ` room ${spec.room_number}` : ""}`
+        }
+      }
+    ]
+  };
+}
+
+function extractMepRedlineViewIdFromActions(actions: ActionCall[]): number | null {
+  for (let i = actions.length - 1; i >= 0; i--) {
+    const action = actions[i];
+    const p = (action?.path ?? "").trim().toLowerCase();
+    if (p !== "/revit/export-view-frame" && p !== "/revit/export-visible-elements" && p !== "/revit/resolve-mep-routing-context") continue;
+    const body = action.body && typeof action.body === "object" && !Array.isArray(action.body)
+      ? (action.body as Record<string, unknown>)
+      : null;
+    const viewId = toFiniteInt(body?.viewId ?? body?.view_id);
+    if (viewId !== null && viewId > 0) return viewId;
+  }
+  return null;
+}
+
+function extractMepRedlineViewIdFromToolResults(toolResults: ToolResult[]): number | null {
+  for (let i = toolResults.length - 1; i >= 0; i--) {
+    const result = toolResults[i];
+    if (!result || (result.status ?? "").trim().toLowerCase() !== "done") continue;
+    const p = (result.path ?? "").trim().toLowerCase();
+    const data = result.result_json && typeof result.result_json === "object"
+      ? (result.result_json as Record<string, unknown>)
+      : null;
+    if (!data) continue;
+
+    if (p === "/revit/sheets") {
+      const placedViews = Array.isArray(data.placedViews) ? (data.placedViews as Array<Record<string, unknown>>) : [];
+      for (const placed of placedViews) {
+        const viewId = toFiniteInt(placed?.viewId ?? placed?.view_id);
+        if (viewId !== null && viewId > 0) return viewId;
+      }
+      const viewportGeometry = Array.isArray(data.viewportGeometry) ? (data.viewportGeometry as Array<Record<string, unknown>>) : [];
+      for (const viewport of viewportGeometry) {
+        const viewId = toFiniteInt(viewport?.viewId ?? viewport?.view_id);
+        if (viewId !== null && viewId > 0) return viewId;
+      }
+    }
+
+    if (p === "/revit/export-view-frame" || p === "/revit/export-visible-elements") {
+      const viewId = toFiniteInt(data.viewId ?? data.view_id);
+      if (viewId !== null && viewId > 0) return viewId;
+    }
+  }
+  return null;
+}
+
+function bestMepRedlineViewId(
+  req: ChatRequest,
+  workbenchResults: WorkbenchActionResult[],
+  actions: ActionCall[] = [],
+  toolResults: ToolResult[] = []
+): number | null {
+  const hints = dedupeViewportPickHints([
+    ...extractViewportPickHintsFromWorkbench(workbenchResults),
+    ...getPersistedViewportPickHints(req.session_id)
+  ]);
+  const bestHint = hints
+    .filter((hint) => hint && Number.isFinite(hint.view_id) && hint.view_id > 0)
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))[0];
+  if (bestHint) return Math.round(bestHint.view_id);
+  const actionViewId = extractMepRedlineViewIdFromActions(actions);
+  if (actionViewId !== null && actionViewId > 0) return actionViewId;
+  const toolResultViewId = extractMepRedlineViewIdFromToolResults(toolResults);
+  if (toolResultViewId !== null && toolResultViewId > 0) return toolResultViewId;
+  const activeViewId = extractActiveModelViewIdFromContext(req.context);
+  return activeViewId !== null && activeViewId > 0 ? activeViewId : null;
+}
+
+function mepRedlineActionsAlreadyOnRoutePath(actions: ActionCall[]): boolean {
+  return actions.some((action) => {
+    const p = (action.path ?? "").trim().toLowerCase();
+    return p === "/revit/resolve-mep-routing-context" || isMepRouteCreationPath(p);
+  });
+}
+
+function actionLooksLikeWrongMepExistingDuctSearch(action: ActionCall): boolean {
+  const p = (action.path ?? "").trim().toLowerCase();
+  if (p !== "/revit/tool-search" || !action.body || typeof action.body !== "object" || Array.isArray(action.body)) return false;
+  const query = typeof (action.body as Record<string, unknown>).query === "string"
+    ? ((action.body as Record<string, unknown>).query as string).toLowerCase()
+    : "";
+  return /\bduct\b/.test(query) && /\b(resize|modify|change|set\s+parameter|width|height|diameter|segment)\b/.test(query);
+}
+
+function latestDuctSpatialScopeHadNoMatches(toolResults: ToolResult[]): boolean {
+  const result = getLatestToolResult(toolResults, "/revit/ducts-by-spatial-scope");
+  if (!result || (result.status ?? "").trim().toLowerCase() !== "done") return false;
+  const res = result.result_json && typeof result.result_json === "object" ? (result.result_json as Record<string, unknown>) : null;
+  if (!res) return false;
+  const elementIds = Array.isArray(res.elementIds) ? res.elementIds : [];
+  const elements = Array.isArray(res.elements) ? res.elements : [];
+  const counts = res.counts && typeof res.counts === "object" ? (res.counts as Record<string, unknown>) : null;
+  const matchedCount = toFiniteInt(counts?.matchedCount) ?? toFiniteInt(res.matchedCount);
+  return elementIds.length === 0 && elements.length === 0 && (matchedCount === null || matchedCount === 0);
+}
+
+function userTextRequestsStatusOnlyNoMepWrite(req: ChatRequest): boolean {
+  const text = getRecentUserTextForRedline(req);
+  if (!text.trim()) return false;
+  const lower = text.toLowerCase();
+  const statusOnly =
+    /\b(concise\s+status|status\s*:|provide\s+(?:a\s+)?status|were\s+any\s+revit\s+changes\s+applied|did\s+you\s+find)\b/.test(lower) ||
+    /\bdo\s+not\s+make\s+additional\s+discovery\s+calls\b/.test(lower);
+  if (!statusOnly) return false;
+  const explicitWrite = /\b(implement|apply|create|add|place|draw|route)\b/.test(lower);
+  return !explicitWrite;
+}
+
+function userTextRequestsMepRouteApply(req: ChatRequest): boolean {
+  const lower = getRecentUserTextForRedline(req).toLowerCase();
+  if (!lower.trim()) return false;
+  if (/\b(dry[\s-]*run|preview|do\s+not\s+(?:apply|write|create|place)|no\s+model\s+change)\b/.test(lower)) return false;
+  return (
+    /\b(implement|apply|create|add|place|draw|pick\s+up)\b/.test(lower) &&
+    /\b(duct|supply\s+air|supply\s+duct|12\s*["']?\s*[x×]\s*10|12x10)\b/.test(lower)
+  );
+}
+
+function latestPickPointXy(toolResults: ToolResult[]): { x: number; y: number } | null {
+  const result = getLatestToolResult(toolResults, "/revit/pick-at-pixel");
+  const data = result?.result_json && typeof result.result_json === "object" ? (result.result_json as Record<string, unknown>) : null;
+  const raw = Array.isArray(data?.pickPointXyz) ? data.pickPointXyz : null;
+  if (!raw || raw.length < 2) return null;
+  const x = toFiniteNumber(raw[0]);
+  const y = toFiniteNumber(raw[1]);
+  if (x === null || y === null) return null;
+  return { x, y };
+}
+
+function latestResolvedMepLevelName(toolResults: ToolResult[]): string | null {
+  const result = getLatestToolResult(toolResults, "/revit/resolve-mep-routing-context");
+  const data = result?.result_json && typeof result.result_json === "object" ? (result.result_json as Record<string, unknown>) : null;
+  const level = data?.level && typeof data.level === "object" ? (data.level as Record<string, unknown>) : null;
+  const name = typeof level?.name === "string" ? level.name.trim() : "";
+  return name || null;
+}
+
+function buildMepRoutePointsFromAnchor(anchor: { x: number; y: number }): Array<Record<string, number>> {
+  // The PDF redline is an L-shaped route: west-to-east, then north into the Unit 405 chase.
+  // Omit Z so the route workflow uses the resolved L4 duct elevation instead of the 2D view plane.
+  const westToBendFt = 16;
+  const bendToEastFt = 12;
+  const northLegFt = 12;
+  return [
+    { x: anchor.x - westToBendFt, y: anchor.y },
+    { x: anchor.x + bendToEastFt, y: anchor.y },
+    { x: anchor.x + bendToEastFt, y: anchor.y + northLegFt }
+  ];
+}
+
+function buildMepRedlineRouteWorkflowResponse(args: {
+  req: ChatRequest;
+  workbenchResults: WorkbenchActionResult[];
+  actions: ActionCall[];
+  toolResults: ToolResult[];
+  spec: MepRedlineSpec;
+}): ChatResponse | null {
+  if (!hasSuccessfulToolPath(args.toolResults, "/revit/resolve-mep-routing-context")) return null;
+  const anchor = latestPickPointXy(args.toolResults);
+  if (!anchor) return null;
+  const viewId = bestMepRedlineViewId(args.req, args.workbenchResults, args.actions, args.toolResults);
+  if (!viewId) return null;
+  const roomNumber = args.spec.room_number ?? extractSpatialRoomNumber(buildRedlineSemanticCorpus(args.req, args.workbenchResults));
+  const apply = userTextRequestsMepRouteApply(args.req);
+  const levelName = latestResolvedMepLevelName(args.toolResults);
+  return {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    assistant_message:
+      apply
+        ? `I have enough bounded context to place the ${args.spec.size_text} Supply Air duct as an unconnected L-shaped route on L4, using the redline anchor and resolved routing elevation.`
+        : `I have enough bounded context to dry-run the ${args.spec.size_text} Supply Air duct route from the redline anchor before applying it.`,
+    actions: [
+      {
+        action_id: randomUUID(),
+        method: "POST",
+        path: "/revit/mep-route-workflow",
+        body: {
+          kind: "duct",
+          viewId,
+          visualViewId: viewId,
+          ...(roomNumber ? { roomNumber } : {}),
+          ...(levelName ? { levelName } : {}),
+          systemType: "Supply Air",
+          ductSize: args.spec.size_text,
+          sizePolicy: "explicit_required",
+          elevationPolicy: "resolve_context_default",
+          routingMode: "polyline",
+          connectSegments: true,
+          verify: true,
+          points: buildMepRoutePointsFromAnchor(anchor),
+          apply,
+          visualVerify: apply,
+          imageSize: 2200,
+          focusPaddingFt: 8
+        }
+      }
+    ]
+  };
+}
+
+function buildMepRedlineRouteRecoveryResponse(args: {
+  req: ChatRequest;
+  workbenchResults: WorkbenchActionResult[];
+  actions: ActionCall[];
+  toolResults: ToolResult[];
+}): ChatResponse | null {
+  if (!isRedlineFocusedTurn(args.req)) return null;
+  if (userTextRequestsStatusOnlyNoMepWrite(args.req)) return null;
+  const spec = extractMepRedlineSpec(args.req, args.workbenchResults);
+  if (!spec || spec.kind !== "duct" || spec.operation !== "create") return null;
+  if (mepRedlineActionsAlreadyOnRoutePath(args.actions)) return null;
+
+  const hasNoActions = args.actions.length === 0;
+  const allActionsReadOnly = args.actions.length > 0 && args.actions.every((action) => action.method !== "POST" || !pathLooksWrite(action.path));
+  const wrongExistingDuctSearch = args.actions.some(actionLooksLikeWrongMepExistingDuctSearch);
+  const noExistingSupplyDuctsFound = latestDuctSpatialScopeHadNoMatches(args.toolResults);
+  const message = (args.actions.length === 0 ? "" : args.actions.map((a) => a.path).join(" ")) + "\n" + getRecentUserTextForRedline(args.req);
+  const asksForExistingTarget = /\b(exact|matching|corresponding|selected|target)\b[\s\S]{0,80}\b(duct|segment|run|element)\b/i.test(message);
+
+  if (!hasNoActions && !allActionsReadOnly && !wrongExistingDuctSearch && !noExistingSupplyDuctsFound && !asksForExistingTarget) return null;
+
+  const viewId = bestMepRedlineViewId(args.req, args.workbenchResults, args.actions, args.toolResults);
+  const roomNumber = spec.room_number ?? extractSpatialRoomNumber(buildRedlineSemanticCorpus(args.req, args.workbenchResults));
+  if (!viewId && !roomNumber) return null;
+
+  const routeWorkflow = buildMepRedlineRouteWorkflowResponse({
+    req: args.req,
+    workbenchResults: args.workbenchResults,
+    actions: args.actions,
+    toolResults: args.toolResults,
+    spec
+  });
+  if (routeWorkflow) return routeWorkflow;
+
+  if (!hasSuccessfulToolPath(args.toolResults, "/revit/resolve-mep-routing-context")) {
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message:
+        `The PDF annotation is authoritative: "${spec.size_text} supply duct" is a new duct routing task unless an editable existing duct is explicitly identified. ` +
+        "No matching editable supply duct has been established, so I’ll resolve the MEP routing context instead of asking for an existing duct target.",
+      actions: [
+        {
+          action_id: randomUUID(),
+          method: "POST",
+          path: "/revit/resolve-mep-routing-context",
+          body: {
+            ...(viewId ? { viewId } : {}),
+            ...(roomNumber ? { roomNumber } : {}),
+            systemKind: "duct",
+            systemClassification: "Supply",
+            routingMode: "above_ceiling",
+            dryRun: true
+          }
+        }
+      ]
+    };
+  }
+
+  if (hasSuccessfulToolPath(args.toolResults, "/revit/tool-search")) {
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message:
+        `The ${spec.size_text} supply duct redline still needs route endpoints before creation, but the route workflow has already been discovered. ` +
+        "I am stopping instead of repeating tool-search/export loops; the next valid step is to resolve or provide endpoint coordinates for `/revit/mep-route-workflow`.",
+      actions: []
+    };
+  }
+
+  return {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    assistant_message:
+      `The ${spec.size_text} supply duct redline still needs route endpoints before creation. I’ll search the MEP route workflow tool surface rather than asking for a duct to resize.`,
+    actions: [
+      {
+        action_id: randomUUID(),
+        method: "POST",
+        path: "/revit/tool-search",
+        body: {
+          query: `create ${spec.size_text} supply duct route workflow frame-linked points room ${roomNumber ?? ""}`.trim()
+        }
+      }
+    ]
+  };
+}
+
+function buildMepRedlineDuctScopeRecoveryResponse(args: {
+  req: ChatRequest;
+  workbenchResults: WorkbenchActionResult[];
+  toolResults: ToolResult[];
+  redlineTargetProfile?: { room_number?: string | null };
+}): ChatResponse | null {
+  const spec = extractMepRedlineSpec(args.req, args.workbenchResults);
+  const roomNumber = spec?.room_number ?? args.redlineTargetProfile?.room_number ?? null;
+  if (spec?.kind !== "duct" || !roomNumber) return null;
+  if (hasSuccessfulToolPath(args.toolResults, "/revit/ducts-by-spatial-scope")) return null;
+  if (countToolPath(args.toolResults, "/revit/ducts-by-spatial-scope") >= 2) return null;
+
+  return {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    assistant_message:
+      `I have duct redline intent for room/space ${roomNumber}, so I’ll query the ductwork spatial scope before any generic hosted-device recovery.`,
+    actions: [
+      {
+        action_id: randomUUID(),
+        method: "POST",
+        path: "/revit/ducts-by-spatial-scope",
+        body: {
+          roomNumber,
+          systemClassification: "Supply",
+          verticalScope: "room+plenum",
+          roomMode: "auto",
+          includeCategories: ["Ducts", "Duct Fittings", "Air Terminals"],
+          includeConnectedOutsideRoom: true,
+          limit: 80
+        }
+      }
+    ]
+  };
+}
+
+export function __testOnlyBuildMepRedlineActionGuardResponse(args: {
+  req: Partial<ChatRequest>;
+  workbenchResults?: WorkbenchActionResult[];
+  actions: ActionCall[];
+}): ChatResponse | null {
+  return buildMepRedlineActionGuardResponse({
+    req: {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: args.req.session_id ?? randomUUID(),
+      message_id: args.req.message_id ?? "test:mep-redline-guard",
+      user_text: args.req.user_text ?? "",
+      tool_results: args.req.tool_results,
+      user_attachments: args.req.user_attachments,
+      context: args.req.context
+    },
+    workbenchResults: args.workbenchResults ?? [],
+    actions: args.actions
+  });
+}
+
+export function __testOnlyBuildMepRedlineDuctScopeRecoveryResponse(args: {
+  req: Partial<ChatRequest>;
+  workbenchResults?: WorkbenchActionResult[];
+  toolResults?: ToolResult[];
+  redlineTargetProfile?: { room_number?: string | null };
+}): ChatResponse | null {
+  return buildMepRedlineDuctScopeRecoveryResponse({
+    req: {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: args.req.session_id ?? randomUUID(),
+      message_id: args.req.message_id ?? "test:mep-redline-duct-scope-recovery",
+      user_text: args.req.user_text ?? "",
+      tool_results: args.req.tool_results,
+      user_attachments: args.req.user_attachments,
+      context: args.req.context
+    },
+    workbenchResults: args.workbenchResults ?? [],
+    toolResults: args.toolResults ?? [],
+    redlineTargetProfile: args.redlineTargetProfile
+  });
+}
+
+export function __testOnlyBuildMepRedlineRouteRecoveryResponse(args: {
+  req: Partial<ChatRequest>;
+  workbenchResults?: WorkbenchActionResult[];
+  actions?: ActionCall[];
+  toolResults?: ToolResult[];
+}): ChatResponse | null {
+  return buildMepRedlineRouteRecoveryResponse({
+    req: {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: args.req.session_id ?? randomUUID(),
+      message_id: args.req.message_id ?? "test:mep-redline-route-recovery",
+      user_text: args.req.user_text ?? "",
+      tool_results: args.req.tool_results,
+      user_attachments: args.req.user_attachments,
+      context: args.req.context
+    },
+    workbenchResults: args.workbenchResults ?? [],
+    actions: args.actions ?? [],
+    toolResults: args.toolResults ?? []
+  });
 }
 
 function inferRedlineTargetingProfileFromText(
@@ -11959,6 +12864,7 @@ function maybeBuildRedlineExecutionBridgeCore(args: {
   const geminiIntents = getPersistedGeminiIntentHints(req.session_id);
   const annotationRegionHints = getPersistedAnnotationRegionHints(req.session_id);
   const semanticCorpus = buildRedlineSemanticCorpus(req, workbenchResults);
+  if (isMepRouteRedlineIntent(semanticCorpus)) return null;
   const explicitTextWallSide = extractSpatialWallSide(semanticCorpus).side;
   const canOverrideImageDerivedWallSide = explicitTextWallSide === null;
   let targetProfile = hydrateRedlineTargetingProfile({
@@ -11975,6 +12881,189 @@ function maybeBuildRedlineExecutionBridgeCore(args: {
     const circuitRoom = inferRoomNumberFromVisibleInventoryCircuit(toolResults, userRequestedCircuit);
     if (circuitRoom) targetProfile = { ...targetProfile, room_number: circuitRoom };
   }
+
+  if (
+    !targetProfile.resolve_only ||
+    hasExplicitMoveRedlineContinuation(req, toolResults) ||
+    hasExplicitRotateRedlineContinuation(req, toolResults)
+  ) {
+    const deleteApplyEvidence = latestDeleteApplyEvidence(toolResults);
+    if (deleteApplyEvidence) {
+      const allDeleted = deleteApplyEvidence.requestedIds.every((id) => deleteApplyEvidence.deletedIds.includes(id));
+      const dryRunProven = hasPriorDeleteDryRunCovering(toolResults, deleteApplyEvidence.requestedIds, deleteApplyEvidence.result);
+      return {
+        version: OPERATOR_BACKEND_CONTRACT_VERSION,
+        assistant_message: allDeleted && dryRunProven
+          ? `Deleted the redline-targeted element id(s) ${deleteApplyEvidence.requestedIds.join(", ")} after dry-run verification.`
+          : !dryRunProven
+            ? `I stopped after the delete apply response because I cannot prove a prior dry-run covered every applied redline target id. Requested: ${deleteApplyEvidence.requestedIds.join(", ")}.`
+            : `I stopped after the delete apply response because it did not prove every requested redline target was deleted. Requested: ${deleteApplyEvidence.requestedIds.join(", ")}; reported: ${deleteApplyEvidence.deletedIds.join(", ") || "none"}.`,
+        actions: []
+      };
+    }
+
+    const deleteDryRun = latestDeleteDryRunForApply(toolResults);
+    if (deleteDryRun) {
+      const dryRunCovered = deleteDryRun.requestedIds.every((id) => deleteDryRun.dryRunIds.includes(id));
+      if (!dryRunCovered) {
+        return {
+          version: OPERATOR_BACKEND_CONTRACT_VERSION,
+          assistant_message:
+            `I stopped before applying the redline delete because the dry-run did not prove every requested target id. ` +
+            `Requested: ${deleteDryRun.requestedIds.join(", ")}; dry-run reported: ${deleteDryRun.dryRunIds.join(", ") || "none"}.`,
+          actions: []
+        };
+      }
+      if (!redlineTextAllowsDeleteApply(req)) {
+        return {
+          version: OPERATOR_BACKEND_CONTRACT_VERSION,
+          assistant_message:
+            `Dry-run delete verified the redline target id(s) ${deleteDryRun.requestedIds.join(", ")}. ` +
+            "I did not apply the delete because the request asked for preview/no model write behavior.",
+          actions: []
+        };
+      }
+      return {
+        version: OPERATOR_BACKEND_CONTRACT_VERSION,
+        assistant_message:
+          `Dry-run delete verified redline target id(s) ${deleteDryRun.requestedIds.join(", ")}; I’ll apply exactly that bounded delete set now.`,
+        actions: [
+          {
+            action_id: randomUUID(),
+            method: "POST",
+            path: "/revit/delete",
+            body: {
+              ids: deleteDryRun.requestedIds,
+              apply: true
+            }
+          }
+        ]
+      };
+    }
+
+    const moveApplyEvidence = latestMoveApplyEvidence(toolResults);
+    if (moveApplyEvidence) {
+      const allMoved = moveApplyEvidence.requestedIds.every((id) => moveApplyEvidence.movedIds.includes(id));
+      const dryRunProven = hasPriorMoveDryRunCovering(toolResults, moveApplyEvidence.requestedIds, moveApplyEvidence.result);
+      return {
+        version: OPERATOR_BACKEND_CONTRACT_VERSION,
+        assistant_message: allMoved && dryRunProven
+          ? `Moved the redline-targeted element id(s) ${moveApplyEvidence.requestedIds.join(", ")} after dry-run verification.`
+          : !dryRunProven
+            ? `I stopped after the move apply response because I cannot prove a prior dry-run covered every applied redline target id. Requested: ${moveApplyEvidence.requestedIds.join(", ")}.`
+            : `I stopped after the move apply response because it did not prove every requested redline target was moved. Requested: ${moveApplyEvidence.requestedIds.join(", ")}; reported: ${moveApplyEvidence.movedIds.join(", ") || "none"}.`,
+        actions: []
+      };
+    }
+
+    const moveDryRun = latestMoveDryRunForApply(toolResults);
+    if (moveDryRun) {
+      const dryRunCovered = moveDryRun.requestedIds.every((id) => moveDryRun.dryRunIds.includes(id));
+      if (!dryRunCovered) {
+        return {
+          version: OPERATOR_BACKEND_CONTRACT_VERSION,
+          assistant_message:
+            `I stopped before applying the redline move because the dry-run did not prove every requested target id. ` +
+            `Requested: ${moveDryRun.requestedIds.join(", ")}; dry-run reported: ${moveDryRun.dryRunIds.join(", ") || "none"}.`,
+          actions: []
+        };
+      }
+      if (!redlineTextAllowsDeleteApply(req)) {
+        return {
+          version: OPERATOR_BACKEND_CONTRACT_VERSION,
+          assistant_message:
+            `Dry-run move verified the redline target id(s) ${moveDryRun.requestedIds.join(", ")}. ` +
+            "I did not apply the move because the request asked for preview/no model write behavior.",
+          actions: []
+        };
+      }
+      const replayBody = extractReplayableMoveBody(moveDryRun.result.result_json, moveDryRun.requestedIds);
+      if (!replayBody) {
+        return {
+          version: OPERATOR_BACKEND_CONTRACT_VERSION,
+          assistant_message:
+            `Dry-run move verified redline target id(s) ${moveDryRun.requestedIds.join(", ")}, ` +
+            "but the dry-run result did not include a replayable model-space vector. I stopped before applying an under-specified move.",
+          actions: []
+        };
+      }
+      return {
+        version: OPERATOR_BACKEND_CONTRACT_VERSION,
+        assistant_message:
+          `Dry-run move verified redline target id(s) ${moveDryRun.requestedIds.join(", ")}; I’ll apply exactly that bounded move set now.`,
+        actions: [
+          {
+            action_id: randomUUID(),
+            method: "POST",
+            path: "/revit/move-elements",
+            body: replayBody
+          }
+        ]
+      };
+    }
+
+    const rotateApplyEvidence = latestRotateApplyEvidence(toolResults);
+    if (rotateApplyEvidence) {
+      const allRotated = rotateApplyEvidence.requestedIds.every((id) => rotateApplyEvidence.rotatedIds.includes(id));
+      const dryRunProven = hasPriorRotateDryRunCovering(toolResults, rotateApplyEvidence.requestedIds, rotateApplyEvidence.result);
+      return {
+        version: OPERATOR_BACKEND_CONTRACT_VERSION,
+        assistant_message: allRotated && dryRunProven
+          ? `Rotated the redline-targeted element id(s) ${rotateApplyEvidence.requestedIds.join(", ")} after dry-run verification.`
+          : !dryRunProven
+            ? `I stopped after the rotate apply response because I cannot prove a prior dry-run covered every applied redline target id. Requested: ${rotateApplyEvidence.requestedIds.join(", ")}.`
+            : `I stopped after the rotate apply response because it did not prove every requested redline target was rotated. Requested: ${rotateApplyEvidence.requestedIds.join(", ")}; reported: ${rotateApplyEvidence.rotatedIds.join(", ") || "none"}.`,
+        actions: []
+      };
+    }
+
+    const rotateDryRun = latestRotateDryRunForApply(toolResults);
+    if (rotateDryRun) {
+      const dryRunCovered = rotateDryRun.requestedIds.every((id) => rotateDryRun.dryRunIds.includes(id));
+      if (!dryRunCovered) {
+        return {
+          version: OPERATOR_BACKEND_CONTRACT_VERSION,
+          assistant_message:
+            `I stopped before applying the redline rotate because the dry-run did not prove every requested target id. ` +
+            `Requested: ${rotateDryRun.requestedIds.join(", ")}; dry-run reported: ${rotateDryRun.dryRunIds.join(", ") || "none"}.`,
+          actions: []
+        };
+      }
+      if (!redlineTextAllowsDeleteApply(req)) {
+        return {
+          version: OPERATOR_BACKEND_CONTRACT_VERSION,
+          assistant_message:
+            `Dry-run rotate verified the redline target id(s) ${rotateDryRun.requestedIds.join(", ")}. ` +
+            "I did not apply the rotate because the request asked for preview/no model write behavior.",
+          actions: []
+        };
+      }
+      const replayBody = extractReplayableRotateBody(rotateDryRun.result.result_json, rotateDryRun.requestedIds);
+      if (!replayBody) {
+        return {
+          version: OPERATOR_BACKEND_CONTRACT_VERSION,
+          assistant_message:
+            `Dry-run rotate verified redline target id(s) ${rotateDryRun.requestedIds.join(", ")}, ` +
+            "but the dry-run result did not include a replayable rotation axis and angle. I stopped before applying an under-specified rotate.",
+          actions: []
+        };
+      }
+      return {
+        version: OPERATOR_BACKEND_CONTRACT_VERSION,
+        assistant_message:
+          `Dry-run rotate verified redline target id(s) ${rotateDryRun.requestedIds.join(", ")}; I’ll apply exactly that bounded rotate set now.`,
+        actions: [
+          {
+            action_id: randomUUID(),
+            method: "POST",
+            path: "/revit/rotate-elements",
+            body: replayBody
+          }
+        ]
+      };
+    }
+  }
+
   if (!targetProfile.room_number) {
     const imageMarkHint = getPersistedImageMarkHint(req.session_id) ?? imageMarkHintFromViewportHints(viewportHints);
     const profileSide = targetProfile.spatial_side ?? normalizeSpatialWallSide(imageMarkHint?.side ?? "");
@@ -13397,6 +14486,7 @@ function defaultSystemPrompt(): string {
     "- If the same read-only action returns no new information twice, stop repeating it and pivot to an alternative tool path (or ask one targeted clarifying question).",
     "- For room/space ductwork lookup, prefer POST /revit/ducts-by-spatial-scope (it handles Room->Space->geometry fallback and room+plenum in one request).",
     "- For one-shot directives like 'change supply ductwork in office unit 301 from 8\\\" to 10\\\"', prefer POST /revit/resize-ductwork-by-scope with scope.roomMode='auto' and scope.verticalScope='room+plenum' before asking follow-up questions.",
+    "- MEP redline intent rule: a PDF annotation such as '12x10 supply duct' labels the requested duct to create/route unless the redline or model evidence clearly identifies an editable existing duct to resize. If no editable HVAC duct exists at the mark and the visible target is linked plumbing, do not ask to edit the plumbing link; draft a bounded HVAC duct route in the active HVAC model using /revit/mep-route-workflow or /revit/create-duct dryRun first.",
     "- Use POST /revit/room-contents when you need generic room inventory beyond ductwork.",
     "- For selector queries scoped to a sheet/view, prefer POST /revit/find-elements.",
     "- To fix rooms stopping at an arbitrary height, use POST /revit/align-room-tops-to-ceilings (dry-run first).",
@@ -13468,7 +14558,8 @@ function defaultSystemPrompt(): string {
     "- Treat sampled inventories as hints only. Prefer the server-provided placement_run_state, placement_work_item, resolved host context, and ranked exemplar candidates over raw inventory dumps.",
     "- For snippet-driven type changes, resolve candidate element IDs first, then use /revit/resolve-element-type or /revit/list-element-types and finally /revit/change-element-type.",
     "- Do not ask whether the attachment changed unless the user explicitly says it changed; default to reusing the session redline anchor and continue execution.",
-    "- For drawing MEP geometry from redlines, prefer /revit/mep-route-workflow for route creation because it enforces resolve context -> dry-run -> optional apply -> post-change focused visual capture. A single line is two ordered points; connected path segments are one ordered point list. Use apply=false first when still uncertain, then apply=true with visualVerify=true once bounded. Inspect planned points, selected level/type/system, chosen size/elevation, connectionAttempts, createdFittingIds, openConnectorCount, and visualVerification.capture.path. If size/elevation is missing, use conservative defaults with explicit warnings (8x8 duct, 1 inch pipe, resolved routing elevation) instead of silently guessing or stopping before a useful draft. For branch/tee/tap requests, run /revit/connect-mep-branch dry-run first. Apply is only supported when the branch starts at an existing open main connector; do not claim branch/tap completion unless connector/fitting verification passes.",
+    "- For vague semantic MEP requests such as extending piping from a main to a sink or routing ductwork to diffusers, call /tools/mep/semantic-route-plan first and follow its read-only discovery actions or guarded dry-run action before any model write. For drawing MEP geometry from redlines, prefer /revit/mep-route-workflow for route creation because it enforces resolve context -> dry-run -> optional apply -> post-change focused visual capture. A single line is two ordered points; connected path segments are one ordered point list. Use apply=false first when still uncertain, then apply=true with visualVerify=true once bounded. Inspect planned points, selected level/type/system, chosen size/elevation, connectionAttempts, createdFittingIds, openConnectorCount, and visualVerification.capture.path. If size/elevation is missing, use conservative defaults with explicit warnings (8x8 duct, 1 inch pipe, resolved routing elevation) instead of silently guessing or stopping before a useful draft. Differing segmentSizes or branchSegmentSizes plan transition fittings for reducers. For editing existing explicit duct/pipe curve ids, use /revit/edit-mep-route-elements dryRun first for whole-element size or simple level-straight elevation edits; it blocks connected elevation moves unless allowConnectedElevationMove:true and returns before/after size, curve, connector, network-audit, and optional focused capture evidence. If the requested edit changes size part way down one straight curve, use /revit/reroute-mep-route-segment size-transition mode with transitionNormalized or transitionChainageFt plus explicit upstream/downstream sizes, and require a transition fitting in connectionAttempts before completion. If the requested edit offsets a middle section of one straight curve, use /revit/reroute-mep-route-segment offset mode; set offsetMode:\"dogleg45\" when diagonal 45-degree legs are required. Connected endpoints on /revit/reroute-mep-route-segment are blocked by default; only set preserveConnectedEndpoints:true after dry-run reports a concrete endpointReconnectionPlan, then require endpoint reconnection attempts plus connector/network audit before completion. For branch/tee/tap requests, dry-run /revit/connect-mep-branch for one branch or /revit/mep-branch-network-workflow for a main route plus multiple branches. Apply is supported for existing open connector branches, straight duct tap/takeoff at a projected non-connector point, pipe tap/takeoff only when dry-run tapApplyPrecheck confirms an explicit takeoff/tap routing preference, straight duct/pipe split tee cases, branch-level reducer transitions via branchSegmentSizes, explicit duct/pipe accessory insertion on created main or branch segments when a compatible familyPath/family/type and chainage/point preconditions pass, and explicit target-id duct/pipe accessory delete/type_change with compatible loaded types. When the user names a tap/takeoff family or type, pass takeoffFamilyName/takeoffTypeName, inspect selected.takeoffRoutingPreference and tapApplyPrecheck on dry-run, and require connectionAttempts[*].fitting to match on apply. Do not claim branch/tap/accessory completion unless connector/fitting/accessory verification passes.",
+    "- Do not use /revit/create-similar-from-instance or wall-hosted family placement for duct/pipe redlines. Those tools are for hosted family instances such as receptacles/devices, not MEP curve geometry.",
     "",
     "Request body templates (use these exactly):",
     "- POST /revit/export-visible-elements:",
@@ -16496,6 +17587,9 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     !!getRedlineSessionSeed(req.session_id) ||
     userTextLooksRedlineContinuation(req) ||
     workbenchResults.some((r) => r?.type === "analyze_redline" || r?.type === "gemini_redline_analyze" || r?.type === "redline_orient");
+  const mepRouteRedlineContext =
+    hasRedlineContext &&
+    isMepRouteRedlineIntent(buildRedlineSemanticCorpus(req, workbenchResults));
 
   if (hasRedlineContext && !redlineDiagnosticRequest) {
     const hadFrameAlignedHint = hasFrameAlignedRedlineHintForLatestFrame(req, workbenchResults);
@@ -16526,6 +17620,41 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     assistant_message: lastDecision.assistant_message || "",
     actions: allowlisted
   };
+  const mepRedlineActionGuard = buildMepRedlineActionGuardResponse({
+    req,
+    workbenchResults,
+    actions: allowlisted
+  });
+  if (mepRedlineActionGuard) return finishResponse(mepRedlineActionGuard);
+  const mepRedlineRouteRecovery = buildMepRedlineRouteRecoveryResponse({
+    req,
+    workbenchResults,
+    actions: allowlisted,
+    toolResults: toolResultsForRouting
+  });
+  if (mepRedlineRouteRecovery) return finishResponse(mepRedlineRouteRecovery);
+  if (
+    mepRouteRedlineContext &&
+    !redlineDiagnosticRequest &&
+    bridgeHasHostedPlacementAction(allowlistedResponseForGuard)
+  ) {
+    return finishResponse({
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message:
+        "I will not use hosted family placement for this duct/pipe redline. That path is for devices like receptacles, and would risk cloning the wrong element. " +
+        "I’ll route this through the MEP duct/pipe creation workflow instead.",
+      actions: [
+        {
+          action_id: randomUUID(),
+          method: "POST",
+          path: "/revit/tool-search",
+          body: {
+            query: "MEP redline create duct route workflow frame-linked points duct size"
+          }
+        }
+      ]
+    });
+  }
   if (
     hasRedlineContext &&
     !redlineDiagnosticRequest &&
@@ -16654,6 +17783,14 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
 
     const bridge = await maybeBuildRedlineExecutionBridge(req, workbenchResults);
     if (bridge) return finishResponse(bridge);
+
+    const ductScopeRecovery = buildMepRedlineDuctScopeRecoveryResponse({
+      req,
+      workbenchResults,
+      toolResults,
+      redlineTargetProfile
+    });
+    if (ductScopeRecovery) return finishResponse(ductScopeRecovery);
 
     if (
       redlineTargetProfile.room_number &&

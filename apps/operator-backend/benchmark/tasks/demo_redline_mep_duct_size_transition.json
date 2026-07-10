@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_mep_duct_size_transition",
+  "name": "Demo E3: Modeled Duct Size Transition Redline",
+  "description": "Run a bounded modeled duct size-transition redline through /revit/reroute-mep-route-segment and require model write evidence, size readback, connector/fitting audit, visual gate, and cleanup evidence.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "metadata": {
+      "workflow": "redline_mep_size_transition"
+    }
+  },
+  "setup_instructions": [
+    "Open the target Revit model and the sheet/view containing the duct size redline.",
+    "Use a prepared deterministic request with a verified host duct id and transition point projected onto that duct.",
+    "Use /revit/reroute-mep-route-segment with operation=size_transition, apply=true, verify=true, and visualVerify=true; do not report completion from a dry-run."
+  ],
+  "success_criteria": [
+    "/revit/reroute-mep-route-segment returns an applied/success status.",
+    "The result reports created, modified, or fitting model ids for the duct transition.",
+    "The projected transition point is reported and matches the requested point within tolerance.",
+    "Requested upstream/downstream duct sizes are read back after the model write.",
+    "A fitting id or connector-network audit is reported.",
+    "A focused post-change capture is returned and the redline visual gate passes.",
+    "Created disposable segment/fitting ids are proven in a cleanup dry-run and then deleted after verification evidence is recorded."
+  ],
+  "failure_criteria": [
+    "The workflow only dry-runs or returns no model write ids.",
+    "The projected transition point is missing or off target.",
+    "The requested size readback is missing or mismatched.",
+    "No fitting/readback or connector-network audit is reported.",
+    "The focused visual capture is missing.",
+    "The redline visual gate is fail or uncertain.",
+    "Cleanup is requested but created transition ids are missing from cleanup evidence."
+  ],
+  "max_time_seconds": 180,
+  "max_steps": 5,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This benchmark covers one safe duct size-transition case first. It is not yet pipe coverage and is not satisfied by changing annotation/tag text without model write evidence."
+  ],
+  "tags": ["revit", "demo", "redline", "mep", "duct", "size-transition", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [
+    "Delete created transition/fitting ids after visual verification so repeated live reliability runs do not accumulate model clutter."
+  ],
+  "adapter_config": {
+    "workflow": "redline_mep_size_transition",
+    "request": {
+      "kind": "duct",
+      "viewId": 401,
+      "visualViewId": 401,
+      "hostElementId": 1542001,
+      "levelName": "L4",
+      "systemType": "Supply Air",
+      "operation": "size_transition",
+      "upstreamDuctSize": "28x18",
+      "downstreamDuctSize": "16x14",
+      "transitionPoint": { "x": 52, "y": 27 },
+      "transitionChainageFt": 12,
+      "verify": true,
+      "apply": true,
+      "visualVerify": true,
+      "cleanupCreatedElements": true,
+      "imageSize": 2200,
+      "focusPaddingFt": 8,
+      "toleranceFt": 1
+    },
+    "mock": {
+      "/revit/reroute-mep-route-segment": {
+        "status": "Success",
+        "hostElementId": 1542001,
+        "modifiedElementIds": [1542001],
+        "createdElementIds": [1542929, 1542930],
+        "createdFittingIds": [1542931],
+        "projectedTransitionPoint": { "x": 52.1, "y": 27.05, "z": 38.8333 },
+        "sizeReadback": {
+          "upstreamDuctSize": "28x18",
+          "downstreamDuctSize": "16x14"
+        },
+        "connectorAudit": {
+          "openConnectorCount": 0,
+          "connectedNetworkOk": true,
+          "systemName": "Supply Air"
+        },
+        "visualVerification": {
+          "status": "CaptureReadyForAIReview",
+          "capturePath": "artifacts/demo-readiness/mep-route/duct_size_transition_after.jpg",
+          "createdElementIds": [1542929, 1542930],
+          "createdFittingIds": [1542931]
+        }
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "count": 3,
+        "ids": [1542929, 1542930, 1542931]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "count": 3,
+        "ids": [1542929, 1542930, 1542931]
+      }
+    }
+  }
+}

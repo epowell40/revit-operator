@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_type_change_duct",
+  "name": "Demo K2: Rectangular-to-Round Duct Type Redline",
+  "description": "Exercise a type/family-change redline operation for an MEP duct target: dry-run a rectangular-to-round duct type change, apply it, prove readback, capture post-change evidence, then revert for repeat-safe live runs.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a model that can be closed without saving.",
+    "Provide a duct element id and compatible target round duct type id or exact type name in the same duct system context.",
+    "Use a low-risk copied sample model and keep revertAfterVerify enabled so repeated live runs restore the original rectangular duct type."
+  ],
+  "success_criteria": [
+    "/revit/change-element-type dry-run returns old rectangular duct and new round duct type evidence for every requested duct.",
+    "/revit/change-element-type apply returns changed duct element ids covering every requested element.",
+    "A post-apply readback proves the duct now has the requested round duct type id.",
+    "A post-change visual capture is produced before reverting.",
+    "The workflow reverts the duct to its original rectangular type and readback proves restoration.",
+    "A type-change summary artifact is written."
+  ],
+  "failure_criteria": [
+    "The dry-run cannot resolve the requested round duct type.",
+    "The apply response omits any requested duct element id.",
+    "Readback does not prove the requested round duct type after apply.",
+    "Post-change visual capture is missing.",
+    "The revert dry-run/apply/readback omits any requested duct element id or fails to restore the original rectangular duct type.",
+    "Summary artifacts are missing."
+  ],
+  "max_time_seconds": 60,
+  "max_steps": 8,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task adapts the type/family-change evidence contract to the rectangular-to-round duct redline scenario.",
+    "Do not count generic success as completion; apply and readback must prove the requested duct ids and target round duct type."
+  ],
+  "tags": ["revit", "demo", "redline", "type-change", "family-change", "duct", "rectangular-to-round", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "redline_type_change",
+    "request": {
+      "elementIds": [9501],
+      "category": "OST_DuctCurves",
+      "targetTypeId": 9602,
+      "sourceTypeGrounding": { "expectedCurrentTypeId": 9601 },
+      "dryRunPreflightReviewed": true,
+      "targetTypeCompatibilityReviewed": true,
+      "visualViewId": 101,
+      "visualVerify": true,
+      "revertAfterVerify": true
+    },
+    "mock": {
+      "/revit/change-element-type:1": {
+        "ok": true,
+        "dryRun": true,
+        "changes": [
+          { "elementId": 9501, "ok": true, "dryRun": true, "oldTypeId": 9601, "oldTypeName": "Rectangular Duct", "newTypeId": 9602, "newTypeName": "Round Duct" }
+        ]
+      },
+      "/revit/change-element-type:2": {
+        "ok": true,
+        "count": 1,
+        "newTypeId": 9602,
+        "newTypeName": "Round Duct",
+        "changedElementIds": [9501],
+        "changes": [
+          { "elementId": 9501, "ok": true, "oldTypeId": 9601, "oldTypeName": "Rectangular Duct", "newTypeId": 9602, "newTypeName": "Round Duct" }
+        ]
+      },
+      "/revit/change-element-type:3": {
+        "ok": true,
+        "dryRun": true,
+        "changes": [
+          { "elementId": 9501, "ok": true, "dryRun": true, "oldTypeId": 9602, "oldTypeName": "Round Duct", "newTypeId": 9602, "newTypeName": "Round Duct" }
+        ]
+      },
+      "/revit/export-image": {
+        "status": "Captured",
+        "viewId": 101,
+        "path": "artifacts/captures/type-change-duct-after.png"
+      },
+      "/revit/change-element-type:4": {
+        "ok": true,
+        "dryRun": true,
+        "changes": [
+          { "elementId": 9501, "ok": true, "dryRun": true, "oldTypeId": 9602, "oldTypeName": "Round Duct", "newTypeId": 9601, "newTypeName": "Rectangular Duct" }
+        ]
+      },
+      "/revit/change-element-type:5": {
+        "ok": true,
+        "count": 1,
+        "newTypeId": 9601,
+        "newTypeName": "Rectangular Duct",
+        "changedElementIds": [9501],
+        "changes": [
+          { "elementId": 9501, "ok": true, "oldTypeId": 9602, "oldTypeName": "Round Duct", "newTypeId": 9601, "newTypeName": "Rectangular Duct" }
+        ]
+      },
+      "/revit/change-element-type:6": {
+        "ok": true,
+        "dryRun": true,
+        "changes": [
+          { "elementId": 9501, "ok": true, "dryRun": true, "oldTypeId": 9601, "oldTypeName": "Rectangular Duct", "newTypeId": 9601, "newTypeName": "Rectangular Duct" }
+        ]
+      }
+    }
+  }
+}

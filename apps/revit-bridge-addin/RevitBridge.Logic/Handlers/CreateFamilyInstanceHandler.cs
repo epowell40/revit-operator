@@ -76,7 +76,11 @@ namespace RevitBridge.Logic.Handlers
                 { 
                     id = RevitBridge.Common.ElementIdCompat.GetValue(instance.Id), 
                     name = instance.Name, 
-                    family = instance.Symbol.FamilyName 
+                    family = instance.Symbol.FamilyName,
+                    familyName = instance.Symbol.FamilyName,
+                    symbol = instance.Symbol.Name,
+                    symbolName = instance.Symbol.Name,
+                    typeName = instance.Symbol.Name
                 });
             }
         }
