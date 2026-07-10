@@ -10,11 +10,15 @@ function fail(msg: string): never {
 function findRepoRoot(startDir: string): string {
   let cur = path.resolve(startDir);
   for (let i = 0; i < 8; i++) {
-    if (
+    const directLayout =
       fs.existsSync(path.join(cur, "operator-backend", "src", "allowlist.ts")) &&
       fs.existsSync(path.join(cur, "revit-bridge-addin", "RevitBridge", "Operator", "OperatorToolManifest.cs")) &&
-      fs.existsSync(path.join(cur, "revit-bridge-addin", "RevitBridge", "Tooling", "tool_examples.json"))
-    ) {
+      fs.existsSync(path.join(cur, "revit-bridge-addin", "RevitBridge", "Tooling", "tool_examples.json"));
+    const appsLayout =
+      fs.existsSync(path.join(cur, "apps", "operator-backend", "src", "allowlist.ts")) &&
+      fs.existsSync(path.join(cur, "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorToolManifest.cs")) &&
+      fs.existsSync(path.join(cur, "apps", "revit-bridge-addin", "RevitBridge", "Tooling", "tool_examples.json"));
+    if (directLayout || appsLayout) {
       return cur;
     }
     const parent = path.dirname(cur);
@@ -93,9 +97,12 @@ function parseBool(raw: string | undefined, fallback: boolean): boolean {
 
 function main(): void {
   const repoRoot = findRepoRoot(process.cwd());
-  const allowlistPath = path.join(repoRoot, "operator-backend", "src", "allowlist.ts");
-  const manifestPath = path.join(repoRoot, "revit-bridge-addin", "RevitBridge", "Operator", "OperatorToolManifest.cs");
-  const examplesPath = path.join(repoRoot, "revit-bridge-addin", "RevitBridge", "Tooling", "tool_examples.json");
+  const appsLayout = fs.existsSync(path.join(repoRoot, "apps", "operator-backend", "src", "allowlist.ts"));
+  const backendRoot = appsLayout ? path.join(repoRoot, "apps", "operator-backend") : path.join(repoRoot, "operator-backend");
+  const addinRoot = appsLayout ? path.join(repoRoot, "apps", "revit-bridge-addin") : path.join(repoRoot, "revit-bridge-addin");
+  const allowlistPath = path.join(backendRoot, "src", "allowlist.ts");
+  const manifestPath = path.join(addinRoot, "RevitBridge", "Operator", "OperatorToolManifest.cs");
+  const examplesPath = path.join(addinRoot, "RevitBridge", "Tooling", "tool_examples.json");
 
   const allow = parseAllowlistKeys(allowlistPath);
   const manifest = parseManifestKeys(manifestPath);

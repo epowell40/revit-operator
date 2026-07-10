@@ -4,6 +4,8 @@ This repository contains the open-source core of Revit Operator. BIMTools also m
 
 ## Local Mode
 
+Supported release targets are Revit 2023, 2024, and 2025 with Node.js 20+ for machines running the backend or MCP server.
+
 Use local mode for development and self-host testing:
 
 ```text

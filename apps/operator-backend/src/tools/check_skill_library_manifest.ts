@@ -18,7 +18,8 @@ function fail(msg: string): never {
 function findRepoRoot(startDir: string): string {
   let cur = path.resolve(startDir);
   for (let i = 0; i < 8; i++) {
-    if (fs.existsSync(path.join(cur, "skills", "skill_library_manifest.json")) && fs.existsSync(path.join(cur, "operator-backend"))) {
+    const hasBackend = fs.existsSync(path.join(cur, "operator-backend")) || fs.existsSync(path.join(cur, "apps", "operator-backend"));
+    if (fs.existsSync(path.join(cur, "skills", "skill_library_manifest.json")) && hasBackend) {
       return cur;
     }
     const parent = path.dirname(cur);

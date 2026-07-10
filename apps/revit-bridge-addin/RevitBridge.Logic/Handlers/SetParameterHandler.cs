@@ -15,12 +15,14 @@ namespace RevitBridge.Logic.Handlers
             public long elementId { get; set; }
             public string parameterName { get; set; }
             public string value { get; set; }
+            public bool? preserveTextCase { get; set; }
         }
 
         public class Params
         {
             public List<SetParamEntry> changes { get; set; }
             public bool apply { get; set; } = true;
+            public bool? preserveTextCase { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -54,7 +56,10 @@ namespace RevitBridge.Logic.Handlers
                         switch (param.StorageType)
                         {
                             case StorageType.String:
-                                success = param.Set(RevitTextCasePolicy.NormalizeParameterValue(elem, param, entry.parameterName, entry.value));
+                                var preserveTextCase = entry.preserveTextCase ?? p.preserveTextCase ?? false;
+                                success = param.Set(preserveTextCase
+                                    ? (entry.value ?? "")
+                                    : RevitTextCasePolicy.NormalizeParameterValue(elem, param, entry.parameterName, entry.value));
                                 break;
                             case StorageType.Integer:
                                 success = param.Set(int.Parse(entry.value));

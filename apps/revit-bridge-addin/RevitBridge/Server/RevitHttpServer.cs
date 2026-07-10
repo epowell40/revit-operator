@@ -134,6 +134,9 @@ namespace RevitBridge.Server
                 { "/revit/create-mep-route", new CreateMepRouteHandler() },
                 { "/revit/connect-mep-branch", new ConnectMepBranchHandler() },
                 { "/revit/mep-route-workflow", new MepRouteWorkflowHandler() },
+                { "/revit/mep-branch-network-workflow", new RevitBridge.Logic.Handlers.MEP.MepBranchNetworkWorkflowHandler() },
+                { "/revit/edit-mep-route-elements", new RevitBridge.Logic.Handlers.MEP.EditMepRouteElementsHandler() },
+                { "/revit/reroute-mep-route-segment", new RevitBridge.Logic.Handlers.MEP.RerouteMepRouteSegmentHandler() },
                 { "/revit/arch-workflows", new ArchWorkflowsHandler() },
                 { "/revit/trace-connected-network", new TraceConnectedNetworkHandler() },
                 { "/revit/find-elements-by-parameter", new FindElementsByParameterHandler() },
@@ -379,6 +382,14 @@ namespace RevitBridge.Server
                 }
 
                 string path = req.Url.AbsolutePath;
+                string requestBody = "";
+                if (req.HasEntityBody)
+                {
+                    using (var reader = new StreamReader(req.InputStream, req.ContentEncoding))
+                    {
+                        requestBody = await reader.ReadToEndAsync();
+                    }
+                }
 
                 // Bridge-layer write gate:
                 // Any mutating endpoint requires an ephemeral write grant beyond X-Operator-Token.
@@ -390,7 +401,7 @@ namespace RevitBridge.Server
                 {
                     try
                     {
-                        var risk = OperatorApprovalPolicy.GetRisk(req.HttpMethod, path);
+                        var risk = GetRequestRisk(req.HttpMethod, path, requestBody);
                         var requiresGrant = risk >= OperatorActionRisk.Medium;
                         if (requiresGrant)
                         {
@@ -455,7 +466,7 @@ namespace RevitBridge.Server
                 }
                 else if (_handlers.TryGetValue(path, out var handler))
                 {
-                    string body = "";
+                    string body = requestBody;
 
                     // Support GET query-string style for documentation endpoints (human/tooling convenience).
                     // Operator tool calls from the agent typically use POST bodies (no query support in action runner).
@@ -468,13 +479,6 @@ namespace RevitBridge.Server
                         var qMethod = (req.QueryString?["method"] ?? "").Trim();
                         var qPath = (req.QueryString?["path"] ?? "").Trim();
                         body = JsonSerializer.Serialize(new { method = qMethod, path = qPath });
-                    }
-                    else if (req.HasEntityBody)
-                    {
-                        using (var reader = new StreamReader(req.InputStream, req.ContentEncoding))
-                        {
-                            body = await reader.ReadToEndAsync();
-                        }
                     }
 
                     object result;
@@ -545,6 +549,88 @@ namespace RevitBridge.Server
             return string.Equals(path, "/revit/computer-use-observe", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/revit/computer-use-act", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/revit/computer-use-guard", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static OperatorActionRisk GetRequestRisk(string method, string path, string body)
+        {
+            var risk = OperatorApprovalPolicy.GetRisk(method, path);
+            if (risk < OperatorActionRisk.Medium) return risk;
+
+            if (!string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)) return risk;
+
+            // These MEP endpoints are safe to run without a write grant only when the
+            // request is explicitly a preview. Actual route creation remains gated.
+            if ((string.Equals(path, "/revit/mep-route-workflow", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/mep-branch-network-workflow", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/reroute-mep-route-segment", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/create-mep-route", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/connect-mep-branch", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/create-duct", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/create-pipe", StringComparison.OrdinalIgnoreCase)) &&
+                IsExplicitMepRoutePreview(path, body))
+            {
+                return OperatorActionRisk.Low;
+            }
+
+            if (string.Equals(path, "/revit/link-cad", StringComparison.OrdinalIgnoreCase) &&
+                IsExplicitDryRunPreview(body))
+            {
+                return OperatorActionRisk.Low;
+            }
+
+            return risk;
+        }
+
+        private static bool IsExplicitDryRunPreview(string body)
+        {
+            if (string.IsNullOrWhiteSpace(body)) return false;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                var root = doc.RootElement;
+                return root.ValueKind == JsonValueKind.Object &&
+                    root.TryGetProperty("dryRun", out var dryRun) &&
+                    dryRun.ValueKind == JsonValueKind.True;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool IsExplicitMepRoutePreview(string path, string body)
+        {
+            if (string.IsNullOrWhiteSpace(body)) return false;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                var root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) return false;
+
+                if (root.TryGetProperty("dryRun", out var dryRun) &&
+                    dryRun.ValueKind == JsonValueKind.True)
+                {
+                    return true;
+                }
+
+                // Workflow endpoints use apply=false as the public dry-run flag.
+                if ((string.Equals(path, "/revit/mep-route-workflow", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(path, "/revit/mep-branch-network-workflow", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(path, "/revit/reroute-mep-route-segment", StringComparison.OrdinalIgnoreCase)) &&
+                    root.TryGetProperty("apply", out var apply) &&
+                    apply.ValueKind == JsonValueKind.False)
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+
+            return false;
         }
     }
 }

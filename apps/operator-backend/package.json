@@ -27,7 +27,7 @@
     "openai": "^5.13.1",
     "pdfjs-dist": "^4.10.38",
     "tesseract.js": "^5.1.1",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

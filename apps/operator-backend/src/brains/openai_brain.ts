@@ -35,7 +35,7 @@ import { knowledgeBaseOwnerIdForPrincipal, listKnowledgeBaseDocuments, searchKno
 import { formatActiveGoalContext, getActiveGoalForSession } from "../goals/service.js";
 import { formatEnvironmentSummaryForPrompt } from "../environment_profile.js";
 import { AGENT_RESPONSE_STYLE_LINES } from "../agent_response_policy.js";
-import { approxPayloadChars, resolveSpeedSettings, selectSpeedRoute } from "../speed_config.js";
+import { approxPayloadChars, resolveSpeedSettings, selectSpeedRoute, type SpeedRouteKind } from "../speed_config.js";
 
 type OpenAiDecision = {
   assistant_message: string;
@@ -758,7 +758,7 @@ async function maybeBuildFastElectricalRedlinePreflight(req: ChatRequest): Promi
     }
   }
   let triedExpansion = false;
-  const alignmentModel = (process.env.OPERATOR_OPENAI_REDLINE_FAST_MODEL ?? "gpt-5.5").trim() || "gpt-5.5";
+  const alignmentModel = (process.env.OPERATOR_OPENAI_REDLINE_FAST_MODEL ?? "gpt-5.6-sol").trim() || "gpt-5.6-sol";
   const alignmentConfidenceFloor = Math.max(0.25, Math.min(0.9, Number.parseFloat(process.env.OPERATOR_REDLINE_FAST_PATH_MATCH_THRESHOLD ?? "0.42") || 0.42));
 
   let matchedCandidate: FastPathViewCandidate | null = null;
@@ -12928,7 +12928,7 @@ async function maybeAutoAlignRedlineViewHints(args: {
     redline_file_path: seed.file_path,
     view_image_data_url: latestFrameImage.image_data_url,
     objective: getRecentUserTextForRedline(args.req),
-    model: process.env.OPERATOR_OPENAI_MODEL ?? "gpt-5.5",
+    model: process.env.OPERATOR_OPENAI_MODEL ?? "gpt-5.6-sol",
     reasoning_effort: process.env.OPERATOR_REDLINE_ALIGNMENT_REASONING_EFFORT ?? "none",
     max_output_tokens: 5000
   });
@@ -13347,7 +13347,7 @@ function defaultSystemPrompt(): string {
     "- Use those results to continue until the task is done.",
     "",
     ...AGENT_RESPONSE_STYLE_LINES,
-    "- Be concise. Do NOT repeat yourself.",
+    "- Lead with the conclusion. Keep all required facts, evidence, caveats, and next actions; trim introductions, repetition, generic reassurance, and optional background first.",
     "- Do NOT dump raw tool JSON back to the user (tool JSON is already visible in the Actions panel).",
     "- If you are done, you may start with \"Answer:\" for compatibility. If blocked, return \"Answer:\" with one concrete blocker/question.",
     "- Users will talk naturally (e.g., \"update the MEP engineers on the cover sheet to WSP\"). Infer missing details using read-only tools (resolve the sheet, find the titleblock, inspect candidates) instead of asking the user to provide exact tool names/JSON.",
@@ -14031,7 +14031,7 @@ export async function __testOnlyBuildRedlineExecutionBridgeAsync(args: {
   );
 }
 
-async function buildPrompt(req: ChatRequest): Promise<string> {
+async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; reason: string }): Promise<string> {
   const history = getHistory(req.session_id);
   const lines: string[] = [];
   const speedSettings = resolveSpeedSettings(req.context);
@@ -14042,6 +14042,11 @@ async function buildPrompt(req: ChatRequest): Promise<string> {
     lines.push(
       `Speed mode: enabled; planner=${speedSettings.planner_model}/${speedSettings.planner_reasoning_effort}; executor=${speedSettings.executor_model}/${speedSettings.executor_reasoning_effort}; context_diet=${speedSettings.context_diet ? "on" : "off"}.`
     );
+    if (lane?.route === "planner") {
+      lines.push(`Current lane: planner (${lane.reason}). Resolve intent, constraints, success criteria, the smallest concrete action sequence, and required verification. Do not repeat settled discovery.`);
+    } else if (lane?.route === "executor") {
+      lines.push(`Current lane: executor (${lane.reason}). Continue from the user's established intent and tool state, emit the next executable action, and verify it. Do not reopen settled decisions or repeat completed calls.`);
+    }
     if (speedSettings.context_diet) {
       lines.push("Speed mode context diet is active: prefer targeted tool discovery over full registries and avoid unnecessary read-only loops.");
     }
@@ -14672,8 +14677,8 @@ function truncateJson(obj: unknown, maxChars: number): string {
   }
 }
 
-async function buildInput(req: ChatRequest): Promise<any> {
-  const prompt = await buildPrompt(req);
+async function buildInput(req: ChatRequest, lane?: { route: SpeedRouteKind; reason: string }): Promise<any> {
+  const prompt = await buildPrompt(req, lane);
 
   if (!shouldAttachImages(req)) return prompt;
 
@@ -15731,7 +15736,7 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
   }
 
   const client = createOpenAiClient(apiKey);
-  const defaultModel = process.env.OPERATOR_OPENAI_MODEL || "gpt-5.5";
+  const defaultModel = process.env.OPERATOR_OPENAI_MODEL || "gpt-5.6-sol";
   const defaultReasoningEffort = getRequestedReasoningEffort(req, normalizeReasoningEffort(process.env.OPERATOR_OPENAI_REASONING_EFFORT || "medium", "medium"));
   const textVerbosity = normalizeTextVerbosity(process.env.OPERATOR_OPENAI_TEXT_VERBOSITY || "low", "low");
   const serviceTier = getRequestedServiceTier();
@@ -15932,7 +15937,7 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     const speedSettings = resolveSpeedSettings(r.context);
     const route = selectSpeedRoute(r, speedSettings, { model: defaultModel, reasoning_effort: defaultReasoningEffort });
     const promptStartedMs = Date.now();
-    const input = await buildInput(r);
+    const input = await buildInput(r, { route: route.route, reason: route.reason });
     const promptBuildMs = Date.now() - promptStartedMs;
     const inputChars = approxPayloadChars(input);
     try {

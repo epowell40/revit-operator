@@ -30,6 +30,7 @@ namespace RevitBridge.Logic.Handlers.MEP
 
             // Output inclusion flags (traversal is always through connected elements; these affect output sets).
             public bool includeDucts { get; set; } = true;
+            public bool includePipes { get; set; } = true;
             public bool includeFittings { get; set; } = true;
             public bool includeAccessories { get; set; } = true;
             public bool includeTerminals { get; set; } = true;
@@ -239,6 +240,10 @@ namespace RevitBridge.Logic.Handlers.MEP
                 BuiltInCategory.OST_DuctFitting,
                 BuiltInCategory.OST_DuctAccessory,
                 BuiltInCategory.OST_DuctTerminal,
+                BuiltInCategory.OST_PipeCurves,
+                BuiltInCategory.OST_PipeFitting,
+                BuiltInCategory.OST_PipeAccessory,
+                BuiltInCategory.OST_PlumbingFixtures,
                 BuiltInCategory.OST_MechanicalEquipment
             };
 
@@ -278,9 +283,13 @@ namespace RevitBridge.Logic.Handlers.MEP
                 var catId = RevitBridge.Common.ElementIdCompat.GetValue(e.Category?.Id);
                 if (catId == 0) return p.includeOtherCategories;
                 if (catId == (int)BuiltInCategory.OST_DuctCurves) return p.includeDucts;
+                if (catId == (int)BuiltInCategory.OST_PipeCurves) return p.includePipes;
                 if (catId == (int)BuiltInCategory.OST_DuctFitting) return p.includeFittings;
+                if (catId == (int)BuiltInCategory.OST_PipeFitting) return p.includeFittings;
                 if (catId == (int)BuiltInCategory.OST_DuctAccessory) return p.includeAccessories;
+                if (catId == (int)BuiltInCategory.OST_PipeAccessory) return p.includeAccessories;
                 if (catId == (int)BuiltInCategory.OST_DuctTerminal) return p.includeTerminals;
+                if (catId == (int)BuiltInCategory.OST_PlumbingFixtures) return p.includeTerminals;
                 if (catId == (int)BuiltInCategory.OST_MechanicalEquipment) return p.includeEquipment;
 
                 return p.includeOtherCategories;
@@ -296,7 +305,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             try
             {
                 var catId = RevitBridge.Common.ElementIdCompat.GetValue(e.Category?.Id);
-                if (catId != (int)BuiltInCategory.OST_DuctFitting) return false;
+                if (catId != (int)BuiltInCategory.OST_DuctFitting && catId != (int)BuiltInCategory.OST_PipeFitting) return false;
                 var count = 0;
                 foreach (var _ in MepSystemUtil.GetConnectors(e))
                 {
@@ -313,7 +322,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             try
             {
                 var catId = RevitBridge.Common.ElementIdCompat.GetValue(e.Category?.Id);
-                if (catId != (int)BuiltInCategory.OST_DuctFitting) return false;
+                if (catId != (int)BuiltInCategory.OST_DuctFitting && catId != (int)BuiltInCategory.OST_PipeFitting) return false;
 
                 var sizes = new List<string>();
                 foreach (var c in MepSystemUtil.GetConnectors(e))

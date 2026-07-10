@@ -338,6 +338,58 @@ namespace RevitBridge.Logic.Handlers
                 }
             }
             catch { }
+
+            var tagAnnotation = BuildTagAnnotationPayload(element);
+            if (tagAnnotation != null)
+                payload["tagAnnotation"] = tagAnnotation;
+        }
+
+        private static object? BuildTagAnnotationPayload(Element element)
+        {
+            if (element is not IndependentTag && element is not RoomTag && element is not SpaceTag)
+                return null;
+
+            var head = TryReadXyzProperty(element, "TagHeadPosition");
+            var leaderElbow = TryReadXyzProperty(element, "LeaderElbow");
+            var leaderEnd = TryReadXyzProperty(element, "LeaderEnd");
+            var hasLeader = TryReadBoolProperty(element, "HasLeader");
+            var leaderEndCondition = TryReadProperty(element, "LeaderEndCondition")?.ToString();
+
+            if (head == null && leaderElbow == null && leaderEnd == null && hasLeader == null && string.IsNullOrWhiteSpace(leaderEndCondition))
+                return null;
+
+            return new
+            {
+                tagHeadPosition = head == null ? null : BuildVector(head),
+                hasLeader,
+                leaderEndCondition,
+                leaderElbow = leaderElbow == null ? null : BuildVector(leaderElbow),
+                leaderEnd = leaderEnd == null ? null : BuildVector(leaderEnd)
+            };
+        }
+
+        private static object? TryReadProperty(object source, string propertyName)
+        {
+            try
+            {
+                var property = source.GetType().GetProperty(propertyName);
+                return property == null ? null : property.GetValue(source);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static XYZ? TryReadXyzProperty(object source, string propertyName)
+        {
+            return TryReadProperty(source, propertyName) as XYZ;
+        }
+
+        private static bool? TryReadBoolProperty(object source, string propertyName)
+        {
+            var value = TryReadProperty(source, propertyName);
+            return value is bool b ? b : null;
         }
 
         private static object? BuildTaggedSpatialPayload(SpatialElement? spatial, string kind)

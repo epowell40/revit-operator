@@ -251,7 +251,6 @@ namespace RevitBridge.Logic.Handlers.MEP
 
             XYZ resolved;
             var hasExplicitZ = false;
-            var cameFromFrame = false;
             if (point.xyz != null && point.xyz.Length >= 2)
             {
                 hasExplicitZ = point.xyz.Length >= 3;
@@ -264,17 +263,17 @@ namespace RevitBridge.Logic.Handlers.MEP
             }
             else if (point.xPx.HasValue && point.yPx.HasValue)
             {
-                cameFromFrame = true;
                 var dp = new DraftPoint { xPx = point.xPx, yPx = point.yPx };
-                resolved = dp.Resolve(frameId);
-                hasExplicitZ = Math.Abs(resolved.Z) > 1e-9;
+                var projected = dp.Resolve(frameId);
+                hasExplicitZ = point.z.HasValue;
+                resolved = new XYZ(projected.X, projected.Y, point.z.GetValueOrDefault(0.0));
             }
             else
             {
                 throw new InvalidOperationException("Each route point must provide x/y[/z], xyz, or xPx/yPx.");
             }
 
-            if (!hasExplicitZ || (cameFromFrame && Math.Abs(resolved.Z) < 1e-9))
+            if (!hasExplicitZ)
             {
                 usedFallbackZ = true;
                 resolved = new XYZ(resolved.X, resolved.Y, fallbackZ);
@@ -329,21 +328,36 @@ namespace RevitBridge.Logic.Handlers.MEP
                 .FirstOrDefault();
         }
 
-        internal static MEPSystemType? FindSystemType(Document doc, string? name)
+        internal static MEPSystemType? FindSystemType(Document doc, string? name, string? kind = null)
         {
             var q = (name ?? "").Trim();
+            var normalizedKind = NormalizeKind(kind);
             var all = new FilteredElementCollector(doc)
                 .OfClass(typeof(MEPSystemType))
                 .Cast<MEPSystemType>()
                 .ToList();
+            var matchingKind = all.Where(x => SystemTypeMatchesKind(x, normalizedKind)).ToList();
+            var candidates = matchingKind.Count > 0 ? matchingKind : all;
             if (q.Length > 0)
             {
-                var exact = all.FirstOrDefault(x => x.Name.Equals(q, StringComparison.OrdinalIgnoreCase));
+                var exact = candidates.FirstOrDefault(x => x.Name.Equals(q, StringComparison.OrdinalIgnoreCase));
                 if (exact != null) return exact;
-                var contains = all.FirstOrDefault(x => x.Name.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0);
+                var contains = candidates.FirstOrDefault(x => x.Name.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0);
                 if (contains != null) return contains;
             }
-            return all.FirstOrDefault();
+            return candidates.FirstOrDefault();
+        }
+
+        private static bool SystemTypeMatchesKind(MEPSystemType systemType, string kind)
+        {
+            try
+            {
+                var catId = ElementIdCompat.GetValue(systemType.Category?.Id);
+                if (kind == "pipe") return catId == (int)BuiltInCategory.OST_PipingSystem;
+                if (kind == "duct") return catId == (int)BuiltInCategory.OST_DuctSystem;
+            }
+            catch { }
+            return false;
         }
 
         internal static DuctType? FindDuctType(Document doc, string? name)
@@ -559,6 +573,64 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (!string.IsNullOrWhiteSpace(connectError))
             {
                 error = string.IsNullOrWhiteSpace(error) ? connectError : $"{error}; ConnectTo fallback: {connectError}";
+            }
+            return false;
+        }
+
+        internal static bool TryCreateTransitionElbowOrConnect(Document doc, Connector? a, Connector? b, bool preferTransition, out long? fittingId, out string method, out string? error)
+        {
+            fittingId = null;
+            method = "none";
+            error = null;
+            if (a == null || b == null)
+            {
+                error = "Connector not found near shared point.";
+                return false;
+            }
+
+            try
+            {
+                if (a.IsConnectedTo(b))
+                {
+                    method = "already_connected";
+                    return true;
+                }
+            }
+            catch { }
+
+            if (preferTransition)
+            {
+                try
+                {
+                    var fitting = doc.Create.NewTransitionFitting(a, b);
+                    if (fitting != null)
+                    {
+                        fittingId = ElementIdCompat.GetValue(fitting.Id);
+                        method = "new_transition_fitting";
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    error = ex.Message;
+                }
+
+                method = "transition_required_failed";
+                error = string.IsNullOrWhiteSpace(error)
+                    ? "A transition fitting was required because adjacent segment sizes differ, but Revit did not create one."
+                    : $"A transition fitting was required because adjacent segment sizes differ, but Revit did not create one: {error}";
+                return false;
+            }
+
+            if (TryCreateElbowOrConnect(doc, a, b, out fittingId, out method, out var elbowError))
+            {
+                error = null;
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(elbowError))
+            {
+                error = string.IsNullOrWhiteSpace(error) ? elbowError : $"{error}; Elbow/connect fallback: {elbowError}";
             }
             return false;
         }

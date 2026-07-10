@@ -71,15 +71,15 @@ export function resolveSpeedSettings(context: unknown): SpeedSettings {
   return {
     speed_mode: speedMode,
     split_planner_executor: split,
-    planner_model: stringValue(raw.planner_model ?? raw.plannerModel, process.env.OPERATOR_PLANNER_MODEL || "gpt-5.5"),
+    planner_model: stringValue(process.env.OPERATOR_PLANNER_MODEL, stringValue(raw.planner_model ?? raw.plannerModel, "gpt-5.6-sol")),
     planner_reasoning_effort: normalizeReasoningEffort(
-      raw.planner_reasoning_effort ?? raw.plannerReasoningEffort,
-      normalizeReasoningEffort(process.env.OPERATOR_PLANNER_REASONING_EFFORT || "medium", "medium")
+      process.env.OPERATOR_PLANNER_REASONING_EFFORT,
+      normalizeReasoningEffort(raw.planner_reasoning_effort ?? raw.plannerReasoningEffort, "medium")
     ),
-    executor_model: stringValue(raw.executor_model ?? raw.executorModel, process.env.OPERATOR_EXECUTOR_MODEL || "gpt-5.4-mini"),
+    executor_model: stringValue(process.env.OPERATOR_EXECUTOR_MODEL, stringValue(raw.executor_model ?? raw.executorModel, "gpt-5.6-terra")),
     executor_reasoning_effort: normalizeReasoningEffort(
-      raw.executor_reasoning_effort ?? raw.executorReasoningEffort,
-      normalizeReasoningEffort(process.env.OPERATOR_EXECUTOR_REASONING_EFFORT || "low", "low")
+      process.env.OPERATOR_EXECUTOR_REASONING_EFFORT,
+      normalizeReasoningEffort(raw.executor_reasoning_effort ?? raw.executorReasoningEffort, "medium")
     ),
     force_planner: boolValue(raw.force_planner ?? raw.forcePlanner, false),
     force_executor: boolValue(raw.force_executor ?? raw.forceExecutor, false),

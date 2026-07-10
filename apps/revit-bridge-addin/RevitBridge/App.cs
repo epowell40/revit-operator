@@ -31,11 +31,23 @@ namespace RevitBridge
             // Ensure Operator backend is up (separate process)
             OperatorBackendAutoStart.TryStartInBackground();
 
-            try
+            if (IsDialogComputerUseEnabled())
             {
-                DialogComputerUse = new OperatorDialogComputerUse(application);
+                try
+                {
+                    WriteStartupLog("Dialog computer-use registration begin.");
+                    DialogComputerUse = new OperatorDialogComputerUse(application);
+                    WriteStartupLog("Dialog computer-use registration complete.");
+                }
+                catch (Exception ex)
+                {
+                    WriteStartupLog($"Dialog computer-use registration failed: {ex.GetType().FullName}: {ex.Message}");
+                }
             }
-            catch { }
+            else
+            {
+                WriteStartupLog("Dialog computer-use registration skipped by local setting.");
+            }
 
             // Register DockablePane (don't hard-fail if already registered)
             try
@@ -84,10 +96,79 @@ namespace RevitBridge
 
         public Result OnShutdown(UIControlledApplication application)
         {
-            try { DialogComputerUse?.Dispose(); } catch { }
-            _server?.Stop();
+            WriteStartupLog("OnShutdown begin.");
+            try
+            {
+                WriteStartupLog("Dialog computer-use dispose begin.");
+                DialogComputerUse?.Dispose();
+                WriteStartupLog("Dialog computer-use dispose complete.");
+            }
+            catch (Exception ex)
+            {
+                WriteStartupLog($"Dialog computer-use dispose failed: {ex.GetType().FullName}: {ex.Message}");
+            }
+            try
+            {
+                WriteStartupLog("HTTP server stop begin.");
+                _server?.Stop();
+                WriteStartupLog("HTTP server stop complete.");
+            }
+            catch (Exception ex)
+            {
+                WriteStartupLog($"HTTP server stop failed: {ex.GetType().FullName}: {ex.Message}");
+            }
             WriteStartupLog("OnShutdown complete.");
             return Result.Succeeded;
+        }
+
+        private static bool IsDialogComputerUseEnabled()
+        {
+            if (IsTruthy(ReadSetting("OPERATOR_DISABLE_DIALOG_COMPUTER_USE"))) return false;
+            if (IsTruthy(ReadSetting("OPERATOR_DIALOG_COMPUTER_USE_DISABLED"))) return false;
+
+            try
+            {
+                var flagPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "RevitOperator",
+                    "disable-dialog-computer-use.flag");
+                if (File.Exists(flagPath)) return false;
+            }
+            catch { }
+
+            return true;
+        }
+
+        private static string ReadSetting(string name)
+        {
+            try
+            {
+                var value = Environment.GetEnvironmentVariable(name);
+                if (!string.IsNullOrWhiteSpace(value)) return value;
+            }
+            catch { }
+            try
+            {
+                var value = Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.User);
+                if (!string.IsNullOrWhiteSpace(value)) return value;
+            }
+            catch { }
+            try
+            {
+                var value = Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.Machine);
+                if (!string.IsNullOrWhiteSpace(value)) return value;
+            }
+            catch { }
+            return "";
+        }
+
+        private static bool IsTruthy(string value)
+        {
+            var normalized = (value ?? "").Trim();
+            return string.Equals(normalized, "1", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalized, "true", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalized, "yes", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalized, "on", StringComparison.OrdinalIgnoreCase);
         }
 
         private static void WriteStartupLog(string message)

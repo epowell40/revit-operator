@@ -26,6 +26,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             public string? ductSize { get; set; }
             public string? diameter { get; set; }
             public string? pipeSize { get; set; }
+            public List<string>? segmentSizes { get; set; }
             public string? sizePolicy { get; set; } = "use_default_with_warning";
             public string? elevationPolicy { get; set; } = "resolve_context_default";
             public string? routingMode { get; set; } = "polyline";
@@ -266,6 +267,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             ductSize = p.ductSize,
             diameter = p.diameter,
             pipeSize = p.pipeSize,
+            segmentSizes = p.segmentSizes,
             sizePolicy = p.sizePolicy,
             elevationPolicy = p.elevationPolicy,
             routingMode = p.routingMode,

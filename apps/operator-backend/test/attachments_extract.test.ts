@@ -18,6 +18,7 @@ test("xlsx attachments produce excerpts with anchors", async () => {
   const full = path.join(uploadsDir, "vent.xlsx");
   const xMod: any = await import("xlsx");
   const xlsx: any = xMod?.default ?? xMod;
+  xlsx.set_fs?.(fs);
   const ws = xlsx.utils.aoa_to_sheet([
     ["Ventilation Table", "", ""],
     ["Room", "CFM", "Notes"],

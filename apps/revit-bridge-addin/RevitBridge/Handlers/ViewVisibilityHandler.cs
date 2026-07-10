@@ -58,6 +58,13 @@ namespace RevitBridge.Handlers
             public Point3? boxMax { get; set; }
             public double? annotationCropMarginFeet { get; set; }
             public bool? annotationCropActive { get; set; }
+            public bool? includeLinkedModels { get; set; }
+            public long? linkedModelInstanceId { get; set; }
+            public long? linkedModelId { get; set; }
+            public long? revitLinkInstanceId { get; set; }
+            public string? linkedModelName { get; set; }
+            public string? revitLinkName { get; set; }
+            public string? linkName { get; set; }
             public bool? dryRun { get; set; }
         }
 
@@ -76,7 +83,12 @@ namespace RevitBridge.Handlers
             var action = (p.action ?? "get").Trim().ToLowerInvariant();
             if (action == "get")
             {
-                return Task.FromResult<object>(BuildViewState(doc, view, "Ok", "get", dryRun: false));
+                return Task.FromResult<object>(BuildViewState(doc, view, "Ok", "get", dryRun: false, p));
+            }
+
+            if (IsLinkedCategoryOverrideRequest(action, p))
+            {
+                return Task.FromResult<object>(BuildUnsupportedLinkedCategoryOverrideState(doc, view, action, p));
             }
 
             var dryRun = p.dryRun ?? false;
@@ -124,7 +136,7 @@ namespace RevitBridge.Handlers
                         boxMin = p.boxMin == null ? null : new { p.boxMin.x, p.boxMin.y, p.boxMin.z },
                         boxMax = p.boxMax == null ? null : new { p.boxMax.x, p.boxMax.y, p.boxMax.z }
                     },
-                    current = BuildViewState(doc, view, "Ok", "get", dryRun: false)
+                    current = BuildViewState(doc, view, "Ok", "get", dryRun: false, p)
                 });
             }
 
@@ -135,7 +147,7 @@ namespace RevitBridge.Handlers
                 tx.Commit();
             }
 
-            return Task.FromResult<object>(BuildViewState(doc, view, "Success", action, dryRun: false));
+            return Task.FromResult<object>(BuildViewState(doc, view, "Success", action, dryRun: false, p));
         }
 
         private static void ApplyAction(Document doc, View view, string action, Params p)
@@ -982,6 +994,45 @@ namespace RevitBridge.Handlers
             };
         }
 
+        private static bool IsLinkedCategoryOverrideRequest(string action, Params p)
+        {
+            if (action != "set_category_override" && action != "clear_category_override") return false;
+            return (p.linkedModelInstanceId.HasValue && p.linkedModelInstanceId.Value > 0) ||
+                   (p.linkedModelId.HasValue && p.linkedModelId.Value > 0) ||
+                   (p.revitLinkInstanceId.HasValue && p.revitLinkInstanceId.Value > 0) ||
+                   !string.IsNullOrWhiteSpace(p.linkedModelName) ||
+                   !string.IsNullOrWhiteSpace(p.revitLinkName) ||
+                   !string.IsNullOrWhiteSpace(p.linkName);
+        }
+
+        private static object BuildUnsupportedLinkedCategoryOverrideState(Document doc, View view, string action, Params p)
+        {
+            return new
+            {
+                status = "Blocked",
+                action,
+                blockCode = "linked_model_category_override_not_supported",
+                message = "Revit 2024 exposes linked model visibility/phase inventory and link-level display overrides, but this handler cannot prove a per-linked-category lineweight override. Refusing to apply a host category override for a linked-model request.",
+                dryRun = p.dryRun ?? false,
+                input = new
+                {
+                    viewId = p.viewId ?? RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
+                    p.linkedModelInstanceId,
+                    p.linkedModelId,
+                    p.revitLinkInstanceId,
+                    p.linkedModelName,
+                    p.revitLinkName,
+                    p.linkName,
+                    p.categoryName,
+                    p.lineWeight,
+                    p.r,
+                    p.g,
+                    p.b
+                },
+                view = BuildViewState(doc, view, "Ok", "get", dryRun: false, new Params { categoryName = p.categoryName, includeLinkedModels = true })
+            };
+        }
+
         private static bool TrySetBuiltInElementIdParameter(View view, string builtInParameterName, ElementId value)
         {
             try
@@ -1223,7 +1274,7 @@ namespace RevitBridge.Handlers
             return null;
         }
 
-        private static object BuildViewState(Document doc, View view, string status, string action, bool dryRun)
+        private static object BuildViewState(Document doc, View view, string status, string action, bool dryRun, Params? p = null)
         {
             View? viewTemplate = null;
             if (view.ViewTemplateId != ElementId.InvalidElementId)
@@ -1284,6 +1335,7 @@ namespace RevitBridge.Handlers
             var scopeBox = TryGetScopeBox(doc, view);
             var phase = TryGetPhase(doc, view);
             var phaseFilter = TryGetPhaseFilter(doc, view);
+            var linkedModels = (p?.includeLinkedModels ?? false) ? BuildLinkedModelsState(doc) : null;
             var temporaryModes = new
             {
                 hideIsolate = TryGetTempModeState(view, TemporaryViewMode.TemporaryHideIsolate),
@@ -1330,12 +1382,141 @@ namespace RevitBridge.Handlers
                     underlay,
                     phase = phase == null ? null : new { id = RevitBridge.Common.ElementIdCompat.GetValue(phase.Id), name = phase.Name },
                     phaseFilter = phaseFilter == null ? null : new { id = RevitBridge.Common.ElementIdCompat.GetValue(phaseFilter.Id), name = phaseFilter.Name },
+                    linkedModels,
                     temporaryModes,
                     viewFilters,
                     viewTemplate = viewTemplate?.Name,
                     viewTemplateId = RevitBridge.Common.ElementIdCompat.GetValue(viewTemplate?.Id)
                 }
             };
+        }
+
+        private static object[] BuildLinkedModelsState(Document doc)
+        {
+            var links = new FilteredElementCollector(doc)
+                .OfClass(typeof(RevitLinkInstance))
+                .Cast<RevitLinkInstance>()
+                .OrderBy(link => link.Name, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            return links.Select(link =>
+            {
+                Document? linkDoc = null;
+                try { linkDoc = link.GetLinkDocument(); } catch { }
+                var linkType = doc.GetElement(link.GetTypeId()) as RevitLinkType;
+                return new
+                {
+                    instanceId = RevitBridge.Common.ElementIdCompat.GetValue(link.Id),
+                    instanceName = link.Name,
+                    typeId = RevitBridge.Common.ElementIdCompat.GetValue(link.GetTypeId()),
+                    typeName = linkType?.Name,
+                    isLoaded = linkDoc != null,
+                    documentTitle = linkDoc?.Title,
+                    pathName = SafePathName(linkDoc),
+                    phases = BuildPhaseInventory(linkDoc),
+                    commonCategories = BuildLinkedCategoryInventory(linkDoc),
+                    phaseMap = BuildPhaseMapState(doc, linkDoc, linkType)
+                };
+            }).Cast<object>().ToArray();
+        }
+
+        private static string? SafePathName(Document? doc)
+        {
+            if (doc == null) return null;
+            try { return doc.PathName; } catch { return null; }
+        }
+
+        private static object[] BuildPhaseInventory(Document? doc)
+        {
+            if (doc == null) return Array.Empty<object>();
+            try
+            {
+                return new FilteredElementCollector(doc)
+                    .OfClass(typeof(Phase))
+                    .Cast<Phase>()
+                    .OrderBy(phase => RevitBridge.Common.ElementIdCompat.GetValue(phase.Id))
+                    .Select(phase => new { id = RevitBridge.Common.ElementIdCompat.GetValue(phase.Id), name = phase.Name })
+                    .Cast<object>()
+                    .ToArray();
+            }
+            catch
+            {
+                return Array.Empty<object>();
+            }
+        }
+
+        private static object[] BuildLinkedCategoryInventory(Document? linkDoc)
+        {
+            if (linkDoc == null) return Array.Empty<object>();
+            var wanted = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "Furniture",
+                "Plumbing Fixtures",
+                "Generic Models",
+                "Lines",
+                "Specialty Equipment"
+            };
+            var rows = new List<object>();
+            try
+            {
+                foreach (Category category in linkDoc.Settings.Categories)
+                {
+                    if (!wanted.Contains(category.Name)) continue;
+                    rows.Add(new
+                    {
+                        id = RevitBridge.Common.ElementIdCompat.GetValue(category.Id),
+                        name = category.Name
+                    });
+                }
+            }
+            catch
+            {
+                return Array.Empty<object>();
+            }
+            return rows.OrderBy(row => row.GetType().GetProperty("name")?.GetValue(row)?.ToString(), StringComparer.OrdinalIgnoreCase).ToArray();
+        }
+
+        private static object[] BuildPhaseMapState(Document hostDoc, Document? linkDoc, RevitLinkType? linkType)
+        {
+            if (linkDoc == null || linkType == null) return Array.Empty<object>();
+            try
+            {
+                var method = linkType.GetType().GetMethod("GetPhaseMap", BindingFlags.Instance | BindingFlags.Public, null, Type.EmptyTypes, null);
+                if (method == null) return Array.Empty<object>();
+                if (method.Invoke(linkType, null) is not System.Collections.IEnumerable map) return Array.Empty<object>();
+                var rows = new List<object>();
+                foreach (var entry in map)
+                {
+                    var hostPhaseId = TryReadElementIdProperty(entry, "Key");
+                    var linkedPhaseId = TryReadElementIdProperty(entry, "Value");
+                    var hostPhase = hostPhaseId == null ? null : hostDoc.GetElement(hostPhaseId) as Phase;
+                    var linkedPhase = linkedPhaseId == null ? null : linkDoc.GetElement(linkedPhaseId) as Phase;
+                    rows.Add(new
+                    {
+                        hostPhaseId = RevitBridge.Common.ElementIdCompat.GetValue(hostPhaseId),
+                        hostPhaseName = hostPhase?.Name,
+                        linkedPhaseId = RevitBridge.Common.ElementIdCompat.GetValue(linkedPhaseId),
+                        linkedPhaseName = linkedPhase?.Name
+                    });
+                }
+                return rows.ToArray();
+            }
+            catch
+            {
+                return Array.Empty<object>();
+            }
+        }
+
+        private static ElementId? TryReadElementIdProperty(object target, string propName)
+        {
+            try
+            {
+                return target.GetType().GetProperty(propName, BindingFlags.Instance | BindingFlags.Public)?.GetValue(target, null) as ElementId;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static string? TryReadProperty(object target, string propName)

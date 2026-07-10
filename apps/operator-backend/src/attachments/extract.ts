@@ -207,6 +207,7 @@ async function extractImageMetaExcerpts(fullPath: string): Promise<AttachmentExc
 async function extractXlsxExcerpts(fullPath: string): Promise<AttachmentExcerpt[]> {
   const xMod: any = await import("xlsx");
   const xlsx: any = xMod?.default ?? xMod;
+  xlsx.set_fs?.(fs);
   const wb = xlsx.readFile(fullPath, { cellDates: false, dense: false });
   const sheetName = (wb.SheetNames && wb.SheetNames.length > 0 ? wb.SheetNames[0] : "") || "";
   if (!sheetName) return [{ anchor: "Excel", text: "Could not read any worksheet names." }];

@@ -28,6 +28,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             public string? ductSize { get; set; }
             public string? diameter { get; set; }
             public string? pipeSize { get; set; }
+            public List<string>? segmentSizes { get; set; }
             public string? sizePolicy { get; set; } = "use_default_with_warning";
             public string? elevationPolicy { get; set; } = "resolve_context_default";
             public string? routingMode { get; set; } = "polyline";
@@ -71,6 +72,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                 return Task.FromResult<object>(new { status = "Blocked", error = "Could not resolve a level for this route.", warnings });
             }
 
+            var routeSegmentCount = Math.Max(0, p.points.Count - 1);
+            var segmentSizeTexts = ResolveSegmentSizeTexts(kind, p, routeSegmentCount);
             var size = MepRoutingUtil.ChooseSize(kind, p.ductSize, p.diameter, p.pipeSize, p.sizePolicy, warnings);
             if (size.Missing && string.Equals((p.sizePolicy ?? "").Trim(), "explicit_required", StringComparison.OrdinalIgnoreCase))
             {
@@ -121,7 +124,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 totalLength += len;
             }
 
-            MEPSystemType? sysType = MepRoutingUtil.FindSystemType(doc, p.systemType);
+            MEPSystemType? sysType = MepRoutingUtil.FindSystemType(doc, p.systemType, kind);
             DuctType? dType = kind == "duct" ? MepRoutingUtil.FindDuctType(doc, p.ductType) : null;
             PipeType? pType = kind == "pipe" ? MepRoutingUtil.FindPipeType(doc, p.pipeType) : null;
             if (sysType == null || (kind == "duct" && dType == null) || (kind == "pipe" && pType == null))
@@ -140,6 +143,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             var segmentResults = new List<object>();
             var connectionAttempts = new List<object>();
             var fittingIds = new List<long>();
+            var jointPlans = MepRouteJointPlanner.PlanJoints(segmentSizeTexts);
 
             using (var tx = new Transaction(doc, p.dryRun ? "Create MEP Route (Dry Run)" : "Create MEP Route"))
             {
@@ -152,16 +156,23 @@ namespace RevitBridge.Logic.Handlers.MEP
                         var b = resolvedPoints[i + 1];
                         Element curve;
                         object sizeApplied;
+                        var segmentSize = MepRoutingUtil.ChooseSize(
+                            kind,
+                            kind == "duct" ? segmentSizeTexts[i] : p.ductSize,
+                            kind == "pipe" ? segmentSizeTexts[i] : p.diameter,
+                            kind == "pipe" ? segmentSizeTexts[i] : p.pipeSize,
+                            p.sizePolicy,
+                            warnings);
                         if (kind == "pipe")
                         {
                             var pipe = Pipe.Create(doc, sysType.Id, pType!.Id, ctx.Level.Id, a, b);
-                            MepRoutingUtil.TryApplyPipeSize(pipe, size, out sizeApplied);
+                            MepRoutingUtil.TryApplyPipeSize(pipe, segmentSize, out sizeApplied);
                             curve = pipe;
                         }
                         else
                         {
                             var duct = Duct.Create(doc, sysType.Id, dType!.Id, ctx.Level.Id, a, b);
-                            MepRoutingUtil.TryApplyDuctSize(duct, size, out sizeApplied);
+                            MepRoutingUtil.TryApplyDuctSize(duct, segmentSize, out sizeApplied);
                             curve = duct;
                         }
 
@@ -174,6 +185,16 @@ namespace RevitBridge.Logic.Handlers.MEP
                             start = ToPointObject(a),
                             end = ToPointObject(b),
                             lengthFt = a.DistanceTo(b),
+                            requestedSize = segmentSizeTexts[i],
+                            chosenSize = new
+                            {
+                                requested = segmentSize.RequestedText.Length == 0 ? null : segmentSize.RequestedText,
+                                applied = segmentSize.AppliedText,
+                                usedDefault = segmentSize.UsedDefault,
+                                widthFt = segmentSize.WidthFt,
+                                heightFt = segmentSize.HeightFt,
+                                diameterFt = segmentSize.DiameterFt
+                            },
                             sizeApplied
                         });
                     }
@@ -187,13 +208,16 @@ namespace RevitBridge.Logic.Handlers.MEP
                             var shared = resolvedPoints[i + 1];
                             var a = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(created[i]), shared, 0.25);
                             var b = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(created[i + 1]), shared, 0.25);
-                            var ok = MepRoutingUtil.TryCreateElbowOrConnect(doc, a, b, out var fittingId, out var method, out var err);
+                            var jointPlan = jointPlans.FirstOrDefault(j => j.JointIndex == i);
+                            var expectTransition = string.Equals(jointPlan?.ExpectedFitting, "transition", StringComparison.OrdinalIgnoreCase);
+                            var ok = MepRoutingUtil.TryCreateTransitionElbowOrConnect(doc, a, b, expectTransition, out var fittingId, out var method, out var err);
                             if (fittingId.HasValue) fittingIds.Add(fittingId.Value);
                             connectionAttempts.Add(new
                             {
                                 fromSegment = i,
                                 toSegment = i + 1,
                                 sharedPoint = ToPointObject(shared),
+                                expectedFitting = jointPlan?.ExpectedFitting ?? "elbow_or_connect",
                                 connected = ok,
                                 method,
                                 fittingId,
@@ -231,6 +255,15 @@ namespace RevitBridge.Logic.Handlers.MEP
                             heightFt = size.HeightFt,
                             diameterFt = size.DiameterFt
                         },
+                        segmentSizes = segmentSizeTexts,
+                        jointPlan = jointPlans.Select(j => new
+                        {
+                            jointIndex = j.JointIndex,
+                            expectedFitting = j.ExpectedFitting,
+                            reason = j.Reason,
+                            fromSize = j.FromSize,
+                            toSize = j.ToSize
+                        }).ToList(),
                         chosenElevation = new { zFt = ctx.RecommendedZ, mode = ctx.RecommendedMode, confidence = ctx.Confidence, assumption = ctx.Assumption, usedFallback = usedElevationFallback },
                         createdElementIds = p.dryRun ? new List<long>() : createdIds,
                         createdFittingIds = p.dryRun ? new List<long>() : fittingIds,
@@ -297,6 +330,30 @@ namespace RevitBridge.Logic.Handlers.MEP
                 ductType = dType == null ? null : new { id = ElementIdCompat.GetValue(dType.Id), name = dType.Name },
                 pipeType = pType == null ? null : new { id = ElementIdCompat.GetValue(pType.Id), name = pType.Name }
             };
+        }
+
+        private static List<string?> ResolveSegmentSizeTexts(string kind, Params p, int segmentCount)
+        {
+            var fallback = kind == "pipe"
+                ? FirstNonEmpty(p.pipeSize, p.diameter)
+                : (p.ductSize ?? "").Trim();
+            var values = new List<string?>();
+            for (var i = 0; i < segmentCount; i++)
+            {
+                var perSegment = p.segmentSizes != null && i < p.segmentSizes.Count ? p.segmentSizes[i] : null;
+                values.Add(string.IsNullOrWhiteSpace(perSegment) ? fallback : perSegment);
+            }
+            return values;
+        }
+
+        private static string FirstNonEmpty(params string?[] values)
+        {
+            foreach (var value in values)
+            {
+                var trimmed = (value ?? "").Trim();
+                if (trimmed.Length > 0) return trimmed;
+            }
+            return "";
         }
 
         private static object ToPointObject(XYZ p) => new { x = p.X, y = p.Y, z = p.Z };

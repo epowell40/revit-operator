@@ -370,6 +370,9 @@ namespace RevitBridge.Operator
                 { "/revit/create-mep-route", typeof(RevitBridge.Logic.Handlers.MEP.CreateMepRouteHandler.Params) },
                 { "/revit/connect-mep-branch", typeof(RevitBridge.Logic.Handlers.MEP.ConnectMepBranchHandler.Params) },
                 { "/revit/mep-route-workflow", typeof(RevitBridge.Logic.Handlers.MEP.MepRouteWorkflowHandler.Params) },
+                { "/revit/mep-branch-network-workflow", typeof(RevitBridge.Logic.Handlers.MEP.MepBranchNetworkWorkflowHandler.Params) },
+                { "/revit/edit-mep-route-elements", typeof(RevitBridge.Logic.Handlers.MEP.EditMepRouteElementsHandler.Params) },
+                { "/revit/reroute-mep-route-segment", typeof(RevitBridge.Logic.Handlers.MEP.RerouteMepRouteSegmentHandler.Params) },
                 { "/revit/arch-workflows", typeof(RevitBridge.Handlers.ArchWorkflowsHandler.Params) },
                 { "/revit/trace-connected-network", typeof(RevitBridge.Logic.Handlers.MEP.TraceConnectedNetworkHandler.Params) },
                 { "/revit/find-elements-by-parameter", typeof(RevitBridge.Logic.Handlers.MEP.FindElementsByParameterHandler.Params) },
@@ -851,6 +854,8 @@ namespace RevitBridge.Operator
                     };
                     enumMap["ruleOperator"] = new[] { "equals", "not_equals", "contains", "not_contains", "begins_with", "ends_with", "greater", "greater_or_equal", "less", "less_or_equal" };
                     unitNotes.Add(new { unit = "feet", fields = new[] { "annotationCropMarginFeet" } });
+                    notes.Add("Use get with includeLinkedModels:true before linked-model graphics or phase mapping work; it reports Revit link ids/names, loaded document titles, common linked categories, linked phases, and phase-map rows when available.");
+                    notes.Add("Do not treat linkedModelName/linkName with set_category_override as a proven linked category override; Revit 2024 lacks a per-linked-category lineweight API in this handler, so those requests block with linked_model_category_override_not_supported instead of changing host categories.");
                     notes.Add("set_crop_box accepts annotationCropActive and annotationCropMarginFeet; use them for sheet views so the viewport box does not include distant stray annotations.");
                     notes.Add("create_view_filter supports one-rule parameter filters and immediately applies the filter to the target view.");
                 }
@@ -878,7 +883,8 @@ namespace RevitBridge.Operator
                     unitNotes.Add(new { unit = "feet", fields = new[] { "points[*].x", "points[*].y", "points[*].z", "points[*].xyz", "defaultOffsetFt", "ceilingOffsetFt", "totalLengthFt" } });
                     unitNotes.Add(new { unit = "pixels", fields = new[] { "points[*].xPx", "points[*].yPx" } });
                     notes.Add("Always dry-run first. If size is omitted, default policy uses 8x8 duct or 1 inch pipe and returns a warning.");
-                    notes.Add("Internal route joints attempt Revit NewElbowFitting first and fall back to Connector.ConnectTo; fitting ids are returned when created.");
+                    notes.Add("Use segmentSizes with one size per segment to draft multi-section routes; internal joints with differing adjacent sizes expect transition fittings.");
+                    notes.Add("Internal route joints attempt Revit NewTransitionFitting for size changes, otherwise NewElbowFitting, then fall back to Connector.ConnectTo; fitting ids are returned when created.");
                     notes.Add("Connector verification is conservative: created standalone routes normally report open endpoint connectors until connected to equipment or existing runs.");
                 }
 
@@ -887,8 +893,12 @@ namespace RevitBridge.Operator
                     enumMap["kind"] = new[] { "duct", "pipe" };
                     enumMap["connectionMode"] = new[] { "tee", "tap", "auto" };
                     unitNotes.Add(new { unit = "feet", fields = new[] { "branchPoints[*].x", "branchPoints[*].y", "branchPoints[*].z", "mainIntersection.distanceToMainFt" } });
-                    notes.Add("Apply is implemented only when branch start is within tolerance of an existing open main connector; the branch snaps to that connector and creates branch segments/fittings.");
-                    notes.Add("Main splitting and tee/tap insertion away from an existing connector remain guarded. Run dry-run first and use nearest-main distance plus connector feasibility to decide the next bounded operation.");
+                    notes.Add("Apply is implemented when branch start is within tolerance of an existing open main connector; the branch snaps to that connector and creates branch segments/fittings.");
+                    notes.Add("A duct/pipe non-connector tee path is available when dry-run reports splitPlan.applySupported=true and connectionMode is tee/auto: the tool splits a straight main, creates the branch, requires a tee fitting, audits continuity, and exports a focused capture.");
+                    notes.Add("A duct/pipe non-connector tap path is available with connectionMode:'tap': the tool leaves the straight main intact, creates branch segments, requires Revit NewTakeoffFitting, audits continuity, and exports a focused capture.");
+                    notes.Add("For named tap/takeoff requests, pass takeoffFamilyName and/or takeoffTypeName. Dry-run returns selected.takeoffRoutingPreference candidates and tapApplyPrecheck; pipe tap apply requires an explicit takeoff/tap routing preference, while ordinary pipe junction preferences belong on split tee. Apply reports connectionAttempts[*].fitting/requestedTakeoff/routingPreference and rolls back on takeoff_type_mismatch.");
+                    notes.Add("Use branchSegmentSizes with one size per branch segment to draft reducer/transition branches; dry-run returns branchPlan.jointPlan and apply prefers transition fittings where adjacent branch sizes differ.");
+                    notes.Add("Run dry-run first and inspect splitPlan, selected, connectionAttempts, connectedNetworkAudit, and focusedCapture. Unsupported Revit takeoff/fitting cases block and roll back instead of leaving disconnected geometry.");
                 }
 
                 if (p == "/revit/mep-route-workflow")
@@ -902,6 +912,23 @@ namespace RevitBridge.Operator
                     notes.Add("Execution order is fixed: resolve context, dry-run route, apply route only if dry-run is not blocked, then highlight/export the applied elements for visual review.");
                     notes.Add("When apply=false the workflow returns DryRunReady and no visual capture because dry-run elements are rolled back.");
                     notes.Add("When apply=true and visualVerify=true, successful responses include visualVerification.capture.path plus AI review checklist text.");
+                }
+
+                if (p == "/revit/mep-branch-network-workflow")
+                {
+                    enumMap["kind"] = new[] { "duct", "pipe" };
+                    enumMap["branches[*].connectionMode"] = new[] { "tee", "tap", "auto" };
+                    enumMap["accessories[*].action"] = new[] { "insert", "delete", "remove", "type_change", "change_type" };
+                    enumMap["sizePolicy"] = new[] { "explicit_required", "use_default_with_warning" };
+                    enumMap["elevationPolicy"] = new[] { "explicit_required", "resolve_context_default" };
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "mainPoints[*].x", "mainPoints[*].y", "mainPoints[*].z", "branches[*].connectionPoint.x", "branches[*].points[*].x", "focusPaddingFt" } });
+                    unitNotes.Add(new { unit = "pixels", fields = new[] { "mainPoints[*].xPx", "mainPoints[*].yPx", "branches[*].connectionPoint.xPx", "branches[*].points[*].xPx", "imageSize" } });
+                    notes.Add("This workflow drafts a main route plus multiple branch connections by composing /revit/create-mep-route and /revit/connect-mep-branch.");
+                    notes.Add("Dry-run plans branch projections and branch-level reducer/transition joint plans against the requested main segment geometry before any model write.");
+                    notes.Add("Use branches[*].branchSegmentSizes with one size per branch segment; networkPlan.branches[*].jointPlan reports transition expectations before apply.");
+                    notes.Add("Apply creates the main first, then each branch. A branch failure reports BlockedPartialApply; the failed branch rolls back, but previously created main/branch elements remain for inspection/cleanup.");
+                    notes.Add("Accessory graph nodes are accepted in the request and surfaced in networkPlan. Apply supports duct/pipe accessory insertion hosted on a created main or branch segment with a compatible resolved family symbol and chainageFt/point, optionally loading an explicit workspace-scoped familyPath first, plus explicit target-id duct/pipe accessory delete and type_change with a compatible loaded type.");
+                    notes.Add("Accessory delete/type_change must provide targetElementId or targetElementIds. Type changes also require typeId, targetTypeName, familySymbolId, or familyName/typeName. Inserted accessories must match the route kind category.");
                 }
 
                 if (p == "/revit/arch-workflows")

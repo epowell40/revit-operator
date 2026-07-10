@@ -25,10 +25,14 @@ const DEFAULT_MAX_LOCAL_FILES = 20;
 function findRepoRoot(startDir: string): string {
   let cur = startDir;
   for (let i = 0; i < 8; i++) {
-    const operatorBackend = path.join(cur, "operator-backend");
+    const operatorBackend = fs.existsSync(path.join(cur, "apps", "operator-backend"))
+      ? path.join(cur, "apps", "operator-backend")
+      : path.join(cur, "operator-backend");
     const prompts = path.join(cur, "prompts");
     const skills = path.join(cur, "skills");
-    const mcpServer = path.join(cur, "mcp-server");
+    const mcpServer = fs.existsSync(path.join(cur, "apps", "mcp-server"))
+      ? path.join(cur, "apps", "mcp-server")
+      : path.join(cur, "mcp-server");
     if (fs.existsSync(operatorBackend) && (fs.existsSync(prompts) || fs.existsSync(skills) || fs.existsSync(mcpServer))) return cur;
     const parent = path.dirname(cur);
     if (!parent || parent === cur) break;
@@ -234,7 +238,10 @@ export function getSkillLibraryText(): string {
     // Repo-local skills dir (gitignored).
     localSkillDirs.push(path.join(repoRoot, "skills", "local"));
     // Legacy repo-local path (pre-2026-02), still supported.
-    localSkillDirs.push(path.join(repoRoot, "operator-backend", "skills-local"));
+    const backendRoot = fs.existsSync(path.join(repoRoot, "apps", "operator-backend"))
+      ? path.join(repoRoot, "apps", "operator-backend")
+      : path.join(repoRoot, "operator-backend");
+    localSkillDirs.push(path.join(backendRoot, "skills-local"));
   } catch {
     // ignore
   }

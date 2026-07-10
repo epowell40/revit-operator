@@ -125,7 +125,7 @@ $xml = @"
     <Name>RevitOperator</Name>
     <Assembly>$deployDll</Assembly>
     <FullClassName>RevitBridge.App</FullClassName>
-    <ClientId>$clientId</ClientId>
+    <AddInId>$clientId</AddInId>
     <VendorId>com.revitoperator</VendorId>
     <VendorDescription>Revit Operator</VendorDescription>
   </AddIn>
