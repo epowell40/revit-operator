@@ -53,6 +53,633 @@
           "hostSearchRadiusFt": 2
         }
       }
+    },
+    "demo_redline_delete_text": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 1800,
+        "textNote": {
+          "x": 1.5,
+          "y": 1.0,
+          "text": "OPERATOR DELETE REDLINE"
+        }
+      }
+    },
+    "demo_redline_add_tag": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 1800,
+        "targetKind": "tag",
+        "dryRunPreflightReviewed": true,
+        "tag": {
+          "viewId": 123400,
+          "elementIds": [123401],
+          "tagTypeName": "__FILL_DISCOVERED_TAG_TYPE_NAME__",
+          "onlyUntagged": false,
+          "addLeader": false,
+          "readbackRequired": true
+        },
+        "cleanupCreatedElements": true
+      }
+    },
+    "demo_redline_add_family_instance": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 1800,
+        "targetKind": "family_instance",
+        "familyInstance": {
+          "familyName": "",
+          "symbolName": "Generic Annotation",
+          "levelName": "",
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "cleanupCreatedElements": true
+      }
+    },
+    "demo_redline_add_receptacle": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 1800,
+        "targetKind": "receptacle",
+        "familyInstance": {
+          "familyName": "Duplex Receptacle",
+          "symbolName": "Duplex Receptacle",
+          "levelName": "",
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "cleanupCreatedElements": true
+      }
+    },
+    "demo_redline_add_light": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 1800,
+        "targetKind": "light",
+        "familyInstance": {
+          "familyName": "Downlight",
+          "symbolName": "Downlight",
+          "levelName": "",
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "cleanupCreatedElements": true
+      }
+    },
+    "demo_redline_add_mep_accessory": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 1800,
+        "targetKind": "mep_accessory",
+        "familyInstance": {
+          "familyName": "Manual Balancing Damper",
+          "symbolName": "Manual Balancing Damper",
+          "levelName": "",
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "cleanupCreatedElements": true
+      }
+    },
+    "demo_redline_delete_tag": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 1800,
+        "targetKind": "tag",
+        "tag": {
+          "viewId": 123400,
+          "elementIds": [123401],
+          "onlyUntagged": false,
+          "addLeader": false
+        }
+      }
+    },
+    "demo_redline_delete_family_instance": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 1800,
+        "targetKind": "family_instance",
+        "familyInstance": {
+          "familyName": "",
+          "symbolName": "Generic Annotation",
+          "levelName": "",
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "demo_redline_delete_receptacle": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 1800,
+        "targetKind": "receptacle",
+        "familyInstance": {
+          "familyName": "Duplex Receptacle",
+          "symbolName": "Duplex Receptacle",
+          "levelName": "",
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "demo_redline_delete_light": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 1800,
+        "targetKind": "light",
+        "familyInstance": {
+          "familyName": "Downlight",
+          "symbolName": "Downlight",
+          "levelName": "",
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "demo_redline_delete_duct_route": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 2200,
+        "targetKind": "duct_route",
+        "kind": "duct",
+        "roomNumber": "405",
+        "levelName": "L4",
+        "systemType": "Supply Air",
+        "ductSize": "12x10",
+        "routingMode": "polyline",
+        "connectSegments": true,
+        "verify": true,
+        "routeVisualVerify": false,
+        "focusPaddingFt": 8,
+        "toleranceFt": 1,
+        "points": [
+          { "x": 40.0, "y": 27.0 },
+          { "x": 58.0, "y": 27.0 }
+        ]
+      }
+    },
+    "demo_redline_delete_pipe_route": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 2200,
+        "targetKind": "pipe_route",
+        "kind": "pipe",
+        "roomNumber": "405",
+        "levelName": "L4",
+        "systemType": "Domestic Cold Water",
+        "pipeSize": "2\"",
+        "routingMode": "polyline",
+        "connectSegments": true,
+        "verify": true,
+        "routeVisualVerify": false,
+        "focusPaddingFt": 8,
+        "toleranceFt": 1,
+        "points": [
+          { "x": 42.0, "y": 24.0 },
+          { "x": 55.0, "y": 24.0 },
+          { "x": 55.0, "y": 31.0 }
+        ]
+      }
+    },
+    "demo_redline_delete_mep_accessory": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 1800,
+        "targetKind": "manual_balancing_damper",
+        "familyInstance": {
+          "familyName": "Manual Balancing Damper",
+          "symbolName": "Manual Balancing Damper",
+          "levelName": "",
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "demo_redline_move_text": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 1800,
+        "toleranceFt": 0.05,
+        "textNote": {
+          "x": 1.5,
+          "y": 1.0,
+          "text": "OPERATOR MOVE REDLINE"
+        },
+        "move": {
+          "vectorX": 1.0,
+          "vectorY": 0.0,
+          "vectorZ": 0.0
+        }
+      }
+    },
+    "demo_redline_move_tag": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 1800,
+        "targetKind": "tag",
+        "toleranceFt": 0.05,
+        "tag": {
+          "viewId": 123400,
+          "elementIds": [123401],
+          "onlyUntagged": false,
+          "addLeader": false
+        },
+        "move": {
+          "vectorX": 1.0,
+          "vectorY": 0.0,
+          "vectorZ": 0.0
+        }
+      }
+    },
+    "demo_redline_move_family_instance": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 1800,
+        "targetKind": "family_instance",
+        "toleranceFt": 0.05,
+        "familyInstance": {
+          "familyName": "",
+          "symbolName": "Generic Annotation",
+          "levelName": "",
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "move": {
+          "mode": "vector",
+          "vectorX": 1,
+          "vectorY": 0,
+          "vectorZ": 0,
+          "behavior": "allOrNothing"
+        }
+      }
+    },
+    "demo_redline_move_receptacle": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 1800,
+        "targetKind": "receptacle",
+        "toleranceFt": 0.05,
+        "familyInstance": {
+          "familyName": "Duplex Receptacle",
+          "symbolName": "Duplex Receptacle",
+          "levelName": "",
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "move": {
+          "mode": "vector",
+          "vectorX": 1,
+          "vectorY": 0,
+          "vectorZ": 0,
+          "behavior": "allOrNothing"
+        }
+      }
+    },
+    "demo_redline_move_light": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 1800,
+        "targetKind": "light",
+        "toleranceFt": 0.05,
+        "familyInstance": {
+          "familyName": "Downlight",
+          "symbolName": "Downlight",
+          "levelName": "",
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "move": {
+          "mode": "vector",
+          "vectorX": 1,
+          "vectorY": 0,
+          "vectorZ": 0,
+          "behavior": "allOrNothing"
+        }
+      }
+    },
+    "demo_redline_move_mep_accessory": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 1800,
+        "targetKind": "manual_balancing_damper",
+        "toleranceFt": 0.05,
+        "familyInstance": {
+          "familyName": "Manual Balancing Damper",
+          "symbolName": "Manual Balancing Damper",
+          "levelName": "",
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "move": {
+          "mode": "vector",
+          "vectorX": 1,
+          "vectorY": 0,
+          "vectorZ": 0,
+          "behavior": "allOrNothing"
+        }
+      }
+    },
+    "demo_redline_move_duct_route": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 2200,
+        "targetKind": "duct_route",
+        "kind": "duct",
+        "roomNumber": "405",
+        "levelName": "L4",
+        "systemType": "Supply Air",
+        "ductSize": "12x10",
+        "routingMode": "polyline",
+        "connectSegments": true,
+        "verify": true,
+        "routeVisualVerify": false,
+        "focusPaddingFt": 8,
+        "toleranceFt": 0.05,
+        "points": [
+          { "x": 40.0, "y": 27.0 },
+          { "x": 58.0, "y": 27.0 }
+        ],
+        "move": {
+          "mode": "vector",
+          "vectorX": 1,
+          "vectorY": 0,
+          "vectorZ": 0,
+          "behavior": "allOrNothing"
+        }
+      }
+    },
+    "demo_redline_move_pipe_route": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 2200,
+        "targetKind": "pipe_route",
+        "kind": "pipe",
+        "roomNumber": "405",
+        "levelName": "L4",
+        "systemType": "Domestic Cold Water",
+        "pipeSize": "2\"",
+        "routingMode": "polyline",
+        "connectSegments": true,
+        "verify": true,
+        "routeVisualVerify": false,
+        "focusPaddingFt": 8,
+        "toleranceFt": 0.05,
+        "points": [
+          { "x": 42.0, "y": 24.0 },
+          { "x": 55.0, "y": 24.0 },
+          { "x": 55.0, "y": 31.0 }
+        ],
+        "move": {
+          "mode": "vector",
+          "vectorX": 1,
+          "vectorY": 0,
+          "vectorZ": 0,
+          "behavior": "allOrNothing"
+        }
+      }
+    },
+    "demo_redline_rotate_text": {
+      "request": {
+        "viewId": 123400,
+        "imageSize": 1800,
+        "textNote": {
+          "x": 1.5,
+          "y": 1.0,
+          "text": "OPERATOR ROTATE REDLINE"
+        },
+        "rotate": {
+          "angleDegrees": 90,
+          "axis": {
+            "mode": "zThroughPoint",
+            "pointX": 1.5,
+            "pointY": 1.0,
+            "pointZ": 0.0
+          }
+        }
+      }
+    },
+    "demo_redline_type_change_device": {
+      "request": {
+        "elementIds": [123401],
+        "category": "OST_ElectricalFixtures",
+        "targetTypeId": 123402,
+        "sourceTypeGrounding": {
+          "expectedCurrentTypeId": 123403
+        },
+        "dryRunPreflightReviewed": true,
+        "targetTypeCompatibilityReviewed": true,
+        "visualViewId": 123400,
+        "visualVerify": true,
+        "revertAfterVerify": true
+      }
+    },
+    "demo_redline_type_change_duct": {
+      "request": {
+        "elementIds": [123501],
+        "category": "OST_DuctCurves",
+        "targetTypeId": 123502,
+        "sourceTypeGrounding": {
+          "expectedCurrentTypeId": 123503
+        },
+        "dryRunPreflightReviewed": true,
+        "targetTypeCompatibilityReviewed": true,
+        "visualViewId": 123400,
+        "visualVerify": true,
+        "revertAfterVerify": true
+      }
+    },
+    "demo_redline_mep_route": {
+      "request": {
+        "kind": "duct",
+        "viewId": 123400,
+        "visualViewId": 123400,
+        "roomNumber": "405",
+        "levelName": "L4",
+        "systemType": "Supply Air",
+        "ductSize": "12x10",
+        "routingMode": "polyline",
+        "connectSegments": true,
+        "verify": true,
+        "apply": true,
+        "visualVerify": true,
+        "cleanupCreatedElements": true,
+        "imageSize": 2200,
+        "focusPaddingFt": 8,
+        "toleranceFt": 1,
+        "redlinePath": "artifacts/uploads/marked.pdf",
+        "points": [
+          { "x": 40.0, "y": 27.0 },
+          { "x": 58.0, "y": 27.0 }
+        ]
+      }
+    },
+    "demo_redline_mep_pipe_route": {
+      "request": {
+        "kind": "pipe",
+        "viewId": 123400,
+        "visualViewId": 123400,
+        "roomNumber": "405",
+        "levelName": "L4",
+        "systemType": "Domestic Cold Water",
+        "pipeSize": "2\"",
+        "routingMode": "polyline",
+        "connectSegments": true,
+        "verify": true,
+        "apply": true,
+        "visualVerify": true,
+        "cleanupCreatedElements": true,
+        "imageSize": 2200,
+        "focusPaddingFt": 8,
+        "toleranceFt": 1,
+        "redlinePath": "artifacts/uploads/marked-pipe.pdf",
+        "points": [
+          { "x": 42.0, "y": 24.0 },
+          { "x": 55.0, "y": 24.0 },
+          { "x": 55.0, "y": 31.0 }
+        ]
+      }
+    },
+    "demo_documentation_primitives": {
+      "request": {
+        "schedule": {
+          "name": "Operator Demo Door Schedule",
+          "category": "OST_Doors",
+          "fields": ["Family and Type", "Count"]
+        },
+        "configureSchedule": {
+          "replaceFilters": false,
+          "replaceSortGroup": false,
+          "sortGroup": [
+            {
+              "field": "Family and Type",
+              "ascending": true,
+              "showHeader": true
+            }
+          ],
+          "showGrandTotals": false
+        },
+        "sheet": {
+          "number": "OP-DEMO",
+          "name": "Operator Demo Documentation",
+          "titleBlockId": -1
+        },
+        "createView": {
+          "action": "create_drafting",
+          "name": "Operator Demo Drafting View",
+          "scale": 100
+        },
+        "viewTemplate": {
+          "name": "Operator Demo View Template"
+        },
+        "placeView": {
+          "x": 1.5,
+          "y": 1.0
+        },
+        "visibility": {
+          "action": "set_detail_level",
+          "detailLevel": "Fine"
+        },
+        "categoryVisibility": {
+          "action": "set_category_override",
+          "categoryName": "Lines",
+          "lineWeight": 5
+        },
+        "filterVisibility": {
+          "action": "apply_view_filter",
+          "filterName": "Operator Demo Future Work",
+          "filterVisible": true,
+          "lineWeight": 5,
+          "createFilter": {
+            "categoryName": "OST_Doors",
+            "ruleParameterName": "Family and Type",
+            "ruleOperator": "begins_with",
+            "ruleValue": "OPERATOR-BENCHMARK-NO-MATCH"
+          }
+        },
+        "templateVisibility": {
+          "action": "set_detail_level",
+          "detailLevel": "Fine"
+        },
+        "templateCategoryVisibility": {
+          "action": "set_category_override",
+          "categoryName": "Lines",
+          "lineWeight": 5
+        },
+        "detailCurves": {
+          "lineStyleCreate": {
+            "name": "Operator Demo Annotation Lines",
+            "lineWeight": 3,
+            "r": 220,
+            "g": 0,
+            "b": 0
+          },
+          "curves": [
+            {
+              "kind": "line",
+              "a": { "x": 0, "y": 0, "z": 0 },
+              "b": { "x": 3, "y": 0, "z": 0 }
+            }
+          ]
+        },
+        "textNote": {
+          "x": 1,
+          "y": 1,
+          "text": "Operator demo annotation"
+        },
+        "tag": {
+          "viewId": 123400,
+          "elementIds": [123456],
+          "onlyUntagged": false,
+          "addLeader": false
+        },
+        "cadLink": {
+          "sourcePath": "benchmark/fixtures/cad/operator-demo-keyplan.dwg",
+          "placement": "center",
+          "customScale": 1,
+          "link": true
+        },
+        "cadGraphicsOverride": {
+          "layerOrSubcategoryName": "M104-FUTURE",
+          "lineWeight": 5
+        },
+        "cleanupCreatedElements": true
+      }
+    },
+    "demo_model_edit_primitives": {
+      "request": {
+        "createFamilyInstance": {
+          "familyName": "",
+          "symbolName": "Generic Annotation",
+          "levelName": "",
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "move": {
+          "mode": "vector",
+          "vectorX": 1,
+          "vectorY": 0,
+          "vectorZ": 0,
+          "behavior": "allOrNothing"
+        },
+        "linkRevit": {
+          "sourcePath": "benchmark/fixtures/revit/link-source.rvt",
+          "pin": true
+        }
+      }
     }
   }
 }

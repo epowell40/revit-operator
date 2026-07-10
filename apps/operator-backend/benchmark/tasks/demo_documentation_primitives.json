@@ -1,0 +1,613 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_documentation_primitives",
+  "name": "Demo F: Documentation Primitives",
+  "description": "Create and verify a bounded set of junior-designer documentation operations: schedule creation, schedule configuration, sheet creation, view creation, view template creation, view placement, view/template visibility settings, template category graphics overrides, CAD link/import evidence, text annotation, tagging, and cleanup for repeated live runs.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "metadata": {
+      "workflow": "documentation_primitives"
+    }
+  },
+  "setup_instructions": [
+    "Open the target Revit model.",
+    "Use unique benchmark-safe sheet and schedule names or let the workflow append the repeat suffix.",
+    "Provide existing view/template ids only when overriding the default created drafting view and generated template.",
+    "Provide tag element ids for at least one taggable element in the target view."
+  ],
+  "success_criteria": [
+    "/revit/create-schedule dry-run succeeds and the apply call returns a schedule view id.",
+    "/revit/configure-schedule dry-run succeeds and the apply response proves it targeted the created schedule id.",
+    "/revit/create-sheet returns a sheet id and the requested sheet number.",
+    "/revit/create-view dry-run and apply calls return a created view id.",
+    "/revit/create-view creates a view template from the created view.",
+    "/revit/place-view returns a created viewport id for the new view on the new sheet.",
+    "/revit/draw-detail-curves dry-run succeeds and apply returns at least one annotation/detail curve id per requested curve.",
+    "/revit/visibility dry-run succeeds and apply responses prove they targeted the created view and created template.",
+    "/revit/visibility category override dry-run succeeds and the apply response proves the requested category lineweight was set in the target view.",
+    "/revit/visibility view filter override dry-run succeeds and the apply response proves the requested filter visibility and lineweight were set in the target view.",
+    "/revit/visibility view-template category override dry-run succeeds and the apply response proves the requested category lineweight was set in the created template.",
+    "/revit/link-cad dry-run succeeds and apply returns a CAD link/import id, owner view id, and viewport id targeting the created sheet and requested source path.",
+    "/revit/create-text reports success and a created text note id for a benchmark annotation.",
+    "/revit/tag-elements dry-run succeeds and apply returns created tag ids covering all requested target elements.",
+    "A post-change capture is produced before cleanup.",
+    "A documentation primitives summary artifact is written.",
+    "Created documentation primitives are proven in a cleanup dry-run and then deleted after evidence is recorded so repeated live runs do not accumulate schedules, sheets, views, annotations, or tags."
+  ],
+  "failure_criteria": [
+    "Schedule dry-run fails or apply returns no schedule id.",
+    "Schedule configuration dry-run fails, apply fails, or the apply response does not prove it targeted the created schedule id.",
+    "Sheet creation returns no sheet id or the wrong sheet number.",
+    "View or view-template creation returns no id.",
+    "View placement does not return a viewport id.",
+    "Detail curve dry-run or apply does not create enough annotation curve ids for the requested curves.",
+    "Visibility dry-run fails, apply fails, or the apply response does not prove it targeted the created view/template.",
+    "Category visibility override succeeds generically but does not report the requested category and lineweight.",
+    "Filter visibility override succeeds generically but does not report the requested filter and lineweight.",
+    "View-template category override succeeds generically but does not report the requested category and lineweight.",
+    "CAD link/import succeeds generically but does not report the requested source path, created sheet id, owner view id, viewport id, or CAD element id.",
+    "Text annotation does not return a created text note id.",
+    "Tag element ids are missing or tagging does not return enough created tag ids to cover all requested targets.",
+    "The post-change visual capture is missing before cleanup.",
+    "Summary artifacts are missing.",
+    "Cleanup is requested but created documentation ids are missing from the cleanup dry-run or applied delete evidence."
+  ],
+  "max_time_seconds": 120,
+  "max_steps": 18,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This benchmark covers documentation/model-setup primitives, not redline spatial placement. Live runs are intentionally mutating and should use disposable benchmark names.",
+    "The CAD link/import branch is the first benchmark shape for linked CAD graphics redlines; live runs need a real DWG fixture under the Revit Operator workspace or an explicitly allowed external root."
+  ],
+  "tags": ["revit", "demo", "documentation", "schedule", "sheet", "view", "visibility", "filter", "tag", "annotation", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [
+    "Delete created schedules, sheets, views, view templates, viewports, detail curves, text notes, and tags after evidence is recorded."
+  ],
+  "adapter_config": {
+    "workflow": "documentation_primitives",
+    "request": {
+      "schedule": {
+        "name": "Operator Demo Door Schedule",
+        "category": "OST_Doors",
+        "fields": ["Family and Type"]
+      },
+      "configureSchedule": {
+        "addFields": ["Count"],
+        "filters": [
+          {
+            "field": "Family and Type",
+            "op": "begins_with",
+            "value": "OPERATOR-BENCHMARK-NO-MATCH"
+          }
+        ],
+        "replaceFilters": false,
+        "replaceSortGroup": false,
+        "sortGroup": [
+          {
+            "field": "Family and Type",
+            "ascending": true,
+            "showHeader": true
+          }
+        ],
+        "columnWidths": [
+          {
+            "field": "Family and Type",
+            "widthFeet": 0.85
+          }
+        ],
+        "showGrandTotals": false
+      },
+      "sheet": {
+        "number": "OP-DEMO",
+        "name": "Operator Demo Documentation",
+        "titleBlockId": -1
+      },
+      "createView": {
+        "action": "create_drafting",
+        "name": "Operator Demo Drafting View",
+        "scale": 100
+      },
+      "viewTemplate": {
+        "name": "Operator Demo View Template"
+      },
+      "placeView": {
+        "x": 1.5,
+        "y": 1.0
+      },
+      "visibility": {
+        "action": "set_scale",
+        "scale": 50
+      },
+      "categoryVisibility": {
+        "action": "set_category_override",
+        "categoryName": "Lines",
+        "lineWeight": 5
+      },
+      "filterVisibility": {
+        "action": "apply_view_filter",
+        "filterName": "Operator Demo Future Work",
+        "filterVisible": true,
+        "lineWeight": 5,
+        "createFilter": {
+          "categoryName": "OST_Doors",
+          "ruleParameterName": "Family and Type",
+          "ruleOperator": "begins_with",
+          "ruleValue": "OPERATOR-BENCHMARK-NO-MATCH"
+        }
+      },
+      "templateVisibility": {
+        "action": "set_scale",
+        "scale": 50
+      },
+      "templateCategoryVisibility": {
+        "action": "set_category_override",
+        "categoryName": "Lines",
+        "lineWeight": 5
+      },
+      "applyViewTemplate": {},
+      "detailCurves": {
+        "lineStyleCreate": {
+          "name": "Operator Demo Annotation Lines",
+          "lineWeight": 3,
+          "r": 220,
+          "g": 0,
+          "b": 0
+        },
+        "curves": [
+          {
+            "kind": "line",
+            "a": { "x": 0, "y": 0, "z": 0 },
+            "b": { "x": 3, "y": 0, "z": 0 }
+          }
+        ]
+      },
+      "textNote": {
+        "x": 1,
+        "y": 1,
+        "text": "Operator demo annotation"
+      },
+      "tag": {
+        "viewId": 401,
+        "elementIds": [301, 302],
+        "onlyUntagged": false,
+        "addLeader": false
+      },
+      "cadLink": {
+        "sourcePath": "benchmark/fixtures/cad/operator-demo-keyplan.dwg",
+        "placement": "center",
+        "customScale": 1,
+        "link": true
+      },
+      "cadGraphicsOverride": {
+        "layerOrSubcategoryName": "M104-FUTURE",
+        "lineWeight": 5
+      },
+      "visualVerify": true,
+      "cleanupCreatedElements": true
+    },
+    "mock": {
+      "/revit/create-schedule:1": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "name": "Operator Demo Door Schedule-R01",
+        "category": "OST_Doors"
+      },
+      "/revit/create-schedule:2": {
+        "status": "Success",
+        "viewId": 8101,
+        "created": true,
+        "name": "Operator Demo Door Schedule-R01",
+        "schedule": {
+          "fieldCount": 1
+        }
+      },
+      "/revit/schedules": {
+        "status": "Ok",
+        "action": "detail",
+        "schedule": {
+          "id": 8101,
+          "fieldCount": 1
+        },
+        "fields": [
+          {
+            "name": "Family and Type"
+          }
+        ]
+      },
+      "/revit/configure-schedule:1": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "scheduleId": 8101
+      },
+      "/revit/configure-schedule:2": {
+        "status": "Success",
+        "scheduleId": 8101,
+          "applied": {
+            "addFields": [
+              {
+                "field": "Count",
+                "status": "Added"
+              }
+            ],
+            "filters": [
+              {
+                "field": "Family and Type",
+                "status": "Applied",
+                "op": "begins_with",
+                "value": "OPERATOR-BENCHMARK-NO-MATCH"
+              }
+            ],
+            "sortGroup": [
+              {
+                "field": "Family and Type",
+              "status": "Applied",
+              "ascending": true,
+              "showHeader": true
+            },
+            {
+              "field": "<definition>",
+              "status": "Applied",
+              "setting": "showGrandTotals",
+              "value": false
+            }
+          ],
+          "columnWidths": [
+            {
+              "field": "Family and Type",
+              "status": "Applied",
+              "widthFeet": 0.85,
+              "appliedTo": {
+                "grid": true,
+                "sheet": true
+              }
+            }
+          ]
+        }
+      },
+      "/revit/schedules:2": {
+        "status": "Ok",
+        "action": "detail",
+        "schedule": {
+          "id": 8101,
+          "fieldCount": 2
+        },
+        "fields": [
+          {
+            "name": "Family and Type"
+          },
+          {
+            "name": "Count"
+          }
+        ]
+      },
+      "/revit/create-sheet": {
+        "id": 8201,
+        "name": "Operator Demo Documentation-R01",
+        "number": "OP-DEMO-R01"
+      },
+      "/revit/create-view:1": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "action": "create_drafting"
+      },
+      "/revit/create-view:2": {
+        "status": "Success",
+        "action": "create_drafting",
+        "view": {
+          "id": 8251,
+          "name": "Operator Demo Drafting View-R01"
+        }
+      },
+      "/revit/create-view:3": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "action": "create_view_template"
+      },
+      "/revit/create-view:4": {
+        "status": "Success",
+        "action": "create_view_template",
+        "view": {
+          "id": 8252,
+          "name": "Operator Demo View Template-R01",
+          "isTemplate": true
+        }
+      },
+      "/revit/place-view": {
+        "id": 8301,
+        "status": "Placed",
+        "sheetId": 8201,
+        "viewId": 8251
+      },
+      "/revit/draw-detail-curves:1": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "viewId": 8251,
+        "createdCount": 1,
+        "segmentsCreated": 1
+      },
+      "/revit/draw-detail-curves:2": {
+        "status": "Success",
+        "dryRun": false,
+        "viewId": 8251,
+        "detailCurveIds": [8351],
+        "createdCount": 1,
+        "segmentsCreated": 1
+      },
+      "/revit/visibility:1": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "action": "set_scale",
+        "input": {
+          "viewId": 8251,
+          "scale": 50
+        }
+      },
+      "/revit/visibility:2": {
+        "status": "Success",
+        "action": "set_scale",
+        "viewId": 8251,
+        "view": {
+          "id": 8251,
+          "scale": 50
+        }
+      },
+      "/revit/visibility:3": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "action": "set_category_override",
+        "input": {
+          "viewId": 8251,
+          "categoryName": "Lines",
+          "lineWeight": 5
+        }
+      },
+      "/revit/visibility:4": {
+        "status": "Success",
+        "action": "set_category_override",
+        "viewId": 8251,
+        "view": {
+          "id": 8251,
+          "categoryOverride": {
+            "categoryName": "Lines",
+            "lineWeight": 5
+          }
+        }
+      },
+      "/revit/visibility:5": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "action": "create_view_filter",
+        "input": {
+          "viewId": 8251,
+          "filterName": "Operator Demo Future Work-R01",
+          "categoryName": "OST_Doors",
+          "ruleParameterName": "Family and Type",
+          "ruleOperator": "begins_with",
+          "ruleValue": "OPERATOR-BENCHMARK-NO-MATCH",
+          "lineWeight": 5
+        }
+      },
+      "/revit/visibility:6": {
+        "status": "Success",
+        "action": "create_view_filter",
+        "viewId": 8251,
+        "view": {
+          "id": 8251,
+          "viewFilters": [
+            {
+              "id": 8501,
+              "name": "Operator Demo Future Work-R01",
+              "visible": true,
+              "override": {
+                "lineWeight": 5
+              }
+            }
+          ]
+        }
+      },
+      "/revit/visibility:7": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "action": "apply_view_filter",
+        "input": {
+          "viewId": 8251,
+          "filterName": "Operator Demo Future Work-R01",
+          "filterId": 8501,
+          "filterVisible": true,
+          "lineWeight": 5
+        }
+      },
+      "/revit/visibility:8": {
+        "status": "Success",
+        "action": "apply_view_filter",
+        "viewId": 8251,
+        "view": {
+          "id": 8251,
+          "viewFilters": [
+            {
+              "id": 8501,
+              "name": "Operator Demo Future Work-R01",
+              "visible": true,
+              "override": {
+                "lineWeight": 5
+              }
+            }
+          ]
+        }
+      },
+      "/revit/visibility:9": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "action": "set_scale",
+        "input": {
+          "viewId": 8252,
+          "scale": 50
+        }
+      },
+      "/revit/visibility:10": {
+        "status": "Success",
+        "action": "set_scale",
+        "viewId": 8252,
+        "view": {
+          "id": 8252,
+          "scale": 50
+        }
+      },
+      "/revit/visibility:11": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "action": "set_category_override",
+        "input": {
+          "viewId": 8252,
+          "categoryName": "Lines",
+          "lineWeight": 5
+        }
+      },
+      "/revit/visibility:12": {
+        "status": "Success",
+        "action": "set_category_override",
+        "viewId": 8252,
+        "view": {
+          "id": 8252,
+          "categoryOverride": {
+            "categoryName": "Lines",
+            "lineWeight": 5
+          }
+        }
+      },
+      "/revit/visibility:13": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "action": "set_template",
+        "input": {
+          "viewId": 8251,
+          "templateName": "Operator Demo View Template-R01"
+        }
+      },
+      "/revit/visibility:14": {
+        "status": "Success",
+        "action": "set_template",
+        "viewId": 8251,
+        "view": {
+          "id": 8251,
+          "viewTemplate": "Operator Demo View Template-R01",
+          "viewTemplateId": 8252
+        }
+      },
+      "/revit/link-cad:1": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "plan": {
+          "sourcePath": "benchmark/fixtures/cad/operator-demo-keyplan.dwg",
+          "targetMode": "view_then_sheet",
+          "viewId": 8600,
+          "viewName": "CAD operator-demo-keyplan for OP-DEMO-R01",
+          "sheetViewId": 8201,
+          "sheetNumber": "OP-DEMO-R01",
+          "placeOnSheet": true,
+          "existingViewportId": null,
+          "canPlaceViewport": true,
+          "placement": "center",
+          "link": true
+        }
+      },
+      "/revit/link-cad:2": {
+        "status": "Success",
+        "mode": "link",
+        "targetMode": "view_then_sheet",
+        "viewId": 8600,
+        "ownerViewId": 8600,
+        "viewName": "CAD operator-demo-keyplan for OP-DEMO-R01",
+        "viewType": "DraftingView",
+        "viewCreated": true,
+        "viewScale": 1,
+        "sheetViewId": 8201,
+        "sheetNumber": "OP-DEMO-R01",
+        "viewportId": 8603,
+        "viewportBox": {
+          "minU": -1.2,
+          "minV": -0.6,
+          "maxU": 1.2,
+          "maxV": 0.6
+        },
+        "elementId": 8601,
+        "sourcePath": "benchmark/fixtures/cad/operator-demo-keyplan.dwg",
+        "cadCategories": [
+          {
+            "categoryId": 8601,
+            "categoryName": "operator-demo-keyplan.dwg",
+            "depth": 0
+          },
+          {
+            "categoryId": 8602,
+            "categoryName": "M104-FUTURE",
+            "depth": 1
+          }
+        ]
+      },
+      "/revit/visibility:15": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "action": "set_category_override",
+        "input": {
+          "viewId": 8600,
+          "categoryName": "M104-FUTURE",
+          "lineWeight": 5
+        }
+      },
+      "/revit/visibility:16": {
+        "status": "Success",
+        "action": "set_category_override",
+        "viewId": 8600,
+        "view": {
+          "id": 8600,
+          "categoryOverride": {
+            "categoryName": "M104-FUTURE",
+            "lineWeight": 5
+          }
+        }
+      },
+      "/revit/create-text": {
+        "status": "success",
+        "id": 8381,
+        "viewId": 8201
+      },
+      "/revit/tag-elements:1": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "viewId": 401,
+        "targetCount": 2,
+        "plannedToTag": 2,
+        "targets": [
+          { "elementId": 301, "category": "Doors", "alreadyTagged": false },
+          { "elementId": 302, "category": "Doors", "alreadyTagged": false }
+        ]
+      },
+      "/revit/tag-elements:2": {
+        "status": "Success",
+        "viewId": 401,
+        "targetCount": 2,
+        "taggedCount": 2,
+        "errorCount": 0,
+        "tagIds": [8401, 8402]
+      },
+      "/revit/export-image": {
+        "status": "Captured",
+        "viewId": 8201,
+        "path": "artifacts/demo-readiness/documentation/documentation_after.png"
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "count": 13,
+        "ids": [8401, 8402, 8381, 8351, 8601, 8301, 8603, 8101, 8201, 8251, 8252, 8600, 8501]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "count": 13,
+        "ids": [8401, 8402, 8381, 8351, 8601, 8301, 8603, 8101, 8201, 8251, 8252, 8600, 8501]
+      }
+    }
+  }
+}

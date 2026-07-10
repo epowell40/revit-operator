@@ -80,6 +80,7 @@ namespace RevitBridge.Server
                 { "/revit/create-revision-cloud", new CreateRevisionCloudHandler() },
                 { "/revit/keynotes", new KeynotesHandler() },
                 { "/revit/link-cad", new LinkCadHandler() },
+                { "/revit/link-revit", new RevitBridge.Logic.Handlers.LinkRevitHandler() },
                 { "/revit/place-image", new PlaceImageHandler() },
                 { "/revit/place-pdf-underlay", new PlacePdfUnderlayHandler() },
                 { "/revit/import-zippybim-geometry", new ImportZippyBimGeometryHandler() },

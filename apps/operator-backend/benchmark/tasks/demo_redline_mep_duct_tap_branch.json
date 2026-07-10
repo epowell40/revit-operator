@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_mep_duct_tap_branch",
+  "name": "Demo E4: Modeled Duct Tap Branch Redline",
+  "description": "Run one bounded modeled duct tap redline through /revit/connect-mep-branch and require tap projection, branch and fitting model ids, connector/system audit, visual gate, and cleanup evidence.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "metadata": {
+      "workflow": "redline_mep_tap_branch"
+    }
+  },
+  "setup_instructions": [
+    "Open the target Revit model and the sheet/view containing a smaller duct branch redline into a main duct.",
+    "Use a prepared deterministic request with a verified main duct id, projected tap point on the main, branch endpoint points, duct size, level, and system.",
+    "Use /revit/connect-mep-branch with connectionMode=tap, apply=true, verify=true, and visualVerify=true; do not report completion from a dry-run."
+  ],
+  "success_criteria": [
+    "/revit/connect-mep-branch returns an applied/created status and is not scaffold-only.",
+    "The result reports created branch duct ids and takeoff/tap fitting ids.",
+    "The projected tap point is reported and matches the requested point within tolerance.",
+    "Requested branch duct size is read back after the model write.",
+    "A connected fitting attempt and connector/network audit are reported.",
+    "A focused post-change capture is returned and the redline visual gate passes.",
+    "Created disposable branch/fitting ids are proven in a cleanup dry-run and then deleted after verification evidence is recorded."
+  ],
+  "failure_criteria": [
+    "The workflow only dry-runs, reports scaffoldOnly=true, or returns no model write ids.",
+    "The projected tap point is missing or off target.",
+    "The requested branch duct size readback is missing or mismatched.",
+    "No connected fitting attempt or connector/network audit is reported.",
+    "The focused visual capture is missing.",
+    "The redline visual gate is fail or uncertain.",
+    "Cleanup is requested but created branch/fitting ids are missing from cleanup evidence."
+  ],
+  "max_time_seconds": 180,
+  "max_steps": 5,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This benchmark covers one safe duct tap/takeoff case first. It does not yet prove pipe top taps, tee splitting, size transitions, or complex multi-branch routing."
+  ],
+  "tags": ["revit", "demo", "redline", "mep", "duct", "tap-branch", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [
+    "Delete created branch/fitting ids after visual verification so repeated live reliability runs do not accumulate model clutter."
+  ],
+  "adapter_config": {
+    "workflow": "redline_mep_tap_branch",
+    "request": {
+      "kind": "duct",
+      "viewId": 401,
+      "visualViewId": 401,
+      "mainElementId": 1542001,
+      "levelName": "L4",
+      "systemType": "Supply Air",
+      "connectionMode": "tap",
+      "branchSize": "14x4",
+      "ductSize": "14x4",
+      "projectedTapPoint": { "x": 52, "y": 27 },
+      "branchPoints": [
+        { "x": 52, "y": 27 },
+        { "x": 52, "y": 35 }
+      ],
+      "expectedFitting": "takeoff",
+      "verify": true,
+      "apply": true,
+      "visualVerify": true,
+      "cleanupCreatedElements": true,
+      "imageSize": 2200,
+      "focusPaddingFt": 8,
+      "toleranceFt": 1
+    },
+    "mock": {
+      "/revit/connect-mep-branch": {
+        "status": "CreatedWithTapTakeoff",
+        "dryRun": false,
+        "scaffoldOnly": false,
+        "kind": "duct",
+        "main": {
+          "id": 1542001
+        },
+        "branchPlan": {
+          "points": [
+            { "x": 52.05, "y": 27.02, "z": 38.8333 },
+            { "x": 52.05, "y": 35, "z": 38.8333 }
+          ],
+          "requestedSize": "14x4",
+          "connectionMode": "tap"
+        },
+        "mainIntersection": {
+          "nearestPointOnMain": { "x": 52.05, "y": 27.02, "z": 38.8333 }
+        },
+        "splitPlan": {
+          "projectedSplitPoint": { "x": 52.05, "y": 27.02, "z": 38.8333 },
+          "applySupported": true,
+          "expectedFitting": "takeoff"
+        },
+        "selected": {
+          "type": "Rectangular Duct",
+          "system": "Supply Air",
+          "level": "L4",
+          "size": "14x4",
+          "takeoffRoutingPreference": "Rectangular Takeoff"
+        },
+        "createdBranchElementIds": [1542917],
+        "createdFittingIds": [1542919],
+        "connectionAttempts": [
+          {
+            "connected": true,
+            "method": "new_takeoff_fitting",
+            "fittingId": 1542919,
+            "fitting": {
+              "id": 1542919,
+              "categoryName": "Duct Fittings",
+              "familyName": "Rectangular Takeoff",
+              "typeName": "Standard"
+            }
+          }
+        ],
+        "openConnectorCount": 1,
+        "connectedNetworkAudit": {
+          "status": "Ok",
+          "openConnectorCount": 1,
+          "systemName": "Supply Air"
+        },
+        "focusedCapture": {
+          "capturePath": "artifacts/demo-readiness/mep-route/duct_tap_branch_after.jpg"
+        }
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "count": 2,
+        "ids": [1542917, 1542919]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "count": 2,
+        "ids": [1542917, 1542919]
+      }
+    }
+  }
+}

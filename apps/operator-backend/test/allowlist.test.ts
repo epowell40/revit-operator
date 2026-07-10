@@ -22,6 +22,15 @@ test("ui.open is allowlisted as POST", () => {
   assert.equal(isAllowlisted("GET", "/ui/open"), false);
 });
 
+test("redline visual verification gate is allowlisted as POST", () => {
+  assert.equal(isAllowlisted("POST", "/tools/redline/verify-visual"), true);
+  assert.equal(isAllowlisted("GET", "/tools/redline/verify-visual"), false);
+});
+
+test("semantic MEP route planner is allowlisted as POST", () => {
+  assert.equal(isAllowlisted("POST", "/tools/mep/semantic-route-plan"), true);
+  assert.equal(isAllowlisted("GET", "/tools/mep/semantic-route-plan"), false);
+});
 
 test("spatial EPIC-0138 endpoints are allowlisted as POST", () => {
   for (const path of [
@@ -51,4 +60,9 @@ test("electrical circuit assignment endpoint is allowlisted as POST", () => {
 test("low voltage layout endpoint is allowlisted as POST", () => {
   assert.equal(isAllowlisted("POST", "/revit/low-voltage-layout"), true);
   assert.equal(isAllowlisted("GET", "/revit/low-voltage-layout"), false);
+});
+
+test("revit model link endpoint is allowlisted as POST", () => {
+  assert.equal(isAllowlisted("POST", "/revit/link-revit"), true);
+  assert.equal(isAllowlisted("GET", "/revit/link-revit"), false);
 });

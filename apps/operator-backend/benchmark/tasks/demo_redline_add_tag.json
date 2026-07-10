@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_add_tag",
+  "name": "Demo G2: Add-Like Redline Tag",
+  "description": "Exercise an add-like redline operation using a disposable tag target: create a bounded tag, prove it is visible, write a deterministic visual gate, and clean it up.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a model that can be closed without saving.",
+    "Use a view that supports tagging the configured element id.",
+    "Use a taggable target element in the same view so repeated live runs create and delete only disposable tag elements."
+  ],
+  "success_criteria": [
+    "A disposable tag id is created in the requested view for the requested target element.",
+    "The created tag id is visible in the post-add visible-element inventory.",
+    "A deterministic add visual gate artifact passes using post-change capture evidence.",
+    "The created tag is cleaned up with native dry-run and applied delete effect evidence."
+  ],
+  "failure_criteria": [
+    "The tag target is not created or is created in the wrong view.",
+    "The post-add visible-element inventory does not contain the created tag id.",
+    "The add visual gate artifact is missing or fails.",
+    "The cleanup delete dry-run/apply omits the tag id from effect evidence."
+  ],
+  "max_time_seconds": 60,
+  "max_steps": 5,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task closes the first tag add/move/delete benchmark trio by adding an explicit add-like tag workflow.",
+    "Do not count requestedIds-only cleanup responses as evidence; cleanup must return ids, deletedIds, or impactedIds."
+  ],
+  "tags": ["revit", "demo", "redline", "add", "tag", "annotation", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "redline_add",
+    "request": {
+      "viewId": 101,
+      "imageSize": 1800,
+      "targetKind": "tag",
+      "dryRunPreflightReviewed": true,
+      "tag": {
+        "viewId": 101,
+        "elementIds": [9001],
+        "tagTypeName": "Keynote Tag",
+        "onlyUntagged": false,
+        "addLeader": false,
+        "readbackRequired": true
+      },
+      "cleanupCreatedElements": true
+    },
+    "mock": {
+      "/revit/tag-elements": {
+        "status": "Success",
+        "viewId": 101,
+        "targetCount": 1,
+        "taggedCount": 1,
+        "errorCount": 0,
+        "tagIds": [8001]
+      },
+      "/revit/export-visible-elements": {
+        "imagePath": "artifacts/captures/add-tag-after.png",
+        "items": [
+          { "id": 8001, "category": "Tags", "hostElementId": 9001 }
+        ]
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "requestedIds": [8001],
+        "impactedIds": [8001]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "requestedIds": [8001],
+        "impactedIds": [8001]
+      }
+    }
+  }
+}

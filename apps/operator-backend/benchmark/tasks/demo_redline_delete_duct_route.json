@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_delete_duct_route",
+  "name": "Demo G12: Delete-Like Redline Duct Route",
+  "description": "Exercise a delete-like redline operation using a disposable modeled duct route: create the route, prove created model ids, delete those exact ids, prove absence, and write visual-gate evidence.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a model that can be closed without saving.",
+    "Use a view and ordered model-space points where a short unconnected duct route can be created and deleted safely."
+  ],
+  "success_criteria": [
+    "A disposable duct route is created through /revit/mep-route-workflow with created model ids.",
+    "The created route ids are visible in the pre-delete visible-element inventory.",
+    "Native delete dry-run and apply effect evidence include every created duct/fitting id.",
+    "The post-delete visible-element inventory no longer contains the created duct/fitting ids.",
+    "A deterministic delete visual gate artifact passes using before/after capture evidence."
+  ],
+  "failure_criteria": [
+    "The disposable duct route is not created or returns no model ids.",
+    "Delete dry-run or apply omits any created duct/fitting id from effect evidence.",
+    "The post-delete visible-element inventory still contains a created duct/fitting id.",
+    "The delete visual gate artifact is missing or fails."
+  ],
+  "max_time_seconds": 180,
+  "max_steps": 6,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task covers delete-like duct redlines using real model-write evidence, not annotation-only evidence.",
+    "All created duct/fitting ids must be represented in delete effect evidence."
+  ],
+  "tags": ["revit", "demo", "redline", "delete", "duct", "mep-route", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "redline_delete",
+    "request": {
+      "viewId": 1363433,
+      "imageSize": 2200,
+      "targetKind": "duct_route",
+      "kind": "duct",
+      "roomNumber": "405",
+      "levelName": "L4",
+      "systemType": "Supply Air",
+      "ductSize": "12x10",
+      "routingMode": "polyline",
+      "connectSegments": true,
+      "verify": true,
+      "cleanupCreatedElements": true,
+      "routeVisualVerify": false,
+      "focusPaddingFt": 8,
+      "toleranceFt": 1,
+      "points": [
+        { "x": 40, "y": 27 },
+        { "x": 58, "y": 27 }
+      ]
+    },
+    "mock": {
+      "/revit/mep-route-workflow": {
+        "status": "AppliedVisualVerificationReady",
+        "applyResult": {
+          "status": "CreatedWithOpenConnectors",
+          "plannedPoints": [
+            { "x": 40, "y": 27, "z": 38.8333 },
+            { "x": 58, "y": 27, "z": 38.8333 }
+          ],
+          "segmentCount": 1,
+          "createdElementIds": [1544929],
+          "createdFittingIds": []
+        }
+      },
+      "/revit/export-visible-elements:1": {
+        "imagePath": "artifacts/captures/delete-duct-route-before.png",
+        "items": [
+          { "id": 1544929, "category": "Ducts", "anchor": { "model": { "x": 49, "y": 27, "z": 38.8333 } } }
+        ]
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "ids": [1544929]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "ids": [1544929]
+      },
+      "/revit/export-visible-elements:2": {
+        "imagePath": "artifacts/captures/delete-duct-route-after.png",
+        "items": []
+      }
+    }
+  }
+}

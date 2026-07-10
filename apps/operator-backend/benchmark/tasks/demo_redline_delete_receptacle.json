@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_delete_receptacle",
+  "name": "Demo G7: Delete-Like Redline Receptacle",
+  "description": "Exercise a delete-like redline operation using an explicit receptacle-like modeled family-instance target with strict type, visible-before, delete-effect, absence, and visual-gate evidence.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a model that can be closed without saving.",
+    "Use a view, level, and receptacle family/type that can be safely placed and deleted.",
+    "If the model lacks a host-compatible receptacle type, keep this task out of the local live override until discovery finds one."
+  ],
+  "success_criteria": [
+    "A disposable receptacle family instance id is created in the model.",
+    "The native create result returns family/type/name evidence matching the requested receptacle symbol.",
+    "The created receptacle id is visible in the pre-delete visible-element inventory.",
+    "Native delete dry-run and apply effect evidence include the created receptacle id.",
+    "The post-delete visible-element inventory no longer contains the receptacle id.",
+    "A deterministic delete visual gate artifact passes using before/after capture evidence."
+  ],
+  "failure_criteria": [
+    "The receptacle is not created or is created as a different requested type.",
+    "The pre-delete visible-element inventory does not contain the created receptacle id.",
+    "Delete dry-run or apply omits the receptacle id from effect evidence.",
+    "The post-delete visible-element inventory still contains the receptacle id.",
+    "The delete visual gate artifact is missing or fails."
+  ],
+  "max_time_seconds": 60,
+  "max_steps": 5,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task makes receptacles a first-class delete-like benchmark instead of relying only on the generic family-instance task.",
+    "Text-note or tag evidence must not satisfy this task; it requires modeled family-instance proof."
+  ],
+  "tags": ["revit", "demo", "redline", "delete", "receptacle", "family-instance", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "redline_delete",
+    "request": {
+      "viewId": 101,
+      "imageSize": 1800,
+      "targetKind": "receptacle",
+      "familyInstance": {
+        "familyName": "Duplex Receptacle",
+        "symbolName": "Duplex Receptacle",
+        "levelName": "",
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    },
+    "mock": {
+      "/revit/create-family-instance": {
+        "id": 9301,
+        "name": "Duplex Receptacle",
+        "family": "Duplex Receptacle",
+        "familyName": "Duplex Receptacle",
+        "symbol": "Duplex Receptacle",
+        "symbolName": "Duplex Receptacle",
+        "typeName": "Duplex Receptacle"
+      },
+      "/revit/export-visible-elements:1": {
+        "imagePath": "artifacts/captures/delete-receptacle-before.png",
+        "items": [
+          { "id": 9301, "category": "Electrical Fixtures", "familyName": "Duplex Receptacle", "symbolName": "Duplex Receptacle" }
+        ]
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "requestedIds": [9301],
+        "impactedIds": [9301]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "requestedIds": [9301],
+        "impactedIds": [9301]
+      },
+      "/revit/export-visible-elements:2": {
+        "imagePath": "artifacts/captures/delete-receptacle-after.png",
+        "items": []
+      }
+    }
+  }
+}

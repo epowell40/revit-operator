@@ -811,6 +811,10 @@ namespace RevitBridge.Handlers
                 {
                     field = fieldName,
                     status = changed ? "Applied" : "Skipped",
+                    heading = TryGetStringProperty(field, new[] { "ColumnHeading", "Heading" }),
+                    headingOrientation = TryGetPropertyText(field, "HeadingOrientation"),
+                    horizontalAlignment = TryGetPropertyText(field, "HorizontalAlignment"),
+                    hidden = TryGetBoolProperty(field, new[] { "IsHidden", "Hidden" }),
                     reason = changed ? null : styleReason
                 });
             }
@@ -1220,6 +1224,41 @@ namespace RevitBridge.Handlers
             }
 
             return false;
+        }
+
+        private static string? TryGetStringProperty(object target, IEnumerable<string> candidateNames)
+        {
+            foreach (var name in candidateNames)
+            {
+                try
+                {
+                    var p = target.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public);
+                    var raw = p?.GetValue(target, null);
+                    var text = raw?.ToString();
+                    if (!string.IsNullOrWhiteSpace(text)) return text;
+                }
+                catch
+                {
+                    // try next
+                }
+            }
+
+            return null;
+        }
+
+        private static string? TryGetPropertyText(object target, string propName)
+        {
+            try
+            {
+                var p = target.GetType().GetProperty(propName, BindingFlags.Instance | BindingFlags.Public);
+                var raw = p?.GetValue(target, null);
+                var text = raw?.ToString();
+                return string.IsNullOrWhiteSpace(text) ? null : text;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static bool? TryGetBoolProperty(object target, IEnumerable<string> candidateNames)

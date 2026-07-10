@@ -38,7 +38,7 @@
     "workflow": "redline_receptacles",
     "request": {
       "viewId": 401,
-      "cleanupCreatedElements": false,
+      "cleanupCreatedElements": true,
       "placements": [
         {
           "exemplarElementId": 301,
@@ -75,15 +75,40 @@
       "/revit/audit-hosted-instance-placement": {
         "ok": true,
         "items": [
-          { "elementId": 601, "visible": true, "hostOk": true, "parametersOk": true, "onRequestedRoomSide": true, "roomSide": "left" }
+          {
+            "elementId": 601,
+            "visible": true,
+            "hostOk": true,
+            "parametersOk": true,
+            "onRequestedRoomSide": true,
+            "roomSide": "left",
+            "electricalCircuit": { "primaryLabel": "LP-1/12", "panel": "LP-1", "circuitNumber": "12" }
+          }
         ]
       },
       "/revit/export-visible-elements:2": {
         "viewId": 401,
+        "capturePath": "artifacts/demo-readiness/redline/after_601.png",
         "elements": [
           { "id": 301, "category": "Electrical Fixtures", "type": "Duplex Receptacle" },
-          { "id": 601, "category": "Electrical Fixtures", "type": "Duplex Receptacle", "mark": "R-DEM-01" }
+          {
+            "id": 601,
+            "category": "Electrical Fixtures",
+            "type": "Duplex Receptacle",
+            "mark": "R-DEM-01",
+            "electricalCircuit": { "primaryLabel": "LP-1/12", "panel": "LP-1", "circuitNumber": "12" }
+          }
         ]
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "count": 1,
+        "ids": [601]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "count": 1,
+        "ids": [601]
       }
     }
   }

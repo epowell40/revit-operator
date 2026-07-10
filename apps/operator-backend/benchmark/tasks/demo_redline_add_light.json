@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_add_light",
+  "name": "Demo G9: Add-Like Redline Light",
+  "description": "Exercise an add-like redline operation using an explicit lighting-fixture modeled family-instance target with strict created-id, type, visibility, visual-gate, and cleanup evidence.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a model that can be closed without saving.",
+    "Use a view, level, and lighting fixture family/type that can be safely placed and deleted.",
+    "If the model lacks a host-compatible lighting type, keep this task out of the local live override until discovery finds one."
+  ],
+  "success_criteria": [
+    "A disposable light family instance id is created in the model.",
+    "The native create result returns family/type/name evidence matching the requested lighting symbol.",
+    "The created light id is visible in the post-add visible-element inventory.",
+    "A deterministic add visual gate artifact passes using post-change capture evidence.",
+    "The created light is cleaned up with native dry-run and applied delete effect evidence."
+  ],
+  "failure_criteria": [
+    "The light is not created or is created as a different requested type.",
+    "The post-add visible-element inventory does not contain the created light id.",
+    "The add visual gate artifact is missing or fails.",
+    "The cleanup delete dry-run/apply omits the light id from effect evidence."
+  ],
+  "max_time_seconds": 60,
+  "max_steps": 5,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task makes lighting fixtures a first-class add-like benchmark instead of relying only on the generic family-instance task.",
+    "Text-note or tag evidence must not satisfy this task; it requires modeled family-instance proof."
+  ],
+  "tags": ["revit", "demo", "redline", "add", "light", "lighting", "family-instance", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "redline_add",
+    "request": {
+      "viewId": 101,
+      "imageSize": 1800,
+      "targetKind": "light",
+      "familyInstance": {
+        "familyName": "Downlight",
+        "symbolName": "Downlight",
+        "levelName": "",
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "cleanupCreatedElements": true
+    },
+    "mock": {
+      "/revit/create-family-instance": {
+        "id": 9401,
+        "name": "Downlight",
+        "family": "Downlight",
+        "familyName": "Downlight",
+        "symbol": "Downlight",
+        "symbolName": "Downlight",
+        "typeName": "Downlight"
+      },
+      "/revit/export-visible-elements": {
+        "imagePath": "artifacts/captures/add-light-after.png",
+        "items": [
+          { "id": 9401, "category": "Lighting Fixtures", "familyName": "Downlight", "symbolName": "Downlight" }
+        ]
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "requestedIds": [9401],
+        "impactedIds": [9401]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "requestedIds": [9401],
+        "impactedIds": [9401]
+      }
+    }
+  }
+}

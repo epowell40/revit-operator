@@ -240,18 +240,22 @@ function scoreVisibleElementForCompactionSample(value: unknown): number {
     category.includes("fire alarm") ||
     /\b(receptacle|outlet|duplex|gfci|gfi|switch|device|power|data|voice|telecom|telephone|comm|communication|fire alarm|strobe|horn|nurse call|call station)\b/.test(name);
   const isSpatialLabel =
+    builtIn.includes("mepspaces") ||
+    builtIn.includes("rooms") ||
     builtIn.includes("roomtag") ||
     builtIn.includes("mepspacetag") ||
     builtIn.includes("textnote") ||
     builtIn.includes("genericannotation") ||
     category.includes("room tag") ||
+    category === "spaces" ||
+    category === "rooms" ||
     category.includes("space tag") ||
     category.includes("annotation") ||
     category.includes("text") ||
     /\b(room|unit|space|live\s*\/?\s*work|p\s*\d{2,6}\s*\/\s*\d{1,4})\b/.test(visibleText);
   return (
     (isElectrical ? 100 : 0) +
-    (isSpatialLabel ? 95 : 0) +
+    (isSpatialLabel ? 115 : 0) +
     (getVisibleElementSpatialNumber(obj) ? 40 : 0) +
     (hasVisibleElementCircuitEvidence(obj) ? 35 : 0) +
     (hasVisibleElementImageAnchor(obj) ? 20 : 0) +
@@ -263,15 +267,19 @@ function scoreVisibleElementForCompactionSample(value: unknown): number {
 function isProtectedVisibleElementTextAnchor(value: unknown): boolean {
   const obj = asObject(value);
   if (!obj) return false;
-  const text = getVisibleElementTextPayload(obj)?.trim() ?? "";
+  const text = (getVisibleElementTextPayload(obj) ?? pickString(obj.name) ?? "").trim();
   if (!text) return false;
   const builtIn = pickString(obj.builtInCategory, obj.categoryToken)?.toLowerCase() ?? "";
   const category = pickString(obj.category)?.toLowerCase() ?? "";
   const textLikeCategory =
+    builtIn.includes("mepspaces") ||
+    builtIn.includes("rooms") ||
     builtIn.includes("roomtag") ||
     builtIn.includes("mepspacetag") ||
     builtIn.includes("textnote") ||
     builtIn.includes("genericannotation") ||
+    category === "spaces" ||
+    category === "rooms" ||
     category.includes("room tag") ||
     category.includes("space tag") ||
     category.includes("annotation") ||
@@ -605,6 +613,7 @@ function isRevitVisualEvidencePath(pathName: string): boolean {
     pathName === "/revit/export-visible-elements" ||
     pathName === "/revit/highlight-and-export" ||
     pathName === "/revit/mep-route-workflow" ||
+    pathName === "/revit/edit-mep-route-elements" ||
     pathName === "/revit/create-similar-from-instance" ||
     pathName === "/revit/place-family-instance-on-host" ||
     pathName === "/revit/adjust-hosted-instance-on-host"

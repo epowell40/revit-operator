@@ -26,6 +26,15 @@ namespace RevitBridge.Logic.Handlers.Drafting
         [JsonPropertyName("yIn")]
         public double? yIn { get; set; }
 
+        [JsonPropertyName("x")]
+        public double? x { get; set; }
+
+        [JsonPropertyName("y")]
+        public double? y { get; set; }
+
+        [JsonPropertyName("z")]
+        public double? z { get; set; }
+
         public XYZ Resolve(string? frameId)
         {
             if (xyz != null && xyz.Length >= 2)
@@ -57,7 +66,27 @@ namespace RevitBridge.Logic.Handlers.Drafting
                     frame.bottomLeft);
             }
 
-            throw new InvalidOperationException("Point must provide xyz, xPx/yPx, or xIn/yIn.");
+            if (x.HasValue && y.HasValue)
+            {
+                if (!string.IsNullOrWhiteSpace(frameId))
+                {
+                    if (!FrameStore.TryGet(frameId.Trim(), out var frame) || frame == null)
+                        throw new InvalidOperationException($"Frame not found (expired?): {frameId}");
+
+                    return SelectionUtil.PixelToModel(
+                        (int)Math.Round(x.Value),
+                        (int)Math.Round(y.Value),
+                        frame.widthPx,
+                        frame.heightPx,
+                        frame.topLeft,
+                        frame.topRight,
+                        frame.bottomLeft);
+                }
+
+                return new XYZ(x.Value, y.Value, z ?? 0.0);
+            }
+
+            throw new InvalidOperationException("Point must provide xyz, xPx/yPx, x/y, or xIn/yIn.");
         }
     }
 }

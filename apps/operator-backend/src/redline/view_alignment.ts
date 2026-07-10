@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createOpenAiClient, resolveOpenAiApiKey } from "../openai_client.js";
-import { resolveExistingFileUnderWorkspace } from "../workspace.js";
+import { ensureWorkspaceLayout, resolveExistingFileUnderWorkspace } from "../workspace.js";
 
 export type ViewAlignmentMark = {
   normalized_x: number;
@@ -41,7 +41,12 @@ function readWorkspaceImageDataUrl(relativePath: string, maxBytes: number): stri
   try {
     const rel = (relativePath ?? "").trim();
     if (!rel || !isSupportedImageExt(rel)) return null;
-    const full = resolveExistingFileUnderWorkspace(rel);
+    const ws = ensureWorkspaceLayout();
+    const full = path.isAbsolute(rel)
+      ? path.resolve(rel)
+      : resolveExistingFileUnderWorkspace(rel);
+    const root = path.resolve(ws.root);
+    if (!full.toLowerCase().startsWith(root.toLowerCase() + path.sep) && path.resolve(full).toLowerCase() !== root.toLowerCase()) return null;
     const st = fs.statSync(full);
     if (!st.isFile() || st.size <= 0 || st.size > maxBytes) return null;
     const ext = path.extname(full).toLowerCase();
@@ -242,6 +247,9 @@ export async function alignRedlineToView(args: {
     "Match the underlying drawing geometry, not the red markup.",
     "Return the rectangle in image 2 that corresponds to image 1 using normalized coordinates from 0 to 1.",
     "Then return the intended insertion point of each explicit red markup target from image 1 mapped into image 2, also normalized 0 to 1.",
+    "For MEP route redlines, nearby text such as '12x10 supply duct' or '6-inch water pipe' is only a label. The target is the separate red route line/polyline near that text.",
+    "When a label and a separate red line are both present, map the center of the red route line/polyline itself. Do not map the center, baseline, lower edge, or visual underline of the text unless the only markup is truly text formatting.",
+    "If the red route line is spatially offset from the callout text, preserve that offset in image 2 even when the text is easier to read.",
     "For add/place device redlines, the target is the wall-adjacent position indicated by the red stroke itself. If the red markup is a tick, circle, or short hand-drawn stroke crossing a wall, use the stroke center projected to the nearest matching wall, preserving its along-wall position.",
     "Do not snap the target to a nearby existing receptacle, circuit label, room label, sink, stair, or other drawing symbol unless the red markup directly encloses that exact symbol. Existing devices are context for type/circuit only, not the insertion point.",
     "Keep the mark position consistent with the returned crop: if a red mark is at normalized image-1 point (x,y), its mapped image-2 point should be near crop.min + (x,y) * crop.size. A semantic adjustment larger than a small symbol width is a low-confidence result and should set matched=false.",

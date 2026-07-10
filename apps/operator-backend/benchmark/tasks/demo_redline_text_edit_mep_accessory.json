@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_text_edit_mep_accessory",
+  "name": "Redline: Edit Existing MEP Accessory Parameter Text",
+  "description": "Edit a parameter-backed text/value on an exact existing duct or pipe accessory, verify category/family/type grounding, read back the requested value, capture the focused view, then revert the parameter to the original value.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "metadata": {
+      "workflow": "parameter_edit"
+    }
+  },
+  "setup_instructions": [
+    "Open the known Revit demo model.",
+    "Use read-only discovery to identify an exact existing duct or pipe accessory element id, category, family/type, writable parameter, current value, and focused visual view id."
+  ],
+  "success_criteria": [
+    "The target id is proven to be the requested duct or pipe accessory category and family/type before any parameter write dry-run.",
+    "The parameter write runs through dry-run and apply passes.",
+    "The requested parameter value is verified by readback after commit.",
+    "A focused post-change visual capture is returned from the requested view before revert.",
+    "The original parameter value is restored with dry-run, apply, and readback evidence."
+  ],
+  "failure_criteria": [
+    "The exact existing accessory id, category, family/type, writable parameter, requested value, or focused view id is missing.",
+    "The selected element is not the requested accessory category or family/type.",
+    "The parameter is read-only, missing, or does not read back the requested value.",
+    "The focused capture is missing, from the wrong view, or reported as low quality.",
+    "The revert is requested but final readback does not match the captured original value."
+  ],
+  "max_time_seconds": 60,
+  "max_steps": 8,
+  "requires_manual_grade": false,
+  "grader_notes": [],
+  "tags": ["revit", "redline", "parameter", "mep", "accessory", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [
+    "Always restore the captured original parameter value after verification."
+  ],
+  "adapter_config": {
+    "workflow": "parameter_edit",
+    "request": {
+      "elementIds": [801],
+      "parameterName": "Mark",
+      "value": "MBD-1A",
+      "minTargetCount": 1,
+      "targetKind": "mep_accessory",
+      "targetGrounding": {
+        "expectedCategory": "OST_DuctAccessory",
+        "expectedFamilyName": "Manual Balancing Damper",
+        "expectedTypeName": "8x8"
+      },
+      "readbackRequired": true,
+      "revertAfterVerify": true,
+      "visualVerify": true,
+      "visualViewId": 4001
+    },
+    "mock": {
+      "/revit/get-parameters:1": {
+        "items": [
+          {
+            "id": 801,
+            "name": "Manual Balancing Damper 8x8",
+            "category": "OST_DuctAccessory",
+            "familyName": "Manual Balancing Damper",
+            "typeName": "8x8",
+            "parameters": { "Mark": "MBD-1" }
+          }
+        ]
+      },
+      "/revit/set-parameter:1": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "changedCount": 1,
+        "diffs": [
+          { "elementId": 801, "parameterName": "Mark", "ok": true, "changed": true, "before": { "value": "MBD-1" }, "after": { "value": "MBD-1A" } }
+        ]
+      },
+      "/revit/set-parameter:2": {
+        "status": "Applied",
+        "dryRun": false,
+        "changedCount": 1,
+        "diffs": [
+          { "elementId": 801, "parameterName": "Mark", "ok": true, "changed": true, "before": { "value": "MBD-1" }, "after": { "value": "MBD-1A" } }
+        ]
+      },
+      "/revit/get-parameters:2": {
+        "items": [
+          {
+            "id": 801,
+            "name": "Manual Balancing Damper 8x8",
+            "category": "OST_DuctAccessory",
+            "familyName": "Manual Balancing Damper",
+            "typeName": "8x8",
+            "parameters": { "Mark": "MBD-1A" }
+          }
+        ]
+      },
+      "/revit/export-image": {
+        "path": "artifacts/captures/mep-accessory-parameter-after.png",
+        "viewId": 4001,
+        "widthPx": 1200,
+        "heightPx": 900,
+        "focusCrop": { "requested": true, "applied": true }
+      },
+      "/revit/set-parameter:3": {
+        "status": "Dry Run",
+        "dryRun": true,
+        "changedCount": 1,
+        "diffs": [
+          { "elementId": 801, "parameterName": "Mark", "ok": true, "changed": true, "before": { "value": "MBD-1A" }, "after": { "value": "MBD-1" } }
+        ]
+      },
+      "/revit/set-parameter:4": {
+        "status": "Applied",
+        "dryRun": false,
+        "changedCount": 1,
+        "diffs": [
+          { "elementId": 801, "parameterName": "Mark", "ok": true, "changed": true, "before": { "value": "MBD-1A" }, "after": { "value": "MBD-1" } }
+        ]
+      },
+      "/revit/get-parameters:3": {
+        "items": [
+          {
+            "id": 801,
+            "name": "Manual Balancing Damper 8x8",
+            "category": "OST_DuctAccessory",
+            "familyName": "Manual Balancing Damper",
+            "typeName": "8x8",
+            "parameters": { "Mark": "MBD-1" }
+          }
+        ]
+      }
+    }
+  }
+}

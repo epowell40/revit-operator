@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_move_family_instance",
+  "name": "Demo G5: Move-Like Redline Family Instance",
+  "description": "Exercise a move-like redline operation using a disposable modeled family-instance target: create a bounded device/fixture-like element, prove its requested type and initial location, move it with native dry-run/apply evidence, prove the model-space delta, write a deterministic visual gate, and clean it up.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a model that can be closed without saving.",
+    "Use a view, level, and non-hosted or level-hosted family type that can be safely placed, moved, and deleted.",
+    "Prefer a generic annotation, receptacle, light fixture, or other disposable benchmark symbol available in the active model."
+  ],
+  "success_criteria": [
+    "A disposable family instance id is created in the model.",
+    "The native create result returns family/type/name evidence matching the requested disposable symbol.",
+    "The created family instance id is visible in the pre-move visible-element inventory with a model-space point.",
+    "Native move dry-run and apply evidence include the created family instance id.",
+    "The post-move visible-element inventory contains the same id at the requested model-space delta.",
+    "A deterministic move visual gate artifact passes using before/after capture evidence.",
+    "The moved family instance is cleaned up with native dry-run and applied delete effect evidence."
+  ],
+  "failure_criteria": [
+    "The family instance is not created or is created as a different requested type.",
+    "The before/after visible-element inventory cannot prove the requested movement vector.",
+    "Move dry-run or apply omits the family instance id from effect evidence.",
+    "The move visual gate artifact is missing or fails.",
+    "Cleanup delete dry-run/apply omits the family instance id from effect evidence."
+  ],
+  "max_time_seconds": 60,
+  "max_steps": 5,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task generalizes move-like redline evidence beyond text and tags into actual modeled family instances.",
+    "Do not count requestedIds-only move or cleanup responses as evidence; move/delete must return ids, movedIds, deletedIds, or impactedIds as appropriate."
+  ],
+  "tags": ["revit", "demo", "redline", "move", "family-instance", "device", "fixture", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "redline_move",
+    "request": {
+      "viewId": 101,
+      "imageSize": 1800,
+      "targetKind": "family_instance",
+      "familyInstance": {
+        "familyName": "",
+        "symbolName": "Generic Annotation",
+        "levelName": "",
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "move": {
+        "mode": "vector",
+        "vectorX": 1,
+        "vectorY": 0,
+        "vectorZ": 0,
+        "behavior": "allOrNothing"
+      },
+      "toleranceFt": 0.05
+    },
+    "mock": {
+      "/revit/create-family-instance": {
+        "id": 9101,
+        "name": "Generic Annotation",
+        "family": "Generic Annotation",
+        "familyName": "Generic Annotation",
+        "symbol": "Generic Annotation",
+        "symbolName": "Generic Annotation",
+        "typeName": "Generic Annotation"
+      },
+      "/revit/export-visible-elements:1": {
+        "imagePath": "artifacts/captures/move-family-instance-before.png",
+        "items": [
+          { "id": 9101, "category": "Generic Annotations", "anchor": { "model": { "x": 0, "y": 0, "z": 0 } } }
+        ]
+      },
+      "/revit/move-elements:1": {
+        "status": "Dry Run",
+        "movedIds": [9101],
+        "skipped": [],
+        "warnings": [],
+        "rolledBack": true
+      },
+      "/revit/move-elements:2": {
+        "status": "Moved",
+        "movedIds": [9101],
+        "skipped": [],
+        "warnings": [],
+        "rolledBack": false
+      },
+      "/revit/export-visible-elements:2": {
+        "imagePath": "artifacts/captures/move-family-instance-after.png",
+        "items": [
+          { "id": 9101, "category": "Generic Annotations", "anchor": { "model": { "x": 1, "y": 0, "z": 0 } } }
+        ]
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "requestedIds": [9101],
+        "impactedIds": [9101]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "requestedIds": [9101],
+        "impactedIds": [9101]
+      }
+    }
+  }
+}

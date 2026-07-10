@@ -201,6 +201,7 @@ namespace RevitBridge.Operator
 
                 // External references placed on sheets are always model-modifying and should be approval-gated.
                 if (string.Equals(p, "/revit/link-cad", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/link-revit", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/place-image", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/place-pdf-underlay", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/import-zippybim-geometry", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;

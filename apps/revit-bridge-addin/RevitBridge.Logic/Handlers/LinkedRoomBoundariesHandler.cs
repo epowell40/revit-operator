@@ -65,7 +65,8 @@ namespace RevitBridge.Logic.Handlers
                 foreach (var room in collector)
                 {
                     if (rooms.Count >= maxRooms) break;
-                    if (!PassesRoomFilters(room, req)) continue;
+                    var roomLevelName = GetRoomLevelName(linkDoc, room);
+                    if (!PassesRoomFilters(room, roomLevelName, req)) continue;
 
                     linkRoomCount++;
                     var roomWarnings = new List<string>();
@@ -84,7 +85,7 @@ namespace RevitBridge.Logic.Handlers
                         sourceScopedId = $"{ElementIdCompat.GetValue(link.Id)}:{ElementIdCompat.GetValue(room.Id)}",
                         number = room.Number,
                         name = room.Name,
-                        levelName = room.Level?.Name ?? "",
+                        levelName = roomLevelName,
                         area = SafeArea(room),
                         volume = SafeVolume(room),
                         location = BuildLocation(room, transform),
@@ -137,10 +138,10 @@ namespace RevitBridge.Logic.Handlers
             });
         }
 
-        private static bool PassesRoomFilters(Room room, LinkedRoomBoundariesRequest req)
+        private static bool PassesRoomFilters(Room room, string roomLevelName, LinkedRoomBoundariesRequest req)
         {
             if (!string.IsNullOrWhiteSpace(req.levelName) &&
-                !MatchesLevel(room.Level?.Name ?? "", req.levelName))
+                !MatchesLevel(roomLevelName, req.levelName))
             {
                 return false;
             }
@@ -244,6 +245,7 @@ namespace RevitBridge.Logic.Handlers
         {
             var a = NormalizeLevel(levelName);
             var b = NormalizeLevel(requested);
+            if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b)) return false;
             return a.Equals(b, StringComparison.OrdinalIgnoreCase) ||
                    a.IndexOf(b, StringComparison.OrdinalIgnoreCase) >= 0 ||
                    b.IndexOf(a, StringComparison.OrdinalIgnoreCase) >= 0;
@@ -257,6 +259,32 @@ namespace RevitBridge.Logic.Handlers
                 .Replace("-", "")
                 .Replace("_", "")
                 .ToUpperInvariant();
+        }
+
+        private static string GetRoomLevelName(Document linkDoc, Room room)
+        {
+            try
+            {
+                var level = room.Level;
+                if (!string.IsNullOrWhiteSpace(level?.Name)) return level.Name;
+            }
+            catch { }
+
+            try
+            {
+                var level = linkDoc.GetElement(room.LevelId) as Level;
+                if (!string.IsNullOrWhiteSpace(level?.Name)) return level.Name;
+            }
+            catch { }
+
+            try
+            {
+                var levelName = room.get_Parameter(BuiltInParameter.LEVEL_NAME)?.AsString();
+                if (!string.IsNullOrWhiteSpace(levelName)) return levelName;
+            }
+            catch { }
+
+            return "";
         }
 
         private static Transform GetLinkTransform(RevitLinkInstance link)

@@ -54,11 +54,10 @@ namespace RevitBridge.Handlers
 
             doc.ExportImage(options);
 
-            // Revit appends .png or other extensions
-            string actualFile = filePath + ".png";
-            if (!File.Exists(actualFile))
+            var actualFile = ExportedImagePathResolver.Resolve(filePath);
+            if (string.IsNullOrWhiteSpace(actualFile) || !File.Exists(actualFile))
             {
-                actualFile = filePath + ".jpg";
+                throw new FileNotFoundException("Revit image export completed, but no exported image file was found.", filePath);
             }
 
             return Task.FromResult<object>(new

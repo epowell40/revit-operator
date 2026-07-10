@@ -17,7 +17,10 @@ namespace RevitBridge.Handlers
             public long id { get; set; }
             public string? name { get; set; }
             public string? family { get; set; }
+            public string? familyName { get; set; }
             public string? symbol { get; set; }
+            public string? symbolName { get; set; }
+            public string? typeName { get; set; }
             public double x { get; set; }
             public double y { get; set; }
             public double z { get; set; }
@@ -131,7 +134,10 @@ namespace RevitBridge.Handlers
                                 id = RevitBridge.Common.ElementIdCompat.GetValue(instance.Id),
                                 name = instance.Name,
                                 family = instance.Symbol?.FamilyName,
+                                familyName = instance.Symbol?.FamilyName,
                                 symbol = instance.Symbol?.Name,
+                                symbolName = instance.Symbol?.Name,
+                                typeName = instance.Symbol?.Name,
                                 x = point.X,
                                 y = point.Y,
                                 z = point.Z
@@ -180,7 +186,10 @@ namespace RevitBridge.Handlers
                 id = firstId,
                 name = firstName,
                 family = symbol.FamilyName,
+                familyName = symbol.FamilyName,
                 symbol = symbol.Name,
+                symbolName = symbol.Name,
+                typeName = symbol.Name,
                 levelName = level?.Name,
                 targetView = targetView == null ? null : new
                 {

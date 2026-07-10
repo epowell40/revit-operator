@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_delete_light",
+  "name": "Demo G10: Delete-Like Redline Light",
+  "description": "Exercise a delete-like redline operation using an explicit lighting-fixture modeled family-instance target with strict type, visible-before, delete-effect, absence, and visual-gate evidence.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a model that can be closed without saving.",
+    "Use a view, level, and lighting fixture family/type that can be safely placed and deleted.",
+    "If the model lacks a host-compatible lighting type, keep this task out of the local live override until discovery finds one."
+  ],
+  "success_criteria": [
+    "A disposable light family instance id is created in the model.",
+    "The native create result returns family/type/name evidence matching the requested lighting symbol.",
+    "The created light id is visible in the pre-delete visible-element inventory.",
+    "Native delete dry-run and apply effect evidence include the created light id.",
+    "The post-delete visible-element inventory no longer contains the light id.",
+    "A deterministic delete visual gate artifact passes using before/after capture evidence."
+  ],
+  "failure_criteria": [
+    "The light is not created or is created as a different requested type.",
+    "The pre-delete visible-element inventory does not contain the created light id.",
+    "Delete dry-run or apply omits the light id from effect evidence.",
+    "The post-delete visible-element inventory still contains the light id.",
+    "The delete visual gate artifact is missing or fails."
+  ],
+  "max_time_seconds": 60,
+  "max_steps": 5,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task makes lighting fixtures a first-class delete-like benchmark instead of relying only on the generic family-instance task.",
+    "Text-note or tag evidence must not satisfy this task; it requires modeled family-instance proof."
+  ],
+  "tags": ["revit", "demo", "redline", "delete", "light", "lighting", "family-instance", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "redline_delete",
+    "request": {
+      "viewId": 101,
+      "imageSize": 1800,
+      "targetKind": "light",
+      "familyInstance": {
+        "familyName": "Downlight",
+        "symbolName": "Downlight",
+        "levelName": "",
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    },
+    "mock": {
+      "/revit/create-family-instance": {
+        "id": 9401,
+        "name": "Downlight",
+        "family": "Downlight",
+        "familyName": "Downlight",
+        "symbol": "Downlight",
+        "symbolName": "Downlight",
+        "typeName": "Downlight"
+      },
+      "/revit/export-visible-elements:1": {
+        "imagePath": "artifacts/captures/delete-light-before.png",
+        "items": [
+          { "id": 9401, "category": "Lighting Fixtures", "familyName": "Downlight", "symbolName": "Downlight" }
+        ]
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "requestedIds": [9401],
+        "impactedIds": [9401]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "requestedIds": [9401],
+        "impactedIds": [9401]
+      },
+      "/revit/export-visible-elements:2": {
+        "imagePath": "artifacts/captures/delete-light-after.png",
+        "items": []
+      }
+    }
+  }
+}

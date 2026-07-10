@@ -40,6 +40,21 @@ export function shouldOpenZippyBimTool(req: ChatRequest): boolean {
 
   const pdfs = pdfAttachments(req);
   const hasPdfAttachment = pdfs.length > 0;
+  const redlineOrMepIntent = includesAny(text, [
+    "redline",
+    "markup",
+    "mark-up",
+    "comment bubble",
+    "comments",
+    "duct",
+    "ductwork",
+    "supply duct",
+    "return duct",
+    "exhaust duct",
+    "pipe",
+    "piping",
+    "mep"
+  ]);
 
   const explicitToolIntent = includesAny(text, [
     "zippybim",
@@ -47,6 +62,8 @@ export function shouldOpenZippyBimTool(req: ChatRequest): boolean {
     "open import tool",
     "open floor plan import"
   ]);
+
+  if (!explicitToolIntent && redlineOrMepIntent) return false;
 
   const importIntent = includesAny(text, [
     "import this pdf floor plan",
@@ -69,7 +86,7 @@ export function shouldOpenZippyBimTool(req: ChatRequest): boolean {
   const genericPdfImportIntent =
     hasPdfAttachment &&
     text.includes("import this pdf") &&
-    !includesAny(text, ["redline", "markup", "mark-up", "comment bubble", "comments"]);
+    !redlineOrMepIntent;
 
   return explicitToolIntent || (hasPdfAttachment && (importIntent || floorPlanIntent || genericPdfImportIntent));
 }

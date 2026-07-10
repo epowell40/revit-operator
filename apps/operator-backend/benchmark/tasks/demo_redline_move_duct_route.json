@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_move_duct_route",
+  "name": "Demo G14: Move-Like Redline Duct Route",
+  "description": "Exercise a move-like redline operation using a disposable modeled duct route: create the route, move every created id, prove the model-space delta, and clean it up.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "requires_live_revit": true
+  },
+  "setup_instructions": [
+    "Open a disposable Revit model or a model that can be closed without saving.",
+    "Use a view and ordered model-space points where a short unconnected duct route can be created, moved, and deleted safely."
+  ],
+  "success_criteria": [
+    "A disposable duct route is created through /revit/mep-route-workflow with created model ids.",
+    "Native move dry-run and apply effect evidence include every created duct/fitting id.",
+    "Visible inventory proves the requested model-space movement vector.",
+    "A deterministic move visual gate artifact passes using before/after capture evidence.",
+    "The moved duct route is cleaned up with native dry-run and applied delete effect evidence."
+  ],
+  "failure_criteria": [
+    "The disposable duct route is not created or returns no model ids.",
+    "Move dry-run or apply omits any created duct/fitting id from effect evidence.",
+    "The before/after visible-element inventory cannot prove the requested movement vector.",
+    "Cleanup delete dry-run/apply omits any created duct/fitting id from effect evidence."
+  ],
+  "max_time_seconds": 180,
+  "max_steps": 7,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This task covers move-like duct redlines using real model-write evidence.",
+    "All created duct/fitting ids must be represented in move and cleanup evidence."
+  ],
+  "tags": ["revit", "demo", "redline", "move", "duct", "mep-route", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "redline_move",
+    "request": {
+      "viewId": 401,
+      "imageSize": 2200,
+      "targetKind": "duct_route",
+      "kind": "duct",
+      "roomNumber": "405",
+      "levelName": "L4",
+      "systemType": "Supply Air",
+      "ductSize": "12x10",
+      "routingMode": "polyline",
+      "connectSegments": true,
+      "verify": true,
+      "routeVisualVerify": false,
+      "focusPaddingFt": 8,
+      "toleranceFt": 0.05,
+      "points": [
+        { "x": 40, "y": 27 },
+        { "x": 58, "y": 27 }
+      ],
+      "move": {
+        "mode": "vector",
+        "vectorX": 1,
+        "vectorY": 0,
+        "vectorZ": 0,
+        "behavior": "allOrNothing"
+      }
+    },
+    "mock": {
+      "/revit/mep-route-workflow": {
+        "status": "AppliedVisualVerificationReady",
+        "applyResult": {
+          "status": "CreatedWithOpenConnectors",
+          "createdElementIds": [1545929],
+          "createdFittingIds": []
+        }
+      },
+      "/revit/export-visible-elements:1": {
+        "imagePath": "artifacts/captures/move-duct-route-before.png",
+        "items": [
+          { "id": 1545929, "category": "Ducts", "anchor": { "model": { "x": 49, "y": 27, "z": 38.8333 } } }
+        ]
+      },
+      "/revit/move-elements:1": {
+        "status": "Dry Run",
+        "movedIds": [1545929],
+        "skipped": [],
+        "rolledBack": true
+      },
+      "/revit/move-elements:2": {
+        "status": "Moved",
+        "movedIds": [1545929],
+        "skipped": [],
+        "rolledBack": false
+      },
+      "/revit/export-visible-elements:2": {
+        "imagePath": "artifacts/captures/move-duct-route-after.png",
+        "items": [
+          { "id": 1545929, "category": "Ducts", "anchor": { "model": { "x": 50, "y": 27, "z": 38.8333 } } }
+        ]
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "ids": [1545929]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "ids": [1545929]
+      }
+    }
+  }
+}

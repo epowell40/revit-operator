@@ -18,6 +18,23 @@ Copy `.env.example` to a local `.env` file and fill only local values. Do not co
 
 See [docs/LOCAL_SETUP.md](docs/LOCAL_SETUP.md) for the current local setup notes and [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) for self-hosting guidance.
 
+## Validation
+
+From the repository root, run the backend build and test suite with:
+
+```powershell
+npm --prefix apps/operator-backend run build
+npm --prefix apps/operator-backend test
+```
+
+On a Windows development machine with Revit installed, compile against all installed supported API versions with:
+
+```powershell
+./scripts/deploy/check_revit_version_compatibility.ps1
+```
+
+Use `-SkipMissing` when intentionally validating a workstation that does not have every supported Revit version installed.
+
 ## Repository Status
 
 This repository now carries the first source migration from the private development repo: the local backend, Revit add-in bridge, MCP bridge, prompts, sample skills, and native redline/spatial placement tooling. Private hosted deployment, admin, customer, billing, and production auth pieces remain in `revit-operator-private`.

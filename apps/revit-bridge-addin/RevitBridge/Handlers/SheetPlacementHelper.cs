@@ -16,7 +16,7 @@ namespace RevitBridge.Handlers
             public object? PreviewBox { get; set; }
         }
 
-        private sealed class SheetRect
+        internal sealed class SheetRect
         {
             public double MinX { get; set; }
             public double MinY { get; set; }
@@ -185,7 +185,8 @@ namespace RevitBridge.Handlers
             double? requestedY,
             bool avoidOverlap,
             Element? sampleInstance = null,
-            ElementId? ignoreElementId = null)
+            ElementId? ignoreElementId = null,
+            List<SheetRect>? additionalOccupied = null)
         {
             var requested = requestedX.HasValue || requestedY.HasValue;
             var x = requestedX ?? 0.0;
@@ -212,6 +213,10 @@ namespace RevitBridge.Handlers
             }
 
             var occupied = CollectSheetOccupancy(doc, sheet, ignoreElementId);
+            if (additionalOccupied != null && additionalOccupied.Count > 0)
+            {
+                occupied.AddRange(additionalOccupied);
+            }
             var start = requested
                 ? new XYZ(x, y, 0)
                 : (sampleInstance != null ? TryGetPoint(sampleInstance) : null);
@@ -242,6 +247,24 @@ namespace RevitBridge.Handlers
 
             if (start != null) return BuildPlacementPoint(start.X, start.Y, "fallback-source-overlap-possible", footprint);
             return BuildPlacementPoint(usableMinX - footprint.MinDx, usableMaxY - footprint.MaxDy, "fallback-sheet-corner-overlap-possible", footprint);
+        }
+
+        public static SheetRect PlacementPreviewRect(SchedulePlacementPoint placement)
+        {
+            var previewRect = SheetRectFromPreviewBox(placement.PreviewBox);
+            if (previewRect != null) return previewRect;
+            return new SheetRect
+                {
+                    MinX = placement.Point.X,
+                    MinY = placement.Point.Y,
+                    MaxX = placement.Point.X,
+                    MaxY = placement.Point.Y
+                };
+        }
+
+        public static SheetRect? TryGetSheetRect(Element element, ViewSheet sheet)
+        {
+            return TryGetElementSheetRect(element, sheet);
         }
 
         public static bool TrySetViewportCenter(Viewport viewport, double x, double y, out string? reason)
@@ -416,6 +439,30 @@ namespace RevitBridge.Handlers
                 MaxDx = r.MaxX - p.X,
                 MaxDy = r.MaxY - p.Y
             };
+        }
+
+        private static SheetRect? SheetRectFromPreviewBox(object? previewBox)
+        {
+            if (previewBox == null) return null;
+            var type = previewBox.GetType();
+            try
+            {
+                var minU = Convert.ToDouble(type.GetProperty("minU")?.GetValue(previewBox));
+                var minV = Convert.ToDouble(type.GetProperty("minV")?.GetValue(previewBox));
+                var maxU = Convert.ToDouble(type.GetProperty("maxU")?.GetValue(previewBox));
+                var maxV = Convert.ToDouble(type.GetProperty("maxV")?.GetValue(previewBox));
+                return new SheetRect
+                {
+                    MinX = Math.Min(minU, maxU),
+                    MinY = Math.Min(minV, maxV),
+                    MaxX = Math.Max(minU, maxU),
+                    MaxY = Math.Max(minV, maxV)
+                };
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static List<SheetRect> CollectSheetOccupancy(Document doc, ViewSheet sheet, ElementId? ignoreElementId)

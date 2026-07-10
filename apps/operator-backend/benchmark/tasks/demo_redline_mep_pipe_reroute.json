@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "task_id": "demo_redline_mep_pipe_reroute",
+  "name": "Demo E6: Modeled Pipe Reroute Offset Redline",
+  "description": "Run one bounded modeled pipe reroute/offset redline through /revit/reroute-mep-route-segment and require split points, replacement segment ids, elbow fitting ids, connector/system audit, visual gate, and cleanup evidence.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "Revit",
+    "metadata": {
+      "workflow": "redline_mep_reroute"
+    }
+  },
+  "setup_instructions": [
+    "Open the target Revit model and the sheet/view containing a pipe offset/drop redline.",
+    "Use a prepared deterministic request with a verified host pipe id, two projected split points or chainages, requested offset/drop, pipe size, level, and system.",
+    "Use /revit/reroute-mep-route-segment with operation=reroute_offset, apply=true, verify=true, and visualVerify=true; do not report completion from a dry-run."
+  ],
+  "success_criteria": [
+    "/revit/reroute-mep-route-segment returns a rerouted/applied status and is not a dry-run.",
+    "The result reports replacement pipe segment ids and elbow fitting ids.",
+    "The split and offset split points are reported and match the requested split points within tolerance when requested points are supplied.",
+    "The requested offset/drop is read back from the plan within tolerance.",
+    "Connected fitting attempts cover all expected fittings.",
+    "A connector/network/system audit reports a connected network.",
+    "A focused post-change capture is returned and the redline visual gate passes.",
+    "Created disposable segment/fitting ids are proven in a cleanup dry-run and then deleted after verification evidence is recorded."
+  ],
+  "failure_criteria": [
+    "The workflow only dry-runs or returns no replacement segment/fitting ids.",
+    "The split or offset split points are missing or off target.",
+    "The requested offset/drop is missing or mismatched.",
+    "Expected fittings are missing or connection attempts are disconnected.",
+    "No connected-network/system audit is reported.",
+    "The focused visual capture is missing.",
+    "The redline visual gate is fail or uncertain.",
+    "Cleanup is requested but created segment/fitting ids are missing from cleanup evidence."
+  ],
+  "max_time_seconds": 180,
+  "max_steps": 5,
+  "requires_manual_grade": false,
+  "grader_notes": [
+    "This benchmark covers one safe pipe reroute/drop case after the duct reroute backend gate. It does not yet prove top taps, multi-branch pipe racks, or arbitrary clash-avoidance routing."
+  ],
+  "tags": ["revit", "demo", "redline", "mep", "pipe", "reroute", "offset", "deterministic"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [
+    "Delete created replacement segment/fitting ids after visual verification so repeated live reliability runs do not accumulate model clutter."
+  ],
+  "adapter_config": {
+    "workflow": "redline_mep_reroute",
+    "request": {
+      "kind": "pipe",
+      "viewId": 401,
+      "visualViewId": 401,
+      "hostElementId": 1642919,
+      "levelName": "L4",
+      "systemType": "Domestic Cold Water",
+      "operation": "reroute_offset",
+      "split1ChainageFt": 4,
+      "split2ChainageFt": 12,
+      "split1Point": { "x": 64, "y": 18 },
+      "split2Point": { "x": 72, "y": 18 },
+      "dropFt": 1,
+      "expectedFitting": "elbow",
+      "verify": true,
+      "apply": true,
+      "visualVerify": true,
+      "cleanupCreatedElements": true,
+      "imageSize": 2200,
+      "focusPaddingFt": 8,
+      "toleranceFt": 1,
+      "dropToleranceFt": 0.25
+    },
+    "mock": {
+      "/revit/reroute-mep-route-segment": {
+        "status": "Rerouted",
+        "dryRun": false,
+        "kind": "pipe",
+        "operation": "reroute_offset",
+        "host": {
+          "id": 1642919,
+          "category": "Pipes",
+          "systemName": "Domestic Cold Water"
+        },
+        "plan": {
+          "ApplySupported": true,
+          "MainLengthFt": 16,
+          "Split1ChainageFt": 4,
+          "Split2ChainageFt": 12,
+          "Split1": { "X": 64, "Y": 18, "Z": 38 },
+          "Split2": { "X": 72, "Y": 18, "Z": 38 },
+          "OffsetSplit1": { "X": 64, "Y": 18, "Z": 37 },
+          "OffsetSplit2": { "X": 72, "Y": 18, "Z": 37 },
+          "Segments": [
+            { "Role": "main_a", "Start": { "X": 60, "Y": 18, "Z": 38 }, "End": { "X": 64, "Y": 18, "Z": 38 } },
+            { "Role": "offset_leg_a", "Start": { "X": 64, "Y": 18, "Z": 38 }, "End": { "X": 64, "Y": 18, "Z": 37 } },
+            { "Role": "offset_middle", "Start": { "X": 64, "Y": 18, "Z": 37 }, "End": { "X": 72, "Y": 18, "Z": 37 } },
+            { "Role": "offset_leg_b", "Start": { "X": 72, "Y": 18, "Z": 37 }, "End": { "X": 72, "Y": 18, "Z": 38 } },
+            { "Role": "main_b", "Start": { "X": 72, "Y": 18, "Z": 38 }, "End": { "X": 76, "Y": 18, "Z": 38 } }
+          ],
+          "ExpectedFittings": [
+            { "ExpectedFitting": "elbow", "At": "split1_to_offset_leg", "Point": { "X": 64, "Y": 18, "Z": 38 } },
+            { "ExpectedFitting": "elbow", "At": "offset_leg_to_middle_a", "Point": { "X": 64, "Y": 18, "Z": 37 } },
+            { "ExpectedFitting": "elbow", "At": "middle_to_offset_leg_b", "Point": { "X": 72, "Y": 18, "Z": 37 } },
+            { "ExpectedFitting": "elbow", "At": "offset_leg_to_split2", "Point": { "X": 72, "Y": 18, "Z": 38 } }
+          ]
+        },
+        "createdElementIds": [1642921, 1642923, 1642925, 1642927, 1642929],
+        "createdFittingIds": [1642931, 1642933, 1642936, 1642937],
+        "deletedOriginalIds": [1642919],
+        "connectionAttempts": [
+          { "fromId": 1642921, "toId": 1642923, "connected": true, "expectedFitting": "elbow", "fittingId": 1642931 },
+          { "fromId": 1642923, "toId": 1642925, "connected": true, "expectedFitting": "elbow", "fittingId": 1642933 },
+          { "fromId": 1642925, "toId": 1642927, "connected": true, "expectedFitting": "elbow", "fittingId": 1642936 },
+          { "fromId": 1642927, "toId": 1642929, "connected": true, "expectedFitting": "elbow", "fittingId": 1642937 }
+        ],
+        "verification": {
+          "openConnectorCount": 2,
+          "connectedConnectorCount": 8,
+          "networkAudit": {
+            "status": "Ok",
+            "systemName": "Domestic Cold Water",
+            "systemAudit": {
+              "pass": true,
+              "connectedCount": 9,
+              "disconnectedCount": 0
+            }
+          }
+        },
+        "visualVerification": {
+          "path": "artifacts/demo-readiness/mep-route/pipe_reroute_after.jpg"
+        }
+      },
+      "/revit/delete:1": {
+        "status": "Dry Run",
+        "count": 9,
+        "ids": [1642921, 1642923, 1642925, 1642927, 1642929, 1642931, 1642933, 1642936, 1642937]
+      },
+      "/revit/delete:2": {
+        "status": "Deleted",
+        "count": 9,
+        "ids": [1642921, 1642923, 1642925, 1642927, 1642929, 1642931, 1642933, 1642936, 1642937]
+      }
+    }
+  }
+}

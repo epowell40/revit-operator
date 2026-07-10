@@ -12,11 +12,6 @@ function readRepoFile(relativePath: string): string {
   return fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
 }
 
-function tryReadRepoFile(relativePath: string): string | null {
-  const fullPath = path.join(repoRoot, relativePath);
-  return fs.existsSync(fullPath) ? fs.readFileSync(fullPath, "utf8") : null;
-}
-
 test("agent response policy requires natural acknowledgement instead of routine visible plans", () => {
   const policy = AGENT_RESPONSE_STYLE_LINES.join("\n");
 
@@ -45,14 +40,17 @@ test("pre-model redline routing uses async recovery bridge", () => {
   assert.doesNotMatch(openAiBrain, /maybeBuildRedlineExecutionBridgeCore\(\{\s*req:\s*currentReq/);
 });
 
-test("chat UI does not convert tool lifecycle into plan chatter", () => {
-  const desktopApp = tryReadRepoFile("operator-desktop/public/app.js");
+test("chat UI does not convert tool lifecycle into plan chatter", (t) => {
+  const desktopAppPath = path.join(repoRoot, "operator-desktop/public/app.js");
+  if (!fs.existsSync(desktopAppPath)) {
+    t.skip("The standalone public core does not include the private desktop sidecar.");
+    return;
+  }
+  const desktopApp = fs.readFileSync(desktopAppPath, "utf8");
   const embeddedPane = readRepoFile("revit-bridge-addin/RevitBridge/Operator/OperatorWebUiHtml.cs");
 
-  if (desktopApp != null) {
-    assert.doesNotMatch(desktopApp, /appendActivityEvent\(`Plan:/);
-    assert.doesNotMatch(desktopApp, /Planned actions:/);
-  }
+  assert.doesNotMatch(desktopApp, /appendActivityEvent\(`Plan:/);
+  assert.doesNotMatch(desktopApp, /Planned actions:/);
   assert.doesNotMatch(embeddedPane, /appendEvent\('Plan: '/);
 });
 
