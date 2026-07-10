@@ -3,6 +3,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { ensureWorkspaceLayout, resolveExistingFileUnderWorkspace } from "../workspace.js";
 import { analyzeRedlineFile } from "../redline/redline_analyzer.js";
+import { buildPdfJsDocumentOptions, loadPdfJsForNode } from "../pdf/pdfjs_node.js";
 
 type RegionBox = {
   index?: number | null;
@@ -31,6 +32,7 @@ export type GeminiRedlineAnalyzeRequest = {
   objective?: string;
   baseline_file_path?: string;
   max_pages?: number;
+  page_start?: number;
   region_boxes?: Array<Partial<RegionBox> & Record<string, unknown>>;
   max_regions?: number;
   min_confidence?: number;
@@ -39,6 +41,7 @@ export type GeminiRedlineAnalyzeRequest = {
 };
 
 export type GeminiRegionIntent = {
+  page_number?: number | null;
   region_index: number | null;
   target_type: "viewport" | "titleblock" | "sheet" | "model_element" | "annotation" | "unknown";
   intent: string;
@@ -59,6 +62,8 @@ export type GeminiRedlineAnalyzeResponse = {
     image_count: number;
     max_regions: number;
     min_confidence: number;
+    page_start: number;
+    page_end: number;
   };
   summary: string;
   regions: GeminiRegionIntent[];
@@ -296,6 +301,7 @@ function normalizeRegionIntent(v: unknown): GeminiRegionIntent | null {
   if (!v || typeof v !== "object") return null;
   const o = v as Record<string, unknown>;
   const regionIdx = toFiniteNumber(o.region_index ?? o.regionIndex ?? o.index);
+  const pageNumber = toFiniteNumber(o.page_number ?? o.pageNumber ?? o.page);
   const intent = typeof o.intent === "string" ? o.intent.trim() : "";
   const rationale = typeof o.rationale === "string" ? o.rationale.trim() : "";
   const proposed = typeof o.proposed_action === "string" ? o.proposed_action.trim() : typeof o.proposedAction === "string" ? String(o.proposedAction).trim() : "";
@@ -303,6 +309,7 @@ function normalizeRegionIntent(v: unknown): GeminiRegionIntent | null {
   if (!intent) return null;
 
   return {
+    ...(pageNumber !== null ? { page_number: Math.max(1, Math.floor(pageNumber)) } : {}),
     region_index: regionIdx === null ? null : Math.max(0, Math.floor(regionIdx)),
     target_type: normalizeTargetType(o.target_type ?? o.targetType),
     intent,
@@ -510,6 +517,8 @@ function buildPrompt(args: {
   relatedGroups: RelatedRegionGroup[];
   maxRegions: number;
   minConfidence: number;
+  pageStart: number;
+  pageCount: number;
 }): string {
   const lines: string[] = [];
   lines.push("You are analyzing engineering redlines on drawings for downstream CAD/Revit execution.");
@@ -519,6 +528,11 @@ function buildPrompt(args: {
   lines.push("");
   lines.push(`Objective: ${args.objective}`);
   if (args.expectedSheet) lines.push(`Expected sheet hint: ${args.expectedSheet}`);
+  lines.push(
+    args.pageCount === 1
+      ? `PDF page represented by this request: ${args.pageStart}.`
+      : `PDF page range represented by this request: ${args.pageStart}-${args.pageStart + args.pageCount - 1}. Report page_number for every region.`
+  );
   lines.push(`Max regions to report: ${args.maxRegions}`);
   lines.push(`Minimum confidence to include in regions: ${args.minConfidence.toFixed(2)}`);
   lines.push("");
@@ -548,6 +562,7 @@ function buildPrompt(args: {
   lines.push('  "global_confidence": 0.0,');
   lines.push('  "regions": [');
   lines.push("    {");
+  lines.push('      "page_number": 1,');
   lines.push('      "region_index": 1,');
   lines.push('      "target_type": "viewport|titleblock|sheet|model_element|annotation|unknown",');
   lines.push('      "intent": "what change is requested",');
@@ -663,6 +678,12 @@ function geminiMaxInputFileBytes(): number {
   const n = Number.parseInt(process.env.OPERATOR_GEMINI_MAX_INPUT_FILE_BYTES ?? `${20 * 1024 * 1024}`, 10);
   if (!Number.isFinite(n)) return 20 * 1024 * 1024;
   return clamp(n, 256 * 1024, 50 * 1024 * 1024);
+}
+
+function geminiMaxPdfInputFileBytes(): number {
+  const n = Number.parseInt(process.env.OPERATOR_GEMINI_MAX_PDF_INPUT_FILE_BYTES ?? `${200 * 1024 * 1024}`, 10);
+  if (!Number.isFinite(n)) return 200 * 1024 * 1024;
+  return clamp(n, 1 * 1024 * 1024, 500 * 1024 * 1024);
 }
 
 function geminiPdfDpi(): number {
@@ -821,6 +842,7 @@ function runPythonJson(code: string, timeoutMs: number): Promise<{ ok: boolean; 
 async function bestEffortConvertPdfToJpegPages(args: {
   pdfRelativePath: string;
   maxPages: number;
+  pageStart: number;
   dpi: number;
   timeoutMs: number;
 }): Promise<{ ok: boolean; page_paths: string[]; warning?: string }> {
@@ -838,6 +860,34 @@ async function bestEffortConvertPdfToJpegPages(args: {
   const outDir = path.join(ws.root, "artifacts", "redline", "gemini", `${stamp}_${rid}_pdf`);
   fs.mkdirSync(outDir, { recursive: true });
 
+  try {
+    const canvasMod = await (Function("specifier", "return import(specifier)")("@napi-rs/canvas") as Promise<any>);
+    const createCanvas = canvasMod?.createCanvas;
+    if (typeof createCanvas === "function") {
+      const bytes = fs.readFileSync(fullPdf);
+      const pdfjs = await loadPdfJsForNode();
+      const doc = await pdfjs.getDocument(buildPdfJsDocumentOptions(new Uint8Array(bytes))).promise;
+      const firstPage = Math.max(1, Math.min(Number(doc.numPages ?? 0) || 1, Math.floor(args.pageStart)));
+      const count = Math.max(0, Math.min(8, args.maxPages, Number(doc.numPages ?? 0) - firstPage + 1));
+      const scale = Math.max(72, Math.min(300, args.dpi)) / 72;
+      const paths: string[] = [];
+      for (let offset = 0; offset < count; offset++) {
+        const pageNumber = firstPage + offset;
+        const page = await doc.getPage(pageNumber);
+        const viewport = page.getViewport({ scale });
+        const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
+        await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+        const output = path.join(outDir, `page_${String(pageNumber).padStart(4, "0")}.png`);
+        fs.writeFileSync(output, canvas.toBuffer("image/png"));
+        paths.push(output);
+      }
+      const relativePaths = paths.map((entry) => toWorkspaceRelativePath(entry)).filter((entry): entry is string => !!entry);
+      if (relativePaths.length > 0) return { ok: true, page_paths: relativePaths };
+    }
+  } catch {
+    // Fall through to the Python/Poppler converters below.
+  }
+
   const py = `
 import json
 import os
@@ -848,6 +898,7 @@ import subprocess
 pdf_path = ${JSON.stringify(fullPdf)}
 out_dir = ${JSON.stringify(outDir)}
 max_pages = int(${JSON.stringify(Math.max(1, Math.min(8, args.maxPages)))})
+page_start = int(${JSON.stringify(Math.max(1, Math.floor(args.pageStart)))})
 dpi = int(${JSON.stringify(Math.max(72, Math.min(300, args.dpi)))})
 
 os.makedirs(out_dir, exist_ok=True)
@@ -861,11 +912,13 @@ def rel_paths(xs):
 try:
     import fitz  # PyMuPDF
     doc = fitz.open(pdf_path)
-    count = min(max_pages, len(doc))
-    for i in range(count):
-        page = doc.load_page(i)
+    first = min(max(0, page_start - 1), len(doc))
+    count = min(max_pages, max(0, len(doc) - first))
+    for offset in range(count):
+        page_number = first + offset
+        page = doc.load_page(page_number)
         pix = page.get_pixmap(dpi=dpi, alpha=False)
-        p = os.path.join(out_dir, f"page_{i+1:02d}.jpg")
+        p = os.path.join(out_dir, f"page_{page_number+1:04d}.jpg")
         pix.save(p)
         paths.append(p)
     if paths:
@@ -876,9 +929,11 @@ except Exception as e:
 if not paths:
     try:
         from pdf2image import convert_from_path
-        images = convert_from_path(pdf_path, dpi=dpi, first_page=1, last_page=max_pages, fmt="jpeg")
-        for i, im in enumerate(images, start=1):
-            p = os.path.join(out_dir, f"page_{i:02d}.jpg")
+        last_page = page_start + max_pages - 1
+        images = convert_from_path(pdf_path, dpi=dpi, first_page=page_start, last_page=last_page, fmt="jpeg")
+        for offset, im in enumerate(images):
+            page_number = page_start + offset
+            p = os.path.join(out_dir, f"page_{page_number:04d}.jpg")
             im.save(p, "JPEG")
             paths.append(p)
         if paths:
@@ -891,7 +946,7 @@ if not paths:
         exe = shutil.which("pdftoppm")
         if exe:
             prefix = os.path.join(out_dir, "page")
-            r = subprocess.run([exe, "-jpeg", "-f", "1", "-l", str(max_pages), "-r", str(dpi), pdf_path, prefix], capture_output=True, text=True)
+            r = subprocess.run([exe, "-jpeg", "-f", str(page_start), "-l", str(page_start + max_pages - 1), "-r", str(dpi), pdf_path, prefix], capture_output=True, text=True)
             if r.returncode == 0:
                 paths = sorted(glob.glob(prefix + "-*.jpg"))
                 if paths:
@@ -1127,11 +1182,13 @@ export async function analyzeRedlineWithGemini(req: GeminiRedlineAnalyzeRequest)
   const minConfidence = clamp(toFiniteNumber(req.min_confidence) ?? 0.35, 0, 1);
   const timeoutMs = Math.max(2_000, Math.min(180_000, Math.floor(req.timeout_ms ?? geminiTimeoutMs())));
   const maxPages = Math.max(1, Math.min(8, Math.floor(req.max_pages ?? 2)));
+  const pageStart = Math.max(1, Math.floor(req.page_start ?? 1));
   const maxInputs = geminiMaxImages();
   const maxImageBytes = geminiMaxImageBytes();
   const maxInlinePartBytes = Math.min(maxImageBytes, geminiInlinePartHardLimitBytes());
   const maxRequestInlineBytes = geminiMaxRequestInlineBytes();
   const maxInputFileBytes = geminiMaxInputFileBytes();
+  const maxPdfInputFileBytes = geminiMaxPdfInputFileBytes();
   const warnings: string[] = [];
   let sourceRegionBoxes = normalizeRegionBoxes(req.region_boxes);
   const focusedPaths: string[] = [];
@@ -1187,6 +1244,7 @@ export async function analyzeRedlineWithGemini(req: GeminiRedlineAnalyzeRequest)
         include_ocr_for_images: false,
         include_pdf_annotations: true,
         max_pages: maxPages,
+        page_start: pageStart,
         timeout_ms: Math.min(timeoutMs, 60_000)
       });
       const derived = Array.isArray(analyzed.mark_regions)
@@ -1277,8 +1335,9 @@ export async function analyzeRedlineWithGemini(req: GeminiRedlineAnalyzeRequest)
       warnings.push(`Input is not a readable file: ${rp}`);
       continue;
     }
-    if (st.size > maxInputFileBytes) {
-      warnings.push(`Input skipped (>${maxInputFileBytes} bytes): ${rp}`);
+    const inputFileLimit = isPdfRelativePath(rp) ? maxPdfInputFileBytes : maxInputFileBytes;
+    if (st.size > inputFileLimit) {
+      warnings.push(`Input skipped (>${inputFileLimit} bytes): ${rp}`);
       continue;
     }
 
@@ -1286,6 +1345,7 @@ export async function analyzeRedlineWithGemini(req: GeminiRedlineAnalyzeRequest)
       const converted = await bestEffortConvertPdfToJpegPages({
         pdfRelativePath: rp,
         maxPages,
+        pageStart,
         dpi: geminiPdfDpi(),
         timeoutMs: Math.min(timeoutMs, 90_000)
       });
@@ -1352,7 +1412,9 @@ export async function analyzeRedlineWithGemini(req: GeminiRedlineAnalyzeRequest)
       image_paths: chosenPaths,
       image_count: chosenPaths.length,
       max_regions: maxRegions,
-      min_confidence: minConfidence
+      min_confidence: minConfidence,
+      page_start: pageStart,
+      page_end: pageStart + maxPages - 1
     }
   });
 
@@ -1402,7 +1464,17 @@ export async function analyzeRedlineWithGemini(req: GeminiRedlineAnalyzeRequest)
   const objective = (req.objective ?? "").trim() || "Identify redline intent and convert it into actionable model-edit instructions.";
   const expectedSheet = (req.expected_sheet ?? "").trim();
   parts.push({
-    text: buildPrompt({ objective, expectedSheet, regionBoxes: sourceRegionBoxes, annotationHints, relatedGroups, maxRegions, minConfidence })
+    text: buildPrompt({
+      objective,
+      expectedSheet,
+      regionBoxes: sourceRegionBoxes,
+      annotationHints,
+      relatedGroups,
+      maxRegions,
+      minConfidence,
+      pageStart,
+      pageCount: maxPages
+    })
   });
 
   let inlineBytesTotal = 0;

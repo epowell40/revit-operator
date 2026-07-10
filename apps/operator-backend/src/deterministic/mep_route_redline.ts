@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ActionCall, type ChatRequest, type ChatResponse, type ToolResult } from "../contracts.js";
 import { analyzeRedlineFile, type RedlineAnalyzeResponse } from "../redline/redline_analyzer.js";
+import { pdfDefaultPageBudget } from "../redline/pdf_intake_policy.js";
 import { mapSheetRegions, type MapSheetRegionsResponse } from "../redline/sheet_region_mapper.js";
 import { readLatestUploadIndexRecords } from "../attachments/upload_index.js";
 import { evaluateRedlineVisualVerificationGate, type RedlineVisualGateResult } from "../verification/redline_visual_verification_gate.js";
@@ -2327,8 +2328,8 @@ export async function resolveMepRouteRedline(req: ResolveMepRouteRedlineRequest)
     expected_sheet: req.expected_sheet,
     include_pdf_annotations: true,
     include_ocr_for_images: true,
-    max_pages: 2,
-    timeout_ms: 20_000
+    max_pages: pdfDefaultPageBudget(),
+    timeout_ms: 120_000
   });
   if (!analysis.ok) {
     return { ok: false, handled: false, assistant_message: "", blocker: analysis.warning ?? "Redline analysis failed." };

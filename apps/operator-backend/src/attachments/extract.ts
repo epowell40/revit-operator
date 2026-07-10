@@ -86,9 +86,15 @@ async function extractPdfExcerpts(fullPath: string): Promise<AttachmentExcerpt[]
   // pdfjs-dist in Node: use legacy build + disableWorker to avoid bundling worker.
   const pdfjs = await loadPdfJsForNode();
   const doc = await pdfjs.getDocument(buildPdfJsDocumentOptions(pdfData)).promise;
-  const maxPages = Math.min(3, doc.numPages || 0);
-  const out: AttachmentExcerpt[] = [];
-  for (let p = 1; p <= maxPages; p++) {
+  const pageCount = Math.max(0, Number(doc.numPages ?? 0));
+  const pageNumbers = selectPdfExcerptPages(pageCount);
+  const out: AttachmentExcerpt[] = pageCount > 0
+    ? [{
+        anchor: "PDF package inventory",
+        text: `page_count=${pageCount}; prompt_excerpt_pages=${pageNumbers.join(",")}; full comment/page analysis is handled by the redline PDF package analyzer.`
+      }]
+    : [];
+  for (const p of pageNumbers) {
     const page = await doc.getPage(p);
     const content = await page.getTextContent();
     const text = (content?.items ?? []).map((it: any) => (typeof it?.str === "string" ? it.str : "")).join(" ");
@@ -96,6 +102,13 @@ async function extractPdfExcerpts(fullPath: string): Promise<AttachmentExcerpt[]
     if (trimmed) out.push({ anchor: `PDF p${p}`, text: trimmed });
   }
   return out;
+}
+
+export function selectPdfExcerptPages(pageCount: number): number[] {
+  const total = Math.max(0, Math.floor(pageCount));
+  if (total <= 0) return [];
+  const candidates = [1, 2, Math.ceil(total / 2), Math.max(1, total - 1), total];
+  return Array.from(new Set(candidates.filter((page) => page >= 1 && page <= total))).sort((a, b) => a - b);
 }
 
 async function extractDocxExcerpts(fullPath: string): Promise<AttachmentExcerpt[]> {
@@ -377,7 +390,7 @@ export async function getAttachmentExcerptsForPrompt(attachments: UserAttachment
         sha = "";
       }
     }
-    const kind = ext === ".pdf" ? "pdf" : ext === ".docx" ? "docx" : "xlsx";
+    const kind = ext === ".pdf" ? "pdf_v2_large_package" : ext === ".docx" ? "docx" : "xlsx";
     const cached = sha ? tryReadCache(sha, kind) : null;
     if (cached) {
       out.push({ id, label, relative_path: rp, external_path: extPath || undefined, mime: a.mime, sha256: sha || undefined, excerpts: cached });
