@@ -196,7 +196,7 @@ export async function alignRedlineToView(args: {
   }
 
   const client = createOpenAiClient(apiKey);
-  const model = (args.model ?? process.env.OPERATOR_OPENAI_MODEL ?? "gpt-5.5").trim();
+  const model = (args.model ?? process.env.OPERATOR_OPENAI_MODEL ?? "gpt-5.6-sol").trim();
   const reasoningEffort = (args.reasoning_effort ?? process.env.OPERATOR_REDLINE_ALIGNMENT_REASONING_EFFORT ?? "none").trim().toLowerCase();
   const serviceTier = (process.env.OPERATOR_OPENAI_SERVICE_TIER ?? "priority").trim().toLowerCase();
   const maxOutputTokens = Math.max(3000, Number.parseInt(String(args.max_output_tokens ?? "5000"), 10) || 5000);

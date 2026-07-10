@@ -17,7 +17,7 @@ type DesktopComputerRelayResponse = {
 };
 
 function resolveDesktopComputerModel(): string {
-  return (process.env.OPERATOR_DESKTOP_COMPUTER_MODEL || "gpt-5.5").trim();
+  return (process.env.OPERATOR_DESKTOP_COMPUTER_MODEL || "gpt-5.6-terra").trim();
 }
 
 function resolveDesktopComputerReasoningEffort(): string {

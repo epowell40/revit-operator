@@ -45,7 +45,7 @@ function buildCodexSpawnEnv(workspaceRoot: string): NodeJS.ProcessEnv {
 
 function getDefaultModel(): string | null {
   const fromEnv = (process.env.OPERATOR_CODEX_MODEL || "").trim();
-  return fromEnv ? fromEnv : "gpt-5.5";
+  return fromEnv ? fromEnv : "gpt-5.6-sol";
 }
 
 function shouldNotifyCodexToolCalls(): boolean {
