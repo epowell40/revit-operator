@@ -5,61 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { analyzeRedlineFile } from "../src/redline/redline_analyzer.js";
 import { analyzeRedlineWithGemini } from "../src/vision/gemini_agentic_vision.js";
-
-function pdfString(value: string): string {
-  return value.replace(/([\\()])/g, "\\$1");
-}
-
-function buildCommentedPdf(pageCount: number, comments: Map<number, string>, nativeAnnotations = true): Buffer {
-  const objects = new Map<number, string>();
-  const pageObjectIds: number[] = [];
-  let nextId = 4;
-
-  for (let page = 1; page <= pageCount; page += 1) {
-    const pageId = nextId++;
-    const contentId = nextId++;
-    const comment = comments.get(page);
-    const annotationId = comment && nativeAnnotations ? nextId++ : null;
-    pageObjectIds.push(pageId);
-
-    const annots = annotationId ? ` /Annots [${annotationId} 0 R]` : "";
-    objects.set(
-      pageId,
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentId} 0 R${annots} >>`
-    );
-    const text = `SHEET A-${String(page).padStart(3, "0")} PAGE ${page}`;
-    const flattenedComment = comment && !nativeAnnotations
-      ? `\nBT /F1 14 Tf 1 0 0 rg 100 120 Td (${pdfString(comment)}) Tj ET`
-      : "";
-    const stream = `BT /F1 12 Tf 72 720 Td (${pdfString(text)}) Tj ET${flattenedComment}`;
-    objects.set(contentId, `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`);
-    if (annotationId && comment) {
-      objects.set(
-        annotationId,
-        `<< /Type /Annot /Subtype /FreeText /Rect [100 100 360 145] /Contents (${pdfString(comment)}) /C [1 0 0] /DA (/F1 12 Tf 1 0 0 rg) >>`
-      );
-    }
-  }
-
-  objects.set(1, "<< /Type /Catalog /Pages 2 0 R >>");
-  objects.set(2, `<< /Type /Pages /Kids [${pageObjectIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pageCount} >>`);
-  objects.set(3, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
-
-  const size = nextId;
-  let body = "%PDF-1.7\n% large package fixture\n";
-  const offsets = new Array<number>(size).fill(0);
-  for (let id = 1; id < size; id += 1) {
-    offsets[id] = Buffer.byteLength(body);
-    body += `${id} 0 obj\n${objects.get(id) ?? "<<>>"}\nendobj\n`;
-  }
-  const xrefOffset = Buffer.byteLength(body);
-  body += `xref\n0 ${size}\n0000000000 65535 f \n`;
-  for (let id = 1; id < size; id += 1) {
-    body += `${String(offsets[id]).padStart(10, "0")} 00000 n \n`;
-  }
-  body += `trailer\n<< /Size ${size} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
-  return Buffer.from(body, "binary");
-}
+import { buildCommentedPdf } from "./fixtures/commented_pdf.js";
 
 test("redline analyzer inventories comments across a 125-page PDF package", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-large-pdf-"));

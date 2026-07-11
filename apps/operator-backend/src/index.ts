@@ -45,6 +45,7 @@ import { mapSheetRegions } from "./redline/sheet_region_mapper.js";
 import { orientRedlineFile } from "./redline/redline_orienter.js";
 import { resolveMepSemanticRoutePlan } from "./deterministic/mep_semantic_route.js";
 import { adaptMepSemanticRoutePlanToAecIntentEvidence } from "./deterministic/mep_semantic_route_evidence.js";
+import { tryCreateRedlineAnalyzeEvidence } from "./redline/redline_analyze_evidence.js";
 import { analyzeRedlinePackageWithGemini } from "./vision/gemini_redline_package.js";
 import { buildEvidencePack } from "./evidence/evidence_pack.js";
 import { maybePersistAutoTurnMemory } from "./memory/auto_turn_memory.js";
@@ -2959,7 +2960,8 @@ const server = http.createServer(async (req, res) => {
         timeout_ms,
         baseline_file_path
       });
-      return writeJson(res, r.ok ? 200 : 400, r);
+      const aec_intent_evidence = r.ok ? await tryCreateRedlineAnalyzeEvidence(r, { id: randomUUID(), created_at: new Date().toISOString() }) : undefined;
+      return writeJson(res, r.ok ? 200 : 400, aec_intent_evidence ? { ...r, aec_intent_evidence } : r);
     }
 
     if (req.method === "POST" && url.pathname === "/tools/redline/map-sheet-regions") {
