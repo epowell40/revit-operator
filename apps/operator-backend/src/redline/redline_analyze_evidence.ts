@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { AEC_INTENT_EVIDENCE_MAX_STRING_CHARS, AEC_INTENT_EVIDENCE_MAX_URI_CHARS, AEC_INTENT_EVIDENCE_V1_SCHEMA, normalizeAecIntentEvidenceV1, type AecIntentEvidenceV1 } from "../aec_intent_evidence.js";
+import { types } from "node:util";
+import { AEC_INTENT_EVIDENCE_MAX_IDENTIFIER_CHARS, AEC_INTENT_EVIDENCE_MAX_STRING_CHARS, AEC_INTENT_EVIDENCE_MAX_URI_CHARS, AEC_INTENT_EVIDENCE_V1_SCHEMA, normalizeAecIntentEvidenceV1, type AecIntentEvidenceV1 } from "../aec_intent_evidence.js";
 import type { RedlineAnalyzeResponse } from "./redline_analyzer.js";
 
 export type RedlineAnalyzeEvidenceOptions = { id: string; created_at: string; sha256?: string; host?: AecIntentEvidenceV1["origin"]["host"] };
@@ -26,7 +27,19 @@ function box(raw: any): NormalizedBox | undefined {
 }
 function pageNumber(value: unknown): number | undefined { return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined; }
 function confidence(value: unknown): number | undefined { return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? value : undefined; }
-function safeActions(response: RedlineAnalyzeResponse): AecIntentEvidenceV1["intent"]["proposed_actions"] { return response.suggested_revit_calls.filter((call) => call.method === "POST" && (call.path === "/revit/sheets" || call.path === "/revit/get-titleblock-info")).map((call) => ({ tool: call.path, body: JSON.parse(JSON.stringify(call.body)), requires_apply: false })); }
+const SHEET_BODY_KEYS = ["action", "includePlacedViews", "includeTitleBlocks", "includeViewportGeometry", "includeViewports", "sheetNumber"], CANONICAL_SHEET_BODY_KEYS = [...SHEET_BODY_KEYS, "includeSheetOutline"];
+function canonicalSheetBody(value: unknown): Record<string, unknown> | undefined {
+  try {
+    if (!value || typeof value !== "object" || Array.isArray(value) || (typeof types.isProxy === "function" && types.isProxy(value)) || Object.getPrototypeOf(value) !== Object.prototype) return undefined;
+    const keys = Reflect.ownKeys(value), includesOutline = keys.includes("includeSheetOutline"), expectedKeys = includesOutline ? CANONICAL_SHEET_BODY_KEYS : SHEET_BODY_KEYS; if (keys.length !== expectedKeys.length || keys.some((key) => typeof key !== "string" || !expectedKeys.includes(key))) return undefined;
+    const descriptors: Record<string, PropertyDescriptor> = {};
+    for (const key of expectedKeys) { const descriptor = Object.getOwnPropertyDescriptor(value, key); if (!descriptor || !descriptor.enumerable || !("value" in descriptor) || descriptor.get !== undefined || descriptor.set !== undefined) return undefined; descriptors[key] = descriptor; }
+    const action = descriptors.action.value, sheetNumber = descriptors.sheetNumber.value, placed = descriptors.includePlacedViews.value, viewports = descriptors.includeViewports.value, geometry = descriptors.includeViewportGeometry.value, titleBlocks = descriptors.includeTitleBlocks.value, outline = descriptors.includeSheetOutline?.value;
+    if (action !== "detail" || typeof sheetNumber !== "string" || sheetNumber !== sheetNumber.trim() || sheetNumber.length > AEC_INTENT_EVIDENCE_MAX_IDENTIFIER_CHARS || !/^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9][A-Za-z0-9._-]{0,15}$/.test(sheetNumber) || placed !== true || viewports !== true || geometry !== true || titleBlocks !== true || includesOutline && outline !== true) return undefined;
+    return { action: "detail", sheetNumber, includePlacedViews: true, includeViewports: true, includeViewportGeometry: true, includeTitleBlocks: true, includeSheetOutline: true };
+  } catch { return undefined; }
+}
+function safeActions(response: RedlineAnalyzeResponse): AecIntentEvidenceV1["intent"]["proposed_actions"] { const actions: AecIntentEvidenceV1["intent"]["proposed_actions"] = []; for (const call of response.suggested_revit_calls) { if (call.method !== "POST" || (call.path !== "/revit/sheets" && call.path !== "/revit/get-titleblock-info")) continue; if (call.path === "/revit/sheets") { const body = canonicalSheetBody(call.body); if (body) actions.push({ tool: call.path, body, requires_apply: false }); } else actions.push({ tool: call.path, body: JSON.parse(JSON.stringify(call.body)), requires_apply: false }); } return actions; }
 function evidenceBase(ref: ArtifactRef, sha256: string | undefined, page: number) { return { ...(uri(ref, page) ? { uri: uri(ref, page) } : {}), ...(sha256 ? { sha256 } : {}) }; }
 
 export function adaptRedlineAnalyzeToAecIntentEvidence(response: RedlineAnalyzeResponse, options: RedlineAnalyzeEvidenceOptions): AecIntentEvidenceV1 {
