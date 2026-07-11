@@ -5,13 +5,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { __testOnlyBuildInitialRedlinePreflightAction, __testOnlyIsFastElectricalPlacementRedline, __testOnlyRunInitialRedlineDecisionLane, __testOnlyShouldPrioritizeInitialRedlinePreflight } from "../src/brains/openai_brain.js";
+import { __testOnlyMaybeRunTopLevelMepRouteRedline } from "../src/brain.js";
 import { executeWorkbenchActions } from "../src/workbench/workbench_runner.js";
 import { buildCommentedPdf } from "./fixtures/commented_pdf.js";
 
 const attachment = [{ id: "duct-redline", filename: "duct.pdf", relative_path: "artifacts/uploads/duct.pdf", mime: "application/pdf" }] as any;
 const readOnlyPrompt = "Analyze the attached duct redline for deterministic intent evidence only; do not create/edit/delete/write.";
-const failedLivePrompt = "analyze `marked-unit405-12x10-duct.pdf` through the deterministic redline-analysis lane and return its AEC intent/evidence record. Do not plan, return, or execute `/revit/*`, dry-run, apply, create, edit, delete, or write actions.";
-const failedLiveAttachment = [{ id: "marked-unit405", filename: "marked-unit405-12x10-duct.pdf", relative_path: "artifacts/uploads/20260711051917_marked-unit405-12x10-duct.pdf", mime: "application/pdf" }] as any;
+const failedLivePrompt = "analyze `marked-unit405-12x10-duct.pdf` through the deterministic redline-analysis lane and return its AEC intent/evidence record. Do not plan, return, or execute `/revit/*`, dry-run, apply, create, edit, delete, or write actions.\n\nAttachments:\n- [1] marked-unit405-12x10-duct.pdf (id=9b6f83e1-fd28-40ab-bc86-3036451fb67f, path=artifacts/uploads/20260711063335_marked-unit405-12x10-duct.pdf, sha256=74b03227b1e9…, bytes=863274)";
+const failedLiveAttachment = [{ id: "9b6f83e1-fd28-40ab-bc86-3036451fb67f", filename: "marked-unit405-12x10-duct.pdf", relative_path: "artifacts/uploads/20260711063335_marked-unit405-12x10-duct.pdf", mime: "application/pdf" }] as any;
 
 test("explicit read-only duct-redline analysis preflight wins over fast bridge classification", () => {
   const action = __testOnlyBuildInitialRedlinePreflightAction({ userText: readOnlyPrompt, userAttachments: attachment });
@@ -42,6 +43,18 @@ test("exact failed-live request uses the production read-only decision lane once
   });
   assert.deepEqual(order, ["analyze_redline", "summary"]); assert.equal(summaries, 1); assert.equal(fastCalls, 0); assert.equal(lane.fastPreflight, null);
   assert.deepEqual(lane.response, { version: "operator.backend.v1", assistant_message: "Grounded deterministic evidence summary.", actions: [] }); assert.equal(JSON.stringify(lane.response).includes("should-not-run"), false); assert.equal(JSON.stringify(lane.response).includes("/revit/delete"), false);
+});
+
+test("top-level MEP routing bypass is structured-attachment-only and shared by dispatch modes", async () => {
+  assert.equal(failedLivePrompt.length, 427);
+  const req = { version: "operator.backend.v1", session_id: "01c787ea-1580-4ccc-9c15-94cbb0568d75", message_id: "6c48bfc5-d3e9-4605-acf2-53254af3ed5c", user_text: failedLivePrompt, user_attachments: failedLiveAttachment } as any;
+  let resolverCalls = 0, coordinatorCalls = 0;
+  const resolver = async () => { resolverCalls += 1; return { version: "operator.backend.v1", assistant_message: "resolver", actions: [] }; };
+  const routed = await __testOnlyMaybeRunTopLevelMepRouteRedline(req, resolver as any);
+  const coordinator = async () => { coordinatorCalls += 1; return { version: "operator.backend.v1", assistant_message: "Evidence summary", actions: [] }; };
+  const response = routed ?? await coordinator();
+  assert.equal(resolverCalls, 0); assert.equal(coordinatorCalls, 1); assert.deepEqual(response, { version: "operator.backend.v1", assistant_message: "Evidence summary", actions: [] });
+  for (const variant of [{ ...req, user_text: "Delete this marked duct from the redline." }, { ...req, user_attachments: undefined }, { ...req, user_text: "Analyze this redline attachment." }]) { resolverCalls = 0; await __testOnlyMaybeRunTopLevelMepRouteRedline(variant, resolver as any); assert.equal(resolverCalls, 1); }
 });
 
 test("workbench analyze_redline appends only deterministic evidence and preserves legacy details", async () => {

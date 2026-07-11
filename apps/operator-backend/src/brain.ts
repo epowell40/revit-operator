@@ -1,7 +1,7 @@
 import "./env.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ChatResponse } from "./contracts.js";
 import { decideRule } from "./brains/rule_brain.js";
-import { decideOpenAi, decideOpenAiStreaming } from "./brains/openai_brain.js";
+import { decideOpenAi, decideOpenAiStreaming, isExplicitReadOnlyRedlineAnalysisRequest } from "./brains/openai_brain.js";
 import { decideCodex, decideCodexStreaming, type StreamCallbacks } from "./brains/codex_brain.js";
 import { maybeBuildZippyBimToolDecision } from "./brains/zippybim_intent.js";
 import { enforceVerificationDisclaimer } from "./verification/titleblock_verify_guard.js";
@@ -71,6 +71,12 @@ function finalizeDecision(req: ChatRequest, decision: ChatResponse): ChatRespons
   }));
 }
 
+async function maybeRunTopLevelMepRouteRedline(req: ChatRequest, resolver = maybeRunDeterministicMepRouteRedline): Promise<ChatResponse | null> {
+  return isExplicitReadOnlyRedlineAnalysisRequest(req) ? null : resolver(req);
+}
+
+export async function __testOnlyMaybeRunTopLevelMepRouteRedline(req: ChatRequest, resolver: typeof maybeRunDeterministicMepRouteRedline): Promise<ChatResponse | null> { return maybeRunTopLevelMepRouteRedline(req, resolver); }
+
 export function __testOnlyFinalizeDecision(req: ChatRequest, decision: ChatResponse): ChatResponse {
   return finalizeDecision(req, decision);
 }
@@ -95,7 +101,7 @@ export async function decide(req: ChatRequest): Promise<ChatResponse> {
     return finalizeDecision(req, enlargedPlanDecision);
   }
 
-  const mepRouteRedlineDecision = await maybeRunDeterministicMepRouteRedline(req);
+  const mepRouteRedlineDecision = await maybeRunTopLevelMepRouteRedline(req);
   if (mepRouteRedlineDecision) {
     return finalizeDecision(req, mepRouteRedlineDecision);
   }
@@ -160,7 +166,7 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks): Pr
     return finalizeDecision(req, enlargedPlanDecision);
   }
 
-  const mepRouteRedlineDecision = await maybeRunDeterministicMepRouteRedline(req);
+  const mepRouteRedlineDecision = await maybeRunTopLevelMepRouteRedline(req);
   if (mepRouteRedlineDecision) {
     const text = mepRouteRedlineDecision.assistant_message || "";
     const chunkSize = 60;
