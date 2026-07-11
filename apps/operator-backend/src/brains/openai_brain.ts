@@ -2203,6 +2203,8 @@ function maybeBuildInitialRedlinePreflightAction(req: ChatRequest): WorkbenchAct
   return buildAutoAnalyzeRedlineAction(seed);
 }
 
+function explicitReadOnlyRedlineAnalysisRequest(req: ChatRequest): boolean { if (!hasRedlineAttachment(req)) return false; const text = `${req.user_text ?? ""}`.toLowerCase(); const verb = "(?:add|provide|install|place|create|implement|duplicate|copy|clone|insert|put|drop|apply|assign|set|connect|route|run|extend|tap|branch|take\\s*(?:off|out)|reroute|offset|draw|delete|remove|demo|demolish|erase|omit|strike|x\\s*out|edit|modify|update|change|revise|replace|correct|resize|size|adjust|move|shift|relocate|slide|rotate|reorient|turn|flip|swap|tag|label|hide|show|display|override|write)"; const noAction = /\b(?:do\s+not|don't|dont)\b(?=[^.!?;]*\bexecute\b)(?=[^.!?;]*\/revit\/)(?![^.!?;]*\b(?:merely|but|then|instead|rather)\b)[^.!?;]*\b(?:actions?|model\s+elements?)\b/; const slashList = new RegExp(`\\b(?:do\\s+not|don't|dont)\\s+${verb}(?:\\s*\\/\\s*${verb})+`); const directModel = /\b(?:do\s+not|don't|dont)\s+(?:modify|change|edit|write(?:\s+to)?)\s+(?:the\s+)?model\b/; const withoutModel = /\bwithout\s+(?:changing|modifying|editing|writing(?:\s+to)?)\s+(?:the\s+)?model\b/; const positive = /\b(?:analysis|evidence|interpretation)(?:\s+record)?\s+only\b|\bonly\s+(?:analy[sz]e|interpret|review)\b|\bread[- ]only\s+(?:analysis|review|interpretation)\b/.test(text) || [noAction, slashList, directModel, withoutModel].some((pattern) => pattern.test(text)); const isolated = text.replace(noAction, "").replace(slashList, "").replace(directModel, "").replace(withoutModel, ""); const mutation = new RegExp(`\\b${verb}\\b|\\bchanging\\b|\\bmake\\b[^.!?;]{0,48}\\b(?:change|changes|edit|edits)\\b`); const unknownAffirmative = /\b(?:and|then|also)\s+[a-z][a-z-]{2,24}\s+(?:the\s+)?(?:marked|existing|new|selected)\b/.test(isolated); return positive && /\b(redline|red line|markup)\b/.test(text) && /\b(analy[sz]e|analysis|interpret|evidence)\b/.test(text) && !mutation.test(isolated) && !unknownAffirmative; }
+async function runInitialRedlineDecisionLane(args: { req: ChatRequest; initialAction: WorkbenchAction | null; runInitialPreflight: (action: WorkbenchAction) => Promise<void>; runFastPreflight: () => Promise<RedlineFastPathPreflight | null>; summarize: () => Promise<OpenAiDecision | { error: string }> }): Promise<{ response: ChatResponse | null; fastPreflight: RedlineFastPathPreflight | null }> { if (!args.initialAction || !explicitReadOnlyRedlineAnalysisRequest(args.req)) return { response: null, fastPreflight: await args.runFastPreflight() }; await args.runInitialPreflight(args.initialAction); const decision = await args.summarize(); return { response: { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: "error" in decision ? decision.error : decision.assistant_message || "Deterministic redline analysis completed.", actions: [] }, fastPreflight: null }; }
 function maybeBuildAutoBootstrapAnalyzeAction(
   req: ChatRequest,
   decision: OpenAiDecision,
@@ -10449,6 +10451,9 @@ export function __testOnlyBuildInitialRedlinePreflightAction(args: {
   } satisfies ChatRequest);
 }
 
+export function __testOnlyShouldPrioritizeInitialRedlinePreflight(args: { userText: string; userAttachments?: ChatRequest["user_attachments"] }): boolean { return explicitReadOnlyRedlineAnalysisRequest({ version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: randomUUID(), message_id: "test:redline-priority", user_text: args.userText, ...(Array.isArray(args.userAttachments) ? { user_attachments: args.userAttachments } : {}) } satisfies ChatRequest); }
+export async function __testOnlyRunInitialRedlineDecisionLane(args: { userText: string; userAttachments?: ChatRequest["user_attachments"]; runInitialPreflight: (action: WorkbenchAction) => Promise<void>; runFastPreflight: () => Promise<RedlineFastPathPreflight | null>; summarize: () => Promise<OpenAiDecision | { error: string }> }) { const req = { version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: randomUUID(), message_id: "test:redline-lane", user_text: args.userText, ...(Array.isArray(args.userAttachments) ? { user_attachments: args.userAttachments } : {}) } satisfies ChatRequest; return runInitialRedlineDecisionLane({ req, initialAction: maybeBuildInitialRedlinePreflightAction(req), runInitialPreflight: args.runInitialPreflight, runFastPreflight: args.runFastPreflight, summarize: args.summarize }); }
+
 export function __testOnlyIsFastElectricalPlacementRedline(args: {
   userText: string;
   userAttachments?: ChatRequest["user_attachments"];
@@ -17035,7 +17040,16 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     return wb;
   }
 
-  const fastPreflight = await maybeBuildFastElectricalRedlinePreflight(currentReq);
+  const initialPreflightAction = maybeBuildInitialRedlinePreflightAction(currentReq);
+  const runInitialPreflight = async (action: WorkbenchAction) => {
+    const preflightResults = await runWorkbenchRound(hydrateRedlineWorkbenchActions(currentReq, [action], getAugmentedToolResults(currentReq, 80)), { initialPreflight: true });
+    if (preflightResults.length === 0) return; workbenchResults = preflightResults; const wbImages = collectWorkbenchInlineImagePaths(preflightResults); const serverExtra: Record<string, unknown> = { workbench_results: formatWorkbenchResultsForPrompt(preflightResults) };
+    if (wbImages.length > 0) serverExtra.workbench_inline_image_paths = wbImages;
+    currentReq = withPlacementWorkItem({ ...currentReq, context: withServerContext(currentReq.context, serverExtra) });
+  };
+  const initialLane = await runInitialRedlineDecisionLane({ req: currentReq, initialAction: initialPreflightAction, runInitialPreflight, runFastPreflight: () => maybeBuildFastElectricalRedlinePreflight(currentReq), summarize: () => callModel(currentReq) });
+  if (initialLane.response) return finishResponse(initialLane.response);
+  const fastPreflight = initialLane.fastPreflight;
   if (fastPreflight) {
     if (fastPreflight.tool_results.length > 0 || fastPreflight.preflight_package_text || fastPreflight.diagnostics_text) {
       currentReq = withPlacementWorkItem({
@@ -17059,23 +17073,7 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     if (fastPreflight.direct_response) return finishResponse(fastPreflight.direct_response);
   }
 
-  const initialPreflightAction = maybeBuildInitialRedlinePreflightAction(currentReq);
-  if (initialPreflightAction) {
-    const preflightActions = hydrateRedlineWorkbenchActions(currentReq, [initialPreflightAction], getAugmentedToolResults(currentReq, 80));
-    const preflightResults = await runWorkbenchRound(preflightActions, { initialPreflight: true });
-    if (preflightResults.length > 0) {
-      workbenchResults = preflightResults;
-      const serverExtra: Record<string, unknown> = {
-        workbench_results: formatWorkbenchResultsForPrompt(preflightResults)
-      };
-      if (fastPreflight?.preflight_package_text) serverExtra.redline_preflight_package = fastPreflight.preflight_package_text;
-      if (fastPreflight?.diagnostics_text) serverExtra.redline_diagnostics = fastPreflight.diagnostics_text;
-      const wbImages = collectWorkbenchInlineImagePaths(preflightResults);
-      if (wbImages.length > 0) serverExtra.workbench_inline_image_paths = wbImages;
-      currentReq = withPlacementWorkItem({ ...currentReq, context: withServerContext(currentReq.context, serverExtra) });
-    }
-  }
-
+  if (initialPreflightAction) await runInitialPreflight(initialPreflightAction);
   const preModelToolResults = getAugmentedToolResults(currentReq, 80);
   if (
     preModelToolResults.length > 0 &&
