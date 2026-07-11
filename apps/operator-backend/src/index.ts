@@ -44,6 +44,7 @@ import { analyzeRedlineFile } from "./redline/redline_analyzer.js";
 import { mapSheetRegions } from "./redline/sheet_region_mapper.js";
 import { orientRedlineFile } from "./redline/redline_orienter.js";
 import { resolveMepSemanticRoutePlan } from "./deterministic/mep_semantic_route.js";
+import { adaptMepSemanticRoutePlanToAecIntentEvidence } from "./deterministic/mep_semantic_route_evidence.js";
 import { analyzeRedlinePackageWithGemini } from "./vision/gemini_redline_package.js";
 import { buildEvidencePack } from "./evidence/evidence_pack.js";
 import { maybePersistAutoTurnMemory } from "./memory/auto_turn_memory.js";
@@ -3012,14 +3013,20 @@ const server = http.createServer(async (req, res) => {
       const parsed = body as any;
       if (!parsed || typeof parsed !== "object") return writeJson(res, 400, { error: "Invalid JSON body" });
 
-      const r = resolveMepSemanticRoutePlan({
-        user_text: typeof parsed.user_text === "string" ? parsed.user_text : typeof parsed.userText === "string" ? parsed.userText : "",
+      const plannerRequest = {
+        user_text: typeof parsed.user_text === "string" ? parsed.user_text : typeof parsed.userText === "string" ? parsed.userText : typeof parsed.request === "string" ? parsed.request : typeof parsed.requestText === "string" ? parsed.requestText : "",
         view_id: typeof parsed.view_id === "number" ? parsed.view_id : typeof parsed.viewId === "number" ? parsed.viewId : undefined,
         room_number: typeof parsed.room_number === "string" ? parsed.room_number : typeof parsed.roomNumber === "string" ? parsed.roomNumber : undefined,
         level_name: typeof parsed.level_name === "string" ? parsed.level_name : typeof parsed.levelName === "string" ? parsed.levelName : undefined,
         tool_results: Array.isArray(parsed.tool_results) ? parsed.tool_results : Array.isArray(parsed.toolResults) ? parsed.toolResults : []
+      };
+      const r = resolveMepSemanticRoutePlan(plannerRequest);
+      const aec_intent_evidence = adaptMepSemanticRoutePlanToAecIntentEvidence(plannerRequest, r, {
+        id: randomUUID(),
+        created_at: new Date().toISOString(),
+        host: { kind: "other", name: "revit-operator-backend" }
       });
-      return writeJson(res, r.ok ? 200 : 400, r);
+      return writeJson(res, r.ok ? 200 : 400, { ...r, aec_intent_evidence });
     }
 
     if (req.method === "POST" && url.pathname === "/tools/redline/orient") {

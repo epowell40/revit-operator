@@ -25,6 +25,44 @@ test("semantic MEP planner requests read-only discovery for main-to-sink piping"
   assert.equal(response.next_actions.some((action) => action.path.includes("create") || action.path.includes("connect-mep-branch")), false);
 });
 
+test("semantic MEP planner treats the repeated Room 405 extension request as constructive routing", () => {
+  const response = resolveMepSemanticRoutePlan({
+    user_text: "Assess extending domestic plumbing piping from an existing main to the sink in Room 405. Confirm required discovery before routing.",
+    room_number: "405"
+  });
+
+  assert.equal(response.status, "needs_discovery");
+  assert.equal(response.plan?.kind, "pipe");
+  assert.equal(response.plan?.operation, "branch_to_target");
+  assert.deepEqual(response.next_actions.map((action) => [action.path, (action.body as Record<string, unknown>).category]), [
+    ["/revit/find-elements", "OST_PlumbingFixtures"],
+    ["/revit/find-elements", "OST_PipeCurves"]
+  ]);
+});
+
+test("semantic MEP planner treats the authoritative requestText noun extension as a branch", () => {
+  const response = resolveMepSemanticRoutePlan({
+    user_text: "Assess a potential piping extension from the main to the sink in Room 405. Identify the sink, main, connectors, and routing constraints that must be discovered before planning. Confirm Room 405 boundaries and level context. Do not modify the model or execute any next_actions.",
+    room_number: "405"
+  });
+
+  assert.equal(response.plan?.operation, "branch_to_target");
+  assert.deepEqual(response.next_actions.map((action) => [action.path, (action.body as Record<string, unknown>).category]), [
+    ["/revit/find-elements", "OST_PlumbingFixtures"],
+    ["/revit/find-elements", "OST_PipeCurves"]
+  ]);
+});
+
+test("semantic MEP planner preserves explicit confirm-only connectivity as verification", () => {
+  const response = resolveMepSemanticRoutePlan({
+    user_text: "Confirm whether existing piping connectivity already reaches the sink in Room 405.",
+    room_number: "405"
+  });
+
+  assert.equal(response.status, "needs_discovery");
+  assert.equal(response.plan?.operation, "verify_existing");
+});
+
 test("semantic MEP planner turns resolved sink and main evidence into guarded branch dry-run", () => {
   const response = resolveMepSemanticRoutePlan({
     user_text: "Extend that piping from the main to that sink.",

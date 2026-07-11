@@ -110,9 +110,9 @@ function inferTargetClass(text: string): MepSemanticTargetClass {
 }
 
 function inferOperation(text: string, targetClass: MepSemanticTargetClass): MepSemanticOperation {
-  if (/\b(verify|check|is\s+there|confirm)\b/i.test(text)) return "verify_existing";
+  if (/\b(?:verify|check|confirm)\b[\s\S]{0,48}\b(?:existing|whether|if)\b|\bis\s+there\b/i.test(text)) return "verify_existing";
   if (targetClass === "diffuser" || targetClass === "air_terminal" || /\b(to\s+the\s+diffusers|serve\s+diffusers)\b/i.test(text)) return "route_network_to_targets";
-  if (/\b(extend|connect|route|run|branch|tap)\b/i.test(text)) return "branch_to_target";
+  if (/\b(?:extend(?:ing|ed|s)?|extension|connect|route|run|branch|tap)\b/i.test(text)) return "branch_to_target";
   return "unknown";
 }
 
