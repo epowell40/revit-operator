@@ -10,6 +10,7 @@ import {
   __testOnlyGroupNearbyRegions,
   __testOnlyIsDeleteLikeAnnotation,
   __testOnlyNormalizePdfRectToUnit,
+  __testOnlyResolvePdfAnnotationGeometry,
   analyzeRedlineFile,
   extractSheetCandidatesFromFilename,
   extractSheetCandidatesFromText,
@@ -81,6 +82,12 @@ test("redline analyzer: extracts sheet candidates from mixed text", () => {
   const nums = new Set(cands.map(c => c.sheet_number));
   assert.ok(nums.has("M501") || nums.has("M5.01"));
   assert.ok(nums.has("A1.00"));
+});
+
+test("redline analyzer: E104 PolyLine derives native negative-MediaBox rect from vertices", () => {
+  const geometry = __testOnlyResolvePdfAnnotationGeometry({ subtype: "PolyLine", annotation: { rect: [-700, -520, Number.MIN_VALUE, Number.MIN_VALUE], vertices: [-700, -520, -410, -55] } });
+  assert.deepEqual(geometry.rect, [-700, -520, -410, -55]);
+  assert.deepEqual(geometry.vertices, [{ x: -700, y: -520 }, { x: -410, y: -55 }]);
 });
 
 test("redline analyzer: boosts expected sheet score", () => {

@@ -25,9 +25,9 @@ import {
   buildPdfAnnotationCoordinateMapper,
   clampPixelBoxToImage,
   extractInkListsPdf,
-  extractPdfPointSequence,
+  extractPdfPointSequence, extractPdfVectorPointSequence,
   mapInkListsToUnit,
-  mapPdfPointsToUnit,
+  mapPdfPointsToUnit, mapPdfVectorPointsToUnit,
   normalizedRectToPixelBox,
   normalizeInkListsToUnitBoxes,
   normalizePdfMarkupAnnotationToUnitBox,
@@ -36,7 +36,7 @@ import {
   normBoxHeight,
   normBoxIntersectionArea,
   normBoxWidth,
-  unionPdfBoxes,
+  unionPdfBoxes, tightPdfRectFromPoints,
   type PdfAnnotationBox,
   type PdfAnnotationPoint
 } from "./pdf_annotation_geometry.js";
@@ -44,6 +44,9 @@ import {
 export { extractSheetCandidatesFromFilename, extractSheetCandidatesFromText } from "./sheet_candidate_classifier.js";
 export type { RedlineSheetCandidate } from "./sheet_candidate_classifier.js";
 export { testOnlyNormalizePdfRectToUnit as __testOnlyNormalizePdfRectToUnit } from "./pdf_annotation_geometry.js";
+
+function resolvePdfAnnotationGeometry(subtype: string, annotation: any): { rect?: [number, number, number, number]; vertices: PdfAnnotationPoint[]; vector: boolean } { const vector = subtype === "Line" || subtype === "PolyLine" || subtype === "Polygon", strictVertices = vector ? extractPdfVectorPointSequence(subtype, annotation?.vertices ?? annotation?.lineCoordinates) : [], vertices = vector ? strictVertices : extractPdfPointSequence(annotation?.vertices ?? annotation?.lineCoordinates ?? annotation?.quadPoints), fallback = Array.isArray(annotation?.rect) && annotation.rect.length >= 4 ? [Number(annotation.rect[0]), Number(annotation.rect[1]), Number(annotation.rect[2]), Number(annotation.rect[3])] as [number, number, number, number] : undefined, rect = tightPdfRectFromPoints(strictVertices); return { vertices, vector, ...(rect ? { rect } : fallback && fallback.every(Number.isFinite) ? { rect: fallback } : {}) }; }
+export function __testOnlyResolvePdfAnnotationGeometry(args: { subtype: string; annotation: unknown }): { rect?: [number, number, number, number]; vertices: PdfAnnotationPoint[]; vector: boolean } { return resolvePdfAnnotationGeometry(args.subtype, args.annotation); }
 
 export type RedlineAnalyzeRequest = {
   file_path: string;
@@ -1939,11 +1942,8 @@ async function analyzePdf(args: {
             "";
           const isDeleteLike = isDeleteLikeAnnotation({ subtype, contents });
           if (isDeleteLike) deleteLikeTotal++;
-          const rect = Array.isArray(a?.rect) && a.rect.length >= 4
-            ? [Number(a.rect[0]), Number(a.rect[1]), Number(a.rect[2]), Number(a.rect[3])] as [number, number, number, number]
-            : undefined;
-          const verticesPdf = extractPdfPointSequence(a?.vertices ?? a?.lineCoordinates ?? a?.quadPoints);
-          const verticesNorm = coordMapper && verticesPdf.length > 0 ? mapPdfPointsToUnit(verticesPdf, coordMapper) : [];
+          const geometry = resolvePdfAnnotationGeometry(subtype, a), rect = geometry.rect, verticesPdf = geometry.vertices;
+          const verticesNorm = coordMapper && verticesPdf.length > 0 ? geometry.vector ? mapPdfVectorPointsToUnit(verticesPdf, coordMapper) : mapPdfPointsToUnit(verticesPdf, coordMapper) : [];
           const inkListsPdf = subtype === "Ink" ? extractInkListsPdf(a?.inkLists) : [];
           const inkListsNorm = coordMapper && inkListsPdf.length > 0 ? mapInkListsToUnit(inkListsPdf, coordMapper) : [];
           const normBoxes =
