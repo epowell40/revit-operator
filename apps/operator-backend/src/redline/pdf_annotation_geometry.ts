@@ -155,6 +155,49 @@ export function extractPdfPointSequence(raw: unknown): PdfAnnotationPoint[] {
   return points.slice(0, 2000);
 }
 
+const vectorMinimumPoints: Record<string, number> = { Line: 2, PolyLine: 2, Polygon: 3 };
+
+/** Strict vector-only coordinates: malformed arrays are rejected whole rather than filtered/clamped. */
+export function extractPdfVectorPointSequence(subtype: unknown, raw: unknown): PdfAnnotationPoint[] {
+  const minimum = typeof subtype === "string" ? vectorMinimumPoints[subtype] : undefined;
+  if (!minimum || !raw || typeof raw !== "object") return [];
+  const length = toFiniteNumber((raw as any).length);
+  if (length === null || !Number.isSafeInteger(length) || length < minimum * 2 || length > 4_000 || length % 2 !== 0) return [];
+  const points: PdfAnnotationPoint[] = [];
+  for (let index = 0; index < length; index += 2) {
+    const x = toFiniteNumber((raw as any)[index]), y = toFiniteNumber((raw as any)[index + 1]);
+    if (x === null || y === null) return [];
+    points.push({ x, y });
+  }
+  return points.length >= minimum ? points : [];
+}
+
+export function tightPdfRectFromPoints(points: readonly PdfAnnotationPoint[]): [number, number, number, number] | null {
+  if (points.length < 2 || points.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) return null;
+  const xs = points.map((point) => point.x), ys = points.map((point) => point.y);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+
+export function mapPdfVectorPointsToUnit(points: readonly PdfAnnotationPoint[], mapper: PdfAnnotationCoordinateMapper): PdfAnnotationPoint[] {
+  if (mapper.width <= 0 || mapper.height <= 0) return [];
+  const output: PdfAnnotationPoint[] = [];
+  for (const point of points) {
+    const mapped = mapper.mapPoint(point.x, point.y);
+    if (!mapped || !Number.isFinite(mapped.x) || !Number.isFinite(mapped.y) || mapped.x < 0 || mapped.x > mapper.width || mapped.y < 0 || mapped.y > mapper.height) return [];
+    output.push({ x: mapped.x / mapper.width, y: mapped.y / mapper.height });
+  }
+  return output;
+}
+
+function unitBoxFromPoints(points: readonly PdfAnnotationPoint[], mapper: PdfAnnotationCoordinateMapper): PdfAnnotationBox | null {
+  const rect = tightPdfRectFromPoints(points);
+  if (!rect || rect[2] < rect[0] || rect[3] < rect[1]) return null;
+  const halfX = 0.5 / mapper.width, halfY = 0.5 / mapper.height;
+  const minX = rect[2] === rect[0] ? Math.max(0, rect[0] - halfX) : rect[0], maxX = rect[2] === rect[0] ? Math.min(1, rect[2] + halfX) : rect[2];
+  const minY = rect[3] === rect[1] ? Math.max(0, rect[1] - halfY) : rect[1], maxY = rect[3] === rect[1] ? Math.min(1, rect[3] + halfY) : rect[3];
+  return maxX <= minX || maxY <= minY ? null : { minX, minY, maxX, maxY };
+}
+
 export function mapPdfPointsToUnit(points: PdfAnnotationPoint[], mapper: PdfAnnotationCoordinateMapper): PdfAnnotationPoint[] {
   if (mapper.width <= 0 || mapper.height <= 0) return [];
   const output: PdfAnnotationPoint[] = [];
@@ -245,6 +288,8 @@ export function normalizePdfMarkupAnnotationToUnitBox(args: {
     const inkBox = unionPdfBoxes(normalizeInkListsToUnitBoxes(args.annotation?.inkLists, args.mapper));
     if (inkBox) return inkBox;
   }
+  const vertices = extractPdfVectorPointSequence(subtype, args.annotation?.vertices ?? args.annotation?.lineCoordinates);
+  if (vertices.length > 0) return unitBoxFromPoints(mapPdfVectorPointsToUnit(vertices, args.mapper), args.mapper);
   const rect = Array.isArray(args.annotation?.rect) && args.annotation.rect.length >= 4
     ? args.annotation.rect.slice(0, 4).map(Number) as [number, number, number, number]
     : null;

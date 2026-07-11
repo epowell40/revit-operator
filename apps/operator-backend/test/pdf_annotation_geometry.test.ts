@@ -5,12 +5,15 @@ import {
   clampPixelBoxToImage,
   extractInkListsPdf,
   extractPdfPointSequence,
+  extractPdfVectorPointSequence,
   mapPdfPointsToUnit,
+  mapPdfVectorPointsToUnit,
   normalizedRectToPixelBox,
   normalizeInkListsToUnitBoxes,
   normalizePdfMarkupAnnotationToUnitBox,
   normBoxDistance,
   normBoxIntersectionArea,
+  tightPdfRectFromPoints,
   testOnlyNormalizePdfRectToUnit,
   unionPdfBoxes
 } from "../src/redline/pdf_annotation_geometry.js";
@@ -65,6 +68,28 @@ test("PDF geometry ignores reply-note markers and uses ink before fallback rects
     mapper: mapper!
   });
   assert.deepEqual(ink, { minX: 0.1, minY: 0.7, maxX: 0.2, maxY: 0.9 });
+});
+
+test("PDF geometry uses strict vector vertices over corrupted negative-MediaBox rect sentinels", () => {
+  const mapper = buildPdfAnnotationCoordinateMapper({ viewport: { width: 3024.24, height: 2160 }, pageView: [-1512.12, -1080, 1512.12, 1080] });
+  assert.ok(mapper);
+  const vertices = [-700, -520, -410, -55];
+  assert.deepEqual(extractPdfVectorPointSequence("PolyLine", vertices), [{ x: -700, y: -520 }, { x: -410, y: -55 }]);
+  assert.deepEqual(tightPdfRectFromPoints(extractPdfVectorPointSequence("PolyLine", vertices)), [-700, -520, -410, -55]);
+  const box = normalizePdfMarkupAnnotationToUnitBox({ annotation: { subtype: "PolyLine", rect: [-700, -520, Number.MIN_VALUE, Number.MIN_VALUE], vertices }, mapper: mapper! });
+  assert.ok(box); assert.ok(Math.abs(box!.minX - 0.2685368886) < 1e-8); assert.ok(Math.abs(box!.maxX - 0.3644287490) < 1e-8); assert.ok(Math.abs(box!.minY - 0.525462963) < 1e-8); assert.ok(Math.abs(box!.maxY - 0.740740741) < 1e-8);
+});
+
+test("PDF vector geometry enforces subtype minimums, positive-coordinate bounds, and raw-rect fallback", () => {
+  const mapper = buildPdfAnnotationCoordinateMapper({ viewport: { width: 100, height: 100 }, pageView: [0, 0, 100, 100] });
+  assert.ok(mapper);
+  assert.equal(extractPdfVectorPointSequence("Line", [10, 20]).length, 0);
+  assert.deepEqual(extractPdfVectorPointSequence("Line", [10, 20, 30, 40]), [{ x: 10, y: 20 }, { x: 30, y: 40 }]);
+  assert.equal(extractPdfVectorPointSequence("Polygon", [10, 10, 20, 20]).length, 0);
+  assert.deepEqual(mapPdfVectorPointsToUnit(extractPdfVectorPointSequence("Polygon", [10, 10, 30, 30, 20, 50]), mapper!), [{ x: 0.1, y: 0.9 }, { x: 0.3, y: 0.7 }, { x: 0.2, y: 0.5 }]);
+  assert.deepEqual(normalizePdfMarkupAnnotationToUnitBox({ annotation: { subtype: "Polygon", rect: [0, 0, 100, 100], vertices: [10, 10, 30, 30, 20, 50] }, mapper: mapper! }), { minX: 0.1, minY: 0.5, maxX: 0.3, maxY: 0.9 });
+  assert.deepEqual(normalizePdfMarkupAnnotationToUnitBox({ annotation: { subtype: "PolyLine", rect: [10, 20, 30, 40], vertices: [10, 20, 30] }, mapper: mapper! }), { minX: 0.1, minY: 0.6, maxX: 0.3, maxY: 0.8 });
+  assert.equal(extractPdfVectorPointSequence("PolyLine", [10, 20, Number.NaN, 30]).length, 0);
 });
 
 test("PDF geometry converts normalized boxes to bounded pixel regions", () => {
