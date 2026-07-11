@@ -1,9 +1,11 @@
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { ensureWorkspaceLayout, resolveExistingFileUnderWorkspace, resolveFileUnderWorkspace } from "../workspace.js";
 import { analyzeRedlineFile } from "../redline/redline_analyzer.js";
+import { tryCreateRedlineAnalyzeEvidence } from "../redline/redline_analyze_evidence.js";
 import { mapSheetRegions } from "../redline/sheet_region_mapper.js";
 import { orientRedlineFile } from "../redline/redline_orienter.js";
 import { analyzeRedlinePackageWithGemini } from "../vision/gemini_redline_package.js";
@@ -407,7 +409,7 @@ export function maxWorkbenchActions(): number {
   return toInt(process.env.OPERATOR_WORKBENCH_MAX_ACTIONS, 6, 1, 20);
 }
 
-export async function executeWorkbenchActions(actions: WorkbenchAction[]): Promise<WorkbenchActionResult[]> {
+export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: { createRedlineAnalyzeEvidence?: typeof tryCreateRedlineAnalyzeEvidence } = {}): Promise<WorkbenchActionResult[]> {
   const results: WorkbenchActionResult[] = [];
   const fullWorkbenchEnabled = workbenchEnabled();
   const redlineOnlyEnabled = !fullWorkbenchEnabled && safeRedlineWorkbenchEnabled();
@@ -501,6 +503,7 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[]): Promi
           timeout_ms: timeoutMs,
           baseline_file_path: typeof action.baseline_file_path === "string" ? action.baseline_file_path : undefined
         });
+        let aec_intent_evidence; try { aec_intent_evidence = analyzed.ok ? await (deps.createRedlineAnalyzeEvidence ?? tryCreateRedlineAnalyzeEvidence)(analyzed, { id: randomUUID(), created_at: new Date().toISOString() }) : undefined; } catch { aec_intent_evidence = undefined; }
         results.push({
           index: i + 1,
           type: action.type,
@@ -510,6 +513,7 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[]): Promi
             : `Redline analysis failed: ${analyzed.warning ?? "unknown error"}`,
           details: {
             ...(analyzed as unknown as Record<string, unknown>),
+            ...(aec_intent_evidence ? { aec_intent_evidence } : {}),
             file_path: fp,
             request: {
               file_path: fp,
