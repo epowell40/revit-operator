@@ -51,6 +51,7 @@ import {
   type DirectBridgeResult
 } from "./direct_revit_bridge.js";
 import { formatWorkbenchResultsForPrompt } from "./workbench_prompt_formatter.js";
+import { groundInitialRedlineWorkbenchResults } from "./redline_target_grounding_runtime.js";
 
 type OpenAiDecision = {
   assistant_message: string;
@@ -16977,6 +16978,7 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     }
 
     let wb = attachArtifactSharesToWorkbenchResults(await executeWorkbenchActions(wbActions));
+    if (opts.initialPreflight) wb = await groundInitialRedlineWorkbenchResults(req.session_id, wb);
     const autoGemini = maybeBuildAutoGeminiAction(req.session_id, wbActions, wb);
     if (autoGemini) {
       try {
