@@ -9,6 +9,7 @@ using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
 using RevitBridge.Logic.Handlers.Core;
+using RevitBridge.Logic.Handlers.MEP;
 
 namespace RevitBridge.Logic.Handlers
 {
@@ -154,8 +155,57 @@ namespace RevitBridge.Logic.Handlers
             }
             else
             {
-                candidates = new FilteredElementCollector(doc).WhereElementIsNotElementType().ToElements().ToList();
-                warnings.Add("No elementIds provided; scanned full model scope.");
+                var collector = new FilteredElementCollector(doc).WhereElementIsNotElementType();
+                var nativePredicates = new List<string>();
+
+                if (categorySet.Count > 0)
+                {
+                    var builtInCategories = new List<BuiltInCategory>();
+                    var unknownCategories = new List<string>();
+                    BuiltInCategoryTokenUtil.ParseMany(categorySet, builtInCategories, unknownCategories);
+                    builtInCategories = builtInCategories.Distinct().ToList();
+                    if (builtInCategories.Count == 1)
+                    {
+                        collector.OfCategory(builtInCategories[0]);
+                        nativePredicates.Add("category");
+                    }
+                    else if (builtInCategories.Count > 1)
+                    {
+                        collector.WherePasses(new ElementMulticategoryFilter(builtInCategories));
+                        nativePredicates.Add("categories");
+                    }
+                    if (unknownCategories.Count > 0)
+                    {
+                        warnings.Add($"Unknown categories rejected from native collection: {string.Join(", ", unknownCategories)}.");
+                        if (builtInCategories.Count == 0)
+                        {
+                            return Task.FromResult<object>(new { status = "Ok", count = 0, truncated = false, items = new List<object>(), warnings });
+                        }
+                    }
+                }
+
+                if (levelSet.Count > 0)
+                {
+                    var levelIds = new FilteredElementCollector(doc)
+                        .OfClass(typeof(Level))
+                        .Cast<Level>()
+                        .Where(level => levelSet.Contains(level.Name))
+                        .Select(level => level.Id)
+                        .ToList();
+                    if (levelIds.Count == 0)
+                    {
+                        warnings.Add($"No exact levels resolved: {string.Join(", ", levelSet)}.");
+                        return Task.FromResult<object>(new { status = "Ok", count = 0, truncated = false, items = new List<object>(), warnings });
+                    }
+                    if (levelIds.Count == 1) collector.WherePasses(new ElementLevelFilter(levelIds[0]));
+                    else collector.WherePasses(new LogicalOrFilter(levelIds.Select(id => (ElementFilter)new ElementLevelFilter(id)).ToList()));
+                    nativePredicates.Add("level");
+                }
+
+                candidates = collector.ToElements().ToList();
+                warnings.Add(nativePredicates.Count > 0
+                    ? $"Native collector predicates applied: {string.Join(", ", nativePredicates)}."
+                    : "No elementIds or native category/level predicates provided; scanned full model scope.");
             }
 
             Element nearElement = null;
@@ -249,6 +299,7 @@ namespace RevitBridge.Logic.Handlers
             var levelName = SpatialIntentUtils.GetLevelName(doc, e);
             var room = SpatialIntentUtils.GetSpatialElement(doc, e);
             var host = (e as FamilyInstance)?.Host;
+            var bestView = ResolveBestView(doc, app.ActiveUIDocument?.ActiveView, e, levelName);
             var searchPoint =
                 p.pointXyz != null && p.pointXyz.Length >= 3
                     ? new XYZ(p.pointXyz[0], p.pointXyz[1], p.pointXyz[2])
@@ -359,6 +410,8 @@ namespace RevitBridge.Logic.Handlers
                 typeId,
                 typeName,
                 familyName,
+                systemName = MepSystemUtil.TryGetSystemName(e),
+                bestView,
                 room = room == null ? null : new
                 {
                     number = SpatialIntentUtils.GetSpatialNumber(room),
@@ -462,6 +515,43 @@ namespace RevitBridge.Logic.Handlers
                     }
                 }
             });
+        }
+
+        private static object ResolveBestView(Document doc, View activeView, Element element, string levelName)
+        {
+            bool VisibleIn(View view)
+            {
+                if (view == null || view.IsTemplate) return false;
+                try { return element.get_BoundingBox(view) != null; }
+                catch { return false; }
+            }
+
+            if (VisibleIn(activeView))
+            {
+                return new
+                {
+                    id = ElementIdCompat.GetValue(activeView.Id),
+                    name = activeView.Name,
+                    viewType = activeView.ViewType.ToString(),
+                    reason = "active_view_visible"
+                };
+            }
+
+            var levelPlan = new FilteredElementCollector(doc)
+                .OfClass(typeof(ViewPlan))
+                .Cast<ViewPlan>()
+                .Where(view => !view.IsTemplate && string.Equals(view.GenLevel?.Name ?? "", levelName ?? "", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(view => view.ViewType == ViewType.EngineeringPlan ? 0 : view.ViewType == ViewType.FloorPlan ? 1 : 2)
+                .ThenBy(view => view.Name, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault(VisibleIn);
+            if (levelPlan == null) return null;
+            return new
+            {
+                id = ElementIdCompat.GetValue(levelPlan.Id),
+                name = levelPlan.Name,
+                viewType = levelPlan.ViewType.ToString(),
+                reason = "same_level_visible_plan"
+            };
         }
     }
 
