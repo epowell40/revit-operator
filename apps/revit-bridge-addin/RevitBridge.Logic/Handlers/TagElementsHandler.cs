@@ -320,14 +320,17 @@ namespace RevitBridge.Logic.Handlers
                                 clearance,
                                 maxRepairAttempts);
                             geometryOutcomes.Add(outcome);
-                            if (string.Equals(outcome.Status, "no_geometry", StringComparison.OrdinalIgnoreCase))
+                            var hasMeasurableGeometry = outcome.TagBounds != null && !string.Equals(outcome.Status, "no_geometry", StringComparison.OrdinalIgnoreCase);
+                            if (!TagWorkPolicy.KeepCreatedTag(geometryAware: true, hasMeasurableGeometry, outcome.CollisionFree))
                             {
                                 doc.Delete(tag.Id);
                                 errors.Add(new
                                 {
                                     elementId,
-                                    failureKind = "tag_no_geometry",
-                                    error = "The selected tag type produced no visible/measurable tag-head geometry. The test tag was removed."
+                                    failureKind = hasMeasurableGeometry ? "tag_unresolved_collision" : "tag_no_geometry",
+                                    error = hasMeasurableGeometry
+                                        ? $"No collision-free tag-head position remained after {outcome.Attempts} bounded attempts. The unresolved tag was removed."
+                                        : "The selected tag type produced no visible/measurable tag-head geometry. The test tag was removed."
                                 });
                                 continue;
                             }
