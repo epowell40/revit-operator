@@ -5357,7 +5357,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/tag-elements", StringComparison.OrdinalIgnoreCase))
             {
-                // { viewId?|viewName?, elementIds?|categoryNames?, categoryTagTypeMap?, tagTypeId?|tagTypeName?|tagFamilyName?, onlyUntagged?, addLeader?, orientation?, offsetX?, offsetY?, placementMode?, placementProfile?, tagWidthPaperInches?, tagHeightPaperInches?, clearancePaperInches?, maxRepairAttempts?, autoLoadTagFamily?, tagFamilySourceProjectPath?, tagFamilySourceCategory?, tagFamilySourceFamilyName?, tagFamilySourceTypeName?, generatedTagFamilyName?, inspectTagFamilyElements?, max?, dryRun? }
+                // { viewId?|viewName?, elementIds?|categoryNames?, categoryTagTypeMap?, tagTypeId?|tagTypeName?|tagFamilyName?, onlyUntagged?, addLeader?, orientation?, offsetX?, offsetY?, placementMode?, placementProfile?, tagWidthPaperInches?, tagHeightPaperInches?, clearancePaperInches?, maxRepairAttempts?, autoLoadTagFamily?, tagFamilySourceProjectPath?, tagFamilySourceCategory?, tagFamilySourceFamilyName?, tagFamilySourceTypeName?, generatedTagFamilyName?, generatedTagContentProfile?, inspectTagFamilyElements?, max?, dryRun? }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "tag-elements body must be an object.";
@@ -5387,6 +5387,7 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalString(obj.Value, "tagFamilySourceFamilyName", maxLen: 200, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "tagFamilySourceTypeName", maxLen: 200, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "generatedTagFamilyName", maxLen: 120, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "generatedTagContentProfile", maxLen: 32, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "inspectTagFamilyElements", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
 
@@ -5406,6 +5407,16 @@ namespace RevitBridge.Operator
                     if (value.Length > 0 && value != "auto" && value != "mep" && value != "electrical" && value != "architectural")
                     {
                         error = "tag-elements.placementProfile must be auto|mep|electrical|architectural.";
+                        return false;
+                    }
+                }
+
+                if (obj.Value.TryGetProperty("generatedTagContentProfile", out var contentProfile) && contentProfile.ValueKind == JsonValueKind.String)
+                {
+                    var value = (contentProfile.GetString() ?? "").Trim().ToLowerInvariant();
+                    if (value.Length > 0 && value != "none" && value != "airflow_only")
+                    {
+                        error = "tag-elements.generatedTagContentProfile must be none|airflow_only.";
                         return false;
                     }
                 }
