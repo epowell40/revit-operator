@@ -52,3 +52,46 @@ test("room count runtime reports once from scoped room contents", async () => {
   assert.match(done.response?.assistant_message ?? "", /no model changes/i);
   assert.deepEqual(done.response?.aec_query_receipt, { schema: "revit-operator.aec-query-receipt.v1", terminal: true, status: "complete", workflow_id: "query.room_contents", bounded: true, broadened: false });
 });
+
+test("scoped list returns bounded element identity and location details instead of count-only prose", async () => {
+  __testOnlyClearAecQueryStates();
+  const value = ahu();
+  value.operation = "list";
+  value.subject = { kind: "category", semantic_class: "air_terminal", terms: ["air terminals"], categories: ["OST_DuctTerminal"], family_name: null, type_name: null, system_name: null, identifiers: [] };
+  value.scope = { ...value.scope, kind: "view", views: [{ id: 44, name: "L4 HVAC" }] };
+  value.outputs = ["summary", "element_ids", "spatial_context"];
+  const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+  const first = await maybeRunAecSemanticQuery(request("list-view"), interpreter);
+  assert.deepEqual(first.response?.actions.map(action => action.path), ["/revit/find-elements"]);
+  const second = await maybeRunAecSemanticQuery(request("list-view", [{ action_id: "aec-query-view-elements", method: "POST", path: "/revit/find-elements", status: "done", result_json: { elementIds: [101, 102], items: [], truncated: false } }]), interpreter);
+  assert.deepEqual(second.response?.actions, [{ action_id: "aec-query-scoped-summaries", method: "POST", path: "/revit/get-element-summary", body: { elementIds: [101, 102] } }]);
+  const done = await maybeRunAecSemanticQuery(request("list-view", [{ action_id: "aec-query-scoped-summaries", method: "POST", path: "/revit/get-element-summary", status: "done", result_json: [{ id: 101, name: "Supply Diffuser", category: "Air Terminals", found: true }, { id: 102, name: "Return Grille", category: "Air Terminals", found: true }] }]), interpreter);
+  assert.match(done.response?.assistant_message ?? "", /id 101 — Supply Diffuser — Air Terminals/);
+  assert.match(done.response?.assistant_message ?? "", /id 102 — Return Grille — Air Terminals/);
+  assert.doesNotMatch(done.response?.assistant_message ?? "", /\[object Object\]/);
+});
+
+test("exact focus resolves identity and context before one native view activation", async () => {
+  __testOnlyClearAecQueryStates();
+  const value = ahu(); value.operation = "focus"; value.execution.max_primary_actions = 3;
+  const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+  const first = await maybeRunAecSemanticQuery(request("focus"), interpreter);
+  assert.deepEqual(first.response?.actions.map(action => action.path), ["/revit/find-elements-by-parameter"]);
+  const second = await maybeRunAecSemanticQuery(request("focus", [{ action_id: "aec-query-exact-identifier", method: "POST", path: "/revit/find-elements-by-parameter", status: "done", result_json: { elements: [{ id: 123, value: "AHU-1" }] } }]), interpreter);
+  assert.deepEqual(second.response?.actions.map(action => action.path), ["/revit/get-placement-context"]);
+  const third = await maybeRunAecSemanticQuery(request("focus", [{ action_id: "aec-query-exact-context", method: "POST", path: "/revit/get-placement-context", status: "done", result_json: { elementId: 123, bestView: { id: 44, name: "L4 HVAC" } } }]), interpreter);
+  assert.deepEqual(third.response?.actions, [{ action_id: "aec-query-exact-focus", method: "POST", path: "/revit/activate-view", body: { viewId: 44, showElementIds: [123] } }]);
+  const done = await maybeRunAecSemanticQuery(request("focus", [{ action_id: "aec-query-exact-focus", method: "POST", path: "/revit/activate-view", status: "done", result_json: { ok: true, activeViewId: 44, activeViewName: "L4 HVAC", shownElementIds: [123] } }]), interpreter);
+  assert.equal(done.response?.assistant_message, "Focused AHU-1 in L4 HVAC. No model elements were changed.");
+  assert.equal(done.response?.aec_query_receipt?.status, "found");
+});
+
+test("unsupported semantic query terminates authoritatively instead of falling through and broadening", async () => {
+  __testOnlyClearAecQueryStates();
+  const value = ahu(); value.operation = "compare";
+  const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+  const done = await maybeRunAecSemanticQuery(request("blocked-compare"), interpreter);
+  assert.equal(done.response?.actions.length, 0);
+  assert.match(done.response?.assistant_message ?? "", /without broadening or guessing/);
+  assert.deepEqual(done.response?.aec_query_receipt, { schema: "revit-operator.aec-query-receipt.v1", terminal: true, status: "failed", workflow_id: "query.blocked", bounded: true, broadened: false });
+});
