@@ -12,6 +12,7 @@ import {
   clearAgentGoal,
   completeGoalAfterAudit,
   createGoal,
+  formatActiveGoalContext,
   getActiveGoalForSession,
   markAgentGoalBlocked,
   markAgentGoalComplete,
@@ -86,6 +87,64 @@ test("goal logs append action evidence and validation entries", () => {
     assert.deepEqual(afterEvidence.artifacts, ["artifacts/reports/rooms.json"]);
     const afterValidation = appendGoalValidation(goal.id, { summary: "Room list count matches expected scope." });
     assert.equal(afterValidation.validation_log.length, 1);
+  });
+});
+
+test("goal work package persists bounded work items and assumptions across progress turns", () => {
+  withWorkspace(() => {
+    const goal = createGoal({
+      title: "Level 4 power plans",
+      objective: "Complete the bounded Level 4 power-plan package.",
+      acceptance_criteria: ["Every scoped view is inspected."],
+      related_session_id: "session-package",
+      status: "active",
+      work_items: [
+        { id: "resolve-views", title: "Resolve Level 4 power views", status: "complete", scope: { kind: "level", levels: ["L4"] }, planned_actions: ["list views"] },
+        { id: "inspect-views", title: "Inspect resolved power views", status: "ready", depends_on: ["resolve-views"], planned_actions: ["bounded view inventory"] }
+      ],
+      assumptions: [{ id: "discipline", statement: "Use electrical power-plan views only.", status: "proposed", basis: "user objective" }]
+    });
+    assert.equal(goal.work_items.length, 2);
+    assert.equal(goal.assumptions[0].status, "proposed");
+
+    const progressed = appendGoalProgress("session-package", {
+      summary: "Inspected the resolved views.",
+      work_item: { id: "inspect-views", title: "Inspect resolved power views", status: "complete", depends_on: ["resolve-views"], evidence_refs: ["step:12"], result_summary: "Three views inspected." },
+      assumption: { id: "discipline", statement: "Use electrical power-plan views only.", status: "accepted", basis: "resolved view metadata", evidence_refs: ["step:11"] }
+    });
+    assert.equal(progressed.work_items.find(item => item.id === "inspect-views")?.status, "complete");
+    assert.equal(progressed.assumptions[0].status, "accepted");
+    const context = formatActiveGoalContext(progressed);
+    assert.match(context, /inspect-views \[complete\] Inspect resolved power views/);
+    assert.match(context, /discipline \[accepted\] Use electrical power-plan views only/);
+  });
+});
+
+test("completion audit refuses passing criteria while typed work items remain incomplete", () => {
+  withWorkspace(() => {
+    const goal = createGoal({
+      title: "Sheet package",
+      objective: "Prepare two sheets.",
+      acceptance_criteria: ["Sheet evidence is recorded."],
+      status: "active",
+      work_items: [{ id: "sheet-a", title: "Prepare sheet E401", status: "ready" }]
+    });
+    const first = requestGoalCompletionAudit(goal.id, { criteria_results: [{ criterion: "Sheet evidence is recorded.", status: "pass", evidence_refs: ["e:1"] }] });
+    assert.equal(first.completion_audit?.complete, false);
+    assert.deepEqual(first.completion_audit?.remaining_work, ["Prepare sheet E401"]);
+    updateGoal(goal.id, { work_items: [{ id: "sheet-a", title: "Prepare sheet E401", status: "complete", evidence_refs: ["e:1"] }] });
+    const second = requestGoalCompletionAudit(goal.id, { criteria_results: [{ criterion: "Sheet evidence is recorded.", status: "pass", evidence_refs: ["e:1"] }] });
+    assert.equal(second.completion_audit?.complete, true);
+  });
+});
+
+test("goal work package rejects malformed and duplicate bounded entries", () => {
+  withWorkspace(() => {
+    const base = { title: "Bounded package", objective: "Validate package bounds.", acceptance_criteria: ["Package is valid."] };
+    assert.throws(() => createGoal({ ...base, work_items: {} }), /work_items must be an array/);
+    assert.throws(() => createGoal({ ...base, work_items: [{ id: "same", title: "A" }, { id: "same", title: "B" }] }), /Duplicate work_items id/);
+    assert.throws(() => createGoal({ ...base, assumptions: [{ id: "a", statement: "" }] }), /statement is required/);
+    assert.throws(() => createGoal({ ...base, work_items: new Array(201).fill(null).map((_, i) => ({ id: `w-${i}`, title: `Work ${i}` })) }), /at most 200/);
   });
 });
 
