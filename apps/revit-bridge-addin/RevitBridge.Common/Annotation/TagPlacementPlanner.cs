@@ -85,7 +85,7 @@ namespace RevitBridge.Common.Annotation
             ValidatePositiveFinite(request.TagHeight, nameof(request.TagHeight));
             ValidateNonNegativeFinite(request.Clearance, nameof(request.Clearance));
 
-            var maxCandidates = Math.Max(1, Math.Min(64, request.MaxCandidates));
+            var maxCandidates = Math.Max(1, Math.Min(128, request.MaxCandidates));
             var obstacles = (request.Obstacles ?? Array.Empty<TagRect2>()).Where(x => x != null).ToList();
             var directions = DirectionsFor(request.Profile);
             var candidates = new List<TagPlacementCandidate>();
@@ -94,11 +94,11 @@ namespace RevitBridge.Common.Annotation
             var xDistance = request.Target.Width * 0.5 + halfWidth + request.Clearance;
             var yDistance = request.Target.Height * 0.5 + halfHeight + request.Clearance;
 
-            foreach (var direction in directions)
+            foreach (var lane in new[] { 0.0, 1.0, -1.0, 2.0, -2.0, 3.0, -3.0, 4.0, -4.0 })
             {
-                foreach (var distanceScale in new[] { 1.0, 1.75, 2.5 })
+                foreach (var distanceScale in new[] { 1.0, 1.75, 2.5, 3.5, 4.75 })
                 {
-                    foreach (var lane in new[] { 0.0, 1.0, -1.0, 2.0, -2.0 })
+                    foreach (var direction in directions)
                     {
                         if (candidates.Count >= maxCandidates) break;
                         var laneStep = Math.Max(request.TagHeight, request.Clearance * 2.0);
@@ -126,7 +126,7 @@ namespace RevitBridge.Common.Annotation
                             Bounds = bounds,
                             CollisionCount = collisionCount,
                             CollisionArea = collisionArea,
-                            Score = collisionCount * 1000000.0 + collisionArea * 1000.0 + direction.Penalty * 1000.0 + (distanceScale - 1.0) * 25.0 + Math.Abs(lane) * 10.0 + distance
+                            Score = collisionCount * 1000000.0 + collisionArea * 1000.0 + direction.Penalty * 300.0 + Math.Pow(distanceScale - 1.0, 2.0) * 10.0 + Math.Abs(lane) * 10.0 + distance
                         });
                     }
                     if (candidates.Count >= maxCandidates) break;

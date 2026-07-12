@@ -87,7 +87,26 @@ namespace RevitBridge.Common.Tests
             {
                 Target = Rect(0, 0, 1, 1), TagWidth = 1, TagHeight = 1, Clearance = 0.1, MaxCandidates = 1000
             });
-            Assert.InRange(ranked.Count, 1, 64);
+            Assert.InRange(ranked.Count, 1, 128);
+        }
+
+        [Fact]
+        public void EscapesDenseNearFieldWithBoundedFarCandidate()
+        {
+            var target = Rect(-0.5, -0.5, 0.5, 0.5);
+            var denseNearField = Rect(-3.4, -3.4, 3.4, 3.4);
+            var candidate = TagPlacementPlanner.RankCandidates(new TagPlacementRequest
+            {
+                Target = target,
+                Obstacles = new[] { target, denseNearField },
+                TagWidth = 1,
+                TagHeight = 1,
+                Clearance = 0.1,
+                Profile = "mep",
+                MaxCandidates = 128
+            }).First();
+            Assert.True(candidate.CollisionFree);
+            Assert.True(System.Math.Abs(candidate.HeadX) > 3.4 || System.Math.Abs(candidate.HeadY) > 3.4);
         }
 
         private static IReadOnlyList<TagPlacementCandidate> Plan(TagRect2 target, IReadOnlyList<TagRect2> obstacles, string profile = "mep") =>

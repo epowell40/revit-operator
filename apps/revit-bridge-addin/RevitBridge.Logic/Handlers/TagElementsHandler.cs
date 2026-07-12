@@ -52,6 +52,7 @@ namespace RevitBridge.Logic.Handlers
             public string? tagFamilySourceTypeName { get; set; }
             public string? generatedTagFamilyName { get; set; }
             public string? generatedTagContentProfile { get; set; } // none|airflow_only
+            public bool? ensureTagCategoryVisible { get; set; }
             public bool? inspectTagFamilyElements { get; set; }
             public int? max { get; set; }
             public bool? dryRun { get; set; }
@@ -103,6 +104,21 @@ namespace RevitBridge.Logic.Handlers
             public string ContentSanitizationStatus { get; set; } = "not_requested";
             public List<TagFamilyTextElementReceipt> KeptTextElements { get; set; } = new List<TagFamilyTextElementReceipt>();
             public List<TagFamilyTextElementReceipt> RemovedTextElements { get; set; } = new List<TagFamilyTextElementReceipt>();
+        }
+
+        private sealed class TagVisibilityOutcome
+        {
+            public string Status { get; set; } = "not_requested";
+            public bool Requested { get; set; }
+            public long? CategoryId { get; set; }
+            public string? CategoryName { get; set; }
+            public long? OwnerViewId { get; set; }
+            public string? OwnerViewName { get; set; }
+            public string? OwnerKind { get; set; }
+            public bool WasHidden { get; set; }
+            public bool IsHidden { get; set; }
+            public bool Changed { get; set; }
+            public string? Error { get; set; }
         }
 
         private sealed class TagFamilyTextElementReceipt
@@ -171,7 +187,9 @@ namespace RevitBridge.Logic.Handlers
             var tagWidth = ResolvePaperInches(p.tagWidthPaperInches, 0.60, 0.05, 4.0) * viewScale / 12.0;
             var tagHeight = ResolvePaperInches(p.tagHeightPaperInches, 0.18, 0.05, 2.0) * viewScale / 12.0;
             var clearance = ResolvePaperInches(p.clearancePaperInches, 0.08, 0.0, 1.0) * viewScale / 12.0;
-            var maxRepairAttempts = Math.Max(1, Math.Min(64, p.maxRepairAttempts ?? 32));
+            var maxRepairAttempts = Math.Max(1, Math.Min(128, p.maxRepairAttempts ?? 128));
+            var ensureTagCategoryVisible = p.ensureTagCategoryVisible ?? geometryAware;
+            var targetTagCategory = ResolveCommonTargetTagCategory(targets);
 
             var existingTagged = onlyUntagged
                 ? CollectTaggedElementIdsOnView(doc, view.Id)
@@ -202,6 +220,7 @@ namespace RevitBridge.Logic.Handlers
             var geometryPlans = geometryAware
                 ? BuildGeometryPlans(doc, view, targets, existingTagged, onlyUntagged, tagWidth, tagHeight, clearance, placementProfile, maxRepairAttempts)
                 : new Dictionary<long, GeometryPlacementPlan>();
+            var tagVisibility = EvaluateTagVisibility(doc, view, targetTagCategory, ensureTagCategoryVisible, dryRun: true);
 
             if (dryRun)
             {
@@ -216,6 +235,7 @@ namespace RevitBridge.Logic.Handlers
                     unresolvedCategories,
                     mappingWarnings,
                     tagFamily = TagFamilyPayload(tagFamilyResolution),
+                    tagVisibility,
                     defaultTagTypeId = defaultTypeId == null ? (long?)null : ElementIdCompat.GetValue(defaultTypeId),
                     placementMode,
                     placementProfile = geometryAware ? placementProfile : null,
@@ -243,6 +263,9 @@ namespace RevitBridge.Logic.Handlers
             using (var t = new Transaction(doc, "Tag Elements"))
             {
                 t.Start();
+                tagVisibility = EvaluateTagVisibility(doc, view, targetTagCategory, ensureTagCategoryVisible, dryRun: false);
+                if (ensureTagCategoryVisible && !string.IsNullOrWhiteSpace(tagVisibility.Error))
+                    throw new InvalidOperationException($"Tag category visibility could not be ensured: {tagVisibility.Error}");
                 foreach (var element in targets)
                 {
                     var elementId = ElementIdCompat.GetValue(element.Id);
@@ -366,6 +389,7 @@ namespace RevitBridge.Logic.Handlers
                 unresolvedCategories,
                 mappingWarnings,
                 tagFamily = TagFamilyPayload(tagFamilyResolution),
+                tagVisibility,
                 placementMode,
                 placementProfile = geometryAware ? placementProfile : null,
                 geometry = geometryAware ? new
@@ -380,6 +404,77 @@ namespace RevitBridge.Logic.Handlers
                 tagReadback,
                 errors = errors.Take(200).ToList()
             });
+        }
+
+        private static TagVisibilityOutcome EvaluateTagVisibility(
+            Document doc,
+            View view,
+            BuiltInCategory? targetTagCategory,
+            bool requested,
+            bool dryRun)
+        {
+            var outcome = new TagVisibilityOutcome { Requested = requested };
+            if (!requested) return outcome;
+            if (targetTagCategory == null)
+            {
+                outcome.Status = "unsupported_target_categories";
+                outcome.Error = "A single supported target tag category is required to ensure visibility.";
+                return outcome;
+            }
+
+            try
+            {
+                var category = doc.Settings.Categories.get_Item(targetTagCategory.Value);
+                if (category == null)
+                {
+                    outcome.Status = "category_not_found";
+                    outcome.Error = $"Tag category {targetTagCategory.Value} is not available in this document.";
+                    return outcome;
+                }
+
+                var templateId = ElementIdCompat.GetValue(view.ViewTemplateId);
+                var owner = templateId > 0 ? doc.GetElement(view.ViewTemplateId) as View : view;
+                if (owner == null)
+                {
+                    outcome.Status = "visibility_owner_not_found";
+                    outcome.Error = "The view visibility owner could not be resolved.";
+                    return outcome;
+                }
+
+                var canHide = owner.CanCategoryBeHidden(category.Id);
+                var hidden = canHide && owner.GetCategoryHidden(category.Id);
+                var decision = TagVisibilityPolicy.Decide(
+                    requested,
+                    dryRun,
+                    ElementIdCompat.GetValue(view.Id),
+                    templateId > 0 ? templateId : (long?)null,
+                    canHide,
+                    hidden);
+                outcome.Status = decision.Status;
+                outcome.CategoryId = ElementIdCompat.GetValue(category.Id);
+                outcome.CategoryName = category.Name;
+                outcome.OwnerViewId = decision.OwnerViewId;
+                outcome.OwnerViewName = owner.Name;
+                outcome.OwnerKind = decision.OwnerKind;
+                outcome.WasHidden = decision.WasHidden;
+                outcome.IsHidden = hidden;
+
+                if (decision.ApplyChange)
+                {
+                    owner.SetCategoryHidden(category.Id, false);
+                    doc.Regenerate();
+                    outcome.IsHidden = owner.GetCategoryHidden(category.Id);
+                    outcome.Changed = !outcome.IsHidden;
+                    outcome.Status = outcome.Changed ? "shown" : "show_failed";
+                    if (!outcome.Changed) outcome.Error = "The tag category remained hidden after the visibility update.";
+                }
+            }
+            catch (Exception ex)
+            {
+                outcome.Status = "visibility_error";
+                outcome.Error = ex.Message;
+            }
+            return outcome;
         }
 
         private static string ResolvePlacementMode(string? value)
