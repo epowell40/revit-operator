@@ -114,6 +114,36 @@ test("level tag runtime inventories, dry-runs, retries collisions, and proves ex
   assert.equal(goal?.work_items.find(item => item.id === "verify.visual")?.status, "ready");
 }));
 
+test("level tag runtime retains a fifth bounded tall-offset repair before final verification", () => withWorkspace(() => {
+  __testOnlyClearAecLevelTagRuntime();
+  const session = "level-tag-fifth-repair";
+  activateGoal(session);
+  startAecLevelTagRuntime(req(session), task(), [{ id: 101, name: "L4 Mechanical Ceiling", levelName: "L4" }]);
+  maybeContinueAecLevelTagRuntime(req(session, [result("aec-level-tag-inventory-101", { count: 1, truncated: false, elementIds: [1511396] })]));
+  maybeContinueAecLevelTagRuntime(req(session, [result("aec-level-tag-dry_run-101", { targetCount: 1, plannedToTag: 1, skippedAlreadyTagged: 0, geometry: { plans: [{ candidateCount: 180 }] } })]));
+
+  for (let variant = 1; variant <= 4; variant += 1) {
+    const retry = maybeContinueAecLevelTagRuntime(req(session, [
+      result(`aec-level-tag-apply-101-v${variant}`, { targetCount: 1, taggedCount: 0, skippedAlreadyTagged: 0, errorCount: 1, tagIds: [], errors: [{ failureKind: "tag_unresolved_collision" }] })
+    ]));
+    assert.equal(retry?.actions[0]?.action_id, `aec-level-tag-apply-101-v${variant + 1}`);
+    if (variant === 4) {
+      assert.equal(body(retry!.actions[0]!).tagWidthPaperInches, 0.50);
+      assert.equal(body(retry!.actions[0]!).tagHeightPaperInches, 0.80);
+      assert.equal(body(retry!.actions[0]!).clearancePaperInches, 0);
+    }
+  }
+
+  const verify = maybeContinueAecLevelTagRuntime(req(session, [
+    result("aec-level-tag-apply-101-v5", { targetCount: 1, taggedCount: 1, skippedAlreadyTagged: 0, errorCount: 0, tagIds: [1547025], errors: [] })
+  ]));
+  assert.deepEqual(verify?.actions.map(action => action.action_id), ["aec-level-tag-verify-101"]);
+  const done = maybeContinueAecLevelTagRuntime(req(session, [
+    result("aec-level-tag-verify-101", { targetCount: 1, plannedToTag: 0, skippedAlreadyTagged: 1, geometry: { plans: [] } })
+  ]));
+  assert.equal(done?.aec_query_receipt?.status, "complete");
+}));
+
 test("level tag runtime fails closed on truncated inventories before any tag action", () => withWorkspace(() => {
   __testOnlyClearAecLevelTagRuntime();
   const session = "level-tag-truncated";
