@@ -5357,7 +5357,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/tag-elements", StringComparison.OrdinalIgnoreCase))
             {
-                // { viewId?|viewName?, elementIds?|categoryNames?, categoryTagTypeMap?, tagTypeId?|tagTypeName?|tagFamilyName?, onlyUntagged?, addLeader?, orientation?, offsetX?, offsetY?, max?, dryRun? }
+                // { viewId?|viewName?, elementIds?|categoryNames?, categoryTagTypeMap?, tagTypeId?|tagTypeName?|tagFamilyName?, onlyUntagged?, addLeader?, orientation?, offsetX?, offsetY?, placementMode?, placementProfile?, tagWidthPaperInches?, tagHeightPaperInches?, clearancePaperInches?, maxRepairAttempts?, max?, dryRun? }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "tag-elements body must be an object.";
@@ -5376,7 +5376,51 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalString(obj.Value, "orientation", maxLen: 24, out error)) return false;
                 if (!ValidateOptionalNumber(obj.Value, "offsetX", out error)) return false;
                 if (!ValidateOptionalNumber(obj.Value, "offsetY", out error)) return false;
+                if (!ValidateOptionalNumber(obj.Value, "tagWidthPaperInches", out error)) return false;
+                if (!ValidateOptionalNumber(obj.Value, "tagHeightPaperInches", out error)) return false;
+                if (!ValidateOptionalNumber(obj.Value, "clearancePaperInches", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "placementMode", maxLen: 32, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "placementProfile", maxLen: 32, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
+
+                if (obj.Value.TryGetProperty("placementMode", out var placementMode) && placementMode.ValueKind == JsonValueKind.String)
+                {
+                    var value = (placementMode.GetString() ?? "").Trim().ToLowerInvariant();
+                    if (value.Length > 0 && value != "offset" && value != "geometry_aware")
+                    {
+                        error = "tag-elements.placementMode must be offset|geometry_aware.";
+                        return false;
+                    }
+                }
+
+                if (obj.Value.TryGetProperty("placementProfile", out var placementProfile) && placementProfile.ValueKind == JsonValueKind.String)
+                {
+                    var value = (placementProfile.GetString() ?? "").Trim().ToLowerInvariant();
+                    if (value.Length > 0 && value != "auto" && value != "mep" && value != "electrical" && value != "architectural")
+                    {
+                        error = "tag-elements.placementProfile must be auto|mep|electrical|architectural.";
+                        return false;
+                    }
+                }
+
+                foreach (var boundedNumber in new[] { "tagWidthPaperInches", "tagHeightPaperInches", "clearancePaperInches" })
+                {
+                    if (!obj.Value.TryGetProperty(boundedNumber, out var number) || number.ValueKind == JsonValueKind.Null) continue;
+                    if (!number.TryGetDouble(out var numeric) || double.IsNaN(numeric) || double.IsInfinity(numeric) || numeric < 0 || numeric > 4)
+                    {
+                        error = $"tag-elements.{boundedNumber} must be a finite number from 0 to 4.";
+                        return false;
+                    }
+                }
+
+                if (obj.Value.TryGetProperty("maxRepairAttempts", out var repairAttempts) && repairAttempts.ValueKind != JsonValueKind.Null)
+                {
+                    if (repairAttempts.ValueKind != JsonValueKind.Number || !repairAttempts.TryGetInt32(out var attempts) || attempts < 1 || attempts > 32)
+                    {
+                        error = "tag-elements.maxRepairAttempts must be an integer from 1 to 32.";
+                        return false;
+                    }
+                }
 
                 var hasElementIds = obj.Value.TryGetProperty("elementIds", out var eids) && eids.ValueKind == JsonValueKind.Array && eids.GetArrayLength() > 0;
                 var hasCategoryNames = obj.Value.TryGetProperty("categoryNames", out var cns) && cns.ValueKind == JsonValueKind.Array && cns.GetArrayLength() > 0;

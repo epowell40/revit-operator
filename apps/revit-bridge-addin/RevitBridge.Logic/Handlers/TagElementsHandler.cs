@@ -9,6 +9,7 @@ using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
+using RevitBridge.Common.Annotation;
 
 namespace RevitBridge.Logic.Handlers
 {
@@ -37,8 +38,36 @@ namespace RevitBridge.Logic.Handlers
             public string? orientation { get; set; } // horizontal|vertical
             public double? offsetX { get; set; }
             public double? offsetY { get; set; }
+            public string? placementMode { get; set; } // offset|geometry_aware
+            public string? placementProfile { get; set; } // auto|mep|electrical|architectural
+            public double? tagWidthPaperInches { get; set; }
+            public double? tagHeightPaperInches { get; set; }
+            public double? clearancePaperInches { get; set; }
+            public int? maxRepairAttempts { get; set; }
             public int? max { get; set; }
             public bool? dryRun { get; set; }
+        }
+
+        private sealed class GeometryPlacementPlan
+        {
+            public Element Target { get; set; } = null!;
+            public TagRect2 TargetBounds { get; set; } = null!;
+            public IReadOnlyList<TagPlacementCandidate> Candidates { get; set; } = Array.Empty<TagPlacementCandidate>();
+            public double PlaneW { get; set; }
+        }
+
+        private sealed class GeometryPlacementOutcome
+        {
+            public string Status { get; set; } = "not_run";
+            public string? Side { get; set; }
+            public int Attempts { get; set; }
+            public int CollisionCount { get; set; }
+            public bool OutsideTarget { get; set; }
+            public bool CollisionFree { get; set; }
+            public bool LeaderApplied { get; set; }
+            public TagRect2? TargetBounds { get; set; }
+            public TagRect2? TagBounds { get; set; }
+            public XYZ? TagHeadPosition { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -59,10 +88,18 @@ namespace RevitBridge.Logic.Handlers
 
             var targets = ResolveTargets(doc, view, p, max, out var unresolvedCategories);
             var onlyUntagged = p.onlyUntagged ?? true;
-            var addLeader = p.addLeader ?? false;
+            var placementMode = ResolvePlacementMode(p.placementMode);
+            var geometryAware = placementMode == "geometry_aware";
+            var placementProfile = ResolvePlacementProfile(p.placementProfile);
+            var addLeader = p.addLeader ?? geometryAware;
             var offset = new XYZ(p.offsetX ?? 1.0, p.offsetY ?? 1.0, 0);
             var orientation = ResolveOrientation(p.orientation);
             var dryRun = p.dryRun ?? false;
+            var viewScale = Math.Max(1, view.Scale);
+            var tagWidth = ResolvePaperInches(p.tagWidthPaperInches, 0.60, 0.05, 4.0) * viewScale / 12.0;
+            var tagHeight = ResolvePaperInches(p.tagHeightPaperInches, 0.18, 0.05, 2.0) * viewScale / 12.0;
+            var clearance = ResolvePaperInches(p.clearancePaperInches, 0.08, 0.0, 1.0) * viewScale / 12.0;
+            var maxRepairAttempts = Math.Max(1, Math.Min(32, p.maxRepairAttempts ?? 16));
 
             var existingTagged = onlyUntagged
                 ? CollectTaggedElementIdsOnView(doc, view.Id)
@@ -82,6 +119,9 @@ namespace RevitBridge.Logic.Handlers
 
             var skippedAlready = onlyUntagged ? planned.Count(x => x.alreadyTagged) : 0;
             var plannedToTag = onlyUntagged ? planned.Count(x => !x.alreadyTagged) : planned.Count;
+            var geometryPlans = geometryAware
+                ? BuildGeometryPlans(doc, view, targets, existingTagged, onlyUntagged, tagWidth, tagHeight, clearance, placementProfile, maxRepairAttempts)
+                : new Dictionary<long, GeometryPlacementPlan>();
 
             if (dryRun)
             {
@@ -96,6 +136,16 @@ namespace RevitBridge.Logic.Handlers
                     unresolvedCategories,
                     mappingWarnings,
                     defaultTagTypeId = defaultTypeId == null ? (long?)null : ElementIdCompat.GetValue(defaultTypeId),
+                    placementMode,
+                    placementProfile = geometryAware ? placementProfile : null,
+                    geometry = geometryAware ? new
+                    {
+                        tagWidthModelFeet = tagWidth,
+                        tagHeightModelFeet = tagHeight,
+                        clearanceModelFeet = clearance,
+                        plannedCount = geometryPlans.Count,
+                        plans = geometryPlans.Values.Take(200).Select(BuildGeometryPlanReadback).ToList()
+                    } : null,
                     targets = planned.Take(200).ToList()
                 });
             }
@@ -104,6 +154,10 @@ namespace RevitBridge.Logic.Handlers
             var tagReadback = new List<object>();
             var errors = new List<object>();
             var skippedNoLocation = 0;
+            var geometryOutcomes = new List<GeometryPlacementOutcome>();
+            var actualObstacles = geometryAware
+                ? CollectGeometryObstacles(doc, view, targets, tagWidth, tagHeight)
+                : new List<TagRect2>();
 
             using (var t = new Transaction(doc, "Tag Elements"))
             {
@@ -116,7 +170,10 @@ namespace RevitBridge.Logic.Handlers
                         continue;
                     }
 
-                    var point = ResolveTagPoint(element, view, offset);
+                    geometryPlans.TryGetValue(elementId, out var geometryPlan);
+                    var point = geometryPlan?.Candidates.FirstOrDefault() is TagPlacementCandidate firstCandidate
+                        ? FromViewCoordinates(view, firstCandidate.HeadX, firstCandidate.HeadY, geometryPlan.PlaneW)
+                        : ResolveTagPoint(element, view, offset);
                     if (point == null)
                     {
                         skippedNoLocation++;
@@ -125,7 +182,7 @@ namespace RevitBridge.Logic.Handlers
 
                     try
                     {
-                        var tag = CreateTagElement(doc, view, element, addLeader, orientation, point);
+                        var tag = CreateTagElement(doc, view, element, geometryAware ? false : addLeader, orientation, point);
 
                         var mappedTypeId = ResolveMappedTypeForElement(element, mapping);
                         var targetTypeId = mappedTypeId ?? defaultTypeId;
@@ -142,7 +199,35 @@ namespace RevitBridge.Logic.Handlers
                         }
 
                         tagIds.Add(ElementIdCompat.GetValue(tag.Id));
-                        tagReadback.Add(BuildTagReadback(doc, tag, element, view));
+                        GeometryPlacementOutcome? outcome = null;
+                        if (geometryAware && geometryPlan != null && tag is IndependentTag independentTag)
+                        {
+                            outcome = RepairAndReadGeometryPlacement(
+                                doc,
+                                view,
+                                independentTag,
+                                geometryPlan,
+                                actualObstacles,
+                                clearance,
+                                maxRepairAttempts);
+                            geometryOutcomes.Add(outcome);
+                            if (outcome.TagBounds != null) actualObstacles.Add(outcome.TagBounds);
+                            if (addLeader)
+                            {
+                                try
+                                {
+                                    independentTag.HasLeader = true;
+                                    doc.Regenerate();
+                                    outcome.LeaderApplied = independentTag.HasLeader;
+                                }
+                                catch
+                                {
+                                    outcome.LeaderApplied = false;
+                                }
+                            }
+                        }
+
+                        tagReadback.Add(BuildTagReadback(doc, tag, element, view, outcome));
                         if (onlyUntagged) existingTagged.Add(elementId);
                     }
                     catch (Exception ex)
@@ -165,12 +250,237 @@ namespace RevitBridge.Logic.Handlers
                 errorCount = errors.Count,
                 unresolvedCategories,
                 mappingWarnings,
+                placementMode,
+                placementProfile = geometryAware ? placementProfile : null,
+                geometry = geometryAware ? new
+                {
+                    evaluatedCount = geometryOutcomes.Count,
+                    collisionFreeCount = geometryOutcomes.Count(x => x.CollisionFree),
+                    repairedCount = geometryOutcomes.Count(x => x.Attempts > 1),
+                    unresolvedCollisionCount = geometryOutcomes.Count(x => !x.CollisionFree)
+                } : null,
                 tagIds,
                 tags = tagReadback,
                 tagReadback,
                 errors = errors.Take(200).ToList()
             });
         }
+
+        private static string ResolvePlacementMode(string? value)
+        {
+            var normalized = (value ?? "offset").Trim().ToLowerInvariant();
+            return normalized == "geometry_aware" ? "geometry_aware" : "offset";
+        }
+
+        private static string ResolvePlacementProfile(string? value)
+        {
+            var normalized = (value ?? "auto").Trim().ToLowerInvariant();
+            return normalized == "mep" || normalized == "electrical" || normalized == "architectural"
+                ? normalized
+                : "auto";
+        }
+
+        private static double ResolvePaperInches(double? value, double fallback, double min, double max)
+        {
+            var resolved = value ?? fallback;
+            if (double.IsNaN(resolved) || double.IsInfinity(resolved)) return fallback;
+            return Math.Max(min, Math.Min(max, resolved));
+        }
+
+        private static Dictionary<long, GeometryPlacementPlan> BuildGeometryPlans(
+            Document doc,
+            View view,
+            IReadOnlyList<Element> targets,
+            ISet<long> existingTagged,
+            bool onlyUntagged,
+            double tagWidth,
+            double tagHeight,
+            double clearance,
+            string profile,
+            int maxCandidates)
+        {
+            var plans = new Dictionary<long, GeometryPlacementPlan>();
+            var obstacles = CollectGeometryObstacles(doc, view, targets, tagWidth, tagHeight);
+
+            foreach (var target in targets.OrderBy(x => ElementIdCompat.GetValue(x.Id)))
+            {
+                var targetId = ElementIdCompat.GetValue(target.Id);
+                if (onlyUntagged && existingTagged.Contains(targetId)) continue;
+                var targetBounds = ToViewRect(target.get_BoundingBox(view), view);
+                if (targetBounds == null) continue;
+                var center = ResolveElementCenter(target, view);
+                if (center == null) continue;
+
+                var candidates = TagPlacementPlanner.RankCandidates(new TagPlacementRequest
+                {
+                    Target = targetBounds,
+                    Obstacles = obstacles,
+                    TagWidth = tagWidth,
+                    TagHeight = tagHeight,
+                    Clearance = clearance,
+                    Profile = profile,
+                    MaxCandidates = maxCandidates
+                });
+                if (candidates.Count == 0) continue;
+
+                plans[targetId] = new GeometryPlacementPlan
+                {
+                    Target = target,
+                    TargetBounds = targetBounds,
+                    Candidates = candidates,
+                    PlaneW = center.DotProduct(view.ViewDirection.Normalize())
+                };
+                obstacles.Add(candidates[0].Bounds);
+            }
+
+            return plans;
+        }
+
+        private static object BuildGeometryPlanReadback(GeometryPlacementPlan plan)
+        {
+            var candidate = plan.Candidates.First();
+            return new
+            {
+                targetElementId = ElementIdCompat.GetValue(plan.Target.Id),
+                targetBounds = RectPayload(plan.TargetBounds),
+                plannedHead = new { u = candidate.HeadX, v = candidate.HeadY },
+                plannedBounds = RectPayload(candidate.Bounds),
+                side = candidate.Side,
+                collisionFree = candidate.CollisionFree,
+                collisionCount = candidate.CollisionCount,
+                candidateCount = plan.Candidates.Count
+            };
+        }
+
+        private static List<TagRect2> CollectGeometryObstacles(Document doc, View view, IReadOnlyList<Element> targets, double tagWidth, double tagHeight)
+        {
+            var obstacles = new List<TagRect2>();
+            foreach (var target in targets)
+            {
+                var rect = ToViewRect(target.get_BoundingBox(view), view);
+                if (rect != null) obstacles.Add(rect);
+            }
+
+            foreach (var element in new FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType())
+            {
+                if (element?.Category?.CategoryType != CategoryType.Annotation) continue;
+                TagRect2? rect;
+                if (element is IndependentTag existingTag)
+                {
+                    var head = existingTag.TagHeadPosition;
+                    var right = view.RightDirection.Normalize();
+                    var up = view.UpDirection.Normalize();
+                    var centerU = head.DotProduct(right);
+                    var centerV = head.DotProduct(up);
+                    rect = new TagRect2(centerU - tagWidth * 0.5, centerV - tagHeight * 0.5, centerU + tagWidth * 0.5, centerV + tagHeight * 0.5);
+                }
+                else
+                {
+                    rect = ToViewRect(element.get_BoundingBox(view), view);
+                }
+                if (rect != null) obstacles.Add(rect);
+            }
+            return obstacles;
+        }
+
+        private static GeometryPlacementOutcome RepairAndReadGeometryPlacement(
+            Document doc,
+            View view,
+            IndependentTag tag,
+            GeometryPlacementPlan plan,
+            IReadOnlyList<TagRect2> obstacles,
+            double clearance,
+            int maxAttempts)
+        {
+            GeometryPlacementOutcome? best = null;
+            var attempts = 0;
+            foreach (var candidate in plan.Candidates.Take(maxAttempts))
+            {
+                attempts++;
+                var head = FromViewCoordinates(view, candidate.HeadX, candidate.HeadY, plan.PlaneW);
+                tag.TagHeadPosition = head;
+                doc.Regenerate();
+                var tagBounds = ToViewRect(tag.get_BoundingBox(view), view);
+                if (tagBounds == null) continue;
+
+                var collisionCount = obstacles.Count(x => tagBounds.Intersects(x.Inflate(clearance)));
+                var outcome = new GeometryPlacementOutcome
+                {
+                    Status = collisionCount == 0 ? (attempts == 1 ? "placed" : "repaired") : "collision",
+                    Side = candidate.Side,
+                    Attempts = attempts,
+                    CollisionCount = collisionCount,
+                    OutsideTarget = !tagBounds.Intersects(plan.TargetBounds.Inflate(clearance)),
+                    CollisionFree = collisionCount == 0,
+                    TargetBounds = plan.TargetBounds,
+                    TagBounds = tagBounds,
+                    TagHeadPosition = head
+                };
+                if (best == null || outcome.CollisionCount < best.CollisionCount) best = outcome;
+                if (outcome.CollisionFree) return outcome;
+            }
+
+            if (best != null && best.TagHeadPosition != null)
+            {
+                tag.TagHeadPosition = best.TagHeadPosition;
+                doc.Regenerate();
+                best.Status = "unresolved_collision";
+                best.Attempts = attempts;
+                return best;
+            }
+
+            return new GeometryPlacementOutcome
+            {
+                Status = "no_geometry",
+                Attempts = attempts,
+                CollisionCount = -1,
+                OutsideTarget = false,
+                CollisionFree = false,
+                TargetBounds = plan.TargetBounds
+            };
+        }
+
+        private static XYZ? ResolveElementCenter(Element element, View view)
+        {
+            if (element.Location is LocationPoint lp && lp.Point != null) return lp.Point;
+            var bbox = element.get_BoundingBox(view);
+            return bbox == null ? null : (bbox.Min + bbox.Max) * 0.5;
+        }
+
+        private static TagRect2? ToViewRect(BoundingBoxXYZ? bbox, View view)
+        {
+            if (bbox == null) return null;
+            var right = view.RightDirection.Normalize();
+            var up = view.UpDirection.Normalize();
+            var points = new List<XYZ>();
+            foreach (var x in new[] { bbox.Min.X, bbox.Max.X })
+            foreach (var y in new[] { bbox.Min.Y, bbox.Max.Y })
+            foreach (var z in new[] { bbox.Min.Z, bbox.Max.Z })
+                points.Add(new XYZ(x, y, z));
+            return new TagRect2(
+                points.Min(p => p.DotProduct(right)),
+                points.Min(p => p.DotProduct(up)),
+                points.Max(p => p.DotProduct(right)),
+                points.Max(p => p.DotProduct(up)));
+        }
+
+        private static XYZ FromViewCoordinates(View view, double u, double v, double w)
+        {
+            var right = view.RightDirection.Normalize();
+            var up = view.UpDirection.Normalize();
+            var normal = view.ViewDirection.Normalize();
+            return right.Multiply(u) + up.Multiply(v) + normal.Multiply(w);
+        }
+
+        private static object RectPayload(TagRect2 rect) => new
+        {
+            minU = rect.MinX,
+            minV = rect.MinY,
+            maxU = rect.MaxX,
+            maxV = rect.MaxY,
+            centerU = rect.CenterX,
+            centerV = rect.CenterY
+        };
 
         private static View? ResolveView(Document doc, long? viewId, string? viewName, View? activeView)
         {
@@ -328,7 +638,7 @@ namespace RevitBridge.Logic.Handlers
                 point);
         }
 
-        private static object BuildTagReadback(Document doc, Element tag, Element target, View view)
+        private static object BuildTagReadback(Document doc, Element tag, Element target, View view, GeometryPlacementOutcome? geometryOutcome)
         {
             var type = doc.GetElement(tag.GetTypeId()) as ElementType;
             var family = type is FamilySymbol fs ? fs.FamilyName : type?.FamilyName;
@@ -342,7 +652,25 @@ namespace RevitBridge.Logic.Handlers
                 tagTypeId = type == null ? (long?)null : ElementIdCompat.GetValue(type.Id),
                 tagTypeName = type?.Name,
                 tagFamilyName = family,
-                value = ReadTagDisplayValue(tag)
+                value = ReadTagDisplayValue(tag),
+                tagHeadPosition = geometryOutcome?.TagHeadPosition == null ? null : new
+                {
+                    x = geometryOutcome.TagHeadPosition.X,
+                    y = geometryOutcome.TagHeadPosition.Y,
+                    z = geometryOutcome.TagHeadPosition.Z
+                },
+                geometryPlacement = geometryOutcome == null ? null : new
+                {
+                    status = geometryOutcome.Status,
+                    side = geometryOutcome.Side,
+                    attempts = geometryOutcome.Attempts,
+                    collisionCount = geometryOutcome.CollisionCount,
+                    outsideTarget = geometryOutcome.OutsideTarget,
+                    collisionFree = geometryOutcome.CollisionFree,
+                    leaderApplied = geometryOutcome.LeaderApplied,
+                    targetBounds = geometryOutcome.TargetBounds == null ? null : RectPayload(geometryOutcome.TargetBounds),
+                    tagBounds = geometryOutcome.TagBounds == null ? null : RectPayload(geometryOutcome.TagBounds)
+                }
             };
         }
 
