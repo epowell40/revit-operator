@@ -119,6 +119,9 @@ test("room design persists target, selected precedent, exact apply evidence, and
   assert.equal(previewed?.assumptions.find(item => item.id === "precedent.room")?.statement, "Room 409 is the selected current-project analog for target Room 407.");
   assert.equal(previewed?.work_items.find(item => item.id === "layout.preview")?.status, "complete");
   assert.equal(previewed?.work_items.find(item => item.id === "layout.apply")?.status, "ready");
+  assert.deepEqual(previewed?.work_items.find(item => item.id === "layout.apply")?.scope, { target_room_number: "407", source_room_number: "409" });
+  assert.deepEqual(previewed?.work_items.find(item => item.id === "layout.apply")?.depends_on, ["layout.preview"]);
+  assert.equal(previewed?.current_phase, "layout_execution");
 
   const receipt = appliedReceipt([1700407], [{ familyType: "Duplex Receptacle|Standard", count: 1 }]);
   receipt.target.number = "407";
@@ -129,6 +132,11 @@ test("room design persists target, selected precedent, exact apply evidence, and
   assert.equal(completed?.work_items.find(item => item.id === "layout.apply")?.status, "complete");
   assert.equal(completed?.work_items.find(item => item.id === "layout.verify")?.status, "complete");
   assert.equal(completed?.work_items.find(item => item.id === "verify.visual")?.status, "ready");
+  assert.deepEqual(completed?.work_items.find(item => item.id === "layout.verify")?.scope, { target_room_number: "407", source_room_number: "409" });
+  assert.deepEqual(completed?.work_items.find(item => item.id === "verify.visual")?.scope, { room_number: "407" });
+  assert.deepEqual(completed?.work_items.find(item => item.id === "verify.visual")?.planned_actions, ["focused Revit inspection", "bounded repair if needed"]);
+  assert.equal(completed?.current_phase, "visual_verification");
+  assert.equal(completed?.current_step, "Perform focused visual QA in Room 407");
   assert.match(completed?.progress_summary ?? "", /Room 407 apply and native persistent readback passed/);
 });
 
