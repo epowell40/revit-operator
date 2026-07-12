@@ -95,3 +95,39 @@ test("unsupported semantic query terminates authoritatively instead of falling t
   assert.match(done.response?.assistant_message ?? "", /without broadening or guessing/);
   assert.deepEqual(done.response?.aec_query_receipt, { schema: "revit-operator.aec-query-receipt.v1", terminal: true, status: "failed", workflow_id: "query.blocked", bounded: true, broadened: false });
 });
+
+test("two-room inventory comparison reports both exact scoped counts and their delta", async () => {
+  __testOnlyClearAecQueryStates();
+  const value = ahu();
+  value.operation = "compare";
+  value.subject = { kind: "category", semantic_class: "receptacle", terms: ["receptacle"], categories: ["OST_ElectricalFixtures"], family_name: null, type_name: null, system_name: null, identifiers: [] };
+  value.scope = { ...value.scope, kind: "room", rooms: ["403", "405"] };
+  value.outputs = ["summary", "count", "element_ids", "comparison"];
+  const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+  const first = await maybeRunAecSemanticQuery(request("compare-rooms"), interpreter);
+  assert.deepEqual(first.response?.actions.map(action => action.path), ["/revit/room-contents", "/revit/room-contents"]);
+  const done = await maybeRunAecSemanticQuery(request("compare-rooms", [
+    { action_id: "aec-query-compare-a", method: "POST", path: "/revit/room-contents", status: "done", result_json: { count: 6, elements: new Array(6).fill({}), truncated: false } },
+    { action_id: "aec-query-compare-b", method: "POST", path: "/revit/room-contents", status: "done", result_json: { count: 8, elements: new Array(8).fill({}), truncated: false } }
+  ]), interpreter);
+  assert.match(done.response?.assistant_message ?? "", /Room 403: 6\. Room 405: 8\./);
+  assert.match(done.response?.assistant_message ?? "", /Room 405 has 2 receptacles more than Room 403/);
+  assert.equal(done.response?.aec_query_receipt?.workflow_id, "query.compare_scopes");
+});
+
+test("truncated comparison does not claim an exact delta", async () => {
+  __testOnlyClearAecQueryStates();
+  const value = ahu();
+  value.operation = "compare";
+  value.subject = { kind: "category", semantic_class: "air_terminal", terms: ["air terminal"], categories: ["OST_DuctTerminal"], family_name: null, type_name: null, system_name: null, identifiers: [] };
+  value.scope = { ...value.scope, kind: "level", levels: ["L3", "L4"] };
+  value.outputs = ["summary", "count", "comparison"];
+  const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+  await maybeRunAecSemanticQuery(request("compare-truncated"), interpreter);
+  const done = await maybeRunAecSemanticQuery(request("compare-truncated", [
+    { action_id: "aec-query-compare-a", method: "POST", path: "/revit/locate-elements", status: "done", result_json: { count: 10, truncated: true, items: new Array(10).fill({}) } },
+    { action_id: "aec-query-compare-b", method: "POST", path: "/revit/locate-elements", status: "done", result_json: { count: 9, truncated: false, items: new Array(9).fill({}) } }
+  ]), interpreter);
+  assert.match(done.response?.assistant_message ?? "", /no exact difference is claimed/);
+  assert.equal(done.response?.aec_query_receipt?.status, "failed");
+});

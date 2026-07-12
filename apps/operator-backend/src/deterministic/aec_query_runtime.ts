@@ -127,6 +127,28 @@ async function begin(req: ChatRequest, interpreter?: AecSemanticTaskInterpreter)
 }
 
 function continueRun(req: ChatRequest, state: QueryState): ChatResponse | null {
+  if (state.workflow_id === "query.compare_scopes") {
+    const first = matchingResult(req, "aec-query-compare-a");
+    const second = matchingResult(req, "aec-query-compare-b");
+    if (!first || !second) return null;
+    states.delete(key(req));
+    if (first.status !== "done" || second.status !== "done") {
+      const error = first.status !== "done" ? first.error : second.error;
+      return response(`I could not complete both bounded comparison reads: ${error || "one scoped read failed"}. No model changes were made.`, [], { workflow_id: state.workflow_id, status: "failed" });
+    }
+    const firstPayload = resultPayload(first);
+    const secondPayload = resultPayload(second);
+    const firstCount = countFromPayload(firstPayload);
+    const secondCount = countFromPayload(secondPayload);
+    const labels = Array.isArray(state.evidence.comparison_labels) ? state.evidence.comparison_labels.filter(label => typeof label === "string").slice(0, 2) as string[] : [];
+    const firstLabel = labels[0] ?? "Scope A";
+    const secondLabel = labels[1] ?? "Scope B";
+    if (firstCount === null || secondCount === null) return response("Both bounded reads completed, but one result did not report a trustworthy count, so I did not infer a comparison. No model changes were made.", [], { workflow_id: state.workflow_id, status: "failed" });
+    if (firstPayload?.truncated === true || secondPayload?.truncated === true) return response(`${firstLabel} returned at least ${firstCount} and ${secondLabel} returned at least ${secondCount}, but a result limit was reached, so no exact difference is claimed. No model changes were made.`, [], { workflow_id: state.workflow_id, status: "failed" });
+    const delta = secondCount - firstCount;
+    const difference = delta === 0 ? "The counts are equal." : `${secondLabel} has ${Math.abs(delta)} ${subjectLabel(state.task)}${Math.abs(delta) === 1 ? "" : "s"} ${delta > 0 ? "more" : "fewer"} than ${firstLabel}.`;
+    return response(`${firstLabel}: ${firstCount}. ${secondLabel}: ${secondCount}. ${difference} Both reads were scoped and predicate-pushed; no model changes were made.`, [], { workflow_id: state.workflow_id, status: "complete" });
+  }
   if (state.workflow_id === "query.exact_identifier" && state.stage === 0) {
     const result = matchingResult(req, "aec-query-exact-identifier");
     if (!result) return null;

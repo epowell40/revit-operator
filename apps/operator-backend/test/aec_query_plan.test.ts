@@ -85,5 +85,23 @@ test("focus requires an exact identifier and a three-action budget; compare stay
 
   const compare = task();
   compare.operation = "compare";
-  assert.match(planAecQueryTask(compare).blockers[0], /two-scope comparison workflow/);
+  assert.match(planAecQueryTask(compare).blockers[0], /comparison/);
+});
+
+test("two-room inventory comparison emits two bounded predicate-pushed reads", () => {
+  const value = task();
+  value.operation = "compare";
+  value.subject = { kind: "category", semantic_class: "receptacle", terms: ["receptacle"], categories: ["OST_ElectricalFixtures"], family_name: null, type_name: null, system_name: null, identifiers: [] };
+  value.scope = { ...value.scope, kind: "room", rooms: ["403", "405"] };
+  value.outputs = ["summary", "count", "element_ids", "comparison"];
+  value.execution.max_primary_actions = 2;
+  const plan = planAecQueryTask(value);
+  assert.equal(plan.workflow_id, "query.compare_scopes");
+  assert.deepEqual(plan.actions, [
+    { action_id: "aec-query-compare-a", method: "POST", path: "/revit/room-contents", body: { roomNumber: "403", mode: "auto", verticalScope: "room", limit: 10, categories: ["OST_ElectricalFixtures"], includeKeywords: ["receptacle"] } },
+    { action_id: "aec-query-compare-b", method: "POST", path: "/revit/room-contents", body: { roomNumber: "405", mode: "auto", verticalScope: "room", limit: 10, categories: ["OST_ElectricalFixtures"], includeKeywords: ["receptacle"] } }
+  ]);
+  assert.deepEqual(plan.evidence.comparison_labels, ["Room 403", "Room 405"]);
+  value.outputs.push("parameters");
+  assert.match(planAecQueryTask(value).blockers[0], /parameter and geometry comparisons/);
 });
