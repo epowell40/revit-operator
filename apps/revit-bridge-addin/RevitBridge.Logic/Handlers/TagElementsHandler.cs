@@ -177,17 +177,6 @@ namespace RevitBridge.Logic.Handlers
                 ? CollectTaggedElementIdsOnView(doc, view.Id)
                 : new HashSet<long>();
 
-            var mapping = ResolveCategoryTagTypeMap(doc, p.categoryTagTypeMap, out var mappingWarnings);
-            var defaultTypeId = ResolveDefaultTagTypeId(doc, p.tagTypeId, p.tagTypeName, p.tagFamilyName);
-            var tagFamilyResolution = geometryAware
-                ? ResolveGeometryTagFamily(app.Application, doc, targets, defaultTypeId, p, dryRun)
-                : null;
-            if (defaultTypeId == null && tagFamilyResolution?.TypeId != null) defaultTypeId = tagFamilyResolution.TypeId;
-            if (dryRun && p.inspectTagFamilyElements == true && tagFamilyResolution?.TypeId != null)
-                InspectTagFamilyElements(doc, tagFamilyResolution);
-            if (!dryRun && geometryAware && defaultTypeId == null && p.autoLoadTagFamily == true)
-                throw new InvalidOperationException(tagFamilyResolution?.Error ?? "A compatible tag family could not be loaded.");
-
             var planned = targets
                 .Select(e => new
                 {
@@ -199,6 +188,17 @@ namespace RevitBridge.Logic.Handlers
 
             var skippedAlready = onlyUntagged ? planned.Count(x => x.alreadyTagged) : 0;
             var plannedToTag = onlyUntagged ? planned.Count(x => !x.alreadyTagged) : planned.Count;
+            var mapping = ResolveCategoryTagTypeMap(doc, p.categoryTagTypeMap, out var mappingWarnings);
+            var defaultTypeId = ResolveDefaultTagTypeId(doc, p.tagTypeId, p.tagTypeName, p.tagFamilyName);
+            var tagFamilyResolution = geometryAware && TagWorkPolicy.RequiresFamilyResolution(dryRun, plannedToTag)
+                ? ResolveGeometryTagFamily(app.Application, doc, targets, defaultTypeId, p, dryRun)
+                : null;
+            if (defaultTypeId == null && tagFamilyResolution?.TypeId != null) defaultTypeId = tagFamilyResolution.TypeId;
+            if (dryRun && p.inspectTagFamilyElements == true && tagFamilyResolution?.TypeId != null)
+                InspectTagFamilyElements(doc, tagFamilyResolution);
+            if (!dryRun && plannedToTag > 0 && geometryAware && defaultTypeId == null && p.autoLoadTagFamily == true)
+                throw new InvalidOperationException(tagFamilyResolution?.Error ?? "A compatible tag family could not be loaded.");
+
             var geometryPlans = geometryAware
                 ? BuildGeometryPlans(doc, view, targets, existingTagged, onlyUntagged, tagWidth, tagHeight, clearance, placementProfile, maxRepairAttempts)
                 : new Dictionary<long, GeometryPlacementPlan>();
