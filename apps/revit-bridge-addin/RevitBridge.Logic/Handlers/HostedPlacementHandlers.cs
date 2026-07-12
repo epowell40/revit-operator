@@ -13,6 +13,7 @@ using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Structure;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
+using RevitBridge.Common.Spatial;
 using RevitBridge.Logic.Handlers.Core;
 
 namespace RevitBridge.Logic.Handlers
@@ -3771,6 +3772,17 @@ namespace RevitBridge.Logic.Handlers
             }
 
             if (targetPoint == null) targetPoint = currentPoint;
+            else if (p.pointXyz == null || p.pointXyz.Length < 3)
+            {
+                // Host chainage is a 2D placement coordinate. Preserve the
+                // instance mounting elevation unless the caller supplied an
+                // explicit world point with its own Z value.
+                targetPoint = new XYZ(
+                    targetPoint.X,
+                    targetPoint.Y,
+                    HostedInstanceAdjustmentPolicy.ResolveTargetElevationFt(currentPoint.Z, targetPoint.Z, hasExplicitPoint: false)
+                );
+            }
             var targetFrame = HostedPlacementUtil.BuildHostLocalFrameData(host, roomWall, targetPoint);
             var orientationSource = p.orientationSourceElementId.HasValue && p.orientationSourceElementId.Value > 0
                 ? doc.GetElement(ElementIdCompat.Create(p.orientationSourceElementId.Value))
@@ -3783,9 +3795,106 @@ namespace RevitBridge.Logic.Handlers
             int? previewHeight = null;
             string circuitActionDetail = "";
             var circuitAuditBefore = HostedPlacementUtil.BuildElectricalCircuitAuditPayload(familyInstance);
+            var originalElementId = ElementIdCompat.GetValue(element.Id);
+            var activeElement = element;
+            var activeFamilyInstance = familyInstance;
+            var usedFaceHostedReplacement = false;
+            long? replacementElementId = null;
+            HostedPlacementUtil.PlacementValidationSummary? placementValidation = null;
+
+            XYZ RotateInPlan(XYZ direction, double radians)
+            {
+                var normalized = direction.GetLength() > 1e-9 ? direction.Normalize() : XYZ.BasisX;
+                var cos = Math.Cos(radians);
+                var sin = Math.Sin(radians);
+                var rotated = new XYZ(
+                    (normalized.X * cos) - (normalized.Y * sin),
+                    (normalized.X * sin) + (normalized.Y * cos),
+                    normalized.Z
+                );
+                return rotated.GetLength() > 1e-9 ? rotated.Normalize() : XYZ.BasisX;
+            }
+
+            XYZ ResolveReplacementReferenceDirection()
+            {
+                var tangent = targetFrame?.tangent != null && targetFrame.tangent.GetLength() > 1e-9
+                    ? targetFrame.tangent.Normalize()
+                    : XYZ.BasisX;
+                if (p.rotateToHostRelativeDegrees.HasValue)
+                    return RotateInPlan(tangent, (p.rotateToHostRelativeDegrees.Value * Math.PI) / 180.0);
+
+                var sourceForOrientation = (p.matchOrientationFromSource ?? false) && orientationSource != null
+                    ? orientationSource
+                    : element;
+                var relative = HostedPlacementUtil.TryComputeOrientationRelativeToHostRadians(sourceForOrientation, currentFrame);
+                return relative.HasValue ? RotateInPlan(tangent, relative.Value) : tangent;
+            }
 
             void ApplyAdjustment()
             {
+                if (HostedInstanceAdjustmentPolicy.RequiresLinkedFaceReplacement(
+                    host is RevitLinkInstance,
+                    roomWall?.linkedElementId != null && roomWall.linkedElementId.Value > 0))
+                {
+                    var symbol = doc.GetElement(element.GetTypeId()) as FamilySymbol
+                        ?? throw new InvalidOperationException("Hosted replacement requires a FamilySymbol type.");
+                    var facePlacement = HostedPlacementUtil.TryResolveFaceHostedPlacementReference(
+                        host,
+                        roomWall,
+                        targetPoint,
+                        ResolveReplacementReferenceDirection(),
+                        warnings
+                    ) ?? throw new InvalidOperationException(
+                        $"Unable to resolve a linked-face placement reference for linked element {roomWall.linkedElementId.Value}."
+                    );
+
+                    if (!symbol.IsActive)
+                    {
+                        symbol.Activate();
+                        doc.Regenerate();
+                    }
+
+                    var replacement = doc.Create.NewFamilyInstance(
+                        facePlacement.faceReference,
+                        facePlacement.placementPoint,
+                        facePlacement.referenceDirection,
+                        symbol
+                    );
+                    HostedPlacementUtil.CopyParameters(element, replacement, new[] { "Mark", "Comments" }, warnings);
+
+                    var circuitMatched = HostedPlacementUtil.TryMatchElectricalCircuitFromSource(
+                        element,
+                        replacement,
+                        p.requireElectricalCircuitMatch,
+                        warnings,
+                        out var replacementCircuitDetail
+                    );
+                    circuitActionDetail = replacementCircuitDetail;
+                    if (!circuitMatched && p.requireElectricalCircuitMatch)
+                        throw new InvalidOperationException(replacementCircuitDetail);
+                    if (!string.IsNullOrWhiteSpace(replacementCircuitDetail)) warnings.Add(replacementCircuitDetail);
+
+                    doc.Regenerate();
+                    replacementElementId = ElementIdCompat.GetValue(replacement.Id);
+                    placementValidation = HostedPlacementUtil.ValidateCreatedPlacements(
+                        app,
+                        new List<long> { replacementElementId.Value },
+                        p.roomId,
+                        p.roomNumber,
+                        p.roomSide,
+                        warnings
+                    );
+                    if (!placementValidation.valid)
+                        throw new InvalidOperationException($"Replacement placement validation failed. {placementValidation.reason}");
+
+                    doc.Delete(element.Id);
+                    doc.Regenerate();
+                    activeElement = replacement;
+                    activeFamilyInstance = replacement;
+                    usedFaceHostedReplacement = true;
+                    return;
+                }
+
                 var refreshedPoint = HostedPlacementUtil.TryGetElementPoint(element) ?? currentPoint;
                 var delta = targetPoint - refreshedPoint;
                 if (delta.GetLength() > 1e-6)
@@ -3843,7 +3952,7 @@ namespace RevitBridge.Logic.Handlers
                 if (!p.includePreviewImage) return;
                 using var tg = new TransactionGroup(doc, "Adjust Hosted Instance On Host Preview");
                 tg.Start();
-                var adjustedPoint = HostedPlacementUtil.TryGetElementPoint(element) ?? targetPoint;
+                var adjustedPoint = HostedPlacementUtil.TryGetElementPoint(activeElement) ?? targetPoint;
                 var adjustedFrame = HostedPlacementUtil.BuildHostLocalFrameData(host, roomWall, adjustedPoint);
                 var labels = new List<PlacementPreviewLabel>
                 {
@@ -3859,7 +3968,7 @@ namespace RevitBridge.Logic.Handlers
                 (previewPath, previewWidth, previewHeight) = HostedPlacementUtil.ExportPlacementPreview(
                     doc,
                     previewView,
-                    new List<long> { ElementIdCompat.GetValue(element.Id) },
+                    new List<long> { ElementIdCompat.GetValue(activeElement.Id) },
                     labels,
                     Math.Max(600, Math.Min(4000, p.previewImageSize ?? 2200)),
                     Math.Max(0.0, Math.Min(100.0, p.focusPaddingFt ?? 6.0)),
@@ -3879,19 +3988,27 @@ namespace RevitBridge.Logic.Handlers
                     tx.Commit();
                 }
                 CapturePreview("planned adjustment", (p.matchOrientationFromSource ?? false) ? orientationSource : element);
+                var plannedElementId = usedFaceHostedReplacement ? replacementElementId : p.elementId;
+                var plannedStrategy = usedFaceHostedReplacement ? "recreate_linked_face_then_delete_original" : "translate_existing_instance";
+                var plannedCircuitAfter = HostedPlacementUtil.BuildElectricalCircuitAuditPayload(activeFamilyInstance);
                 tg.RollBack();
                 return Task.FromResult<object>(new
                 {
                     status = "Planned",
                     dryRun = true,
+                    originalElementId,
                     elementId = p.elementId,
+                    temporaryReplacementElementId = usedFaceHostedReplacement ? plannedElementId : null,
+                    replacementStrategy = plannedStrategy,
+                    originalRetained = true,
                     host = HostedPlacementUtil.BuildPlacementHostPayload(host),
                     moveVector = new { x = targetPoint.X - currentPoint.X, y = targetPoint.Y - currentPoint.Y, z = targetPoint.Z - currentPoint.Z },
                     placementPoint = new { x = targetPoint.X, y = targetPoint.Y, z = targetPoint.Z },
                     hostLocalFrameBefore = HostedPlacementUtil.BuildHostLocalFramePayload(currentFrame, element),
                     hostLocalFrameAfter = HostedPlacementUtil.BuildHostLocalFramePayload(targetFrame, (p.matchOrientationFromSource ?? false) ? orientationSource : element),
                     electricalCircuitBefore = circuitAuditBefore,
-                    electricalCircuitAfter = HostedPlacementUtil.BuildElectricalCircuitAuditPayload(familyInstance),
+                    electricalCircuitAfter = plannedCircuitAfter,
+                    placementValidation,
                     circuitActionDetail = string.IsNullOrWhiteSpace(circuitActionDetail) ? null : circuitActionDetail,
                     preview = previewPath != null ? new { path = previewPath, widthPx = previewWidth, heightPx = previewHeight } : null,
                     warnings
@@ -3906,14 +4023,25 @@ namespace RevitBridge.Logic.Handlers
             }
 
             CapturePreview("adjusted instance", (p.matchOrientationFromSource ?? false) ? orientationSource : element);
-            var finalPoint = HostedPlacementUtil.TryGetElementPoint(element) ?? targetPoint;
+            if (usedFaceHostedReplacement)
+            {
+                if (replacementElementId == null || doc.GetElement(ElementIdCompat.Create(replacementElementId.Value)) == null)
+                    throw new InvalidOperationException("Hosted replacement did not persist after commit.");
+                if (doc.GetElement(ElementIdCompat.Create(originalElementId)) != null)
+                    throw new InvalidOperationException("Original hosted instance still exists after replacement commit.");
+            }
+
+            var finalPoint = HostedPlacementUtil.TryGetElementPoint(activeElement) ?? targetPoint;
             var finalFrame = HostedPlacementUtil.BuildHostLocalFrameData(host, roomWall, finalPoint);
-            var circuitAuditAfter = HostedPlacementUtil.BuildElectricalCircuitAuditPayload(familyInstance);
+            var circuitAuditAfter = HostedPlacementUtil.BuildElectricalCircuitAuditPayload(activeFamilyInstance);
             return Task.FromResult<object>(new
             {
                 status = "Adjusted",
                 dryRun = false,
-                elementId = p.elementId,
+                originalElementId,
+                elementId = ElementIdCompat.GetValue(activeElement.Id),
+                replacementStrategy = usedFaceHostedReplacement ? "recreate_linked_face_then_delete_original" : "translate_existing_instance",
+                originalDeleted = usedFaceHostedReplacement,
                 host = HostedPlacementUtil.BuildPlacementHostPayload(host),
                 moveVector = new { x = finalPoint.X - currentPoint.X, y = finalPoint.Y - currentPoint.Y, z = finalPoint.Z - currentPoint.Z },
                 placementPoint = new { x = finalPoint.X, y = finalPoint.Y, z = finalPoint.Z },
@@ -3921,6 +4049,7 @@ namespace RevitBridge.Logic.Handlers
                 hostLocalFrameAfter = HostedPlacementUtil.BuildHostLocalFramePayload(finalFrame, (p.matchOrientationFromSource ?? false) ? orientationSource : element),
                 electricalCircuitBefore = circuitAuditBefore,
                 electricalCircuitAfter = circuitAuditAfter,
+                placementValidation,
                 circuitActionDetail = string.IsNullOrWhiteSpace(circuitActionDetail) ? null : circuitActionDetail,
                 preview = previewPath != null ? new { path = previewPath, widthPx = previewWidth, heightPx = previewHeight } : null,
                 warnings

@@ -11,6 +11,8 @@ import { applyEnvironmentPolicyToActions } from "./environment_profile.js";
 import { maybeRunDeterministicEnlargedPlanSheet } from "./deterministic/enlarged_plan_sheet.js";
 import { maybeRunDeterministicMepRouteRedline } from "./deterministic/mep_route_redline.js";
 import { maybeRunDeterministicRoomReceptacleAnalog } from "./deterministic/room_receptacle_analog.js";
+import { maybeRunSemanticAecWorkflow } from "./deterministic/aec_workflow_registry.js";
+import type { AecTaskIntentInterpreter } from "./aec_task_intent_interpreter.js";
 
 function maybeBuildZippyBimToolOpenedAck(req: ChatRequest): ChatResponse | null {
   const text = (req.user_text ?? "").trim();
@@ -77,6 +79,7 @@ async function maybeRunTopLevelMepRouteRedline(req: ChatRequest, resolver = mayb
 }
 
 export async function __testOnlyMaybeRunTopLevelMepRouteRedline(req: ChatRequest, resolver: typeof maybeRunDeterministicMepRouteRedline): Promise<ChatResponse | null> { return maybeRunTopLevelMepRouteRedline(req, resolver); }
+export async function __testOnlyMaybeRunSemanticAecWorkflow(req: ChatRequest, interpreter: AecTaskIntentInterpreter): Promise<ChatResponse | null> { return maybeRunSemanticAecWorkflow(req, interpreter); }
 
 export function __testOnlyFinalizeDecision(req: ChatRequest, decision: ChatResponse): ChatResponse {
   return finalizeDecision(req, decision);
@@ -110,6 +113,11 @@ export async function decide(req: ChatRequest): Promise<ChatResponse> {
   const mepRouteRedlineDecision = await maybeRunTopLevelMepRouteRedline(req);
   if (mepRouteRedlineDecision) {
     return finalizeDecision(req, mepRouteRedlineDecision);
+  }
+
+  const semanticAecDecision = await maybeRunSemanticAecWorkflow(req);
+  if (semanticAecDecision) {
+    return finalizeDecision(req, semanticAecDecision);
   }
 
   const forced = (process.env.OPERATOR_BRAIN || "").toLowerCase().trim();
@@ -191,6 +199,14 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks): Pr
     }
     cb.onDone?.(text);
     return finalizeDecision(req, mepRouteRedlineDecision);
+  }
+
+  const semanticAecDecision = await maybeRunSemanticAecWorkflow(req);
+  if (semanticAecDecision) {
+    const text = semanticAecDecision.assistant_message || "";
+    cb.onDelta?.(text);
+    cb.onDone?.(text);
+    return finalizeDecision(req, semanticAecDecision);
   }
 
   const forced = (process.env.OPERATOR_BRAIN || "").toLowerCase().trim();

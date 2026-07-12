@@ -283,11 +283,12 @@ namespace RevitBridge.Logic.Handlers
             }
 
             var devices = BuildDeviceRecords(document, source);
-            var requiredSignatures = new HashSet<string>(devices.Select(device => device.PlannerDevice.SourceHostSignature).Where(signature => !string.IsNullOrWhiteSpace(signature))!, StringComparer.Ordinal);
-            var sourcePlannerAnchors = source.Anchors.Where(anchor => requiredSignatures.Contains(DwellingReceptacleAnalogPlanner.NormalizedSignature(anchor.Value))).ToList();
+            var usedSourceAnchorIds = new HashSet<string>(devices.Select(device => device.PlannerDevice.SourceHostScopedId).Where(id => !string.IsNullOrWhiteSpace(id))!, StringComparer.Ordinal);
+            var sourcePlannerAnchors = source.Anchors.Where(anchor => usedSourceAnchorIds.Contains(anchor.Value.ScopedId)).ToList();
+            if (sourcePlannerAnchors.Count != usedSourceAnchorIds.Count)
+                throw new InvalidOperationException("source_used_semantic_anchor_missing");
+            var requiredSignatures = new HashSet<string>(sourcePlannerAnchors.Select(anchor => DwellingReceptacleAnalogPlanner.NormalizedSignature(anchor.Value)), StringComparer.Ordinal);
             var targetPlannerAnchors = target.Anchors.Where(anchor => requiredSignatures.Contains(DwellingReceptacleAnalogPlanner.NormalizedSignature(anchor.Value))).ToList();
-            if (!Signatures(sourcePlannerAnchors).SequenceEqual(Signatures(targetPlannerAnchors), StringComparer.Ordinal))
-                throw new InvalidOperationException("source_target_used_semantic_anchor_mismatch");
             var plannerInput = new DwellingReceptacleAnalogPlanInput
             {
                 SourceRoom = source.Frame,
@@ -300,7 +301,7 @@ namespace RevitBridge.Logic.Handlers
             };
             var analogPlan = DwellingReceptacleAnalogPlanner.Plan(plannerInput);
             if (!string.Equals(analogPlan.Status, "ready", StringComparison.Ordinal))
-                throw new InvalidOperationException("analog_planner_not_ready:" + string.Join(",", analogPlan.ManualReviews.Select(review => review.Code)));
+                throw new InvalidOperationException("analog_planner_not_ready:" + string.Join(",", analogPlan.ManualReviews.Select(review => review.Code + (string.IsNullOrWhiteSpace(review.AnchorSignature) ? string.Empty : "@" + review.AnchorSignature))));
 
             var context = new PreparedContext
             {

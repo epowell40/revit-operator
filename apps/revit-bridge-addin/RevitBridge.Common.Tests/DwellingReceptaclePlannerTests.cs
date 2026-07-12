@@ -279,6 +279,49 @@ namespace RevitBridge.Common.Tests
             Assert.Equal("manual_review", plan.Status);
             Assert.Empty(plan.ProposedPlacements);
             Assert.Contains(plan.ManualReviews, x => x.Code == "anchor_signature_multiset_mismatch");
+            Assert.Contains(plan.ManualReviews, x => x.Code == "anchor_signature_target_count_insufficient" && x.AnchorSignature == "plumbing_fixtures|vanity_sink|*");
+        }
+
+        [Fact]
+        public void AnalogPlannerAllowsExtraTargetAnchorsAndSelectsOneInjectivelyByNormalizedPosition()
+        {
+            var input = RepeatedAssignmentFixture();
+            input.SourceAnchors.RemoveAll(x => x.ScopedId == "source-high");
+            input.TargetAnchors.Add(Anchor("target-extra", "Casework", "Cabinet", "A", 0.8, 0.8));
+
+            var plan = DwellingReceptacleAnalogPlanner.Plan(input);
+
+            Assert.Equal("ready", plan.Status);
+            var placement = Assert.Single(plan.ProposedPlacements);
+            Assert.Equal("target-low-y", placement.TargetHostAnchorScopedId);
+        }
+
+        [Fact]
+        public void AnalogPlannerFallsBackToSameCategoryAndFamilyAcrossDifferentTargetTypeDimensions()
+        {
+            var input = AnalogFixture();
+            input.TargetAnchors.Single(x => x.ScopedId == "target-counter-vanity").Type = "30 Inch Depth";
+
+            var plan = DwellingReceptacleAnalogPlanner.Plan(input);
+
+            Assert.Equal("ready", plan.Status);
+            var placement = plan.ProposedPlacements.Single(x => x.SourceElementId == "405-standard-vanity");
+            Assert.Equal("casework|counter|*", placement.SourceAnchorSignature);
+            Assert.Equal(placement.SourceAnchorSignature, placement.TargetAnchorSignature);
+            Assert.Contains("family_role", placement.MappingRuleTrace);
+        }
+
+        [Fact]
+        public void AnalogPlannerStillFailsClosedWhenTargetSemanticFamilyIsDifferent()
+        {
+            var input = AnalogFixture();
+            input.TargetAnchors.Single(x => x.ScopedId == "target-counter-vanity").Family = "Unrelated Shelf";
+
+            var plan = DwellingReceptacleAnalogPlanner.Plan(input);
+
+            Assert.Equal("manual_review", plan.Status);
+            Assert.Empty(plan.ProposedPlacements);
+            Assert.Contains(plan.ManualReviews, x => x.Code == "anchor_signature_target_count_insufficient");
         }
 
         [Theory]

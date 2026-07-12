@@ -92,6 +92,13 @@ namespace RevitBridge.Common.LowVoltage.Skills.DwellingReceptacles
         private const double AssignmentCostMargin = 0.0001;
         private const int MaximumExactAssignmentGroupSize = 8;
 
+        private sealed class SemanticPair
+        {
+            public DwellingReceptacleAnalogAnchor Target { get; set; } = new DwellingReceptacleAnalogAnchor();
+            public string MatchSignature { get; set; } = string.Empty;
+            public bool UsesFamilyRoleFallback { get; set; }
+        }
+
         public static DwellingReceptacleAnalogPlan Plan(DwellingReceptacleAnalogPlanInput input)
         {
             if (input == null) throw new ArgumentNullException(nameof(input));
@@ -107,17 +114,17 @@ namespace RevitBridge.Common.LowVoltage.Skills.DwellingReceptacles
             var sourceAnchors = input.SourceAnchors.ToList();
             var targetAnchors = input.TargetAnchors.ToList();
             var sourceById = sourceAnchors.ToDictionary(anchor => anchor.ScopedId, StringComparer.Ordinal);
-            var pairsBySignature = BuildAllPairs(sourceAnchors, targetAnchors, input.SourceRoom, input.TargetRoom, plan);
-            if (pairsBySignature == null || plan.ManualReviews.Count > 0) return FailClosed(plan);
+            var pairsBySourceId = BuildAllPairs(sourceAnchors, targetAnchors, input.SourceRoom, input.TargetRoom, plan);
+            if (pairsBySourceId == null || plan.ManualReviews.Count > 0) return FailClosed(plan);
 
             var placements = new List<DwellingReceptacleAnalogPlacement>();
             foreach (var device in input.ReferenceDevices.OrderBy(x => x.ElementId, StringComparer.Ordinal))
             {
                 if (DeclaresSemanticHost(device))
                 {
-                    var semantic = ResolveSemanticHost(device, sourceAnchors, sourceById, pairsBySignature, input, plan);
+                    var semantic = ResolveSemanticHost(device, sourceAnchors, sourceById, pairsBySourceId, input, plan);
                     if (semantic == null) continue;
-                    if (!TryBuildSemanticPlacement(device, semantic.Value.Source, semantic.Value.Target, input, out var placement))
+                    if (!TryBuildSemanticPlacement(device, semantic.Value.Source, semantic.Value.Pair, input, out var placement))
                     {
                         AddReview(plan, "nonfinite_semantic_placement", "Semantic mapping produced a nonfinite mounting height, local offset, or target point.", device.ElementId, semantic.Value.Signature);
                         continue;
@@ -157,11 +164,11 @@ namespace RevitBridge.Common.LowVoltage.Skills.DwellingReceptacles
             return signature;
         }
 
-        private static (DwellingReceptacleAnalogAnchor Source, DwellingReceptacleAnalogAnchor Target, string Signature)? ResolveSemanticHost(
+        private static (DwellingReceptacleAnalogAnchor Source, SemanticPair Pair, string Signature)? ResolveSemanticHost(
             DwellingReceptacleReferenceDevice device,
             IReadOnlyCollection<DwellingReceptacleAnalogAnchor> sourceAnchors,
             IReadOnlyDictionary<string, DwellingReceptacleAnalogAnchor> sourceById,
-            IReadOnlyDictionary<string, Dictionary<string, DwellingReceptacleAnalogAnchor>> pairsBySignature,
+            IReadOnlyDictionary<string, SemanticPair> pairsBySourceId,
             DwellingReceptacleAnalogPlanInput input,
             DwellingReceptacleAnalogPlan plan)
         {
@@ -218,15 +225,15 @@ namespace RevitBridge.Common.LowVoltage.Skills.DwellingReceptacles
                 AddReview(plan, "semantic_host_distance_exceeded", "A declared semantic host exceeds the semantic anchor distance threshold.", device.ElementId, signature);
                 return null;
             }
-            if (!pairsBySignature.TryGetValue(signature, out var pairs) || !pairs.TryGetValue(source.ScopedId, out var target))
+            if (!pairsBySourceId.TryGetValue(source.ScopedId, out var pair))
             {
                 AddReview(plan, "semantic_anchor_pair_missing", "The resolved semantic source anchor has no deterministic target pair.", device.ElementId, signature);
                 return null;
             }
-            return (source, target, signature);
+            return (source, pair, signature);
         }
 
-        private static Dictionary<string, Dictionary<string, DwellingReceptacleAnalogAnchor>>? BuildAllPairs(
+        private static Dictionary<string, SemanticPair>? BuildAllPairs(
             IReadOnlyCollection<DwellingReceptacleAnalogAnchor> sourceAnchors,
             IReadOnlyCollection<DwellingReceptacleAnalogAnchor> targetAnchors,
             DwellingReceptacleAnalogRoomFrame sourceRoom,
@@ -235,18 +242,30 @@ namespace RevitBridge.Common.LowVoltage.Skills.DwellingReceptacles
         {
             var sourceGroups = sourceAnchors.GroupBy(NormalizedSignature).ToDictionary(x => x.Key, x => x.OrderBy(anchor => anchor.ScopedId, StringComparer.Ordinal).ToList(), StringComparer.Ordinal);
             var targetGroups = targetAnchors.GroupBy(NormalizedSignature).ToDictionary(x => x.Key, x => x.OrderBy(anchor => anchor.ScopedId, StringComparer.Ordinal).ToList(), StringComparer.Ordinal);
-            if (!HaveEqualSignatureMultisets(sourceGroups, targetGroups))
+            var usesFamilyRoleFallback = !TargetCoversSourceSignatureMultiset(sourceGroups, targetGroups);
+            if (usesFamilyRoleFallback)
             {
-                AddReview(plan, "anchor_signature_multiset_mismatch", "Every normalized source anchor signature must have the same target count, including unused signatures.", null, null);
+                sourceGroups = sourceAnchors.GroupBy(SemanticRoleSignature).ToDictionary(x => x.Key, x => x.OrderBy(anchor => anchor.ScopedId, StringComparer.Ordinal).ToList(), StringComparer.Ordinal);
+                targetGroups = targetAnchors.GroupBy(SemanticRoleSignature).ToDictionary(x => x.Key, x => x.OrderBy(anchor => anchor.ScopedId, StringComparer.Ordinal).ToList(), StringComparer.Ordinal);
+            }
+            if (!TargetCoversSourceSignatureMultiset(sourceGroups, targetGroups))
+            {
+                AddReview(plan, "anchor_signature_multiset_mismatch", "Every used normalized source anchor signature must have at least the same target count.", null, null);
+                foreach (var pair in sourceGroups.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+                {
+                    var available = targetGroups.TryGetValue(pair.Key, out var candidates) ? candidates.Count : 0;
+                    if (available < pair.Value.Count)
+                        AddReview(plan, "anchor_signature_target_count_insufficient", "The target has " + available + " matching anchor(s) for " + pair.Value.Count + " used source anchor(s).", null, pair.Key);
+                }
                 return null;
             }
 
-            var result = new Dictionary<string, Dictionary<string, DwellingReceptacleAnalogAnchor>>(StringComparer.Ordinal);
+            var result = new Dictionary<string, SemanticPair>(StringComparer.Ordinal);
             foreach (var signature in sourceGroups.Keys.OrderBy(x => x, StringComparer.Ordinal))
             {
                 var source = sourceGroups[signature];
                 var target = targetGroups[signature];
-                if (source.Count > MaximumExactAssignmentGroupSize)
+                if (source.Count > MaximumExactAssignmentGroupSize || target.Count > MaximumExactAssignmentGroupSize)
                 {
                     AddReview(plan, "assignment_group_too_large", "Repeated anchor signature exceeds the bounded exact assignment limit.", null, signature);
                     return null;
@@ -257,9 +276,15 @@ namespace RevitBridge.Common.LowVoltage.Skills.DwellingReceptacles
                     AddReview(plan, "ambiguous_anchor_assignment", "Repeated anchor signature has an ambiguous or inadequately separated minimum-cost normalized-XY assignment.", null, signature);
                     return null;
                 }
-                var pairs = new Dictionary<string, DwellingReceptacleAnalogAnchor>(StringComparer.Ordinal);
-                for (var index = 0; index < source.Count; index++) pairs[source[index].ScopedId] = target[assignment[index]];
-                result[signature] = pairs;
+                for (var index = 0; index < source.Count; index++)
+                {
+                    result[source[index].ScopedId] = new SemanticPair
+                    {
+                        Target = target[assignment[index]],
+                        MatchSignature = signature,
+                        UsesFamilyRoleFallback = usesFamilyRoleFallback
+                    };
+                }
             }
             return result;
         }
@@ -270,15 +295,15 @@ namespace RevitBridge.Common.LowVoltage.Skills.DwellingReceptacles
             DwellingReceptacleAnalogRoomFrame sourceRoom,
             DwellingReceptacleAnalogRoomFrame targetRoom)
         {
-            if (source.Count == 1) return new[] { 0 };
             var search = new AssignmentSearch(source, target, sourceRoom, targetRoom);
             search.Search(0, 0);
             return search.HasUnambiguousBest ? search.BestAssignment : null;
         }
 
-        private static bool TryBuildSemanticPlacement(DwellingReceptacleReferenceDevice device, DwellingReceptacleAnalogAnchor source, DwellingReceptacleAnalogAnchor target, DwellingReceptacleAnalogPlanInput input, out DwellingReceptacleAnalogPlacement placement)
+        private static bool TryBuildSemanticPlacement(DwellingReceptacleReferenceDevice device, DwellingReceptacleAnalogAnchor source, SemanticPair pair, DwellingReceptacleAnalogPlanInput input, out DwellingReceptacleAnalogPlacement placement)
         {
             placement = new DwellingReceptacleAnalogPlacement();
+            var target = pair.Target;
             var mountingHeight = device.Point.Z - input.SourceRoom.FloorZ;
             var offsetX = device.Point.X - source.Point.X;
             var offsetY = device.Point.Y - source.Point.Y;
@@ -291,11 +316,11 @@ namespace RevitBridge.Common.LowVoltage.Skills.DwellingReceptacles
                 TargetPoint = point,
                 MountingHeightAffFt = mountingHeight,
                 MappingBasis = "semantic_anchor",
-                MappingRuleTrace = "paired_anchor_translation_preserving_local_offset_and_mounting_height",
+                MappingRuleTrace = pair.UsesFamilyRoleFallback ? "paired_anchor_family_role_translation_preserving_local_offset_and_mounting_height" : "paired_anchor_translation_preserving_local_offset_and_mounting_height",
                 SourceAnchorScopedId = source.ScopedId,
                 TargetHostAnchorScopedId = target.ScopedId,
-                SourceAnchorSignature = NormalizedSignature(source),
-                TargetAnchorSignature = NormalizedSignature(target),
+                SourceAnchorSignature = pair.MatchSignature,
+                TargetAnchorSignature = pair.MatchSignature,
                 TargetHostScopedId = target.HostScopedId
             };
             return IsValidDerivedPlacement(placement);
@@ -348,10 +373,10 @@ namespace RevitBridge.Common.LowVoltage.Skills.DwellingReceptacles
             if (materialized.GroupBy(x => x.ScopedId, StringComparer.Ordinal).Any(x => x.Count() > 1)) AddReview(plan, "duplicate_" + scope + "_anchor_id", "Anchor identities must be unique within a room.", null, null);
         }
 
-        private static bool HaveEqualSignatureMultisets(
+        private static bool TargetCoversSourceSignatureMultiset(
             IReadOnlyDictionary<string, List<DwellingReceptacleAnalogAnchor>> source,
             IReadOnlyDictionary<string, List<DwellingReceptacleAnalogAnchor>> target)
-            => source.Count == target.Count && source.All(pair => target.TryGetValue(pair.Key, out var candidates) && candidates.Count == pair.Value.Count);
+            => source.All(pair => target.TryGetValue(pair.Key, out var candidates) && candidates.Count >= pair.Value.Count);
 
         private static (Point3 Point, string Side, double Chainage) MapBoundary(Point3 point, DwellingReceptacleAnalogRoomFrame source, DwellingReceptacleAnalogRoomFrame target, double mountingHeight)
         {
@@ -430,6 +455,20 @@ namespace RevitBridge.Common.LowVoltage.Skills.DwellingReceptacles
         }
 
         private static string NormalizeComponent(string value) => (value ?? string.Empty).Trim().ToLowerInvariant().Replace(' ', '_');
+        private static string SemanticRoleSignature(DwellingReceptacleAnalogAnchor anchor)
+        {
+            if (!TryNormalizeComponent(anchor.Category, out var category) || !TryNormalizeComponent(anchor.Family, out var family))
+                throw new ArgumentException("Anchor role signature is malformed.", nameof(anchor));
+            var compact = family.Replace("_", string.Empty);
+            var role = family;
+            if (category == "casework" && compact.Contains("vanity") && compact.Contains("counter")) role = "vanity_counter";
+            else if (category == "casework" && compact.Contains("counter")) role = "counter";
+            else if (compact.Contains("kitchen") && compact.Contains("sink")) role = "kitchen_sink";
+            else if (compact.Contains("vanity") && compact.Contains("sink")) role = "vanity_sink";
+            else if (compact.Contains("shower")) role = "shower";
+            else if (compact.Contains("washer")) role = "washer";
+            return category + "|" + role + "|*";
+        }
         private static bool DeclaresSemanticHost(DwellingReceptacleReferenceDevice device) => !string.IsNullOrWhiteSpace(device.SourceHostScopedId) || !string.IsNullOrWhiteSpace(device.SourceHostSignature);
         private static bool IsFinite(Point3 point) => point != null && IsFinite(point.X) && IsFinite(point.Y) && IsFinite(point.Z);
         private static bool IsFinite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);

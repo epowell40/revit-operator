@@ -1,19 +1,47 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ToolResult } from "../src/contracts.js";
-import { __testOnlyRoomReceptacleIntent, maybeRunDeterministicRoomReceptacleAnalog } from "../src/deterministic/room_receptacle_analog.js";
+import { __testOnlyVerifiedAnalogApplyReceipt, maybeRunDeterministicRoomReceptacleAnalog } from "../src/deterministic/room_receptacle_analog.js";
+import { AEC_TASK_INTENT_V1_SCHEMA, type AecTaskIntentV1 } from "../src/aec_task_intent.js";
 
 function request(userText = "", toolResults: ToolResult[] = []): ChatRequest {
   return { version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: "room-403-demo", message_id: "message-1", user_text: userText, tool_results: toolResults };
 }
 
+function layoutIntent(targetRoom = "403", sourceRoom: string | null = null): AecTaskIntentV1 {
+  return {
+    schema: AEC_TASK_INTENT_V1_SCHEMA,
+    operation: "layout",
+    object_class: "receptacle",
+    target: { document: null, view: null, room_number: targetRoom, element_ids: [] },
+    reference: { kind: sourceRoom ? "room" : "office_standard", room_number: sourceRoom },
+    mutation: { kind: "create", requested: true },
+    spatial_constraints: [],
+    confidence: { value: 0.98, ambiguity: "none", reasons: ["explicit target and layout request"] },
+    evidence: { user_text: "fixture" }
+  };
+}
+
+function appliedReceipt(createdIds: number[], typeCounts: Array<{ familyType: string; count: number }>, warnings: string[] = []) {
+  return {
+    status: "applied", applied: true, planHash: "hash-405-403", source: { number: "405" }, target: { number: "403" },
+    createdIds, typeCounts, warnings,
+    readback: createdIds.map(id => ({
+      id, family: "Duplex Receptacle", type: "Standard", point: { x: id, y: 2, z: 3 }, targetRoomNumber: "403",
+      orientation: { hand: { x: 1, y: 0, z: 0 }, expected: { x: 1, y: 0, z: 0 }, agreement: 1, facingAgreement: 1 },
+      physicalHost: { linkInstanceId: 10, linkedElementId: 20, faceFingerprint: `face-${id}` },
+      semanticAnchor: { source: `source-${id}`, target: `target-${id}` }
+    }))
+  };
+}
+
 test("office-standard Room 403 intent enters the native preview path without model discovery chatter", () => {
-  const response = maybeRunDeterministicRoomReceptacleAnalog(request("Lay out the receptacles in Room 403 based on our office standards."));
+  const response = maybeRunDeterministicRoomReceptacleAnalog(request("Lay out the receptacles in Room 403 based on our office standards."), layoutIntent());
   assert.equal(response?.actions.length, 1);
   assert.equal(response?.actions[0]?.path, "/revit/plan-room-receptacles-from-analog");
   assert.deepEqual(response?.actions[0]?.body, { targetRoomNumber: "403", includePreviewImage: true });
-  assert.equal(__testOnlyRoomReceptacleIntent("lay out the outlets in room 403 per our office standard"), "403");
-  assert.equal(__testOnlyRoomReceptacleIntent("lay out the receptacles in room 403 and room 405 per our office standard"), null);
+  const explicit = maybeRunDeterministicRoomReceptacleAnalog(request("Design Room 403 from Room 405."), layoutIntent("403", "405"));
+  assert.deepEqual(explicit?.actions[0]?.body, { targetRoomNumber: "403", sourceRoomNumber: "405", includePreviewImage: true });
 });
 
 test("verified rollback preview advances to the exact hash-bound analog apply", () => {
@@ -41,25 +69,32 @@ test("native persistent readback produces one compact completion report", () => 
     method: "POST",
     path: "/revit/apply-room-receptacles-from-analog",
     status: "done",
-    result_json: {
-      status: "applied",
-      applied: true,
-      source: { number: "405" },
-      target: { number: "403" },
-      createdIds,
-      readback: createdIds.map(id => ({ id })),
-      typeCounts: [
+    result_json: appliedReceipt(createdIds, [
         { familyType: "Duplex Receptacle|Standard", count: 7 },
         { familyType: "Duplex Receptacle|GFCI", count: 4 },
         { familyType: "Duplex Receptacle|Counter Top", count: 1 },
         { familyType: "High Voltage Receptacle|Standard", count: 2 }
-      ]
-    }
+      ])
   }]));
   assert.deepEqual(response?.actions, []);
   assert.match(response?.assistant_message ?? "", /Room 403 is complete/);
   assert.match(response?.assistant_message ?? "", /verified 14 receptacles/);
   assert.match(response?.assistant_message ?? "", /Room 405/);
+});
+
+test("completion receipt requires exact current-run ids plus type, room, host, position, and orientation evidence", () => {
+  const valid = appliedReceipt([1700001], [{ familyType: "Duplex Receptacle|Standard", count: 1 }]);
+  assert.ok(__testOnlyVerifiedAnalogApplyReceipt(valid));
+  const mutate = (change: (copy: any) => void) => { const copy = JSON.parse(JSON.stringify(valid)); change(copy); return copy; };
+  for (const invalid of [
+    mutate(copy => { copy.planHash = ""; }),
+    mutate(copy => { copy.createdIds.push(copy.createdIds[0]); }),
+    mutate(copy => { copy.readback[0].targetRoomNumber = "405"; }),
+    mutate(copy => { copy.readback[0].orientation.agreement = 0.5; }),
+    mutate(copy => { delete copy.readback[0].physicalHost.faceFingerprint; }),
+    mutate(copy => { delete copy.readback[0].semanticAnchor; }),
+    mutate(copy => { copy.typeCounts[0].count = 2; })
+  ]) assert.equal(__testOnlyVerifiedAnalogApplyReceipt(invalid), null);
 });
 
 test("applied receipt keeps success truthful while surfacing post-commit preview warnings", () => {
@@ -69,11 +104,7 @@ test("applied receipt keeps success truthful while surfacing post-commit preview
     method: "POST",
     path: "/revit/apply-room-receptacles-from-analog",
     status: "done",
-    result_json: {
-      status: "applied", applied: true, source: { number: "405" }, target: { number: "403" },
-      createdIds, readback: createdIds.map(id => ({ id })),
-      warnings: ["post_apply_preview_unavailable:InvalidOperationException"]
-    }
+    result_json: appliedReceipt(createdIds, [{ familyType: "Duplex Receptacle|Standard", count: 2 }], ["post_apply_preview_unavailable:InvalidOperationException"])
   }]));
   assert.deepEqual(previewUnavailable?.actions, []);
   assert.match(previewUnavailable?.assistant_message ?? "", /Room 403 is complete/);
@@ -85,11 +116,7 @@ test("applied receipt keeps success truthful while surfacing post-commit preview
     method: "POST",
     path: "/revit/apply-room-receptacles-from-analog",
     status: "done",
-    result_json: {
-      status: "applied", applied: true, source: { number: "405" }, target: { number: "403" },
-      createdIds, readback: createdIds.map(id => ({ id })),
-      warnings: ["post_apply_preview_cleanup_failed:cleanup_not_proven"]
-    }
+    result_json: appliedReceipt(createdIds, [{ familyType: "Duplex Receptacle|Standard", count: 2 }], ["post_apply_preview_cleanup_failed:cleanup_not_proven"])
   }]));
   assert.match(cleanupUnproven?.assistant_message ?? "", /cleanup could not be proven/);
   assert.match(cleanupUnproven?.assistant_message ?? "", /inspect the current view/);

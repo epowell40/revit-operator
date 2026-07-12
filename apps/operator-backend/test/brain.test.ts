@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { __testOnlyFinalizeDecision, decide } from "../src/brain.js";
+import { __testOnlyFinalizeDecision, __testOnlyMaybeRunSemanticAecWorkflow, decide } from "../src/brain.js";
+import { AEC_TASK_INTENT_V1_SCHEMA } from "../src/aec_task_intent.js";
 import { decideRule } from "../src/brains/rule_brain.js";
 import { shouldOpenZippyBimTool } from "../src/brains/zippybim_intent.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest } from "../src/contracts.js";
@@ -46,7 +47,13 @@ test("bridge-only status question pings bridge without opening Revit", async () 
 });
 
 test("office-standard room receptacle demo bypasses the general model loop", async () => {
-  const res = await decide(mkReq("Lay out the receptacles in Room 403 based on our office standards."));
+  const res = await __testOnlyMaybeRunSemanticAecWorkflow(mkReq("Lay out the receptacles in Room 403 based on our office standards."), { async interpret() { return {
+    schema: AEC_TASK_INTENT_V1_SCHEMA, operation: "layout", object_class: "receptacle",
+    target: { document: null, view: null, room_number: "403", element_ids: [] },
+    reference: { kind: "office_standard", room_number: null }, mutation: { kind: "create", requested: true },
+    spatial_constraints: [], confidence: { value: 0.98, ambiguity: "none", reasons: ["explicit"] }, evidence: { user_text: "replaced by authoritative request" }
+  }; } });
+  assert.ok(res);
   assert.equal(res.actions.length, 1);
   assert.equal(res.actions[0]?.method, "POST");
   assert.equal(res.actions[0]?.path, "/revit/plan-room-receptacles-from-analog");
