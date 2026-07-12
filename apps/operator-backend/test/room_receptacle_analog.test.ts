@@ -1,11 +1,31 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test, { after, before } from "node:test";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ToolResult } from "../src/contracts.js";
 import { __testOnlyVerifiedAnalogApplyReceipt, maybeRunDeterministicRoomReceptacleAnalog } from "../src/deterministic/room_receptacle_analog.js";
 import { AEC_TASK_INTENT_V1_SCHEMA, type AecTaskIntentV1 } from "../src/aec_task_intent.js";
+import { getActiveGoalForSession } from "../src/goals/service.js";
+
+const previousWorkspace = process.env.OPERATOR_WORKSPACE_ROOT;
+let testWorkspace = "";
+before(() => {
+  testWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "room-receptacle-goal-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = testWorkspace;
+});
+after(() => {
+  if (previousWorkspace === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+  else process.env.OPERATOR_WORKSPACE_ROOT = previousWorkspace;
+  fs.rmSync(testWorkspace, { recursive: true, force: true });
+});
 
 function request(userText = "", toolResults: ToolResult[] = []): ChatRequest {
   return { version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: "room-403-demo", message_id: "message-1", user_text: userText, tool_results: toolResults };
+}
+
+function sessionRequest(sessionId: string, userText = "", toolResults: ToolResult[] = []): ChatRequest {
+  return { ...request(userText, toolResults), session_id: sessionId, message_id: `${sessionId}-${toolResults[0]?.action_id ?? "start"}` };
 }
 
 function layoutIntent(targetRoom = "403", sourceRoom: string | null = null): AecTaskIntentV1 {
@@ -80,6 +100,36 @@ test("native persistent readback produces one compact completion report", () => 
   assert.match(response?.assistant_message ?? "", /Room 403 is complete/);
   assert.match(response?.assistant_message ?? "", /verified 14 receptacles/);
   assert.match(response?.assistant_message ?? "", /Room 405/);
+});
+
+test("room design persists target, selected precedent, exact apply evidence, and queued visual QA", () => {
+  const session = "room-407-persistent-goal";
+  const intent = layoutIntent("407");
+  intent.evidence.user_text = "Lay out receptacles in Room 407.";
+  maybeRunDeterministicRoomReceptacleAnalog(sessionRequest(session, intent.evidence.user_text), intent);
+  const started = getActiveGoalForSession(session);
+  assert.equal(started?.work_items.find(item => item.id === "precedent.resolve")?.status, "ready");
+  assert.equal(started?.work_budget?.conversational_permission_loops, 0);
+
+  maybeRunDeterministicRoomReceptacleAnalog(sessionRequest(session, "", [{
+    action_id: "preview-407", method: "POST", path: "/revit/plan-room-receptacles-from-analog", status: "done",
+    result_json: { status: "ready", ready: true, planHash: "hash-409-407", source: { number: "409" }, target: { number: "407" } }
+  }]));
+  const previewed = getActiveGoalForSession(session);
+  assert.equal(previewed?.assumptions.find(item => item.id === "precedent.room")?.statement, "Room 409 is the selected current-project analog for target Room 407.");
+  assert.equal(previewed?.work_items.find(item => item.id === "layout.preview")?.status, "complete");
+  assert.equal(previewed?.work_items.find(item => item.id === "layout.apply")?.status, "ready");
+
+  const receipt = appliedReceipt([1700407], [{ familyType: "Duplex Receptacle|Standard", count: 1 }]);
+  receipt.target.number = "407";
+  receipt.source.number = "409";
+  receipt.readback[0]!.targetRoomNumber = "407";
+  maybeRunDeterministicRoomReceptacleAnalog(sessionRequest(session, "", [{ action_id: "apply-407", method: "POST", path: "/revit/apply-room-receptacles-from-analog", status: "done", result_json: receipt }]));
+  const completed = getActiveGoalForSession(session);
+  assert.equal(completed?.work_items.find(item => item.id === "layout.apply")?.status, "complete");
+  assert.equal(completed?.work_items.find(item => item.id === "layout.verify")?.status, "complete");
+  assert.equal(completed?.work_items.find(item => item.id === "verify.visual")?.status, "ready");
+  assert.match(completed?.progress_summary ?? "", /Room 407 apply and native persistent readback passed/);
 });
 
 test("completion receipt requires exact current-run ids plus type, room, host, position, and orientation evidence", () => {
