@@ -36,6 +36,18 @@ test("unique exact lookup continues directly to bounded placement context; ambig
   assert.deepEqual((ambiguous.evidence.candidates as any[]).map(item => item.id), [1, 2]);
 });
 
+test("alternative Mark-or-Name identity stays one bounded OR lookup instead of falling through", () => {
+  const value = task();
+  value.subject.categories = ["Mechanical Equipment"];
+  value.subject.identifiers = [
+    { parameter: "Mark", value: "AHU-1", match: "exact" },
+    { parameter: "Name", value: "AHU-1", match: "exact" }
+  ];
+  const plan = planAecQueryTask(value);
+  assert.equal(plan.status, "ready");
+  assert.deepEqual(plan.actions[0], { action_id: "aec-query-exact-identifier", method: "POST", path: "/revit/find-elements-by-parameter", body: { category: "Mechanical Equipment", limit: 10, predicates: [{ parameterName: "Mark", op: "equals", value: "AHU-1" }, { parameterName: "Name", op: "equals", value: "AHU-1" }], matchMode: "any" } });
+});
+
 test("room count uses room-contents rather than a document-wide element query", () => {
   const value = task();
   value.operation = "count";

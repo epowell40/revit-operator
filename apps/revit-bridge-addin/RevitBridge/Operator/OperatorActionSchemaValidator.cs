@@ -2326,7 +2326,6 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalString(obj.Value, "parameterName", maxLen: 128, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "parameter", maxLen: 128, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "paramName", maxLen: 128, out error)) return false;
-                if (!ValidateRequiredString(obj.Value, "value", maxLen: 256, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "systemName", maxLen: 256, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "viewId", out error)) return false;
 
@@ -2335,9 +2334,36 @@ namespace RevitBridge.Operator
                     (obj.Value.TryGetProperty("parameter", out var pAlias) && pAlias.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(pAlias.GetString())) ||
                     (obj.Value.TryGetProperty("paramName", out var pnAlias) && pnAlias.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(pnAlias.GetString()));
 
-                if (!hasParameterName)
+                var hasPredicates = false;
+                if (obj.Value.TryGetProperty("predicates", out var predicatesEl) && predicatesEl.ValueKind != JsonValueKind.Null)
                 {
-                    error = "find-elements-by-parameter requires parameterName (aliases accepted: parameter, paramName).";
+                    if (predicatesEl.ValueKind != JsonValueKind.Array || predicatesEl.GetArrayLength() < 1 || predicatesEl.GetArrayLength() > 8)
+                    {
+                        error = "find-elements-by-parameter.predicates must contain 1 to 8 items.";
+                        return false;
+                    }
+                    foreach (var predicate in predicatesEl.EnumerateArray())
+                    {
+                        if (predicate.ValueKind != JsonValueKind.Object || !ValidateRequiredString(predicate, "parameterName", maxLen: 128, out error) || !ValidateRequiredString(predicate, "value", maxLen: 256, out error)) return false;
+                        if (predicate.TryGetProperty("op", out var predicateOp) && predicateOp.ValueKind != JsonValueKind.Null && (predicateOp.ValueKind != JsonValueKind.String || (!(predicateOp.GetString() ?? "").Equals("equals", StringComparison.OrdinalIgnoreCase) && !(predicateOp.GetString() ?? "").Equals("contains", StringComparison.OrdinalIgnoreCase))))
+                        {
+                            error = "find-elements-by-parameter predicate op must be 'equals' or 'contains'.";
+                            return false;
+                        }
+                    }
+                    hasPredicates = true;
+                }
+
+                if (!hasPredicates && !ValidateRequiredString(obj.Value, "value", maxLen: 256, out error)) return false;
+                if (obj.Value.TryGetProperty("matchMode", out var matchModeEl) && matchModeEl.ValueKind != JsonValueKind.Null && (matchModeEl.ValueKind != JsonValueKind.String || (!(matchModeEl.GetString() ?? "").Equals("any", StringComparison.OrdinalIgnoreCase) && !(matchModeEl.GetString() ?? "").Equals("all", StringComparison.OrdinalIgnoreCase))))
+                {
+                    error = "find-elements-by-parameter.matchMode must be 'any' or 'all'.";
+                    return false;
+                }
+
+                if (!hasParameterName && !hasPredicates)
+                {
+                    error = "find-elements-by-parameter requires parameterName or predicates.";
                     return false;
                 }
 
