@@ -1,9 +1,45 @@
 import { randomUUID } from "node:crypto";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ChatResponse, type ToolResult } from "../contracts.js";
 import type { AecTaskIntentV1 } from "../aec_task_intent.js";
+import { appendGoalProgress, getActiveGoalForSession, setAgentGoal } from "../goals/service.js";
 
 const PLAN_PATH = "/revit/plan-room-receptacles-from-analog";
 const APPLY_PATH = "/revit/apply-room-receptacles-from-analog";
+
+function ensureRoomDesignGoal(req: ChatRequest, intent: AecTaskIntentV1, roomNumber: string): void {
+  const objective = intent.evidence.user_text.trim() || `Lay out receptacles in Room ${roomNumber}.`;
+  const active = getActiveGoalForSession(req.session_id);
+  const sameObjective = !!active && active.objective.trim().toLocaleLowerCase() === objective.toLocaleLowerCase();
+  const replaceableAutoGoal = !!active && active.created_by === "auto_goal:chat" && sameObjective && active.work_items.length === 0 && active.evidence_log.length === 0 && active.action_log.length === 0 && active.validation_log.length === 0;
+  if (active && !replaceableAutoGoal) return;
+  setAgentGoal(req.session_id, {
+    title: `Design receptacle layout in Room ${roomNumber}`,
+    objective,
+    success_criteria: [
+      `Room ${roomNumber} receives a grounded project-standard receptacle layout without duplicates.`,
+      "Every created device has exact type, room, host, position, and orientation readback.",
+      "Focused visual verification remains explicit and unresolved failures do not trigger broad retries."
+    ],
+    current_phase: "precedent_discovery",
+    current_step: "Discover and validate the strongest available project analog",
+    progress_summary: `Target Room ${roomNumber} is grounded; bounded project-precedent discovery is next.`,
+    work_items: [
+      { id: "target.inspect", title: `Inspect Room ${roomNumber} geometry and existing receptacles`, status: "in_progress", scope: { room_number: roomNumber }, planned_actions: ["native room and anchor inventory"] },
+      { id: "precedent.resolve", title: "Resolve the strongest applicable project precedent", status: "ready", scope: { target_room_number: roomNumber }, depends_on: ["target.inspect"], planned_actions: ["score same-level furnished analogs", "record selected precedent and assumptions"] },
+      { id: "layout.preview", title: "Rollback-preview the exact mapped layout", status: "pending", scope: { target_room_number: roomNumber }, depends_on: ["precedent.resolve"], planned_actions: ["hash-bound native preview"] },
+      { id: "layout.apply", title: "Apply the verified hash-bound layout", status: "pending", scope: { target_room_number: roomNumber }, depends_on: ["layout.preview"], planned_actions: ["atomic apply", "exact created-id receipt"] },
+      { id: "layout.verify", title: "Verify device type, room, host, position, and orientation", status: "pending", scope: { target_room_number: roomNumber }, depends_on: ["layout.apply"], planned_actions: ["native persistent readback"] },
+      { id: "verify.visual", title: `Perform focused visual QA in Room ${roomNumber}`, status: "pending", scope: { room_number: roomNumber }, depends_on: ["layout.verify"], planned_actions: ["focused Revit inspection", "bounded repair if needed"] }
+    ],
+    assumptions: [{ id: "reference.hierarchy", statement: "Use explicit direction first, then a uniquely grounded current-project analog before office/code baselines.", status: "accepted", basis: intent.reference.kind === "room" ? "explicit source room" : "office-standard project workflow" }],
+    work_budget: { mode: "room_receptacle_design", target_rooms: 1, conversational_permission_loops: 0 }
+  });
+}
+
+function appendRoomDesignProgress(sessionId: string, entry: unknown): void {
+  if (!getActiveGoalForSession(sessionId)) return;
+  appendGoalProgress(sessionId, entry);
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -75,6 +111,7 @@ export function maybeRunDeterministicRoomReceptacleAnalog(req: ChatRequest, inte
   if (!planResult && !applyResult && !initialRoom) return null;
 
   if (!planResult && !applyResult && initialRoom) {
+    ensureRoomDesignGoal(req, intent!, initialRoom);
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
       assistant_message: `Preparing and validating the office-standard receptacle layout for Room ${initialRoom}…`,
@@ -93,6 +130,7 @@ export function maybeRunDeterministicRoomReceptacleAnalog(req: ChatRequest, inte
 
   if (planResult && !applyResult) {
     if (planResult.status !== "done") {
+      appendRoomDesignProgress(req.session_id, { summary: "Bounded project-precedent discovery failed; no model changes were made.", work_item: { id: "precedent.resolve", title: "Resolve the strongest applicable project precedent", status: "blocked", blocker: planResult.error || planResult.failure_hint || "Analog preview failed.", evidence_refs: [`action:${planResult.action_id}`] } });
       return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: failureMessage("preview", planResult), actions: [] };
     }
     const plan = payloadFor(planResult);
@@ -101,12 +139,23 @@ export function maybeRunDeterministicRoomReceptacleAnalog(req: ChatRequest, inte
     const planHash = typeof plan?.planHash === "string" ? plan.planHash : "";
     const ready = plan?.ready === true && plan?.status === "ready" && !!targetRoomNumber && !!sourceRoomNumber && !!planHash;
     if (!ready) {
+      appendRoomDesignProgress(req.session_id, { summary: "The analog preview did not establish a unique hash-bound project precedent.", work_items: [{ id: "precedent.resolve", title: "Resolve the strongest applicable project precedent", status: "blocked", blocker: "No complete unique analog plan was returned.", evidence_refs: [`action:${planResult.action_id}`] }, { id: "layout.preview", title: "Rollback-preview the exact mapped layout", status: "blocked", blocker: "Project precedent remains unresolved.", evidence_refs: [`action:${planResult.action_id}`] }] });
       return {
         version: OPERATOR_BACKEND_CONTRACT_VERSION,
         assistant_message: "The rollback preview did not produce a complete, hash-bound analog plan, so I stopped without changing the model.",
         actions: []
       };
     }
+    appendRoomDesignProgress(req.session_id, {
+      summary: `Selected Room ${sourceRoomNumber} as the unique current-project precedent and verified a hash-bound rollback preview for Room ${targetRoomNumber}.`,
+      assumptions: [{ id: "precedent.room", statement: `Room ${sourceRoomNumber} is the selected current-project analog for target Room ${targetRoomNumber}.`, status: "accepted", basis: "native same-level geometry, anchor, adjacency, and exact device-inventory scoring", evidence_refs: [`action:${planResult.action_id}`] }],
+      work_items: [
+        { id: "target.inspect", title: `Inspect Room ${targetRoomNumber} geometry and existing receptacles`, status: "complete", evidence_refs: [`action:${planResult.action_id}`], result_summary: "Target room and anchor geometry were resolved natively." },
+        { id: "precedent.resolve", title: "Resolve the strongest applicable project precedent", status: "complete", evidence_refs: [`action:${planResult.action_id}`], result_summary: `Unique project analog Room ${sourceRoomNumber} selected.` },
+        { id: "layout.preview", title: "Rollback-preview the exact mapped layout", status: "complete", evidence_refs: [`action:${planResult.action_id}`], result_summary: `Hash-bound plan ${planHash} verified with no persistent model change.` },
+        { id: "layout.apply", title: "Apply the verified hash-bound layout", status: "ready", depends_on: ["layout.preview"], planned_actions: ["atomic apply", "exact created-id receipt"] }
+      ]
+    });
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
       assistant_message: `The rollback preview verified the Room ${targetRoomNumber} layout against analog Room ${sourceRoomNumber}. Applying the same hash-bound plan…`,
@@ -121,6 +170,7 @@ export function maybeRunDeterministicRoomReceptacleAnalog(req: ChatRequest, inte
 
   if (applyResult) {
     if (applyResult.status !== "done") {
+      appendRoomDesignProgress(req.session_id, { summary: "The atomic apply failed and no broad or conversational recovery was attempted.", work_item: { id: "layout.apply", title: "Apply the verified hash-bound layout", status: "failed", blocker: applyResult.error || applyResult.failure_hint || "Apply failed.", evidence_refs: [`action:${applyResult.action_id}`] } });
       return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: failureMessage("apply", applyResult), actions: [] };
     }
     const applied = payloadFor(applyResult);
@@ -131,6 +181,7 @@ export function maybeRunDeterministicRoomReceptacleAnalog(req: ChatRequest, inte
     const typeCounts = receipt?.typeCounts ?? [];
     const warnings = Array.isArray(applied?.warnings) ? applied.warnings.filter(value => typeof value === "string") as string[] : [];
     if (!receipt) {
+      appendRoomDesignProgress(req.session_id, { summary: "Apply returned without complete exact persistent readback, so completion is not claimed.", work_items: [{ id: "layout.apply", title: "Apply the verified hash-bound layout", status: "blocked", blocker: "Created IDs or persistent readback were incomplete.", evidence_refs: [`action:${applyResult.action_id}`] }, { id: "layout.verify", title: "Verify device type, room, host, position, and orientation", status: "blocked", blocker: "Persistent readback is incomplete.", evidence_refs: [`action:${applyResult.action_id}`] }] });
       return {
         version: OPERATOR_BACKEND_CONTRACT_VERSION,
         assistant_message: "The apply call did not return a complete persistent inventory/readback receipt, so I cannot claim the layout is complete.",
@@ -147,6 +198,14 @@ export function maybeRunDeterministicRoomReceptacleAnalog(req: ChatRequest, inte
       : previewUnavailable
         ? " The model write and native element readback passed, but the optional post-apply preview image was unavailable; visual confirmation remains a follow-up."
         : "";
+    appendRoomDesignProgress(req.session_id, {
+      summary: `Atomic Room ${targetRoomNumber} apply and native persistent readback passed for ${createdIds.length} receptacle(s) using Room ${sourceRoomNumber}.`,
+      work_items: [
+        { id: "layout.apply", title: "Apply the verified hash-bound layout", status: "complete", evidence_refs: [`action:${applyResult.action_id}`], result_summary: `${createdIds.length} unique receptacle IDs created atomically.` },
+        { id: "layout.verify", title: "Verify device type, room, host, position, and orientation", status: "complete", evidence_refs: [`action:${applyResult.action_id}`], result_summary: "Exact ID, type, room, physical host, point, and orientation readback passed for every created device." },
+        { id: "verify.visual", title: `Perform focused visual QA in Room ${targetRoomNumber}`, status: "ready", depends_on: ["layout.verify"], evidence_refs: [`action:${applyResult.action_id}`], result_summary: previewNote ? "Native readback passed; focused visual follow-up remains required by the preview warning." : "Native readback passed; focused human-style Revit inspection is queued." }
+      ]
+    });
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
       assistant_message: `Room ${targetRoomNumber} is complete. I placed and natively verified ${createdIds.length} receptacles using Room ${sourceRoomNumber} as the project-standard analog${types ? ` (${types})` : ""}. The model write was atomic and the returned host, position, orientation, type, and room readback all passed.${previewNote}`,
