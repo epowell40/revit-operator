@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AEC_SEMANTIC_TASK_V1_SCHEMA, type AecSemanticTaskV1 } from "../src/aec_semantic_task.js";
-import type { AecSemanticTaskInterpreter } from "../src/aec_semantic_task_interpreter.js";
+import { interpretAecSemanticTask, type AecSemanticTaskInterpreter } from "../src/aec_semantic_task_interpreter.js";
 import { __testOnlyClearAecQueryStates } from "../src/deterministic/aec_query_runtime.js";
+import { buildAecScopeWorkPackage } from "../src/deterministic/aec_scope_work_package.js";
 import { maybeRunSemanticAecWorkflow } from "../src/deterministic/aec_workflow_registry.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
 
@@ -12,6 +13,7 @@ function base(prompt: string): AecSemanticTaskV1 { return { schema: AEC_SEMANTIC
 function roomCount(prompt: string): AecSemanticTaskV1 { const value = base(prompt); value.operation = "count"; value.subject = { kind: "category", semantic_class: "receptacle", terms: ["receptacle"], categories: ["OST_ElectricalFixtures"], family_name: null, type_name: null, system_name: null, identifiers: [] }; value.scope = { ...value.scope, kind: "room", rooms: ["403"] }; value.outputs = ["count", "element_ids", "summary"]; return value; }
 function viewList(prompt: string): AecSemanticTaskV1 { const value = base(prompt); value.operation = "list"; value.subject = { kind: "category", semantic_class: "air_terminal", terms: ["air terminal"], categories: ["OST_DuctTerminal"], family_name: null, type_name: null, system_name: null, identifiers: [] }; value.scope = { ...value.scope, kind: "view", views: [{ id: 1709383, name: "L4 HVAC" }] }; value.outputs = ["element_ids", "summary"]; return value; }
 function selectionInspect(prompt: string): AecSemanticTaskV1 { const value = base(prompt); value.operation = "inspect"; value.subject = { kind: "elements", semantic_class: "family_instance", terms: ["selected devices"], categories: [], family_name: null, type_name: null, system_name: null, identifiers: [] }; value.scope = { ...value.scope, kind: "selection", element_ids: [101, 102] }; value.outputs = ["parameters", "spatial_context", "summary"]; return value; }
+function levelTag(prompt: string): AecSemanticTaskV1 { const value = base(prompt); value.operation = "tag"; value.subject = { kind: "category", semantic_class: "air_terminal", terms: ["air terminals"], categories: ["OST_DuctTerminal"], family_name: null, type_name: null, system_name: null, identifiers: [] }; value.scope = { ...value.scope, kind: "level", levels: ["Level 4"] }; value.reference = { strategy: "none", source_description: null, source_room: null }; value.mutation = { kind: "create", requested: true }; value.outputs = ["summary", "element_ids", "verification"]; value.execution = { max_results: 500, max_primary_actions: 8, allow_document_fallback: false, requires_visual_verification: true }; return value; }
 
 const cases: Case[] = [
   ...["Where is AHU-1?", "Find AHU-1.", "What room contains AHU-1?", "Show me the location of the unit marked AHU-1.", "Which level is air handler AHU-1 on?"].map(prompt => ({ prompt, task: () => base(prompt), path: "/revit/find-elements-by-parameter" })),
@@ -31,5 +33,25 @@ test("twenty materially different read-query paraphrases use typed bounded workf
     assert.equal(decision?.actions.length, 1, item.prompt);
     assert.equal(decision?.actions[0].path, item.path, item.prompt);
     assert.notEqual((decision?.actions[0].body as any)?.allowDocumentScan, true, item.prompt);
+  }
+});
+
+test("level tagging paraphrases enter semantic scope resolution without hardcoded trigger phrases", async () => {
+  const prompts = [
+    "Tag all air terminals on Level 4.",
+    "Please annotate every diffuser across the fourth-floor mechanical plans.",
+    "Finish the air-device tags for L4.",
+    "Apply our air terminal labels throughout level four.",
+    "Make sure each supply and return grille on the L4 plans is tagged."
+  ];
+  for (const [index, prompt] of prompts.entries()) {
+    const interpreter: AecSemanticTaskInterpreter = { async interpret(input) { assert.equal(input.user_text, prompt); return levelTag(prompt); } };
+    const semantic = await interpretAecSemanticTask({ version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: `tag-paraphrase-${index}`, message_id: "m", user_text: prompt }, interpreter);
+    assert.equal(semantic?.operation, "tag", prompt);
+    assert.deepEqual(semantic?.subject.categories, ["OST_DuctTerminal"], prompt);
+    const plan = buildAecScopeWorkPackage(semantic);
+    assert.equal(plan.status, "ready", prompt);
+    assert.deepEqual(plan.discovery_actions.map(action => action.path), ["/revit/query"], prompt);
+    assert.deepEqual(plan.discovery_actions[0]?.body, { category: "OST_Levels", limit: 500 }, prompt);
   }
 });
