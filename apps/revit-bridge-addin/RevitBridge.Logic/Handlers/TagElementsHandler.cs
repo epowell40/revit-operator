@@ -51,6 +51,7 @@ namespace RevitBridge.Logic.Handlers
             public string? tagFamilySourceFamilyName { get; set; }
             public string? tagFamilySourceTypeName { get; set; }
             public string? generatedTagFamilyName { get; set; }
+            public string? generatedTagContentProfile { get; set; } // none|airflow_only
             public bool? inspectTagFamilyElements { get; set; }
             public int? max { get; set; }
             public bool? dryRun { get; set; }
@@ -96,6 +97,16 @@ namespace RevitBridge.Logic.Handlers
             public int ElementInventoryTotalCount { get; set; }
             public bool ElementInventoryTruncated { get; set; }
             public List<TagFamilyElementInventoryItem> ElementInventory { get; set; } = new List<TagFamilyElementInventoryItem>();
+            public string ContentProfile { get; set; } = TagFamilyContentPolicy.None;
+            public string ContentSanitizationStatus { get; set; } = "not_requested";
+            public List<TagFamilyTextElementReceipt> KeptTextElements { get; set; } = new List<TagFamilyTextElementReceipt>();
+            public List<TagFamilyTextElementReceipt> RemovedTextElements { get; set; } = new List<TagFamilyTextElementReceipt>();
+        }
+
+        private sealed class TagFamilyTextElementReceipt
+        {
+            public long ElementId { get; set; }
+            public string SampleText { get; set; } = "";
         }
 
         private sealed class TagFamilyElementInventoryItem
@@ -609,6 +620,10 @@ namespace RevitBridge.Logic.Handlers
                 name = x.Name,
                 parameters = x.Parameters
             }).ToList(),
+            contentProfile = resolution.ContentProfile,
+            contentSanitizationStatus = resolution.ContentSanitizationStatus,
+            keptTextElements = resolution.KeptTextElements.Select(x => new { elementId = x.ElementId, sampleText = x.SampleText }).ToList(),
+            removedTextElements = resolution.RemovedTextElements.Select(x => new { elementId = x.ElementId, sampleText = x.SampleText }).ToList(),
             sourceCandidates = resolution.SourceCandidates.Take(100).Select(x => new
             {
                 familyName = x.FamilyName,
@@ -743,12 +758,13 @@ namespace RevitBridge.Logic.Handlers
             bool dryRun)
         {
             var targetTagCategory = ResolveCommonTargetTagCategory(targets);
+            var contentProfile = TagFamilyContentPolicy.NormalizeProfile(request.generatedTagContentProfile);
             if (targetTagCategory == null)
             {
                 return new TagFamilyResolution { Status = "unsupported_target_categories", Error = "Geometry-aware auto-loading requires targets from one supported tag category." };
             }
 
-            if (requestedTypeId != null && doc.GetElement(requestedTypeId) is FamilySymbol requestedSymbol)
+            if (requestedTypeId != null && doc.GetElement(requestedTypeId) is FamilySymbol requestedSymbol && contentProfile == TagFamilyContentPolicy.None)
             {
                 return ResolutionFromSymbol("requested", targetTagCategory.Value, requestedSymbol);
             }
@@ -763,7 +779,7 @@ namespace RevitBridge.Logic.Handlers
                 .OrderBy(x => x.FamilyName ?? string.Empty, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(x => x.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase)
                 .FirstOrDefault();
-            if (loaded != null) return ResolutionFromSymbol("loaded", targetTagCategory.Value, loaded);
+            if (loaded != null && contentProfile == TagFamilyContentPolicy.None) return ResolutionFromSymbol("loaded", targetTagCategory.Value, loaded);
 
             if (request.autoLoadTagFamily != true)
             {
@@ -811,6 +827,7 @@ namespace RevitBridge.Logic.Handlers
                 familyName,
                 request.tagFamilySourceFamilyName,
                 request.tagFamilySourceTypeName,
+                contentProfile,
                 dryRun);
         }
 
@@ -823,6 +840,7 @@ namespace RevitBridge.Logic.Handlers
             string familyName,
             string? requestedSourceFamilyName,
             string? requestedSourceTypeName,
+            string contentProfile,
             bool dryRun)
         {
             Document? sourceDoc = null;
@@ -859,6 +877,7 @@ namespace RevitBridge.Logic.Handlers
                         TargetTagCategory = targetTagCategory.ToString(),
                         SourceTagCategory = sourceTagCategory.ToString(),
                         SourceProjectPath = sourcePath,
+                        ContentProfile = contentProfile,
                         SourceCandidates = sourceCandidates,
                         Error = sourceSymbols.Count == 0
                             ? "The source project does not contain a compatible source tag family."
@@ -876,6 +895,8 @@ namespace RevitBridge.Logic.Handlers
                         SourceProjectPath = sourcePath,
                         FamilyName = familyName,
                         TypeName = sourceSymbol.Name,
+                        ContentProfile = contentProfile,
+                        ContentSanitizationStatus = contentProfile == TagFamilyContentPolicy.None ? "not_requested" : "planned",
                         SourceCandidates = sourceCandidates
                     };
                 }
@@ -890,6 +911,7 @@ namespace RevitBridge.Logic.Handlers
                     familyDoc.OwnerFamily.FamilyCategory = targetCategory;
                     familyTransaction.Commit();
                 }
+                var contentReceipt = SanitizeTagFamilyContent(familyDoc, contentProfile);
 
                 var outputDir = WorkspacePaths.EnsureDir("artifacts", "tag-families");
                 var outputPath = Path.Combine(outputDir, familyName + ".rfa");
@@ -923,6 +945,10 @@ namespace RevitBridge.Logic.Handlers
                 resolution.SourceProjectPath = sourcePath;
                 resolution.GeneratedFamilyPath = outputPath;
                 resolution.SourceCandidates = sourceCandidates;
+                resolution.ContentProfile = contentProfile;
+                resolution.ContentSanitizationStatus = contentReceipt.Status;
+                resolution.KeptTextElements = contentReceipt.Kept;
+                resolution.RemovedTextElements = contentReceipt.Removed;
                 return resolution;
             }
             catch (Exception ex)
@@ -934,6 +960,7 @@ namespace RevitBridge.Logic.Handlers
                     SourceTagCategory = sourceTagCategory.ToString(),
                     SourceProjectPath = sourcePath,
                     FamilyName = familyName,
+                    ContentProfile = contentProfile,
                     Error = ex.Message
                 };
             }
@@ -942,6 +969,53 @@ namespace RevitBridge.Logic.Handlers
                 if (familyDoc != null) try { familyDoc.Close(false); } catch { }
                 if (sourceDoc != null) try { sourceDoc.Close(false); } catch { }
             }
+        }
+
+        private sealed class TagFamilyContentSanitizationReceipt
+        {
+            public string Status { get; set; } = "not_requested";
+            public List<TagFamilyTextElementReceipt> Kept { get; set; } = new List<TagFamilyTextElementReceipt>();
+            public List<TagFamilyTextElementReceipt> Removed { get; set; } = new List<TagFamilyTextElementReceipt>();
+        }
+
+        private static TagFamilyContentSanitizationReceipt SanitizeTagFamilyContent(Document familyDoc, string contentProfile)
+        {
+            var receipt = new TagFamilyContentSanitizationReceipt();
+            if (contentProfile == TagFamilyContentPolicy.None) return receipt;
+
+            var textElements = new FilteredElementCollector(familyDoc)
+                .OfClass(typeof(TextElement))
+                .WhereElementIsNotElementType()
+                .Cast<TextElement>()
+                .ToList();
+            foreach (var textElement in textElements)
+            {
+                var item = new TagFamilyTextElementReceipt
+                {
+                    ElementId = ElementIdCompat.GetValue(textElement.Id),
+                    SampleText = textElement.Text ?? string.Empty
+                };
+                if (TagFamilyContentPolicy.ShouldKeepText(contentProfile, textElement.Text)) receipt.Kept.Add(item);
+                else receipt.Removed.Add(item);
+            }
+
+            if (receipt.Kept.Count == 0)
+                throw new InvalidOperationException($"Tag-family content profile {contentProfile} found no compatible label text and refused to produce a blank family.");
+
+            if (receipt.Removed.Count == 0)
+            {
+                receipt.Status = "no_changes";
+                return receipt;
+            }
+
+            using (var transaction = new Transaction(familyDoc, "Sanitize Generated Tag Content"))
+            {
+                transaction.Start();
+                familyDoc.Delete(receipt.Removed.Select(x => ElementIdCompat.Create(x.ElementId)).ToList());
+                transaction.Commit();
+            }
+            receipt.Status = "sanitized";
+            return receipt;
         }
 
         private sealed class TagFamilyCandidateComparer : IEqualityComparer<TagFamilyCandidate>
