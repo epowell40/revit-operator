@@ -6,5 +6,10 @@ namespace RevitBridge.Common.Annotation
         {
             return dryRun || plannedToTag > 0;
         }
+
+        public static bool KeepCreatedTag(bool geometryAware, bool hasMeasurableGeometry, bool collisionFree)
+        {
+            return !geometryAware || (hasMeasurableGeometry && collisionFree);
+        }
     }
 }

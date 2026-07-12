@@ -22,5 +22,19 @@ namespace RevitBridge.Common.Tests
         {
             Assert.True(TagWorkPolicy.RequiresFamilyResolution(dryRun: false, plannedToTag: 1));
         }
+
+        [Theory]
+        [InlineData(false, false, false, true)]
+        [InlineData(true, false, false, false)]
+        [InlineData(true, true, false, false)]
+        [InlineData(true, true, true, true)]
+        public void GeometryAwareTagsRemainOnlyWithMeasuredCollisionFreeReadback(
+            bool geometryAware,
+            bool hasMeasurableGeometry,
+            bool collisionFree,
+            bool expected)
+        {
+            Assert.Equal(expected, TagWorkPolicy.KeepCreatedTag(geometryAware, hasMeasurableGeometry, collisionFree));
+        }
     }
 }
