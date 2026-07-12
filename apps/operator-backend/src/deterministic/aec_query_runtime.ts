@@ -4,12 +4,20 @@ import type { AecSemanticTaskV1 } from "../aec_semantic_task.js";
 import { continueExactIdentifierQuery, planAecQueryTask, type AecQueryPlanV1, type AecQueryWorkflowId } from "./aec_query_plan.js";
 
 type QueryState = { task: AecSemanticTaskV1; workflow_id: AecQueryWorkflowId; stage: number; evidence: Record<string, unknown>; expires_at: number };
+type QueryReceiptStatus = NonNullable<ChatResponse["aec_query_receipt"]>["status"];
 const states = new Map<string, QueryState>();
 const TTL_MS = 5 * 60_000;
 
 function purge(now = Date.now()): void { for (const [key, state] of states) if (state.expires_at <= now) states.delete(key); }
 function key(req: ChatRequest): string { return req.session_id; }
-function response(message: string, actions: ChatResponse["actions"] = []): ChatResponse { return { version: "operator.backend.v1", assistant_message: message, actions }; }
+function response(message: string, actions: ChatResponse["actions"] = [], receipt?: { workflow_id: AecQueryWorkflowId; status: QueryReceiptStatus }): ChatResponse {
+  return {
+    version: "operator.backend.v1",
+    assistant_message: message,
+    actions,
+    ...(receipt ? { aec_query_receipt: { schema: "revit-operator.aec-query-receipt.v1" as const, terminal: true as const, status: receipt.status, workflow_id: receipt.workflow_id, bounded: true as const, broadened: false as const } } : {})
+  };
+}
 function resultPayload(result: ToolResult | undefined): Record<string, unknown> | null { const value = result?.result_json; return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null; }
 function matchingResult(req: ChatRequest, actionId: string): ToolResult | undefined { return req.tool_results?.find(result => result.action_id === actionId); }
 
@@ -24,16 +32,16 @@ function subjectLabel(task: AecSemanticTaskV1): string {
 }
 
 function completeSingleAction(task: AecSemanticTaskV1, workflow: AecQueryWorkflowId, result: ToolResult): ChatResponse {
-  if (result.status !== "done") return response(`I could not complete the bounded ${task.operation} query: ${result.error || "the Revit read action failed"}.`);
+  if (result.status !== "done") return response(`I could not complete the bounded ${task.operation} query: ${result.error || "the Revit read action failed"}.`, [], { workflow_id: workflow, status: "failed" });
   const payload = resultPayload(result);
   const count = countFromPayload(payload);
   const scope = task.scope.rooms[0] ? `Room ${task.scope.rooms[0]}` : task.scope.views[0]?.name ?? task.scope.sheets[0] ?? "the requested scope";
   const countText = count === null ? "The bounded query completed" : `${count} ${subjectLabel(task)}${count === 1 ? "" : "s"} matched`;
-  return response(`${countText} in ${scope}. The result came from the scoped ${workflow.replace("query.", "").replaceAll("_", " ")} workflow; no model changes were made.`);
+  return response(`${countText} in ${scope}. The result came from the scoped ${workflow.replace("query.", "").replaceAll("_", " ")} workflow; no model changes were made.`, [], { workflow_id: workflow, status: "complete" });
 }
 
 function exactCompletion(task: AecSemanticTaskV1, state: QueryState, result: ToolResult): ChatResponse {
-  if (result.status !== "done") return response(`I found the exact identifier but could not read its placement context: ${result.error || "the context query failed"}. No model changes were made.`);
+  if (result.status !== "done") return response(`I found the exact identifier but could not read its placement context: ${result.error || "the context query failed"}. No model changes were made.`, [], { workflow_id: state.workflow_id, status: "failed" });
   const context = resultPayload(result) ?? {};
   const candidate = state.evidence.candidate && typeof state.evidence.candidate === "object" ? state.evidence.candidate as Record<string, unknown> : {};
   const room = context.room && typeof context.room === "object" ? context.room as Record<string, unknown> : null;
@@ -46,7 +54,7 @@ function exactCompletion(task: AecSemanticTaskV1, state: QueryState, result: Too
   const system = typeof context.systemName === "string" && context.systemName ? ` System: ${context.systemName}.` : "";
   const bestView = context.bestView && typeof context.bestView === "object" ? context.bestView as Record<string, unknown> : null;
   const viewText = bestView?.name ? ` Best view: ${bestView.name} (id ${bestView.id ?? "unknown"}).` : "";
-  return response(`${identifier} is element ${elementId}${familyType ? ` (${familyType})` : ""}, on ${level}, with ${roomText}. Its model location is ${location}.${system}${viewText} No model changes were made.`);
+  return response(`${identifier} is element ${elementId}${familyType ? ` (${familyType})` : ""}, on ${level}, with ${roomText}. Its model location is ${location}.${system}${viewText} No model changes were made.`, [], { workflow_id: state.workflow_id, status: "found" });
 }
 
 async function begin(req: ChatRequest, interpreter?: AecSemanticTaskInterpreter): Promise<{ task: AecSemanticTaskV1 | null; response: ChatResponse | null }> {
@@ -68,8 +76,8 @@ function continueRun(req: ChatRequest, state: QueryState): ChatResponse | null {
       return response("I found one exact match and am reading only its placement context.", next.actions);
     }
     states.delete(key(req));
-    if (next.status === "blocked") return response(`I found multiple candidates for ${state.task.subject.identifiers[0]?.value ?? "that identifier"}; I did not guess or broaden the search. No model changes were made.`);
-    return response(`I did not find an exact match for ${state.task.subject.identifiers[0]?.value ?? "that identifier"} in the requested category and scope. No model changes were made.`);
+    if (next.status === "blocked") return response(`I found multiple candidates for ${state.task.subject.identifiers[0]?.value ?? "that identifier"}; I did not guess or broaden the search. No model changes were made.`, [], { workflow_id: state.workflow_id, status: "ambiguous" });
+    return response(`I did not find an exact match for ${state.task.subject.identifiers[0]?.value ?? "that identifier"} in the requested category and scope. No model changes were made.`, [], { workflow_id: state.workflow_id, status: "not_found" });
   }
   if (state.workflow_id === "query.exact_identifier" && state.stage === 1) {
     const result = matchingResult(req, "aec-query-exact-context") ?? matchingResult(req, "aec-query-exact-scope");
