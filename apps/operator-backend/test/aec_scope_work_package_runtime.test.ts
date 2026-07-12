@@ -9,6 +9,7 @@ import { getActiveGoalForSession, setAgentGoal } from "../src/goals/service.js";
 import { __testOnlyClearAecScopeWorkPackageStates, maybeRunAecScopeWorkPackage } from "../src/deterministic/aec_scope_work_package_runtime.js";
 
 function task(prompt: string): AecSemanticTaskV1 { return { schema: AEC_SEMANTIC_TASK_V1_SCHEMA, operation: "layout", subject: { kind: "class", semantic_class: "electrical_equipment", terms: ["power plan"], categories: ["OST_ElectricalFixtures"], family_name: null, type_name: null, system_name: null, identifiers: [] }, scope: { kind: "level", document: null, levels: ["L4"], rooms: [], spaces: [], areas: [], views: [], sheets: [], systems: [], element_ids: [], region: null }, reference: { strategy: "current_project_precedent", source_description: null, source_room: null }, mutation: { kind: "create", requested: true }, outputs: ["summary", "verification"], execution: { max_results: 100, max_primary_actions: 8, allow_document_fallback: false, requires_visual_verification: true }, confidence: { value: 0.95, ambiguity: "low", reasons: ["level and discipline resolved"] }, evidence: { user_text: prompt } }; }
+function tagTask(prompt: string): AecSemanticTaskV1 { return { ...task(prompt), operation: "tag", subject: { kind: "category", semantic_class: "air_terminal", terms: ["air terminals"], categories: ["OST_DuctTerminal"], family_name: null, type_name: null, system_name: null, identifiers: [] }, reference: { strategy: "none", source_description: null, source_room: null } }; }
 function req(session: string, prompt = "", tool_results?: ChatRequest["tool_results"]): ChatRequest { return { version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: session, message_id: `${session}-${tool_results?.length ?? 0}`, user_text: prompt, tool_results }; }
 const levelResult = { action_id: "aec-scope-resolve-levels", method: "POST" as const, path: "/revit/query", status: "done" as const, result_json: [{ id: 1362791, name: "L4", category: "Levels" }] };
 
@@ -81,5 +82,21 @@ test("authoritative Sidecar request safely supersedes an empty same-session auto
     const first = maybeRunAecScopeWorkPackage(request, task(prompt));
     assert.deepEqual(first?.actions.map(action => action.path), ["/revit/query"]);
     assert.equal(getActiveGoalForSession(session)?.objective, prompt);
+  } finally { if (previous === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT; else process.env.OPERATOR_WORKSPACE_ROOT = previous; fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("resolved level tag scope enters the bounded per-view tag runtime instead of stopping at a plan", () => {
+  const previous = process.env.OPERATOR_WORKSPACE_ROOT; const root = fs.mkdtempSync(path.join(os.tmpdir(), "aec-level-tag-integration-")); process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    __testOnlyClearAecScopeWorkPackageStates(); const session = "scope-level-tag"; const prompt = "Tag all air terminals on Level 4.";
+    const first = maybeRunAecScopeWorkPackage(req(session, prompt), tagTask(prompt));
+    assert.deepEqual(first?.actions.map(action => action.path), ["/revit/query"]);
+    const second = maybeRunAecScopeWorkPackage(req(session, "", [levelResult]));
+    assert.deepEqual((second?.actions[0]?.body as any)?.semanticGroups, ["mechanical"]);
+    const third = maybeRunAecScopeWorkPackage(req(session, "", [{ action_id: "aec-scope-resolve-views", method: "POST", path: "/revit/views", status: "done", result_json: { status: "ok", count: 2, returned: 2, truncated: false, appliedFilters: ["exclude_templates", "level_names_exact", "semantic_groups"], views: [{ id: 101, name: "L4 HVAC", levelName: "L4", type: "FloorPlan" }, { id: 102, name: "L4 HVAC Enlarged", levelName: "L4", type: "FloorPlan" }] } }]));
+    assert.deepEqual(third?.actions.map(action => action.path), ["/revit/find-elements", "/revit/find-elements"]);
+    assert.deepEqual(third?.actions.map(action => action.body), [{ viewId: 101, categories: ["OST_DuctTerminal"], limit: 5000 }, { viewId: 102, categories: ["OST_DuctTerminal"], limit: 5000 }]);
+    assert.equal(third?.aec_query_receipt, undefined);
+    assert.equal(getActiveGoalForSession(session)?.work_items.find(item => item.id === "view.101.inspect")?.status, "ready");
   } finally { if (previous === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT; else process.env.OPERATOR_WORKSPACE_ROOT = previous; fs.rmSync(root, { recursive: true, force: true }); }
 });
