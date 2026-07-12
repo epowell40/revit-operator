@@ -344,9 +344,7 @@ namespace RevitBridge.Logic.Handlers
             foreach (Category category in doc.Settings.Categories)
             {
                 var id = ElementIdCompat.GetValue(category.Id);
-                string? builtInToken = null;
-                if (id >= int.MinValue && id <= int.MaxValue && Enum.IsDefined(typeof(BuiltInCategory), (int)id))
-                    builtInToken = ((BuiltInCategory)(int)id).ToString();
+                var builtInToken = StrictCategoryResolver.TryGetEnumName(typeof(BuiltInCategory), id);
                 catalog.Add(new StrictCategoryDescriptor
                 {
                     Id = id,
