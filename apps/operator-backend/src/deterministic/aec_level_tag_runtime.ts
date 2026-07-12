@@ -27,7 +27,8 @@ const APPLY_VARIANTS: ReadonlyArray<Record<string, number>> = [
   {},
   { tagWidthPaperInches: 0.55, tagHeightPaperInches: 0.30, clearancePaperInches: 0.03 },
   { tagWidthPaperInches: 0.45, tagHeightPaperInches: 0.25, clearancePaperInches: 0 },
-  { tagWidthPaperInches: 0.45, tagHeightPaperInches: 0.45, clearancePaperInches: 0 }
+  { tagWidthPaperInches: 0.45, tagHeightPaperInches: 0.45, clearancePaperInches: 0 },
+  { tagWidthPaperInches: 0.50, tagHeightPaperInches: 0.80, clearancePaperInches: 0 }
 ];
 
 function response(message: string, actions: ActionCall[] = []): ChatResponse {
