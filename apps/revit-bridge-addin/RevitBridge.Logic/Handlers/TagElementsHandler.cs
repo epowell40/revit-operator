@@ -187,7 +187,7 @@ namespace RevitBridge.Logic.Handlers
             var tagWidth = ResolvePaperInches(p.tagWidthPaperInches, 0.60, 0.05, 4.0) * viewScale / 12.0;
             var tagHeight = ResolvePaperInches(p.tagHeightPaperInches, 0.18, 0.05, 2.0) * viewScale / 12.0;
             var clearance = ResolvePaperInches(p.clearancePaperInches, 0.08, 0.0, 1.0) * viewScale / 12.0;
-            var maxRepairAttempts = Math.Max(1, Math.Min(128, p.maxRepairAttempts ?? 128));
+            var maxRepairAttempts = Math.Max(1, Math.Min(180, p.maxRepairAttempts ?? 180));
             var ensureTagCategoryVisible = p.ensureTagCategoryVisible ?? geometryAware;
             var targetTagCategory = ResolveCommonTargetTagCategory(targets);
 

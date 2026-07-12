@@ -5433,9 +5433,9 @@ namespace RevitBridge.Operator
 
                 if (obj.Value.TryGetProperty("maxRepairAttempts", out var repairAttempts) && repairAttempts.ValueKind != JsonValueKind.Null)
                 {
-                    if (repairAttempts.ValueKind != JsonValueKind.Number || !repairAttempts.TryGetInt32(out var attempts) || attempts < 1 || attempts > 64)
+                    if (repairAttempts.ValueKind != JsonValueKind.Number || !repairAttempts.TryGetInt32(out var attempts) || attempts < 1 || attempts > 180)
                     {
-                        error = "tag-elements.maxRepairAttempts must be an integer from 1 to 64.";
+                        error = "tag-elements.maxRepairAttempts must be an integer from 1 to 180.";
                         return false;
                     }
                 }
