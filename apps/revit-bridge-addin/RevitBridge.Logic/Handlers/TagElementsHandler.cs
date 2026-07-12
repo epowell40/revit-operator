@@ -631,7 +631,7 @@ namespace RevitBridge.Logic.Handlers
             GeometryPlacementOutcome? best = null;
             TagAnchorCalibration? anchorCalibration = null;
             var attempts = 0;
-            foreach (var candidate in plan.Candidates.Take(maxAttempts))
+            foreach (var candidate in TagCandidateProbePolicy.Select(plan.Candidates, maxAttempts))
             {
                 attempts++;
                 var anchorU = anchorCalibration?.AnchorXForCenter(candidate.HeadX) ?? candidate.HeadX;
