@@ -32,6 +32,16 @@ test("semantic MEP route planner is allowlisted as POST", () => {
   assert.equal(isAllowlisted("GET", "/tools/mep/semantic-route-plan"), false);
 });
 
+test("native room receptacle preview and apply endpoints are allowlisted as POST", () => {
+  for (const path of [
+    "/revit/plan-room-receptacles-from-analog",
+    "/revit/apply-room-receptacles-from-analog"
+  ]) {
+    assert.equal(isAllowlisted("POST", path), true);
+    assert.equal(isAllowlisted("GET", path), false);
+  }
+});
+
 test("spatial EPIC-0138 endpoints are allowlisted as POST", () => {
   for (const path of [
     "/revit/locate-elements",

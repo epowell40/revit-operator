@@ -222,6 +222,9 @@ namespace RevitBridge.Server
                 { "/revit/highlight-and-export", new HighlightAndExportHandler() },
                 { "/revit/activate-view", new ActivateViewHandler() },
                 { "/revit/resolve-room-plan-view", new ResolveRoomPlanViewHandler() },
+                { "/revit/plan-dwelling-receptacles", new PlanDwellingReceptaclesHandler() },
+                { "/revit/plan-room-receptacles-from-analog", new PlanRoomReceptaclesFromAnalogHandler() },
+                { "/revit/apply-room-receptacles-from-analog", new ApplyRoomReceptaclesFromAnalogHandler() },
 
                 // Type utilities (needed for "swap double door -> single door" workflows)
                 { "/revit/list-element-types", new ListElementTypesHandler() },

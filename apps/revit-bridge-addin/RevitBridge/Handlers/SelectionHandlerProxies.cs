@@ -50,4 +50,22 @@ namespace RevitBridge.Handlers
         public Task<object> Handle(UIApplication app, string jsonData) =>
             new RevitBridge.Logic.Handlers.ResolveRoomPlanViewHandler().Handle(app, jsonData);
     }
+
+    public class PlanDwellingReceptaclesHandler : IRequestHandler
+    {
+        public Task<object> Handle(UIApplication app, string jsonData) =>
+            new RevitBridge.Logic.Handlers.PlanDwellingReceptaclesHandler().Handle(app, jsonData);
+    }
+
+    public class PlanRoomReceptaclesFromAnalogHandler : IRequestHandler
+    {
+        public Task<object> Handle(UIApplication app, string jsonData) =>
+            new RevitBridge.Logic.Handlers.PlanRoomReceptaclesFromAnalogHandler().Handle(app, jsonData);
+    }
+
+    public class ApplyRoomReceptaclesFromAnalogHandler : IRequestHandler
+    {
+        public Task<object> Handle(UIApplication app, string jsonData) =>
+            new RevitBridge.Logic.Handlers.ApplyRoomReceptaclesFromAnalogHandler().Handle(app, jsonData);
+    }
 }

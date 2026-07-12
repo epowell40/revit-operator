@@ -86,6 +86,9 @@ namespace RevitBridge.Logic
                 { "/revit/highlight-and-export", new HighlightAndExportHandler() },
                 { "/revit/activate-view", new ActivateViewHandler() },
                 { "/revit/resolve-room-plan-view", new ResolveRoomPlanViewHandler() },
+                { "/revit/plan-dwelling-receptacles", new PlanDwellingReceptaclesHandler() },
+                { "/revit/plan-room-receptacles-from-analog", new PlanRoomReceptaclesFromAnalogHandler() },
+                { "/revit/apply-room-receptacles-from-analog", new ApplyRoomReceptaclesFromAnalogHandler() },
                 { "/revit/resolve-room-wall", new ResolveRoomWallHandler() },
 
                 // Type utilities

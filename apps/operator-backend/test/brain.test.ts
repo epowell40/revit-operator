@@ -45,6 +45,14 @@ test("bridge-only status question pings bridge without opening Revit", async () 
   assert.doesNotMatch(JSON.stringify(res.actions), /open-model|2026|launch/i);
 });
 
+test("office-standard room receptacle demo bypasses the general model loop", async () => {
+  const res = await decide(mkReq("Lay out the receptacles in Room 403 based on our office standards."));
+  assert.equal(res.actions.length, 1);
+  assert.equal(res.actions[0]?.method, "POST");
+  assert.equal(res.actions[0]?.path, "/revit/plan-room-receptacles-from-analog");
+  assert.deepEqual(res.actions[0]?.body, { targetRoomNumber: "403", includePreviewImage: true });
+});
+
 test("capture maps to /revit/export-image", async () => {
   const res = await decideRule(mkReq("capture view"));
   assert.equal(res.actions.length, 1);

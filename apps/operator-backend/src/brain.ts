@@ -10,6 +10,7 @@ import { resolveOpenAiApiKey } from "./openai_client.js";
 import { applyEnvironmentPolicyToActions } from "./environment_profile.js";
 import { maybeRunDeterministicEnlargedPlanSheet } from "./deterministic/enlarged_plan_sheet.js";
 import { maybeRunDeterministicMepRouteRedline } from "./deterministic/mep_route_redline.js";
+import { maybeRunDeterministicRoomReceptacleAnalog } from "./deterministic/room_receptacle_analog.js";
 
 function maybeBuildZippyBimToolOpenedAck(req: ChatRequest): ChatResponse | null {
   const text = (req.user_text ?? "").trim();
@@ -82,6 +83,11 @@ export function __testOnlyFinalizeDecision(req: ChatRequest, decision: ChatRespo
 }
 
 export async function decide(req: ChatRequest): Promise<ChatResponse> {
+  const roomReceptacleDecision = maybeRunDeterministicRoomReceptacleAnalog(req);
+  if (roomReceptacleDecision) {
+    return finalizeDecision(req, roomReceptacleDecision);
+  }
+
   const bridgeStatusDecision = maybeBuildBridgeStatusDecision(req);
   if (bridgeStatusDecision) {
     return finalizeDecision(req, bridgeStatusDecision);
@@ -120,6 +126,14 @@ export async function decide(req: ChatRequest): Promise<ChatResponse> {
 }
 
 export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks): Promise<ChatResponse> {
+  const roomReceptacleDecision = maybeRunDeterministicRoomReceptacleAnalog(req);
+  if (roomReceptacleDecision) {
+    const text = roomReceptacleDecision.assistant_message || "";
+    cb.onDelta?.(text);
+    cb.onDone?.(text);
+    return finalizeDecision(req, roomReceptacleDecision);
+  }
+
   const bridgeStatusDecision = maybeBuildBridgeStatusDecision(req);
   if (bridgeStatusDecision) {
     const text = bridgeStatusDecision.assistant_message || "";

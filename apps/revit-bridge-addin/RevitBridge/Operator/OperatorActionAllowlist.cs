@@ -217,6 +217,9 @@ namespace RevitBridge.Operator
                     // Selection utils
                     "/revit/set-selection",
                     "/revit/resolve-room-plan-view",
+                    "/revit/plan-dwelling-receptacles",
+                    "/revit/plan-room-receptacles-from-analog",
+                    "/revit/apply-room-receptacles-from-analog",
 
                     // Type utilities
                     "/revit/list-element-types",

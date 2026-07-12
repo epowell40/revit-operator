@@ -220,6 +220,9 @@ namespace RevitBridge.Operator
                 // Selection / types
                 { "/revit/set-selection", new SetSelectionHandler() },
                 { "/revit/resolve-room-plan-view", new ResolveRoomPlanViewHandler() },
+                { "/revit/plan-dwelling-receptacles", new PlanDwellingReceptaclesHandler() },
+                { "/revit/plan-room-receptacles-from-analog", new PlanRoomReceptaclesFromAnalogHandler() },
+                { "/revit/apply-room-receptacles-from-analog", new ApplyRoomReceptaclesFromAnalogHandler() },
                 { "/revit/list-element-types", new ListElementTypesHandler() },
                 { "/revit/resolve-element-type", new ResolveElementTypeHandler() },
                 { "/revit/duplicate-element-type", new DuplicateElementTypeHandler() },
