@@ -233,10 +233,16 @@ namespace RevitBridge.Logic.Handlers
 
                     try
                     {
-                        var tag = CreateTagElement(doc, view, element, geometryAware ? false : addLeader, orientation, point);
-
                         var mappedTypeId = ResolveMappedTypeForElement(element, mapping);
                         var targetTypeId = mappedTypeId ?? defaultTypeId;
+                        if (targetTypeId != null && targetTypeId != ElementId.InvalidElementId &&
+                            doc.GetElement(targetTypeId) is FamilySymbol targetSymbol && !targetSymbol.IsActive)
+                        {
+                            targetSymbol.Activate();
+                            doc.Regenerate();
+                        }
+
+                        var tag = CreateTagElement(doc, view, element, geometryAware ? false : addLeader, orientation, point);
                         if (targetTypeId != null && targetTypeId != ElementId.InvalidElementId)
                         {
                             try
