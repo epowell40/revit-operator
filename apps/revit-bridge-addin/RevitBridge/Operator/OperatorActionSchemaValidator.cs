@@ -5357,7 +5357,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/tag-elements", StringComparison.OrdinalIgnoreCase))
             {
-                // { viewId?|viewName?, elementIds?|categoryNames?, categoryTagTypeMap?, tagTypeId?|tagTypeName?|tagFamilyName?, onlyUntagged?, addLeader?, orientation?, offsetX?, offsetY?, placementMode?, placementProfile?, tagWidthPaperInches?, tagHeightPaperInches?, clearancePaperInches?, maxRepairAttempts?, autoLoadTagFamily?, tagFamilySourceProjectPath?, tagFamilySourceCategory?, generatedTagFamilyName?, max?, dryRun? }
+                // { viewId?|viewName?, elementIds?|categoryNames?, categoryTagTypeMap?, tagTypeId?|tagTypeName?|tagFamilyName?, onlyUntagged?, addLeader?, orientation?, offsetX?, offsetY?, placementMode?, placementProfile?, tagWidthPaperInches?, tagHeightPaperInches?, clearancePaperInches?, maxRepairAttempts?, autoLoadTagFamily?, tagFamilySourceProjectPath?, tagFamilySourceCategory?, tagFamilySourceFamilyName?, tagFamilySourceTypeName?, generatedTagFamilyName?, max?, dryRun? }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "tag-elements body must be an object.";
@@ -5384,6 +5384,8 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalBool(obj.Value, "autoLoadTagFamily", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "tagFamilySourceProjectPath", maxLen: 1024, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "tagFamilySourceCategory", maxLen: 120, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "tagFamilySourceFamilyName", maxLen: 200, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "tagFamilySourceTypeName", maxLen: 200, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "generatedTagFamilyName", maxLen: 120, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
 
