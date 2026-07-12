@@ -1,19 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ChatResponse, type ToolResult } from "../contracts.js";
+import type { AecTaskIntentV1 } from "../aec_task_intent.js";
 
 const PLAN_PATH = "/revit/plan-room-receptacles-from-analog";
 const APPLY_PATH = "/revit/apply-room-receptacles-from-analog";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
-}
-
-function roomNumberFromIntent(text: string): string | null {
-  if (!/\b(receptacles?|outlets?)\b/i.test(text) || !/\boffice\s+standards?\b/i.test(text)) return null;
-  if (!/\b(layout|lay\s*out|place|add|reposition|replace|rework)\b/i.test(text)) return null;
-  const matches = [...text.matchAll(/\broom\s+#?([A-Za-z0-9][A-Za-z0-9._-]{0,31})\b/gi)].map(match => match[1]);
-  if (matches.length === 0 || new Set(matches.map(value => value.toLowerCase())).size !== 1) return null;
-  return matches[0];
 }
 
 function latestResult(req: ChatRequest, path: string): ToolResult | null {
@@ -23,7 +16,6 @@ function latestResult(req: ChatRequest, path: string): ToolResult | null {
   }
   return null;
 }
-
 function payloadFor(result: ToolResult): Record<string, unknown> | null {
   return asRecord(result.result_json);
 }
@@ -31,6 +23,40 @@ function payloadFor(result: ToolResult): Record<string, unknown> | null {
 function nestedRoomNumber(payload: Record<string, unknown> | null, key: "source" | "target"): string | null {
   const room = asRecord(payload?.[key]);
   return typeof room?.number === "string" && room.number.trim() ? room.number.trim() : null;
+}
+
+function finiteVector(value: unknown): boolean {
+  const vector = asRecord(value);
+  return !!vector && [vector.x, vector.y, vector.z].every(component => typeof component === "number" && Number.isFinite(component));
+}
+
+function verifiedApplyReceipt(payload: Record<string, unknown> | null): { createdIds: number[]; readback: Record<string, unknown>[]; typeCounts: Record<string, unknown>[] } | null {
+  if (!payload || payload.applied !== true || payload.status !== "applied" || typeof payload.planHash !== "string" || !payload.planHash.trim()) return null;
+  const targetRoomNumber = nestedRoomNumber(payload, "target");
+  if (!targetRoomNumber) return null;
+  const createdIds = Array.isArray(payload.createdIds) ? payload.createdIds.filter(id => Number.isSafeInteger(id) && (id as number) > 0) as number[] : [];
+  if (createdIds.length === 0 || createdIds.length !== (payload.createdIds as unknown[]).length || new Set(createdIds).size !== createdIds.length) return null;
+  const readback = Array.isArray(payload.readback) ? payload.readback.map(asRecord) : [];
+  if (readback.some(value => value === null) || readback.length !== createdIds.length) return null;
+  const records = readback as Record<string, unknown>[];
+  const returnedIds = records.map(record => record.id);
+  if (returnedIds.some(id => !Number.isSafeInteger(id)) || new Set(returnedIds).size !== createdIds.length || createdIds.some(id => !returnedIds.includes(id))) return null;
+  for (const record of records) {
+    const orientation = asRecord(record.orientation);
+    const physicalHost = asRecord(record.physicalHost);
+    const semanticAnchor = asRecord(record.semanticAnchor);
+    if (record.targetRoomNumber !== targetRoomNumber || typeof record.family !== "string" || !record.family.trim() || typeof record.type !== "string" || !record.type.trim()) return null;
+    if (!finiteVector(record.point) || !orientation || !finiteVector(orientation.hand) || !finiteVector(orientation.expected)) return null;
+    if (typeof orientation.agreement !== "number" || !Number.isFinite(orientation.agreement) || orientation.agreement < 0.98) return null;
+    if (typeof orientation.facingAgreement !== "number" || !Number.isFinite(orientation.facingAgreement) || orientation.facingAgreement < 0.95) return null;
+    if (!physicalHost || !Number.isSafeInteger(physicalHost.linkInstanceId) || !Number.isSafeInteger(physicalHost.linkedElementId) || typeof physicalHost.faceFingerprint !== "string" || !physicalHost.faceFingerprint.trim()) return null;
+    const validAnchor = (value: unknown) => value === null || (typeof value === "string" && !!value.trim());
+    if (!semanticAnchor || !validAnchor(semanticAnchor.source) || !validAnchor(semanticAnchor.target)) return null;
+  }
+  const typeCounts = Array.isArray(payload.typeCounts) ? payload.typeCounts.map(asRecord) : [];
+  if (typeCounts.some(value => value === null) || typeCounts.reduce((sum, value) => sum + (Number.isSafeInteger(value?.count) ? value!.count as number : -createdIds.length), 0) !== createdIds.length) return null;
+  if (typeCounts.some(value => typeof value?.familyType !== "string" || !value.familyType.trim() || !Number.isSafeInteger(value.count) || (value.count as number) <= 0)) return null;
+  return { createdIds, readback: records, typeCounts: typeCounts as Record<string, unknown>[] };
 }
 
 function failureMessage(stage: "preview" | "apply", result: ToolResult): string {
@@ -41,10 +67,10 @@ function failureMessage(stage: "preview" | "apply", result: ToolResult): string 
   return `I could not complete the Room receptacle preview. No model changes were made. ${detail}`;
 }
 
-export function maybeRunDeterministicRoomReceptacleAnalog(req: ChatRequest): ChatResponse | null {
+export function maybeRunDeterministicRoomReceptacleAnalog(req: ChatRequest, intent: AecTaskIntentV1 | null = null): ChatResponse | null {
   const planResult = latestResult(req, PLAN_PATH);
   const applyResult = latestResult(req, APPLY_PATH);
-  const initialRoom = roomNumberFromIntent((req.user_text ?? "").trim());
+  const initialRoom = intent?.target.room_number ?? null;
 
   if (!planResult && !applyResult && !initialRoom) return null;
 
@@ -56,7 +82,11 @@ export function maybeRunDeterministicRoomReceptacleAnalog(req: ChatRequest): Cha
         action_id: randomUUID(),
         method: "POST",
         path: PLAN_PATH,
-        body: { targetRoomNumber: initialRoom, includePreviewImage: true }
+        body: {
+          targetRoomNumber: initialRoom,
+          ...(intent?.reference.kind === "room" && intent.reference.room_number ? { sourceRoomNumber: intent.reference.room_number } : {}),
+          includePreviewImage: true
+        }
       }]
     };
   }
@@ -96,14 +126,11 @@ export function maybeRunDeterministicRoomReceptacleAnalog(req: ChatRequest): Cha
     const applied = payloadFor(applyResult);
     const targetRoomNumber = nestedRoomNumber(applied, "target") ?? "target room";
     const sourceRoomNumber = nestedRoomNumber(applied, "source") ?? "verified analog";
-    const createdIds = Array.isArray(applied?.createdIds) ? applied.createdIds.filter(id => Number.isInteger(id)) : [];
-    const typeCounts = Array.isArray(applied?.typeCounts)
-      ? applied.typeCounts.map(value => asRecord(value)).filter((value): value is Record<string, unknown> => !!value)
-      : [];
-    const readback = Array.isArray(applied?.readback) ? applied.readback : [];
+    const receipt = verifiedApplyReceipt(applied);
+    const createdIds = receipt?.createdIds ?? [];
+    const typeCounts = receipt?.typeCounts ?? [];
     const warnings = Array.isArray(applied?.warnings) ? applied.warnings.filter(value => typeof value === "string") as string[] : [];
-    const verified = applied?.applied === true && applied?.status === "applied" && createdIds.length > 0 && readback.length === createdIds.length;
-    if (!verified) {
+    if (!receipt) {
       return {
         version: OPERATOR_BACKEND_CONTRACT_VERSION,
         assistant_message: "The apply call did not return a complete persistent inventory/readback receipt, so I cannot claim the layout is complete.",
@@ -129,5 +156,4 @@ export function maybeRunDeterministicRoomReceptacleAnalog(req: ChatRequest): Cha
 
   return null;
 }
-
-export const __testOnlyRoomReceptacleIntent = roomNumberFromIntent;
+export const __testOnlyVerifiedAnalogApplyReceipt = verifiedApplyReceipt;

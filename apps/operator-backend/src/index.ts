@@ -45,6 +45,7 @@ import { mapSheetRegions } from "./redline/sheet_region_mapper.js";
 import { orientRedlineFile } from "./redline/redline_orienter.js";
 import { resolveMepSemanticRoutePlan } from "./deterministic/mep_semantic_route.js";
 import { adaptMepSemanticRoutePlanToAecIntentEvidence } from "./deterministic/mep_semantic_route_evidence.js";
+import { resolveAecTaskIntentHttp } from "./aec_task_intent_http.js";
 import { tryCreateRedlineAnalyzeEvidence } from "./redline/redline_analyze_evidence.js";
 import { analyzeRedlinePackageWithGemini } from "./vision/gemini_redline_package.js";
 import { buildEvidencePack } from "./evidence/evidence_pack.js";
@@ -646,6 +647,7 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname === "/tools/redline/map-sheet-regions" ||
     pathname === "/tools/redline/gemini-analyze" ||
     pathname === "/tools/mep/semantic-route-plan" ||
+    pathname === "/tools/aec/task-intent" ||
     pathname === "/tools/evidence-pack/build" ||
     pathname === "/artifacts/list" ||
     pathname === "/artifacts/share" ||
@@ -3010,6 +3012,7 @@ const server = http.createServer(async (req, res) => {
       return writeJson(res, r.ok ? 200 : 400, r);
     }
 
+    if (req.method === "POST" && url.pathname === "/tools/aec/task-intent") { const r = await resolveAecTaskIntentHttp(await readJson(req)); return writeJson(res, r.status, r.body); }
     if (req.method === "POST" && url.pathname === "/tools/mep/semantic-route-plan") {
       const body = await readJson(req);
       const parsed = body as any;
