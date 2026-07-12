@@ -49,6 +49,25 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void ExpandsOutwardWhenNearLanesAreBlocked()
+        {
+            var target = Rect(-0.5, -0.5, 0.5, 0.5);
+            var nearRight = Rect(0.6, -4, 2.0, 4);
+            var candidate = TagPlacementPlanner.RankCandidates(new TagPlacementRequest
+            {
+                Target = target,
+                Obstacles = new[] { target, nearRight },
+                TagWidth = 1,
+                TagHeight = 0.5,
+                Clearance = 0.1,
+                Profile = "mep",
+                MaxCandidates = 64
+            }).First();
+            Assert.True(candidate.CollisionFree);
+            Assert.True(candidate.HeadX > 2.0);
+        }
+
+        [Fact]
         public void DisciplineProfilesChangeStablePreference()
         {
             var target = Rect(-0.5, -0.5, 0.5, 0.5);
