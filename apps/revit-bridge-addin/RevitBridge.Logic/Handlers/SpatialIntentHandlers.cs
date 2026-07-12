@@ -526,7 +526,7 @@ namespace RevitBridge.Logic.Handlers
                 catch { return false; }
             }
 
-            if (VisibleIn(activeView))
+            if (activeView is ViewPlan && VisibleIn(activeView))
             {
                 return new
                 {
@@ -544,14 +544,25 @@ namespace RevitBridge.Logic.Handlers
                 .OrderBy(view => view.ViewType == ViewType.EngineeringPlan ? 0 : view.ViewType == ViewType.FloorPlan ? 1 : 2)
                 .ThenBy(view => view.Name, StringComparer.OrdinalIgnoreCase)
                 .FirstOrDefault(VisibleIn);
-            if (levelPlan == null) return null;
-            return new
+            if (levelPlan != null) return new
             {
                 id = ElementIdCompat.GetValue(levelPlan.Id),
                 name = levelPlan.Name,
                 viewType = levelPlan.ViewType.ToString(),
                 reason = "same_level_visible_plan"
             };
+
+            if (activeView != null && !(activeView is ViewSheet) && !(activeView is ViewSchedule) && VisibleIn(activeView))
+            {
+                return new
+                {
+                    id = ElementIdCompat.GetValue(activeView.Id),
+                    name = activeView.Name,
+                    viewType = activeView.ViewType.ToString(),
+                    reason = "active_graphical_view_visible"
+                };
+            }
+            return null;
         }
     }
 
