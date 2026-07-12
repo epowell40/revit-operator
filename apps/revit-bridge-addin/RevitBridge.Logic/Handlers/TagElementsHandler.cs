@@ -51,6 +51,7 @@ namespace RevitBridge.Logic.Handlers
             public string? tagFamilySourceFamilyName { get; set; }
             public string? tagFamilySourceTypeName { get; set; }
             public string? generatedTagFamilyName { get; set; }
+            public bool? inspectTagFamilyElements { get; set; }
             public int? max { get; set; }
             public bool? dryRun { get; set; }
         }
@@ -90,6 +91,18 @@ namespace RevitBridge.Logic.Handlers
             public string? GeneratedFamilyPath { get; set; }
             public string? Error { get; set; }
             public List<TagFamilyCandidate> SourceCandidates { get; set; } = new List<TagFamilyCandidate>();
+            public string? ElementInventoryStatus { get; set; }
+            public string? ElementInventoryError { get; set; }
+            public List<TagFamilyElementInventoryItem> ElementInventory { get; set; } = new List<TagFamilyElementInventoryItem>();
+        }
+
+        private sealed class TagFamilyElementInventoryItem
+        {
+            public long ElementId { get; set; }
+            public string ElementClass { get; set; } = "";
+            public string? Category { get; set; }
+            public string? Name { get; set; }
+            public List<object> Parameters { get; set; } = new List<object>();
         }
 
         private sealed class TagFamilyCandidate
@@ -155,6 +168,8 @@ namespace RevitBridge.Logic.Handlers
                 ? ResolveGeometryTagFamily(app.Application, doc, targets, defaultTypeId, p, dryRun)
                 : null;
             if (defaultTypeId == null && tagFamilyResolution?.TypeId != null) defaultTypeId = tagFamilyResolution.TypeId;
+            if (dryRun && p.inspectTagFamilyElements == true && tagFamilyResolution?.TypeId != null)
+                InspectTagFamilyElements(doc, tagFamilyResolution);
             if (!dryRun && geometryAware && defaultTypeId == null && p.autoLoadTagFamily == true)
                 throw new InvalidOperationException(tagFamilyResolution?.Error ?? "A compatible tag family could not be loaded.");
 
@@ -580,12 +595,116 @@ namespace RevitBridge.Logic.Handlers
             familyId = resolution.FamilyId == null ? (long?)null : ElementIdCompat.GetValue(resolution.FamilyId),
             generatedFamilyPath = resolution.GeneratedFamilyPath,
             error = resolution.Error,
+            elementInventoryStatus = resolution.ElementInventoryStatus,
+            elementInventoryError = resolution.ElementInventoryError,
+            elementInventory = resolution.ElementInventory.Take(300).Select(x => new
+            {
+                elementId = x.ElementId,
+                elementClass = x.ElementClass,
+                category = x.Category,
+                name = x.Name,
+                parameters = x.Parameters
+            }).ToList(),
             sourceCandidates = resolution.SourceCandidates.Take(100).Select(x => new
             {
                 familyName = x.FamilyName,
                 typeName = x.TypeName
             }).ToList()
         };
+
+        private static void InspectTagFamilyElements(Document projectDoc, TagFamilyResolution resolution)
+        {
+            Document? familyDoc = null;
+            try
+            {
+                if (resolution.TypeId == null || projectDoc.GetElement(resolution.TypeId) is not FamilySymbol symbol)
+                {
+                    resolution.ElementInventoryStatus = "type_unavailable";
+                    return;
+                }
+
+                familyDoc = projectDoc.EditFamily(symbol.Family);
+                if (familyDoc == null) throw new InvalidOperationException("Could not open the selected tag family for read-only inspection.");
+                resolution.ElementInventory = new FilteredElementCollector(familyDoc)
+                    .WhereElementIsNotElementType()
+                    .Take(300)
+                    .Select(element => new TagFamilyElementInventoryItem
+                    {
+                        ElementId = ElementIdCompat.GetValue(element.Id),
+                        ElementClass = element.GetType().Name,
+                        Category = SafeElementCategoryName(element),
+                        Name = SafeElementName(element),
+                        Parameters = ReadElementParameterInventory(element)
+                    })
+                    .ToList();
+                resolution.ElementInventoryStatus = "inspected";
+            }
+            catch (Exception ex)
+            {
+                resolution.ElementInventoryStatus = "inspection_failed";
+                resolution.ElementInventoryError = ex.Message;
+            }
+            finally
+            {
+                if (familyDoc != null) try { familyDoc.Close(false); } catch { }
+            }
+        }
+
+        private static string? SafeElementCategoryName(Element element)
+        {
+            try { return element.Category?.Name; }
+            catch { return null; }
+        }
+
+        private static string? SafeElementName(Element element)
+        {
+            try { return element.Name; }
+            catch { return null; }
+        }
+
+        private static List<object> ReadElementParameterInventory(Element element)
+        {
+            var parameters = new List<object>();
+            foreach (Parameter parameter in element.Parameters)
+            {
+                if (parameters.Count >= 30) break;
+                try
+                {
+                    string? value;
+                    switch (parameter.StorageType)
+                    {
+                        case StorageType.Double:
+                            value = parameter.AsValueString() ?? parameter.AsDouble().ToString("R");
+                            break;
+                        case StorageType.Integer:
+                            value = parameter.AsValueString() ?? parameter.AsInteger().ToString();
+                            break;
+                        case StorageType.String:
+                            value = parameter.AsString();
+                            break;
+                        case StorageType.ElementId:
+                            value = ElementIdCompat.GetValue(parameter.AsElementId()).ToString();
+                            break;
+                        default:
+                            value = null;
+                            break;
+                    }
+
+                    parameters.Add(new
+                    {
+                        name = parameter.Definition?.Name,
+                        storageType = parameter.StorageType.ToString(),
+                        value,
+                        isReadOnly = parameter.IsReadOnly
+                    });
+                }
+                catch
+                {
+                    // Diagnostic inventory is best-effort per parameter.
+                }
+            }
+            return parameters;
+        }
 
         private static TagFamilyResolution ResolveGeometryTagFamily(
             Autodesk.Revit.ApplicationServices.Application application,
