@@ -8,6 +8,8 @@ type JsonMap = Record<string, unknown>;
 export type GoalStatus = "draft" | "active" | "paused" | "blocked" | "complete" | "canceled" | "failed";
 export type GoalLogKind = "action" | "evidence" | "validation";
 export type GoalCriterionStatus = "pass" | "fail" | "unknown";
+export type GoalWorkItemStatus = "pending" | "ready" | "in_progress" | "blocked" | "complete" | "failed" | "skipped";
+export type GoalAssumptionStatus = "proposed" | "accepted" | "rejected" | "superseded";
 
 export type GoalLogEntry = {
   id: string;
@@ -37,6 +39,28 @@ export type GoalCompletionAudit = {
   recommendation: string;
 };
 
+export type GoalWorkItem = {
+  id: string;
+  title: string;
+  status: GoalWorkItemStatus;
+  scope: JsonMap | null;
+  depends_on: string[];
+  planned_actions: string[];
+  evidence_refs: string[];
+  blocker: string | null;
+  result_summary: string | null;
+  updated_at: string;
+};
+
+export type GoalAssumption = {
+  id: string;
+  statement: string;
+  status: GoalAssumptionStatus;
+  basis: string | null;
+  evidence_refs: string[];
+  updated_at: string;
+};
+
 export type GoalRecord = {
   id: string;
   title: string;
@@ -53,6 +77,8 @@ export type GoalRecord = {
   progress_summary: string;
   token_budget?: number | null;
   work_budget?: JsonMap | null;
+  work_items: GoalWorkItem[];
+  assumptions: GoalAssumption[];
   evidence_log: GoalLogEntry[];
   action_log: GoalLogEntry[];
   validation_log: GoalLogEntry[];
@@ -86,6 +112,9 @@ export type GoalCreateInput = {
   tokenBudget?: unknown;
   work_budget?: unknown;
   workBudget?: unknown;
+  work_items?: unknown;
+  workItems?: unknown;
+  assumptions?: unknown;
   related_thread_id?: unknown;
   relatedThreadId?: unknown;
   related_session_id?: unknown;
@@ -203,6 +232,74 @@ function normalizeStatus(value: unknown): GoalStatus | null {
   return null;
 }
 
+function normalizeWorkItemStatus(value: unknown): GoalWorkItemStatus {
+  const status = clip(value, 80).toLowerCase();
+  if (["pending", "ready", "in_progress", "blocked", "complete", "failed", "skipped"].includes(status)) return status as GoalWorkItemStatus;
+  return "pending";
+}
+
+function normalizeAssumptionStatus(value: unknown): GoalAssumptionStatus {
+  const status = clip(value, 80).toLowerCase();
+  if (["proposed", "accepted", "rejected", "superseded"].includes(status)) return status as GoalAssumptionStatus;
+  return "proposed";
+}
+
+function normalizeWorkItems(value: unknown): GoalWorkItem[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error("work_items must be an array.");
+  if (value.length > 200) throw new Error("work_items supports at most 200 entries.");
+  const seen = new Set<string>();
+  return value.map((item, index) => {
+    const obj = item && typeof item === "object" && !Array.isArray(item) ? item as any : {};
+    const id = clip(obj.id, 160) || randomUUID();
+    if (seen.has(id)) throw new Error(`Duplicate work_items id '${id}'.`);
+    seen.add(id);
+    const title = clip(obj.title ?? obj.summary, 500);
+    if (!title) throw new Error(`work_items[${index}].title is required.`);
+    return {
+      id,
+      title,
+      status: normalizeWorkItemStatus(obj.status),
+      scope: asJsonMap(obj.scope),
+      depends_on: asStringList(obj.depends_on ?? obj.dependsOn, 40, 160),
+      planned_actions: asStringList(obj.planned_actions ?? obj.plannedActions, 40, 500),
+      evidence_refs: asStringList(obj.evidence_refs ?? obj.evidenceRefs, 80, 500),
+      blocker: clip(obj.blocker, 1000) || null,
+      result_summary: clip(obj.result_summary ?? obj.resultSummary, 2000) || null,
+      updated_at: clip(obj.updated_at ?? obj.updatedAt, 80) || nowIso()
+    };
+  });
+}
+
+function normalizeAssumptions(value: unknown): GoalAssumption[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error("assumptions must be an array.");
+  if (value.length > 100) throw new Error("assumptions supports at most 100 entries.");
+  const seen = new Set<string>();
+  return value.map((item, index) => {
+    const obj = item && typeof item === "object" && !Array.isArray(item) ? item as any : {};
+    const id = clip(obj.id, 160) || randomUUID();
+    if (seen.has(id)) throw new Error(`Duplicate assumptions id '${id}'.`);
+    seen.add(id);
+    const statement = clip(obj.statement ?? obj.summary, 1200);
+    if (!statement) throw new Error(`assumptions[${index}].statement is required.`);
+    return {
+      id,
+      statement,
+      status: normalizeAssumptionStatus(obj.status),
+      basis: clip(obj.basis ?? obj.source, 1000) || null,
+      evidence_refs: asStringList(obj.evidence_refs ?? obj.evidenceRefs, 80, 500),
+      updated_at: clip(obj.updated_at ?? obj.updatedAt, 80) || nowIso()
+    };
+  });
+}
+
+function mergeById<T extends { id: string }>(existing: T[], incoming: T[], max: number): T[] {
+  const merged = new Map(existing.map(item => [item.id, item]));
+  for (const item of incoming) merged.set(item.id, item);
+  return [...merged.values()].slice(-max);
+}
+
 function normalizeLogEntry(value: unknown, kind: GoalLogKind): GoalLogEntry {
   const obj = value && typeof value === "object" && !Array.isArray(value) ? (value as any) : {};
   const summary = clip(obj.summary ?? obj.text ?? obj.message ?? value, 2000);
@@ -297,6 +394,8 @@ export function createGoal(input: GoalCreateInput): GoalRecord {
     progress_summary: clip(input.progress_summary ?? input.progressSummary, 3000) || "Goal created.",
     token_budget: asNumberOrNull(input.token_budget ?? input.tokenBudget),
     work_budget: asJsonMap(input.work_budget ?? input.workBudget),
+    work_items: normalizeWorkItems(input.work_items ?? input.workItems),
+    assumptions: normalizeAssumptions(input.assumptions),
     evidence_log: [],
     action_log: [],
     validation_log: [],
@@ -316,7 +415,13 @@ export function createGoal(input: GoalCreateInput): GoalRecord {
 export function getGoal(goalId: string): GoalRecord | null {
   const id = clip(goalId, 160);
   if (!id) return null;
-  return readJson<GoalRecord>(goalPath(id));
+  const goal = readJson<GoalRecord>(goalPath(id));
+  if (!goal) return null;
+  return {
+    ...goal,
+    work_items: Array.isArray(goal.work_items) ? normalizeWorkItems(goal.work_items) : [],
+    assumptions: Array.isArray(goal.assumptions) ? normalizeAssumptions(goal.assumptions) : []
+  };
 }
 
 export function listGoals(limit = 50): GoalRecord[] {
@@ -325,7 +430,11 @@ export function listGoals(limit = 50): GoalRecord[] {
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const goal = readJson<GoalRecord>(path.join(root, entry.name, "goal.json"));
-    if (goal) records.push(goal);
+    if (goal) records.push({
+      ...goal,
+      work_items: Array.isArray(goal.work_items) ? normalizeWorkItems(goal.work_items) : [],
+      assumptions: Array.isArray(goal.assumptions) ? normalizeAssumptions(goal.assumptions) : []
+    });
   }
   records.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
   return records.slice(0, Math.max(1, Math.min(200, limit)));
@@ -356,6 +465,8 @@ export function updateGoal(goalId: string, input: GoalUpdateInput): GoalRecord {
     progress_summary: (input.progress_summary ?? input.progressSummary) !== undefined ? clip(input.progress_summary ?? input.progressSummary, 3000) : goal.progress_summary,
     token_budget: (input.token_budget ?? input.tokenBudget) !== undefined ? asNumberOrNull(input.token_budget ?? input.tokenBudget) : goal.token_budget ?? null,
     work_budget: (input.work_budget ?? input.workBudget) !== undefined ? asJsonMap(input.work_budget ?? input.workBudget) : goal.work_budget ?? null,
+    work_items: (input.work_items ?? input.workItems) !== undefined ? normalizeWorkItems(input.work_items ?? input.workItems) : goal.work_items,
+    assumptions: input.assumptions !== undefined ? normalizeAssumptions(input.assumptions) : goal.assumptions,
     related_thread_id: (input.related_thread_id ?? input.relatedThreadId) !== undefined ? clip(input.related_thread_id ?? input.relatedThreadId, 180) || null : goal.related_thread_id ?? null,
     related_session_id: (input.related_session_id ?? input.relatedSessionId) !== undefined ? clip(input.related_session_id ?? input.relatedSessionId, 180) || null : goal.related_session_id ?? null,
     related_model_id: (input.related_model_id ?? input.relatedModelId) !== undefined ? clip(input.related_model_id ?? input.relatedModelId, 180) || null : goal.related_model_id ?? null,
@@ -429,7 +540,10 @@ export function requestGoalCompletionAudit(goalId: string, input?: unknown): Goa
   const blockers = asStringList(obj.blockers, 40, 1200);
   if (goal.blocker) blockers.unshift(goal.blocker);
   const remainingWork = asStringList(obj.remaining_work ?? obj.remainingWork, 80, 1200);
-  const complete = criteriaResults.length > 0 && criteriaResults.every(r => r.status === "pass") && blockers.length === 0;
+  const incompleteWorkItems = (goal.work_items ?? []).filter(item => item.status !== "complete" && item.status !== "skipped");
+  for (const item of incompleteWorkItems) if (!remainingWork.includes(item.title)) remainingWork.push(item.title);
+  for (const item of incompleteWorkItems.filter(item => item.status === "blocked" && item.blocker)) blockers.push(`${item.title}: ${item.blocker}`);
+  const complete = criteriaResults.length > 0 && criteriaResults.every(r => r.status === "pass") && blockers.length === 0 && incompleteWorkItems.length === 0;
   for (const r of criteriaResults) {
     if (r.status !== "pass" && !remainingWork.includes(r.criterion)) remainingWork.push(r.criterion);
   }
@@ -505,9 +619,20 @@ export function clearAgentGoal(sessionId: string, reason?: unknown): GoalRecord 
 }
 
 export function appendGoalProgress(sessionId: string, entry: unknown): GoalRecord {
-  const goal = getActiveGoalForSession(sessionId);
+  let goal = getActiveGoalForSession(sessionId);
   if (!goal) throw new Error("No active goal for session.");
   const obj = entry && typeof entry === "object" && !Array.isArray(entry) ? (entry as any) : {};
+  const workValue = obj.work_items ?? obj.workItems ?? (obj.work_item !== undefined ? [obj.work_item] : obj.workItem !== undefined ? [obj.workItem] : undefined);
+  const assumptionValue = obj.assumptions ?? (obj.assumption !== undefined ? [obj.assumption] : undefined);
+  if (workValue !== undefined || assumptionValue !== undefined) {
+    const incomingWork = workValue === undefined ? [] : normalizeWorkItems(workValue);
+    const incomingAssumptions = assumptionValue === undefined ? [] : normalizeAssumptions(assumptionValue);
+    goal = saveGoal({
+      ...goal,
+      work_items: mergeById(goal.work_items ?? [], incomingWork, 200),
+      assumptions: mergeById(goal.assumptions ?? [], incomingAssumptions, 100)
+    });
+  }
   const summary =
     clip(obj.summary, 2000) ||
     [
@@ -550,6 +675,12 @@ export function formatActiveGoalContext(goal: GoalRecord | null): string {
   const recentActions = goal.action_log.slice(-5).map(e => `- ${e.ts}: ${e.summary}`);
   const recentEvidence = goal.evidence_log.slice(-5).map(e => `- ${e.ts}: ${e.summary}`);
   const recentValidations = goal.validation_log.slice(-5).map(e => `- ${e.ts}: ${e.summary}`);
+  const workItems = (goal.work_items ?? []).filter(item => item.status !== "skipped").slice(-12).map(item => {
+    const dependencies = item.depends_on.length ? ` depends_on=${item.depends_on.join(",")}` : "";
+    const blocker = item.blocker ? ` blocker=${item.blocker}` : "";
+    return `- ${item.id} [${item.status}] ${item.title}${dependencies}${blocker}`;
+  });
+  const assumptions = (goal.assumptions ?? []).filter(item => item.status === "proposed" || item.status === "accepted").slice(-12).map(item => `- ${item.id} [${item.status}] ${item.statement}${item.basis ? ` (basis: ${item.basis})` : ""}`);
   return [
     "ACTIVE GOAL CONTEXT (active_goal_context):",
     `id: ${goal.id}`,
@@ -562,9 +693,11 @@ export function formatActiveGoalContext(goal: GoalRecord | null): string {
     `current_step: ${goal.current_step || "(unset)"}`,
     `progress_summary: ${goal.progress_summary || "(empty)"}`,
     `blocker: ${goal.blocker || "(none)"}`,
+    `work_items:\n${workItems.length ? workItems.join("\n") : "- (none)"}`,
+    `assumptions:\n${assumptions.length ? assumptions.join("\n") : "- (none)"}`,
     `recent_action_log:\n${recentActions.length ? recentActions.join("\n") : "- (none)"}`,
     `recent_evidence_log:\n${recentEvidence.length ? recentEvidence.join("\n") : "- (none)"}`,
     `recent_validation_log:\n${recentValidations.length ? recentValidations.join("\n") : "- (none)"}`,
-    "Goal Mode instructions: work toward the active goal, avoid repeating completed work, pick the next concrete action, record evidence after meaningful actions, run validations when available, mark uncertainty as not complete, and request a completion audit before any complete status."
+    "Goal Mode instructions: work toward the active goal, avoid repeating completed work, pick the next ready work item whose dependencies are complete, persist changed work-item/assumption state with progress, record evidence after meaningful actions, run validations when available, mark uncertainty as not complete, and request a completion audit before any complete status."
   ].join("\n");
 }
