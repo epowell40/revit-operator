@@ -37,6 +37,38 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void Candidate_probe_policy_keeps_every_predicted_clear_candidate_and_caps_colliding_probes()
+        {
+            var candidates = Enumerable.Range(1, 12).Select(index => new TagPlacementCandidate
+            {
+                HeadX = index,
+                HeadY = 0,
+                Bounds = Rect(index, 0, index + 1, 1),
+                CollisionCount = index <= 3 ? 0 : 1
+            }).ToList();
+
+            var selected = TagCandidateProbePolicy.Select(candidates, 12, 4);
+
+            Assert.Equal(new[] { 1d, 2d, 3d, 4d, 5d, 6d, 7d }, selected.Select(candidate => candidate.HeadX));
+        }
+
+        [Fact]
+        public void Candidate_probe_policy_honors_the_existing_attempt_bound()
+        {
+            var candidates = Enumerable.Range(1, 10).Select(index => new TagPlacementCandidate
+            {
+                HeadX = index,
+                HeadY = 0,
+                Bounds = Rect(index, 0, index + 1, 1),
+                CollisionCount = index == 5 ? 0 : 1
+            }).ToList();
+
+            var selected = TagCandidateProbePolicy.Select(candidates, 4, 2);
+
+            Assert.Equal(new[] { 1d, 2d }, selected.Select(candidate => candidate.HeadX));
+        }
+
+        [Fact]
         public void PlacesTagOutsideTargetFootprint()
         {
             var target = Rect(-0.5, -0.5, 0.5, 0.5);
