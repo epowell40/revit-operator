@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
+using RevitBridge.Common.Semantic;
 
 namespace RevitBridge.Logic.Handlers
 {
@@ -142,14 +143,8 @@ namespace RevitBridge.Logic.Handlers
             if (!string.IsNullOrWhiteSpace(p?.category)) requestedCats.Add(p.category.Trim());
             if (p?.categories != null) requestedCats.AddRange(p.categories.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()));
 
-            var bicList = new List<BuiltInCategory>();
-            var unknownCats = new List<string>();
-            foreach (var c in requestedCats.Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                if (BuiltInCategoryTokenUtil.TryParse(c, out var bic)) bicList.Add(bic);
-                else unknownCats.Add(c);
-            }
-            if (unknownCats.Count > 0) warnings.Add($"Unknown categories matched by exact category name only when possible: {string.Join(", ", unknownCats)}");
+            var resolvedCategories = ResolveRequestedCategories(doc, requestedCats);
+            var categoryIds = resolvedCategories.Select(x => x.Id).ToHashSet();
 
             var nameContains = (p?.nameContains ?? "").Trim();
             var typeNameContains = (p?.typeNameContains ?? "").Trim();
@@ -189,7 +184,8 @@ namespace RevitBridge.Logic.Handlers
                 sheetId,
                 includeSheetElements: p?.includeSheetElements == true,
                 includeViewportElements: includeViewportElements,
-                scopeKind))
+                scopeKind,
+                categoryIds))
             {
                 var e = candidate.Element;
                 scanned++;
@@ -212,7 +208,7 @@ namespace RevitBridge.Logic.Handlers
                     if (textMatch == null) continue;
                 }
 
-                if (bicList.Count > 0 && !IsInCategories(e, bicList)) continue;
+                if (categoryIds.Count > 0 && !categoryIds.Contains(ElementIdCompat.GetValue(e.Category?.Id))) continue;
                 if (!string.IsNullOrWhiteSpace(nameContains) && (e.Name ?? "").IndexOf(nameContains, StringComparison.OrdinalIgnoreCase) < 0) continue;
 
                 if (!string.IsNullOrWhiteSpace(markContains))
@@ -263,6 +259,14 @@ namespace RevitBridge.Logic.Handlers
                     sheetId
                 },
                 elementIds = ids.Distinct().OrderBy(x => x).ToList(),
+                categoryFilterApplied = categoryIds.Count > 0,
+                resolvedCategories = resolvedCategories.Select(x => new
+                {
+                    requested = x.RequestedToken,
+                    categoryId = x.Id,
+                    name = x.Name,
+                    builtInToken = x.BuiltInToken
+                }).ToList(),
                 textFilterApplied = includeTextMatches,
                 textSearch = includeTextMatches ? new { textContains, normalized = textContainsNorm } : null,
                 items,
@@ -279,13 +283,14 @@ namespace RevitBridge.Logic.Handlers
             long? sheetId,
             bool includeSheetElements,
             bool includeViewportElements,
-            string scopeKind)
+            string scopeKind,
+            IReadOnlyCollection<long> categoryIds)
         {
             if (scopeKind == "View")
             {
                 foreach (var v in viewIds)
                 {
-                    foreach (var e in new FilteredElementCollector(doc, v).WhereElementIsNotElementType())
+                    foreach (var e in CreateCollector(doc, v, categoryIds))
                         yield return new CandidateElement { Element = e, SourceViewId = v };
                 }
                 yield break;
@@ -297,7 +302,7 @@ namespace RevitBridge.Logic.Handlers
                 {
                     foreach (var v in viewIds)
                     {
-                        foreach (var e in new FilteredElementCollector(doc, v).WhereElementIsNotElementType())
+                        foreach (var e in CreateCollector(doc, v, categoryIds))
                             yield return new CandidateElement { Element = e, SourceViewId = v };
                     }
                 }
@@ -305,30 +310,51 @@ namespace RevitBridge.Logic.Handlers
                 if (includeSheetElements && sheetId.HasValue)
                 {
                     var sheetViewId = RevitBridge.Common.ElementIdCompat.Create(sheetId.Value);
-                    foreach (var e in new FilteredElementCollector(doc, sheetViewId).WhereElementIsNotElementType())
+                    foreach (var e in CreateCollector(doc, sheetViewId, categoryIds))
                         yield return new CandidateElement { Element = e, SourceViewId = sheetViewId };
                 }
 
                 yield break;
             }
 
-            foreach (var e in new FilteredElementCollector(doc).WhereElementIsNotElementType())
+            foreach (var e in CreateCollector(doc, null, categoryIds))
                 yield return new CandidateElement { Element = e, SourceViewId = null };
         }
 
-        private static bool IsInCategories(Element e, List<BuiltInCategory> bics)
+        private static FilteredElementCollector CreateCollector(Document doc, ElementId? viewId, IReadOnlyCollection<long> categoryIds)
         {
-            try
+            var collector = viewId == null
+                ? new FilteredElementCollector(doc)
+                : new FilteredElementCollector(doc, viewId);
+            collector.WhereElementIsNotElementType();
+            if (categoryIds.Count == 0) return collector;
+
+            var filters = categoryIds
+                .Select(x => (ElementFilter)new ElementCategoryFilter(ElementIdCompat.Create(x)))
+                .ToList();
+            return filters.Count == 1
+                ? collector.WherePasses(filters[0])
+                : collector.WherePasses(new LogicalOrFilter(filters));
+        }
+
+        private static IReadOnlyList<StrictCategoryResolution> ResolveRequestedCategories(Document doc, IReadOnlyCollection<string> requested)
+        {
+            if (requested.Count == 0) return Array.Empty<StrictCategoryResolution>();
+            var catalog = new List<StrictCategoryDescriptor>();
+            foreach (Category category in doc.Settings.Categories)
             {
-                if (e?.Category?.Id == null) return false;
-                var id = e.Category.Id.IntegerValue;
-                foreach (var bic in bics)
+                var id = ElementIdCompat.GetValue(category.Id);
+                string? builtInToken = null;
+                if (id >= int.MinValue && id <= int.MaxValue && Enum.IsDefined(typeof(BuiltInCategory), (int)id))
+                    builtInToken = ((BuiltInCategory)(int)id).ToString();
+                catalog.Add(new StrictCategoryDescriptor
                 {
-                    if ((int)bic == id) return true;
-                }
+                    Id = id,
+                    Name = category.Name ?? string.Empty,
+                    BuiltInToken = builtInToken
+                });
             }
-            catch { }
-            return false;
+            return StrictCategoryResolver.Resolve(requested, catalog);
         }
 
         private static string? TryGetMark(Element e)
