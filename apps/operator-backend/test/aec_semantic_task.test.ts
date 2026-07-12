@@ -99,3 +99,13 @@ test("document scope is an explicit opt-in rather than a fallback side effect", 
   value.scope.rooms = ["403"];
   assert.throws(() => normalizeAecSemanticTaskV1(value), /scope\.kind/);
 });
+
+test("reference descriptions preserve grounded precedent and standards without pretending they are explicit user sources", () => {
+  for (const strategy of ["current_project_precedent", "office_standard", "code_baseline", "conservative_proposal"] as const) {
+    const value = exactAhuTask();
+    value.reference = { strategy, source_description: "Adjacent completed Level 3 mechanical plans", source_room: null };
+    assert.equal(normalizeAecSemanticTaskV1(value).reference.source_description, "Adjacent completed Level 3 mechanical plans");
+  }
+  const none = exactAhuTask(); none.reference = { strategy: "none", source_description: "invented", source_room: null };
+  assert.throws(() => normalizeAecSemanticTaskV1(none), /reference\.source_description/);
+});

@@ -544,6 +544,27 @@ namespace RevitBridge.Operator
                             additionalProps: false));
                 }
 
+                if (string.Equals(p, "/revit/views", StringComparison.OrdinalIgnoreCase) && string.Equals(m, "POST", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "action", Str(new[] { "list", "count" }) },
+                            { "viewIds", Arr(Int()) },
+                            { "levelNames", Arr(Str()) },
+                            { "viewTypes", Arr(Str()) },
+                            { "disciplines", Arr(Str()) },
+                            { "viewNames", Arr(Str()) },
+                            { "nameContainsAny", Arr(Str()) },
+                            { "semanticGroups", Arr(Str(new[] { "power", "lighting", "electrical", "mechanical", "plumbing", "fire_alarm", "architectural" })) },
+                            { "includeTemplates", Bool() },
+                            { "offset", Int() },
+                            { "limit", Int() }
+                        },
+                        required: Array.Empty<string>(),
+                        additionalProps: false);
+                }
+
                 // Sheets listing (paging + prefix matching).
                 if (string.Equals(p, "/revit/sheets", StringComparison.OrdinalIgnoreCase))
                 {

@@ -37,3 +37,36 @@ test("semantic interpreter skips continuations and rejects unsupported provider 
   assert.equal(await interpretAecSemanticTask({ version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: "s", message_id: "m", user_text: "Where is AHU-1?" }, bad), null);
   assert.equal((__testOnlyAecSemanticTaskSchema as any).additionalProperties, false);
 });
+
+test("provider mixed scope with one concrete field is narrowed to that exact scope", async () => {
+  const prompt = "Lay out the mechanical plans on Level 4 across applicable views and sheets.";
+  const value = semanticTask(prompt) as any;
+  value.operation = "layout";
+  value.subject = { ...value.subject, kind: "class", semantic_class: "view", terms: ["mechanical plans"], categories: [], identifiers: [] };
+  value.scope = { ...value.scope, kind: "mixed", levels: ["Level 4"] };
+  value.reference = { strategy: "current_project_precedent", source_description: "adjacent completed mechanical sheets", source_room: null };
+  value.mutation = { kind: "update", requested: true };
+  value.execution.requires_visual_verification = true;
+  const task = await interpretAecSemanticTask({ version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: "scope", message_id: "m", user_text: prompt }, { async interpret() { return value; } });
+  assert.equal(task?.scope.kind, "level");
+  assert.deepEqual(task?.scope.levels, ["Level 4"]);
+});
+
+test("target scope remains separate from precedent evidence", async () => {
+  const prompt = "Lay out Level 4 mechanical plans using Level 3, Level 5, M103, and M105 as precedent.";
+  const value = semanticTask(prompt) as any; value.operation = "layout"; value.subject.semantic_class = "mechanical_equipment";
+  value.scope = { ...value.scope, kind: "level", levels: ["Level 4"] };
+  value.reference = { strategy: "explicit", source_description: "Level 3, Level 5, M103, and M105 precedent", source_room: null };
+  value.mutation = { kind: "update", requested: true }; value.execution.requires_visual_verification = true;
+  const task = await interpretAecSemanticTask({ version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: "precedent", message_id: "m", user_text: prompt }, { async interpret() { return value; } });
+  assert.deepEqual(task?.scope.levels, ["Level 4"]); assert.deepEqual(task?.scope.sheets, []); assert.equal(task?.scope.document, null); assert.match(task?.reference.source_description ?? "", /M103/);
+});
+
+test("Sidecar authoritative user text overrides model-authored delegate expansion", async () => {
+  let seen: any = null;
+  const original = "Lay out the mechanical plans on Level 4.";
+  const delegated = "Target M104, M204, Plan HVAC L4, RCP HVAC L4, Level 3, Level 4, and Level 5.";
+  const interpreter: AecSemanticTaskInterpreter = { async interpret(input) { seen = input; const value = semanticTask(input.user_text) as any; value.operation = "layout"; value.subject.semantic_class = "mechanical_equipment"; value.scope = { ...value.scope, kind: "level", levels: ["Level 4"] }; value.reference = { strategy: "current_project_precedent", source_description: "project precedent", source_room: null }; value.mutation = { kind: "update", requested: true }; value.execution.requires_visual_verification = true; return value; } };
+  const task = await interpretAecSemanticTask({ version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: "authoritative", message_id: "m", user_text: delegated, context: { ui: { authoritative_user_text: original } } }, interpreter);
+  assert.equal(seen.user_text, original); assert.equal(seen.delegated_task_text, delegated); assert.equal(task?.evidence.user_text, original); assert.deepEqual(task?.scope.levels, ["Level 4"]);
+});

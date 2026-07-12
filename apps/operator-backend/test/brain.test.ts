@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { __testOnlyFinalizeDecision, __testOnlyMaybeRunSemanticAecWorkflow, decide } from "../src/brain.js";
+import { __testOnlyFinalizeDecision, __testOnlyIsBridgeStatusQuestion, __testOnlyMaybeRunSemanticAecWorkflow, decide } from "../src/brain.js";
 import { AEC_TASK_INTENT_V1_SCHEMA } from "../src/aec_task_intent.js";
 import { decideRule } from "../src/brains/rule_brain.js";
 import { shouldOpenZippyBimTool } from "../src/brains/zippybim_intent.js";
@@ -44,6 +44,13 @@ test("bridge-only status question pings bridge without opening Revit", async () 
   assert.equal(res.actions[0]?.method, "GET");
   assert.equal(res.actions[0]?.path, "/revit/ping");
   assert.doesNotMatch(JSON.stringify(res.actions), /open-model|2026|launch/i);
+});
+
+test("equipment systems and best-view query is not misclassified as bridge status", () => {
+  const prompt = "Where is HRU403? Return its exact element identity, family and type, level, room or space, connected systems, and best Revit view. Read only; do not modify the model.";
+  assert.equal(__testOnlyIsBridgeStatusQuestion(prompt), false);
+  assert.equal(__testOnlyIsBridgeStatusQuestion("Is the Revit bridge connected?"), true);
+  assert.equal(__testOnlyIsBridgeStatusQuestion("Can you check whether Revit is reachable?"), true);
 });
 
 test("office-standard room receptacle demo bypasses the general model loop", async () => {

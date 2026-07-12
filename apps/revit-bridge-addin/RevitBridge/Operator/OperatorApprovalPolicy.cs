@@ -92,6 +92,7 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/activate-view", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/query", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/resolve", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/views", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/sheets", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/schedules", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/export-schedule-csv", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;

@@ -33,15 +33,24 @@ function maybeBuildZippyBimToolOpenedAck(req: ChatRequest): ChatResponse | null 
   };
 }
 
+export function __testOnlyIsBridgeStatusQuestion(userText: string): boolean {
+  const text = (userText ?? "").trim().toLowerCase();
+  if (!text || /\b(open|launch|start)\s+revit\b/.test(text)) return false;
+
+  if (/\bbridge\b/.test(text)) {
+    return /\b(is|are|was|check|status|open|running|up|available|connected|reachable|ping|see|alive|online|healthy|responding|responsive)\b/.test(text);
+  }
+
+  return [
+    /\b(?:is|are|was)\s+(?:the\s+)?revit(?:\s+(?:operator|backend|server|api))?\s+(?:open|running|up|available|connected|reachable|alive|online|healthy|responding|responsive)\b/,
+    /\b(?:check|verify|confirm|test|ping)\b.{0,48}\brevit(?:\s+(?:operator|backend|server|api))?\b/,
+    /\b(?:can\s+you\s+)?(?:see|reach|ping)\s+(?:the\s+)?revit(?:\s+(?:operator|backend|server|api))?\b/,
+    /\brevit\s+(?:connection|connectivity|status|health)\b/
+  ].some(pattern => pattern.test(text));
+}
+
 function maybeBuildBridgeStatusDecision(req: ChatRequest): ChatResponse | null {
-  const text = (req.user_text ?? "").trim().toLowerCase();
-  if (!text) return null;
-  const mentionsBridge = /\bbridge\b/.test(text);
-  const mentionsRevitConnectivity = /\brevit\b/.test(text) && /\b(connected|reachable|ping|bridge|operator|backend|server|api)\b/.test(text);
-  if (!mentionsBridge && !mentionsRevitConnectivity) return null;
-  const asksStatus = /\b(is|are|was|check|status|open|running|up|available|connected|reachable|ping|see|alive|online|healthy|responding|responsive)\b/.test(text);
-  if (!asksStatus) return null;
-  if (/\b(open|launch|start)\s+revit\b/.test(text)) return null;
+  if (!__testOnlyIsBridgeStatusQuestion(req.user_text ?? "")) return null;
   return {
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
     assistant_message: "Checking whether the Revit bridge is reachable...",

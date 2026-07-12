@@ -7,6 +7,7 @@ import { appendEvent } from "../memory/sqlite_store.js";
 import { maybeRunAecSemanticQuery } from "./aec_query_runtime.js";
 import type { AecSemanticTaskInterpreter } from "../aec_semantic_task_interpreter.js";
 import type { AecSemanticTaskV1 } from "../aec_semantic_task.js";
+import { maybeRunAecScopeWorkPackage } from "./aec_scope_work_package_runtime.js";
 
 export type AecWorkflowId = "electrical.receptacle_layout_from_analog";
 export type AecWorkflowResolution = { workflow_id: AecWorkflowId; intent: AecTaskIntentV1 };
@@ -47,6 +48,8 @@ export function adaptSemanticTaskToLegacyWorkflow(task: AecSemanticTaskV1): AecT
 }
 
 export async function maybeRunSemanticAecWorkflow(req: ChatRequest, interpreter?: AecTaskIntentInterpreter, semanticInterpreter?: AecSemanticTaskInterpreter): Promise<ChatResponse | null> {
+  const scopeContinuation = maybeRunAecScopeWorkPackage(req);
+  if (scopeContinuation) return scopeContinuation;
   const issuedIntent = consumeAecTaskIntentToken(req.context, (req.user_text ?? "").trim());
   if (issuedIntent) { try { appendEvent(req.session_id, "assistant", "aec.task_intent.reused", { message_id: req.message_id, intent: issuedIntent }); } catch { } }
   if (issuedIntent) { const issuedResolution = resolveAecWorkflow(issuedIntent); return issuedResolution ? executeAecWorkflow(req, issuedResolution) : null; }
@@ -59,6 +62,8 @@ export async function maybeRunSemanticAecWorkflow(req: ChatRequest, interpreter?
   if (semantic.response) return semantic.response;
   const adapted = semantic.task ? adaptSemanticTaskToLegacyWorkflow(semantic.task) : null;
   if (adapted) { const adaptedResolution = resolveAecWorkflow(adapted); return adaptedResolution ? executeAecWorkflow(req, adaptedResolution) : null; }
+  const scoped = semantic.task ? maybeRunAecScopeWorkPackage(req, semantic.task) : null;
+  if (scoped) return scoped;
   const intent = semantic.task ? null : await interpretAecTaskIntent(req, interpreter);
   const resolution = intent ? resolveAecWorkflow(intent) : null;
   return resolution ? executeAecWorkflow(req, resolution) : null;

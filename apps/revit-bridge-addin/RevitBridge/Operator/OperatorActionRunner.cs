@@ -32,7 +32,7 @@ namespace RevitBridge.Operator
                 { "/revit/context", new ContextHandler() },
                 { "/revit/state-snapshot", new RevitStateSnapshotHandler() },
                 { "/revit/native-capabilities", new NativeCapabilitiesHandler() },
-                { "/revit/views", new ListViewsHandler() },
+                { "/revit/views", new RevitBridge.Logic.Handlers.ListViewsHandler() },
                 { "/revit/tool-registry", new ToolRegistryHandler() },
                 { "/revit/tool-search", new ToolSearchHandler() },
                 { "/revit/tool-doc", new ToolDocHandler() },
