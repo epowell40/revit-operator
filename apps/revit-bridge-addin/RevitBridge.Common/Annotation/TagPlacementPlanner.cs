@@ -96,36 +96,40 @@ namespace RevitBridge.Common.Annotation
 
             foreach (var direction in directions)
             {
-                foreach (var lane in new[] { 0.0, 1.0, -1.0, 2.0, -2.0 })
+                foreach (var distanceScale in new[] { 1.0, 1.75, 2.5 })
                 {
-                    if (candidates.Count >= maxCandidates) break;
-                    var laneStep = Math.Max(request.TagHeight, request.Clearance * 2.0);
-                    var headX = request.Target.CenterX + direction.X * xDistance + (direction.Y != 0 ? lane * laneStep : 0);
-                    var headY = request.Target.CenterY + direction.Y * yDistance + (direction.X != 0 ? lane * laneStep : 0);
-                    var bounds = new TagRect2(headX - halfWidth, headY - halfHeight, headX + halfWidth, headY + halfHeight);
-                    var collisionCount = 0;
-                    var collisionArea = 0.0;
-                    foreach (var obstacle in obstacles)
+                    foreach (var lane in new[] { 0.0, 1.0, -1.0, 2.0, -2.0 })
                     {
-                        var inflated = obstacle.Inflate(request.Clearance);
-                        if (!bounds.Intersects(inflated)) continue;
-                        collisionCount++;
-                        collisionArea += bounds.IntersectionArea(inflated);
-                    }
+                        if (candidates.Count >= maxCandidates) break;
+                        var laneStep = Math.Max(request.TagHeight, request.Clearance * 2.0);
+                        var headX = request.Target.CenterX + direction.X * xDistance * distanceScale + (direction.Y != 0 ? lane * laneStep : 0);
+                        var headY = request.Target.CenterY + direction.Y * yDistance * distanceScale + (direction.X != 0 ? lane * laneStep : 0);
+                        var bounds = new TagRect2(headX - halfWidth, headY - halfHeight, headX + halfWidth, headY + halfHeight);
+                        var collisionCount = 0;
+                        var collisionArea = 0.0;
+                        foreach (var obstacle in obstacles)
+                        {
+                            var inflated = obstacle.Inflate(request.Clearance);
+                            if (!bounds.Intersects(inflated)) continue;
+                            collisionCount++;
+                            collisionArea += bounds.IntersectionArea(inflated);
+                        }
 
-                    var distance = Math.Sqrt(
-                        Math.Pow(headX - request.Target.CenterX, 2) +
-                        Math.Pow(headY - request.Target.CenterY, 2));
-                    candidates.Add(new TagPlacementCandidate
-                    {
-                        Side = direction.Side,
-                        HeadX = headX,
-                        HeadY = headY,
-                        Bounds = bounds,
-                        CollisionCount = collisionCount,
-                        CollisionArea = collisionArea,
-                        Score = collisionCount * 1000000.0 + collisionArea * 1000.0 + direction.Penalty * 1000.0 + Math.Abs(lane) * 10.0 + distance
-                    });
+                        var distance = Math.Sqrt(
+                            Math.Pow(headX - request.Target.CenterX, 2) +
+                            Math.Pow(headY - request.Target.CenterY, 2));
+                        candidates.Add(new TagPlacementCandidate
+                        {
+                            Side = direction.Side,
+                            HeadX = headX,
+                            HeadY = headY,
+                            Bounds = bounds,
+                            CollisionCount = collisionCount,
+                            CollisionArea = collisionArea,
+                            Score = collisionCount * 1000000.0 + collisionArea * 1000.0 + direction.Penalty * 1000.0 + (distanceScale - 1.0) * 25.0 + Math.Abs(lane) * 10.0 + distance
+                        });
+                    }
+                    if (candidates.Count >= maxCandidates) break;
                 }
                 if (candidates.Count >= maxCandidates) break;
             }

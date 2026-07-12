@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
@@ -44,6 +45,10 @@ namespace RevitBridge.Logic.Handlers
             public double? tagHeightPaperInches { get; set; }
             public double? clearancePaperInches { get; set; }
             public int? maxRepairAttempts { get; set; }
+            public bool? autoLoadTagFamily { get; set; }
+            public string? tagFamilySourceProjectPath { get; set; }
+            public string? tagFamilySourceCategory { get; set; }
+            public string? generatedTagFamilyName { get; set; }
             public int? max { get; set; }
             public bool? dryRun { get; set; }
         }
@@ -68,6 +73,35 @@ namespace RevitBridge.Logic.Handlers
             public TagRect2? TargetBounds { get; set; }
             public TagRect2? TagBounds { get; set; }
             public XYZ? TagHeadPosition { get; set; }
+        }
+
+        private sealed class TagFamilyResolution
+        {
+            public string Status { get; set; } = "missing";
+            public string? TargetTagCategory { get; set; }
+            public string? SourceTagCategory { get; set; }
+            public string? SourceProjectPath { get; set; }
+            public string? FamilyName { get; set; }
+            public string? TypeName { get; set; }
+            public ElementId? TypeId { get; set; }
+            public string? GeneratedFamilyPath { get; set; }
+            public string? Error { get; set; }
+        }
+
+        private sealed class TagFamilyLoadOptions : IFamilyLoadOptions
+        {
+            public bool OnFamilyFound(bool familyInUse, out bool overwriteParameterValues)
+            {
+                overwriteParameterValues = false;
+                return true;
+            }
+
+            public bool OnSharedFamilyFound(Family sharedFamily, bool familyInUse, out FamilySource source, out bool overwriteParameterValues)
+            {
+                source = FamilySource.Family;
+                overwriteParameterValues = false;
+                return true;
+            }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -99,7 +133,7 @@ namespace RevitBridge.Logic.Handlers
             var tagWidth = ResolvePaperInches(p.tagWidthPaperInches, 0.60, 0.05, 4.0) * viewScale / 12.0;
             var tagHeight = ResolvePaperInches(p.tagHeightPaperInches, 0.18, 0.05, 2.0) * viewScale / 12.0;
             var clearance = ResolvePaperInches(p.clearancePaperInches, 0.08, 0.0, 1.0) * viewScale / 12.0;
-            var maxRepairAttempts = Math.Max(1, Math.Min(32, p.maxRepairAttempts ?? 16));
+            var maxRepairAttempts = Math.Max(1, Math.Min(64, p.maxRepairAttempts ?? 32));
 
             var existingTagged = onlyUntagged
                 ? CollectTaggedElementIdsOnView(doc, view.Id)
@@ -107,6 +141,12 @@ namespace RevitBridge.Logic.Handlers
 
             var mapping = ResolveCategoryTagTypeMap(doc, p.categoryTagTypeMap, out var mappingWarnings);
             var defaultTypeId = ResolveDefaultTagTypeId(doc, p.tagTypeId, p.tagTypeName, p.tagFamilyName);
+            var tagFamilyResolution = geometryAware
+                ? ResolveGeometryTagFamily(app.Application, doc, targets, defaultTypeId, p, dryRun)
+                : null;
+            if (defaultTypeId == null && tagFamilyResolution?.TypeId != null) defaultTypeId = tagFamilyResolution.TypeId;
+            if (!dryRun && geometryAware && defaultTypeId == null && p.autoLoadTagFamily == true)
+                throw new InvalidOperationException(tagFamilyResolution?.Error ?? "A compatible tag family could not be loaded.");
 
             var planned = targets
                 .Select(e => new
@@ -135,6 +175,7 @@ namespace RevitBridge.Logic.Handlers
                     skippedAlreadyTagged = skippedAlready,
                     unresolvedCategories,
                     mappingWarnings,
+                    tagFamily = TagFamilyPayload(tagFamilyResolution),
                     defaultTagTypeId = defaultTypeId == null ? (long?)null : ElementIdCompat.GetValue(defaultTypeId),
                     placementMode,
                     placementProfile = geometryAware ? placementProfile : null,
@@ -250,6 +291,7 @@ namespace RevitBridge.Logic.Handlers
                 errorCount = errors.Count,
                 unresolvedCategories,
                 mappingWarnings,
+                tagFamily = TagFamilyPayload(tagFamilyResolution),
                 placementMode,
                 placementProfile = geometryAware ? placementProfile : null,
                 geometry = geometryAware ? new
@@ -481,6 +523,231 @@ namespace RevitBridge.Logic.Handlers
             centerU = rect.CenterX,
             centerV = rect.CenterY
         };
+
+        private static object? TagFamilyPayload(TagFamilyResolution? resolution) => resolution == null ? null : new
+        {
+            status = resolution.Status,
+            targetTagCategory = resolution.TargetTagCategory,
+            sourceTagCategory = resolution.SourceTagCategory,
+            sourceProjectPath = resolution.SourceProjectPath,
+            familyName = resolution.FamilyName,
+            typeName = resolution.TypeName,
+            typeId = resolution.TypeId == null ? (long?)null : ElementIdCompat.GetValue(resolution.TypeId),
+            generatedFamilyPath = resolution.GeneratedFamilyPath,
+            error = resolution.Error
+        };
+
+        private static TagFamilyResolution ResolveGeometryTagFamily(
+            Autodesk.Revit.ApplicationServices.Application application,
+            Document doc,
+            IReadOnlyList<Element> targets,
+            ElementId? requestedTypeId,
+            TagRequest request,
+            bool dryRun)
+        {
+            var targetTagCategory = ResolveCommonTargetTagCategory(targets);
+            if (targetTagCategory == null)
+            {
+                return new TagFamilyResolution { Status = "unsupported_target_categories", Error = "Geometry-aware auto-loading requires targets from one supported tag category." };
+            }
+
+            if (requestedTypeId != null && doc.GetElement(requestedTypeId) is FamilySymbol requestedSymbol)
+            {
+                return ResolutionFromSymbol("requested", targetTagCategory.Value, requestedSymbol);
+            }
+
+            var loaded = new FilteredElementCollector(doc)
+                .OfClass(typeof(FamilySymbol))
+                .OfCategory(targetTagCategory.Value)
+                .Cast<FamilySymbol>()
+                .OrderBy(x => x.FamilyName ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(x => x.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault();
+            if (loaded != null) return ResolutionFromSymbol("loaded", targetTagCategory.Value, loaded);
+
+            if (request.autoLoadTagFamily != true)
+            {
+                return new TagFamilyResolution
+                {
+                    Status = "missing",
+                    TargetTagCategory = targetTagCategory.Value.ToString(),
+                    Error = "No compatible tag family is loaded. Supply a workspace-scoped source project and set autoLoadTagFamily=true."
+                };
+            }
+
+            var sourcePathInput = (request.tagFamilySourceProjectPath ?? string.Empty).Trim();
+            if (sourcePathInput.Length == 0)
+            {
+                return new TagFamilyResolution
+                {
+                    Status = "source_required",
+                    TargetTagCategory = targetTagCategory.Value.ToString(),
+                    Error = "tagFamilySourceProjectPath is required when autoLoadTagFamily=true."
+                };
+            }
+
+            var sourcePath = WorkspacePaths.ResolveExistingFileUnderWorkspace(sourcePathInput);
+            if (string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(doc.PathName ?? string.Empty), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Tag-family source project must differ from the active project.");
+            var sourceTagCategory = ResolveBuiltInCategory(request.tagFamilySourceCategory, BuiltInCategory.OST_DoorTags);
+            var familyName = SanitizeFamilyName(request.generatedTagFamilyName, DefaultGeneratedTagFamilyName(targetTagCategory.Value));
+            return ImportTagFamilyFromSource(application, doc, sourcePath, sourceTagCategory, targetTagCategory.Value, familyName, dryRun);
+        }
+
+        private static TagFamilyResolution ImportTagFamilyFromSource(
+            Autodesk.Revit.ApplicationServices.Application application,
+            Document targetDoc,
+            string sourcePath,
+            BuiltInCategory sourceTagCategory,
+            BuiltInCategory targetTagCategory,
+            string familyName,
+            bool dryRun)
+        {
+            Document? sourceDoc = null;
+            Document? familyDoc = null;
+            try
+            {
+                sourceDoc = application.OpenDocumentFile(sourcePath);
+                var sourceSymbol = new FilteredElementCollector(sourceDoc)
+                    .OfClass(typeof(FamilySymbol))
+                    .OfCategory(sourceTagCategory)
+                    .Cast<FamilySymbol>()
+                    .OrderBy(x => x.FamilyName ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(x => x.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+                    .FirstOrDefault();
+                if (sourceSymbol == null)
+                {
+                    return new TagFamilyResolution
+                    {
+                        Status = "source_tag_missing",
+                        TargetTagCategory = targetTagCategory.ToString(),
+                        SourceTagCategory = sourceTagCategory.ToString(),
+                        SourceProjectPath = sourcePath,
+                        Error = "The source project does not contain a compatible source tag family."
+                    };
+                }
+
+                if (dryRun)
+                {
+                    return new TagFamilyResolution
+                    {
+                        Status = "source_available",
+                        TargetTagCategory = targetTagCategory.ToString(),
+                        SourceTagCategory = sourceTagCategory.ToString(),
+                        SourceProjectPath = sourcePath,
+                        FamilyName = familyName,
+                        TypeName = sourceSymbol.Name
+                    };
+                }
+
+                familyDoc = sourceDoc.EditFamily(sourceSymbol.Family);
+                if (familyDoc == null) throw new InvalidOperationException("Could not edit the source tag family.");
+                var targetCategory = Category.GetCategory(familyDoc, targetTagCategory);
+                if (targetCategory == null) throw new InvalidOperationException($"Target tag category {targetTagCategory} is unavailable in the family document.");
+                using (var familyTransaction = new Transaction(familyDoc, "Retarget Tag Family"))
+                {
+                    familyTransaction.Start();
+                    familyDoc.OwnerFamily.FamilyCategory = targetCategory;
+                    familyTransaction.Commit();
+                }
+
+                var outputDir = WorkspacePaths.EnsureDir("artifacts", "tag-families");
+                var outputPath = Path.Combine(outputDir, familyName + ".rfa");
+                familyDoc.SaveAs(outputPath, new SaveAsOptions { OverwriteExistingFile = true, Compact = true });
+                familyDoc.Close(false);
+                familyDoc = null;
+
+                Family? loadedFamily;
+                using (var loadTransaction = new Transaction(targetDoc, "Load Geometry-Aware Tag Family"))
+                {
+                    loadTransaction.Start();
+                    targetDoc.LoadFamily(outputPath, new TagFamilyLoadOptions(), out loadedFamily);
+                    if (loadedFamily == null) throw new InvalidOperationException("Revit did not return the imported tag family.");
+                    loadTransaction.Commit();
+                }
+
+                var loadedSymbol = loadedFamily.GetFamilySymbolIds()
+                    .Select(id => targetDoc.GetElement(id))
+                    .OfType<FamilySymbol>()
+                    .FirstOrDefault(x => x.Category != null && ElementIdCompat.GetValue(x.Category.Id) == (long)targetTagCategory)
+                    ?? loadedFamily.GetFamilySymbolIds().Select(id => targetDoc.GetElement(id)).OfType<FamilySymbol>().FirstOrDefault();
+                if (loadedSymbol == null) throw new InvalidOperationException("Imported tag family did not contain a usable type.");
+                var resolution = ResolutionFromSymbol("imported", targetTagCategory, loadedSymbol);
+                resolution.SourceTagCategory = sourceTagCategory.ToString();
+                resolution.SourceProjectPath = sourcePath;
+                resolution.GeneratedFamilyPath = outputPath;
+                return resolution;
+            }
+            catch (Exception ex)
+            {
+                return new TagFamilyResolution
+                {
+                    Status = "import_failed",
+                    TargetTagCategory = targetTagCategory.ToString(),
+                    SourceTagCategory = sourceTagCategory.ToString(),
+                    SourceProjectPath = sourcePath,
+                    FamilyName = familyName,
+                    Error = ex.Message
+                };
+            }
+            finally
+            {
+                if (familyDoc != null) try { familyDoc.Close(false); } catch { }
+                if (sourceDoc != null) try { sourceDoc.Close(false); } catch { }
+            }
+        }
+
+        private static TagFamilyResolution ResolutionFromSymbol(string status, BuiltInCategory targetTagCategory, FamilySymbol symbol) => new TagFamilyResolution
+        {
+            Status = status,
+            TargetTagCategory = targetTagCategory.ToString(),
+            FamilyName = symbol.FamilyName,
+            TypeName = symbol.Name,
+            TypeId = symbol.Id
+        };
+
+        private static BuiltInCategory? ResolveCommonTargetTagCategory(IReadOnlyList<Element> targets)
+        {
+            var categories = targets.Select(ResolveTargetTagCategory).Distinct().ToList();
+            return categories.Count == 1 ? categories[0] : null;
+        }
+
+        private static BuiltInCategory? ResolveTargetTagCategory(Element element)
+        {
+            if (element.Category == null) return null;
+            var id = ElementIdCompat.GetValue(element.Category.Id);
+            if (id == (long)BuiltInCategory.OST_DuctTerminal) return BuiltInCategory.OST_DuctTerminalTags;
+            if (id == (long)BuiltInCategory.OST_MechanicalEquipment) return BuiltInCategory.OST_MechanicalEquipmentTags;
+            if (id == (long)BuiltInCategory.OST_ElectricalEquipment) return BuiltInCategory.OST_ElectricalEquipmentTags;
+            if (id == (long)BuiltInCategory.OST_ElectricalFixtures) return BuiltInCategory.OST_ElectricalFixtureTags;
+            if (id == (long)BuiltInCategory.OST_LightingFixtures) return BuiltInCategory.OST_LightingFixtureTags;
+            if (id == (long)BuiltInCategory.OST_PlumbingFixtures) return BuiltInCategory.OST_PlumbingFixtureTags;
+            return null;
+        }
+
+        private static BuiltInCategory ResolveBuiltInCategory(string? token, BuiltInCategory fallback)
+        {
+            var value = (token ?? string.Empty).Trim();
+            return value.Length > 0 && Enum.TryParse(value, true, out BuiltInCategory parsed) ? parsed : fallback;
+        }
+
+        private static string DefaultGeneratedTagFamilyName(BuiltInCategory targetTagCategory)
+        {
+            if (targetTagCategory == BuiltInCategory.OST_DuctTerminalTags) return "Operator Air Terminal Tag";
+            if (targetTagCategory == BuiltInCategory.OST_MechanicalEquipmentTags) return "Operator Mechanical Equipment Tag";
+            if (targetTagCategory == BuiltInCategory.OST_ElectricalEquipmentTags) return "Operator Electrical Equipment Tag";
+            if (targetTagCategory == BuiltInCategory.OST_ElectricalFixtureTags) return "Operator Electrical Fixture Tag";
+            if (targetTagCategory == BuiltInCategory.OST_LightingFixtureTags) return "Operator Lighting Fixture Tag";
+            if (targetTagCategory == BuiltInCategory.OST_PlumbingFixtureTags) return "Operator Plumbing Fixture Tag";
+            return "Operator Element Tag";
+        }
+
+        private static string SanitizeFamilyName(string? value, string fallback)
+        {
+            var name = string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+            foreach (var invalid in Path.GetInvalidFileNameChars()) name = name.Replace(invalid, '_');
+            return name.Length > 100 ? name.Substring(0, 100) : name;
+        }
 
         private static View? ResolveView(Document doc, long? viewId, string? viewName, View? activeView)
         {
