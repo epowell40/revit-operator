@@ -10,7 +10,10 @@ function ensureRoomDesignGoal(req: ChatRequest, intent: AecTaskIntentV1, roomNum
   const objective = intent.evidence.user_text.trim() || `Lay out receptacles in Room ${roomNumber}.`;
   const active = getActiveGoalForSession(req.session_id);
   const sameObjective = !!active && active.objective.trim().toLocaleLowerCase() === objective.toLocaleLowerCase();
-  const replaceableAutoGoal = !!active && active.created_by === "auto_goal:chat" && sameObjective && active.work_items.length === 0 && active.evidence_log.length === 0 && active.action_log.length === 0 && active.validation_log.length === 0;
+  const context = req.context && typeof req.context === "object" && !Array.isArray(req.context) ? req.context as Record<string, unknown> : null;
+  const ui = context?.ui && typeof context.ui === "object" && !Array.isArray(context.ui) ? context.ui as Record<string, unknown> : null;
+  const authoritative = typeof ui?.authoritative_user_text === "string" ? ui.authoritative_user_text.trim() : "";
+  const replaceableAutoGoal = !!active && active.created_by === "auto_goal:chat" && active.related_session_id === req.session_id && (sameObjective || authoritative === objective) && active.work_items.length === 0 && active.evidence_log.length === 0 && active.action_log.length === 0 && active.validation_log.length === 0;
   if (active && !replaceableAutoGoal) return;
   setAgentGoal(req.session_id, {
     title: `Design receptacle layout in Room ${roomNumber}`,
