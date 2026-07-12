@@ -9,6 +9,34 @@ namespace RevitBridge.Common.Tests
     public sealed class TagPlacementPlannerTests
     {
         [Fact]
+        public void Tag_size_calibration_replaces_estimate_then_keeps_largest_measured_footprint()
+        {
+            var calibration = new TagSizeCalibration(4.8, 1.44);
+
+            Assert.True(calibration.Observe(3.6, 2.0));
+            Assert.True(calibration.IsCalibrated);
+            Assert.Equal(3.6, calibration.Width, 6);
+            Assert.Equal(2.0, calibration.Height, 6);
+
+            Assert.True(calibration.Observe(4.1, 1.8));
+            Assert.Equal(4.1, calibration.Width, 6);
+            Assert.Equal(2.0, calibration.Height, 6);
+        }
+
+        [Fact]
+        public void Tag_size_calibration_ignores_non_finite_or_non_positive_measurements()
+        {
+            var calibration = new TagSizeCalibration(4.8, 1.44);
+
+            Assert.False(calibration.Observe(double.NaN, 2.0));
+            Assert.False(calibration.Observe(3.0, double.PositiveInfinity));
+            Assert.False(calibration.Observe(0, 2.0));
+            Assert.False(calibration.IsCalibrated);
+            Assert.Equal(4.8, calibration.Width, 6);
+            Assert.Equal(1.44, calibration.Height, 6);
+        }
+
+        [Fact]
         public void PlacesTagOutsideTargetFootprint()
         {
             var target = Rect(-0.5, -0.5, 0.5, 0.5);

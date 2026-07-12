@@ -217,7 +217,7 @@ namespace RevitBridge.Logic.Handlers
             if (!dryRun && plannedToTag > 0 && geometryAware && defaultTypeId == null && p.autoLoadTagFamily == true)
                 throw new InvalidOperationException(tagFamilyResolution?.Error ?? "A compatible tag family could not be loaded.");
 
-            var geometryPlans = geometryAware
+            var geometryPlans = geometryAware && dryRun
                 ? BuildGeometryPlans(doc, view, targets, existingTagged, onlyUntagged, tagWidth, tagHeight, clearance, placementProfile, maxRepairAttempts)
                 : new Dictionary<long, GeometryPlacementPlan>();
             var tagVisibility = EvaluateTagVisibility(doc, view, targetTagCategory, ensureTagCategoryVisible, dryRun: true);
@@ -259,6 +259,7 @@ namespace RevitBridge.Logic.Handlers
             var actualObstacles = geometryAware
                 ? CollectGeometryObstacles(doc, view, targets, tagWidth, tagHeight)
                 : new List<TagRect2>();
+            var tagSizeCalibration = new TagSizeCalibration(tagWidth, tagHeight);
 
             using (var t = new Transaction(doc, "Tag Elements"))
             {
@@ -274,7 +275,9 @@ namespace RevitBridge.Logic.Handlers
                         continue;
                     }
 
-                    geometryPlans.TryGetValue(elementId, out var geometryPlan);
+                    var geometryPlan = geometryAware
+                        ? BuildGeometryPlan(view, element, actualObstacles, tagSizeCalibration.Width, tagSizeCalibration.Height, clearance, placementProfile, maxRepairAttempts)
+                        : null;
                     var point = geometryPlan?.Candidates.FirstOrDefault() is TagPlacementCandidate firstCandidate
                         ? FromViewCoordinates(view, firstCandidate.HeadX, firstCandidate.HeadY, geometryPlan.PlaneW)
                         : ResolveTagPoint(element, view, offset);
@@ -321,6 +324,12 @@ namespace RevitBridge.Logic.Handlers
                                 maxRepairAttempts);
                             geometryOutcomes.Add(outcome);
                             var hasMeasurableGeometry = outcome.TagBounds != null && !string.Equals(outcome.Status, "no_geometry", StringComparison.OrdinalIgnoreCase);
+                            if (hasMeasurableGeometry && outcome.TagBounds != null)
+                            {
+                                var measuredWidth = outcome.TagBounds.MaxX - outcome.TagBounds.MinX;
+                                var measuredHeight = outcome.TagBounds.MaxY - outcome.TagBounds.MinY;
+                                tagSizeCalibration.Observe(measuredWidth, measuredHeight);
+                            }
                             if (!TagWorkPolicy.KeepCreatedTag(geometryAware: true, hasMeasurableGeometry, outcome.CollisionFree))
                             {
                                 doc.Delete(tag.Id);
@@ -520,34 +529,47 @@ namespace RevitBridge.Logic.Handlers
             {
                 var targetId = ElementIdCompat.GetValue(target.Id);
                 if (onlyUntagged && existingTagged.Contains(targetId)) continue;
-                var targetBounds = ToViewRect(target.get_BoundingBox(view), view);
-                if (targetBounds == null) continue;
-                var center = ResolveElementCenter(target, view);
-                if (center == null) continue;
-
-                var candidates = TagPlacementPlanner.RankCandidates(new TagPlacementRequest
-                {
-                    Target = targetBounds,
-                    Obstacles = obstacles,
-                    TagWidth = tagWidth,
-                    TagHeight = tagHeight,
-                    Clearance = clearance,
-                    Profile = profile,
-                    MaxCandidates = maxCandidates
-                });
-                if (candidates.Count == 0) continue;
-
-                plans[targetId] = new GeometryPlacementPlan
-                {
-                    Target = target,
-                    TargetBounds = targetBounds,
-                    Candidates = candidates,
-                    PlaneW = center.DotProduct(view.ViewDirection.Normalize())
-                };
-                obstacles.Add(candidates[0].Bounds);
+                var plan = BuildGeometryPlan(view, target, obstacles, tagWidth, tagHeight, clearance, profile, maxCandidates);
+                if (plan == null) continue;
+                plans[targetId] = plan;
+                obstacles.Add(plan.Candidates[0].Bounds);
             }
 
             return plans;
+        }
+
+        private static GeometryPlacementPlan? BuildGeometryPlan(
+            View view,
+            Element target,
+            IReadOnlyList<TagRect2> obstacles,
+            double tagWidth,
+            double tagHeight,
+            double clearance,
+            string profile,
+            int maxCandidates)
+        {
+            var targetBounds = ToViewRect(target.get_BoundingBox(view), view);
+            if (targetBounds == null) return null;
+            var center = ResolveElementCenter(target, view);
+            if (center == null) return null;
+            var candidates = TagPlacementPlanner.RankCandidates(new TagPlacementRequest
+            {
+                Target = targetBounds,
+                Obstacles = obstacles,
+                TagWidth = tagWidth,
+                TagHeight = tagHeight,
+                Clearance = clearance,
+                Profile = profile,
+                MaxCandidates = maxCandidates
+            });
+            if (candidates.Count == 0) return null;
+            return new GeometryPlacementPlan
+            {
+                Target = target,
+                TargetBounds = targetBounds,
+                Candidates = candidates,
+                PlaneW = center.DotProduct(view.ViewDirection.Normalize())
+            };
         }
 
         private static object BuildGeometryPlanReadback(GeometryPlacementPlan plan)
