@@ -22,6 +22,23 @@ test("exact identifier runtime completes in two primary actions without broad pa
   assert.match(third.response?.assistant_message ?? "", /Room 401/);
   assert.match(third.response?.assistant_message ?? "", /System: SUPPLY AIR/);
   assert.match(third.response?.assistant_message ?? "", /Best view: L4 HVAC \(id 44\)/);
+  assert.deepEqual(third.response?.aec_query_receipt, { schema: "revit-operator.aec-query-receipt.v1", terminal: true, status: "found", workflow_id: "query.exact_identifier", bounded: true, broadened: false });
+});
+
+test("exact identifier not-found is an authoritative bounded terminal receipt", async () => {
+  __testOnlyClearAecQueryStates();
+  const value = ahu();
+  value.subject.identifiers = [
+    { parameter: "Mark", value: "AHU-1", match: "case_insensitive_exact" },
+    { parameter: "Name", value: "AHU-1", match: "case_insensitive_exact" }
+  ];
+  const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+  const first = await maybeRunAecSemanticQuery(request("ahu-missing"), interpreter);
+  assert.deepEqual(first.response?.actions.map(action => action.path), ["/revit/find-elements-by-parameter"]);
+  const done = await maybeRunAecSemanticQuery(request("ahu-missing", [{ action_id: "aec-query-exact-identifier", method: "POST", path: "/revit/find-elements-by-parameter", status: "done", result_json: { count: 0, elements: [] } }]), interpreter);
+  assert.equal(done.response?.actions.length, 0);
+  assert.match(done.response?.assistant_message ?? "", /did not find an exact match/i);
+  assert.deepEqual(done.response?.aec_query_receipt, { schema: "revit-operator.aec-query-receipt.v1", terminal: true, status: "not_found", workflow_id: "query.exact_identifier", bounded: true, broadened: false });
 });
 
 test("room count runtime reports once from scoped room contents", async () => {
@@ -33,4 +50,5 @@ test("room count runtime reports once from scoped room contents", async () => {
   const done = await maybeRunAecSemanticQuery(request("count", [{ action_id: "aec-query-room-contents", method: "POST", path: "/revit/room-contents", status: "done", result_json: { count: 14, elements: new Array(14).fill({}) } }]), interpreter);
   assert.match(done.response?.assistant_message ?? "", /14 receptacles matched in Room 403/);
   assert.match(done.response?.assistant_message ?? "", /no model changes/i);
+  assert.deepEqual(done.response?.aec_query_receipt, { schema: "revit-operator.aec-query-receipt.v1", terminal: true, status: "complete", workflow_id: "query.room_contents", bounded: true, broadened: false });
 });

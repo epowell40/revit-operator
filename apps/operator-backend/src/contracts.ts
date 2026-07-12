@@ -68,4 +68,12 @@ export type ChatResponse = {
   version: typeof OPERATOR_BACKEND_CONTRACT_VERSION;
   assistant_message: string;
   actions: ActionCall[];
+  aec_query_receipt?: {
+    schema: "revit-operator.aec-query-receipt.v1";
+    terminal: true;
+    status: "found" | "not_found" | "ambiguous" | "complete" | "failed";
+    workflow_id: string;
+    bounded: true;
+    broadened: false;
+  };
 };
