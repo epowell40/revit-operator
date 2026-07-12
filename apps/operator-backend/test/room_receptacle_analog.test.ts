@@ -6,7 +6,7 @@ import test, { after, before } from "node:test";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ToolResult } from "../src/contracts.js";
 import { __testOnlyVerifiedAnalogApplyReceipt, maybeRunDeterministicRoomReceptacleAnalog } from "../src/deterministic/room_receptacle_analog.js";
 import { AEC_TASK_INTENT_V1_SCHEMA, type AecTaskIntentV1 } from "../src/aec_task_intent.js";
-import { getActiveGoalForSession } from "../src/goals/service.js";
+import { getActiveGoalForSession, setAgentGoal } from "../src/goals/service.js";
 
 const previousWorkspace = process.env.OPERATOR_WORKSPACE_ROOT;
 let testWorkspace = "";
@@ -138,6 +138,30 @@ test("room design persists target, selected precedent, exact apply evidence, and
   assert.equal(completed?.current_phase, "visual_verification");
   assert.equal(completed?.current_step, "Perform focused visual QA in Room 407");
   assert.match(completed?.progress_summary ?? "", /Room 407 apply and native persistent readback passed/);
+});
+
+test("authoritative room request replaces only an empty model-expanded auto goal", () => {
+  const session = "room-authoritative-auto-goal";
+  const prompt = "Layout receptacles in room 403.";
+  setAgentGoal(session, {
+    title: "Expanded room plan",
+    objective: "Inspect Room 403, place and circuit devices, save the model, and report all locations.",
+    success_criteria: ["Complete or block truthfully."],
+    created_by: "auto_goal:chat",
+    current_phase: "observe",
+    current_step: "preflight"
+  } as any);
+  const req = sessionRequest(session, prompt);
+  req.context = { ui: { authoritative_user_text: prompt } };
+  const intent = layoutIntent();
+  intent.evidence.user_text = prompt;
+  const response = maybeRunDeterministicRoomReceptacleAnalog(req, intent);
+  assert.deepEqual(response?.actions.map(action => action.path), ["/revit/plan-room-receptacles-from-analog"]);
+  const goal = getActiveGoalForSession(session);
+  assert.equal(goal?.objective, prompt);
+  assert.equal(goal?.work_budget?.mode, "room_receptacle_design");
+  assert.equal(goal?.work_budget?.conversational_permission_loops, 0);
+  assert.equal(goal?.work_items.find(item => item.id === "target.inspect")?.scope?.room_number, "403");
 });
 
 test("completion receipt requires exact current-run ids plus type, room, host, position, and orientation evidence", () => {
