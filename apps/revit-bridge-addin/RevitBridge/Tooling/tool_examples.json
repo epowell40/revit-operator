@@ -3874,6 +3874,79 @@
     },
     {
       "method": "POST",
+      "path": "/revit/plan-dwelling-receptacles",
+      "examples": [
+        {
+          "name": "Plan office-standard receptacles in a room",
+          "request": {
+            "roomNumber": "403",
+            "includeExistingReceptacles": true
+          },
+          "expected_response_shape": {
+            "schema": "revit-operator.dwelling-receptacle-discovery-plan.v1",
+            "status": "ready",
+            "room": {
+              "number": "403"
+            },
+            "profile": {
+              "ProfileId": "DWELLING-RECEPTACLES-V1"
+            },
+            "plan": {
+              "RequiresApply": false,
+              "InvokedTools": false,
+              "ProposedPlacements": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/plan-room-receptacles-from-analog",
+      "examples": [
+        {
+          "name": "Preview a room receptacle layout from a discovered analog",
+          "request": {
+            "targetRoomNumber": "403",
+            "includePreviewImage": true
+          },
+          "expected_response_shape": {
+            "schema": "revit-operator.room-receptacle-analog-native-plan.v1",
+            "status": "ready",
+            "ready": true,
+            "applied": false,
+            "planHash": "sha256",
+            "source": { "number": "405" },
+            "target": { "number": "403" }
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/apply-room-receptacles-from-analog",
+      "examples": [
+        {
+          "name": "Apply a fresh hash-bound analog receptacle plan",
+          "request": {
+            "targetRoomNumber": "403",
+            "sourceRoomNumber": "405",
+            "planHash": "sha256",
+            "includePreviewImage": true
+          },
+          "expected_response_shape": {
+            "schema": "revit-operator.room-receptacle-analog-native-plan.v1",
+            "status": "applied",
+            "ready": true,
+            "applied": true,
+            "createdIds": [],
+            "readback": []
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/list-element-types",
       "examples": [
         {
