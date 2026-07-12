@@ -48,6 +48,8 @@ namespace RevitBridge.Logic.Handlers
             public bool? autoLoadTagFamily { get; set; }
             public string? tagFamilySourceProjectPath { get; set; }
             public string? tagFamilySourceCategory { get; set; }
+            public string? tagFamilySourceFamilyName { get; set; }
+            public string? tagFamilySourceTypeName { get; set; }
             public string? generatedTagFamilyName { get; set; }
             public int? max { get; set; }
             public bool? dryRun { get; set; }
@@ -86,6 +88,13 @@ namespace RevitBridge.Logic.Handlers
             public ElementId? TypeId { get; set; }
             public string? GeneratedFamilyPath { get; set; }
             public string? Error { get; set; }
+            public List<TagFamilyCandidate> SourceCandidates { get; set; } = new List<TagFamilyCandidate>();
+        }
+
+        private sealed class TagFamilyCandidate
+        {
+            public string FamilyName { get; set; } = "";
+            public string TypeName { get; set; } = "";
         }
 
         private sealed class TagFamilyLoadOptions : IFamilyLoadOptions
@@ -239,7 +248,6 @@ namespace RevitBridge.Logic.Handlers
                             }
                         }
 
-                        tagIds.Add(ElementIdCompat.GetValue(tag.Id));
                         GeometryPlacementOutcome? outcome = null;
                         if (geometryAware && geometryPlan != null && tag is IndependentTag independentTag)
                         {
@@ -252,6 +260,17 @@ namespace RevitBridge.Logic.Handlers
                                 clearance,
                                 maxRepairAttempts);
                             geometryOutcomes.Add(outcome);
+                            if (string.Equals(outcome.Status, "no_geometry", StringComparison.OrdinalIgnoreCase))
+                            {
+                                doc.Delete(tag.Id);
+                                errors.Add(new
+                                {
+                                    elementId,
+                                    failureKind = "tag_no_geometry",
+                                    error = "The selected tag type produced no visible/measurable tag-head geometry. The test tag was removed."
+                                });
+                                continue;
+                            }
                             if (outcome.TagBounds != null) actualObstacles.Add(outcome.TagBounds);
                             if (addLeader)
                             {
@@ -268,12 +287,30 @@ namespace RevitBridge.Logic.Handlers
                             }
                         }
 
+                        tagIds.Add(ElementIdCompat.GetValue(tag.Id));
                         tagReadback.Add(BuildTagReadback(doc, tag, element, view, outcome));
                         if (onlyUntagged) existingTagged.Add(elementId);
                     }
                     catch (Exception ex)
                     {
                         errors.Add(new { elementId, error = ex.Message });
+                    }
+                }
+
+                if (tagIds.Count == 0 &&
+                    string.Equals(tagFamilyResolution?.Status, "imported", StringComparison.OrdinalIgnoreCase) &&
+                    tagFamilyResolution?.TypeId != null)
+                {
+                    try
+                    {
+                        doc.Delete(tagFamilyResolution.TypeId);
+                        tagFamilyResolution.Status = "import_rejected_no_geometry";
+                        tagFamilyResolution.Error = "The imported tag type produced no visible/measurable tag-head geometry and was removed.";
+                    }
+                    catch (Exception cleanupEx)
+                    {
+                        tagFamilyResolution.Status = "import_rejected_cleanup_failed";
+                        tagFamilyResolution.Error = cleanupEx.Message;
                     }
                 }
 
@@ -534,7 +571,12 @@ namespace RevitBridge.Logic.Handlers
             typeName = resolution.TypeName,
             typeId = resolution.TypeId == null ? (long?)null : ElementIdCompat.GetValue(resolution.TypeId),
             generatedFamilyPath = resolution.GeneratedFamilyPath,
-            error = resolution.Error
+            error = resolution.Error,
+            sourceCandidates = resolution.SourceCandidates.Take(100).Select(x => new
+            {
+                familyName = x.FamilyName,
+                typeName = x.TypeName
+            }).ToList()
         };
 
         private static TagFamilyResolution ResolveGeometryTagFamily(
@@ -590,8 +632,28 @@ namespace RevitBridge.Logic.Handlers
             if (string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(doc.PathName ?? string.Empty), StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Tag-family source project must differ from the active project.");
             var sourceTagCategory = ResolveBuiltInCategory(request.tagFamilySourceCategory, BuiltInCategory.OST_DoorTags);
+            if (sourceTagCategory != targetTagCategory.Value)
+            {
+                return new TagFamilyResolution
+                {
+                    Status = "source_category_mismatch",
+                    TargetTagCategory = targetTagCategory.Value.ToString(),
+                    SourceTagCategory = sourceTagCategory.ToString(),
+                    SourceProjectPath = sourcePath,
+                    Error = "The source tag category must exactly match the target tag category; cross-category tag cloning is not supported."
+                };
+            }
             var familyName = SanitizeFamilyName(request.generatedTagFamilyName, DefaultGeneratedTagFamilyName(targetTagCategory.Value));
-            return ImportTagFamilyFromSource(application, doc, sourcePath, sourceTagCategory, targetTagCategory.Value, familyName, dryRun);
+            return ImportTagFamilyFromSource(
+                application,
+                doc,
+                sourcePath,
+                sourceTagCategory,
+                targetTagCategory.Value,
+                familyName,
+                request.tagFamilySourceFamilyName,
+                request.tagFamilySourceTypeName,
+                dryRun);
         }
 
         private static TagFamilyResolution ImportTagFamilyFromSource(
@@ -601,6 +663,8 @@ namespace RevitBridge.Logic.Handlers
             BuiltInCategory sourceTagCategory,
             BuiltInCategory targetTagCategory,
             string familyName,
+            string? requestedSourceFamilyName,
+            string? requestedSourceTypeName,
             bool dryRun)
         {
             Document? sourceDoc = null;
@@ -608,13 +672,27 @@ namespace RevitBridge.Logic.Handlers
             try
             {
                 sourceDoc = application.OpenDocumentFile(sourcePath);
-                var sourceSymbol = new FilteredElementCollector(sourceDoc)
+                var sourceSymbols = new FilteredElementCollector(sourceDoc)
                     .OfClass(typeof(FamilySymbol))
                     .OfCategory(sourceTagCategory)
                     .Cast<FamilySymbol>()
                     .OrderBy(x => x.FamilyName ?? string.Empty, StringComparer.OrdinalIgnoreCase)
                     .ThenBy(x => x.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase)
-                    .FirstOrDefault();
+                    .ToList();
+                var sourceCandidates = sourceSymbols
+                    .Select(x => new TagFamilyCandidate
+                    {
+                        FamilyName = x.FamilyName ?? string.Empty,
+                        TypeName = x.Name ?? string.Empty
+                    })
+                    .Distinct(new TagFamilyCandidateComparer())
+                    .Take(100)
+                    .ToList();
+                var familyFilter = (requestedSourceFamilyName ?? string.Empty).Trim();
+                var typeFilter = (requestedSourceTypeName ?? string.Empty).Trim();
+                var sourceSymbol = sourceSymbols.FirstOrDefault(x =>
+                    (familyFilter.Length == 0 || string.Equals(x.FamilyName ?? string.Empty, familyFilter, StringComparison.OrdinalIgnoreCase)) &&
+                    (typeFilter.Length == 0 || string.Equals(x.Name ?? string.Empty, typeFilter, StringComparison.OrdinalIgnoreCase)));
                 if (sourceSymbol == null)
                 {
                     return new TagFamilyResolution
@@ -623,7 +701,10 @@ namespace RevitBridge.Logic.Handlers
                         TargetTagCategory = targetTagCategory.ToString(),
                         SourceTagCategory = sourceTagCategory.ToString(),
                         SourceProjectPath = sourcePath,
-                        Error = "The source project does not contain a compatible source tag family."
+                        SourceCandidates = sourceCandidates,
+                        Error = sourceSymbols.Count == 0
+                            ? "The source project does not contain a compatible source tag family."
+                            : "No source tag family/type matched the requested exact selection."
                     };
                 }
 
@@ -636,7 +717,8 @@ namespace RevitBridge.Logic.Handlers
                         SourceTagCategory = sourceTagCategory.ToString(),
                         SourceProjectPath = sourcePath,
                         FamilyName = familyName,
-                        TypeName = sourceSymbol.Name
+                        TypeName = sourceSymbol.Name,
+                        SourceCandidates = sourceCandidates
                     };
                 }
 
@@ -676,6 +758,7 @@ namespace RevitBridge.Logic.Handlers
                 resolution.SourceTagCategory = sourceTagCategory.ToString();
                 resolution.SourceProjectPath = sourcePath;
                 resolution.GeneratedFamilyPath = outputPath;
+                resolution.SourceCandidates = sourceCandidates;
                 return resolution;
             }
             catch (Exception ex)
@@ -695,6 +778,16 @@ namespace RevitBridge.Logic.Handlers
                 if (familyDoc != null) try { familyDoc.Close(false); } catch { }
                 if (sourceDoc != null) try { sourceDoc.Close(false); } catch { }
             }
+        }
+
+        private sealed class TagFamilyCandidateComparer : IEqualityComparer<TagFamilyCandidate>
+        {
+            public bool Equals(TagFamilyCandidate? x, TagFamilyCandidate? y) =>
+                string.Equals(x?.FamilyName ?? string.Empty, y?.FamilyName ?? string.Empty, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(x?.TypeName ?? string.Empty, y?.TypeName ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+            public int GetHashCode(TagFamilyCandidate obj) =>
+                StringComparer.OrdinalIgnoreCase.GetHashCode((obj.FamilyName ?? string.Empty) + "\u001f" + (obj.TypeName ?? string.Empty));
         }
 
         private static TagFamilyResolution ResolutionFromSymbol(string status, BuiltInCategory targetTagCategory, FamilySymbol symbol) => new TagFamilyResolution
