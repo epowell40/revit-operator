@@ -21,6 +21,22 @@ namespace RevitBridge.Common.Semantic
 
     public static class StrictCategoryResolver
     {
+        public static string? TryGetEnumName(Type enumType, long value)
+        {
+            if (enumType == null) throw new ArgumentNullException(nameof(enumType));
+            if (!enumType.IsEnum) throw new ArgumentException("Type must be an enum.", nameof(enumType));
+            try
+            {
+                var underlying = Enum.GetUnderlyingType(enumType);
+                var typedValue = Convert.ChangeType(value, underlying);
+                return Enum.GetName(enumType, typedValue);
+            }
+            catch (OverflowException)
+            {
+                return null;
+            }
+        }
+
         public static IReadOnlyList<StrictCategoryResolution> Resolve(
             IEnumerable<string>? requestedTokens,
             IEnumerable<StrictCategoryDescriptor>? catalog)

@@ -7,6 +7,9 @@ namespace RevitBridge.Common.Tests
 {
     public sealed class StrictCategoryResolverTests
     {
+        private enum IntBackedCategory : int { Sample = -42 }
+        private enum LongBackedCategory : long { Sample = -42000000000L }
+
         private static readonly IReadOnlyList<StrictCategoryDescriptor> Catalog = new[]
         {
             new StrictCategoryDescriptor { Id = -2008013, Name = "Air Terminals", BuiltInToken = "OST_DuctTerminal" },
@@ -47,6 +50,24 @@ namespace RevitBridge.Common.Tests
                 new StrictCategoryDescriptor { Id = 2, Name = "Devices" }
             };
             Assert.Throws<ArgumentException>(() => StrictCategoryResolver.Resolve(new[] { "Devices" }, ambiguous));
+        }
+
+        [Fact]
+        public void ReadsIntBackedEnumNameFromLongId()
+        {
+            Assert.Equal("Sample", StrictCategoryResolver.TryGetEnumName(typeof(IntBackedCategory), -42));
+        }
+
+        [Fact]
+        public void ReadsLongBackedEnumNameFromLongId()
+        {
+            Assert.Equal("Sample", StrictCategoryResolver.TryGetEnumName(typeof(LongBackedCategory), -42000000000L));
+        }
+
+        [Fact]
+        public void ReturnsNullWhenValueOverflowsEnumBackingType()
+        {
+            Assert.Null(StrictCategoryResolver.TryGetEnumName(typeof(IntBackedCategory), long.MaxValue));
         }
     }
 }
