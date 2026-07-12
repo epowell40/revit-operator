@@ -85,7 +85,10 @@ namespace RevitBridge.Common.Annotation
             ValidatePositiveFinite(request.TagHeight, nameof(request.TagHeight));
             ValidateNonNegativeFinite(request.Clearance, nameof(request.Clearance));
 
-            var maxCandidates = Math.Max(1, Math.Min(128, request.MaxCandidates));
+            // The deterministic search below contains 9 lanes x 5 distance bands x 4 directions.
+            // Keep the search finite, but allow callers to inspect the complete bounded lattice in
+            // dense production views instead of truncating it after the first 128 positions.
+            var maxCandidates = Math.Max(1, Math.Min(180, request.MaxCandidates));
             var obstacles = (request.Obstacles ?? Array.Empty<TagRect2>()).Where(x => x != null).ToList();
             var directions = DirectionsFor(request.Profile);
             var candidates = new List<TagPlacementCandidate>();
@@ -135,6 +138,8 @@ namespace RevitBridge.Common.Annotation
             }
 
             return candidates
+                .GroupBy(x => new { x.HeadX, x.HeadY })
+                .Select(group => group.OrderBy(x => x.Score).ThenBy(x => x.Side, StringComparer.Ordinal).First())
                 .OrderBy(x => x.Score)
                 .ThenBy(x => x.Side, StringComparer.Ordinal)
                 .ThenBy(x => x.HeadX)
