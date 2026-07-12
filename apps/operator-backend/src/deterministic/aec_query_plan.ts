@@ -3,6 +3,7 @@ import { normalizeAecSemanticTaskV1, type AecSemanticTaskV1 } from "../aec_seman
 
 export type AecQueryWorkflowId =
   | "query.blocked"
+  | "query.compare_scopes"
   | "query.exact_identifier"
   | "query.room_contents"
   | "query.level_elements"
@@ -39,6 +40,38 @@ function categoryBody(task: AecSemanticTaskV1): Record<string, unknown> {
     : task.subject.categories.length > 1 ? { categories: task.subject.categories } : {};
 }
 
+function planBoundedComparison(task: AecSemanticTaskV1): AecQueryPlanV1 {
+  if (task.execution.max_primary_actions < 2) return blocked("A bounded comparison requires two primary scoped reads.");
+  if (!["category", "class"].includes(task.subject.kind) || task.subject.categories.length === 0) return blocked("Bounded comparison currently requires one explicit category or class with a canonical category predicate.");
+  if (task.outputs.some(output => ["parameters", "spatial_context", "best_view", "verification"].includes(output))) return blocked("Bounded comparison currently supports inventory count/IDs/summary only; parameter and geometry comparisons require a dedicated workflow.");
+
+  const labels: string[] = [];
+  const actions: ActionCall[] = [];
+  const add = (index: number, label: string, path: string, body: Record<string, unknown>) => {
+    labels.push(label);
+    actions.push(action(`aec-query-compare-${index === 0 ? "a" : "b"}`, path, body));
+  };
+
+  if (task.scope.kind === "room" && task.scope.rooms.length === 2) {
+    task.scope.rooms.forEach((room, index) => {
+      const body: Record<string, unknown> = { roomNumber: room, mode: "auto", verticalScope: "room", limit: task.execution.max_results, categories: task.subject.categories };
+      if (task.subject.terms.length) body.includeKeywords = task.subject.terms;
+      add(index, `Room ${room}`, "/revit/room-contents", body);
+    });
+  } else if (task.scope.kind === "level" && task.scope.levels.length === 2) {
+    if (task.subject.categories.some(category => !category.startsWith("OST_"))) return blocked("Level comparison requires canonical OST_ categories so both native collectors remain predicate-pushed.");
+    task.scope.levels.forEach((level, index) => add(index, level, "/revit/locate-elements", { categories: task.subject.categories, levelNames: [level], limit: task.execution.max_results }));
+  } else if (task.scope.kind === "view" && task.scope.views.length === 2 && task.scope.views.every(view => Number.isSafeInteger(view.id) && (view.id as number) > 0)) {
+    task.scope.views.forEach((view, index) => add(index, view.name ?? `view ${view.id}`, "/revit/find-elements", { viewId: view.id, ...categoryBody(task), limit: task.execution.max_results }));
+  } else if (task.scope.kind === "sheet" && task.scope.sheets.length === 2) {
+    task.scope.sheets.forEach((sheet, index) => add(index, `sheet ${sheet}`, "/revit/find-elements", { sheetNumber: sheet, includeSheetElements: true, includeViewportElements: true, ...categoryBody(task), limit: task.execution.max_results }));
+  } else {
+    return blocked("Compare requires exactly two resolved rooms, levels, view IDs, or sheet numbers in one scope kind.");
+  }
+
+  return { status: "ready", workflow_id: "query.compare_scopes", actions, blockers: [], evidence: { predicate_pushed: true, document_payload_requested: false, comparison_labels: labels } };
+}
+
 export function planAecQueryTask(value: unknown): AecQueryPlanV1 {
   let task: AecSemanticTaskV1;
   try { task = normalizeAecSemanticTaskV1(value); } catch (error) {
@@ -46,7 +79,7 @@ export function planAecQueryTask(value: unknown): AecQueryPlanV1 {
   }
   if (!READ_OPERATIONS.has(task.operation)) return blocked(`Operation '${task.operation}' is not a read query.`);
   if (task.confidence.ambiguity === "material" || task.confidence.value < 0.75) return blocked("Material task ambiguity must be resolved before deterministic query execution.");
-  if (task.operation === "compare") return blocked("Compare requires a bounded two-scope comparison workflow; a single scoped query is not sufficient.");
+  if (task.operation === "compare") return planBoundedComparison(task);
   if (task.operation === "focus" && task.subject.kind !== "exact_identifier") return blocked("Focus currently requires one exact identifier so the target view and element can be resolved without guessing.");
   if (task.operation === "focus" && task.execution.max_primary_actions < 3) return blocked("Exact-element focus requires three bounded actions: identity lookup, placement context, and view activation.");
 
