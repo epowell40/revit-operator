@@ -77,6 +77,8 @@ namespace RevitBridge.Logic.Handlers
             public TagRect2? TargetBounds { get; set; }
             public TagRect2? TagBounds { get; set; }
             public XYZ? TagHeadPosition { get; set; }
+            public double? AnchorOffsetU { get; set; }
+            public double? AnchorOffsetV { get; set; }
         }
 
         private sealed class TagFamilyResolution
@@ -507,15 +509,30 @@ namespace RevitBridge.Logic.Handlers
             int maxAttempts)
         {
             GeometryPlacementOutcome? best = null;
+            TagAnchorCalibration? anchorCalibration = null;
             var attempts = 0;
             foreach (var candidate in plan.Candidates.Take(maxAttempts))
             {
                 attempts++;
-                var head = FromViewCoordinates(view, candidate.HeadX, candidate.HeadY, plan.PlaneW);
+                var anchorU = anchorCalibration?.AnchorXForCenter(candidate.HeadX) ?? candidate.HeadX;
+                var anchorV = anchorCalibration?.AnchorYForCenter(candidate.HeadY) ?? candidate.HeadY;
+                var head = FromViewCoordinates(view, anchorU, anchorV, plan.PlaneW);
                 tag.TagHeadPosition = head;
                 doc.Regenerate();
                 var tagBounds = ToViewRect(tag.get_BoundingBox(view), view);
                 if (tagBounds == null) continue;
+
+                if (anchorCalibration == null)
+                {
+                    anchorCalibration = TagAnchorCalibration.FromMeasurement(anchorU, anchorV, tagBounds);
+                    anchorU = anchorCalibration.AnchorXForCenter(candidate.HeadX);
+                    anchorV = anchorCalibration.AnchorYForCenter(candidate.HeadY);
+                    head = FromViewCoordinates(view, anchorU, anchorV, plan.PlaneW);
+                    tag.TagHeadPosition = head;
+                    doc.Regenerate();
+                    tagBounds = ToViewRect(tag.get_BoundingBox(view), view);
+                    if (tagBounds == null) continue;
+                }
 
                 var collisionCount = obstacles.Count(x => tagBounds.Intersects(x.Inflate(clearance)));
                 var outcome = new GeometryPlacementOutcome
@@ -528,7 +545,9 @@ namespace RevitBridge.Logic.Handlers
                     CollisionFree = collisionCount == 0,
                     TargetBounds = plan.TargetBounds,
                     TagBounds = tagBounds,
-                    TagHeadPosition = head
+                    TagHeadPosition = head,
+                    AnchorOffsetU = anchorCalibration.OffsetX,
+                    AnchorOffsetV = anchorCalibration.OffsetY
                 };
                 if (best == null || outcome.CollisionCount < best.CollisionCount) best = outcome;
                 if (outcome.CollisionFree) return outcome;
@@ -1268,7 +1287,12 @@ namespace RevitBridge.Logic.Handlers
                     collisionFree = geometryOutcome.CollisionFree,
                     leaderApplied = geometryOutcome.LeaderApplied,
                     targetBounds = geometryOutcome.TargetBounds == null ? null : RectPayload(geometryOutcome.TargetBounds),
-                    tagBounds = geometryOutcome.TagBounds == null ? null : RectPayload(geometryOutcome.TagBounds)
+                    tagBounds = geometryOutcome.TagBounds == null ? null : RectPayload(geometryOutcome.TagBounds),
+                    anchorOffset = geometryOutcome.AnchorOffsetU == null || geometryOutcome.AnchorOffsetV == null ? null : new
+                    {
+                        u = geometryOutcome.AnchorOffsetU,
+                        v = geometryOutcome.AnchorOffsetV
+                    }
                 }
             };
         }
