@@ -93,6 +93,8 @@ namespace RevitBridge.Logic.Handlers
             public List<TagFamilyCandidate> SourceCandidates { get; set; } = new List<TagFamilyCandidate>();
             public string? ElementInventoryStatus { get; set; }
             public string? ElementInventoryError { get; set; }
+            public int ElementInventoryTotalCount { get; set; }
+            public bool ElementInventoryTruncated { get; set; }
             public List<TagFamilyElementInventoryItem> ElementInventory { get; set; } = new List<TagFamilyElementInventoryItem>();
         }
 
@@ -597,6 +599,8 @@ namespace RevitBridge.Logic.Handlers
             error = resolution.Error,
             elementInventoryStatus = resolution.ElementInventoryStatus,
             elementInventoryError = resolution.ElementInventoryError,
+            elementInventoryTotalCount = resolution.ElementInventoryTotalCount,
+            elementInventoryTruncated = resolution.ElementInventoryTruncated,
             elementInventory = resolution.ElementInventory.Take(300).Select(x => new
             {
                 elementId = x.ElementId,
@@ -625,8 +629,16 @@ namespace RevitBridge.Logic.Handlers
 
                 familyDoc = projectDoc.EditFamily(symbol.Family);
                 if (familyDoc == null) throw new InvalidOperationException("Could not open the selected tag family for read-only inspection.");
-                resolution.ElementInventory = new FilteredElementCollector(familyDoc)
+                var familyElements = new FilteredElementCollector(familyDoc)
                     .WhereElementIsNotElementType()
+                    .ToElements()
+                    .OrderBy(TagFamilyInspectionPriority)
+                    .ThenBy(element => element.GetType().Name, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(element => ElementIdCompat.GetValue(element.Id))
+                    .ToList();
+                resolution.ElementInventoryTotalCount = familyElements.Count;
+                resolution.ElementInventoryTruncated = familyElements.Count > 300;
+                resolution.ElementInventory = familyElements
                     .Take(300)
                     .Select(element => new TagFamilyElementInventoryItem
                     {
@@ -648,6 +660,22 @@ namespace RevitBridge.Logic.Handlers
             {
                 if (familyDoc != null) try { familyDoc.Close(false); } catch { }
             }
+        }
+
+        private static int TagFamilyInspectionPriority(Element element)
+        {
+            var className = element.GetType().Name;
+            if (element is FamilyInstance || element is CurveElement || element is GenericForm || element is Dimension || element is ReferencePlane ||
+                className.IndexOf("Label", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                className.IndexOf("Text", StringComparison.OrdinalIgnoreCase) >= 0)
+                return 0;
+
+            if (element is GraphicsStyle || element is Material || element is FillPatternElement || element is LinePatternElement ||
+                element is ParameterElement || element is View || element is Level ||
+                className.IndexOf("Asset", StringComparison.OrdinalIgnoreCase) >= 0)
+                return 2;
+
+            return 1;
         }
 
         private static string? SafeElementCategoryName(Element element)
