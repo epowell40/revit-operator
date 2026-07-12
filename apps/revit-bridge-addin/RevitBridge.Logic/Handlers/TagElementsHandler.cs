@@ -86,6 +86,7 @@ namespace RevitBridge.Logic.Handlers
             public string? FamilyName { get; set; }
             public string? TypeName { get; set; }
             public ElementId? TypeId { get; set; }
+            public ElementId? FamilyId { get; set; }
             public string? GeneratedFamilyPath { get; set; }
             public string? Error { get; set; }
             public List<TagFamilyCandidate> SourceCandidates { get; set; } = new List<TagFamilyCandidate>();
@@ -299,11 +300,11 @@ namespace RevitBridge.Logic.Handlers
 
                 if (tagIds.Count == 0 &&
                     string.Equals(tagFamilyResolution?.Status, "imported", StringComparison.OrdinalIgnoreCase) &&
-                    tagFamilyResolution?.TypeId != null)
+                    (tagFamilyResolution?.FamilyId != null || tagFamilyResolution?.TypeId != null))
                 {
                     try
                     {
-                        doc.Delete(tagFamilyResolution.TypeId);
+                        doc.Delete(tagFamilyResolution.FamilyId ?? tagFamilyResolution.TypeId!);
                         tagFamilyResolution.Status = "import_rejected_no_geometry";
                         tagFamilyResolution.Error = "The imported tag type produced no visible/measurable tag-head geometry and was removed.";
                     }
@@ -570,6 +571,7 @@ namespace RevitBridge.Logic.Handlers
             familyName = resolution.FamilyName,
             typeName = resolution.TypeName,
             typeId = resolution.TypeId == null ? (long?)null : ElementIdCompat.GetValue(resolution.TypeId),
+            familyId = resolution.FamilyId == null ? (long?)null : ElementIdCompat.GetValue(resolution.FamilyId),
             generatedFamilyPath = resolution.GeneratedFamilyPath,
             error = resolution.Error,
             sourceCandidates = resolution.SourceCandidates.Take(100).Select(x => new
@@ -598,7 +600,10 @@ namespace RevitBridge.Logic.Handlers
                 return ResolutionFromSymbol("requested", targetTagCategory.Value, requestedSymbol);
             }
 
-            var loaded = new FilteredElementCollector(doc)
+            var exactSourceSelection =
+                !string.IsNullOrWhiteSpace(request.tagFamilySourceFamilyName) ||
+                !string.IsNullOrWhiteSpace(request.tagFamilySourceTypeName);
+            var loaded = exactSourceSelection ? null : new FilteredElementCollector(doc)
                 .OfClass(typeof(FamilySymbol))
                 .OfCategory(targetTagCategory.Value)
                 .Cast<FamilySymbol>()
@@ -748,11 +753,17 @@ namespace RevitBridge.Logic.Handlers
                     loadTransaction.Commit();
                 }
 
-                var loadedSymbol = loadedFamily.GetFamilySymbolIds()
+                var loadedSymbols = loadedFamily.GetFamilySymbolIds()
                     .Select(id => targetDoc.GetElement(id))
                     .OfType<FamilySymbol>()
-                    .FirstOrDefault(x => x.Category != null && ElementIdCompat.GetValue(x.Category.Id) == (long)targetTagCategory)
-                    ?? loadedFamily.GetFamilySymbolIds().Select(id => targetDoc.GetElement(id)).OfType<FamilySymbol>().FirstOrDefault();
+                    .ToList();
+                var loadedSymbol = loadedSymbols.FirstOrDefault(x =>
+                        x.Category != null &&
+                        ElementIdCompat.GetValue(x.Category.Id) == (long)targetTagCategory &&
+                        string.Equals(x.Name ?? string.Empty, sourceSymbol.Name ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+                    ?? loadedSymbols.FirstOrDefault(x =>
+                        x.Category != null && ElementIdCompat.GetValue(x.Category.Id) == (long)targetTagCategory)
+                    ?? loadedSymbols.FirstOrDefault();
                 if (loadedSymbol == null) throw new InvalidOperationException("Imported tag family did not contain a usable type.");
                 var resolution = ResolutionFromSymbol("imported", targetTagCategory, loadedSymbol);
                 resolution.SourceTagCategory = sourceTagCategory.ToString();
@@ -796,7 +807,8 @@ namespace RevitBridge.Logic.Handlers
             TargetTagCategory = targetTagCategory.ToString(),
             FamilyName = symbol.FamilyName,
             TypeName = symbol.Name,
-            TypeId = symbol.Id
+            TypeId = symbol.Id,
+            FamilyId = symbol.Family?.Id
         };
 
         private static BuiltInCategory? ResolveCommonTargetTagCategory(IReadOnlyList<Element> targets)
