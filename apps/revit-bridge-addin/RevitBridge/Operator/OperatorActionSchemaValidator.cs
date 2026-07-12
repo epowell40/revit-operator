@@ -6957,6 +6957,45 @@ namespace RevitBridge.Operator
                 return true;
             }
 
+            if (string.Equals(path, "/revit/views", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
+                {
+                    error = "views body must be an object.";
+                    return false;
+                }
+                if (!ValidateOptionalString(obj.Value, "action", maxLen: 16, out error)) return false;
+                if (!ValidateOptionalLongArray(obj.Value, "viewIds", maxCount: 64, out error)) return false;
+                if (!ValidateOptionalStringArray(obj.Value, "levelNames", maxCount: 32, maxLen: 160, out error)) return false;
+                if (!ValidateOptionalStringArray(obj.Value, "viewTypes", maxCount: 32, maxLen: 80, out error)) return false;
+                if (!ValidateOptionalStringArray(obj.Value, "disciplines", maxCount: 16, maxLen: 80, out error)) return false;
+                if (!ValidateOptionalStringArray(obj.Value, "viewNames", maxCount: 32, maxLen: 160, out error)) return false;
+                if (!ValidateOptionalStringArray(obj.Value, "nameContainsAny", maxCount: 32, maxLen: 160, out error)) return false;
+                if (!ValidateOptionalStringArray(obj.Value, "semanticGroups", maxCount: 8, maxLen: 80, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "includeTemplates", out error)) return false;
+                var viewsAction = obj.Value.TryGetProperty("action", out var actionEl) && actionEl.ValueKind == JsonValueKind.String
+                    ? (actionEl.GetString() ?? "").Trim().ToLowerInvariant()
+                    : "list";
+                if (viewsAction != "list" && viewsAction != "count")
+                {
+                    error = "views.action must be 'list' or 'count'.";
+                    return false;
+                }
+                if (obj.Value.TryGetProperty("offset", out var offsetEl) && offsetEl.ValueKind != JsonValueKind.Null &&
+                    (offsetEl.ValueKind != JsonValueKind.Number || !offsetEl.TryGetInt32(out var offset) || offset < 0 || offset > 200000))
+                {
+                    error = "views.offset must be an integer from 0 through 200000.";
+                    return false;
+                }
+                if (obj.Value.TryGetProperty("limit", out var limitEl) && limitEl.ValueKind != JsonValueKind.Null &&
+                    (limitEl.ValueKind != JsonValueKind.Number || !limitEl.TryGetInt32(out var limit) || limit < 1 || limit > 500))
+                {
+                    error = "views.limit must be an integer from 1 through 500.";
+                    return false;
+                }
+                return true;
+            }
+
             if (string.Equals(path, "/revit/sheets", StringComparison.OrdinalIgnoreCase))
             {
                 // list:   { action?: "list", query?: string, sheetNumberPrefix?: string, exact?: bool, offset?: int, limit?: int, all?: bool, max?: int }

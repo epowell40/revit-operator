@@ -23,6 +23,7 @@ const defaultAllowed: Allowlist = {
     "/revit/native-api-call",
     "/revit/self-test",
     "/revit/state-snapshot",
+    "/revit/views",
     "/revit/regenerate",
     "/revit/computer-use-observe",
     "/revit/computer-use-act",

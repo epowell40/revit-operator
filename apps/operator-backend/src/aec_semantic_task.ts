@@ -236,7 +236,8 @@ export function normalizeAecSemanticTaskV1(value: unknown, authoritativeUserText
   const selected = selectedScopeKinds(normalized.scope);
   if (normalized.scope.kind === "mixed" ? selected.length < 2 : ["document", "active_context"].includes(normalized.scope.kind) ? selected.length !== 0 : selected.length !== 1 || selected[0] !== normalized.scope.kind) fail("scope.kind");
   if (normalized.scope.kind === "document" && !normalized.execution.allow_document_fallback) fail("execution.allow_document_fallback");
-  if (normalized.reference.strategy === "explicit" !== (normalized.reference.source_description !== null)) fail("reference.source_description");
+  if (normalized.reference.strategy === "explicit" && normalized.reference.source_description === null) fail("reference.source_description");
+  if (normalized.reference.strategy === "none" && normalized.reference.source_description !== null) fail("reference.source_description");
   if (normalized.reference.source_room !== null && normalized.reference.strategy !== "explicit") fail("reference.source_room");
   return normalized;
 }

@@ -205,6 +205,72 @@
       ]
     },
     {
+      "method": "POST",
+      "path": "/revit/views",
+      "examples": [
+        {
+          "name": "List exact level and discipline views",
+          "request": {
+            "action": "list",
+            "levelNames": [
+              "L4"
+            ],
+            "semanticGroups": [
+              "mechanical"
+            ],
+            "includeTemplates": false,
+            "offset": 0,
+            "limit": 50
+          },
+          "expected_response_shape": {
+            "status": "ok",
+            "action": "list",
+            "count": 2,
+            "returned": 2,
+            "offset": 0,
+            "limit": 50,
+            "truncated": false,
+            "appliedFilters": [
+              "exclude_templates",
+              "level_names_exact",
+              "semantic_groups"
+            ],
+            "views": [
+              {
+                "id": 123,
+                "name": "L4 - Mechanical",
+                "type": "FloorPlan",
+                "levelName": "L4",
+                "discipline": "Mechanical"
+              }
+            ]
+          },
+          "notes": [
+            "Use exact levelNames/viewNames/viewIds whenever the user supplied exact scope; do not replace them with contains predicates.",
+            "Treat truncated:true as incomplete coverage and page or narrow the query before model work."
+          ]
+        },
+        {
+          "name": "Count exact matching views",
+          "request": {
+            "action": "count",
+            "viewTypes": [
+              "FloorPlan"
+            ],
+            "includeTemplates": false
+          },
+          "expected_response_shape": {
+            "status": "ok",
+            "action": "count",
+            "count": 12,
+            "returned": 0,
+            "truncated": false,
+            "views": []
+          }
+        }
+      ]
+    },
+    {
       "method": "GET",
       "path": "/revit/capabilities",
       "examples": [

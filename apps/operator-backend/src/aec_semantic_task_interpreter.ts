@@ -5,6 +5,7 @@ import { AEC_SEMANTIC_TASK_MAX_TEXT_CHARS, AEC_SEMANTIC_TASK_V1_SCHEMA, normaliz
 
 export type AecSemanticTaskInterpretationInput = {
   user_text: string;
+  delegated_task_text?: string;
   recent_messages: Array<{ role: "user" | "assistant" | "tool"; text: string }>;
 };
 
@@ -53,13 +54,15 @@ const schema = {
   }
 } as const;
 
-const instructions = `Interpret the user's professional Revit/AEC objective into the strict semantic task record. Return facts and scope, never tool names or paths.
+const instructions = `Interpret the user's professional Revit/AEC objective into the strict semantic task record. Return facts and scope, never tool names or paths. user_text is the authoritative user request. delegated_task_text, when present, is model-authored planning context only: it may clarify execution ideas but must never add target levels, rooms, views, sheets, elements, or mutations absent from user_text.
 Understand paraphrases by meaning. Do not require trigger words. Preserve exact marks, room numbers, level names, sheet numbers, family/type names, and leading zeroes.
-For a uniquely named or marked element such as AHU-1, use operation=locate or inspect, subject.kind=exact_identifier, the most likely Revit semantic_class and category, and exact Mark and/or Name identifiers. Alternative exact predicates are allowed and are evaluated as a bounded OR. Request compact identity, parameter, spatial-context, and best-view outputs, and set max_primary_actions=2 when spatial_context or best_view is requested. If the user explicitly asks to show, focus, or take them to that exact element, use operation=focus and max_primary_actions=3 so the runtime can resolve identity, resolve the best view, and activate/focus it without guessing.
+For a uniquely named or marked element, preserve the exact identifier supplied by the user and use operation=locate or inspect, subject.kind=exact_identifier, the most likely Revit semantic_class and category, and exact Mark and/or Name identifiers. Do not invent an example identifier when the request does not contain one. Alternative exact predicates are allowed and are evaluated as a bounded OR. Request compact identity, parameter, spatial-context, and best-view outputs, and set max_primary_actions=2 when spatial_context or best_view is requested. If the user explicitly asks to show, focus, or take them to that exact element, use operation=focus and max_primary_actions=3 so the runtime can resolve identity, resolve the best view, and activate/focus it without guessing.
 Use document scope and allow_document_fallback=true only when the user explicitly requests the whole project/model. Otherwise represent the smallest explicit scope or active_context and keep fallback false.
 For count/list questions, identify the requested category/class and room, level, view, sheet, system, selection, or region scope. Never invent scope values. Count normally uses one primary action. List/inspect/locate normally use max_primary_actions=2 so a compact ID-only native result can be enriched with bounded element summaries without scanning again.
+For discipline-scoped view or sheet work, preserve the discipline in subject.semantic_class even though the objects being arranged are views/sheets: mechanical or HVAC uses mechanical_equipment; electrical power uses electrical_equipment; lighting uses light_fixture; plumbing uses plumbing_fixture; fire alarm uses electrical_equipment with an explicit fire-alarm term. Use semantic_class=view or sheet only when the user supplied no discipline. This structured classification drives bounded view predicates and must not be inferred later from prompt trigger words.
 For an inventory comparison between exactly two rooms, levels, views, or sheets, use operation=compare, one category/class subject with canonical categories, the single scope kind containing exactly two resolved values, outputs limited to summary/count/element_ids/comparison, and max_primary_actions=2. Do not use this shape for parameter, geometry, or qualitative design comparisons.
-For underspecified design/layout work, select the strongest supported reference strategy in this order: explicit source, current-project precedent, office standard, code baseline, conservative proposal. Put a distinct explicitly named source room in reference.source_room; otherwise keep it null. Do not manufacture an explicit source.
+For underspecified design/layout work, select the strongest supported reference strategy in this order: explicit source, current-project precedent, office standard, code baseline, conservative proposal. Put a distinct explicitly named source room in reference.source_room; otherwise keep it null. Do not manufacture an explicit source. Mutation scope contains only the target to be changed; precedent levels, rooms, sheets, and views belong in reference.source_description and must not be copied into scope. A named active project is context, not document-wide mutation scope, so keep scope.document null unless the user explicitly requests the whole document. Scope kind describes concrete target identifiers supplied by the user, not the kinds of objects execution must later discover. For example, work across applicable views and sheets on target Level 4 using Level 3/Level 5 or M103/M105 as precedent is scope.kind=level, levels=["Level 4"], sheets=[], document=null; the precedent identifiers remain only in reference.source_description. Use mixed only when the user explicitly targets at least two different concrete scope fields for mutation.
+reference.source_description may describe the grounded explicit source, current-project precedent, office standard, code baseline, or conservative proposal. Keep it null only when no reference evidence is available; strategy=none requires null.
 Plain room receptacle-layout requests are layout+receptacle+create. They normally use current_project_precedent when no source is named; discovering a suitable analog is execution work, not a reason for material ambiguity.
 Tagging and other mutations require visual verification. Read operations never request mutation.
 Use ambiguity=material only when a consequential target or requested mutation cannot be grounded safely. Keep max_primary_actions small (normally 1-3) and max_results bounded.`;
@@ -68,6 +71,28 @@ function outputText(response: any): string {
   if (typeof response?.output_text === "string") return response.output_text;
   for (const item of Array.isArray(response?.output) ? response.output : []) for (const content of Array.isArray(item?.content) ? item.content : []) if (typeof content?.text === "string") return content.text;
   return "";
+}
+
+function canonicalizeProviderScopeDiscriminant(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const root = value as Record<string, unknown>;
+  const rawScope = root.scope;
+  if (!rawScope || typeof rawScope !== "object" || Array.isArray(rawScope)) return value;
+  const scope = rawScope as Record<string, unknown>;
+  if (scope.kind !== "mixed") return value;
+  const selected = [
+    typeof scope.document === "string" && scope.document.trim() ? "document" : null,
+    Array.isArray(scope.levels) && scope.levels.length ? "level" : null,
+    Array.isArray(scope.rooms) && scope.rooms.length ? "room" : null,
+    Array.isArray(scope.spaces) && scope.spaces.length ? "space" : null,
+    Array.isArray(scope.areas) && scope.areas.length ? "area" : null,
+    Array.isArray(scope.views) && scope.views.length ? "view" : null,
+    Array.isArray(scope.sheets) && scope.sheets.length ? "sheet" : null,
+    Array.isArray(scope.systems) && scope.systems.length ? "system" : null,
+    Array.isArray(scope.element_ids) && scope.element_ids.length ? "selection" : null,
+    scope.region && typeof scope.region === "object" ? "region" : null
+  ].filter((kind): kind is string => !!kind);
+  return selected.length === 1 ? { ...root, scope: { ...scope, kind: selected[0] } } : value;
 }
 
 export class OpenAiAecSemanticTaskInterpreter implements AecSemanticTaskInterpreter {
@@ -82,13 +107,17 @@ export class OpenAiAecSemanticTaskInterpreter implements AecSemanticTaskInterpre
 }
 
 export async function interpretAecSemanticTask(req: ChatRequest, interpreter: AecSemanticTaskInterpreter = new OpenAiAecSemanticTaskInterpreter()): Promise<AecSemanticTaskV1 | null> {
-  const userText = (req.user_text ?? "").trim();
+  const delegatedText = (req.user_text ?? "").trim();
+  const context = req.context && typeof req.context === "object" && !Array.isArray(req.context) ? req.context as Record<string, unknown> : null;
+  const ui = context?.ui && typeof context.ui === "object" && !Array.isArray(context.ui) ? context.ui as Record<string, unknown> : null;
+  const authoritativeText = typeof ui?.authoritative_user_text === "string" ? ui.authoritative_user_text.trim() : "";
+  const userText = authoritativeText || delegatedText;
   if (!userText || userText.length > AEC_SEMANTIC_TASK_MAX_TEXT_CHARS || (req.tool_results?.length ?? 0) > 0) return null;
-  const recent = getRecentMessages(req.session_id, 8).filter(message => message.text.trim() && message.text.trim() !== userText).slice(-6).map(message => ({ role: message.role, text: message.text.slice(0, AEC_SEMANTIC_TASK_MAX_TEXT_CHARS) }));
+  const recent = getRecentMessages(req.session_id, 8).filter(message => message.text.trim() && message.text.trim() !== userText && message.text.trim() !== delegatedText).slice(-6).map(message => ({ role: message.role, text: message.text.slice(0, AEC_SEMANTIC_TASK_MAX_TEXT_CHARS) }));
   try {
-    const value = await interpreter.interpret({ user_text: userText, recent_messages: recent });
+    const value = await interpreter.interpret({ user_text: userText, ...(delegatedText && delegatedText !== userText ? { delegated_task_text: delegatedText } : {}), recent_messages: recent });
     if (value === null) return null;
-    const task = normalizeAecSemanticTaskV1(value, userText);
+    const task = normalizeAecSemanticTaskV1(canonicalizeProviderScopeDiscriminant(value), userText);
     try { appendEvent(req.session_id, "assistant", "aec.semantic_task", { message_id: req.message_id, interpreter: interpreter.constructor?.name || "unknown", task }); } catch { }
     return task;
   } catch (error) {

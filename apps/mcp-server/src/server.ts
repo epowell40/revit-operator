@@ -464,6 +464,25 @@ server.tool("revit_list_views", "List all views.", {}, async () => {
   } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
 
+server.tool("revit_query_views", "Query a bounded view index by exact level/type/discipline/id predicates or a declared semantic group.", {
+  action: z.enum(["list", "count"]).default("list"),
+  viewIds: z.array(z.number().int().positive()).max(64).optional(),
+  levelNames: z.array(z.string().min(1).max(160)).max(32).optional(),
+  viewTypes: z.array(z.string().min(1).max(80)).max(32).optional(),
+  disciplines: z.array(z.string().min(1).max(80)).max(16).optional(),
+  viewNames: z.array(z.string().min(1).max(160)).max(32).optional(),
+  nameContainsAny: z.array(z.string().min(1).max(160)).max(32).optional(),
+  semanticGroups: z.array(z.enum(["power", "lighting", "electrical", "mechanical", "plumbing", "fire_alarm", "architectural"])).max(8).optional(),
+  includeTemplates: z.boolean().default(false),
+  offset: z.number().int().min(0).max(200000).default(0),
+  limit: z.number().int().min(1).max(500).default(100)
+}, async (args) => {
+  try {
+    const data = await callRevit("/revit/views", "POST", args);
+    return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+  } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
+});
+
 server.tool("revit_tool_doc", "Describe a Revit HTTP tool (request schema + canonical examples).",
   { method: z.enum(["GET", "POST"]), path: z.string() },
   async (args) => {
