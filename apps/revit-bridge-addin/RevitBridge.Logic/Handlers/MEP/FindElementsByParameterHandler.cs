@@ -12,6 +12,13 @@ namespace RevitBridge.Logic.Handlers.MEP
 {
     public class FindElementsByParameterHandler : IRequestHandler
     {
+        public sealed class ParameterPredicate
+        {
+            public string? parameterName { get; set; }
+            public string op { get; set; } = "equals";
+            public string? value { get; set; }
+        }
+
         public sealed class Params
         {
             public string? category { get; set; }
@@ -23,6 +30,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             public string? paramName { get; set; }
             public string op { get; set; } = "equals"; // equals | contains
             public string? value { get; set; }
+            public List<ParameterPredicate>? predicates { get; set; }
+            public string matchMode { get; set; } = "any"; // any | all
 
             public string? systemName { get; set; }
             public long? viewId { get; set; }
@@ -32,10 +41,8 @@ namespace RevitBridge.Logic.Handlers.MEP
         public Task<object> Handle(UIApplication app, string jsonData)
         {
             var p = string.IsNullOrWhiteSpace(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
-            var paramName = ResolveParameterName(p);
-            if (paramName.Length == 0) throw new ArgumentException("parameterName is required (aliases accepted: parameter, paramName).");
-
-            var op = NormalizeOperator(p.op);
+            var predicates = ResolvePredicates(p);
+            var matchMode = NormalizeMatchMode(p.matchMode, predicates.Count > 1);
 
             var uidoc = app.ActiveUIDocument;
             if (uidoc == null) throw new InvalidOperationException("No active UI document.");
@@ -73,10 +80,16 @@ namespace RevitBridge.Logic.Handlers.MEP
                     if (!sysName.Equals(sysFilter, StringComparison.OrdinalIgnoreCase)) continue;
                 }
 
-                var param = e.LookupParameter(paramName);
-                if (param == null) continue;
-
-                if (!ParamMatches(doc, param, op, p.value ?? "", out var actualValue)) continue;
+                var matchedParameters = new List<object>();
+                object? firstActualValue = null;
+                foreach (var predicate in predicates)
+                {
+                    var param = e.LookupParameter(predicate.parameterName!);
+                    if (param == null || !ParamMatches(doc, param, predicate.op, predicate.value ?? "", out var actualValue)) continue;
+                    firstActualValue ??= actualValue;
+                    matchedParameters.Add(new { parameterName = predicate.parameterName, op = predicate.op, expectedValue = predicate.value, value = actualValue });
+                }
+                if (matchMode == "all" ? matchedParameters.Count != predicates.Count : matchedParameters.Count == 0) continue;
 
                 var catToken = SelectionUtil.GetCategoryToken(e) ?? (e.Category?.Name ?? "None");
                 rows.Add(new
@@ -85,8 +98,9 @@ namespace RevitBridge.Logic.Handlers.MEP
                     category = catToken,
                     name = e.Name,
                     systemName = MepSystemUtil.TryGetSystemName(e),
-                    parameterName = paramName,
-                    value = actualValue
+                    parameterName = predicates.Count == 1 ? predicates[0].parameterName : null,
+                    value = predicates.Count == 1 ? firstActualValue : null,
+                    matchedParameters
                 });
 
                 if (rows.Count >= limit) break;
@@ -99,9 +113,11 @@ namespace RevitBridge.Logic.Handlers.MEP
             return Task.FromResult<object>(new
             {
                 status = "Ok",
-                parameterName = paramName,
-                op,
-                expectedValue = p.value,
+                parameterName = predicates.Count == 1 ? predicates[0].parameterName : null,
+                op = predicates.Count == 1 ? predicates[0].op : null,
+                expectedValue = predicates.Count == 1 ? predicates[0].value : null,
+                matchMode,
+                predicates,
                 systemName = sysFilter.Length > 0 ? sysFilter : null,
                 viewId = p.viewId,
                 categories = bicList.Select(x => x.ToString()).Distinct().ToList(),
@@ -178,6 +194,34 @@ namespace RevitBridge.Logic.Handlers.MEP
             }
 
             return "";
+        }
+
+        private static List<ParameterPredicate> ResolvePredicates(Params p)
+        {
+            var supplied = p.predicates?.Where(x => x != null).ToList() ?? new List<ParameterPredicate>();
+            if (supplied.Count > 8) throw new ArgumentException("predicates supports at most 8 alternatives.");
+            if (supplied.Count == 0)
+            {
+                var legacyName = ResolveParameterName(p);
+                if (legacyName.Length == 0) throw new ArgumentException("parameterName or predicates is required (aliases accepted: parameter, paramName).");
+                supplied.Add(new ParameterPredicate { parameterName = legacyName, op = p.op, value = p.value });
+            }
+            foreach (var predicate in supplied)
+            {
+                predicate.parameterName = (predicate.parameterName ?? "").Trim();
+                if (predicate.parameterName.Length == 0) throw new ArgumentException("Each predicate requires parameterName.");
+                predicate.op = NormalizeOperator(predicate.op);
+                predicate.value ??= "";
+            }
+            return supplied;
+        }
+
+        private static string NormalizeMatchMode(string? raw, bool multiple)
+        {
+            if (!multiple) return "all";
+            var value = (raw ?? "any").Trim().ToLowerInvariant();
+            if (value == "any" || value == "all") return value;
+            throw new ArgumentException("matchMode must be 'any' or 'all'.");
         }
 
         private static string NormalizeOperator(string? raw)

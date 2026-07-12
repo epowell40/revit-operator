@@ -47,19 +47,24 @@ export function planAecQueryTask(value: unknown): AecQueryPlanV1 {
   if (task.confidence.ambiguity === "material" || task.confidence.value < 0.75) return blocked("Material task ambiguity must be resolved before deterministic query execution.");
 
   if (task.subject.kind === "exact_identifier") {
-    if (task.subject.identifiers.length !== 1) return blocked("Exact-identifier queries currently require exactly one identifier predicate.");
+    if (task.subject.identifiers.length === 0 || task.subject.identifiers.length > 8) return blocked("Exact-identifier queries require 1 to 8 bounded identifier predicates.");
     if (task.scope.kind === "view" && numericViewId(task) === null) return blocked("Named view scope must be resolved to one exact view id before element lookup.");
     if (["area", "sheet", "region"].includes(task.scope.kind) || (task.scope.kind === "mixed" && (task.scope.areas.length > 0 || task.scope.sheets.length > 0 || task.scope.region !== null))) {
       return blocked(`Exact-identifier lookup does not support '${task.scope.kind}' scope without a bounded scope resolver.`);
     }
-    const identifier = task.subject.identifiers[0];
     const body: Record<string, unknown> = {
       ...categoryBody(task),
-      parameterName: identifier.parameter,
-      op: identifier.match === "contains" ? "contains" : "equals",
-      value: identifier.value,
       limit: Math.min(task.execution.max_results, 100)
     };
+    if (task.subject.identifiers.length === 1) {
+      const identifier = task.subject.identifiers[0];
+      body.parameterName = identifier.parameter;
+      body.op = identifier.match === "contains" ? "contains" : "equals";
+      body.value = identifier.value;
+    } else {
+      body.predicates = task.subject.identifiers.map(identifier => ({ parameterName: identifier.parameter, op: identifier.match === "contains" ? "contains" : "equals", value: identifier.value }));
+      body.matchMode = "any";
+    }
     const viewId = numericViewId(task);
     if (viewId !== null) body.viewId = viewId;
     const systemName = task.subject.system_name ?? (task.scope.systems.length === 1 ? task.scope.systems[0] : null);
