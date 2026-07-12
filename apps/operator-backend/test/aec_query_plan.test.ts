@@ -73,3 +73,17 @@ test("planner pushes canonical level/category predicates and fails closed when n
   bad.scope.phase = "NEW CONSTRUCTION";
   assert.match(planAecQueryTask(bad).blockers[0], /scope\.phase/);
 });
+
+test("focus requires an exact identifier and a three-action budget; compare stays fail-closed", () => {
+  const focus = task();
+  focus.operation = "focus";
+  assert.match(planAecQueryTask(focus).blockers[0], /three bounded actions/);
+  focus.execution.max_primary_actions = 3;
+  assert.equal(planAecQueryTask(focus).workflow_id, "query.exact_identifier");
+  focus.subject = { ...focus.subject, kind: "category", identifiers: [] };
+  assert.match(planAecQueryTask(focus).blockers[0], /requires one exact identifier/);
+
+  const compare = task();
+  compare.operation = "compare";
+  assert.match(planAecQueryTask(compare).blockers[0], /two-scope comparison workflow/);
+});

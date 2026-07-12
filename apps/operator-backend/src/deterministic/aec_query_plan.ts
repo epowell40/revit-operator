@@ -2,6 +2,7 @@ import type { ActionCall, ToolResult } from "../contracts.js";
 import { normalizeAecSemanticTaskV1, type AecSemanticTaskV1 } from "../aec_semantic_task.js";
 
 export type AecQueryWorkflowId =
+  | "query.blocked"
   | "query.exact_identifier"
   | "query.room_contents"
   | "query.level_elements"
@@ -45,6 +46,9 @@ export function planAecQueryTask(value: unknown): AecQueryPlanV1 {
   }
   if (!READ_OPERATIONS.has(task.operation)) return blocked(`Operation '${task.operation}' is not a read query.`);
   if (task.confidence.ambiguity === "material" || task.confidence.value < 0.75) return blocked("Material task ambiguity must be resolved before deterministic query execution.");
+  if (task.operation === "compare") return blocked("Compare requires a bounded two-scope comparison workflow; a single scoped query is not sufficient.");
+  if (task.operation === "focus" && task.subject.kind !== "exact_identifier") return blocked("Focus currently requires one exact identifier so the target view and element can be resolved without guessing.");
+  if (task.operation === "focus" && task.execution.max_primary_actions < 3) return blocked("Exact-element focus requires three bounded actions: identity lookup, placement context, and view activation.");
 
   if (task.subject.kind === "exact_identifier") {
     if (task.subject.identifiers.length === 0 || task.subject.identifiers.length > 8) return blocked("Exact-identifier queries require 1 to 8 bounded identifier predicates.");
