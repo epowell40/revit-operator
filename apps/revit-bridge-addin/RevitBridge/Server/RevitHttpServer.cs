@@ -134,6 +134,7 @@ namespace RevitBridge.Server
                 { "/revit/resolve-mep-routing-context", new ResolveMepRoutingContextHandler() },
                 { "/revit/create-mep-route", new CreateMepRouteHandler() },
                 { "/revit/connect-mep-branch", new ConnectMepBranchHandler() },
+                { "/revit/connect-mep-elements", new RevitBridge.Logic.Handlers.MEP.ConnectMepElementsHandler() },
                 { "/revit/mep-route-workflow", new MepRouteWorkflowHandler() },
                 { "/revit/mep-branch-network-workflow", new RevitBridge.Logic.Handlers.MEP.MepBranchNetworkWorkflowHandler() },
                 { "/revit/edit-mep-route-elements", new RevitBridge.Logic.Handlers.MEP.EditMepRouteElementsHandler() },
@@ -572,6 +573,7 @@ namespace RevitBridge.Server
                  string.Equals(path, "/revit/reroute-mep-route-segment", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/create-mep-route", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/connect-mep-branch", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/connect-mep-elements", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/create-duct", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/create-pipe", StringComparison.OrdinalIgnoreCase)) &&
                 IsExplicitMepRoutePreview(path, body))

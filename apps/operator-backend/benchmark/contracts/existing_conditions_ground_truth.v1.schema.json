@@ -9,11 +9,19 @@
     "schema_version": { "const": 1 },
     "fixture_id": { "type": "string", "minLength": 1 },
     "scope_id": { "type": "string", "minLength": 1 },
+    "discipline": { "type": "string", "enum": ["mechanical", "plumbing", "electrical", "mixed", "other"] },
     "ground_truth_model": {
       "type": "object", "additionalProperties": false, "required": ["path", "sha256"],
       "properties": { "path": { "type": "string", "minLength": 1 }, "sha256": { "$ref": "#/$defs/sha256" } }
     },
     "visible_evidence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/evidence" } },
+    "evaluation_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "require_evaluator_change_receipt": { "type": "boolean" }
+      }
+    },
     "deletion_manifest": {
       "type": "object", "additionalProperties": false, "required": ["requested_element_ids", "deleted_element_ids", "dependent_element_ids", "dry_run_receipt_sha256"],
       "properties": {
@@ -41,11 +49,29 @@
       "properties": {
         "key": { "type": "string", "minLength": 1 },
         "kind": { "type": "string", "enum": ["mep_curve", "fitting", "family_instance", "other"] },
+        "discipline": { "type": "string", "enum": ["mechanical", "plumbing", "electrical", "mixed", "other"] },
+        "role": { "type": ["string", "null"] },
         "category": { "type": "string", "minLength": 1 },
         "family": { "type": ["string", "null"] },
         "type": { "type": ["string", "null"] },
         "system_classification": { "type": ["string", "null"] },
         "system_type": { "type": ["string", "null"] },
+        "level_name": { "type": ["string", "null"] },
+        "room_number": { "type": ["string", "null"] },
+        "space_number": { "type": ["string", "null"] },
+        "host_key": { "type": ["string", "null"] },
+        "electrical": {
+          "type": ["object", "null"],
+          "properties": {
+            "panel": { "type": ["string", "null"] },
+            "circuit_number": { "type": ["string", "null"] },
+            "primary_label": { "type": ["string", "null"] },
+            "system_ids": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+            "power_system_ids": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+            "exact_power_system_count": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
         "location": { "oneOf": [{ "$ref": "#/$defs/point3" }, { "type": "null" }] },
         "endpoints": { "type": ["array", "null"], "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/point3" } }
       },
@@ -53,7 +79,11 @@
     },
     "connection": {
       "type": "object", "additionalProperties": false, "required": ["a", "b"],
-      "properties": { "a": { "type": "string", "minLength": 1 }, "b": { "type": "string", "minLength": 1 } }
+      "properties": {
+        "a": { "type": "string", "minLength": 1 },
+        "b": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "enum": ["physical", "host", "electrical_circuit", "system"] }
+      }
     },
     "snapshot": {
       "type": "object", "additionalProperties": false, "required": ["native_readback", "elements", "connections", "open_connector_count"],

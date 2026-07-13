@@ -41,6 +41,7 @@ namespace RevitBridge.Logic
                 { "/revit/resolve-mep-routing-context", new RevitBridge.Logic.Handlers.MEP.ResolveMepRoutingContextHandler() },
                 { "/revit/create-mep-route", new RevitBridge.Logic.Handlers.MEP.CreateMepRouteHandler() },
                 { "/revit/connect-mep-branch", new RevitBridge.Logic.Handlers.MEP.ConnectMepBranchHandler() },
+                { "/revit/connect-mep-elements", new RevitBridge.Logic.Handlers.MEP.ConnectMepElementsHandler() },
                 { "/revit/mep-route-workflow", new RevitBridge.Logic.Handlers.MEP.MepRouteWorkflowHandler() },
                 { "/revit/mep-branch-network-workflow", new RevitBridge.Logic.Handlers.MEP.MepBranchNetworkWorkflowHandler() },
                 { "/revit/edit-mep-route-elements", new RevitBridge.Logic.Handlers.MEP.EditMepRouteElementsHandler() },

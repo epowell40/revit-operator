@@ -31,6 +31,7 @@ const MODEL_WRITE_PATHS = new Set([
   "/revit/create-mep-route",
   "/revit/mep-route-workflow",
   "/revit/connect-mep-branch",
+  "/revit/connect-mep-elements",
   "/revit/edit-mep-route-elements",
   "/revit/resize-duct-run",
   "/revit/resize-ducts-by-scope",

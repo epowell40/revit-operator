@@ -2,14 +2,22 @@ import fs from "node:fs";
 import path from "node:path";
 import { ensureDir, writeJsonFile } from "./files.js";
 import type { BridgeTransport, RevitWorkflowResult, RevitWorkflowVerification } from "./revit_workflows.js";
+import {
+  validateExistingConditionsEvaluatorVisualReceipt,
+  type ExistingConditionsEvaluatorVisualReceipt
+} from "../existing_conditions/evaluator_visual.js";
 
 export type ExistingConditionsPoint3 = { x: number; y: number; z: number };
 
 export type ExistingConditionsElementKind = "mep_curve" | "fitting" | "family_instance" | "other";
+export type ExistingConditionsDiscipline = "mechanical" | "plumbing" | "electrical" | "mixed" | "other";
+export type ExistingConditionsRelationshipKind = "physical" | "host" | "electrical_circuit" | "system";
 
 export type ExistingConditionsElement = {
   key: string;
   kind: ExistingConditionsElementKind;
+  discipline?: ExistingConditionsDiscipline;
+  role?: string | null;
   category: string;
   family?: string | null;
   type?: string | null;
@@ -18,6 +26,18 @@ export type ExistingConditionsElement = {
   location?: ExistingConditionsPoint3 | null;
   endpoints?: [ExistingConditionsPoint3, ExistingConditionsPoint3] | null;
   rotation_degrees?: number | null;
+  level_name?: string | null;
+  room_number?: string | null;
+  space_number?: string | null;
+  host_key?: string | null;
+  electrical?: {
+    panel?: string | null;
+    circuit_number?: string | null;
+    primary_label?: string | null;
+    system_ids?: string[];
+    power_system_ids?: string[];
+    exact_power_system_count?: number;
+  } | null;
   size?: {
     shape?: string | null;
     width_ft?: number | null;
@@ -30,6 +50,7 @@ export type ExistingConditionsElement = {
 export type ExistingConditionsConnection = {
   a: string;
   b: string;
+  kind?: ExistingConditionsRelationshipKind;
 };
 
 export type ExistingConditionsSnapshot = {
@@ -48,7 +69,18 @@ export type ExistingConditionsGroundTruth = {
   schema_version: 1;
   fixture_id: string;
   scope_id: string;
+  discipline?: ExistingConditionsDiscipline;
   visible_evidence: ExistingConditionsEvidenceReceipt[];
+  ground_truth_model?: { path: string; sha256: string };
+  deletion_manifest?: {
+    requested_element_ids: number[];
+    deleted_element_ids: number[];
+    dependent_element_ids: number[];
+    dry_run_receipt_sha256: string;
+  };
+  evaluation_policy?: {
+    require_evaluator_change_receipt?: boolean;
+  };
   snapshot: ExistingConditionsSnapshot;
 };
 
@@ -56,15 +88,18 @@ export type ExistingConditionsCandidate = {
   schema_version: 1;
   fixture_id: string;
   scope_id: string;
+  discipline?: ExistingConditionsDiscipline;
   visible_evidence: ExistingConditionsEvidenceReceipt[];
   accessed_artifact_roles: string[];
   out_of_scope_changed_element_keys: string[];
-  snapshot: ExistingConditionsSnapshot;
-  visual_receipt?: {
-    post_change_capture_sha256?: string | null;
-    post_change_pdf_sha256?: string | null;
-    review_status?: "pass" | "needs_review" | "fail" | null;
+  evaluator_change_receipt?: {
+    native_diff_readback: boolean;
+    changed_element_keys: string[];
+    out_of_scope_changed_element_keys: string[];
+    receipt_sha256: string;
   } | null;
+  snapshot: ExistingConditionsSnapshot;
+  visual_receipt?: ExistingConditionsEvaluatorVisualReceipt | null;
 };
 
 export type ExistingConditionsScoringPolicy = {
@@ -77,6 +112,10 @@ export type ExistingConditionsScoringPolicy = {
   minimum_precision: number;
   minimum_recall: number;
   minimum_connectivity_score: number;
+  minimum_system_score: number;
+  minimum_spatial_score: number;
+  minimum_hosting_score: number;
+  minimum_electrical_circuit_score: number;
 };
 
 export type ExistingConditionsMatchedPair = {
@@ -86,6 +125,7 @@ export type ExistingConditionsMatchedPair = {
   geometry_score: number;
   attribute_score: number;
   system_score: number;
+  spatial_score: number;
   distance_ft: number | null;
 };
 
@@ -113,7 +153,17 @@ export type ExistingConditionsScore = {
     attributes: number;
     connectivity: number;
     systems: number;
+    spatial: number;
+    hosting: number;
+    electrical_circuits: number;
     drawing_evidence: number;
+  };
+  applicability: {
+    physical_connectivity: boolean;
+    systems: boolean;
+    spatial: boolean;
+    hosting: boolean;
+    electrical_circuits: boolean;
   };
   matched_pairs: ExistingConditionsMatchedPair[];
   missed_truth_keys: string[];
@@ -134,7 +184,11 @@ export const DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY: ExistingConditionsScori
   passing_score: 85,
   minimum_precision: 0.8,
   minimum_recall: 0.8,
-  minimum_connectivity_score: 0.75
+  minimum_connectivity_score: 0.75,
+  minimum_system_score: 0.8,
+  minimum_spatial_score: 0.8,
+  minimum_hosting_score: 0.75,
+  minimum_electrical_circuit_score: 1
 };
 
 const FORBIDDEN_AGENT_ARTIFACT_ROLES = new Set([
@@ -225,6 +279,46 @@ function connectorSize(raw: JsonMap): JsonMap {
   return {};
 }
 
+function inferDiscipline(category: string): ExistingConditionsDiscipline {
+  const key = normalized(category);
+  if (/electrical|lighting|fire alarm|data device|communication device/.test(key)) return "electrical";
+  if (/plumbing fixture|sanitary|domestic|sprinkler/.test(key)) return "plumbing";
+  if (/duct|mechanical equipment|air terminal/.test(key)) return "mechanical";
+  if (/pipe/.test(key)) return "mechanical";
+  return "other";
+}
+
+function inferRole(category: string): string {
+  const key = normalized(category);
+  if (/duct terminal|air terminal/.test(key)) return "air_terminal";
+  if (/duct fitting/.test(key)) return "duct_fitting";
+  if (/duct/.test(key)) return "duct";
+  if (/pipe fitting/.test(key)) return "pipe_fitting";
+  if (/pipe accessory/.test(key)) return "pipe_accessory";
+  if (/pipe/.test(key)) return "pipe";
+  if (/plumbing fixture/.test(key)) return "plumbing_fixture";
+  if (/electrical fixture/.test(key)) return "electrical_device";
+  if (/electrical equipment/.test(key)) return "electrical_equipment";
+  if (/lighting fixture/.test(key)) return "light_fixture";
+  if (/lighting device/.test(key)) return "lighting_device";
+  if (/fire alarm/.test(key)) return "fire_alarm_device";
+  if (/data device/.test(key)) return "data_device";
+  if (/communication device/.test(key)) return "communication_device";
+  if (/mechanical equipment/.test(key)) return "mechanical_equipment";
+  return "other";
+}
+
+function spatialNumber(value: unknown): string | null {
+  const obj = asObject(value);
+  return firstText(obj.number, obj.Number, obj.name, obj.Name);
+}
+
+function idKeys(value: unknown, prefix: string): string[] {
+  return Array.isArray(value)
+    ? [...new Set(value.map(finiteNumber).filter((id): id is number => id !== null && id > 0).map((id) => `${prefix}:${Math.trunc(id)}`))]
+    : [];
+}
+
 function normalizedElementFromVisible(raw: JsonMap): { id: number; element: ExistingConditionsElement } | null {
   const id = finiteNumber(raw.elementId ?? raw.element_id ?? raw.id);
   if (id === null || id <= 0) return null;
@@ -246,11 +340,18 @@ function normalizedElementFromVisible(raw: JsonMap): { id: number; element: Exis
   const parameters = primitiveParameters(raw.parameters);
   const sizeFromConnector = connectorSize(raw);
   const system = asObject(raw.system);
+  const electricalCircuit = asObject(raw.electricalCircuit ?? raw.electrical_circuit);
+  const systemIds = idKeys(electricalCircuit.systemIds ?? electricalCircuit.system_ids, "electrical-system");
+  const powerSystemIds = idKeys(electricalCircuit.powerSystemIds ?? electricalCircuit.power_system_ids, "electrical-system");
+  const host = asObject(raw.host);
+  const hostingSurface = asObject(raw.hostingSurface ?? raw.hosting_surface);
   return {
     id,
     element: {
       key: firstText(raw.sourceScopedId, raw.source_scoped_id, `host:${Math.trunc(id)}`)!,
       kind,
+      discipline: inferDiscipline(category),
+      role: inferRole(category),
       category,
       family: firstText(raw.familyName, raw.family_name),
       type: firstText(raw.typeName, raw.type_name, raw.name),
@@ -259,6 +360,35 @@ function normalizedElementFromVisible(raw: JsonMap): { id: number; element: Exis
       location,
       endpoints: start && end ? [start, end] : null,
       rotation_degrees: radians === null ? null : radians * 180 / Math.PI,
+      level_name: firstText(raw.levelName, raw.level_name),
+      room_number: spatialNumber(raw.room),
+      space_number: spatialNumber(raw.space ?? raw.associatedSpatial ?? raw.associated_spatial),
+      host_key: firstText(
+        raw.hostResolvedScopedId,
+        raw.host_resolved_scoped_id,
+        raw.hostLinkedElementScopedId,
+        raw.host_linked_element_scoped_id,
+        raw.hostScopedId,
+        raw.host_scoped_id,
+        host.resolvedScopedId,
+        host.resolved_scoped_id,
+        host.scopedId,
+        host.scoped_id,
+        hostingSurface.linkedElementScopedId,
+        hostingSurface.linked_element_scoped_id,
+        hostingSurface.hostElementScopedId,
+        hostingSurface.host_element_scoped_id
+      ),
+      electrical: systemIds.length > 0 || powerSystemIds.length > 0 || firstText(electricalCircuit.panel, parameters.panel, electricalCircuit.circuitNumber, parameters.circuitNumber)
+        ? {
+            panel: firstText(electricalCircuit.panel, parameters.panel),
+            circuit_number: firstText(electricalCircuit.circuitNumber, electricalCircuit.circuit_number, parameters.circuitNumber),
+            primary_label: firstText(electricalCircuit.primaryLabel, electricalCircuit.primary_label),
+            system_ids: systemIds,
+            power_system_ids: powerSystemIds,
+            exact_power_system_count: finiteNumber(electricalCircuit.exactPowerSystemCount ?? electricalCircuit.exact_power_system_count) ?? powerSystemIds.length
+          }
+        : null,
       size: {
         shape: firstText(sizeFromConnector.kind, sizeFromConnector.shape),
         width_ft: finiteNumber(sizeFromConnector.widthFt ?? sizeFromConnector.width_ft ?? parameters.width),
@@ -284,7 +414,7 @@ export function normalizeExistingConditionsSnapshot(
   const connectorRoot = asObject(connectorsPayload);
   const connectorRows = objectRows(connectorRoot.results ?? connectorRoot.items);
   const seenConnectorIds = new Set<number>();
-  const edges = new Set<string>();
+  const relations = new Set<string>();
   let openConnectorCount = 0;
   for (const row of connectorRows) {
     const id = finiteNumber(row.id ?? row.elementId ?? row.element_id);
@@ -305,8 +435,14 @@ export function normalizeExistingConditionsSnapshot(
         const refId = finiteNumber(ref.ownerId ?? ref.owner_id ?? ref.id);
         if (refId === null || Math.trunc(refId) === Math.trunc(id)) continue;
         const refKey = idToKey.get(Math.trunc(refId)) ?? `host:${Math.trunc(refId)}`;
-        edges.add(canonicalEdge(ownerKey, refKey));
+        relations.add(canonicalRelation("physical", ownerKey, refKey));
       }
+    }
+  }
+  for (const entry of normalizedRows) {
+    if (entry.element.host_key) relations.add(canonicalRelation("host", entry.element.key, entry.element.host_key));
+    for (const systemKey of entry.element.electrical?.power_system_ids ?? []) {
+      relations.add(canonicalRelation("electrical_circuit", entry.element.key, systemKey));
     }
   }
   const nativeReadback = selectedIds.size > 0 &&
@@ -315,9 +451,9 @@ export function normalizeExistingConditionsSnapshot(
   return {
     native_readback: nativeReadback,
     elements: normalizedRows.map((entry) => entry.element),
-    connections: [...edges].map((edge) => {
-      const separator = edge.indexOf("::");
-      return { a: edge.slice(0, separator), b: edge.slice(separator + 2) };
+    connections: [...relations].map((encoded) => {
+      const [kind, a, b] = JSON.parse(encoded) as [ExistingConditionsRelationshipKind, string, string];
+      return { a, b, kind };
     }),
     open_connector_count: openConnectorCount
   };
@@ -390,6 +526,8 @@ function attributeComparison(
   policy: ExistingConditionsScoringPolicy
 ): number {
   const scores: Array<number | null> = [
+    comparableFieldScore(truth.discipline, candidate.discipline),
+    comparableFieldScore(truth.role, candidate.role),
     comparableFieldScore(truth.family, candidate.family),
     comparableFieldScore(truth.type, candidate.type),
     comparableFieldScore(truth.size?.shape, candidate.size?.shape),
@@ -415,6 +553,14 @@ function systemComparison(truth: ExistingConditionsElement, candidate: ExistingC
   ], 1);
 }
 
+function spatialComparison(truth: ExistingConditionsElement, candidate: ExistingConditionsElement): number {
+  return average([
+    comparableFieldScore(truth.level_name, candidate.level_name),
+    comparableFieldScore(truth.room_number, candidate.room_number),
+    comparableFieldScore(truth.space_number, candidate.space_number)
+  ], 1);
+}
+
 function comparePair(
   truth: ExistingConditionsElement,
   candidate: ExistingConditionsElement,
@@ -426,7 +572,8 @@ function comparePair(
   if (geometry.score <= 0) return null;
   const attributes = attributeComparison(truth, candidate, policy);
   const systems = systemComparison(truth, candidate);
-  const pairScore = 0.6 * geometry.score + 0.3 * attributes + 0.1 * systems;
+  const spatial = spatialComparison(truth, candidate);
+  const pairScore = 0.55 * geometry.score + 0.25 * attributes + 0.1 * systems + 0.1 * spatial;
   if (pairScore < policy.minimum_pair_score) return null;
   return {
     truth_key: truth.key,
@@ -435,6 +582,7 @@ function comparePair(
     geometry_score: round(geometry.score),
     attribute_score: round(attributes),
     system_score: round(systems),
+    spatial_score: round(spatial),
     distance_ft: geometry.distance_ft === null ? null : round(geometry.distance_ft)
   };
 }
@@ -530,8 +678,48 @@ function canonicalEdge(a: string, b: string): string {
   return normalized(a) < normalized(b) ? `${a}::${b}` : `${b}::${a}`;
 }
 
+function canonicalRelation(kind: ExistingConditionsRelationshipKind, a: string, b: string): string {
+  const ordered = normalized(a) < normalized(b) ? [a, b] : [b, a];
+  return JSON.stringify([kind, ordered[0], ordered[1]]);
+}
+
 function f1(precision: number, recall: number): number {
   return precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0;
+}
+
+function relationshipKind(edge: ExistingConditionsConnection): ExistingConditionsRelationshipKind {
+  return edge.kind ?? "physical";
+}
+
+function relationshipF1(
+  truth: ExistingConditionsSnapshot,
+  candidate: ExistingConditionsSnapshot,
+  pairs: ExistingConditionsMatchedPair[],
+  kind: ExistingConditionsRelationshipKind
+): number {
+  const truthToCandidate = new Map(pairs.map((pair) => [pair.truth_key, pair.candidate_key]));
+  const candidateToTruth = new Map(pairs.map((pair) => [pair.candidate_key, pair.truth_key]));
+  const truthElementKeys = new Set(truth.elements.map((element) => element.key));
+  const candidateElementKeys = new Set(candidate.elements.map((element) => element.key));
+  const truthConnections = truth.connections.filter((edge) => relationshipKind(edge) === kind);
+  const candidateConnections = candidate.connections.filter((edge) => relationshipKind(edge) === kind);
+  const truthEdges = new Set(truthConnections.map((edge) => canonicalEdge(edge.a, edge.b)));
+  const candidateEdges = new Set(candidateConnections.map((edge) => canonicalEdge(edge.a, edge.b)));
+  let preserved = 0;
+  for (const edge of truthConnections) {
+    const a = truthToCandidate.get(edge.a) ?? (!truthElementKeys.has(edge.a) ? edge.a : undefined);
+    const b = truthToCandidate.get(edge.b) ?? (!truthElementKeys.has(edge.b) ? edge.b : undefined);
+    if (a && b && candidateEdges.has(canonicalEdge(a, b))) preserved += 1;
+  }
+  let validCandidate = 0;
+  for (const edge of candidateConnections) {
+    const a = candidateToTruth.get(edge.a) ?? (!candidateElementKeys.has(edge.a) ? edge.a : undefined);
+    const b = candidateToTruth.get(edge.b) ?? (!candidateElementKeys.has(edge.b) ? edge.b : undefined);
+    if (a && b && truthEdges.has(canonicalEdge(a, b))) validCandidate += 1;
+  }
+  const edgeRecall = truthEdges.size === 0 ? (candidateEdges.size === 0 ? 1 : 0) : preserved / truthEdges.size;
+  const edgePrecision = candidateEdges.size === 0 ? (truthEdges.size === 0 ? 1 : 0) : validCandidate / candidateEdges.size;
+  return f1(edgePrecision, edgeRecall);
 }
 
 function connectivityScore(
@@ -539,30 +727,14 @@ function connectivityScore(
   candidate: ExistingConditionsSnapshot,
   pairs: ExistingConditionsMatchedPair[]
 ): number {
-  const truthToCandidate = new Map(pairs.map((pair) => [pair.truth_key, pair.candidate_key]));
-  const candidateToTruth = new Map(pairs.map((pair) => [pair.candidate_key, pair.truth_key]));
-  const truthElementKeys = new Set(truth.elements.map((element) => element.key));
-  const candidateElementKeys = new Set(candidate.elements.map((element) => element.key));
-  const truthEdges = new Set(truth.connections.map((edge) => canonicalEdge(edge.a, edge.b)));
-  const candidateEdges = new Set(candidate.connections.map((edge) => canonicalEdge(edge.a, edge.b)));
-  let preserved = 0;
-  for (const edge of truth.connections) {
-    const a = truthToCandidate.get(edge.a) ?? (!truthElementKeys.has(edge.a) ? edge.a : undefined);
-    const b = truthToCandidate.get(edge.b) ?? (!truthElementKeys.has(edge.b) ? edge.b : undefined);
-    if (a && b && candidateEdges.has(canonicalEdge(a, b))) preserved += 1;
-  }
-  let validCandidate = 0;
-  for (const edge of candidate.connections) {
-    const a = candidateToTruth.get(edge.a) ?? (!candidateElementKeys.has(edge.a) ? edge.a : undefined);
-    const b = candidateToTruth.get(edge.b) ?? (!candidateElementKeys.has(edge.b) ? edge.b : undefined);
-    if (a && b && truthEdges.has(canonicalEdge(a, b))) validCandidate += 1;
-  }
-  const edgeRecall = truthEdges.size === 0 ? (candidateEdges.size === 0 ? 1 : 0) : preserved / truthEdges.size;
-  const edgePrecision = candidateEdges.size === 0 ? (truthEdges.size === 0 ? 1 : 0) : validCandidate / candidateEdges.size;
-  const edgeF1 = f1(edgePrecision, edgeRecall);
+  const edgeF1 = relationshipF1(truth, candidate, pairs, "physical");
   const openDenominator = Math.max(1, truth.open_connector_count, candidate.open_connector_count);
   const openScore = clamp01(1 - Math.abs(truth.open_connector_count - candidate.open_connector_count) / openDenominator);
   return 0.8 * edgeF1 + 0.2 * openScore;
+}
+
+function hasTruthRelationship(truth: ExistingConditionsSnapshot, kind: ExistingConditionsRelationshipKind): boolean {
+  return truth.connections.some((edge) => relationshipKind(edge) === kind);
 }
 
 function evidenceMap(receipts: ExistingConditionsEvidenceReceipt[]): Map<string, string> {
@@ -574,9 +746,21 @@ function validateRun(truth: ExistingConditionsGroundTruth, candidate: ExistingCo
   if (truth.schema_version !== 1 || candidate.schema_version !== 1) reasons.push("unsupported_schema_version");
   if (truth.fixture_id !== candidate.fixture_id) reasons.push("fixture_id_mismatch");
   if (truth.scope_id !== candidate.scope_id) reasons.push("scope_id_mismatch");
+  if (truth.discipline && candidate.discipline && normalized(truth.discipline) !== normalized(candidate.discipline)) reasons.push("discipline_mismatch");
   if (!truth.snapshot.native_readback || !candidate.snapshot.native_readback) reasons.push("missing_native_readback");
   if (truth.snapshot.elements.length === 0) reasons.push("empty_ground_truth");
   if (candidate.out_of_scope_changed_element_keys.length > 0) reasons.push("out_of_scope_write");
+  if (truth.evaluation_policy?.require_evaluator_change_receipt) {
+    const receipt = candidate.evaluator_change_receipt;
+    if (!receipt || !receipt.native_diff_readback || !/^[a-f0-9]{64}$/i.test(receipt.receipt_sha256 ?? "")) {
+      reasons.push("missing_evaluator_change_receipt");
+    } else if (receipt.out_of_scope_changed_element_keys.length > 0) {
+      reasons.push("out_of_scope_write");
+    }
+  }
+  if (!validateExistingConditionsEvaluatorVisualReceipt(candidate.visual_receipt)) {
+    reasons.push("missing_or_invalid_evaluator_visual_receipt");
+  }
   if (candidate.accessed_artifact_roles.some((role) => FORBIDDEN_AGENT_ARTIFACT_ROLES.has(normalized(role)))) {
     reasons.push("ground_truth_leakage_detected");
   }
@@ -608,18 +792,36 @@ export function scoreExistingConditionsReconstruction(
   const geometry = average(pairs.map((pair) => pair.geometry_score), 0);
   const attributes = average(pairs.map((pair) => pair.attribute_score), 0);
   const systems = average(pairs.map((pair) => pair.system_score), 0);
+  const spatial = average(pairs.map((pair) => pair.spatial_score), 0);
   const connectivity = pairs.length > 0 ? connectivityScore(truth.snapshot, candidate.snapshot, pairs) : 0;
-  const drawingEvidence = candidate.visual_receipt?.post_change_capture_sha256 &&
-    candidate.visual_receipt?.post_change_pdf_sha256 &&
-    candidate.visual_receipt?.review_status === "pass" ? 1 : 0;
-  const weightedScore = invalidReasons.length > 0 ? 0 : 100 * (
-    0.2 * elementF1 +
-    0.25 * geometry +
-    0.2 * attributes +
-    0.2 * connectivity +
-    0.1 * systems +
-    0.05 * drawingEvidence
-  );
+  const hosting = pairs.length > 0 ? relationshipF1(truth.snapshot, candidate.snapshot, pairs, "host") : 0;
+  const electricalCircuits = pairs.length > 0 ? relationshipF1(truth.snapshot, candidate.snapshot, pairs, "electrical_circuit") : 0;
+  const physicalConnectivityApplicable = hasTruthRelationship(truth.snapshot, "physical") || hasTruthRelationship(candidate.snapshot, "physical");
+  const systemsApplicable = truth.snapshot.elements.some((element) => normalized(element.system_classification) || normalized(element.system_type));
+  // Room/space membership is the spatial hard gate. Some linked-face-hosted Revit
+  // families expose no writable/readable level after a safe copy even when their
+  // world elevation and host are exact; level remains a reported pair metric but
+  // cannot by itself make an otherwise grounded reconstruction invalid.
+  const spatialApplicable = truth.snapshot.elements.some((element) => normalized(element.room_number) || normalized(element.space_number));
+  const hostingApplicable = hasTruthRelationship(truth.snapshot, "host") || hasTruthRelationship(candidate.snapshot, "host");
+  const electricalCircuitsApplicable = hasTruthRelationship(truth.snapshot, "electrical_circuit") || hasTruthRelationship(candidate.snapshot, "electrical_circuit");
+  const drawingEvidence = validateExistingConditionsEvaluatorVisualReceipt(candidate.visual_receipt) &&
+    candidate.visual_receipt?.evaluator_review.review_status === "pass" ? 1 : 0;
+  const weightedComponents = [
+    { weight: 0.15, value: elementF1, applicable: true },
+    { weight: 0.2, value: geometry, applicable: true },
+    { weight: 0.15, value: attributes, applicable: true },
+    { weight: 0.15, value: connectivity, applicable: physicalConnectivityApplicable },
+    { weight: 0.1, value: systems, applicable: systemsApplicable },
+    { weight: 0.08, value: spatial, applicable: spatialApplicable },
+    { weight: 0.07, value: hosting, applicable: hostingApplicable },
+    { weight: 0.05, value: electricalCircuits, applicable: electricalCircuitsApplicable },
+    { weight: 0.05, value: drawingEvidence, applicable: true }
+  ];
+  const activeWeight = weightedComponents.filter((entry) => entry.applicable).reduce((sum, entry) => sum + entry.weight, 0);
+  const weightedScore = invalidReasons.length > 0 || activeWeight <= 0
+    ? 0
+    : 100 * weightedComponents.filter((entry) => entry.applicable).reduce((sum, entry) => sum + entry.weight * entry.value, 0) / activeWeight;
   const failures: string[] = [];
   for (const reason of invalidReasons) failures.push(reason.split(":", 1)[0]!);
   if (invalidReasons.length === 0) {
@@ -628,7 +830,11 @@ export function scoreExistingConditionsReconstruction(
     if (precision < policy.minimum_precision) failures.push("false_positive_elements");
     if (geometry < 0.8) failures.push("geometry_mismatch");
     if (attributes < 0.8) failures.push("attribute_mismatch");
-    if (connectivity < policy.minimum_connectivity_score) failures.push("connectivity_mismatch");
+    if (physicalConnectivityApplicable && connectivity < policy.minimum_connectivity_score) failures.push("connectivity_mismatch");
+    if (systemsApplicable && systems < policy.minimum_system_score) failures.push("system_mismatch");
+    if (spatialApplicable && spatial < policy.minimum_spatial_score) failures.push("spatial_mismatch");
+    if (hostingApplicable && hosting < policy.minimum_hosting_score) failures.push("hosting_mismatch");
+    if (electricalCircuitsApplicable && electricalCircuits < policy.minimum_electrical_circuit_score) failures.push("electrical_circuit_mismatch");
     if (drawingEvidence < 1) failures.push("drawing_verification_missing");
     if (weightedScore < policy.passing_score) failures.push("score_below_threshold");
   }
@@ -636,7 +842,11 @@ export function scoreExistingConditionsReconstruction(
     weightedScore >= policy.passing_score &&
     precision >= policy.minimum_precision &&
     recall >= policy.minimum_recall &&
-    connectivity >= policy.minimum_connectivity_score &&
+    (!physicalConnectivityApplicable || connectivity >= policy.minimum_connectivity_score) &&
+    (!systemsApplicable || systems >= policy.minimum_system_score) &&
+    (!spatialApplicable || spatial >= policy.minimum_spatial_score) &&
+    (!hostingApplicable || hosting >= policy.minimum_hosting_score) &&
+    (!electricalCircuitsApplicable || electricalCircuits >= policy.minimum_electrical_circuit_score) &&
     drawingEvidence === 1;
   return {
     schema_version: 1,
@@ -662,7 +872,17 @@ export function scoreExistingConditionsReconstruction(
       attributes: round(attributes),
       connectivity: round(connectivity),
       systems: round(systems),
+      spatial: round(spatial),
+      hosting: round(hosting),
+      electrical_circuits: round(electricalCircuits),
       drawing_evidence: drawingEvidence
+    },
+    applicability: {
+      physical_connectivity: physicalConnectivityApplicable,
+      systems: systemsApplicable,
+      spatial: spatialApplicable,
+      hosting: hostingApplicable,
+      electrical_circuits: electricalCircuitsApplicable
     },
     matched_pairs: pairs,
     missed_truth_keys: missedTruthKeys,
@@ -706,6 +926,9 @@ function markdownScorecard(result: ExistingConditionsScore): string {
     `| Attributes | ${result.metrics.attributes.toFixed(3)} |`,
     `| Connectivity | ${result.metrics.connectivity.toFixed(3)} |`,
     `| Systems | ${result.metrics.systems.toFixed(3)} |`,
+    `| Spatial context | ${result.metrics.spatial.toFixed(3)} |`,
+    `| Hosting | ${result.metrics.hosting.toFixed(3)} |`,
+    `| Electrical circuits | ${result.metrics.electrical_circuits.toFixed(3)} |`,
     `| Drawing evidence | ${result.metrics.drawing_evidence.toFixed(3)} |`,
     "",
     "## Failure classifications",
@@ -742,7 +965,11 @@ export async function runExistingConditionsReconstructionEvaluation(
     { name: "run_is_leakage_and_scope_safe", ok: result.valid_run, expected: true, actual: result.invalid_reasons },
     { name: "element_precision_meets_threshold", ok: result.metrics.precision >= (policy.minimum_precision ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_precision), expected: policy.minimum_precision ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_precision, actual: result.metrics.precision },
     { name: "element_recall_meets_threshold", ok: result.metrics.recall >= (policy.minimum_recall ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_recall), expected: policy.minimum_recall ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_recall, actual: result.metrics.recall },
-    { name: "connectivity_meets_threshold", ok: result.metrics.connectivity >= (policy.minimum_connectivity_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_connectivity_score), expected: policy.minimum_connectivity_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_connectivity_score, actual: result.metrics.connectivity },
+    { name: "connectivity_meets_threshold", ok: !result.applicability.physical_connectivity || result.metrics.connectivity >= (policy.minimum_connectivity_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_connectivity_score), expected: policy.minimum_connectivity_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_connectivity_score, actual: result.metrics.connectivity },
+    { name: "systems_meet_threshold", ok: !result.applicability.systems || result.metrics.systems >= (policy.minimum_system_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_system_score), expected: policy.minimum_system_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_system_score, actual: result.metrics.systems },
+    { name: "spatial_context_meets_threshold", ok: !result.applicability.spatial || result.metrics.spatial >= (policy.minimum_spatial_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_spatial_score), expected: policy.minimum_spatial_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_spatial_score, actual: result.metrics.spatial },
+    { name: "hosting_meets_threshold", ok: !result.applicability.hosting || result.metrics.hosting >= (policy.minimum_hosting_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_hosting_score), expected: policy.minimum_hosting_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_hosting_score, actual: result.metrics.hosting },
+    { name: "electrical_circuits_meet_threshold", ok: !result.applicability.electrical_circuits || result.metrics.electrical_circuits >= (policy.minimum_electrical_circuit_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_electrical_circuit_score), expected: policy.minimum_electrical_circuit_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_electrical_circuit_score, actual: result.metrics.electrical_circuits },
     { name: "drawing_verification_present", ok: result.metrics.drawing_evidence === 1, expected: 1, actual: result.metrics.drawing_evidence },
     { name: "overall_reconstruction_passed", ok: result.passed, expected: true, actual: result.score }
   ];

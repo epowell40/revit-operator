@@ -203,11 +203,21 @@ namespace RevitBridge.Logic.Handlers.MEP
 
         private static bool ContainsHint(string normalizedValue, string[] hints)
         {
+            var tokens = normalizedValue
+                .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             foreach (var hint in hints)
             {
                 var h = NormalizeForMatch(hint);
                 if (h.Length == 0) continue;
                 if (normalizedValue.Equals(h, StringComparison.OrdinalIgnoreCase)) return true;
+                // Two-letter system abbreviations such as SA/RA/EA must match a
+                // complete token. Substring matching makes "sanitary" look like
+                // supply air because it begins with "sa".
+                if (h.Length <= 2)
+                {
+                    if (tokens.Any(token => token.Equals(h, StringComparison.OrdinalIgnoreCase))) return true;
+                    continue;
+                }
                 if (normalizedValue.IndexOf(h, StringComparison.OrdinalIgnoreCase) >= 0) return true;
             }
 

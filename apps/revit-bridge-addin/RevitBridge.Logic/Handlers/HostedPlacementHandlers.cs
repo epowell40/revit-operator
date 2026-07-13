@@ -674,6 +674,55 @@ namespace RevitBridge.Logic.Handlers
             return walls.FirstOrDefault(x => x.hostElementId == hostId) ?? walls.FirstOrDefault();
         }
 
+        internal static Element? ResolveFamilyInstanceHost(Document doc, FamilyInstance? instance)
+        {
+            if (instance == null) return null;
+            try
+            {
+                if (instance.Host != null) return instance.Host;
+            }
+            catch { }
+
+            try
+            {
+                var hostFace = instance.HostFace;
+                if (hostFace != null && hostFace.ElementId != ElementId.InvalidElementId)
+                    return doc.GetElement(hostFace.ElementId);
+            }
+            catch { }
+            return null;
+        }
+
+        internal static RoomWallResolution? ResolveLinkedFaceHostFallback(Document doc, Element? host, FamilyInstance? sourceInstance)
+        {
+            if (host is not RevitLinkInstance link || sourceInstance == null) return null;
+            Reference? hostFace;
+            try { hostFace = sourceInstance.HostFace; } catch { hostFace = null; }
+            if (hostFace == null || hostFace.ElementId != link.Id || hostFace.LinkedElementId == ElementId.InvalidElementId) return null;
+
+            var linkedElement = link.GetLinkDocument()?.GetElement(hostFace.LinkedElementId);
+            if (linkedElement == null) return null;
+            var point = TryGetElementPoint(sourceInstance) ?? XYZ.Zero;
+            XYZ tangent;
+            try { tangent = sourceInstance.HandOrientation; } catch { tangent = XYZ.BasisX; }
+            if (tangent == null || tangent.GetLength() <= 1e-9) tangent = XYZ.BasisX;
+            else tangent = tangent.Normalize();
+
+            return new RoomWallResolution
+            {
+                hostElementId = ElementIdCompat.GetValue(link.Id),
+                boundaryElementId = ElementIdCompat.GetValue(hostFace.LinkedElementId),
+                linkedElementId = ElementIdCompat.GetValue(hostFace.LinkedElementId),
+                hostElement = link,
+                boundaryElement = linkedElement,
+                midpoint = point,
+                projectedRoomPoint = point,
+                tangent = tangent,
+                boundaryLengthFt = 0.0,
+                supportsPlacement = true
+            };
+        }
+
         internal static string? BuildPlacementPreviewSecondaryText(HostLocalFrameData? frame, Element? orientationElement = null)
         {
             if (frame == null) return null;
@@ -1234,149 +1283,51 @@ namespace RevitBridge.Logic.Handlers
         {
             if (host is not RevitLinkInstance link || roomWall?.linkedElementId == null || roomWall.linkedElementId.Value <= 0)
                 return null;
-
-            var linkDoc = link.GetLinkDocument();
-            if (linkDoc == null)
-            {
-                warnings.Add("Linked face placement was requested, but the linked document is not available.");
-                return null;
-            }
-
-            var linkedElement = linkDoc.GetElement(ElementIdCompat.Create(roomWall.linkedElementId.Value));
-            if (linkedElement == null)
-            {
-                warnings.Add($"Linked face placement could not find linked element {roomWall.linkedElementId.Value}.");
-                return null;
-            }
-
-            var transform = GetLinkTransform(link);
-            var inverse = transform.Inverse;
-            var pointInLink = inverse.OfPoint(worldPoint);
-            var interior = roomWall.interiorDirection != null && roomWall.interiorDirection.GetLength() > 1e-9
-                ? roomWall.interiorDirection.Normalize()
-                : null;
             var preferredDirection = preferredReferenceDirection != null && preferredReferenceDirection.GetLength() > 1e-9
                 ? preferredReferenceDirection.Normalize()
                 : roomWall.tangent != null && roomWall.tangent.GetLength() > 1e-9
                     ? roomWall.tangent.Normalize()
                     : XYZ.BasisX;
 
-            PlanarFace? bestFace = null;
-            Reference? bestReference = null;
-            XYZ bestPoint = worldPoint;
-            XYZ bestDirection = preferredDirection;
-            double bestScore = double.MaxValue;
-            double bestDistance = double.MaxValue;
-
-            foreach (var face in EnumeratePlanarFacesWithReferences(linkedElement))
+            var referenceView = LinkedFaceReferenceUtil.FindReferenceView(host.Document);
+            if (referenceView == null)
             {
-                if (face.Reference == null) continue;
-                var normalHost = transform.OfVector(face.FaceNormal);
-                if (normalHost.GetLength() <= 1e-9) continue;
-                normalHost = normalHost.Normalize();
-                if (Math.Abs(normalHost.Z) > 0.35) continue;
-
-                IntersectionResult? projection = null;
-                try { projection = face.Project(pointInLink); } catch { projection = null; }
-                if (projection == null) continue;
-
-                var projectedHost = transform.OfPoint(projection.XYZPoint);
-                var distance = projectedHost.DistanceTo(worldPoint);
-                var interiorPenalty = interior == null ? 0.0 : Math.Max(0.0, -normalHost.DotProduct(interior)) * 0.5;
-                var score = distance + interiorPenalty;
-                if (score >= bestScore) continue;
-
-                Reference? linkReference = null;
-                try { linkReference = face.Reference.CreateLinkReference(link); } catch { linkReference = null; }
-                if (linkReference == null) continue;
-
-                var direction = preferredDirection;
-                if (Math.Abs(direction.DotProduct(normalHost)) > 0.95)
-                {
-                    direction = roomWall.tangent != null && roomWall.tangent.GetLength() > 1e-9
-                        ? roomWall.tangent.Normalize()
-                        : normalHost.CrossProduct(XYZ.BasisZ);
-                    if (direction.GetLength() <= 1e-9) direction = normalHost.CrossProduct(XYZ.BasisX);
-                    if (direction.GetLength() > 1e-9) direction = direction.Normalize();
-                }
-                if (direction.GetLength() <= 1e-9 || Math.Abs(direction.DotProduct(normalHost)) > 0.95)
-                    continue;
-
-                bestFace = face;
-                bestReference = linkReference;
-                bestPoint = projectedHost;
-                bestDirection = direction;
-                bestScore = score;
-                bestDistance = distance;
+                warnings.Add("Linked face placement requires a non-template 3D reference view, but none was available.");
+                return null;
             }
 
-            if (bestFace == null || bestReference == null)
+            if (!LinkedFaceReferenceUtil.TryResolve(
+                    host.Document,
+                    referenceView,
+                    link,
+                    ElementIdCompat.Create(roomWall.linkedElementId.Value),
+                    worldPoint,
+                    preferredDirection,
+                    out var resolution,
+                    out var error,
+                    searchRadiusFt: 4.0,
+                    maximumResolvedDisplacementFt: 1.0,
+                    maximumVerticalDisplacementFt: 0.5,
+                    requireVerticalFace: true) || resolution == null)
             {
-                warnings.Add($"Linked face placement could not resolve a wall face reference for linked element {roomWall.linkedElementId.Value} near the target point.");
+                warnings.Add($"Linked face placement could not resolve linked element {roomWall.linkedElementId.Value}: {error}");
                 return null;
             }
 
             return new FaceHostedPlacementReference
             {
-                faceReference = bestReference,
-                placementPoint = bestPoint,
-                referenceDirection = bestDirection,
+                faceReference = resolution.FaceReference,
+                placementPoint = resolution.PlacementPoint,
+                referenceDirection = resolution.ReferenceDirection,
                 basis = "linked_face_reference",
                 linkedElementId = roomWall.linkedElementId,
-                faceDistanceFt = bestDistance
+                faceDistanceFt = resolution.DistanceFt
             };
         }
 
         internal static bool RequiresLinkedFaceHostedPlacement(Element host, RoomWallResolution? roomWall)
         {
             return host is RevitLinkInstance && roomWall?.linkedElementId != null && roomWall.linkedElementId.Value > 0;
-        }
-
-        private static Transform GetLinkTransform(RevitLinkInstance link)
-        {
-            try { return link.GetTotalTransform(); } catch { }
-            try { return link.GetTransform(); } catch { }
-            return Transform.Identity;
-        }
-
-        private static IEnumerable<PlanarFace> EnumeratePlanarFacesWithReferences(Element element)
-        {
-            var opts = new Options
-            {
-                ComputeReferences = true,
-                IncludeNonVisibleObjects = true,
-                DetailLevel = ViewDetailLevel.Fine
-            };
-
-            GeometryElement? geometry = null;
-            try { geometry = element.get_Geometry(opts); } catch { geometry = null; }
-            if (geometry == null) yield break;
-
-            foreach (var face in EnumeratePlanarFacesWithReferences(geometry))
-                yield return face;
-        }
-
-        private static IEnumerable<PlanarFace> EnumeratePlanarFacesWithReferences(GeometryElement geometry)
-        {
-            foreach (var obj in geometry)
-            {
-                if (obj is Solid solid)
-                {
-                    foreach (Face face in solid.Faces)
-                    {
-                        if (face is PlanarFace planar && planar.Reference != null)
-                            yield return planar;
-                    }
-                }
-                else if (obj is GeometryInstance instance)
-                {
-                    GeometryElement? nested = null;
-                    try { nested = instance.GetInstanceGeometry(); } catch { nested = null; }
-                    if (nested == null) continue;
-                    foreach (var face in EnumeratePlanarFacesWithReferences(nested))
-                        yield return face;
-                }
-            }
         }
 
         internal static double ViewPlaneDistanceFt(View view, XYZ a, XYZ b)
@@ -2695,7 +2646,8 @@ namespace RevitBridge.Logic.Handlers
             var requestedHost = doc.GetElement(ElementIdCompat.Create(p.hostElementId)) ?? throw new InvalidOperationException($"Host element {p.hostElementId} not found.");
             var host = HostedPlacementUtil.ResolveSupportedPlacementHost(doc, previewView, requestedHost, referenceElement ?? sourceElement, p.roomId, p.roomNumber, p.roomSide, warnings, "hosted placement");
             var level = HostedPlacementUtil.ResolveLevel(doc, p.levelName, sourceElement, host) ?? throw new InvalidOperationException("Unable to resolve level.");
-            var roomWall = HostedPlacementUtil.ResolveRoomWallForHost(doc, previewView, host, p.roomId, p.roomNumber, p.roomSide);
+            var roomWall = HostedPlacementUtil.ResolveRoomWallForHost(doc, previewView, host, p.roomId, p.roomNumber, p.roomSide)
+                ?? HostedPlacementUtil.ResolveLinkedFaceHostFallback(doc, host, sourceElement as FamilyInstance);
 
             var basePoint = (p.pointXyz != null && p.pointXyz.Length >= 3)
                 ? new XYZ(p.pointXyz[0], p.pointXyz[1], p.pointXyz[2])
@@ -3056,7 +3008,7 @@ namespace RevitBridge.Logic.Handlers
             var symbol = doc.GetElement(exemplar.GetTypeId()) as FamilySymbol ?? throw new InvalidOperationException("Exemplar type is not a FamilySymbol.");
             var requestedHost = p.hostElementId.HasValue && p.hostElementId.Value > 0
                 ? doc.GetElement(ElementIdCompat.Create(p.hostElementId.Value))
-                : exemplarFi.Host;
+                : HostedPlacementUtil.ResolveFamilyInstanceHost(doc, exemplarFi);
             var orientationSource = p.orientationSourceElementId.HasValue && p.orientationSourceElementId.Value > 0
                 ? doc.GetElement(ElementIdCompat.Create(p.orientationSourceElementId.Value))
                 : exemplar;
@@ -3069,7 +3021,8 @@ namespace RevitBridge.Logic.Handlers
             if (requestedHost == null) throw new InvalidOperationException("No host element was available for create-similar.");
             var host = HostedPlacementUtil.ResolveSupportedPlacementHost(doc, previewView, requestedHost, referenceElement ?? exemplar, p.roomId, p.roomNumber, p.roomSide, warnings, "create-similar");
             var level = HostedPlacementUtil.ResolveLevel(doc, p.levelName, exemplar, host) ?? throw new InvalidOperationException("Unable to resolve level.");
-            var roomWall = HostedPlacementUtil.ResolveRoomWallForHost(doc, previewView, host, p.roomId, p.roomNumber, p.roomSide);
+            var roomWall = HostedPlacementUtil.ResolveRoomWallForHost(doc, previewView, host, p.roomId, p.roomNumber, p.roomSide)
+                ?? HostedPlacementUtil.ResolveLinkedFaceHostFallback(doc, host, exemplarFi);
 
             var requestedPlacements = new List<PlacementInput>();
             if (p.placements != null && p.placements.Count > 0) requestedPlacements.AddRange(p.placements.Where(x => x != null));
@@ -3094,6 +3047,7 @@ namespace RevitBridge.Logic.Handlers
             string? transactionStatus = null;
             var exemplarPoint = HostedPlacementUtil.TryGetElementPoint(exemplar);
             var exemplarElectricalCircuit = HostedPlacementUtil.BuildElectricalCircuitAuditPayload(exemplarFi);
+            var usedCopiedLinkedHostFallback = false;
 
             string BuildCommitFailureText()
             {
@@ -3192,21 +3146,40 @@ namespace RevitBridge.Logic.Handlers
                         roomWall?.tangent,
                         warnings
                     );
-                    if (HostedPlacementUtil.RequiresLinkedFaceHostedPlacement(host, roomWall) && facePlacement == null)
-                    {
-                        throw new InvalidOperationException(
-                            $"Linked-wall hosted placement requires a resolved face reference for linked element {roomWall?.linkedElementId}. Refusing to fall back to generic RevitLinkInstance host placement because Revit can create an unhosted/off-room device."
-                        );
-                    }
+                    var canCopyLinkedHostedExemplar = facePlacement == null &&
+                        host is RevitLinkInstance &&
+                        exemplarPoint != null &&
+                        HostedPlacementUtil.ResolveFamilyInstanceHost(doc, exemplarFi)?.Id == host.Id;
+                    if (HostedPlacementUtil.RequiresLinkedFaceHostedPlacement(host, roomWall) && facePlacement == null && !canCopyLinkedHostedExemplar)
+                        throw new InvalidOperationException($"Linked-wall hosted placement requires a resolved face reference for linked element {roomWall?.linkedElementId} or a hosted exemplar that can be copied without losing its host.");
                     var placementPointForCreate = facePlacement?.placementPoint ?? finalPoint;
                     var apiPoint = facePlacement?.placementPoint ?? HostedPlacementUtil.ConvertWorldPointForHost(host, finalPoint);
-                    var created = facePlacement != null
-                        ? doc.Create.NewFamilyInstance(facePlacement.faceReference, placementPointForCreate, facePlacement.referenceDirection, symbol)
-                        : doc.Create.NewFamilyInstance(apiPoint, symbol, host, level, StructuralType.NonStructural);
+                    var copiedLinkedHostedExemplar = false;
+                    FamilyInstance created;
+                    if (facePlacement != null)
+                    {
+                        created = doc.Create.NewFamilyInstance(facePlacement.faceReference, placementPointForCreate, facePlacement.referenceDirection, symbol);
+                    }
+                    else if (canCopyLinkedHostedExemplar)
+                    {
+                        var copiedIds = ElementTransformUtils.CopyElement(doc, exemplar.Id, finalPoint - exemplarPoint!);
+                        created = copiedIds.Select(id => doc.GetElement(id)).OfType<FamilyInstance>().FirstOrDefault()
+                            ?? throw new InvalidOperationException("Copying the linked-face hosted exemplar did not produce a FamilyInstance.");
+                        doc.Regenerate();
+                        if (HostedPlacementUtil.ResolveFamilyInstanceHost(doc, created)?.Id != host.Id)
+                            throw new InvalidOperationException("Copying the linked-face hosted exemplar did not preserve its RevitLinkInstance host.");
+                        copiedLinkedHostedExemplar = true;
+                        usedCopiedLinkedHostFallback = true;
+                        apiPoint = finalPoint;
+                    }
+                    else
+                    {
+                        created = doc.Create.NewFamilyInstance(apiPoint, symbol, host, level, StructuralType.NonStructural);
+                    }
                     HostedPlacementUtil.CopyParameters(exemplar, created, p.parameterNamesToCopy, warnings);
                     HostedPlacementUtil.ApplyParameterValues(created, p.parameterOverrides, warnings);
                     var matchOrientation = p.matchOrientationFromSource ?? true;
-                    if (facePlacement == null)
+                    if (facePlacement == null && !copiedLinkedHostedExemplar)
                     {
                         HostedPlacementUtil.ApplyRotationAndFlip(
                             matchOrientation ? orientationSource : exemplar,
@@ -3216,7 +3189,7 @@ namespace RevitBridge.Logic.Handlers
                             warnings
                         );
                     }
-                    else if (matchOrientation && (p.copyRotation || p.copyFacingHandState))
+                    else if (facePlacement != null && matchOrientation && (p.copyRotation || p.copyFacingHandState))
                     {
                         warnings.Add("Skipped post-placement rotate/flip because the face-hosted placement reference already defines orientation; forcing rotation can make Revit roll back linked-face placements.");
                     }
@@ -3242,6 +3215,25 @@ namespace RevitBridge.Logic.Handlers
                     createdIds.Add(createdId);
                     var frame = HostedPlacementUtil.BuildHostLocalFrameData(host, roomWall, finalPoint);
                     var framePayload = HostedPlacementUtil.BuildHostLocalFramePayload(frame, matchOrientation ? orientationSource : exemplar);
+                    object? placementReferencePayload = facePlacement != null
+                        ? new
+                        {
+                            basis = facePlacement.basis,
+                            linkedElementId = facePlacement.linkedElementId,
+                            faceDistanceFt = facePlacement.faceDistanceFt,
+                            point = HostedPlacementUtil.BuildVector(facePlacement.placementPoint),
+                            referenceDirection = HostedPlacementUtil.BuildVector(facePlacement.referenceDirection)
+                        }
+                        : copiedLinkedHostedExemplar
+                            ? new
+                            {
+                                basis = "copied_linked_face_host",
+                                linkedElementId = roomWall?.linkedElementId,
+                                faceDistanceFt = 0.0,
+                                point = HostedPlacementUtil.BuildVector(finalPoint),
+                                referenceDirection = HostedPlacementUtil.BuildVector(roomWall?.tangent)
+                            }
+                            : null;
                     resultRows.Add(new
                     {
                         index = i,
@@ -3249,14 +3241,7 @@ namespace RevitBridge.Logic.Handlers
                         temporaryElementId = createdId,
                         placementPoint = new { x = finalPoint.X, y = finalPoint.Y, z = finalPoint.Z },
                         apiPlacementPoint = new { x = apiPoint.X, y = apiPoint.Y, z = apiPoint.Z },
-                        placementReference = facePlacement == null ? null : new
-                        {
-                            basis = facePlacement.basis,
-                            linkedElementId = facePlacement.linkedElementId,
-                            faceDistanceFt = facePlacement.faceDistanceFt,
-                            point = HostedPlacementUtil.BuildVector(facePlacement.placementPoint),
-                            referenceDirection = HostedPlacementUtil.BuildVector(facePlacement.referenceDirection)
-                        },
+                        placementReference = placementReferencePayload,
                         alongHostOffsetFt = item.alongHostOffsetFt,
                         targetChainageFt = item.targetChainageFt,
                         targetNormalizedChainage = item.targetNormalizedChainage,
@@ -3265,6 +3250,44 @@ namespace RevitBridge.Logic.Handlers
                         label = item.label
                     });
                 }
+            }
+
+            void VerifyCopiedLinkedHostFallback()
+            {
+                if (!usedCopiedLinkedHostFallback) return;
+                if (!(host is RevitLinkInstance linkHost))
+                    throw new InvalidOperationException("Copied linked-host fallback requires a RevitLinkInstance host.");
+                if (createdIds.Count != plannedPoints.Count)
+                    throw new InvalidOperationException("Copied linked-host fallback verification could not pair every created element with its requested point.");
+
+                for (var i = 0; i < createdIds.Count; i++)
+                {
+                    var created = doc.GetElement(ElementIdCompat.Create(createdIds[i])) as FamilyInstance
+                        ?? throw new InvalidOperationException($"Copied linked-host fallback element {createdIds[i]} is missing or is not a FamilyInstance.");
+                    var createdHost = HostedPlacementUtil.ResolveFamilyInstanceHost(doc, created);
+                    if (createdHost?.Id != linkHost.Id)
+                        throw new InvalidOperationException($"Copied linked-host fallback element {createdIds[i]} did not preserve RevitLinkInstance host {ElementIdCompat.GetValue(linkHost.Id)}.");
+                    var actualPoint = HostedPlacementUtil.TryGetElementPoint(created)
+                        ?? throw new InvalidOperationException($"Copied linked-host fallback element {createdIds[i]} has no verifiable insertion point.");
+                    var distance = actualPoint.DistanceTo(plannedPoints[i]);
+                    if (distance > 0.05)
+                        throw new InvalidOperationException($"Copied linked-host fallback element {createdIds[i]} is {distance:0.###} ft from its requested point; maximum is 0.05 ft.");
+                }
+
+                warnings.Add("The linked model is unloaded, so linked room/side evidence is unavailable. Verified the copied instance by exact RevitLinkInstance host and requested world point instead.");
+            }
+
+            HostedPlacementUtil.PlacementValidationSummary ValidateRows()
+            {
+                VerifyCopiedLinkedHostFallback();
+                return HostedPlacementUtil.ValidateCreatedPlacements(
+                    app,
+                    createdIds,
+                    usedCopiedLinkedHostFallback ? null : p.roomId,
+                    usedCopiedLinkedHostFallback ? null : p.roomNumber,
+                    usedCopiedLinkedHostFallback ? null : p.roomSide,
+                    warnings
+                );
             }
 
             if (p.dryRun)
@@ -3277,14 +3300,7 @@ namespace RevitBridge.Logic.Handlers
                         tx.Start();
                         CreateRows();
                         doc.Regenerate();
-                        placementValidation = HostedPlacementUtil.ValidateCreatedPlacements(
-                            app,
-                            createdIds,
-                            p.roomId,
-                            p.roomNumber,
-                            p.roomSide,
-                            warnings
-                        );
+                        placementValidation = ValidateRows();
                         tx.Commit();
                     }
 
@@ -3342,14 +3358,7 @@ namespace RevitBridge.Logic.Handlers
                     tx.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(tx, failures, rollbackOnErrors: true, deleteWarnings: true));
                     CreateRows();
                     doc.Regenerate();
-                    placementValidation = HostedPlacementUtil.ValidateCreatedPlacements(
-                        app,
-                        createdIds,
-                        p.roomId,
-                        p.roomNumber,
-                        p.roomSide,
-                        warnings
-                    );
+                    placementValidation = ValidateRows();
                     if (placementValidation.valid == false)
                     {
                         tx.RollBack();
@@ -3776,12 +3785,13 @@ namespace RevitBridge.Logic.Handlers
             var doc = uidoc.Document;
             var element = doc.GetElement(ElementIdCompat.Create(p.elementId)) ?? throw new InvalidOperationException($"Element {p.elementId} not found.");
             var familyInstance = element as FamilyInstance ?? throw new InvalidOperationException("elementId must reference a FamilyInstance.");
-            var host = familyInstance.Host ?? throw new InvalidOperationException("Hosted adjustment requires a FamilyInstance host.");
+            var host = HostedPlacementUtil.ResolveFamilyInstanceHost(doc, familyInstance) ?? throw new InvalidOperationException("Hosted adjustment requires a FamilyInstance host.");
             if (!HostedPlacementUtil.IsSupportedPlacementHost(host))
                 throw new InvalidOperationException($"Unsupported host element: {host.Category?.Name ?? host.GetType().Name}.");
 
             var previewView = HostedPlacementUtil.ResolveView(doc, uidoc.ActiveView, p.previewViewId) ?? uidoc.ActiveView;
-            var roomWall = HostedPlacementUtil.ResolveRoomWallForHost(doc, previewView, host, p.roomId, p.roomNumber, p.roomSide);
+            var roomWall = HostedPlacementUtil.ResolveRoomWallForHost(doc, previewView, host, p.roomId, p.roomNumber, p.roomSide)
+                ?? HostedPlacementUtil.ResolveLinkedFaceHostFallback(doc, host, familyInstance);
             var warnings = new List<string>();
             var currentPoint = HostedPlacementUtil.TryGetElementPoint(element) ?? throw new InvalidOperationException("Unable to resolve element insertion point.");
             var currentFrame = HostedPlacementUtil.BuildHostLocalFrameData(host, roomWall, currentPoint);

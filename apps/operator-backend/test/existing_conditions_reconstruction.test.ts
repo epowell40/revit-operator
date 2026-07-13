@@ -10,6 +10,9 @@ import {
 import { MockBridgeTransport, runRevitDemoWorkflow } from "../src/benchmark/revit_workflows.js";
 import fs from "node:fs";
 import path from "node:path";
+import { createExistingConditionsEvaluatorVisualReceipt } from "../src/existing_conditions/evaluator_visual.js";
+
+const SOURCE_HASH = "a".repeat(64);
 
 function duct(key: string, y = 10, size = 1): ExistingConditionsElement {
   return {
@@ -32,7 +35,7 @@ function truth(elements = [duct("truth-a"), duct("truth-b", 20)]): ExistingCondi
     schema_version: 1,
     fixture_id: "snowdon-m104-unit403-duct-v1",
     scope_id: "m104-unit403",
-    visible_evidence: [{ role: "source_pdf", sha256: "abc123" }],
+    visible_evidence: [{ role: "source_pdf", sha256: SOURCE_HASH }],
     snapshot: {
       native_readback: true,
       elements,
@@ -47,7 +50,7 @@ function candidate(elements = [duct("new-901"), duct("new-902", 20)]): ExistingC
     schema_version: 1,
     fixture_id: "snowdon-m104-unit403-duct-v1",
     scope_id: "m104-unit403",
-    visible_evidence: [{ role: "source_pdf", sha256: "abc123" }],
+    visible_evidence: [{ role: "source_pdf", sha256: SOURCE_HASH }],
     accessed_artifact_roles: ["agent_visible_package", "source_pdf", "redacted_model"],
     out_of_scope_changed_element_keys: [],
     snapshot: {
@@ -56,11 +59,11 @@ function candidate(elements = [duct("new-901"), duct("new-902", 20)]): ExistingC
       connections: elements.length > 1 ? [{ a: elements[0]!.key, b: elements[1]!.key }] : [],
       open_connector_count: 2
     },
-    visual_receipt: {
-      post_change_capture_sha256: "capture",
-      post_change_pdf_sha256: "pdf",
+    visual_receipt: createExistingConditionsEvaluatorVisualReceipt({
+      post_change_capture_sha256: "b".repeat(64),
+      post_change_pdf_sha256: "c".repeat(64),
       review_status: "pass"
-    }
+    })
   };
 }
 
@@ -117,6 +120,25 @@ test("invalidates changed evidence and out-of-scope writes", () => {
   assert.equal(result.valid_run, false);
   assert.equal(result.invalid_reasons.includes("visible_evidence_changed:source_pdf"), true);
   assert.equal(result.invalid_reasons.includes("out_of_scope_write"), true);
+});
+
+test("future fixtures can require an evaluator-owned native scope-diff receipt", () => {
+  const expected = truth();
+  expected.evaluation_policy = { require_evaluator_change_receipt: true };
+  const missing = scoreExistingConditionsReconstruction(expected, candidate());
+  assert.equal(missing.valid_run, false);
+  assert.equal(missing.invalid_reasons.includes("missing_evaluator_change_receipt"), true);
+
+  const evaluated = candidate();
+  evaluated.evaluator_change_receipt = {
+    native_diff_readback: true,
+    changed_element_keys: ["new-901", "new-902"],
+    out_of_scope_changed_element_keys: [],
+    receipt_sha256: "d".repeat(64)
+  };
+  const accepted = scoreExistingConditionsReconstruction(expected, evaluated);
+  assert.equal(accepted.valid_run, true);
+  assert.equal(accepted.passed, true);
 });
 
 test("reports missing native connector topology", () => {
@@ -182,7 +204,7 @@ test("normalizes visible-element and connector readback into a scoring snapshot"
   assert.equal(snapshot.native_readback, true);
   assert.equal(snapshot.elements[0]?.kind, "mep_curve");
   assert.equal(snapshot.elements[0]?.size?.width_ft, 1);
-  assert.deepEqual(snapshot.connections, [{ a: "host:101", b: "host:90" }]);
+  assert.deepEqual(snapshot.connections, [{ a: "host:101", b: "host:90", kind: "physical" }]);
   assert.equal(snapshot.open_connector_count, 1);
 });
 
@@ -227,4 +249,139 @@ test("does not mistake MEPSystem AllRefs membership for a physical connector", (
   assert.equal(snapshot.native_readback, true);
   assert.deepEqual(snapshot.connections, []);
   assert.equal(snapshot.open_connector_count, 1);
+});
+
+test("normalizes hosted electrical devices and real power-system membership", () => {
+  const snapshot = normalizeExistingConditionsSnapshot(
+    {
+      items: [{
+        id: 501,
+        sourceScopedId: "host:501",
+        category: "Electrical Fixtures",
+        familyName: "Duplex Receptacle",
+        typeName: "Duplex",
+        levelName: "L4",
+        point: { x: 4, y: 5, z: 3 },
+        room: { number: "403" },
+        hostResolvedScopedId: "link:44:990",
+        electricalCircuit: {
+          panel: "LP4",
+          circuitNumber: "17",
+          systemIds: [701],
+          powerSystemIds: [701],
+          exactPowerSystemCount: 1
+        }
+      }]
+    },
+    { status: "Ok", results: [] },
+    { selected_element_ids: [501], require_connector_readback: false }
+  );
+  assert.equal(snapshot.native_readback, true);
+  assert.equal(snapshot.elements[0]?.discipline, "electrical");
+  assert.equal(snapshot.elements[0]?.role, "electrical_device");
+  assert.equal(snapshot.elements[0]?.room_number, "403");
+  assert.equal(snapshot.elements[0]?.host_key, "link:44:990");
+  assert.deepEqual(snapshot.elements[0]?.electrical?.power_system_ids, ["electrical-system:701"]);
+  assert.deepEqual(snapshot.connections, [
+    { a: "host:501", b: "link:44:990", kind: "host" },
+    { a: "electrical-system:701", b: "host:501", kind: "electrical_circuit" }
+  ]);
+});
+
+function electricalDevice(key: string, x: number, host = "link:44:990", system = "electrical-system:701"): ExistingConditionsElement {
+  return {
+    key,
+    kind: "family_instance",
+    discipline: "electrical",
+    role: "electrical_device",
+    category: "Electrical Fixtures",
+    family: "Duplex Receptacle",
+    type: "Duplex",
+    location: { x, y: 5, z: 3 },
+    rotation_degrees: 90,
+    level_name: "L4",
+    room_number: "403",
+    host_key: host,
+    electrical: {
+      panel: "LP4",
+      circuit_number: "17",
+      primary_label: "LP4/17",
+      system_ids: [system],
+      power_system_ids: [system],
+      exact_power_system_count: 1
+    }
+  };
+}
+
+test("scores electrical layout, host, room, orientation, and exact circuit relationship", () => {
+  const expected = truth([electricalDevice("truth-device", 4)]);
+  expected.discipline = "electrical";
+  expected.snapshot.connections = [
+    { a: "truth-device", b: "link:44:990", kind: "host" },
+    { a: "truth-device", b: "electrical-system:701", kind: "electrical_circuit" }
+  ];
+  expected.snapshot.open_connector_count = 0;
+  const actual = candidate([electricalDevice("new-device", 4)]);
+  actual.discipline = "electrical";
+  actual.snapshot.connections = [
+    { a: "new-device", b: "link:44:990", kind: "host" },
+    { a: "new-device", b: "electrical-system:701", kind: "electrical_circuit" }
+  ];
+  actual.snapshot.open_connector_count = 0;
+  const result = scoreExistingConditionsReconstruction(expected, actual);
+  assert.equal(result.passed, true);
+  assert.equal(result.score, 100);
+  assert.equal(result.metrics.hosting, 1);
+  assert.equal(result.metrics.electrical_circuits, 1);
+  assert.deepEqual(result.applicability, { physical_connectivity: false, systems: false, spatial: true, hosting: true, electrical_circuits: true });
+});
+
+test("level-only evidence does not hard-fail an exact linked-hosted reconstruction", () => {
+  const expectedDevice = electricalDevice("truth-device", 4);
+  expectedDevice.room_number = null;
+  const actualDevice = electricalDevice("new-device", 4);
+  actualDevice.room_number = null;
+  actualDevice.level_name = null;
+  const result = scoreExistingConditionsReconstruction(truth([expectedDevice]), candidate([actualDevice]));
+  assert.equal(result.applicability.spatial, false);
+  assert.equal(result.failure_classifications.includes("spatial_mismatch"), false);
+  assert.equal(result.passed, true);
+});
+
+test("panel and circuit labels do not substitute for real electrical-system membership", () => {
+  const expected = truth([electricalDevice("truth-device", 4)]);
+  expected.snapshot.connections = [{ a: "truth-device", b: "electrical-system:701", kind: "electrical_circuit" }];
+  expected.snapshot.open_connector_count = 0;
+  const labelOnly = electricalDevice("new-device", 4);
+  labelOnly.electrical = { ...labelOnly.electrical, system_ids: [], power_system_ids: [], exact_power_system_count: 0 };
+  const actual = candidate([labelOnly]);
+  actual.snapshot.connections = [];
+  actual.snapshot.open_connector_count = 0;
+  const result = scoreExistingConditionsReconstruction(expected, actual);
+  assert.equal(result.passed, false);
+  assert.equal(result.metrics.electrical_circuits, 0);
+  assert.equal(result.failure_classifications.includes("electrical_circuit_mismatch"), true);
+});
+
+test("wrong device host fails independently of otherwise matching geometry", () => {
+  const expected = truth([electricalDevice("truth-device", 4)]);
+  expected.snapshot.connections = [{ a: "truth-device", b: "link:44:990", kind: "host" }];
+  expected.snapshot.open_connector_count = 0;
+  const actual = candidate([electricalDevice("new-device", 4, "link:44:991")]);
+  actual.snapshot.connections = [{ a: "new-device", b: "link:44:991", kind: "host" }];
+  actual.snapshot.open_connector_count = 0;
+  const result = scoreExistingConditionsReconstruction(expected, actual);
+  assert.equal(result.passed, false);
+  assert.equal(result.metrics.hosting, 0);
+  assert.equal(result.failure_classifications.includes("hosting_mismatch"), true);
+});
+
+test("a wrong MEP system cannot pass on geometry and attributes alone", () => {
+  const wrongSystem = duct("new");
+  wrongSystem.system_classification = "Return Air";
+  wrongSystem.system_type = "Return Air 1";
+  const result = scoreExistingConditionsReconstruction(truth([duct("truth")]), candidate([wrongSystem]));
+  assert.equal(result.passed, false);
+  assert.equal(result.metrics.systems, 0);
+  assert.equal(result.failure_classifications.includes("system_mismatch"), true);
 });

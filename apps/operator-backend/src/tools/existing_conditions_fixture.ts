@@ -8,6 +8,20 @@ import {
   type ExistingConditionsGroundTruth,
   type ExistingConditionsSnapshot
 } from "../benchmark/existing_conditions_reconstruction.js";
+import {
+  advanceExistingConditionsController,
+  createExistingConditionsControllerState,
+  getExistingConditionsControllerNextAction,
+  type ExistingConditionsControllerEvent,
+  type ExistingConditionsControllerState
+} from "../existing_conditions/controller.js";
+import { createExistingConditionsEvaluatorChangeReceipt } from "../existing_conditions/evaluator_diff.js";
+import {
+  createExistingConditionsEvaluatorVisualReceipt,
+  validateExistingConditionsEvaluatorVisualReceipt,
+  type ExistingConditionsEvaluatorVisualReceipt
+} from "../existing_conditions/evaluator_visual.js";
+import { assertExistingConditionsContract } from "../existing_conditions/contract_validation.js";
 
 function argument(name: string): string {
   const index = process.argv.indexOf(name);
@@ -30,6 +44,29 @@ function parseIds(value: string): number[] {
   return [...new Set(ids)];
 }
 
+function parseCsv(value: string, label: string): string[] {
+  const values = value.split(",").map((entry) => entry.trim()).filter(Boolean);
+  if (values.length === 0) throw new Error(`${label} must contain at least one value.`);
+  return [...new Set(values)];
+}
+
+function parseNumbers(value: string, count: number, label: string): number[] {
+  const values = value.split(",").map((entry) => Number(entry.trim()));
+  if (values.length !== count || values.some((entry) => !Number.isFinite(entry))) {
+    throw new Error(`${label} must contain exactly ${count} comma-separated numbers.`);
+  }
+  return values;
+}
+
+function optionalDiscipline(): "mechanical" | "plumbing" | "electrical" | "mixed" | undefined {
+  const value = argument("--discipline").toLowerCase();
+  if (!value) return undefined;
+  if (!["mechanical", "plumbing", "electrical", "mixed"].includes(value)) {
+    throw new Error("--discipline must be mechanical, plumbing, electrical, or mixed.");
+  }
+  return value as "mechanical" | "plumbing" | "electrical" | "mixed";
+}
+
 function writeJson(filePath: string, value: unknown): void {
   const resolved = path.resolve(filePath);
   fs.mkdirSync(path.dirname(resolved), { recursive: true });
@@ -42,14 +79,23 @@ function usage(): never {
     "Usage:",
     "  npm run existing-conditions -- normalize --visible <export-visible-elements.json> --connectors <get-connectors.json> --ids <id,id,...> --out <snapshot.json>",
     "  npm run existing-conditions -- capture --expected-model <model.rvt> --view-id <id> --ids <id,id,...> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
-    "  npm run existing-conditions -- package --fixture-id <id> --scope-id <id> --redacted-model <agent-redacted.rvt> --source-pdf <source.pdf> --view-id <id> --out-dir <agent-dir>",
-    "  npm run existing-conditions -- seal-truth --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --out <truth.json>",
-    "  npm run existing-conditions -- seal-candidate --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --post-capture <image> --post-pdf <pdf> --out <candidate.json>",
+    "  npm run existing-conditions -- package --fixture-id <id> --scope-id <id> --discipline <mechanical|plumbing|electrical|mixed> --redacted-model <agent-redacted.rvt> --source-pdf <source.pdf> --view-id <id> --model-bounds <minX,minY,minZ,maxX,maxY,maxZ> --image-region <minX,minY,maxX,maxY> --allowed-categories <OST_...,OST_...> --out-dir <agent-dir>",
+    "  npm run existing-conditions -- seal-truth --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --ground-truth-model <source.rvt> --deletion-manifest <json> --delete-dry-run <json> --out <truth.json>",
+    "  npm run existing-conditions -- evaluator-review-visual --post-capture <image> --post-pdf <pdf> --status <pass|needs_review|fail> --out <receipt.json>",
+    "  npm run existing-conditions -- seal-candidate --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --evaluator-visual-receipt <json> --out <candidate.json>",
     "  npm run existing-conditions -- score --truth <truth.json> --candidate <candidate.json> --out-dir <score-dir>",
+    "  npm run existing-conditions -- advance-controller --state <controller-state-or-receipt.json> --event <event.json> --out <next-receipt.json>",
+    "  npm run existing-conditions -- evaluator-diff --before-visible <json> --after-visible <json> --package <agent_package.json> --out <receipt.json>",
+    "  npm run existing-conditions -- validate-contract --kind <agent_package|ground_truth|candidate> --file <json>",
     "  npm run existing-conditions -- redact --expected-source <source.rvt> --staging-model <withheld-staging.rvt> --redacted-model <agent-redacted.rvt> --view-id <id> --ids <id,id,...> --anchor-ids <id,id,...> --out-dir <fixture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "Options:",
     "  --allow-missing-connectors  Permit non-MEP normalization without connector readback.",
+    "  --categories <tokens>       Override the supported cross-discipline visible-element categories during capture.",
     "  --allow-dependent-deletes   Permit the delete dry-run to include IDs beyond --ids.",
+    "  --require-evaluator-receipt Require evaluator-owned native before/after scope-diff evidence when scoring.",
+    "  --evaluator-change-receipt <json>  Attach the evaluator-owned native scope-diff receipt when sealing a candidate.",
+    "  --evaluator-visual-receipt <json>  Attach a separately generated evaluator visual-review receipt.",
+    "  --notes <text|text>        Pipe-delimited evaluator notes for evaluator-review-visual.",
     "  --resume-staging            Resume from the already active --staging-model after a prior safety stop.",
     "  --bridge-url <url>          Default: http://localhost:5000."
   ].join("\n"));
@@ -78,6 +124,12 @@ function responseIds(value: unknown): number[] {
 function sha256(filePath: string): string {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
+
+const DEFAULT_EXISTING_CONDITIONS_CATEGORIES = [
+  "OST_DuctCurves", "OST_DuctFitting", "OST_DuctAccessory", "OST_MechanicalEquipment", "OST_DuctTerminal",
+  "OST_PipeCurves", "OST_PipeFitting", "OST_PipeAccessory", "OST_PlumbingFixtures", "OST_Sprinklers",
+  "OST_ElectricalFixtures", "OST_ElectricalEquipment", "OST_LightingFixtures", "OST_LightingDevices", "OST_FireAlarmDevices", "OST_DataDevices", "OST_CommunicationDevices"
+];
 
 type BridgeClient = {
   get(route: string): Promise<unknown>;
@@ -132,6 +184,9 @@ async function captureNativeSnapshot(): Promise<void> {
   if (canonicalPath(activeDocumentPath(context)) !== canonicalPath(expectedModel)) {
     throw new Error(`Active document is not the expected model: ${activeDocumentPath(context)}`);
   }
+  const categories = argument("--categories")
+    ? parseCsv(argument("--categories"), "--categories")
+    : DEFAULT_EXISTING_CONDITIONS_CATEGORIES;
   const visible = await client.post("/revit/export-visible-elements", {
     viewId,
     imageSize: 3000,
@@ -139,7 +194,7 @@ async function captureNativeSnapshot(): Promise<void> {
     includeGeometry: true,
     includeLinked: false,
     limit: 2000,
-    categories: ["OST_DuctCurves", "OST_DuctFitting", "OST_DuctAccessory", "OST_MechanicalEquipment", "OST_DuctTerminal", "OST_PipeCurves", "OST_PipeFitting", "OST_PipeAccessory", "OST_PlumbingFixtures"]
+    categories
   });
   const connectors = await client.post("/revit/get-connectors", {
     elementIds: ids,
@@ -171,50 +226,109 @@ function buildAgentPackage(): void {
   const sourcePdf = path.resolve(requiredArgument("--source-pdf"));
   const outDir = path.resolve(requiredArgument("--out-dir"));
   const viewId = Number(requiredArgument("--view-id"));
+  const discipline = optionalDiscipline();
+  if (!discipline) throw new Error("--discipline is required.");
+  const allowedCategories = parseCsv(requiredArgument("--allowed-categories"), "--allowed-categories");
+  const modelBounds = parseNumbers(requiredArgument("--model-bounds"), 6, "--model-bounds");
+  const imageRegion = parseNumbers(requiredArgument("--image-region"), 4, "--image-region");
+  if (imageRegion.some((value) => value < 0 || value > 1) || imageRegion[0]! >= imageRegion[2]! || imageRegion[1]! >= imageRegion[3]!) {
+    throw new Error("--image-region must be normalized 0..1 with min values below max values.");
+  }
+  if (modelBounds[0]! >= modelBounds[3]! || modelBounds[1]! >= modelBounds[4]! || modelBounds[2]! > modelBounds[5]!) {
+    throw new Error("--model-bounds minimum values must be below maximum values.");
+  }
+  const maximumCreatedElements = Number(argument("--max-created") || "50");
+  if (!Number.isInteger(maximumCreatedElements) || maximumCreatedElements < 1 || maximumCreatedElements > 500) {
+    throw new Error("--max-created must be an integer from 1 through 500.");
+  }
+  const maxRepairs = Number(argument("--max-repairs") || "2");
+  if (!Number.isInteger(maxRepairs) || maxRepairs < 0 || maxRepairs > 10) throw new Error("--max-repairs must be an integer from 0 through 10.");
   if (!Number.isInteger(viewId) || viewId <= 0) throw new Error("--view-id must be a positive integer.");
   if (!fs.existsSync(redactedModel)) throw new Error(`Redacted model does not exist: ${redactedModel}`);
   if (!fs.existsSync(sourcePdf)) throw new Error(`Source PDF does not exist: ${sourcePdf}`);
   fs.mkdirSync(outDir, { recursive: true });
   const pdfCopy = path.join(outDir, "source_evidence.pdf");
   const packagePath = path.join(outDir, "agent_package.json");
-  if (fs.existsSync(pdfCopy) || fs.existsSync(packagePath)) {
+  const controllerStatePath = path.join(outDir, "controller_state.json");
+  if (fs.existsSync(pdfCopy) || fs.existsSync(packagePath) || fs.existsSync(controllerStatePath)) {
     throw new Error(`Refusing to overwrite an existing agent package in: ${outDir}`);
   }
   fs.copyFileSync(sourcePdf, pdfCopy, fs.constants.COPYFILE_EXCL);
-  writeJson(packagePath, {
+  const agentPackage = {
     schema_version: 1,
     fixture_id: fixtureId,
-    scope_id: scopeId,
-    task: "Reconstruct missing existing-condition MEP work from the plotted PDF evidence in the currently open redacted model.",
-    redacted_model: {
+    discipline,
+    task: argument("--task") || "Reconstruct the missing existing-condition work from the plotted PDF evidence in the currently open redacted model.",
+    working_model: {
       role: "redacted_model",
       path: redactedModel,
       sha256: sha256(redactedModel)
     },
-    visible_evidence: [{
+    evidence: [{
       role: "source_pdf",
       path: pdfCopy,
-      sha256: sha256(pdfCopy)
+      sha256: sha256(pdfCopy),
+      page: Number(argument("--pdf-page") || "1")
     }],
     scope: {
+      scope_id: scopeId,
       view_id: viewId,
-      description: "M104 / Level 4 / Unit 403",
-      allowed_categories: ["Ducts", "Duct Fittings"]
+      sheet_number: argument("--sheet-number") || null,
+      model_bounds_ft: {
+        min: { x: modelBounds[0], y: modelBounds[1], z: modelBounds[2] },
+        max: { x: modelBounds[3], y: modelBounds[4], z: modelBounds[5] }
+      },
+      image_region_normalized: {
+        min_x: imageRegion[0], min_y: imageRegion[1], max_x: imageRegion[2], max_y: imageRegion[3]
+      }
     },
-    policy: {
+    allowed_categories: allowedCategories,
+    write_policy: {
+      dry_run_required: true,
+      bounded_scope_required: true,
+      out_of_scope_changes_allowed: false,
+      maximum_created_elements: maximumCreatedElements,
+      max_repairs: maxRepairs,
+      material_confidence_threshold: 0.75,
       forbidden_artifact_roles: ["ground_truth_model", "ground_truth_snapshot", "deletion_manifest", "withheld_evaluator_package"],
-      allowed_artifact_roles: ["agent_visible_package", "source_pdf", "redacted_model"],
-      require_dry_run_before_apply: true,
       require_native_readback: true,
-      require_post_change_visual_receipt: true,
-      reject_out_of_scope_writes: true
+      require_post_change_visual_receipt: true
     },
     output_contract: {
-      created_element_ids: "positive integer array",
-      accessed_artifact_roles: "string array",
-      out_of_scope_changed_element_keys: "string array",
-      reconstruction_notes: "brief string"
+      candidate_snapshot_path: path.join(outDir, "candidate_snapshot.json"),
+      post_change_capture_path: path.join(outDir, "post_change_capture.png"),
+      post_change_pdf_path: path.join(outDir, "post_change.pdf"),
+      run_receipt_path: path.join(outDir, "reconstruction_run_receipt.json"),
+      controller_state_path: controllerStatePath
     }
+  };
+  assertExistingConditionsContract("agent_package", agentPackage);
+  writeJson(packagePath, agentPackage);
+  const controllerState = createExistingConditionsControllerState({
+    fixture_id: fixtureId,
+    scope_id: scopeId,
+    discipline,
+    allowed_categories: allowedCategories,
+    maximum_created_elements: maximumCreatedElements,
+    visible_evidence: [{ role: "source_pdf", sha256: sha256(pdfCopy) }],
+    material_confidence_threshold: 0.75,
+    max_repairs: maxRepairs
+  });
+  writeJson(controllerStatePath, {
+    state: controllerState,
+    next_action: getExistingConditionsControllerNextAction(controllerState)
+  });
+}
+
+function advanceController(): void {
+  const rawState = readJson(requiredArgument("--state"));
+  const stateObject = asObject(rawState);
+  const state = (stateObject.state && typeof stateObject.state === "object" ? stateObject.state : rawState) as ExistingConditionsControllerState;
+  const event = readJson(requiredArgument("--event")) as ExistingConditionsControllerEvent;
+  const next = advanceExistingConditionsController(state, event);
+  writeJson(requiredArgument("--out"), {
+    state: next,
+    next_action: getExistingConditionsControllerNextAction(next)
   });
 }
 
@@ -223,17 +337,35 @@ function sealGroundTruth(): void {
   const scopeId = requiredArgument("--scope-id");
   const snapshotPath = path.resolve(requiredArgument("--snapshot"));
   const sourcePdf = path.resolve(requiredArgument("--source-pdf"));
+  const groundTruthModel = path.resolve(requiredArgument("--ground-truth-model"));
+  const deletionManifestPath = path.resolve(requiredArgument("--deletion-manifest"));
+  const deleteDryRunPath = path.resolve(requiredArgument("--delete-dry-run"));
   const outPath = path.resolve(requiredArgument("--out"));
   if (canonicalPath(outPath).includes("/agent/")) {
     throw new Error("Ground truth must not be written into an agent-visible directory.");
   }
+  const discipline = optionalDiscipline();
+  if (!fs.existsSync(groundTruthModel)) throw new Error(`Ground-truth model does not exist: ${groundTruthModel}`);
+  const manifest = asObject(readJson(deletionManifestPath));
   const truth: ExistingConditionsGroundTruth = {
     schema_version: 1,
     fixture_id: fixtureId,
     scope_id: scopeId,
+    ...(discipline ? { discipline } : {}),
+    ground_truth_model: { path: groundTruthModel, sha256: sha256(groundTruthModel) },
     visible_evidence: [{ role: "source_pdf", sha256: sha256(sourcePdf) }],
+    evaluation_policy: {
+      require_evaluator_change_receipt: process.argv.includes("--require-evaluator-receipt")
+    },
+    deletion_manifest: {
+      requested_element_ids: Array.isArray(manifest.requested_element_ids) ? manifest.requested_element_ids.map(Number) : [],
+      deleted_element_ids: Array.isArray(manifest.deleted_element_ids) ? manifest.deleted_element_ids.map(Number) : [],
+      dependent_element_ids: Array.isArray(manifest.dependent_element_ids) ? manifest.dependent_element_ids.map(Number) : [],
+      dry_run_receipt_sha256: sha256(deleteDryRunPath)
+    },
     snapshot: readJson(snapshotPath) as ExistingConditionsSnapshot
   };
+  assertExistingConditionsContract("ground_truth", truth);
   writeJson(outPath, truth);
 }
 
@@ -242,28 +374,63 @@ function sealCandidate(): void {
   const scopeId = requiredArgument("--scope-id");
   const snapshotPath = path.resolve(requiredArgument("--snapshot"));
   const sourcePdf = path.resolve(requiredArgument("--source-pdf"));
-  const postCapture = path.resolve(requiredArgument("--post-capture"));
-  const postPdf = path.resolve(requiredArgument("--post-pdf"));
+  const visualReceipt = readJson(requiredArgument("--evaluator-visual-receipt")) as ExistingConditionsEvaluatorVisualReceipt;
+  if (!validateExistingConditionsEvaluatorVisualReceipt(visualReceipt)) {
+    throw new Error("Evaluator visual receipt is invalid or has been modified.");
+  }
+  const discipline = optionalDiscipline();
   const candidate: ExistingConditionsCandidate = {
     schema_version: 1,
     fixture_id: fixtureId,
     scope_id: scopeId,
+    ...(discipline ? { discipline } : {}),
     visible_evidence: [{ role: "source_pdf", sha256: sha256(sourcePdf) }],
     accessed_artifact_roles: ["agent_visible_package", "source_pdf", "redacted_model"],
     out_of_scope_changed_element_keys: [],
+    ...(argument("--evaluator-change-receipt")
+      ? { evaluator_change_receipt: readJson(argument("--evaluator-change-receipt")) as ExistingConditionsCandidate["evaluator_change_receipt"] }
+      : {}),
     snapshot: readJson(snapshotPath) as ExistingConditionsSnapshot,
-    visual_receipt: {
-      post_change_capture_sha256: sha256(postCapture),
-      post_change_pdf_sha256: sha256(postPdf),
-      review_status: "pass"
-    }
+    visual_receipt: visualReceipt
   };
+  assertExistingConditionsContract("candidate", candidate);
   writeJson(requiredArgument("--out"), candidate);
 }
 
+function reviewVisualEvidence(): void {
+  const postCapture = path.resolve(requiredArgument("--post-capture"));
+  const postPdf = path.resolve(requiredArgument("--post-pdf"));
+  const status = requiredArgument("--status").toLowerCase();
+  if (!fs.existsSync(postCapture)) throw new Error(`Post-change capture does not exist: ${postCapture}`);
+  if (!fs.existsSync(postPdf)) throw new Error(`Post-change PDF does not exist: ${postPdf}`);
+  if (!["pass", "needs_review", "fail"].includes(status)) throw new Error("--status must be pass, needs_review, or fail.");
+  const notes = argument("--notes").split("|").map((note) => note.trim()).filter(Boolean);
+  const receipt = createExistingConditionsEvaluatorVisualReceipt({
+    post_change_capture_sha256: sha256(postCapture),
+    post_change_pdf_sha256: sha256(postPdf),
+    review_status: status as "pass" | "needs_review" | "fail",
+    notes
+  });
+  writeJson(requiredArgument("--out"), receipt);
+}
+
+function validateContractFile(): void {
+  const kind = requiredArgument("--kind");
+  if (!["agent_package", "ground_truth", "candidate"].includes(kind)) {
+    throw new Error("--kind must be agent_package, ground_truth, or candidate.");
+  }
+  const filePath = path.resolve(requiredArgument("--file"));
+  assertExistingConditionsContract(kind as "agent_package" | "ground_truth" | "candidate", readJson(filePath));
+  process.stdout.write(`${filePath}: valid ${kind}\n`);
+}
+
 function scoreSealedCandidate(): void {
-  const truth = readJson(requiredArgument("--truth")) as ExistingConditionsGroundTruth;
-  const candidate = readJson(requiredArgument("--candidate")) as ExistingConditionsCandidate;
+  const truthValue = readJson(requiredArgument("--truth"));
+  const candidateValue = readJson(requiredArgument("--candidate"));
+  assertExistingConditionsContract("ground_truth", truthValue);
+  assertExistingConditionsContract("candidate", candidateValue);
+  const truth = truthValue as ExistingConditionsGroundTruth;
+  const candidate = candidateValue as ExistingConditionsCandidate;
   const outDir = path.resolve(requiredArgument("--out-dir"));
   if (fs.existsSync(outDir) && fs.readdirSync(outDir).length > 0) {
     throw new Error(`Refusing to overwrite a non-empty score directory: ${outDir}`);
@@ -364,7 +531,9 @@ async function runRedaction(): Promise<void> {
     includeGeometry: true,
     includeLinked: false,
     limit: 2000,
-    categories: ["OST_DuctCurves", "OST_DuctFitting", "OST_DuctAccessory", "OST_MechanicalEquipment", "OST_DuctTerminal"]
+    categories: argument("--categories")
+      ? parseCsv(argument("--categories"), "--categories")
+      : DEFAULT_EXISTING_CONDITIONS_CATEGORIES
   });
   const anchorConnectorsAfter = await client.post("/revit/get-connectors", {
     elementIds: anchorIds,
@@ -437,8 +606,29 @@ async function main(): Promise<void> {
     sealCandidate();
     return;
   }
+  if (command === "evaluator-review-visual") {
+    reviewVisualEvidence();
+    return;
+  }
+  if (command === "validate-contract") {
+    validateContractFile();
+    return;
+  }
   if (command === "score") {
     scoreSealedCandidate();
+    return;
+  }
+  if (command === "advance-controller") {
+    advanceController();
+    return;
+  }
+  if (command === "evaluator-diff") {
+    const receipt = createExistingConditionsEvaluatorChangeReceipt(
+      readJson(requiredArgument("--before-visible")),
+      readJson(requiredArgument("--after-visible")),
+      readJson(requiredArgument("--package"))
+    );
+    writeJson(requiredArgument("--out"), receipt);
     return;
   }
   usage();

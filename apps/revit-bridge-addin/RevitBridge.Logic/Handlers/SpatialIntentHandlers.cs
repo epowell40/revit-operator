@@ -298,7 +298,15 @@ namespace RevitBridge.Logic.Handlers
             var center = HostedPlacementUtil.TryGetElementPoint(e) ?? SpatialIntentUtils.GetElementCenter(e);
             var levelName = SpatialIntentUtils.GetLevelName(doc, e);
             var room = SpatialIntentUtils.GetSpatialElement(doc, e);
-            var host = (e as FamilyInstance)?.Host;
+            var familyInstance = e as FamilyInstance;
+            var host = familyInstance?.Host;
+            // Linked-face hosted instances can legitimately report Host == null
+            // while HostFace still points at the RevitLinkInstance. Preserve that
+            // factual host instead of misclassifying a valid device as unhosted.
+            if (host == null && familyInstance?.HostFace != null)
+            {
+                try { host = doc.GetElement(familyInstance.HostFace.ElementId); } catch { host = null; }
+            }
             var bestView = ResolveBestView(doc, app.ActiveUIDocument?.ActiveView, e, levelName);
             var searchPoint =
                 p.pointXyz != null && p.pointXyz.Length >= 3
