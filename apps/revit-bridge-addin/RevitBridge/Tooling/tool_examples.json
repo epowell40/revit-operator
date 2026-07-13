@@ -2512,6 +2512,88 @@
     },
     {
       "method": "POST",
+      "path": "/revit/plan-family-evolution",
+      "examples": [
+        {
+          "name": "Plan HRU403 selected-equipment size and power-side clearance",
+          "request": {
+            "instanceId": 1465049,
+            "expectedUniqueId": "copy exact uniqueId from the selected element receipt",
+            "expectedMark": "HRU403",
+            "expectedFamilyName": "HeatRecoveryUnit",
+            "expectedTypeName": "Heat Recovery Unit (HRU)",
+            "newFamilyName": "HeatRecoveryUnit - HRU403 Selected",
+            "newTypeName": "HRU403 - 3ft8 x 4ft2",
+            "width": "3' 8\"",
+            "depth": "4' 2\"",
+            "clearance": {
+              "side": "power_connection",
+              "offset": "36 in",
+              "lineStyleName": "Operator - Clearance Light Dashed",
+              "linePatternName": "Operator - Clearance Dash"
+            }
+          },
+          "expected_response_shape": {
+            "status": "Planned",
+            "planHash": "sha256",
+            "requiredConfirm": "APPLY FAMILY EVOLUTION 1465049"
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/apply-family-evolution",
+      "examples": [
+        {
+          "name": "Apply exact approved family evolution plan",
+          "request": {
+            "instanceId": 1465049,
+            "expectedUniqueId": "copy exact uniqueId from the plan target",
+            "expectedMark": "HRU403",
+            "expectedFamilyName": "HeatRecoveryUnit",
+            "expectedTypeName": "Heat Recovery Unit (HRU)",
+            "newFamilyName": "HeatRecoveryUnit - HRU403 Selected",
+            "newTypeName": "HRU403 - 3ft8 x 4ft2",
+            "width": "3' 8\"",
+            "depth": "4' 2\"",
+            "clearance": {
+              "side": "power_connection",
+              "offset": "36 in"
+            },
+            "planHash": "exact hash from plan",
+            "confirm": "APPLY FAMILY EVOLUTION 1465049"
+          },
+          "expected_response_shape": {
+            "status": "Applied",
+            "instanceId": 1465049,
+            "familyArtifact": "workspace rfa path"
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/read-family-evolution",
+      "examples": [
+        {
+          "name": "Read back evolved HRU family",
+          "request": {
+            "instanceId": 1465049,
+            "lineStyleName": "Operator - Clearance Light Dashed"
+          },
+          "expected_response_shape": {
+            "status": "Read",
+            "instanceId": 1465049,
+            "clearance": {
+              "symbolicCurveCount": 4
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/query",
       "examples": [
         {

@@ -6722,6 +6722,54 @@ namespace RevitBridge.Operator
                 return true;
             }
 
+            if (string.Equals(path, "/revit/plan-family-evolution", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/revit/apply-family-evolution", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
+                {
+                    error = "family evolution body must be an object.";
+                    return false;
+                }
+                if (!ValidateRequiredLong(obj.Value, "instanceId", out error)) return false;
+                if (!ValidateRequiredString(obj.Value, "expectedUniqueId", maxLen: 256, out error)) return false;
+                if (!ValidateRequiredString(obj.Value, "expectedFamilyName", maxLen: 128, out error)) return false;
+                if (!ValidateRequiredString(obj.Value, "expectedTypeName", maxLen: 128, out error)) return false;
+                if (!ValidateRequiredString(obj.Value, "newFamilyName", maxLen: 128, out error)) return false;
+                if (!ValidateRequiredString(obj.Value, "newTypeName", maxLen: 128, out error)) return false;
+                if (!ValidateRequiredString(obj.Value, "width", maxLen: 64, out error)) return false;
+                if (!ValidateRequiredString(obj.Value, "depth", maxLen: 64, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "expectedMark", maxLen: 128, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "widthParameterName", maxLen: 128, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "depthParameterName", maxLen: 128, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "familySavePath", maxLen: 1024, out error)) return false;
+                if (obj.Value.TryGetProperty("clearance", out var clearance) &&
+                    clearance.ValueKind != JsonValueKind.Null && clearance.ValueKind != JsonValueKind.Object)
+                {
+                    error = "family evolution clearance must be an object.";
+                    return false;
+                }
+                if (string.Equals(path, "/revit/apply-family-evolution", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!ValidateRequiredString(obj.Value, "planHash", maxLen: 128, out error)) return false;
+                    if (!ValidateRequiredString(obj.Value, "confirm", maxLen: 128, out error)) return false;
+                }
+                return true;
+            }
+
+            if (string.Equals(path, "/revit/read-family-evolution", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
+                {
+                    error = "read-family-evolution body must be an object.";
+                    return false;
+                }
+                if (!ValidateRequiredLong(obj.Value, "instanceId", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "widthParameterName", maxLen: 128, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "depthParameterName", maxLen: 128, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "lineStyleName", maxLen: 128, out error)) return false;
+                return true;
+            }
+
             if (string.Equals(path, "/revit/duplicate-type-and-swap-instance", StringComparison.OrdinalIgnoreCase))
             {
                 // { instanceId:number, newTypeName:string, typeParamChanges?:[{parameterName,value}], dryRun?:bool, confirm?:string }
