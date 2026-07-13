@@ -4,6 +4,7 @@ import { appendGoalProgress, getActiveGoalForSession, setAgentGoal } from "../go
 import { buildAecScopeWorkPackage, type AecScopeWorkPackageV1 } from "./aec_scope_work_package.js";
 import { resolveLevelIdentities, type ResolvedLevelIdentity } from "./aec_level_identity.js";
 import { __testOnlyClearAecLevelTagRuntime, maybeContinueAecLevelTagRuntime, startAecLevelTagRuntime } from "./aec_level_tag_runtime.js";
+import { __testOnlyClearAecLevelPowerPlanPilot, maybeContinueAecLevelPowerPlanPilot, startAecLevelPowerPlanPilot } from "./aec_level_power_plan_runtime.js";
 
 type RuntimeState = { task: AecSemanticTaskV1; package: AecScopeWorkPackageV1; stage: "levels" | "scope"; action_ids: string[]; evidence_action_ids: string[]; resolved_levels: ResolvedLevelIdentity[] };
 const states = new Map<string, RuntimeState>();
@@ -127,12 +128,20 @@ function continuation(req: ChatRequest, state: RuntimeState): ChatResponse {
   })));
   states.delete(req.session_id);
   if (tagRuntime) return tagRuntime;
+  const powerPlanRuntime = startAecLevelPowerPlanPilot(req, state.task, resolved.map(view => ({
+    id: view.id,
+    name: view.name,
+    levelName: "levelName" in view ? view.levelName : null
+  })));
+  if (powerPlanRuntime) return powerPlanRuntime;
   return terminal(`I resolved ${resolved.length} exact graphical view(s) and persisted separate inspect, execute, and visual-verification work items for each. No model changes were made during scope resolution.`, "complete");
 }
 
 export function maybeRunAecScopeWorkPackage(req: ChatRequest, task?: AecSemanticTaskV1 | null): ChatResponse | null {
   const tagContinuation = maybeContinueAecLevelTagRuntime(req);
   if (tagContinuation) return tagContinuation;
+  const powerPlanContinuation = maybeContinueAecLevelPowerPlanPilot(req);
+  if (powerPlanContinuation) return powerPlanContinuation;
   const existingState = states.get(req.session_id);
   if (existingState && Array.isArray(req.tool_results) && req.tool_results.length > 0) return continuation(req, existingState);
   if (!task || (req.user_text ?? "").trim().length === 0 || (req.tool_results?.length ?? 0) > 0) return null;
@@ -161,4 +170,4 @@ export function maybeRunAecScopeWorkPackage(req: ChatRequest, task?: AecSemantic
   return response(`${workPackage.summary} I am resolving exact live Revit scope first; this is read-only and will not execute model changes.`, workPackage.discovery_actions);
 }
 
-export function __testOnlyClearAecScopeWorkPackageStates(): void { states.clear(); __testOnlyClearAecLevelTagRuntime(); }
+export function __testOnlyClearAecScopeWorkPackageStates(): void { states.clear(); __testOnlyClearAecLevelTagRuntime(); __testOnlyClearAecLevelPowerPlanPilot(); }
