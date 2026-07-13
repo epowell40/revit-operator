@@ -36,5 +36,28 @@ namespace RevitBridge.Common.Tests
         {
             Assert.Equal(expected, TagWorkPolicy.KeepCreatedTag(geometryAware, hasMeasurableGeometry, collisionFree));
         }
+
+        [Theory]
+        [InlineData(false, 1, false, true, false)]
+        [InlineData(true, 0, false, true, false)]
+        [InlineData(true, 2, false, true, false)]
+        [InlineData(true, 1, false, false, false)]
+        [InlineData(true, 1, false, true, true)]
+        [InlineData(true, 1, true, false, true)]
+        public void MeasuredLeaderPreparationRequiresOneReferenceAndSupportedFreeEnd(
+            bool leaderApplied,
+            int taggedReferenceCount,
+            bool isAlreadyFree,
+            bool canAssignFree,
+            bool expected)
+        {
+            Assert.Equal(
+                expected,
+                TagWorkPolicy.CanPrepareMeasuredLeader(
+                    leaderApplied,
+                    taggedReferenceCount,
+                    isAlreadyFree,
+                    canAssignFree));
+        }
     }
 }

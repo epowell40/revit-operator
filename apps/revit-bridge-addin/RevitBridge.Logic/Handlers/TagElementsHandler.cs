@@ -85,6 +85,10 @@ namespace RevitBridge.Logic.Handlers
             public bool CollisionFree { get; set; }
             public bool LeaderApplied { get; set; }
             public string LeaderGeometryStatus { get; set; } = "not_requested";
+            public string? LeaderEndConditionBefore { get; set; }
+            public string? LeaderEndConditionAfter { get; set; }
+            public bool LeaderEndpointAssigned { get; set; }
+            public string? LeaderGeometryError { get; set; }
             public int LeaderCrossingCount { get; set; }
             public int LeaderProtectedCrossingCount { get; set; }
             public double? LeaderLength { get; set; }
@@ -666,7 +670,7 @@ namespace RevitBridge.Logic.Handlers
                         var centerU = head.DotProduct(right);
                         var centerV = head.DotProduct(up);
                         rect = new TagRect2(centerU - tagWidth * 0.5, centerV - tagHeight * 0.5, centerU + tagWidth * 0.5, centerV + tagHeight * 0.5);
-                        if (!AddExistingTagLeaderSegments(view, existingTag, obstacles.LeaderSegments))
+                        if (!AddExistingTagLeaderGeometry(view, existingTag, obstacles))
                             throw new InvalidOperationException($"Existing leader geometry for tag {ElementIdCompat.GetValue(existingTag.Id)} could not be measured. Geometry-aware placement stopped to avoid an unverified leader crossing.");
                     }
                     else
@@ -809,6 +813,13 @@ namespace RevitBridge.Logic.Handlers
                 return;
             }
 
+            if (!TryPrepareCreatedLeaderForReadback(doc, view, tag, plan, outcome))
+            {
+                outcome.CollisionFree = false;
+                outcome.Status = "leader_geometry_unavailable";
+                return;
+            }
+
             var actualSegments = ReadIndependentTagLeaderSegments(tag, view);
             if (actualSegments.Count == 0)
             {
@@ -829,19 +840,123 @@ namespace RevitBridge.Logic.Handlers
             if (!outcome.CollisionFree) outcome.Status = "actual_leader_collision";
         }
 
-        private static bool AddExistingTagLeaderSegments(
+        private static bool TryPrepareCreatedLeaderForReadback(
+            Document doc,
             View view,
             IndependentTag tag,
-            ICollection<TagSegment2> destination)
+            GeometryPlacementPlan plan,
+            GeometryPlacementOutcome outcome)
         {
-            if (!tag.HasLeader) return true;
-            var actual = ReadIndependentTagLeaderSegments(tag, view);
-            if (actual.Count > 0)
+            try
             {
-                foreach (var segment in actual) destination.Add(segment);
+                var references = tag.GetTaggedReferences();
+                var isAlreadyFree = tag.LeaderEndCondition == LeaderEndCondition.Free;
+                var canAssignFree = isAlreadyFree || tag.CanLeaderEndConditionBeAssigned(LeaderEndCondition.Free);
+                outcome.LeaderEndConditionBefore = tag.LeaderEndCondition.ToString();
+
+                if (!TagWorkPolicy.CanPrepareMeasuredLeader(
+                        outcome.LeaderApplied,
+                        references.Count,
+                        isAlreadyFree,
+                        canAssignFree))
+                {
+                    outcome.LeaderGeometryStatus = references.Count == 1
+                        ? "free_end_not_supported"
+                        : "tagged_reference_count_unsupported";
+                    return false;
+                }
+
+                if (!isAlreadyFree)
+                {
+                    tag.LeaderEndCondition = LeaderEndCondition.Free;
+                    doc.Regenerate();
+                }
+
+                var plannedSegment = outcome.LeaderSegment;
+                if (plannedSegment == null)
+                {
+                    outcome.LeaderGeometryStatus = "planned_endpoint_unavailable";
+                    return false;
+                }
+
+                var reference = references[0];
+                if (!tag.IsLeaderVisible(reference))
+                {
+                    outcome.LeaderGeometryStatus = "leader_not_visible";
+                    return false;
+                }
+
+                var endpoint = FromViewCoordinates(
+                    view,
+                    plannedSegment.StartX,
+                    plannedSegment.StartY,
+                    plan.PlaneW);
+                tag.SetLeaderEnd(reference, endpoint);
+                doc.Regenerate();
+
+                outcome.LeaderEndConditionAfter = tag.LeaderEndCondition.ToString();
+                outcome.LeaderEndpointAssigned = true;
                 return true;
             }
-            return false;
+            catch (Exception ex)
+            {
+                outcome.LeaderGeometryStatus = "free_end_assignment_failed";
+                outcome.LeaderGeometryError = ex.Message;
+                return false;
+            }
+        }
+
+        private static bool AddExistingTagLeaderGeometry(
+            View view,
+            IndependentTag tag,
+            GeometryObstacleSet obstacles)
+        {
+            if (!tag.HasLeader) return true;
+            try
+            {
+                var references = tag.GetTaggedReferences();
+                if (references.Count == 0) return false;
+                var visibleLeaderCount = 0;
+                var head = tag.TagHeadPosition;
+                var right = view.RightDirection.Normalize();
+                var up = view.UpDirection.Normalize();
+
+                foreach (var reference in references)
+                {
+                    if (!tag.IsLeaderVisible(reference)) continue;
+                    visibleLeaderCount++;
+
+                    if (tag.LeaderEndCondition == LeaderEndCondition.Free)
+                    {
+                        var end = tag.GetLeaderEnd(reference);
+                        var elbow = tag.HasLeaderElbow(reference) ? tag.GetLeaderElbow(reference) : null;
+                        var before = obstacles.LeaderSegments.Count;
+                        AddLeaderPath(end, elbow, head, view, obstacles.LeaderSegments);
+                        if (obstacles.LeaderSegments.Count == before) return false;
+                        continue;
+                    }
+
+                    var attachedElbow = tag.HasLeaderElbow(reference) ? tag.GetLeaderElbow(reference) : null;
+                    var hiddenLegAnchor = attachedElbow ?? head;
+                    var taggedElement = tag.Document.GetElement(reference.ElementId);
+                    var targetBounds = taggedElement == null ? null : ToViewRect(taggedElement.get_BoundingBox(view), view);
+                    if (targetBounds == null) return false;
+
+                    obstacles.LeaderProtectedObstacles.Add(
+                        TagPlacementPlanner.BuildConservativeLeaderEnvelope(
+                            targetBounds,
+                            hiddenLegAnchor.DotProduct(right),
+                            hiddenLegAnchor.DotProduct(up)));
+                    if (attachedElbow != null)
+                        AddLeaderSegment(attachedElbow, head, view, obstacles.LeaderSegments);
+                }
+
+                return visibleLeaderCount > 0;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static List<TagSegment2> ReadIndependentTagLeaderSegments(IndependentTag tag, View view)
@@ -850,25 +965,18 @@ namespace RevitBridge.Logic.Handlers
             try
             {
                 if (!tag.HasLeader) return segments;
+                if (tag.LeaderEndCondition != LeaderEndCondition.Free) return segments;
                 var head = tag.TagHeadPosition;
-                var references = TryReadTaggedReferences(tag);
+                var references = tag.GetTaggedReferences();
                 if (references.Count > 0)
                 {
                     foreach (var reference in references)
                     {
-                        var end = TryInvokeXyzMethod(tag, "GetLeaderEnd", reference);
-                        var elbow = TryInvokeXyzMethod(tag, "GetLeaderElbow", reference);
+                        if (!tag.IsLeaderVisible(reference)) return new List<TagSegment2>();
+                        var end = tag.GetLeaderEnd(reference);
+                        var elbow = tag.HasLeaderElbow(reference) ? tag.GetLeaderElbow(reference) : null;
                         AddLeaderPath(end, elbow, head, view, segments);
                     }
-                }
-                else
-                {
-                    AddLeaderPath(
-                        TryReadXyzProperty(tag, "LeaderEnd"),
-                        TryReadXyzProperty(tag, "LeaderElbow"),
-                        head,
-                        view,
-                        segments);
                 }
             }
             catch
@@ -1690,6 +1798,10 @@ namespace RevitBridge.Logic.Handlers
                     collisionFree = geometryOutcome.CollisionFree,
                     leaderApplied = geometryOutcome.LeaderApplied,
                     leaderGeometryStatus = geometryOutcome.LeaderGeometryStatus,
+                    leaderEndConditionBefore = geometryOutcome.LeaderEndConditionBefore,
+                    leaderEndConditionAfter = geometryOutcome.LeaderEndConditionAfter,
+                    leaderEndpointAssigned = geometryOutcome.LeaderEndpointAssigned,
+                    leaderGeometryError = geometryOutcome.LeaderGeometryError,
                     leaderLength = geometryOutcome.LeaderLength,
                     leaderCrossingCount = geometryOutcome.LeaderCrossingCount,
                     leaderProtectedCrossingCount = geometryOutcome.LeaderProtectedCrossingCount,

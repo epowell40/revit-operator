@@ -11,5 +11,14 @@ namespace RevitBridge.Common.Annotation
         {
             return !geometryAware || (hasMeasurableGeometry && collisionFree);
         }
+
+        public static bool CanPrepareMeasuredLeader(
+            bool leaderApplied,
+            int taggedReferenceCount,
+            bool isAlreadyFree,
+            bool canAssignFree)
+        {
+            return leaderApplied && taggedReferenceCount == 1 && (isAlreadyFree || canAssignFree);
+        }
     }
 }
