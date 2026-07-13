@@ -64,6 +64,37 @@ test("office-standard Room 403 intent enters the native preview path without mod
   assert.deepEqual(explicit?.actions[0]?.body, { targetRoomNumber: "403", sourceRoomNumber: "405", includePreviewImage: true });
 });
 
+test("explicit circuit intent binds strict source-system matching through preview and apply", () => {
+  const intent = layoutIntent("403", "405");
+  intent.evidence.user_text = "Lay out Room 403 from Room 405 and match the same circuits.";
+  const initial = maybeRunDeterministicRoomReceptacleAnalog(request(intent.evidence.user_text), intent);
+  assert.deepEqual(initial?.actions[0]?.body, {
+    targetRoomNumber: "403",
+    sourceRoomNumber: "405",
+    circuitMode: "match_source_system",
+    includePreviewImage: true
+  });
+
+  const continuation = maybeRunDeterministicRoomReceptacleAnalog(request("", [{
+    action_id: "preview-circuits",
+    method: "POST",
+    path: "/revit/plan-room-receptacles-from-analog",
+    status: "done",
+    result_json: {
+      status: "ready", ready: true, planHash: "hash-circuit-405-403",
+      source: { number: "405" }, target: { number: "403" },
+      circuitValidation: { mode: "match_source_system", verified: true }
+    }
+  }]));
+  assert.deepEqual(continuation?.actions[0]?.body, {
+    targetRoomNumber: "403",
+    sourceRoomNumber: "405",
+    planHash: "hash-circuit-405-403",
+    circuitMode: "match_source_system",
+    includePreviewImage: true
+  });
+});
+
 test("verified rollback preview advances to the exact hash-bound analog apply", () => {
   const response = maybeRunDeterministicRoomReceptacleAnalog(request("", [{
     action_id: "preview",
@@ -177,6 +208,12 @@ test("completion receipt requires exact current-run ids plus type, room, host, p
     mutate(copy => { delete copy.readback[0].semanticAnchor; }),
     mutate(copy => { copy.typeCounts[0].count = 2; })
   ]) assert.equal(__testOnlyVerifiedAnalogApplyReceipt(invalid), null);
+
+  const circuitValid = appliedReceipt([1700001], [{ familyType: "Duplex Receptacle|Standard", count: 1 }]) as any;
+  circuitValid.circuitValidation = { mode: "match_source_system", verified: true, assignments: [{ exactMatch: true }] };
+  assert.ok(__testOnlyVerifiedAnalogApplyReceipt(circuitValid));
+  circuitValid.circuitValidation.assignments[0].exactMatch = false;
+  assert.equal(__testOnlyVerifiedAnalogApplyReceipt(circuitValid), null);
 });
 
 test("applied receipt keeps success truthful while surfacing post-commit preview warnings", () => {

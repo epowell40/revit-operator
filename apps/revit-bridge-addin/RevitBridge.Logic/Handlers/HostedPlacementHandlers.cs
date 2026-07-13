@@ -13,6 +13,7 @@ using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Structure;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
+using RevitBridge.Common.Electrical;
 using RevitBridge.Common.Spatial;
 using RevitBridge.Logic.Handlers.Core;
 
@@ -457,7 +458,7 @@ namespace RevitBridge.Logic.Handlers
             };
         }
 
-        internal static ResolvedSpatialContext? FindSpatialElement(Document doc, long? spatialId, string? roomNumber)
+        internal static ResolvedSpatialContext? FindSpatialElement(Document doc, long? spatialId, string? roomNumber, string? spatialKindPreference = "auto")
         {
             if (spatialId.HasValue && spatialId.Value > 0)
             {
@@ -477,7 +478,7 @@ namespace RevitBridge.Logic.Handlers
                 }
             }
 
-            var resolved = SpatialElementResolver.ResolveByNumber(doc, roomNumber ?? "", "auto");
+            var resolved = SpatialElementResolver.ResolveByNumber(doc, roomNumber ?? "", spatialKindPreference);
             if (resolved?.Element == null) return null;
             return new ResolvedSpatialContext
             {
@@ -1811,6 +1812,7 @@ namespace RevitBridge.Logic.Handlers
             }
 
             var sourceLabel = BuildElectricalCircuitLabel(sourceFi, sourceCircuit);
+            var sourceSystemId = TryGetElectricalSystemId(sourceCircuit);
             var sourceNormalized = NormalizeElectricalCircuitLabel(sourceLabel);
             var targetSystemsBefore = GetElectricalSystems(target);
             var removedLabels = new List<string>();
@@ -1856,6 +1858,12 @@ namespace RevitBridge.Logic.Handlers
             var finalNormalized = NormalizeElectricalCircuitLabel(finalLabel);
             if (requireMatch)
             {
+                var finalPowerSystemIds = GetPowerElectricalSystemIds(target);
+                if (!sourceSystemId.HasValue || !CircuitMatchPolicy.HasExactMembership(sourceSystemId.Value, finalPowerSystemIds))
+                {
+                    detail = $"Adjusted instance did not join exactly the source power system. Expected system {sourceSystemId?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}; actual power systems: {string.Join(",", finalPowerSystemIds)}.";
+                    return false;
+                }
                 if (sourceNormalized.Length > 0 && finalNormalized.Length > 0 && !string.Equals(sourceNormalized, finalNormalized, StringComparison.OrdinalIgnoreCase))
                 {
                     detail = $"Adjusted instance joined an unexpected electrical circuit. Expected {sourceLabel}, got {finalLabel}.";
@@ -1883,6 +1891,8 @@ namespace RevitBridge.Logic.Handlers
             var labels = new List<string>();
             var normalized = new List<string>();
             var systems = instance == null ? new List<object>() : GetElectricalSystems(instance);
+            var systemIds = systems.Select(TryGetElectricalSystemId).Where(id => id.HasValue).Select(id => id!.Value).Distinct().OrderBy(id => id).ToList();
+            var powerSystemIds = systems.Where(LooksLikePowerCircuit).Select(TryGetElectricalSystemId).Where(id => id.HasValue).Select(id => id!.Value).Distinct().OrderBy(id => id).ToList();
             if (instance != null)
             {
                 foreach (var system in systems)
@@ -1907,8 +1917,24 @@ namespace RevitBridge.Logic.Handlers
                 primaryLabel = primaryLabel.Length > 0 ? primaryLabel : null,
                 labels,
                 normalizedLabels = normalized,
-                systemCount = systems.Count
+                systemCount = systems.Count,
+                systemIds,
+                powerSystemIds,
+                exactPowerSystemCount = powerSystemIds.Count
             };
+        }
+
+        internal static List<long> GetPowerElectricalSystemIds(FamilyInstance? instance)
+        {
+            if (instance == null) return new List<long>();
+            return GetElectricalSystems(instance)
+                .Where(LooksLikePowerCircuit)
+                .Select(TryGetElectricalSystemId)
+                .Where(id => id.HasValue)
+                .Select(id => id!.Value)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToList();
         }
 
         private static object? ResolvePreferredElectricalSystem(FamilyInstance sourceFi)
@@ -1992,6 +2018,18 @@ namespace RevitBridge.Logic.Handlers
             }
 
             return false;
+        }
+
+        private static long? TryGetElectricalSystemId(object? system)
+        {
+            if (system is Element element) return ElementIdCompat.GetValue(element.Id);
+            try
+            {
+                var value = system?.GetType().GetProperty("Id", BindingFlags.Instance | BindingFlags.Public)?.GetValue(system);
+                if (value is ElementId id) return ElementIdCompat.GetValue(id);
+            }
+            catch { }
+            return null;
         }
 
         private static bool TryAddFamilyInstanceToElectricalSystem(object system, FamilyInstance created, out string error)

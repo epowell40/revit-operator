@@ -7,9 +7,11 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Architecture;
+using Autodesk.Revit.DB.Electrical;
 using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
+using RevitBridge.Common.Electrical;
 using RevitBridge.Common.LowVoltage.Core.Geometry;
 using RevitBridge.Common.LowVoltage.Skills.DwellingReceptacles;
 
@@ -21,6 +23,7 @@ namespace RevitBridge.Logic.Handlers
         public string? sourceRoomNumber { get; set; }
         public long? viewId { get; set; }
         public bool includePreviewImage { get; set; } = true;
+        public string circuitMode { get; set; } = CircuitMatchPolicy.None;
         public string? planHash { get; set; }
     }
 
@@ -62,6 +65,8 @@ namespace RevitBridge.Logic.Handlers
             public string SourceHostStableReference { get; set; } = string.Empty;
             public string SourceCircuitPanel { get; set; } = string.Empty;
             public string SourceCircuitNumber { get; set; } = string.Empty;
+            public ElectricalSystem? SourcePowerSystem { get; set; }
+            public CircuitSnapshot? SourceCircuitSnapshot { get; set; }
             public XYZ PreferredDirection { get; set; } = XYZ.BasisX;
             public bool SemanticHostIsExactPhysical { get; set; }
         }
@@ -101,12 +106,32 @@ namespace RevitBridge.Logic.Handlers
             public List<PreparedPlacement> Placements { get; set; } = new List<PreparedPlacement>();
             public DwellingReceptacleAnalogCandidateSelection Selection { get; set; } = new DwellingReceptacleAnalogCandidateSelection();
             public string PlanHash { get; set; } = string.Empty;
+            public string CircuitMode { get; set; } = CircuitMatchPolicy.None;
+        }
+
+        private sealed class CircuitSnapshot
+        {
+            public long SystemId { get; set; }
+            public string SystemType { get; set; } = string.Empty;
+            public long? PanelElementId { get; set; }
+            public string PanelName { get; set; } = string.Empty;
+            public string CircuitNumber { get; set; } = string.Empty;
+            public double? VoltageInternal { get; set; }
+            public string VoltageDisplay { get; set; } = string.Empty;
+            public int? Poles { get; set; }
+            public string LoadClassifications { get; set; } = string.Empty;
+            public double? TrueLoadInternal { get; set; }
+            public string TrueLoadDisplay { get; set; } = string.Empty;
+            public double? ApparentLoadInternal { get; set; }
+            public string ApparentLoadDisplay { get; set; } = string.Empty;
         }
 
         private sealed class CreationReceipt
         {
             public List<long> CreatedIds { get; } = new List<long>();
             public List<object> Readback { get; } = new List<object>();
+            public List<object> CircuitSystems { get; } = new List<object>();
+            public List<object> CircuitAssignments { get; } = new List<object>();
             public List<CapturedFailure> Failures { get; } = new List<CapturedFailure>();
         }
 
@@ -118,6 +143,7 @@ namespace RevitBridge.Logic.Handlers
                 : JsonSerializer.Deserialize<RoomReceptacleAnalogParams>(jsonData, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new RoomReceptacleAnalogParams();
             request.targetRoomNumber = (request.targetRoomNumber ?? string.Empty).Trim();
             request.sourceRoomNumber = string.IsNullOrWhiteSpace(request.sourceRoomNumber) ? null : request.sourceRoomNumber.Trim();
+            request.circuitMode = CircuitMatchPolicy.NormalizeMode(request.circuitMode);
             if (request.targetRoomNumber.Length == 0) throw new ArgumentException("targetRoomNumber is required.");
             if (apply && string.IsNullOrWhiteSpace(request.planHash)) throw new ArgumentException("planHash is required for apply.");
 
@@ -228,7 +254,7 @@ namespace RevitBridge.Logic.Handlers
 
         private static PreparedContext Prepare(Document document, View activeView, RoomReceptacleAnalogParams request)
         {
-            var targetSpatial = HostedPlacementUtil.FindSpatialElement(document, null, request.targetRoomNumber)
+            var targetSpatial = HostedPlacementUtil.FindSpatialElement(document, null, request.targetRoomNumber, "space")
                 ?? throw new InvalidOperationException($"Target Room/Space '{request.targetRoomNumber}' was not found.");
             var planView = ResolvePowerPlanView(document, targetSpatial.element, request.viewId)
                 ?? throw new InvalidOperationException("No same-level floor/power plan view was found for the target.");
@@ -241,7 +267,7 @@ namespace RevitBridge.Logic.Handlers
             DwellingReceptacleAnalogCandidateSelection selection;
             if (!string.IsNullOrWhiteSpace(request.sourceRoomNumber))
             {
-                var explicitSpatial = HostedPlacementUtil.FindSpatialElement(document, null, request.sourceRoomNumber)
+                var explicitSpatial = HostedPlacementUtil.FindSpatialElement(document, null, request.sourceRoomNumber, "space")
                     ?? throw new InvalidOperationException($"Source Room/Space '{request.sourceRoomNumber}' was not found.");
                 source = BuildSpatialRecord(document, explicitSpatial);
                 if (source.Receptacles.Count == 0) throw new InvalidOperationException("source_room_has_no_receptacles");
@@ -282,7 +308,7 @@ namespace RevitBridge.Logic.Handlers
                 source = eligibleCandidates.Single(candidate => string.Equals(candidate.Spatial.id.ToString(CultureInfo.InvariantCulture), selection.SelectedRoomScopedId, StringComparison.Ordinal));
             }
 
-            var devices = BuildDeviceRecords(document, source);
+            var devices = BuildDeviceRecords(document, source, request.circuitMode);
             var usedSourceAnchorIds = new HashSet<string>(devices.Select(device => device.PlannerDevice.SourceHostScopedId).Where(id => !string.IsNullOrWhiteSpace(id))!, StringComparer.Ordinal);
             var sourcePlannerAnchors = source.Anchors.Where(anchor => usedSourceAnchorIds.Contains(anchor.Value.ScopedId)).ToList();
             if (sourcePlannerAnchors.Count != usedSourceAnchorIds.Count)
@@ -313,7 +339,8 @@ namespace RevitBridge.Logic.Handlers
                 Target = target,
                 Devices = devices,
                 AnalogPlan = analogPlan,
-                Selection = selection
+                Selection = selection,
+                CircuitMode = request.circuitMode
             };
             context.Placements = PreparePhysicalPlacements(context);
             ValidatePreparedPlacements(context);
@@ -785,6 +812,7 @@ namespace RevitBridge.Logic.Handlers
                     receipt.CreatedIds.Add(ElementIdCompat.GetValue(created.Id));
                 }
                 context.Document.Regenerate();
+                AssignRequestedCircuits(context, receipt);
                 for (var index = 0; index < receipt.CreatedIds.Count; index++)
                 {
                     var placement = context.Placements[index];
@@ -800,7 +828,31 @@ namespace RevitBridge.Logic.Handlers
                     if (!IsFinite(orientationAgreement) || orientationAgreement < 0.98) throw new InvalidOperationException("created_orientation_mismatch");
                     var facingAgreement = Math.Abs(SafeDirection(created.GetTransform().BasisZ).DotProduct(placement.Face.FaceNormal));
                     if (!IsFinite(facingAgreement) || facingAgreement < 0.95) throw new InvalidOperationException("created_facing_mismatch");
-                    if (HasCircuit(created)) throw new InvalidOperationException("created_unexpected_circuit_membership");
+                    var actualPowerSystems = GetPowerSystems(created);
+                    var expectedPowerSystem = placement.Source.SourcePowerSystem;
+                    if (context.CircuitMode == CircuitMatchPolicy.MatchSourceSystem)
+                    {
+                        var actualIds = actualPowerSystems.Select(system => ElementIdCompat.GetValue(system.Id)).ToList();
+                        var expectedId = expectedPowerSystem == null ? (long?)null : ElementIdCompat.GetValue(expectedPowerSystem.Id);
+                        var exactMatch = expectedId.HasValue
+                            ? CircuitMatchPolicy.HasExactMembership(expectedId.Value, actualIds)
+                            : actualIds.Count == 0 && !HasCircuit(created);
+                        if (!exactMatch) throw new InvalidOperationException("created_power_system_membership_mismatch:" + receipt.CreatedIds[index]);
+                        receipt.CircuitAssignments.Add(new
+                        {
+                            sourceElementId = ElementIdCompat.GetValue(placement.Source.Instance.Id),
+                            createdElementId = receipt.CreatedIds[index],
+                            expectedSystemId = expectedId,
+                            actualPowerSystemIds = actualIds,
+                            exactMatch = true,
+                            status = expectedId.HasValue ? "matched_exact_source_power_system" : "source_unassigned_state_preserved",
+                            engineeringReviewRequired = !expectedId.HasValue
+                        });
+                    }
+                    else if (actualPowerSystems.Count != 0 || HasCircuit(created))
+                    {
+                        throw new InvalidOperationException("created_unexpected_circuit_membership");
+                    }
                     receipt.Readback.Add(new
                     {
                         id = receipt.CreatedIds[index],
@@ -824,6 +876,41 @@ namespace RevitBridge.Logic.Handlers
             }
         }
 
+        private static void AssignRequestedCircuits(PreparedContext context, CreationReceipt receipt)
+        {
+            if (context.CircuitMode != CircuitMatchPolicy.MatchSourceSystem) return;
+            var indexed = context.Placements.Select((placement, index) => new { placement, index }).ToList();
+            foreach (var group in indexed.Where(item => item.placement.Source.SourcePowerSystem != null).GroupBy(item => ElementIdCompat.GetValue(item.placement.Source.SourcePowerSystem!.Id)).OrderBy(group => group.Key))
+            {
+                if (group.Key <= 0) throw new InvalidOperationException("source_power_system_invalid_for_assignment");
+                var system = group.First().placement.Source.SourcePowerSystem ?? throw new InvalidOperationException("source_power_system_missing_for_assignment");
+                var before = CaptureCircuitSnapshot(system);
+                var components = new ElementSet();
+                foreach (var item in group)
+                {
+                    var created = context.Document.GetElement(ElementIdCompat.Create(receipt.CreatedIds[item.index]));
+                    if (created == null || !components.Insert(created)) throw new InvalidOperationException("created_circuit_component_set_failed");
+                }
+                if (!system.AddToCircuit(components)) throw new InvalidOperationException("source_power_system_add_failed:" + group.Key);
+                context.Document.Regenerate();
+                var after = CaptureCircuitSnapshot(system);
+                receipt.CircuitSystems.Add(new
+                {
+                    systemId = group.Key,
+                    addedElementIds = group.Select(item => receipt.CreatedIds[item.index]).ToList(),
+                    before,
+                    after,
+                    factualLoadDelta = new
+                    {
+                        unitBasis = "Revit internal electrical units",
+                        trueLoad = CircuitMatchPolicy.FactualDelta(before.TrueLoadInternal, after.TrueLoadInternal),
+                        apparentLoad = CircuitMatchPolicy.FactualDelta(before.ApparentLoadInternal, after.ApparentLoadInternal)
+                    },
+                    complianceDetermination = (string?)null
+                });
+            }
+        }
+
         private static void VerifyPersistentInventory(PreparedContext context, IReadOnlyCollection<long> createdIds)
         {
             var actual = FindReceptacles(context.Document, context.Target.Spatial.element);
@@ -833,6 +920,25 @@ namespace RevitBridge.Logic.Handlers
             var actualTypes = actual.GroupBy(FamilyTypeKey, StringComparer.Ordinal).ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
             if (expectedTypes.Count != actualTypes.Count || expectedTypes.Any(pair => !actualTypes.TryGetValue(pair.Key, out var count) || count != pair.Value))
                 throw new InvalidOperationException("post_commit_type_inventory_mismatch");
+            for (var index = 0; index < context.Placements.Count; index++)
+            {
+                var created = context.Document.GetElement(ElementIdCompat.Create(createdIds.ElementAt(index))) as FamilyInstance
+                    ?? throw new InvalidOperationException("post_commit_created_instance_missing");
+                var powerSystemIds = GetPowerSystems(created).Select(system => ElementIdCompat.GetValue(system.Id)).ToList();
+                if (context.CircuitMode == CircuitMatchPolicy.MatchSourceSystem)
+                {
+                    var expectedSystem = context.Placements[index].Source.SourcePowerSystem;
+                    var exactMatch = expectedSystem != null
+                        ? CircuitMatchPolicy.HasExactMembership(ElementIdCompat.GetValue(expectedSystem.Id), powerSystemIds)
+                        : powerSystemIds.Count == 0 && !HasCircuit(created);
+                    if (!exactMatch)
+                        throw new InvalidOperationException("post_commit_power_system_membership_mismatch:" + ElementIdCompat.GetValue(created.Id));
+                }
+                else if (powerSystemIds.Count != 0 || HasCircuit(created))
+                {
+                    throw new InvalidOperationException("post_commit_unexpected_circuit_membership:" + ElementIdCompat.GetValue(created.Id));
+                }
+            }
         }
 
         private static (string? path, int? widthPx, int? heightPx) ExportPreview(PreparedContext context, IList<long> ids, List<string> warnings)
@@ -874,8 +980,29 @@ namespace RevitBridge.Logic.Handlers
                     mappingBasis = placement.Planned.MappingBasis,
                     semanticAnchor = new { source = placement.Planned.SourceAnchorScopedId, target = placement.Planned.TargetHostAnchorScopedId, signature = placement.Planned.TargetAnchorSignature },
                     physicalHost = new { sourceLinkedElementId = ElementIdCompat.GetValue(placement.Source.PhysicalLinkedElementId), targetLinkedElementId = ElementIdCompat.GetValue(placement.LinkedElementId), linkInstanceId = ElementIdCompat.GetValue(placement.Link.Id), placement.PhysicalMappingBasis, faceFingerprint = placement.Face.FaceFingerprint },
-                    sourceCircuit = new { panel = EmptyToNull(placement.Source.SourceCircuitPanel), circuitNumber = EmptyToNull(placement.Source.SourceCircuitNumber), policy = "record_source_do_not_copy" }
+                    sourceCircuit = new
+                    {
+                        panel = EmptyToNull(placement.Source.SourceCircuitPanel),
+                        circuitNumber = EmptyToNull(placement.Source.SourceCircuitNumber),
+                        systemId = placement.Source.SourceCircuitSnapshot?.SystemId,
+                        system = placement.Source.SourceCircuitSnapshot,
+                        policy = context.CircuitMode == CircuitMatchPolicy.MatchSourceSystem ? "match_exact_source_power_system" : "record_source_do_not_copy"
+                    }
                 }).ToList(),
+                circuitValidation = new
+                {
+                    mode = context.CircuitMode,
+                    attempted = context.CircuitMode == CircuitMatchPolicy.MatchSourceSystem,
+                    verified = context.CircuitMode == CircuitMatchPolicy.MatchSourceSystem
+                        ? receipt.CircuitAssignments.Count == context.Placements.Count
+                        : receipt.CircuitAssignments.Count == 0,
+                    assignments = receipt.CircuitAssignments,
+                    systems = receipt.CircuitSystems,
+                    assignedCount = context.Placements.Count(placement => placement.Source.SourcePowerSystem != null),
+                    unassignedCount = context.Placements.Count(placement => placement.Source.SourcePowerSystem == null),
+                    engineeringReviewRequired = context.Placements.Any(placement => placement.Source.SourcePowerSystem == null),
+                    scope = "Factual Revit system membership and before/after panel-circuit-load readback only; no capacity, breaker, conductor, demand, code, or AHJ compliance determination."
+                },
                 readback = applied ? receipt.Readback : new List<object>(),
                 previewVerification = applied ? null : new { temporaryCount = receipt.Readback.Count, verified = receipt.Readback.Count == context.Placements.Count, idsPersisted = false },
                 createdIds = applied ? receipt.CreatedIds : new List<long>(),
@@ -979,7 +1106,7 @@ namespace RevitBridge.Logic.Handlers
         private static DwellingReceptacleAnalogCandidate ToCandidate(Document document, SpatialRecord record, SpatialRecord target, bool usedSemanticOnly)
         {
             var signatures = usedSemanticOnly
-                ? BuildDeviceRecords(document, record).Select(device => device.PlannerDevice.SourceHostSignature).Where(signature => !string.IsNullOrWhiteSpace(signature)).Cast<string>().OrderBy(signature => signature, StringComparer.Ordinal).ToList()
+                ? BuildDeviceRecords(document, record, CircuitMatchPolicy.None).Select(device => device.PlannerDevice.SourceHostSignature).Where(signature => !string.IsNullOrWhiteSpace(signature)).Cast<string>().OrderBy(signature => signature, StringComparer.Ordinal).ToList()
                 : record.Anchors.Select(anchor => DwellingReceptacleAnalogPlanner.NormalizedSignature(anchor.Value)).ToList();
             return new DwellingReceptacleAnalogCandidate
             {
@@ -1080,7 +1207,7 @@ namespace RevitBridge.Logic.Handlers
             return result.OrderBy(anchor => anchor.Value.ScopedId, StringComparer.Ordinal).ToList();
         }
 
-        private static List<DeviceRecord> BuildDeviceRecords(Document document, SpatialRecord source)
+        private static List<DeviceRecord> BuildDeviceRecords(Document document, SpatialRecord source, string circuitMode)
         {
             var byPhysicalHost = source.Anchors.Where(anchor => anchor.Link != null).ToDictionary(anchor => AnchorKey(anchor.Link!.Id, anchor.LinkedElementId), StringComparer.Ordinal);
             var semanticCandidates = source.Anchors.Where(anchor => !IsWallCategory(anchor.Value.Category, anchor.Value.Category)).ToList();
@@ -1113,6 +1240,12 @@ namespace RevitBridge.Logic.Handlers
                     planner.SourceHostSignature = DwellingReceptacleAnalogPlanner.NormalizedSignature(semantic.Value);
                     planner.SourceHostCategory = semantic.Value.Category;
                 }
+                var sourcePowerSystem = circuitMode == CircuitMatchPolicy.MatchSourceSystem
+                    ? ResolveSourcePowerSystemState(instance)
+                    : null;
+                var sourceCircuitSnapshot = sourcePowerSystem == null ? null : CaptureCircuitSnapshot(sourcePowerSystem);
+                if (sourceCircuitSnapshot != null && (!sourceCircuitSnapshot.PanelElementId.HasValue || string.IsNullOrWhiteSpace(sourceCircuitSnapshot.PanelName) || string.IsNullOrWhiteSpace(sourceCircuitSnapshot.CircuitNumber)))
+                    throw new InvalidOperationException("source_power_system_not_panel_assigned:" + ElementIdCompat.GetValue(instance.Id));
                 result.Add(new DeviceRecord
                 {
                     Instance = instance,
@@ -1126,6 +1259,8 @@ namespace RevitBridge.Logic.Handlers
                     SourceHostStableReference = SafeStableReference(document, hostFace),
                     SourceCircuitPanel = ReadParameter(instance, "Panel"),
                     SourceCircuitNumber = ReadParameter(instance, "Circuit Number"),
+                    SourcePowerSystem = sourcePowerSystem,
+                    SourceCircuitSnapshot = sourceCircuitSnapshot,
                     PreferredDirection = SafeDirection(instance.HandOrientation),
                     SemanticHostIsExactPhysical = semanticHostIsExactPhysical
                 });
@@ -1165,7 +1300,8 @@ namespace RevitBridge.Logic.Handlers
                 Pair("document.project", context.Document.ProjectInformation?.UniqueId ?? string.Empty),
                 Pair("source.room", context.Source.Spatial.id.ToString(CultureInfo.InvariantCulture)),
                 Pair("target.room", context.Target.Spatial.id.ToString(CultureInfo.InvariantCulture)),
-                Pair("view", ElementIdCompat.GetValue(context.PlanView.Id).ToString(CultureInfo.InvariantCulture))
+                Pair("view", ElementIdCompat.GetValue(context.PlanView.Id).ToString(CultureInfo.InvariantCulture)),
+                Pair("circuit.mode", context.CircuitMode)
             };
             foreach (var anchor in context.Source.Anchors.OrderBy(anchor => anchor.Value.ScopedId, StringComparer.Ordinal)) fields.Add(Pair("source.anchor." + anchor.Value.ScopedId, AnchorFingerprint(anchor)));
             foreach (var anchor in context.Target.Anchors.OrderBy(anchor => anchor.Value.ScopedId, StringComparer.Ordinal)) fields.Add(Pair("target.anchor." + anchor.Value.ScopedId, AnchorFingerprint(anchor)));
@@ -1177,6 +1313,7 @@ namespace RevitBridge.Logic.Handlers
                 fields.Add(Pair(prefix + ".semantic", (placement.Planned.TargetHostAnchorScopedId ?? string.Empty) + "|" + (placement.Planned.TargetAnchorSignature ?? string.Empty)));
                 fields.Add(Pair(prefix + ".physical", placement.Face.LinkedElementUniqueId + "|" + placement.Face.FaceFingerprint));
                 fields.Add(Pair(prefix + ".source_circuit", placement.Source.SourceCircuitPanel + "|" + placement.Source.SourceCircuitNumber));
+                fields.Add(Pair(prefix + ".source_system", CircuitFingerprint(placement.Source.SourceCircuitSnapshot)));
             }
             return DwellingReceptacleAnalogRuntime.ComputePlanHash(fields);
         }
@@ -1274,6 +1411,68 @@ namespace RevitBridge.Logic.Handlers
 
         private static bool IsWallCategory(string builtIn, string category) => builtIn.Equals("OST_Walls", StringComparison.OrdinalIgnoreCase) || category.Equals("Walls", StringComparison.OrdinalIgnoreCase) || builtIn.Equals("OST_Cornices", StringComparison.OrdinalIgnoreCase) || category.Equals("Wall Sweeps", StringComparison.OrdinalIgnoreCase);
         private static bool HasCircuit(FamilyInstance instance) => ReadParameter(instance, "Panel").Length > 0 || ReadParameter(instance, "Circuit Number").Length > 0;
+        private static List<ElectricalSystem> GetPowerSystems(FamilyInstance instance)
+        {
+            try
+            {
+                return (instance.MEPModel?.GetElectricalSystems() ?? new HashSet<ElectricalSystem>())
+                    .Where(system => system != null && CircuitMatchPolicy.IsPowerSystemType(system.SystemType.ToString()))
+                    .OrderBy(system => ElementIdCompat.GetValue(system.Id))
+                    .ToList();
+            }
+            catch { return new List<ElectricalSystem>(); }
+        }
+
+        private static ElectricalSystem? ResolveSourcePowerSystemState(FamilyInstance instance)
+        {
+            var systems = GetPowerSystems(instance);
+            if (systems.Count > 1)
+                throw new InvalidOperationException("source_device_has_ambiguous_power_systems:" + ElementIdCompat.GetValue(instance.Id) + ":found=" + systems.Count);
+            return systems.SingleOrDefault();
+        }
+
+        private static CircuitSnapshot CaptureCircuitSnapshot(ElectricalSystem system)
+        {
+            Element? panel = null;
+            try { panel = system.BaseEquipment; } catch { }
+            return new CircuitSnapshot
+            {
+                SystemId = ElementIdCompat.GetValue(system.Id),
+                SystemType = SafeCircuitString(() => system.SystemType.ToString()),
+                PanelElementId = panel == null ? (long?)null : ElementIdCompat.GetValue(panel.Id),
+                PanelName = SafeCircuitString(() => system.PanelName),
+                CircuitNumber = SafeCircuitString(() => system.CircuitNumber),
+                VoltageInternal = SafeCircuitDouble(() => system.Voltage),
+                VoltageDisplay = ReadDisplayParameter(system, "Voltage"),
+                Poles = SafeCircuitInt(() => system.PolesNumber),
+                LoadClassifications = SafeCircuitString(() => system.LoadClassifications),
+                TrueLoadInternal = SafeCircuitDouble(() => system.TrueLoad),
+                TrueLoadDisplay = ReadDisplayParameter(system, "True Load"),
+                ApparentLoadInternal = SafeCircuitDouble(() => system.ApparentLoad),
+                ApparentLoadDisplay = ReadDisplayParameter(system, "Apparent Load")
+            };
+        }
+
+        private static string CircuitFingerprint(CircuitSnapshot? snapshot)
+        {
+            if (snapshot == null) return string.Empty;
+            return string.Join("|", new[]
+            {
+                snapshot.SystemId.ToString(CultureInfo.InvariantCulture), snapshot.SystemType,
+                snapshot.PanelElementId?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+                snapshot.PanelName, snapshot.CircuitNumber,
+                snapshot.VoltageInternal?.ToString("R", CultureInfo.InvariantCulture) ?? string.Empty,
+                snapshot.Poles?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+                snapshot.LoadClassifications,
+                snapshot.TrueLoadInternal?.ToString("R", CultureInfo.InvariantCulture) ?? string.Empty,
+                snapshot.ApparentLoadInternal?.ToString("R", CultureInfo.InvariantCulture) ?? string.Empty
+            });
+        }
+
+        private static string SafeCircuitString(Func<string> getter) { try { return (getter() ?? string.Empty).Trim(); } catch { return string.Empty; } }
+        private static double? SafeCircuitDouble(Func<double> getter) { try { var value = getter(); return IsFinite(value) ? value : (double?)null; } catch { return null; } }
+        private static int? SafeCircuitInt(Func<int> getter) { try { return getter(); } catch { return null; } }
+        private static string ReadDisplayParameter(Element element, string name) { try { return (element.LookupParameter(name)?.AsValueString() ?? string.Empty).Trim(); } catch { return string.Empty; } }
         private static string SafeStableReference(Document document, Reference reference) { try { return reference.ConvertToStableRepresentation(document) ?? string.Empty; } catch { return string.Empty; } }
         private static string ReadParameter(Element element, string name) => (element.LookupParameter(name)?.AsString() ?? element.LookupParameter(name)?.AsValueString() ?? string.Empty).Trim();
         private static string? EmptyToNull(string value) => string.IsNullOrWhiteSpace(value) ? null : value;

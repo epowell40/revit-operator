@@ -10,6 +10,7 @@ using Autodesk.Revit.DB.Electrical;
 using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
+using RevitBridge.Common.Electrical;
 using RevitBridge.Logic.Handlers.Core;
 
 namespace RevitBridge.Logic.Handlers
@@ -491,7 +492,7 @@ namespace RevitBridge.Logic.Handlers
             public long? sourceElementId { get; set; }
             public bool dryRun { get; set; } = true;
             public bool confirm { get; set; } = false;
-            public bool parameterOnlyFallback { get; set; } = true;
+            public bool parameterOnlyFallback { get; set; } = false;
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -535,21 +536,28 @@ namespace RevitBridge.Logic.Handlers
                     var detail = "";
                     if (!apply && source != null && fi != null)
                     {
+                        var sourcePowerSystemIds = HostedPlacementUtil.GetPowerElectricalSystemIds(source as FamilyInstance);
                         var sourceAudit = HostedPlacementUtil.BuildElectricalCircuitAuditPayload(source as FamilyInstance);
                         var sourceLabel = ReadAnonymousString(sourceAudit, "primaryLabel");
                         action = "preflight_match_source_electrical_system";
-                        ok = !string.IsNullOrWhiteSpace(sourceLabel);
+                        ok = sourcePowerSystemIds.Count == 1;
                         detail = ok
-                            ? $"Source exemplar has a resolvable electrical circuit ({sourceLabel}). Apply with dryRun:false and confirm:true to join it."
-                            : "Source exemplar has no resolvable electrical circuit.";
+                            ? $"Source exemplar has exactly one power system ({sourcePowerSystemIds[0]}; {sourceLabel}). Apply with dryRun:false and confirm:true to join it."
+                            : $"Source exemplar must have exactly one power system; found {sourcePowerSystemIds.Count}.";
                     }
                     else if (apply && source != null && fi != null)
                     {
-                        ok = HostedPlacementUtil.TryReassignElectricalCircuitFromSource(source, fi, false, warnings, out detail);
+                        var sourcePowerSystemIds = HostedPlacementUtil.GetPowerElectricalSystemIds(source as FamilyInstance);
+                        if (sourcePowerSystemIds.Count != 1)
+                            throw new InvalidOperationException($"source_element_requires_one_power_system:{p.sourceElementId}:found={sourcePowerSystemIds.Count}");
+                        ok = HostedPlacementUtil.TryReassignElectricalCircuitFromSource(source, fi, true, warnings, out detail);
                         action = "match_source_electrical_system";
+                        var finalPowerSystemIds = HostedPlacementUtil.GetPowerElectricalSystemIds(fi);
+                        if (!ok || !CircuitMatchPolicy.HasExactMembership(sourcePowerSystemIds[0], finalPowerSystemIds))
+                            throw new InvalidOperationException("exact_source_power_system_assignment_failed:" + id + ":" + detail);
                     }
 
-                    if ((!apply || !ok) && p.parameterOnlyFallback)
+                    if (source == null && (!apply || !ok) && p.parameterOnlyFallback)
                     {
                         var setPanel = TrySetStringParameter(element, "Panel", p.panelName, apply, out var panelDetail);
                         var setCircuit = TrySetStringParameter(element, "Circuit Number", p.circuitNumber, apply, out var circuitDetail);
@@ -583,10 +591,10 @@ namespace RevitBridge.Logic.Handlers
 
             return Task.FromResult<object>(new
             {
-                schema = "operator.assign_electrical_circuit.v1",
+                schema = "operator.assign_electrical_circuit.v2",
                 applied = apply,
-                mode = source != null ? "source_system_first_then_parameter_fallback" : "parameter_fallback",
-                limitation = "When sourceElementId is supplied, the handler attempts real ElectricalSystem reassignment. Direct panel/circuit values fall back to writable instance parameters only; Revit may keep system-owned circuit fields read-only.",
+                mode = source != null ? "strict_exact_source_power_system" : p.parameterOnlyFallback ? "explicit_parameter_only_fallback" : "no_assignment_mode_selected",
+                limitation = "sourceElementId uses atomic real ElectricalSystem reassignment with exact source-system-ID readback. Direct panel/circuit values are labels only and are attempted solely when parameterOnlyFallback:true is explicitly requested; they do not prove circuit membership or electrical compliance.",
                 results,
                 warnings
             });

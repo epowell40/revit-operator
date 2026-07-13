@@ -4056,6 +4056,8 @@
           "name": "Preview a room receptacle layout from a discovered analog",
           "request": {
             "targetRoomNumber": "403",
+            "sourceRoomNumber": "405",
+            "circuitMode": "match_source_system",
             "includePreviewImage": true
           },
           "expected_response_shape": {
@@ -4079,6 +4081,7 @@
           "request": {
             "targetRoomNumber": "403",
             "sourceRoomNumber": "405",
+            "circuitMode": "match_source_system",
             "planHash": "sha256",
             "includePreviewImage": true
           },
@@ -8500,13 +8503,12 @@
               22222
             ],
             "sourceElementId": 11111,
-            "dryRun": true,
-            "parameterOnlyFallback": true
+            "dryRun": true
           },
           "expected_response_shape": {
-            "schema": "operator.assign_electrical_circuit.v1",
+            "schema": "operator.assign_electrical_circuit.v2",
             "applied": false,
-            "mode": "source_system_first_then_parameter_fallback",
+            "mode": "strict_exact_source_power_system",
             "results": [
               {
                 "elementId": 22222,
@@ -8537,10 +8539,10 @@
             "parameterOnlyFallback": true
           },
           "expected_response_shape": {
-            "schema": "operator.assign_electrical_circuit.v1",
+            "schema": "operator.assign_electrical_circuit.v2",
             "applied": true,
-            "mode": "parameter_fallback",
-            "limitation": "When sourceElementId is supplied, the handler attempts real ElectricalSystem reassignment."
+            "mode": "explicit_parameter_only_fallback",
+            "limitation": "Direct panel/circuit values are labels only and do not prove circuit membership."
           }
         }
       ]
