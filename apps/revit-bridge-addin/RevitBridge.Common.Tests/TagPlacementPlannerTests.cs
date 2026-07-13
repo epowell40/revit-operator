@@ -113,6 +113,21 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void Attached_leader_envelope_contains_the_tagged_element_and_hidden_attachment_leg()
+        {
+            var envelope = TagPlacementPlanner.BuildConservativeLeaderEnvelope(
+                Rect(-2, -1, 1, 3),
+                4,
+                -3);
+
+            Assert.Equal(-2, envelope.MinX, 6);
+            Assert.Equal(-3, envelope.MinY, 6);
+            Assert.Equal(4, envelope.MaxX, 6);
+            Assert.Equal(3, envelope.MaxY, 6);
+            Assert.True(new TagSegment2(-3, 0, 5, 0).CrossesInterior(envelope));
+        }
+
+        [Fact]
         public void Rejects_otherwise_clear_head_when_its_leader_crosses_an_existing_leader()
         {
             var target = Rect(-0.5, -0.5, 0.5, 0.5);

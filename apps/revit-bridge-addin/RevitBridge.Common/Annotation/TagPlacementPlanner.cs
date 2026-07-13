@@ -287,6 +287,19 @@ namespace RevitBridge.Common.Annotation
             return new TagSegment2(startX, startY, tagBounds.CenterX, tagBounds.CenterY);
         }
 
+        public static TagRect2 BuildConservativeLeaderEnvelope(TagRect2 target, double anchorX, double anchorY)
+        {
+            if (target == null) throw new ArgumentNullException(nameof(target));
+            if (double.IsNaN(anchorX) || double.IsInfinity(anchorX) ||
+                double.IsNaN(anchorY) || double.IsInfinity(anchorY))
+                throw new ArgumentOutOfRangeException(nameof(anchorX), "Leader anchor coordinates must be finite.");
+            return new TagRect2(
+                Math.Min(target.MinX, anchorX),
+                Math.Min(target.MinY, anchorY),
+                Math.Max(target.MaxX, anchorX),
+                Math.Max(target.MaxY, anchorY));
+        }
+
         private static bool SameRect(TagRect2 left, TagRect2 right, double tolerance = 1e-9) =>
             Math.Abs(left.MinX - right.MinX) <= tolerance &&
             Math.Abs(left.MinY - right.MinY) <= tolerance &&
