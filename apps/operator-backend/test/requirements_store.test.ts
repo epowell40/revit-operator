@@ -20,6 +20,7 @@ import {
 } from "../src/memory/requirements_store.js";
 import { runWithRequestContext, type RequestPrincipal } from "../src/request_context.js";
 import { requiresMemoryAuthentication } from "../src/memory/requirements_route_policy.js";
+import { captureRequirementsResponseGuard, enforceRequirementsResponseGuard, formatRequirementsPromptBlockSafely } from "../src/memory/requirements_response_policy.js";
 import { authenticateRequest } from "../src/auth.js";
 import { maybeContinueAecLevelPowerPlanPilot, startAecLevelPowerPlanPilot } from "../src/deterministic/aec_level_power_plan_runtime.js";
 import { AEC_SEMANTIC_TASK_V1_SCHEMA, type AecSemanticTaskV1 } from "../src/aec_semantic_task.js";
@@ -372,4 +373,28 @@ test("filesystem planning lease blocks a second backend process sharing the ledg
   }
   assert.equal(fs.existsSync(lease.lease_path), false);
   assert.equal(createRequirement({ scope: ref, key: "tags.leaders", text: "Write after release." }).requirement.revision, 1);
+});
+
+test("OpenAI requirements policy formats prompts and blocks a stale action response", () => {
+  mkWorkspace();
+  const request: ChatRequest = {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    session_id: "requirements-openai-policy",
+    message_id: "m1",
+    user_text: "Keep tag leaders short.",
+    context: { revit: { document: { title: "Snowdon Towers HVAC", path: "C:\\Models\\Snowdon.rvt" } } }
+  };
+  const guard = captureRequirementsResponseGuard(request);
+  assert.equal(guard.blocker, null);
+  const projectScope = deriveRequirementScopesForChat(request).find(row => row.kind === "project")!;
+  createRequirement({ scope: projectScope, key: "tags.leaders", text: "Keep leaders short." });
+  assert.match(formatRequirementsPromptBlockSafely(request), /Keep leaders short/);
+  const guarded = enforceRequirementsResponseGuard(request, {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    assistant_message: "Applying tags.",
+    actions: [{ action_id: "a1", method: "POST", path: "/revit/tag-elements", body: {} }]
+  }, guard);
+  assert.deepEqual(guarded.actions, []);
+  assert.match(guarded.assistant_message, /changed while this plan was being prepared/);
+  assert.equal(guarded.requirements_receipt?.applied[0]?.key, "tags.leaders");
 });
