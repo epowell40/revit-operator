@@ -21,6 +21,7 @@ import {
 import { runWithRequestContext, type RequestPrincipal } from "../src/request_context.js";
 import { requiresMemoryAuthentication } from "../src/memory/requirements_route_policy.js";
 import { captureRequirementsResponseGuard, enforceRequirementsResponseGuard, formatRequirementsPromptBlockSafely } from "../src/memory/requirements_response_policy.js";
+import { handleRequirementsHttpRoute } from "../src/memory/requirements_http_routes.js";
 import { authenticateRequest } from "../src/auth.js";
 import { maybeContinueAecLevelPowerPlanPilot, startAecLevelPowerPlanPilot } from "../src/deterministic/aec_level_power_plan_runtime.js";
 import { AEC_SEMANTIC_TASK_V1_SCHEMA, type AecSemanticTaskV1 } from "../src/aec_semantic_task.js";
@@ -397,4 +398,31 @@ test("OpenAI requirements policy formats prompts and blocks a stale action respo
   assert.deepEqual(guarded.actions, []);
   assert.match(guarded.assistant_message, /changed while this plan was being prepared/);
   assert.equal(guarded.requirements_receipt?.applied[0]?.key, "tags.leaders");
+});
+
+test("requirements HTTP adapter creates, lists, and reports revision conflicts", async () => {
+  mkWorkspace();
+  const created = await handleRequirementsHttpRoute({
+    method: "POST",
+    url: new URL("http://localhost/memory/requirements"),
+    actor_id: "eli",
+    read_body: async () => ({ scope: scope("office", "bimtools"), key: "tags.text", text: "Use readable text." })
+  });
+  assert.equal(created?.status, 201);
+  assert.equal(created?.audit?.type, "requirements.created");
+  const requirement = (created?.body as any).requirement;
+  const listed = await handleRequirementsHttpRoute({
+    method: "GET",
+    url: new URL("http://localhost/memory/requirements?scope_kind=office&scope_id=bimtools"),
+    actor_id: "eli",
+    read_body: async () => null
+  });
+  assert.equal((listed?.body as any).requirements[0].requirement_id, requirement.requirement_id);
+  const conflict = await handleRequirementsHttpRoute({
+    method: "POST",
+    url: new URL("http://localhost/memory/requirements/revise"),
+    actor_id: "eli",
+    read_body: async () => ({ ...requirement, expected_revision: 0, text: "stale" })
+  });
+  assert.equal(conflict?.status, 409);
 });
