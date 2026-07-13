@@ -227,7 +227,10 @@ namespace RevitBridge.Operator
                 { "/revit/resolve-element-type", new ResolveElementTypeHandler() },
                 { "/revit/duplicate-element-type", new DuplicateElementTypeHandler() },
                 { "/revit/set-type-parameters", new SetTypeParametersHandler() },
-                { "/revit/duplicate-type-and-swap-instance", new DuplicateTypeAndSwapInstanceHandler() }
+                { "/revit/duplicate-type-and-swap-instance", new DuplicateTypeAndSwapInstanceHandler() },
+                { "/revit/plan-family-evolution", new RevitBridge.Logic.Handlers.PlanFamilyEvolutionHandler() },
+                { "/revit/apply-family-evolution", new RevitBridge.Logic.Handlers.ApplyFamilyEvolutionHandler() },
+                { "/revit/read-family-evolution", new RevitBridge.Logic.Handlers.ReadFamilyEvolutionHandler() }
             };
         }
 
