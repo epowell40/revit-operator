@@ -31,6 +31,9 @@ namespace RevitBridge.Logic.Handlers.MEP
             public string? elevationPolicy { get; set; } = "resolve_context_default";
             public string? routingMode { get; set; } = "polyline";
             public bool connectSegments { get; set; } = true;
+            public bool connectToExisting { get; set; } = false;
+            public bool requireExistingEndpointConnections { get; set; } = false;
+            public double externalConnectionToleranceFt { get; set; } = 0.1;
             public bool verify { get; set; } = true;
             public double? defaultOffsetFt { get; set; }
             public double? ceilingOffsetFt { get; set; }
@@ -272,6 +275,9 @@ namespace RevitBridge.Logic.Handlers.MEP
             elevationPolicy = p.elevationPolicy,
             routingMode = p.routingMode,
             connectSegments = p.connectSegments,
+            connectToExisting = p.connectToExisting,
+            requireExistingEndpointConnections = p.requireExistingEndpointConnections,
+            externalConnectionToleranceFt = p.externalConnectionToleranceFt,
             verify = p.verify,
             dryRun = dryRun,
             defaultOffsetFt = p.defaultOffsetFt,

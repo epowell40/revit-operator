@@ -526,6 +526,76 @@ namespace RevitBridge.Logic.Handlers.MEP
             }
         }
 
+        internal static bool IsPhysicallyConnected(Connector? connector)
+        {
+            if (connector == null) return false;
+            try
+            {
+                var ownerId = connector.Owner == null ? 0 : ElementIdCompat.GetValue(connector.Owner.Id);
+                foreach (Connector reference in connector.AllRefs)
+                {
+                    if (reference == null || reference.Owner == null) continue;
+                    if (reference.Owner is MEPSystem) continue;
+                    if (ElementIdCompat.GetValue(reference.Owner.Id) == ownerId) continue;
+                    return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        internal static Connector? FindClosestCompatibleOpenConnector(
+            Document doc,
+            Connector source,
+            ISet<long> excludedOwnerIds,
+            double maxDistanceFt,
+            out double distanceFt)
+        {
+            Connector? best = null;
+            distanceFt = double.MaxValue;
+            var bestOwnerId = long.MaxValue;
+            foreach (var element in new FilteredElementCollector(doc).WhereElementIsNotElementType().ToElements())
+            {
+                if (element == null || element is MEPSystem) continue;
+                var ownerId = ElementIdCompat.GetValue(element.Id);
+                if (excludedOwnerIds.Contains(ownerId)) continue;
+
+                foreach (var candidate in GetConnectors(element))
+                {
+                    if (candidate == null || IsPhysicallyConnected(candidate) || !AreConnectorsCompatible(source, candidate)) continue;
+                    double distance;
+                    try { distance = source.Origin.DistanceTo(candidate.Origin); }
+                    catch { continue; }
+                    if (distance > maxDistanceFt) continue;
+                    if (distance < distanceFt - 1e-9 || (Math.Abs(distance - distanceFt) <= 1e-9 && ownerId < bestOwnerId))
+                    {
+                        best = candidate;
+                        distanceFt = distance;
+                        bestOwnerId = ownerId;
+                    }
+                }
+            }
+            return best;
+        }
+
+        private static bool AreConnectorsCompatible(Connector a, Connector b)
+        {
+            try
+            {
+                if (a.Domain != b.Domain || a.Shape != b.Shape) return false;
+                const double toleranceFt = 1.0 / 192.0; // 1/16 inch
+                if (a.Shape == ConnectorProfileType.Round)
+                    return Math.Abs(a.Radius - b.Radius) <= toleranceFt;
+                var direct = Math.Abs(a.Width - b.Width) <= toleranceFt && Math.Abs(a.Height - b.Height) <= toleranceFt;
+                var rotated = Math.Abs(a.Width - b.Height) <= toleranceFt && Math.Abs(a.Height - b.Width) <= toleranceFt;
+                return direct || rotated;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         internal static bool TryCreateElbowOrConnect(Document doc, Connector? a, Connector? b, out long? fittingId, out string method, out string? error)
         {
             fittingId = null;
@@ -644,7 +714,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 {
                     try
                     {
-                        if (!c.IsConnected) count++;
+                        if (!IsPhysicallyConnected(c)) count++;
                     }
                     catch
                     {

@@ -33,6 +33,9 @@ namespace RevitBridge.Logic.Handlers.MEP
             public string? elevationPolicy { get; set; } = "resolve_context_default";
             public string? routingMode { get; set; } = "polyline";
             public bool connectSegments { get; set; } = true;
+            public bool connectToExisting { get; set; } = false;
+            public bool requireExistingEndpointConnections { get; set; } = false;
+            public double externalConnectionToleranceFt { get; set; } = 0.1;
             public bool verify { get; set; } = true;
             public bool dryRun { get; set; } = true;
             public double? defaultOffsetFt { get; set; }
@@ -50,6 +53,15 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (p.points == null || p.points.Count < 2)
             {
                 return Task.FromResult<object>(new { status = "Blocked", error = "At least two route points are required.", warnings });
+            }
+            if (p.requireExistingEndpointConnections && !p.connectToExisting)
+            {
+                return Task.FromResult<object>(new
+                {
+                    status = "Blocked",
+                    error = "requireExistingEndpointConnections=true requires connectToExisting=true.",
+                    warnings
+                });
             }
 
             var doc = app.ActiveUIDocument.Document;
@@ -227,6 +239,39 @@ namespace RevitBridge.Logic.Handlers.MEP
                         doc.Regenerate();
                     }
 
+                    if (p.connectToExisting)
+                    {
+                        var excludedOwnerIds = new HashSet<long>(createdIds);
+                        var toleranceFt = Math.Max(1e-4, Math.Min(1.0, p.externalConnectionToleranceFt));
+                        var externalEndpointFailures = 0;
+                        TryConnectExternalEndpoint(
+                            doc,
+                            created[0],
+                            resolvedPoints[0],
+                            "start",
+                            excludedOwnerIds,
+                            toleranceFt,
+                            connectionAttempts,
+                            ref externalEndpointFailures);
+                        TryConnectExternalEndpoint(
+                            doc,
+                            created[created.Count - 1],
+                            resolvedPoints[resolvedPoints.Count - 1],
+                            "end",
+                            excludedOwnerIds,
+                            toleranceFt,
+                            connectionAttempts,
+                            ref externalEndpointFailures);
+                        doc.Regenerate();
+
+                        if (externalEndpointFailures > 0)
+                        {
+                            var message = $"Could not physically connect {externalEndpointFailures} route endpoint(s) to compatible existing connectors within {toleranceFt:G6} ft.";
+                            if (p.requireExistingEndpointConnections) throw new InvalidOperationException(message);
+                            warnings.Add(message);
+                        }
+                    }
+
                     var openConnectorCount = p.verify ? MepRoutingUtil.CountOpenConnectors(created) : (int?)null;
                     var status = p.dryRun
                         ? "Dry Run"
@@ -309,6 +354,65 @@ namespace RevitBridge.Logic.Handlers.MEP
                 warnings.Add($"Could not fully resolve route points during blocked dry-run: {ex.Message}");
                 return new { pointCount = points.Count };
             }
+        }
+
+        private static void TryConnectExternalEndpoint(
+            Document doc,
+            Element routeElement,
+            XYZ endpoint,
+            string endpointName,
+            ISet<long> excludedOwnerIds,
+            double toleranceFt,
+            List<object> connectionAttempts,
+            ref int failureCount)
+        {
+            var routeConnector = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(routeElement), endpoint, toleranceFt);
+            if (routeConnector == null)
+            {
+                failureCount++;
+                connectionAttempts.Add(new
+                {
+                    connectionKind = "existing_endpoint",
+                    endpoint = endpointName,
+                    routeElementId = ElementIdCompat.GetValue(routeElement.Id),
+                    connected = false,
+                    method = "route_connector_not_found",
+                    error = "Created route connector was not found near the requested endpoint."
+                });
+                return;
+            }
+
+            var external = MepRoutingUtil.FindClosestCompatibleOpenConnector(doc, routeConnector, excludedOwnerIds, toleranceFt, out var distanceFt);
+            if (external == null || external.Owner == null)
+            {
+                failureCount++;
+                connectionAttempts.Add(new
+                {
+                    connectionKind = "existing_endpoint",
+                    endpoint = endpointName,
+                    routeElementId = ElementIdCompat.GetValue(routeElement.Id),
+                    connected = false,
+                    method = "compatible_existing_connector_not_found",
+                    toleranceFt,
+                    error = "No physically open compatible existing connector was found near the route endpoint."
+                });
+                return;
+            }
+
+            var connected = MepRoutingUtil.TryConnect(routeConnector, external, out var error);
+            if (!connected) failureCount++;
+            connectionAttempts.Add(new
+            {
+                connectionKind = "existing_endpoint",
+                endpoint = endpointName,
+                routeElementId = ElementIdCompat.GetValue(routeElement.Id),
+                externalOwnerId = ElementIdCompat.GetValue(external.Owner.Id),
+                externalCategory = external.Owner.Category?.Name ?? "",
+                distanceFt,
+                connected,
+                method = connected ? "connector_connect_to" : "failed",
+                error
+            });
         }
 
         private static object BuildPlan(List<XYZ> points)

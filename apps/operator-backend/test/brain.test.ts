@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { __testOnlyFinalizeDecision, __testOnlyIsBridgeStatusQuestion, __testOnlyMaybeRunSemanticAecWorkflow, decide } from "../src/brain.js";
+import { __testOnlyFinalizeDecision, __testOnlyIsBridgeStatusQuestion, __testOnlyIsExistingConditionsReconstructionRequest, __testOnlyMaybeRunSemanticAecWorkflow, __testOnlyMaybeRunTopLevelMepRouteRedline, __testOnlyMaybeRunTopLevelSemanticAecWorkflow, decide } from "../src/brain.js";
 import { AEC_TASK_INTENT_V1_SCHEMA } from "../src/aec_task_intent.js";
 import { decideRule } from "../src/brains/rule_brain.js";
 import { shouldOpenZippyBimTool } from "../src/brains/zippybim_intent.js";
-import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest } from "../src/contracts.js";
+import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ChatResponse } from "../src/contracts.js";
 
 function mkReq(text: string): ChatRequest {
   return {
@@ -132,6 +132,101 @@ test("redline MEP PDF prompt does not open the zippybim floor plan import tool",
   });
 
   assert.equal(shouldOpen, false);
+});
+
+test("explicit existing-conditions reconstruction bypasses the deterministic redline resolver", async () => {
+  let calls = 0;
+  const req = {
+    ...mkReq("Reconstruct the existing conditions in Unit 403 from this unmarked source PDF."),
+    session_id: "existing-conditions-text",
+    user_attachments: [
+      {
+        id: "pdf-1",
+        relative_path: "artifacts/uploads/source-evidence.pdf",
+        filename: "source-evidence.pdf",
+        mime: "application/pdf"
+      }
+    ]
+  } satisfies ChatRequest;
+
+  const result = await __testOnlyMaybeRunTopLevelMepRouteRedline(req, async () => {
+    calls += 1;
+    return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: "redline", actions: [] };
+  });
+
+  assert.equal(result, null);
+  assert.equal(calls, 0);
+});
+
+test("existing-conditions intent persists across empty tool-result continuation turns", async () => {
+  const initial = { ...mkReq("Existing conditions reconstruction, not a redline."), session_id: "existing-conditions-continuation" };
+  assert.equal(__testOnlyIsExistingConditionsReconstructionRequest(initial), true);
+
+  let calls = 0;
+  const continuation = {
+    ...mkReq(""),
+    session_id: initial.session_id,
+    message_id: "m-continuation",
+    tool_results: []
+  } satisfies ChatRequest;
+  const result = await __testOnlyMaybeRunTopLevelMepRouteRedline(continuation, async () => {
+    calls += 1;
+    return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: "redline", actions: [] };
+  });
+
+  assert.equal(result, null);
+  assert.equal(calls, 0);
+});
+
+test("workflow intent context bypasses the deterministic redline resolver", async () => {
+  const req = {
+    ...mkReq("Use the attached PDF as source evidence."),
+    session_id: "existing-conditions-context",
+    context: { benchmark: { workflow_intent: "existing_conditions_reconstruction" } }
+  } satisfies ChatRequest;
+
+  assert.equal(__testOnlyIsExistingConditionsReconstructionRequest(req), true);
+});
+
+test("existing-conditions reconstruction bypasses the semantic AEC query registry", async () => {
+  let calls = 0;
+  const req = {
+    ...mkReq("Query bounded native elements for this existing-conditions reconstruction."),
+    session_id: "existing-conditions-semantic-bypass",
+    context: { workflow_intent: "existing_conditions_reconstruction" }
+  } satisfies ChatRequest;
+
+  const result = await __testOnlyMaybeRunTopLevelSemanticAecWorkflow(req, async () => {
+    calls += 1;
+    return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: "semantic", actions: [] };
+  });
+
+  assert.equal(result, null);
+  assert.equal(calls, 0);
+});
+
+test("genuine MEP redline requests still invoke the deterministic redline resolver", async () => {
+  let calls = 0;
+  const req = {
+    ...mkReq("Pick up the attached redline: add the 12 x 10 supply duct where marked."),
+    session_id: "genuine-redline",
+    user_attachments: [
+      {
+        id: "pdf-1",
+        relative_path: "artifacts/uploads/marked.pdf",
+        filename: "marked.pdf",
+        mime: "application/pdf"
+      }
+    ]
+  } satisfies ChatRequest;
+  const expected: ChatResponse = { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: "redline", actions: [] };
+  const result = await __testOnlyMaybeRunTopLevelMepRouteRedline(req, async () => {
+    calls += 1;
+    return expected;
+  });
+
+  assert.equal(result, expected);
+  assert.equal(calls, 1);
 });
 
 test("finalizeDecision replaces blank no-op responses with a fallback explanation", () => {

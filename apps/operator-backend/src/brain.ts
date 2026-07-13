@@ -14,6 +14,59 @@ import { maybeRunDeterministicRoomReceptacleAnalog } from "./deterministic/room_
 import { maybeRunSemanticAecWorkflow } from "./deterministic/aec_workflow_registry.js";
 import type { AecTaskIntentInterpreter } from "./aec_task_intent_interpreter.js";
 
+const EXISTING_CONDITIONS_SESSION_LIMIT = 256;
+const existingConditionsReconstructionSessions = new Map<string, true>();
+
+function contextDeclaresExistingConditionsReconstruction(value: unknown, depth = 0): boolean {
+  if (depth > 4 || value == null) return false;
+  if (typeof value === "string") {
+    return value.trim().toLowerCase() === "existing_conditions_reconstruction";
+  }
+  if (Array.isArray(value)) {
+    return value.some(item => contextDeclaresExistingConditionsReconstruction(item, depth + 1));
+  }
+  if (typeof value !== "object") return false;
+
+  return Object.entries(value as Record<string, unknown>).some(([key, item]) => {
+    const normalizedKey = key.trim().toLowerCase();
+    if ((normalizedKey === "workflow_intent" || normalizedKey === "workflowintent")
+      && typeof item === "string"
+      && item.trim().toLowerCase() === "existing_conditions_reconstruction") {
+      return true;
+    }
+    return contextDeclaresExistingConditionsReconstruction(item, depth + 1);
+  });
+}
+
+function textDeclaresExistingConditionsReconstruction(userText: string): boolean {
+  const text = userText.trim().toLowerCase();
+  if (!text) return false;
+  return [
+    /\bexisting[-\s]+conditions?\s+reconstruction\b/,
+    /\b(?:reconstruct|restore|redraft|re-draft|model)\b.{0,60}\bexisting[-\s]+conditions?\b/,
+    /\bunmarked\s+(?:source\s+)?(?:pdf|drawing|sheet)\b/,
+    /\bnot\s+(?:a\s+)?redline\b/
+  ].some(pattern => pattern.test(text));
+}
+
+function rememberExistingConditionsReconstructionSession(sessionId: string): void {
+  if (!sessionId) return;
+  existingConditionsReconstructionSessions.delete(sessionId);
+  existingConditionsReconstructionSessions.set(sessionId, true);
+  while (existingConditionsReconstructionSessions.size > EXISTING_CONDITIONS_SESSION_LIMIT) {
+    const oldest = existingConditionsReconstructionSessions.keys().next().value as string | undefined;
+    if (!oldest) break;
+    existingConditionsReconstructionSessions.delete(oldest);
+  }
+}
+
+export function __testOnlyIsExistingConditionsReconstructionRequest(req: ChatRequest): boolean {
+  const declared = textDeclaresExistingConditionsReconstruction(req.user_text ?? "")
+    || contextDeclaresExistingConditionsReconstruction(req.context);
+  if (declared) rememberExistingConditionsReconstructionSession(req.session_id);
+  return declared || existingConditionsReconstructionSessions.has(req.session_id);
+}
+
 function maybeBuildZippyBimToolOpenedAck(req: ChatRequest): ChatResponse | null {
   const text = (req.user_text ?? "").trim();
   if (text.length > 0) return null;
@@ -84,11 +137,15 @@ function finalizeDecision(req: ChatRequest, decision: ChatResponse): ChatRespons
 }
 
 async function maybeRunTopLevelMepRouteRedline(req: ChatRequest, resolver = maybeRunDeterministicMepRouteRedline): Promise<ChatResponse | null> {
-  return isExplicitReadOnlyRedlineAnalysisRequest(req) ? null : resolver(req);
+  return isExplicitReadOnlyRedlineAnalysisRequest(req) || __testOnlyIsExistingConditionsReconstructionRequest(req)
+    ? null
+    : resolver(req);
 }
 
 async function maybeRunTopLevelSemanticAecWorkflow(req: ChatRequest, resolver = maybeRunSemanticAecWorkflow): Promise<ChatResponse | null> {
-  return isExplicitReadOnlyRedlineAnalysisRequest(req) ? null : resolver(req);
+  return isExplicitReadOnlyRedlineAnalysisRequest(req) || __testOnlyIsExistingConditionsReconstructionRequest(req)
+    ? null
+    : resolver(req);
 }
 
 export async function __testOnlyMaybeRunTopLevelMepRouteRedline(req: ChatRequest, resolver: typeof maybeRunDeterministicMepRouteRedline): Promise<ChatResponse | null> { return maybeRunTopLevelMepRouteRedline(req, resolver); }

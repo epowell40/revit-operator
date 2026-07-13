@@ -17,6 +17,7 @@
     "check:tool-contracts": "tsx src/tools/check_tool_contracts.ts",
     "check:repo": "npm run check:skills-manifest && npm run check:tool-contracts",
     "benchmark": "tsx src/tools/benchmark.ts",
+    "existing-conditions": "tsx src/tools/existing_conditions_fixture.ts",
     "report:runs": "tsx src/tools/run_report.ts",
     "prompts:scrub": "tsx src/tools/scrub_human_prompts.ts"
   },

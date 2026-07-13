@@ -97,6 +97,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         }
 
                         var refsOut = new List<object>();
+                        var physicalRefsOut = new List<object>();
                         if (p.includeAllRefs)
                         {
                             var seen = new HashSet<long>();
@@ -115,11 +116,17 @@ namespace RevitBridge.Logic.Handlers.MEP
                                             if (o.Id == null) continue;
                                             if (o.Id.IntegerValue == e.Id.IntegerValue) continue;
                                             if (!seen.Add(RevitBridge.Common.ElementIdCompat.GetValue(o.Id))) continue;
-                                            refsOut.Add(new
+                                            var ownerCategory = SelectionUtil.GetCategoryToken(o) ?? (o.Category?.Name ?? "None");
+                                            var isMepSystem = o is MEPSystem;
+                                            var reference = new
                                             {
                                                 ownerId = RevitBridge.Common.ElementIdCompat.GetValue(o.Id),
-                                                ownerCategory = SelectionUtil.GetCategoryToken(o) ?? (o.Category?.Name ?? "None")
-                                            });
+                                                ownerCategory,
+                                                isMepSystem,
+                                                isPhysicalElement = !isMepSystem
+                                            };
+                                            refsOut.Add(reference);
+                                            if (!isMepSystem) physicalRefsOut.Add(reference);
                                         }
                                         catch
                                         {
@@ -142,7 +149,10 @@ namespace RevitBridge.Logic.Handlers.MEP
                             shape,
                             size,
                             coordinateSystem = cs,
-                            connectedTo = refsOut
+                            connectedTo = refsOut,
+                            physicalConnectedTo = physicalRefsOut,
+                            physicalConnectionCount = physicalRefsOut.Count,
+                            isPhysicallyConnected = physicalRefsOut.Count > 0
                         });
                         idx++;
                     }
