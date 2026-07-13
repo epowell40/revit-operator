@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { __testOnlyBuildInitialRedlinePreflightAction, __testOnlyIsFastElectricalPlacementRedline, __testOnlyRunInitialRedlineDecisionLane, __testOnlyShouldPrioritizeInitialRedlinePreflight } from "../src/brains/openai_brain.js";
-import { __testOnlyMaybeRunTopLevelMepRouteRedline } from "../src/brain.js";
+import { __testOnlyMaybeRunTopLevelMepRouteRedline, decide, decideStreaming } from "../src/brain.js";
 import { adaptRedlineAnalyzeToAecIntentEvidence } from "../src/redline/redline_analyze_evidence.js";
 import { AEC_INTENT_EVIDENCE_MAX_STRING_CHARS } from "../src/aec_intent_evidence.js";
 import { executeWorkbenchActions } from "../src/workbench/workbench_runner.js";
@@ -58,7 +58,21 @@ test("exact failed-live request uses the production read-only decision lane once
 test("authoritative step 1968 safety list keeps both dispatches on one analysis-only lane", async () => {
   const req = { version: "operator.backend.v1", session_id: "ff088c6a-359c-4d15-97ff-7894e1d3415c", message_id: "f053cd9f-2b13-4389-b455-434f65f0f000", user_text: step1968Prompt, user_attachments: step1968Attachment } as any;
   const action = __testOnlyBuildInitialRedlinePreflightAction({ userText: step1968Prompt, userAttachments: step1968Attachment }); assert.equal(action?.type, "analyze_redline"); if (action?.type === "analyze_redline") assert.equal(action.file_path, step1968Attachment[0].relative_path);
-  for (const dispatch of ["non-streaming", "streaming"]) { let resolverCalls = 0; const response = await __testOnlyMaybeRunTopLevelMepRouteRedline(req, async () => { resolverCalls += 1; return { version: "operator.backend.v1", assistant_message: "resolver", actions: [] }; }); assert.equal(response, null, dispatch); assert.equal(resolverCalls, 0, dispatch); }
+  const previousBrain = process.env.OPERATOR_BRAIN; process.env.OPERATOR_BRAIN = "openai";
+  try {
+    let mepResolverCalls = 0, semanticResolverCalls = 0, nonStreamingAnalysisCalls = 0, streamingAnalysisCalls = 0;
+    const dependencies = {
+      mepRouteRedline: async () => { mepResolverCalls += 1; return { version: "operator.backend.v1", assistant_message: "mep resolver", actions: [] }; },
+      semanticAecWorkflow: async () => { semanticResolverCalls += 1; return { version: "operator.backend.v1", assistant_message: "semantic resolver", actions: [] }; },
+      openAiBrain: async () => { nonStreamingAnalysisCalls += 1; return { version: "operator.backend.v1", assistant_message: "non-streaming analysis lane", actions: [] }; },
+      openAiStreamingBrain: async () => { streamingAnalysisCalls += 1; return { version: "operator.backend.v1", assistant_message: "streaming analysis lane", actions: [] }; }
+    } as any;
+    const nonStreaming = await decide(req, dependencies);
+    const streaming = await decideStreaming(req, {}, dependencies);
+    assert.equal(mepResolverCalls, 0); assert.equal(semanticResolverCalls, 0);
+    assert.equal(nonStreamingAnalysisCalls, 1); assert.equal(streamingAnalysisCalls, 1);
+    assert.equal(nonStreaming.assistant_message, "non-streaming analysis lane"); assert.equal(streaming.assistant_message, "streaming analysis lane");
+  } finally { if (previousBrain === undefined) delete process.env.OPERATOR_BRAIN; else process.env.OPERATOR_BRAIN = previousBrain; }
   const order: string[] = []; const lane = await __testOnlyRunInitialRedlineDecisionLane({ userText: step1968Prompt, userAttachments: step1968Attachment, runInitialPreflight: async (entry) => { order.push(entry.type); }, runFastPreflight: async () => { order.push("fast"); return null; }, summarize: async () => { order.push("summary"); return { assistant_message: "Evidence summary", actions: [{ action_id: "unexpected", method: "POST", path: "/revit/delete", body_json: "{}" }] } as any; } });
   assert.deepEqual(order, ["analyze_redline", "summary"]); assert.equal(lane.fastPreflight, null); assert.deepEqual(lane.response, { version: "operator.backend.v1", assistant_message: "Evidence summary", actions: [] });
 });

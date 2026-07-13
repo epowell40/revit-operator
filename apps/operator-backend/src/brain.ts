@@ -87,14 +87,26 @@ async function maybeRunTopLevelMepRouteRedline(req: ChatRequest, resolver = mayb
   return isExplicitReadOnlyRedlineAnalysisRequest(req) ? null : resolver(req);
 }
 
+async function maybeRunTopLevelSemanticAecWorkflow(req: ChatRequest, resolver = maybeRunSemanticAecWorkflow): Promise<ChatResponse | null> {
+  return isExplicitReadOnlyRedlineAnalysisRequest(req) ? null : resolver(req);
+}
+
 export async function __testOnlyMaybeRunTopLevelMepRouteRedline(req: ChatRequest, resolver: typeof maybeRunDeterministicMepRouteRedline): Promise<ChatResponse | null> { return maybeRunTopLevelMepRouteRedline(req, resolver); }
+export async function __testOnlyMaybeRunTopLevelSemanticAecWorkflow(req: ChatRequest, resolver: typeof maybeRunSemanticAecWorkflow): Promise<ChatResponse | null> { return maybeRunTopLevelSemanticAecWorkflow(req, resolver); }
 export async function __testOnlyMaybeRunSemanticAecWorkflow(req: ChatRequest, interpreter: AecTaskIntentInterpreter): Promise<ChatResponse | null> { return maybeRunSemanticAecWorkflow(req, interpreter); }
 
 export function __testOnlyFinalizeDecision(req: ChatRequest, decision: ChatResponse): ChatResponse {
   return finalizeDecision(req, decision);
 }
 
-export async function decide(req: ChatRequest): Promise<ChatResponse> {
+export type BrainDecisionDependencies = {
+  mepRouteRedline?: typeof maybeRunDeterministicMepRouteRedline;
+  semanticAecWorkflow?: typeof maybeRunSemanticAecWorkflow;
+  openAiBrain?: typeof decideOpenAi;
+  openAiStreamingBrain?: typeof decideOpenAiStreaming;
+};
+
+export async function decide(req: ChatRequest, dependencies: BrainDecisionDependencies = {}): Promise<ChatResponse> {
   const roomReceptacleDecision = maybeRunDeterministicRoomReceptacleAnalog(req);
   if (roomReceptacleDecision) {
     return finalizeDecision(req, roomReceptacleDecision);
@@ -119,12 +131,12 @@ export async function decide(req: ChatRequest): Promise<ChatResponse> {
     return finalizeDecision(req, enlargedPlanDecision);
   }
 
-  const mepRouteRedlineDecision = await maybeRunTopLevelMepRouteRedline(req);
+  const mepRouteRedlineDecision = await maybeRunTopLevelMepRouteRedline(req, dependencies.mepRouteRedline);
   if (mepRouteRedlineDecision) {
     return finalizeDecision(req, mepRouteRedlineDecision);
   }
 
-  const semanticAecDecision = await maybeRunSemanticAecWorkflow(req);
+  const semanticAecDecision = await maybeRunTopLevelSemanticAecWorkflow(req, dependencies.semanticAecWorkflow);
   if (semanticAecDecision) {
     return finalizeDecision(req, semanticAecDecision);
   }
@@ -134,7 +146,7 @@ export async function decide(req: ChatRequest): Promise<ChatResponse> {
 
   let decision: ChatResponse;
   if (forced === "rule") decision = await decideRule(req);
-  else if (forced === "openai") decision = await decideOpenAi(req);
+  else if (forced === "openai") decision = await (dependencies.openAiBrain ?? decideOpenAi)(req);
   else if (forced === "codex") decision = await decideCodex(req);
   else if (hasOpenAiKey) decision = await decideOpenAi(req);
   else decision = await decideRule(req);
@@ -142,7 +154,7 @@ export async function decide(req: ChatRequest): Promise<ChatResponse> {
   return finalizeDecision(req, decision);
 }
 
-export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks): Promise<ChatResponse> {
+export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dependencies: BrainDecisionDependencies = {}): Promise<ChatResponse> {
   const roomReceptacleDecision = maybeRunDeterministicRoomReceptacleAnalog(req);
   if (roomReceptacleDecision) {
     const text = roomReceptacleDecision.assistant_message || "";
@@ -197,7 +209,7 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks): Pr
     return finalizeDecision(req, enlargedPlanDecision);
   }
 
-  const mepRouteRedlineDecision = await maybeRunTopLevelMepRouteRedline(req);
+  const mepRouteRedlineDecision = await maybeRunTopLevelMepRouteRedline(req, dependencies.mepRouteRedline);
   if (mepRouteRedlineDecision) {
     const text = mepRouteRedlineDecision.assistant_message || "";
     const chunkSize = 60;
@@ -210,7 +222,7 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks): Pr
     return finalizeDecision(req, mepRouteRedlineDecision);
   }
 
-  const semanticAecDecision = await maybeRunSemanticAecWorkflow(req);
+  const semanticAecDecision = await maybeRunTopLevelSemanticAecWorkflow(req, dependencies.semanticAecWorkflow);
   if (semanticAecDecision) {
     const text = semanticAecDecision.assistant_message || "";
     cb.onDelta?.(text);
@@ -222,10 +234,10 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks): Pr
   const hasOpenAiKey = !!resolveOpenAiApiKey();
   if (forced === "codex") return decideCodexStreaming(req, cb);
   if (forced === "openai" || (forced !== "rule" && hasOpenAiKey)) {
-    return finalizeDecision(req, await decideOpenAiStreaming(req, cb));
+    return finalizeDecision(req, await (dependencies.openAiStreamingBrain ?? decideOpenAiStreaming)(req, cb));
   }
 
-  const decision = await decide(req);
+  const decision = await decide(req, dependencies);
 
   const text = decision.assistant_message || "";
   const chunkSize = 60;
