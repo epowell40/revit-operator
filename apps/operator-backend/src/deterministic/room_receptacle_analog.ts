@@ -5,6 +5,20 @@ import { appendGoalProgress, getActiveGoalForSession, setAgentGoal, updateGoal }
 
 const PLAN_PATH = "/revit/plan-room-receptacles-from-analog";
 const APPLY_PATH = "/revit/apply-room-receptacles-from-analog";
+const MATCH_SOURCE_CIRCUIT_MODE = "match_source_system";
+
+function requestedCircuitMode(intent: AecTaskIntentV1 | null): "none" | "match_source_system" {
+  const text = intent?.evidence.user_text ?? "";
+  const explicitCircuitMatch = /\b(?:same|match|copy|mirror|include|assign)\b.{0,48}\b(?:circuits?|panels?)\b/i.test(text)
+    || /\b(?:circuits?|panels?)\b.{0,48}\b(?:same|match|copy|mirror|include|assign)\b/i.test(text)
+    || /\bwire(?:d|ing)?\b/i.test(text);
+  return explicitCircuitMatch ? MATCH_SOURCE_CIRCUIT_MODE : "none";
+}
+
+function payloadCircuitMode(payload: Record<string, unknown> | null): "none" | "match_source_system" {
+  const validation = asRecord(payload?.circuitValidation);
+  return validation?.mode === MATCH_SOURCE_CIRCUIT_MODE ? MATCH_SOURCE_CIRCUIT_MODE : "none";
+}
 
 function ensureRoomDesignGoal(req: ChatRequest, intent: AecTaskIntentV1, roomNumber: string): void {
   const objective = intent.evidence.user_text.trim() || `Lay out receptacles in Room ${roomNumber}.`;
@@ -101,6 +115,11 @@ function verifiedApplyReceipt(payload: Record<string, unknown> | null): { create
   const typeCounts = Array.isArray(payload.typeCounts) ? payload.typeCounts.map(asRecord) : [];
   if (typeCounts.some(value => value === null) || typeCounts.reduce((sum, value) => sum + (Number.isSafeInteger(value?.count) ? value!.count as number : -createdIds.length), 0) !== createdIds.length) return null;
   if (typeCounts.some(value => typeof value?.familyType !== "string" || !value.familyType.trim() || !Number.isSafeInteger(value.count) || (value.count as number) <= 0)) return null;
+  const circuitValidation = asRecord(payload.circuitValidation);
+  if (circuitValidation?.mode === MATCH_SOURCE_CIRCUIT_MODE) {
+    const assignments = Array.isArray(circuitValidation.assignments) ? circuitValidation.assignments.map(asRecord) : [];
+    if (circuitValidation.verified !== true || assignments.length !== createdIds.length || assignments.some(value => value?.exactMatch !== true)) return null;
+  }
   return { createdIds, readback: records, typeCounts: typeCounts as Record<string, unknown>[] };
 }
 
@@ -121,6 +140,7 @@ export function maybeRunDeterministicRoomReceptacleAnalog(req: ChatRequest, inte
 
   if (!planResult && !applyResult && initialRoom) {
     ensureRoomDesignGoal(req, intent!, initialRoom);
+    const circuitMode = requestedCircuitMode(intent);
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
       assistant_message: `Preparing and validating the office-standard receptacle layout for Room ${initialRoom}…`,
@@ -131,6 +151,7 @@ export function maybeRunDeterministicRoomReceptacleAnalog(req: ChatRequest, inte
         body: {
           targetRoomNumber: initialRoom,
           ...(intent?.reference.kind === "room" && intent.reference.room_number ? { sourceRoomNumber: intent.reference.room_number } : {}),
+          ...(circuitMode === MATCH_SOURCE_CIRCUIT_MODE ? { circuitMode } : {}),
           includePreviewImage: true
         }
       }]
@@ -146,6 +167,7 @@ export function maybeRunDeterministicRoomReceptacleAnalog(req: ChatRequest, inte
     const targetRoomNumber = nestedRoomNumber(plan, "target");
     const sourceRoomNumber = nestedRoomNumber(plan, "source");
     const planHash = typeof plan?.planHash === "string" ? plan.planHash : "";
+    const circuitMode = payloadCircuitMode(plan);
     const ready = plan?.ready === true && plan?.status === "ready" && !!targetRoomNumber && !!sourceRoomNumber && !!planHash;
     if (!ready) {
       appendRoomDesignProgress(req.session_id, { summary: "The analog preview did not establish a unique hash-bound project precedent.", work_items: [{ id: "precedent.resolve", title: "Resolve the strongest applicable project precedent", status: "blocked", scope: null, depends_on: ["target.inspect"], planned_actions: ["score same-level furnished analogs", "record selected precedent and assumptions"], blocker: "No complete unique analog plan was returned.", evidence_refs: [`action:${planResult.action_id}`] }, { id: "layout.preview", title: "Rollback-preview the exact mapped layout", status: "blocked", scope: null, depends_on: ["precedent.resolve"], planned_actions: ["hash-bound native preview"], blocker: "Project precedent remains unresolved.", evidence_refs: [`action:${planResult.action_id}`] }] });
@@ -174,7 +196,7 @@ export function maybeRunDeterministicRoomReceptacleAnalog(req: ChatRequest, inte
         action_id: randomUUID(),
         method: "POST",
         path: APPLY_PATH,
-        body: { targetRoomNumber, sourceRoomNumber, planHash, includePreviewImage: true }
+        body: { targetRoomNumber, sourceRoomNumber, planHash, ...(circuitMode === MATCH_SOURCE_CIRCUIT_MODE ? { circuitMode } : {}), includePreviewImage: true }
       }]
     };
   }
@@ -209,6 +231,12 @@ export function maybeRunDeterministicRoomReceptacleAnalog(req: ChatRequest, inte
       : previewUnavailable
         ? " The model write and native element readback passed, but the optional post-apply preview image was unavailable; visual confirmation remains a follow-up."
         : "";
+    const circuitValidation = asRecord(applied?.circuitValidation);
+    const circuitNote = circuitValidation?.mode === MATCH_SOURCE_CIRCUIT_MODE
+      ? circuitValidation.engineeringReviewRequired === true
+        ? ` Exact source circuit-state parity passed, including ${String(circuitValidation.assignedCount ?? "the assigned")} real system memberships; ${String(circuitValidation.unassignedCount ?? "one or more")} source-matched device(s) remain intentionally unassigned and require engineering review.`
+        : " Every created device was verified on its exact source power-system ID. This is factual membership/load readback, not a capacity or code-compliance determination."
+      : "";
     appendRoomDesignProgress(req.session_id, {
       summary: `Atomic Room ${targetRoomNumber} apply and native persistent readback passed for ${createdIds.length} receptacle(s) using Room ${sourceRoomNumber}.`,
       work_items: [
@@ -220,7 +248,7 @@ export function maybeRunDeterministicRoomReceptacleAnalog(req: ChatRequest, inte
     updateRoomDesignPhase(req.session_id, "visual_verification", `Perform focused visual QA in Room ${targetRoomNumber}`);
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
-      assistant_message: `Room ${targetRoomNumber} is complete. I placed and natively verified ${createdIds.length} receptacles using Room ${sourceRoomNumber} as the project-standard analog${types ? ` (${types})` : ""}. The model write was atomic and the returned host, position, orientation, type, and room readback all passed.${previewNote}`,
+      assistant_message: `Room ${targetRoomNumber} is complete. I placed and natively verified ${createdIds.length} receptacles using Room ${sourceRoomNumber} as the project-standard analog${types ? ` (${types})` : ""}. The model write was atomic and the returned host, position, orientation, type, and room readback all passed.${circuitNote}${previewNote}`,
       actions: []
     };
   }
