@@ -21,6 +21,7 @@ import { appendEvent, appendNotification, getRecentStepToolResults } from "../me
 import { persistence } from "../persistence/persistence_manager.js";
 import { retrieveMemoryContext } from "../memory/jsonl_memory_store.js";
 import { formatProjectProfileForPrompt } from "../memory/project_profile.js";
+import { formatRequirementsForPrompt, resolveRequirementsForChat } from "../memory/requirements_store.js";
 import { createOpenAiClient, resolveOpenAiApiKey } from "../openai_client.js";
 import { executeWorkbenchActions, maxWorkbenchActions, type WorkbenchAction, type WorkbenchActionResult } from "../workbench/workbench_runner.js";
 import { createArtifactShare } from "../artifacts/artifact_bus.js";
@@ -14913,6 +14914,16 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
     // ignore
   }
 
+  try {
+    const requirementsBlock = formatRequirementsForPrompt(resolveRequirementsForChat(req));
+    if (requirementsBlock) {
+      lines.push(requirementsBlock);
+      lines.push("");
+    }
+  } catch {
+    // Requirements remain fail-closed at the receipt/API layer; prompt construction must remain available.
+  }
+
   const principal = getRequestPrincipal();
   const ownerUserId = knowledgeBaseOwnerIdForPrincipal(principal);
   if (ownerUserId) {
@@ -16487,8 +16498,43 @@ export function __testOnlyFinalizeOpenAiResponseForRequest(req: ChatRequest, res
 }
 
 async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal): Promise<ChatResponse> {
+  let initialRequirementsReceipt: ReturnType<typeof resolveRequirementsForChat> | null = null;
+  let initialRequirementsError = "";
+  try {
+    initialRequirementsReceipt = resolveRequirementsForChat(req);
+  } catch (error) {
+    initialRequirementsError = error instanceof Error ? error.message : String(error);
+  }
   const finishResponse = (response: ChatResponse): ChatResponse => {
     response = __testOnlyFinalizeOpenAiResponseForRequest(req, response);
+    try {
+      const requirements_receipt = resolveRequirementsForChat(req);
+      const hasActions = Array.isArray(response.actions) && response.actions.length > 0;
+      if (hasActions && initialRequirementsReceipt && requirements_receipt.receipt_sha256 !== initialRequirementsReceipt.receipt_sha256) {
+        response = {
+          ...response,
+          assistant_message: "Durable requirements changed while this plan was being prepared. I stopped before Revit actions; re-run the request against the attached current receipt.",
+          actions: []
+        };
+      } else if (hasActions && requirements_receipt.status !== "resolved") {
+        response = {
+          ...response,
+          assistant_message: `Durable requirements are ${requirements_receipt.status}. I stopped before Revit actions; resolve or narrow the attached receipt first.`,
+          actions: []
+        };
+      }
+      if (requirements_receipt.status !== "resolved" || requirements_receipt.applied.length > 0) {
+        response = { ...response, requirements_receipt };
+      }
+    } catch (error) {
+      if (Array.isArray(response.actions) && response.actions.length > 0) {
+        response = {
+          ...response,
+          assistant_message: `Durable requirements could not be read safely (${error instanceof Error ? error.message : String(error)}). I stopped before Revit actions.`,
+          actions: []
+        };
+      }
+    }
     if (Array.isArray(response.actions) && response.actions.some((action) => typeof action?.path === "string" && action.path.startsWith("/revit/"))) {
       const state = getRedlineFastPathState(req.session_id);
       if (!state.phases.first_revit_action_emitted) {
@@ -16499,6 +16545,22 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     }
     return response;
   };
+
+  if (initialRequirementsError) {
+    return finishResponse({
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message: `Durable requirements could not be read safely (${initialRequirementsError}). I stopped before planning or Revit actions.`,
+      actions: []
+    });
+  }
+  if (initialRequirementsReceipt && initialRequirementsReceipt.status !== "resolved") {
+    return finishResponse({
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message: `Durable requirements are ${initialRequirementsReceipt.status}. I stopped before planning or Revit actions; resolve or narrow the attached receipt first.`,
+      actions: [],
+      requirements_receipt: initialRequirementsReceipt
+    });
+  }
 
   if (isRedlineFocusedTurn(req)) {
     noteRedlineFastPathPhase(req.session_id, "request_accepted");

@@ -1,6 +1,7 @@
 import type { ChatRequest, ChatResponse, ToolResult } from "../contracts.js";
 import type { AecSemanticTaskV1 } from "../aec_semantic_task.js";
 import { appendGoalProgress, getActiveGoalForSession, updateGoal } from "../goals/service.js";
+import { resolveRequirements, resolveRequirementsForChat, type RequirementsReceipt } from "../memory/requirements_store.js";
 
 type ResolvedView = { id: number; name: string; levelName: string | null };
 type Inventory = { view: ResolvedView; elementIds: number[]; inventoryActionId: string };
@@ -12,6 +13,7 @@ type RuntimeState = {
   inventories: Inventory[];
   summaries: Map<number, Array<Record<string, unknown>>>;
   evidenceActionIds: string[];
+  requirementsReceipt: RequirementsReceipt | null;
 };
 
 const states = new Map<string, RuntimeState>();
@@ -19,13 +21,13 @@ const POWER_INSPECTION_CATEGORIES = ["OST_ElectricalFixtures", "OST_ElectricalEq
 const MAX_PILOT_VIEWS = 2;
 const MAX_ELEMENTS_PER_VIEW = 500;
 
-function response(message: string, actions: ChatResponse["actions"] = []): ChatResponse {
-  return { version: "operator.backend.v1", assistant_message: message, actions };
+function response(message: string, actions: ChatResponse["actions"] = [], requirementsReceipt: RequirementsReceipt | null = null): ChatResponse {
+  return { version: "operator.backend.v1", assistant_message: message, actions, ...(requirementsReceipt ? { requirements_receipt: requirementsReceipt } : {}) };
 }
 
-function terminal(message: string, status: "complete" | "failed"): ChatResponse {
+function terminal(message: string, status: "complete" | "failed", requirementsReceipt: RequirementsReceipt | null = null): ChatResponse {
   return {
-    ...response(message),
+    ...response(message, [], requirementsReceipt),
     aec_query_receipt: {
       schema: "revit-operator.aec-query-receipt.v1",
       terminal: true,
@@ -137,7 +139,7 @@ function block(req: ChatRequest, state: RuntimeState, message: string, results: 
     }))
   });
   states.delete(req.session_id);
-  return terminal(`${message} I made no model changes and did not widen the verified Level scope.`, "failed");
+  return terminal(`${message} I made no model changes and did not widen the verified Level scope.`, "failed", state.requirementsReceipt);
 }
 
 function finish(req: ChatRequest, state: RuntimeState, frameResults: ToolResult[]): ChatResponse {
@@ -206,10 +208,18 @@ function finish(req: ChatRequest, state: RuntimeState, frameResults: ToolResult[
   if (goal) updateGoal(goal.id, { current_phase: "precedent_resolution", current_step: "Resolve exact current-project or office-standard power-plan precedent" });
   states.delete(req.session_id);
   const details = findings.map(({ inventory, summary }) => `${inventory.view.name} (${inventory.view.id}): ${summary}`).join(" ");
-  return terminal(`I completed the bounded Level power-plan pilot inspection. ${details} I preserved the per-view evidence and next action—resolve an exact precedent before any dry-run or model write.`, "complete");
+  return terminal(`I completed the bounded Level power-plan pilot inspection. ${details} I preserved the per-view evidence and next action—resolve an exact precedent before any dry-run or model write.`, "complete", state.requirementsReceipt);
 }
 
 function continueRuntime(req: ChatRequest, state: RuntimeState): ChatResponse {
+  try {
+    const currentReceipt = resolveRequirements({ scope_refs: state.requirementsReceipt?.scope_refs ?? [], query: state.requirementsReceipt?.query ?? "", max_results: 40 });
+    if (currentReceipt.status !== "resolved" || currentReceipt.receipt_sha256 !== state.requirementsReceipt?.receipt_sha256) {
+      return block(req, { ...state, requirementsReceipt: currentReceipt }, "Durable requirements changed or became blocked after this power-plan envelope was created; re-plan from the current receipt.", []);
+    }
+  } catch (error) {
+    return block(req, state, `Durable requirements could not be revalidated safely (${error instanceof Error ? error.message : String(error)}).`, []);
+  }
   const results = matchingResults(req, state.actionIds);
   if (results.length !== state.actionIds.length) return block(req, state, "One or more bounded power-plan inspection actions are missing.", results);
 
@@ -221,10 +231,10 @@ function continueRuntime(req: ChatRequest, state: RuntimeState): ChatResponse {
     if (actions.length === 0) {
       const frames = frameActions(state.views);
       states.set(req.session_id, { ...state, stage: "frame", actionIds: frames.map(action => action.action_id), inventories: accepted, evidenceActionIds: [...state.evidenceActionIds, ...results.map(result => result.action_id)] });
-      return response("The exact power views are empty for the bounded inspection categories. I am exporting focused before-state frames to preserve that finding.", frames);
+      return response("The exact power views are empty for the bounded inspection categories. I am exporting focused before-state frames to preserve that finding.", frames, state.requirementsReceipt);
     }
     states.set(req.session_id, { ...state, stage: "summary", actionIds: actions.map(action => action.action_id), inventories: accepted, evidenceActionIds: [...state.evidenceActionIds, ...results.map(result => result.action_id)] });
-    return response("I completed exact per-view power inventories and am reading back only those bounded element IDs before visual inspection.", actions);
+    return response("I completed exact per-view power inventories and am reading back only those bounded element IDs before visual inspection.", actions, state.requirementsReceipt);
   }
 
   if (state.stage === "summary") {
@@ -240,7 +250,7 @@ function continueRuntime(req: ChatRequest, state: RuntimeState): ChatResponse {
     }
     const frames = frameActions(state.views);
     states.set(req.session_id, { ...state, stage: "frame", actionIds: frames.map(action => action.action_id), summaries, evidenceActionIds: [...state.evidenceActionIds, ...results.map(result => result.action_id)] });
-    return response("The bounded IDs read back exactly. I am exporting one focused visual frame per resolved view before recording findings and next actions.", frames);
+    return response("The bounded IDs read back exactly. I am exporting one focused visual frame per resolved view before recording findings and next actions.", frames, state.requirementsReceipt);
   }
 
   return finish(req, state, results);
@@ -248,18 +258,34 @@ function continueRuntime(req: ChatRequest, state: RuntimeState): ChatResponse {
 
 export function startAecLevelPowerPlanPilot(req: ChatRequest, task: AecSemanticTaskV1, views: ResolvedView[]): ChatResponse | null {
   if (!isPowerPlanTask(task)) return null;
+  const requirementsReceipt = resolveRequirementsForChat(req);
+  if (requirementsReceipt.status !== "resolved") {
+    appendGoalProgress(req.session_id, {
+      summary: `Durable requirements ${requirementsReceipt.status} for the bounded Level power-plan workflow; planning stopped before Revit actions.`,
+      work_item: { id: "requirements.resolve", title: "Resolve durable requirements", status: "blocked", blocker: `requirements receipt ${requirementsReceipt.receipt_sha256}` }
+    });
+    return terminal(`Durable requirements are ${requirementsReceipt.status} for this Level power-plan request. I stopped before Revit actions; resolve or narrow the attached receipt.`, "failed", requirementsReceipt);
+  }
   if (views.length === 0 || views.length > MAX_PILOT_VIEWS) {
     const blocker = views.length === 0 ? "No exact power-plan view was resolved." : `The pilot supports at most ${MAX_PILOT_VIEWS} exact power-plan views, but ${views.length} were resolved.`;
     appendGoalProgress(req.session_id, { summary: blocker, work_item: { id: "scope.inspect", title: "Inspect current model and view state in the resolved scope", status: "blocked", blocker } });
-    return terminal(`${blocker} I stopped without model changes rather than silently sampling or widening the scope.`, "failed");
+    return terminal(`${blocker} I stopped without model changes rather than silently sampling or widening the scope.`, "failed", requirementsReceipt);
   }
   const actions = inventoryActions(views);
-  states.set(req.session_id, { task, views, stage: "inventory", actionIds: actions.map(action => action.action_id), inventories: [], summaries: new Map(), evidenceActionIds: [] });
+  states.set(req.session_id, { task, views, stage: "inventory", actionIds: actions.map(action => action.action_id), inventories: [], summaries: new Map(), evidenceActionIds: [], requirementsReceipt });
   appendGoalProgress(req.session_id, {
     summary: `Starting a bounded read-only power-plan pilot in ${views.length} exact view(s).`,
-    assumptions: [{ id: "power.no_implicit_write", statement: "The pilot inspects and records exact per-view evidence before any design proposal; no broad write scope is inferred.", status: "accepted", basis: "underspecified Level power-plan request" }]
+    assumptions: [
+      { id: "power.no_implicit_write", statement: "The pilot inspects and records exact per-view evidence before any design proposal; no broad write scope is inferred.", status: "accepted", basis: "underspecified Level power-plan request" },
+      {
+        id: "requirements.receipt",
+        statement: `Durable requirements receipt ${requirementsReceipt.receipt_sha256}; applied ${requirementsReceipt.applied.map(row => `${row.requirement_id}@${row.revision}`).join(", ") || "none"}.`,
+        status: "accepted",
+        basis: "deterministic scoped requirements resolution"
+      }
+    ]
   });
-  return response(`I resolved ${views.length} exact power-plan view(s). I am now inspecting only bounded electrical fixtures, equipment, and wires in those views; no model write is planned.`, actions);
+  return response(`I resolved ${views.length} exact power-plan view(s). I am now inspecting only bounded electrical fixtures, equipment, and wires in those views; no model write is planned.`, actions, requirementsReceipt);
 }
 
 export function maybeContinueAecLevelPowerPlanPilot(req: ChatRequest): ChatResponse | null {

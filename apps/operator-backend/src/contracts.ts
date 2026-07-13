@@ -76,4 +76,39 @@ export type ChatResponse = {
     bounded: true;
     broadened: false;
   };
+  requirements_receipt?: {
+    schema: "revit-operator.requirements-receipt.v1";
+    generated_at: string;
+    status: "resolved" | "conflict" | "overflow";
+    query: string;
+    scope_refs: Array<{ kind: "office" | "engineer" | "project" | "client"; id: string }>;
+    applied: Array<{
+      requirement_id: string;
+      revision: number;
+      scope: { kind: "office" | "engineer" | "project" | "client"; id: string };
+      key: string;
+      text: string;
+      reason: "highest_precedence" | "duplicate" | "lower_precedence" | "superseded";
+    }>;
+    suppressed: Array<{
+      requirement_id: string;
+      revision: number;
+      scope: { kind: "office" | "engineer" | "project" | "client"; id: string };
+      key: string;
+      text: string;
+      reason: "highest_precedence" | "duplicate" | "lower_precedence" | "superseded";
+    }>;
+    conflicts: Array<{
+      key: string;
+      precedence: number;
+      requirements: Array<{
+        requirement_id: string;
+        revision: number;
+        scope: { kind: "office" | "engineer" | "project" | "client"; id: string };
+        text: string;
+      }>;
+    }>;
+    overflow: { applied_count: number; suppressed_count: number; conflict_count: number; max_results: number } | null;
+    receipt_sha256: string;
+  };
 };

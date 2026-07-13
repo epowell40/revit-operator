@@ -11,6 +11,13 @@ import { disableInstalledSkill, enableDisabledSkill, installStagedSkill, stageLo
 import { persistence } from "../persistence/persistence_manager.js";
 import { appendDailyMemory, appendLongtermMemory, retrieveMemoryContext } from "../memory/jsonl_memory_store.js";
 import { addProjectStandard, formatProjectProfileForUser } from "../memory/project_profile.js";
+import {
+  createRequirement,
+  deriveRequirementScopesForChat,
+  formatRequirementsForUser,
+  listRequirements,
+  resolveRequirements
+} from "../memory/requirements_store.js";
 
 type ActiveRun = {
   sessionId: string;
@@ -287,7 +294,7 @@ function formatSkillList(): string {
   lines.push("Run: run skill <id> with { ... }");
   lines.push("Stop: cancel skill");
   lines.push("Local skills: save skill {...} (stages) | install skill <id> | disable skill <id> | enable skill <id>");
-  lines.push("Memory: remember preference <text> | remember workflow <text> | remember note <text> | search memory <query>");
+  lines.push("Memory: remember preference <text> | remember project requirement <key>: <text> | remember engineer preference <key>: <text> | remember requirement <office|engineer|project|client> <scope-id> <key>: <text> | show requirements | explain requirements <query>");
   lines.push("More: list staged skills | list disabled skills");
   return lines.join("\n");
 }
@@ -400,6 +407,16 @@ export function maybeHandleMacroSkill(req: ChatRequest): ChatResponse | null {
     return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: formatProjectProfileForUser(), actions: [] };
   }
 
+  if (lower === "show requirements" || lower === "list requirements") {
+    return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: formatRequirementsForUser(listRequirements({ status: "all", limit: 200 })), actions: [] };
+  }
+
+  if (lower === "explain requirements" || lower.startsWith("explain requirements ")) {
+    const query = normalizeMemoryText(userText.slice("explain requirements".length), 1000);
+    const receipt = resolveRequirements({ scope_refs: deriveRequirementScopesForChat(req), query, max_results: 80 });
+    return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: JSON.stringify(receipt, null, 2), actions: [] };
+  }
+
   if (lower === "list staged skills" || lower === "staged skills" || lower === "list staged skill") {
     return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: formatStagedSkills(), actions: [] };
   }
@@ -432,6 +449,40 @@ export function maybeHandleMacroSkill(req: ChatRequest): ChatResponse | null {
       };
     } catch (e) {
       return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: `Failed to save preference: ${String(e)}`, actions: [] };
+    }
+  }
+
+  if (lower.startsWith("remember engineer preference ") || lower.startsWith("remember project requirement ")) {
+    const isProject = lower.startsWith("remember project requirement ");
+    const prefix = isProject ? "remember project requirement " : "remember engineer preference ";
+    const parsed = parseProjectStandardCommand(userText, prefix);
+    if (!parsed.text || parsed.category === "general") {
+      return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: `Usage: ${prefix}<key>: <text>`, actions: [] };
+    }
+    const kind = isProject ? "project" : "engineer";
+    const scope = deriveRequirementScopesForChat(req).find(row => row.kind === kind);
+    if (!scope) {
+      return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: isProject ? "No active Revit project identity is available. Open the target model or use the generic scoped command." : "No engineer identity is available.", actions: [] };
+    }
+    try {
+      const saved = createRequirement({ scope, key: parsed.category, text: parsed.text, source: "chat.command", session_id: req.session_id, tags: [kind, isProject ? "requirement" : "preference"] });
+      return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: `Saved durable ${kind} requirement ${saved.requirement.requirement_id}@1 [${saved.requirement.key}] for ${scope.id}.`, actions: [] };
+    } catch (e) {
+      return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: `Failed to save durable requirement: ${String(e)}`, actions: [] };
+    }
+  }
+
+  if (lower.startsWith("remember requirement ")) {
+    const body = normalizeMemoryText(userText.slice("remember requirement ".length), 1400);
+    const match = /^(office|engineer|project|client)\s+([^\s]+)\s+([^:]{1,160}):\s*(.+)$/i.exec(body);
+    if (!match) {
+      return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: "Usage: remember requirement <office|engineer|project|client> <scope-id> <key>: <text>", actions: [] };
+    }
+    try {
+      const saved = createRequirement({ scope: { kind: match[1]!.toLowerCase() as any, id: match[2]! }, key: match[3]!, text: match[4]!, source: "chat.command", session_id: req.session_id, tags: [match[1]!.toLowerCase(), "requirement"] });
+      return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: `Saved durable requirement ${saved.requirement.requirement_id}@1 [${saved.requirement.scope.kind}:${saved.requirement.scope.id}] [${saved.requirement.key}].`, actions: [] };
+    } catch (e) {
+      return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: `Failed to save durable requirement: ${String(e)}`, actions: [] };
     }
   }
 

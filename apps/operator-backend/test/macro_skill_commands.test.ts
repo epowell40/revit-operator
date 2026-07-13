@@ -145,3 +145,24 @@ test("show project profile lists saved standards", () => {
   assert.match(r!.assistant_message, /Project standards profile/);
   assert.match(r!.assistant_message, /Verify titleblock fields/);
 });
+
+test("remember project requirement infers a stable active-model scope", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-ws-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const request = mkReq("s6", "m1", "remember project requirement tags.leaders: Keep leaders short and uncrossed.");
+  request.context = { revit: { document: { title: "Snowdon Towers HVAC", path: "C:\\Models\\Snowdon.rvt" } } };
+  const saved = maybeHandleMacroSkill(request);
+  assert.match(saved?.assistant_message ?? "", /Saved durable project requirement req_/);
+  const shown = maybeHandleMacroSkill(mkReq("s6", "m2", "show requirements"));
+  assert.match(shown?.assistant_message ?? "", /tags\.leaders/);
+  assert.match(shown?.assistant_message ?? "", /Keep leaders short and uncrossed/);
+});
+
+test("generic durable requirement command supports office and client scopes", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-ws-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const office = maybeHandleMacroSkill(mkReq("s7", "m1", "remember requirement office bimtools tags.case: Use ALL CAPS."));
+  const client = maybeHandleMacroSkill(mkReq("s7", "m2", "remember requirement client hospital-a rooms.naming: Preserve client room naming."));
+  assert.match(office?.assistant_message ?? "", /office:bimtools/);
+  assert.match(client?.assistant_message ?? "", /client:hospital-a/);
+});

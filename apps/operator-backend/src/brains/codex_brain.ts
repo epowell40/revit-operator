@@ -11,6 +11,13 @@ import { getSkillLibraryText } from "../skills/skill_library.js";
 import { persistence } from "../persistence/persistence_manager.js";
 import { retrieveMemoryContext } from "../memory/jsonl_memory_store.js";
 import { formatProjectProfileForPrompt } from "../memory/project_profile.js";
+import {
+  beginRequirementsPlanningLease,
+  endRequirementsPlanningLease,
+  formatRequirementsForPrompt,
+  resolveRequirementsForChat,
+  type RequirementsReceipt
+} from "../memory/requirements_store.js";
 import { getPinnedGoal } from "../session_store.js";
 import { compactIncomingToolResult } from "../tool_result_compaction.js";
 import { formatActiveGoalContext, getActiveGoalForSession } from "../goals/service.js";
@@ -363,10 +370,31 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   const text = (req.user_text ?? "").toString();
   let memBlock = "";
   let projectProfileBlock = "";
+  let requirementsBlock = "";
+  let requirementsReceipt: RequirementsReceipt | null = null;
+  let requirementsError = "";
   try {
     projectProfileBlock = formatProjectProfileForPrompt();
   } catch {
     projectProfileBlock = "";
+  }
+  try {
+    requirementsReceipt = resolveRequirementsForChat(req);
+    requirementsBlock = formatRequirementsForPrompt(requirementsReceipt);
+  } catch (error) {
+    requirementsReceipt = null;
+    requirementsBlock = "";
+    requirementsError = error instanceof Error ? error.message : String(error);
+  }
+  if (requirementsError) {
+    const message = `Durable requirements could not be read safely (${requirementsError}). I stopped before planning or tool actions.`;
+    cb.onDone?.(message);
+    return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [] };
+  }
+  if (requirementsReceipt && requirementsReceipt.status !== "resolved") {
+    const message = `Durable requirements are ${requirementsReceipt.status}. I stopped before planning or tool actions; resolve or narrow the attached receipt first.`;
+    cb.onDone?.(message);
+    return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [], requirements_receipt: requirementsReceipt };
   }
   try {
     const query = text.trim() || (getPinnedGoal(req.session_id) ?? "") || "";
@@ -397,6 +425,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
             const blocks: string[] = [];
             if (activeGoalBlock) blocks.push(activeGoalBlock);
             if (projectProfileBlock) blocks.push(projectProfileBlock);
+            if (requirementsBlock) blocks.push(requirementsBlock);
             try {
               blocks.push(formatEnvironmentSummaryForPrompt());
             } catch {}
@@ -419,17 +448,50 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         }
       ]
     : // If the client sends an empty user_text (legacy tool-loop continuation), still nudge Codex.
-      [{ type: "text", text: activeGoalBlock ? `${activeGoalBlock}\n\n(continue)` : "(continue)", text_elements: [] as any[] }];
+      [{ type: "text", text: [activeGoalBlock, requirementsBlock, "(continue)"].filter(Boolean).join("\n\n"), text_elements: [] as any[] }];
 
-  const start = (await withTransportRetry(() =>
-    c.request("turn/start", {
-      threadId,
-      input
-    })
-  )) as any;
+  let requirementsLease: ReturnType<typeof beginRequirementsPlanningLease> | null = null;
+  if (requirementsReceipt) {
+    try {
+      const plannedReceiptSha256 = requirementsReceipt.receipt_sha256;
+      requirementsLease = beginRequirementsPlanningLease(plannedReceiptSha256);
+      const leasedReceipt = resolveRequirementsForChat(req);
+      if (leasedReceipt.status !== "resolved" || leasedReceipt.receipt_sha256 !== plannedReceiptSha256) {
+        endRequirementsPlanningLease(requirementsLease);
+        requirementsLease = null;
+        const message = leasedReceipt.status === "resolved"
+          ? "Durable requirements changed while the planning lease was being acquired. I stopped before tool actions; re-run the request against the attached current receipt."
+          : `Durable requirements became ${leasedReceipt.status} while the planning lease was being acquired. I stopped before tool actions; resolve or narrow the attached receipt first.`;
+        cb.onDone?.(message);
+        return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [], requirements_receipt: leasedReceipt };
+      }
+      requirementsReceipt = leasedReceipt;
+    } catch (error) {
+      endRequirementsPlanningLease(requirementsLease);
+      requirementsLease = null;
+      const message = `Durable requirements could not be leased and revalidated safely (${error instanceof Error ? error.message : String(error)}). I stopped before planning or tool actions.`;
+      cb.onDone?.(message);
+      return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [], requirements_receipt: requirementsReceipt };
+    }
+  }
+  let start: any;
+  try {
+    start = (await withTransportRetry(() =>
+      c.request("turn/start", {
+        threadId,
+        input
+      })
+    )) as any;
+  } catch (error) {
+    endRequirementsPlanningLease(requirementsLease);
+    throw error;
+  }
 
   const turnId = typeof start?.turn?.id === "string" ? start.turn.id : "";
-  if (!turnId) throw new Error("Codex turn/start did not return a turn id.");
+  if (!turnId) {
+    endRequirementsPlanningLease(requirementsLease);
+    throw new Error("Codex turn/start did not return a turn id.");
+  }
   try {
     appendEvent(req.session_id, "assistant", "codex.turn.start", { thread_id: threadId, turn_id: turnId });
   } catch {
@@ -571,6 +633,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     );
   } finally {
     unsubscribe();
+    endRequirementsPlanningLease(requirementsLease);
   }
 
   cb.onDone?.(assistantText);
@@ -587,6 +650,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   return {
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
     assistant_message: assistantText || "",
-    actions: []
+    actions: [],
+    ...(requirementsReceipt && (requirementsReceipt.status !== "resolved" || requirementsReceipt.applied.length > 0) ? { requirements_receipt: requirementsReceipt } : {})
   };
 }
