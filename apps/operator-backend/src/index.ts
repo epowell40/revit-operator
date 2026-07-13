@@ -51,6 +51,14 @@ import { analyzeRedlinePackageWithGemini } from "./vision/gemini_redline_package
 import { buildEvidencePack } from "./evidence/evidence_pack.js";
 import { maybePersistAutoTurnMemory } from "./memory/auto_turn_memory.js";
 import { addProjectStandard, readProjectProfile } from "./memory/project_profile.js";
+import {
+  createRequirement,
+  listRequirements,
+  resolveRequirements,
+  retireRequirement,
+  reviseRequirement
+} from "./memory/requirements_store.js";
+import { requiresMemoryAuthentication } from "./memory/requirements_route_policy.js";
 import { createOpenAiClient, resolveOpenAiApiKey } from "./openai_client.js";
 import { getDesktopComputerConfig, relayDesktopComputerResponse } from "./desktop_computer.js";
 import { authenticateRequest, resolveAuthMode } from "./auth.js";
@@ -610,6 +618,7 @@ function getHeader(req: http.IncomingMessage, name: string): string {
 
 function requiresOperatorToken(pathname: string): boolean {
   if (pathname.startsWith("/tools/zippybim/")) return true;
+  if (requiresMemoryAuthentication(pathname)) return true;
   // Intentionally include /health to avoid drive-by localhost probing of backend state.
   return (
     pathname === "/chat" ||
@@ -2623,6 +2632,102 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         return writeJson(res, 500, { ok: false, error: `Failed to read project profile: ${msg}` });
+      }
+    }
+
+    if (req.method === "GET" && url.pathname === "/memory/requirements") {
+      try {
+        const scopeKind = url.searchParams.get("scope_kind");
+        const scopeId = url.searchParams.get("scope_id");
+        const statusRaw = url.searchParams.get("status");
+        const status = statusRaw === "retired" || statusRaw === "all" ? statusRaw : "active";
+        const limit = Number.parseInt(url.searchParams.get("limit") ?? "200", 10);
+        const scope = scopeKind && scopeId ? { kind: scopeKind as any, id: scopeId } : undefined;
+        return writeJson(res, 200, { ok: true, requirements: listRequirements({ scope, status, limit }) });
+      } catch (e) {
+        return writeJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+
+    if (req.method === "POST" && url.pathname === "/memory/requirements") {
+      const body = await readJson(req).catch(() => null);
+      try {
+        const parsed = body && typeof body === "object" ? body as any : {};
+        const saved = createRequirement({
+          scope: parsed.scope,
+          key: parsed.key,
+          text: parsed.text,
+          tags: parsed.tags,
+          effective_from: parsed.effective_from,
+          effective_until: parsed.effective_until,
+          supersedes_requirement_ids: parsed.supersedes_requirement_ids,
+          source: parsed.source ?? "api",
+          session_id: parsed.session_id,
+          actor_id: auth.principal?.user_id ?? null,
+          evidence: parsed.evidence
+        });
+        appendAuditLine({ type: "requirements.created", ts: new Date().toISOString(), requirement_id: saved.requirement.requirement_id, revision: saved.requirement.revision, principal: auth.principal ?? null });
+        return writeJson(res, 201, saved);
+      } catch (e) {
+        return writeJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+
+    if (req.method === "POST" && url.pathname === "/memory/requirements/revise") {
+      const body = await readJson(req).catch(() => null);
+      try {
+        const parsed = body && typeof body === "object" ? body as any : {};
+        const saved = reviseRequirement({
+          requirement_id: parsed.requirement_id,
+          expected_revision: Number(parsed.expected_revision),
+          scope: parsed.scope,
+          key: parsed.key,
+          text: parsed.text,
+          tags: parsed.tags,
+          effective_from: parsed.effective_from,
+          effective_until: parsed.effective_until,
+          supersedes_requirement_ids: parsed.supersedes_requirement_ids,
+          source: parsed.source ?? "api.revise",
+          session_id: parsed.session_id,
+          actor_id: auth.principal?.user_id ?? null,
+          evidence: parsed.evidence
+        });
+        appendAuditLine({ type: "requirements.revised", ts: new Date().toISOString(), requirement_id: saved.requirement.requirement_id, revision: saved.requirement.revision, principal: auth.principal ?? null });
+        return writeJson(res, 200, saved);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        return writeJson(res, /Revision conflict/.test(message) ? 409 : 400, { ok: false, error: message });
+      }
+    }
+
+    if (req.method === "POST" && url.pathname === "/memory/requirements/retire") {
+      const body = await readJson(req).catch(() => null);
+      try {
+        const parsed = body && typeof body === "object" ? body as any : {};
+        const saved = retireRequirement({
+          requirement_id: parsed.requirement_id,
+          expected_revision: Number(parsed.expected_revision),
+          source: parsed.source ?? "api.retire",
+          session_id: parsed.session_id,
+          actor_id: auth.principal?.user_id ?? null,
+          evidence: parsed.evidence
+        });
+        appendAuditLine({ type: "requirements.retired", ts: new Date().toISOString(), requirement_id: saved.requirement.requirement_id, revision: saved.requirement.revision, principal: auth.principal ?? null });
+        return writeJson(res, 200, saved);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        return writeJson(res, /Revision conflict/.test(message) ? 409 : 400, { ok: false, error: message });
+      }
+    }
+
+    if (req.method === "POST" && url.pathname === "/memory/requirements/resolve") {
+      const body = await readJson(req).catch(() => null);
+      try {
+        const parsed = body && typeof body === "object" ? body as any : {};
+        const receipt = resolveRequirements({ scope_refs: parsed.scope_refs, query: parsed.query, at: parsed.at, max_results: parsed.max_results });
+        return writeJson(res, receipt.status === "resolved" ? 200 : 409, { ok: receipt.status === "resolved", receipt });
+      } catch (e) {
+        return writeJson(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) });
       }
     }
 

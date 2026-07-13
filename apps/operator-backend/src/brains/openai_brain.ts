@@ -21,6 +21,7 @@ import { appendEvent, appendNotification, getRecentStepToolResults } from "../me
 import { persistence } from "../persistence/persistence_manager.js";
 import { retrieveMemoryContext } from "../memory/jsonl_memory_store.js";
 import { formatProjectProfileForPrompt } from "../memory/project_profile.js";
+import { captureRequirementsResponseGuard, enforceRequirementsResponseGuard, formatRequirementsPromptBlockSafely } from "../memory/requirements_response_policy.js";
 import { createOpenAiClient, resolveOpenAiApiKey } from "../openai_client.js";
 import { executeWorkbenchActions, maxWorkbenchActions, type WorkbenchAction, type WorkbenchActionResult } from "../workbench/workbench_runner.js";
 import { createArtifactShare } from "../artifacts/artifact_bus.js";
@@ -14904,7 +14905,7 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
   }
 
   try {
-    const profileBlock = formatProjectProfileForPrompt();
+    const profileBlock = [formatProjectProfileForPrompt(), formatRequirementsPromptBlockSafely(req)].filter(Boolean).join("\n\n");
     if (profileBlock) {
       lines.push(profileBlock);
       lines.push("");
@@ -16487,8 +16488,10 @@ export function __testOnlyFinalizeOpenAiResponseForRequest(req: ChatRequest, res
 }
 
 async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal): Promise<ChatResponse> {
+  const requirementsGuard = captureRequirementsResponseGuard(req);
   const finishResponse = (response: ChatResponse): ChatResponse => {
     response = __testOnlyFinalizeOpenAiResponseForRequest(req, response);
+    response = enforceRequirementsResponseGuard(req, response, requirementsGuard);
     if (Array.isArray(response.actions) && response.actions.some((action) => typeof action?.path === "string" && action.path.startsWith("/revit/"))) {
       const state = getRedlineFastPathState(req.session_id);
       if (!state.phases.first_revit_action_emitted) {
@@ -16499,6 +16502,8 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     }
     return response;
   };
+
+  if (requirementsGuard.blocker) return finishResponse(requirementsGuard.blocker);
 
   if (isRedlineFocusedTurn(req)) {
     noteRedlineFastPathPhase(req.session_id, "request_accepted");
