@@ -44,7 +44,54 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     res.end("unexpected backend request");
   });
   const backendPort = await listen(backend);
+  const bridgeRequests: Array<{ method: string; path: string; token: string; grant: string }> = [];
+  const bridge = http.createServer((req, res) => {
+    const requestUrl = new URL(req.url ?? "/", "http://127.0.0.1");
+    const token = String(req.headers["x-operator-token"] ?? "");
+    const grant = String(req.headers["x-operator-write-grant"] ?? "");
+    bridgeRequests.push({ method: req.method ?? "", path: requestUrl.pathname, token, grant });
+    res.setHeader("Content-Type", "application/json");
+    if (token !== "mcp-stdio-smoke-token") {
+      res.statusCode = 401;
+      res.end(JSON.stringify({ error: "bad token" }));
+      return;
+    }
+    if (requestUrl.pathname === "/revit/ping") {
+      res.end(JSON.stringify({ status: "ok", source: "stdio-smoke" }));
+      return;
+    }
+    if (requestUrl.pathname === "/revit/tool-registry") {
+      res.end(JSON.stringify({
+        version: "operator.tool_registry.v1",
+        tools: [
+          { method: "GET", path: "/revit/context", group: "Core", risk: "low", title: "Context", description: "Current context" },
+          { method: "POST", path: "/revit/test-write", group: "Test", risk: "medium", title: "Test Write", description: "Smoke write" }
+        ]
+      }));
+      return;
+    }
+    if (requestUrl.pathname === "/revit/context") {
+      res.end(JSON.stringify({ document: "Snowdon", view: "L4 - Power" }));
+      return;
+    }
+    if (requestUrl.pathname === "/revit/test-write") {
+      if (grant !== "grant-token") {
+        res.statusCode = 403;
+        res.end(JSON.stringify({ error: "missing grant" }));
+        return;
+      }
+      res.end(JSON.stringify({ applied: true, source: "stdio-smoke" }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end(JSON.stringify({ error: "not found" }));
+  });
+  const bridgePort = await listen(bridge);
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "revit-operator-mcp-stdio-"));
+  fs.writeFileSync(path.join(workspace, "write_grant.json"), JSON.stringify({
+    token: "grant-token",
+    expires_at_utc: new Date(Date.now() + 60_000).toISOString()
+  }), "utf8");
   const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -53,6 +100,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     env: {
       ...env,
       OPERATOR_API_BASE_URL: `http://127.0.0.1:${backendPort}`,
+      REVIT_BRIDGE_URL: `http://127.0.0.1:${bridgePort}`,
       OPERATOR_TOKEN: "mcp-stdio-smoke-token",
       OPERATOR_WORKSPACE_ROOT: workspace
     },
@@ -68,6 +116,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     } finally {
       await withTimeout(transport.close(), "closing MCP child transport", 5_000);
       await closeServer(backend);
+      await closeServer(bridge);
       fs.rmSync(workspace, { recursive: true, force: true });
     }
   });
@@ -89,6 +138,29 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   ]) {
     assert.equal(names.has(name), true, `Missing MCP tool: ${name}`);
   }
+
+  const ping = await withTimeout(client.callTool({ name: "revit_ping", arguments: {} }), "calling Revit ping over stdio");
+  assert.match((ping as any).content[0].text, /stdio-smoke/);
+
+  const search = await withTimeout(client.callTool({
+    name: "revit_search_tools",
+    arguments: { query: "context", method: "GET" }
+  }), "searching bridge tools over stdio");
+  assert.match((search as any).content[0].text, /\/revit\/context/);
+
+  const context = await withTimeout(client.callTool({
+    name: "revit_call_tool",
+    arguments: { method: "GET", path: "/revit/context", requireKnownPath: true }
+  }), "calling a generic bridge read over stdio");
+  assert.match((context as any).content[0].text, /L4 - Power/);
+
+  const write = await withTimeout(client.callTool({
+    name: "revit_call_tool",
+    arguments: { method: "POST", path: "/revit/test-write", body: { apply: true }, requireKnownPath: true }
+  }), "calling a grant-backed generic bridge write over stdio");
+  assert.match((write as any).content[0].text, /"applied": true/);
+  assert.equal(bridgeRequests.every(request => request.token === "mcp-stdio-smoke-token"), true);
+  assert.equal(bridgeRequests.some(request => request.path === "/revit/test-write" && request.grant === "grant-token"), true);
 
   for (const writeControl of ["apply", "write"] as const) {
     const result = await withTimeout(client.callTool({

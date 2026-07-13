@@ -10,14 +10,19 @@ function ensureDir(p: string): void {
   }
 }
 
+function resolveAppsRoot(candidate: string): string | null {
+  const direct = path.resolve(candidate);
+  if (fs.existsSync(path.join(direct, "operator-backend")) && fs.existsSync(path.join(direct, "mcp-server"))) return direct;
+  const nested = path.join(direct, "apps");
+  if (fs.existsSync(path.join(nested, "operator-backend")) && fs.existsSync(path.join(nested, "mcp-server"))) return nested;
+  return null;
+}
+
 function findRepoRoot(startDir: string): string {
   let cur = path.resolve(startDir);
   for (let i = 0; i < 8; i++) {
-    const operatorBackend = path.join(cur, "operator-backend");
-    const mcpServer = path.join(cur, "mcp-server");
-    const prompts = path.join(cur, "prompts");
-    const skills = path.join(cur, "skills");
-    if (fs.existsSync(operatorBackend) && fs.existsSync(mcpServer) && (fs.existsSync(prompts) || fs.existsSync(skills))) return cur;
+    const appsRoot = resolveAppsRoot(cur);
+    if (appsRoot) return appsRoot;
     const parent = path.dirname(cur);
     if (!parent || parent === cur) break;
     cur = parent;
@@ -34,6 +39,7 @@ function normalizePathForTomlArg(p: string): string {
 
 function renderMcpServerBlock(opts: { repoRoot: string; workspaceRoot: string; codexHome: string }): string {
   const serverJs = normalizePathForTomlArg(path.join(opts.repoRoot, "mcp-server", "dist", "server.js"));
+  const serverCwd = normalizePathForTomlArg(path.dirname(path.dirname(serverJs)));
   const workspaceRoot = normalizePathForTomlArg(opts.workspaceRoot);
   const codexHome = normalizePathForTomlArg(opts.codexHome);
   const envInline = `env = { OPERATOR_WORKSPACE_ROOT = ${JSON.stringify(workspaceRoot)}, CODEX_HOME = ${JSON.stringify(codexHome)} }`;
@@ -42,14 +48,10 @@ function renderMcpServerBlock(opts: { repoRoot: string; workspaceRoot: string; c
     "[mcp_servers.revit_operator]",
     "command = \"node\"",
     `args = [${JSON.stringify(serverJs)}]`,
+    `cwd = ${JSON.stringify(serverCwd)}`,
     envInline,
+    "startup_timeout_sec = 20",
     // Codex defaults tool_timeout_sec=60. Revit exports + family reloads can exceed that.
-    "tool_timeout_sec = 240",
-    // Keep a hyphenated alias as well; some prompts/models refer to this server name.
-    "[mcp_servers.\"revit-operator\"]",
-    "command = \"node\"",
-    `args = [${JSON.stringify(serverJs)}]`,
-    envInline,
     "tool_timeout_sec = 240",
     "# Inherit environment (OPERATOR_TOKEN is read from the Workspace token file as well).",
     "# END RevitOperator (managed)",
@@ -76,7 +78,8 @@ export function ensureCodexHomeConfig(opts: { codexHome: string; repoRoot?: stri
   const codexHome = path.resolve(opts.codexHome);
   ensureDir(codexHome);
 
-  const repoRoot = opts.repoRoot ? path.resolve(opts.repoRoot) : findRepoRoot(process.cwd());
+  const requestedRoot = opts.repoRoot ? path.resolve(opts.repoRoot) : findRepoRoot(process.cwd());
+  const repoRoot = resolveAppsRoot(requestedRoot) ?? requestedRoot;
   const workspaceRoot = path.resolve(codexHome, "..");
   const configPath = path.join(codexHome, "config.toml");
 

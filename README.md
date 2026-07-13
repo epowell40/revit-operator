@@ -18,6 +18,8 @@ Copy `.env.example` to a local `.env` file and fill only local values. Do not co
 
 See [docs/LOCAL_SETUP.md](docs/LOCAL_SETUP.md) for the current local setup notes and [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) for self-hosting guidance.
 
+To use the Revit bridge from Codex, Claude Code, or another MCP-compatible agent without the Operator pane, see [docs/EXTERNAL_AGENT_HARNESS.md](docs/EXTERNAL_AGENT_HARNESS.md). The public helper generates host configuration, diagnoses the live bridge, and can issue deliberately bounded pane-free write grants.
+
 ## Validation
 
 From the repository root, run the backend build and test suite with:
