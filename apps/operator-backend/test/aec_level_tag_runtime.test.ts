@@ -144,6 +144,29 @@ test("level tag runtime retains a fifth bounded tall-offset repair before final 
   assert.equal(done?.aec_query_receipt?.status, "complete");
 }));
 
+test("level tag runtime retries professionally unsafe leader routes with a bounded alternate placement", () => withWorkspace(() => {
+  __testOnlyClearAecLevelTagRuntime();
+  const session = "level-tag-leader-repair";
+  activateGoal(session);
+  startAecLevelTagRuntime(req(session), task(), [{ id: 101, name: "L4 HVAC", levelName: "L4" }]);
+  maybeContinueAecLevelTagRuntime(req(session, [result("aec-level-tag-inventory-101", { count: 1, truncated: false, elementIds: [11] })]));
+  maybeContinueAecLevelTagRuntime(req(session, [result("aec-level-tag-dry_run-101", { targetCount: 1, plannedToTag: 1, skippedAlreadyTagged: 0, geometry: { plans: [{ candidateCount: 180 }] } })]));
+
+  const retry = maybeContinueAecLevelTagRuntime(req(session, [
+    result("aec-level-tag-apply-101-v1", {
+      targetCount: 1,
+      taggedCount: 0,
+      skippedAlreadyTagged: 0,
+      errorCount: 1,
+      tagIds: [],
+      errors: [{ failureKind: "tag_unresolved_leader_collision" }]
+    })
+  ]));
+
+  assert.equal(retry?.actions[0]?.action_id, "aec-level-tag-apply-101-v2");
+  assert.equal(body(retry!.actions[0]!).placementMode, "geometry_aware");
+}));
+
 test("level tag runtime fails closed on truncated inventories before any tag action", () => withWorkspace(() => {
   __testOnlyClearAecLevelTagRuntime();
   const session = "level-tag-truncated";

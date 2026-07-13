@@ -235,7 +235,8 @@ function continueApply(req: ChatRequest, state: RuntimeState, results: ToolResul
     view.created_tag_ids = [...new Set(view.created_tag_ids)];
     view.last_error_count = errors;
     const kinds = errorKinds(payload);
-    const retryable = errors > 0 && kinds.length === errors && kinds.every(kind => kind === "tag_unresolved_collision");
+    const retryableKinds = new Set(["tag_unresolved_collision", "tag_unresolved_leader_collision"]);
+    const retryable = errors > 0 && kinds.length === errors && kinds.every(kind => retryableKinds.has(kind));
     if (errors > 0 && retryable) retryViews.push(view);
     else if (errors > 0) state.hard_failure = `${errors} non-retryable tag error(s) remained in ${view.name}.`;
     appendGoalProgress(req.session_id, {
