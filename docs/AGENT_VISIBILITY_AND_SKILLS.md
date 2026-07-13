@@ -33,6 +33,8 @@ The public MCP server entrypoint is:
 
 - `apps/mcp-server/dist/server.js`
 
+This stdio server is also the supported external-harness boundary for Codex, Claude Code, and other MCP hosts. It exposes live tool discovery plus generic and typed Revit calls without requiring the Operator pane. See `docs/EXTERNAL_AGENT_HARNESS.md` for configuration, diagnostics, and bounded write approval.
+
 ## Quick checks
 
 ```powershell

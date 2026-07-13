@@ -420,7 +420,7 @@ namespace RevitBridge.Server
                                 {
                                     error = "Write requires approval (missing/invalid X-Operator-Write-Grant).",
                                     details = err,
-                                    hint = "In the Operator pane, set Writes -> 'Allow this session' (or 'YOLO'), then retry."
+                                    hint = "Approve writes in the Operator pane, or explicitly issue a short-lived pane-free grant with the public MCP external-agent helper, then retry."
                                 });
 
                                 byte[] denied = Encoding.UTF8.GetBytes(responseText);

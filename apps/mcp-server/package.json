@@ -12,6 +12,7 @@
     "start": "node dist/server.js",
     "dev": "ts-node src/server.ts",
     "test": "npm run build && node --test dist/**/*.test.js",
+    "external-agent": "node dist/cli/externalAgent.js",
     "acceptance:mep": "ts-node src/scripts/run_mep_continuity_acceptance.ts"
   },
   "dependencies": {
