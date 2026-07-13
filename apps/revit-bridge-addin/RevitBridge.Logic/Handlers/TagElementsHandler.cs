@@ -64,6 +64,15 @@ namespace RevitBridge.Logic.Handlers
             public TagRect2 TargetBounds { get; set; } = null!;
             public IReadOnlyList<TagPlacementCandidate> Candidates { get; set; } = Array.Empty<TagPlacementCandidate>();
             public double PlaneW { get; set; }
+            public bool LeaderEnabled { get; set; }
+        }
+
+        private sealed class GeometryObstacleSet
+        {
+            public List<TagRect2> HeadObstacles { get; } = new List<TagRect2>();
+            public List<TagRect2> SoftHeadObstacles { get; } = new List<TagRect2>();
+            public List<TagRect2> LeaderProtectedObstacles { get; } = new List<TagRect2>();
+            public List<TagSegment2> LeaderSegments { get; } = new List<TagSegment2>();
         }
 
         private sealed class GeometryPlacementOutcome
@@ -75,6 +84,14 @@ namespace RevitBridge.Logic.Handlers
             public bool OutsideTarget { get; set; }
             public bool CollisionFree { get; set; }
             public bool LeaderApplied { get; set; }
+            public string LeaderGeometryStatus { get; set; } = "not_requested";
+            public int LeaderCrossingCount { get; set; }
+            public int LeaderProtectedCrossingCount { get; set; }
+            public double? LeaderLength { get; set; }
+            public TagSegment2? LeaderSegment { get; set; }
+            public List<TagSegment2> LeaderSegments { get; set; } = new List<TagSegment2>();
+            public int SoftObstacleCount { get; set; }
+            public double SoftObstacleArea { get; set; }
             public TagRect2? TargetBounds { get; set; }
             public TagRect2? TagBounds { get; set; }
             public XYZ? TagHeadPosition { get; set; }
@@ -218,7 +235,7 @@ namespace RevitBridge.Logic.Handlers
                 throw new InvalidOperationException(tagFamilyResolution?.Error ?? "A compatible tag family could not be loaded.");
 
             var geometryPlans = geometryAware && dryRun
-                ? BuildGeometryPlans(doc, view, targets, existingTagged, onlyUntagged, tagWidth, tagHeight, clearance, placementProfile, maxRepairAttempts)
+                ? BuildGeometryPlans(doc, view, targets, existingTagged, onlyUntagged, tagWidth, tagHeight, clearance, placementProfile, maxRepairAttempts, addLeader)
                 : new Dictionary<long, GeometryPlacementPlan>();
             var tagVisibility = EvaluateTagVisibility(doc, view, targetTagCategory, ensureTagCategoryVisible, dryRun: true);
 
@@ -258,7 +275,7 @@ namespace RevitBridge.Logic.Handlers
             var geometryOutcomes = new List<GeometryPlacementOutcome>();
             var actualObstacles = geometryAware
                 ? CollectGeometryObstacles(doc, view, targets, tagWidth, tagHeight)
-                : new List<TagRect2>();
+                : new GeometryObstacleSet();
             var tagSizeCalibration = new TagSizeCalibration(tagWidth, tagHeight);
 
             using (var t = new Transaction(doc, "Tag Elements"))
@@ -267,7 +284,10 @@ namespace RevitBridge.Logic.Handlers
                 tagVisibility = EvaluateTagVisibility(doc, view, targetTagCategory, ensureTagCategoryVisible, dryRun: false);
                 if (ensureTagCategoryVisible && !string.IsNullOrWhiteSpace(tagVisibility.Error))
                     throw new InvalidOperationException($"Tag category visibility could not be ensured: {tagVisibility.Error}");
-                foreach (var element in targets)
+                IEnumerable<Element> orderedTargets = geometryAware
+                    ? targets.OrderBy(element => ElementIdCompat.GetValue(element.Id))
+                    : targets.AsEnumerable();
+                foreach (var element in orderedTargets)
                 {
                     var elementId = ElementIdCompat.GetValue(element.Id);
                     if (onlyUntagged && existingTagged.Contains(elementId))
@@ -276,7 +296,7 @@ namespace RevitBridge.Logic.Handlers
                     }
 
                     var geometryPlan = geometryAware
-                        ? BuildGeometryPlan(view, element, actualObstacles, tagSizeCalibration.Width, tagSizeCalibration.Height, clearance, placementProfile, maxRepairAttempts)
+                        ? BuildGeometryPlan(view, element, actualObstacles, tagSizeCalibration.Width, tagSizeCalibration.Height, clearance, placementProfile, maxRepairAttempts, addLeader)
                         : null;
                     var point = geometryPlan?.Candidates.FirstOrDefault() is TagPlacementCandidate firstCandidate
                         ? FromViewCoordinates(view, firstCandidate.HeadX, firstCandidate.HeadY, geometryPlan.PlaneW)
@@ -330,33 +350,42 @@ namespace RevitBridge.Logic.Handlers
                                 var measuredHeight = outcome.TagBounds.MaxY - outcome.TagBounds.MinY;
                                 tagSizeCalibration.Observe(measuredWidth, measuredHeight);
                             }
+                            if (outcome.CollisionFree && addLeader)
+                            {
+                                ValidateAppliedLeader(doc, view, independentTag, geometryPlan, actualObstacles, clearance, outcome);
+                            }
                             if (!TagWorkPolicy.KeepCreatedTag(geometryAware: true, hasMeasurableGeometry, outcome.CollisionFree))
                             {
                                 doc.Delete(tag.Id);
                                 errors.Add(new
                                 {
                                     elementId,
-                                    failureKind = hasMeasurableGeometry ? "tag_unresolved_collision" : "tag_no_geometry",
+                                    failureKind = hasMeasurableGeometry
+                                        ? (addLeader && (!outcome.LeaderApplied || !string.Equals(outcome.LeaderGeometryStatus, "actual", StringComparison.OrdinalIgnoreCase) || outcome.LeaderCrossingCount > 0 || outcome.LeaderProtectedCrossingCount > 0) ? "tag_unresolved_leader_collision" : "tag_unresolved_collision")
+                                        : "tag_no_geometry",
                                     error = hasMeasurableGeometry
-                                        ? $"No collision-free tag-head position remained after {outcome.Attempts} bounded attempts. The unresolved tag was removed."
+                                        ? $"No professionally clear tag/leader position remained after {outcome.Attempts} bounded attempts. The unresolved tag was removed."
                                         : "The selected tag type produced no visible/measurable tag-head geometry. The test tag was removed."
                                 });
                                 continue;
                             }
-                            if (outcome.TagBounds != null) actualObstacles.Add(outcome.TagBounds);
-                            if (addLeader)
+                            if (outcome.TagBounds != null)
                             {
-                                try
-                                {
-                                    independentTag.HasLeader = true;
-                                    doc.Regenerate();
-                                    outcome.LeaderApplied = independentTag.HasLeader;
-                                }
-                                catch
-                                {
-                                    outcome.LeaderApplied = false;
-                                }
+                                actualObstacles.HeadObstacles.Add(outcome.TagBounds);
+                                actualObstacles.LeaderProtectedObstacles.Add(outcome.TagBounds);
                             }
+                            foreach (var leaderSegment in outcome.LeaderSegments) actualObstacles.LeaderSegments.Add(leaderSegment);
+                        }
+                        else if (geometryAware)
+                        {
+                            doc.Delete(tag.Id);
+                            errors.Add(new
+                            {
+                                elementId,
+                                failureKind = "tag_unsupported_geometry_kind",
+                                error = $"Geometry-aware placement is not yet supported for {tag.GetType().Name}. The unverified tag was removed."
+                            });
+                            continue;
                         }
 
                         tagIds.Add(ElementIdCompat.GetValue(tag.Id));
@@ -409,7 +438,13 @@ namespace RevitBridge.Logic.Handlers
                     evaluatedCount = geometryOutcomes.Count,
                     collisionFreeCount = geometryOutcomes.Count(x => x.CollisionFree),
                     repairedCount = geometryOutcomes.Count(x => x.Attempts > 1),
-                    unresolvedCollisionCount = geometryOutcomes.Count(x => !x.CollisionFree)
+                    unresolvedCollisionCount = geometryOutcomes.Count(x => !x.CollisionFree),
+                    leaderAppliedCount = geometryOutcomes.Count(x => x.LeaderApplied),
+                    actualLeaderReadbackCount = geometryOutcomes.Count(x => x.LeaderGeometryStatus == "actual"),
+                    predictedLeaderFallbackCount = geometryOutcomes.Count(x => x.LeaderGeometryStatus == "predicted_fallback"),
+                    unavailableLeaderGeometryCount = geometryOutcomes.Count(x => x.LeaderGeometryStatus == "unavailable"),
+                    leaderCrossingCount = geometryOutcomes.Sum(x => x.LeaderCrossingCount),
+                    leaderProtectedCrossingCount = geometryOutcomes.Sum(x => x.LeaderProtectedCrossingCount)
                 } : null,
                 tagIds,
                 tags = tagReadback,
@@ -520,7 +555,8 @@ namespace RevitBridge.Logic.Handlers
             double tagHeight,
             double clearance,
             string profile,
-            int maxCandidates)
+            int maxCandidates,
+            bool leaderEnabled)
         {
             var plans = new Dictionary<long, GeometryPlacementPlan>();
             var obstacles = CollectGeometryObstacles(doc, view, targets, tagWidth, tagHeight);
@@ -529,10 +565,14 @@ namespace RevitBridge.Logic.Handlers
             {
                 var targetId = ElementIdCompat.GetValue(target.Id);
                 if (onlyUntagged && existingTagged.Contains(targetId)) continue;
-                var plan = BuildGeometryPlan(view, target, obstacles, tagWidth, tagHeight, clearance, profile, maxCandidates);
+                var plan = BuildGeometryPlan(view, target, obstacles, tagWidth, tagHeight, clearance, profile, maxCandidates, leaderEnabled);
                 if (plan == null) continue;
                 plans[targetId] = plan;
-                obstacles.Add(plan.Candidates[0].Bounds);
+                var selected = plan.Candidates.FirstOrDefault(candidate => candidate.CollisionFree);
+                if (selected == null) continue;
+                obstacles.HeadObstacles.Add(selected.Bounds);
+                obstacles.LeaderProtectedObstacles.Add(selected.Bounds);
+                if (leaderEnabled && selected.LeaderSegment != null) obstacles.LeaderSegments.Add(selected.LeaderSegment);
             }
 
             return plans;
@@ -541,12 +581,13 @@ namespace RevitBridge.Logic.Handlers
         private static GeometryPlacementPlan? BuildGeometryPlan(
             View view,
             Element target,
-            IReadOnlyList<TagRect2> obstacles,
+            GeometryObstacleSet obstacles,
             double tagWidth,
             double tagHeight,
             double clearance,
             string profile,
-            int maxCandidates)
+            int maxCandidates,
+            bool leaderEnabled)
         {
             var targetBounds = ToViewRect(target.get_BoundingBox(view), view);
             if (targetBounds == null) return null;
@@ -555,7 +596,11 @@ namespace RevitBridge.Logic.Handlers
             var candidates = TagPlacementPlanner.RankCandidates(new TagPlacementRequest
             {
                 Target = targetBounds,
-                Obstacles = obstacles,
+                Obstacles = obstacles.HeadObstacles,
+                SoftObstacles = obstacles.SoftHeadObstacles,
+                LeaderProtectedObstacles = obstacles.LeaderProtectedObstacles,
+                LeaderSegments = obstacles.LeaderSegments,
+                LeaderEnabled = leaderEnabled,
                 TagWidth = tagWidth,
                 TagHeight = tagHeight,
                 Clearance = clearance,
@@ -568,7 +613,8 @@ namespace RevitBridge.Logic.Handlers
                 Target = target,
                 TargetBounds = targetBounds,
                 Candidates = candidates,
-                PlaneW = center.DotProduct(view.ViewDirection.Normalize())
+                PlaneW = center.DotProduct(view.ViewDirection.Normalize()),
+                LeaderEnabled = leaderEnabled
             };
         }
 
@@ -584,37 +630,58 @@ namespace RevitBridge.Logic.Handlers
                 side = candidate.Side,
                 collisionFree = candidate.CollisionFree,
                 collisionCount = candidate.CollisionCount,
+                softObstacleCount = candidate.SoftObstacleCount,
+                softObstacleArea = candidate.SoftObstacleArea,
+                leaderLength = candidate.LeaderLength,
+                leaderCrossingCount = candidate.LeaderCrossingCount,
+                leaderProtectedCrossingCount = candidate.LeaderProtectedCrossingCount,
+                leaderSegment = candidate.LeaderSegment == null ? null : SegmentPayload(candidate.LeaderSegment),
                 candidateCount = plan.Candidates.Count
             };
         }
 
-        private static List<TagRect2> CollectGeometryObstacles(Document doc, View view, IReadOnlyList<Element> targets, double tagWidth, double tagHeight)
+        private static GeometryObstacleSet CollectGeometryObstacles(Document doc, View view, IReadOnlyList<Element> targets, double tagWidth, double tagHeight)
         {
-            var obstacles = new List<TagRect2>();
+            var obstacles = new GeometryObstacleSet();
+            var targetIds = new HashSet<long>(targets.Select(target => ElementIdCompat.GetValue(target.Id)));
             foreach (var target in targets)
             {
                 var rect = ToViewRect(target.get_BoundingBox(view), view);
-                if (rect != null) obstacles.Add(rect);
+                if (rect == null) continue;
+                obstacles.HeadObstacles.Add(rect);
+                obstacles.LeaderProtectedObstacles.Add(rect);
             }
 
             foreach (var element in new FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType())
             {
-                if (element?.Category?.CategoryType != CategoryType.Annotation) continue;
-                TagRect2? rect;
-                if (element is IndependentTag existingTag)
+                if (element?.Category == null) continue;
+                if (element.Category.CategoryType == CategoryType.Annotation)
                 {
-                    var head = existingTag.TagHeadPosition;
-                    var right = view.RightDirection.Normalize();
-                    var up = view.UpDirection.Normalize();
-                    var centerU = head.DotProduct(right);
-                    var centerV = head.DotProduct(up);
-                    rect = new TagRect2(centerU - tagWidth * 0.5, centerV - tagHeight * 0.5, centerU + tagWidth * 0.5, centerV + tagHeight * 0.5);
+                    TagRect2? rect;
+                    if (element is IndependentTag existingTag)
+                    {
+                        var head = existingTag.TagHeadPosition;
+                        var right = view.RightDirection.Normalize();
+                        var up = view.UpDirection.Normalize();
+                        var centerU = head.DotProduct(right);
+                        var centerV = head.DotProduct(up);
+                        rect = new TagRect2(centerU - tagWidth * 0.5, centerV - tagHeight * 0.5, centerU + tagWidth * 0.5, centerV + tagHeight * 0.5);
+                        if (!AddExistingTagLeaderSegments(view, existingTag, obstacles.LeaderSegments))
+                            throw new InvalidOperationException($"Existing leader geometry for tag {ElementIdCompat.GetValue(existingTag.Id)} could not be measured. Geometry-aware placement stopped to avoid an unverified leader crossing.");
+                    }
+                    else
+                    {
+                        rect = ToViewRect(element.get_BoundingBox(view), view);
+                    }
+                    if (rect == null) continue;
+                    obstacles.HeadObstacles.Add(rect);
+                    obstacles.LeaderProtectedObstacles.Add(rect);
                 }
-                else
+                else if (!targetIds.Contains(ElementIdCompat.GetValue(element.Id)) && IsSoftPlanObstacle(element) && obstacles.SoftHeadObstacles.Count < 3000)
                 {
-                    rect = ToViewRect(element.get_BoundingBox(view), view);
+                    var rect = ToViewRect(element.get_BoundingBox(view), view);
+                    if (rect != null) obstacles.SoftHeadObstacles.Add(rect);
                 }
-                if (rect != null) obstacles.Add(rect);
             }
             return obstacles;
         }
@@ -624,7 +691,7 @@ namespace RevitBridge.Logic.Handlers
             View view,
             IndependentTag tag,
             GeometryPlacementPlan plan,
-            IReadOnlyList<TagRect2> obstacles,
+            GeometryObstacleSet obstacles,
             double clearance,
             int maxAttempts)
         {
@@ -654,22 +721,41 @@ namespace RevitBridge.Logic.Handlers
                     if (tagBounds == null) continue;
                 }
 
-                var collisionCount = obstacles.Count(x => tagBounds.Intersects(x.Inflate(clearance)));
+                var collisionCount = obstacles.HeadObstacles.Count(x => tagBounds.Intersects(x.Inflate(clearance)));
+                var softObstacleCount = obstacles.SoftHeadObstacles.Count(rect => tagBounds.Intersects(rect));
+                var softObstacleArea = obstacles.SoftHeadObstacles
+                    .Where(rect => tagBounds.Intersects(rect))
+                    .Sum(tagBounds.IntersectionArea);
+                var leaderSegment = plan.LeaderEnabled ? TagPlacementPlanner.BuildLeaderSegment(plan.TargetBounds, tagBounds) : null;
+                var leaderCrossingCount = leaderSegment == null ? 0 : obstacles.LeaderSegments.Count(segment => leaderSegment.Intersects(segment));
+                var leaderProtectedCrossingCount = leaderSegment == null
+                    ? 0
+                    : obstacles.LeaderProtectedObstacles.Count(rect => !SameRect(rect, plan.TargetBounds) && leaderSegment.CrossesInterior(rect.Inflate(clearance)));
+                var collisionFree = collisionCount == 0 && leaderCrossingCount == 0 && leaderProtectedCrossingCount == 0;
                 var outcome = new GeometryPlacementOutcome
                 {
-                    Status = collisionCount == 0 ? (attempts == 1 ? "placed" : "repaired") : "collision",
+                    Status = collisionFree ? (attempts == 1 ? "placed" : "repaired") : "collision",
                     Side = candidate.Side,
                     Attempts = attempts,
                     CollisionCount = collisionCount,
+                    SoftObstacleCount = softObstacleCount,
+                    SoftObstacleArea = softObstacleArea,
+                    LeaderSegment = leaderSegment,
+                    LeaderSegments = leaderSegment == null ? new List<TagSegment2>() : new List<TagSegment2> { leaderSegment },
+                    LeaderLength = leaderSegment?.Length,
+                    LeaderCrossingCount = leaderCrossingCount,
+                    LeaderProtectedCrossingCount = leaderProtectedCrossingCount,
+                    LeaderGeometryStatus = plan.LeaderEnabled ? "predicted" : "not_requested",
                     OutsideTarget = !tagBounds.Intersects(plan.TargetBounds.Inflate(clearance)),
-                    CollisionFree = collisionCount == 0,
+                    CollisionFree = collisionFree,
                     TargetBounds = plan.TargetBounds,
                     TagBounds = tagBounds,
                     TagHeadPosition = head,
                     AnchorOffsetU = anchorCalibration.OffsetX,
                     AnchorOffsetV = anchorCalibration.OffsetY
                 };
-                if (best == null || outcome.CollisionCount < best.CollisionCount) best = outcome;
+                if (best == null || PlacementFailureScore(outcome) < PlacementFailureScore(best) ||
+                    (PlacementFailureScore(outcome) == PlacementFailureScore(best) && outcome.SoftObstacleArea < best.SoftObstacleArea)) best = outcome;
                 if (outcome.CollisionFree) return outcome;
             }
 
@@ -693,11 +779,194 @@ namespace RevitBridge.Logic.Handlers
             };
         }
 
+        private static int PlacementFailureScore(GeometryPlacementOutcome outcome) =>
+            Math.Max(0, outcome.CollisionCount) + outcome.LeaderCrossingCount + outcome.LeaderProtectedCrossingCount;
+
+        private static void ValidateAppliedLeader(
+            Document doc,
+            View view,
+            IndependentTag tag,
+            GeometryPlacementPlan plan,
+            GeometryObstacleSet obstacles,
+            double clearance,
+            GeometryPlacementOutcome outcome)
+        {
+            try
+            {
+                tag.HasLeader = true;
+                doc.Regenerate();
+                outcome.LeaderApplied = tag.HasLeader;
+            }
+            catch
+            {
+                outcome.LeaderApplied = false;
+            }
+
+            if (!outcome.LeaderApplied)
+            {
+                outcome.LeaderGeometryStatus = "apply_failed";
+                outcome.CollisionFree = false;
+                return;
+            }
+
+            var actualSegments = ReadIndependentTagLeaderSegments(tag, view);
+            if (actualSegments.Count == 0)
+            {
+                outcome.LeaderGeometryStatus = "unavailable";
+                outcome.CollisionFree = false;
+                outcome.Status = "leader_geometry_unavailable";
+                return;
+            }
+
+            outcome.LeaderGeometryStatus = "actual";
+            outcome.LeaderSegments = actualSegments;
+            outcome.LeaderSegment = actualSegments.FirstOrDefault();
+            outcome.LeaderLength = actualSegments.Sum(segment => segment.Length);
+            outcome.LeaderCrossingCount = actualSegments.Sum(segment => obstacles.LeaderSegments.Count(existing => segment.Intersects(existing)));
+            outcome.LeaderProtectedCrossingCount = actualSegments.Sum(segment =>
+                obstacles.LeaderProtectedObstacles.Count(rect => !SameRect(rect, plan.TargetBounds) && segment.CrossesInterior(rect.Inflate(clearance))));
+            outcome.CollisionFree = outcome.CollisionCount == 0 && outcome.LeaderCrossingCount == 0 && outcome.LeaderProtectedCrossingCount == 0;
+            if (!outcome.CollisionFree) outcome.Status = "actual_leader_collision";
+        }
+
+        private static bool AddExistingTagLeaderSegments(
+            View view,
+            IndependentTag tag,
+            ICollection<TagSegment2> destination)
+        {
+            if (!tag.HasLeader) return true;
+            var actual = ReadIndependentTagLeaderSegments(tag, view);
+            if (actual.Count > 0)
+            {
+                foreach (var segment in actual) destination.Add(segment);
+                return true;
+            }
+            return false;
+        }
+
+        private static List<TagSegment2> ReadIndependentTagLeaderSegments(IndependentTag tag, View view)
+        {
+            var segments = new List<TagSegment2>();
+            try
+            {
+                if (!tag.HasLeader) return segments;
+                var head = tag.TagHeadPosition;
+                var references = TryReadTaggedReferences(tag);
+                if (references.Count > 0)
+                {
+                    foreach (var reference in references)
+                    {
+                        var end = TryInvokeXyzMethod(tag, "GetLeaderEnd", reference);
+                        var elbow = TryInvokeXyzMethod(tag, "GetLeaderElbow", reference);
+                        AddLeaderPath(end, elbow, head, view, segments);
+                    }
+                }
+                else
+                {
+                    AddLeaderPath(
+                        TryReadXyzProperty(tag, "LeaderEnd"),
+                        TryReadXyzProperty(tag, "LeaderElbow"),
+                        head,
+                        view,
+                        segments);
+                }
+            }
+            catch
+            {
+                segments.Clear();
+            }
+            return segments;
+        }
+
+        private static void AddLeaderPath(XYZ? end, XYZ? elbow, XYZ head, View view, ICollection<TagSegment2> destination)
+        {
+            if (end == null) return;
+            if (elbow != null)
+            {
+                AddLeaderSegment(end, elbow, view, destination);
+                AddLeaderSegment(elbow, head, view, destination);
+                return;
+            }
+            AddLeaderSegment(end, head, view, destination);
+        }
+
+        private static List<object> TryReadTaggedReferences(IndependentTag tag)
+        {
+            try
+            {
+                var method = tag.GetType().GetMethod("GetTaggedReferences", BindingFlags.Instance | BindingFlags.Public, null, Type.EmptyTypes, null);
+                if (method?.Invoke(tag, null) is System.Collections.IEnumerable values)
+                    return values.Cast<object>().Where(value => value != null).ToList();
+            }
+            catch
+            {
+                // Legacy Revit versions expose leader geometry as properties instead.
+            }
+            return new List<object>();
+        }
+
+        private static XYZ? TryInvokeXyzMethod(object source, string methodName, object argument)
+        {
+            try
+            {
+                var method = source.GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public)
+                    .FirstOrDefault(candidate => candidate.Name == methodName && candidate.GetParameters().Length == 1);
+                return method?.Invoke(source, new[] { argument }) as XYZ;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static void AddLeaderSegment(XYZ start, XYZ end, View view, ICollection<TagSegment2> destination)
+        {
+            var right = view.RightDirection.Normalize();
+            var up = view.UpDirection.Normalize();
+            var segment = new TagSegment2(
+                start.DotProduct(right),
+                start.DotProduct(up),
+                end.DotProduct(right),
+                end.DotProduct(up));
+            if (segment.Length > 1e-9) destination.Add(segment);
+        }
+
+        private static XYZ? TryReadXyzProperty(object source, string propertyName)
+        {
+            try
+            {
+                return source.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public)?.GetValue(source, null) as XYZ;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool IsSoftPlanObstacle(Element element)
+        {
+            if (element is Wall || element is FamilyInstance) return true;
+            var categoryId = ElementIdCompat.GetValue(element.Category?.Id);
+            return categoryId == (long)BuiltInCategory.OST_DuctCurves ||
+                   categoryId == (long)BuiltInCategory.OST_PipeCurves ||
+                   categoryId == (long)BuiltInCategory.OST_CableTray ||
+                   categoryId == (long)BuiltInCategory.OST_Conduit ||
+                   categoryId == (long)BuiltInCategory.OST_RoomSeparationLines;
+        }
+
+        private static bool SameRect(TagRect2 left, TagRect2 right, double tolerance = 1e-9) =>
+            Math.Abs(left.MinX - right.MinX) <= tolerance &&
+            Math.Abs(left.MinY - right.MinY) <= tolerance &&
+            Math.Abs(left.MaxX - right.MaxX) <= tolerance &&
+            Math.Abs(left.MaxY - right.MaxY) <= tolerance;
+
         private static XYZ? ResolveElementCenter(Element element, View view)
         {
             if (element.Location is LocationPoint lp && lp.Point != null) return lp.Point;
             var bbox = element.get_BoundingBox(view);
-            return bbox == null ? null : (bbox.Min + bbox.Max) * 0.5;
+            if (bbox == null) return null;
+            var localCenter = (bbox.Min + bbox.Max) * 0.5;
+            return bbox.Transform?.OfPoint(localCenter) ?? localCenter;
         }
 
         private static TagRect2? ToViewRect(BoundingBoxXYZ? bbox, View view)
@@ -709,7 +978,10 @@ namespace RevitBridge.Logic.Handlers
             foreach (var x in new[] { bbox.Min.X, bbox.Max.X })
             foreach (var y in new[] { bbox.Min.Y, bbox.Max.Y })
             foreach (var z in new[] { bbox.Min.Z, bbox.Max.Z })
-                points.Add(new XYZ(x, y, z));
+            {
+                var localPoint = new XYZ(x, y, z);
+                points.Add(bbox.Transform?.OfPoint(localPoint) ?? localPoint);
+            }
             return new TagRect2(
                 points.Min(p => p.DotProduct(right)),
                 points.Min(p => p.DotProduct(up)),
@@ -733,6 +1005,15 @@ namespace RevitBridge.Logic.Handlers
             maxV = rect.MaxY,
             centerU = rect.CenterX,
             centerV = rect.CenterY
+        };
+
+        private static object SegmentPayload(TagSegment2 segment) => new
+        {
+            startU = segment.StartX,
+            startV = segment.StartY,
+            endU = segment.EndX,
+            endV = segment.EndY,
+            length = segment.Length
         };
 
         private static object? TagFamilyPayload(TagFamilyResolution? resolution) => resolution == null ? null : new
@@ -1403,9 +1684,16 @@ namespace RevitBridge.Logic.Handlers
                     side = geometryOutcome.Side,
                     attempts = geometryOutcome.Attempts,
                     collisionCount = geometryOutcome.CollisionCount,
+                    softObstacleCount = geometryOutcome.SoftObstacleCount,
+                    softObstacleArea = geometryOutcome.SoftObstacleArea,
                     outsideTarget = geometryOutcome.OutsideTarget,
                     collisionFree = geometryOutcome.CollisionFree,
                     leaderApplied = geometryOutcome.LeaderApplied,
+                    leaderGeometryStatus = geometryOutcome.LeaderGeometryStatus,
+                    leaderLength = geometryOutcome.LeaderLength,
+                    leaderCrossingCount = geometryOutcome.LeaderCrossingCount,
+                    leaderProtectedCrossingCount = geometryOutcome.LeaderProtectedCrossingCount,
+                    leaderSegments = geometryOutcome.LeaderSegments.Select(SegmentPayload).ToList(),
                     targetBounds = geometryOutcome.TargetBounds == null ? null : RectPayload(geometryOutcome.TargetBounds),
                     tagBounds = geometryOutcome.TagBounds == null ? null : RectPayload(geometryOutcome.TagBounds),
                     anchorOffset = geometryOutcome.AnchorOffsetU == null || geometryOutcome.AnchorOffsetV == null ? null : new

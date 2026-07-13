@@ -99,6 +99,141 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void Leader_segment_runs_from_nearest_target_boundary_to_tag_head()
+        {
+            var leader = TagPlacementPlanner.BuildLeaderSegment(
+                Rect(-0.5, -0.5, 0.5, 0.5),
+                Rect(1.5, -0.25, 2.5, 0.25));
+
+            Assert.Equal(0.5, leader.StartX, 6);
+            Assert.Equal(0, leader.StartY, 6);
+            Assert.Equal(2, leader.EndX, 6);
+            Assert.Equal(0, leader.EndY, 6);
+            Assert.Equal(1.5, leader.Length, 6);
+        }
+
+        [Fact]
+        public void Rejects_otherwise_clear_head_when_its_leader_crosses_an_existing_leader()
+        {
+            var target = Rect(-0.5, -0.5, 0.5, 0.5);
+            var ranked = TagPlacementPlanner.RankCandidates(new TagPlacementRequest
+            {
+                Target = target,
+                Obstacles = new[] { target },
+                LeaderSegments = new[] { new TagSegment2(0.8, -2, 0.8, 2) },
+                TagWidth = 1,
+                TagHeight = 0.5,
+                Clearance = 0.1,
+                Profile = "mep",
+                MaxCandidates = 4
+            });
+
+            Assert.Equal("top", ranked.First().Side);
+            Assert.True(ranked.First().CollisionFree);
+            Assert.Contains(ranked, candidate => candidate.Side == "right" && candidate.CollisionCount == 0 && candidate.LeaderCrossingCount == 1 && !candidate.CollisionFree);
+        }
+
+        [Fact]
+        public void Prevents_leader_from_running_through_protected_annotation_content()
+        {
+            var target = Rect(-0.5, -0.5, 0.5, 0.5);
+            var protectedText = Rect(0.52, -0.05, 0.58, 0.05);
+            var ranked = TagPlacementPlanner.RankCandidates(new TagPlacementRequest
+            {
+                Target = target,
+                Obstacles = new[] { target },
+                LeaderProtectedObstacles = new[] { protectedText },
+                TagWidth = 1,
+                TagHeight = 0.5,
+                Clearance = 0.1,
+                Profile = "mep",
+                MaxCandidates = 4
+            });
+
+            Assert.Equal("top", ranked.First().Side);
+            Assert.Contains(ranked, candidate => candidate.Side == "right" && candidate.CollisionCount == 0 && candidate.LeaderProtectedCrossingCount == 1);
+        }
+
+        [Fact]
+        public void Prefers_clear_floor_space_over_soft_wall_or_equipment_overlap()
+        {
+            var target = Rect(-0.5, -0.5, 0.5, 0.5);
+            var ranked = TagPlacementPlanner.RankCandidates(new TagPlacementRequest
+            {
+                Target = target,
+                Obstacles = new[] { target },
+                SoftObstacles = new[] { Rect(0.55, -1, 2, 1) },
+                TagWidth = 1,
+                TagHeight = 0.5,
+                Clearance = 0.1,
+                Profile = "mep",
+                MaxCandidates = 4
+            });
+
+            Assert.Equal("top", ranked.First().Side);
+            Assert.Equal(0, ranked.First().SoftObstacleCount);
+            Assert.Contains(ranked, candidate => candidate.Side == "right" && candidate.SoftObstacleCount > 0);
+        }
+
+        [Fact]
+        public void Keeps_the_nearest_clear_leader_ahead_of_farther_clear_variants()
+        {
+            var ranked = TagPlacementPlanner.RankCandidates(new TagPlacementRequest
+            {
+                Target = Rect(-0.5, -0.5, 0.5, 0.5),
+                Obstacles = new[] { Rect(-0.5, -0.5, 0.5, 0.5) },
+                TagWidth = 1,
+                TagHeight = 0.5,
+                Clearance = 0.2,
+                Profile = "mep",
+                MaxCandidates = 180
+            });
+
+            Assert.Equal(0.7, ranked.First().LeaderLength, 6);
+            Assert.Equal(
+                ranked.Where(candidate => candidate.Side == ranked.First().Side).Min(candidate => candidate.LeaderLength),
+                ranked.First().LeaderLength,
+                6);
+        }
+
+        [Fact]
+        public void Leader_disabled_uses_head_geometry_only_and_reports_no_leader_metrics()
+        {
+            var target = Rect(-0.5, -0.5, 0.5, 0.5);
+            var candidate = TagPlacementPlanner.RankCandidates(new TagPlacementRequest
+            {
+                Target = target,
+                Obstacles = new[] { target },
+                LeaderSegments = new[] { new TagSegment2(0.8, -2, 0.8, 2) },
+                LeaderProtectedObstacles = new[] { Rect(0.52, -0.05, 0.58, 0.05) },
+                LeaderEnabled = false,
+                TagWidth = 1,
+                TagHeight = 0.5,
+                Clearance = 0.1,
+                Profile = "mep",
+                MaxCandidates = 4
+            }).First();
+
+            Assert.True(candidate.CollisionFree);
+            Assert.Equal("right", candidate.Side);
+            Assert.Null(candidate.LeaderSegment);
+            Assert.Equal(0, candidate.LeaderLength);
+            Assert.Equal(0, candidate.LeaderCrossingCount);
+            Assert.Equal(0, candidate.LeaderProtectedCrossingCount);
+        }
+
+        [Fact]
+        public void Segment_geometry_distinguishes_interior_crossings_from_boundary_touches()
+        {
+            var rect = Rect(1, 1, 2, 2);
+            Assert.True(new TagSegment2(0, 1.5, 3, 1.5).CrossesInterior(rect));
+            Assert.False(new TagSegment2(0, 1, 3, 1).CrossesInterior(rect));
+            Assert.True(new TagSegment2(0, 0, 2, 2).Intersects(new TagSegment2(0, 2, 2, 0)));
+            Assert.True(new TagSegment2(0, 0, 2, 0).Intersects(new TagSegment2(2, 0, 3, 1)));
+            Assert.True(new TagSegment2(0, 0, 3, 0).Intersects(new TagSegment2(1, 0, 2, 0)));
+        }
+
+        [Fact]
         public void ReportsLeastBadCandidateWhenEverySideIsBlocked()
         {
             var target = Rect(-0.5, -0.5, 0.5, 0.5);
