@@ -19,8 +19,17 @@ export type ArchitecturalWallLineCandidatePolicy = {
   maximum_source_endpoint_gap_ft: number;
   minimum_length_ft: number;
   maximum_candidates: number;
+  maximum_face_pair_inputs: number;
   duplicate_angle_tolerance_degrees: number;
   duplicate_separation_ft: number;
+  face_pair_angle_tolerance_degrees: number;
+  minimum_face_pair_separation_ft: number;
+  maximum_face_pair_separation_ft: number;
+  minimum_face_pair_overlap_ratio: number;
+  minimum_junction_angle_degrees: number;
+  maximum_junction_angle_degrees: number;
+  maximum_junction_endpoint_gap_ft: number;
+  maximum_junction_hypotheses: number;
   parallel_angle_tolerance_degrees: number;
   minimum_parallel_separation_ft: number;
   maximum_parallel_separation_ft: number;
@@ -31,8 +40,11 @@ export type ArchitecturalWallLineCandidatePolicy = {
 export type ArchitecturalWallLineCandidate = {
   candidate_id: string;
   rank: number;
+  derivation: "detected_line" | "parallel_face_midline";
   pixel_points: [Point2, Point2];
   model_points: [Point2, Point2];
+  face_separation_ft: number | null;
+  supporting_face_pixel_points: [[Point2, Point2], [Point2, Point2]] | null;
   angle_degrees: number;
   length_ft: number;
   candidate_coverage: number;
@@ -48,6 +60,17 @@ export type ArchitecturalWallLineAmbiguity = {
   perpendicular_separation_ft: number;
   overlap_ratio: number;
   score_gap: number;
+};
+
+export type ArchitecturalWallJunctionHypothesis = {
+  junction_id: string;
+  rank: number;
+  candidate_ids: [string, string];
+  pixel_point: Point2;
+  model_point: Point2;
+  angle_difference_degrees: number;
+  endpoint_distances_ft: [number, number];
+  topology_score: number;
 };
 
 type ImageReference = {
@@ -69,6 +92,7 @@ export type ArchitecturalWallLineCandidateReceipt = {
   status: "candidates_ready" | "clarification_required" | "blocked";
   policy: ArchitecturalWallLineCandidatePolicy;
   candidates: ArchitecturalWallLineCandidate[];
+  junction_hypotheses: ArchitecturalWallJunctionHypothesis[];
   ambiguities: ArchitecturalWallLineAmbiguity[];
   clarification_question: string | null;
   overlay: ImageReference;
@@ -77,6 +101,7 @@ export type ArchitecturalWallLineCandidateReceipt = {
 
 type HoughPoint = { x: number; y: number };
 type RawLine = {
+  derivation: "detected_line" | "parallel_face_midline";
   angle_degrees: number;
   rho: number;
   pixel_points: [Point2, Point2];
@@ -84,6 +109,8 @@ type RawLine = {
   candidate_coverage: number;
   source_ink_coverage: number;
   rank_score: number;
+  face_separation_px: number | null;
+  supporting_face_pixel_points: [[Point2, Point2], [Point2, Point2]] | null;
 };
 
 const DEFAULT_POLICY_BASE = {
@@ -96,8 +123,17 @@ const DEFAULT_POLICY_BASE = {
   maximum_source_endpoint_gap_ft: 0.3,
   minimum_length_ft: 2,
   maximum_candidates: 8,
+  maximum_face_pair_inputs: 80,
   duplicate_angle_tolerance_degrees: 8,
   duplicate_separation_ft: 0.65,
+  face_pair_angle_tolerance_degrees: 3,
+  minimum_face_pair_separation_ft: 0.2,
+  maximum_face_pair_separation_ft: 2.5,
+  minimum_face_pair_overlap_ratio: 0.7,
+  minimum_junction_angle_degrees: 45,
+  maximum_junction_angle_degrees: 135,
+  maximum_junction_endpoint_gap_ft: 1.25,
+  maximum_junction_hypotheses: 12,
   parallel_angle_tolerance_degrees: 3,
   minimum_parallel_separation_ft: 0.15,
   maximum_parallel_separation_ft: 4,
@@ -187,8 +223,23 @@ function policyFor(width: number, height: number, override: Partial<Architectura
   positive(policy.maximum_source_endpoint_gap_ft, "maximum_source_endpoint_gap_ft");
   positive(policy.minimum_length_ft, "minimum_length_ft");
   positiveInteger(policy.maximum_candidates, "maximum_candidates");
+  positiveInteger(policy.maximum_face_pair_inputs, "maximum_face_pair_inputs");
   positive(policy.duplicate_angle_tolerance_degrees, "duplicate_angle_tolerance_degrees");
   positive(policy.duplicate_separation_ft, "duplicate_separation_ft");
+  positive(policy.face_pair_angle_tolerance_degrees, "face_pair_angle_tolerance_degrees");
+  positive(policy.minimum_face_pair_separation_ft, "minimum_face_pair_separation_ft");
+  positive(policy.maximum_face_pair_separation_ft, "maximum_face_pair_separation_ft");
+  if (policy.maximum_face_pair_separation_ft <= policy.minimum_face_pair_separation_ft) {
+    throw new Error("maximum_face_pair_separation_ft_must_exceed_minimum");
+  }
+  positive(policy.minimum_junction_angle_degrees, "minimum_junction_angle_degrees");
+  positive(policy.maximum_junction_angle_degrees, "maximum_junction_angle_degrees");
+  if (policy.maximum_junction_angle_degrees <= policy.minimum_junction_angle_degrees
+    || policy.maximum_junction_angle_degrees >= 180) {
+    throw new Error("maximum_junction_angle_degrees_must_exceed_minimum_and_be_below_180");
+  }
+  positive(policy.maximum_junction_endpoint_gap_ft, "maximum_junction_endpoint_gap_ft");
+  positiveInteger(policy.maximum_junction_hypotheses, "maximum_junction_hypotheses");
   positive(policy.parallel_angle_tolerance_degrees, "parallel_angle_tolerance_degrees");
   positive(policy.minimum_parallel_separation_ft, "minimum_parallel_separation_ft");
   positive(policy.maximum_parallel_separation_ft, "maximum_parallel_separation_ft");
@@ -197,6 +248,7 @@ function policyFor(width: number, height: number, override: Partial<Architectura
   }
   for (const [label, value] of [
     ["minimum_parallel_overlap_ratio", policy.minimum_parallel_overlap_ratio],
+    ["minimum_face_pair_overlap_ratio", policy.minimum_face_pair_overlap_ratio],
     ["ambiguity_score_gap", policy.ambiguity_score_gap]
   ] as const) {
     finite(value, label);
@@ -360,13 +412,16 @@ function evaluateLine(
   const normalizedLength = Math.min(1, lengthFt / Math.max(1, Math.min(20, diagonalFt)));
   const score = 0.55 * normalizedLength + 0.3 * candidateCoverage + 0.15 * sourceCoverage;
   return {
+    derivation: "detected_line",
     angle_degrees: round((angleDegrees + 180) % 180),
     rho,
     pixel_points: [start, end],
     length_px: lengthPx,
     candidate_coverage: candidateCoverage,
     source_ink_coverage: sourceCoverage,
-    rank_score: score
+    rank_score: score,
+    face_separation_px: null,
+    supporting_face_pixel_points: null
   };
 }
 
@@ -404,8 +459,78 @@ function sameLine(
 }
 
 function stableCandidateId(line: RawLine): string {
-  const payload = line.pixel_points.flatMap((entry) => [round(entry.x), round(entry.y)]).join("|");
+  const payload = [
+    line.derivation,
+    ...line.pixel_points.flatMap((entry) => [round(entry.x), round(entry.y)]),
+    line.face_separation_px === null ? "none" : round(line.face_separation_px)
+  ].join("|");
   return `line-${crypto.createHash("sha256").update(payload).digest("hex").slice(0, 12)}`;
+}
+
+function buildFacePairMidlines(
+  raw: RawLine[],
+  pixelsPerFoot: number,
+  policy: ArchitecturalWallLineCandidatePolicy
+): RawLine[] {
+  const inputs = raw
+    .filter((entry) => entry.derivation === "detected_line")
+    .slice(0, policy.maximum_face_pair_inputs);
+  const midlines: RawLine[] = [];
+  for (let aIndex = 0; aIndex < inputs.length; aIndex += 1) {
+    for (let bIndex = aIndex + 1; bIndex < inputs.length; bIndex += 1) {
+      const a = inputs[aIndex]!;
+      const b = inputs[bIndex]!;
+      if (angleDifference(a.angle_degrees, b.angle_degrees) > policy.face_pair_angle_tolerance_degrees) continue;
+      const separationPx = perpendicularDistance(a, b);
+      const separationFt = separationPx / pixelsPerFoot;
+      if (separationFt < policy.minimum_face_pair_separation_ft
+        || separationFt > policy.maximum_face_pair_separation_ft) continue;
+      const overlap = lineOverlap(a, b);
+      if (overlap < policy.minimum_face_pair_overlap_ratio) continue;
+      const radians = a.angle_degrees * Math.PI / 180;
+      const dx = Math.cos(radians);
+      const dy = Math.sin(radians);
+      const nx = -dy;
+      const ny = dx;
+      const project = (point: Point2): number => point.x * dx + point.y * dy;
+      const aInterval = a.pixel_points.map(project).sort((x, y) => x - y);
+      const bInterval = b.pixel_points.map(project).sort((x, y) => x - y);
+      const startProjection = Math.max(aInterval[0]!, bInterval[0]!);
+      const endProjection = Math.min(aInterval[1]!, bInterval[1]!);
+      const lengthPx = endProjection - startProjection;
+      if (lengthPx < policy.minimum_length_ft * pixelsPerFoot) continue;
+      const aMidpoint = {
+        x: (a.pixel_points[0].x + a.pixel_points[1].x) / 2,
+        y: (a.pixel_points[0].y + a.pixel_points[1].y) / 2
+      };
+      const bMidpoint = {
+        x: (b.pixel_points[0].x + b.pixel_points[1].x) / 2,
+        y: (b.pixel_points[0].y + b.pixel_points[1].y) / 2
+      };
+      const centerRho = ((aMidpoint.x * nx + aMidpoint.y * ny) + (bMidpoint.x * nx + bMidpoint.y * ny)) / 2;
+      const baseX = nx * centerRho;
+      const baseY = ny * centerRho;
+      const candidateCoverage = Math.min(a.candidate_coverage, b.candidate_coverage);
+      const sourceCoverage = Math.min(a.source_ink_coverage, b.source_ink_coverage);
+      const score = Math.min(1, (a.rank_score + b.rank_score) / 2 + 0.08 + 0.08 * overlap);
+      midlines.push({
+        derivation: "parallel_face_midline",
+        angle_degrees: a.angle_degrees,
+        rho: centerRho,
+        pixel_points: [
+          { x: baseX + dx * startProjection, y: baseY + dy * startProjection },
+          { x: baseX + dx * endProjection, y: baseY + dy * endProjection }
+        ],
+        length_px: lengthPx,
+        candidate_coverage: candidateCoverage,
+        source_ink_coverage: sourceCoverage,
+        rank_score: score,
+        face_separation_px: separationPx,
+        supporting_face_pixel_points: [a.pixel_points, b.pixel_points]
+      });
+    }
+  }
+  return midlines;
 }
 
 function detectLines(
@@ -468,8 +593,13 @@ function detectLines(
     }
   }
   raw.sort((a, b) => b.rank_score - a.rank_score || b.length_px - a.length_px || a.angle_degrees - b.angle_degrees);
+  const combined = [...buildFacePairMidlines(raw, pixelsPerFoot, policy), ...raw];
+  combined.sort((a, b) => b.rank_score - a.rank_score
+    || (a.derivation === b.derivation ? 0 : a.derivation === "parallel_face_midline" ? -1 : 1)
+    || b.length_px - a.length_px
+    || a.angle_degrees - b.angle_degrees);
   const accepted: RawLine[] = [];
-  for (const entry of raw) {
+  for (const entry of combined) {
     if (accepted.some((other) => sameLine(entry, other, pixelsPerFoot, policy))) continue;
     accepted.push(entry);
     if (accepted.length >= policy.maximum_candidates) break;
@@ -516,11 +646,73 @@ function buildAmbiguities(
   return ambiguities;
 }
 
+function buildJunctionHypotheses(
+  candidates: ArchitecturalWallLineCandidate[],
+  pixelsPerFoot: number,
+  scope: ArchitecturalSourceDeltaReceipt["scope_model_bounds"],
+  width: number,
+  height: number,
+  policy: ArchitecturalWallLineCandidatePolicy
+): ArchitecturalWallJunctionHypothesis[] {
+  const hypotheses: Omit<ArchitecturalWallJunctionHypothesis, "rank">[] = [];
+  const paired = candidates.filter((candidate) => candidate.derivation === "parallel_face_midline");
+  const cross = (a: Point2, b: Point2): number => a.x * b.y - a.y * b.x;
+  const distance = (a: Point2, b: Point2): number => Math.hypot(a.x - b.x, a.y - b.y);
+  for (let aIndex = 0; aIndex < paired.length; aIndex += 1) {
+    for (let bIndex = aIndex + 1; bIndex < paired.length; bIndex += 1) {
+      const a = paired[aIndex]!;
+      const b = paired[bIndex]!;
+      const angle = angleDifference(a.angle_degrees, b.angle_degrees);
+      if (angle < policy.minimum_junction_angle_degrees || angle > policy.maximum_junction_angle_degrees) continue;
+      const p = a.pixel_points[0];
+      const q = b.pixel_points[0];
+      const r = { x: a.pixel_points[1].x - p.x, y: a.pixel_points[1].y - p.y };
+      const s = { x: b.pixel_points[1].x - q.x, y: b.pixel_points[1].y - q.y };
+      const denominator = cross(r, s);
+      if (Math.abs(denominator) <= 1e-9) continue;
+      const qp = { x: q.x - p.x, y: q.y - p.y };
+      const t = cross(qp, s) / denominator;
+      const u = cross(qp, r) / denominator;
+      const intersection = { x: p.x + t * r.x, y: p.y + t * r.y };
+      const endpointDistancesFt: [number, number] = [
+        Math.min(distance(intersection, a.pixel_points[0]), distance(intersection, a.pixel_points[1])) / pixelsPerFoot,
+        Math.min(distance(intersection, b.pixel_points[0]), distance(intersection, b.pixel_points[1])) / pixelsPerFoot
+      ];
+      if (endpointDistancesFt.some((entry) => entry > policy.maximum_junction_endpoint_gap_ft)) continue;
+      const aTolerance = policy.maximum_junction_endpoint_gap_ft * pixelsPerFoot / Math.max(1, a.length_ft * pixelsPerFoot);
+      const bTolerance = policy.maximum_junction_endpoint_gap_ft * pixelsPerFoot / Math.max(1, b.length_ft * pixelsPerFoot);
+      if (t < -aTolerance || t > 1 + aTolerance || u < -bTolerance || u > 1 + bTolerance) continue;
+      if (intersection.x < 0 || intersection.x > width || intersection.y < 0 || intersection.y > height) continue;
+      const orthogonality = 1 - Math.min(1, Math.abs(90 - angle) / 45);
+      const endpointSupport = 1 - Math.min(1, Math.max(...endpointDistancesFt) / policy.maximum_junction_endpoint_gap_ft);
+      const topologyScore = Math.min(1, (a.rank_score + b.rank_score) / 2 + 0.08 * orthogonality + 0.08 * endpointSupport);
+      const candidateIds: [string, string] = [a.candidate_id, b.candidate_id].sort() as [string, string];
+      hypotheses.push({
+        junction_id: `junction-${crypto.createHash("sha256").update(candidateIds.join("|")).digest("hex").slice(0, 12)}`,
+        candidate_ids: candidateIds,
+        pixel_point: { x: round(intersection.x), y: round(intersection.y) },
+        model_point: (() => {
+          const model = pointToModel(intersection, scope, width, height);
+          return { x: round(model.x), y: round(model.y) };
+        })(),
+        angle_difference_degrees: round(angle),
+        endpoint_distances_ft: endpointDistancesFt.map(round) as [number, number],
+        topology_score: round(topologyScore)
+      });
+    }
+  }
+  return hypotheses
+    .sort((a, b) => b.topology_score - a.topology_score || a.junction_id.localeCompare(b.junction_id))
+    .slice(0, policy.maximum_junction_hypotheses)
+    .map((entry, index) => ({ ...entry, rank: index + 1 }));
+}
+
 async function writeOverlay(
   sourcePath: string,
   width: number,
   height: number,
   candidates: ArchitecturalWallLineCandidate[],
+  junctions: ArchitecturalWallJunctionHypothesis[],
   outDir: string
 ): Promise<ImageReference> {
   const source = await loadImage(sourcePath);
@@ -531,8 +723,8 @@ async function writeOverlay(
   for (const candidate of candidates) {
     const color = colors[(candidate.rank - 1) % colors.length]!;
     context.strokeStyle = color;
-    context.lineWidth = candidate.rank <= 2 ? 5 : 3;
-    context.setLineDash(candidate.rank <= 2 ? [] : [14, 8]);
+    context.lineWidth = candidate.derivation === "parallel_face_midline" ? 5 : 3;
+    context.setLineDash(candidate.derivation === "parallel_face_midline" ? [] : [14, 8]);
     context.beginPath();
     context.moveTo(candidate.pixel_points[0].x, candidate.pixel_points[0].y);
     context.lineTo(candidate.pixel_points[1].x, candidate.pixel_points[1].y);
@@ -544,7 +736,20 @@ async function writeOverlay(
     context.fillRect(labelX - 3, labelY - 17, 92, 22);
     context.fillStyle = color;
     context.font = "bold 16px Arial";
-    context.fillText(`L${candidate.rank} ${candidate.rank_score.toFixed(2)}`, labelX, labelY);
+    const prefix = candidate.derivation === "parallel_face_midline" ? "C" : "L";
+    context.fillText(`${prefix}${candidate.rank} ${candidate.rank_score.toFixed(2)}`, labelX, labelY);
+  }
+  for (const junction of junctions) {
+    context.strokeStyle = "#222222";
+    context.fillStyle = "rgba(255,255,255,0.9)";
+    context.lineWidth = 4;
+    context.beginPath();
+    context.arc(junction.pixel_point.x, junction.pixel_point.y, 12, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+    context.fillStyle = "#222222";
+    context.font = "bold 15px Arial";
+    context.fillText(`J${junction.rank}`, junction.pixel_point.x + 15, junction.pixel_point.y - 8);
   }
   const overlayPath = path.join(outDir, "wall_line_candidates.png");
   fs.writeFileSync(overlayPath, canvas.toBuffer("image/png"));
@@ -613,6 +818,7 @@ export async function buildArchitecturalWallLineCandidates(
   const candidates: ArchitecturalWallLineCandidate[] = raw.map((line, index) => ({
     candidate_id: stableCandidateId(line),
     rank: index + 1,
+    derivation: line.derivation,
     pixel_points: line.pixel_points.map((entry) => ({
       x: round(Math.max(0, Math.min(width, entry.x))),
       y: round(Math.max(0, Math.min(height, entry.y)))
@@ -624,15 +830,30 @@ export async function buildArchitecturalWallLineCandidates(
       }, delta.scope_model_bounds, width, height);
       return { x: round(model.x), y: round(model.y) };
     }) as [Point2, Point2],
+    face_separation_ft: line.face_separation_px === null ? null : round(line.face_separation_px / pixelsPerFoot),
+    supporting_face_pixel_points: line.supporting_face_pixel_points === null ? null : line.supporting_face_pixel_points.map(
+      (face) => face.map((entry) => ({
+        x: round(Math.max(0, Math.min(width, entry.x))),
+        y: round(Math.max(0, Math.min(height, entry.y)))
+      })) as [Point2, Point2]
+    ) as [[Point2, Point2], [Point2, Point2]],
     angle_degrees: line.angle_degrees,
     length_ft: round(line.length_px / pixelsPerFoot),
     candidate_coverage: round(line.candidate_coverage),
     source_ink_coverage: round(line.source_ink_coverage),
     rank_score: round(line.rank_score)
   }));
+  const junctionHypotheses = buildJunctionHypotheses(
+    candidates,
+    pixelsPerFoot,
+    delta.scope_model_bounds,
+    width,
+    height,
+    policy
+  );
   const ambiguities = buildAmbiguities(raw, candidates, pixelsPerFoot, policy);
   const status = candidates.length === 0 ? "blocked" : ambiguities.length > 0 ? "clarification_required" : "candidates_ready";
-  const overlay = await writeOverlay(sourcePath, width, height, candidates, resolvedOutDir);
+  const overlay = await writeOverlay(sourcePath, width, height, candidates, junctionHypotheses, resolvedOutDir);
   return {
     schema_version: 1,
     artifact_role: "architectural_wall_line_candidates",
@@ -645,6 +866,7 @@ export async function buildArchitecturalWallLineCandidates(
     status,
     policy,
     candidates,
+    junction_hypotheses: junctionHypotheses,
     ambiguities,
     clarification_question: status === "clarification_required"
       ? "Multiple source-supported wall-line candidates overlap or have near-equal rank. Confirm the intended wall centerline/host candidate before compiling openings or any native action."
@@ -654,6 +876,8 @@ export async function buildArchitecturalWallLineCandidates(
     overlay,
     usage_constraints: [
       "Candidates are deterministic image measurements, not selected truth and not native Revit actions.",
+      "Parallel-face midlines are explicit centerline hypotheses derived from two supported face lines; their measured face separation and supporting faces must be reconciled semantically before selection.",
+      "Junction hypotheses identify near-endpoint intersections between paired-face centerlines and provide topology evidence only; they do not select either wall or authorize an opening host.",
       "Parallel or near-equal candidates remain explicit ambiguities; rank alone must not authorize a wall or opening host.",
       "Candidate geometry is derived only from hash-bound source-aligned and source-only delta images in the registered frame.",
       "Opening recognition, wall type/thickness, vertical extents, and family/type promotion remain separate evidence-gated steps."

@@ -134,6 +134,10 @@ test("wall-line extraction preserves overlapping parallel alternatives instead o
     );
     assert.equal(receipt.status, "clarification_required");
     assert.ok(receipt.candidates.length >= 2);
+    const faceMidline = receipt.candidates.find((candidate) => candidate.derivation === "parallel_face_midline");
+    assert.ok(faceMidline, JSON.stringify(receipt.candidates, null, 2));
+    assert.ok(faceMidline.face_separation_ft !== null && faceMidline.face_separation_ft >= 0.2);
+    assert.equal(faceMidline.supporting_face_pixel_points?.length, 2);
     assert.ok(receipt.ambiguities.some((entry) => entry.reason === "parallel_overlapping_wall_lines"));
     assert.match(receipt.clarification_question ?? "", /Confirm the intended wall centerline\/host candidate/);
     assert.equal("selected_candidate_id" in receipt, false);
@@ -158,6 +162,41 @@ test("wall-line extraction preserves overlapping parallel alternatives instead o
     ], { cwd: process.cwd(), encoding: "utf8" });
     assert.equal(cliRun.status, 0, cliRun.stderr || cliRun.stdout);
     assert.equal(JSON.parse(fs.readFileSync(receiptPath, "utf8")).status, "clarification_required");
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("wall-line extraction exposes connected paired-face centerlines as non-selecting junction hypotheses", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-wall-junction-candidates-"));
+  try {
+    const fixture = await buildFixture(temp, "junction-a", [
+      [[70, 80], [430, 80]],
+      [[70, 100], [430, 100]],
+      [[70, 80], [70, 310]],
+      [[90, 100], [90, 310]]
+    ]);
+    const receipt = await buildArchitecturalWallLineCandidates(
+      fixture.delta,
+      sha256(fixture.deltaReceiptPath),
+      fixture.measurement,
+      sha256(fixture.measurementReceiptPath),
+      path.join(temp, "junction-candidates"),
+      {
+        maximum_candidates: 12,
+        minimum_length_ft: 3,
+        maximum_wall_interruption_ft: 1,
+        maximum_face_pair_separation_ft: 1.5
+      }
+    );
+    assert.ok(receipt.junction_hypotheses.length > 0, JSON.stringify(receipt.candidates, null, 2));
+    const junction = receipt.junction_hypotheses[0]!;
+    assert.equal(junction.candidate_ids.length, 2);
+    assert.ok(junction.angle_difference_degrees >= 80 && junction.angle_difference_degrees <= 100);
+    assert.ok(junction.endpoint_distances_ft.every((distance) => distance <= 1.25));
+    assert.ok(junction.pixel_point.x >= 60 && junction.pixel_point.x <= 110);
+    assert.ok(junction.pixel_point.y >= 70 && junction.pixel_point.y <= 115);
+    assert.equal("selected_candidate_id" in receipt, false);
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
