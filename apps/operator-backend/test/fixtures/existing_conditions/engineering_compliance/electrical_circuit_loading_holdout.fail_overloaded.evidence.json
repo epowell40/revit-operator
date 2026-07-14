@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "case_id": "holdout-electrical-nondwelling-receptacle-circuit-loading-v1",
+  "standards_profile_sha256": "e28ae52a495eaeec357987854c75d5f1cfec1b455a71c6612f74b5a235ef373e",
+  "native_evidence_owner": "evaluator",
+  "native_readback": true,
+  "checks": [
+    {
+      "check_id": "receptacle-circuit-load",
+      "type": "receptacle_circuit_loading",
+      "circuits": [
+        {
+          "circuit_id": "P-HO-1-12",
+          "voltage": 120,
+          "phase_count": 1,
+          "breaker_amps": 20,
+          "native_membership_verified": true,
+          "native_ocpd_verified": true,
+          "native_conductor_verified": true,
+          "conductor_ampacity_amps": 20,
+          "conductor_ocpd_compatibility_verified": true,
+          "receptacles": [
+            {"element_key": "host:duplex-a", "yoke_or_strap_count": 1, "native_yoke_or_strap_count_verified": true, "continuous": false},
+            {"element_key": "host:quad-a", "yoke_or_strap_count": 2, "native_yoke_or_strap_count_verified": true, "continuous": false},
+            {"element_key": "host:duplex-b", "yoke_or_strap_count": 1, "native_yoke_or_strap_count_verified": true, "continuous": false},
+            {"element_key": "host:quad-b", "yoke_or_strap_count": 2, "native_yoke_or_strap_count_verified": true, "continuous": false},
+            {"element_key": "host:duplex-c", "yoke_or_strap_count": 1, "native_yoke_or_strap_count_verified": true, "continuous": false}
+          ],
+          "other_continuous_va": 500,
+          "other_noncontinuous_va": 700
+        }
+      ]
+    }
+  ]
+}

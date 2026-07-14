@@ -55,6 +55,8 @@ Score native circuit membership and calculated volt-amperes. General-use recepta
 
 and compares it with the profile-selected single- or three-phase circuit-capacity calculation. Native circuit membership, yoke/strap count, OCPD basis, conductor basis, and conductor/OCPD compatibility must all be verified. This avoids a blanket “all circuits are limited to 80 percent” rule. A 100-percent-rated exception requires immutable equipment evidence and native verification; a caller-provided boolean is insufficient.
 
+The shipped 180-VA-per-yoke holdout is explicitly a non-dwelling general-use receptacle-loading exercise. Dwelling-unit general receptacles are not silently evaluated with that same method; their load calculation must come from the declared dwelling profile. GFCI and dwelling wall-space cases remain separate checks even when they happen to appear in one model.
+
 ## Plumbing invariants
 
 Fixture profiles declare required and prohibited services. The evaluator checks native system reachability rather than demanding a separate direct connector for every conceptual service.
@@ -80,6 +82,20 @@ At least one evaluation family should use a different model region or independen
 ## Public implementation
 
 The public evaluator primitives are in `apps/operator-backend/src/existing_conditions/engineering_invariants.ts`. Compliance/generative scoring requires evaluator-owned native before/after scope receipts and evaluator-owned access provenance; candidate self-report is not accepted as proof. The agent-package schema carries the task class, standards-profile hash, multi-solution acceptance basis, and required receipt paths. Focused tests cover task-class separation, verified GFCI paths, interval-based wall coverage, yoke/strap VA and continuous-load calculations, plumbing service topology, subtype-driven sizes, and cross-split leakage detection.
+
+The declarative case runner is in `apps/operator-backend/src/existing_conditions/engineering_case_runner.ts`. A case definition owns rules and geometry; a separate evaluator-owned native-evidence file owns model observations. An evaluator-only key, kept outside the agent-visible package, HMAC-signs the canonical case hash, native-evidence hash, and standards-profile hash. The runner rejects missing/extra checks, type mismatches, profile-hash drift, non-native evidence, candidate-owned evidence, stale/tampered evidence, and invalid signatures before deriving check results.
+
+Seal evaluator evidence:
+
+`npm run existing-conditions -- seal-engineering-evidence --case <case.json> --native-evidence <evaluator-native-evidence.json> --evaluator-key-file <secret> --out <provenance.json>`
+
+Evaluate it:
+
+`npm run existing-conditions -- evaluate-engineering-case --case <case.json> --native-evidence <evaluator-native-evidence.json> --evaluator-provenance <provenance.json> --evaluator-key-file <secret> --out <evaluation.json>`
+
+A valid but failing engineering case writes its detailed evaluation and exits nonzero. The signing key is an evaluator secret and must never be placed in the agent package, fixture directory, Git, or model workspace.
+
+Independent holdout fixtures live under `apps/operator-backend/test/fixtures/existing_conditions/engineering_compliance/`. They include breaker-protected sink GFCI, multiple valid wall-space layouts, non-dwelling receptacle circuit rebalancing, and lavatory/water-closet service topology. Their standards profile is deliberately labeled benchmark-only; it must be replaced with the real project jurisdiction, AHJ adoption, amendments, and criteria before any project compliance claim.
 
 ## Primary-source starting points
 

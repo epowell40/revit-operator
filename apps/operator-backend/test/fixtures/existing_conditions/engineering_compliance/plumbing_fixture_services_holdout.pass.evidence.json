@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "case_id": "holdout-plumbing-lavatory-water-closet-services-v1",
+  "standards_profile_sha256": "e28ae52a495eaeec357987854c75d5f1cfec1b455a71c6612f74b5a235ef373e",
+  "native_evidence_owner": "evaluator",
+  "native_readback": true,
+  "checks": [
+    {
+      "check_id": "fixture-service-topology",
+      "type": "plumbing_fixture_services",
+      "fixtures": [
+        {
+          "element_key": "host:lav-holdout-1",
+          "fixture_class": "lavatory",
+          "services": [
+            {"service": "domestic_cold_water", "native_reachable": true, "native_path_verified": true, "direct_connection": true, "path_element_keys": ["host:lav-holdout-1", "pipe:dcw-1"], "system_ids": ["system:dcw-1"], "system_classification": "Domestic Cold Water", "connection_size_inches": 0.5, "connection_size_native_verified": true},
+            {"service": "domestic_hot_water", "native_reachable": true, "native_path_verified": true, "direct_connection": true, "path_element_keys": ["host:lav-holdout-1", "pipe:dhw-1"], "system_ids": ["system:dhw-1"], "system_classification": "Domestic Hot Water", "connection_size_inches": 0.5, "connection_size_native_verified": true},
+            {"service": "sanitary", "native_reachable": true, "native_path_verified": true, "direct_connection": true, "path_element_keys": ["host:lav-holdout-1", "pipe:san-1"], "system_ids": ["system:san-1"], "system_classification": "Sanitary", "connection_size_inches": 1.5, "connection_size_native_verified": true},
+            {"service": "vented_drainage", "native_reachable": true, "native_path_verified": true, "direct_connection": false, "path_element_keys": ["host:lav-holdout-1", "pipe:san-1", "pipe:vent-stack-1"], "system_ids": ["system:san-1"], "system_classification": "Sanitary"}
+          ]
+        },
+        {
+          "element_key": "host:wc-holdout-1",
+          "fixture_class": "water_closet",
+          "fixture_subtype": "flush_tank",
+          "services": [
+            {"service": "domestic_cold_water", "native_reachable": true, "native_path_verified": true, "direct_connection": true, "path_element_keys": ["host:wc-holdout-1", "pipe:dcw-2"], "system_ids": ["system:dcw-1"], "system_classification": "Domestic Cold Water", "connection_size_inches": 0.5, "connection_size_native_verified": true},
+            {"service": "sanitary", "native_reachable": true, "native_path_verified": true, "direct_connection": true, "path_element_keys": ["host:wc-holdout-1", "pipe:san-2"], "system_ids": ["system:san-1"], "system_classification": "Sanitary", "connection_size_inches": 3, "connection_size_native_verified": true},
+            {"service": "vented_drainage", "native_reachable": true, "native_path_verified": true, "direct_connection": false, "path_element_keys": ["host:wc-holdout-1", "pipe:san-2", "pipe:vent-stack-1"], "system_ids": ["system:san-1"], "system_classification": "Sanitary"}
+          ]
+        }
+      ]
+    }
+  ]
+}

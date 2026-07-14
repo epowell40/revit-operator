@@ -32,6 +32,13 @@ import {
   type EvaluatorOwnedAccessProvenance,
   type EvaluatorOwnedChangeReceipt
 } from "../existing_conditions/engineering_invariants.js";
+import {
+  createEngineeringCaseEvidenceProvenance,
+  evaluateEngineeringInvariantCase,
+  type EngineeringCaseDefinition,
+  type EngineeringCaseEvidenceProvenance,
+  type EngineeringCaseNativeEvidence
+} from "../existing_conditions/engineering_case_runner.js";
 
 function argument(name: string): string {
   const index = process.argv.indexOf(name);
@@ -94,6 +101,8 @@ function usage(): never {
     "  npm run existing-conditions -- evaluator-review-visual --post-capture <image> --post-pdf <pdf> --status <pass|needs_review|fail> --out <receipt.json>",
     "  npm run existing-conditions -- seal-candidate --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --evaluator-visual-receipt <json> --out <candidate.json>",
     "  npm run existing-conditions -- score --package <agent_package.json> [--truth <truth.json> --candidate <candidate.json> | --evaluator-checks <json> --evaluator-change-receipt <json> --evaluator-access-provenance <json> --constructability <pass|fail> --drawing-legibility <pass|fail>] --out-dir <score-dir>",
+    "  npm run existing-conditions -- seal-engineering-evidence --case <case-definition.json> --native-evidence <evaluator-native-evidence.json> --evaluator-key-file <secret> --out <provenance.json>",
+    "  npm run existing-conditions -- evaluate-engineering-case --case <case-definition.json> --native-evidence <evaluator-native-evidence.json> --evaluator-provenance <provenance.json> --evaluator-key-file <secret> --out <checks.json>",
     "  npm run existing-conditions -- advance-controller --state <controller-state-or-receipt.json> --event <event.json> --out <next-receipt.json>",
     "  npm run existing-conditions -- evaluator-diff --before-visible <json> --after-visible <json> --package <agent_package.json> --out <receipt.json>",
     "  npm run existing-conditions -- validate-contract --kind <agent_package|ground_truth|candidate> --file <json>",
@@ -349,7 +358,15 @@ function buildAgentPackage(): void {
       maximum_created_elements: maximumCreatedElements,
       max_repairs: maxRepairs,
       material_confidence_threshold: 0.75,
-      forbidden_artifact_roles: ["ground_truth_model", "ground_truth_snapshot", "deletion_manifest", "withheld_evaluator_package"],
+      forbidden_artifact_roles: [
+        "ground_truth_model",
+        "ground_truth_snapshot",
+        "deletion_manifest",
+        "withheld_evaluator_package",
+        "evaluator_native_evidence",
+        "evaluator_provenance",
+        "evaluator_signing_key"
+      ],
       require_native_readback: true,
       require_post_change_visual_receipt: true,
       require_evaluator_change_receipt: true,
@@ -584,6 +601,28 @@ function scoreSealedCandidate(): void {
   fs.writeFileSync(path.join(outDir, "existing_conditions_score.md"), `${lines.join("\n")}\n`, "utf8");
 }
 
+function evaluateEngineeringCaseFile(): void {
+  const definition = readJson(requiredArgument("--case")) as EngineeringCaseDefinition;
+  const evidence = readJson(requiredArgument("--native-evidence")) as EngineeringCaseNativeEvidence;
+  const provenance = readJson(requiredArgument("--evaluator-provenance")) as EngineeringCaseEvidenceProvenance;
+  const evaluatorKey = fs.readFileSync(path.resolve(requiredArgument("--evaluator-key-file")), "utf8").trim();
+  const result = evaluateEngineeringInvariantCase(definition, evidence, provenance, evaluatorKey);
+  writeJson(requiredArgument("--out"), result);
+  if (!result.valid) throw new Error(result.invalid_reasons.join(","));
+  if (!result.passed) {
+    const failures = result.checks.filter((check) => !check.passed)
+      .map((check) => check.failure_classification ?? "engineering_invariant_failed");
+    throw new Error(`engineering_case_failed:${[...new Set(failures)].join(",")}`);
+  }
+}
+
+function sealEngineeringEvidenceFile(): void {
+  const definition = readJson(requiredArgument("--case")) as EngineeringCaseDefinition;
+  const evidence = readJson(requiredArgument("--native-evidence")) as EngineeringCaseNativeEvidence;
+  const evaluatorKey = fs.readFileSync(path.resolve(requiredArgument("--evaluator-key-file")), "utf8").trim();
+  writeJson(requiredArgument("--out"), createEngineeringCaseEvidenceProvenance(definition, evidence, evaluatorKey));
+}
+
 async function runRedaction(): Promise<void> {
   const expectedSource = path.resolve(requiredArgument("--expected-source"));
   const stagingModel = path.resolve(requiredArgument("--staging-model"));
@@ -740,6 +779,14 @@ async function main(): Promise<void> {
   }
   if (command === "score") {
     scoreSealedCandidate();
+    return;
+  }
+  if (command === "evaluate-engineering-case") {
+    evaluateEngineeringCaseFile();
+    return;
+  }
+  if (command === "seal-engineering-evidence") {
+    sealEngineeringEvidenceFile();
     return;
   }
   if (command === "advance-controller") {

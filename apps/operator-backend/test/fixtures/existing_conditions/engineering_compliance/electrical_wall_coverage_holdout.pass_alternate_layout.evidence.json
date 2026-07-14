@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "case_id": "holdout-electrical-dwelling-wall-coverage-v1",
+  "standards_profile_sha256": "e28ae52a495eaeec357987854c75d5f1cfec1b455a71c6612f74b5a235ef373e",
+  "native_evidence_owner": "evaluator",
+  "native_readback": true,
+  "checks": [
+    {
+      "check_id": "wall-space-coverage",
+      "type": "dwelling_wall_coverage",
+      "receptacles": [
+        {"element_key": "host:west-r1", "segment_id": "living-west-of-door", "offset_along_segment_ft": 5, "counts_for_coverage": true},
+        {"element_key": "host:west-r2", "segment_id": "living-west-of-door", "offset_along_segment_ft": 13, "counts_for_coverage": true},
+        {"element_key": "host:east-floor-r1", "segment_id": "living-east-of-door", "offset_along_segment_ft": 4.5, "counts_for_coverage": true, "floor_distance_from_wall_ft": 1}
+      ]
+    }
+  ]
+}

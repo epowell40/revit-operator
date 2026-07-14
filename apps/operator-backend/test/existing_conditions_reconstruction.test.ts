@@ -126,6 +126,16 @@ test("invalidates a run that accessed withheld truth", () => {
   assert.equal(result.invalid_reasons.includes("ground_truth_leakage_detected"), true);
 });
 
+test("invalidates a run that accessed evaluator-native evidence or its signing key", () => {
+  for (const role of ["evaluator_native_evidence", "evaluator_provenance", "evaluator_signing_key"]) {
+    const attempt = candidate();
+    attempt.accessed_artifact_roles.push(role);
+    const result = scoreExistingConditionsReconstruction(truth(), attempt);
+    assert.equal(result.valid_run, false, role);
+    assert.equal(result.invalid_reasons.includes("ground_truth_leakage_detected"), true, role);
+  }
+});
+
 test("invalidates changed evidence and out-of-scope writes", () => {
   const attempt = candidate();
   attempt.visible_evidence[0]!.sha256 = "changed";

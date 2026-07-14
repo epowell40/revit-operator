@@ -197,7 +197,10 @@ const FORBIDDEN_AGENT_ARTIFACT_ROLES = new Set([
   "ground_truth_snapshot",
   "truth_manifest",
   "deletion_manifest",
-  "withheld_evaluator_package"
+  "withheld_evaluator_package",
+  "evaluator_native_evidence",
+  "evaluator_provenance",
+  "evaluator_signing_key"
 ]);
 
 function clamp01(value: number): number {
