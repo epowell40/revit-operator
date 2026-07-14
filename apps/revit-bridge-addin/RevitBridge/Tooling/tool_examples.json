@@ -8890,6 +8890,45 @@
           }
         }
       ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/audit-electrical-circuit-loading",
+      "examples": [
+        {
+          "name": "Audit complete native panel receptacle inventory",
+          "request": {
+            "panelName": "P205",
+            "wireAmpacityProfiles": [
+              {
+                "wireSizeToken": "1-#12, 1-#12, 1-#12",
+                "ampacityAmps": 20
+              }
+            ],
+            "maxElements": 5000
+          },
+          "expected_response_shape": {
+            "schema": "revit-operator.electrical-circuit-loading-audit.v1",
+            "scopeMode": "panel_inventory",
+            "selectedPanelName": "P205",
+            "selectedPanelElementId": 1411627,
+            "scopeElementIds": [],
+            "scopedDevices": [],
+            "circuits": [],
+            "diagnostics": {
+              "complete": true,
+              "truncated": false,
+              "inventoryComplete": true,
+              "discoveredElectricalFixtureCount": 538,
+              "selectedElectricalFixtureCount": 21
+            }
+          },
+          "notes": [
+            "Use either panelName for endpoint-owned native discovery or elementIds for an explicit bounded scope, never both.",
+            "The endpoint reports factual native evidence only; the evaluator applies the adopted standards and device profiles."
+          ]
+        }
+      ]
     }
   ]
 }

@@ -2036,6 +2036,24 @@ server.tool("revit_get_connectors", "Get connector origins/sizes/directions for 
   }
 );
 
+server.tool("revit_audit_electrical_circuit_loading", "Read evaluator-grade factual circuit membership, breaker, voltage, poles, wire-size, conductor-profile, and closed-scope load evidence without making a compliance claim.",
+  {
+    elementIds: z.array(z.number().int().positive()).min(1).max(5000).optional(),
+    panelName: z.string().min(1).optional(),
+    wireAmpacityProfiles: z.array(z.object({
+      wireSizeToken: z.string().min(1),
+      ampacityAmps: z.number().positive(),
+    })).min(1).max(100),
+    maxElements: z.number().int().positive().max(5000).optional().default(5000),
+  },
+  async (req) => {
+    try {
+      const data = await callRevit("/revit/audit-electrical-circuit-loading", "POST", req);
+      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
+  }
+);
+
 server.tool("revit_align_room_tops_to_ceilings", "Align room top elevation to the primary ceiling bottom elevation in each room (supports dry-run).",
   {
     roomNumbers: z.array(z.string()).optional(),

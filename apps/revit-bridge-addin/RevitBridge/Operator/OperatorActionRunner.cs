@@ -223,6 +223,7 @@ namespace RevitBridge.Operator
                 { "/revit/set-selection", new SetSelectionHandler() },
                 { "/revit/resolve-room-plan-view", new ResolveRoomPlanViewHandler() },
                 { "/revit/plan-dwelling-receptacles", new PlanDwellingReceptaclesHandler() },
+                { "/revit/audit-electrical-circuit-loading", new RevitBridge.Logic.Handlers.ElectricalCircuitLoadingAuditHandler() },
                 { "/revit/plan-room-receptacles-from-analog", new PlanRoomReceptaclesFromAnalogHandler() },
                 { "/revit/apply-room-receptacles-from-analog", new ApplyRoomReceptaclesFromAnalogHandler() },
                 { "/revit/list-element-types", new ListElementTypesHandler() },

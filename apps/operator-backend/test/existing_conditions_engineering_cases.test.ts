@@ -89,11 +89,12 @@ test("circuit holdout scores native yokes and calculated load, not a memorized r
   const passing = evaluate("electrical_circuit_loading_holdout.case.json", "electrical_circuit_loading_holdout.pass_rebalanced.evidence.json");
   const overloaded = evaluate("electrical_circuit_loading_holdout.case.json", "electrical_circuit_loading_holdout.fail_overloaded.evidence.json");
   assert.equal(passing.passed, true);
-  assert.deepEqual(passing.checks.map((check) => check.details.required_va), [2070, 2065]);
+  assert.deepEqual(passing.checks.map((check) => check.details.required_va).filter((value) => value != null), [2070, 2065]);
   assert.equal(overloaded.passed, false);
-  assert.equal(overloaded.checks[0]?.details.required_va, 2585);
-  assert.equal(overloaded.checks[0]?.details.circuit_capacity_va, 2400);
-  assert.equal(overloaded.checks[0]?.failure_classification, "circuit_calculated_load_exceeds_capacity");
+  assert.equal(overloaded.checks.find((check) => check.details.required_va != null)?.details.required_va, 2585);
+  const overloadedCircuit = overloaded.checks.find((check) => check.details.circuit_capacity_va != null);
+  assert.equal(overloadedCircuit?.details.circuit_capacity_va, 2400);
+  assert.equal(overloadedCircuit?.failure_classification, "circuit_calculated_load_exceeds_capacity");
 });
 
 test("plumbing holdout requires lavatory hot and cold while prohibiting conventional water-closet hot water", () => {

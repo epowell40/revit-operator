@@ -76,6 +76,8 @@ export type EngineeringCaseCheckEvidence =
     check_id: string;
     type: "receptacle_circuit_loading";
     circuits: CircuitCapacityEvidence[];
+    scope_receptacle_element_keys: string[];
+    native_scope_inventory_verified: boolean;
   }
   | {
     check_id: string;
@@ -302,7 +304,10 @@ export function evaluateEngineeringInvariantCase(
     } else if (definitionCheck.type === "dwelling_wall_coverage" && nativeEvidence.type === "dwelling_wall_coverage") {
       evaluated = evaluateDwellingWallCoverage(definitionCheck.rule, definitionCheck.segments, nativeEvidence.receptacles);
     } else if (definitionCheck.type === "receptacle_circuit_loading" && nativeEvidence.type === "receptacle_circuit_loading") {
-      evaluated = evaluateReceptacleCircuitLoading(definitionCheck.rule, nativeEvidence.circuits);
+      evaluated = evaluateReceptacleCircuitLoading(definitionCheck.rule, nativeEvidence.circuits, {
+        receptacle_element_keys: nativeEvidence.scope_receptacle_element_keys,
+        native_scope_inventory_verified: nativeEvidence.native_scope_inventory_verified
+      });
     } else if (definitionCheck.type === "plumbing_fixture_services" && nativeEvidence.type === "plumbing_fixture_services") {
       evaluated = evaluatePlumbingFixtureServices(definitionCheck.rules, nativeEvidence.fixtures);
     }

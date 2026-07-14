@@ -22,6 +22,7 @@ using AuditHostedInstancePlacementActionHandler = RevitBridge.Logic.Handlers.Aud
 using ResolveRoomWallActionHandler = RevitBridge.Logic.Handlers.ResolveRoomWallHandler;
 using RankSimilarDevicesOnWallActionHandler = RevitBridge.Logic.Handlers.RankSimilarDevicesOnWallHandler;
 using AssignElectricalCircuitActionHandler = RevitBridge.Logic.Handlers.AssignElectricalCircuitHandler;
+using ElectricalCircuitLoadingAuditActionHandler = RevitBridge.Logic.Handlers.ElectricalCircuitLoadingAuditHandler;
 
 namespace RevitBridge.Server
 {
@@ -152,6 +153,7 @@ namespace RevitBridge.Server
                 { "/revit/resize-ductwork-by-scope", new ResizeDuctworkByScopeHandler() },
                 { "/revit/repair-duct-continuity-by-scope", new RepairDuctContinuityByScopeHandler() },
                 { "/revit/get-connectors", new GetConnectorsHandler() },
+                { "/revit/audit-electrical-circuit-loading", new ElectricalCircuitLoadingAuditActionHandler() },
                 { "/revit/align-room-tops-to-ceilings", new AlignRoomTopsToCeilingsHandler() },
                 { "/revit/analyze-dimensions", new AnalyzeDimensionsHandler() },
                 { "/revit/export-dimensioning-v2", new ExportDimensioningV2Handler() },

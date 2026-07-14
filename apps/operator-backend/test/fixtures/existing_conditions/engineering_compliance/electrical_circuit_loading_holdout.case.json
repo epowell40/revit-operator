@@ -10,6 +10,8 @@
       "type": "receptacle_circuit_loading",
       "rule": {
         "rule_id": "nec-220.14-i-holdout",
+        "applicable_load_scope": "non_dwelling_general_use",
+        "capacity_calculation": "single_phase_va",
         "source": {
           "authority": "NFPA",
           "title": "NFPA 70 second-revision statements",

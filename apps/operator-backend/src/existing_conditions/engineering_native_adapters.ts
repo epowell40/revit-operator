@@ -45,6 +45,30 @@ export type DwellingWallCoverageNativeAdapterConfig = {
   segment_length_tolerance_ft: number;
 };
 
+export type CircuitLoadingNativeAdapterConfig = {
+  schema_version: 1;
+  case_id: string;
+  standards_profile_sha256: string;
+  starting_model_sha256: string;
+  expected_model_sha256: string;
+  check_id: string;
+  room_number?: string;
+  panel_name?: string;
+  load_scope: "non_dwelling_general_use" | "dwelling_profile" | "project_specific";
+  receptacle_match_tokens: string[];
+  wire_ampacity_profiles: Array<{
+    wire_size_token: string;
+    ampacity_amps: number;
+  }>;
+  device_profiles: Array<{
+    profile_id: string;
+    family_match_tokens: string[];
+    type_match_tokens: string[];
+    yoke_or_strap_count: number;
+    continuous: boolean;
+  }>;
+};
+
 export type NativeParameterReadback = {
   id: number;
   name?: string;
@@ -472,6 +496,343 @@ export function collectDwellingWallCoverageNativeEvidence(
       direct_target_room_inventory_cross_check: true,
       planner_proposals_ignored: true,
       subject_element_ids_withheld_from_config: true,
+      native_call_readback: true
+    }
+  } as EngineeringCaseNativeEvidence;
+}
+
+function validateCircuitLoadingConfig(config: CircuitLoadingNativeAdapterConfig): void {
+  if (config.schema_version !== 1) throw new Error("circuit_adapter_schema_version_unsupported");
+  if (!text(config.case_id) || !text(config.check_id)) throw new Error("circuit_adapter_identity_missing");
+  const roomScope = Boolean(text(config.room_number));
+  const panelScope = Boolean(text(config.panel_name));
+  if (roomScope === panelScope) throw new Error("circuit_adapter_scope_identity_invalid");
+  if (!/^[a-f0-9]{64}$/i.test(text(config.standards_profile_sha256))) throw new Error("circuit_adapter_profile_hash_invalid");
+  if (!/^[a-f0-9]{64}$/i.test(text(config.starting_model_sha256))) throw new Error("circuit_adapter_starting_model_hash_invalid");
+  if (!/^[a-f0-9]{64}$/i.test(text(config.expected_model_sha256))) throw new Error("circuit_adapter_expected_model_hash_invalid");
+  if (!["non_dwelling_general_use", "dwelling_profile", "project_specific"].includes(config.load_scope)) {
+    throw new Error("circuit_adapter_load_scope_invalid");
+  }
+  if (!Array.isArray(config.receptacle_match_tokens) || config.receptacle_match_tokens.map(text).filter(Boolean).length === 0) {
+    throw new Error("circuit_adapter_receptacle_match_tokens_missing");
+  }
+  if (!Array.isArray(config.wire_ampacity_profiles) || config.wire_ampacity_profiles.length === 0
+    || config.wire_ampacity_profiles.some((profile) => !text(profile.wire_size_token)
+      || !Number.isFinite(profile.ampacity_amps) || profile.ampacity_amps <= 0)) {
+    throw new Error("circuit_adapter_wire_ampacity_profiles_invalid");
+  }
+  if (!Array.isArray(config.device_profiles) || config.device_profiles.length === 0) throw new Error("circuit_adapter_device_profiles_missing");
+  const profileIds = config.device_profiles.map((profile) => text(profile.profile_id));
+  if (profileIds.some((id) => !id) || new Set(profileIds).size !== profileIds.length) throw new Error("circuit_adapter_device_profile_identity_invalid");
+  if (config.device_profiles.some((profile) => !Array.isArray(profile.family_match_tokens)
+    || profile.family_match_tokens.map(text).filter(Boolean).length === 0
+    || !Array.isArray(profile.type_match_tokens)
+    || profile.type_match_tokens.map(text).filter(Boolean).length === 0
+    || !Number.isInteger(profile.yoke_or_strap_count)
+    || profile.yoke_or_strap_count <= 0)) {
+    throw new Error("circuit_adapter_device_profile_invalid");
+  }
+}
+
+export function assertExpectedCircuitLoadingModelSha256(config: CircuitLoadingNativeAdapterConfig, actualSha256: string): void {
+  validateCircuitLoadingConfig(config);
+  if (text(config.expected_model_sha256).toLowerCase() !== text(actualSha256).toLowerCase()) {
+    throw new Error("circuit_adapter_expected_model_hash_mismatch");
+  }
+}
+
+export function selectCircuitLoadingScopedElementIds(config: CircuitLoadingNativeAdapterConfig, roomContents: unknown): number[] {
+  validateCircuitLoadingConfig(config);
+  if (text(config.panel_name)) throw new Error("circuit_adapter_panel_scope_is_native_discovery");
+  const room = object(roomContents);
+  if (text(room.roomNumber) !== text(config.room_number)) throw new Error("circuit_adapter_room_mismatch");
+  return [...new Set((Array.isArray(room.elements) ? room.elements.map(object) : [])
+    .filter((element) => text(element.builtInCategory) === "OST_ElectricalFixtures"
+      && tokenMatch(searchableIdentity(element), config.receptacle_match_tokens))
+    .map((element) => finite(element.id))
+    .filter((id): id is number => id != null && Number.isInteger(id) && id > 0))].sort((a, b) => a - b);
+}
+
+function collectCircuitLoadingPanelNativeEvidence(
+  config: CircuitLoadingNativeAdapterConfig,
+  circuitAudit: unknown
+): EngineeringCaseNativeEvidence {
+  const audit = object(circuitAudit);
+  const panelName = text(config.panel_name);
+  if (text(audit.schema) !== "revit-operator.electrical-circuit-loading-audit.v1") throw new Error("circuit_adapter_audit_schema_invalid");
+  if (text(audit.modelSha256).toLowerCase() !== text(config.expected_model_sha256).toLowerCase()) {
+    throw new Error("circuit_adapter_expected_model_hash_mismatch");
+  }
+  if (text(audit.scopeMode) !== "panel_inventory" || text(audit.selectedPanelName).toLowerCase() !== panelName.toLowerCase()) {
+    throw new Error("circuit_adapter_panel_scope_mismatch");
+  }
+  const panelElementId = finite(audit.selectedPanelElementId);
+  if (panelElementId == null || !Number.isInteger(panelElementId) || panelElementId <= 0) {
+    throw new Error("circuit_adapter_panel_identity_missing");
+  }
+  const diagnostics = object(audit.diagnostics);
+  if (diagnostics.complete !== true || diagnostics.truncated === true || diagnostics.inventoryComplete !== true) {
+    throw new Error("circuit_adapter_audit_incomplete");
+  }
+
+  const auditScopeIds = (Array.isArray(audit.scopeElementIds) ? audit.scopeElementIds : [])
+    .map(finite).filter((id): id is number => id != null && Number.isInteger(id) && id > 0).sort((a, b) => a - b);
+  const scopedDevices = Array.isArray(audit.scopedDevices) ? audit.scopedDevices.map(object) : [];
+  const scopedDeviceIds = scopedDevices.map((device) => finite(device.elementId))
+    .filter((id): id is number => id != null && Number.isInteger(id) && id > 0).sort((a, b) => a - b);
+  if (auditScopeIds.length === 0 || new Set(auditScopeIds).size !== auditScopeIds.length
+    || new Set(scopedDeviceIds).size !== scopedDeviceIds.length
+    || engineeringCaseArtifactSha256(auditScopeIds) !== engineeringCaseArtifactSha256(scopedDeviceIds)
+    || finite(diagnostics.selectedElectricalFixtureCount) !== auditScopeIds.length) {
+    throw new Error("circuit_adapter_scope_inventory_mismatch");
+  }
+
+  const deviceById = new Map<number, JsonObject>();
+  const profileById = new Map<number, CircuitLoadingNativeAdapterConfig["device_profiles"][number]>();
+  for (const device of scopedDevices) {
+    const id = finite(device.elementId);
+    const elementKey = text(device.sourceScopedId);
+    if (id == null || !Number.isInteger(id) || id <= 0 || !elementKey || text(device.builtInCategory) !== "OST_ElectricalFixtures") {
+      throw new Error("circuit_adapter_receptacle_identity_invalid");
+    }
+    deviceById.set(id, device);
+    if (!tokenMatch(searchableIdentity(device), config.receptacle_match_tokens)) continue;
+    const matches = config.device_profiles.filter((profile) => tokenMatch(text(device.familyName), profile.family_match_tokens)
+      && tokenMatch(text(device.typeName || device.elementName), profile.type_match_tokens));
+    if (matches.length !== 1) throw new Error(`circuit_adapter_device_profile_${matches.length === 0 ? "missing" : "ambiguous"}:${id}`);
+    profileById.set(id, matches[0]!);
+  }
+
+  const circuitRows = Array.isArray(audit.circuits) ? audit.circuits.map(object) : [];
+  if (circuitRows.length === 0) throw new Error("circuit_adapter_circuits_missing");
+  const selectedRows: JsonObject[] = [];
+  let excludedNonReceptacleCircuitCount = 0;
+  for (const row of circuitRows) {
+    const circuitId = text(row.circuitId);
+    const memberIds = (Array.isArray(row.memberElementIds) ? row.memberElementIds : [])
+      .map(finite).filter((id): id is number => id != null && Number.isInteger(id) && id > 0);
+    const allNativeMemberIds = (Array.isArray(row.allNativeMemberElementIds) ? row.allNativeMemberElementIds : [])
+      .map(finite).filter((id): id is number => id != null && Number.isInteger(id) && id > 0);
+    if (!circuitId || memberIds.length === 0 || new Set(memberIds).size !== memberIds.length
+      || new Set(allNativeMemberIds).size !== allNativeMemberIds.length
+      || engineeringCaseArtifactSha256([...memberIds].sort((a, b) => a - b)) !== engineeringCaseArtifactSha256([...allNativeMemberIds].sort((a, b) => a - b))) {
+      throw new Error("circuit_adapter_circuit_membership_invalid");
+    }
+    if (text(row.panelName).toLowerCase() !== panelName.toLowerCase() || finite(row.panelElementId) !== panelElementId) {
+      throw new Error(`circuit_adapter_circuit_panel_mismatch:${circuitId}`);
+    }
+    const matchingCount = memberIds.filter((id) => profileById.has(id)).length;
+    if (matchingCount === 0) {
+      excludedNonReceptacleCircuitCount += 1;
+      continue;
+    }
+    if (matchingCount !== memberIds.length) throw new Error(`circuit_adapter_mixed_load_circuit_unsupported:${circuitId}`);
+    if (object(row.evidence).allCircuitMembersInsideScope !== true || row.otherLoadsNativeVerified !== true) {
+      throw new Error(`circuit_adapter_circuit_scope_not_closed:${circuitId}`);
+    }
+    selectedRows.push(row);
+  }
+  if (selectedRows.length === 0) throw new Error("circuit_adapter_scoped_receptacles_missing");
+
+  const selectedElementIds = selectedRows.flatMap((row) => (Array.isArray(row.memberElementIds) ? row.memberElementIds : []))
+    .map(finite).filter((id): id is number => id != null && Number.isInteger(id) && id > 0);
+  if (new Set(selectedElementIds).size !== selectedElementIds.length) throw new Error("circuit_adapter_duplicate_circuit_assignment");
+  const circuits = selectedRows.map((row) => {
+    const circuitId = text(row.circuitId);
+    const memberIds = (row.memberElementIds as unknown[]).map((value) => finite(value))
+      .filter((id): id is number => id != null && Number.isInteger(id) && id > 0);
+    const receptacles = memberIds.map((id) => {
+      const device = deviceById.get(id);
+      const profile = profileById.get(id);
+      if (!device || !profile) throw new Error(`circuit_adapter_member_outside_scope:${id}`);
+      return {
+        element_key: text(device.sourceScopedId),
+        yoke_or_strap_count: profile.yoke_or_strap_count,
+        yoke_or_strap_count_profile_verified: true,
+        continuous: profile.continuous,
+        continuous_classification_profile_verified: true
+      };
+    });
+    const voltage = finite(row.voltage);
+    const phaseCount = finite(row.phaseCount);
+    const breakerAmps = finite(row.breakerAmps);
+    const conductorAmpacityAmps = finite(row.conductorAmpacityAmps);
+    const otherContinuousVa = finite(row.otherContinuousVa);
+    const otherNoncontinuousVa = finite(row.otherNoncontinuousVa);
+    if (voltage == null || (phaseCount !== 1 && phaseCount !== 3) || breakerAmps == null || conductorAmpacityAmps == null
+      || otherContinuousVa == null || otherNoncontinuousVa == null) throw new Error(`circuit_adapter_circuit_numeric_basis_invalid:${circuitId}`);
+    return {
+      circuit_id: circuitId,
+      load_scope: config.load_scope,
+      voltage,
+      phase_count: phaseCount as 1 | 3,
+      breaker_amps: breakerAmps,
+      native_membership_verified: row.nativeMembershipVerified === true,
+      native_ocpd_verified: row.nativeOcpdVerified === true,
+      native_conductor_verified: row.nativeConductorVerified === true,
+      conductor_ampacity_amps: conductorAmpacityAmps,
+      conductor_ocpd_compatibility_verified: row.conductorOcpdCompatibilityVerified === true,
+      receptacles,
+      other_continuous_va: otherContinuousVa,
+      other_noncontinuous_va: otherNoncontinuousVa,
+      other_loads_native_verified: row.otherLoadsNativeVerified === true,
+      listed_for_100_percent_continuous_operation: row.listedFor100PercentContinuousOperation === true,
+      continuous_rating_native_verified: row.continuousRatingNativeVerified === true,
+      continuous_rating_evidence_sha256: text(row.continuousRatingEvidenceSha256) || null
+    };
+  });
+  const selectedKeys = selectedElementIds.map((id) => text(deviceById.get(id)?.sourceScopedId)).sort();
+  return {
+    schema_version: 1,
+    case_id: text(config.case_id),
+    standards_profile_sha256: text(config.standards_profile_sha256).toLowerCase(),
+    native_evidence_owner: "evaluator",
+    native_readback: true,
+    checks: [{
+      check_id: text(config.check_id),
+      type: "receptacle_circuit_loading",
+      scope_receptacle_element_keys: selectedKeys,
+      native_scope_inventory_verified: true,
+      circuits
+    }],
+    collection_receipt: {
+      adapter: "panel_inventory_electrical_circuit_loading_v1",
+      selected_panel_name: panelName,
+      selected_panel_element_id: panelElementId,
+      starting_model_sha256: text(config.starting_model_sha256).toLowerCase(),
+      expected_model_sha256: text(config.expected_model_sha256).toLowerCase(),
+      circuit_audit_sha256: engineeringCaseArtifactSha256(circuitAudit),
+      adapter_config_sha256: engineeringCaseArtifactSha256(config),
+      discovered_electrical_fixture_count: finite(diagnostics.discoveredElectricalFixtureCount),
+      selected_panel_fixture_count: auditScopeIds.length,
+      selected_receptacle_count: selectedElementIds.length,
+      selected_receptacle_circuit_count: selectedRows.length,
+      excluded_non_receptacle_circuit_count: excludedNonReceptacleCircuitCount,
+      subject_element_ids_withheld_from_config: true,
+      exact_coordinates_withheld_from_config: true,
+      native_call_readback: true
+    }
+  } as EngineeringCaseNativeEvidence;
+}
+
+export function collectCircuitLoadingNativeEvidence(
+  config: CircuitLoadingNativeAdapterConfig,
+  roomContents: unknown,
+  circuitAudit: unknown
+): EngineeringCaseNativeEvidence {
+  validateCircuitLoadingConfig(config);
+  if (text(config.panel_name)) return collectCircuitLoadingPanelNativeEvidence(config, circuitAudit);
+  const room = object(roomContents);
+  if (text(room.roomNumber) !== text(config.room_number)) throw new Error("circuit_adapter_room_mismatch");
+  if (object(room.diagnostics).matchedScopedCount == null) throw new Error("circuit_adapter_room_diagnostics_missing");
+  const audit = object(circuitAudit);
+  if (text(audit.schema) !== "revit-operator.electrical-circuit-loading-audit.v1") throw new Error("circuit_adapter_audit_schema_invalid");
+  if (text(audit.modelSha256).toLowerCase() !== text(config.expected_model_sha256).toLowerCase()) {
+    throw new Error("circuit_adapter_expected_model_hash_mismatch");
+  }
+  const diagnostics = object(audit.diagnostics);
+  if (diagnostics.complete !== true || diagnostics.truncated === true) throw new Error("circuit_adapter_audit_incomplete");
+
+  const roomElements = (Array.isArray(room.elements) ? room.elements.map(object) : []).filter((element) =>
+    text(element.builtInCategory) === "OST_ElectricalFixtures"
+    && tokenMatch(searchableIdentity(element), config.receptacle_match_tokens));
+  if (roomElements.length === 0) throw new Error("circuit_adapter_scoped_receptacles_missing");
+  const roomById = new Map<number, JsonObject>();
+  const profileById = new Map<number, CircuitLoadingNativeAdapterConfig["device_profiles"][number]>();
+  for (const element of roomElements) {
+    const id = finite(element.id);
+    const elementKey = text(element.sourceScopedId);
+    if (id == null || !Number.isInteger(id) || id <= 0 || !elementKey) throw new Error("circuit_adapter_receptacle_identity_invalid");
+    const family = text(element.familyName);
+    const typeName = text(element.typeName || element.name);
+    const matches = config.device_profiles.filter((profile) => tokenMatch(family, profile.family_match_tokens)
+      && tokenMatch(typeName, profile.type_match_tokens));
+    if (matches.length !== 1) throw new Error(`circuit_adapter_device_profile_${matches.length === 0 ? "missing" : "ambiguous"}:${id}`);
+    roomById.set(id, element);
+    profileById.set(id, matches[0]);
+  }
+
+  const auditScopeIds = (Array.isArray(audit.scopeElementIds) ? audit.scopeElementIds : [])
+    .map(finite).filter((id): id is number => id != null && Number.isInteger(id) && id > 0).sort((a, b) => a - b);
+  const roomIds = [...roomById.keys()].sort((a, b) => a - b);
+  if (new Set(auditScopeIds).size !== auditScopeIds.length
+    || engineeringCaseArtifactSha256(auditScopeIds) !== engineeringCaseArtifactSha256(roomIds)) {
+    throw new Error("circuit_adapter_scope_inventory_mismatch");
+  }
+
+  const circuitRows = Array.isArray(audit.circuits) ? audit.circuits.map(object) : [];
+  if (circuitRows.length === 0) throw new Error("circuit_adapter_circuits_missing");
+  const circuits = circuitRows.map((row) => {
+    const circuitId = text(row.circuitId);
+    const memberIds = (Array.isArray(row.memberElementIds) ? row.memberElementIds : [])
+      .map(finite).filter((id): id is number => id != null && Number.isInteger(id) && id > 0);
+    if (!circuitId || memberIds.length === 0 || new Set(memberIds).size !== memberIds.length) {
+      throw new Error("circuit_adapter_circuit_membership_invalid");
+    }
+    const receptacles = memberIds.map((id) => {
+      const element = roomById.get(id);
+      const profile = profileById.get(id);
+      if (!element || !profile) throw new Error(`circuit_adapter_member_outside_scope:${id}`);
+      return {
+        element_key: text(element.sourceScopedId),
+        yoke_or_strap_count: profile.yoke_or_strap_count,
+        yoke_or_strap_count_profile_verified: true,
+        continuous: profile.continuous,
+        continuous_classification_profile_verified: true
+      };
+    });
+    const voltage = finite(row.voltage);
+    const phaseCount = finite(row.phaseCount);
+    const breakerAmps = finite(row.breakerAmps);
+    const conductorAmpacityAmps = finite(row.conductorAmpacityAmps);
+    const otherContinuousVa = finite(row.otherContinuousVa);
+    const otherNoncontinuousVa = finite(row.otherNoncontinuousVa);
+    if (voltage == null || (phaseCount !== 1 && phaseCount !== 3) || breakerAmps == null || conductorAmpacityAmps == null
+      || otherContinuousVa == null || otherNoncontinuousVa == null) throw new Error(`circuit_adapter_circuit_numeric_basis_invalid:${circuitId}`);
+    return {
+      circuit_id: circuitId,
+      load_scope: config.load_scope,
+      voltage,
+      phase_count: phaseCount as 1 | 3,
+      breaker_amps: breakerAmps,
+      native_membership_verified: row.nativeMembershipVerified === true,
+      native_ocpd_verified: row.nativeOcpdVerified === true,
+      native_conductor_verified: row.nativeConductorVerified === true,
+      conductor_ampacity_amps: conductorAmpacityAmps,
+      conductor_ocpd_compatibility_verified: row.conductorOcpdCompatibilityVerified === true,
+      receptacles,
+      other_continuous_va: otherContinuousVa,
+      other_noncontinuous_va: otherNoncontinuousVa,
+      other_loads_native_verified: row.otherLoadsNativeVerified === true,
+      listed_for_100_percent_continuous_operation: row.listedFor100PercentContinuousOperation === true,
+      continuous_rating_native_verified: row.continuousRatingNativeVerified === true,
+      continuous_rating_evidence_sha256: text(row.continuousRatingEvidenceSha256) || null
+    };
+  });
+
+  return {
+    schema_version: 1,
+    case_id: text(config.case_id),
+    standards_profile_sha256: text(config.standards_profile_sha256).toLowerCase(),
+    native_evidence_owner: "evaluator",
+    native_readback: true,
+    checks: [{
+      check_id: text(config.check_id),
+      type: "receptacle_circuit_loading",
+      scope_receptacle_element_keys: roomElements.map((element) => text(element.sourceScopedId)).sort(),
+      native_scope_inventory_verified: true,
+      circuits
+    }],
+    collection_receipt: {
+      adapter: "room_contents_electrical_circuit_loading_v1",
+      room_number: text(config.room_number),
+      starting_model_sha256: text(config.starting_model_sha256).toLowerCase(),
+      expected_model_sha256: text(config.expected_model_sha256).toLowerCase(),
+      room_contents_sha256: engineeringCaseArtifactSha256(roomContents),
+      circuit_audit_sha256: engineeringCaseArtifactSha256(circuitAudit),
+      adapter_config_sha256: engineeringCaseArtifactSha256(config),
+      subject_element_ids_withheld_from_config: true,
+      exact_coordinates_withheld_from_config: true,
       native_call_readback: true
     }
   } as EngineeringCaseNativeEvidence;

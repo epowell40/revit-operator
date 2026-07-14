@@ -57,6 +57,10 @@ Score native circuit membership and calculated volt-amperes. General-use recepta
 
 and compares it with the profile-selected single- or three-phase circuit-capacity calculation. Native circuit membership, yoke/strap count, OCPD basis, conductor basis, and conductor/OCPD compatibility must all be verified. This avoids a blanket “all circuits are limited to 80 percent” rule. A 100-percent-rated exception requires immutable equipment evidence and native verification; a caller-provided boolean is insufficient.
 
+The evidence also binds a complete evaluator-owned scoped receptacle inventory. Every scoped device must appear on exactly one evaluated circuit, circuit IDs must be unique, and the same native element cannot be counted twice within or across circuits. Load scope and capacity calculation are explicit profile fields (`non_dwelling_general_use`, `dwelling_profile`, or `project_specific`; single-phase or three-phase line-to-line), so a non-dwelling 180-VA/yoke exercise cannot silently score a dwelling case. Yoke/strap count and continuous/noncontinuous classification are derived from immutable evaluator family/type profiles; they are not mislabeled as native Revit facts. Other circuit loads require native evaluator readback. Different compliant circuit groupings are intentionally accepted.
+
+For panel-scoped live acceptance, `/revit/audit-electrical-circuit-loading` discovers the complete `OST_ElectricalFixtures` inventory inside Revit, resolves an exact panel name to one native panel element, and returns family/type identity plus exact power-system membership for every selected device. The evaluator configuration contains the panel name and engineering profiles, but no subject element IDs, circuit IDs, or accepted coordinates. Pure receptacle circuits are evaluated; non-receptacle circuits are explicitly counted as excluded, and a circuit mixing profiled receptacles with unclassified loads fails closed instead of treating omitted load as zero.
+
 The shipped 180-VA-per-yoke holdout is explicitly a non-dwelling general-use receptacle-loading exercise. Dwelling-unit general receptacles are not silently evaluated with that same method; their load calculation must come from the declared dwelling profile. GFCI and dwelling wall-space cases remain separate checks even when they happen to appear in one model.
 
 ## Plumbing invariants
@@ -66,6 +70,7 @@ Fixture profiles declare required and prohibited services. The evaluator checks 
 - An occupancy- and use-specific lavatory profile can require cold water, hot or tempered water, sanitary drainage, and a vented drainage path.
 - A sourced project profile for a conventional water-closet subtype can require cold water, sanitary drainage, and a vented drainage path and can prohibit an unintended hot-water connection. Bidet/personal-hygiene and other combination products require separate profiles; “all toilets prohibit every hot-water path” is not a universal engine rule.
 - Vented drainage can pass through verified downstream network topology; the vent does not need to connect directly to the fixture family.
+- Each service needs one unique fixture-bound native path. Duplicate service summaries, paths that do not begin at the target fixture for a claimed direct connection, ambiguous subtype profiles, and a “vent” claim that merely repeats the sanitary path without a distinct downstream vent continuation fail closed. Exact path element IDs and route geometry are not acceptance targets; alternate native connector/network routes can pass.
 - Flush-tank, flushometer-tank, and flushometer-valve connection-size criteria are separate sourced subtype rules. Manufacturer and project criteria can narrow them. The engine intentionally ships no guessed universal fixture connection sizes.
 
 ## Leakage controls
@@ -75,7 +80,9 @@ Evaluation splits must hold out configured source-model families, source regions
 - change protection provenance while preserving the receptacle appearance;
 - create a wall-space coverage gap at a different coordinate and wall length;
 - vary breaker rating, voltage, yoke count, continuous load, and native circuit membership;
+- vary circuit IDs, ordering, element IDs, family/type labels, and valid device-to-circuit groupings while preserving the same engineering facts;
 - omit cold or hot service, add prohibited hot service to a water closet, break sanitary reachability, or break only the downstream vent path;
+- vary compliant plumbing branch order and path length, and independently test duplicate summaries, wrong fixture-bound paths, wrong system classifications, ambiguous profiles, and subtype-specific size boundaries;
 - vary fixture subtype and supply-size criteria through the standards profile;
 - add plausible but out-of-scope nearby work to measure false positives.
 
@@ -120,6 +127,12 @@ The dwelling adapter consumes only the native wall-space discovery portion of `/
 Collect evaluator evidence from captured native responses:
 
 `npm run existing-conditions -- collect-dwelling-wall-native-evidence --adapter-config <json> --planner-response <json> --room-contents <json> --out <evaluator-native-evidence.json>`
+
+### Circuit-loading native adapter
+
+The circuit adapter supports legacy room inventory and preferred native panel inventory. Panel mode is robust to hosted devices that Revit reports as `NotInRoom`: the endpoint itself scans electrical fixtures, resolves native panel identity, and proves inventory completeness before the evaluator selects profile-matched receptacle circuits. Alternate valid device-to-circuit groupings pass when membership is conserved and each circuit satisfies the adopted VA, OCPD, conductor, and continuous-load rules.
+
+`npm run existing-conditions -- capture-circuit-loading-native-evidence --adapter-config <json> --expected-model <model.rvt> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>`
 
 Capture directly from the expected open model:
 

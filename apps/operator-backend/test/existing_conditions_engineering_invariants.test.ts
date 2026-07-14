@@ -204,10 +204,13 @@ test("circuit loading uses yokes or straps and does not impose a blanket 80 perc
   const result = evaluateReceptacleCircuitLoading({
     rule_id: "receptacle-circuit-load",
     source: nec("220.14(I), 210.20(A)"),
+    applicable_load_scope: "non_dwelling_general_use",
+    capacity_calculation: "single_phase_va",
     volt_amperes_per_yoke_or_strap: 180,
     continuous_load_multiplier: 1.25
   }, [{
     circuit_id: "P1-6",
+    load_scope: "non_dwelling_general_use",
     voltage: 120,
     phase_count: 1,
     breaker_amps: 20,
@@ -217,11 +220,12 @@ test("circuit loading uses yokes or straps and does not impose a blanket 80 perc
     conductor_ampacity_amps: 20,
     conductor_ocpd_compatibility_verified: true,
     receptacles: [
-      { element_key: "duplex", yoke_or_strap_count: 1, native_yoke_or_strap_count_verified: true, continuous: false },
-      { element_key: "quad-two-yokes", yoke_or_strap_count: 2, native_yoke_or_strap_count_verified: true, continuous: false }
+      { element_key: "duplex", yoke_or_strap_count: 1, yoke_or_strap_count_profile_verified: true, continuous: false, continuous_classification_profile_verified: true },
+      { element_key: "quad-two-yokes", yoke_or_strap_count: 2, yoke_or_strap_count_profile_verified: true, continuous: false, continuous_classification_profile_verified: true }
     ],
     other_continuous_va: 1200,
-    other_noncontinuous_va: 300
+    other_noncontinuous_va: 300,
+    other_loads_native_verified: true
   }])[0];
   assert.equal(result.details.required_va, 2340);
   assert.equal(result.details.circuit_capacity_va, 2400);
@@ -229,10 +233,13 @@ test("circuit loading uses yokes or straps and does not impose a blanket 80 perc
   const invalid = evaluateReceptacleCircuitLoading({
     rule_id: "bad-load",
     source: nec("220.14(I)"),
+    applicable_load_scope: "non_dwelling_general_use",
+    capacity_calculation: "single_phase_va",
     volt_amperes_per_yoke_or_strap: 180,
     continuous_load_multiplier: 1.25
   }, [{
     circuit_id: "bad",
+    load_scope: "non_dwelling_general_use",
     voltage: Number.POSITIVE_INFINITY,
     phase_count: 1,
     breaker_amps: 20,
@@ -241,12 +248,51 @@ test("circuit loading uses yokes or straps and does not impose a blanket 80 perc
     native_conductor_verified: true,
     conductor_ampacity_amps: 20,
     conductor_ocpd_compatibility_verified: true,
-    receptacles: [{ element_key: "bad-yoke", yoke_or_strap_count: -1, native_yoke_or_strap_count_verified: true, continuous: false }],
+    receptacles: [{ element_key: "bad-yoke", yoke_or_strap_count: -1, yoke_or_strap_count_profile_verified: true, continuous: false, continuous_classification_profile_verified: true }],
     other_continuous_va: -1,
-    other_noncontinuous_va: 0
+    other_noncontinuous_va: 0,
+    other_loads_native_verified: true
   }])[0];
   assert.equal(invalid.passed, false);
   assert.equal(invalid.failure_classification, "circuit_load_evidence_invalid");
+});
+
+test("circuit loading accepts alternate groupings but rejects omitted or duplicate scoped devices", () => {
+  const rule = {
+    rule_id: "receptacle-circuit-load-scope",
+    source: nec("220.14(I), 210.20(A)"),
+    applicable_load_scope: "non_dwelling_general_use" as const,
+    capacity_calculation: "single_phase_va" as const,
+    volt_amperes_per_yoke_or_strap: 180,
+    continuous_load_multiplier: 1.25
+  };
+  const circuit = (circuit_id: string, keys: string[]) => ({
+    circuit_id,
+    load_scope: "non_dwelling_general_use" as const,
+    voltage: 120,
+    phase_count: 1 as const,
+    breaker_amps: 20,
+    native_membership_verified: true,
+    native_ocpd_verified: true,
+    native_conductor_verified: true,
+    conductor_ampacity_amps: 20,
+    conductor_ocpd_compatibility_verified: true,
+    receptacles: keys.map((element_key) => ({ element_key, yoke_or_strap_count: 1, yoke_or_strap_count_profile_verified: true, continuous: false, continuous_classification_profile_verified: true })),
+    other_continuous_va: 0,
+    other_noncontinuous_va: 0,
+    other_loads_native_verified: true
+  });
+  const scope = { receptacle_element_keys: ["r1", "r2", "r3", "r4"], native_scope_inventory_verified: true };
+  const alternateA = evaluateReceptacleCircuitLoading(rule, [circuit("P1-1", ["r1", "r2"]), circuit("P1-3", ["r3", "r4"])], scope);
+  const alternateB = evaluateReceptacleCircuitLoading(rule, [circuit("P1-1", ["r1", "r3"]), circuit("P1-3", ["r2", "r4"])], scope);
+  assert.equal(alternateA.every((check) => check.passed), true);
+  assert.equal(alternateB.every((check) => check.passed), true);
+  const omitted = evaluateReceptacleCircuitLoading(rule, [circuit("P1-1", ["r1", "r2", "r3"])], scope);
+  assert.equal(omitted[0].failure_classification, "circuit_scope_membership_incomplete_or_duplicated");
+  assert.equal(omitted[0].details.missing_receptacle_element_keys, "r4");
+  const duplicated = evaluateReceptacleCircuitLoading(rule, [circuit("P1-1", ["r1", "r2"]), circuit("P1-3", ["r2", "r3", "r4"])], scope);
+  assert.equal(duplicated[0].details.duplicate_circuit_membership, true);
+  assert.equal(duplicated.every((check) => !check.passed), true);
 });
 
 test("plumbing services score system reachability and enforce a sourced conventional fixture subtype profile", () => {
@@ -321,6 +367,32 @@ test("plumbing services score system reachability and enforce a sourced conventi
   assert.equal(results[0].details.vent_checked_by_network_reachability, true);
   assert.equal(results[1].passed, false);
   assert.equal(results[1].details.prohibited_services_present, "domestic_hot_water");
+});
+
+test("plumbing topology rejects duplicate summaries, ambiguous profiles, and sanitary-only vent claims", () => {
+  const source = IPC;
+  const baseRule = {
+    rule_id: "lavatory-topology",
+    fixture_class: "lavatory",
+    source,
+    required_services: ["sanitary", "vented_drainage"] as const,
+    prohibited_services: [] as const,
+    expected_system_classifications: { sanitary: ["Sanitary"], vented_drainage: ["Sanitary"] },
+    required_connection_mode: { sanitary: "direct" as const, vented_drainage: "network" as const }
+  };
+  const sanitary = { service: "sanitary" as const, native_reachable: true, native_path_verified: true, direct_connection: true, path_element_keys: ["lav", "san"], system_ids: ["san-system"], system_classification: "Sanitary" };
+  const validVent = { service: "vented_drainage" as const, native_reachable: true, native_path_verified: true, direct_connection: false, path_element_keys: ["lav", "san", "vent"], system_ids: ["san-system"], system_classification: "Sanitary" };
+  const duplicate = evaluatePlumbingFixtureServices([{ ...baseRule, required_services: [...baseRule.required_services], prohibited_services: [] }], [{ element_key: "lav", fixture_class: "lavatory", services: [sanitary, validVent, { ...validVent }] }])[0];
+  assert.equal(duplicate.passed, false);
+  assert.match(String(duplicate.details.topology_failures), /duplicate_service_evidence/);
+  const sanitaryOnlyVent = evaluatePlumbingFixtureServices([{ ...baseRule, required_services: [...baseRule.required_services], prohibited_services: [] }], [{ element_key: "lav", fixture_class: "lavatory", services: [sanitary, { ...validVent, path_element_keys: ["lav", "san"] }] }])[0];
+  assert.equal(sanitaryOnlyVent.passed, false);
+  assert.match(String(sanitaryOnlyVent.details.topology_failures), /distinct_network_continuation_unverified/);
+  const ambiguous = evaluatePlumbingFixtureServices([
+    { ...baseRule, rule_id: "lav-a", required_services: [...baseRule.required_services], prohibited_services: [] },
+    { ...baseRule, rule_id: "lav-b", required_services: [...baseRule.required_services], prohibited_services: [] }
+  ], [{ element_key: "lav", fixture_class: "lavatory", services: [sanitary, validVent] }])[0];
+  assert.equal(ambiguous.failure_classification, "plumbing_fixture_service_profile_ambiguous");
 });
 
 test("dataset audit catches answer and source-region leakage plus fake compliance replay", () => {

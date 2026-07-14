@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assertExpectedCircuitLoadingModelSha256,
   assertExpectedDwellingWallCoverageModelSha256,
   assertExpectedGfciModelSha256,
+  collectCircuitLoadingNativeEvidence,
   collectDwellingWallCoverageNativeEvidence,
   collectGfciNativeEvidence,
   type DwellingWallCoverageNativeAdapterConfig,
-  type GfciNativeAdapterConfig
+  type GfciNativeAdapterConfig,
+  type CircuitLoadingNativeAdapterConfig
 } from "../src/existing_conditions/engineering_native_adapters.js";
 
 const PROFILE = "e28ae52a495eaeec357987854c75d5f1cfec1b455a71c6612f74b5a235ef373e";
@@ -307,4 +310,208 @@ test("binds dwelling native capture to the configured model hash", () => {
     /dwelling_adapter_expected_model_hash_mismatch/
   );
   assert.doesNotThrow(() => assertExpectedDwellingWallCoverageModelSha256(dwellingConfig(), "d".repeat(64)));
+});
+
+function circuitConfig(): CircuitLoadingNativeAdapterConfig {
+  return {
+    schema_version: 1,
+    case_id: "live-circuit-office-v1",
+    standards_profile_sha256: PROFILE,
+    starting_model_sha256: "b".repeat(64),
+    expected_model_sha256: "f".repeat(64),
+    check_id: "receptacle-circuit-load",
+    room_number: "Office 201",
+    load_scope: "non_dwelling_general_use",
+    receptacle_match_tokens: ["receptacle"],
+    wire_ampacity_profiles: [{ wire_size_token: "#12", ampacity_amps: 20 }],
+    device_profiles: [
+      { profile_id: "duplex-one-yoke", family_match_tokens: ["receptacle"], type_match_tokens: ["duplex"], yoke_or_strap_count: 1, continuous: false },
+      { profile_id: "quad-two-yokes", family_match_tokens: ["receptacle"], type_match_tokens: ["quad"], yoke_or_strap_count: 2, continuous: false }
+    ]
+  };
+}
+
+function circuitRoomContents() {
+  return {
+    roomNumber: "Office 201",
+    diagnostics: { matchedScopedCount: 3 },
+    elements: [
+      { id: 11, sourceScopedId: "host:11", builtInCategory: "OST_ElectricalFixtures", familyName: "General Receptacle", typeName: "Duplex" },
+      { id: 12, sourceScopedId: "host:12", builtInCategory: "OST_ElectricalFixtures", familyName: "General Receptacle", typeName: "Quad" },
+      { id: 13, sourceScopedId: "host:13", builtInCategory: "OST_ElectricalFixtures", familyName: "General Receptacle", typeName: "Duplex" }
+    ]
+  };
+}
+
+function circuitAudit(memberGroups: number[][] = [[11, 12], [13]]) {
+  return {
+    schema: "revit-operator.electrical-circuit-loading-audit.v1",
+    modelSha256: "f".repeat(64),
+    scopeElementIds: [11, 12, 13],
+    diagnostics: { complete: true, truncated: false },
+    circuits: memberGroups.map((memberElementIds, index) => ({
+      circuitId: `P1-${index * 2 + 1}`,
+      memberElementIds,
+      voltage: 120,
+      phaseCount: 1,
+      breakerAmps: 20,
+      nativeMembershipVerified: true,
+      nativeOcpdVerified: true,
+      nativeConductorVerified: true,
+      conductorAmpacityAmps: 20,
+      conductorOcpdCompatibilityVerified: true,
+      otherContinuousVa: 0,
+      otherNoncontinuousVa: 0,
+      otherLoadsNativeVerified: true
+    }))
+  };
+}
+
+test("circuit adapter derives yokes from native family types and accepts alternate circuit groupings", () => {
+  const first = collectCircuitLoadingNativeEvidence(circuitConfig(), circuitRoomContents(), circuitAudit());
+  const alternate = collectCircuitLoadingNativeEvidence(circuitConfig(), circuitRoomContents(), circuitAudit([[11, 13], [12]]));
+  for (const evidence of [first, alternate]) {
+    const check = evidence.checks[0];
+    assert.equal(check?.type, "receptacle_circuit_loading");
+    if (check?.type !== "receptacle_circuit_loading") continue;
+    assert.deepEqual(check.scope_receptacle_element_keys, ["host:11", "host:12", "host:13"]);
+    assert.equal(check.circuits.flatMap((circuit) => circuit.receptacles).reduce((sum, receptacle) => sum + receptacle.yoke_or_strap_count, 0), 4);
+  }
+});
+
+test("circuit adapter fails closed on incomplete scope, ambiguous device profiles, and out-of-scope members", () => {
+  const incomplete = circuitAudit();
+  incomplete.diagnostics.truncated = true;
+  assert.throws(() => collectCircuitLoadingNativeEvidence(circuitConfig(), circuitRoomContents(), incomplete), /circuit_adapter_audit_incomplete/);
+  const ambiguousConfig = circuitConfig();
+  ambiguousConfig.device_profiles.push({ ...ambiguousConfig.device_profiles[0]!, profile_id: "duplicate-duplex" });
+  assert.throws(() => collectCircuitLoadingNativeEvidence(ambiguousConfig, circuitRoomContents(), circuitAudit()), /circuit_adapter_device_profile_ambiguous:11/);
+  const outOfScope = circuitAudit([[11, 99], [12, 13]]);
+  assert.throws(() => collectCircuitLoadingNativeEvidence(circuitConfig(), circuitRoomContents(), outOfScope), /circuit_adapter_member_outside_scope:99/);
+});
+
+test("binds circuit native capture to the configured model hash", () => {
+  assert.throws(() => assertExpectedCircuitLoadingModelSha256(circuitConfig(), "e".repeat(64)), /circuit_adapter_expected_model_hash_mismatch/);
+  assert.doesNotThrow(() => assertExpectedCircuitLoadingModelSha256(circuitConfig(), "f".repeat(64)));
+});
+
+function panelCircuitConfig(): CircuitLoadingNativeAdapterConfig {
+  const config = circuitConfig();
+  delete config.room_number;
+  config.panel_name = "P205";
+  return config;
+}
+
+function panelCircuitAudit() {
+  return {
+    schema: "revit-operator.electrical-circuit-loading-audit.v1",
+    modelSha256: "f".repeat(64),
+    scopeMode: "panel_inventory",
+    selectedPanelName: "P205",
+    selectedPanelElementId: 500,
+    scopeElementIds: [11, 12, 13, 20],
+    scopedDevices: [
+      { elementId: 11, sourceScopedId: "host:11", builtInCategory: "OST_ElectricalFixtures", familyName: "General Receptacle", typeName: "Duplex" },
+      { elementId: 12, sourceScopedId: "host:12", builtInCategory: "OST_ElectricalFixtures", familyName: "General Receptacle", typeName: "Quad" },
+      { elementId: 13, sourceScopedId: "host:13", builtInCategory: "OST_ElectricalFixtures", familyName: "General Receptacle", typeName: "Duplex" },
+      { elementId: 20, sourceScopedId: "host:20", builtInCategory: "OST_ElectricalFixtures", familyName: "Mechanical Equipment Connection", typeName: "208V" }
+    ],
+    diagnostics: {
+      complete: true,
+      truncated: false,
+      inventoryComplete: true,
+      discoveredElectricalFixtureCount: 40,
+      selectedElectricalFixtureCount: 4
+    },
+    circuits: [
+      {
+        circuitId: "P205-1",
+        panelName: "P205",
+        panelElementId: 500,
+        memberElementIds: [11, 12],
+        allNativeMemberElementIds: [11, 12],
+        voltage: 120,
+        phaseCount: 1,
+        breakerAmps: 20,
+        nativeMembershipVerified: true,
+        nativeOcpdVerified: true,
+        nativeConductorVerified: true,
+        conductorAmpacityAmps: 20,
+        conductorOcpdCompatibilityVerified: true,
+        otherContinuousVa: 0,
+        otherNoncontinuousVa: 0,
+        otherLoadsNativeVerified: true,
+        evidence: { allCircuitMembersInsideScope: true }
+      },
+      {
+        circuitId: "P205-3",
+        panelName: "P205",
+        panelElementId: 500,
+        memberElementIds: [13],
+        allNativeMemberElementIds: [13],
+        voltage: 120,
+        phaseCount: 1,
+        breakerAmps: 20,
+        nativeMembershipVerified: true,
+        nativeOcpdVerified: true,
+        nativeConductorVerified: true,
+        conductorAmpacityAmps: 20,
+        conductorOcpdCompatibilityVerified: true,
+        otherContinuousVa: 0,
+        otherNoncontinuousVa: 0,
+        otherLoadsNativeVerified: true,
+        evidence: { allCircuitMembersInsideScope: true }
+      },
+      {
+        circuitId: "P205-16",
+        panelName: "P205",
+        panelElementId: 500,
+        memberElementIds: [20],
+        allNativeMemberElementIds: [20],
+        voltage: 208,
+        phaseCount: 1,
+        breakerAmps: 40,
+        nativeMembershipVerified: true,
+        nativeOcpdVerified: true,
+        nativeConductorVerified: true,
+        conductorAmpacityAmps: 40,
+        conductorOcpdCompatibilityVerified: true,
+        otherContinuousVa: 0,
+        otherNoncontinuousVa: 0,
+        otherLoadsNativeVerified: true,
+        evidence: { allCircuitMembersInsideScope: true }
+      }
+    ]
+  };
+}
+
+test("panel circuit adapter derives a complete native receptacle scope without configured element or circuit ids", () => {
+  const evidence = collectCircuitLoadingNativeEvidence(panelCircuitConfig(), null, panelCircuitAudit());
+  const check = evidence.checks[0];
+  assert.equal(check?.type, "receptacle_circuit_loading");
+  if (check?.type !== "receptacle_circuit_loading") return;
+  assert.deepEqual(check.scope_receptacle_element_keys, ["host:11", "host:12", "host:13"]);
+  assert.deepEqual(check.circuits.map((circuit) => circuit.circuit_id), ["P205-1", "P205-3"]);
+  assert.equal(evidence.collection_receipt?.selected_panel_element_id, 500);
+  assert.equal(evidence.collection_receipt?.excluded_non_receptacle_circuit_count, 1);
+});
+
+test("panel circuit adapter rejects inventory, panel, mixed-load, and duplicate-assignment leakage", () => {
+  const incomplete = panelCircuitAudit();
+  incomplete.diagnostics.inventoryComplete = false;
+  assert.throws(() => collectCircuitLoadingNativeEvidence(panelCircuitConfig(), null, incomplete), /circuit_adapter_audit_incomplete/);
+
+  const wrongPanel = panelCircuitAudit();
+  wrongPanel.circuits[0]!.panelElementId = 999;
+  assert.throws(() => collectCircuitLoadingNativeEvidence(panelCircuitConfig(), null, wrongPanel), /circuit_adapter_circuit_panel_mismatch:P205-1/);
+
+  const mixed = panelCircuitAudit();
+  mixed.circuits[0]!.memberElementIds.push(20);
+  mixed.circuits[0]!.allNativeMemberElementIds.push(20);
+  assert.throws(() => collectCircuitLoadingNativeEvidence(panelCircuitConfig(), null, mixed), /circuit_adapter_mixed_load_circuit_unsupported:P205-1/);
+
+  const duplicate = panelCircuitAudit();
+  duplicate.circuits[1]!.memberElementIds = [11];
+  duplicate.circuits[1]!.allNativeMemberElementIds = [11];
+  assert.throws(() => collectCircuitLoadingNativeEvidence(panelCircuitConfig(), null, duplicate), /circuit_adapter_duplicate_circuit_assignment/);
 });

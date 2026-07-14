@@ -352,6 +352,8 @@ export function evaluateDwellingWallCoverage(
 export type ReceptacleCircuitLoadRule = {
   rule_id: string;
   source: EngineeringSourceReference;
+  applicable_load_scope: "non_dwelling_general_use" | "dwelling_profile" | "project_specific";
+  capacity_calculation: "single_phase_va" | "three_phase_line_to_line_va";
   volt_amperes_per_yoke_or_strap: number;
   continuous_load_multiplier: number;
 };
@@ -359,12 +361,14 @@ export type ReceptacleCircuitLoadRule = {
 export type ReceptacleCircuitLoad = {
   element_key: string;
   yoke_or_strap_count: number;
-  native_yoke_or_strap_count_verified: boolean;
+  yoke_or_strap_count_profile_verified: boolean;
   continuous: boolean;
+  continuous_classification_profile_verified: boolean;
 };
 
 export type CircuitCapacityEvidence = {
   circuit_id: string;
+  load_scope: "non_dwelling_general_use" | "dwelling_profile" | "project_specific";
   voltage: number;
   phase_count: 1 | 3;
   breaker_amps: number;
@@ -376,6 +380,7 @@ export type CircuitCapacityEvidence = {
   receptacles: ReceptacleCircuitLoad[];
   other_continuous_va: number;
   other_noncontinuous_va: number;
+  other_loads_native_verified: boolean;
   listed_for_100_percent_continuous_operation?: boolean;
   continuous_rating_evidence_sha256?: string | null;
   continuous_rating_native_verified?: boolean;
@@ -383,13 +388,25 @@ export type CircuitCapacityEvidence = {
 
 export function evaluateReceptacleCircuitLoading(
   rule: ReceptacleCircuitLoadRule,
-  circuits: CircuitCapacityEvidence[]
+  circuits: CircuitCapacityEvidence[],
+  scope?: {
+    receptacle_element_keys: string[];
+    native_scope_inventory_verified: boolean;
+  }
 ): EngineeringCheckResult[] {
-  return circuits.map((circuit) => {
+  const duplicateCircuitIds = unique(circuits.map((circuit) => circuit.circuit_id)).length !== circuits.length;
+  const assignedKeys = circuits.flatMap((circuit) => circuit.receptacles.map((receptacle) => text(receptacle.element_key)));
+  const duplicateAssignedKeys = unique(assignedKeys).length !== assignedKeys.length;
+  const results: EngineeringCheckResult[] = circuits.map((circuit) => {
+    const phaseMatchesCalculation = (circuit.phase_count === 1 && rule.capacity_calculation === "single_phase_va")
+      || (circuit.phase_count === 3 && rule.capacity_calculation === "three_phase_line_to_line_va");
     const invalidCircuitMetadata = !Number.isFinite(rule.volt_amperes_per_yoke_or_strap)
       || rule.volt_amperes_per_yoke_or_strap <= 0
       || !Number.isFinite(rule.continuous_load_multiplier)
       || rule.continuous_load_multiplier < 1
+      || circuit.load_scope !== rule.applicable_load_scope
+      || !phaseMatchesCalculation
+      || duplicateCircuitIds
       || !Number.isFinite(circuit.voltage)
       || circuit.voltage <= 0
       || !Number.isFinite(circuit.breaker_amps)
@@ -400,11 +417,15 @@ export function evaluateReceptacleCircuitLoading(
       || !Number.isFinite(circuit.other_continuous_va)
       || circuit.other_continuous_va < 0
       || !Number.isFinite(circuit.other_noncontinuous_va)
-      || circuit.other_noncontinuous_va < 0;
+      || circuit.other_noncontinuous_va < 0
+      || !circuit.other_loads_native_verified;
     const invalidReceptacleMetadata = circuit.receptacles.some((receptacle) =>
-      !Number.isInteger(receptacle.yoke_or_strap_count)
+      !text(receptacle.element_key)
+      || !Number.isInteger(receptacle.yoke_or_strap_count)
       || receptacle.yoke_or_strap_count <= 0
-      || !receptacle.native_yoke_or_strap_count_verified);
+      || !receptacle.yoke_or_strap_count_profile_verified
+      || !receptacle.continuous_classification_profile_verified)
+      || duplicateAssignedKeys;
     let continuousVa = circuit.other_continuous_va;
     let noncontinuousVa = circuit.other_noncontinuous_va;
     for (const receptacle of circuit.receptacles) {
@@ -419,7 +440,8 @@ export function evaluateReceptacleCircuitLoading(
     );
     const multiplier = verified100PercentRating ? 1 : rule.continuous_load_multiplier;
     const requiredVa = noncontinuousVa + continuousVa * multiplier;
-    const capacityVa = circuit.voltage * circuit.breaker_amps * (circuit.phase_count === 3 ? Math.sqrt(3) : 1);
+    const capacityVa = circuit.voltage * circuit.breaker_amps
+      * (rule.capacity_calculation === "three_phase_line_to_line_va" ? Math.sqrt(3) : 1);
     const nativeBasisVerified = circuit.native_membership_verified
       && circuit.native_ocpd_verified
       && circuit.native_conductor_verified;
@@ -441,6 +463,8 @@ export function evaluateReceptacleCircuitLoading(
         continuous_va: continuousVa,
         noncontinuous_va: noncontinuousVa,
         continuous_multiplier: multiplier,
+        load_scope: circuit.load_scope,
+        capacity_calculation: rule.capacity_calculation,
         required_va: requiredVa,
         circuit_capacity_va: capacityVa,
         native_membership_verified: circuit.native_membership_verified,
@@ -448,10 +472,39 @@ export function evaluateReceptacleCircuitLoading(
         native_conductor_verified: circuit.native_conductor_verified,
         conductor_ampacity_amps: circuit.conductor_ampacity_amps,
         conductor_ocpd_compatibility_verified: circuit.conductor_ocpd_compatibility_verified,
+        other_loads_native_verified: circuit.other_loads_native_verified,
         verified_100_percent_rating: verified100PercentRating
       }
     };
   });
+  if (scope) {
+    const scopedKeys = scope.receptacle_element_keys.map(text).filter(Boolean);
+    const uniqueScopedKeys = unique(scopedKeys);
+    const uniqueAssignedKeys = unique(assignedKeys);
+    const duplicateScopedKeys = uniqueScopedKeys.length !== scopedKeys.length;
+    const missing = uniqueScopedKeys.filter((key) => !uniqueAssignedKeys.includes(key));
+    const unexpected = uniqueAssignedKeys.filter((key) => !uniqueScopedKeys.includes(key));
+    const passed = scope.native_scope_inventory_verified
+      && !duplicateScopedKeys
+      && !duplicateAssignedKeys
+      && missing.length === 0
+      && unexpected.length === 0;
+    results.unshift({
+      check_id: `${rule.rule_id}:scope`,
+      passed,
+      failure_classification: passed ? null : "circuit_scope_membership_incomplete_or_duplicated",
+      details: {
+        native_scope_inventory_verified: scope.native_scope_inventory_verified,
+        scoped_receptacle_count: uniqueScopedKeys.length,
+        assigned_receptacle_count: uniqueAssignedKeys.length,
+        duplicate_scope_element_keys: duplicateScopedKeys,
+        duplicate_circuit_membership: duplicateAssignedKeys,
+        missing_receptacle_element_keys: missing.join(",") || null,
+        unexpected_receptacle_element_keys: unexpected.join(",") || null
+      }
+    });
+  }
+  return results;
 }
 
 export type PlumbingServiceKind = "domestic_cold_water" | "domestic_hot_water" | "sanitary" | "vented_drainage";
@@ -497,25 +550,55 @@ export function evaluatePlumbingFixtureServices(
 ): EngineeringCheckResult[] {
   const results: EngineeringCheckResult[] = [];
   for (const fixture of fixtures) {
-    const rule = rules.find((candidate) => text(candidate.fixture_class).toLowerCase() === text(fixture.fixture_class).toLowerCase()
-      && (!text(candidate.fixture_subtype) || text(candidate.fixture_subtype).toLowerCase() === text(fixture.fixture_subtype).toLowerCase()));
+    const fixtureClass = text(fixture.fixture_class).toLowerCase();
+    const fixtureSubtype = text(fixture.fixture_subtype).toLowerCase();
+    const classRules = rules.filter((candidate) => text(candidate.fixture_class).toLowerCase() === fixtureClass);
+    const exactRules = classRules.filter((candidate) => text(candidate.fixture_subtype).toLowerCase() === fixtureSubtype && fixtureSubtype.length > 0);
+    const genericRules = classRules.filter((candidate) => !text(candidate.fixture_subtype));
+    const matchingRules = exactRules.length > 0 ? exactRules : genericRules;
+    const rule = matchingRules.length === 1 ? matchingRules[0] : null;
     if (!rule) {
       results.push({
         check_id: `plumbing_service_profile:${fixture.element_key}`,
         passed: false,
-        failure_classification: "plumbing_fixture_service_profile_missing",
-        details: { fixture_class: fixture.fixture_class, fixture_subtype: fixture.fixture_subtype ?? null }
+        failure_classification: matchingRules.length > 1
+          ? "plumbing_fixture_service_profile_ambiguous"
+          : "plumbing_fixture_service_profile_missing",
+        details: {
+          fixture_class: fixture.fixture_class,
+          fixture_subtype: fixture.fixture_subtype ?? null,
+          exact_profile_count: exactRules.length,
+          generic_profile_count: genericRules.length
+        }
       });
       continue;
     }
+    const serviceNames = fixture.services.map((service) => service.service);
+    const duplicateServices = unique(serviceNames).length !== serviceNames.length;
+    const malformedServices = fixture.services.filter((service) => {
+      const path = unique(service.path_element_keys);
+      const fixtureInPath = path.includes(fixture.element_key);
+      const directPathValid = !service.direct_connection || (path[0] === fixture.element_key && path.length >= 2);
+      return service.native_reachable && (!service.native_path_verified
+        || !fixtureInPath
+        || !directPathValid
+        || unique(service.system_ids).length === 0
+        || !text(service.system_classification));
+    });
     const provenServices = fixture.services.filter((service) => service.native_reachable
       && service.native_path_verified
-      && unique(service.path_element_keys).length > 0
-      && unique(service.system_ids).length > 0);
+      && unique(service.path_element_keys).includes(fixture.element_key)
+      && (!service.direct_connection || (unique(service.path_element_keys)[0] === fixture.element_key
+        && unique(service.path_element_keys).length >= 2))
+      && unique(service.system_ids).length > 0
+      && text(service.system_classification));
     const reachable = new Set(provenServices.map((service) => service.service));
     const missing = rule.required_services.filter((service) => !reachable.has(service));
-    const prohibited = rule.prohibited_services.filter((service) => reachable.has(service));
+    const prohibited = rule.prohibited_services.filter((service) => fixture.services.some((candidate) =>
+      candidate.service === service && candidate.native_reachable));
     const topologyFailures: string[] = [];
+    if (duplicateServices) topologyFailures.push("duplicate_service_evidence");
+    if (malformedServices.length > 0) topologyFailures.push(`malformed_native_paths:${unique(malformedServices.map((service) => service.service)).join("|")}`);
     for (const service of rule.required_services) {
       const evidence = provenServices.find((candidate) => candidate.service === service);
       if (!evidence) continue;
@@ -526,10 +609,22 @@ export function evaluatePlumbingFixtureServices(
       if (rule.required_connection_mode[service] === "direct" && !evidence.direct_connection) {
         topologyFailures.push(`${service}:direct_connection_required`);
       }
+      if (rule.required_connection_mode[service] === "network" && evidence.direct_connection) {
+        topologyFailures.push(`${service}:network_reachability_required`);
+      }
+    }
+    const vent = provenServices.find((candidate) => candidate.service === "vented_drainage");
+    const sanitary = provenServices.find((candidate) => candidate.service === "sanitary");
+    if (rule.required_services.includes("vented_drainage") && vent) {
+      const ventPath = unique(vent.path_element_keys);
+      const sanitaryPath = new Set(unique(sanitary?.path_element_keys ?? []));
+      const distinctVentContinuation = ventPath.length >= 3
+        && ventPath.some((key) => key !== fixture.element_key && !sanitaryPath.has(key));
+      if (!distinctVentContinuation) topologyFailures.push("vented_drainage:distinct_network_continuation_unverified");
     }
     const sizeFailures: string[] = [];
     for (const sizeRule of rule.connection_sizes ?? []) {
-      const evidence = fixture.services.find((service) => service.service === sizeRule.service && service.native_reachable);
+      const evidence = provenServices.find((service) => service.service === sizeRule.service);
       const size = finite(evidence?.connection_size_inches);
       if (size === null || !evidence?.connection_size_native_verified) {
         sizeFailures.push(`${sizeRule.service}:missing`);

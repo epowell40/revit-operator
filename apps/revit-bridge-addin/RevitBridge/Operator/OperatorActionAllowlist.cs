@@ -224,6 +224,7 @@ namespace RevitBridge.Operator
                     "/revit/set-selection",
                     "/revit/resolve-room-plan-view",
                     "/revit/plan-dwelling-receptacles",
+                    "/revit/audit-electrical-circuit-loading",
                     "/revit/plan-room-receptacles-from-analog",
                     "/revit/apply-room-receptacles-from-analog",
 

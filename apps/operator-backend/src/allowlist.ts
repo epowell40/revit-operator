@@ -74,6 +74,7 @@ const defaultAllowed: Allowlist = {
     "/revit/ducts-by-spatial-scope",
     "/revit/align-room-tops-to-ceilings",
     "/revit/get-connectors",
+    "/revit/audit-electrical-circuit-loading",
     "/revit/export-image",
     "/revit/capture-screenshare",
     "/revit/export-pdf",

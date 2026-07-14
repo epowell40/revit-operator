@@ -40,11 +40,15 @@ import {
   type EngineeringCaseNativeEvidence
 } from "../existing_conditions/engineering_case_runner.js";
 import {
+  assertExpectedCircuitLoadingModelSha256,
   assertExpectedDwellingWallCoverageModelSha256,
   assertExpectedGfciModelSha256,
+  collectCircuitLoadingNativeEvidence,
   collectDwellingWallCoverageNativeEvidence,
   collectGfciNativeEvidence,
+  selectCircuitLoadingScopedElementIds,
   selectGfciScopedElementIds,
+  type CircuitLoadingNativeAdapterConfig,
   type DwellingWallCoverageNativeAdapterConfig,
   type GfciNativeAdapterConfig,
   type NativeParameterReadback
@@ -116,6 +120,8 @@ function usage(): never {
     "  npm run existing-conditions -- capture-gfci-native-evidence --adapter-config <json> --expected-model <model.rvt> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "  npm run existing-conditions -- collect-dwelling-wall-native-evidence --adapter-config <json> --planner-response <json> --room-contents <json> --out <evaluator-native-evidence.json>",
     "  npm run existing-conditions -- capture-dwelling-wall-native-evidence --adapter-config <json> --expected-model <model.rvt> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
+    "  npm run existing-conditions -- collect-circuit-loading-native-evidence --adapter-config <json> --room-contents <json> --circuit-audit <json> --out <evaluator-native-evidence.json>",
+    "  npm run existing-conditions -- capture-circuit-loading-native-evidence --adapter-config <json> --expected-model <model.rvt> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "  npm run existing-conditions -- evaluate-engineering-case --case <case-definition.json> --native-evidence <evaluator-native-evidence.json> --evaluator-provenance <provenance.json> --evaluator-key-file <secret> --out <checks.json>",
     "  npm run existing-conditions -- advance-controller --state <controller-state-or-receipt.json> --event <event.json> --out <next-receipt.json>",
     "  npm run existing-conditions -- evaluator-diff --before-visible <json> --after-visible <json> --package <agent_package.json> --out <receipt.json>",
@@ -710,6 +716,73 @@ function collectDwellingWallCoverageNativeEvidenceFile(): void {
   writeJson(requiredArgument("--out"), evidence);
 }
 
+function collectCircuitLoadingNativeEvidenceFile(): void {
+  const config = readJson(requiredArgument("--adapter-config")) as CircuitLoadingNativeAdapterConfig;
+  const evidence = collectCircuitLoadingNativeEvidence(
+    config,
+    readJson(requiredArgument("--room-contents")),
+    readJson(requiredArgument("--circuit-audit"))
+  );
+  writeJson(requiredArgument("--out"), evidence);
+}
+
+async function captureCircuitLoadingNativeEvidence(): Promise<void> {
+  const expectedModel = path.resolve(requiredArgument("--expected-model"));
+  const outDir = path.resolve(requiredArgument("--out-dir"));
+  if (fs.existsSync(outDir) && fs.readdirSync(outDir).length > 0) {
+    throw new Error(`Refusing to overwrite a non-empty circuit-loading capture directory: ${outDir}`);
+  }
+  const config = readJson(requiredArgument("--adapter-config")) as CircuitLoadingNativeAdapterConfig;
+  const expectedModelSha256 = sha256(expectedModel);
+  assertExpectedCircuitLoadingModelSha256(config, expectedModelSha256);
+  const client = bridgeClient();
+  const context = await client.get("/revit/context");
+  if (canonicalPath(activeDocumentPath(context)) !== canonicalPath(expectedModel)) {
+    throw new Error(`Active document is not the expected model: ${activeDocumentPath(context)}`);
+  }
+  let roomContents: unknown = null;
+  let elementIds: number[] = [];
+  if (config.room_number) {
+    roomContents = await client.post("/revit/room-contents", {
+      roomNumber: config.room_number,
+      categories: ["Electrical Fixtures"],
+      includeLinked: false,
+      mode: "auto",
+      verticalScope: "room",
+      spatialKindPreference: "space",
+      limit: 50000
+    });
+    elementIds = selectCircuitLoadingScopedElementIds(config, roomContents);
+    if (elementIds.length === 0) throw new Error("circuit_adapter_scoped_receptacles_missing");
+  }
+  const circuitAudit = await client.post("/revit/audit-electrical-circuit-loading", {
+    ...(config.panel_name ? { panelName: config.panel_name } : { elementIds }),
+    wireAmpacityProfiles: config.wire_ampacity_profiles.map((profile) => ({
+      wireSizeToken: profile.wire_size_token,
+      ampacityAmps: profile.ampacity_amps
+    })),
+    maxElements: 5000
+  });
+  const evidence = collectCircuitLoadingNativeEvidence(config, roomContents, circuitAudit);
+  evidence.collection_receipt = {
+    ...(evidence.collection_receipt ?? {}),
+    expected_model_path: expectedModel,
+    expected_model_sha256: expectedModelSha256
+  };
+  writeJson(path.join(outDir, "context.json"), context);
+  if (config.room_number) writeJson(path.join(outDir, "room_contents.json"), roomContents);
+  writeJson(path.join(outDir, "circuit_audit.json"), circuitAudit);
+  writeJson(path.join(outDir, "native_evidence.json"), evidence);
+  writeJson(path.join(outDir, "capture_receipt.json"), {
+    schema_version: 1,
+    expected_model_path: expectedModel,
+    expected_model_sha256: expectedModelSha256,
+    ...(config.panel_name ? { panel_name: config.panel_name } : { room_number: config.room_number, scoped_element_ids: elementIds }),
+    adapter_config_sha256: sha256(path.resolve(requiredArgument("--adapter-config"))),
+    native_readback: evidence.native_readback
+  });
+}
+
 async function captureDwellingWallCoverageNativeEvidence(): Promise<void> {
   const expectedModel = path.resolve(requiredArgument("--expected-model"));
   const outDir = path.resolve(requiredArgument("--out-dir"));
@@ -941,6 +1014,14 @@ async function main(): Promise<void> {
   }
   if (command === "capture-dwelling-wall-native-evidence") {
     await captureDwellingWallCoverageNativeEvidence();
+    return;
+  }
+  if (command === "collect-circuit-loading-native-evidence") {
+    collectCircuitLoadingNativeEvidenceFile();
+    return;
+  }
+  if (command === "capture-circuit-loading-native-evidence") {
+    await captureCircuitLoadingNativeEvidence();
     return;
   }
   if (command === "advance-controller") {

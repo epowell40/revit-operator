@@ -443,6 +443,7 @@ namespace RevitBridge.Operator
                 { "/revit/computer-use-guard", typeof(RevitBridge.Operator.OperatorDialogComputerUse.GuardParams) },
                 { "/revit/resolve-room-plan-view", typeof(RevitBridge.Logic.Handlers.ResolveRoomPlanViewHandler.Params) },
                 { "/revit/plan-dwelling-receptacles", typeof(RevitBridge.Logic.Handlers.PlanDwellingReceptaclesHandler.Params) },
+                { "/revit/audit-electrical-circuit-loading", typeof(RevitBridge.Logic.Handlers.ElectricalCircuitLoadingAuditHandler.Params) },
                 { "/revit/plan-room-receptacles-from-analog", typeof(RevitBridge.Logic.Handlers.RoomReceptacleAnalogParams) },
                 { "/revit/apply-room-receptacles-from-analog", typeof(RevitBridge.Logic.Handlers.RoomReceptacleAnalogParams) },
                 { "/revit/list-element-types", typeof(RevitBridge.Logic.Handlers.ListElementTypesHandler.Params) },

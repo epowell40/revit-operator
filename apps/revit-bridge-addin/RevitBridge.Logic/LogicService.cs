@@ -38,6 +38,7 @@ namespace RevitBridge.Logic
                 { "/revit/rooms", new RoomHandler() },
                 { "/revit/linked-room-boundaries", new LinkedRoomBoundariesHandler() },
                 { "/revit/room-contents", new RoomContentsHandler() },
+                { "/revit/audit-electrical-circuit-loading", new ElectricalCircuitLoadingAuditHandler() },
                 { "/revit/resolve-mep-routing-context", new RevitBridge.Logic.Handlers.MEP.ResolveMepRoutingContextHandler() },
                 { "/revit/create-mep-route", new RevitBridge.Logic.Handlers.MEP.CreateMepRouteHandler() },
                 { "/revit/connect-mep-branch", new RevitBridge.Logic.Handlers.MEP.ConnectMepBranchHandler() },
