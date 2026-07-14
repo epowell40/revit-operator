@@ -6037,6 +6037,22 @@
             "linkTypeId": 123,
             "linkInstanceId": 456
           }
+        },
+        {
+          "name": "Reload an existing architectural background link without changing its placement",
+          "request": {
+            "action": "reload",
+            "linkTypeId": 123,
+            "sourcePath": "local-work/existing-conditions/links/architectural.rvt",
+            "dryRun": false
+          },
+          "expected_response_shape": {
+            "status": "Reloaded",
+            "linkTypeId": 123,
+            "loadedInstances": [
+              { "instanceId": 456, "loaded": true }
+            ]
+          }
         }
       ]
     },
@@ -6589,6 +6605,81 @@
             "warnings": [
               "Duct size was missing; using conservative placeholder 8x8 inch rectangular duct."
             ]
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/existing-conditions-mep-draft-workflow",
+      "examples": [
+        {
+          "name": "Atomically dry-run a registered plumbing fixture and pipe dependency graph",
+          "request": {
+            "inputFingerprintSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "operations": [
+              {
+                "action_key": "route:cold-1",
+                "path": "/revit/mep-route-workflow",
+                "depends_on": [],
+                "expected_created_min": 1,
+                "expected_created_max": 1,
+                "apply_body": {
+                  "kind": "pipe",
+                  "levelName": "L4",
+                  "systemType": "Domestic Cold Water",
+                  "pipeType": "Copper",
+                  "pipeSize": "1/2 inch",
+                  "points": [
+                    { "x": 0, "y": 0, "z": 9 },
+                    { "x": 6, "y": 0, "z": 9 }
+                  ],
+                  "apply": true,
+                  "verify": true
+                }
+              },
+              {
+                "action_key": "place:lav-1",
+                "path": "/revit/place-families",
+                "depends_on": [],
+                "expected_created_min": 1,
+                "expected_created_max": 1,
+                "apply_body": {
+                  "levelName": "L4",
+                  "familyName": "SinkConnection",
+                  "symbolName": "Vanity",
+                  "instances": [{ "x": 0, "y": 0, "z": 0 }],
+                  "dryRun": false
+                }
+              },
+              {
+                "action_key": "connect:lav-1",
+                "path": "/revit/connect-mep-elements",
+                "depends_on": ["route:cold-1", "place:lav-1"],
+                "expected_created_min": 0,
+                "expected_created_max": 0,
+                "deferred_body": {
+                  "source_element": { "created_by_action": "place:lav-1", "output": "created" },
+                  "target_elements": [{ "created_by_action": "route:cold-1", "output": "route_start" }],
+                  "required_connection_count": 1
+                }
+              }
+            ],
+            "dryRun": true,
+            "verify": true,
+            "maximumCreatedElements": 8
+          },
+          "expected_response_shape": {
+            "schema": "operator.existing_conditions_mep_draft_workflow.v1",
+            "inputFingerprintSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "status": "DryRunReady",
+            "dryRun": true,
+            "transactionGroupRolledBack": true,
+            "rollbackVerified": true,
+            "atomic": true,
+            "operationCount": 3,
+            "createdElementIds": [],
+            "transientCreatedElementIds": [101, 102]
           }
         }
       ]

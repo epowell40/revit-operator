@@ -17,13 +17,14 @@ Reconstruct a bounded portion of missing existing-condition work from plotted PD
 - Exact redacted working-model path and SHA-256.
 - Source PDF path/page and SHA-256.
 - Exact view or sheet plus normalized image region and model-space bounds.
+- Required background-link manifest with every link loaded, plus a live Revit capture and exported test PDF proving that walls, doors, rooms, grids, and other required context actually plot. An unresolved or visually absent required background invalidates the package and any visual score.
 - Allowed categories and maximum created-element count.
 - Explicitly forbidden evaluator artifacts, including source/ground-truth model, ground-truth snapshot, deletion manifest, and withheld package.
 - Candidate snapshot, focused capture, post-change PDF, and run-receipt output paths.
 
 ## Monotonic workflow
 
-1. **Inspect** the bounded model region, PDF, mapping, surrounding elements, connectors, hosts, rooms/spaces, and project precedent. Do not search evaluator-only paths.
+1. **Inspect** the bounded model region, PDF, mapping, surrounding elements, connectors, hosts, rooms/spaces, and project precedent. Verify every required Revit link is loaded before interpreting or scoring the view, then inspect one exported test PDF to prove the background plots. Do not search evaluator-only paths.
 2. **Plan** exact proposed elements with category, role, family/type or pathway type, geometry/elevation, system, physical connections, host, room/space, and factual electrical-system intent where applicable. Record confidence and assumptions.
 3. **Clarify** only when unresolved ambiguity would materially change geometry, size/elevation, family/type, system, host, or circuit. Consolidate material ambiguities into one focused question. Do not ask about harmless uncertainty that can be recorded as an assumption.
 4. **Dry-run** every write. The planned keys, categories, bounds, maximum count, and expected anchors must match the approved plan exactly.
@@ -38,9 +39,12 @@ Reconstruct a bounded portion of missing existing-condition work from plotted PD
 
 ## Discipline execution routes
 
+- Structured plumbing/electrical PDF observations can be compiled with `npm run existing-conditions -- compile-mep-draft --input <observations.json> --out <plan.json> --workflow-out <dry-run.json>`. The package must include the native `level_name` and its absolute `level_elevation_ft`; each observation's `elevation_ft` is an offset above that level. The compiler hash-binds and verifies a 2D source-to-model similarity registration, emits controller source observations and plan elements, blocks material ambiguity, and produces an atomic native dependency graph.
+- Submit the generated dry-run body to `/revit/existing-conditions-mep-draft-workflow`. The request carries the compiler input fingerprint, and each plumbing service join names the observed start or end of its route instead of expanding to every segment/fitting. The native workflow executes every dependent placement, route, endpoint join, and factual circuit assignment inside one Revit transaction group and rolls the whole group back for dry-run or on any failed operation. Rolled-back IDs are reported only as transient diagnostics, never as committed `createdElementIds`. This compiler consumes structured observations; it does not itself extract symbols or linework from arbitrary PDFs.
+
 - Duct and pipe pathways: prefer `/revit/mep-route-workflow`; use explicit system/type/size/elevation and `connectToExisting` plus `requireExistingEndpointConnections` when both stable anchors are known.
 - Air terminals and unhosted equipment: use `/revit/place-families` or a bounded workflow wrapper with source-model family/type precedent, then inspect connectors and system assignment.
-- Wall/face-hosted plumbing or electrical devices: use `/revit/place-family-instance-on-host` with a real exemplar, exact host, orientation matching, and room-side context.
+- Wall/face-hosted plumbing or electrical devices: use `/revit/place-family-instance-on-host` with a real exemplar, exact host category, room-side context, and source-supported orientation. Do not force orientation matching when Revit cannot rotate the exemplar onto the resolved host; preserve the safe host placement and record the orientation limitation instead.
 - Electrical circuits: use `/revit/assign-electrical-circuit` with `sourceElementId` only when source precedent proves one exact power system. Treat panel/circuit parameter fallback as labels, not membership.
 - Evidence: use `/revit/export-visible-elements`, `/revit/get-connectors`, `/revit/export-view-region`, and `/revit/export-pdf` on the exact scope.
 
@@ -48,6 +52,7 @@ Reconstruct a bounded portion of missing existing-condition work from plotted PD
 
 - Visible-evidence hash differs from the package.
 - The active model is not the exact redacted model.
+- Any required architectural or discipline background link is unresolved, unloaded, or absent from the live view or exported test PDF.
 - Required PDF mapping, model bounds, family/type, system, elevation, host, or circuit is materially ambiguous.
 - Dry-run changes categories, elements, or bounds outside the package.
 - Native readback is missing or a requested physical/circuit relationship cannot be proven.

@@ -57,6 +57,11 @@ import {
   type PlumbingFixtureServicesNativeAdapterConfig,
   type NativeParameterReadback
 } from "../existing_conditions/engineering_native_adapters.js";
+import {
+  buildAtomicMepDraftWorkflowRequest,
+  compileMepDraftPlan,
+  type MepDraftPackage
+} from "../existing_conditions/mep_draft_plan.js";
 
 function argument(name: string): string {
   const index = process.argv.indexOf(name);
@@ -113,6 +118,7 @@ function usage(): never {
   throw new Error([
     "Usage:",
     "  npm run existing-conditions -- normalize --visible <export-visible-elements.json> --connectors <get-connectors.json> --ids <id,id,...> --out <snapshot.json>",
+    "  npm run existing-conditions -- compile-mep-draft --input <source-observations.json> --out <compiled-plan.json> [--workflow-out <atomic-dry-run-request.json>] [--max-created <count>]",
     "  npm run existing-conditions -- capture --expected-model <model.rvt> (--view-id <id> | --view-ids <id,id,...>) --ids <id,id,...> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "  npm run existing-conditions -- package --fixture-id <id> --scope-id <id> --discipline <mechanical|plumbing|electrical|mixed> --task-class <exact_reconstruction|standards_compliance_repair|generative_layout> [--standards-profile <json>] --redacted-model <agent-redacted.rvt> --source-pdf <source.pdf> --view-id <id> --model-bounds <minX,minY,minZ,maxX,maxY,maxZ> --image-region <minX,minY,maxX,maxY> --allowed-categories <OST_...,OST_...> --out-dir <agent-dir>",
     "  npm run existing-conditions -- seal-truth --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --ground-truth-model <source.rvt> --deletion-manifest <json> --delete-dry-run <json> --out <truth.json>",
@@ -1017,6 +1023,16 @@ async function main(): Promise<void> {
       }
     );
     writeJson(requiredArgument("--out"), snapshot);
+    return;
+  }
+  if (command === "compile-mep-draft") {
+    const plan = compileMepDraftPlan(readJson(requiredArgument("--input")) as MepDraftPackage);
+    writeJson(requiredArgument("--out"), plan);
+    const workflowOut = argument("--workflow-out");
+    if (workflowOut && plan.status === "ready") {
+      const maxCreated = Number(argument("--max-created") || Math.max(1, plan.plan_elements.filter((entry) => entry.action === "create").length * 4));
+      writeJson(workflowOut, buildAtomicMepDraftWorkflowRequest(plan, { maximum_created_elements: maxCreated }));
+    }
     return;
   }
   if (command === "redact") {

@@ -83,7 +83,11 @@ test("read-only electrical circuit loading audit endpoint is allowlisted as POST
 });
 
 test("connected MEP reconstruction endpoints are allowlisted as POST", () => {
-  for (const path of ["/revit/connect-mep-elements", "/revit/copy-mep-pattern"]) {
+  for (const path of [
+    "/revit/connect-mep-elements",
+    "/revit/existing-conditions-mep-draft-workflow",
+    "/revit/copy-mep-pattern"
+  ]) {
     assert.equal(isAllowlisted("POST", path), true);
     assert.equal(isAllowlisted("GET", path), false);
   }
