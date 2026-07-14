@@ -10,6 +10,12 @@ import type { ArchitecturalSourceDeltaReceipt } from "./architectural_source_del
 export type ArchitecturalRedactionVisibilityPolicy = {
   target_evidence_radius_ft: number;
   wall_endpoint_evidence_radius_ft: number;
+  wall_endpoint_occlusion_approach_ft: number;
+  wall_endpoint_occlusion_junction_radius_ft: number;
+  wall_endpoint_occlusion_ray_tolerance_ft: number;
+  wall_endpoint_occlusion_minimum_angle_degrees: number;
+  wall_endpoint_occlusion_ray_sample_count: number;
+  wall_endpoint_occlusion_minimum_ray_support: number;
   target_exclusion_radius_ft: number;
   minimum_target_frame_margin_ft: number;
   minimum_wall_sample_coverage: number;
@@ -22,6 +28,12 @@ export type ArchitecturalRedactionVisibilityPolicy = {
 export const DEFAULT_ARCHITECTURAL_REDACTION_VISIBILITY_POLICY: ArchitecturalRedactionVisibilityPolicy = {
   target_evidence_radius_ft: 0.75,
   wall_endpoint_evidence_radius_ft: 0.25,
+  wall_endpoint_occlusion_approach_ft: 0.5,
+  wall_endpoint_occlusion_junction_radius_ft: 0.5,
+  wall_endpoint_occlusion_ray_tolerance_ft: 0.25,
+  wall_endpoint_occlusion_minimum_angle_degrees: 45,
+  wall_endpoint_occlusion_ray_sample_count: 5,
+  wall_endpoint_occlusion_minimum_ray_support: 3,
   target_exclusion_radius_ft: 1.5,
   minimum_target_frame_margin_ft: 0.75,
   minimum_wall_sample_coverage: 0.3,
@@ -40,6 +52,10 @@ export type ArchitecturalRedactionTargetVisibility = {
   candidate_pixel_count: number;
   wall_endpoint_sample_count?: number;
   supported_wall_endpoint_count?: number;
+  directly_supported_wall_endpoint_count?: number;
+  junction_occlusion_supported_wall_endpoint_count?: number;
+  wall_endpoint_support_modes?: Array<"source_only" | "retained_junction" | "unsupported">;
+  wall_endpoint_junction_ray_support?: number[];
   wall_endpoint_evidence_coverage?: number;
   wall_endpoint_evidence_passed?: boolean;
   minimum_frame_clearance_ft: number;
@@ -255,6 +271,50 @@ function dilate(mask: Uint8Array, width: number, height: number, radius: number)
   return output;
 }
 
+function commonInkMask(source: Uint8Array, expandedRedacted: Uint8Array): Uint8Array {
+  const common = new Uint8Array(source.length);
+  for (let index = 0; index < common.length; index += 1) {
+    common[index] = source[index] && expandedRedacted[index] ? 1 : 0;
+  }
+  return common;
+}
+
+function lineAngleDifferenceDegrees(aRadians: number, bRadians: number): number {
+  const raw = Math.abs((aRadians - bRadians) * 180 / Math.PI) % 180;
+  return Math.min(raw, 180 - raw);
+}
+
+function retainedJunctionRaySupport(
+  common: Uint8Array,
+  width: number,
+  height: number,
+  endpoint: PixelPoint,
+  inwardDirection: PixelPoint,
+  pixelsPerFoot: number,
+  policy: ArchitecturalRedactionVisibilityPolicy
+): number {
+  const wallAngle = Math.atan2(inwardDirection.y, inwardDirection.x);
+  const radius = policy.wall_endpoint_occlusion_junction_radius_ft * pixelsPerFoot;
+  const rayTolerance = Math.max(2, policy.wall_endpoint_occlusion_ray_tolerance_ft * pixelsPerFoot);
+  const samples = policy.wall_endpoint_occlusion_ray_sample_count;
+  let maximumSupport = 0;
+  for (let degrees = 0; degrees < 360; degrees += 5) {
+    const radians = degrees * Math.PI / 180;
+    if (lineAngleDifferenceDegrees(radians, wallAngle) < policy.wall_endpoint_occlusion_minimum_angle_degrees) continue;
+    let support = 0;
+    for (let index = 1; index <= samples; index += 1) {
+      const distance = radius * index / samples;
+      const point = {
+        x: endpoint.x + Math.cos(radians) * distance,
+        y: endpoint.y + Math.sin(radians) * distance
+      };
+      if (anyMaskPixel(common, width, height, point, rayTolerance)) support += 1;
+    }
+    maximumSupport = Math.max(maximumSupport, support);
+  }
+  return maximumSupport;
+}
+
 export async function auditArchitecturalRedactionVisibility(
   truth: ExistingConditionsGroundTruth,
   delta: ArchitecturalSourceDeltaReceipt,
@@ -269,6 +329,8 @@ export async function auditArchitecturalRedactionVisibility(
   assertArtifact(delta.artifacts.redacted_aligned, "redacted_aligned", width, height);
   assertArtifact(delta.artifacts.candidate_delta_mask, "candidate_delta_mask", width, height);
   const masks = await imageMasks(delta);
+  const expandedRedacted = dilate(masks.redacted, width, height, delta.render_policy.redacted_ink_dilation_px);
+  const common = commonInkMask(masks.source, expandedRedacted);
   const pixelsPerFoot = Math.max(
     width / (delta.scope_model_bounds.max.x - delta.scope_model_bounds.min.x),
     height / (delta.scope_model_bounds.max.y - delta.scope_model_bounds.min.y)
@@ -291,9 +353,46 @@ export async function auditArchitecturalRedactionVisibility(
     const wallEndpointSamples = elementRole === "wall"
       ? targetPoints(element, elementRole).map((point) => modelToPixel(point, delta.scope_model_bounds, width, height))
       : [];
-    const supportedWallEndpoints = wallEndpointSamples.filter(
-      (sample) => anyMaskPixel(masks.candidate, width, height, sample, wallEndpointEvidenceRadius)
-    ).length;
+    const wallEndpointSupport = wallEndpointSamples.map((sample, index) => {
+      if (anyMaskPixel(masks.candidate, width, height, sample, wallEndpointEvidenceRadius)) {
+        return { mode: "source_only" as const, junctionRaySupport: 0 };
+      }
+      const other = wallEndpointSamples[index === 0 ? 1 : 0];
+      if (!other) return { mode: "unsupported" as const, junctionRaySupport: 0 };
+      const distance = Math.hypot(other.x - sample.x, other.y - sample.y);
+      if (distance <= 0) return { mode: "unsupported" as const, junctionRaySupport: 0 };
+      const inwardDirection = { x: (other.x - sample.x) / distance, y: (other.y - sample.y) / distance };
+      const approachDistance = policy.wall_endpoint_occlusion_approach_ft * pixelsPerFoot;
+      const approach = {
+        x: sample.x + inwardDirection.x * approachDistance,
+        y: sample.y + inwardDirection.y * approachDistance
+      };
+      const approachSupported = anyMaskPixel(
+        masks.candidate,
+        width,
+        height,
+        approach,
+        wallEndpointEvidenceRadius
+      );
+      const junctionRaySupport = retainedJunctionRaySupport(
+        common,
+        width,
+        height,
+        sample,
+        inwardDirection,
+        pixelsPerFoot,
+        policy
+      );
+      const junctionSupported = approachSupported
+        && junctionRaySupport >= policy.wall_endpoint_occlusion_minimum_ray_support;
+      return {
+        mode: junctionSupported ? "retained_junction" as const : "unsupported" as const,
+        junctionRaySupport
+      };
+    });
+    const supportedWallEndpoints = wallEndpointSupport.filter((entry) => entry.mode !== "unsupported").length;
+    const directlySupportedWallEndpoints = wallEndpointSupport.filter((entry) => entry.mode === "source_only").length;
+    const junctionSupportedWallEndpoints = wallEndpointSupport.filter((entry) => entry.mode === "retained_junction").length;
     const wallEndpointCoverage = wallEndpointSamples.length > 0
       ? supportedWallEndpoints / wallEndpointSamples.length
       : 1;
@@ -318,6 +417,10 @@ export async function auditArchitecturalRedactionVisibility(
       ...(elementRole === "wall" ? {
         wall_endpoint_sample_count: wallEndpointSamples.length,
         supported_wall_endpoint_count: supportedWallEndpoints,
+        directly_supported_wall_endpoint_count: directlySupportedWallEndpoints,
+        junction_occlusion_supported_wall_endpoint_count: junctionSupportedWallEndpoints,
+        wall_endpoint_support_modes: wallEndpointSupport.map((entry) => entry.mode),
+        wall_endpoint_junction_ray_support: wallEndpointSupport.map((entry) => entry.junctionRaySupport),
         wall_endpoint_evidence_coverage: round(wallEndpointCoverage),
         wall_endpoint_evidence_passed: wallEndpointEvidencePassed
       } : {}),
@@ -327,7 +430,6 @@ export async function auditArchitecturalRedactionVisibility(
       passed: evidencePassed && fullyInsideFrame
     });
   }
-  const expandedRedacted = dilate(masks.redacted, width, height, delta.render_policy.redacted_ink_dilation_px);
   let sourceBackground = 0;
   let commonBackground = 0;
   for (let index = 0; index < masks.source.length; index += 1) {

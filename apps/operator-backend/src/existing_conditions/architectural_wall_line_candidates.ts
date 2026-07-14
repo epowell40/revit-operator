@@ -20,12 +20,14 @@ export type ArchitecturalWallLineCandidatePolicy = {
   minimum_length_ft: number;
   maximum_candidates: number;
   maximum_face_pair_inputs: number;
+  hough_peak_duplicate_separation_ft: number;
   duplicate_angle_tolerance_degrees: number;
   duplicate_separation_ft: number;
   face_pair_angle_tolerance_degrees: number;
   minimum_face_pair_separation_ft: number;
   maximum_face_pair_separation_ft: number;
   minimum_face_pair_overlap_ratio: number;
+  minimum_face_pair_candidate_coverage: number;
   minimum_junction_angle_degrees: number;
   maximum_junction_angle_degrees: number;
   maximum_junction_endpoint_gap_ft: number;
@@ -46,6 +48,7 @@ export type ArchitecturalWallLineCandidatePolicy = {
   opening_gap_group_center_tolerance_ft: number;
   opening_gap_group_width_tolerance_ft: number;
   maximum_opening_gap_hypotheses: number;
+  minimum_opening_gap_evidence_score: number;
   opening_evidence_minimum_context_ft: number;
   opening_evidence_width_multiplier: number;
   parallel_angle_tolerance_degrees: number;
@@ -177,12 +180,14 @@ const DEFAULT_POLICY_BASE = {
   minimum_length_ft: 2,
   maximum_candidates: 8,
   maximum_face_pair_inputs: 80,
+  hough_peak_duplicate_separation_ft: 0.1,
   duplicate_angle_tolerance_degrees: 8,
   duplicate_separation_ft: 0.65,
   face_pair_angle_tolerance_degrees: 3,
   minimum_face_pair_separation_ft: 0.2,
   maximum_face_pair_separation_ft: 2.5,
   minimum_face_pair_overlap_ratio: 0.7,
+  minimum_face_pair_candidate_coverage: 0.45,
   minimum_junction_angle_degrees: 45,
   maximum_junction_angle_degrees: 135,
   maximum_junction_endpoint_gap_ft: 1.25,
@@ -203,6 +208,7 @@ const DEFAULT_POLICY_BASE = {
   opening_gap_group_center_tolerance_ft: 0.8,
   opening_gap_group_width_tolerance_ft: 1,
   maximum_opening_gap_hypotheses: 12,
+  minimum_opening_gap_evidence_score: 0.85,
   opening_evidence_minimum_context_ft: 3,
   opening_evidence_width_multiplier: 1.5,
   parallel_angle_tolerance_degrees: 3,
@@ -295,6 +301,7 @@ function policyFor(width: number, height: number, override: Partial<Architectura
   positive(policy.minimum_length_ft, "minimum_length_ft");
   positiveInteger(policy.maximum_candidates, "maximum_candidates");
   positiveInteger(policy.maximum_face_pair_inputs, "maximum_face_pair_inputs");
+  positive(policy.hough_peak_duplicate_separation_ft, "hough_peak_duplicate_separation_ft");
   positive(policy.duplicate_angle_tolerance_degrees, "duplicate_angle_tolerance_degrees");
   positive(policy.duplicate_separation_ft, "duplicate_separation_ft");
   positive(policy.face_pair_angle_tolerance_degrees, "face_pair_angle_tolerance_degrees");
@@ -346,10 +353,12 @@ function policyFor(width: number, height: number, override: Partial<Architectura
   for (const [label, value] of [
     ["minimum_parallel_overlap_ratio", policy.minimum_parallel_overlap_ratio],
     ["minimum_face_pair_overlap_ratio", policy.minimum_face_pair_overlap_ratio],
+    ["minimum_face_pair_candidate_coverage", policy.minimum_face_pair_candidate_coverage],
     ["opening_gap_maximum_ink_ratio", policy.opening_gap_maximum_ink_ratio],
     ["opening_gap_minimum_flank_coverage", policy.opening_gap_minimum_flank_coverage],
     ["opening_gap_minimum_profile_ink_coverage", policy.opening_gap_minimum_profile_ink_coverage],
     ["minimum_opening_host_source_ink_coverage", policy.minimum_opening_host_source_ink_coverage],
+    ["minimum_opening_gap_evidence_score", policy.minimum_opening_gap_evidence_score],
     ["ambiguity_score_gap", policy.ambiguity_score_gap]
   ] as const) {
     finite(value, label);
@@ -613,6 +622,7 @@ function buildFacePairMidlines(
       const baseY = ny * centerRho;
       const candidateCoverage = Math.min(a.candidate_coverage, b.candidate_coverage);
       const sourceCoverage = Math.min(a.source_ink_coverage, b.source_ink_coverage);
+      if (candidateCoverage < policy.minimum_face_pair_candidate_coverage) continue;
       const score = Math.min(1, (a.rank_score + b.rank_score) / 2 + 0.08 + 0.08 * overlap);
       midlines.push({
         derivation: "parallel_face_midline",
@@ -666,7 +676,7 @@ function detectLines(
     }
     peaks.sort((a, b) => b.votes - a.votes || a.index - b.index);
     const selectedPeaks: Array<{ index: number; votes: number }> = [];
-    const duplicateRhoDistance = policy.duplicate_separation_ft * pixelsPerFoot;
+    const duplicateRhoDistance = policy.hough_peak_duplicate_separation_ft * pixelsPerFoot;
     for (const peak of peaks) {
       const rho = peak.index * policy.rho_bin_px - diagonalPx;
       if (selectedPeaks.some((selected) => {
@@ -1040,6 +1050,7 @@ function buildOpeningGapHypotheses(
   }
   return hypotheses
     .sort((a, b) => b.evidence_score - a.evidence_score || a.opening_hypothesis_id.localeCompare(b.opening_hypothesis_id))
+    .filter((entry) => entry.evidence_score >= policy.minimum_opening_gap_evidence_score)
     .slice(0, policy.maximum_opening_gap_hypotheses)
     .map((entry, index) => ({ ...entry, rank: index + 1 }));
 }

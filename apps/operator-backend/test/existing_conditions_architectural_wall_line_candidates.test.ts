@@ -270,16 +270,21 @@ test("wall-line extraction exposes a repeated wall-band gap as an unclassified h
       scope_id: receipt.scope_id,
       candidate_receipt_sha256: candidateReceiptSha256,
       status: "classified",
-      classifications: [{
-        opening_hypothesis_id: opening.opening_hypothesis_id,
-        host_candidate_id: opening.host_candidate_id,
-        classification: "door",
-        confidence: 0.9,
-        cues: ["swing_arc", "paired_jambs"],
-        evidence_artifact_sha256s: [crop.source_crop.sha256, crop.evidence_overlay.sha256],
-        rationale: "A bounded swing arc and jamb evidence are visible in the crop.",
-        selected_host_candidate_id: null
-      }],
+      classifications: receipt.opening_gap_hypotheses.map((hypothesis) => {
+        const evidence = receipt.opening_evidence_crops.find(
+          (entry) => entry.opening_hypothesis_id === hypothesis.opening_hypothesis_id
+        )!;
+        return {
+          opening_hypothesis_id: hypothesis.opening_hypothesis_id,
+          host_candidate_id: hypothesis.host_candidate_id,
+          classification: "door" as const,
+          confidence: 0.9,
+          cues: ["swing_arc" as const, "paired_jambs" as const],
+          evidence_artifact_sha256s: [evidence.source_crop.sha256, evidence.evidence_overlay.sha256],
+          rationale: "A bounded swing arc and jamb evidence are visible in the crop.",
+          selected_host_candidate_id: null
+        };
+      }),
       native_write: false
     };
     assert.doesNotThrow(() => assertExistingConditionsContract("architectural_opening_classification", classified));
@@ -314,7 +319,9 @@ test("wall-line extraction exposes a repeated wall-band gap as an unclassified h
     assert.throws(
       () => validateArchitecturalOpeningClassification({
         ...classified,
-        classifications: [{ ...classified.classifications[0]!, host_candidate_id: "line-wrong" }]
+        classifications: classified.classifications.map((entry, index) => index === 0
+          ? { ...entry, host_candidate_id: "line-wrong" }
+          : entry)
       }, receipt, candidateReceiptSha256),
       /host_mismatch/
     );
@@ -322,13 +329,13 @@ test("wall-line extraction exposes a repeated wall-band gap as an unclassified h
     const uncertain: ArchitecturalOpeningClassificationReceipt = {
       ...classified,
       status: "clarification_required",
-      classifications: [{
-        ...classified.classifications[0]!,
-        classification: "unknown",
+      classifications: classified.classifications.map((entry, index) => index === 0 ? {
+        ...entry,
+        classification: "unknown" as const,
         confidence: 0.4,
-        cues: ["annotation_occlusion", "insufficient_symbol"],
+        cues: ["annotation_occlusion" as const, "insufficient_symbol" as const],
         rationale: "Annotations obscure the source symbol, so the opening cannot be classified safely."
-      }]
+      } : entry)
     };
     assert.doesNotThrow(() => validateArchitecturalOpeningClassification(
       uncertain,
@@ -338,7 +345,9 @@ test("wall-line extraction exposes a repeated wall-band gap as an unclassified h
     assert.throws(
       () => assertExistingConditionsContract("architectural_opening_classification", {
         ...uncertain,
-        classifications: [{ ...uncertain.classifications[0]!, inferred_width_ft: 3 }]
+        classifications: uncertain.classifications.map((entry, index) => index === 0
+          ? { ...entry, inferred_width_ft: 3 }
+          : entry)
       }),
       /additional properties/
     );
@@ -378,6 +387,80 @@ test("opening-gap discovery ignores retained background ink crossing a source-on
     const opening = receipt.opening_gap_hypotheses.find((entry) => entry.width_ft >= 2.5 && entry.width_ft <= 4.5);
     assert.ok(opening, JSON.stringify(receipt.opening_gap_hypotheses, null, 2));
     assert.ok(opening.pixel_center.x >= 190 && opening.pixel_center.x <= 330);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("face pairing preserves common narrow partition faces below candidate dedupe tolerance", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-narrow-wall-face-pair-"));
+  try {
+    const fixture = await buildFixture(temp, "narrow-wall-face-pair", [
+      [[40, 90], [210, 90]],
+      [[310, 90], [560, 90]],
+      [[40, 102], [210, 102]],
+      [[310, 102], [560, 102]]
+    ]);
+    const receipt = await buildArchitecturalWallLineCandidates(
+      fixture.delta,
+      sha256(fixture.deltaReceiptPath),
+      fixture.measurement,
+      sha256(fixture.measurementReceiptPath),
+      path.join(temp, "narrow-wall-face-pair-candidates"),
+      {
+        maximum_candidates: 12,
+        minimum_length_ft: 3,
+        maximum_wall_interruption_ft: 4,
+        maximum_face_pair_separation_ft: 1.5,
+        opening_gap_minimum_confirming_profiles: 2
+      }
+    );
+    const narrowPair = receipt.candidates.find((candidate) => candidate.derivation === "parallel_face_midline"
+      && candidate.face_separation_ft !== null
+      && candidate.face_separation_ft >= 0.3
+      && candidate.face_separation_ft <= 0.5);
+    assert.ok(narrowPair, JSON.stringify(receipt.candidates, null, 2));
+    assert.ok(receipt.opening_gap_hypotheses.some((opening) => opening.host_candidate_id === narrowPair.candidate_id));
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("face pairing rejects sparse parallel annotation clutter", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-sparse-face-clutter-"));
+  try {
+    const sparse = Array.from({ length: 8 }, (_, index) => {
+      const x = 40 + index * 65;
+      return [[x, 230], [x + 12, 230]] as [[number, number], [number, number]];
+    });
+    const fixture = await buildFixture(temp, "sparse-face-clutter", [
+      [[40, 90], [210, 90]],
+      [[310, 90], [560, 90]],
+      [[40, 102], [210, 102]],
+      [[310, 102], [560, 102]],
+      ...sparse,
+      ...sparse.map((line) => [[line[0][0], 250], [line[1][0], 250]] as [[number, number], [number, number]])
+    ]);
+    const receipt = await buildArchitecturalWallLineCandidates(
+      fixture.delta,
+      sha256(fixture.deltaReceiptPath),
+      fixture.measurement,
+      sha256(fixture.measurementReceiptPath),
+      path.join(temp, "sparse-face-clutter-candidates"),
+      {
+        maximum_candidates: 12,
+        minimum_length_ft: 3,
+        maximum_wall_interruption_ft: 4,
+        maximum_face_pair_separation_ft: 1.5
+      }
+    );
+    assert.ok(receipt.candidates.some((candidate) => candidate.derivation === "parallel_face_midline"
+      && candidate.face_separation_ft !== null
+      && candidate.face_separation_ft >= 0.3
+      && candidate.face_separation_ft <= 0.5));
+    assert.ok(receipt.candidates
+      .filter((candidate) => candidate.derivation === "parallel_face_midline")
+      .every((candidate) => candidate.candidate_coverage >= receipt.policy.minimum_face_pair_candidate_coverage));
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }

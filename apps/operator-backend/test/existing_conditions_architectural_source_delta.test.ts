@@ -36,6 +36,25 @@ function drawFixtureSegments(filePath: string, lines: Array<{ x: number; y1: num
   fs.writeFileSync(filePath, canvas.toBuffer("image/png"));
 }
 
+function drawFixtureLineSegments(
+  filePath: string,
+  lines: Array<{ x1: number; y1: number; x2: number; y2: number }>
+): void {
+  const canvas = createCanvas(200, 200);
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, 200, 200);
+  context.strokeStyle = "#000000";
+  context.lineWidth = 4;
+  for (const line of lines) {
+    context.beginPath();
+    context.moveTo(line.x1, line.y1);
+    context.lineTo(line.x2, line.y2);
+    context.stroke();
+  }
+  fs.writeFileSync(filePath, canvas.toBuffer("image/png"));
+}
+
 function deltaInput(sourcePath: string, redactedPath: string): ArchitecturalSourceDeltaInput {
   return {
     schema_version: 1,
@@ -211,6 +230,34 @@ test("architectural redaction gate rejects a wall whose centerline is visible bu
     assert.equal(wall.wall_endpoint_evidence_passed, false);
     assert.equal(gate.passed, false);
     assert.ok(gate.failure_classifications.includes("withheld_wall_endpoints_not_visibly_redacted"));
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("architectural redaction gate accepts an endpoint occluded by a retained non-collinear wall junction", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-redaction-junction-occlusion-"));
+  try {
+    const sourcePath = path.join(temp, "source.png");
+    const redactedPath = path.join(temp, "redacted.png");
+    drawFixtureLineSegments(sourcePath, [
+      { x1: 40, y1: 20, x2: 40, y2: 180 },
+      { x1: 140, y1: 20, x2: 140, y2: 180 },
+      { x1: 140, y1: 20, x2: 190, y2: 20 }
+    ]);
+    drawFixtureLineSegments(redactedPath, [
+      { x1: 40, y1: 20, x2: 40, y2: 180 },
+      { x1: 140, y1: 20, x2: 140, y2: 28 },
+      { x1: 140, y1: 20, x2: 190, y2: 20 }
+    ]);
+    const receipt = await buildArchitecturalSourceDelta(deltaInput(sourcePath, redactedPath), path.join(temp, "out"));
+    const gate = await auditArchitecturalRedactionVisibility(architecturalTruth(), receipt);
+    const wall = gate.targets.find((target) => target.role === "wall")!;
+    assert.equal(wall.wall_endpoint_evidence_passed, true, JSON.stringify(wall));
+    assert.equal(wall.directly_supported_wall_endpoint_count, 1);
+    assert.equal(wall.junction_occlusion_supported_wall_endpoint_count, 1);
+    assert.deepEqual(wall.wall_endpoint_support_modes, ["retained_junction", "source_only"]);
+    assert.equal(gate.passed, true, JSON.stringify(gate));
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
