@@ -4,11 +4,15 @@ import {
   assertExpectedCircuitLoadingModelSha256,
   assertExpectedDwellingWallCoverageModelSha256,
   assertExpectedGfciModelSha256,
+  assertExpectedPlumbingFixtureServicesModelSha256,
   collectCircuitLoadingNativeEvidence,
   collectDwellingWallCoverageNativeEvidence,
   collectGfciNativeEvidence,
+  collectPlumbingFixtureServicesNativeEvidence,
+  plumbingFixtureAuditDiscoveryTokens,
   type DwellingWallCoverageNativeAdapterConfig,
   type GfciNativeAdapterConfig,
+  type PlumbingFixtureServicesNativeAdapterConfig,
   type CircuitLoadingNativeAdapterConfig
 } from "../src/existing_conditions/engineering_native_adapters.js";
 
@@ -514,4 +518,126 @@ test("panel circuit adapter rejects inventory, panel, mixed-load, and duplicate-
   duplicate.circuits[1]!.memberElementIds = [11];
   duplicate.circuits[1]!.allNativeMemberElementIds = [11];
   assert.throws(() => collectCircuitLoadingNativeEvidence(panelCircuitConfig(), null, duplicate), /circuit_adapter_duplicate_circuit_assignment/);
+});
+
+function plumbingConfig(): PlumbingFixtureServicesNativeAdapterConfig {
+  return {
+    schema_version: 1,
+    case_id: "live-plumbing-level-services-v1",
+    standards_profile_sha256: PROFILE,
+    starting_model_sha256: "8".repeat(64),
+    expected_model_sha256: "9".repeat(64),
+    check_id: "fixture-service-topology",
+    level_name: "L4",
+    fixture_profiles: [
+      { profile_id: "vanity", fixture_class: "lavatory", fixture_subtype: "vanity", family_match_tokens: ["fixture connection"], type_match_tokens: ["vanity"] },
+      { profile_id: "flush-tank-water-closet", fixture_class: "water_closet", fixture_subtype: "flush_tank", family_match_tokens: ["fixture connection"], type_match_tokens: ["water closet"] }
+    ]
+  };
+}
+
+function plumbingConnector(connectorIndex: number, pipeSystemType: string, directId: number, systemElementId: number, diameterInches: number, ventContinuation: Record<string, unknown> = {}) {
+  return {
+    connectorIndex, domain: "DomainPiping", pipeSystemType, systemElementId, systemName: pipeSystemType, diameterInches,
+    physicalConnectedElementIds: [directId], physicalConnectionCount: 1, isPhysicallyConnected: true, ventContinuation
+  };
+}
+
+function plumbingAudit(vanityId = 101, wcId = 102) {
+  const vent = (fixtureId: number, sanitaryId: number, ventId: number) => ({
+    found: true, complete: true, truncated: false,
+    pathElementIds: [fixtureId, sanitaryId, ventId],
+    pathEdges: [{ fromElementId: fixtureId, toElementId: sanitaryId }, { fromElementId: sanitaryId, toElementId: ventId }],
+    ventSystemElementIds: [950], ventSystemNames: ["Building Vent"], pathElementCategories: ["OST_PipeCurves"]
+  });
+  return {
+    schema: "revit-operator.plumbing-fixture-services-audit.v1", modelSha256: "9".repeat(64),
+    scopeMode: "level_inventory", selectedLevelName: "L4",
+    fixtures: [
+      {
+        elementId: vanityId, sourceScopedId: `host:${vanityId}`, builtInCategory: "OST_PlumbingFixtures",
+        familyName: "P-HC Fixture Connections", typeName: "Vanity", levelName: "L4", connectorInventoryComplete: true, connectorCount: 3,
+        connectors: [
+          plumbingConnector(0, "Sanitary", 201, 901, 2, vent(vanityId, 201, 301)),
+          plumbingConnector(1, "DomesticHotWater", 202, 902, 0.5),
+          plumbingConnector(2, "DomesticColdWater", 203, 903, 0.5)
+        ]
+      },
+      {
+        elementId: wcId, sourceScopedId: `host:${wcId}`, builtInCategory: "OST_PlumbingFixtures",
+        familyName: "P-HC Fixture Connections", typeName: "Water Closet Connection", levelName: "L4", connectorInventoryComplete: true, connectorCount: 2,
+        connectors: [
+          plumbingConnector(0, "DomesticColdWater", 204, 903, 0.5),
+          plumbingConnector(1, "Sanitary", 205, 901, 4, vent(wcId, 205, 305))
+        ]
+      }
+    ],
+    diagnostics: { complete: true, truncated: false, inventoryComplete: true, discoveredPlumbingFixtureCount: 179, selectedPlumbingFixtureCount: 2 }
+  };
+}
+
+test("collects plumbing service evidence from native level inventory without configured fixture ids", () => {
+  const evidence = collectPlumbingFixtureServicesNativeEvidence(plumbingConfig(), plumbingAudit());
+  const check = evidence.checks[0];
+  assert.equal(check?.type, "plumbing_fixture_services");
+  if (check?.type !== "plumbing_fixture_services") return;
+  assert.equal(check.fixtures.length, 2);
+  assert.equal(check.fixtures[0]?.fixture_class, "lavatory");
+  assert.equal(check.fixtures[1]?.fixture_subtype, "flush_tank");
+  const hot = check.fixtures[1]?.services.find((service) => service.service === "domestic_hot_water");
+  assert.equal(hot?.native_reachable, false);
+  assert.equal(hot?.native_absence_verified, true);
+  assert.equal(JSON.stringify(plumbingConfig()).includes("101"), false);
+});
+
+test("accepts equivalent native plumbing topology with different element identities", () => {
+  const evidence = collectPlumbingFixtureServicesNativeEvidence(plumbingConfig(), plumbingAudit(4101, 4102));
+  const check = evidence.checks[0];
+  assert.equal(check?.type, "plumbing_fixture_services");
+  if (check?.type !== "plumbing_fixture_services") return;
+  assert.deepEqual(check.fixtures.map((fixture) => fixture.element_key), ["host:4101", "host:4102"]);
+});
+
+test("does not promote an arbitrary third node to native Vent-system evidence", () => {
+  const audit = plumbingAudit();
+  audit.fixtures[0]!.connectors[0]!.ventContinuation = { ...audit.fixtures[0]!.connectors[0]!.ventContinuation, found: false, ventSystemElementIds: [] };
+  const evidence = collectPlumbingFixtureServicesNativeEvidence(plumbingConfig(), audit);
+  const check = evidence.checks[0];
+  assert.equal(check?.type, "plumbing_fixture_services");
+  if (check?.type !== "plumbing_fixture_services") return;
+  const vent = check.fixtures[0]?.services.find((service) => service.service === "vented_drainage");
+  assert.equal(vent?.native_reachable, false);
+  assert.equal(vent?.native_path_verified, false);
+});
+
+test("does not promote a disconnected edge summary to native Vent-system evidence", () => {
+  const audit = plumbingAudit();
+  const continuation = audit.fixtures[0]!.connectors[0]!.ventContinuation as { pathEdges: Array<{ fromElementId: number; toElementId: number }> };
+  continuation.pathEdges[0]!.toElementId = 999;
+  const evidence = collectPlumbingFixtureServicesNativeEvidence(plumbingConfig(), audit);
+  const check = evidence.checks[0];
+  assert.equal(check?.type, "plumbing_fixture_services");
+  if (check?.type !== "plumbing_fixture_services") return;
+  const vent = check.fixtures[0]?.services.find((service) => service.service === "vented_drainage");
+  assert.equal(vent?.native_reachable, false);
+  assert.notEqual(vent?.path_edges_native_verified, true);
+});
+
+test("rejects incomplete native plumbing connector or vent traversal inventory", () => {
+  const audit = plumbingAudit();
+  audit.diagnostics.complete = false;
+  audit.diagnostics.truncated = true;
+  assert.throws(() => collectPlumbingFixtureServicesNativeEvidence(plumbingConfig(), audit), /plumbing_adapter_audit_incomplete/);
+});
+
+test("derives only broad native discovery tokens from plumbing fixture profiles", () => {
+  assert.deepEqual(plumbingFixtureAuditDiscoveryTokens(plumbingConfig()), {
+    familyMatchTokens: ["fixture connection"],
+    typeMatchTokens: ["vanity", "water closet"]
+  });
+});
+
+test("binds plumbing fixture service capture to the configured model hash", () => {
+  assert.throws(() => assertExpectedPlumbingFixtureServicesModelSha256(plumbingConfig(), "7".repeat(64)), /plumbing_adapter_expected_model_hash_mismatch/);
+  assert.doesNotThrow(() => assertExpectedPlumbingFixtureServicesModelSha256(plumbingConfig(), "9".repeat(64)));
 });

@@ -224,6 +224,7 @@ namespace RevitBridge.Operator
                 { "/revit/resolve-room-plan-view", new ResolveRoomPlanViewHandler() },
                 { "/revit/plan-dwelling-receptacles", new PlanDwellingReceptaclesHandler() },
                 { "/revit/audit-electrical-circuit-loading", new RevitBridge.Logic.Handlers.ElectricalCircuitLoadingAuditHandler() },
+                { "/revit/audit-plumbing-fixture-services", new RevitBridge.Logic.Handlers.PlumbingFixtureServicesAuditHandler() },
                 { "/revit/plan-room-receptacles-from-analog", new PlanRoomReceptaclesFromAnalogHandler() },
                 { "/revit/apply-room-receptacles-from-analog", new ApplyRoomReceptaclesFromAnalogHandler() },
                 { "/revit/list-element-types", new ListElementTypesHandler() },

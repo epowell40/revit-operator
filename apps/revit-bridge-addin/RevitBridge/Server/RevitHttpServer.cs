@@ -23,6 +23,7 @@ using ResolveRoomWallActionHandler = RevitBridge.Logic.Handlers.ResolveRoomWallH
 using RankSimilarDevicesOnWallActionHandler = RevitBridge.Logic.Handlers.RankSimilarDevicesOnWallHandler;
 using AssignElectricalCircuitActionHandler = RevitBridge.Logic.Handlers.AssignElectricalCircuitHandler;
 using ElectricalCircuitLoadingAuditActionHandler = RevitBridge.Logic.Handlers.ElectricalCircuitLoadingAuditHandler;
+using PlumbingFixtureServicesAuditActionHandler = RevitBridge.Logic.Handlers.PlumbingFixtureServicesAuditHandler;
 
 namespace RevitBridge.Server
 {
@@ -154,6 +155,7 @@ namespace RevitBridge.Server
                 { "/revit/repair-duct-continuity-by-scope", new RepairDuctContinuityByScopeHandler() },
                 { "/revit/get-connectors", new GetConnectorsHandler() },
                 { "/revit/audit-electrical-circuit-loading", new ElectricalCircuitLoadingAuditActionHandler() },
+                { "/revit/audit-plumbing-fixture-services", new PlumbingFixtureServicesAuditActionHandler() },
                 { "/revit/align-room-tops-to-ceilings", new AlignRoomTopsToCeilingsHandler() },
                 { "/revit/analyze-dimensions", new AnalyzeDimensionsHandler() },
                 { "/revit/export-dimensioning-v2", new ExportDimensioningV2Handler() },

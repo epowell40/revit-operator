@@ -2054,6 +2054,23 @@ server.tool("revit_audit_electrical_circuit_loading", "Read evaluator-grade fact
   }
 );
 
+server.tool("revit_audit_plumbing_fixture_services", "Read evaluator-grade level-scoped plumbing fixture connector, system-classification, size, and native Vent-system continuation evidence without making a compliance claim.",
+  {
+    levelName: z.string().min(1),
+    familyMatchTokens: z.array(z.string().min(1)).min(1).max(100),
+    typeMatchTokens: z.array(z.string().min(1)).min(1).max(100),
+    maxElements: z.number().int().positive().max(5000).optional().default(5000),
+    maxVentSearchElements: z.number().int().positive().max(10000).optional().default(2000),
+    maxVentSearchHops: z.number().int().positive().max(500).optional().default(40),
+  },
+  async (req) => {
+    try {
+      const data = await callRevit("/revit/audit-plumbing-fixture-services", "POST", req);
+      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
+  }
+);
+
 server.tool("revit_align_room_tops_to_ceilings", "Align room top elevation to the primary ceiling bottom elevation in each room (supports dry-run).",
   {
     roomNumbers: z.array(z.string()).optional(),

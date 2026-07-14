@@ -16,7 +16,7 @@
             {"service": "domestic_cold_water", "native_reachable": true, "native_path_verified": true, "direct_connection": true, "path_element_keys": ["host:lav-holdout-1", "pipe:dcw-1"], "system_ids": ["system:dcw-1"], "system_classification": "Domestic Cold Water", "connection_size_inches": 0.5, "connection_size_native_verified": true},
             {"service": "domestic_hot_water", "native_reachable": true, "native_path_verified": true, "direct_connection": true, "path_element_keys": ["host:lav-holdout-1", "pipe:dhw-1"], "system_ids": ["system:dhw-1"], "system_classification": "Domestic Hot Water", "connection_size_inches": 0.5, "connection_size_native_verified": true},
             {"service": "sanitary", "native_reachable": true, "native_path_verified": true, "direct_connection": true, "path_element_keys": ["host:lav-holdout-1", "pipe:san-1"], "system_ids": ["system:san-1"], "system_classification": "Sanitary", "connection_size_inches": 1.5, "connection_size_native_verified": true},
-            {"service": "vented_drainage", "native_reachable": true, "native_path_verified": true, "direct_connection": false, "path_element_keys": ["host:lav-holdout-1", "pipe:san-1", "pipe:vent-stack-1"], "system_ids": ["system:san-1"], "system_classification": "Sanitary"}
+            {"service": "vented_drainage", "native_reachable": true, "native_path_verified": true, "direct_connection": false, "path_element_keys": ["host:lav-holdout-1", "pipe:san-1", "pipe:vent-stack-1"], "path_edges_native_verified": true, "path_element_categories": ["OST_PipeCurves"], "continuation_kind": "native_vent_system_continuation", "system_ids": ["system:vent-1"], "system_classification": "Vent"}
           ]
         },
         {
@@ -26,7 +26,8 @@
           "services": [
             {"service": "domestic_cold_water", "native_reachable": true, "native_path_verified": true, "direct_connection": true, "path_element_keys": ["host:wc-holdout-1", "pipe:dcw-2"], "system_ids": ["system:dcw-1"], "system_classification": "Domestic Cold Water", "connection_size_inches": 0.5, "connection_size_native_verified": true},
             {"service": "sanitary", "native_reachable": true, "native_path_verified": true, "direct_connection": true, "path_element_keys": ["host:wc-holdout-1", "pipe:san-2"], "system_ids": ["system:san-1"], "system_classification": "Sanitary", "connection_size_inches": 3, "connection_size_native_verified": true},
-            {"service": "vented_drainage", "native_reachable": true, "native_path_verified": true, "direct_connection": false, "path_element_keys": ["host:wc-holdout-1", "pipe:san-2", "pipe:vent-stack-1"], "system_ids": ["system:san-1"], "system_classification": "Sanitary"}
+            {"service": "vented_drainage", "native_reachable": true, "native_path_verified": true, "direct_connection": false, "path_element_keys": ["host:wc-holdout-1", "pipe:san-2", "pipe:vent-stack-1"], "path_edges_native_verified": true, "path_element_categories": ["OST_PipeCurves"], "continuation_kind": "native_vent_system_continuation", "system_ids": ["system:vent-1"], "system_classification": "Vent"},
+            {"service": "domestic_hot_water", "native_reachable": false, "native_absence_verified": true, "native_path_verified": false, "direct_connection": false, "path_element_keys": [], "system_ids": [], "system_classification": ""}
           ]
         }
       ]

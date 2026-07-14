@@ -307,7 +307,7 @@ test("plumbing services score system reachability and enforce a sourced conventi
         domestic_cold_water: ["Domestic Cold Water"],
         domestic_hot_water: ["Domestic Hot Water"],
         sanitary: ["Sanitary"],
-        vented_drainage: ["Sanitary"]
+        vented_drainage: ["Vent"]
       },
       required_connection_mode: {
         domestic_cold_water: "direct" as const,
@@ -326,7 +326,7 @@ test("plumbing services score system reachability and enforce a sourced conventi
       expected_system_classifications: {
         domestic_cold_water: ["Domestic Cold Water"],
         sanitary: ["Sanitary"],
-        vented_drainage: ["Sanitary"]
+        vented_drainage: ["Vent"]
       },
       required_connection_mode: {
         domestic_cold_water: "direct" as const,
@@ -348,7 +348,7 @@ test("plumbing services score system reachability and enforce a sourced conventi
         { service: "domestic_cold_water", native_reachable: true, native_path_verified: true, direct_connection: true, path_element_keys: ["lav-1", "dcw-1"], system_ids: ["dcw-system"], system_classification: "Domestic Cold Water", connection_size_inches: 0.5, connection_size_native_verified: true },
         { service: "domestic_hot_water", native_reachable: true, native_path_verified: true, direct_connection: true, path_element_keys: ["lav-1", "dhw-1"], system_ids: ["dhw-system"], system_classification: "Domestic Hot Water", connection_size_inches: 0.5, connection_size_native_verified: true },
         { service: "sanitary", native_reachable: true, native_path_verified: true, direct_connection: true, path_element_keys: ["lav-1", "san-1"], system_ids: ["san-system"], system_classification: "Sanitary", connection_size_inches: 1.5, connection_size_native_verified: true },
-        { service: "vented_drainage", native_reachable: true, native_path_verified: true, direct_connection: false, path_element_keys: ["lav-1", "san-1", "vent-1"], system_ids: ["san-system"], system_classification: "Sanitary" }
+        { service: "vented_drainage", native_reachable: true, native_path_verified: true, path_edges_native_verified: true, direct_connection: false, path_element_keys: ["lav-1", "san-1", "vent-1"], path_element_categories: ["OST_PipeCurves"], continuation_kind: "native_vent_system_continuation", system_ids: ["vent-system"], system_classification: "Vent" }
       ]
     },
     {
@@ -359,7 +359,7 @@ test("plumbing services score system reachability and enforce a sourced conventi
         { service: "domestic_cold_water", native_reachable: true, native_path_verified: true, direct_connection: true, path_element_keys: ["wc-1", "dcw-2"], system_ids: ["dcw-system"], system_classification: "Domestic Cold Water", connection_size_inches: 0.5, connection_size_native_verified: true },
         { service: "domestic_hot_water", native_reachable: true, native_path_verified: true, direct_connection: true, path_element_keys: ["wc-1", "dhw-2"], system_ids: ["dhw-system"], system_classification: "Domestic Hot Water", connection_size_inches: 0.5, connection_size_native_verified: true },
         { service: "sanitary", native_reachable: true, native_path_verified: true, direct_connection: true, path_element_keys: ["wc-1", "san-2"], system_ids: ["san-system"], system_classification: "Sanitary", connection_size_inches: 3, connection_size_native_verified: true },
-        { service: "vented_drainage", native_reachable: true, native_path_verified: true, direct_connection: false, path_element_keys: ["wc-1", "san-2", "vent-2"], system_ids: ["san-system"], system_classification: "Sanitary" }
+        { service: "vented_drainage", native_reachable: true, native_path_verified: true, path_edges_native_verified: true, direct_connection: false, path_element_keys: ["wc-1", "san-2", "vent-2"], path_element_categories: ["OST_PipeCurves"], continuation_kind: "native_vent_system_continuation", system_ids: ["vent-system"], system_classification: "Vent" }
       ]
     }
   ]);
@@ -377,11 +377,11 @@ test("plumbing topology rejects duplicate summaries, ambiguous profiles, and san
     source,
     required_services: ["sanitary", "vented_drainage"] as const,
     prohibited_services: [] as const,
-    expected_system_classifications: { sanitary: ["Sanitary"], vented_drainage: ["Sanitary"] },
+    expected_system_classifications: { sanitary: ["Sanitary"], vented_drainage: ["Vent"] },
     required_connection_mode: { sanitary: "direct" as const, vented_drainage: "network" as const }
   };
   const sanitary = { service: "sanitary" as const, native_reachable: true, native_path_verified: true, direct_connection: true, path_element_keys: ["lav", "san"], system_ids: ["san-system"], system_classification: "Sanitary" };
-  const validVent = { service: "vented_drainage" as const, native_reachable: true, native_path_verified: true, direct_connection: false, path_element_keys: ["lav", "san", "vent"], system_ids: ["san-system"], system_classification: "Sanitary" };
+  const validVent = { service: "vented_drainage" as const, native_reachable: true, native_path_verified: true, path_edges_native_verified: true, direct_connection: false, path_element_keys: ["lav", "san", "vent"], path_element_categories: ["OST_PipeCurves"], continuation_kind: "native_vent_system_continuation" as const, system_ids: ["vent-system"], system_classification: "Vent" };
   const duplicate = evaluatePlumbingFixtureServices([{ ...baseRule, required_services: [...baseRule.required_services], prohibited_services: [] }], [{ element_key: "lav", fixture_class: "lavatory", services: [sanitary, validVent, { ...validVent }] }])[0];
   assert.equal(duplicate.passed, false);
   assert.match(String(duplicate.details.topology_failures), /duplicate_service_evidence/);
@@ -393,6 +393,53 @@ test("plumbing topology rejects duplicate summaries, ambiguous profiles, and san
     { ...baseRule, rule_id: "lav-b", required_services: [...baseRule.required_services], prohibited_services: [] }
   ], [{ element_key: "lav", fixture_class: "lavatory", services: [sanitary, validVent] }])[0];
   assert.equal(ambiguous.failure_classification, "plumbing_fixture_service_profile_ambiguous");
+});
+
+test("plumbing prohibited services require complete native absence evidence rather than omission", () => {
+  const rule = {
+    rule_id: "tank-water-closet-no-hot-water",
+    fixture_class: "water_closet",
+    fixture_subtype: "flush_tank",
+    source: PROJECT_PLUMBING,
+    required_services: ["domestic_cold_water"] as const,
+    prohibited_services: ["domestic_hot_water"] as const,
+    expected_system_classifications: { domestic_cold_water: ["Domestic Cold Water"] },
+    required_connection_mode: { domestic_cold_water: "direct" as const }
+  };
+  const coldWater = {
+    service: "domestic_cold_water" as const,
+    native_reachable: true,
+    native_path_verified: true,
+    direct_connection: true,
+    path_element_keys: ["wc", "dcw"],
+    system_ids: ["dcw-system"],
+    system_classification: "Domestic Cold Water"
+  };
+  const omitted = evaluatePlumbingFixtureServices([{ ...rule, required_services: [...rule.required_services], prohibited_services: [...rule.prohibited_services] }], [{
+    element_key: "wc",
+    fixture_class: "water_closet",
+    fixture_subtype: "flush_tank",
+    services: [coldWater]
+  }])[0];
+  assert.equal(omitted.passed, false);
+  assert.match(String(omitted.details.topology_failures), /domestic_hot_water:native_absence_unverified/);
+
+  const nativeAbsence = evaluatePlumbingFixtureServices([{ ...rule, required_services: [...rule.required_services], prohibited_services: [...rule.prohibited_services] }], [{
+    element_key: "wc",
+    fixture_class: "water_closet",
+    fixture_subtype: "flush_tank",
+    services: [coldWater, {
+      service: "domestic_hot_water",
+      native_reachable: false,
+      native_absence_verified: true,
+      native_path_verified: false,
+      direct_connection: false,
+      path_element_keys: [],
+      system_ids: [],
+      system_classification: ""
+    }]
+  }])[0];
+  assert.equal(nativeAbsence.passed, true);
 });
 
 test("dataset audit catches answer and source-region leakage plus fake compliance replay", () => {

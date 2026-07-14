@@ -8929,6 +8929,38 @@
           ]
         }
       ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/audit-plumbing-fixture-services",
+      "examples": [
+        {
+          "name": "Audit level fixture connector and vent topology",
+          "request": {
+            "levelName": "L4",
+            "familyMatchTokens": ["fixture connection"],
+            "typeMatchTokens": ["vanity", "water closet"],
+            "maxElements": 5000,
+            "maxVentSearchElements": 2000,
+            "maxVentSearchHops": 40
+          },
+          "expected_response_shape": {
+            "schema": "revit-operator.plumbing-fixture-services-audit.v1",
+            "scopeMode": "level_inventory",
+            "selectedLevelName": "L4",
+            "fixtures": [],
+            "diagnostics": {
+              "complete": true,
+              "truncated": false,
+              "inventoryComplete": true
+            }
+          },
+          "notes": [
+            "Discovery is level and family/type-token based; target fixture IDs and expected paths are not accepted.",
+            "The endpoint reports factual native evidence only; the evaluator applies fixture service and size profiles."
+          ]
+        }
+      ]
     }
   ]
 }

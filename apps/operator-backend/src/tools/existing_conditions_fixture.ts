@@ -43,14 +43,18 @@ import {
   assertExpectedCircuitLoadingModelSha256,
   assertExpectedDwellingWallCoverageModelSha256,
   assertExpectedGfciModelSha256,
+  assertExpectedPlumbingFixtureServicesModelSha256,
   collectCircuitLoadingNativeEvidence,
   collectDwellingWallCoverageNativeEvidence,
   collectGfciNativeEvidence,
+  collectPlumbingFixtureServicesNativeEvidence,
+  plumbingFixtureAuditDiscoveryTokens,
   selectCircuitLoadingScopedElementIds,
   selectGfciScopedElementIds,
   type CircuitLoadingNativeAdapterConfig,
   type DwellingWallCoverageNativeAdapterConfig,
   type GfciNativeAdapterConfig,
+  type PlumbingFixtureServicesNativeAdapterConfig,
   type NativeParameterReadback
 } from "../existing_conditions/engineering_native_adapters.js";
 
@@ -122,6 +126,8 @@ function usage(): never {
     "  npm run existing-conditions -- capture-dwelling-wall-native-evidence --adapter-config <json> --expected-model <model.rvt> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "  npm run existing-conditions -- collect-circuit-loading-native-evidence --adapter-config <json> --room-contents <json> --circuit-audit <json> --out <evaluator-native-evidence.json>",
     "  npm run existing-conditions -- capture-circuit-loading-native-evidence --adapter-config <json> --expected-model <model.rvt> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
+    "  npm run existing-conditions -- collect-plumbing-fixture-services-native-evidence --adapter-config <json> --plumbing-audit <json> --out <evaluator-native-evidence.json>",
+    "  npm run existing-conditions -- capture-plumbing-fixture-services-native-evidence --adapter-config <json> --expected-model <model.rvt> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "  npm run existing-conditions -- evaluate-engineering-case --case <case-definition.json> --native-evidence <evaluator-native-evidence.json> --evaluator-provenance <provenance.json> --evaluator-key-file <secret> --out <checks.json>",
     "  npm run existing-conditions -- advance-controller --state <controller-state-or-receipt.json> --event <event.json> --out <next-receipt.json>",
     "  npm run existing-conditions -- evaluator-diff --before-visible <json> --after-visible <json> --package <agent_package.json> --out <receipt.json>",
@@ -783,6 +789,57 @@ async function captureCircuitLoadingNativeEvidence(): Promise<void> {
   });
 }
 
+function collectPlumbingFixtureServicesNativeEvidenceFile(): void {
+  const config = readJson(requiredArgument("--adapter-config")) as PlumbingFixtureServicesNativeAdapterConfig;
+  const evidence = collectPlumbingFixtureServicesNativeEvidence(
+    config,
+    readJson(requiredArgument("--plumbing-audit"))
+  );
+  writeJson(requiredArgument("--out"), evidence);
+}
+
+async function capturePlumbingFixtureServicesNativeEvidence(): Promise<void> {
+  const expectedModel = path.resolve(requiredArgument("--expected-model"));
+  const outDir = path.resolve(requiredArgument("--out-dir"));
+  if (fs.existsSync(outDir) && fs.readdirSync(outDir).length > 0) {
+    throw new Error(`Refusing to overwrite a non-empty plumbing fixture-services capture directory: ${outDir}`);
+  }
+  const config = readJson(requiredArgument("--adapter-config")) as PlumbingFixtureServicesNativeAdapterConfig;
+  const expectedModelSha256 = sha256(expectedModel);
+  assertExpectedPlumbingFixtureServicesModelSha256(config, expectedModelSha256);
+  const client = bridgeClient();
+  const context = await client.get("/revit/context");
+  if (canonicalPath(activeDocumentPath(context)) !== canonicalPath(expectedModel)) {
+    throw new Error(`Active document is not the expected model: ${activeDocumentPath(context)}`);
+  }
+  const discovery = plumbingFixtureAuditDiscoveryTokens(config);
+  const plumbingAudit = await client.post("/revit/audit-plumbing-fixture-services", {
+    levelName: config.level_name,
+    familyMatchTokens: discovery.familyMatchTokens,
+    typeMatchTokens: discovery.typeMatchTokens,
+    maxElements: 5000,
+    maxVentSearchElements: 2000,
+    maxVentSearchHops: 40
+  });
+  const evidence = collectPlumbingFixtureServicesNativeEvidence(config, plumbingAudit);
+  evidence.collection_receipt = {
+    ...(evidence.collection_receipt ?? {}),
+    expected_model_path: expectedModel,
+    expected_model_sha256: expectedModelSha256
+  };
+  writeJson(path.join(outDir, "context.json"), context);
+  writeJson(path.join(outDir, "plumbing_audit.json"), plumbingAudit);
+  writeJson(path.join(outDir, "native_evidence.json"), evidence);
+  writeJson(path.join(outDir, "capture_receipt.json"), {
+    schema_version: 1,
+    expected_model_path: expectedModel,
+    expected_model_sha256: expectedModelSha256,
+    level_name: config.level_name,
+    adapter_config_sha256: sha256(path.resolve(requiredArgument("--adapter-config"))),
+    native_readback: evidence.native_readback
+  });
+}
+
 async function captureDwellingWallCoverageNativeEvidence(): Promise<void> {
   const expectedModel = path.resolve(requiredArgument("--expected-model"));
   const outDir = path.resolve(requiredArgument("--out-dir"));
@@ -1022,6 +1079,14 @@ async function main(): Promise<void> {
   }
   if (command === "capture-circuit-loading-native-evidence") {
     await captureCircuitLoadingNativeEvidence();
+    return;
+  }
+  if (command === "collect-plumbing-fixture-services-native-evidence") {
+    collectPlumbingFixtureServicesNativeEvidenceFile();
+    return;
+  }
+  if (command === "capture-plumbing-fixture-services-native-evidence") {
+    await capturePlumbingFixtureServicesNativeEvidence();
     return;
   }
   if (command === "advance-controller") {

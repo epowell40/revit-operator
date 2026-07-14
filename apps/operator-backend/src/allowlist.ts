@@ -75,6 +75,7 @@ const defaultAllowed: Allowlist = {
     "/revit/align-room-tops-to-ceilings",
     "/revit/get-connectors",
     "/revit/audit-electrical-circuit-loading",
+    "/revit/audit-plumbing-fixture-services",
     "/revit/export-image",
     "/revit/capture-screenshare",
     "/revit/export-pdf",

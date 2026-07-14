@@ -2,6 +2,7 @@ import {
   engineeringCaseArtifactSha256,
   type EngineeringCaseNativeEvidence
 } from "./engineering_case_runner.js";
+import type { PlumbingFixtureEvidence } from "./engineering_invariants.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -66,6 +67,23 @@ export type CircuitLoadingNativeAdapterConfig = {
     type_match_tokens: string[];
     yoke_or_strap_count: number;
     continuous: boolean;
+  }>;
+};
+
+export type PlumbingFixtureServicesNativeAdapterConfig = {
+  schema_version: 1;
+  case_id: string;
+  standards_profile_sha256: string;
+  starting_model_sha256: string;
+  expected_model_sha256: string;
+  check_id: string;
+  level_name: string;
+  fixture_profiles: Array<{
+    profile_id: string;
+    fixture_class: string;
+    fixture_subtype?: string | null;
+    family_match_tokens: string[];
+    type_match_tokens: string[];
   }>;
 };
 
@@ -831,6 +849,232 @@ export function collectCircuitLoadingNativeEvidence(
       room_contents_sha256: engineeringCaseArtifactSha256(roomContents),
       circuit_audit_sha256: engineeringCaseArtifactSha256(circuitAudit),
       adapter_config_sha256: engineeringCaseArtifactSha256(config),
+      subject_element_ids_withheld_from_config: true,
+      exact_coordinates_withheld_from_config: true,
+      native_call_readback: true
+    }
+  } as EngineeringCaseNativeEvidence;
+}
+
+const PLUMBING_SERVICE_BY_NATIVE_CLASSIFICATION: Record<string, "domestic_cold_water" | "domestic_hot_water" | "sanitary"> = {
+  domesticcoldwater: "domestic_cold_water",
+  domestichotwater: "domestic_hot_water",
+  sanitary: "sanitary"
+};
+
+const PLUMBING_CANONICAL_CLASSIFICATION: Record<string, string> = {
+  domesticcoldwater: "Domestic Cold Water",
+  domestichotwater: "Domestic Hot Water",
+  sanitary: "Sanitary",
+  vent: "Vent"
+};
+
+function validatePlumbingFixtureServicesConfig(config: PlumbingFixtureServicesNativeAdapterConfig): void {
+  if (config.schema_version !== 1) throw new Error("plumbing_adapter_schema_version_unsupported");
+  if (!text(config.case_id) || !text(config.check_id) || !text(config.level_name)) throw new Error("plumbing_adapter_identity_missing");
+  if (!/^[a-f0-9]{64}$/i.test(text(config.standards_profile_sha256))) throw new Error("plumbing_adapter_profile_hash_invalid");
+  if (!/^[a-f0-9]{64}$/i.test(text(config.starting_model_sha256))) throw new Error("plumbing_adapter_starting_model_hash_invalid");
+  if (!/^[a-f0-9]{64}$/i.test(text(config.expected_model_sha256))) throw new Error("plumbing_adapter_expected_model_hash_invalid");
+  if (!Array.isArray(config.fixture_profiles) || config.fixture_profiles.length === 0) throw new Error("plumbing_adapter_fixture_profiles_missing");
+  const profileIds = config.fixture_profiles.map((profile) => text(profile.profile_id));
+  if (profileIds.some((id) => !id) || new Set(profileIds).size !== profileIds.length) {
+    throw new Error("plumbing_adapter_fixture_profile_identity_invalid");
+  }
+  if (config.fixture_profiles.some((profile) => !text(profile.fixture_class)
+    || !Array.isArray(profile.family_match_tokens) || profile.family_match_tokens.map(text).filter(Boolean).length === 0
+    || !Array.isArray(profile.type_match_tokens) || profile.type_match_tokens.map(text).filter(Boolean).length === 0)) {
+    throw new Error("plumbing_adapter_fixture_profile_invalid");
+  }
+}
+
+export function plumbingFixtureAuditDiscoveryTokens(config: PlumbingFixtureServicesNativeAdapterConfig): {
+  familyMatchTokens: string[];
+  typeMatchTokens: string[];
+} {
+  validatePlumbingFixtureServicesConfig(config);
+  return {
+    familyMatchTokens: [...new Set(config.fixture_profiles.flatMap((profile) => profile.family_match_tokens.map(text).filter(Boolean)))].sort(),
+    typeMatchTokens: [...new Set(config.fixture_profiles.flatMap((profile) => profile.type_match_tokens.map(text).filter(Boolean)))].sort()
+  };
+}
+
+export function assertExpectedPlumbingFixtureServicesModelSha256(
+  config: PlumbingFixtureServicesNativeAdapterConfig,
+  actualSha256: string
+): void {
+  validatePlumbingFixtureServicesConfig(config);
+  if (text(config.expected_model_sha256).toLowerCase() !== text(actualSha256).toLowerCase()) {
+    throw new Error("plumbing_adapter_expected_model_hash_mismatch");
+  }
+}
+
+export function collectPlumbingFixtureServicesNativeEvidence(
+  config: PlumbingFixtureServicesNativeAdapterConfig,
+  plumbingAudit: unknown
+): EngineeringCaseNativeEvidence {
+  validatePlumbingFixtureServicesConfig(config);
+  const audit = object(plumbingAudit);
+  if (text(audit.schema) !== "revit-operator.plumbing-fixture-services-audit.v1") throw new Error("plumbing_adapter_audit_schema_invalid");
+  if (text(audit.modelSha256).toLowerCase() !== text(config.expected_model_sha256).toLowerCase()) {
+    throw new Error("plumbing_adapter_expected_model_hash_mismatch");
+  }
+  if (text(audit.scopeMode) !== "level_inventory" || text(audit.selectedLevelName).toLowerCase() !== text(config.level_name).toLowerCase()) {
+    throw new Error("plumbing_adapter_level_scope_mismatch");
+  }
+  const diagnostics = object(audit.diagnostics);
+  if (diagnostics.complete !== true || diagnostics.truncated === true || diagnostics.inventoryComplete !== true) {
+    throw new Error("plumbing_adapter_audit_incomplete");
+  }
+  const rows = Array.isArray(audit.fixtures) ? audit.fixtures.map(object) : [];
+  if (rows.length === 0 || finite(diagnostics.selectedPlumbingFixtureCount) !== rows.length) {
+    throw new Error("plumbing_adapter_scope_inventory_mismatch");
+  }
+  const fixtureIds = rows.map((row) => finite(row.elementId));
+  if (fixtureIds.some((id) => id == null || !Number.isInteger(id) || id <= 0)
+    || new Set(fixtureIds as number[]).size !== fixtureIds.length) {
+    throw new Error("plumbing_adapter_fixture_identity_invalid");
+  }
+
+  const fixtures = rows.map((row) => {
+    const fixtureId = finite(row.elementId)!;
+    const elementKey = text(row.sourceScopedId);
+    if (elementKey !== `host:${fixtureId}` || text(row.builtInCategory) !== "OST_PlumbingFixtures"
+      || text(row.levelName).toLowerCase() !== text(config.level_name).toLowerCase()
+      || row.connectorInventoryComplete !== true) {
+      throw new Error(`plumbing_adapter_fixture_native_identity_invalid:${fixtureId}`);
+    }
+    const matches = config.fixture_profiles.filter((profile) => tokenMatch(text(row.familyName), profile.family_match_tokens)
+      && tokenMatch(text(row.typeName || row.elementName), profile.type_match_tokens));
+    if (matches.length !== 1) throw new Error(`plumbing_adapter_fixture_profile_${matches.length === 0 ? "missing" : "ambiguous"}:${fixtureId}`);
+    const profile = matches[0]!;
+    const connectors = Array.isArray(row.connectors) ? row.connectors.map(object) : [];
+    if (finite(row.connectorCount) !== connectors.length) throw new Error(`plumbing_adapter_connector_inventory_mismatch:${fixtureId}`);
+    const connectorIndexes = connectors.map((connector) => finite(connector.connectorIndex));
+    if (connectorIndexes.some((index) => index == null || !Number.isInteger(index) || index < 0)
+      || new Set(connectorIndexes as number[]).size !== connectorIndexes.length) {
+      throw new Error(`plumbing_adapter_connector_identity_invalid:${fixtureId}`);
+    }
+    const byService = new Map<string, JsonObject[]>();
+    for (const connector of connectors) {
+      const classification = text(connector.pipeSystemType).toLowerCase();
+      const service = PLUMBING_SERVICE_BY_NATIVE_CLASSIFICATION[classification];
+      if (!service) continue;
+      const current = byService.get(service) ?? [];
+      current.push(connector);
+      byService.set(service, current);
+    }
+    for (const [service, candidates] of byService) {
+      if (candidates.length > 1) throw new Error(`plumbing_adapter_service_connector_ambiguous:${fixtureId}:${service}`);
+    }
+    const services: PlumbingFixtureEvidence["services"] = [];
+    for (const service of ["domestic_cold_water", "domestic_hot_water", "sanitary"] as const) {
+      const connector = byService.get(service)?.[0];
+      if (!connector) {
+        services.push({
+          service,
+          native_reachable: false,
+          native_absence_verified: true,
+          native_path_verified: false,
+          direct_connection: false,
+          path_element_keys: [],
+          system_ids: [],
+          system_classification: ""
+        });
+        continue;
+      }
+      const directIds = (Array.isArray(connector.physicalConnectedElementIds) ? connector.physicalConnectedElementIds : [])
+        .map(finite).filter((id): id is number => id != null && Number.isInteger(id) && id > 0);
+      const systemId = finite(connector.systemElementId);
+      const nativeClassification = text(connector.pipeSystemType).toLowerCase();
+      const diameter = finite(connector.diameterInches);
+      if (directIds.length !== 1 || new Set(directIds).size !== 1 || connector.isPhysicallyConnected !== true
+        || finite(connector.physicalConnectionCount) !== 1 || systemId == null || !Number.isInteger(systemId) || systemId <= 0
+        || !PLUMBING_CANONICAL_CLASSIFICATION[nativeClassification]) {
+        throw new Error(`plumbing_adapter_direct_path_unverified:${fixtureId}:${service}`);
+      }
+      services.push({
+        service,
+        native_reachable: true,
+        native_absence_verified: false,
+        native_path_verified: true,
+        direct_connection: true,
+        path_element_keys: [elementKey, `host:${directIds[0]}`],
+        path_edges_native_verified: true,
+        system_ids: [`piping-system:${systemId}`],
+        system_classification: PLUMBING_CANONICAL_CLASSIFICATION[nativeClassification],
+        connection_size_inches: diameter,
+        connection_size_native_verified: diameter != null && diameter > 0
+      });
+    }
+
+    const sanitary = byService.get("sanitary")?.[0];
+    const vent = object(sanitary?.ventContinuation);
+    const ventPathIds = (Array.isArray(vent.pathElementIds) ? vent.pathElementIds : [])
+      .map(finite).filter((id): id is number => id != null && Number.isInteger(id) && id > 0);
+    const ventSystemIds = (Array.isArray(vent.ventSystemElementIds) ? vent.ventSystemElementIds : [])
+      .map(finite).filter((id): id is number => id != null && Number.isInteger(id) && id > 0);
+    const pathEdges = Array.isArray(vent.pathEdges) ? vent.pathEdges.map(object) : [];
+    const pathCategories = Array.isArray(vent.pathElementCategories) ? vent.pathElementCategories.map(text).filter(Boolean) : [];
+    const ventProven = Boolean(sanitary)
+      && vent.found === true && vent.complete === true && vent.truncated !== true
+      && ventPathIds.length >= 3 && ventPathIds[0] === fixtureId
+      && new Set(ventPathIds).size === ventPathIds.length
+      && ventSystemIds.length > 0 && new Set(ventSystemIds).size === ventSystemIds.length
+      && pathEdges.length === ventPathIds.length - 1
+      && pathEdges.every((edge, index) => finite(edge.fromElementId) === ventPathIds[index]
+        && finite(edge.toElementId) === ventPathIds[index + 1])
+      && pathCategories.length > 0
+      && pathCategories.every((category) => ["OST_PipeCurves", "OST_PipeFitting", "OST_PipeAccessory"].includes(category));
+    services.push(ventProven ? {
+      service: "vented_drainage",
+      native_reachable: true,
+      native_absence_verified: false,
+      native_path_verified: true,
+      direct_connection: false,
+      path_element_keys: ventPathIds.map((id) => `host:${id}`),
+      path_edges_native_verified: true,
+      path_element_categories: pathCategories,
+      continuation_kind: "native_vent_system_continuation",
+      system_ids: ventSystemIds.map((id) => `piping-system:${id}`),
+      system_classification: "Vent"
+    } : {
+      service: "vented_drainage",
+      native_reachable: false,
+      native_absence_verified: vent.complete === true && vent.truncated !== true,
+      native_path_verified: false,
+      direct_connection: false,
+      path_element_keys: [],
+      system_ids: [],
+      system_classification: ""
+    });
+    return {
+      element_key: elementKey,
+      fixture_class: text(profile.fixture_class),
+      fixture_subtype: text(profile.fixture_subtype) || null,
+      services
+    };
+  });
+
+  return {
+    schema_version: 1,
+    case_id: text(config.case_id),
+    standards_profile_sha256: text(config.standards_profile_sha256).toLowerCase(),
+    native_evidence_owner: "evaluator",
+    native_readback: true,
+    checks: [{
+      check_id: text(config.check_id),
+      type: "plumbing_fixture_services",
+      fixtures
+    }],
+    collection_receipt: {
+      adapter: "level_inventory_plumbing_fixture_services_v1",
+      selected_level_name: text(config.level_name),
+      starting_model_sha256: text(config.starting_model_sha256).toLowerCase(),
+      expected_model_sha256: text(config.expected_model_sha256).toLowerCase(),
+      plumbing_audit_sha256: engineeringCaseArtifactSha256(plumbingAudit),
+      adapter_config_sha256: engineeringCaseArtifactSha256(config),
+      discovered_plumbing_fixture_count: finite(diagnostics.discoveredPlumbingFixtureCount),
+      selected_plumbing_fixture_count: fixtures.length,
       subject_element_ids_withheld_from_config: true,
       exact_coordinates_withheld_from_config: true,
       native_call_readback: true

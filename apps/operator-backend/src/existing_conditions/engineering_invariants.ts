@@ -534,9 +534,13 @@ export type PlumbingFixtureEvidence = {
   services: Array<{
     service: PlumbingServiceKind;
     native_reachable: boolean;
+    native_absence_verified?: boolean;
     native_path_verified: boolean;
     direct_connection: boolean;
     path_element_keys: string[];
+    path_edges_native_verified?: boolean;
+    path_element_categories?: string[];
+    continuation_kind?: "native_vent_system_continuation";
     system_ids: string[];
     system_classification: string;
     connection_size_inches?: number | null;
@@ -613,6 +617,12 @@ export function evaluatePlumbingFixtureServices(
         topologyFailures.push(`${service}:network_reachability_required`);
       }
     }
+    for (const service of rule.prohibited_services) {
+      const evidence = fixture.services.find((candidate) => candidate.service === service);
+      if (!evidence || (!evidence.native_reachable && evidence.native_absence_verified !== true)) {
+        topologyFailures.push(`${service}:native_absence_unverified`);
+      }
+    }
     const vent = provenServices.find((candidate) => candidate.service === "vented_drainage");
     const sanitary = provenServices.find((candidate) => candidate.service === "sanitary");
     if (rule.required_services.includes("vented_drainage") && vent) {
@@ -621,6 +631,13 @@ export function evaluatePlumbingFixtureServices(
       const distinctVentContinuation = ventPath.length >= 3
         && ventPath.some((key) => key !== fixture.element_key && !sanitaryPath.has(key));
       if (!distinctVentContinuation) topologyFailures.push("vented_drainage:distinct_network_continuation_unverified");
+      if (vent.continuation_kind !== "native_vent_system_continuation"
+        || vent.path_edges_native_verified !== true
+        || unique(vent.path_element_categories ?? []).some((category) => ![
+          "OST_PipeCurves", "OST_PipeFitting", "OST_PipeAccessory"
+        ].includes(category))) {
+        topologyFailures.push("vented_drainage:native_vent_continuation_unverified");
+      }
     }
     const sizeFailures: string[] = [];
     for (const sizeRule of rule.connection_sizes ?? []) {

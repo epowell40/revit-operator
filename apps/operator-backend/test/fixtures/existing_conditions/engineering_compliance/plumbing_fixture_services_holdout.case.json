@@ -26,7 +26,7 @@
             "domestic_cold_water": ["Domestic Cold Water"],
             "domestic_hot_water": ["Domestic Hot Water"],
             "sanitary": ["Sanitary"],
-            "vented_drainage": ["Sanitary"]
+            "vented_drainage": ["Vent"]
           },
           "required_connection_mode": {
             "domestic_cold_water": "direct",
@@ -52,7 +52,7 @@
           "expected_system_classifications": {
             "domestic_cold_water": ["Domestic Cold Water"],
             "sanitary": ["Sanitary"],
-            "vented_drainage": ["Sanitary"]
+            "vented_drainage": ["Vent"]
           },
           "required_connection_mode": {
             "domestic_cold_water": "direct",
