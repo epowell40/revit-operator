@@ -196,6 +196,48 @@ test("wall-line extraction exposes connected paired-face centerlines as non-sele
     assert.ok(junction.endpoint_distances_ft.every((distance) => distance <= 1.25));
     assert.ok(junction.pixel_point.x >= 60 && junction.pixel_point.x <= 110);
     assert.ok(junction.pixel_point.y >= 70 && junction.pixel_point.y <= 115);
+    assert.equal(receipt.opening_gap_hypotheses.length, 0, JSON.stringify({
+      candidates: receipt.candidates,
+      openings: receipt.opening_gap_hypotheses
+    }, null, 2));
+    assert.equal("selected_candidate_id" in receipt, false);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("wall-line extraction exposes a repeated wall-band gap as an unclassified host-bound opening hypothesis", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-opening-gap-candidates-"));
+  try {
+    const fixture = await buildFixture(temp, "opening-gap-a", [
+      [[40, 90], [210, 90]],
+      [[310, 90], [560, 90]],
+      [[40, 110], [210, 110]],
+      [[310, 110], [560, 110]]
+    ]);
+    const receipt = await buildArchitecturalWallLineCandidates(
+      fixture.delta,
+      sha256(fixture.deltaReceiptPath),
+      fixture.measurement,
+      sha256(fixture.measurementReceiptPath),
+      path.join(temp, "opening-gap-candidates"),
+      {
+        maximum_candidates: 12,
+        minimum_length_ft: 3,
+        maximum_wall_interruption_ft: 4,
+        maximum_face_pair_separation_ft: 1.5,
+        opening_gap_minimum_confirming_profiles: 2
+      }
+    );
+    assert.ok(receipt.opening_gap_hypotheses.length > 0, JSON.stringify(receipt.candidates, null, 2));
+    const opening = receipt.opening_gap_hypotheses.find((entry) => entry.width_ft >= 2.5 && entry.width_ft <= 4.5);
+    assert.ok(opening, JSON.stringify(receipt.opening_gap_hypotheses, null, 2));
+    assert.equal(opening.kind, "unclassified_opening_gap");
+    assert.ok(receipt.candidates.some((candidate) => candidate.candidate_id === opening.host_candidate_id));
+    assert.ok(opening.confirming_profile_count >= 2);
+    assert.ok(opening.flank_ink_coverage >= 0.55);
+    assert.ok(opening.gap_ink_coverage <= 0.15);
+    assert.ok(opening.pixel_center.x >= 190 && opening.pixel_center.x <= 330);
     assert.equal("selected_candidate_id" in receipt, false);
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });

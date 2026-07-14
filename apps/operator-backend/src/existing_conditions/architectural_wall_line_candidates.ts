@@ -30,6 +30,22 @@ export type ArchitecturalWallLineCandidatePolicy = {
   maximum_junction_angle_degrees: number;
   maximum_junction_endpoint_gap_ft: number;
   maximum_junction_hypotheses: number;
+  minimum_opening_gap_width_ft: number;
+  maximum_opening_gap_width_ft: number;
+  opening_gap_flank_ft: number;
+  opening_gap_maximum_internal_ink_ft: number;
+  opening_gap_maximum_ink_ratio: number;
+  opening_gap_minimum_flank_coverage: number;
+  opening_gap_minimum_profile_ink_coverage: number;
+  minimum_opening_host_source_ink_coverage: number;
+  opening_gap_axis_snap_tolerance_degrees: number;
+  opening_gap_face_profile_band_ft: number;
+  opening_gap_face_profile_sample_count: number;
+  opening_gap_minimum_confirming_profiles: number;
+  opening_gap_support_radius_px: number;
+  opening_gap_group_center_tolerance_ft: number;
+  opening_gap_group_width_tolerance_ft: number;
+  maximum_opening_gap_hypotheses: number;
   parallel_angle_tolerance_degrees: number;
   minimum_parallel_separation_ft: number;
   maximum_parallel_separation_ft: number;
@@ -73,6 +89,25 @@ export type ArchitecturalWallJunctionHypothesis = {
   topology_score: number;
 };
 
+export type ArchitecturalOpeningGapHypothesis = {
+  opening_hypothesis_id: string;
+  rank: number;
+  kind: "unclassified_opening_gap";
+  host_candidate_id: string;
+  pixel_center: Point2;
+  model_center: Point2;
+  width_ft: number;
+  host_chainage_ft: number;
+  host_chainage_ratio: number;
+  profile_axis_degrees: number;
+  confirming_profile_count: number;
+  profile_offset_range_ft: [number, number];
+  flank_ink_coverage: number;
+  gap_ink_coverage: number;
+  profile_ink_coverage: number;
+  evidence_score: number;
+};
+
 type ImageReference = {
   path: string;
   sha256: string;
@@ -93,6 +128,7 @@ export type ArchitecturalWallLineCandidateReceipt = {
   policy: ArchitecturalWallLineCandidatePolicy;
   candidates: ArchitecturalWallLineCandidate[];
   junction_hypotheses: ArchitecturalWallJunctionHypothesis[];
+  opening_gap_hypotheses: ArchitecturalOpeningGapHypothesis[];
   ambiguities: ArchitecturalWallLineAmbiguity[];
   clarification_question: string | null;
   overlay: ImageReference;
@@ -134,6 +170,22 @@ const DEFAULT_POLICY_BASE = {
   maximum_junction_angle_degrees: 135,
   maximum_junction_endpoint_gap_ft: 1.25,
   maximum_junction_hypotheses: 12,
+  minimum_opening_gap_width_ft: 1.5,
+  maximum_opening_gap_width_ft: 6,
+  opening_gap_flank_ft: 0.25,
+  opening_gap_maximum_internal_ink_ft: 0.15,
+  opening_gap_maximum_ink_ratio: 0.15,
+  opening_gap_minimum_flank_coverage: 0.55,
+  opening_gap_minimum_profile_ink_coverage: 0.45,
+  minimum_opening_host_source_ink_coverage: 0.7,
+  opening_gap_axis_snap_tolerance_degrees: 8,
+  opening_gap_face_profile_band_ft: 0.15,
+  opening_gap_face_profile_sample_count: 7,
+  opening_gap_minimum_confirming_profiles: 2,
+  opening_gap_support_radius_px: 6,
+  opening_gap_group_center_tolerance_ft: 0.8,
+  opening_gap_group_width_tolerance_ft: 1,
+  maximum_opening_gap_hypotheses: 12,
   parallel_angle_tolerance_degrees: 3,
   minimum_parallel_separation_ft: 0.15,
   maximum_parallel_separation_ft: 4,
@@ -240,6 +292,30 @@ function policyFor(width: number, height: number, override: Partial<Architectura
   }
   positive(policy.maximum_junction_endpoint_gap_ft, "maximum_junction_endpoint_gap_ft");
   positiveInteger(policy.maximum_junction_hypotheses, "maximum_junction_hypotheses");
+  positive(policy.minimum_opening_gap_width_ft, "minimum_opening_gap_width_ft");
+  positive(policy.maximum_opening_gap_width_ft, "maximum_opening_gap_width_ft");
+  if (policy.maximum_opening_gap_width_ft <= policy.minimum_opening_gap_width_ft) {
+    throw new Error("maximum_opening_gap_width_ft_must_exceed_minimum");
+  }
+  positive(policy.opening_gap_flank_ft, "opening_gap_flank_ft");
+  positive(policy.opening_gap_maximum_internal_ink_ft, "opening_gap_maximum_internal_ink_ft");
+  positive(policy.opening_gap_face_profile_band_ft, "opening_gap_face_profile_band_ft");
+  positive(policy.opening_gap_axis_snap_tolerance_degrees, "opening_gap_axis_snap_tolerance_degrees");
+  if (policy.opening_gap_axis_snap_tolerance_degrees >= 45) {
+    throw new Error("opening_gap_axis_snap_tolerance_degrees_must_be_below_45");
+  }
+  positiveInteger(policy.opening_gap_face_profile_sample_count, "opening_gap_face_profile_sample_count");
+  if (policy.opening_gap_face_profile_sample_count < 3 || policy.opening_gap_face_profile_sample_count % 2 === 0) {
+    throw new Error("opening_gap_face_profile_sample_count_must_be_an_odd_integer_at_least_3");
+  }
+  positiveInteger(policy.opening_gap_minimum_confirming_profiles, "opening_gap_minimum_confirming_profiles");
+  if (policy.opening_gap_minimum_confirming_profiles > policy.opening_gap_face_profile_sample_count) {
+    throw new Error("opening_gap_minimum_confirming_profiles_exceeds_samples");
+  }
+  positiveInteger(policy.opening_gap_support_radius_px, "opening_gap_support_radius_px");
+  positive(policy.opening_gap_group_center_tolerance_ft, "opening_gap_group_center_tolerance_ft");
+  positive(policy.opening_gap_group_width_tolerance_ft, "opening_gap_group_width_tolerance_ft");
+  positiveInteger(policy.maximum_opening_gap_hypotheses, "maximum_opening_gap_hypotheses");
   positive(policy.parallel_angle_tolerance_degrees, "parallel_angle_tolerance_degrees");
   positive(policy.minimum_parallel_separation_ft, "minimum_parallel_separation_ft");
   positive(policy.maximum_parallel_separation_ft, "maximum_parallel_separation_ft");
@@ -249,6 +325,10 @@ function policyFor(width: number, height: number, override: Partial<Architectura
   for (const [label, value] of [
     ["minimum_parallel_overlap_ratio", policy.minimum_parallel_overlap_ratio],
     ["minimum_face_pair_overlap_ratio", policy.minimum_face_pair_overlap_ratio],
+    ["opening_gap_maximum_ink_ratio", policy.opening_gap_maximum_ink_ratio],
+    ["opening_gap_minimum_flank_coverage", policy.opening_gap_minimum_flank_coverage],
+    ["opening_gap_minimum_profile_ink_coverage", policy.opening_gap_minimum_profile_ink_coverage],
+    ["minimum_opening_host_source_ink_coverage", policy.minimum_opening_host_source_ink_coverage],
     ["ambiguity_score_gap", policy.ambiguity_score_gap]
   ] as const) {
     finite(value, label);
@@ -707,12 +787,249 @@ function buildJunctionHypotheses(
     .map((entry, index) => ({ ...entry, rank: index + 1 }));
 }
 
+type OpeningProfileGap = {
+  host: ArchitecturalWallLineCandidate;
+  profile_index: number;
+  center_distance_px: number;
+  pixel_center: Point2;
+  width_px: number;
+  offset_px: number;
+  flank_ink_coverage: number;
+  gap_ink_coverage: number;
+  profile_ink_coverage: number;
+  profile_axis_degrees: number;
+};
+
+function maskHasInk(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  radius: number
+): boolean {
+  const centerX = Math.round(x);
+  const centerY = Math.round(y);
+  for (let row = Math.max(0, centerY - radius); row <= Math.min(height - 1, centerY + radius); row += 1) {
+    for (let column = Math.max(0, centerX - radius); column <= Math.min(width - 1, centerX + radius); column += 1) {
+      if (mask[row * width + column]) return true;
+    }
+  }
+  return false;
+}
+
+function profileOpeningGaps(
+  host: ArchitecturalWallLineCandidate,
+  sourceMask: Uint8Array,
+  width: number,
+  height: number,
+  pixelsPerFoot: number,
+  policy: ArchitecturalWallLineCandidatePolicy
+): OpeningProfileGap[] {
+  if (host.derivation !== "parallel_face_midline"
+    || host.face_separation_ft === null
+    || host.supporting_face_pixel_points === null
+    || host.source_ink_coverage < policy.minimum_opening_host_source_ink_coverage) return [];
+  const originalStart = host.pixel_points[0];
+  const originalEnd = host.pixel_points[1];
+  const lengthPx = Math.hypot(originalEnd.x - originalStart.x, originalEnd.y - originalStart.y);
+  if (lengthPx <= 0) return [];
+  const originalDirection = {
+    x: (originalEnd.x - originalStart.x) / lengthPx,
+    y: (originalEnd.y - originalStart.y) / lengthPx
+  };
+  const normalizedAngle = (Math.atan2(originalDirection.y, originalDirection.x) * 180 / Math.PI + 180) % 180;
+  const nearestAxis = Math.abs(normalizedAngle - 90) < Math.min(normalizedAngle, 180 - normalizedAngle) ? 90 : 0;
+  const axisDifference = nearestAxis === 90 ? Math.abs(normalizedAngle - 90) : Math.min(normalizedAngle, 180 - normalizedAngle);
+  let direction = originalDirection;
+  let profileAxisDegrees = normalizedAngle;
+  if (axisDifference <= policy.opening_gap_axis_snap_tolerance_degrees) {
+    const radians = nearestAxis * Math.PI / 180;
+    const axis = { x: Math.cos(radians), y: Math.sin(radians) };
+    const sign = axis.x * originalDirection.x + axis.y * originalDirection.y < 0 ? -1 : 1;
+    direction = { x: axis.x * sign, y: axis.y * sign };
+    profileAxisDegrees = nearestAxis;
+  }
+  const midpoint = {
+    x: (originalStart.x + originalEnd.x) / 2,
+    y: (originalStart.y + originalEnd.y) / 2
+  };
+  const start = { x: midpoint.x - direction.x * lengthPx / 2, y: midpoint.y - direction.y * lengthPx / 2 };
+  const end = { x: midpoint.x + direction.x * lengthPx / 2, y: midpoint.y + direction.y * lengthPx / 2 };
+  const normal = { x: -direction.y, y: direction.x };
+  const minimumGapPx = Math.ceil(policy.minimum_opening_gap_width_ft * pixelsPerFoot);
+  const maximumGapPx = Math.floor(policy.maximum_opening_gap_width_ft * pixelsPerFoot);
+  const flankPx = Math.max(1, Math.round(policy.opening_gap_flank_ft * pixelsPerFoot));
+  const maximumInternalInkPx = Math.max(0, Math.round(policy.opening_gap_maximum_internal_ink_ft * pixelsPerFoot));
+  const hostMidpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+  const faceOffsets = host.supporting_face_pixel_points.map((face) => {
+    const midpoint = { x: (face[0].x + face[1].x) / 2, y: (face[0].y + face[1].y) / 2 };
+    return (midpoint.x - hostMidpoint.x) * normal.x + (midpoint.y - hostMidpoint.y) * normal.y;
+  });
+  const faceProfileBandPx = policy.opening_gap_face_profile_band_ft * pixelsPerFoot;
+  const profileOffsets = faceOffsets.flatMap((faceOffset) => Array.from(
+    { length: policy.opening_gap_face_profile_sample_count },
+    (_, sampleIndex) => faceOffset + faceProfileBandPx
+      * (sampleIndex / (policy.opening_gap_face_profile_sample_count - 1) * 2 - 1)
+  ));
+  const sampleLength = Math.max(1, Math.round(lengthPx));
+  const gaps: OpeningProfileGap[] = [];
+  for (let profileIndex = 0; profileIndex < profileOffsets.length; profileIndex += 1) {
+    const offsetPx = profileOffsets[profileIndex]!;
+    const supported = new Uint8Array(sampleLength + 1);
+    for (let index = 0; index <= sampleLength; index += 1) {
+      const distancePx = index / sampleLength * lengthPx;
+      const x = start.x + direction.x * distancePx + normal.x * offsetPx;
+      const y = start.y + direction.y * distancePx + normal.y * offsetPx;
+      supported[index] = maskHasInk(
+        sourceMask,
+        width,
+        height,
+        x,
+        y,
+        policy.opening_gap_support_radius_px
+      ) ? 1 : 0;
+    }
+    const blankRuns: Array<{ start: number; end: number }> = [];
+    const totalProfileInk = supported.reduce((sum, value) => sum + value, 0);
+    let blankStart: number | null = null;
+    for (let index = 0; index <= sampleLength; index += 1) {
+      if (!supported[index] && blankStart === null) blankStart = index;
+      if (supported[index] && blankStart !== null) {
+        blankRuns.push({ start: blankStart, end: index - 1 });
+        blankStart = null;
+      }
+    }
+    if (blankStart !== null) blankRuns.push({ start: blankStart, end: sampleLength });
+    const merged: Array<{ start: number; end: number }> = [];
+    for (const run of blankRuns) {
+      const previous = merged.at(-1);
+      if (previous && run.start - previous.end - 1 <= maximumInternalInkPx) previous.end = run.end;
+      else merged.push({ ...run });
+    }
+    for (const run of merged) {
+      const widthPx = run.end - run.start + 1;
+      if (widthPx < minimumGapPx || widthPx > maximumGapPx) continue;
+      if (run.start < flankPx || run.end + flankPx > sampleLength) continue;
+      let gapInk = 0;
+      for (let index = run.start; index <= run.end; index += 1) gapInk += supported[index]!;
+      const gapInkCoverage = gapInk / widthPx;
+      if (gapInkCoverage > policy.opening_gap_maximum_ink_ratio) continue;
+      const outsideGapLength = supported.length - widthPx;
+      const profileInkCoverage = outsideGapLength <= 0 ? 0 : (totalProfileInk - gapInk) / outsideGapLength;
+      if (profileInkCoverage < policy.opening_gap_minimum_profile_ink_coverage) continue;
+      let flankInk = 0;
+      for (let index = run.start - flankPx; index < run.start; index += 1) flankInk += supported[index]!;
+      for (let index = run.end + 1; index <= run.end + flankPx; index += 1) flankInk += supported[index]!;
+      const flankCoverage = flankInk / (flankPx * 2);
+      if (flankCoverage < policy.opening_gap_minimum_flank_coverage) continue;
+      gaps.push({
+        host,
+        profile_index: profileIndex,
+        center_distance_px: (run.start + run.end) / 2 / sampleLength * lengthPx,
+        pixel_center: {
+          x: start.x + direction.x * ((run.start + run.end) / 2 / sampleLength * lengthPx),
+          y: start.y + direction.y * ((run.start + run.end) / 2 / sampleLength * lengthPx)
+        },
+        width_px: widthPx / sampleLength * lengthPx,
+        offset_px: offsetPx,
+        flank_ink_coverage: flankCoverage,
+        gap_ink_coverage: gapInkCoverage,
+        profile_ink_coverage: profileInkCoverage,
+        profile_axis_degrees: profileAxisDegrees
+      });
+    }
+  }
+  return gaps;
+}
+
+function buildOpeningGapHypotheses(
+  candidates: ArchitecturalWallLineCandidate[],
+  sourceMask: Uint8Array,
+  width: number,
+  height: number,
+  pixelsPerFoot: number,
+  scope: ArchitecturalSourceDeltaReceipt["scope_model_bounds"],
+  policy: ArchitecturalWallLineCandidatePolicy
+): ArchitecturalOpeningGapHypothesis[] {
+  const allGaps = candidates.flatMap((candidate) => profileOpeningGaps(
+    candidate,
+    sourceMask,
+    width,
+    height,
+    pixelsPerFoot,
+    policy
+  ));
+  const groups: OpeningProfileGap[][] = [];
+  for (const gap of allGaps.sort((a, b) => a.host.candidate_id.localeCompare(b.host.candidate_id)
+    || a.center_distance_px - b.center_distance_px
+    || a.profile_index - b.profile_index)) {
+    const group = groups.find((entries) => entries[0]!.host.candidate_id === gap.host.candidate_id
+      && Math.abs(entries.reduce((sum, entry) => sum + entry.center_distance_px, 0) / entries.length - gap.center_distance_px)
+        <= policy.opening_gap_group_center_tolerance_ft * pixelsPerFoot
+      && Math.abs(entries.reduce((sum, entry) => sum + entry.width_px, 0) / entries.length - gap.width_px)
+        <= policy.opening_gap_group_width_tolerance_ft * pixelsPerFoot);
+    if (group) group.push(gap);
+    else groups.push([gap]);
+  }
+  const hypotheses: Omit<ArchitecturalOpeningGapHypothesis, "rank">[] = [];
+  for (const group of groups) {
+    const confirmingProfiles = new Set(group.map((entry) => entry.profile_index));
+    if (confirmingProfiles.size < policy.opening_gap_minimum_confirming_profiles) continue;
+    const host = group[0]!.host;
+    const centerDistancePx = group.reduce((sum, entry) => sum + entry.center_distance_px, 0) / group.length;
+    const widthPx = group.reduce((sum, entry) => sum + entry.width_px, 0) / group.length;
+    const flankCoverage = group.reduce((sum, entry) => sum + entry.flank_ink_coverage, 0) / group.length;
+    const gapInkCoverage = group.reduce((sum, entry) => sum + entry.gap_ink_coverage, 0) / group.length;
+    const profileInkCoverage = group.reduce((sum, entry) => sum + entry.profile_ink_coverage, 0) / group.length;
+    const lengthPx = Math.hypot(
+      host.pixel_points[1].x - host.pixel_points[0].x,
+      host.pixel_points[1].y - host.pixel_points[0].y
+    );
+    const pixelCenter = {
+      x: group.reduce((sum, entry) => sum + entry.pixel_center.x, 0) / group.length,
+      y: group.reduce((sum, entry) => sum + entry.pixel_center.y, 0) / group.length
+    };
+    const modelCenter = pointToModel(pixelCenter, scope, width, height);
+    const offsetsFt = group.map((entry) => entry.offset_px / pixelsPerFoot).sort((a, b) => a - b);
+    const profileConfirmation = Math.min(1, confirmingProfiles.size / policy.opening_gap_face_profile_sample_count);
+    const evidenceScore = 0.35 * flankCoverage
+      + 0.2 * (1 - gapInkCoverage)
+      + 0.15 * profileInkCoverage
+      + 0.15 * profileConfirmation
+      + 0.15 * host.rank_score;
+    const payload = [host.candidate_id, round(centerDistancePx), round(widthPx)].join("|");
+    hypotheses.push({
+      opening_hypothesis_id: `opening-${crypto.createHash("sha256").update(payload).digest("hex").slice(0, 12)}`,
+      kind: "unclassified_opening_gap",
+      host_candidate_id: host.candidate_id,
+      pixel_center: { x: round(pixelCenter.x), y: round(pixelCenter.y) },
+      model_center: { x: round(modelCenter.x), y: round(modelCenter.y) },
+      width_ft: round(widthPx / pixelsPerFoot),
+      host_chainage_ft: round(centerDistancePx / pixelsPerFoot),
+      host_chainage_ratio: round(centerDistancePx / lengthPx),
+      profile_axis_degrees: round(group[0]!.profile_axis_degrees),
+      confirming_profile_count: confirmingProfiles.size,
+      profile_offset_range_ft: [round(offsetsFt[0]!), round(offsetsFt.at(-1)!)],
+      flank_ink_coverage: round(flankCoverage),
+      gap_ink_coverage: round(gapInkCoverage),
+      profile_ink_coverage: round(profileInkCoverage),
+      evidence_score: round(Math.min(1, evidenceScore))
+    });
+  }
+  return hypotheses
+    .sort((a, b) => b.evidence_score - a.evidence_score || a.opening_hypothesis_id.localeCompare(b.opening_hypothesis_id))
+    .slice(0, policy.maximum_opening_gap_hypotheses)
+    .map((entry, index) => ({ ...entry, rank: index + 1 }));
+}
+
 async function writeOverlay(
   sourcePath: string,
   width: number,
   height: number,
   candidates: ArchitecturalWallLineCandidate[],
   junctions: ArchitecturalWallJunctionHypothesis[],
+  openingGaps: ArchitecturalOpeningGapHypothesis[],
   outDir: string
 ): Promise<ImageReference> {
   const source = await loadImage(sourcePath);
@@ -750,6 +1067,22 @@ async function writeOverlay(
     context.fillStyle = "#222222";
     context.font = "bold 15px Arial";
     context.fillText(`J${junction.rank}`, junction.pixel_point.x + 15, junction.pixel_point.y - 8);
+  }
+  for (const opening of openingGaps) {
+    context.strokeStyle = "#00a6a6";
+    context.fillStyle = "rgba(255,255,255,0.9)";
+    context.lineWidth = 4;
+    context.beginPath();
+    context.moveTo(opening.pixel_center.x, opening.pixel_center.y - 14);
+    context.lineTo(opening.pixel_center.x + 14, opening.pixel_center.y);
+    context.lineTo(opening.pixel_center.x, opening.pixel_center.y + 14);
+    context.lineTo(opening.pixel_center.x - 14, opening.pixel_center.y);
+    context.closePath();
+    context.fill();
+    context.stroke();
+    context.fillStyle = "#006d6d";
+    context.font = "bold 15px Arial";
+    context.fillText(`O${opening.rank}`, opening.pixel_center.x + 17, opening.pixel_center.y + 5);
   }
   const overlayPath = path.join(outDir, "wall_line_candidates.png");
   fs.writeFileSync(overlayPath, canvas.toBuffer("image/png"));
@@ -851,9 +1184,26 @@ export async function buildArchitecturalWallLineCandidates(
     height,
     policy
   );
+  const openingGapHypotheses = buildOpeningGapHypotheses(
+    candidates,
+    masks.source,
+    width,
+    height,
+    pixelsPerFoot,
+    delta.scope_model_bounds,
+    policy
+  );
   const ambiguities = buildAmbiguities(raw, candidates, pixelsPerFoot, policy);
   const status = candidates.length === 0 ? "blocked" : ambiguities.length > 0 ? "clarification_required" : "candidates_ready";
-  const overlay = await writeOverlay(sourcePath, width, height, candidates, junctionHypotheses, resolvedOutDir);
+  const overlay = await writeOverlay(
+    sourcePath,
+    width,
+    height,
+    candidates,
+    junctionHypotheses,
+    openingGapHypotheses,
+    resolvedOutDir
+  );
   return {
     schema_version: 1,
     artifact_role: "architectural_wall_line_candidates",
@@ -867,6 +1217,7 @@ export async function buildArchitecturalWallLineCandidates(
     policy,
     candidates,
     junction_hypotheses: junctionHypotheses,
+    opening_gap_hypotheses: openingGapHypotheses,
     ambiguities,
     clarification_question: status === "clarification_required"
       ? "Multiple source-supported wall-line candidates overlap or have near-equal rank. Confirm the intended wall centerline/host candidate before compiling openings or any native action."
@@ -878,6 +1229,7 @@ export async function buildArchitecturalWallLineCandidates(
       "Candidates are deterministic image measurements, not selected truth and not native Revit actions.",
       "Parallel-face midlines are explicit centerline hypotheses derived from two supported face lines; their measured face separation and supporting faces must be reconciled semantically before selection.",
       "Junction hypotheses identify near-endpoint intersections between paired-face centerlines and provide topology evidence only; they do not select either wall or authorize an opening host.",
+      "Opening-gap hypotheses require a bounded low-ink interval across multiple normal wall-band profiles with supported ink on both flanks; they remain unclassified and bind only to a wall candidate, not a selected native host or family type.",
       "Parallel or near-equal candidates remain explicit ambiguities; rank alone must not authorize a wall or opening host.",
       "Candidate geometry is derived only from hash-bound source-aligned and source-only delta images in the registered frame.",
       "Opening recognition, wall type/thickness, vertical extents, and family/type promotion remain separate evidence-gated steps."

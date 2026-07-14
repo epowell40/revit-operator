@@ -81,6 +81,10 @@ import {
 } from "../existing_conditions/architectural_source_delta.js";
 import { auditArchitecturalRedactionVisibility } from "../existing_conditions/architectural_redaction_visibility_gate.js";
 import {
+  auditLinkedBackgroundModelHealth,
+  DEFAULT_LINKED_BACKGROUND_MODEL_GATE_POLICY
+} from "../existing_conditions/linked_background_model_gate.js";
+import {
   buildArchitecturalMeasurementOverlay,
   compileArchitecturalPixelMeasurementPreview,
   type ArchitecturalMeasurementOverlayReceipt,
@@ -154,6 +158,7 @@ function usage(): never {
     "  npm run existing-conditions -- build-architectural-wall-candidates --delta-receipt <receipt.json> --measurement-receipt <receipt.json> --out-dir <candidate-dir> --out <candidate-receipt.json>",
     "  npm run existing-conditions -- compile-architectural-pixel-preview --input <pixel-observations.json> --measurement-receipt <measurement-receipt.json> --out <compiled-preview.json> [--source-out <converted-source-observations.json>] [--compilation-out <compilation.json>]",
     "  npm run existing-conditions -- audit-architectural-redaction --truth <ground-truth.json> --delta-receipt <receipt.json> --out <gate-receipt.json>",
+    "  npm run existing-conditions -- audit-linked-background --model-health <model-health.json> --out <gate-receipt.json> [--link-name-tokens <token,token,...>]",
     "  npm run existing-conditions -- promote-architectural-preview --input <source-observations.json> --resolutions <evidence-backed-resolutions.json> --out <promotion.json> [--action-out <atomic-import-request.json>] [--apply]",
     "  npm run existing-conditions -- compile-architectural-shell --input <source-observations.json> --out <compiled-plan.json> [--action-out <atomic-import-request.json>] [--apply]",
     "  npm run existing-conditions -- capture --expected-model <model.rvt> (--view-id <id> | --view-ids <id,id,...>) --ids <id,id,...> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
@@ -1430,6 +1435,21 @@ async function main(): Promise<void> {
     const receipt = await auditArchitecturalRedactionVisibility(
       truth as ExistingConditionsGroundTruth,
       readJson(requiredArgument("--delta-receipt")) as ArchitecturalSourceDeltaReceipt
+    );
+    writeJson(requiredArgument("--out"), receipt);
+    if (!receipt.passed) process.exitCode = 1;
+    return;
+  }
+  if (command === "audit-linked-background") {
+    const configuredTokens = argument("--link-name-tokens");
+    const receipt = auditLinkedBackgroundModelHealth(
+      readJson(requiredArgument("--model-health")),
+      configuredTokens
+        ? {
+          ...DEFAULT_LINKED_BACKGROUND_MODEL_GATE_POLICY,
+          expected_name_tokens: parseCsv(configuredTokens, "--link-name-tokens")
+        }
+        : DEFAULT_LINKED_BACKGROUND_MODEL_GATE_POLICY
     );
     writeJson(requiredArgument("--out"), receipt);
     if (!receipt.passed) process.exitCode = 1;
