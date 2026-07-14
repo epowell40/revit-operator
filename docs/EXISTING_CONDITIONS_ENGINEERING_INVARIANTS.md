@@ -113,6 +113,20 @@ Or derive evidence from already captured native responses:
 
 The live acceptance pattern is baseline-delta, not hidden-answer replay: capture a known-good native baseline, introduce a deliberate defect, require the independent evaluator to fail it, repair it through the normal generic tool path, and require a fresh native capture to pass while scope, circuit association, drawing legibility, and unrelated model content remain unchanged. This V1 adapter proves integral-device protection only. Upstream feed-through and GFCI-breaker cases require separate native electrical-path adapters before they can pass live acceptance.
 
+### Live native dwelling wall-space capture
+
+The dwelling adapter consumes only the native wall-space discovery portion of `/revit/plan-dwelling-receptacles` plus an independent, unlinked `/revit/room-contents` inventory for the target Space. It derives receptacle chainages from target-room native points and discovered wall geometry; planner-proposed placements are explicitly ignored. The adapter requires exact set equality between planner-selected existing devices and independently projected target-room devices, rejects overlap with the near-boundary adjacent-space exclusion receipt, and rejects duplicate or missing configured wall segments. Exact target element IDs and accepted coordinates are absent from the adapter configuration and agent package.
+
+Collect evaluator evidence from captured native responses:
+
+`npm run existing-conditions -- collect-dwelling-wall-native-evidence --adapter-config <json> --planner-response <json> --room-contents <json> --out <evaluator-native-evidence.json>`
+
+Capture directly from the expected open model:
+
+`npm run existing-conditions -- capture-dwelling-wall-native-evidence --adapter-config <json> --expected-model <model.rvt> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>`
+
+A valid live repair must pass the interval-union invariant. It is not required to reproduce the planner's proposal, a Snowdon source coordinate, or one frozen post-change RVT binary.
+
 ## Primary-source starting points
 
 These are starting points, not embedded defaults. Each fixture must resolve its adopted edition and amendments.

@@ -40,9 +40,12 @@ import {
   type EngineeringCaseNativeEvidence
 } from "../existing_conditions/engineering_case_runner.js";
 import {
+  assertExpectedDwellingWallCoverageModelSha256,
   assertExpectedGfciModelSha256,
+  collectDwellingWallCoverageNativeEvidence,
   collectGfciNativeEvidence,
   selectGfciScopedElementIds,
+  type DwellingWallCoverageNativeAdapterConfig,
   type GfciNativeAdapterConfig,
   type NativeParameterReadback
 } from "../existing_conditions/engineering_native_adapters.js";
@@ -111,6 +114,8 @@ function usage(): never {
     "  npm run existing-conditions -- seal-engineering-evidence --case <case-definition.json> --native-evidence <evaluator-native-evidence.json> --evaluator-key-file <secret> --out <provenance.json>",
     "  npm run existing-conditions -- collect-gfci-native-evidence --adapter-config <json> --room-contents <json> --parameter-readbacks <json> --out <evaluator-native-evidence.json>",
     "  npm run existing-conditions -- capture-gfci-native-evidence --adapter-config <json> --expected-model <model.rvt> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
+    "  npm run existing-conditions -- collect-dwelling-wall-native-evidence --adapter-config <json> --planner-response <json> --room-contents <json> --out <evaluator-native-evidence.json>",
+    "  npm run existing-conditions -- capture-dwelling-wall-native-evidence --adapter-config <json> --expected-model <model.rvt> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "  npm run existing-conditions -- evaluate-engineering-case --case <case-definition.json> --native-evidence <evaluator-native-evidence.json> --evaluator-provenance <provenance.json> --evaluator-key-file <secret> --out <checks.json>",
     "  npm run existing-conditions -- advance-controller --state <controller-state-or-receipt.json> --event <event.json> --out <next-receipt.json>",
     "  npm run existing-conditions -- evaluator-diff --before-visible <json> --after-visible <json> --package <agent_package.json> --out <receipt.json>",
@@ -695,6 +700,67 @@ async function captureGfciNativeEvidence(): Promise<void> {
   });
 }
 
+function collectDwellingWallCoverageNativeEvidenceFile(): void {
+  const config = readJson(requiredArgument("--adapter-config")) as DwellingWallCoverageNativeAdapterConfig;
+  const evidence = collectDwellingWallCoverageNativeEvidence(
+    config,
+    readJson(requiredArgument("--planner-response")),
+    readJson(requiredArgument("--room-contents"))
+  );
+  writeJson(requiredArgument("--out"), evidence);
+}
+
+async function captureDwellingWallCoverageNativeEvidence(): Promise<void> {
+  const expectedModel = path.resolve(requiredArgument("--expected-model"));
+  const outDir = path.resolve(requiredArgument("--out-dir"));
+  if (fs.existsSync(outDir) && fs.readdirSync(outDir).length > 0) {
+    throw new Error(`Refusing to overwrite a non-empty dwelling-wall capture directory: ${outDir}`);
+  }
+  const config = readJson(requiredArgument("--adapter-config")) as DwellingWallCoverageNativeAdapterConfig;
+  const expectedModelSha256 = sha256(expectedModel);
+  assertExpectedDwellingWallCoverageModelSha256(config, expectedModelSha256);
+  const client = bridgeClient();
+  const context = await client.get("/revit/context");
+  if (canonicalPath(activeDocumentPath(context)) !== canonicalPath(expectedModel)) {
+    throw new Error(`Active document is not the expected model: ${activeDocumentPath(context)}`);
+  }
+  const plannerResponse = await client.post("/revit/plan-dwelling-receptacles", {
+    roomNumber: config.room_number,
+    viewId: config.view_id,
+    roomClassifications: config.room_classifications,
+    includeExistingReceptacles: true
+  });
+  const roomContents = await client.post("/revit/room-contents", {
+    roomNumber: config.room_number,
+    categories: ["Electrical Fixtures"],
+    includeLinked: false,
+    mode: "auto",
+    verticalScope: "room",
+    spatialKindPreference: "space",
+    limit: 50000
+  });
+  const evidence = collectDwellingWallCoverageNativeEvidence(config, plannerResponse, roomContents);
+  evidence.collection_receipt = {
+    ...(evidence.collection_receipt ?? {}),
+    expected_model_path: expectedModel,
+    expected_model_sha256: expectedModelSha256
+  };
+  writeJson(path.join(outDir, "context.json"), context);
+  writeJson(path.join(outDir, "planner_response.json"), plannerResponse);
+  writeJson(path.join(outDir, "room_contents.json"), roomContents);
+  writeJson(path.join(outDir, "native_evidence.json"), evidence);
+  writeJson(path.join(outDir, "capture_receipt.json"), {
+    schema_version: 1,
+    expected_model_path: expectedModel,
+    expected_model_sha256: expectedModelSha256,
+    room_number: config.room_number,
+    view_id: config.view_id,
+    target_wall_segment_ids: config.wall_segments.map((segment) => segment.segment_id),
+    adapter_config_sha256: sha256(path.resolve(requiredArgument("--adapter-config"))),
+    native_readback: evidence.native_readback
+  });
+}
+
 async function runRedaction(): Promise<void> {
   const expectedSource = path.resolve(requiredArgument("--expected-source"));
   const stagingModel = path.resolve(requiredArgument("--staging-model"));
@@ -867,6 +933,14 @@ async function main(): Promise<void> {
   }
   if (command === "capture-gfci-native-evidence") {
     await captureGfciNativeEvidence();
+    return;
+  }
+  if (command === "collect-dwelling-wall-native-evidence") {
+    collectDwellingWallCoverageNativeEvidenceFile();
+    return;
+  }
+  if (command === "capture-dwelling-wall-native-evidence") {
+    await captureDwellingWallCoverageNativeEvidence();
     return;
   }
   if (command === "advance-controller") {
