@@ -328,21 +328,43 @@ function buildAgentPackage(): void {
     throw new Error("--task-class must be exact_reconstruction, standards_compliance_repair, or generative_layout.");
   }
   const standardsProfileSource = argument("--standards-profile");
+  const registrationArtifactSource = argument("--registration-artifact");
+  const typeMappingArtifactSource = argument("--type-mapping-artifact");
   if (taskClass !== "exact_reconstruction" && (!standardsProfileSource || !fs.existsSync(path.resolve(standardsProfileSource)))) {
     throw new Error("--standards-profile must identify an existing JSON file for compliance and generative tasks.");
+  }
+  for (const [flag, source] of [["--registration-artifact", registrationArtifactSource], ["--type-mapping-artifact", typeMappingArtifactSource]] as const) {
+    if (!source) continue;
+    const resolved = path.resolve(source);
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) throw new Error(`${flag} must identify an existing JSON file.`);
+    try {
+      JSON.parse(fs.readFileSync(resolved, "utf8"));
+    } catch {
+      throw new Error(`${flag} must identify valid JSON.`);
+    }
   }
   fs.mkdirSync(outDir, { recursive: true });
   const pdfCopy = path.join(outDir, "source_evidence.pdf");
   const packagePath = path.join(outDir, "agent_package.json");
   const controllerStatePath = path.join(outDir, "controller_state.json");
   const standardsProfileCopy = path.join(outDir, "standards_profile.json");
+  const registrationArtifactCopy = path.join(outDir, "source_to_model_registration.json");
+  const typeMappingArtifactCopy = path.join(outDir, "approved_type_catalog.json");
   if (fs.existsSync(pdfCopy) || fs.existsSync(packagePath) || fs.existsSync(controllerStatePath)
-    || (taskClass !== "exact_reconstruction" && fs.existsSync(standardsProfileCopy))) {
+    || (taskClass !== "exact_reconstruction" && fs.existsSync(standardsProfileCopy))
+    || (registrationArtifactSource && fs.existsSync(registrationArtifactCopy))
+    || (typeMappingArtifactSource && fs.existsSync(typeMappingArtifactCopy))) {
     throw new Error(`Refusing to overwrite an existing agent package in: ${outDir}`);
   }
   fs.copyFileSync(sourcePdf, pdfCopy, fs.constants.COPYFILE_EXCL);
   if (taskClass !== "exact_reconstruction") {
     fs.copyFileSync(path.resolve(standardsProfileSource), standardsProfileCopy, fs.constants.COPYFILE_EXCL);
+  }
+  if (registrationArtifactSource) {
+    fs.copyFileSync(path.resolve(registrationArtifactSource), registrationArtifactCopy, fs.constants.COPYFILE_EXCL);
+  }
+  if (typeMappingArtifactSource) {
+    fs.copyFileSync(path.resolve(typeMappingArtifactSource), typeMappingArtifactCopy, fs.constants.COPYFILE_EXCL);
   }
   const allowsMultipleValidSolutions = taskClass !== "exact_reconstruction";
   const agentPackage = {
@@ -369,6 +391,16 @@ function buildAgentPackage(): void {
       path: redactedModel,
       sha256: sha256(redactedModel)
     },
+    registration_artifact: registrationArtifactSource ? {
+      role: "source_to_model_registration",
+      path: registrationArtifactCopy,
+      sha256: sha256(registrationArtifactCopy)
+    } : null,
+    type_mapping_artifact: typeMappingArtifactSource ? {
+      role: "approved_type_catalog",
+      path: typeMappingArtifactCopy,
+      sha256: sha256(typeMappingArtifactCopy)
+    } : null,
     evidence: [{
       role: "source_pdf",
       path: pdfCopy,
@@ -428,7 +460,11 @@ function buildAgentPackage(): void {
     discipline,
     allowed_categories: allowedCategories,
     maximum_created_elements: maximumCreatedElements,
-    visible_evidence: [{ role: "source_pdf", sha256: sha256(pdfCopy) }],
+    visible_evidence: [
+      { role: "source_pdf", sha256: sha256(pdfCopy) },
+      ...(registrationArtifactSource ? [{ role: "source_to_model_registration", sha256: sha256(registrationArtifactCopy) }] : []),
+      ...(typeMappingArtifactSource ? [{ role: "approved_type_catalog", sha256: sha256(typeMappingArtifactCopy) }] : [])
+    ],
     require_source_observation_grounding: taskClass === "exact_reconstruction",
     material_confidence_threshold: 0.75,
     max_repairs: maxRepairs
