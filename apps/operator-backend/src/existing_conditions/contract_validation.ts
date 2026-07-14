@@ -3,12 +3,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020, { type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
 
-export type ExistingConditionsContractName = "agent_package" | "ground_truth" | "candidate";
+export type ExistingConditionsContractName = "agent_package" | "ground_truth" | "candidate" | "architectural_preview";
 
 const FILES: Record<ExistingConditionsContractName, string> = {
   agent_package: "existing_conditions_agent_package.v1.schema.json",
   ground_truth: "existing_conditions_ground_truth.v1.schema.json",
-  candidate: "existing_conditions_candidate.v1.schema.json"
+  candidate: "existing_conditions_candidate.v1.schema.json",
+  architectural_preview: "existing_conditions_architectural_preview.v1.schema.json"
 };
 
 let validators: Record<ExistingConditionsContractName, ValidateFunction> | null = null;
@@ -29,11 +30,9 @@ function loadValidators(): Record<ExistingConditionsContractName, ValidateFuncti
   const schemas = Object.values(FILES).map((file) => JSON.parse(fs.readFileSync(path.join(directory, file), "utf8")) as Record<string, unknown>);
   const ajv = new Ajv2020({ allErrors: true, strict: true });
   for (const schema of schemas) ajv.addSchema(schema);
-  validators = {
-    agent_package: ajv.getSchema(String(schemas[0]!.$id))!,
-    ground_truth: ajv.getSchema(String(schemas[1]!.$id))!,
-    candidate: ajv.getSchema(String(schemas[2]!.$id))!
-  };
+  validators = Object.fromEntries(
+    (Object.keys(FILES) as ExistingConditionsContractName[]).map((name, index) => [name, ajv.getSchema(String(schemas[index]!.$id))!])
+  ) as Record<ExistingConditionsContractName, ValidateFunction>;
   return validators;
 }
 

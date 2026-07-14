@@ -93,6 +93,55 @@ test("runtime contract validation accepts hash-bound registration and approved t
   assert.throws(() => assertExistingConditionsContract("agent_package", packageValue), /invalid_existing_conditions_agent_package_contract/);
 });
 
+test("runtime contract validation accepts plan-only architectural observations with unresolved material fields", () => {
+  const preview = {
+    schema_version: 1,
+    fixture_id: "architectural-preview-contract-v1",
+    scope_id: "scope",
+    source_evidence_sha256: "e".repeat(64),
+    visible_evidence: [{ role: "source_pdf", sha256: "e".repeat(64) }],
+    registration: {
+      source_evidence_sha256: "e".repeat(64),
+      control_points: [
+        { source: { x: 0, y: 0 }, model: { x: 0, y: 0 } },
+        { source: { x: 10, y: 0 }, model: { x: 10, y: 0 } },
+        { source: { x: 0, y: 10 }, model: { x: 0, y: 10 } }
+      ]
+    },
+    level_name: "L4",
+    level_elevation_ft: 32,
+    maximum_created_elements: 2,
+    observations: [
+      {
+        kind: "wall",
+        discipline: "architectural",
+        observation_id: "wall-1",
+        visibility: "clear",
+        confidence: 0.95,
+        supported_attributes: ["location"],
+        points: [{ x: 0, y: 0 }, { x: 10, y: 0 }]
+      },
+      {
+        kind: "door",
+        discipline: "architectural",
+        observation_id: "door-1",
+        visibility: "clear",
+        confidence: 0.9,
+        supported_attributes: ["location", "host"],
+        point: { x: 5, y: 0 },
+        host_wall_observation_id: "wall-1"
+      }
+    ]
+  };
+  assert.doesNotThrow(() => assertExistingConditionsContract("architectural_preview", preview));
+  const invalid = structuredClone(preview);
+  (invalid.observations[0] as Record<string, unknown>).hidden_type_guess = "invented";
+  assert.throws(
+    () => assertExistingConditionsContract("architectural_preview", invalid),
+    /invalid_existing_conditions_architectural_preview_contract/
+  );
+});
+
 test("runtime contract validation requires source-observation grounding for exact reconstruction", () => {
   const invalid = validAgentPackage();
   invalid.write_policy = { ...(invalid.write_policy as Record<string, unknown>), require_source_observation_grounding: false };

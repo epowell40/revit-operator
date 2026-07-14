@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json",
+  "title": "Existing conditions architectural plan-geometry preview V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "fixture_id",
+    "scope_id",
+    "source_evidence_sha256",
+    "visible_evidence",
+    "registration",
+    "level_name",
+    "level_elevation_ft",
+    "maximum_created_elements",
+    "observations"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "fixture_id": { "type": "string", "minLength": 1 },
+    "scope_id": { "type": "string", "minLength": 1 },
+    "source_evidence_sha256": { "$ref": "#/$defs/sha256" },
+    "visible_evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/evidence" }
+    },
+    "registration": { "$ref": "#/$defs/registration" },
+    "level_name": { "type": "string", "minLength": 1 },
+    "level_elevation_ft": { "type": "number" },
+    "geometry_confidence_threshold": { "type": "number", "minimum": 0, "maximum": 1 },
+    "material_confidence_threshold": { "type": "number", "minimum": 0, "maximum": 1 },
+    "maximum_opening_host_distance_ft": { "type": "number", "exclusiveMinimum": 0 },
+    "maximum_created_elements": { "type": "integer", "minimum": 1 },
+    "observations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/wall_observation" },
+          { "$ref": "#/$defs/door_observation" },
+          { "$ref": "#/$defs/window_observation" }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "sha256"],
+      "properties": {
+        "role": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "registration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_evidence_sha256", "control_points"],
+      "properties": {
+        "source_evidence_sha256": { "$ref": "#/$defs/sha256" },
+        "control_points": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "model"],
+            "properties": {
+              "source": { "$ref": "#/$defs/point" },
+              "model": { "$ref": "#/$defs/point" }
+            }
+          }
+        },
+        "max_rms_error_ft": { "type": "number", "minimum": 0 },
+        "max_point_error_ft": { "type": "number", "minimum": 0 }
+      }
+    },
+    "visibility": { "type": "string", "enum": ["clear", "partial", "occluded"] },
+    "supported_attributes": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "wall_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "discipline",
+        "observation_id",
+        "visibility",
+        "confidence",
+        "supported_attributes",
+        "points"
+      ],
+      "properties": {
+        "kind": { "const": "wall" },
+        "discipline": { "const": "architectural" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "points": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            { "$ref": "#/$defs/point" },
+            { "$ref": "#/$defs/point" }
+          ]
+        },
+        "wall_type_name": { "type": "string", "minLength": 1 },
+        "thickness_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "height_ft": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "door_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "discipline",
+        "observation_id",
+        "visibility",
+        "confidence",
+        "supported_attributes",
+        "point",
+        "host_wall_observation_id"
+      ],
+      "properties": {
+        "kind": { "const": "door" },
+        "discipline": { "const": "architectural" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "point": { "$ref": "#/$defs/point" },
+        "host_wall_observation_id": { "type": "string", "minLength": 1 },
+        "family_name": { "type": "string", "minLength": 1 },
+        "type_name": { "type": "string", "minLength": 1 },
+        "width_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "height_ft": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "window_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "discipline",
+        "observation_id",
+        "visibility",
+        "confidence",
+        "supported_attributes",
+        "point",
+        "host_wall_observation_id"
+      ],
+      "properties": {
+        "kind": { "const": "window" },
+        "discipline": { "const": "architectural" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "point": { "$ref": "#/$defs/point" },
+        "host_wall_observation_id": { "type": "string", "minLength": 1 },
+        "family_name": { "type": "string", "minLength": 1 },
+        "type_name": { "type": "string", "minLength": 1 },
+        "width_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "height_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "sill_height_ft": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

@@ -66,6 +66,14 @@ import {
   compileArchitecturalShellPlan,
   type ArchitecturalShellPackage
 } from "../existing_conditions/architectural_shell_plan.js";
+import {
+  compileArchitecturalPlanGeometryPreview,
+  promoteArchitecturalPlanGeometryPreview,
+  type CompiledArchitecturalPlanGeometryPreview,
+  type ArchitecturalPlanGeometryPreviewPackage,
+  type ArchitecturalPlanGeometryResolution
+} from "../existing_conditions/architectural_plan_geometry_preview.js";
+import { scoreArchitecturalPlanGeometryPreview } from "../existing_conditions/architectural_plan_geometry_score.js";
 
 function argument(name: string): string {
   const index = process.argv.indexOf(name);
@@ -123,6 +131,9 @@ function usage(): never {
     "Usage:",
     "  npm run existing-conditions -- normalize --visible <export-visible-elements.json> --connectors <get-connectors.json> --ids <id,id,...> --out <snapshot.json>",
     "  npm run existing-conditions -- compile-mep-draft --input <source-observations.json> --out <compiled-plan.json> [--workflow-out <atomic-dry-run-request.json>] [--max-created <count>]",
+    "  npm run existing-conditions -- compile-architectural-preview --input <source-observations.json> --out <preview.json>",
+    "  npm run existing-conditions -- score-architectural-preview --truth <ground-truth.json> --preview <compiled-preview.json> --out <score.json>",
+    "  npm run existing-conditions -- promote-architectural-preview --input <source-observations.json> --resolutions <evidence-backed-resolutions.json> --out <promotion.json> [--action-out <atomic-import-request.json>] [--apply]",
     "  npm run existing-conditions -- compile-architectural-shell --input <source-observations.json> --out <compiled-plan.json> [--action-out <atomic-import-request.json>] [--apply]",
     "  npm run existing-conditions -- capture --expected-model <model.rvt> (--view-id <id> | --view-ids <id,id,...>) --ids <id,id,...> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "  npm run existing-conditions -- package --fixture-id <id> --scope-id <id> --discipline <mechanical|plumbing|electrical|architectural|mixed> --task-class <exact_reconstruction|standards_compliance_repair|generative_layout> [--standards-profile <json>] --redacted-model <agent-redacted.rvt> --source-pdf <source.pdf> --view-id <id> --model-bounds <minX,minY,minZ,maxX,maxY,maxZ> --image-region <minX,minY,maxX,maxY> --allowed-categories <OST_...,OST_...> --out-dir <agent-dir>",
@@ -142,7 +153,7 @@ function usage(): never {
     "  npm run existing-conditions -- evaluate-engineering-case --case <case-definition.json> --native-evidence <evaluator-native-evidence.json> --evaluator-provenance <provenance.json> --evaluator-key-file <secret> --out <checks.json>",
     "  npm run existing-conditions -- advance-controller --state <controller-state-or-receipt.json> --event <event.json> --out <next-receipt.json>",
     "  npm run existing-conditions -- evaluator-diff --before-visible <json> --after-visible <json> --package <agent_package.json> --out <receipt.json>",
-    "  npm run existing-conditions -- validate-contract --kind <agent_package|ground_truth|candidate> --file <json>",
+    "  npm run existing-conditions -- validate-contract --kind <agent_package|ground_truth|candidate|architectural_preview> --file <json>",
     "  npm run existing-conditions -- redact --expected-source <source.rvt> --staging-model <withheld-staging.rvt> --redacted-model <agent-redacted.rvt> --view-id <id> --ids <id,id,...> --anchor-ids <id,id,...> --out-dir <fixture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "Options:",
     "  --allow-missing-connectors  Permit non-MEP normalization without connector readback.",
@@ -571,11 +582,11 @@ function reviewVisualEvidence(): void {
 
 function validateContractFile(): void {
   const kind = requiredArgument("--kind");
-  if (!["agent_package", "ground_truth", "candidate"].includes(kind)) {
-    throw new Error("--kind must be agent_package, ground_truth, or candidate.");
+  if (!["agent_package", "ground_truth", "candidate", "architectural_preview"].includes(kind)) {
+    throw new Error("--kind must be agent_package, ground_truth, candidate, or architectural_preview.");
   }
   const filePath = path.resolve(requiredArgument("--file"));
-  assertExistingConditionsContract(kind as "agent_package" | "ground_truth" | "candidate", readJson(filePath));
+  assertExistingConditionsContract(kind as "agent_package" | "ground_truth" | "candidate" | "architectural_preview", readJson(filePath));
   process.stdout.write(`${filePath}: valid ${kind}\n`);
 }
 
@@ -1083,6 +1094,42 @@ async function main(): Promise<void> {
     if (actionOut) {
       if (!plan.action) throw new Error(`Architectural shell plan is ${plan.status}; no action request was emitted.`);
       writeJson(actionOut, process.argv.includes("--apply") ? plan.action.apply_body : plan.action.dry_run_body);
+    }
+    return;
+  }
+  if (command === "compile-architectural-preview") {
+    const input = readJson(requiredArgument("--input"));
+    assertExistingConditionsContract("architectural_preview", input);
+    const preview = compileArchitecturalPlanGeometryPreview(input as ArchitecturalPlanGeometryPreviewPackage);
+    writeJson(requiredArgument("--out"), preview);
+    return;
+  }
+  if (command === "score-architectural-preview") {
+    const truth = readJson(requiredArgument("--truth"));
+    assertExistingConditionsContract("ground_truth", truth);
+    const score = scoreArchitecturalPlanGeometryPreview(
+      truth as ExistingConditionsGroundTruth,
+      readJson(requiredArgument("--preview")) as CompiledArchitecturalPlanGeometryPreview
+    );
+    writeJson(requiredArgument("--out"), score);
+    return;
+  }
+  if (command === "promote-architectural-preview") {
+    const input = readJson(requiredArgument("--input"));
+    assertExistingConditionsContract("architectural_preview", input);
+    const promotion = promoteArchitecturalPlanGeometryPreview(
+      input as ArchitecturalPlanGeometryPreviewPackage,
+      readJson(requiredArgument("--resolutions")) as ArchitecturalPlanGeometryResolution[]
+    );
+    writeJson(requiredArgument("--out"), promotion);
+    const actionOut = argument("--action-out");
+    if (actionOut) {
+      if (!promotion.compiled_plan.action) {
+        throw new Error(`Promoted architectural shell plan is ${promotion.compiled_plan.status}; no action request was emitted.`);
+      }
+      writeJson(actionOut, process.argv.includes("--apply")
+        ? promotion.compiled_plan.action.apply_body
+        : promotion.compiled_plan.action.dry_run_body);
     }
     return;
   }
