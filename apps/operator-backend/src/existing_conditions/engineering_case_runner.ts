@@ -24,6 +24,7 @@ export type EngineeringCaseDefinition = {
   task_class: Extract<ExistingConditionsBenchmarkTaskClass, "standards_compliance_repair" | "generative_layout">;
   discipline: "electrical" | "plumbing" | "mixed";
   standards_profile_sha256: string;
+  starting_model_sha256?: string;
   checks: EngineeringCaseCheckDefinition[];
 };
 
@@ -57,6 +58,7 @@ export type EngineeringCaseNativeEvidence = {
   native_evidence_owner: "evaluator";
   native_readback: boolean;
   checks: EngineeringCaseCheckEvidence[];
+  collection_receipt?: Record<string, unknown>;
 };
 
 export type EngineeringCaseCheckEvidence =
@@ -212,6 +214,9 @@ export function evaluateEngineeringInvariantCase(
     invalidReasons.push("case_task_class_invalid");
   }
   if (!validSha256(definition?.standards_profile_sha256)) invalidReasons.push("case_standards_profile_sha256_invalid");
+  if (definition?.starting_model_sha256 != null && !validSha256(definition.starting_model_sha256)) {
+    invalidReasons.push("case_starting_model_sha256_invalid");
+  }
   if (!Array.isArray(definition?.checks) || definition.checks.length === 0) invalidReasons.push("case_checks_missing");
 
   const definitionIds = (definition?.checks ?? []).map((check) => text(check.check_id));
@@ -235,6 +240,12 @@ export function evaluateEngineeringInvariantCase(
   if (evidence?.native_evidence_owner !== "evaluator") invalidReasons.push("evidence_not_evaluator_owned");
   if (!evidence?.native_readback) invalidReasons.push("evidence_native_readback_missing");
   if (!Array.isArray(evidence?.checks)) invalidReasons.push("evidence_checks_missing");
+  if (definition?.starting_model_sha256 != null) {
+    const receipt = evidence?.collection_receipt ?? {};
+    if (text(receipt.starting_model_sha256).toLowerCase() !== text(definition.starting_model_sha256).toLowerCase()) {
+      invalidReasons.push("evidence_starting_model_hash_mismatch");
+    }
+  }
 
   if (!provenance) {
     invalidReasons.push("evaluator_provenance_missing");

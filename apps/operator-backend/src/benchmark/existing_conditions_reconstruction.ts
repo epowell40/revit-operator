@@ -200,7 +200,8 @@ const FORBIDDEN_AGENT_ARTIFACT_ROLES = new Set([
   "withheld_evaluator_package",
   "evaluator_native_evidence",
   "evaluator_provenance",
-  "evaluator_signing_key"
+  "evaluator_signing_key",
+  "evaluator_native_adapter_config"
 ]);
 
 function clamp01(value: number): number {

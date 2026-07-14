@@ -97,6 +97,20 @@ A valid but failing engineering case writes its detailed evaluation and exits no
 
 Independent holdout fixtures live under `apps/operator-backend/test/fixtures/existing_conditions/engineering_compliance/`. They include breaker-protected sink GFCI, multiple valid wall-space layouts, non-dwelling receptacle circuit rebalancing, and lavatory/water-closet service topology. Their standards profile is deliberately labeled benchmark-only; it must be replaced with the real project jurisdiction, AHJ adoption, amendments, and criteria before any project compliance claim.
 
+### Live native GFCI capture
+
+The first live compliance fixture uses a Snowdon duplicate as realistic geometry, not as a code oracle. The evaluator chooses a bounded room region without exposing target element IDs, captures plumbing/electrical room contents plus per-element native parameter readbacks, and derives horizontal clear distance to transformed sink bounding geometry. Sink candidates are limited to the receptacle scope expanded by an evaluator-declared search radius. Integral-device proof comes from the same per-element native readback that supplies voltage; a room symbol or family label alone is insufficient. The case and signed evidence bind the immutable starting task-model hash, while capture records and verifies the distinct post-change model hash. This establishes fixture lineage without requiring every valid repair to produce one exact RVT binary. The signed evidence also binds canonical hashes of the adapter configuration, room inventory, and parameter readbacks.
+
+Capture live evidence from the expected open model:
+
+`npm run existing-conditions -- capture-gfci-native-evidence --adapter-config <evaluator-adapter.json> --expected-model <model.rvt> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>`
+
+Or derive evidence from already captured native responses:
+
+`npm run existing-conditions -- collect-gfci-native-evidence --adapter-config <evaluator-adapter.json> --room-contents <room-contents.json> --parameter-readbacks <parameter-readbacks.json> --out <evaluator-native-evidence.json>`
+
+The live acceptance pattern is baseline-delta, not hidden-answer replay: capture a known-good native baseline, introduce a deliberate defect, require the independent evaluator to fail it, repair it through the normal generic tool path, and require a fresh native capture to pass while scope, circuit association, drawing legibility, and unrelated model content remain unchanged. This V1 adapter proves integral-device protection only. Upstream feed-through and GFCI-breaker cases require separate native electrical-path adapters before they can pass live acceptance.
+
 ## Primary-source starting points
 
 These are starting points, not embedded defaults. Each fixture must resolve its adopted edition and amendments.

@@ -131,6 +131,29 @@ test("case runner rejects forged evaluator fields, hash drift, missing checks, a
   assert.ok(wrongKeyResult.invalid_reasons.includes("evaluator_provenance_signature_invalid"));
 });
 
+test("live cases bind native evidence to the immutable starting task model without fixing one repaired binary", () => {
+  const definition = {
+    ...readJson<EngineeringCaseDefinition>("electrical_gfci_holdout.case.json"),
+    starting_model_sha256: "a".repeat(64)
+  };
+  const original = readJson<EngineeringCaseNativeEvidence>("electrical_gfci_holdout.pass_breaker.evidence.json");
+  const evidence = {
+    ...original,
+    collection_receipt: {
+      starting_model_sha256: "b".repeat(64),
+      expected_model_sha256: "c".repeat(64)
+    }
+  };
+  const result = evaluateEngineeringInvariantCase(
+    definition,
+    evidence,
+    createEngineeringCaseEvidenceProvenance(definition, evidence, EVALUATOR_KEY),
+    EVALUATOR_KEY
+  );
+  assert.equal(result.valid, false);
+  assert.ok(result.invalid_reasons.includes("evidence_starting_model_hash_mismatch"));
+});
+
 test("corpus manifest passes strict cross-split leakage checks", () => {
   const manifest = readJson<{ cases: BenchmarkDatasetCase[] }>("corpus_manifest.json");
   assert.deepEqual(auditBenchmarkDatasetLeakage(manifest.cases), []);

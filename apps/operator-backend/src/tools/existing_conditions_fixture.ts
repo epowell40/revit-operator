@@ -39,6 +39,13 @@ import {
   type EngineeringCaseEvidenceProvenance,
   type EngineeringCaseNativeEvidence
 } from "../existing_conditions/engineering_case_runner.js";
+import {
+  assertExpectedGfciModelSha256,
+  collectGfciNativeEvidence,
+  selectGfciScopedElementIds,
+  type GfciNativeAdapterConfig,
+  type NativeParameterReadback
+} from "../existing_conditions/engineering_native_adapters.js";
 
 function argument(name: string): string {
   const index = process.argv.indexOf(name);
@@ -102,6 +109,8 @@ function usage(): never {
     "  npm run existing-conditions -- seal-candidate --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --evaluator-visual-receipt <json> --out <candidate.json>",
     "  npm run existing-conditions -- score --package <agent_package.json> [--truth <truth.json> --candidate <candidate.json> | --evaluator-checks <json> --evaluator-change-receipt <json> --evaluator-access-provenance <json> --constructability <pass|fail> --drawing-legibility <pass|fail>] --out-dir <score-dir>",
     "  npm run existing-conditions -- seal-engineering-evidence --case <case-definition.json> --native-evidence <evaluator-native-evidence.json> --evaluator-key-file <secret> --out <provenance.json>",
+    "  npm run existing-conditions -- collect-gfci-native-evidence --adapter-config <json> --room-contents <json> --parameter-readbacks <json> --out <evaluator-native-evidence.json>",
+    "  npm run existing-conditions -- capture-gfci-native-evidence --adapter-config <json> --expected-model <model.rvt> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "  npm run existing-conditions -- evaluate-engineering-case --case <case-definition.json> --native-evidence <evaluator-native-evidence.json> --evaluator-provenance <provenance.json> --evaluator-key-file <secret> --out <checks.json>",
     "  npm run existing-conditions -- advance-controller --state <controller-state-or-receipt.json> --event <event.json> --out <next-receipt.json>",
     "  npm run existing-conditions -- evaluator-diff --before-visible <json> --after-visible <json> --package <agent_package.json> --out <receipt.json>",
@@ -365,7 +374,8 @@ function buildAgentPackage(): void {
         "withheld_evaluator_package",
         "evaluator_native_evidence",
         "evaluator_provenance",
-        "evaluator_signing_key"
+        "evaluator_signing_key",
+        "evaluator_native_adapter_config"
       ],
       require_native_readback: true,
       require_post_change_visual_receipt: true,
@@ -623,6 +633,68 @@ function sealEngineeringEvidenceFile(): void {
   writeJson(requiredArgument("--out"), createEngineeringCaseEvidenceProvenance(definition, evidence, evaluatorKey));
 }
 
+function collectGfciNativeEvidenceFile(): void {
+  const config = readJson(requiredArgument("--adapter-config")) as GfciNativeAdapterConfig;
+  const readbacks = readJson(requiredArgument("--parameter-readbacks"));
+  if (!Array.isArray(readbacks)) throw new Error("--parameter-readbacks must contain a JSON array.");
+  const evidence = collectGfciNativeEvidence(
+    config,
+    readJson(requiredArgument("--room-contents")),
+    readbacks as NativeParameterReadback[]
+  );
+  writeJson(requiredArgument("--out"), evidence);
+}
+
+async function captureGfciNativeEvidence(): Promise<void> {
+  const expectedModel = path.resolve(requiredArgument("--expected-model"));
+  const outDir = path.resolve(requiredArgument("--out-dir"));
+  if (fs.existsSync(outDir) && fs.readdirSync(outDir).length > 0) {
+    throw new Error(`Refusing to overwrite a non-empty GFCI capture directory: ${outDir}`);
+  }
+  const config = readJson(requiredArgument("--adapter-config")) as GfciNativeAdapterConfig;
+  const expectedModelSha256 = sha256(expectedModel);
+  assertExpectedGfciModelSha256(config, expectedModelSha256);
+  const client = bridgeClient();
+  const context = await client.get("/revit/context");
+  if (canonicalPath(activeDocumentPath(context)) !== canonicalPath(expectedModel)) {
+    throw new Error(`Active document is not the expected model: ${activeDocumentPath(context)}`);
+  }
+  const roomContents = await client.post("/revit/room-contents", {
+    roomNumber: config.room_number,
+    categories: ["Plumbing Fixtures", "Electrical Fixtures"],
+    includeLinked: true,
+    mode: "auto",
+    verticalScope: "room",
+    spatialKindPreference: "space",
+    limit: 50000
+  });
+  const elementIds = selectGfciScopedElementIds(config, roomContents);
+  if (elementIds.length === 0) throw new Error("gfci_adapter_scoped_receptacles_missing");
+  const parameterReadbacks: NativeParameterReadback[] = [];
+  for (const elementId of elementIds) {
+    parameterReadbacks.push(await client.post("/revit/get-parameters", { elementId }) as NativeParameterReadback);
+  }
+  const evidence = collectGfciNativeEvidence(config, roomContents, parameterReadbacks);
+  evidence.collection_receipt = {
+    ...(evidence.collection_receipt ?? {}),
+    expected_model_path: expectedModel,
+    expected_model_sha256: expectedModelSha256
+  };
+  writeJson(path.join(outDir, "context.json"), context);
+  writeJson(path.join(outDir, "room_contents.json"), roomContents);
+  writeJson(path.join(outDir, "parameter_readbacks.json"), parameterReadbacks);
+  writeJson(path.join(outDir, "native_evidence.json"), evidence);
+  writeJson(path.join(outDir, "capture_receipt.json"), {
+    schema_version: 1,
+    expected_model_path: expectedModel,
+    expected_model_sha256: expectedModelSha256,
+    room_number: config.room_number,
+    scoped_element_ids: elementIds,
+    adapter_config_sha256: sha256(path.resolve(requiredArgument("--adapter-config"))),
+    native_readback: evidence.native_readback
+  });
+}
+
 async function runRedaction(): Promise<void> {
   const expectedSource = path.resolve(requiredArgument("--expected-source"));
   const stagingModel = path.resolve(requiredArgument("--staging-model"));
@@ -787,6 +859,14 @@ async function main(): Promise<void> {
   }
   if (command === "seal-engineering-evidence") {
     sealEngineeringEvidenceFile();
+    return;
+  }
+  if (command === "collect-gfci-native-evidence") {
+    collectGfciNativeEvidenceFile();
+    return;
+  }
+  if (command === "capture-gfci-native-evidence") {
+    await captureGfciNativeEvidence();
     return;
   }
   if (command === "advance-controller") {

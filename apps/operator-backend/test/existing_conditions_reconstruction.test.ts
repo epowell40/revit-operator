@@ -127,7 +127,7 @@ test("invalidates a run that accessed withheld truth", () => {
 });
 
 test("invalidates a run that accessed evaluator-native evidence or its signing key", () => {
-  for (const role of ["evaluator_native_evidence", "evaluator_provenance", "evaluator_signing_key"]) {
+  for (const role of ["evaluator_native_evidence", "evaluator_provenance", "evaluator_signing_key", "evaluator_native_adapter_config"]) {
     const attempt = candidate();
     attempt.accessed_artifact_roles.push(role);
     const result = scoreExistingConditionsReconstruction(truth(), attempt);
