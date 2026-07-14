@@ -1315,7 +1315,7 @@ export async function buildArchitecturalWallLineCandidates(
   );
   const openingGapHypotheses = buildOpeningGapHypotheses(
     candidates,
-    masks.source,
+    masks.candidate,
     width,
     height,
     pixelsPerFoot,

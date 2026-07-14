@@ -27,7 +27,8 @@ function sha256(filePath: string): string {
 function drawFixture(
   filePath: string,
   includeTargets: boolean,
-  targets: Array<[[number, number], [number, number]]>
+  targets: Array<[[number, number], [number, number]]>,
+  retainedSegments: Array<[[number, number], [number, number]]> = []
 ): void {
   const canvas = createCanvas(600, 360);
   const context = canvas.getContext("2d");
@@ -39,6 +40,12 @@ function drawFixture(
   context.moveTo(20, 330);
   context.lineTo(580, 330);
   context.stroke();
+  for (const [start, end] of retainedSegments) {
+    context.beginPath();
+    context.moveTo(start[0], start[1]);
+    context.lineTo(end[0], end[1]);
+    context.stroke();
+  }
   if (includeTargets) {
     context.lineWidth = 5;
     for (const [start, end] of targets) {
@@ -99,12 +106,13 @@ function deltaInput(sourcePath: string, redactedPath: string, fixtureId: string)
 async function buildFixture(
   temp: string,
   fixtureId: string,
-  targets: Array<[[number, number], [number, number]]>
+  targets: Array<[[number, number], [number, number]]>,
+  retainedSegments: Array<[[number, number], [number, number]]> = []
 ) {
   const sourcePath = path.join(temp, `${fixtureId}-source.png`);
   const redactedPath = path.join(temp, `${fixtureId}-redacted.png`);
-  drawFixture(sourcePath, true, targets);
-  drawFixture(redactedPath, false, targets);
+  drawFixture(sourcePath, true, targets, retainedSegments);
+  drawFixture(redactedPath, false, targets, retainedSegments);
   const delta = await buildArchitecturalSourceDelta(
     deltaInput(sourcePath, redactedPath, fixtureId),
     path.join(temp, `${fixtureId}-delta`)
@@ -335,6 +343,41 @@ test("wall-line extraction exposes a repeated wall-band gap as an unclassified h
       /additional properties/
     );
     assert.equal("selected_candidate_id" in receipt, false);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("opening-gap discovery ignores retained background ink crossing a source-only wall opening", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-opening-gap-retained-clutter-"));
+  try {
+    const fixture = await buildFixture(temp, "opening-gap-retained-clutter", [
+      [[40, 90], [210, 90]],
+      [[310, 90], [560, 90]],
+      [[40, 110], [210, 110]],
+      [[310, 110], [560, 110]]
+    ], [
+      [[230, 40], [230, 160]],
+      [[260, 40], [260, 160]],
+      [[290, 40], [290, 160]]
+    ]);
+    const receipt = await buildArchitecturalWallLineCandidates(
+      fixture.delta,
+      sha256(fixture.deltaReceiptPath),
+      fixture.measurement,
+      sha256(fixture.measurementReceiptPath),
+      path.join(temp, "opening-gap-retained-clutter-candidates"),
+      {
+        maximum_candidates: 12,
+        minimum_length_ft: 3,
+        maximum_wall_interruption_ft: 4,
+        maximum_face_pair_separation_ft: 1.5,
+        opening_gap_minimum_confirming_profiles: 2
+      }
+    );
+    const opening = receipt.opening_gap_hypotheses.find((entry) => entry.width_ft >= 2.5 && entry.width_ft <= 4.5);
+    assert.ok(opening, JSON.stringify(receipt.opening_gap_hypotheses, null, 2));
+    assert.ok(opening.pixel_center.x >= 190 && opening.pixel_center.x <= 330);
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
