@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-pixel-measurement.v1.schema.json",
+  "title": "Existing conditions architectural registered pixel measurement V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "fixture_id",
+    "scope_id",
+    "source_evidence_sha256",
+    "visible_evidence",
+    "registration",
+    "measurement_receipt_sha256",
+    "coordinate_space",
+    "level_name",
+    "level_elevation_ft",
+    "maximum_created_elements",
+    "observations"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "fixture_id": { "type": "string", "minLength": 1 },
+    "scope_id": { "type": "string", "minLength": 1 },
+    "source_evidence_sha256": {
+      "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/sha256"
+    },
+    "visible_evidence": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/evidence"
+      }
+    },
+    "registration": {
+      "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/registration"
+    },
+    "measurement_receipt_sha256": {
+      "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/sha256"
+    },
+    "coordinate_space": { "const": "measurement_overlay_pixels_top_left" },
+    "level_name": { "type": "string", "minLength": 1 },
+    "level_elevation_ft": { "type": "number" },
+    "geometry_confidence_threshold": { "type": "number", "minimum": 0, "maximum": 1 },
+    "material_confidence_threshold": { "type": "number", "minimum": 0, "maximum": 1 },
+    "maximum_opening_host_distance_ft": { "type": "number", "exclusiveMinimum": 0 },
+    "maximum_created_elements": { "type": "integer", "minimum": 1 },
+    "observations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/wall_observation" },
+          { "$ref": "#/$defs/door_observation" },
+          { "$ref": "#/$defs/window_observation" }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "base_properties": {
+      "type": "object",
+      "properties": {
+        "discipline": { "const": "architectural" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "visibility": {
+          "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/visibility"
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": {
+          "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/supported_attributes"
+        }
+      }
+    },
+    "wall_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "discipline",
+        "observation_id",
+        "visibility",
+        "confidence",
+        "supported_attributes",
+        "pixel_points"
+      ],
+      "properties": {
+        "kind": { "const": "wall" },
+        "discipline": { "const": "architectural" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "visibility": {
+          "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/visibility"
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": {
+          "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/supported_attributes"
+        },
+        "pixel_points": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/point" },
+            { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/point" }
+          ]
+        }
+      }
+    },
+    "door_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "discipline",
+        "observation_id",
+        "visibility",
+        "confidence",
+        "supported_attributes",
+        "pixel_point",
+        "host_wall_observation_id"
+      ],
+      "properties": {
+        "kind": { "const": "door" },
+        "discipline": { "const": "architectural" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "visibility": {
+          "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/visibility"
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": {
+          "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/supported_attributes"
+        },
+        "pixel_point": {
+          "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/point"
+        },
+        "host_wall_observation_id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "window_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "discipline",
+        "observation_id",
+        "visibility",
+        "confidence",
+        "supported_attributes",
+        "pixel_point",
+        "host_wall_observation_id"
+      ],
+      "properties": {
+        "kind": { "const": "window" },
+        "discipline": { "const": "architectural" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "visibility": {
+          "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/visibility"
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": {
+          "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/supported_attributes"
+        },
+        "pixel_point": {
+          "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/point"
+        },
+        "host_wall_observation_id": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

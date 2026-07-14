@@ -101,7 +101,9 @@
               "architectural_source_aligned",
               "architectural_redacted_aligned",
               "architectural_candidate_delta_mask",
-              "architectural_source_redacted_comparison"
+              "architectural_source_redacted_comparison",
+              "architectural_registered_measurement",
+              "architectural_registered_measurement_overlay"
             ]
           },
           "path": { "type": "string", "minLength": 1 },

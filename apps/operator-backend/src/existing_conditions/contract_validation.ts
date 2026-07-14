@@ -3,13 +3,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020, { type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
 
-export type ExistingConditionsContractName = "agent_package" | "ground_truth" | "candidate" | "architectural_preview";
+export type ExistingConditionsContractName = "agent_package" | "ground_truth" | "candidate" | "architectural_preview" | "architectural_pixel_measurement";
 
 const FILES: Record<ExistingConditionsContractName, string> = {
   agent_package: "existing_conditions_agent_package.v1.schema.json",
   ground_truth: "existing_conditions_ground_truth.v1.schema.json",
   candidate: "existing_conditions_candidate.v1.schema.json",
-  architectural_preview: "existing_conditions_architectural_preview.v1.schema.json"
+  architectural_preview: "existing_conditions_architectural_preview.v1.schema.json",
+  architectural_pixel_measurement: "existing_conditions_architectural_pixel_measurement.v1.schema.json"
 };
 
 let validators: Record<ExistingConditionsContractName, ValidateFunction> | null = null;

@@ -25,6 +25,8 @@ test("package CLI copies and hash-binds optional registration, type-catalog, and
       return [name, { path: artifactPath, sha256: sha256(artifactPath), width_px: 10, height_px: 10 }];
     }));
     const deltaReceiptPath = path.join(temp, "delta-receipt.json");
+    const measurementOverlayPath = path.join(temp, "measurement-overlay.png");
+    const measurementReceiptPath = path.join(temp, "measurement-receipt.json");
     const sourceRenderPath = path.join(temp, "source-render.png");
     const surroundingCapturePath = path.join(temp, "surrounding-capture.jpg");
     const outDir = path.join(temp, "agent");
@@ -40,9 +42,28 @@ test("package CLI copies and hash-binds optional registration, type-catalog, and
       fixture_id: "package-artifacts-v1",
       scope_id: "scope",
       registration_verified: true,
+      registration_source_evidence_sha256: "e".repeat(64),
       source_render_sha256: sha256(sourceRenderPath),
       redacted_model_capture_sha256: sha256(surroundingCapturePath),
+      output_frame: { width_px: 10, height_px: 10 },
       artifacts: deltaArtifacts
+    })}\n`, "utf8");
+    fs.writeFileSync(measurementOverlayPath, "measurement-overlay-bytes", "utf8");
+    fs.writeFileSync(measurementReceiptPath, `${JSON.stringify({
+      schema_version: 1,
+      artifact_role: "architectural_registered_measurement_overlay",
+      fixture_id: "package-artifacts-v1",
+      scope_id: "scope",
+      architectural_delta_receipt_sha256: sha256(deltaReceiptPath),
+      registration_source_evidence_sha256: "e".repeat(64),
+      source_aligned_sha256: deltaArtifacts.source_aligned.sha256,
+      candidate_delta_mask_sha256: deltaArtifacts.candidate_delta_mask.sha256,
+      overlay: {
+        path: measurementOverlayPath,
+        sha256: sha256(measurementOverlayPath),
+        width_px: 10,
+        height_px: 10
+      }
     })}\n`, "utf8");
 
     const cli = path.resolve(process.cwd(), "dist/src/tools/existing_conditions_fixture.js");
@@ -62,7 +83,8 @@ test("package CLI copies and hash-binds optional registration, type-catalog, and
       "--type-mapping-artifact", typeCatalogPath,
       "--source-pdf-render", sourceRenderPath,
       "--surrounding-model-capture", surroundingCapturePath,
-      "--architectural-delta-receipt", deltaReceiptPath
+      "--architectural-delta-receipt", deltaReceiptPath,
+      "--architectural-measurement-receipt", measurementReceiptPath
     ], { cwd: process.cwd(), encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr || result.stdout);
 
@@ -79,7 +101,7 @@ test("package CLI copies and hash-binds optional registration, type-catalog, and
       path: typeCatalogCopy,
       sha256: sha256(typeCatalogCopy)
     });
-    assert.equal(packageValue.derived_evidence.length, 5);
+    assert.equal(packageValue.derived_evidence.length, 7);
     assert.deepEqual(packageValue.evidence.map(({ role }: { role: string }) => role), [
       "source_pdf", "source_pdf_render", "surrounding_model_capture"
     ]);
