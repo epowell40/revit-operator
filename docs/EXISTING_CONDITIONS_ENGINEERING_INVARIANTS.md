@@ -47,6 +47,8 @@ Score verified protection, not a family/type label. An integral GFCI device, ups
 
 Score continuous qualifying wall-space coverage. The evaluator projects eligible outlets onto each uninterrupted segment and verifies that the union of their allowed coverage intervals spans the segment. Many coordinate layouts can therefore pass. Door/opening interruptions, minimum qualifying width, floor-outlet eligibility, and maximum point distance are profile inputs.
 
+Native discovery must also prove that each existing device belongs to the target Room or Space. Direct Revit spatial association takes precedence so a valid wall-hosted device on the boundary is retained; insertion-point containment is only a fallback when no direct association exists. A nearby device assigned to an adjacent space must not count merely because it projects onto the same shared wall. Evaluator capture should retain the excluded near-boundary IDs as a scope receipt and independently cross-check target-room inventory.
+
 ### Circuit loading
 
 Score native circuit membership and calculated volt-amperes. General-use receptacle load is represented per yoke or strap, so simplex, duplex, and quad face configurations do not become guessed VA values. The evaluator calculates:
