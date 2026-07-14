@@ -46,6 +46,8 @@ export type ArchitecturalWallLineCandidatePolicy = {
   opening_gap_group_center_tolerance_ft: number;
   opening_gap_group_width_tolerance_ft: number;
   maximum_opening_gap_hypotheses: number;
+  opening_evidence_minimum_context_ft: number;
+  opening_evidence_width_multiplier: number;
   parallel_angle_tolerance_degrees: number;
   minimum_parallel_separation_ft: number;
   maximum_parallel_separation_ft: number;
@@ -108,11 +110,24 @@ export type ArchitecturalOpeningGapHypothesis = {
   evidence_score: number;
 };
 
-type ImageReference = {
+export type ArchitecturalImageReference = {
   path: string;
   sha256: string;
   width_px: number;
   height_px: number;
+};
+
+export type ArchitecturalOpeningEvidenceCrop = {
+  opening_hypothesis_id: string;
+  host_candidate_id: string;
+  crop_bounds_px: {
+    min_x: number;
+    min_y: number;
+    max_x: number;
+    max_y: number;
+  };
+  source_crop: ArchitecturalImageReference;
+  evidence_overlay: ArchitecturalImageReference;
 };
 
 export type ArchitecturalWallLineCandidateReceipt = {
@@ -129,9 +144,10 @@ export type ArchitecturalWallLineCandidateReceipt = {
   candidates: ArchitecturalWallLineCandidate[];
   junction_hypotheses: ArchitecturalWallJunctionHypothesis[];
   opening_gap_hypotheses: ArchitecturalOpeningGapHypothesis[];
+  opening_evidence_crops: ArchitecturalOpeningEvidenceCrop[];
   ambiguities: ArchitecturalWallLineAmbiguity[];
   clarification_question: string | null;
-  overlay: ImageReference;
+  overlay: ArchitecturalImageReference;
   usage_constraints: string[];
 };
 
@@ -186,6 +202,8 @@ const DEFAULT_POLICY_BASE = {
   opening_gap_group_center_tolerance_ft: 0.8,
   opening_gap_group_width_tolerance_ft: 1,
   maximum_opening_gap_hypotheses: 12,
+  opening_evidence_minimum_context_ft: 3,
+  opening_evidence_width_multiplier: 1.5,
   parallel_angle_tolerance_degrees: 3,
   minimum_parallel_separation_ft: 0.15,
   maximum_parallel_separation_ft: 4,
@@ -251,7 +269,7 @@ function pointToModel(
   };
 }
 
-function imageReference(reference: ImageReference, label: string, width: number, height: number): string {
+function imageReference(reference: ArchitecturalImageReference, label: string, width: number, height: number): string {
   const filePath = path.resolve(requiredText(reference.path, `${label}_path`));
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) throw new Error(`${label}_file_not_found:${filePath}`);
   if (sha256File(filePath) !== sha256Text(reference.sha256, `${label}_sha256`)) throw new Error(`${label}_sha256_mismatch`);
@@ -316,6 +334,8 @@ function policyFor(width: number, height: number, override: Partial<Architectura
   positive(policy.opening_gap_group_center_tolerance_ft, "opening_gap_group_center_tolerance_ft");
   positive(policy.opening_gap_group_width_tolerance_ft, "opening_gap_group_width_tolerance_ft");
   positiveInteger(policy.maximum_opening_gap_hypotheses, "maximum_opening_gap_hypotheses");
+  positive(policy.opening_evidence_minimum_context_ft, "opening_evidence_minimum_context_ft");
+  positive(policy.opening_evidence_width_multiplier, "opening_evidence_width_multiplier");
   positive(policy.parallel_angle_tolerance_degrees, "parallel_angle_tolerance_degrees");
   positive(policy.minimum_parallel_separation_ft, "minimum_parallel_separation_ft");
   positive(policy.maximum_parallel_separation_ft, "maximum_parallel_separation_ft");
@@ -1031,7 +1051,7 @@ async function writeOverlay(
   junctions: ArchitecturalWallJunctionHypothesis[],
   openingGaps: ArchitecturalOpeningGapHypothesis[],
   outDir: string
-): Promise<ImageReference> {
+): Promise<ArchitecturalImageReference> {
   const source = await loadImage(sourcePath);
   const canvas = createCanvas(width, height);
   const context = canvas.getContext("2d");
@@ -1092,6 +1112,105 @@ async function writeOverlay(
     width_px: width,
     height_px: height
   };
+}
+
+async function writeOpeningEvidenceCrops(
+  sourcePath: string,
+  width: number,
+  height: number,
+  candidates: ArchitecturalWallLineCandidate[],
+  openings: ArchitecturalOpeningGapHypothesis[],
+  pixelsPerFoot: number,
+  policy: ArchitecturalWallLineCandidatePolicy,
+  outDir: string
+): Promise<ArchitecturalOpeningEvidenceCrop[]> {
+  if (openings.length === 0) return [];
+  const source = await loadImage(sourcePath);
+  const cropsDirectory = path.join(outDir, "opening_evidence");
+  fs.mkdirSync(cropsDirectory);
+  const result: ArchitecturalOpeningEvidenceCrop[] = [];
+  for (const opening of openings) {
+    const host = candidates.find((candidate) => candidate.candidate_id === opening.host_candidate_id);
+    if (!host) throw new Error(`architectural_opening_crop_host_not_found:${opening.host_candidate_id}`);
+    const start = host.pixel_points[0];
+    const end = host.pixel_points[1];
+    const length = Math.hypot(end.x - start.x, end.y - start.y);
+    if (length <= 0) throw new Error(`architectural_opening_crop_host_is_degenerate:${opening.host_candidate_id}`);
+    const axis = { x: (end.x - start.x) / length, y: (end.y - start.y) / length };
+    const normal = { x: -axis.y, y: axis.x };
+    const halfAlong = Math.max(
+      policy.opening_evidence_minimum_context_ft,
+      opening.width_ft * policy.opening_evidence_width_multiplier
+    ) * pixelsPerFoot;
+    const halfNormal = Math.max(
+      policy.opening_evidence_minimum_context_ft,
+      opening.width_ft * policy.opening_evidence_width_multiplier
+    ) * pixelsPerFoot;
+    const corners = [-1, 1].flatMap((alongSign) => [-1, 1].map((normalSign) => ({
+      x: opening.pixel_center.x + axis.x * halfAlong * alongSign + normal.x * halfNormal * normalSign,
+      y: opening.pixel_center.y + axis.y * halfAlong * alongSign + normal.y * halfNormal * normalSign
+    })));
+    const minX = Math.max(0, Math.floor(Math.min(...corners.map((point) => point.x))));
+    const minY = Math.max(0, Math.floor(Math.min(...corners.map((point) => point.y))));
+    const maxX = Math.min(width, Math.ceil(Math.max(...corners.map((point) => point.x))));
+    const maxY = Math.min(height, Math.ceil(Math.max(...corners.map((point) => point.y))));
+    const cropWidth = maxX - minX;
+    const cropHeight = maxY - minY;
+    if (cropWidth <= 0 || cropHeight <= 0) throw new Error(`architectural_opening_crop_is_empty:${opening.opening_hypothesis_id}`);
+    const rawCanvas = createCanvas(cropWidth, cropHeight);
+    rawCanvas.getContext("2d").drawImage(source, minX, minY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+    const sourceCropPath = path.join(cropsDirectory, `${opening.opening_hypothesis_id}-source.png`);
+    fs.writeFileSync(sourceCropPath, rawCanvas.toBuffer("image/png"));
+
+    const overlayCanvas = createCanvas(cropWidth, cropHeight);
+    const overlayContext = overlayCanvas.getContext("2d");
+    overlayContext.drawImage(rawCanvas, 0, 0);
+    const localCenter = { x: opening.pixel_center.x - minX, y: opening.pixel_center.y - minY };
+    const halfGap = opening.width_ft * pixelsPerFoot / 2;
+    overlayContext.strokeStyle = "#00a6a6";
+    overlayContext.lineWidth = 3;
+    overlayContext.setLineDash([10, 6]);
+    overlayContext.beginPath();
+    overlayContext.moveTo(localCenter.x - axis.x * halfAlong, localCenter.y - axis.y * halfAlong);
+    overlayContext.lineTo(localCenter.x + axis.x * halfAlong, localCenter.y + axis.y * halfAlong);
+    overlayContext.stroke();
+    overlayContext.setLineDash([]);
+    overlayContext.strokeStyle = "#ff006e";
+    overlayContext.lineWidth = 4;
+    for (const sign of [-1, 1]) {
+      const point = {
+        x: localCenter.x + axis.x * halfGap * sign,
+        y: localCenter.y + axis.y * halfGap * sign
+      };
+      overlayContext.beginPath();
+      overlayContext.moveTo(point.x - normal.x * 12, point.y - normal.y * 12);
+      overlayContext.lineTo(point.x + normal.x * 12, point.y + normal.y * 12);
+      overlayContext.stroke();
+    }
+    overlayContext.fillStyle = "#006d6d";
+    overlayContext.font = "bold 15px Arial";
+    overlayContext.fillText(opening.opening_hypothesis_id, 8, 20);
+    const evidenceOverlayPath = path.join(cropsDirectory, `${opening.opening_hypothesis_id}-overlay.png`);
+    fs.writeFileSync(evidenceOverlayPath, overlayCanvas.toBuffer("image/png"));
+    result.push({
+      opening_hypothesis_id: opening.opening_hypothesis_id,
+      host_candidate_id: opening.host_candidate_id,
+      crop_bounds_px: { min_x: minX, min_y: minY, max_x: maxX, max_y: maxY },
+      source_crop: {
+        path: sourceCropPath,
+        sha256: sha256File(sourceCropPath),
+        width_px: cropWidth,
+        height_px: cropHeight
+      },
+      evidence_overlay: {
+        path: evidenceOverlayPath,
+        sha256: sha256File(evidenceOverlayPath),
+        width_px: cropWidth,
+        height_px: cropHeight
+      }
+    });
+  }
+  return result;
 }
 
 export async function buildArchitecturalWallLineCandidates(
@@ -1204,6 +1323,16 @@ export async function buildArchitecturalWallLineCandidates(
     openingGapHypotheses,
     resolvedOutDir
   );
+  const openingEvidenceCrops = await writeOpeningEvidenceCrops(
+    sourcePath,
+    width,
+    height,
+    candidates,
+    openingGapHypotheses,
+    pixelsPerFoot,
+    policy,
+    resolvedOutDir
+  );
   return {
     schema_version: 1,
     artifact_role: "architectural_wall_line_candidates",
@@ -1218,6 +1347,7 @@ export async function buildArchitecturalWallLineCandidates(
     candidates,
     junction_hypotheses: junctionHypotheses,
     opening_gap_hypotheses: openingGapHypotheses,
+    opening_evidence_crops: openingEvidenceCrops,
     ambiguities,
     clarification_question: status === "clarification_required"
       ? "Multiple source-supported wall-line candidates overlap or have near-equal rank. Confirm the intended wall centerline/host candidate before compiling openings or any native action."

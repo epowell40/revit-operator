@@ -28,6 +28,8 @@ test("package CLI copies and hash-binds optional registration, type-catalog, and
     const measurementOverlayPath = path.join(temp, "measurement-overlay.png");
     const measurementReceiptPath = path.join(temp, "measurement-receipt.json");
     const wallCandidateOverlayPath = path.join(temp, "wall-candidate-overlay.png");
+    const openingSourceCropPath = path.join(temp, "opening-source.png");
+    const openingEvidenceOverlayPath = path.join(temp, "opening-overlay.png");
     const wallCandidateReceiptPath = path.join(temp, "wall-candidate-receipt.json");
     const sourceRenderPath = path.join(temp, "source-render.png");
     const surroundingCapturePath = path.join(temp, "surrounding-capture.jpg");
@@ -68,6 +70,8 @@ test("package CLI copies and hash-binds optional registration, type-catalog, and
       }
     })}\n`, "utf8");
     fs.writeFileSync(wallCandidateOverlayPath, "wall-candidate-overlay-bytes", "utf8");
+    fs.writeFileSync(openingSourceCropPath, "opening-source-bytes", "utf8");
+    fs.writeFileSync(openingEvidenceOverlayPath, "opening-overlay-bytes", "utf8");
     fs.writeFileSync(wallCandidateReceiptPath, `${JSON.stringify({
       schema_version: 1,
       artifact_role: "architectural_wall_line_candidates",
@@ -89,6 +93,42 @@ test("package CLI copies and hash-binds optional registration, type-catalog, and
         candidate_coverage: 1,
         source_ink_coverage: 1,
         rank_score: 1
+      }],
+      junction_hypotheses: [],
+      opening_gap_hypotheses: [{
+        opening_hypothesis_id: "opening-a",
+        rank: 1,
+        kind: "unclassified_opening_gap",
+        host_candidate_id: "line-a",
+        pixel_center: { x: 5, y: 5 },
+        model_center: { x: 5, y: 5 },
+        width_ft: 3,
+        host_chainage_ft: 4,
+        host_chainage_ratio: 0.5,
+        profile_axis_degrees: 45,
+        confirming_profile_count: 3,
+        profile_offset_range_ft: [-0.2, 0.2],
+        flank_ink_coverage: 1,
+        gap_ink_coverage: 0,
+        profile_ink_coverage: 1,
+        evidence_score: 0.9
+      }],
+      opening_evidence_crops: [{
+        opening_hypothesis_id: "opening-a",
+        host_candidate_id: "line-a",
+        crop_bounds_px: { min_x: 0, min_y: 0, max_x: 10, max_y: 10 },
+        source_crop: {
+          path: openingSourceCropPath,
+          sha256: sha256(openingSourceCropPath),
+          width_px: 10,
+          height_px: 10
+        },
+        evidence_overlay: {
+          path: openingEvidenceOverlayPath,
+          sha256: sha256(openingEvidenceOverlayPath),
+          width_px: 10,
+          height_px: 10
+        }
       }],
       ambiguities: [],
       clarification_question: "Confirm the line.",
@@ -137,7 +177,9 @@ test("package CLI copies and hash-binds optional registration, type-catalog, and
       path: typeCatalogCopy,
       sha256: sha256(typeCatalogCopy)
     });
-    assert.equal(packageValue.derived_evidence.length, 9);
+    assert.equal(packageValue.derived_evidence.length, 11);
+    assert.equal(packageValue.derived_evidence.some(({ role }: { role: string }) => role === "architectural_opening_source_crop"), true);
+    assert.equal(packageValue.derived_evidence.some(({ role }: { role: string }) => role === "architectural_opening_evidence_overlay"), true);
     assert.deepEqual(packageValue.evidence.map(({ role }: { role: string }) => role), [
       "source_pdf", "source_pdf_render", "surrounding_model_capture"
     ]);

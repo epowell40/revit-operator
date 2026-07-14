@@ -105,7 +105,9 @@
               "architectural_registered_measurement",
               "architectural_registered_measurement_overlay",
               "architectural_wall_line_candidates",
-              "architectural_wall_line_candidate_overlay"
+              "architectural_wall_line_candidate_overlay",
+              "architectural_opening_source_crop",
+              "architectural_opening_evidence_overlay"
             ]
           },
           "path": { "type": "string", "minLength": 1 },

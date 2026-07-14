@@ -94,6 +94,11 @@ import {
   buildArchitecturalWallLineCandidates,
   type ArchitecturalWallLineCandidateReceipt
 } from "../existing_conditions/architectural_wall_line_candidates.js";
+import {
+  validateArchitecturalOpeningClassification,
+  type ArchitecturalOpeningClassificationReceipt
+} from "../existing_conditions/architectural_opening_classification.js";
+import { scoreArchitecturalOpeningClassification } from "../existing_conditions/architectural_opening_classification_score.js";
 
 function argument(name: string): string {
   const index = process.argv.indexOf(name);
@@ -156,6 +161,8 @@ function usage(): never {
     "  npm run existing-conditions -- build-architectural-delta --input <registered-source-and-redacted-capture.json> --out-dir <derived-artifacts-dir> --out <receipt.json>",
     "  npm run existing-conditions -- build-architectural-measurement --delta-receipt <receipt.json> --out-dir <measurement-dir> --out <measurement-receipt.json>",
     "  npm run existing-conditions -- build-architectural-wall-candidates --delta-receipt <receipt.json> --measurement-receipt <receipt.json> --out-dir <candidate-dir> --out <candidate-receipt.json>",
+    "  npm run existing-conditions -- validate-architectural-opening-classification --candidate-receipt <receipt.json> --classification <agent-classification.json> --out <validated-classification.json>",
+    "  npm run existing-conditions -- score-architectural-opening-classification --truth <ground-truth.json> --candidate-receipt <receipt.json> --classification <validated-classification.json> --out <score.json>",
     "  npm run existing-conditions -- compile-architectural-pixel-preview --input <pixel-observations.json> --measurement-receipt <measurement-receipt.json> --out <compiled-preview.json> [--source-out <converted-source-observations.json>] [--compilation-out <compilation.json>]",
     "  npm run existing-conditions -- audit-architectural-redaction --truth <ground-truth.json> --delta-receipt <receipt.json> --out <gate-receipt.json>",
     "  npm run existing-conditions -- audit-linked-background --model-health <model-health.json> --out <gate-receipt.json> [--link-name-tokens <token,token,...>]",
@@ -179,7 +186,7 @@ function usage(): never {
     "  npm run existing-conditions -- evaluate-engineering-case --case <case-definition.json> --native-evidence <evaluator-native-evidence.json> --evaluator-provenance <provenance.json> --evaluator-key-file <secret> --out <checks.json>",
     "  npm run existing-conditions -- advance-controller --state <controller-state-or-receipt.json> --event <event.json> --out <next-receipt.json>",
     "  npm run existing-conditions -- evaluator-diff --before-visible <json> --after-visible <json> --package <agent_package.json> --out <receipt.json>",
-    "  npm run existing-conditions -- validate-contract --kind <agent_package|ground_truth|candidate|architectural_preview|architectural_pixel_measurement|architectural_wall_candidate_clarification> --file <json>",
+    "  npm run existing-conditions -- validate-contract --kind <agent_package|ground_truth|candidate|architectural_preview|architectural_pixel_measurement|architectural_wall_candidate_clarification|architectural_opening_classification> --file <json>",
     "  npm run existing-conditions -- redact --expected-source <source.rvt> --staging-model <withheld-staging.rvt> --redacted-model <agent-redacted.rvt> --view-id <id> --ids <id,id,...> --anchor-ids <id,id,...> --out-dir <fixture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "Options:",
     "  --allow-missing-connectors  Permit non-MEP normalization without connector readback.",
@@ -493,6 +500,31 @@ function buildAgentPackage(): void {
       || architecturalWallCandidateReceipt.overlay.height_px !== architecturalDeltaReceipt.output_frame.height_px) {
       throw new Error("architectural_wall_candidate_overlay_dimensions_mismatch");
     }
+    const openingHypotheses = Array.isArray(architecturalWallCandidateReceipt.opening_gap_hypotheses)
+      ? architecturalWallCandidateReceipt.opening_gap_hypotheses
+      : [];
+    const openingCrops = Array.isArray(architecturalWallCandidateReceipt.opening_evidence_crops)
+      ? architecturalWallCandidateReceipt.opening_evidence_crops
+      : [];
+    if (openingCrops.length !== openingHypotheses.length) {
+      throw new Error("architectural_opening_evidence_crop_count_mismatch");
+    }
+    for (const crop of openingCrops) {
+      const opening = openingHypotheses.find(
+        (entry) => entry.opening_hypothesis_id === crop.opening_hypothesis_id
+          && entry.host_candidate_id === crop.host_candidate_id
+      );
+      if (!opening) throw new Error("architectural_opening_evidence_crop_hypothesis_mismatch");
+      for (const [label, artifact] of [["source", crop.source_crop], ["overlay", crop.evidence_overlay]] as const) {
+        const artifactPath = path.resolve(artifact.path);
+        if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
+          throw new Error(`architectural_opening_${label}_crop_file_not_found`);
+        }
+        if (sha256(artifactPath).toLowerCase() !== artifact.sha256.toLowerCase()) {
+          throw new Error(`architectural_opening_${label}_crop_sha256_mismatch`);
+        }
+      }
+    }
   }
   for (const [flag, source] of [["--source-pdf-render", sourcePdfRenderSource], ["--surrounding-model-capture", surroundingModelCaptureSource]] as const) {
     if (source && (!fs.existsSync(path.resolve(source)) || !fs.statSync(path.resolve(source)).isFile())) {
@@ -583,6 +615,22 @@ function buildAgentPackage(): void {
     fs.mkdirSync(architecturalWallCandidateDirectory);
     const overlayCopy = path.join(architecturalWallCandidateDirectory, "wall_line_candidates.png");
     fs.copyFileSync(path.resolve(architecturalWallCandidateReceipt.overlay.path), overlayCopy, fs.constants.COPYFILE_EXCL);
+    const openingEvidenceDirectory = path.join(architecturalWallCandidateDirectory, "opening_evidence");
+    const sourceOpeningCrops = Array.isArray(architecturalWallCandidateReceipt.opening_evidence_crops)
+      ? architecturalWallCandidateReceipt.opening_evidence_crops
+      : [];
+    if (sourceOpeningCrops.length > 0) fs.mkdirSync(openingEvidenceDirectory);
+    const packagedOpeningCrops = sourceOpeningCrops.map((crop) => {
+      const sourceCopy = path.join(openingEvidenceDirectory, `${crop.opening_hypothesis_id}-source.png`);
+      const overlayArtifactCopy = path.join(openingEvidenceDirectory, `${crop.opening_hypothesis_id}-overlay.png`);
+      fs.copyFileSync(path.resolve(crop.source_crop.path), sourceCopy, fs.constants.COPYFILE_EXCL);
+      fs.copyFileSync(path.resolve(crop.evidence_overlay.path), overlayArtifactCopy, fs.constants.COPYFILE_EXCL);
+      return {
+        ...crop,
+        source_crop: { ...crop.source_crop, path: sourceCopy, sha256: sha256(sourceCopy) },
+        evidence_overlay: { ...crop.evidence_overlay, path: overlayArtifactCopy, sha256: sha256(overlayArtifactCopy) }
+      };
+    });
     packagedArchitecturalWallCandidates = {
       ...architecturalWallCandidateReceipt,
       architectural_delta_receipt_sha256: sha256(architecturalDeltaReceiptCopy),
@@ -593,7 +641,8 @@ function buildAgentPackage(): void {
         ...architecturalWallCandidateReceipt.overlay,
         path: overlayCopy,
         sha256: sha256(overlayCopy)
-      }
+      },
+      opening_evidence_crops: packagedOpeningCrops
     };
     writeJson(architecturalWallCandidateReceiptCopy, packagedArchitecturalWallCandidates);
   }
@@ -644,7 +693,11 @@ function buildAgentPackage(): void {
       ] : []),
       ...(packagedArchitecturalWallCandidates ? [
         { role: "architectural_wall_line_candidates", path: architecturalWallCandidateReceiptCopy, sha256: sha256(architecturalWallCandidateReceiptCopy) },
-        { role: "architectural_wall_line_candidate_overlay", path: packagedArchitecturalWallCandidates.overlay.path, sha256: packagedArchitecturalWallCandidates.overlay.sha256 }
+        { role: "architectural_wall_line_candidate_overlay", path: packagedArchitecturalWallCandidates.overlay.path, sha256: packagedArchitecturalWallCandidates.overlay.sha256 },
+        ...packagedArchitecturalWallCandidates.opening_evidence_crops.flatMap((crop) => [
+          { role: "architectural_opening_source_crop", path: crop.source_crop.path, sha256: crop.source_crop.sha256 },
+          { role: "architectural_opening_evidence_overlay", path: crop.evidence_overlay.path, sha256: crop.evidence_overlay.sha256 }
+        ])
       ] : [])
     ] : undefined,
     evidence: [
@@ -738,7 +791,11 @@ function buildAgentPackage(): void {
       ] : []),
       ...(packagedArchitecturalWallCandidates ? [
         { role: "architectural_wall_line_candidates", sha256: sha256(architecturalWallCandidateReceiptCopy) },
-        { role: "architectural_wall_line_candidate_overlay", sha256: packagedArchitecturalWallCandidates.overlay.sha256 }
+        { role: "architectural_wall_line_candidate_overlay", sha256: packagedArchitecturalWallCandidates.overlay.sha256 },
+        ...packagedArchitecturalWallCandidates.opening_evidence_crops.flatMap((crop) => [
+          { role: "architectural_opening_source_crop", sha256: crop.source_crop.sha256 },
+          { role: "architectural_opening_evidence_overlay", sha256: crop.evidence_overlay.sha256 }
+        ])
       ] : [])
     ],
     require_source_observation_grounding: taskClass === "exact_reconstruction",
@@ -847,12 +904,12 @@ function reviewVisualEvidence(): void {
 
 function validateContractFile(): void {
   const kind = requiredArgument("--kind");
-  if (!["agent_package", "ground_truth", "candidate", "architectural_preview", "architectural_pixel_measurement", "architectural_wall_candidate_clarification"].includes(kind)) {
-    throw new Error("--kind must be agent_package, ground_truth, candidate, architectural_preview, architectural_pixel_measurement, or architectural_wall_candidate_clarification.");
+  if (!["agent_package", "ground_truth", "candidate", "architectural_preview", "architectural_pixel_measurement", "architectural_wall_candidate_clarification", "architectural_opening_classification"].includes(kind)) {
+    throw new Error("--kind must be agent_package, ground_truth, candidate, architectural_preview, architectural_pixel_measurement, architectural_wall_candidate_clarification, or architectural_opening_classification.");
   }
   const filePath = path.resolve(requiredArgument("--file"));
   assertExistingConditionsContract(
-    kind as "agent_package" | "ground_truth" | "candidate" | "architectural_preview" | "architectural_pixel_measurement" | "architectural_wall_candidate_clarification",
+    kind as "agent_package" | "ground_truth" | "candidate" | "architectural_preview" | "architectural_pixel_measurement" | "architectural_wall_candidate_clarification" | "architectural_opening_classification",
     readJson(filePath)
   );
   process.stdout.write(`${filePath}: valid ${kind}\n`);
@@ -1427,6 +1484,31 @@ async function main(): Promise<void> {
       requiredArgument("--out-dir")
     );
     writeJson(requiredArgument("--out"), receipt);
+    return;
+  }
+  if (command === "validate-architectural-opening-classification") {
+    const candidateReceiptPath = path.resolve(requiredArgument("--candidate-receipt"));
+    const candidates = readJson(candidateReceiptPath) as ArchitecturalWallLineCandidateReceipt;
+    const classification = readJson(requiredArgument("--classification")) as ArchitecturalOpeningClassificationReceipt;
+    assertExistingConditionsContract("architectural_opening_classification", classification);
+    validateArchitecturalOpeningClassification(classification, candidates, sha256(candidateReceiptPath));
+    writeJson(requiredArgument("--out"), classification);
+    return;
+  }
+  if (command === "score-architectural-opening-classification") {
+    const truth = readJson(requiredArgument("--truth"));
+    assertExistingConditionsContract("ground_truth", truth);
+    const candidateReceiptPath = path.resolve(requiredArgument("--candidate-receipt"));
+    const classification = readJson(requiredArgument("--classification")) as ArchitecturalOpeningClassificationReceipt;
+    assertExistingConditionsContract("architectural_opening_classification", classification);
+    const score = scoreArchitecturalOpeningClassification(
+      truth as ExistingConditionsGroundTruth,
+      readJson(candidateReceiptPath) as ArchitecturalWallLineCandidateReceipt,
+      sha256(candidateReceiptPath),
+      classification
+    );
+    writeJson(requiredArgument("--out"), score);
+    if (!score.passed) process.exitCode = 1;
     return;
   }
   if (command === "audit-architectural-redaction") {

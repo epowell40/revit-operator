@@ -12,6 +12,10 @@ import {
   type ArchitecturalSourceDeltaInput
 } from "../src/existing_conditions/architectural_source_delta.js";
 import { buildArchitecturalWallLineCandidates } from "../src/existing_conditions/architectural_wall_line_candidates.js";
+import {
+  validateArchitecturalOpeningClassification,
+  type ArchitecturalOpeningClassificationReceipt
+} from "../src/existing_conditions/architectural_opening_classification.js";
 import { assertExistingConditionsContract } from "../src/existing_conditions/contract_validation.js";
 
 const SOURCE_HASH = "7".repeat(64);
@@ -238,6 +242,98 @@ test("wall-line extraction exposes a repeated wall-band gap as an unclassified h
     assert.ok(opening.flank_ink_coverage >= 0.55);
     assert.ok(opening.gap_ink_coverage <= 0.15);
     assert.ok(opening.pixel_center.x >= 190 && opening.pixel_center.x <= 330);
+    const crop = receipt.opening_evidence_crops.find(
+      (entry) => entry.opening_hypothesis_id === opening.opening_hypothesis_id
+    );
+    assert.ok(crop);
+    assert.equal(crop.host_candidate_id, opening.host_candidate_id);
+    assert.equal(fs.existsSync(crop.source_crop.path), true);
+    assert.equal(fs.existsSync(crop.evidence_overlay.path), true);
+    assert.equal(sha256(crop.source_crop.path), crop.source_crop.sha256);
+    assert.equal(sha256(crop.evidence_overlay.path), crop.evidence_overlay.sha256);
+    assert.equal(crop.source_crop.width_px, crop.evidence_overlay.width_px);
+    assert.equal(crop.source_crop.height_px, crop.evidence_overlay.height_px);
+
+    const candidateReceiptSha256 = "8".repeat(64);
+    const classified: ArchitecturalOpeningClassificationReceipt = {
+      schema_version: 1,
+      artifact_role: "architectural_opening_classification",
+      fixture_id: receipt.fixture_id,
+      scope_id: receipt.scope_id,
+      candidate_receipt_sha256: candidateReceiptSha256,
+      status: "classified",
+      classifications: [{
+        opening_hypothesis_id: opening.opening_hypothesis_id,
+        host_candidate_id: opening.host_candidate_id,
+        classification: "door",
+        confidence: 0.9,
+        cues: ["swing_arc", "paired_jambs"],
+        evidence_artifact_sha256s: [crop.source_crop.sha256, crop.evidence_overlay.sha256],
+        rationale: "A bounded swing arc and jamb evidence are visible in the crop.",
+        selected_host_candidate_id: null
+      }],
+      native_write: false
+    };
+    assert.doesNotThrow(() => assertExistingConditionsContract("architectural_opening_classification", classified));
+    assert.doesNotThrow(() => validateArchitecturalOpeningClassification(
+      classified,
+      receipt,
+      candidateReceiptSha256
+    ));
+    const candidateReceiptPath = path.join(temp, "opening-candidate-receipt.json");
+    const classificationPath = path.join(temp, "opening-classification.json");
+    const validatedPath = path.join(temp, "opening-classification-validated.json");
+    fs.writeFileSync(candidateReceiptPath, `${JSON.stringify(receipt, null, 2)}\n`, "utf8");
+    const cliClassification = { ...classified, candidate_receipt_sha256: sha256(candidateReceiptPath) };
+    fs.writeFileSync(classificationPath, `${JSON.stringify(cliClassification, null, 2)}\n`, "utf8");
+    const classificationCli = spawnSync(process.execPath, [
+      path.resolve(process.cwd(), "dist/src/tools/existing_conditions_fixture.js"),
+      "validate-architectural-opening-classification",
+      "--candidate-receipt", candidateReceiptPath,
+      "--classification", classificationPath,
+      "--out", validatedPath
+    ], { cwd: process.cwd(), encoding: "utf8" });
+    assert.equal(classificationCli.status, 0, classificationCli.stderr || classificationCli.stdout);
+    assert.deepEqual(JSON.parse(fs.readFileSync(validatedPath, "utf8")), cliClassification);
+    assert.throws(
+      () => validateArchitecturalOpeningClassification(
+        { ...classified, status: "clarification_required" },
+        receipt,
+        candidateReceiptSha256
+      ),
+      /status_mismatch/
+    );
+    assert.throws(
+      () => validateArchitecturalOpeningClassification({
+        ...classified,
+        classifications: [{ ...classified.classifications[0]!, host_candidate_id: "line-wrong" }]
+      }, receipt, candidateReceiptSha256),
+      /host_mismatch/
+    );
+
+    const uncertain: ArchitecturalOpeningClassificationReceipt = {
+      ...classified,
+      status: "clarification_required",
+      classifications: [{
+        ...classified.classifications[0]!,
+        classification: "unknown",
+        confidence: 0.4,
+        cues: ["annotation_occlusion", "insufficient_symbol"],
+        rationale: "Annotations obscure the source symbol, so the opening cannot be classified safely."
+      }]
+    };
+    assert.doesNotThrow(() => validateArchitecturalOpeningClassification(
+      uncertain,
+      receipt,
+      candidateReceiptSha256
+    ));
+    assert.throws(
+      () => assertExistingConditionsContract("architectural_opening_classification", {
+        ...uncertain,
+        classifications: [{ ...uncertain.classifications[0]!, inferred_width_ft: 3 }]
+      }),
+      /additional properties/
+    );
     assert.equal("selected_candidate_id" in receipt, false);
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
