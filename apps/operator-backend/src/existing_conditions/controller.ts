@@ -1,4 +1,4 @@
-export type ExistingConditionsDiscipline = "mechanical" | "plumbing" | "electrical" | "mixed";
+export type ExistingConditionsDiscipline = "mechanical" | "plumbing" | "electrical" | "architectural" | "mixed";
 
 export type ExistingConditionsControllerPhase =
   | "inspect"

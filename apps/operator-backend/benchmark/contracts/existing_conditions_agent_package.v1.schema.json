@@ -37,7 +37,7 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "enum": ["hidden_truth_geometry", "engineering_invariants", "system_topology", "constructability", "drawing_legibility", "scope_safety"]
+            "enum": ["hidden_truth_geometry", "engineering_invariants", "system_topology", "architectural_topology", "constructability", "drawing_legibility", "scope_safety"]
           }
         },
         "allows_multiple_valid_solutions": { "type": "boolean" },

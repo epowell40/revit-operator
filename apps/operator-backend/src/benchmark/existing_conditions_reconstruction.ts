@@ -9,9 +9,9 @@ import {
 
 export type ExistingConditionsPoint3 = { x: number; y: number; z: number };
 
-export type ExistingConditionsElementKind = "mep_curve" | "fitting" | "family_instance" | "other";
-export type ExistingConditionsDiscipline = "mechanical" | "plumbing" | "electrical" | "mixed" | "other";
-export type ExistingConditionsRelationshipKind = "physical" | "host" | "electrical_circuit" | "system";
+export type ExistingConditionsElementKind = "mep_curve" | "linear_element" | "fitting" | "family_instance" | "other";
+export type ExistingConditionsDiscipline = "mechanical" | "plumbing" | "electrical" | "architectural" | "mixed" | "other";
+export type ExistingConditionsRelationshipKind = "physical" | "wall_junction" | "host" | "electrical_circuit" | "system";
 
 export type ExistingConditionsElement = {
   key: string;
@@ -112,6 +112,7 @@ export type ExistingConditionsScoringPolicy = {
   minimum_precision: number;
   minimum_recall: number;
   minimum_connectivity_score: number;
+  minimum_architectural_topology_score: number;
   minimum_system_score: number;
   minimum_spatial_score: number;
   minimum_hosting_score: number;
@@ -152,6 +153,7 @@ export type ExistingConditionsScore = {
     geometry: number;
     attributes: number;
     connectivity: number;
+    architectural_topology: number;
     systems: number;
     spatial: number;
     hosting: number;
@@ -160,6 +162,7 @@ export type ExistingConditionsScore = {
   };
   applicability: {
     physical_connectivity: boolean;
+    architectural_topology: boolean;
     systems: boolean;
     spatial: boolean;
     hosting: boolean;
@@ -185,6 +188,7 @@ export const DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY: ExistingConditionsScori
   minimum_precision: 0.8,
   minimum_recall: 0.8,
   minimum_connectivity_score: 0.75,
+  minimum_architectural_topology_score: 0.8,
   minimum_system_score: 0.8,
   minimum_spatial_score: 0.8,
   minimum_hosting_score: 0.75,
@@ -285,6 +289,7 @@ function connectorSize(raw: JsonMap): JsonMap {
 
 function inferDiscipline(category: string): ExistingConditionsDiscipline {
   const key = normalized(category);
+  if (/wall|door|window|room|floor|ceiling|roof|column/.test(key)) return "architectural";
   if (/electrical|lighting|fire alarm|data device|communication device/.test(key)) return "electrical";
   if (/plumbing fixture|sanitary|domestic|sprinkler/.test(key)) return "plumbing";
   if (/duct|mechanical equipment|air terminal/.test(key)) return "mechanical";
@@ -294,6 +299,10 @@ function inferDiscipline(category: string): ExistingConditionsDiscipline {
 
 function inferRole(category: string): string {
   const key = normalized(category);
+  if (/wall/.test(key)) return "wall";
+  if (/door/.test(key)) return "door";
+  if (/window/.test(key)) return "window";
+  if (/room/.test(key)) return "room";
   if (/duct terminal|air terminal/.test(key)) return "air_terminal";
   if (/duct fitting/.test(key)) return "duct_fitting";
   if (/duct/.test(key)) return "duct";
@@ -334,6 +343,8 @@ function normalizedElementFromVisible(raw: JsonMap): { id: number; element: Exis
   const categoryKey = normalized(category);
   const kind: ExistingConditionsElementKind = /fitting|accessor/.test(categoryKey)
     ? "fitting"
+    : (start && end && /wall/.test(categoryKey))
+      ? "linear_element"
     : (start && end && /duct|pipe|conduit|tray/.test(categoryKey))
       ? "mep_curve"
       : (raw.familyName || raw.family_name || raw.typeName || raw.type_name)
@@ -449,6 +460,18 @@ export function normalizeExistingConditionsSnapshot(
       relations.add(canonicalRelation("electrical_circuit", entry.element.key, systemKey));
     }
   }
+  const walls = normalizedRows
+    .map((entry) => entry.element)
+    .filter((element) => element.discipline === "architectural" && element.role === "wall" && element.endpoints);
+  for (let i = 0; i < walls.length; i += 1) {
+    for (let j = i + 1; j < walls.length; j += 1) {
+      const a = walls[i]!;
+      const b = walls[j]!;
+      if (segmentsMeet2d(a.endpoints!, b.endpoints!, 0.25)) {
+        relations.add(canonicalRelation("wall_junction", a.key, b.key));
+      }
+    }
+  }
   const nativeReadback = selectedIds.size > 0 &&
     normalizedRows.length === selectedIds.size &&
     (options.require_connector_readback === false || seenConnectorIds.size === selectedIds.size);
@@ -505,6 +528,51 @@ export function mergeExistingConditionsVisibleElementPayloads(
 
 function pointDistance(a: ExistingConditionsPoint3, b: ExistingConditionsPoint3): number {
   return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+function pointToSegmentDistance2d(
+  point: ExistingConditionsPoint3,
+  segment: [ExistingConditionsPoint3, ExistingConditionsPoint3]
+): number {
+  const [a, b] = segment;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const denominator = dx * dx + dy * dy;
+  if (denominator <= Number.EPSILON) return Math.hypot(point.x - a.x, point.y - a.y);
+  const t = clamp01(((point.x - a.x) * dx + (point.y - a.y) * dy) / denominator);
+  return Math.hypot(point.x - (a.x + t * dx), point.y - (a.y + t * dy));
+}
+
+function segmentsMeet2d(
+  a: [ExistingConditionsPoint3, ExistingConditionsPoint3],
+  b: [ExistingConditionsPoint3, ExistingConditionsPoint3],
+  toleranceFt: number
+): boolean {
+  const zGap = Math.min(
+    Math.abs(a[0].z - b[0].z),
+    Math.abs(a[0].z - b[1].z),
+    Math.abs(a[1].z - b[0].z),
+    Math.abs(a[1].z - b[1].z)
+  );
+  if (zGap > toleranceFt) return false;
+  const ax = a[1].x - a[0].x;
+  const ay = a[1].y - a[0].y;
+  const bx = b[1].x - b[0].x;
+  const by = b[1].y - b[0].y;
+  const denominator = ax * by - ay * bx;
+  if (Math.abs(denominator) > Number.EPSILON) {
+    const dx = b[0].x - a[0].x;
+    const dy = b[0].y - a[0].y;
+    const t = (dx * by - dy * bx) / denominator;
+    const u = (dx * ay - dy * ax) / denominator;
+    if (t >= 0 && t <= 1 && u >= 0 && u <= 1) return true;
+  }
+  return Math.min(
+    pointToSegmentDistance2d(a[0], b),
+    pointToSegmentDistance2d(a[1], b),
+    pointToSegmentDistance2d(b[0], a),
+    pointToSegmentDistance2d(b[1], a)
+  ) <= toleranceFt;
 }
 
 function endpointDistance(
@@ -830,6 +898,14 @@ export function scoreExistingConditionsReconstruction(
   const matchedCandidate = new Set(pairs.map((pair) => pair.candidate_key));
   const missedTruthKeys = truth.snapshot.elements.filter((element) => !matchedTruth.has(element.key)).map((element) => element.key);
   const falsePositiveKeys = candidate.snapshot.elements.filter((element) => !matchedCandidate.has(element.key)).map((element) => element.key);
+  const architecturalOpeningRoles = new Set(["door", "window"]);
+  const missedArchitecturalOpenings = truth.snapshot.elements.filter((element) =>
+    !matchedTruth.has(element.key) && element.discipline === "architectural" && architecturalOpeningRoles.has(normalized(element.role))
+  );
+  const falsePositiveArchitecturalOpenings = candidate.snapshot.elements.filter((element) =>
+    !matchedCandidate.has(element.key) && element.discipline === "architectural" && architecturalOpeningRoles.has(normalized(element.role))
+  );
+  const architecturalOpeningsExact = missedArchitecturalOpenings.length === 0 && falsePositiveArchitecturalOpenings.length === 0;
   const precision = candidate.snapshot.elements.length > 0 ? pairs.length / candidate.snapshot.elements.length : 0;
   const recall = truth.snapshot.elements.length > 0 ? pairs.length / truth.snapshot.elements.length : 0;
   const elementF1 = f1(precision, recall);
@@ -838,9 +914,11 @@ export function scoreExistingConditionsReconstruction(
   const systems = average(pairs.map((pair) => pair.system_score), 0);
   const spatial = average(pairs.map((pair) => pair.spatial_score), 0);
   const connectivity = pairs.length > 0 ? connectivityScore(truth.snapshot, candidate.snapshot, pairs) : 0;
+  const architecturalTopology = pairs.length > 0 ? relationshipF1(truth.snapshot, candidate.snapshot, pairs, "wall_junction") : 0;
   const hosting = pairs.length > 0 ? relationshipF1(truth.snapshot, candidate.snapshot, pairs, "host") : 0;
   const electricalCircuits = pairs.length > 0 ? relationshipF1(truth.snapshot, candidate.snapshot, pairs, "electrical_circuit") : 0;
   const physicalConnectivityApplicable = hasTruthRelationship(truth.snapshot, "physical") || hasTruthRelationship(candidate.snapshot, "physical");
+  const architecturalTopologyApplicable = hasTruthRelationship(truth.snapshot, "wall_junction") || hasTruthRelationship(candidate.snapshot, "wall_junction");
   const systemsApplicable = truth.snapshot.elements.some((element) => normalized(element.system_classification) || normalized(element.system_type));
   // Room/space membership is the spatial hard gate. Some linked-face-hosted Revit
   // families expose no writable/readable level after a safe copy even when their
@@ -856,6 +934,7 @@ export function scoreExistingConditionsReconstruction(
     { weight: 0.2, value: geometry, applicable: true },
     { weight: 0.15, value: attributes, applicable: true },
     { weight: 0.15, value: connectivity, applicable: physicalConnectivityApplicable },
+    { weight: 0.15, value: architecturalTopology, applicable: architecturalTopologyApplicable },
     { weight: 0.1, value: systems, applicable: systemsApplicable },
     { weight: 0.08, value: spatial, applicable: spatialApplicable },
     { weight: 0.07, value: hosting, applicable: hostingApplicable },
@@ -872,9 +951,12 @@ export function scoreExistingConditionsReconstruction(
     if (candidate.snapshot.elements.length === 0) failures.push("no_reconstruction");
     if (recall < policy.minimum_recall) failures.push("incomplete_reconstruction");
     if (precision < policy.minimum_precision) failures.push("false_positive_elements");
+    if (missedArchitecturalOpenings.length > 0) failures.push("missing_architectural_openings");
+    if (falsePositiveArchitecturalOpenings.length > 0) failures.push("false_positive_architectural_openings");
     if (geometry < 0.8) failures.push("geometry_mismatch");
     if (attributes < 0.8) failures.push("attribute_mismatch");
     if (physicalConnectivityApplicable && connectivity < policy.minimum_connectivity_score) failures.push("connectivity_mismatch");
+    if (architecturalTopologyApplicable && architecturalTopology < policy.minimum_architectural_topology_score) failures.push("architectural_topology_mismatch");
     if (systemsApplicable && systems < policy.minimum_system_score) failures.push("system_mismatch");
     if (spatialApplicable && spatial < policy.minimum_spatial_score) failures.push("spatial_mismatch");
     if (hostingApplicable && hosting < policy.minimum_hosting_score) failures.push("hosting_mismatch");
@@ -886,7 +968,9 @@ export function scoreExistingConditionsReconstruction(
     weightedScore >= policy.passing_score &&
     precision >= policy.minimum_precision &&
     recall >= policy.minimum_recall &&
+    architecturalOpeningsExact &&
     (!physicalConnectivityApplicable || connectivity >= policy.minimum_connectivity_score) &&
+    (!architecturalTopologyApplicable || architecturalTopology >= policy.minimum_architectural_topology_score) &&
     (!systemsApplicable || systems >= policy.minimum_system_score) &&
     (!spatialApplicable || spatial >= policy.minimum_spatial_score) &&
     (!hostingApplicable || hosting >= policy.minimum_hosting_score) &&
@@ -915,6 +999,7 @@ export function scoreExistingConditionsReconstruction(
       geometry: round(geometry),
       attributes: round(attributes),
       connectivity: round(connectivity),
+      architectural_topology: round(architecturalTopology),
       systems: round(systems),
       spatial: round(spatial),
       hosting: round(hosting),
@@ -923,6 +1008,7 @@ export function scoreExistingConditionsReconstruction(
     },
     applicability: {
       physical_connectivity: physicalConnectivityApplicable,
+      architectural_topology: architecturalTopologyApplicable,
       systems: systemsApplicable,
       spatial: spatialApplicable,
       hosting: hostingApplicable,
@@ -969,6 +1055,7 @@ function markdownScorecard(result: ExistingConditionsScore): string {
     `| Geometry | ${result.metrics.geometry.toFixed(3)} |`,
     `| Attributes | ${result.metrics.attributes.toFixed(3)} |`,
     `| Connectivity | ${result.metrics.connectivity.toFixed(3)} |`,
+    `| Architectural topology | ${result.metrics.architectural_topology.toFixed(3)} |`,
     `| Systems | ${result.metrics.systems.toFixed(3)} |`,
     `| Spatial context | ${result.metrics.spatial.toFixed(3)} |`,
     `| Hosting | ${result.metrics.hosting.toFixed(3)} |`,
@@ -1010,6 +1097,7 @@ export async function runExistingConditionsReconstructionEvaluation(
     { name: "element_precision_meets_threshold", ok: result.metrics.precision >= (policy.minimum_precision ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_precision), expected: policy.minimum_precision ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_precision, actual: result.metrics.precision },
     { name: "element_recall_meets_threshold", ok: result.metrics.recall >= (policy.minimum_recall ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_recall), expected: policy.minimum_recall ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_recall, actual: result.metrics.recall },
     { name: "connectivity_meets_threshold", ok: !result.applicability.physical_connectivity || result.metrics.connectivity >= (policy.minimum_connectivity_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_connectivity_score), expected: policy.minimum_connectivity_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_connectivity_score, actual: result.metrics.connectivity },
+    { name: "architectural_topology_meets_threshold", ok: !result.applicability.architectural_topology || result.metrics.architectural_topology >= (policy.minimum_architectural_topology_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_architectural_topology_score), expected: policy.minimum_architectural_topology_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_architectural_topology_score, actual: result.metrics.architectural_topology },
     { name: "systems_meet_threshold", ok: !result.applicability.systems || result.metrics.systems >= (policy.minimum_system_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_system_score), expected: policy.minimum_system_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_system_score, actual: result.metrics.systems },
     { name: "spatial_context_meets_threshold", ok: !result.applicability.spatial || result.metrics.spatial >= (policy.minimum_spatial_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_spatial_score), expected: policy.minimum_spatial_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_spatial_score, actual: result.metrics.spatial },
     { name: "hosting_meets_threshold", ok: !result.applicability.hosting || result.metrics.hosting >= (policy.minimum_hosting_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_hosting_score), expected: policy.minimum_hosting_score ?? DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY.minimum_hosting_score, actual: result.metrics.hosting },

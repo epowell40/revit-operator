@@ -6158,6 +6158,75 @@
               "Generic - 6\"": 2
             }
           }
+        },
+        {
+          "name": "Dry-run an exact registered architectural shell",
+          "request": {
+            "levelName": "Level 4",
+            "levelElevationFt": 32,
+            "normalizeWallGeometry": false,
+            "importWalls": true,
+            "importDoors": true,
+            "importWindows": true,
+            "requireExactWallTypes": true,
+            "requireExactOpeningTypes": true,
+            "requireSourceWallHosts": true,
+            "requireAllElements": true,
+            "maximumCreatedElements": 3,
+            "maximumOpeningHostDistanceFeet": 0.5,
+            "disableWallJoins": false,
+            "dryRun": true,
+            "geometry": {
+              "metadata": {
+                "source": "existing_conditions_architectural_shell_compiler",
+                "units": "feet"
+              },
+              "elements": [
+                {
+                  "id": "wall-source-17",
+                  "element": "wall",
+                  "path": [[0, 0], [12, 4]],
+                  "thickness": 0.5,
+                  "height": 10,
+                  "typeName": "Generic - 6\""
+                },
+                {
+                  "id": "door-source-23",
+                  "element": "door",
+                  "position": [4.743416, 1.581139],
+                  "width": 3,
+                  "height": 7,
+                  "familyName": "Single-Flush",
+                  "typeName": "36 x 84",
+                  "hostWallId": "wall-source-17",
+                  "chainageFt": 5
+                },
+                {
+                  "id": "window-source-31",
+                  "element": "window",
+                  "position": [8.53815, 2.84605],
+                  "width": 2,
+                  "height": 4,
+                  "sillHeight": 3,
+                  "familyName": "Fixed",
+                  "typeName": "24 x 48",
+                  "hostWallId": "wall-source-17",
+                  "chainageFt": 9
+                }
+              ]
+            }
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "summary": {
+              "wallsCreated": 1,
+              "doorsCreated": 1,
+              "windowsCreated": 1
+            },
+            "walls": [],
+            "doors": [],
+            "windows": []
+          }
         }
       ]
     },

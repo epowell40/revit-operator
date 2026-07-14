@@ -9,7 +9,7 @@
     "schema_version": { "const": 1 },
     "fixture_id": { "type": "string", "minLength": 1 },
     "scope_id": { "type": "string", "minLength": 1 },
-    "discipline": { "type": "string", "enum": ["mechanical", "plumbing", "electrical", "mixed", "other"] },
+    "discipline": { "type": "string", "enum": ["mechanical", "plumbing", "electrical", "architectural", "mixed", "other"] },
     "visible_evidence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/evidence" } },
     "accessed_artifact_roles": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
     "out_of_scope_changed_element_keys": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },

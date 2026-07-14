@@ -62,6 +62,10 @@ import {
   compileMepDraftPlan,
   type MepDraftPackage
 } from "../existing_conditions/mep_draft_plan.js";
+import {
+  compileArchitecturalShellPlan,
+  type ArchitecturalShellPackage
+} from "../existing_conditions/architectural_shell_plan.js";
 
 function argument(name: string): string {
   const index = process.argv.indexOf(name);
@@ -98,13 +102,13 @@ function parseNumbers(value: string, count: number, label: string): number[] {
   return values;
 }
 
-function optionalDiscipline(): "mechanical" | "plumbing" | "electrical" | "mixed" | undefined {
+function optionalDiscipline(): "mechanical" | "plumbing" | "electrical" | "architectural" | "mixed" | undefined {
   const value = argument("--discipline").toLowerCase();
   if (!value) return undefined;
-  if (!["mechanical", "plumbing", "electrical", "mixed"].includes(value)) {
-    throw new Error("--discipline must be mechanical, plumbing, electrical, or mixed.");
+  if (!["mechanical", "plumbing", "electrical", "architectural", "mixed"].includes(value)) {
+    throw new Error("--discipline must be mechanical, plumbing, electrical, architectural, or mixed.");
   }
-  return value as "mechanical" | "plumbing" | "electrical" | "mixed";
+  return value as "mechanical" | "plumbing" | "electrical" | "architectural" | "mixed";
 }
 
 function writeJson(filePath: string, value: unknown): void {
@@ -119,8 +123,9 @@ function usage(): never {
     "Usage:",
     "  npm run existing-conditions -- normalize --visible <export-visible-elements.json> --connectors <get-connectors.json> --ids <id,id,...> --out <snapshot.json>",
     "  npm run existing-conditions -- compile-mep-draft --input <source-observations.json> --out <compiled-plan.json> [--workflow-out <atomic-dry-run-request.json>] [--max-created <count>]",
+    "  npm run existing-conditions -- compile-architectural-shell --input <source-observations.json> --out <compiled-plan.json> [--action-out <atomic-import-request.json>] [--apply]",
     "  npm run existing-conditions -- capture --expected-model <model.rvt> (--view-id <id> | --view-ids <id,id,...>) --ids <id,id,...> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
-    "  npm run existing-conditions -- package --fixture-id <id> --scope-id <id> --discipline <mechanical|plumbing|electrical|mixed> --task-class <exact_reconstruction|standards_compliance_repair|generative_layout> [--standards-profile <json>] --redacted-model <agent-redacted.rvt> --source-pdf <source.pdf> --view-id <id> --model-bounds <minX,minY,minZ,maxX,maxY,maxZ> --image-region <minX,minY,maxX,maxY> --allowed-categories <OST_...,OST_...> --out-dir <agent-dir>",
+    "  npm run existing-conditions -- package --fixture-id <id> --scope-id <id> --discipline <mechanical|plumbing|electrical|architectural|mixed> --task-class <exact_reconstruction|standards_compliance_repair|generative_layout> [--standards-profile <json>] --redacted-model <agent-redacted.rvt> --source-pdf <source.pdf> --view-id <id> --model-bounds <minX,minY,minZ,maxX,maxY,maxZ> --image-region <minX,minY,maxX,maxY> --allowed-categories <OST_...,OST_...> --out-dir <agent-dir>",
     "  npm run existing-conditions -- seal-truth --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --ground-truth-model <source.rvt> --deletion-manifest <json> --delete-dry-run <json> --out <truth.json>",
     "  npm run existing-conditions -- evaluator-review-visual --post-capture <image> --post-pdf <pdf> --status <pass|needs_review|fail> --out <receipt.json>",
     "  npm run existing-conditions -- seal-candidate --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --evaluator-visual-receipt <json> --out <candidate.json>",
@@ -1032,6 +1037,16 @@ async function main(): Promise<void> {
     if (workflowOut && plan.status === "ready") {
       const maxCreated = Number(argument("--max-created") || Math.max(1, plan.plan_elements.filter((entry) => entry.action === "create").length * 4));
       writeJson(workflowOut, buildAtomicMepDraftWorkflowRequest(plan, { maximum_created_elements: maxCreated }));
+    }
+    return;
+  }
+  if (command === "compile-architectural-shell") {
+    const plan = compileArchitecturalShellPlan(readJson(requiredArgument("--input")) as ArchitecturalShellPackage);
+    writeJson(requiredArgument("--out"), plan);
+    const actionOut = argument("--action-out");
+    if (actionOut) {
+      if (!plan.action) throw new Error(`Architectural shell plan is ${plan.status}; no action request was emitted.`);
+      writeJson(actionOut, process.argv.includes("--apply") ? plan.action.apply_body : plan.action.dry_run_body);
     }
     return;
   }

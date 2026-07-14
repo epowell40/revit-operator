@@ -357,7 +357,7 @@ test("scores electrical layout, host, room, orientation, and exact circuit relat
   assert.equal(result.score, 100);
   assert.equal(result.metrics.hosting, 1);
   assert.equal(result.metrics.electrical_circuits, 1);
-  assert.deepEqual(result.applicability, { physical_connectivity: false, systems: false, spatial: true, hosting: true, electrical_circuits: true });
+  assert.deepEqual(result.applicability, { physical_connectivity: false, architectural_topology: false, systems: false, spatial: true, hosting: true, electrical_circuits: true });
 });
 
 test("level-only evidence does not hard-fail an exact linked-hosted reconstruction", () => {

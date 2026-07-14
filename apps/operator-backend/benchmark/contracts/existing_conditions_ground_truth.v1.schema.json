@@ -9,7 +9,7 @@
     "schema_version": { "const": 1 },
     "fixture_id": { "type": "string", "minLength": 1 },
     "scope_id": { "type": "string", "minLength": 1 },
-    "discipline": { "type": "string", "enum": ["mechanical", "plumbing", "electrical", "mixed", "other"] },
+    "discipline": { "type": "string", "enum": ["mechanical", "plumbing", "electrical", "architectural", "mixed", "other"] },
     "ground_truth_model": {
       "type": "object", "additionalProperties": false, "required": ["path", "sha256"],
       "properties": { "path": { "type": "string", "minLength": 1 }, "sha256": { "$ref": "#/$defs/sha256" } }
@@ -48,8 +48,8 @@
       "type": "object", "required": ["key", "kind", "category"],
       "properties": {
         "key": { "type": "string", "minLength": 1 },
-        "kind": { "type": "string", "enum": ["mep_curve", "fitting", "family_instance", "other"] },
-        "discipline": { "type": "string", "enum": ["mechanical", "plumbing", "electrical", "mixed", "other"] },
+        "kind": { "type": "string", "enum": ["mep_curve", "linear_element", "fitting", "family_instance", "other"] },
+        "discipline": { "type": "string", "enum": ["mechanical", "plumbing", "electrical", "architectural", "mixed", "other"] },
         "role": { "type": ["string", "null"] },
         "category": { "type": "string", "minLength": 1 },
         "family": { "type": ["string", "null"] },
@@ -82,7 +82,7 @@
       "properties": {
         "a": { "type": "string", "minLength": 1 },
         "b": { "type": "string", "minLength": 1 },
-        "kind": { "type": "string", "enum": ["physical", "host", "electrical_circuit", "system"] }
+        "kind": { "type": "string", "enum": ["physical", "wall_junction", "host", "electrical_circuit", "system"] }
       }
     },
     "snapshot": {
