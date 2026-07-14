@@ -79,6 +79,7 @@ import {
   type ArchitecturalSourceDeltaInput,
   type ArchitecturalSourceDeltaReceipt
 } from "../existing_conditions/architectural_source_delta.js";
+import { auditArchitecturalRedactionVisibility } from "../existing_conditions/architectural_redaction_visibility_gate.js";
 
 function argument(name: string): string {
   const index = process.argv.indexOf(name);
@@ -139,6 +140,7 @@ function usage(): never {
     "  npm run existing-conditions -- compile-architectural-preview --input <source-observations.json> --out <preview.json>",
     "  npm run existing-conditions -- score-architectural-preview --truth <ground-truth.json> --preview <compiled-preview.json> --out <score.json>",
     "  npm run existing-conditions -- build-architectural-delta --input <registered-source-and-redacted-capture.json> --out-dir <derived-artifacts-dir> --out <receipt.json>",
+    "  npm run existing-conditions -- audit-architectural-redaction --truth <ground-truth.json> --delta-receipt <receipt.json> --out <gate-receipt.json>",
     "  npm run existing-conditions -- promote-architectural-preview --input <source-observations.json> --resolutions <evidence-backed-resolutions.json> --out <promotion.json> [--action-out <atomic-import-request.json>] [--apply]",
     "  npm run existing-conditions -- compile-architectural-shell --input <source-observations.json> --out <compiled-plan.json> [--action-out <atomic-import-request.json>] [--apply]",
     "  npm run existing-conditions -- capture --expected-model <model.rvt> (--view-id <id> | --view-ids <id,id,...>) --ids <id,id,...> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
@@ -1233,6 +1235,17 @@ async function main(): Promise<void> {
       requiredArgument("--out-dir")
     );
     writeJson(requiredArgument("--out"), receipt);
+    return;
+  }
+  if (command === "audit-architectural-redaction") {
+    const truth = readJson(requiredArgument("--truth"));
+    assertExistingConditionsContract("ground_truth", truth);
+    const receipt = await auditArchitecturalRedactionVisibility(
+      truth as ExistingConditionsGroundTruth,
+      readJson(requiredArgument("--delta-receipt")) as ArchitecturalSourceDeltaReceipt
+    );
+    writeJson(requiredArgument("--out"), receipt);
+    if (!receipt.passed) process.exitCode = 1;
     return;
   }
   if (command === "promote-architectural-preview") {

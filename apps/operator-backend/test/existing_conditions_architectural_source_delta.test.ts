@@ -9,6 +9,8 @@ import {
   buildArchitecturalSourceDelta,
   type ArchitecturalSourceDeltaInput
 } from "../src/existing_conditions/architectural_source_delta.js";
+import { auditArchitecturalRedactionVisibility } from "../src/existing_conditions/architectural_redaction_visibility_gate.js";
+import type { ExistingConditionsGroundTruth } from "../src/benchmark/existing_conditions_reconstruction.js";
 
 function sha256(filePath: string): string {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
@@ -73,6 +75,40 @@ function deltaInput(sourcePath: string, redactedPath: string): ArchitecturalSour
   };
 }
 
+function architecturalTruth(): ExistingConditionsGroundTruth {
+  return {
+    schema_version: 1,
+    fixture_id: "architectural-delta-independent-v1",
+    scope_id: "synthetic-scope-19",
+    discipline: "architectural",
+    visible_evidence: [],
+    snapshot: {
+      native_readback: true,
+      open_connector_count: 0,
+      connections: [{ a: "target-window", b: "target-wall", kind: "host" }],
+      elements: [
+        {
+          key: "target-wall",
+          kind: "linear_element",
+          discipline: "architectural",
+          role: "wall",
+          category: "Walls",
+          endpoints: [{ x: 7, y: 9, z: 0 }, { x: 7, y: 1, z: 0 }]
+        },
+        {
+          key: "target-window",
+          kind: "family_instance",
+          discipline: "architectural",
+          role: "window",
+          category: "Windows",
+          location: { x: 7, y: 5, z: 0 },
+          host_key: "target-wall"
+        }
+      ]
+    }
+  };
+}
+
 test("registered source/redacted delta suppresses common geometry and highlights source-only ink", async () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-source-delta-"));
   try {
@@ -126,6 +162,57 @@ test("delta generation rejects unverified registration and changed visible image
       buildArchitecturalSourceDelta(changed, path.join(temp, "changed")),
       /source_render_sha256_mismatch/
     );
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("architectural redaction gate requires visible target removal and retained common background", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-redaction-gate-"));
+  try {
+    const sourcePath = path.join(temp, "source.png");
+    const redactedPath = path.join(temp, "redacted.png");
+    drawFixture(sourcePath, [40, 140]);
+    drawFixture(redactedPath, [40]);
+    const receipt = await buildArchitecturalSourceDelta(deltaInput(sourcePath, redactedPath), path.join(temp, "pass"));
+    const gate = await auditArchitecturalRedactionVisibility(architecturalTruth(), receipt);
+    assert.equal(gate.passed, true);
+    assert.equal(gate.targets.length, 2);
+    assert.equal(gate.targets.every((target) => target.passed), true);
+    assert.equal(gate.background.passed, true);
+    assert.ok(gate.background.common_ink_pixels_outside_targets >= 100);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("architectural redaction gate rejects an unredacted target", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-redaction-target-fail-"));
+  try {
+    const sourcePath = path.join(temp, "source.png");
+    const redactedPath = path.join(temp, "redacted.png");
+    drawFixture(sourcePath, [40, 140]);
+    drawFixture(redactedPath, [40, 140]);
+    const receipt = await buildArchitecturalSourceDelta(deltaInput(sourcePath, redactedPath), path.join(temp, "out"));
+    const gate = await auditArchitecturalRedactionVisibility(architecturalTruth(), receipt);
+    assert.equal(gate.passed, false);
+    assert.ok(gate.failure_classifications.includes("withheld_target_not_visibly_redacted"));
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("architectural redaction gate rejects a missing architectural background", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-redaction-background-fail-"));
+  try {
+    const sourcePath = path.join(temp, "source.png");
+    const redactedPath = path.join(temp, "redacted.png");
+    drawFixture(sourcePath, [40, 140]);
+    drawFixture(redactedPath, []);
+    const receipt = await buildArchitecturalSourceDelta(deltaInput(sourcePath, redactedPath), path.join(temp, "out"));
+    const gate = await auditArchitecturalRedactionVisibility(architecturalTruth(), receipt);
+    assert.equal(gate.passed, false);
+    assert.ok(gate.failure_classifications.includes("architectural_background_not_retained"));
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
