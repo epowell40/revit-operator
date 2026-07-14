@@ -63,6 +63,7 @@ export type ArchitecturalWallLineCandidate = {
   model_points: [Point2, Point2];
   face_separation_ft: number | null;
   supporting_face_pixel_points: [[Point2, Point2], [Point2, Point2]] | null;
+  supporting_face_model_points: [[Point2, Point2], [Point2, Point2]] | null;
   angle_degrees: number;
   length_ft: number;
   candidate_coverage: number;
@@ -1288,6 +1289,15 @@ export async function buildArchitecturalWallLineCandidates(
         x: round(Math.max(0, Math.min(width, entry.x))),
         y: round(Math.max(0, Math.min(height, entry.y)))
       })) as [Point2, Point2]
+    ) as [[Point2, Point2], [Point2, Point2]],
+    supporting_face_model_points: line.supporting_face_pixel_points === null ? null : line.supporting_face_pixel_points.map(
+      (face) => face.map((entry) => {
+        const model = pointToModel({
+          x: Math.max(0, Math.min(width, entry.x)),
+          y: Math.max(0, Math.min(height, entry.y))
+        }, delta.scope_model_bounds, width, height);
+        return { x: round(model.x), y: round(model.y) };
+      }) as [Point2, Point2]
     ) as [[Point2, Point2], [Point2, Point2]],
     angle_degrees: line.angle_degrees,
     length_ft: round(line.length_px / pixelsPerFoot),

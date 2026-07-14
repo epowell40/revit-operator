@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020, { type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
 
-export type ExistingConditionsContractName = "agent_package" | "ground_truth" | "candidate" | "architectural_preview" | "architectural_pixel_measurement" | "architectural_wall_candidate_clarification" | "architectural_opening_classification";
+export type ExistingConditionsContractName = "agent_package" | "ground_truth" | "candidate" | "architectural_preview" | "architectural_pixel_measurement" | "architectural_wall_candidate_clarification" | "architectural_opening_classification" | "architectural_opening_host_resolution";
 
 const FILES: Record<ExistingConditionsContractName, string> = {
   agent_package: "existing_conditions_agent_package.v1.schema.json",
@@ -12,7 +12,8 @@ const FILES: Record<ExistingConditionsContractName, string> = {
   architectural_preview: "existing_conditions_architectural_preview.v1.schema.json",
   architectural_pixel_measurement: "existing_conditions_architectural_pixel_measurement.v1.schema.json",
   architectural_wall_candidate_clarification: "existing_conditions_architectural_wall_candidate_clarification.v1.schema.json",
-  architectural_opening_classification: "existing_conditions_architectural_opening_classification.v1.schema.json"
+  architectural_opening_classification: "existing_conditions_architectural_opening_classification.v1.schema.json",
+  architectural_opening_host_resolution: "existing_conditions_architectural_opening_host_resolution.v1.schema.json"
 };
 
 let validators: Record<ExistingConditionsContractName, ValidateFunction> | null = null;
