@@ -19,7 +19,8 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "require_evaluator_change_receipt": { "type": "boolean" }
+        "require_evaluator_change_receipt": { "type": "boolean" },
+        "elevation_evidence": { "enum": ["plan_visible", "project_context", "not_visible"] }
       }
     },
     "deletion_manifest": {

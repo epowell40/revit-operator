@@ -146,7 +146,7 @@
         "required": ["attribute", "basis", "evidence_role", "reference"],
         "properties": {
           "attribute": { "type": "string", "minLength": 1 },
-          "basis": { "enum": ["legible_source_evidence", "native_model_precedent", "user_direction"] },
+          "basis": { "enum": ["legible_source_evidence", "native_model_precedent", "user_direction", "declared_heuristic"] },
           "evidence_role": { "type": "string", "minLength": 1 },
           "reference": { "type": "string", "minLength": 1 }
         }

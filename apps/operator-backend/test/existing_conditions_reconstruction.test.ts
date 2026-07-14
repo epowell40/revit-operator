@@ -117,6 +117,67 @@ test("does not match a route outside geometric tolerance", () => {
   assert.equal(result.failure_classifications.includes("incomplete_reconstruction"), true);
 });
 
+test("unobserved elevation is reported but only modestly affects plan reconstruction", () => {
+  const expected = truth([duct("truth")]);
+  expected.evaluation_policy = { elevation_evidence: "not_visible" };
+  const floorLevel = duct("candidate-on-floor");
+  floorLevel.endpoints = floorLevel.endpoints?.map((point) => ({ ...point, z: 0 })) as [
+    { x: number; y: number; z: number },
+    { x: number; y: number; z: number }
+  ];
+  const result = scoreExistingConditionsReconstruction(expected, candidate([floorLevel]));
+  assert.equal(result.passed, true);
+  assert.equal(result.counts.matched, 1);
+  assert.equal(result.metrics.elevation, 0);
+  assert.equal(result.metrics.geometry, 0.95);
+  assert.equal(result.matched_pairs[0]?.plan_distance_ft, 0);
+  assert.equal(result.matched_pairs[0]?.elevation_difference_ft, 9);
+  assert.equal(result.elevation_evidence, "not_visible");
+});
+
+test("plan-visible elevation remains a strict reconstruction criterion", () => {
+  const expected = truth([duct("truth")]);
+  expected.evaluation_policy = { elevation_evidence: "plan_visible" };
+  const wrongElevation = duct("candidate-wrong-elevation");
+  wrongElevation.endpoints = wrongElevation.endpoints?.map((point) => ({ ...point, z: 0 })) as [
+    { x: number; y: number; z: number },
+    { x: number; y: number; z: number }
+  ];
+  const result = scoreExistingConditionsReconstruction(expected, candidate([wrongElevation]));
+  assert.equal(result.passed, false);
+  assert.equal(result.counts.matched, 0);
+  assert.equal(result.failure_classifications.includes("incomplete_reconstruction"), true);
+});
+
+test("unobserved elevation never excuses incorrect plan geometry", () => {
+  const expected = truth([duct("truth")]);
+  expected.evaluation_policy = { elevation_evidence: "not_visible" };
+  const wrongBay = duct("candidate-wrong-bay", 15);
+  wrongBay.endpoints = wrongBay.endpoints?.map((point) => ({ ...point, z: 0 })) as [
+    { x: number; y: number; z: number },
+    { x: number; y: number; z: number }
+  ];
+  const result = scoreExistingConditionsReconstruction(expected, candidate([wrongBay]));
+  assert.equal(result.counts.matched, 0);
+  assert.equal(result.passed, false);
+});
+
+test("project-context elevation never rescues incorrect plan geometry", () => {
+  const expected = truth([duct("truth")]);
+  expected.evaluation_policy = { elevation_evidence: "project_context" };
+  const wrongBay = duct("candidate-wrong-bay", 15);
+  wrongBay.endpoints = wrongBay.endpoints?.map((point) => ({ ...point, z: 9 })) as [
+    { x: number; y: number; z: number },
+    { x: number; y: number; z: number }
+  ];
+
+  const result = scoreExistingConditionsReconstruction(expected, candidate([wrongBay]));
+
+  assert.equal(result.passed, false);
+  assert.equal(result.counts.matched, 0);
+  assert.equal(result.failure_classifications.includes("geometry_mismatch"), true);
+});
+
 test("invalidates a run that accessed withheld truth", () => {
   const attempt = candidate();
   attempt.accessed_artifact_roles.push("deletion_manifest");

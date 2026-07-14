@@ -80,6 +80,8 @@ export type ExistingConditionsGroundTruth = {
   };
   evaluation_policy?: {
     require_evaluator_change_receipt?: boolean;
+    /** Controls how much withheld Z may affect a plan-based reconstruction score. */
+    elevation_evidence?: "plan_visible" | "project_context" | "not_visible";
   };
   snapshot: ExistingConditionsSnapshot;
 };
@@ -107,6 +109,9 @@ export type ExistingConditionsScoringPolicy = {
   endpoint_tolerance_ft: number;
   rotation_tolerance_degrees: number;
   size_tolerance_ft: number;
+  elevation_tolerance_ft: number;
+  project_context_elevation_geometry_weight: number;
+  unobserved_elevation_geometry_weight: number;
   minimum_pair_score: number;
   passing_score: number;
   minimum_precision: number;
@@ -128,6 +133,9 @@ export type ExistingConditionsMatchedPair = {
   system_score: number;
   spatial_score: number;
   distance_ft: number | null;
+  plan_distance_ft: number | null;
+  elevation_difference_ft: number | null;
+  elevation_score: number;
 };
 
 export type ExistingConditionsScore = {
@@ -137,6 +145,7 @@ export type ExistingConditionsScore = {
   valid_run: boolean;
   passed: boolean;
   score: number;
+  elevation_evidence: "plan_visible" | "project_context" | "not_visible";
   failure_classifications: string[];
   invalid_reasons: string[];
   counts: {
@@ -151,6 +160,7 @@ export type ExistingConditionsScore = {
     recall: number;
     element_f1: number;
     geometry: number;
+    elevation: number;
     attributes: number;
     connectivity: number;
     architectural_topology: number;
@@ -183,6 +193,9 @@ export const DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY: ExistingConditionsScori
   endpoint_tolerance_ft: 1,
   rotation_tolerance_degrees: 10,
   size_tolerance_ft: 1 / 48,
+  elevation_tolerance_ft: 3,
+  project_context_elevation_geometry_weight: 0.2,
+  unobserved_elevation_geometry_weight: 0.05,
   minimum_pair_score: 0.45,
   passing_score: 85,
   minimum_precision: 0.8,
@@ -530,6 +543,10 @@ function pointDistance(a: ExistingConditionsPoint3, b: ExistingConditionsPoint3)
   return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 }
 
+function pointDistance2d(a: ExistingConditionsPoint3, b: ExistingConditionsPoint3): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
 function pointToSegmentDistance2d(
   point: ExistingConditionsPoint3,
   segment: [ExistingConditionsPoint3, ExistingConditionsPoint3]
@@ -584,6 +601,24 @@ function endpointDistance(
   return Math.min(forward, reverse);
 }
 
+function endpointPlanAndElevationDistance(
+  truth: [ExistingConditionsPoint3, ExistingConditionsPoint3],
+  candidate: [ExistingConditionsPoint3, ExistingConditionsPoint3]
+): { plan_distance_ft: number; elevation_difference_ft: number } {
+  const variants = [
+    {
+      plan_distance_ft: Math.max(pointDistance2d(truth[0], candidate[0]), pointDistance2d(truth[1], candidate[1])),
+      elevation_difference_ft: Math.max(Math.abs(truth[0].z - candidate[0].z), Math.abs(truth[1].z - candidate[1].z))
+    },
+    {
+      plan_distance_ft: Math.max(pointDistance2d(truth[0], candidate[1]), pointDistance2d(truth[1], candidate[0])),
+      elevation_difference_ft: Math.max(Math.abs(truth[0].z - candidate[1].z), Math.abs(truth[1].z - candidate[0].z))
+    }
+  ];
+  variants.sort((a, b) => a.plan_distance_ft - b.plan_distance_ft || a.elevation_difference_ft - b.elevation_difference_ft);
+  return variants[0]!;
+}
+
 function circularDegreesDifference(a: number, b: number): number {
   const raw = Math.abs(((a - b) % 360 + 360) % 360);
   return Math.min(raw, 360 - raw);
@@ -609,17 +644,37 @@ function average(values: Array<number | null>, fallback: number): number {
 function geometryComparison(
   truth: ExistingConditionsElement,
   candidate: ExistingConditionsElement,
-  policy: ExistingConditionsScoringPolicy
-): { score: number; distance_ft: number | null } {
+  policy: ExistingConditionsScoringPolicy,
+  elevationEvidence: "plan_visible" | "project_context" | "not_visible"
+): { score: number; distance_ft: number | null; plan_distance_ft: number | null; plan_score: number; elevation_difference_ft: number | null; elevation_score: number } {
   let distance: number | null = null;
+  let planDistance: number | null = null;
+  let elevationDifference: number | null = null;
   let tolerance = policy.location_tolerance_ft;
   if (truth.endpoints && candidate.endpoints) {
     distance = endpointDistance(truth.endpoints, candidate.endpoints);
+    const separated = endpointPlanAndElevationDistance(truth.endpoints, candidate.endpoints);
+    planDistance = separated.plan_distance_ft;
+    elevationDifference = separated.elevation_difference_ft;
     tolerance = policy.endpoint_tolerance_ft;
   } else if (truth.location && candidate.location) {
     distance = pointDistance(truth.location, candidate.location);
+    planDistance = pointDistance2d(truth.location, candidate.location);
+    elevationDifference = Math.abs(truth.location.z - candidate.location.z);
   }
-  const position = distance === null ? 0 : clamp01(1 - distance / Math.max(tolerance, Number.EPSILON));
+  const strictPosition = distance === null ? 0 : clamp01(1 - distance / Math.max(tolerance, Number.EPSILON));
+  const planPosition = planDistance === null ? 0 : clamp01(1 - planDistance / Math.max(tolerance, Number.EPSILON));
+  const elevationScore = elevationDifference === null
+    ? 1
+    : clamp01(1 - elevationDifference / Math.max(policy.elevation_tolerance_ft, Number.EPSILON));
+  const elevationWeight = elevationEvidence === "plan_visible"
+    ? 1
+    : elevationEvidence === "project_context"
+      ? policy.project_context_elevation_geometry_weight
+      : policy.unobserved_elevation_geometry_weight;
+  const position = elevationEvidence === "plan_visible"
+    ? strictPosition
+    : (1 - elevationWeight) * planPosition + elevationWeight * elevationScore;
   const rotation = numericFieldScore(
     truth.rotation_degrees,
     candidate.rotation_degrees,
@@ -629,7 +684,14 @@ function geometryComparison(
     ? null
     : clamp01(1 - circularDegreesDifference(Number(truth.rotation_degrees), Number(candidate.rotation_degrees)) /
       Math.max(policy.rotation_tolerance_degrees, Number.EPSILON));
-  return { score: average([position, rotationScore], position), distance_ft: distance };
+  return {
+    score: average([position, rotationScore], position),
+    distance_ft: elevationEvidence === "plan_visible" ? distance : planDistance,
+    plan_distance_ft: planDistance,
+    plan_score: planPosition,
+    elevation_difference_ft: elevationDifference,
+    elevation_score: elevationScore
+  };
 }
 
 function attributeComparison(
@@ -676,11 +738,15 @@ function spatialComparison(truth: ExistingConditionsElement, candidate: Existing
 function comparePair(
   truth: ExistingConditionsElement,
   candidate: ExistingConditionsElement,
-  policy: ExistingConditionsScoringPolicy
+  policy: ExistingConditionsScoringPolicy,
+  elevationEvidence: "plan_visible" | "project_context" | "not_visible"
 ): ExistingConditionsMatchedPair | null {
   if (normalized(truth.category) !== normalized(candidate.category)) return null;
   if (truth.kind !== candidate.kind) return null;
-  const geometry = geometryComparison(truth, candidate, policy);
+  const geometry = geometryComparison(truth, candidate, policy, elevationEvidence);
+  // Elevation policy may soften inaccessible Z, but can never rescue a route at
+  // the wrong plan location through otherwise matching attributes or systems.
+  if (geometry.plan_score <= 0) return null;
   if (geometry.score <= 0) return null;
   const attributes = attributeComparison(truth, candidate, policy);
   const systems = systemComparison(truth, candidate);
@@ -695,7 +761,10 @@ function comparePair(
     attribute_score: round(attributes),
     system_score: round(systems),
     spatial_score: round(spatial),
-    distance_ft: geometry.distance_ft === null ? null : round(geometry.distance_ft)
+    distance_ft: geometry.distance_ft === null ? null : round(geometry.distance_ft),
+    plan_distance_ft: geometry.plan_distance_ft === null ? null : round(geometry.plan_distance_ft),
+    elevation_difference_ft: geometry.elevation_difference_ft === null ? null : round(geometry.elevation_difference_ft),
+    elevation_score: round(geometry.elevation_score)
   };
 }
 
@@ -759,11 +828,12 @@ function assignRowsToColumns(costs: number[][]): number[] {
 function globallyMatch(
   truth: ExistingConditionsElement[],
   candidate: ExistingConditionsElement[],
-  policy: ExistingConditionsScoringPolicy
+  policy: ExistingConditionsScoringPolicy,
+  elevationEvidence: "plan_visible" | "project_context" | "not_visible"
 ): ExistingConditionsMatchedPair[] {
   if (truth.length === 0 || candidate.length === 0) return [];
   const pairMatrix = truth.map((truthElement) =>
-    candidate.map((candidateElement) => comparePair(truthElement, candidateElement, policy))
+    candidate.map((candidateElement) => comparePair(truthElement, candidateElement, policy, elevationEvidence))
   );
   const impossibleCost = 1_000_000;
   if (truth.length <= candidate.length) {
@@ -891,8 +961,9 @@ export function scoreExistingConditionsReconstruction(
 ): ExistingConditionsScore {
   const policy = { ...DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY, ...policyOverrides };
   const invalidReasons = validateRun(truth, candidate);
+  const elevationEvidence = truth.evaluation_policy?.elevation_evidence ?? "plan_visible";
   const pairs = invalidReasons.length === 0
-    ? globallyMatch(truth.snapshot.elements, candidate.snapshot.elements, policy)
+    ? globallyMatch(truth.snapshot.elements, candidate.snapshot.elements, policy, elevationEvidence)
     : [];
   const matchedTruth = new Set(pairs.map((pair) => pair.truth_key));
   const matchedCandidate = new Set(pairs.map((pair) => pair.candidate_key));
@@ -910,6 +981,7 @@ export function scoreExistingConditionsReconstruction(
   const recall = truth.snapshot.elements.length > 0 ? pairs.length / truth.snapshot.elements.length : 0;
   const elementF1 = f1(precision, recall);
   const geometry = average(pairs.map((pair) => pair.geometry_score), 0);
+  const elevation = average(pairs.map((pair) => pair.elevation_score), 1);
   const attributes = average(pairs.map((pair) => pair.attribute_score), 0);
   const systems = average(pairs.map((pair) => pair.system_score), 0);
   const spatial = average(pairs.map((pair) => pair.spatial_score), 0);
@@ -983,6 +1055,7 @@ export function scoreExistingConditionsReconstruction(
     valid_run: invalidReasons.length === 0,
     passed,
     score: round(weightedScore, 3),
+    elevation_evidence: elevationEvidence,
     failure_classifications: [...new Set(failures)],
     invalid_reasons: invalidReasons,
     counts: {
@@ -997,6 +1070,7 @@ export function scoreExistingConditionsReconstruction(
       recall: round(recall),
       element_f1: round(elementF1),
       geometry: round(geometry),
+      elevation: round(elevation),
       attributes: round(attributes),
       connectivity: round(connectivity),
       architectural_topology: round(architecturalTopology),
@@ -1053,6 +1127,7 @@ function markdownScorecard(result: ExistingConditionsScore): string {
     "| --- | ---: |",
     `| Element F1 | ${result.metrics.element_f1.toFixed(3)} |`,
     `| Geometry | ${result.metrics.geometry.toFixed(3)} |`,
+    `| Elevation | ${result.metrics.elevation.toFixed(3)} (${result.elevation_evidence}) |`,
     `| Attributes | ${result.metrics.attributes.toFixed(3)} |`,
     `| Connectivity | ${result.metrics.connectivity.toFixed(3)} |`,
     `| Architectural topology | ${result.metrics.architectural_topology.toFixed(3)} |`,

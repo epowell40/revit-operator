@@ -17,12 +17,19 @@ type JsonMap = { [key: string]: JsonValue };
 
 export type MepDraftVisibility = "clear" | "partial" | "occluded";
 
+export type MepDraftAttributeProvenance = {
+  attribute: string;
+  basis: "source_observation" | "native_model_precedent" | "user_direction" | "declared_heuristic";
+  reference: string;
+};
+
 type MepDraftObservationBase = {
   observation_id: string;
   evidence_role?: string;
   visibility: MepDraftVisibility;
   confidence: number;
   supported_attributes: string[];
+  attribute_provenance?: MepDraftAttributeProvenance[];
 };
 
 export type MepDraftPlacement =
@@ -298,6 +305,24 @@ function validateObservation(observation: MepDraftObservation, index: number): v
   }
   if (!["clear", "partial", "occluded"].includes(observation.visibility)) throw new Error(`${id}_visibility_is_invalid`);
   if (!Array.isArray(observation.supported_attributes)) throw new Error(`${id}_supported_attributes_must_be_array`);
+  if (observation.attribute_provenance != null) {
+    if (!Array.isArray(observation.attribute_provenance)) throw new Error(`${id}_attribute_provenance_must_be_array`);
+    const supported = new Set(observation.supported_attributes.map(normalized));
+    const seen = new Set<string>();
+    for (const [provenanceIndex, provenance] of observation.attribute_provenance.entries()) {
+      const attribute = normalized(requiredText(provenance.attribute, `${id}_attribute_provenance_${provenanceIndex}_attribute`));
+      if (!supported.has(attribute)) throw new Error(`${id}_attribute_provenance_not_supported:${attribute}`);
+      if (seen.has(attribute)) throw new Error(`${id}_attribute_provenance_duplicate:${attribute}`);
+      seen.add(attribute);
+      if (!["source_observation", "native_model_precedent", "user_direction", "declared_heuristic"].includes(provenance.basis)) {
+        throw new Error(`${id}_attribute_provenance_basis_invalid:${attribute}`);
+      }
+      if (provenance.basis === "declared_heuristic" && (observation.kind !== "pipe_route" || attribute !== "elevation")) {
+        throw new Error(`${id}_declared_heuristic_only_allowed_for_pipe_elevation`);
+      }
+      requiredText(provenance.reference, `${id}_${attribute}_provenance_reference`);
+    }
+  }
   if (observation.kind === "pipe_route") {
     if (!Array.isArray(observation.points) || observation.points.length < 2) throw new Error(`${id}_requires_at_least_two_points`);
     observation.points.forEach((entry, pointIndex) => {
@@ -541,6 +566,9 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
       : observation.visibility === "partial"
         ? observation.confidence * 0.8
         : observation.confidence * 0.55;
+    const declaredHeuristics = (observation.attribute_provenance ?? [])
+      .filter((entry) => entry.basis === "declared_heuristic")
+      .map((entry) => `${normalized(entry.attribute)} inferred by declared heuristic: ${clean(entry.reference)}`);
     sourceObservations.push({
       observation_id: observation.observation_id,
       evidence_role: clean(observation.evidence_role) || "source_pdf",
@@ -558,7 +586,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
       role: role(observation),
       action: action(observation),
       confidence: effectiveConfidence,
-      assumptions: [],
+      assumptions: declaredHeuristics,
       source_observation_ids: [observation.observation_id],
       required_source_attributes: requiredAttributes
     });
@@ -580,6 +608,9 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         resolution_basis: null,
         resolution_evidence_reference: null
       });
+    }
+    if (declaredHeuristics.length > 0) {
+      warnings.push(`${observation.observation_id}: ${declaredHeuristics.join("; ")}`);
     }
   }
 

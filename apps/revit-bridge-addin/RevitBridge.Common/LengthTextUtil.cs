@@ -42,19 +42,7 @@ namespace RevitBridge.Common
                     }
                 }
 
-                if (TryParseUnitSuffix(t, "\"", 1.0 / 12.0, out feet)) return true;
-                if (TryParseUnitSuffix(t, "in", 1.0 / 12.0, out feet)) return true;
-                if (TryParseUnitSuffix(t, "ft", 1.0, out feet)) return true;
-                if (TryParseUnitSuffix(t, "'", 1.0, out feet)) return true;
-                if (TryParseUnitSuffix(t, "mm", 0.0254 / 12.0, out feet)) return true;
-                if (TryParseUnitSuffix(t, "cm", 0.3048 / 100.0 / 12.0, out feet)) return true;
-                if (TryParseUnitSuffix(t, "m", 0.3048 / 12.0, out feet)) return true;
-
-                if (double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out feet) ||
-                    double.TryParse(t, NumberStyles.Float, CultureInfo.CurrentCulture, out feet))
-                {
-                    return true; // assume raw feet for backward compatibility
-                }
+                if (EngineeringLengthText.TryParseLengthToFeet(t, unitlessIsInches: false, out feet)) return true;
 
                 error = $"Invalid length string: \"{raw}\".";
                 return false;
@@ -84,22 +72,5 @@ namespace RevitBridge.Common
             }
         }
 
-        private static bool TryParseUnitSuffix(string t, string suffix, double feetPerSuffixUnit, out double feet)
-        {
-            feet = 0;
-            if (!t.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
-                return false;
-
-            var num = t.Substring(0, t.Length - suffix.Length).Trim();
-            if (num.Length == 0) return false;
-            if (!double.TryParse(num, NumberStyles.Float, CultureInfo.InvariantCulture, out var raw) &&
-                !double.TryParse(num, NumberStyles.Float, CultureInfo.CurrentCulture, out raw))
-            {
-                return false;
-            }
-
-            feet = raw * feetPerSuffixUnit;
-            return true;
-        }
     }
 }

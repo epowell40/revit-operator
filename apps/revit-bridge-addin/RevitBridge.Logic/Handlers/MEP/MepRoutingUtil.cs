@@ -449,14 +449,8 @@ namespace RevitBridge.Logic.Handlers.MEP
         internal static double? ParseLengthFeet(string? raw)
         {
             if (string.IsNullOrWhiteSpace(raw)) return null;
-            var t = raw.Trim().ToLowerInvariant();
-            var isFeet = t.Contains("ft") || t.Contains("'");
-            t = t.Replace("inches", "").Replace("inch", "").Replace("in", "");
-            t = t.Replace("feet", "").Replace("foot", "").Replace("ft", "");
-            t = t.Replace("\"", "").Replace("'", "").Trim();
-            if (!double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out var n)) return null;
-            if (double.IsNaN(n) || double.IsInfinity(n) || n <= 0) return null;
-            return isFeet ? n : n / 12.0;
+            if (!EngineeringLengthText.TryParseLengthToFeet(raw, unitlessIsInches: true, out var feet)) return null;
+            return double.IsNaN(feet) || double.IsInfinity(feet) || feet <= 0 ? (double?)null : feet;
         }
 
         internal static bool TryApplyDuctSize(Duct duct, SizeChoice size, out object result)

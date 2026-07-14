@@ -33,7 +33,7 @@ type RegisteredRender = {
 
 export type RegisteredMepAttributeEvidence = {
   attribute: string;
-  basis: "legible_source_evidence" | "native_model_precedent" | "user_direction";
+  basis: "legible_source_evidence" | "native_model_precedent" | "user_direction" | "declared_heuristic";
   evidence_role: string;
   reference: string;
 };
@@ -208,7 +208,7 @@ function validateAttributeEvidence(
     const attribute = normalized(requiredText(claim.attribute, `${observation.observation_id}_attribute_evidence_${index}_attribute`));
     if (!supported.has(attribute)) throw new Error(`${observation.observation_id}_attribute_evidence_not_supported:${attribute}`);
     if (claims.has(attribute)) throw new Error(`${observation.observation_id}_attribute_evidence_duplicate:${attribute}`);
-    if (!["legible_source_evidence", "native_model_precedent", "user_direction"].includes(claim.basis)) {
+    if (!["legible_source_evidence", "native_model_precedent", "user_direction", "declared_heuristic"].includes(claim.basis)) {
       throw new Error(`${observation.observation_id}_attribute_evidence_basis_invalid:${attribute}`);
     }
     const evidenceRole = requiredText(claim.evidence_role, `${observation.observation_id}_${attribute}_evidence_role`);
@@ -222,6 +222,14 @@ function validateAttributeEvidence(
     if (claim.basis === "native_model_precedent"
       && ["source pdf", normalized(renderRole)].includes(normalized(evidenceRole))) {
       throw new Error(`${observation.observation_id}_${attribute}_native_precedent_requires_native_evidence`);
+    }
+    if (claim.basis === "declared_heuristic") {
+      if (observation.kind !== "pipe_route" || attribute !== "elevation") {
+        throw new Error(`${observation.observation_id}_declared_heuristic_only_allowed_for_pipe_elevation`);
+      }
+      if (!["source pdf", normalized(renderRole)].includes(normalized(evidenceRole))) {
+        throw new Error(`${observation.observation_id}_elevation_heuristic_requires_plan_context`);
+      }
     }
     requiredText(claim.reference, `${observation.observation_id}_${attribute}_evidence_reference`);
     claims.set(attribute, claim);
@@ -291,6 +299,13 @@ export async function compileRegisteredMepObservations(
       return { ...observation };
     }
     validateAttributeEvidence(observation, evidenceByRole, renderRole);
+    const attributeProvenance = observation.attribute_evidence.map((claim) => ({
+      attribute: claim.attribute,
+      basis: claim.basis === "legible_source_evidence"
+        ? "source_observation" as const
+        : claim.basis,
+      reference: claim.reference
+    }));
     if (observation.kind === "pipe_route") {
       if (!Array.isArray(observation.pixel_points) || observation.pixel_points.length < 2) {
         throw new Error(`${observation.observation_id}_requires_at_least_two_pixel_points`);
@@ -306,7 +321,12 @@ export async function compileRegisteredMepObservations(
         throw new Error(`${observation.observation_id}_route_is_degenerate`);
       }
       const { pixel_points: _pixelPoints, attribute_evidence: _attributeEvidence, ...rest } = observation;
-      return { ...rest, evidence_role: renderRole, points: modelPoints.map((entry) => modelToSource(entry, registration)) };
+      return {
+        ...rest,
+        evidence_role: renderRole,
+        attribute_provenance: attributeProvenance,
+        points: modelPoints.map((entry) => modelToSource(entry, registration))
+      };
     }
     const modelPoint = pixelToModel(
       observation.pixel_point,
@@ -316,7 +336,7 @@ export async function compileRegisteredMepObservations(
       `${observation.observation_id}_pixel_point`
     );
     const { pixel_point: _pixelPoint, attribute_evidence: _attributeEvidence, ...rest } = observation;
-    return { ...rest, evidence_role: renderRole, point: modelToSource(modelPoint, registration) };
+    return { ...rest, evidence_role: renderRole, attribute_provenance: attributeProvenance, point: modelToSource(modelPoint, registration) };
   });
   const convertedPackage: MepDraftPackage = {
     schema_version: 1,
@@ -343,6 +363,7 @@ export async function compileRegisteredMepObservations(
     compiled_plan: compileMepDraftPlan(convertedPackage),
     usage_constraints: [
       "Registered pixels establish bounded plan geometry only; material, system, size, elevation, family, type, host, and service-topology claims remain subject to the existing MEP compiler evidence gates.",
+      "A pipe elevation may use declared_heuristic provenance when the plan does not show elevation; it remains an explicit inference in the compiled assumptions and is never represented as source-observed truth.",
       "Electrical circuit membership cannot be inferred from plotted labels or this registered render and must remain grounded in exact native source power-system evidence.",
       "The registered render must be agent-visible, hash-bound, dimension-verified, and aligned to the declared model frame.",
       "No evaluator, withheld truth, native target identity, or scorer output is used to convert pixel observations."

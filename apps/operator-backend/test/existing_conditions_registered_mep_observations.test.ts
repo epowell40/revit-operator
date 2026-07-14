@@ -164,6 +164,34 @@ test("registered plumbing pixels compile through existing route, placement, and 
   assert.deepEqual(result.compiled_plan.actions[1]?.expected_model_point, { x: 102, y: 202, z: 32 });
 });
 
+test("a plan-absent pipe elevation may proceed only as an explicit declared heuristic", async () => {
+  const input = plumbingInput();
+  const route = input.observations[0];
+  if (route?.kind !== "pipe_route") throw new Error("fixture_setup_failed");
+  const elevationClaim = route.attribute_evidence.find((entry) => entry.attribute === "elevation");
+  if (!elevationClaim) throw new Error("elevation_claim_setup_failed");
+  elevationClaim.basis = "declared_heuristic";
+  elevationClaim.reference = "No elevation is shown in plan; assume 9 feet above L4 as a typical plenum routing height.";
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.status, "ready");
+  assert.deepEqual(result.compiled_plan.plan_elements[0]?.assumptions, [
+    "elevation inferred by declared heuristic: No elevation is shown in plan; assume 9 feet above L4 as a typical plenum routing height."
+  ]);
+  assert.match(result.compiled_plan.warnings.join("\n"), /declared heuristic/);
+  const convertedRoute = result.converted_package.observations[0];
+  assert.equal(convertedRoute?.attribute_provenance?.find((entry) => entry.attribute === "elevation")?.basis, "declared_heuristic");
+});
+
+test("declared heuristics cannot invent pipe size, type, or system", async () => {
+  const input = plumbingInput();
+  const route = input.observations[0];
+  if (route?.kind !== "pipe_route") throw new Error("fixture_setup_failed");
+  const sizeClaim = route.attribute_evidence.find((entry) => entry.attribute === "size");
+  if (!sizeClaim) throw new Error("size_claim_setup_failed");
+  sizeClaim.basis = "declared_heuristic";
+  await assert.rejects(() => compileRegisteredMepObservations(input), /declared_heuristic_only_allowed_for_pipe_elevation/);
+});
+
 test("registered electrical pixels locate devices but render evidence cannot assert circuit membership", async () => {
   const input = electricalInput();
   input.observations.push({

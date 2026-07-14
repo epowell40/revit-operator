@@ -71,6 +71,32 @@ test("runtime contract validation accepts an exact reconstruction package", () =
   assert.doesNotThrow(() => assertExistingConditionsContract("agent_package", validAgentPackage()));
 });
 
+test("ground-truth contracts declare whether elevation is actually observable", () => {
+  const groundTruth = {
+    schema_version: 1,
+    fixture_id: "plan-observable-elevation-v1",
+    scope_id: "bounded-plan",
+    ground_truth_model: { path: "withheld.rvt", sha256: "a".repeat(64) },
+    visible_evidence: [{ role: "source_pdf", sha256: "b".repeat(64) }],
+    evaluation_policy: { elevation_evidence: "not_visible" },
+    deletion_manifest: {
+      requested_element_ids: [1],
+      deleted_element_ids: [1],
+      dependent_element_ids: [],
+      dry_run_receipt_sha256: "c".repeat(64)
+    },
+    snapshot: {
+      native_readback: true,
+      elements: [{ key: "pipe-1", kind: "mep_curve", category: "Pipes" }],
+      connections: [],
+      open_connector_count: 2
+    }
+  };
+  assert.doesNotThrow(() => assertExistingConditionsContract("ground_truth", groundTruth));
+  groundTruth.evaluation_policy.elevation_evidence = "hidden_truth_strict";
+  assert.throws(() => assertExistingConditionsContract("ground_truth", groundTruth), /invalid_existing_conditions_ground_truth_contract/);
+});
+
 test("runtime contract validation accepts hash-bound registration, approved type-catalog, and derived evidence artifacts", () => {
   const packageValue = validAgentPackage();
   packageValue.registration_artifact = {
