@@ -23,6 +23,15 @@ import {
   type ExistingConditionsEvaluatorVisualReceipt
 } from "../existing_conditions/evaluator_visual.js";
 import { assertExistingConditionsContract } from "../existing_conditions/contract_validation.js";
+import {
+  scoreEngineeringInvariantBenchmark,
+  type EngineeringAcceptanceBasis,
+  type EngineeringBenchmarkTaskContract,
+  type EngineeringCheckResult,
+  type EngineeringStandardsContext,
+  type EvaluatorOwnedAccessProvenance,
+  type EvaluatorOwnedChangeReceipt
+} from "../existing_conditions/engineering_invariants.js";
 
 function argument(name: string): string {
   const index = process.argv.indexOf(name);
@@ -80,11 +89,11 @@ function usage(): never {
     "Usage:",
     "  npm run existing-conditions -- normalize --visible <export-visible-elements.json> --connectors <get-connectors.json> --ids <id,id,...> --out <snapshot.json>",
     "  npm run existing-conditions -- capture --expected-model <model.rvt> (--view-id <id> | --view-ids <id,id,...>) --ids <id,id,...> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
-    "  npm run existing-conditions -- package --fixture-id <id> --scope-id <id> --discipline <mechanical|plumbing|electrical|mixed> --redacted-model <agent-redacted.rvt> --source-pdf <source.pdf> --view-id <id> --model-bounds <minX,minY,minZ,maxX,maxY,maxZ> --image-region <minX,minY,maxX,maxY> --allowed-categories <OST_...,OST_...> --out-dir <agent-dir>",
+    "  npm run existing-conditions -- package --fixture-id <id> --scope-id <id> --discipline <mechanical|plumbing|electrical|mixed> --task-class <exact_reconstruction|standards_compliance_repair|generative_layout> [--standards-profile <json>] --redacted-model <agent-redacted.rvt> --source-pdf <source.pdf> --view-id <id> --model-bounds <minX,minY,minZ,maxX,maxY,maxZ> --image-region <minX,minY,maxX,maxY> --allowed-categories <OST_...,OST_...> --out-dir <agent-dir>",
     "  npm run existing-conditions -- seal-truth --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --ground-truth-model <source.rvt> --deletion-manifest <json> --delete-dry-run <json> --out <truth.json>",
     "  npm run existing-conditions -- evaluator-review-visual --post-capture <image> --post-pdf <pdf> --status <pass|needs_review|fail> --out <receipt.json>",
     "  npm run existing-conditions -- seal-candidate --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --evaluator-visual-receipt <json> --out <candidate.json>",
-    "  npm run existing-conditions -- score --truth <truth.json> --candidate <candidate.json> --out-dir <score-dir>",
+    "  npm run existing-conditions -- score --package <agent_package.json> [--truth <truth.json> --candidate <candidate.json> | --evaluator-checks <json> --evaluator-change-receipt <json> --evaluator-access-provenance <json> --constructability <pass|fail> --drawing-legibility <pass|fail>] --out-dir <score-dir>",
     "  npm run existing-conditions -- advance-controller --state <controller-state-or-receipt.json> --event <event.json> --out <next-receipt.json>",
     "  npm run existing-conditions -- evaluator-diff --before-visible <json> --after-visible <json> --package <agent_package.json> --out <receipt.json>",
     "  npm run existing-conditions -- validate-contract --kind <agent_package|ground_truth|candidate> --file <json>",
@@ -268,19 +277,47 @@ function buildAgentPackage(): void {
   if (!Number.isInteger(viewId) || viewId <= 0) throw new Error("--view-id must be a positive integer.");
   if (!fs.existsSync(redactedModel)) throw new Error(`Redacted model does not exist: ${redactedModel}`);
   if (!fs.existsSync(sourcePdf)) throw new Error(`Source PDF does not exist: ${sourcePdf}`);
+  const taskClass = argument("--task-class") || "exact_reconstruction";
+  if (!["exact_reconstruction", "standards_compliance_repair", "generative_layout"].includes(taskClass)) {
+    throw new Error("--task-class must be exact_reconstruction, standards_compliance_repair, or generative_layout.");
+  }
+  const standardsProfileSource = argument("--standards-profile");
+  if (taskClass !== "exact_reconstruction" && (!standardsProfileSource || !fs.existsSync(path.resolve(standardsProfileSource)))) {
+    throw new Error("--standards-profile must identify an existing JSON file for compliance and generative tasks.");
+  }
   fs.mkdirSync(outDir, { recursive: true });
   const pdfCopy = path.join(outDir, "source_evidence.pdf");
   const packagePath = path.join(outDir, "agent_package.json");
   const controllerStatePath = path.join(outDir, "controller_state.json");
-  if (fs.existsSync(pdfCopy) || fs.existsSync(packagePath) || fs.existsSync(controllerStatePath)) {
+  const standardsProfileCopy = path.join(outDir, "standards_profile.json");
+  if (fs.existsSync(pdfCopy) || fs.existsSync(packagePath) || fs.existsSync(controllerStatePath)
+    || (taskClass !== "exact_reconstruction" && fs.existsSync(standardsProfileCopy))) {
     throw new Error(`Refusing to overwrite an existing agent package in: ${outDir}`);
   }
   fs.copyFileSync(sourcePdf, pdfCopy, fs.constants.COPYFILE_EXCL);
+  if (taskClass !== "exact_reconstruction") {
+    fs.copyFileSync(path.resolve(standardsProfileSource), standardsProfileCopy, fs.constants.COPYFILE_EXCL);
+  }
+  const allowsMultipleValidSolutions = taskClass !== "exact_reconstruction";
   const agentPackage = {
     schema_version: 1,
     fixture_id: fixtureId,
     discipline,
+    task_class: taskClass,
     task: argument("--task") || "Reconstruct the missing existing-condition work from the plotted PDF evidence in the currently open redacted model.",
+    standards_profile: taskClass === "exact_reconstruction" ? null : {
+      role: "standards_profile",
+      path: standardsProfileCopy,
+      sha256: sha256(standardsProfileCopy)
+    },
+    acceptance_contract: {
+      acceptance_basis: taskClass === "exact_reconstruction"
+        ? ["hidden_truth_geometry", "system_topology", "drawing_legibility", "scope_safety"]
+        : ["engineering_invariants", "system_topology", "constructability", "drawing_legibility", "scope_safety"],
+      allows_multiple_valid_solutions: allowsMultipleValidSolutions,
+      requires_exact_element_ids: false,
+      requires_exact_coordinates: !allowsMultipleValidSolutions
+    },
     working_model: {
       role: "redacted_model",
       path: redactedModel,
@@ -314,14 +351,17 @@ function buildAgentPackage(): void {
       material_confidence_threshold: 0.75,
       forbidden_artifact_roles: ["ground_truth_model", "ground_truth_snapshot", "deletion_manifest", "withheld_evaluator_package"],
       require_native_readback: true,
-      require_post_change_visual_receipt: true
+      require_post_change_visual_receipt: true,
+      require_evaluator_change_receipt: true,
+      require_evaluator_access_provenance: true
     },
     output_contract: {
       candidate_snapshot_path: path.join(outDir, "candidate_snapshot.json"),
       post_change_capture_path: path.join(outDir, "post_change_capture.png"),
       post_change_pdf_path: path.join(outDir, "post_change.pdf"),
       run_receipt_path: path.join(outDir, "reconstruction_run_receipt.json"),
-      controller_state_path: controllerStatePath
+      controller_state_path: controllerStatePath,
+      evaluator_access_provenance_path: path.join(outDir, "evaluator_access_provenance.json")
     }
   };
   assertExistingConditionsContract("agent_package", agentPackage);
@@ -447,16 +487,78 @@ function validateContractFile(): void {
 }
 
 function scoreSealedCandidate(): void {
+  const outDir = path.resolve(requiredArgument("--out-dir"));
+  if (fs.existsSync(outDir) && fs.readdirSync(outDir).length > 0) {
+    throw new Error(`Refusing to overwrite a non-empty score directory: ${outDir}`);
+  }
+  const packageArgument = argument("--package");
+  let taskClass = "exact_reconstruction";
+  let packageValue: Record<string, unknown> | null = null;
+  if (packageArgument) {
+    packageValue = asObject(readJson(packageArgument));
+    assertExistingConditionsContract("agent_package", packageValue);
+    taskClass = String(packageValue.task_class ?? "");
+  }
+
+  if (taskClass !== "exact_reconstruction") {
+    const standardsReference = asObject(packageValue?.standards_profile);
+    const standardsPath = path.resolve(String(standardsReference.path ?? ""));
+    if (!fs.existsSync(standardsPath)) throw new Error(`Standards profile does not exist: ${standardsPath}`);
+    const expectedStandardsHash = String(standardsReference.sha256 ?? "").toLowerCase();
+    const actualStandardsHash = sha256(standardsPath).toLowerCase();
+    if (expectedStandardsHash !== actualStandardsHash) throw new Error("standards_profile_hash_mismatch");
+    const standardsContext = readJson(standardsPath) as EngineeringStandardsContext;
+    const acceptance = asObject(packageValue?.acceptance_contract);
+    const writePolicy = asObject(packageValue?.write_policy);
+    const contract: EngineeringBenchmarkTaskContract = {
+      task_class: taskClass as "standards_compliance_repair" | "generative_layout",
+      acceptance_basis: (Array.isArray(acceptance.acceptance_basis) ? acceptance.acceptance_basis : []) as EngineeringAcceptanceBasis[],
+      allows_multiple_valid_solutions: acceptance.allows_multiple_valid_solutions === true,
+      requires_exact_element_ids: acceptance.requires_exact_element_ids === true,
+      requires_exact_coordinates: acceptance.requires_exact_coordinates === true,
+      standards_context: standardsContext,
+      standards_profile_artifact_sha256: actualStandardsHash,
+      requires_evaluator_change_receipt: writePolicy.require_evaluator_change_receipt === true,
+      requires_evaluator_access_provenance: writePolicy.require_evaluator_access_provenance === true
+    };
+    const rawChecks = readJson(requiredArgument("--evaluator-checks"));
+    const checks = (Array.isArray(rawChecks) ? rawChecks : asObject(rawChecks).checks) as EngineeringCheckResult[];
+    if (!Array.isArray(checks)) throw new Error("--evaluator-checks must contain a JSON array or {checks:[...]}.");
+    const constructability = requiredArgument("--constructability").toLowerCase();
+    const drawingLegibility = requiredArgument("--drawing-legibility").toLowerCase();
+    if (!['pass', 'fail'].includes(constructability)) throw new Error("--constructability must be pass or fail.");
+    if (!['pass', 'fail'].includes(drawingLegibility)) throw new Error("--drawing-legibility must be pass or fail.");
+    const result = scoreEngineeringInvariantBenchmark({
+      contract,
+      evaluator_checks: checks,
+      evaluator_change_receipt: readJson(requiredArgument("--evaluator-change-receipt")) as EvaluatorOwnedChangeReceipt,
+      evaluator_access_provenance: readJson(requiredArgument("--evaluator-access-provenance")) as EvaluatorOwnedAccessProvenance,
+      constructability_passed: constructability === "pass",
+      drawing_legibility_passed: drawingLegibility === "pass"
+    });
+    writeJson(path.join(outDir, "existing_conditions_engineering_score.json"), result);
+    const lines = [
+      `# Existing conditions engineering evaluation - ${String(packageValue?.fixture_id ?? "fixture")}`,
+      "",
+      `- Task class: ${result.task_class}`,
+      `- Valid run: ${result.valid_run ? "yes" : "no"}`,
+      `- Passed: ${result.passed ? "yes" : "no"}`,
+      `- Score: ${result.score.toFixed(3)} / 100`,
+      `- Engineering invariants: ${result.metrics.engineering_invariants.toFixed(3)}`,
+      `- Scope safety: ${result.metrics.scope_safety.toFixed(3)}`,
+      `- Access provenance: ${result.metrics.access_provenance.toFixed(3)}`,
+      ""
+    ];
+    fs.writeFileSync(path.join(outDir, "existing_conditions_engineering_score.md"), `${lines.join("\n")}\n`, "utf8");
+    return;
+  }
+
   const truthValue = readJson(requiredArgument("--truth"));
   const candidateValue = readJson(requiredArgument("--candidate"));
   assertExistingConditionsContract("ground_truth", truthValue);
   assertExistingConditionsContract("candidate", candidateValue);
   const truth = truthValue as ExistingConditionsGroundTruth;
   const candidate = candidateValue as ExistingConditionsCandidate;
-  const outDir = path.resolve(requiredArgument("--out-dir"));
-  if (fs.existsSync(outDir) && fs.readdirSync(outDir).length > 0) {
-    throw new Error(`Refusing to overwrite a non-empty score directory: ${outDir}`);
-  }
   const result = scoreExistingConditionsReconstruction(truth, candidate);
   writeJson(path.join(outDir, "existing_conditions_score.json"), result);
   const lines = [

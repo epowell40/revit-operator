@@ -1,0 +1,93 @@
+# Existing-conditions engineering invariants
+
+Revit Operator benchmarks must distinguish reconstructing documented existing conditions from correcting a standards defect and producing a new layout. A Snowdon source model is useful evidence, but it is not itself a universal engineering standard.
+
+## Task classes
+
+### Exact reconstruction
+
+The agent receives bounded visible evidence and a redacted model. Hidden truth may score geometry, family/type, size, elevation, system, topology, host, circuit, and drawing legibility. Exact coordinates can be appropriate because the task is to reproduce documented existing conditions.
+
+### Standards/compliance repair
+
+The evaluator scores the adopted engineering rule and accepts every solution that satisfies it. It must not require the original Snowdon element ID, family name, coordinate, or circuit when another native solution is valid.
+
+Examples include:
+
+- prove GFCI protection for an applicable receptacle near a sink;
+- repair a dwelling wall-space coverage gap;
+- move receptacle load onto circuits without exceeding the calculated capacity;
+- add a missing plumbing service or remove a prohibited one.
+
+### Generative layout
+
+The evaluator accepts a class of solutions and scores engineering invariants, system topology, constructability, drawing legibility, and scope safety. The hidden reference design can be a comparison point, but not the sole answer.
+
+## Required standards context
+
+Every compliance or generative case must declare:
+
+- jurisdiction and authority having jurisdiction;
+- adopted code family and edition;
+- effective date and occupancy/use classification;
+- local amendments, including an explicit empty list, ordinance/revision, affected sections, source URL, and SHA-256;
+- project/client criteria, revision, source URL, and SHA-256;
+- primary-source authority, title, edition, section/subsection/table, source URL, and SHA-256 for every rule;
+- conflict precedence and an immutable hash for the complete standards profile.
+
+The evaluator has no implicit “latest code” mode. A rule without this context fails closed. Numerical thresholds live in the fixture's standards profile; they are not universal constants in the evaluator.
+
+## Electrical invariants
+
+### GFCI protection
+
+Score verified protection, not a family/type label. An integral GFCI device, upstream feed-through device, GFCI branch breaker, or documented equivalent can pass only when evaluator-owned native path evidence identifies the subject receptacle, protection device, and protected circuit. Applicability, measurement method, voltage/rating limits, and exceptions come from the adopted profile. Invalid or missing measurements fail closed.
+
+### Dwelling receptacle coverage
+
+Score continuous qualifying wall-space coverage. The evaluator projects eligible outlets onto each uninterrupted segment and verifies that the union of their allowed coverage intervals spans the segment. Many coordinate layouts can therefore pass. Door/opening interruptions, minimum qualifying width, floor-outlet eligibility, and maximum point distance are profile inputs.
+
+### Circuit loading
+
+Score native circuit membership and calculated volt-amperes. General-use receptacle load is represented per yoke or strap, so simplex, duplex, and quad face configurations do not become guessed VA values. The evaluator calculates:
+
+`required VA = noncontinuous VA + continuous VA × adopted multiplier`
+
+and compares it with the profile-selected single- or three-phase circuit-capacity calculation. Native circuit membership, yoke/strap count, OCPD basis, conductor basis, and conductor/OCPD compatibility must all be verified. This avoids a blanket “all circuits are limited to 80 percent” rule. A 100-percent-rated exception requires immutable equipment evidence and native verification; a caller-provided boolean is insufficient.
+
+## Plumbing invariants
+
+Fixture profiles declare required and prohibited services. The evaluator checks native system reachability rather than demanding a separate direct connector for every conceptual service.
+
+- An occupancy- and use-specific lavatory profile can require cold water, hot or tempered water, sanitary drainage, and a vented drainage path.
+- A sourced project profile for a conventional water-closet subtype can require cold water, sanitary drainage, and a vented drainage path and can prohibit an unintended hot-water connection. Bidet/personal-hygiene and other combination products require separate profiles; “all toilets prohibit every hot-water path” is not a universal engine rule.
+- Vented drainage can pass through verified downstream network topology; the vent does not need to connect directly to the fixture family.
+- Flush-tank, flushometer-tank, and flushometer-valve connection-size criteria are separate sourced subtype rules. Manufacturer and project criteria can narrow them. The engine intentionally ships no guessed universal fixture connection sizes.
+
+## Leakage controls
+
+Evaluation splits must hold out configured source-model families, source regions, PDF/view fingerprints, prompt-template fingerprints, mutation families, and hidden-answer fingerprints. A standards or generative evaluation case cannot be an exact replay of a deleted source pattern or reuse source-model geometry as its sole answer. Useful mutation families include:
+
+- change protection provenance while preserving the receptacle appearance;
+- create a wall-space coverage gap at a different coordinate and wall length;
+- vary breaker rating, voltage, yoke count, continuous load, and native circuit membership;
+- omit cold or hot service, add prohibited hot service to a water closet, break sanitary reachability, or break only the downstream vent path;
+- vary fixture subtype and supply-size criteria through the standards profile;
+- add plausible but out-of-scope nearby work to measure false positives.
+
+At least one evaluation family should use a different model region or independently generated geometry from every development example. Drawing quality and scope safety remain gates even when the engineering rule passes.
+
+## Public implementation
+
+The public evaluator primitives are in `apps/operator-backend/src/existing_conditions/engineering_invariants.ts`. Compliance/generative scoring requires evaluator-owned native before/after scope receipts and evaluator-owned access provenance; candidate self-report is not accepted as proof. The agent-package schema carries the task class, standards-profile hash, multi-solution acceptance basis, and required receipt paths. Focused tests cover task-class separation, verified GFCI paths, interval-based wall coverage, yoke/strap VA and continuous-load calculations, plumbing service topology, subtype-driven sizes, and cross-split leakage detection.
+
+## Primary-source starting points
+
+These are starting points, not embedded defaults. Each fixture must resolve its adopted edition and amendments.
+
+- NFPA 70, Article 210 GFCI and dwelling receptacle provisions, and Article 220 receptacle load calculations: [NFPA 70 public access](https://link.nfpa.org/all-publications/70/2020)
+- NFPA code-development record for NEC 210.52(A) wall-space coverage: [NFPA preliminary second-revision report](https://docinfofiles.nfpa.org/files/AboutTheCodes/70/70_A2025_NEC_P02_SD_PrelimSR.pdf)
+- NFPA code-development record for sink-proximity GFCI criteria and exceptions: [NFPA public-input report](https://docinfofiles.nfpa.org/files/AboutTheCodes/70/70_A2025_NEC_P02_PISubmittals.pdf)
+- ICC 2024 IPC Sections 602 and 604, including fixture-supply design criteria and size tables: [IPC Chapter 6](https://codes.iccsafe.org/content/IPC2024P1/chapter-6-water-supply-and-distribution)
+- ICC 2024 IPC Sections 301.3 and 301.4 for drainage and water-supply connections: [IPC Chapter 3](https://codes.iccsafe.org/content/IPC2024P1/chapter-3-general-regulations)
+- ICC 2024 IPC Chapter 9 for vent-system requirements: [IPC Chapter 9](https://codes.iccsafe.org/content/IPC2024P1/chapter-9-vents)
