@@ -297,8 +297,9 @@ namespace RevitBridge.Logic.Handlers
             try
             {
                 var linkedId = ElementIdCompat.GetValue(linkedElement.Id).ToString(CultureInfo.InvariantCulture);
-                var stable = Regex.Replace(sourceStableReferencePattern, "(:RVTLINK:)-?\\d+", match => match.Groups[1].Value + linkedId, RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
-                if (string.Equals(stable, sourceStableReferencePattern, StringComparison.Ordinal)) { error = "linked_face_rebind_pattern_missing"; return null; }
+                var linkedElementPattern = new Regex("(:RVTLINK:)-?\\d+", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+                if (!linkedElementPattern.IsMatch(sourceStableReferencePattern)) { error = "linked_face_rebind_pattern_missing"; return null; }
+                var stable = linkedElementPattern.Replace(sourceStableReferencePattern, match => match.Groups[1].Value + linkedId);
                 var reference = Reference.ParseFromStableRepresentation(document, stable);
                 if (reference == null) { error = "linked_face_rebind_parse_null"; return null; }
                 if (reference.ElementId != linkInstance.Id || reference.LinkedElementId != linkedElement.Id) { error = "linked_face_rebind_identity_mismatch"; return null; }

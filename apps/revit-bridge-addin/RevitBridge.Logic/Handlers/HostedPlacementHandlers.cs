@@ -1279,7 +1279,8 @@ namespace RevitBridge.Logic.Handlers
             RoomWallResolution? roomWall,
             XYZ worldPoint,
             XYZ? preferredReferenceDirection,
-            List<string> warnings)
+            List<string> warnings,
+            string? sourceStableReferencePattern = null)
         {
             if (host is not RevitLinkInstance link || roomWall?.linkedElementId == null || roomWall.linkedElementId.Value <= 0)
                 return null;
@@ -1308,7 +1309,8 @@ namespace RevitBridge.Logic.Handlers
                     searchRadiusFt: 4.0,
                     maximumResolvedDisplacementFt: 1.0,
                     maximumVerticalDisplacementFt: 0.5,
-                    requireVerticalFace: true) || resolution == null)
+                    requireVerticalFace: true,
+                    sourceStableReferencePattern: sourceStableReferencePattern) || resolution == null)
             {
                 warnings.Add($"Linked face placement could not resolve linked element {roomWall.linkedElementId.Value}: {error}");
                 return null;
@@ -2700,17 +2702,27 @@ namespace RevitBridge.Logic.Handlers
 
             var z = p.elevationFt ?? (basePoint.Z + (p.elevationDeltaFt ?? 0.0));
             var finalPoint = new XYZ(basePoint.X, basePoint.Y, z);
+            string? sourceHostFaceStableReference = null;
+            if (sourceElement is FamilyInstance sourceHostFamilyInstance)
+            {
+                try { sourceHostFaceStableReference = sourceHostFamilyInstance.HostFace?.ConvertToStableRepresentation(doc); }
+                catch { }
+            }
             var facePlacement = HostedPlacementUtil.TryResolveFaceHostedPlacementReference(
                 host,
                 roomWall,
                 finalPoint,
                 roomWall?.tangent,
-                warnings
+                warnings,
+                sourceHostFaceStableReference
             );
             if (HostedPlacementUtil.RequiresLinkedFaceHostedPlacement(host, roomWall) && facePlacement == null)
             {
+                var resolutionDetail = warnings.LastOrDefault(value => value.StartsWith("Linked face placement", StringComparison.OrdinalIgnoreCase));
                 throw new InvalidOperationException(
-                    $"Linked-wall hosted placement requires a resolved face reference for linked element {roomWall?.linkedElementId}. Refusing to fall back to generic RevitLinkInstance host placement because Revit can create an unhosted/off-room device."
+                    $"Linked-wall hosted placement requires a resolved face reference for linked element {roomWall?.linkedElementId}. " +
+                    "Refusing to fall back to generic RevitLinkInstance host placement because Revit can create an unhosted/off-room device." +
+                    (string.IsNullOrWhiteSpace(resolutionDetail) ? string.Empty : $" Detail: {resolutionDetail}")
                 );
             }
             var placementPointForCreate = facePlacement?.placementPoint ?? finalPoint;
@@ -2740,10 +2752,13 @@ namespace RevitBridge.Logic.Handlers
                 if (sourceElement != null) HostedPlacementUtil.CopyParameters(sourceElement, created, p.parameterNamesToCopy, warnings);
                 HostedPlacementUtil.ApplyParameterValues(created, p.parameterOverrides, warnings);
                 var matchOrientation = p.matchOrientationFromSource ?? true;
+                // Face-hosted creation already uses the resolved reference direction. Rotating the
+                // new instance again can make Revit reject an otherwise valid linked-face placement.
+                var copyRotationAfterCreate = p.copyRotation && matchOrientation && facePlacement == null;
                 HostedPlacementUtil.ApplyRotationAndFlip(
                     matchOrientation ? orientationSource : sourceElement,
                     created,
-                    p.copyRotation && matchOrientation,
+                    copyRotationAfterCreate,
                     p.copyFacingHandState && matchOrientation,
                     warnings
                 );
