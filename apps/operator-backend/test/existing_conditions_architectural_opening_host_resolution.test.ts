@@ -233,9 +233,17 @@ test("resolves a vertical host after axis rotation and does not depend on candid
 
 test("fails closed when the host participates in an ambiguity or classification confidence is low", () => {
   const ambiguous = candidateReceipt();
+  ambiguous.candidates.push({
+    ...ambiguous.candidates[0]!,
+    candidate_id: "parallel-host-competitor-randomized",
+    rank: 3,
+    model_points: [{ x: 0, y: 0.5 }, { x: 10, y: 0.5 }],
+    pixel_points: [{ x: 0, y: 0.5 }, { x: 10, y: 0.5 }],
+    rank_score: 0.89
+  });
   ambiguous.ambiguities.push({
     ambiguity_id: "ambiguity-randomized",
-    candidate_ids: ["host-candidate-randomized", "cross-wall-randomized"],
+    candidate_ids: ["host-candidate-randomized", "parallel-host-competitor-randomized"],
     reason: "near_equal_rank",
     angle_difference_degrees: 0,
     perpendicular_separation_ft: 0.5,
@@ -250,6 +258,31 @@ test("fails closed when the host participates in an ambiguity or classification 
   assert.ok(lowConfidenceResolution.resolutions[0]!.blockers.includes("opening_classification_confidence_below_threshold"));
 });
 
+test("ignores a parallel-wall ambiguity that cannot host the opening center", () => {
+  const candidates = candidateReceipt();
+  candidates.candidates.push({
+    ...candidates.candidates[0]!,
+    candidate_id: "distant-parallel-wall-randomized",
+    rank: 3,
+    model_points: [{ x: 0, y: 3 }, { x: 10, y: 3 }],
+    pixel_points: [{ x: 0, y: 3 }, { x: 10, y: 3 }],
+    rank_score: 0.7
+  });
+  candidates.ambiguities.push({
+    ambiguity_id: "distant-ambiguity-randomized",
+    candidate_ids: ["host-candidate-randomized", "distant-parallel-wall-randomized"],
+    reason: "parallel_overlapping_wall_lines",
+    angle_difference_degrees: 0,
+    perpendicular_separation_ft: 3,
+    overlap_ratio: 1,
+    score_gap: 0.2
+  });
+  const resolution = resolveArchitecturalOpeningHosts(candidates, HASH_A, classification(), HASH_C);
+  assert.equal(resolution.status, "resolved");
+  assert.equal(resolution.resolutions[0]!.selected_host_candidate_id, "host-candidate-randomized");
+  assert.ok(!resolution.resolutions[0]!.blockers.includes("opening_host_candidate_is_ambiguous"));
+});
+
 test("scores identity-perturbed host geometry and relationship while ignoring unrelated walls", () => {
   const candidates = candidateReceipt();
   const classified = classification();
@@ -261,6 +294,22 @@ test("scores identity-perturbed host geometry and relationship while ignoring un
   assert.equal(score.counts.matched_openings, 1);
   assert.equal(score.metrics.hosting, 1);
   assert.equal(score.promotion_allowed, false);
+});
+
+test("scores a collinear containing wall as equivalent when PDF evidence cannot expose native segmentation", () => {
+  const candidates = candidateReceipt();
+  candidates.candidates[0]!.supporting_face_model_points = [
+    [{ x: -2, y: -0.3 }, { x: 12, y: -0.3 }],
+    [{ x: -2, y: 0.3 }, { x: 12, y: 0.3 }]
+  ];
+  const classified = classification();
+  const resolution = resolveArchitecturalOpeningHosts(candidates, HASH_A, classified, HASH_C);
+  const score = scoreArchitecturalOpeningHostResolution(groundTruth(), candidates, HASH_A, classified, HASH_C, resolution);
+  assert.equal(score.passed, true);
+  assert.equal(score.wall_matches[0]!.matching_basis, "collinear_overlap");
+  assert.equal(score.wall_matches[0]!.truth_coverage, 1);
+  assert.ok(score.wall_matches[0]!.prediction_overlap >= 0.69);
+  assert.equal(score.metrics.hosting, 1);
 });
 
 test("rejects a wrong native host relationship independently of opening location", () => {

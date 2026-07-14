@@ -4,7 +4,9 @@ import {
   type ArchitecturalOpeningClassificationReceipt
 } from "./architectural_opening_classification.js";
 import type {
+  ArchitecturalOpeningGapHypothesis,
   ArchitecturalWallJunctionHypothesis,
+  ArchitecturalWallLineAmbiguity,
   ArchitecturalWallLineCandidate,
   ArchitecturalWallLineCandidateReceipt
 } from "./architectural_wall_line_candidates.js";
@@ -155,6 +157,40 @@ function supportingExtentProjections(candidate: ArchitecturalWallLineCandidate, 
   ];
 }
 
+function distanceToSegment(point: Point2, segment: [Point2, Point2]): number {
+  const [start, end] = segment;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared <= Number.EPSILON) return Math.hypot(point.x - start.x, point.y - start.y);
+  const parameter = Math.max(0, Math.min(1,
+    ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared
+  ));
+  return Math.hypot(
+    point.x - (start.x + parameter * dx),
+    point.y - (start.y + parameter * dy)
+  );
+}
+
+function ambiguityCompetesForOpening(
+  ambiguity: ArchitecturalWallLineAmbiguity,
+  opening: ArchitecturalOpeningGapHypothesis,
+  host: ArchitecturalWallLineCandidate,
+  wallCandidates: Map<string, ArchitecturalWallLineCandidate>,
+  policy: ArchitecturalOpeningHostResolutionPolicy
+): boolean {
+  if (!ambiguity.candidate_ids.includes(host.candidate_id)) return false;
+  const alternateId = ambiguity.candidate_ids.find((candidateId) => candidateId !== host.candidate_id);
+  const alternate = alternateId ? wallCandidates.get(alternateId) : null;
+  if (!alternate) return true;
+  const maximumWallThickness = Math.max(host.face_separation_ft ?? 0, alternate.face_separation_ft ?? 0);
+  const plausibleCenterlineOffset = Math.max(
+    0.75,
+    maximumWallThickness / 2 + policy.minimum_opening_end_clearance_ft
+  );
+  return distanceToSegment(opening.model_center, alternate.model_points) <= plausibleCenterlineOffset;
+}
+
 function junctionForEndpoint(
   candidates: ArchitecturalWallLineCandidateReceipt,
   hostCandidateId: string,
@@ -224,7 +260,7 @@ export function resolveArchitecturalOpeningHosts(
     if (!host) blockers.push("opening_host_candidate_missing");
     if (host && host.derivation !== "parallel_face_midline") blockers.push("opening_host_is_not_paired_face_midline");
     if (host && host.source_ink_coverage < policy.minimum_host_source_ink_coverage) blockers.push("opening_host_source_ink_below_threshold");
-    if (candidates.ambiguities.some((entry) => entry.candidate_ids.includes(opening.host_candidate_id))) {
+    if (host && candidates.ambiguities.some((entry) => ambiguityCompetesForOpening(entry, opening, host, wallCandidates, policy))) {
       blockers.push("opening_host_candidate_is_ambiguous");
     }
     const axis = snappedAxis(opening.profile_axis_degrees, policy.maximum_axis_snap_degrees);

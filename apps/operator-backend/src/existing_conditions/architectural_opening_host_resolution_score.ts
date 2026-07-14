@@ -13,6 +13,9 @@ type Point2 = { x: number; y: number };
 
 export type ArchitecturalOpeningHostResolutionScoringPolicy = {
   wall_endpoint_tolerance_ft: number;
+  wall_axis_tolerance_degrees: number;
+  minimum_wall_truth_coverage: number;
+  minimum_wall_prediction_overlap: number;
   opening_location_tolerance_ft: number;
   minimum_wall_precision: number;
   minimum_wall_recall: number;
@@ -24,6 +27,9 @@ export type ArchitecturalOpeningHostResolutionScoringPolicy = {
 
 export const DEFAULT_ARCHITECTURAL_OPENING_HOST_RESOLUTION_SCORING_POLICY: ArchitecturalOpeningHostResolutionScoringPolicy = {
   wall_endpoint_tolerance_ft: 0.5,
+  wall_axis_tolerance_degrees: 5,
+  minimum_wall_truth_coverage: 0.9,
+  minimum_wall_prediction_overlap: 0.6,
   opening_location_tolerance_ft: 1,
   minimum_wall_precision: 0.8,
   minimum_wall_recall: 0.8,
@@ -67,7 +73,12 @@ export type ArchitecturalOpeningHostResolutionScore = {
   wall_matches: Array<{
     selected_host_candidate_id: string;
     truth_wall_key: string;
+    matching_basis: "endpoint" | "collinear_overlap";
     maximum_endpoint_error_ft: number;
+    axis_error_degrees: number;
+    perpendicular_offset_ft: number;
+    truth_coverage: number;
+    prediction_overlap: number;
     geometry_score: number;
   }>;
   opening_matches: Array<{
@@ -103,6 +114,79 @@ function endpointError(predicted: [Point2, Point2], truth: [Point2, Point2]): nu
   return Math.min(direct, reverse);
 }
 
+function segmentLength(points: [Point2, Point2]): number {
+  return distance(points[0], points[1]);
+}
+
+function segmentMatch(
+  predicted: [Point2, Point2],
+  truth: [Point2, Point2],
+  policy: ArchitecturalOpeningHostResolutionScoringPolicy
+): {
+  matching_basis: "endpoint" | "collinear_overlap";
+  maximum_endpoint_error_ft: number;
+  axis_error_degrees: number;
+  perpendicular_offset_ft: number;
+  truth_coverage: number;
+  prediction_overlap: number;
+  geometry_score: number;
+} | null {
+  const endpoint = endpointError(predicted, truth);
+  const truthDx = truth[1].x - truth[0].x;
+  const truthDy = truth[1].y - truth[0].y;
+  const truthLength = segmentLength(truth);
+  const predictedLength = segmentLength(predicted);
+  if (truthLength <= Number.EPSILON || predictedLength <= Number.EPSILON) return null;
+  const unit = { x: truthDx / truthLength, y: truthDy / truthLength };
+  const predictedUnit = {
+    x: (predicted[1].x - predicted[0].x) / predictedLength,
+    y: (predicted[1].y - predicted[0].y) / predictedLength
+  };
+  const axisCosine = Math.min(1, Math.abs(unit.x * predictedUnit.x + unit.y * predictedUnit.y));
+  const axisError = Math.acos(axisCosine) * 180 / Math.PI;
+  const predictedMidpoint = {
+    x: (predicted[0].x + predicted[1].x) / 2,
+    y: (predicted[0].y + predicted[1].y) / 2
+  };
+  const perpendicularOffset = Math.abs(
+    (predictedMidpoint.x - truth[0].x) * -unit.y
+    + (predictedMidpoint.y - truth[0].y) * unit.x
+  );
+  const project = (point: Point2): number => (point.x - truth[0].x) * unit.x + (point.y - truth[0].y) * unit.y;
+  const predictedProjections = predicted.map(project) as [number, number];
+  const predictedMinimum = Math.min(...predictedProjections);
+  const predictedMaximum = Math.max(...predictedProjections);
+  const overlap = Math.max(0, Math.min(truthLength, predictedMaximum) - Math.max(0, predictedMinimum));
+  const truthCoverage = overlap / truthLength;
+  const predictionOverlap = overlap / predictedLength;
+  if (endpoint <= policy.wall_endpoint_tolerance_ft) {
+    return {
+      matching_basis: "endpoint",
+      maximum_endpoint_error_ft: round(endpoint),
+      axis_error_degrees: round(axisError),
+      perpendicular_offset_ft: round(perpendicularOffset),
+      truth_coverage: round(truthCoverage),
+      prediction_overlap: round(predictionOverlap),
+      geometry_score: round(Math.max(0, 1 - endpoint / policy.wall_endpoint_tolerance_ft))
+    };
+  }
+  if (axisError > policy.wall_axis_tolerance_degrees
+    || perpendicularOffset > policy.wall_endpoint_tolerance_ft
+    || truthCoverage < policy.minimum_wall_truth_coverage
+    || predictionOverlap < policy.minimum_wall_prediction_overlap) return null;
+  const overlapF1 = f1(predictionOverlap, truthCoverage);
+  const offsetScore = Math.max(0, 1 - perpendicularOffset / policy.wall_endpoint_tolerance_ft);
+  return {
+    matching_basis: "collinear_overlap",
+    maximum_endpoint_error_ft: round(endpoint),
+    axis_error_degrees: round(axisError),
+    perpendicular_offset_ft: round(perpendicularOffset),
+    truth_coverage: round(truthCoverage),
+    prediction_overlap: round(predictionOverlap),
+    geometry_score: round(overlapF1 * offsetScore)
+  };
+}
+
 function f1(precision: number, recall: number): number {
   return precision + recall > 0 ? 2 * precision * recall / (precision + recall) : 0;
 }
@@ -113,6 +197,7 @@ function ratio(matches: number, total: number, emptyValue: number): number {
 
 function validatePolicy(policy: ArchitecturalOpeningHostResolutionScoringPolicy): void {
   if (!Number.isFinite(policy.wall_endpoint_tolerance_ft) || policy.wall_endpoint_tolerance_ft <= 0
+    || !Number.isFinite(policy.wall_axis_tolerance_degrees) || policy.wall_axis_tolerance_degrees <= 0 || policy.wall_axis_tolerance_degrees > 45
     || !Number.isFinite(policy.opening_location_tolerance_ft) || policy.opening_location_tolerance_ft <= 0
     || !Number.isFinite(policy.passing_score) || policy.passing_score < 0 || policy.passing_score > 100) {
     throw new Error("architectural_opening_host_resolution_scoring_policy_invalid");
@@ -120,6 +205,8 @@ function validatePolicy(policy: ArchitecturalOpeningHostResolutionScoringPolicy)
   const fractions = [
     policy.minimum_wall_precision,
     policy.minimum_wall_recall,
+    policy.minimum_wall_truth_coverage,
+    policy.minimum_wall_prediction_overlap,
     policy.minimum_opening_precision,
     policy.minimum_opening_recall,
     policy.minimum_hosting_score
@@ -167,15 +254,15 @@ export function scoreArchitecturalOpeningHostResolution(
   }])).values()];
   const wallPossibilities = truthHostWalls.flatMap((truthWall) => predictedHostWalls.flatMap((predictedWall) => {
     const truthPoints = truthWall.endpoints as Array<{ x: number; y: number }>;
-    const error = endpointError(predictedWall.points, [truthPoints[0]!, truthPoints[1]!]);
-    if (error > policy.wall_endpoint_tolerance_ft) return [];
+    const match = segmentMatch(predictedWall.points, [truthPoints[0]!, truthPoints[1]!], policy);
+    if (!match) return [];
     return [{
       selected_host_candidate_id: predictedWall.candidate_id,
       truth_wall_key: truthWall.key,
-      maximum_endpoint_error_ft: round(error),
-      geometry_score: round(Math.max(0, 1 - error / policy.wall_endpoint_tolerance_ft))
+      ...match
     }];
-  })).sort((a, b) => a.maximum_endpoint_error_ft - b.maximum_endpoint_error_ft
+  })).sort((a, b) => b.geometry_score - a.geometry_score
+    || a.maximum_endpoint_error_ft - b.maximum_endpoint_error_ft
     || a.truth_wall_key.localeCompare(b.truth_wall_key)
     || a.selected_host_candidate_id.localeCompare(b.selected_host_candidate_id));
   const usedTruthWalls = new Set<string>();
