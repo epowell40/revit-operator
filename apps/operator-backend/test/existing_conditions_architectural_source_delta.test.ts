@@ -179,6 +179,7 @@ test("architectural redaction gate requires visible target removal and retained 
     assert.equal(gate.passed, true);
     assert.equal(gate.targets.length, 2);
     assert.equal(gate.targets.every((target) => target.passed), true);
+    assert.equal(gate.targets.every((target) => target.fully_inside_measurement_frame), true);
     assert.equal(gate.background.passed, true);
     assert.ok(gate.background.common_ink_pixels_outside_targets >= 100);
   } finally {
@@ -213,6 +214,30 @@ test("architectural redaction gate rejects a missing architectural background", 
     const gate = await auditArchitecturalRedactionVisibility(architecturalTruth(), receipt);
     assert.equal(gate.passed, false);
     assert.ok(gate.failure_classifications.includes("architectural_background_not_retained"));
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("architectural redaction gate rejects truth geometry clipped by the measurement frame", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-redaction-frame-fail-"));
+  try {
+    const sourcePath = path.join(temp, "source.png");
+    const redactedPath = path.join(temp, "redacted.png");
+    drawFixture(sourcePath, [40, 140]);
+    drawFixture(redactedPath, [40]);
+    const receipt = await buildArchitecturalSourceDelta(deltaInput(sourcePath, redactedPath), path.join(temp, "out"));
+    const truth = architecturalTruth();
+    truth.snapshot.elements[0]!.endpoints = [
+      { x: 7, y: 9.5, z: 0 },
+      { x: 7, y: -1, z: 0 }
+    ];
+    const gate = await auditArchitecturalRedactionVisibility(truth, receipt);
+    assert.equal(gate.passed, false);
+    assert.ok(gate.failure_classifications.includes("withheld_target_clipped_by_measurement_frame"));
+    assert.equal(gate.targets[0]!.evidence_passed, true);
+    assert.equal(gate.targets[0]!.fully_inside_measurement_frame, false);
+    assert.equal(gate.targets[0]!.minimum_frame_clearance_ft, -1);
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }

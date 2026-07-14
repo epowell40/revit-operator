@@ -10,6 +10,7 @@ import type { ArchitecturalSourceDeltaReceipt } from "./architectural_source_del
 export type ArchitecturalRedactionVisibilityPolicy = {
   target_evidence_radius_ft: number;
   target_exclusion_radius_ft: number;
+  minimum_target_frame_margin_ft: number;
   minimum_wall_sample_coverage: number;
   minimum_opening_sample_coverage: number;
   minimum_common_background_pixels: number;
@@ -19,6 +20,7 @@ export type ArchitecturalRedactionVisibilityPolicy = {
 export const DEFAULT_ARCHITECTURAL_REDACTION_VISIBILITY_POLICY: ArchitecturalRedactionVisibilityPolicy = {
   target_evidence_radius_ft: 0.75,
   target_exclusion_radius_ft: 1.5,
+  minimum_target_frame_margin_ft: 0.75,
   minimum_wall_sample_coverage: 0.3,
   minimum_opening_sample_coverage: 1,
   minimum_common_background_pixels: 100,
@@ -32,6 +34,9 @@ export type ArchitecturalRedactionTargetVisibility = {
   supported_sample_count: number;
   evidence_coverage: number;
   candidate_pixel_count: number;
+  minimum_frame_clearance_ft: number;
+  fully_inside_measurement_frame: boolean;
+  evidence_passed: boolean;
   passed: boolean;
 };
 
@@ -115,6 +120,30 @@ function samplesForElement(
   }
   if (!element.location) throw new Error(`architectural_truth_opening_missing_location:${element.key}`);
   return [modelToPixel(element.location, bounds, width, height)];
+}
+
+function targetPoints(
+  element: ExistingConditionsElement,
+  elementRole: "wall" | "door" | "window"
+): Point2[] {
+  if (elementRole === "wall") {
+    if (!element.endpoints) throw new Error(`architectural_truth_wall_missing_endpoints:${element.key}`);
+    return element.endpoints.map((point) => ({ x: point.x, y: point.y }));
+  }
+  if (!element.location) throw new Error(`architectural_truth_opening_missing_location:${element.key}`);
+  return [{ x: element.location.x, y: element.location.y }];
+}
+
+function minimumFrameClearance(
+  points: Point2[],
+  bounds: ArchitecturalSourceDeltaReceipt["scope_model_bounds"]
+): number {
+  return Math.min(...points.flatMap((point) => [
+    point.x - bounds.min.x,
+    bounds.max.x - point.x,
+    point.y - bounds.min.y,
+    bounds.max.y - point.y
+  ]));
 }
 
 function anyMaskPixel(mask: Uint8Array, width: number, height: number, point: PixelPoint, radius: number): boolean {
@@ -251,6 +280,12 @@ export async function auditArchitecturalRedactionVisibility(
       ? policy.minimum_wall_sample_coverage
       : policy.minimum_opening_sample_coverage;
     const candidatePixels = countMaskPixels(masks.candidate, width, height, samples, evidenceRadius);
+    const frameClearance = minimumFrameClearance(
+      targetPoints(element, elementRole),
+      delta.scope_model_bounds
+    );
+    const fullyInsideFrame = frameClearance >= policy.minimum_target_frame_margin_ft;
+    const evidencePassed = coverage >= minimum && candidatePixels > 0;
     targets.push({
       truth_key: element.key,
       role: elementRole,
@@ -258,7 +293,10 @@ export async function auditArchitecturalRedactionVisibility(
       supported_sample_count: supported,
       evidence_coverage: round(coverage),
       candidate_pixel_count: candidatePixels,
-      passed: coverage >= minimum && candidatePixels > 0
+      minimum_frame_clearance_ft: round(frameClearance),
+      fully_inside_measurement_frame: fullyInsideFrame,
+      evidence_passed: evidencePassed,
+      passed: evidencePassed && fullyInsideFrame
     });
   }
   const expandedRedacted = dilate(masks.redacted, width, height, delta.render_policy.redacted_ink_dilation_px);
@@ -274,7 +312,10 @@ export async function auditArchitecturalRedactionVisibility(
     commonRatio >= policy.minimum_common_background_ratio;
   const failures: string[] = [];
   if (targets.length === 0) failures.push("no_supported_architectural_truth_targets");
-  if (targets.some((target) => !target.passed)) failures.push("withheld_target_not_visibly_redacted");
+  if (targets.some((target) => !target.evidence_passed)) failures.push("withheld_target_not_visibly_redacted");
+  if (targets.some((target) => !target.fully_inside_measurement_frame)) {
+    failures.push("withheld_target_clipped_by_measurement_frame");
+  }
   if (!backgroundPassed) failures.push("architectural_background_not_retained");
   return {
     schema_version: 1,
