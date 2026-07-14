@@ -6595,6 +6595,67 @@
     },
     {
       "method": "POST",
+      "path": "/revit/connect-mep-elements",
+      "examples": [
+        {
+          "name": "Dry-run fixture connections to explicit pipe targets",
+          "request": {
+            "sourceElementId": 1716456,
+            "targetElementIds": [1716457, 1716459, 1716470],
+            "toleranceFt": 0.5,
+            "sizeToleranceFt": 0.01,
+            "requiredConnectionCount": 3,
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "status": "Ready",
+            "dryRun": true,
+            "requiredConnectionCount": 3,
+            "plannedConnectionCount": 3,
+            "connectionPlan": []
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/copy-mep-pattern",
+      "examples": [
+        {
+          "name": "Dry-run a translated connected pipe and fixture precedent",
+          "request": {
+            "sourceElementIds": [1372145, 1612224, 1612255],
+            "translationXyz": [0, 0, 13.3333333333333],
+            "externalConnections": [
+              {
+                "copiedSourceElementId": 1612224,
+                "existingElementId": 1617192
+              },
+              {
+                "copiedSourceElementId": 1612255,
+                "existingElementId": 1617216
+              }
+            ],
+            "connectionToleranceFt": 0.125,
+            "connectionSizeToleranceFt": 0.01,
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "status": "Ready",
+            "dryRun": true,
+            "nativePreflightSucceeded": true,
+            "transactionRolledBack": true,
+            "plannedCreatedCount": 3,
+            "internalPhysicalConnectionCount": 2,
+            "externalConnections": []
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/connect-mep-branch",
       "examples": [
         {

@@ -20,6 +20,15 @@ test("evaluator receipt accepts only in-scope native changes", () => {
   assert.match(receipt.receipt_sha256, /^[a-f0-9]{64}$/);
 });
 
+test("evaluator receipt accepts the same multi-view discipline scope independent of view order", () => {
+  const created = { id: 2, builtInCategory: "OST_DuctCurves", geometry: { start: { model: { x: 1, y: 1, z: 1 } }, end: { model: { x: 5, y: 1, z: 1 } } } };
+  const before = { viewIds: [101, 202], count: 0, truncated: false, items: [] };
+  const after = { viewIds: [202, 101], count: 1, truncated: false, items: [created] };
+  const receipt = createExistingConditionsEvaluatorChangeReceipt(before, after, packageContract);
+  assert.deepEqual(receipt.changed_element_keys, ["2"]);
+  assert.deepEqual(receipt.out_of_scope_changed_element_keys, []);
+});
+
 test("evaluator receipt reports modifications outside allowed scope", () => {
   const before = { id: 1, builtInCategory: "OST_Walls", point: { x: 20, y: 20, z: 0 }, typeName: "Wall A" };
   const after = { ...before, typeName: "Wall B" };

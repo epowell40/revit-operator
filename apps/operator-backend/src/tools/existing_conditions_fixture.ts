@@ -3,6 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import {
   normalizeExistingConditionsSnapshot,
+  mergeExistingConditionsVisibleElementPayloads,
   scoreExistingConditionsReconstruction,
   type ExistingConditionsCandidate,
   type ExistingConditionsGroundTruth,
@@ -78,7 +79,7 @@ function usage(): never {
   throw new Error([
     "Usage:",
     "  npm run existing-conditions -- normalize --visible <export-visible-elements.json> --connectors <get-connectors.json> --ids <id,id,...> --out <snapshot.json>",
-    "  npm run existing-conditions -- capture --expected-model <model.rvt> --view-id <id> --ids <id,id,...> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
+    "  npm run existing-conditions -- capture --expected-model <model.rvt> (--view-id <id> | --view-ids <id,id,...>) --ids <id,id,...> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "  npm run existing-conditions -- package --fixture-id <id> --scope-id <id> --discipline <mechanical|plumbing|electrical|mixed> --redacted-model <agent-redacted.rvt> --source-pdf <source.pdf> --view-id <id> --model-bounds <minX,minY,minZ,maxX,maxY,maxZ> --image-region <minX,minY,maxX,maxY> --allowed-categories <OST_...,OST_...> --out-dir <agent-dir>",
     "  npm run existing-conditions -- seal-truth --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --ground-truth-model <source.rvt> --deletion-manifest <json> --delete-dry-run <json> --out <truth.json>",
     "  npm run existing-conditions -- evaluator-review-visual --post-capture <image> --post-pdf <pdf> --status <pass|needs_review|fail> --out <receipt.json>",
@@ -172,9 +173,13 @@ function activeDocumentPath(contextValue: unknown): string {
 async function captureNativeSnapshot(): Promise<void> {
   const expectedModel = path.resolve(requiredArgument("--expected-model"));
   const outDir = path.resolve(requiredArgument("--out-dir"));
-  const viewId = Number(requiredArgument("--view-id"));
+  const viewIds = argument("--view-ids")
+    ? parseIds(argument("--view-ids"))
+    : [Number(requiredArgument("--view-id"))];
   const ids = parseIds(requiredArgument("--ids"));
-  if (!Number.isInteger(viewId) || viewId <= 0) throw new Error("--view-id must be a positive integer.");
+  if (viewIds.some((viewId) => !Number.isInteger(viewId) || viewId <= 0)) {
+    throw new Error("--view-id/--view-ids must contain positive integers.");
+  }
   if (!fs.existsSync(expectedModel)) throw new Error(`Expected model does not exist: ${expectedModel}`);
   if (fs.existsSync(outDir) && fs.readdirSync(outDir).length > 0) {
     throw new Error(`Refusing to overwrite a non-empty capture directory: ${outDir}`);
@@ -187,15 +192,21 @@ async function captureNativeSnapshot(): Promise<void> {
   const categories = argument("--categories")
     ? parseCsv(argument("--categories"), "--categories")
     : DEFAULT_EXISTING_CONDITIONS_CATEGORIES;
-  const visible = await client.post("/revit/export-visible-elements", {
-    viewId,
-    imageSize: 3000,
-    includeMapping: true,
-    includeGeometry: true,
-    includeLinked: false,
-    limit: 2000,
-    categories
-  });
+  const visibleByView: unknown[] = [];
+  for (const viewId of viewIds) {
+    visibleByView.push(await client.post("/revit/export-visible-elements", {
+      viewId,
+      imageSize: 3000,
+      includeMapping: true,
+      includeGeometry: true,
+      includeLinked: false,
+      limit: 2000,
+      categories
+    }));
+  }
+  const visible = visibleByView.length === 1
+    ? visibleByView[0]
+    : mergeExistingConditionsVisibleElementPayloads(visibleByView, viewIds);
   const connectors = await client.post("/revit/get-connectors", {
     elementIds: ids,
     includeAllRefs: true,
@@ -205,17 +216,28 @@ async function captureNativeSnapshot(): Promise<void> {
     selected_element_ids: ids,
     require_connector_readback: !process.argv.includes("--allow-missing-connectors")
   });
+  if (!snapshot.native_readback) {
+    const capturedIds = new Set(snapshot.elements.map((entry) => Number(String(entry.key).replace(/^host:/, ""))).filter(Number.isInteger));
+    const missingIds = ids.filter((id) => !capturedIds.has(id));
+    throw new Error(`Native capture is incomplete for the requested scope. Missing visible/native rows: ${missingIds.join(",") || "connector_readback"}. Supply all required discipline views with --view-ids.`);
+  }
   writeJson(path.join(outDir, "context.json"), context);
   writeJson(path.join(outDir, "visible_elements.json"), visible);
+  if (visibleByView.length > 1) {
+    for (let index = 0; index < visibleByView.length; index += 1) {
+      writeJson(path.join(outDir, `visible_elements_view_${viewIds[index]}.json`), visibleByView[index]);
+    }
+  }
   writeJson(path.join(outDir, "connectors.json"), connectors);
   writeJson(path.join(outDir, "snapshot.json"), snapshot);
   writeJson(path.join(outDir, "capture_receipt.json"), {
     schema_version: 1,
     model_path: expectedModel,
     model_sha256: sha256(expectedModel),
-    view_id: viewId,
+    view_id: viewIds[0],
+    view_ids: viewIds,
     selected_element_count: ids.length,
-    native_readback: true
+    native_readback: snapshot.native_readback
   });
 }
 

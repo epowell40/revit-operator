@@ -74,6 +74,7 @@ export type ExistingConditionsControllerState = {
   apply_receipt: {
     status: "pass";
     changed_element_keys: string[];
+    created_element_keys: string[];
     out_of_scope_changed_element_keys: string[];
     receipt_sha256: string;
   } | null;
@@ -123,6 +124,7 @@ export type ExistingConditionsControllerEvent =
       type: "apply_completed";
       passed: boolean;
       changed_element_keys: string[];
+      created_element_keys?: string[];
       out_of_scope_changed_element_keys: string[];
       receipt_sha256: string;
       failure_reason?: string;
@@ -438,11 +440,23 @@ export function advanceExistingConditionsController(
     const outOfScope = uniqueText(event.out_of_scope_changed_element_keys ?? []);
     if (outOfScope.length > 0) return block(state, event, `out_of_scope_write:${outOfScope.join(",")}`);
     const changed = uniqueText(event.changed_element_keys ?? []);
-    if (changed.length > state.maximum_created_elements) return block(state, event, "maximum_created_elements_exceeded");
+    const knownExisting = new Set([
+      ...(state.inspection_receipt?.discovered_element_keys ?? []),
+      ...(state.inspection_receipt?.surrounding_anchor_keys ?? [])
+    ].map(normalized));
+    const created = event.created_element_keys
+      ? uniqueText(event.created_element_keys)
+      : changed.filter((key) => !knownExisting.has(normalized(key)));
+    const changedNormalized = new Set(changed.map(normalized));
+    if (created.some((key) => !changedNormalized.has(normalized(key)))) {
+      return block(state, event, "created_element_not_in_changed_elements");
+    }
+    if (created.length > state.maximum_created_elements) return block(state, event, "maximum_created_elements_exceeded");
     const next = transition(state, event, "verify_native", "Approved plan applied inside the bounded scope.");
     next.apply_receipt = {
       status: "pass",
       changed_element_keys: changed,
+      created_element_keys: created,
       out_of_scope_changed_element_keys: [],
       receipt_sha256: requireSha256(event.receipt_sha256, "apply.receipt_sha256")
     };
@@ -509,6 +523,7 @@ export function advanceExistingConditionsController(
     next.apply_receipt = {
       status: "pass",
       changed_element_keys: uniqueText(event.changed_element_keys ?? []),
+      created_element_keys: state.apply_receipt?.created_element_keys ?? [],
       out_of_scope_changed_element_keys: [],
       receipt_sha256: requireSha256(event.receipt_sha256, "repair.receipt_sha256")
     };

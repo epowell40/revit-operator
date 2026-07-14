@@ -172,6 +172,60 @@ test("controller blocks an out-of-scope apply receipt", () => {
   assert.match(state.blocker ?? "", /out_of_scope_write:host:42/);
 });
 
+test("controller counts only created elements when retained anchors also change", () => {
+  let state = createExistingConditionsControllerState({
+    fixture_id: "fixture",
+    scope_id: "scope",
+    discipline: "plumbing",
+    allowed_categories: ["OST_PlumbingFixtures", "OST_PipeCurves", "OST_PipeFitting"],
+    maximum_created_elements: 2,
+    visible_evidence: [{ role: "source_pdf", sha256: HASH_A }]
+  });
+  state = advanceExistingConditionsController(state, {
+    type: "inspection_completed",
+    visible_evidence: [{ role: "source_pdf", sha256: HASH_A }],
+    native_readback: true,
+    discovered_element_keys: [],
+    surrounding_anchor_keys: ["host:10", "host:11"]
+  });
+  state = advanceExistingConditionsController(state, {
+    type: "plan_submitted",
+    elements: [
+      { plan_key: "fixture", category: "OST_PlumbingFixtures", role: "fixture", action: "create", confidence: 1, assumptions: [] },
+      { plan_key: "pipe", category: "OST_PipeCurves", role: "pipe", action: "create", confidence: 1, assumptions: [] }
+    ]
+  });
+  state = advanceExistingConditionsController(state, {
+    type: "dry_run_completed",
+    passed: true,
+    planned_element_keys: ["fixture", "pipe"],
+    receipt_sha256: HASH_B
+  });
+  state = advanceExistingConditionsController(state, {
+    type: "apply_completed",
+    passed: true,
+    changed_element_keys: ["host:10", "host:11", "host:100", "host:101"],
+    created_element_keys: ["host:100", "host:101"],
+    out_of_scope_changed_element_keys: [],
+    receipt_sha256: HASH_C
+  });
+  assert.equal(state.phase, "verify_native");
+  assert.deepEqual(state.apply_receipt?.created_element_keys, ["host:100", "host:101"]);
+});
+
+test("controller blocks when a claimed created element is absent from the changed receipt", () => {
+  const state = advanceExistingConditionsController(dryRunPassed(), {
+    type: "apply_completed",
+    passed: true,
+    changed_element_keys: ["host:9001"],
+    created_element_keys: ["host:9002"],
+    out_of_scope_changed_element_keys: [],
+    receipt_sha256: HASH_C
+  });
+  assert.equal(state.phase, "blocked");
+  assert.equal(state.blocker, "created_element_not_in_changed_elements");
+});
+
 test("native verification failure enters bounded repair and repeats verification", () => {
   let state = advanceExistingConditionsController(applied(), {
     type: "native_verification_completed",

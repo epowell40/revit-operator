@@ -3,16 +3,30 @@ import assert from "node:assert/strict";
 import {
   scoreExistingConditionsReconstruction,
   normalizeExistingConditionsSnapshot,
+  mergeExistingConditionsVisibleElementPayloads,
   type ExistingConditionsCandidate,
   type ExistingConditionsElement,
   type ExistingConditionsGroundTruth
 } from "../src/benchmark/existing_conditions_reconstruction.js";
+
 import { MockBridgeTransport, runRevitDemoWorkflow } from "../src/benchmark/revit_workflows.js";
 import fs from "node:fs";
 import path from "node:path";
 import { createExistingConditionsEvaluatorVisualReceipt } from "../src/existing_conditions/evaluator_visual.js";
 
 const SOURCE_HASH = "a".repeat(64);
+
+test("multi-view visible element exports merge without duplicating host ids", () => {
+  const merged = mergeExistingConditionsVisibleElementPayloads([
+    { scanned: 2, items: [{ id: 10, category: "Pipes" }, { id: 20, category: "Plumbing Fixtures" }], warnings: ["first"] },
+    { scanned: 2, items: [{ id: 20, category: "Plumbing Fixtures" }, { id: 30, category: "Pipes" }], warnings: ["second"] }
+  ], [101, 102]);
+  assert.deepEqual(merged.viewIds, [101, 102]);
+  assert.equal(merged.count, 3);
+  assert.equal(merged.scanned, 4);
+  assert.deepEqual((merged.items as Array<{ id: number }>).map((entry) => entry.id), [10, 20, 30]);
+  assert.deepEqual(merged.warnings, ["first", "second"]);
+});
 
 function duct(key: string, y = 10, size = 1): ExistingConditionsElement {
   return {

@@ -109,6 +109,17 @@ function completeItems(value: unknown, label: string): JsonObject[] {
   return exported.items.map(object);
 }
 
+function visibleViewScope(value: unknown): string {
+  const exported = exportObject(value);
+  if (Array.isArray(exported.viewIds)) {
+    const ids = [...new Set(exported.viewIds.map(number).filter((id): id is number => id !== null && Number.isInteger(id) && id > 0))]
+      .sort((a, b) => a - b);
+    return ids.length > 0 ? `multi:${ids.join(",")}` : "";
+  }
+  const viewId = number(exported.viewId);
+  return viewId !== null && Number.isInteger(viewId) && viewId > 0 ? `single:${viewId}` : "";
+}
+
 function elementKey(item: JsonObject): string {
   const candidates = [item.sourceScopedId, item.uniqueId, item.elementId, item.id];
   const selected = candidates.map((value) => String(value ?? "").trim()).find(Boolean);
@@ -196,11 +207,9 @@ export function createExistingConditionsEvaluatorChangeReceipt(
   afterVisible: unknown,
   agentPackage: unknown
 ): ExistingConditionsEvaluatorChangeReceipt {
-  const beforeExport = exportObject(beforeVisible);
-  const afterExport = exportObject(afterVisible);
-  const beforeViewId = String(beforeExport.viewId ?? "").trim();
-  const afterViewId = String(afterExport.viewId ?? "").trim();
-  if (!beforeViewId || beforeViewId !== afterViewId) throw new Error("visible_inventory_view_mismatch");
+  const beforeViewScope = visibleViewScope(beforeVisible);
+  const afterViewScope = visibleViewScope(afterVisible);
+  if (!beforeViewScope || beforeViewScope !== afterViewScope) throw new Error("visible_inventory_view_mismatch");
 
   const before = completeItems(beforeVisible, "before");
   const after = completeItems(afterVisible, "after");

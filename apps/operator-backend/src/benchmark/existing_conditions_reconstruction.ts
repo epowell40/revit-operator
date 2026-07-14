@@ -459,6 +459,46 @@ export function normalizeExistingConditionsSnapshot(
   };
 }
 
+/**
+ * Combines host-model visible-element exports from multiple discipline views.
+ * Existing-condition captures deliberately request includeLinked=false, so a
+ * host ElementId is a stable deduplication key across the supplied views.
+ */
+export function mergeExistingConditionsVisibleElementPayloads(
+  payloads: unknown[],
+  viewIds: number[] = []
+): Record<string, unknown> {
+  if (payloads.length === 0) throw new Error("visible_element_payloads_required");
+  const itemsById = new Map<number, Record<string, unknown>>();
+  const warnings: string[] = [];
+  let scanned = 0;
+  let truncated = false;
+  for (const payload of payloads) {
+    const root = asObject(payload);
+    scanned += finiteNumber(root.scanned) ?? 0;
+    truncated = truncated || root.truncated === true;
+    for (const warning of Array.isArray(root.warnings) ? root.warnings : []) {
+      const text = String(warning ?? "").trim();
+      if (text) warnings.push(text);
+    }
+    for (const row of objectRows(root.items ?? root.elements)) {
+      const id = finiteNumber(row.id ?? row.elementId ?? row.element_id);
+      if (id === null || Math.trunc(id) <= 0) continue;
+      if (!itemsById.has(Math.trunc(id))) itemsById.set(Math.trunc(id), row);
+    }
+  }
+  const items = [...itemsById.values()];
+  return {
+    schema_version: 1,
+    viewIds: [...new Set(viewIds.filter((id) => Number.isInteger(id) && id > 0))],
+    count: items.length,
+    scanned,
+    truncated,
+    items,
+    warnings: [...new Set(warnings)]
+  };
+}
+
 function pointDistance(a: ExistingConditionsPoint3, b: ExistingConditionsPoint3): number {
   return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 }

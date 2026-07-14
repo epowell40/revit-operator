@@ -131,6 +131,22 @@ namespace RevitBridge.Logic.Handlers.MEP
                         ?? throw new InvalidOperationException($"Mapped copied element {copiedId} was not found.");
                     var existing = doc.GetElement(ElementIdCompat.Create(connection.existingElementId))
                         ?? throw new InvalidOperationException($"External element {connection.existingElementId} was not found.");
+                    // Revit can automatically join coincident pipe/duct endpoints while
+                    // CopyElements regenerates the copied pattern. Treat that native join
+                    // as satisfying the explicit request instead of requiring a second
+                    // pair of open connectors that no longer exists.
+                    if (ArePhysicallyConnected(doc, copiedId, connection.existingElementId))
+                    {
+                        externalResults.Add(new
+                        {
+                            copiedSourceElementId = connection.copiedSourceElementId,
+                            copiedElementId = copiedId,
+                            existingElementId = connection.existingElementId,
+                            distanceFt = 0.0,
+                            alreadyConnected = true
+                        });
+                        continue;
+                    }
                     var pair = FindExternalConnectorPair(copied, existing, p.connectionToleranceFt, p.connectionSizeToleranceFt)
                         ?? throw new InvalidOperationException($"No compatible open connector pair was found between copied source {connection.copiedSourceElementId} and existing element {connection.existingElementId} within {p.connectionToleranceFt:0.###} ft and {p.connectionSizeToleranceFt:0.###} ft size tolerance.");
                     pair.Copied.ConnectTo(pair.Existing);
@@ -139,7 +155,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                         copiedSourceElementId = connection.copiedSourceElementId,
                         copiedElementId = copiedId,
                         existingElementId = connection.existingElementId,
-                        distanceFt = pair.DistanceFt
+                        distanceFt = pair.DistanceFt,
+                        alreadyConnected = false
                     });
                 }
                 doc.Regenerate();
@@ -336,8 +353,23 @@ namespace RevitBridge.Logic.Handlers.MEP
         private static List<Connector> OpenPhysicalConnectors(Element element)
         {
             return MepRoutingUtil.GetConnectors(element)
-                .Where(connector => connector.ConnectorType != ConnectorType.Logical && !connector.IsConnected)
+                .Where(connector => connector.ConnectorType != ConnectorType.Logical && !HasPhysicalReference(connector))
                 .ToList();
+        }
+
+        private static bool HasPhysicalReference(Connector connector)
+        {
+            ConnectorSet? refs = null;
+            try { refs = connector.AllRefs; } catch { }
+            if (refs == null) return false;
+            foreach (Connector reference in refs)
+            {
+                if (reference == null || reference.ConnectorType == ConnectorType.Logical || reference.Owner == null) continue;
+                if (reference.Owner is MEPSystem) continue;
+                if (ElementIdCompat.GetValue(reference.Owner.Id) == ElementIdCompat.GetValue(connector.Owner.Id)) continue;
+                return true;
+            }
+            return false;
         }
 
         private static bool ArePhysicallyConnected(Document doc, long aId, long bId)
