@@ -578,7 +578,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             return best;
         }
 
-        private static bool AreConnectorsCompatible(Connector a, Connector b)
+        internal static bool AreConnectorsCompatible(Connector a, Connector b)
         {
             try
             {

@@ -36,6 +36,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             public double focusPaddingFt { get; set; } = 4.0;
             public string? takeoffFamilyName { get; set; }
             public string? takeoffTypeName { get; set; }
+            public long? existingBranchAnchorElementId { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -123,10 +124,21 @@ namespace RevitBridge.Logic.Handlers.MEP
                     warnings.Add($"Could not project branch start to main curve: {ex.Message}");
                 }
             }
+
             else
             {
                 warnings.Add("Main element does not expose a LocationCurve; split/tee planning is not available for this element.");
             }
+
+            var existingBranchAnchorPlan = PlanExistingBranchAnchor(
+                doc,
+                main,
+                kind,
+                p.existingBranchAnchorElementId,
+                splitPrecheck.SplitPoint,
+                branch.Count > 1 ? branch[1] : null,
+                p.branchSize,
+                warnings);
 
             var connectors = MepRoutingUtil.GetConnectors(main);
             var nearestConnector = MepRoutingUtil.FindClosestConnector(connectors, branchStart, 0.5);
@@ -137,17 +149,41 @@ namespace RevitBridge.Logic.Handlers.MEP
                 try { nearestConnectorOpen = !nearestConnector.IsConnected; } catch { nearestConnectorOpen = false; }
             }
 
-            var feasibleExistingConnector = nearestConnector != null && nearestConnectorOpen && nearestConnectorDistance.GetValueOrDefault(999) <= 0.25;
-            var feasibleTap = splitPrecheck.ApplySupported && requestedConnectionMode == "tap" && pipeTapHasExplicitTakeoffPreference;
-            var feasibleSplitTee = splitPrecheck.ApplySupported && requestedConnectionMode != "tap";
-            var status = p.dryRun ? "Dry Run" : (feasibleExistingConnector ? "CreatedWithOpenConnectors" : (feasibleTap ? "CreatedWithTapTakeoff" : (feasibleSplitTee ? "CreatedWithSplitTee" : "Blocked")));
+            var retainedAnchorModeSupported = !existingBranchAnchorPlan.Requested
+                || MepExistingBranchAnchorPlanner.SupportsConnectionMode(requestedConnectionMode);
+            var feasibleExistingConnector = !existingBranchAnchorPlan.Requested
+                && nearestConnector != null
+                && nearestConnectorOpen
+                && nearestConnectorDistance.GetValueOrDefault(999) <= 0.25;
+            var feasibleTap = !existingBranchAnchorPlan.Requested
+                && splitPrecheck.ApplySupported
+                && requestedConnectionMode == "tap"
+                && pipeTapHasExplicitTakeoffPreference;
+            var feasibleSplitTee = splitPrecheck.ApplySupported
+                && retainedAnchorModeSupported
+                && (!existingBranchAnchorPlan.Requested || existingBranchAnchorPlan.ApplySupported);
+            var status = p.dryRun
+                ? "Dry Run"
+                : (feasibleExistingConnector
+                    ? "CreatedWithOpenConnectors"
+                    : (feasibleTap
+                        ? "CreatedWithTapTakeoff"
+                        : (feasibleSplitTee
+                            ? (existingBranchAnchorPlan.Requested ? "CreatedWithRetainedBranchAnchor" : "CreatedWithSplitTee")
+                            : "Blocked")));
             var nextStep = splitPrecheck.BlockReason;
-            if (feasibleExistingConnector)
+            if (existingBranchAnchorPlan.Requested && !retainedAnchorModeSupported)
+                nextStep = "existingBranchAnchorElementId requires connectionMode:\"tee\"; retained anchors never fall back to an open-main or tap/takeoff path.";
+            else if (feasibleExistingConnector)
                 nextStep = "Safe apply path is available because the branch starts at an existing open main connector.";
             else if (feasibleTap)
                 nextStep = $"Safe {kind} tap/takeoff apply path is available for this projected non-connector branch point.";
             else if (requestedConnectionMode == "tap" && splitPrecheck.ApplySupported && kind == "pipe" && !pipeTapHasExplicitTakeoffPreference)
                 nextStep = "Pipe tap/takeoff apply is blocked because the selected pipe type does not expose an explicit tap/takeoff routing preference. Use connectionMode:\"tee\" for a split tee, or choose a pipe type with a takeoff/tap routing preference.";
+            else if (existingBranchAnchorPlan.Requested && !existingBranchAnchorPlan.ApplySupported)
+                nextStep = existingBranchAnchorPlan.BlockReason;
+            else if (existingBranchAnchorPlan.Requested && existingBranchAnchorPlan.ApplySupported)
+                nextStep = "Safe split/tee apply can reuse the retained two-connector branch anchor without creating a duplicate transition or reducer.";
             else if (feasibleSplitTee)
                 nextStep = $"Safe {kind} split/tee apply path is available for this projected non-connector branch point.";
 
@@ -305,7 +341,19 @@ namespace RevitBridge.Logic.Handlers.MEP
                         tx.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(tx, failures, rollbackOnErrors: true, deleteWarnings: false));
 
                         var snapped = new List<XYZ>(branch);
-                        snapped[0] = splitPrecheck.SplitPoint;
+                        var retainedAnchor = existingBranchAnchorPlan.AnchorElement;
+                        var retainedAnchorMainConnector = existingBranchAnchorPlan.MainConnector;
+                        var retainedAnchorBranchConnector = existingBranchAnchorPlan.BranchConnector;
+                        if (existingBranchAnchorPlan.Requested)
+                        {
+                            if (!existingBranchAnchorPlan.ApplySupported || retainedAnchor == null || retainedAnchorMainConnector == null || retainedAnchorBranchConnector == null)
+                                throw new InvalidOperationException(existingBranchAnchorPlan.BlockReason ?? "The retained branch anchor did not pass apply preflight.");
+                            snapped[0] = retainedAnchorBranchConnector.Origin;
+                        }
+                        else
+                        {
+                            snapped[0] = splitPrecheck.SplitPoint;
+                        }
 
                         ElementId curveTypeId;
                         if (kind == "pipe")
@@ -373,8 +421,29 @@ namespace RevitBridge.Logic.Handlers.MEP
 
                         var mainA = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(firstMainSegment), splitPrecheck.SplitPoint, 0.25);
                         var mainB = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(secondMainSegment), splitPrecheck.SplitPoint, 0.25);
-                        var branchConnector = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(branchElements[0]), splitPrecheck.SplitPoint, 0.25);
-                        var teeOk = TryCreateTeeFitting(doc, mainA, mainB, branchConnector, out var teeFittingId, out var teeMethod, out var teeError);
+                        Element? retainedAnchorTeeSeed = null;
+                        Connector? teeBranchConnector;
+                        if (existingBranchAnchorPlan.Requested && retainedAnchorMainConnector != null)
+                        {
+                            retainedAnchorTeeSeed = CreateRetainedAnchorTeeSeed(
+                                doc,
+                                kind,
+                                systemTypeId,
+                                curveTypeId,
+                                levelId,
+                                splitPrecheck.SplitPoint,
+                                retainedAnchorMainConnector);
+                            doc.Regenerate();
+                            teeBranchConnector = MepRoutingUtil.FindClosestConnector(
+                                MepRoutingUtil.GetConnectors(retainedAnchorTeeSeed),
+                                splitPrecheck.SplitPoint,
+                                0.25);
+                        }
+                        else
+                        {
+                            teeBranchConnector = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(branchElements[0]), splitPrecheck.SplitPoint, 0.25);
+                        }
+                        var teeOk = TryCreateTeeFitting(doc, mainA, mainB, teeBranchConnector, out var teeFittingId, out var teeMethod, out var teeError);
                         if (teeFittingId.HasValue) createdFittingIds.Add(teeFittingId.Value);
                         connectionAttempts.Add(new
                         {
@@ -388,6 +457,70 @@ namespace RevitBridge.Logic.Handlers.MEP
                         });
                         if (!teeOk)
                             throw new InvalidOperationException($"Could not create tee fitting at split point: {teeError ?? teeMethod}");
+
+                        if (existingBranchAnchorPlan.Requested && retainedAnchorMainConnector != null && retainedAnchorBranchConnector != null)
+                        {
+                            if (!teeFittingId.HasValue || retainedAnchorTeeSeed == null)
+                                throw new InvalidOperationException("Retained branch anchor tee creation did not return the temporary seed and tee fitting required for direct reconnection.");
+
+                            doc.Regenerate();
+                            var teeElement = doc.GetElement(ElementIdCompat.Create(teeFittingId.Value));
+                            if (teeElement == null)
+                                throw new InvalidOperationException("Could not resolve the temporary tee seed connection after creating the retained-anchor tee.");
+
+                            var teeSeedConnection = FindPhysicalConnectionOwnedBy(retainedAnchorTeeSeed, teeElement.Id);
+                            if (teeSeedConnection == null)
+                                throw new InvalidOperationException("The temporary tee seed was not physically connected to the created tee.");
+                            teeSeedConnection.Item1.DisconnectFrom(teeSeedConnection.Item2);
+                            var deletedSeedIds = doc.Delete(retainedAnchorTeeSeed.Id);
+                            if (deletedSeedIds.Any(id => id == teeElement.Id))
+                                throw new InvalidOperationException("Removing the temporary tee seed unexpectedly deleted the created tee fitting.");
+                            doc.Regenerate();
+
+                            teeElement = doc.GetElement(ElementIdCompat.Create(teeFittingId.Value));
+                            if (teeElement == null)
+                                throw new InvalidOperationException("The created tee fitting did not survive temporary seed removal.");
+                            var teeAnchorConnector = MepRoutingUtil.FindClosestConnector(
+                                MepRoutingUtil.GetConnectors(teeElement),
+                                retainedAnchorMainConnector.Origin,
+                                0.25);
+                            var teeAnchorConnected = MepRoutingUtil.TryConnect(teeAnchorConnector, retainedAnchorMainConnector, out var teeAnchorError);
+                            connectionAttempts.Add(new
+                            {
+                                connection = "tee_to_retained_anchor",
+                                teeFittingId,
+                                retainedAnchorElementId = p.existingBranchAnchorElementId,
+                                connected = teeAnchorConnected,
+                                method = teeAnchorConnected ? "connector_connect_to" : "failed",
+                                fittingId = (long?)null,
+                                error = teeAnchorError
+                            });
+                            if (!teeAnchorConnected)
+                                throw new InvalidOperationException($"Could not directly connect the created tee to the retained branch anchor: {teeAnchorError}");
+
+                            var createdBranchConnector = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(branchElements[0]), snapped[0], 0.25);
+                            var anchorConnected = MepRoutingUtil.TryCreateElbowOrConnect(
+                                doc,
+                                retainedAnchorBranchConnector,
+                                createdBranchConnector,
+                                out var anchorConnectionFittingId,
+                                out var anchorConnectionMethod,
+                                out var anchorConnectionError);
+                            connectionAttempts.Add(new
+                            {
+                                connection = "retained_anchor_to_branch",
+                                retainedAnchorElementId = p.existingBranchAnchorElementId,
+                                branchElementId = createdBranchIds.FirstOrDefault(),
+                                connected = anchorConnected,
+                                method = anchorConnectionMethod,
+                                fittingId = anchorConnectionFittingId,
+                                error = anchorConnectionError
+                            });
+                            if (!anchorConnected)
+                                throw new InvalidOperationException($"Could not connect the retained branch anchor to the new branch: {anchorConnectionError ?? anchorConnectionMethod}");
+                            if (anchorConnectionFittingId.HasValue)
+                                throw new InvalidOperationException("Retained branch anchor connection created an unexpected extra fitting instead of a direct physical connection.");
+                        }
 
                         for (var i = 0; i < branchElements.Count - 1; i++)
                         {
@@ -419,7 +552,9 @@ namespace RevitBridge.Logic.Handlers.MEP
                         if (FailureHandlingUtil.HasErrors(failures))
                             throw new InvalidOperationException("Revit reported an error while creating the branch split/tee.");
 
-                        openConnectorCount = MepRoutingUtil.CountOpenConnectors(branchElements.Concat(new Element[] { firstMainSegment, secondMainSegment }));
+                        var auditElements = branchElements.Concat(new Element[] { firstMainSegment, secondMainSegment });
+                        if (retainedAnchor != null) auditElements = auditElements.Concat(new[] { retainedAnchor });
+                        openConnectorCount = MepRoutingUtil.CountOpenConnectors(auditElements);
                         tx.Commit();
                     }
                     catch (Exception ex)
@@ -645,6 +780,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     nearestConnectorDistanceFt = nearestConnectorDistance,
                     nearestConnectorOpen
                 },
+                existingBranchAnchorPlan = existingBranchAnchorPlan.ToResponse(),
                 selected = new
                 {
                     type = DescribeElementType(doc, main),
@@ -670,7 +806,15 @@ namespace RevitBridge.Logic.Handlers.MEP
                 openConnectorCount,
                 connectedNetworkAudit,
                 focusedCapture,
-                applyStatus = p.dryRun ? "NotAppliedDryRun" : (feasibleExistingConnector ? "AppliedExistingOpenConnectorOnly" : (feasibleTap ? "AppliedTapTakeoff" : (feasibleSplitTee ? "AppliedSplitTee" : "GuardedScaffoldOnly"))),
+                applyStatus = p.dryRun
+                    ? "NotAppliedDryRun"
+                    : (feasibleExistingConnector
+                        ? "AppliedExistingOpenConnectorOnly"
+                        : (feasibleTap
+                            ? "AppliedTapTakeoff"
+                            : (feasibleSplitTee
+                                ? (existingBranchAnchorPlan.Requested ? "AppliedSplitTeeWithRetainedBranchAnchor" : "AppliedSplitTee")
+                                : "GuardedScaffoldOnly"))),
                 recommendedNextImplementationStep = nextStep,
                 warnings,
                 rolledBack
@@ -690,6 +834,229 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (p.branchSegmentSizes != null && segmentIndex >= 0 && segmentIndex < p.branchSegmentSizes.Count && !string.IsNullOrWhiteSpace(p.branchSegmentSizes[segmentIndex]))
                 return p.branchSegmentSizes[segmentIndex];
             return p.branchSize;
+        }
+
+        private static Element CreateRetainedAnchorTeeSeed(
+            Document doc,
+            string kind,
+            ElementId systemTypeId,
+            ElementId curveTypeId,
+            ElementId levelId,
+            XYZ splitPoint,
+            Connector retainedAnchorMainConnector)
+        {
+            var anchorPoint = retainedAnchorMainConnector.Origin;
+            if (splitPoint.DistanceTo(anchorPoint) <= doc.Application.ShortCurveTolerance)
+                throw new InvalidOperationException("The retained branch anchor is too close to the split point to create a safe temporary tee seed.");
+
+            if (kind == "pipe")
+            {
+                var pipe = Pipe.Create(doc, systemTypeId, curveTypeId, levelId, splitPoint, anchorPoint);
+                MepRoutingUtil.TryApplyPipeSize(pipe, new MepRoutingUtil.SizeChoice
+                {
+                    RequestedText = "retained_anchor_main_connector",
+                    AppliedText = "retained_anchor_main_connector",
+                    DiameterFt = retainedAnchorMainConnector.Radius * 2.0
+                }, out _);
+                return pipe;
+            }
+
+            var duct = Duct.Create(doc, systemTypeId, curveTypeId, levelId, splitPoint, anchorPoint);
+            var size = new MepRoutingUtil.SizeChoice
+            {
+                RequestedText = "retained_anchor_main_connector",
+                AppliedText = "retained_anchor_main_connector"
+            };
+            if (retainedAnchorMainConnector.Shape == ConnectorProfileType.Round)
+                size.DiameterFt = retainedAnchorMainConnector.Radius * 2.0;
+            else
+            {
+                size.WidthFt = retainedAnchorMainConnector.Width;
+                size.HeightFt = retainedAnchorMainConnector.Height;
+            }
+            MepRoutingUtil.TryApplyDuctSize(duct, size, out _);
+            return duct;
+        }
+
+        private static Tuple<Connector, Connector>? FindPhysicalConnectionOwnedBy(Element source, ElementId ownerId)
+        {
+            try
+            {
+                foreach (var connector in MepRoutingUtil.GetConnectors(source))
+                {
+                    foreach (Connector reference in connector.AllRefs)
+                    {
+                        if (reference?.Owner == null || reference.Owner is MEPSystem) continue;
+                        if (reference.Owner.Id == ownerId) return Tuple.Create(connector, reference);
+                    }
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private sealed class ExistingBranchAnchorPlan
+        {
+            public bool Requested { get; set; }
+            public bool ApplySupported { get; set; }
+            public long? AnchorElementId { get; set; }
+            public Element? AnchorElement { get; set; }
+            public Connector? MainConnector { get; set; }
+            public Connector? BranchConnector { get; set; }
+            public double? MainConnectorDistanceToSplitFt { get; set; }
+            public string? BlockCode { get; set; }
+            public string? BlockReason { get; set; }
+
+            public object? ToResponse()
+            {
+                if (!Requested) return null;
+                return new
+                {
+                    requested = true,
+                    applySupported = ApplySupported,
+                    anchorElementId = AnchorElementId,
+                    anchorCategory = AnchorElement?.Category?.Name,
+                    mainConnectorDistanceToSplitFt = MainConnectorDistanceToSplitFt,
+                    mainConnector = DescribeConnector(MainConnector),
+                    branchConnector = DescribeConnector(BranchConnector),
+                    blockCode = string.IsNullOrWhiteSpace(BlockCode) ? null : BlockCode,
+                    blockReason = string.IsNullOrWhiteSpace(BlockReason) ? null : BlockReason
+                };
+            }
+        }
+
+        private static ExistingBranchAnchorPlan PlanExistingBranchAnchor(
+            Document doc,
+            Element main,
+            string kind,
+            long? anchorElementId,
+            XYZ? splitPoint,
+            XYZ? downstreamPoint,
+            string? requestedBranchSize,
+            List<string> warnings)
+        {
+            var plan = new ExistingBranchAnchorPlan
+            {
+                Requested = anchorElementId.HasValue,
+                AnchorElementId = anchorElementId
+            };
+            if (!anchorElementId.HasValue) return plan;
+            if (anchorElementId.Value <= 0 || anchorElementId.Value == ElementIdCompat.GetValue(main.Id))
+                return BlockAnchor(plan, "invalid_anchor_element_id", "existingBranchAnchorElementId must identify a positive element other than the main curve.");
+            if (splitPoint == null || downstreamPoint == null)
+                return BlockAnchor(plan, "anchor_geometry_unresolved", "The split point and first downstream branch point are required to orient a retained branch anchor.");
+
+            var anchor = doc.GetElement(ElementIdCompat.Create(anchorElementId.Value));
+            if (anchor == null)
+                return BlockAnchor(plan, "anchor_not_found", $"Retained branch anchor element {anchorElementId.Value} was not found.");
+            plan.AnchorElement = anchor;
+            var categoryId = anchor.Category == null ? long.MinValue : ElementIdCompat.GetValue(anchor.Category.Id);
+            var validCategory = kind == "pipe"
+                ? categoryId == (int)BuiltInCategory.OST_PipeFitting || categoryId == (int)BuiltInCategory.OST_PipeAccessory
+                : categoryId == (int)BuiltInCategory.OST_DuctFitting || categoryId == (int)BuiltInCategory.OST_DuctAccessory;
+            if (!validCategory)
+                return BlockAnchor(plan, "anchor_category_mismatch", $"Retained branch anchor category '{anchor.Category?.Name}' is not compatible with kind '{kind}'.");
+
+            var anchorConnectors = MepRoutingUtil.GetConnectors(anchor).ToList();
+            var mainRepresentative = MepRoutingUtil.GetConnectors(main).FirstOrDefault();
+            if (mainRepresentative == null)
+                return BlockAnchor(plan, "anchor_main_connector_incompatible", "The main curve does not expose a representative connector for retained-anchor validation.");
+            var sizeWarnings = new List<string>();
+            var requestedSize = MepRoutingUtil.ChooseSize(kind, requestedBranchSize, requestedBranchSize, requestedBranchSize, "explicit_required", sizeWarnings);
+            warnings.AddRange(sizeWarnings);
+            if (requestedSize.Missing)
+                return BlockAnchor(plan, "anchor_branch_size_mismatch", "An explicit branch size is required when reusing a retained branch anchor.");
+
+            var plannerResult = MepExistingBranchAnchorPlanner.Plan(
+                anchorConnectors.Select((connector, index) => ToPlannerConnector(connector, index)).ToList(),
+                ToPlannerPoint(splitPoint),
+                ToPlannerPoint(downstreamPoint),
+                ToPlannerSize(mainRepresentative),
+                ToPlannerSize(mainRepresentative.Domain, requestedSize));
+            if (!plannerResult.ApplySupported || !plannerResult.MainConnectorIndex.HasValue || !plannerResult.BranchConnectorIndex.HasValue)
+                return BlockAnchor(plan, plannerResult.BlockCode, plannerResult.BlockReason);
+
+            var mainSide = anchorConnectors[plannerResult.MainConnectorIndex.Value];
+            var branchSide = anchorConnectors[plannerResult.BranchConnectorIndex.Value];
+
+            plan.MainConnector = mainSide;
+            plan.BranchConnector = branchSide;
+            plan.MainConnectorDistanceToSplitFt = plannerResult.MainConnectorDistanceToSplitFt;
+            plan.ApplySupported = true;
+            return plan;
+        }
+
+        private static ExistingBranchAnchorPlan BlockAnchor(ExistingBranchAnchorPlan plan, string code, string reason)
+        {
+            plan.ApplySupported = false;
+            plan.BlockCode = code;
+            plan.BlockReason = reason;
+            return plan;
+        }
+
+        private static MepBranchAnchorConnector ToPlannerConnector(Connector connector, int index)
+        {
+            return new MepBranchAnchorConnector
+            {
+                Index = index,
+                Origin = ToPlannerPoint(connector.Origin),
+                Size = ToPlannerSize(connector),
+                PhysicallyConnected = MepRoutingUtil.IsPhysicallyConnected(connector)
+            };
+        }
+
+        private static MepBranchAnchorPoint ToPlannerPoint(XYZ point) => new MepBranchAnchorPoint { X = point.X, Y = point.Y, Z = point.Z };
+
+        private static MepBranchAnchorSize ToPlannerSize(Connector connector) => new MepBranchAnchorSize
+        {
+            Domain = NormalizePlannerDomain(connector.Domain),
+            Shape = NormalizePlannerShape(connector.Shape),
+            DiameterFt = connector.Shape == ConnectorProfileType.Round ? connector.Radius * 2.0 : (double?)null,
+            WidthFt = connector.Shape == ConnectorProfileType.Rectangular ? connector.Width : (double?)null,
+            HeightFt = connector.Shape == ConnectorProfileType.Rectangular ? connector.Height : (double?)null
+        };
+
+        private static MepBranchAnchorSize ToPlannerSize(Domain domain, MepRoutingUtil.SizeChoice size) => new MepBranchAnchorSize
+        {
+            Domain = NormalizePlannerDomain(domain),
+            Shape = size.DiameterFt.HasValue ? "round" : "rectangular",
+            DiameterFt = size.DiameterFt,
+            WidthFt = size.WidthFt,
+            HeightFt = size.HeightFt
+        };
+
+        private static string NormalizePlannerDomain(Domain domain)
+        {
+            var value = domain.ToString().ToLowerInvariant();
+            if (value.Contains("piping")) return "piping";
+            if (value.Contains("hvac")) return "hvac";
+            return value;
+        }
+
+        private static string NormalizePlannerShape(ConnectorProfileType shape) => shape == ConnectorProfileType.Round
+            ? "round"
+            : shape == ConnectorProfileType.Rectangular ? "rectangular" : shape.ToString().ToLowerInvariant();
+
+        private static object? DescribeConnector(Connector? connector)
+        {
+            if (connector == null) return null;
+            try
+            {
+                return new
+                {
+                    origin = ToPointObject(connector.Origin),
+                    domain = connector.Domain.ToString(),
+                    shape = connector.Shape.ToString(),
+                    diameterFt = connector.Shape == ConnectorProfileType.Round ? connector.Radius * 2.0 : (double?)null,
+                    widthFt = connector.Shape == ConnectorProfileType.Rectangular ? connector.Width : (double?)null,
+                    heightFt = connector.Shape == ConnectorProfileType.Rectangular ? connector.Height : (double?)null,
+                    physicallyConnected = MepRoutingUtil.IsPhysicallyConnected(connector)
+                };
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static bool TryCreateTeeFitting(Document doc, Connector? a, Connector? b, Connector? c, out long? fittingId, out string method, out string? error)
