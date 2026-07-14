@@ -86,6 +86,10 @@ import {
   type ArchitecturalMeasurementOverlayReceipt,
   type ArchitecturalPixelMeasurementPackage
 } from "../existing_conditions/architectural_pixel_measurement.js";
+import {
+  buildArchitecturalWallLineCandidates,
+  type ArchitecturalWallLineCandidateReceipt
+} from "../existing_conditions/architectural_wall_line_candidates.js";
 
 function argument(name: string): string {
   const index = process.argv.indexOf(name);
@@ -147,12 +151,13 @@ function usage(): never {
     "  npm run existing-conditions -- score-architectural-preview --truth <ground-truth.json> --preview <compiled-preview.json> --out <score.json>",
     "  npm run existing-conditions -- build-architectural-delta --input <registered-source-and-redacted-capture.json> --out-dir <derived-artifacts-dir> --out <receipt.json>",
     "  npm run existing-conditions -- build-architectural-measurement --delta-receipt <receipt.json> --out-dir <measurement-dir> --out <measurement-receipt.json>",
+    "  npm run existing-conditions -- build-architectural-wall-candidates --delta-receipt <receipt.json> --measurement-receipt <receipt.json> --out-dir <candidate-dir> --out <candidate-receipt.json>",
     "  npm run existing-conditions -- compile-architectural-pixel-preview --input <pixel-observations.json> --measurement-receipt <measurement-receipt.json> --out <compiled-preview.json> [--source-out <converted-source-observations.json>] [--compilation-out <compilation.json>]",
     "  npm run existing-conditions -- audit-architectural-redaction --truth <ground-truth.json> --delta-receipt <receipt.json> --out <gate-receipt.json>",
     "  npm run existing-conditions -- promote-architectural-preview --input <source-observations.json> --resolutions <evidence-backed-resolutions.json> --out <promotion.json> [--action-out <atomic-import-request.json>] [--apply]",
     "  npm run existing-conditions -- compile-architectural-shell --input <source-observations.json> --out <compiled-plan.json> [--action-out <atomic-import-request.json>] [--apply]",
     "  npm run existing-conditions -- capture --expected-model <model.rvt> (--view-id <id> | --view-ids <id,id,...>) --ids <id,id,...> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
-    "  npm run existing-conditions -- package --fixture-id <id> --scope-id <id> --discipline <mechanical|plumbing|electrical|architectural|mixed> --task-class <exact_reconstruction|standards_compliance_repair|generative_layout> [--standards-profile <json>] [--source-pdf-render <image> --surrounding-model-capture <image> --architectural-delta-receipt <json> [--architectural-measurement-receipt <json>]] --redacted-model <agent-redacted.rvt> --source-pdf <source.pdf> --view-id <id> --model-bounds <minX,minY,minZ,maxX,maxY,maxZ> --image-region <minX,minY,maxX,maxY> --allowed-categories <OST_...,OST_...> --out-dir <agent-dir>",
+    "  npm run existing-conditions -- package --fixture-id <id> --scope-id <id> --discipline <mechanical|plumbing|electrical|architectural|mixed> --task-class <exact_reconstruction|standards_compliance_repair|generative_layout> [--standards-profile <json>] [--source-pdf-render <image> --surrounding-model-capture <image> --architectural-delta-receipt <json> [--architectural-measurement-receipt <json> [--architectural-wall-candidate-receipt <json>]]] --redacted-model <agent-redacted.rvt> --source-pdf <source.pdf> --view-id <id> --model-bounds <minX,minY,minZ,maxX,maxY,maxZ> --image-region <minX,minY,maxX,maxY> --allowed-categories <OST_...,OST_...> --out-dir <agent-dir>",
     "  npm run existing-conditions -- seal-truth --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --ground-truth-model <source.rvt> --deletion-manifest <json> --delete-dry-run <json> --out <truth.json>",
     "  npm run existing-conditions -- evaluator-review-visual --post-capture <image> --post-pdf <pdf> --status <pass|needs_review|fail> --out <receipt.json>",
     "  npm run existing-conditions -- seal-candidate --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --evaluator-visual-receipt <json> --out <candidate.json>",
@@ -169,7 +174,7 @@ function usage(): never {
     "  npm run existing-conditions -- evaluate-engineering-case --case <case-definition.json> --native-evidence <evaluator-native-evidence.json> --evaluator-provenance <provenance.json> --evaluator-key-file <secret> --out <checks.json>",
     "  npm run existing-conditions -- advance-controller --state <controller-state-or-receipt.json> --event <event.json> --out <next-receipt.json>",
     "  npm run existing-conditions -- evaluator-diff --before-visible <json> --after-visible <json> --package <agent_package.json> --out <receipt.json>",
-    "  npm run existing-conditions -- validate-contract --kind <agent_package|ground_truth|candidate|architectural_preview|architectural_pixel_measurement> --file <json>",
+    "  npm run existing-conditions -- validate-contract --kind <agent_package|ground_truth|candidate|architectural_preview|architectural_pixel_measurement|architectural_wall_candidate_clarification> --file <json>",
     "  npm run existing-conditions -- redact --expected-source <source.rvt> --staging-model <withheld-staging.rvt> --redacted-model <agent-redacted.rvt> --view-id <id> --ids <id,id,...> --anchor-ids <id,id,...> --out-dir <fixture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "Options:",
     "  --allow-missing-connectors  Permit non-MEP normalization without connector readback.",
@@ -359,6 +364,7 @@ function buildAgentPackage(): void {
   const typeMappingArtifactSource = argument("--type-mapping-artifact");
   const architecturalDeltaReceiptSource = argument("--architectural-delta-receipt");
   const architecturalMeasurementReceiptSource = argument("--architectural-measurement-receipt");
+  const architecturalWallCandidateReceiptSource = argument("--architectural-wall-candidate-receipt");
   const sourcePdfRenderSource = argument("--source-pdf-render");
   const surroundingModelCaptureSource = argument("--surrounding-model-capture");
   if (taskClass !== "exact_reconstruction" && (!standardsProfileSource || !fs.existsSync(path.resolve(standardsProfileSource)))) {
@@ -448,6 +454,41 @@ function buildAgentPackage(): void {
       throw new Error("architectural_measurement_overlay_dimensions_mismatch");
     }
   }
+  let architecturalWallCandidateReceipt: ArchitecturalWallLineCandidateReceipt | null = null;
+  if (architecturalWallCandidateReceiptSource) {
+    if (!architecturalDeltaReceipt || !architecturalDeltaReceiptSource
+      || !architecturalMeasurementReceipt || !architecturalMeasurementReceiptSource) {
+      throw new Error("--architectural-wall-candidate-receipt requires both architectural delta and measurement receipts.");
+    }
+    const resolved = path.resolve(architecturalWallCandidateReceiptSource);
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+      throw new Error("--architectural-wall-candidate-receipt must identify an existing JSON file.");
+    }
+    architecturalWallCandidateReceipt = readJson(resolved) as ArchitecturalWallLineCandidateReceipt;
+    if (architecturalWallCandidateReceipt.schema_version !== 1
+      || architecturalWallCandidateReceipt.artifact_role !== "architectural_wall_line_candidates"
+      || architecturalWallCandidateReceipt.fixture_id !== fixtureId
+      || architecturalWallCandidateReceipt.scope_id !== scopeId
+      || architecturalWallCandidateReceipt.architectural_delta_receipt_sha256 !== sha256(path.resolve(architecturalDeltaReceiptSource)).toLowerCase()
+      || architecturalWallCandidateReceipt.measurement_receipt_sha256 !== sha256(path.resolve(architecturalMeasurementReceiptSource)).toLowerCase()
+      || architecturalWallCandidateReceipt.source_aligned_sha256 !== architecturalDeltaReceipt.artifacts.source_aligned.sha256
+      || architecturalWallCandidateReceipt.candidate_delta_mask_sha256 !== architecturalDeltaReceipt.artifacts.candidate_delta_mask.sha256
+      || !Array.isArray(architecturalWallCandidateReceipt.candidates)
+      || architecturalWallCandidateReceipt.candidates.length === 0) {
+      throw new Error("--architectural-wall-candidate-receipt does not match the fixture, upstream receipts, images, or candidate contract.");
+    }
+    const overlayPath = path.resolve(architecturalWallCandidateReceipt.overlay.path);
+    if (!fs.existsSync(overlayPath) || !fs.statSync(overlayPath).isFile()) {
+      throw new Error("architectural_wall_candidate_overlay_file_not_found");
+    }
+    if (sha256(overlayPath).toLowerCase() !== architecturalWallCandidateReceipt.overlay.sha256.toLowerCase()) {
+      throw new Error("architectural_wall_candidate_overlay_sha256_mismatch");
+    }
+    if (architecturalWallCandidateReceipt.overlay.width_px !== architecturalDeltaReceipt.output_frame.width_px
+      || architecturalWallCandidateReceipt.overlay.height_px !== architecturalDeltaReceipt.output_frame.height_px) {
+      throw new Error("architectural_wall_candidate_overlay_dimensions_mismatch");
+    }
+  }
   for (const [flag, source] of [["--source-pdf-render", sourcePdfRenderSource], ["--surrounding-model-capture", surroundingModelCaptureSource]] as const) {
     if (source && (!fs.existsSync(path.resolve(source)) || !fs.statSync(path.resolve(source)).isFile())) {
       throw new Error(`${flag} must identify an existing image file.`);
@@ -464,6 +505,8 @@ function buildAgentPackage(): void {
   const architecturalDeltaReceiptCopy = path.join(architecturalDeltaDirectory, "receipt.json");
   const architecturalMeasurementDirectory = path.join(outDir, "architectural_measurement");
   const architecturalMeasurementReceiptCopy = path.join(architecturalMeasurementDirectory, "receipt.json");
+  const architecturalWallCandidateDirectory = path.join(outDir, "architectural_wall_candidates");
+  const architecturalWallCandidateReceiptCopy = path.join(architecturalWallCandidateDirectory, "receipt.json");
   const sourcePdfRenderCopy = sourcePdfRenderSource
     ? path.join(outDir, `source_evidence_page_${Number(argument("--pdf-page") || "1")}${path.extname(sourcePdfRenderSource) || ".png"}`)
     : null;
@@ -476,6 +519,7 @@ function buildAgentPackage(): void {
     || (typeMappingArtifactSource && fs.existsSync(typeMappingArtifactCopy))
     || (architecturalDeltaReceipt && fs.existsSync(architecturalDeltaDirectory))
     || (architecturalMeasurementReceipt && fs.existsSync(architecturalMeasurementDirectory))
+    || (architecturalWallCandidateReceipt && fs.existsSync(architecturalWallCandidateDirectory))
     || (sourcePdfRenderCopy && fs.existsSync(sourcePdfRenderCopy))
     || (surroundingModelCaptureCopy && fs.existsSync(surroundingModelCaptureCopy))) {
     throw new Error(`Refusing to overwrite an existing agent package in: ${outDir}`);
@@ -526,6 +570,28 @@ function buildAgentPackage(): void {
     };
     writeJson(architecturalMeasurementReceiptCopy, packagedArchitecturalMeasurement);
   }
+  let packagedArchitecturalWallCandidates: ArchitecturalWallLineCandidateReceipt | null = null;
+  if (architecturalWallCandidateReceipt) {
+    if (!packagedArchitecturalDelta || !packagedArchitecturalMeasurement) {
+      throw new Error("packaged_architectural_delta_and_measurement_are_required_for_wall_candidates");
+    }
+    fs.mkdirSync(architecturalWallCandidateDirectory);
+    const overlayCopy = path.join(architecturalWallCandidateDirectory, "wall_line_candidates.png");
+    fs.copyFileSync(path.resolve(architecturalWallCandidateReceipt.overlay.path), overlayCopy, fs.constants.COPYFILE_EXCL);
+    packagedArchitecturalWallCandidates = {
+      ...architecturalWallCandidateReceipt,
+      architectural_delta_receipt_sha256: sha256(architecturalDeltaReceiptCopy),
+      measurement_receipt_sha256: sha256(architecturalMeasurementReceiptCopy),
+      source_aligned_sha256: packagedArchitecturalDelta.artifacts.source_aligned.sha256,
+      candidate_delta_mask_sha256: packagedArchitecturalDelta.artifacts.candidate_delta_mask.sha256,
+      overlay: {
+        ...architecturalWallCandidateReceipt.overlay,
+        path: overlayCopy,
+        sha256: sha256(overlayCopy)
+      }
+    };
+    writeJson(architecturalWallCandidateReceiptCopy, packagedArchitecturalWallCandidates);
+  }
   const allowsMultipleValidSolutions = taskClass !== "exact_reconstruction";
   const agentPackage = {
     schema_version: 1,
@@ -570,6 +636,10 @@ function buildAgentPackage(): void {
       ...(packagedArchitecturalMeasurement ? [
         { role: "architectural_registered_measurement", path: architecturalMeasurementReceiptCopy, sha256: sha256(architecturalMeasurementReceiptCopy) },
         { role: "architectural_registered_measurement_overlay", path: packagedArchitecturalMeasurement.overlay.path, sha256: packagedArchitecturalMeasurement.overlay.sha256 }
+      ] : []),
+      ...(packagedArchitecturalWallCandidates ? [
+        { role: "architectural_wall_line_candidates", path: architecturalWallCandidateReceiptCopy, sha256: sha256(architecturalWallCandidateReceiptCopy) },
+        { role: "architectural_wall_line_candidate_overlay", path: packagedArchitecturalWallCandidates.overlay.path, sha256: packagedArchitecturalWallCandidates.overlay.sha256 }
       ] : [])
     ] : undefined,
     evidence: [
@@ -660,6 +730,10 @@ function buildAgentPackage(): void {
       ...(packagedArchitecturalMeasurement ? [
         { role: "architectural_registered_measurement", sha256: sha256(architecturalMeasurementReceiptCopy) },
         { role: "architectural_registered_measurement_overlay", sha256: packagedArchitecturalMeasurement.overlay.sha256 }
+      ] : []),
+      ...(packagedArchitecturalWallCandidates ? [
+        { role: "architectural_wall_line_candidates", sha256: sha256(architecturalWallCandidateReceiptCopy) },
+        { role: "architectural_wall_line_candidate_overlay", sha256: packagedArchitecturalWallCandidates.overlay.sha256 }
       ] : [])
     ],
     require_source_observation_grounding: taskClass === "exact_reconstruction",
@@ -768,12 +842,12 @@ function reviewVisualEvidence(): void {
 
 function validateContractFile(): void {
   const kind = requiredArgument("--kind");
-  if (!["agent_package", "ground_truth", "candidate", "architectural_preview", "architectural_pixel_measurement"].includes(kind)) {
-    throw new Error("--kind must be agent_package, ground_truth, candidate, architectural_preview, or architectural_pixel_measurement.");
+  if (!["agent_package", "ground_truth", "candidate", "architectural_preview", "architectural_pixel_measurement", "architectural_wall_candidate_clarification"].includes(kind)) {
+    throw new Error("--kind must be agent_package, ground_truth, candidate, architectural_preview, architectural_pixel_measurement, or architectural_wall_candidate_clarification.");
   }
   const filePath = path.resolve(requiredArgument("--file"));
   assertExistingConditionsContract(
-    kind as "agent_package" | "ground_truth" | "candidate" | "architectural_preview" | "architectural_pixel_measurement",
+    kind as "agent_package" | "ground_truth" | "candidate" | "architectural_preview" | "architectural_pixel_measurement" | "architectural_wall_candidate_clarification",
     readJson(filePath)
   );
   process.stdout.write(`${filePath}: valid ${kind}\n`);
@@ -1335,6 +1409,19 @@ async function main(): Promise<void> {
     if (sourceOut) writeJson(sourceOut, compilation.converted_source_package);
     const compilationOut = argument("--compilation-out");
     if (compilationOut) writeJson(compilationOut, compilation);
+    return;
+  }
+  if (command === "build-architectural-wall-candidates") {
+    const deltaReceiptPath = path.resolve(requiredArgument("--delta-receipt"));
+    const measurementReceiptPath = path.resolve(requiredArgument("--measurement-receipt"));
+    const receipt = await buildArchitecturalWallLineCandidates(
+      readJson(deltaReceiptPath) as ArchitecturalSourceDeltaReceipt,
+      sha256(deltaReceiptPath),
+      readJson(measurementReceiptPath) as ArchitecturalMeasurementOverlayReceipt,
+      sha256(measurementReceiptPath),
+      requiredArgument("--out-dir")
+    );
+    writeJson(requiredArgument("--out"), receipt);
     return;
   }
   if (command === "audit-architectural-redaction") {

@@ -9,9 +9,11 @@ import type { ArchitecturalSourceDeltaReceipt } from "./architectural_source_del
 
 export type ArchitecturalRedactionVisibilityPolicy = {
   target_evidence_radius_ft: number;
+  wall_endpoint_evidence_radius_ft: number;
   target_exclusion_radius_ft: number;
   minimum_target_frame_margin_ft: number;
   minimum_wall_sample_coverage: number;
+  minimum_wall_endpoint_coverage: number;
   minimum_opening_sample_coverage: number;
   minimum_common_background_pixels: number;
   minimum_common_background_ratio: number;
@@ -19,9 +21,11 @@ export type ArchitecturalRedactionVisibilityPolicy = {
 
 export const DEFAULT_ARCHITECTURAL_REDACTION_VISIBILITY_POLICY: ArchitecturalRedactionVisibilityPolicy = {
   target_evidence_radius_ft: 0.75,
+  wall_endpoint_evidence_radius_ft: 0.25,
   target_exclusion_radius_ft: 1.5,
   minimum_target_frame_margin_ft: 0.75,
   minimum_wall_sample_coverage: 0.3,
+  minimum_wall_endpoint_coverage: 1,
   minimum_opening_sample_coverage: 1,
   minimum_common_background_pixels: 100,
   minimum_common_background_ratio: 0.25
@@ -34,6 +38,10 @@ export type ArchitecturalRedactionTargetVisibility = {
   supported_sample_count: number;
   evidence_coverage: number;
   candidate_pixel_count: number;
+  wall_endpoint_sample_count?: number;
+  supported_wall_endpoint_count?: number;
+  wall_endpoint_evidence_coverage?: number;
+  wall_endpoint_evidence_passed?: boolean;
   minimum_frame_clearance_ft: number;
   fully_inside_measurement_frame: boolean;
   evidence_passed: boolean;
@@ -266,6 +274,7 @@ export async function auditArchitecturalRedactionVisibility(
     height / (delta.scope_model_bounds.max.y - delta.scope_model_bounds.min.y)
   );
   const evidenceRadius = Math.max(1, policy.target_evidence_radius_ft * pixelsPerFoot);
+  const wallEndpointEvidenceRadius = Math.max(1, policy.wall_endpoint_evidence_radius_ft * pixelsPerFoot);
   const exclusionRadius = Math.max(evidenceRadius, policy.target_exclusion_radius_ft * pixelsPerFoot);
   const exclusion = new Uint8Array(width * height);
   const targets: ArchitecturalRedactionTargetVisibility[] = [];
@@ -279,13 +288,26 @@ export async function auditArchitecturalRedactionVisibility(
     const minimum = elementRole === "wall"
       ? policy.minimum_wall_sample_coverage
       : policy.minimum_opening_sample_coverage;
-    const candidatePixels = countMaskPixels(masks.candidate, width, height, samples, evidenceRadius);
+    const wallEndpointSamples = elementRole === "wall"
+      ? targetPoints(element, elementRole).map((point) => modelToPixel(point, delta.scope_model_bounds, width, height))
+      : [];
+    const supportedWallEndpoints = wallEndpointSamples.filter(
+      (sample) => anyMaskPixel(masks.candidate, width, height, sample, wallEndpointEvidenceRadius)
+    ).length;
+    const wallEndpointCoverage = wallEndpointSamples.length > 0
+      ? supportedWallEndpoints / wallEndpointSamples.length
+      : 1;
+    const wallEndpointEvidencePassed = elementRole !== "wall"
+      || wallEndpointCoverage >= policy.minimum_wall_endpoint_coverage;
     const frameClearance = minimumFrameClearance(
       targetPoints(element, elementRole),
       delta.scope_model_bounds
     );
     const fullyInsideFrame = frameClearance >= policy.minimum_target_frame_margin_ft;
-    const evidencePassed = coverage >= minimum && candidatePixels > 0;
+    const candidatePixels = countMaskPixels(masks.candidate, width, height, samples, evidenceRadius);
+    const evidencePassed = coverage >= minimum
+      && candidatePixels > 0
+      && (wallEndpointEvidencePassed || !fullyInsideFrame);
     targets.push({
       truth_key: element.key,
       role: elementRole,
@@ -293,6 +315,12 @@ export async function auditArchitecturalRedactionVisibility(
       supported_sample_count: supported,
       evidence_coverage: round(coverage),
       candidate_pixel_count: candidatePixels,
+      ...(elementRole === "wall" ? {
+        wall_endpoint_sample_count: wallEndpointSamples.length,
+        supported_wall_endpoint_count: supportedWallEndpoints,
+        wall_endpoint_evidence_coverage: round(wallEndpointCoverage),
+        wall_endpoint_evidence_passed: wallEndpointEvidencePassed
+      } : {}),
       minimum_frame_clearance_ft: round(frameClearance),
       fully_inside_measurement_frame: fullyInsideFrame,
       evidence_passed: evidencePassed,
@@ -313,6 +341,11 @@ export async function auditArchitecturalRedactionVisibility(
   const failures: string[] = [];
   if (targets.length === 0) failures.push("no_supported_architectural_truth_targets");
   if (targets.some((target) => !target.evidence_passed)) failures.push("withheld_target_not_visibly_redacted");
+  if (targets.some((target) => target.role === "wall"
+    && target.fully_inside_measurement_frame
+    && target.wall_endpoint_evidence_passed === false)) {
+    failures.push("withheld_wall_endpoints_not_visibly_redacted");
+  }
   if (targets.some((target) => !target.fully_inside_measurement_frame)) {
     failures.push("withheld_target_clipped_by_measurement_frame");
   }

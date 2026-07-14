@@ -27,6 +27,8 @@ test("package CLI copies and hash-binds optional registration, type-catalog, and
     const deltaReceiptPath = path.join(temp, "delta-receipt.json");
     const measurementOverlayPath = path.join(temp, "measurement-overlay.png");
     const measurementReceiptPath = path.join(temp, "measurement-receipt.json");
+    const wallCandidateOverlayPath = path.join(temp, "wall-candidate-overlay.png");
+    const wallCandidateReceiptPath = path.join(temp, "wall-candidate-receipt.json");
     const sourceRenderPath = path.join(temp, "source-render.png");
     const surroundingCapturePath = path.join(temp, "surrounding-capture.jpg");
     const outDir = path.join(temp, "agent");
@@ -65,6 +67,39 @@ test("package CLI copies and hash-binds optional registration, type-catalog, and
         height_px: 10
       }
     })}\n`, "utf8");
+    fs.writeFileSync(wallCandidateOverlayPath, "wall-candidate-overlay-bytes", "utf8");
+    fs.writeFileSync(wallCandidateReceiptPath, `${JSON.stringify({
+      schema_version: 1,
+      artifact_role: "architectural_wall_line_candidates",
+      fixture_id: "package-artifacts-v1",
+      scope_id: "scope",
+      architectural_delta_receipt_sha256: sha256(deltaReceiptPath),
+      measurement_receipt_sha256: sha256(measurementReceiptPath),
+      source_aligned_sha256: deltaArtifacts.source_aligned.sha256,
+      candidate_delta_mask_sha256: deltaArtifacts.candidate_delta_mask.sha256,
+      status: "clarification_required",
+      policy: {},
+      candidates: [{
+        candidate_id: "line-a",
+        rank: 1,
+        pixel_points: [{ x: 1, y: 1 }, { x: 9, y: 9 }],
+        model_points: [{ x: 1, y: 9 }, { x: 9, y: 1 }],
+        angle_degrees: 45,
+        length_ft: 8,
+        candidate_coverage: 1,
+        source_ink_coverage: 1,
+        rank_score: 1
+      }],
+      ambiguities: [],
+      clarification_question: "Confirm the line.",
+      overlay: {
+        path: wallCandidateOverlayPath,
+        sha256: sha256(wallCandidateOverlayPath),
+        width_px: 10,
+        height_px: 10
+      },
+      usage_constraints: []
+    })}\n`, "utf8");
 
     const cli = path.resolve(process.cwd(), "dist/src/tools/existing_conditions_fixture.js");
     const result = spawnSync(process.execPath, [
@@ -84,7 +119,8 @@ test("package CLI copies and hash-binds optional registration, type-catalog, and
       "--source-pdf-render", sourceRenderPath,
       "--surrounding-model-capture", surroundingCapturePath,
       "--architectural-delta-receipt", deltaReceiptPath,
-      "--architectural-measurement-receipt", measurementReceiptPath
+      "--architectural-measurement-receipt", measurementReceiptPath,
+      "--architectural-wall-candidate-receipt", wallCandidateReceiptPath
     ], { cwd: process.cwd(), encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr || result.stdout);
 
@@ -101,7 +137,7 @@ test("package CLI copies and hash-binds optional registration, type-catalog, and
       path: typeCatalogCopy,
       sha256: sha256(typeCatalogCopy)
     });
-    assert.equal(packageValue.derived_evidence.length, 7);
+    assert.equal(packageValue.derived_evidence.length, 9);
     assert.deepEqual(packageValue.evidence.map(({ role }: { role: string }) => role), [
       "source_pdf", "source_pdf_render", "surrounding_model_capture"
     ]);

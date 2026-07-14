@@ -17,16 +17,20 @@ function sha256(filePath: string): string {
 }
 
 function drawFixture(filePath: string, lines: number[]): void {
+  drawFixtureSegments(filePath, lines.map((x) => ({ x, y1: 20, y2: 180 })));
+}
+
+function drawFixtureSegments(filePath: string, lines: Array<{ x: number; y1: number; y2: number }>): void {
   const canvas = createCanvas(200, 200);
   const context = canvas.getContext("2d");
   context.fillStyle = "#ffffff";
   context.fillRect(0, 0, 200, 200);
   context.strokeStyle = "#000000";
   context.lineWidth = 4;
-  for (const x of lines) {
+  for (const line of lines) {
     context.beginPath();
-    context.moveTo(x, 20);
-    context.lineTo(x, 180);
+    context.moveTo(line.x, line.y1);
+    context.lineTo(line.x, line.y2);
     context.stroke();
   }
   fs.writeFileSync(filePath, canvas.toBuffer("image/png"));
@@ -179,9 +183,34 @@ test("architectural redaction gate requires visible target removal and retained 
     assert.equal(gate.passed, true);
     assert.equal(gate.targets.length, 2);
     assert.equal(gate.targets.every((target) => target.passed), true);
+    assert.equal(gate.targets[0]!.supported_wall_endpoint_count, 2);
+    assert.equal(gate.targets[0]!.wall_endpoint_evidence_passed, true);
     assert.equal(gate.targets.every((target) => target.fully_inside_measurement_frame), true);
     assert.equal(gate.background.passed, true);
     assert.ok(gate.background.common_ink_pixels_outside_targets >= 100);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("architectural redaction gate rejects a wall whose centerline is visible but an exact endpoint is occluded", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-redaction-endpoint-fail-"));
+  try {
+    const sourcePath = path.join(temp, "source.png");
+    const redactedPath = path.join(temp, "redacted.png");
+    drawFixture(sourcePath, [40, 140]);
+    drawFixtureSegments(redactedPath, [
+      { x: 40, y1: 20, y2: 180 },
+      { x: 140, y1: 20, y2: 70 }
+    ]);
+    const receipt = await buildArchitecturalSourceDelta(deltaInput(sourcePath, redactedPath), path.join(temp, "out"));
+    const gate = await auditArchitecturalRedactionVisibility(architecturalTruth(), receipt);
+    const wall = gate.targets.find((target) => target.role === "wall")!;
+    assert.ok(wall.evidence_coverage >= gate.policy.minimum_wall_sample_coverage);
+    assert.equal(wall.supported_wall_endpoint_count, 1);
+    assert.equal(wall.wall_endpoint_evidence_passed, false);
+    assert.equal(gate.passed, false);
+    assert.ok(gate.failure_classifications.includes("withheld_wall_endpoints_not_visibly_redacted"));
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
