@@ -63,6 +63,10 @@ import {
   type MepDraftPackage
 } from "../existing_conditions/mep_draft_plan.js";
 import {
+  compileRegisteredMepObservations,
+  type RegisteredMepObservationPackage
+} from "../existing_conditions/registered_mep_observations.js";
+import {
   compileArchitecturalShellPlan,
   type ArchitecturalShellPackage
 } from "../existing_conditions/architectural_shell_plan.js";
@@ -160,6 +164,7 @@ function usage(): never {
   throw new Error([
     "Usage:",
     "  npm run existing-conditions -- normalize --visible <export-visible-elements.json> --connectors <get-connectors.json> --ids <id,id,...> --out <snapshot.json>",
+    "  npm run existing-conditions -- compile-registered-mep-observations --input <registered-pixel-observations.json> --out <compilation.json> [--package-out <mep-draft-package.json>] [--workflow-out <atomic-dry-run-request.json>] [--max-created <count>]",
     "  npm run existing-conditions -- compile-mep-draft --input <source-observations.json> --out <compiled-plan.json> [--workflow-out <atomic-dry-run-request.json>] [--max-created <count>]",
     "  npm run existing-conditions -- compile-architectural-preview --input <source-observations.json> --out <preview.json>",
     "  npm run existing-conditions -- score-architectural-preview --truth <ground-truth.json> --preview <compiled-preview.json> --out <score.json>",
@@ -193,7 +198,7 @@ function usage(): never {
     "  npm run existing-conditions -- evaluate-engineering-case --case <case-definition.json> --native-evidence <evaluator-native-evidence.json> --evaluator-provenance <provenance.json> --evaluator-key-file <secret> --out <checks.json>",
     "  npm run existing-conditions -- advance-controller --state <controller-state-or-receipt.json> --event <event.json> --out <next-receipt.json>",
     "  npm run existing-conditions -- evaluator-diff --before-visible <json> --after-visible <json> --package <agent_package.json> --out <receipt.json>",
-    "  npm run existing-conditions -- validate-contract --kind <agent_package|ground_truth|candidate|architectural_preview|architectural_pixel_measurement|architectural_wall_candidate_clarification|architectural_opening_classification|architectural_opening_host_resolution> --file <json>",
+    "  npm run existing-conditions -- validate-contract --kind <agent_package|ground_truth|candidate|architectural_preview|architectural_pixel_measurement|registered_mep_observations|architectural_wall_candidate_clarification|architectural_opening_classification|architectural_opening_host_resolution> --file <json>",
     "  npm run existing-conditions -- redact --expected-source <source.rvt> --staging-model <withheld-staging.rvt> --redacted-model <agent-redacted.rvt> --view-id <id> --ids <id,id,...> --anchor-ids <id,id,...> --out-dir <fixture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "Options:",
     "  --allow-missing-connectors  Permit non-MEP normalization without connector readback.",
@@ -911,12 +916,12 @@ function reviewVisualEvidence(): void {
 
 function validateContractFile(): void {
   const kind = requiredArgument("--kind");
-  if (!["agent_package", "ground_truth", "candidate", "architectural_preview", "architectural_pixel_measurement", "architectural_wall_candidate_clarification", "architectural_opening_classification", "architectural_opening_host_resolution"].includes(kind)) {
-    throw new Error("--kind must be agent_package, ground_truth, candidate, architectural_preview, architectural_pixel_measurement, architectural_wall_candidate_clarification, architectural_opening_classification, or architectural_opening_host_resolution.");
+  if (!["agent_package", "ground_truth", "candidate", "architectural_preview", "architectural_pixel_measurement", "registered_mep_observations", "architectural_wall_candidate_clarification", "architectural_opening_classification", "architectural_opening_host_resolution"].includes(kind)) {
+    throw new Error("--kind must be agent_package, ground_truth, candidate, architectural_preview, architectural_pixel_measurement, registered_mep_observations, architectural_wall_candidate_clarification, architectural_opening_classification, or architectural_opening_host_resolution.");
   }
   const filePath = path.resolve(requiredArgument("--file"));
   assertExistingConditionsContract(
-    kind as "agent_package" | "ground_truth" | "candidate" | "architectural_preview" | "architectural_pixel_measurement" | "architectural_wall_candidate_clarification" | "architectural_opening_classification" | "architectural_opening_host_resolution",
+    kind as "agent_package" | "ground_truth" | "candidate" | "architectural_preview" | "architectural_pixel_measurement" | "registered_mep_observations" | "architectural_wall_candidate_clarification" | "architectural_opening_classification" | "architectural_opening_host_resolution",
     readJson(filePath)
   );
   process.stdout.write(`${filePath}: valid ${kind}\n`);
@@ -1407,6 +1412,20 @@ async function main(): Promise<void> {
       }
     );
     writeJson(requiredArgument("--out"), snapshot);
+    return;
+  }
+  if (command === "compile-registered-mep-observations") {
+    const input = readJson(requiredArgument("--input"));
+    assertExistingConditionsContract("registered_mep_observations", input);
+    const compilation = await compileRegisteredMepObservations(input as RegisteredMepObservationPackage);
+    writeJson(requiredArgument("--out"), compilation);
+    const packageOut = argument("--package-out");
+    if (packageOut) writeJson(packageOut, compilation.converted_package);
+    const workflowOut = argument("--workflow-out");
+    if (workflowOut && compilation.compiled_plan.status === "ready") {
+      const maxCreated = Number(argument("--max-created") || Math.max(1, compilation.compiled_plan.plan_elements.filter((entry) => entry.action === "create").length * 4));
+      writeJson(workflowOut, buildAtomicMepDraftWorkflowRequest(compilation.compiled_plan, { maximum_created_elements: maxCreated }));
+    }
     return;
   }
   if (command === "compile-mep-draft") {

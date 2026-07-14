@@ -153,6 +153,67 @@ test("runtime contract validation requires source-observation grounding for exac
   assert.throws(() => assertExistingConditionsContract("agent_package", invalid), /invalid_existing_conditions_agent_package_contract/);
 });
 
+test("runtime contract validation accepts registered MEP pixels and rejects hidden truth fields", () => {
+  const input = {
+    schema_version: 1,
+    fixture_id: "registered-electrical-contract-v1",
+    scope_id: "bounded-office",
+    discipline: "electrical",
+    source_evidence_sha256: "a".repeat(64),
+    visible_evidence: [
+      { role: "source_pdf", sha256: "a".repeat(64) },
+      { role: "registered_source_render", sha256: "b".repeat(64) }
+    ],
+    native_element_references: [],
+    registration: {
+      source_evidence_sha256: "a".repeat(64),
+      control_points: [
+        { source: { x: 0, y: 0 }, model: { x: 0, y: 0 } },
+        { source: { x: 10, y: 0 }, model: { x: 10, y: 0 } },
+        { source: { x: 0, y: 10 }, model: { x: 0, y: 10 } }
+      ]
+    },
+    coordinate_space: "registered_render_pixels_top_left",
+    registered_render: {
+      path: "agent-visible.png",
+      sha256: "b".repeat(64),
+      width_px: 100,
+      height_px: 100,
+      evidence_role: "registered_source_render",
+      access_scope: "agent_visible"
+    },
+    frame: { model_bounds: { min: { x: 0, y: 0 }, max: { x: 10, y: 10 } } },
+    level_name: "L4",
+    level_elevation_ft: 32,
+    maximum_observations: 4,
+    observations: [{
+      kind: "electrical_device",
+      discipline: "electrical",
+      observation_id: "device-1",
+      visibility: "clear",
+      confidence: 0.95,
+      supported_attributes: ["location", "type"],
+      attribute_evidence: [{
+        attribute: "type",
+        basis: "legible_source_evidence",
+        evidence_role: "registered_source_render",
+        reference: "duplex receptacle symbol at selected pixel"
+      }],
+      role: "duplex receptacle",
+      pixel_point: { x: 25, y: 75 },
+      elevation_ft: 1.5,
+      placement: { mode: "unhosted_family", family_name: "Receptacle", type_name: "Duplex" }
+    }]
+  };
+  assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", input));
+  const invalid = structuredClone(input);
+  (invalid.observations[0] as Record<string, unknown>).withheld_element_id = 12345;
+  assert.throws(
+    () => assertExistingConditionsContract("registered_mep_observations", invalid),
+    /invalid_existing_conditions_registered_mep_observations_contract/
+  );
+});
+
 test("runtime contract validation requires a standards profile and multi-solution acceptance for compliance", () => {
   const invalid = validAgentPackage();
   invalid.task_class = "standards_compliance_repair";
