@@ -74,6 +74,11 @@ import {
   type ArchitecturalPlanGeometryResolution
 } from "../existing_conditions/architectural_plan_geometry_preview.js";
 import { scoreArchitecturalPlanGeometryPreview } from "../existing_conditions/architectural_plan_geometry_score.js";
+import {
+  buildArchitecturalSourceDelta,
+  type ArchitecturalSourceDeltaInput,
+  type ArchitecturalSourceDeltaReceipt
+} from "../existing_conditions/architectural_source_delta.js";
 
 function argument(name: string): string {
   const index = process.argv.indexOf(name);
@@ -133,10 +138,11 @@ function usage(): never {
     "  npm run existing-conditions -- compile-mep-draft --input <source-observations.json> --out <compiled-plan.json> [--workflow-out <atomic-dry-run-request.json>] [--max-created <count>]",
     "  npm run existing-conditions -- compile-architectural-preview --input <source-observations.json> --out <preview.json>",
     "  npm run existing-conditions -- score-architectural-preview --truth <ground-truth.json> --preview <compiled-preview.json> --out <score.json>",
+    "  npm run existing-conditions -- build-architectural-delta --input <registered-source-and-redacted-capture.json> --out-dir <derived-artifacts-dir> --out <receipt.json>",
     "  npm run existing-conditions -- promote-architectural-preview --input <source-observations.json> --resolutions <evidence-backed-resolutions.json> --out <promotion.json> [--action-out <atomic-import-request.json>] [--apply]",
     "  npm run existing-conditions -- compile-architectural-shell --input <source-observations.json> --out <compiled-plan.json> [--action-out <atomic-import-request.json>] [--apply]",
     "  npm run existing-conditions -- capture --expected-model <model.rvt> (--view-id <id> | --view-ids <id,id,...>) --ids <id,id,...> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
-    "  npm run existing-conditions -- package --fixture-id <id> --scope-id <id> --discipline <mechanical|plumbing|electrical|architectural|mixed> --task-class <exact_reconstruction|standards_compliance_repair|generative_layout> [--standards-profile <json>] --redacted-model <agent-redacted.rvt> --source-pdf <source.pdf> --view-id <id> --model-bounds <minX,minY,minZ,maxX,maxY,maxZ> --image-region <minX,minY,maxX,maxY> --allowed-categories <OST_...,OST_...> --out-dir <agent-dir>",
+    "  npm run existing-conditions -- package --fixture-id <id> --scope-id <id> --discipline <mechanical|plumbing|electrical|architectural|mixed> --task-class <exact_reconstruction|standards_compliance_repair|generative_layout> [--standards-profile <json>] [--source-pdf-render <image> --surrounding-model-capture <image> --architectural-delta-receipt <json>] --redacted-model <agent-redacted.rvt> --source-pdf <source.pdf> --view-id <id> --model-bounds <minX,minY,minZ,maxX,maxY,maxZ> --image-region <minX,minY,maxX,maxY> --allowed-categories <OST_...,OST_...> --out-dir <agent-dir>",
     "  npm run existing-conditions -- seal-truth --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --ground-truth-model <source.rvt> --deletion-manifest <json> --delete-dry-run <json> --out <truth.json>",
     "  npm run existing-conditions -- evaluator-review-visual --post-capture <image> --post-pdf <pdf> --status <pass|needs_review|fail> --out <receipt.json>",
     "  npm run existing-conditions -- seal-candidate --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --evaluator-visual-receipt <json> --out <candidate.json>",
@@ -341,6 +347,9 @@ function buildAgentPackage(): void {
   const standardsProfileSource = argument("--standards-profile");
   const registrationArtifactSource = argument("--registration-artifact");
   const typeMappingArtifactSource = argument("--type-mapping-artifact");
+  const architecturalDeltaReceiptSource = argument("--architectural-delta-receipt");
+  const sourcePdfRenderSource = argument("--source-pdf-render");
+  const surroundingModelCaptureSource = argument("--surrounding-model-capture");
   if (taskClass !== "exact_reconstruction" && (!standardsProfileSource || !fs.existsSync(path.resolve(standardsProfileSource)))) {
     throw new Error("--standards-profile must identify an existing JSON file for compliance and generative tasks.");
   }
@@ -354,6 +363,53 @@ function buildAgentPackage(): void {
       throw new Error(`${flag} must identify valid JSON.`);
     }
   }
+  let architecturalDeltaReceipt: ArchitecturalSourceDeltaReceipt | null = null;
+  if (architecturalDeltaReceiptSource) {
+    if (!sourcePdfRenderSource || !surroundingModelCaptureSource) {
+      throw new Error("--architectural-delta-receipt requires --source-pdf-render and --surrounding-model-capture.");
+    }
+    const resolved = path.resolve(architecturalDeltaReceiptSource);
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+      throw new Error("--architectural-delta-receipt must identify an existing JSON file.");
+    }
+    architecturalDeltaReceipt = readJson(resolved) as ArchitecturalSourceDeltaReceipt;
+    if (architecturalDeltaReceipt.schema_version !== 1
+      || architecturalDeltaReceipt.artifact_role !== "architectural_source_redacted_delta"
+      || architecturalDeltaReceipt.fixture_id !== fixtureId
+      || architecturalDeltaReceipt.scope_id !== scopeId
+      || !architecturalDeltaReceipt.registration_verified
+      || !architecturalDeltaReceipt.artifacts
+      || typeof architecturalDeltaReceipt.artifacts !== "object"
+      || !/^[a-f0-9]{64}$/i.test(String(architecturalDeltaReceipt.source_render_sha256 ?? ""))
+      || !/^[a-f0-9]{64}$/i.test(String(architecturalDeltaReceipt.redacted_model_capture_sha256 ?? ""))) {
+      throw new Error("--architectural-delta-receipt does not match the package fixture/scope or verified V1 contract.");
+    }
+    for (const requiredArtifact of ["source_aligned", "redacted_aligned", "candidate_delta_mask", "comparison"] as const) {
+      if (!architecturalDeltaReceipt.artifacts[requiredArtifact]) {
+        throw new Error(`architectural_delta_${requiredArtifact}_is_required`);
+      }
+    }
+    for (const [name, artifact] of Object.entries(architecturalDeltaReceipt.artifacts)) {
+      const artifactPath = path.resolve(artifact.path);
+      if (!fs.existsSync(artifactPath) || !fs.statSync(artifactPath).isFile()) {
+        throw new Error(`architectural_delta_${name}_file_not_found`);
+      }
+      if (sha256(artifactPath).toLowerCase() !== String(artifact.sha256).toLowerCase()) {
+        throw new Error(`architectural_delta_${name}_sha256_mismatch`);
+      }
+    }
+    if (sha256(path.resolve(sourcePdfRenderSource)).toLowerCase() !== architecturalDeltaReceipt.source_render_sha256.toLowerCase()) {
+      throw new Error("architectural_delta_source_render_sha256_mismatch");
+    }
+    if (sha256(path.resolve(surroundingModelCaptureSource)).toLowerCase() !== architecturalDeltaReceipt.redacted_model_capture_sha256.toLowerCase()) {
+      throw new Error("architectural_delta_surrounding_model_capture_sha256_mismatch");
+    }
+  }
+  for (const [flag, source] of [["--source-pdf-render", sourcePdfRenderSource], ["--surrounding-model-capture", surroundingModelCaptureSource]] as const) {
+    if (source && (!fs.existsSync(path.resolve(source)) || !fs.statSync(path.resolve(source)).isFile())) {
+      throw new Error(`${flag} must identify an existing image file.`);
+    }
+  }
   fs.mkdirSync(outDir, { recursive: true });
   const pdfCopy = path.join(outDir, "source_evidence.pdf");
   const packagePath = path.join(outDir, "agent_package.json");
@@ -361,10 +417,21 @@ function buildAgentPackage(): void {
   const standardsProfileCopy = path.join(outDir, "standards_profile.json");
   const registrationArtifactCopy = path.join(outDir, "source_to_model_registration.json");
   const typeMappingArtifactCopy = path.join(outDir, "approved_type_catalog.json");
+  const architecturalDeltaDirectory = path.join(outDir, "architectural_source_delta");
+  const architecturalDeltaReceiptCopy = path.join(architecturalDeltaDirectory, "receipt.json");
+  const sourcePdfRenderCopy = sourcePdfRenderSource
+    ? path.join(outDir, `source_evidence_page_${Number(argument("--pdf-page") || "1")}${path.extname(sourcePdfRenderSource) || ".png"}`)
+    : null;
+  const surroundingModelCaptureCopy = surroundingModelCaptureSource
+    ? path.join(outDir, `surrounding_model_capture${path.extname(surroundingModelCaptureSource) || ".png"}`)
+    : null;
   if (fs.existsSync(pdfCopy) || fs.existsSync(packagePath) || fs.existsSync(controllerStatePath)
     || (taskClass !== "exact_reconstruction" && fs.existsSync(standardsProfileCopy))
     || (registrationArtifactSource && fs.existsSync(registrationArtifactCopy))
-    || (typeMappingArtifactSource && fs.existsSync(typeMappingArtifactCopy))) {
+    || (typeMappingArtifactSource && fs.existsSync(typeMappingArtifactCopy))
+    || (architecturalDeltaReceipt && fs.existsSync(architecturalDeltaDirectory))
+    || (sourcePdfRenderCopy && fs.existsSync(sourcePdfRenderCopy))
+    || (surroundingModelCaptureCopy && fs.existsSync(surroundingModelCaptureCopy))) {
     throw new Error(`Refusing to overwrite an existing agent package in: ${outDir}`);
   }
   fs.copyFileSync(sourcePdf, pdfCopy, fs.constants.COPYFILE_EXCL);
@@ -376,6 +443,23 @@ function buildAgentPackage(): void {
   }
   if (typeMappingArtifactSource) {
     fs.copyFileSync(path.resolve(typeMappingArtifactSource), typeMappingArtifactCopy, fs.constants.COPYFILE_EXCL);
+  }
+  if (sourcePdfRenderCopy) {
+    fs.copyFileSync(path.resolve(sourcePdfRenderSource), sourcePdfRenderCopy, fs.constants.COPYFILE_EXCL);
+  }
+  if (surroundingModelCaptureCopy) {
+    fs.copyFileSync(path.resolve(surroundingModelCaptureSource), surroundingModelCaptureCopy, fs.constants.COPYFILE_EXCL);
+  }
+  let packagedArchitecturalDelta: ArchitecturalSourceDeltaReceipt | null = null;
+  if (architecturalDeltaReceipt) {
+    fs.mkdirSync(architecturalDeltaDirectory);
+    const copiedArtifacts = Object.fromEntries(Object.entries(architecturalDeltaReceipt.artifacts).map(([name, artifact]) => {
+      const destination = path.join(architecturalDeltaDirectory, `${name}.png`);
+      fs.copyFileSync(path.resolve(artifact.path), destination, fs.constants.COPYFILE_EXCL);
+      return [name, { ...artifact, path: destination, sha256: sha256(destination) }];
+    })) as ArchitecturalSourceDeltaReceipt["artifacts"];
+    packagedArchitecturalDelta = { ...architecturalDeltaReceipt, artifacts: copiedArtifacts };
+    writeJson(architecturalDeltaReceiptCopy, packagedArchitecturalDelta);
   }
   const allowsMultipleValidSolutions = taskClass !== "exact_reconstruction";
   const agentPackage = {
@@ -412,12 +496,32 @@ function buildAgentPackage(): void {
       path: typeMappingArtifactCopy,
       sha256: sha256(typeMappingArtifactCopy)
     } : null,
-    evidence: [{
-      role: "source_pdf",
-      path: pdfCopy,
-      sha256: sha256(pdfCopy),
-      page: Number(argument("--pdf-page") || "1")
-    }],
+    derived_evidence: packagedArchitecturalDelta ? [
+      { role: "architectural_source_redacted_delta", path: architecturalDeltaReceiptCopy, sha256: sha256(architecturalDeltaReceiptCopy) },
+      { role: "architectural_source_aligned", path: packagedArchitecturalDelta.artifacts.source_aligned.path, sha256: packagedArchitecturalDelta.artifacts.source_aligned.sha256 },
+      { role: "architectural_redacted_aligned", path: packagedArchitecturalDelta.artifacts.redacted_aligned.path, sha256: packagedArchitecturalDelta.artifacts.redacted_aligned.sha256 },
+      { role: "architectural_candidate_delta_mask", path: packagedArchitecturalDelta.artifacts.candidate_delta_mask.path, sha256: packagedArchitecturalDelta.artifacts.candidate_delta_mask.sha256 },
+      { role: "architectural_source_redacted_comparison", path: packagedArchitecturalDelta.artifacts.comparison.path, sha256: packagedArchitecturalDelta.artifacts.comparison.sha256 }
+    ] : undefined,
+    evidence: [
+      {
+        role: "source_pdf",
+        path: pdfCopy,
+        sha256: sha256(pdfCopy),
+        page: Number(argument("--pdf-page") || "1")
+      },
+      ...(sourcePdfRenderCopy ? [{
+        role: "source_pdf_render",
+        path: sourcePdfRenderCopy,
+        sha256: sha256(sourcePdfRenderCopy),
+        page: Number(argument("--pdf-page") || "1")
+      }] : []),
+      ...(surroundingModelCaptureCopy ? [{
+        role: "surrounding_model_capture",
+        path: surroundingModelCaptureCopy,
+        sha256: sha256(surroundingModelCaptureCopy)
+      }] : [])
+    ],
     scope: {
       scope_id: scopeId,
       view_id: viewId,
@@ -473,8 +577,17 @@ function buildAgentPackage(): void {
     maximum_created_elements: maximumCreatedElements,
     visible_evidence: [
       { role: "source_pdf", sha256: sha256(pdfCopy) },
+      ...(sourcePdfRenderCopy ? [{ role: "source_pdf_render", sha256: sha256(sourcePdfRenderCopy) }] : []),
+      ...(surroundingModelCaptureCopy ? [{ role: "surrounding_model_capture", sha256: sha256(surroundingModelCaptureCopy) }] : []),
       ...(registrationArtifactSource ? [{ role: "source_to_model_registration", sha256: sha256(registrationArtifactCopy) }] : []),
-      ...(typeMappingArtifactSource ? [{ role: "approved_type_catalog", sha256: sha256(typeMappingArtifactCopy) }] : [])
+      ...(typeMappingArtifactSource ? [{ role: "approved_type_catalog", sha256: sha256(typeMappingArtifactCopy) }] : []),
+      ...(packagedArchitecturalDelta ? [
+        { role: "architectural_source_redacted_delta", sha256: sha256(architecturalDeltaReceiptCopy) },
+        { role: "architectural_source_aligned", sha256: packagedArchitecturalDelta.artifacts.source_aligned.sha256 },
+        { role: "architectural_redacted_aligned", sha256: packagedArchitecturalDelta.artifacts.redacted_aligned.sha256 },
+        { role: "architectural_candidate_delta_mask", sha256: packagedArchitecturalDelta.artifacts.candidate_delta_mask.sha256 },
+        { role: "architectural_source_redacted_comparison", sha256: packagedArchitecturalDelta.artifacts.comparison.sha256 }
+      ] : [])
     ],
     require_source_observation_grounding: taskClass === "exact_reconstruction",
     material_confidence_threshold: 0.75,
@@ -1112,6 +1225,14 @@ async function main(): Promise<void> {
       readJson(requiredArgument("--preview")) as CompiledArchitecturalPlanGeometryPreview
     );
     writeJson(requiredArgument("--out"), score);
+    return;
+  }
+  if (command === "build-architectural-delta") {
+    const receipt = await buildArchitecturalSourceDelta(
+      readJson(requiredArgument("--input")) as ArchitecturalSourceDeltaInput,
+      requiredArgument("--out-dir")
+    );
+    writeJson(requiredArgument("--out"), receipt);
     return;
   }
   if (command === "promote-architectural-preview") {

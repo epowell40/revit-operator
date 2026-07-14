@@ -71,7 +71,7 @@ test("runtime contract validation accepts an exact reconstruction package", () =
   assert.doesNotThrow(() => assertExistingConditionsContract("agent_package", validAgentPackage()));
 });
 
-test("runtime contract validation accepts hash-bound registration and approved type-catalog artifacts", () => {
+test("runtime contract validation accepts hash-bound registration, approved type-catalog, and derived evidence artifacts", () => {
   const packageValue = validAgentPackage();
   packageValue.registration_artifact = {
     role: "source_to_model_registration",
@@ -83,6 +83,11 @@ test("runtime contract validation accepts hash-bound registration and approved t
     path: "approved_type_catalog.json",
     sha256: "d".repeat(64)
   };
+  packageValue.derived_evidence = [{
+    role: "architectural_source_redacted_comparison",
+    path: "source_redacted_comparison.png",
+    sha256: "e".repeat(64)
+  }];
   assert.doesNotThrow(() => assertExistingConditionsContract("agent_package", packageValue));
 
   packageValue.type_mapping_artifact = {
