@@ -651,3 +651,125 @@ test("host and circuit topology reject wrong categories and multi-circuit member
   );
   assert.throws(() => compileMepDraftPlan(hosted), /electrical_device_assigned_to_multiple_circuits/);
 });
+
+function concealedLavatoryClusterPackage(): MepDraftPackage {
+  const bridge = (
+    observation_id: string,
+    service: "domestic_cold_water" | "domestic_hot_water" | "sanitary",
+    target_reference_key: string,
+    pipe_size: string,
+    pipe_type: string,
+    system_type: string
+  ): MepDraftPackage["observations"][number] => ({
+    kind: "pipe_route",
+    observation_id,
+    discipline: "plumbing",
+    service,
+    geometry_mode: "native_connector_bridge",
+    source_fixture_observation_id: "fixture-visible-31",
+    target_reference_key,
+    maximum_length_ft: 2,
+    visibility: "occluded",
+    confidence: 0.98,
+    evidence_role: "native_model_inventory",
+    supported_attributes: ["location", "size", "elevation", "system", "type"],
+    attribute_provenance: [
+      { attribute: "location", basis: "native_model_precedent", reference: `runtime connector pair ${target_reference_key}` },
+      { attribute: "elevation", basis: "native_model_precedent", reference: `runtime connector pair ${target_reference_key}` },
+      { attribute: "size", basis: "native_model_precedent", reference: `open connector ${target_reference_key}` },
+      { attribute: "system", basis: "native_model_precedent", reference: `open connector ${target_reference_key}` },
+      { attribute: "type", basis: "native_model_precedent", reference: "project pipe-type precedent" }
+    ],
+    pipe_size,
+    pipe_type,
+    system_type
+  });
+  return {
+    schema_version: 1,
+    fixture_id: "concealed-lavatory-cluster-v1",
+    scope_id: "unseen-unit-lavatory-alpha",
+    source_evidence_sha256: SOURCE_HASH,
+    visible_evidence: visibleEvidence(),
+    native_element_references: [
+      { reference_key: "anchor-cold-947", element_id: 947, category: "OST_PipeFitting", role: "open cold-water anchor", evidence_role: "native_model_inventory", evidence_sha256: MODEL_HASH },
+      { reference_key: "anchor-hot-632", element_id: 632, category: "OST_PipeFitting", role: "open hot-water anchor", evidence_role: "native_model_inventory", evidence_sha256: MODEL_HASH },
+      { reference_key: "anchor-sanitary-418", element_id: 418, category: "OST_PipeFitting", role: "open sanitary anchor", evidence_role: "native_model_inventory", evidence_sha256: MODEL_HASH }
+    ],
+    registration: registration(),
+    level_name: "Benchmark L2",
+    level_elevation_ft: 20,
+    observations: [
+      bridge("bridge-cold-17", "domestic_cold_water", "anchor-cold-947", "1/2 inch", "Copper", "Domestic Cold Water"),
+      bridge("bridge-hot-53", "domestic_hot_water", "anchor-hot-632", "1/2 inch", "Copper", "Domestic Hot Water"),
+      bridge("bridge-sanitary-88", "sanitary", "anchor-sanitary-418", "2 inch", "PVC - DWV", "Sanitary"),
+      {
+        kind: "plumbing_fixture",
+        observation_id: "fixture-visible-31",
+        discipline: "plumbing",
+        role: "lavatory",
+        visibility: "clear",
+        confidence: 0.99,
+        supported_attributes: ["location", "type", "service_topology"],
+        point: { x: 2, y: 3 },
+        elevation_ft: 0,
+        placement: { mode: "unhosted_family", family_name: "Fixture Connections", type_name: "Vanity", rotation_degrees: -90 },
+        service_route_connections: [
+          { route_observation_id: "bridge-cold-17", route_endpoint: "native_source" },
+          { route_observation_id: "bridge-hot-53", route_endpoint: "native_source" },
+          { route_observation_id: "bridge-sanitary-88", route_endpoint: "native_source" }
+        ],
+        service_boundary: {
+          basis: "native_model_precedent",
+          evidence_role: "native_model_inventory",
+          required_services: ["domestic_cold_water", "domestic_hot_water", "sanitary"],
+          prohibited_services: ["vent"]
+        }
+      }
+    ]
+  };
+}
+
+test("concealed plumbing fixture cluster resolves hidden offsets only through explicit native connector bridges", () => {
+  const plan = compileMepDraftPlan(concealedLavatoryClusterPackage());
+  assert.equal(plan.status, "ready");
+  assert.deepEqual(plan.actions.map((entry) => entry.path), [
+    "/revit/place-families",
+    "/revit/create-pipe-between-connectors",
+    "/revit/create-pipe-between-connectors",
+    "/revit/create-pipe-between-connectors"
+  ]);
+  assert.deepEqual(plan.actions.slice(1).map((entry) => entry.depends_on), [
+    ["place:fixture-visible-31"],
+    ["place:fixture-visible-31"],
+    ["place:fixture-visible-31"]
+  ]);
+  assert.deepEqual(plan.actions.slice(1).map((entry) => entry.deferred_body?.target_element_id), [947, 632, 418]);
+  assert.equal(plan.actions.some((entry) => entry.path === "/revit/connect-mep-elements"), false);
+  assert.equal(plan.plan_elements.filter((entry) => entry.plan_key.startsWith("bridge-")).every((entry) =>
+    entry.assumptions.some((value) => /not observed in the source plan/.test(value))), true);
+
+  const workflow = buildAtomicMepDraftWorkflowRequest(plan);
+  assert.equal(workflow.dryRun, true);
+  assert.deepEqual(workflow.operations.map((entry) => entry.action_key), [
+    "place:fixture-visible-31",
+    "route:bridge-cold-17",
+    "route:bridge-hot-53",
+    "route:bridge-sanitary-88"
+  ]);
+  assert.equal(workflow.operations[1]?.apply_body?.service, "domestic_cold_water");
+  assert.equal(workflow.operations[1]?.deferred_body?.source_element?.created_by_action, "place:fixture-visible-31");
+});
+
+test("connector bridges reject hidden geometry claims without native provenance or an exact anchor", () => {
+  const missingProvenance = concealedLavatoryClusterPackage();
+  const route = missingProvenance.observations[0];
+  if (route?.kind !== "pipe_route" || route.geometry_mode !== "native_connector_bridge") throw new Error("route_setup_failed");
+  route.attribute_provenance = route.attribute_provenance?.filter((entry) => entry.attribute !== "elevation");
+  assert.throws(() => compileMepDraftPlan(missingProvenance), /elevation_must_be_native_model_precedent/);
+
+  const unknownAnchor = concealedLavatoryClusterPackage();
+  const secondRoute = unknownAnchor.observations[0];
+  if (secondRoute?.kind !== "pipe_route" || secondRoute.geometry_mode !== "native_connector_bridge") throw new Error("route_setup_failed");
+  secondRoute.target_reference_key = "not-in-inventory";
+  assert.throws(() => compileMepDraftPlan(unknownAnchor), /target_reference_unknown/);
+});

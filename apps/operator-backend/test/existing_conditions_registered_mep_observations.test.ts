@@ -164,6 +164,63 @@ test("registered plumbing pixels compile through existing route, placement, and 
   assert.deepEqual(result.compiled_plan.actions[1]?.expected_model_point, { x: 102, y: 202, z: 32 });
 });
 
+test("registered fixture pixels compose with concealed native connector bridge geometry", async () => {
+  const input = plumbingInput();
+  const nativeHash = "b".repeat(64);
+  input.visible_evidence.push({ role: "native_model_inventory", sha256: nativeHash });
+  input.native_element_references = [{
+    reference_key: "retained-cold-anchor-701",
+    element_id: 701,
+    category: "OST_PipeFitting",
+    role: "open cold-water anchor",
+    evidence_role: "native_model_inventory",
+    evidence_sha256: nativeHash
+  }];
+  input.observations[0] = {
+    kind: "pipe_route",
+    discipline: "plumbing",
+    observation_id: "cold-connector-bridge-71",
+    evidence_role: "native_model_inventory",
+    visibility: "occluded",
+    confidence: 0.98,
+    supported_attributes: ["location", "size", "elevation", "system", "type"],
+    attribute_evidence: [
+      { attribute: "location", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "runtime connectors on the placed fixture and explicit retained anchor" },
+      { attribute: "size", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "matching half-inch native connectors" },
+      { attribute: "elevation", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "runtime connector elevations, not plan-observed" },
+      { attribute: "system", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "native Domestic Cold Water classifications" },
+      { attribute: "type", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "project Copper pipe precedent" }
+    ],
+    service: "domestic_cold_water",
+    geometry_mode: "native_connector_bridge",
+    source_fixture_observation_id: "fixture-random-42",
+    target_reference_key: "retained-cold-anchor-701",
+    maximum_length_ft: 2,
+    pipe_size: "1/2 inch",
+    pipe_type: "Copper",
+    system_type: "Domestic Cold Water"
+  };
+  const fixture = input.observations[1];
+  if (fixture?.kind !== "plumbing_fixture") throw new Error("fixture_setup_failed");
+  fixture.service_route_connections = [{ route_observation_id: "cold-connector-bridge-71", route_endpoint: "native_source" }];
+  fixture.service_boundary = {
+    basis: "native_model_precedent",
+    evidence_role: "native_model_inventory",
+    required_services: ["domestic_cold_water"],
+    prohibited_services: ["domestic_hot_water"]
+  };
+
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.status, "ready");
+  assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.path), [
+    "/revit/place-families",
+    "/revit/create-pipe-between-connectors"
+  ]);
+  assert.deepEqual(result.compiled_plan.actions[0]?.expected_model_point, { x: 102, y: 202, z: 32 });
+  assert.equal(result.compiled_plan.actions[1]?.deferred_body?.target_element_id, 701);
+  assert.match(result.usage_constraints.join("\n"), /plan geometry/i);
+});
+
 test("a plan-absent pipe elevation may proceed only as an explicit declared heuristic", async () => {
   const input = plumbingInput();
   const route = input.observations[0];
@@ -224,13 +281,13 @@ test("hash and dimension mismatches fail before any MEP plan is compiled", async
 test("out-of-frame, degenerate, duplicate, and wrong-discipline observations fail closed", async () => {
   const outside = plumbingInput();
   const outsideRoute = outside.observations[0];
-  if (outsideRoute?.kind !== "pipe_route") throw new Error("fixture_setup_failed");
+  if (outsideRoute?.kind !== "pipe_route" || outsideRoute.geometry_mode === "native_connector_bridge") throw new Error("fixture_setup_failed");
   outsideRoute.pixel_points[1] = { x: 101, y: 80 };
   await assert.rejects(() => compileRegisteredMepObservations(outside), /outside_registered_render/);
 
   const degenerate = plumbingInput();
   const degenerateRoute = degenerate.observations[0];
-  if (degenerateRoute?.kind !== "pipe_route") throw new Error("fixture_setup_failed");
+  if (degenerateRoute?.kind !== "pipe_route" || degenerateRoute.geometry_mode === "native_connector_bridge") throw new Error("fixture_setup_failed");
   degenerateRoute.pixel_points[1] = { ...degenerateRoute.pixel_points[0]! };
   await assert.rejects(() => compileRegisteredMepObservations(degenerate), /route_is_degenerate/);
 

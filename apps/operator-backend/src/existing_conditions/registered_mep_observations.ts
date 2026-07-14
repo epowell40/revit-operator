@@ -8,8 +8,9 @@ import {
   type ElectricalCircuitObservation,
   type ElectricalDeviceObservation,
   type MepDraftPackage,
+  type PlumbingNativeConnectorBridgeObservation,
   type PlumbingFixtureObservation,
-  type PlumbingPipeRouteObservation
+  type PlumbingSourcePointRouteObservation
 } from "./mep_draft_plan.js";
 import {
   solveExistingConditionsRegistration,
@@ -42,9 +43,11 @@ type WithAttributeEvidence = {
   attribute_evidence: RegisteredMepAttributeEvidence[];
 };
 
-export type RegisteredPlumbingPipeRouteObservation = Omit<PlumbingPipeRouteObservation, "points"> & WithAttributeEvidence & {
+export type RegisteredPlumbingPipeRouteObservation = Omit<PlumbingSourcePointRouteObservation, "points"> & WithAttributeEvidence & {
   pixel_points: ExistingConditionsPlanPoint[];
 };
+
+export type RegisteredPlumbingConnectorBridgeObservation = Omit<PlumbingNativeConnectorBridgeObservation, "attribute_provenance"> & WithAttributeEvidence;
 
 export type RegisteredPlumbingFixtureObservation = Omit<PlumbingFixtureObservation, "point"> & WithAttributeEvidence & {
   pixel_point: ExistingConditionsPlanPoint;
@@ -56,6 +59,7 @@ export type RegisteredElectricalDeviceObservation = Omit<ElectricalDeviceObserva
 
 export type RegisteredMepPixelObservation =
   | RegisteredPlumbingPipeRouteObservation
+  | RegisteredPlumbingConnectorBridgeObservation
   | RegisteredPlumbingFixtureObservation
   | RegisteredElectricalDeviceObservation
   | ElectricalCircuitObservation;
@@ -187,7 +191,9 @@ function allowedDiscipline(
 }
 
 function materialAttributes(observation: Exclude<RegisteredMepPixelObservation, ElectricalCircuitObservation>): string[] {
-  if (observation.kind === "pipe_route") return ["size", "elevation", "system", "type"];
+  if (observation.kind === "pipe_route") return observation.geometry_mode === "native_connector_bridge"
+    ? ["location", "size", "elevation", "system", "type"]
+    : ["size", "elevation", "system", "type"];
   if (observation.kind === "plumbing_fixture") {
     return observation.placement.mode === "hosted_exemplar" ? ["type", "host", "service topology"] : ["type", "service topology"];
   }
@@ -307,6 +313,13 @@ export async function compileRegisteredMepObservations(
       reference: claim.reference
     }));
     if (observation.kind === "pipe_route") {
+      if (observation.geometry_mode === "native_connector_bridge") {
+        const { attribute_evidence: _attributeEvidence, ...rest } = observation;
+        return {
+          ...rest,
+          attribute_provenance: attributeProvenance
+        };
+      }
       if (!Array.isArray(observation.pixel_points) || observation.pixel_points.length < 2) {
         throw new Error(`${observation.observation_id}_requires_at_least_two_pixel_points`);
       }
@@ -364,6 +377,7 @@ export async function compileRegisteredMepObservations(
     usage_constraints: [
       "Registered pixels establish bounded plan geometry only; material, system, size, elevation, family, type, host, and service-topology claims remain subject to the existing MEP compiler evidence gates.",
       "A pipe elevation may use declared_heuristic provenance when the plan does not show elevation; it remains an explicit inference in the compiled assumptions and is never represented as source-observed truth.",
+      "A native_connector_bridge may resolve a short concealed service stub only between an agent-visible fixture observation and an explicit hash-bound native anchor; its endpoints and elevation are runtime native inferences, not registered-pixel observations.",
       "Electrical circuit membership cannot be inferred from plotted labels or this registered render and must remain grounded in exact native source power-system evidence.",
       "The registered render must be agent-visible, hash-bound, dimension-verified, and aligned to the declared model frame.",
       "No evaluator, withheld truth, native target identity, or scorer output is used to convert pixel observations."

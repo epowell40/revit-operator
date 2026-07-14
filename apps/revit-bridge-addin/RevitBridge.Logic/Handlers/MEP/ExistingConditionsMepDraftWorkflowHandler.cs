@@ -38,6 +38,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             public List<ElementReference>? target_elements { get; set; }
             public List<ElementReference>? element_ids { get; set; }
             public long? source_element_id { get; set; }
+            public long? target_element_id { get; set; }
             public int? required_connection_count { get; set; }
         }
 
@@ -236,6 +237,24 @@ namespace RevitBridge.Logic.Handlers.MEP
                     parameterOnlyFallback = false
                 });
             }
+            if (path == "/revit/create-pipe-between-connectors")
+            {
+                var deferred = operation.deferred_body ?? throw new InvalidOperationException($"deferred_body_required:{operation.action_key}");
+                var sourceIds = ResolveReference(deferred.source_element, outputs, operation.action_key, "source_element");
+                if (sourceIds.Count != 1)
+                    throw new InvalidOperationException($"source_element_reference_must_resolve_one_id:{operation.action_key}:found={sourceIds.Count}");
+                if (!deferred.target_element_id.HasValue || deferred.target_element_id.Value <= 0)
+                    throw new InvalidOperationException($"target_element_id_required:{operation.action_key}");
+                if (!operation.apply_body.HasValue || operation.apply_body.Value.ValueKind != JsonValueKind.Object)
+                    throw new InvalidOperationException($"apply_body_required:{operation.action_key}");
+                var bridgeBody = JsonSerializer.Deserialize<Dictionary<string, object>>(operation.apply_body.Value.GetRawText())
+                    ?? new Dictionary<string, object>();
+                bridgeBody["sourceElementId"] = sourceIds[0];
+                bridgeBody["targetElementId"] = deferred.target_element_id.Value;
+                bridgeBody["dryRun"] = false;
+                bridgeBody["verify"] = verify;
+                return JsonSerializer.Serialize(bridgeBody);
+            }
 
             if (!operation.apply_body.HasValue || operation.apply_body.Value.ValueKind != JsonValueKind.Object)
                 throw new InvalidOperationException($"apply_body_required:{operation.action_key}");
@@ -263,6 +282,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 case "/revit/place-families": return new PlaceFamiliesHandler();
                 case "/revit/place-family-instance-on-host": return new PlaceFamilyInstanceOnHostHandler();
                 case "/revit/connect-mep-elements": return new ConnectMepElementsHandler();
+                case "/revit/create-pipe-between-connectors": return new CreatePipeBetweenConnectorsHandler();
                 case "/revit/assign-electrical-circuit": return new AssignElectricalCircuitHandler();
                 default: throw new InvalidOperationException($"unsupported_mep_draft_operation_path:{rawPath}");
             }
@@ -323,6 +343,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                 var id = ReadLong(response, "elementId");
                 return new OperationOutput { CreatedElementIds = id > 0 ? new List<long> { id } : new List<long>() };
             }
+            if (path == "/revit/create-pipe-between-connectors")
+                return new OperationOutput { CreatedElementIds = ReadLongArray(response, "createdElementIds") };
             return new OperationOutput();
         }
 
@@ -334,6 +356,12 @@ namespace RevitBridge.Logic.Handlers.MEP
                 reason = "response_not_object";
                 return true;
             }
+            var error = ReadString(response, "error");
+            if (!string.IsNullOrWhiteSpace(error))
+            {
+                reason = error;
+                return true;
+            }
             var status = ReadString(response, "status");
             if (status.IndexOf("block", StringComparison.OrdinalIgnoreCase) >= 0
                 || status.IndexOf("fail", StringComparison.OrdinalIgnoreCase) >= 0
@@ -341,12 +369,6 @@ namespace RevitBridge.Logic.Handlers.MEP
                 || status.IndexOf("invalid", StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 reason = status;
-                return true;
-            }
-            var error = ReadString(response, "error");
-            if (!string.IsNullOrWhiteSpace(error))
-            {
-                reason = error;
                 return true;
             }
             if (response.TryGetProperty("failedCount", out var failedCount)

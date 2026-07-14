@@ -6780,6 +6780,44 @@
     },
     {
       "method": "POST",
+      "path": "/revit/create-pipe-between-connectors",
+      "examples": [
+        {
+          "name": "Dry-run a concealed fixture service stub between explicit native owners",
+          "request": {
+            "sourceElementId": 1716456,
+            "targetElementId": 1617216,
+            "service": "domestic_cold_water",
+            "systemType": "Domestic Cold Water",
+            "pipeType": "Copper",
+            "pipeSize": "1/2 inch",
+            "levelName": "L4",
+            "maximumLengthFt": 2,
+            "sizeToleranceFt": 0.005208333333333333,
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "schema": "revit-operator.pipe-between-connectors.v1",
+            "status": "DryRunReady",
+            "dryRun": true,
+            "sourceElementId": 1716456,
+            "targetElementId": 1617216,
+            "service": "domestic_cold_water",
+            "connectorGeometryBasis": "native_runtime_connectors",
+            "hiddenGeometryInferred": true,
+            "createdElementIds": [],
+            "dryRunElementIds": [1716457],
+            "sourceConnectionVerified": true,
+            "targetConnectionVerified": true,
+            "openConnectorCount": 0,
+            "rolledBack": true
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/copy-mep-pattern",
       "examples": [
         {

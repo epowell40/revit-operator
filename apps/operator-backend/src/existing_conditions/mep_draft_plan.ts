@@ -50,19 +50,40 @@ export type MepDraftPlacement =
       match_orientation_from_source?: boolean;
     };
 
-export type PlumbingPipeRouteObservation = MepDraftObservationBase & {
+type PlumbingPipeRouteObservationBase = MepDraftObservationBase & {
   kind: "pipe_route";
   discipline: "plumbing";
   service: "domestic_cold_water" | "domestic_hot_water" | "sanitary" | "vent";
-  points: ExistingConditionsPlanPoint[];
   pipe_size: string;
   pipe_type: string;
   system_type: string;
+};
+
+export type PlumbingSourcePointRouteObservation = PlumbingPipeRouteObservationBase & {
+  geometry_mode?: "source_points";
+  points: ExistingConditionsPlanPoint[];
   elevation_ft: number;
   connect_to_existing?: boolean;
   require_existing_endpoint_connections?: boolean;
   external_connection_tolerance_ft?: number;
 };
+
+export type PlumbingNativeConnectorBridgeObservation = PlumbingPipeRouteObservationBase & {
+  /**
+   * Resolve both endpoints from native open connectors after placing the source
+   * fixture. This is for short service stubs whose exact offsets are not legible
+   * in the plotted plan; the hidden geometry remains an explicit inference.
+   */
+  geometry_mode: "native_connector_bridge";
+  source_fixture_observation_id: string;
+  target_reference_key: string;
+  maximum_length_ft?: number;
+  size_tolerance_ft?: number;
+};
+
+export type PlumbingPipeRouteObservation =
+  | PlumbingSourcePointRouteObservation
+  | PlumbingNativeConnectorBridgeObservation;
 
 export type PlumbingFixtureObservation = MepDraftObservationBase & {
   kind: "plumbing_fixture";
@@ -73,7 +94,7 @@ export type PlumbingFixtureObservation = MepDraftObservationBase & {
   placement: MepDraftPlacement;
   service_route_connections: Array<{
     route_observation_id: string;
-    route_endpoint: "start" | "end";
+    route_endpoint: "start" | "end" | "native_source";
   }>;
   service_boundary: {
     basis: "source_observation" | "native_model_precedent";
@@ -146,6 +167,7 @@ export type MepDraftAction = {
     | "/revit/place-families"
     | "/revit/place-family-instance-on-host"
     | "/revit/connect-mep-elements"
+    | "/revit/create-pipe-between-connectors"
     | "/revit/assign-electrical-circuit";
   depends_on: string[];
   dry_run_body?: JsonMap;
@@ -155,6 +177,7 @@ export type MepDraftAction = {
     target_elements?: MepDraftElementReference[];
     element_ids?: MepDraftElementReference[];
     source_element_id?: number;
+    target_element_id?: number;
     required_connection_count?: number;
   };
   expected_model_point?: ExistingConditionsPlanPoint & { z: number };
@@ -324,17 +347,32 @@ function validateObservation(observation: MepDraftObservation, index: number): v
     }
   }
   if (observation.kind === "pipe_route") {
-    if (!Array.isArray(observation.points) || observation.points.length < 2) throw new Error(`${id}_requires_at_least_two_points`);
-    observation.points.forEach((entry, pointIndex) => {
-      finite(entry.x, `${id}_point_${pointIndex}_x`);
-      finite(entry.y, `${id}_point_${pointIndex}_y`);
-    });
     requiredText(observation.pipe_size, `${id}_pipe_size`);
     requiredText(observation.pipe_type, `${id}_pipe_type`);
     requiredText(observation.system_type, `${id}_system_type`);
-    finite(observation.elevation_ft, `${id}_elevation_ft`);
-    if (observation.require_existing_endpoint_connections && !observation.connect_to_existing) {
-      throw new Error(`${id}_required_endpoint_connections_need_connect_to_existing`);
+    if (observation.geometry_mode === "native_connector_bridge") {
+      requiredText(observation.source_fixture_observation_id, `${id}_source_fixture_observation_id`);
+      requiredText(observation.target_reference_key, `${id}_target_reference_key`);
+      const maximumLength = observation.maximum_length_ft == null ? 5 : finite(observation.maximum_length_ft, `${id}_maximum_length_ft`);
+      if (maximumLength <= 0 || maximumLength > 100) throw new Error(`${id}_maximum_length_ft_out_of_range`);
+      const sizeTolerance = observation.size_tolerance_ft == null ? 1 / 192 : finite(observation.size_tolerance_ft, `${id}_size_tolerance_ft`);
+      if (sizeTolerance < 0 || sizeTolerance > 0.25) throw new Error(`${id}_size_tolerance_ft_out_of_range`);
+      const provenance = new Map((observation.attribute_provenance ?? []).map((entry) => [normalized(entry.attribute), entry]));
+      for (const attribute of ["location", "elevation"]) {
+        if (provenance.get(attribute)?.basis !== "native_model_precedent") {
+          throw new Error(`${id}_${attribute}_must_be_native_model_precedent_for_connector_bridge`);
+        }
+      }
+    } else {
+      if (!Array.isArray(observation.points) || observation.points.length < 2) throw new Error(`${id}_requires_at_least_two_points`);
+      observation.points.forEach((entry, pointIndex) => {
+        finite(entry.x, `${id}_point_${pointIndex}_x`);
+        finite(entry.y, `${id}_point_${pointIndex}_y`);
+      });
+      finite(observation.elevation_ft, `${id}_elevation_ft`);
+      if (observation.require_existing_endpoint_connections && !observation.connect_to_existing) {
+        throw new Error(`${id}_required_endpoint_connections_need_connect_to_existing`);
+      }
     }
     return;
   }
@@ -350,7 +388,7 @@ function validateObservation(observation: MepDraftObservation, index: number): v
       }
       observation.service_route_connections.forEach((connection, connectionIndex) => {
         requiredText(connection.route_observation_id, `${id}_service_route_connection_${connectionIndex}_route_observation_id`);
-        if (connection.route_endpoint !== "start" && connection.route_endpoint !== "end") {
+        if (connection.route_endpoint !== "start" && connection.route_endpoint !== "end" && connection.route_endpoint !== "native_source") {
           throw new Error(`${id}_service_route_connection_${connectionIndex}_route_endpoint_invalid`);
         }
       });
@@ -483,6 +521,15 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
     if (!visibleEvidenceByRole.has(normalized(evidenceRole))) {
       throw new Error(`${observation.observation_id}_references_unknown_visible_evidence_role:${evidenceRole}`);
     }
+    if (observation.kind === "pipe_route" && observation.geometry_mode === "native_connector_bridge") {
+      const sourceFixture = byId.get(observation.source_fixture_observation_id);
+      if (!sourceFixture || sourceFixture.kind !== "plumbing_fixture") {
+        throw new Error(`${observation.observation_id}_references_unknown_source_fixture:${observation.source_fixture_observation_id}`);
+      }
+      if (!nativeReferences.has(observation.target_reference_key)) {
+        throw new Error(`${observation.observation_id}_target_reference_unknown:${observation.target_reference_key}`);
+      }
+    }
     if (observation.kind === "plumbing_fixture") {
       if (!observation.service_boundary || !["source_observation", "native_model_precedent"].includes(observation.service_boundary.basis)) {
         throw new Error(`${observation.observation_id}_service_boundary_basis_invalid`);
@@ -498,6 +545,16 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         const routeId = connection.route_observation_id;
         const route = byId.get(routeId);
         if (!route || route.kind !== "pipe_route") throw new Error(`${observation.observation_id}_references_unknown_pipe_route:${routeId}`);
+        if (route.geometry_mode === "native_connector_bridge") {
+          if (route.source_fixture_observation_id !== observation.observation_id) {
+            throw new Error(`${routeId}_source_fixture_mismatch:${route.source_fixture_observation_id}:${observation.observation_id}`);
+          }
+          if (connection.route_endpoint !== "native_source") {
+            throw new Error(`${observation.observation_id}_connector_bridge_requires_native_source_endpoint:${routeId}`);
+          }
+        } else if (connection.route_endpoint === "native_source") {
+          throw new Error(`${observation.observation_id}_source_points_route_cannot_use_native_source_endpoint:${routeId}`);
+        }
         const endpointKey = `${routeId}:${connection.route_endpoint}`;
         const existingClaim = claimedPipeEndpoints.get(endpointKey);
         if (existingClaim) {
@@ -561,7 +618,9 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
     const requiredAttributes = materialAttributes(observation);
     const supported = new Set(observation.supported_attributes.map(normalized));
     const missing = requiredAttributes.filter((attribute) => !supported.has(normalized(attribute)));
-    const effectiveConfidence = observation.visibility === "clear"
+    const effectiveConfidence = observation.kind === "pipe_route" && observation.geometry_mode === "native_connector_bridge"
+      ? observation.confidence
+      : observation.visibility === "clear"
       ? observation.confidence
       : observation.visibility === "partial"
         ? observation.confidence * 0.8
@@ -569,6 +628,9 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
     const declaredHeuristics = (observation.attribute_provenance ?? [])
       .filter((entry) => entry.basis === "declared_heuristic")
       .map((entry) => `${normalized(entry.attribute)} inferred by declared heuristic: ${clean(entry.reference)}`);
+    const nativeConnectorAssumptions = observation.kind === "pipe_route" && observation.geometry_mode === "native_connector_bridge"
+      ? ["concealed route endpoints resolved from explicit native runtime connectors; not observed in the source plan"]
+      : [];
     sourceObservations.push({
       observation_id: observation.observation_id,
       evidence_role: clean(observation.evidence_role) || "source_pdf",
@@ -586,7 +648,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
       role: role(observation),
       action: action(observation),
       confidence: effectiveConfidence,
-      assumptions: declaredHeuristics,
+      assumptions: [...declaredHeuristics, ...nativeConnectorAssumptions],
       source_observation_ids: [observation.observation_id],
       required_source_attributes: requiredAttributes
     });
@@ -612,6 +674,9 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
     if (declaredHeuristics.length > 0) {
       warnings.push(`${observation.observation_id}: ${declaredHeuristics.join("; ")}`);
     }
+    if (nativeConnectorAssumptions.length > 0) {
+      warnings.push(`${observation.observation_id}: ${nativeConnectorAssumptions.join("; ")}`);
+    }
   }
 
   const blockers = registration.verified ? [] : [
@@ -624,6 +689,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
   if (blockers.length === 0 && ambiguities.length === 0) {
     for (const observation of input.observations) {
       if (observation.kind === "pipe_route") {
+        if (observation.geometry_mode === "native_connector_bridge") continue;
         const points = observation.points.map((entry) => ({
           ...transformExistingConditionsPlanPoint(registration, entry),
           z: levelElevationFt + observation.elevation_ft
@@ -686,10 +752,39 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
       });
     }
     for (const observation of input.observations) {
+      if (observation.kind !== "pipe_route" || observation.geometry_mode !== "native_connector_bridge") continue;
+      const sourceAction = `place:${observation.source_fixture_observation_id}`;
+      const targetReference = nativeReferences.get(observation.target_reference_key)!;
+      actions.push({
+        action_key: `route:${observation.observation_id}`,
+        observation_ids: [observation.observation_id, observation.source_fixture_observation_id],
+        method: "POST",
+        path: "/revit/create-pipe-between-connectors",
+        depends_on: [sourceAction],
+        apply_body: {
+          service: observation.service,
+          systemType: observation.system_type,
+          pipeType: observation.pipe_type,
+          pipeSize: observation.pipe_size,
+          levelName,
+          maximumLengthFt: observation.maximum_length_ft ?? 5,
+          sizeToleranceFt: observation.size_tolerance_ft ?? (1 / 192)
+        },
+        deferred_body: {
+          source_element: { created_by_action: sourceAction, output: "created" },
+          target_element_id: targetReference.element_id
+        },
+        expected_created_min: 1,
+        expected_created_max: 1
+      });
+    }
+    for (const observation of input.observations) {
       if (observation.kind !== "plumbing_fixture" || observation.service_route_connections.length === 0) continue;
       const sourceAction = `place:${observation.observation_id}`;
       for (const connection of observation.service_route_connections) {
         const routeId = connection.route_observation_id;
+        const route = byId.get(routeId);
+        if (route?.kind === "pipe_route" && route.geometry_mode === "native_connector_bridge") continue;
         const targetAction = `route:${routeId}`;
         actions.push({
           action_key: `connect:${observation.observation_id}:${routeId}`,

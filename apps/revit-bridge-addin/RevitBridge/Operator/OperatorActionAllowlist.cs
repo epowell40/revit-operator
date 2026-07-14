@@ -74,6 +74,7 @@ namespace RevitBridge.Operator
                     "/revit/create-mep-route",
                     "/revit/connect-mep-branch",
                     "/revit/connect-mep-elements",
+                    "/revit/create-pipe-between-connectors",
                     "/revit/existing-conditions-mep-draft-workflow",
                     "/revit/copy-mep-pattern",
                     "/revit/mep-route-workflow",

@@ -137,6 +137,7 @@ namespace RevitBridge.Server
                 { "/revit/create-mep-route", new CreateMepRouteHandler() },
                 { "/revit/connect-mep-branch", new ConnectMepBranchHandler() },
                 { "/revit/connect-mep-elements", new RevitBridge.Logic.Handlers.MEP.ConnectMepElementsHandler() },
+                { "/revit/create-pipe-between-connectors", new RevitBridge.Logic.Handlers.MEP.CreatePipeBetweenConnectorsHandler() },
                 { "/revit/existing-conditions-mep-draft-workflow", new RevitBridge.Logic.Handlers.MEP.ExistingConditionsMepDraftWorkflowHandler() },
                 { "/revit/copy-mep-pattern", new RevitBridge.Logic.Handlers.MEP.CopyMepPatternHandler() },
                 { "/revit/mep-route-workflow", new MepRouteWorkflowHandler() },
@@ -580,6 +581,7 @@ namespace RevitBridge.Server
                  string.Equals(path, "/revit/create-mep-route", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/connect-mep-branch", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/connect-mep-elements", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/create-pipe-between-connectors", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/existing-conditions-mep-draft-workflow", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/copy-mep-pattern", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/create-duct", StringComparison.OrdinalIgnoreCase) ||

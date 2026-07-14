@@ -58,6 +58,7 @@
       "items": {
         "oneOf": [
           { "$ref": "#/$defs/pipe_route" },
+          { "$ref": "#/$defs/pipe_connector_bridge" },
           { "$ref": "#/$defs/plumbing_fixture" },
           { "$ref": "#/$defs/electrical_device" },
           { "$ref": "#/$defs/electrical_circuit" }
@@ -176,6 +177,30 @@
         "external_connection_tolerance_ft": { "type": "number", "exclusiveMinimum": 0 }
       }
     },
+    "pipe_connector_bridge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "service", "geometry_mode", "source_fixture_observation_id", "target_reference_key", "pipe_size", "pipe_type", "system_type"],
+      "properties": {
+        "kind": { "const": "pipe_route" },
+        "discipline": { "const": "plumbing" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
+        "service": { "enum": ["domestic_cold_water", "domestic_hot_water", "sanitary", "vent"] },
+        "geometry_mode": { "const": "native_connector_bridge" },
+        "source_fixture_observation_id": { "type": "string", "minLength": 1 },
+        "target_reference_key": { "type": "string", "minLength": 1 },
+        "maximum_length_ft": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 },
+        "size_tolerance_ft": { "type": "number", "minimum": 0, "maximum": 0.25 },
+        "pipe_size": { "type": "string", "minLength": 1 },
+        "pipe_type": { "type": "string", "minLength": 1 },
+        "system_type": { "type": "string", "minLength": 1 }
+      }
+    },
     "plumbing_fixture": {
       "type": "object",
       "additionalProperties": false,
@@ -201,7 +226,7 @@
             "required": ["route_observation_id", "route_endpoint"],
             "properties": {
               "route_observation_id": { "type": "string", "minLength": 1 },
-              "route_endpoint": { "enum": ["start", "end"] }
+              "route_endpoint": { "enum": ["start", "end", "native_source"] }
             }
           }
         },
