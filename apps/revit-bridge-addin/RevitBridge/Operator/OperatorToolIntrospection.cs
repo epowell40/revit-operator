@@ -371,6 +371,7 @@ namespace RevitBridge.Operator
                 { "/revit/create-mep-route", typeof(RevitBridge.Logic.Handlers.MEP.CreateMepRouteHandler.Params) },
                 { "/revit/connect-mep-branch", typeof(RevitBridge.Logic.Handlers.MEP.ConnectMepBranchHandler.Params) },
                 { "/revit/connect-mep-elements", typeof(RevitBridge.Logic.Handlers.MEP.ConnectMepElementsHandler.Params) },
+                { "/revit/copy-mep-pattern", typeof(RevitBridge.Logic.Handlers.MEP.CopyMepPatternHandler.Params) },
                 { "/revit/mep-route-workflow", typeof(RevitBridge.Logic.Handlers.MEP.MepRouteWorkflowHandler.Params) },
                 { "/revit/mep-branch-network-workflow", typeof(RevitBridge.Logic.Handlers.MEP.MepBranchNetworkWorkflowHandler.Params) },
                 { "/revit/edit-mep-route-elements", typeof(RevitBridge.Logic.Handlers.MEP.EditMepRouteElementsHandler.Params) },

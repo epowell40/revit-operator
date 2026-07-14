@@ -62,6 +62,7 @@ const defaultAllowed: Allowlist = {
     "/revit/create-mep-route",
     "/revit/connect-mep-branch",
     "/revit/connect-mep-elements",
+    "/revit/copy-mep-pattern",
     "/revit/mep-route-workflow",
     "/revit/mep-branch-network-workflow",
     "/revit/edit-mep-route-elements",

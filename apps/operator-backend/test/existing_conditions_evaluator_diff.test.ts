@@ -65,3 +65,33 @@ test("evaluator receipt ignores nondeterministic connector and circuit set order
   assert.deepEqual(receipt.changed_element_keys, []);
   assert.deepEqual(receipt.out_of_scope_changed_element_keys, []);
 });
+
+test("evaluator receipt ignores computed curve flow propagation but retains terminal design flow", () => {
+  const curveBefore = {
+    id: 1,
+    builtInCategory: "OST_DuctCurves",
+    point: { x: 20, y: 20, z: 1 },
+    parameters: { cfm: "200 CFM", airflow: "200 CFM", diameter: "8\"" }
+  };
+  const curveAfter = {
+    ...curveBefore,
+    parameters: { cfm: "0 CFM", airflow: "0 CFM", diameter: "8\"" }
+  };
+  const terminalBefore = {
+    id: 2,
+    builtInCategory: "OST_DuctTerminal",
+    point: { x: 20, y: 20, z: 1 },
+    parameters: { cfm: "100 CFM", airflow: "100 CFM" }
+  };
+  const terminalAfter = {
+    ...terminalBefore,
+    parameters: { cfm: "125 CFM", airflow: "125 CFM" }
+  };
+  const receipt = createExistingConditionsEvaluatorChangeReceipt(
+    visible([curveBefore, terminalBefore]),
+    visible([curveAfter, terminalAfter]),
+    { scope: packageContract.scope, allowed_categories: ["OST_DuctCurves", "OST_DuctTerminal"] }
+  );
+  assert.deepEqual(receipt.changed_element_keys, ["2"]);
+  assert.deepEqual(receipt.out_of_scope_changed_element_keys, ["2"]);
+});

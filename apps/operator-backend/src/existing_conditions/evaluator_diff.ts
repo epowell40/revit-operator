@@ -81,6 +81,18 @@ function normalizedSystem(value: unknown, fallbackName: unknown): unknown {
   };
 }
 
+function normalizedParameters(item: JsonObject): unknown {
+  const parameters = object(item.parameters);
+  if (Object.keys(parameters).length === 0) return null;
+  const category = categoryToken(item);
+  if (category !== "ost_ductcurves" && category !== "ost_pipecurves") return parameters;
+  // Revit recalculates flow display values across a connected curve network when an
+  // in-scope branch is added. Those read-only values are not edits to the surrounding
+  // curves. Terminal/fixture design-flow parameters remain fingerprinted normally.
+  const { cfm: _cfm, airflow: _airflow, flow: _flow, ...deterministicParameters } = parameters;
+  return deterministicParameters;
+}
+
 function exportObject(value: unknown): JsonObject {
   const root = object(value);
   return Object.keys(object(root.result)).length > 0 ? object(root.result) : root;
@@ -158,7 +170,7 @@ function fingerprint(item: JsonObject): string {
     bboxModel: item.bboxModel ?? null,
     geometry: item.geometry ?? null,
     orientation: item.orientation ?? null,
-    parameters: item.parameters ?? null,
+    parameters: normalizedParameters(item),
     connectorsSummary: normalizedConnectorsSummary(item.connectorsSummary)
   });
 }
