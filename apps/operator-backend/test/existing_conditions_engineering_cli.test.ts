@@ -78,6 +78,7 @@ test("task-aware CLI scores compliance through engineering invariants and reject
         material_confidence_threshold: 0.75,
         forbidden_artifact_roles: ["ground_truth_model"],
         require_native_readback: true,
+        require_source_observation_grounding: false,
         require_post_change_visual_receipt: true,
         require_evaluator_change_receipt: true,
         require_evaluator_access_provenance: true

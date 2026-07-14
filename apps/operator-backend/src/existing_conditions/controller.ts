@@ -19,11 +19,25 @@ export type ExistingConditionsVisibleEvidence = {
 
 export type ExistingConditionsPlanElement = {
   plan_key: string;
+  discipline?: Exclude<ExistingConditionsDiscipline, "mixed"> | "architectural";
   category: string;
   role: string;
   action: "create" | "connect" | "host" | "assign_circuit" | "set_parameter";
   confidence: number;
   assumptions: string[];
+  source_observation_ids?: string[];
+  required_source_attributes?: string[];
+};
+
+export type ExistingConditionsSourceObservation = {
+  observation_id: string;
+  evidence_role: string;
+  discipline: Exclude<ExistingConditionsDiscipline, "mixed"> | "architectural";
+  category: string;
+  role: string;
+  visibility: "clear" | "partial" | "occluded";
+  confidence: number;
+  supported_attributes: string[];
 };
 
 export type ExistingConditionsAmbiguity = {
@@ -33,7 +47,11 @@ export type ExistingConditionsAmbiguity = {
   material: boolean;
   confidence: number;
   choices: string[];
+  related_plan_keys?: string[];
+  material_attributes?: string[];
   resolution?: string | null;
+  resolution_basis?: "user_direction" | "project_precedent" | "legible_source_evidence" | null;
+  resolution_evidence_reference?: string | null;
 };
 
 export type ExistingConditionsControllerHistoryEntry = {
@@ -54,6 +72,7 @@ export type ExistingConditionsControllerState = {
   allowed_categories: string[];
   maximum_created_elements: number;
   expected_visible_evidence: ExistingConditionsVisibleEvidence[];
+  require_source_observation_grounding: boolean;
   material_confidence_threshold: number;
   max_repairs: number;
   repairs_attempted: number;
@@ -62,6 +81,8 @@ export type ExistingConditionsControllerState = {
     inventory_complete: boolean;
     discovered_element_keys: string[];
     surrounding_anchor_keys: string[];
+    source_observations_complete: boolean;
+    source_observations: ExistingConditionsSourceObservation[];
   } | null;
   plan: ExistingConditionsPlanElement[];
   ambiguities: ExistingConditionsAmbiguity[];
@@ -102,6 +123,8 @@ export type ExistingConditionsControllerEvent =
       inventory_complete?: boolean;
       discovered_element_keys: string[];
       surrounding_anchor_keys: string[];
+      source_observations_complete?: boolean;
+      source_observations?: ExistingConditionsSourceObservation[];
     }
   | {
       type: "plan_submitted";
@@ -110,7 +133,12 @@ export type ExistingConditionsControllerEvent =
     }
   | {
       type: "clarification_answered";
-      answers: Array<{ ambiguity_id: string; resolution: string }>;
+      answers: Array<{
+        ambiguity_id: string;
+        resolution: string;
+        basis?: "user_direction" | "project_precedent" | "legible_source_evidence";
+        evidence_reference?: string;
+      }>;
     }
   | {
       type: "dry_run_completed";
@@ -164,6 +192,7 @@ export type ExistingConditionsControllerInit = {
   allowed_categories: string[];
   maximum_created_elements: number;
   visible_evidence: ExistingConditionsVisibleEvidence[];
+  require_source_observation_grounding?: boolean;
   material_confidence_threshold?: number;
   max_repairs?: number;
 };
@@ -274,17 +303,60 @@ function validatePlan(
     seen.add(key);
     const category = requireNonEmpty(raw.category, `plan[${index}].category`);
     if (!allowed.has(normalized(category))) throw new Error(`out_of_scope_category:${category}`);
+    const discipline = normalized(raw.discipline);
+    if (state.require_source_observation_grounding
+      && !["mechanical", "plumbing", "electrical", "architectural"].includes(discipline)) {
+      throw new Error(`plan[${index}].discipline_required`);
+    }
     const confidence = Number(raw.confidence);
     if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
       throw new Error(`plan[${index}].confidence_out_of_range`);
     }
     return {
       plan_key: planKey,
+      discipline: discipline ? discipline as ExistingConditionsPlanElement["discipline"] : undefined,
       category,
       role: requireNonEmpty(raw.role, `plan[${index}].role`),
       action: raw.action,
       confidence,
-      assumptions: uniqueText(raw.assumptions ?? [])
+      assumptions: uniqueText(raw.assumptions ?? []),
+      source_observation_ids: uniqueText(raw.source_observation_ids ?? []),
+      required_source_attributes: uniqueText(raw.required_source_attributes ?? [])
+    };
+  });
+}
+
+function validateSourceObservations(
+  state: ExistingConditionsControllerState,
+  values: ExistingConditionsSourceObservation[]
+): ExistingConditionsSourceObservation[] {
+  const visibleRoles = new Set(state.expected_visible_evidence.map((entry) => normalized(entry.role)));
+  const disciplines = new Set(["mechanical", "plumbing", "electrical", "architectural"]);
+  const visibilityKinds = new Set(["clear", "partial", "occluded"]);
+  const seen = new Set<string>();
+  return values.map((raw, index) => {
+    const observationId = requireNonEmpty(raw.observation_id, `source_observation[${index}].observation_id`);
+    if (seen.has(normalized(observationId))) throw new Error(`duplicate_source_observation_id:${observationId}`);
+    seen.add(normalized(observationId));
+    const evidenceRole = requireNonEmpty(raw.evidence_role, `source_observation[${index}].evidence_role`);
+    if (!visibleRoles.has(normalized(evidenceRole))) throw new Error(`unknown_source_evidence_role:${evidenceRole}`);
+    const discipline = normalized(raw.discipline);
+    if (!disciplines.has(discipline)) throw new Error(`source_observation[${index}].discipline_invalid`);
+    const visibility = normalized(raw.visibility);
+    if (!visibilityKinds.has(visibility)) throw new Error(`source_observation[${index}].visibility_invalid`);
+    const confidence = Number(raw.confidence);
+    if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
+      throw new Error(`source_observation[${index}].confidence_out_of_range`);
+    }
+    return {
+      observation_id: observationId,
+      evidence_role: evidenceRole,
+      discipline: discipline as ExistingConditionsSourceObservation["discipline"],
+      category: requireNonEmpty(raw.category, `source_observation[${index}].category`),
+      role: requireNonEmpty(raw.role, `source_observation[${index}].role`),
+      visibility: visibility as ExistingConditionsSourceObservation["visibility"],
+      confidence,
+      supported_attributes: uniqueText(raw.supported_attributes ?? [])
     };
   });
 }
@@ -310,9 +382,91 @@ function validateAmbiguities(
       material,
       confidence,
       choices: uniqueText(raw.choices ?? []),
-      resolution: cleanText(raw.resolution) || null
+      related_plan_keys: uniqueText(raw.related_plan_keys ?? []),
+      material_attributes: uniqueText(raw.material_attributes ?? []),
+      resolution: cleanText(raw.resolution) || null,
+      resolution_basis: raw.resolution_basis ?? null,
+      resolution_evidence_reference: cleanText(raw.resolution_evidence_reference) || null
     };
   });
+}
+
+function addRequiredSourceGroundingAmbiguities(
+  state: ExistingConditionsControllerState,
+  plan: ExistingConditionsPlanElement[],
+  ambiguities: ExistingConditionsAmbiguity[]
+): ExistingConditionsAmbiguity[] {
+  if (!state.require_source_observation_grounding) return ambiguities;
+  const result = [...ambiguities];
+  const observations = state.inspection_receipt?.source_observations ?? [];
+  const byId = new Map(observations.map((entry) => [normalized(entry.observation_id), entry]));
+  const planKeys = new Set(plan.map((entry) => normalized(entry.plan_key)));
+  for (const ambiguity of result) {
+    for (const key of ambiguity.related_plan_keys ?? []) {
+      if (!planKeys.has(normalized(key))) throw new Error(`ambiguity_unknown_plan_key:${key}`);
+    }
+  }
+  for (const element of plan) {
+    const citedIds = uniqueText(element.source_observation_ids ?? []);
+    if (citedIds.length === 0) throw new Error(`plan_source_observation_required:${element.plan_key}`);
+    const cited = citedIds.map((id) => {
+      const observation = byId.get(normalized(id));
+      if (!observation) throw new Error(`plan_source_observation_unknown:${element.plan_key}:${id}`);
+      return observation;
+    });
+    const categoryMismatch = cited.find((observation) => normalized(observation.category) !== normalized(element.category));
+    if (categoryMismatch) {
+      throw new Error(`plan_source_observation_category_mismatch:${element.plan_key}:${categoryMismatch.observation_id}`);
+    }
+    const disciplineMismatch = cited.find((observation) => normalized(observation.discipline) !== normalized(element.discipline));
+    if (disciplineMismatch) {
+      throw new Error(`plan_source_observation_discipline_mismatch:${element.plan_key}:${disciplineMismatch.observation_id}`);
+    }
+    const requiredAttributes = uniqueText(element.required_source_attributes ?? []);
+    if (requiredAttributes.length === 0) throw new Error(`plan_required_source_attributes_missing:${element.plan_key}`);
+    let relatedMaterial = result.filter((ambiguity) => ambiguity.material
+      && (ambiguity.related_plan_keys ?? []).some((key) => normalized(key) === normalized(element.plan_key)));
+    const effectiveConfidence = Math.min(element.confidence, ...cited.map((observation) => observation.confidence));
+    if (effectiveConfidence < state.material_confidence_threshold && relatedMaterial.length === 0) {
+      result.push({
+        id: `source-confidence:${element.plan_key}`,
+        topic: `${element.role} source confidence`,
+        description: `The cited source evidence for ${element.plan_key} is below the material confidence threshold; confirm ${requiredAttributes.join(", ")}.`,
+        material: true,
+        confidence: effectiveConfidence,
+        choices: [],
+        related_plan_keys: [element.plan_key],
+        material_attributes: requiredAttributes,
+        resolution: null,
+        resolution_basis: null,
+        resolution_evidence_reference: null
+      });
+      relatedMaterial = result.filter((ambiguity) => ambiguity.material
+        && (ambiguity.related_plan_keys ?? []).some((key) => normalized(key) === normalized(element.plan_key)));
+    }
+    const supported = new Set(cited.flatMap((observation) => observation.supported_attributes).map(normalized));
+    for (const attribute of requiredAttributes) {
+      if (supported.has(normalized(attribute))) continue;
+      const covered = relatedMaterial.some((ambiguity) => (ambiguity.material_attributes ?? [])
+        .some((candidate) => normalized(candidate) === normalized(attribute)));
+      if (!covered) {
+        result.push({
+          id: `source-attribute:${element.plan_key}:${normalized(attribute).replace(/[^a-z0-9]+/g, "-")}`,
+          topic: `${element.role} ${attribute}`,
+          description: `The cited source evidence does not establish ${attribute} for ${element.plan_key}.`,
+          material: true,
+          confidence: effectiveConfidence,
+          choices: [],
+          related_plan_keys: [element.plan_key],
+          material_attributes: [attribute],
+          resolution: null,
+          resolution_basis: null,
+          resolution_evidence_reference: null
+        });
+      }
+    }
+  }
+  return result;
 }
 
 export function createExistingConditionsControllerState(
@@ -345,6 +499,7 @@ export function createExistingConditionsControllerState(
     allowed_categories: allowedCategories,
     maximum_created_elements: maximumCreatedElements,
     expected_visible_evidence: evidence,
+    require_source_observation_grounding: input.require_source_observation_grounding === true,
     material_confidence_threshold: threshold,
     max_repairs: maxRepairs,
     repairs_attempted: 0,
@@ -375,12 +530,21 @@ export function advanceExistingConditionsController(
     assertVisibleEvidenceUnchanged(state.expected_visible_evidence, event.visible_evidence);
     if (!event.native_readback) return block(state, event, "inspection_missing_native_readback");
     if (event.inventory_complete === false) return block(state, event, "inspection_inventory_incomplete");
+    if (state.require_source_observation_grounding && event.source_observations_complete !== true) {
+      return block(state, event, "source_observation_inventory_incomplete");
+    }
+    const sourceObservations = validateSourceObservations(state, event.source_observations ?? []);
+    if (state.require_source_observation_grounding && sourceObservations.length === 0) {
+      return block(state, event, "source_observations_missing");
+    }
     const next = transition(state, event, "plan", "Bounded evidence and native context inspected.");
     next.inspection_receipt = {
       native_readback: true,
       inventory_complete: true,
       discovered_element_keys: uniqueText(event.discovered_element_keys ?? []),
-      surrounding_anchor_keys: uniqueText(event.surrounding_anchor_keys ?? [])
+      surrounding_anchor_keys: uniqueText(event.surrounding_anchor_keys ?? []),
+      source_observations_complete: event.source_observations_complete === true,
+      source_observations: sourceObservations
     };
     return next;
   }
@@ -388,7 +552,11 @@ export function advanceExistingConditionsController(
   if (event.type === "plan_submitted") {
     assertPhase(state, "plan");
     const plan = validatePlan(state, event.elements ?? []);
-    const ambiguities = validateAmbiguities(state, event.ambiguities ?? []);
+    const ambiguities = addRequiredSourceGroundingAmbiguities(
+      state,
+      plan,
+      validateAmbiguities(state, event.ambiguities ?? [])
+    );
     const question = buildClarificationQuestion(ambiguities);
     const next = transition(
       state,
@@ -404,11 +572,39 @@ export function advanceExistingConditionsController(
 
   if (event.type === "clarification_answered") {
     assertPhase(state, "clarify");
-    const answers = new Map((event.answers ?? []).map((answer) => [normalized(answer.ambiguity_id), cleanText(answer.resolution)]));
+    const answers = new Map<string, { resolution: string; basis: string; evidence_reference: string }>();
+    for (const answer of event.answers ?? []) {
+      const id = normalized(answer.ambiguity_id);
+      if (!state.ambiguities.some((entry) => normalized(entry.id) === id)) throw new Error(`clarification_unknown_ambiguity:${answer.ambiguity_id}`);
+      if (answers.has(id)) throw new Error(`clarification_duplicate_answer:${answer.ambiguity_id}`);
+      answers.set(id, {
+        resolution: cleanText(answer.resolution),
+        basis: normalized(answer.basis),
+        evidence_reference: cleanText(answer.evidence_reference)
+      });
+    }
     const nextAmbiguities = state.ambiguities.map((entry) => ({
       ...entry,
-      resolution: answers.get(normalized(entry.id)) || entry.resolution || null
+      resolution: answers.get(normalized(entry.id))?.resolution || entry.resolution || null,
+      resolution_basis: (answers.get(normalized(entry.id))?.basis || entry.resolution_basis || null) as ExistingConditionsAmbiguity["resolution_basis"],
+      resolution_evidence_reference: answers.get(normalized(entry.id))?.evidence_reference || entry.resolution_evidence_reference || null
     }));
+    for (const ambiguity of nextAmbiguities) {
+      if (!ambiguity.material || !cleanText(ambiguity.resolution)) continue;
+      const answer = answers.get(normalized(ambiguity.id));
+      if (ambiguity.choices.length > 0 && !ambiguity.choices.some((choice) => normalized(choice) === normalized(ambiguity.resolution))) {
+        throw new Error(`clarification_resolution_not_offered_choice:${ambiguity.id}`);
+      }
+      if (ambiguity.choices.length === 0 && answer) {
+        if (!answer.basis) throw new Error(`clarification_resolution_basis_required:${ambiguity.id}`);
+        if (!["user_direction", "project_precedent", "legible_source_evidence"].includes(answer.basis)) {
+          throw new Error(`clarification_resolution_basis_invalid:${ambiguity.id}`);
+        }
+        if (answer.basis !== "user_direction" && !answer.evidence_reference) {
+          throw new Error(`clarification_evidence_reference_required:${ambiguity.id}`);
+        }
+      }
+    }
     const question = buildClarificationQuestion(nextAmbiguities);
     if (question) throw new Error("material_ambiguity_unresolved");
     const next = transition(state, event, "dry_run", "Material ambiguity resolved; plan may be preflighted.");

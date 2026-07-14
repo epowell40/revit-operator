@@ -395,6 +395,7 @@ function buildAgentPackage(): void {
         "evaluator_native_adapter_config"
       ],
       require_native_readback: true,
+      require_source_observation_grounding: taskClass === "exact_reconstruction",
       require_post_change_visual_receipt: true,
       require_evaluator_change_receipt: true,
       require_evaluator_access_provenance: true
@@ -417,6 +418,7 @@ function buildAgentPackage(): void {
     allowed_categories: allowedCategories,
     maximum_created_elements: maximumCreatedElements,
     visible_evidence: [{ role: "source_pdf", sha256: sha256(pdfCopy) }],
+    require_source_observation_grounding: taskClass === "exact_reconstruction",
     material_confidence_threshold: 0.75,
     max_repairs: maxRepairs
   });

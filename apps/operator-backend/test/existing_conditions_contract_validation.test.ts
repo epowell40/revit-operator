@@ -35,6 +35,7 @@ function validAgentPackage(): Record<string, unknown> {
       material_confidence_threshold: 0.75,
       forbidden_artifact_roles: ["ground_truth_model"],
       require_native_readback: true,
+      require_source_observation_grounding: true,
       require_post_change_visual_receipt: true,
       require_evaluator_change_receipt: true,
       require_evaluator_access_provenance: true
@@ -68,6 +69,12 @@ test("runtime contract validation rejects an agent package with unsupported writ
 
 test("runtime contract validation accepts an exact reconstruction package", () => {
   assert.doesNotThrow(() => assertExistingConditionsContract("agent_package", validAgentPackage()));
+});
+
+test("runtime contract validation requires source-observation grounding for exact reconstruction", () => {
+  const invalid = validAgentPackage();
+  invalid.write_policy = { ...(invalid.write_policy as Record<string, unknown>), require_source_observation_grounding: false };
+  assert.throws(() => assertExistingConditionsContract("agent_package", invalid), /invalid_existing_conditions_agent_package_contract/);
 });
 
 test("runtime contract validation requires a standards profile and multi-solution acceptance for compliance", () => {

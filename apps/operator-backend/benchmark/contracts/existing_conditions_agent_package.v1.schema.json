@@ -86,7 +86,7 @@
     "write_policy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["dry_run_required", "bounded_scope_required", "out_of_scope_changes_allowed", "maximum_created_elements", "max_repairs", "material_confidence_threshold", "forbidden_artifact_roles", "require_native_readback", "require_post_change_visual_receipt", "require_evaluator_change_receipt", "require_evaluator_access_provenance"],
+      "required": ["dry_run_required", "bounded_scope_required", "out_of_scope_changes_allowed", "maximum_created_elements", "max_repairs", "material_confidence_threshold", "forbidden_artifact_roles", "require_native_readback", "require_source_observation_grounding", "require_post_change_visual_receipt", "require_evaluator_change_receipt", "require_evaluator_access_provenance"],
       "properties": {
         "dry_run_required": { "const": true },
         "bounded_scope_required": { "const": true },
@@ -96,6 +96,7 @@
         "material_confidence_threshold": { "type": "number", "minimum": 0, "maximum": 1 },
         "forbidden_artifact_roles": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
         "require_native_readback": { "const": true },
+        "require_source_observation_grounding": { "type": "boolean" },
         "require_post_change_visual_receipt": { "const": true },
         "require_evaluator_change_receipt": { "const": true },
         "require_evaluator_access_provenance": { "const": true }
@@ -118,7 +119,15 @@
   "allOf": [
     {
       "if": { "properties": { "task_class": { "const": "exact_reconstruction" } } },
-      "then": { "properties": { "standards_profile": { "type": "null" } } },
+      "then": {
+        "properties": {
+          "standards_profile": { "type": "null" },
+          "write_policy": {
+            "type": "object",
+            "properties": { "require_source_observation_grounding": { "const": true } }
+          }
+        }
+      },
       "else": {
         "properties": {
           "standards_profile": { "type": "object" },
