@@ -37,7 +37,8 @@ export type MepDraftPlacement =
       source_reference_key: string;
       host_reference_key: string;
       host_category: string;
-      target_chainage_ft: number;
+      /** Optional wall-chainage override. Omit when the registered world point is the placement authority. */
+      target_chainage_ft?: number;
       room_side?: string;
       match_orientation_from_source?: boolean;
     };
@@ -284,8 +285,10 @@ function validatePlacement(placement: MepDraftPlacement, observationId: string):
   requiredText(placement.source_reference_key, `${observationId}_source_reference_key`);
   requiredText(placement.host_reference_key, `${observationId}_host_reference_key`);
   requiredText(placement.host_category, `${observationId}_host_category`);
-  const chainage = finite(placement.target_chainage_ft, `${observationId}_target_chainage_ft`);
-  if (chainage < 0) throw new Error(`${observationId}_target_chainage_ft_must_be_nonnegative`);
+  if (placement.target_chainage_ft != null) {
+    const chainage = finite(placement.target_chainage_ft, `${observationId}_target_chainage_ft`);
+    if (chainage < 0) throw new Error(`${observationId}_target_chainage_ft_must_be_nonnegative`);
+  }
 }
 
 function validateObservation(observation: MepDraftObservation, index: number): void {
@@ -384,13 +387,15 @@ function pointAction(
     sourceElementId: sourceReference.element_id,
     hostElementId: hostReference.element_id,
     pointXyz: [expected.x, expected.y, expected.z],
-    targetChainageFt: observation.placement.target_chainage_ft,
     orientationSourceElementId: sourceReference.element_id,
     matchOrientationFromSource,
     copyRotation: matchOrientationFromSource,
     copyFacingHandState: matchOrientationFromSource,
     includePreviewImage: true
   };
+  if (observation.placement.target_chainage_ft != null) {
+    common.targetChainageFt = observation.placement.target_chainage_ft;
+  }
   if (roomNumber) common.roomNumber = roomNumber;
   if (observation.placement.room_side) common.roomSide = observation.placement.room_side;
   return {

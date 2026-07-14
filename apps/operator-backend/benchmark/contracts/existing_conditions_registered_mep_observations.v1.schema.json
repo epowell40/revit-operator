@@ -125,7 +125,7 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["mode", "source_reference_key", "host_reference_key", "host_category", "target_chainage_ft"],
+          "required": ["mode", "source_reference_key", "host_reference_key", "host_category"],
           "properties": {
             "mode": { "const": "hosted_exemplar" },
             "source_reference_key": { "type": "string", "minLength": 1 },

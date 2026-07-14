@@ -296,6 +296,42 @@ test("electrical plan compiles host-aware devices before factual circuit assignm
   assert.equal(workflow.maximumCreatedElements, 2);
 });
 
+test("hosted registered placement may use its world point without an invented chainage", () => {
+  const plan = compileMepDraftPlan({
+    schema_version: 1,
+    fixture_id: "electrical-world-point-host-v1",
+    scope_id: "level-4-room-403-point-authority",
+    source_evidence_sha256: SOURCE_HASH,
+    visible_evidence: visibleEvidence(),
+    native_element_references: nativeReferences(),
+    registration: registration(),
+    level_name: "L4",
+    level_elevation_ft: 32,
+    room_number: "403",
+    observations: [{
+      kind: "electrical_device",
+      observation_id: "receptacle-from-registered-pixel",
+      discipline: "electrical",
+      role: "GFCI duplex receptacle",
+      visibility: "clear",
+      confidence: 0.94,
+      supported_attributes: ["location", "type", "host"],
+      point: { x: 3, y: 4 },
+      elevation_ft: 4,
+      placement: {
+        mode: "hosted_exemplar",
+        source_reference_key: "receptacle-source",
+        host_reference_key: "south-wall-host",
+        host_category: "OST_Walls",
+        match_orientation_from_source: true
+      }
+    }]
+  });
+  assert.equal(plan.status, "ready");
+  assert.deepEqual(plan.actions[0]?.dry_run_body?.pointXyz, [92, 206, 36]);
+  assert.equal(Object.hasOwn(plan.actions[0]?.dry_run_body ?? {}, "targetChainageFt"), false);
+});
+
 test("partial evidence or unsupported material attributes consolidates clarification and emits no writes", () => {
   const input: MepDraftPackage = {
     schema_version: 1,

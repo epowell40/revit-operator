@@ -206,6 +206,23 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
     }]
   };
   assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", input));
+  const hostedWithoutInventedChainage = structuredClone(input);
+  const hostedObservation = hostedWithoutInventedChainage.observations[0];
+  hostedObservation.supported_attributes = ["location", "type", "host"];
+  hostedObservation.attribute_evidence.push({
+    attribute: "host",
+    basis: "native_model_precedent",
+    evidence_role: "native_model_inventory",
+    reference: "adjacent same-type hosted exemplar"
+  });
+  hostedWithoutInventedChainage.visible_evidence.push({ role: "native_model_inventory", sha256: "c".repeat(64) });
+  (hostedObservation as Record<string, unknown>).placement = {
+    mode: "hosted_exemplar",
+    source_reference_key: "device-source",
+    host_reference_key: "wall-host",
+    host_category: "OST_RvtLinks"
+  };
+  assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", hostedWithoutInventedChainage));
   const invalid = structuredClone(input);
   (invalid.observations[0] as Record<string, unknown>).withheld_element_id = 12345;
   assert.throws(
