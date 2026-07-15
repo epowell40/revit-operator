@@ -7,6 +7,7 @@ import {
   type CompiledMepDraftPlan,
   type ElectricalCircuitObservation,
   type ElectricalDeviceObservation,
+  type ElectricalEquipmentObservation,
   type MepDraftPackage,
   type PlumbingDownstreamVentTeeObservation,
   type PlumbingNativeConnectorBridgeObservation,
@@ -69,12 +70,17 @@ export type RegisteredElectricalDeviceObservation = Omit<ElectricalDeviceObserva
   pixel_point: ExistingConditionsPlanPoint;
 };
 
+export type RegisteredElectricalEquipmentObservation = Omit<ElectricalEquipmentObservation, "point"> & WithAttributeEvidence & {
+  pixel_point: ExistingConditionsPlanPoint;
+};
+
 export type RegisteredMepPixelObservation =
   | RegisteredPlumbingPipeRouteObservation
   | RegisteredPlumbingConnectorBridgeObservation
   | RegisteredPlumbingDownstreamVentTeeObservation
   | RegisteredPlumbingFixtureObservation
   | RegisteredElectricalDeviceObservation
+  | RegisteredElectricalEquipmentObservation
   | ElectricalCircuitObservation;
 
 export type RegisteredMepObservationPackage = Omit<MepDraftPackage, "observations"> & {

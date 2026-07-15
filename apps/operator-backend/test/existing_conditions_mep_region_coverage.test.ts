@@ -83,6 +83,65 @@ test("bounded MEP region coverage produces a deterministic complete receipt", ()
   assert.equal(first.region_sha256, second.region_sha256);
 });
 
+test("an irregular scope polygon excludes adjacent corridor marks without shrinking annotation bounds", () => {
+  const input = coverage();
+  input.scope_polygon = [
+    { x: 100, y: 100 },
+    { x: 700, y: 100 },
+    { x: 700, y: 350 },
+    { x: 900, y: 350 },
+    { x: 900, y: 700 },
+    { x: 100, y: 700 }
+  ];
+  input.candidates[3]!.pixel_bounds = { min: { x: 680, y: 320 }, max: { x: 760, y: 370 } };
+  input.candidates[2]!.pixel_bounds = { min: { x: 680, y: 355 }, max: { x: 700, y: 375 } };
+  input.candidates[3]!.scope_anchor_candidate_id = "symbol-random-803";
+  const result = validateBoundedMepRegionCoverageV1(input, context());
+  assert.equal(result.coverage_status, "complete");
+  assert.deepEqual(result.scope_polygon, input.scope_polygon);
+
+  delete input.candidates[3]!.scope_anchor_candidate_id;
+  assert.throws(
+    () => validateBoundedMepRegionCoverageV1(input, context()),
+    /candidate_outside_scope_polygon:annotation-random-804/
+  );
+});
+
+test("scope polygons reject laundering through out-of-bounds anchors and invalid geometry", () => {
+  const outsideAnchor = coverage();
+  outsideAnchor.scope_polygon = [
+    { x: 100, y: 100 },
+    { x: 900, y: 100 },
+    { x: 900, y: 700 },
+    { x: 100, y: 700 }
+  ];
+  outsideAnchor.candidates[0]!.scope_point = { x: 800, y: 600 };
+  assert.throws(
+    () => validateBoundedMepRegionCoverageV1(outsideAnchor, context()),
+    /candidate_scope_point_outside_bounds:trace-random-801/
+  );
+
+  const selfIntersecting = coverage();
+  selfIntersecting.scope_polygon = [
+    { x: 100, y: 100 },
+    { x: 900, y: 700 },
+    { x: 900, y: 100 },
+    { x: 100, y: 700 }
+  ];
+  assert.throws(
+    () => validateBoundedMepRegionCoverageV1(selfIntersecting, context()),
+    /scope_polygon_(has_zero_area|self_intersects)/
+  );
+
+  const badAnchor = coverage();
+  badAnchor.scope_polygon = outsideAnchor.scope_polygon;
+  badAnchor.candidates[3]!.scope_anchor_candidate_id = "trace-random-801";
+  assert.throws(
+    () => validateBoundedMepRegionCoverageV1(badAnchor, context()),
+    /scope_anchor_requires_point_symbol/
+  );
+});
+
 test("unfamiliar bounded symbols remain spatially explicit and partial", () => {
   const input = coverage();
   input.candidates.push({
@@ -100,6 +159,21 @@ test("unfamiliar bounded symbols remain spatially explicit and partial", () => {
   assert.equal(result.coverage_status, "partial");
   assert.deepEqual(result.unresolved_candidate_ids, ["unknown-random-991"]);
   assert.equal(result.covered_observation_ids.length, 4);
+});
+
+test("a clear circuit label remains partial when its visible member symbol is not classified", () => {
+  const input = coverage();
+  input.candidates[3]!.disposition = {
+    status: "unresolved",
+    reason: "unresolved_member_classification",
+    note: "The label is legible, but its leader terminates at a point symbol whose device subtype is unresolved."
+  };
+  const result = validateBoundedMepRegionCoverageV1(input, {
+    ...context(),
+    observations: context().observations.filter((entry) => entry.observation_id !== "circuit-random-44")
+  });
+  assert.equal(result.coverage_status, "partial");
+  assert.deepEqual(result.unresolved_candidate_ids, ["annotation-random-804"]);
 });
 
 test("coverage fails when a proposed observation has no source candidate", () => {
@@ -124,6 +198,21 @@ test("coverage fails when one observation is linked from multiple candidates", (
     () => validateBoundedMepRegionCoverageV1(input, context()),
     /observation_linked_multiple_times:device-random-18/
   );
+});
+
+test("repeated printed labels may corroborate one native circuit observation", () => {
+  const input = coverage();
+  input.candidates.push({
+    candidate_id: "repeated-circuit-label-random-806",
+    primitive: "circuit_annotation",
+    pixel_bounds: { min: { x: 650, y: 450 }, max: { x: 760, y: 485 } },
+    visibility: "clear",
+    disposition: { status: "resolved", observation_ids: ["circuit-random-44"] }
+  });
+  const result = validateBoundedMepRegionCoverageV1(input, context());
+  assert.equal(result.coverage_status, "complete");
+  assert.equal(result.candidate_count, 5);
+  assert.equal(result.covered_observation_ids.filter((id) => id === "circuit-random-44").length, 1);
 });
 
 test("coverage rejects primitive laundering and resolved unknown marks", () => {

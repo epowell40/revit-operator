@@ -48,6 +48,8 @@ export type MepDraftPlacement =
       target_chainage_ft?: number;
       room_side?: string;
       match_orientation_from_source?: boolean;
+      /** Panelboards must inherit a compatible native Distribution System before circuit assignment. */
+      copy_distribution_system_from_source?: boolean;
     };
 
 type PlumbingPipeRouteObservationBase = MepDraftObservationBase & {
@@ -140,13 +142,20 @@ export type PlumbingFixtureObservation = MepDraftObservationBase & {
   };
 };
 
-export type ElectricalDeviceObservation = MepDraftObservationBase & {
-  kind: "electrical_device";
+type ElectricalFamilyInstanceObservationBase = MepDraftObservationBase & {
   discipline: "electrical";
   role: string;
   point: ExistingConditionsPlanPoint;
   elevation_ft: number;
   placement: MepDraftPlacement;
+};
+
+export type ElectricalDeviceObservation = ElectricalFamilyInstanceObservationBase & {
+  kind: "electrical_device";
+};
+
+export type ElectricalEquipmentObservation = ElectricalFamilyInstanceObservationBase & {
+  kind: "electrical_equipment";
 };
 
 type ElectricalCircuitObservationBase = MepDraftObservationBase & {
@@ -168,6 +177,8 @@ export type ElectricalNewCircuitObservation = ElectricalCircuitObservationBase &
   system_type: "PowerCircuit";
   membership_basis: "legible_source_circuit_label" | "user_direction";
   panel_reference_key?: string;
+  /** Electrical-equipment observation created earlier in this same atomic graph. */
+  panel_observation_id?: string;
   member_label_evidence?: Array<{
     member_observation_id: string;
     evidence_role: string;
@@ -183,6 +194,7 @@ export type MepDraftObservation =
   | PlumbingPipeRouteObservation
   | PlumbingFixtureObservation
   | ElectricalDeviceObservation
+  | ElectricalEquipmentObservation
   | ElectricalCircuitObservation;
 
 export type MepDraftPackage = {
@@ -239,6 +251,7 @@ export type MepDraftAction = {
     source_element_id?: number;
     create_system_type?: "PowerCircuit";
     panel_element_id?: number;
+    panel_element?: MepDraftElementReference;
     target_element_id?: number;
     required_connection_count?: number;
     fixture_elements?: MepDraftElementReference[];
@@ -376,7 +389,7 @@ function materialAttributes(observation: MepDraftObservation): string[] {
       ? ["location", "type", "host", "service topology"]
       : ["location", "type", "service topology"];
   }
-  if (observation.kind === "electrical_device") {
+  if (observation.kind === "electrical_device" || observation.kind === "electrical_equipment") {
     return observation.placement.mode === "hosted_exemplar"
       ? ["location", "type", "host"]
       : ["location", "type"];
@@ -387,6 +400,7 @@ function materialAttributes(observation: MepDraftObservation): string[] {
 function category(observation: MepDraftObservation): string {
   if (observation.kind === "pipe_route") return "OST_PipeCurves";
   if (observation.kind === "plumbing_fixture") return "OST_PlumbingFixtures";
+  if (observation.kind === "electrical_equipment") return "OST_ElectricalEquipment";
   return "OST_ElectricalFixtures";
 }
 
@@ -509,12 +523,17 @@ function validateObservation(observation: MepDraftObservation, index: number): v
     }
     return;
   }
-  if (observation.kind === "plumbing_fixture" || observation.kind === "electrical_device") {
+  if (observation.kind === "plumbing_fixture" || observation.kind === "electrical_device" || observation.kind === "electrical_equipment") {
     requiredText(observation.role, `${id}_role`);
     finite(observation.point.x, `${id}_point_x`);
     finite(observation.point.y, `${id}_point_y`);
     finite(observation.elevation_ft, `${id}_elevation_ft`);
     validatePlacement(observation.placement, id);
+    if (observation.placement.mode === "hosted_exemplar"
+      && observation.placement.copy_distribution_system_from_source !== undefined
+      && observation.kind !== "electrical_equipment") {
+      throw new Error(`${id}_distribution_system_copy_requires_electrical_equipment`);
+    }
     if (observation.kind === "plumbing_fixture") {
       if (!Array.isArray(observation.service_route_connections)) {
         throw new Error(`${id}_service_route_connections_must_be_array`);
@@ -572,7 +591,7 @@ function validateObservation(observation: MepDraftObservation, index: number): v
 }
 
 function pointAction(
-  observation: PlumbingFixtureObservation | ElectricalDeviceObservation,
+  observation: PlumbingFixtureObservation | ElectricalDeviceObservation | ElectricalEquipmentObservation,
   transformed: ExistingConditionsPlanPoint,
   levelName: string,
   levelElevationFt: number,
@@ -627,6 +646,9 @@ function pointAction(
   }
   if (roomNumber) common.roomNumber = roomNumber;
   if (observation.placement.room_side) common.roomSide = observation.placement.room_side;
+  if (observation.kind === "electrical_equipment" && observation.placement.copy_distribution_system_from_source === true) {
+    common.parameterNamesToCopy = ["Distribution System"];
+  }
   return {
     action_key: actionKey,
     observation_ids: [observation.observation_id],
@@ -780,7 +802,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
       if (prohibitedPresent.length > 0) throw new Error(`${observation.observation_id}_prohibited_services_present:${prohibitedPresent.join(",")}`);
       if (undeclaredServices.length > 0) throw new Error(`${observation.observation_id}_undeclared_services_present:${undeclaredServices.join(",")}`);
     }
-    if ((observation.kind === "plumbing_fixture" || observation.kind === "electrical_device")
+    if ((observation.kind === "plumbing_fixture" || observation.kind === "electrical_device" || observation.kind === "electrical_equipment")
       && observation.placement.mode === "hosted_exemplar") {
       const sourceReference = nativeReferences.get(observation.placement.source_reference_key);
       if (!sourceReference) throw new Error(`${observation.observation_id}_source_reference_unknown`);
@@ -797,7 +819,9 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
       }
       for (const memberId of observation.member_observation_ids) {
         const member = byId.get(memberId);
-        if (!member || member.kind !== "electrical_device") throw new Error(`${observation.observation_id}_references_unknown_electrical_device:${memberId}`);
+        if (!member || (member.kind !== "electrical_device" && member.kind !== "electrical_equipment")) {
+          throw new Error(`${observation.observation_id}_references_unknown_electrical_device:${memberId}`);
+        }
         const existingCircuit = assignedElectricalDevices.get(memberId);
         if (existingCircuit) {
           throw new Error(`electrical_device_assigned_to_multiple_circuits:${memberId}:${existingCircuit}:${observation.observation_id}`);
@@ -812,6 +836,9 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
             }
           }
         }
+        if (observation.panel_reference_key && observation.panel_observation_id) {
+          throw new Error(`${observation.observation_id}_panel_reference_and_observation_are_mutually_exclusive`);
+        }
         if (observation.panel_reference_key) {
           const panelReference = nativeReferences.get(observation.panel_reference_key);
           if (!panelReference) throw new Error(`${observation.observation_id}_panel_reference_unknown`);
@@ -819,11 +846,26 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
             throw new Error(`${observation.observation_id}_panel_reference_category_mismatch`);
           }
         }
+        if (observation.panel_observation_id) {
+          const panelObservation = byId.get(observation.panel_observation_id);
+          if (!panelObservation || panelObservation.kind !== "electrical_equipment") {
+            throw new Error(`${observation.observation_id}_panel_observation_must_be_electrical_equipment`);
+          }
+          if (observation.member_observation_ids.includes(observation.panel_observation_id)) {
+            throw new Error(`${observation.observation_id}_panel_observation_cannot_be_circuit_member`);
+          }
+          if (panelObservation.placement.mode !== "hosted_exemplar"
+            || panelObservation.placement.copy_distribution_system_from_source !== true) {
+            throw new Error(`${observation.observation_id}_created_panel_requires_native_distribution_system_precedent`);
+          }
+        }
         continue;
       }
       const sourceReference = nativeReferences.get(observation.source_reference_key);
       if (!sourceReference) throw new Error(`${observation.observation_id}_source_reference_unknown`);
-      if (normalized(sourceReference.category) !== normalized("OST_ElectricalFixtures")) throw new Error(`${observation.observation_id}_source_reference_category_mismatch`);
+      if (!["OST_ElectricalFixtures", "OST_ElectricalEquipment"].map(normalized).includes(normalized(sourceReference.category))) {
+        throw new Error(`${observation.observation_id}_source_reference_category_mismatch`);
+      }
       const powerSystemIds = unique(sourceReference.power_system_ids ?? []);
       if (powerSystemIds.length !== 1 || powerSystemIds[0] !== observation.expected_power_system_id) {
         throw new Error(`${observation.observation_id}_source_power_system_not_exactly_verified`);
@@ -963,7 +1005,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         });
         continue;
       }
-      if (observation.kind === "plumbing_fixture" || observation.kind === "electrical_device") {
+      if (observation.kind === "plumbing_fixture" || observation.kind === "electrical_device" || observation.kind === "electrical_equipment") {
         actions.push(pointAction(
           observation,
           transformExistingConditionsPlanPoint(registration, observation.point),
@@ -974,7 +1016,11 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         ));
         continue;
       }
-      const dependencies = observation.member_observation_ids.map((id) => `place:${id}`);
+      const memberDependencies = observation.member_observation_ids.map((id) => `place:${id}`);
+      const panelDependency = observation.circuit_mode === "create_new_power_system" && observation.panel_observation_id
+        ? `place:${observation.panel_observation_id}`
+        : undefined;
+      const dependencies = [...memberDependencies, ...(panelDependency ? [panelDependency] : [])];
       const sourceReference = observation.circuit_mode === "create_new_power_system"
         ? undefined
         : nativeReferences.get(observation.source_reference_key)!;
@@ -988,10 +1034,11 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         path: "/revit/assign-electrical-circuit",
         depends_on: dependencies,
         deferred_body: {
-          element_ids: dependencies.map((createdByAction) => ({ created_by_action: createdByAction })),
+          element_ids: memberDependencies.map((createdByAction) => ({ created_by_action: createdByAction })),
           ...(sourceReference ? { source_element_id: sourceReference.element_id } : {}),
           ...(observation.circuit_mode === "create_new_power_system" ? { create_system_type: "PowerCircuit" as const } : {}),
-          ...(panelReference ? { panel_element_id: panelReference.element_id } : {})
+          ...(panelReference ? { panel_element_id: panelReference.element_id } : {}),
+          ...(panelDependency ? { panel_element: { created_by_action: panelDependency } } : {})
         },
         expected_created_min: observation.circuit_mode === "create_new_power_system" ? 1 : 0,
         expected_created_max: observation.circuit_mode === "create_new_power_system" ? 1 : 0

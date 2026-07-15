@@ -47,6 +47,14 @@ function nativeReferences() {
       evidence_role: "native_model_inventory",
       evidence_sha256: MODEL_HASH,
       power_system_ids: ["system-333"]
+    },
+    {
+      reference_key: "panel-source",
+      element_id: 444,
+      category: "OST_ElectricalEquipment",
+      role: "120/208 V panelboard precedent",
+      evidence_role: "native_model_inventory",
+      evidence_sha256: MODEL_HASH
     }
   ];
 }
@@ -70,7 +78,7 @@ function plumbingTopologyPackage(): MepDraftPackage {
     scope_id: "independent-restroom-alpha",
     source_evidence_sha256: SOURCE_HASH,
     visible_evidence: visibleEvidence(),
-    native_element_references: [],
+    native_element_references: nativeReferences(),
     registration: registration(),
     level_name: "Benchmark L2",
     level_elevation_ft: 0,
@@ -294,6 +302,213 @@ test("electrical plan compiles host-aware devices before factual circuit assignm
   const workflow = buildAtomicMepDraftWorkflowRequest(plan, { dry_run: false, maximum_created_elements: 2 });
   assert.equal(workflow.dryRun, false);
   assert.equal(workflow.maximumCreatedElements, 2);
+});
+
+test("electrical equipment retains its native category and can participate in a factual circuit", () => {
+  const references = [
+    ...nativeReferences(),
+    {
+      reference_key: "equipment-source",
+      element_id: 444,
+      category: "OST_ElectricalEquipment",
+      role: "wall-mounted electrical equipment",
+      evidence_role: "native_model_inventory",
+      evidence_sha256: MODEL_HASH,
+      power_system_ids: ["system-333"]
+    }
+  ];
+  const plan = compileMepDraftPlan({
+    schema_version: 1,
+    fixture_id: "electrical-equipment-layout-v1",
+    scope_id: "level-4-room-409-equipment",
+    source_evidence_sha256: SOURCE_HASH,
+    visible_evidence: visibleEvidence(),
+    native_element_references: references,
+    registration: registration(),
+    level_name: "L4",
+    level_elevation_ft: 0,
+    room_number: "409",
+    observations: [
+      {
+        kind: "electrical_equipment",
+        observation_id: "equipment-a",
+        discipline: "electrical",
+        role: "electrical equipment",
+        visibility: "clear",
+        confidence: 0.95,
+        supported_attributes: ["location", "type", "host"],
+        point: { x: 3, y: 4 },
+        elevation_ft: 4,
+        placement: {
+          mode: "hosted_exemplar",
+          source_reference_key: "equipment-source",
+          host_reference_key: "south-wall-host",
+          host_category: "OST_Walls"
+        }
+      },
+      {
+        kind: "electrical_circuit",
+        observation_id: "equipment-circuit",
+        discipline: "electrical",
+        evidence_role: "native_model_inventory",
+        visibility: "clear",
+        confidence: 1,
+        supported_attributes: ["circuit"],
+        member_observation_ids: ["equipment-a"],
+        source_reference_key: "equipment-source",
+        expected_power_system_id: "system-333",
+        membership_basis: "native_source_power_system",
+        panel_circuit_label: "P409/6"
+      }
+    ]
+  });
+  assert.equal(plan.status, "ready");
+  assert.equal(plan.plan_elements[0]?.category, "OST_ElectricalEquipment");
+  assert.equal(plan.actions[0]?.path, "/revit/place-family-instance-on-host");
+  assert.deepEqual(plan.actions[1]?.depends_on, ["place:equipment-a"]);
+});
+
+test("a new circuit can target a panelboard created earlier in the same atomic graph", () => {
+  const plan = compileMepDraftPlan({
+    schema_version: 1,
+    fixture_id: "electrical-new-panel-circuit-v1",
+    scope_id: "level-4-room-409-new-panel-circuit",
+    source_evidence_sha256: SOURCE_HASH,
+    visible_evidence: visibleEvidence(),
+    native_element_references: nativeReferences(),
+    registration: registration(),
+    level_name: "L4",
+    level_elevation_ft: 0,
+    room_number: "409",
+    observations: [
+      {
+        kind: "electrical_equipment",
+        observation_id: "panel-p409",
+        discipline: "electrical",
+        role: "panelboard P409",
+        visibility: "clear",
+        confidence: 0.96,
+        supported_attributes: ["location", "type", "host"],
+        point: { x: 2, y: 3 },
+        elevation_ft: 4,
+        placement: {
+          mode: "hosted_exemplar",
+          source_reference_key: "panel-source",
+          host_reference_key: "south-wall-host",
+          host_category: "OST_Walls",
+          copy_distribution_system_from_source: true
+        }
+      },
+      {
+        kind: "electrical_device",
+        observation_id: "receptacle-p409-1",
+        discipline: "electrical",
+        role: "duplex receptacle",
+        visibility: "clear",
+        confidence: 0.95,
+        supported_attributes: ["location", "type"],
+        point: { x: 4, y: 5 },
+        elevation_ft: 1.5,
+        placement: { mode: "unhosted_family", family_name: "Receptacle", type_name: "Standard" }
+      },
+      {
+        kind: "electrical_circuit",
+        observation_id: "new-p409-1",
+        discipline: "electrical",
+        evidence_role: "source_pdf",
+        visibility: "clear",
+        confidence: 0.99,
+        supported_attributes: ["circuit"],
+        member_observation_ids: ["receptacle-p409-1"],
+        circuit_mode: "create_new_power_system",
+        system_type: "PowerCircuit",
+        membership_basis: "user_direction",
+        user_direction_reference: "The bounded test directs one member to the new panel circuit.",
+        panel_circuit_label: "P409/1",
+        panel_observation_id: "panel-p409"
+      }
+    ]
+  });
+  assert.equal(plan.status, "ready");
+  assert.deepEqual(plan.actions.map((entry) => entry.action_key), [
+    "place:panel-p409",
+    "place:receptacle-p409-1",
+    "circuit:new-p409-1"
+  ]);
+  assert.deepEqual(plan.actions[2]?.depends_on, ["place:receptacle-p409-1", "place:panel-p409"]);
+  assert.deepEqual(plan.actions[2]?.deferred_body?.element_ids, [{ created_by_action: "place:receptacle-p409-1" }]);
+  assert.deepEqual(plan.actions[2]?.deferred_body?.panel_element, { created_by_action: "place:panel-p409" });
+  assert.deepEqual(plan.actions[0]?.apply_body?.parameterNamesToCopy, ["Distribution System"]);
+});
+
+test("a created panel circuit rejects missing distribution precedent and self-membership", () => {
+  const base: MepDraftPackage = {
+    schema_version: 1,
+    fixture_id: "electrical-invalid-new-panel-circuit-v1",
+    scope_id: "level-4-room-409-invalid-new-panel-circuit",
+    source_evidence_sha256: SOURCE_HASH,
+    visible_evidence: visibleEvidence(),
+    native_element_references: nativeReferences(),
+    registration: registration(),
+    level_name: "L4",
+    level_elevation_ft: 0,
+    observations: [
+      {
+        kind: "electrical_equipment",
+        observation_id: "panel-p409",
+        discipline: "electrical",
+        role: "panelboard P409",
+        visibility: "clear",
+        confidence: 0.96,
+        supported_attributes: ["location", "type"],
+        point: { x: 2, y: 3 },
+        elevation_ft: 4,
+        placement: { mode: "unhosted_family", family_name: "Panelboard", type_name: "P409 Type" }
+      },
+      {
+        kind: "electrical_device",
+        observation_id: "receptacle-p409-1",
+        discipline: "electrical",
+        role: "duplex receptacle",
+        visibility: "clear",
+        confidence: 0.95,
+        supported_attributes: ["location", "type"],
+        point: { x: 4, y: 5 },
+        elevation_ft: 1.5,
+        placement: { mode: "unhosted_family", family_name: "Receptacle", type_name: "Standard" }
+      },
+      {
+        kind: "electrical_circuit",
+        observation_id: "new-p409-1",
+        discipline: "electrical",
+        evidence_role: "source_pdf",
+        visibility: "clear",
+        confidence: 0.99,
+        supported_attributes: ["circuit"],
+        member_observation_ids: ["receptacle-p409-1"],
+        circuit_mode: "create_new_power_system",
+        system_type: "PowerCircuit",
+        membership_basis: "user_direction",
+        user_direction_reference: "bounded invalid-case test",
+        panel_circuit_label: "P409/1",
+        panel_observation_id: "panel-p409"
+      }
+    ]
+  };
+  assert.throws(() => compileMepDraftPlan(base), /created_panel_requires_native_distribution_system_precedent/);
+  const circuit = base.observations[2];
+  const panel = base.observations[0];
+  if (circuit?.kind !== "electrical_circuit" || circuit.circuit_mode !== "create_new_power_system"
+    || panel?.kind !== "electrical_equipment") throw new Error("invalid_panel_test_setup_failed");
+  panel.placement = {
+    mode: "hosted_exemplar",
+    source_reference_key: "panel-source",
+    host_reference_key: "south-wall-host",
+    host_category: "OST_Walls",
+    copy_distribution_system_from_source: true
+  };
+  circuit.member_observation_ids = ["panel-p409"];
+  assert.throws(() => compileMepDraftPlan(base), /panel_observation_cannot_be_circuit_member/);
 });
 
 test("electrical plan creates a new native power circuit without a retained circuit member", () => {

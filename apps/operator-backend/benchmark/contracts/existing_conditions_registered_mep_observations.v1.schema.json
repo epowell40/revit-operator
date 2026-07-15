@@ -63,6 +63,7 @@
           { "$ref": "#/$defs/pipe_downstream_vent_tee" },
           { "$ref": "#/$defs/plumbing_fixture" },
           { "$ref": "#/$defs/electrical_device" },
+          { "$ref": "#/$defs/electrical_equipment" },
           { "$ref": "#/$defs/electrical_circuit" }
         ]
       }
@@ -136,7 +137,8 @@
             "host_category": { "type": "string", "minLength": 1 },
             "target_chainage_ft": { "type": "number", "minimum": 0 },
             "room_side": { "type": "string", "minLength": 1 },
-            "match_orientation_from_source": { "type": "boolean" }
+            "match_orientation_from_source": { "type": "boolean" },
+            "copy_distribution_system_from_source": { "type": "boolean" }
           }
         }
       ]
@@ -331,6 +333,25 @@
         "placement": { "$ref": "#/$defs/placement" }
       }
     },
+    "electrical_equipment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "role", "pixel_point", "elevation_ft", "placement"],
+      "properties": {
+        "kind": { "const": "electrical_equipment" },
+        "discipline": { "const": "electrical" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
+        "role": { "type": "string", "minLength": 1 },
+        "pixel_point": { "$ref": "#/$defs/point" },
+        "elevation_ft": { "type": "number" },
+        "placement": { "$ref": "#/$defs/placement" }
+      }
+    },
     "electrical_circuit": {
       "type": "object",
       "additionalProperties": false,
@@ -351,6 +372,7 @@
         "membership_basis": { "enum": ["native_source_power_system", "legible_source_circuit_label", "user_direction"] },
         "panel_circuit_label": { "type": "string", "minLength": 1 },
         "panel_reference_key": { "type": "string", "minLength": 1 },
+        "panel_observation_id": { "type": "string", "minLength": 1 },
         "user_direction_reference": { "type": "string", "minLength": 1 },
         "member_label_evidence": {
           "type": "array",

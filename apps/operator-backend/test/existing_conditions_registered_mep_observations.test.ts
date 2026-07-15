@@ -459,6 +459,40 @@ test("registered electrical pixels locate devices but render evidence cannot ass
   await assert.rejects(() => compileRegisteredMepObservations(input), /circuit_membership_cannot_use_render_evidence/);
 });
 
+test("registered electrical equipment pixels compile as native electrical equipment", async () => {
+  const input = electricalInput();
+  input.observations = [{
+    kind: "electrical_equipment",
+    discipline: "electrical",
+    observation_id: "equipment-random-31",
+    visibility: "clear",
+    confidence: 0.96,
+    supported_attributes: ["location", "type"],
+    attribute_evidence: [
+      { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "panelboard symbol and tag are legible at the selected pixel" }
+    ],
+    role: "panelboard",
+    pixel_point: { x: 45, y: 55 },
+    elevation_ft: 4,
+    placement: { mode: "unhosted_family", family_name: "Panelboard A", type_name: "Panel B" }
+  }];
+  input.source_coverage = {
+    ...electricalCoverage(input),
+    candidates: [{
+      candidate_id: "bounded-equipment-symbol-random-31",
+      primitive: "point_symbol",
+      pixel_bounds: { min: { x: 40, y: 50 }, max: { x: 50, y: 60 } },
+      visibility: "clear",
+      disposition: { status: "resolved", observation_ids: ["equipment-random-31"] }
+    }]
+  };
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.status, "ready");
+  assert.equal(result.compiled_plan.plan_elements[0]?.category, "OST_ElectricalEquipment");
+  assert.equal(result.converted_package.observations[0]?.kind, "electrical_equipment");
+  assert.equal(result.compiled_plan.actions[0]?.path, "/revit/place-families");
+});
+
 test("registered MEP observations bind a complete bounded-region coverage receipt", async () => {
   const input = electricalInput();
   input.source_coverage = electricalCoverage(input);

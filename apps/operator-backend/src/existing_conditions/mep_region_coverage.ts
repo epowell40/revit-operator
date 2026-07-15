@@ -7,12 +7,24 @@ export type BoundedMepRegionCoverageCandidateV1 = {
   candidate_id: string;
   primitive: "point_symbol" | "linear_trace" | "junction" | "circuit_annotation" | "unknown";
   pixel_bounds: MepCoverageBounds;
+  /**
+   * Optional explicit point used to decide whether a candidate belongs to an
+   * irregular scope polygon. It must remain inside pixel_bounds. When omitted,
+   * the pixel-bounds center is used.
+   */
+  scope_point?: MepCoveragePoint;
+  /**
+   * Circuit text may sit outside the room while its leader targets a device
+   * inside it. This field scopes that annotation through the exact point-symbol
+   * candidate it annotates instead of through a free-floating coordinate.
+   */
+  scope_anchor_candidate_id?: string;
   visibility: "clear" | "partial" | "occluded";
   disposition:
     | { status: "resolved"; observation_ids: string[] }
     | {
         status: "unresolved";
-        reason: "ambiguous_symbol" | "illegible_connectivity" | "occluded" | "clipped_by_region";
+        reason: "ambiguous_symbol" | "illegible_connectivity" | "unresolved_member_classification" | "occluded" | "clipped_by_region";
         note: string;
       };
 };
@@ -24,13 +36,18 @@ export type BoundedMepRegionCoverageV1 = {
   registered_render_sha256: string;
   coordinate_space: "registered_render_pixels_top_left";
   region: MepCoverageBounds;
+  /**
+   * Optional unclosed simple polygon inside region. Candidate scope is decided
+   * by scope_point (or the candidate-bounds center), including the boundary.
+   */
+  scope_polygon?: MepCoveragePoint[];
   disciplines: Array<"plumbing" | "electrical">;
   candidates: BoundedMepRegionCoverageCandidateV1[];
 };
 
 export type MepCoverageObservationDescriptor = {
   observation_id: string;
-  kind: "pipe_route" | "plumbing_fixture" | "electrical_device" | "electrical_circuit";
+  kind: "pipe_route" | "plumbing_fixture" | "electrical_device" | "electrical_equipment" | "electrical_circuit";
   discipline: "plumbing" | "electrical";
 };
 
@@ -41,6 +58,7 @@ export type BoundedMepRegionCoverageReceiptV1 = {
   registered_render_sha256: string;
   coordinate_space: "registered_render_pixels_top_left";
   region: MepCoverageBounds;
+  scope_polygon?: MepCoveragePoint[];
   region_sha256: string;
   coverage_contract_sha256: string;
   coverage_status: "complete" | "partial";
@@ -111,6 +129,81 @@ function contains(outer: MepCoverageBounds, inner: MepCoverageBounds): boolean {
     && inner.min.y >= outer.min.y && inner.max.y <= outer.max.y;
 }
 
+function containsPoint(outer: MepCoverageBounds, inner: MepCoveragePoint): boolean {
+  return inner.x >= outer.min.x && inner.x <= outer.max.x
+    && inner.y >= outer.min.y && inner.y <= outer.max.y;
+}
+
+function cross(a: MepCoveragePoint, b: MepCoveragePoint, c: MepCoveragePoint): number {
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+function pointOnSegment(pointValue: MepCoveragePoint, a: MepCoveragePoint, b: MepCoveragePoint): boolean {
+  const epsilon = 1e-7;
+  if (Math.abs(cross(a, b, pointValue)) > epsilon) return false;
+  return pointValue.x >= Math.min(a.x, b.x) - epsilon
+    && pointValue.x <= Math.max(a.x, b.x) + epsilon
+    && pointValue.y >= Math.min(a.y, b.y) - epsilon
+    && pointValue.y <= Math.max(a.y, b.y) + epsilon;
+}
+
+function segmentsIntersect(a: MepCoveragePoint, b: MepCoveragePoint, c: MepCoveragePoint, d: MepCoveragePoint): boolean {
+  const abC = cross(a, b, c);
+  const abD = cross(a, b, d);
+  const cdA = cross(c, d, a);
+  const cdB = cross(c, d, b);
+  if (((abC > 0 && abD < 0) || (abC < 0 && abD > 0))
+    && ((cdA > 0 && cdB < 0) || (cdA < 0 && cdB > 0))) return true;
+  return pointOnSegment(c, a, b) || pointOnSegment(d, a, b)
+    || pointOnSegment(a, c, d) || pointOnSegment(b, c, d);
+}
+
+function polygon(value: MepCoveragePoint[] | undefined, region: MepCoverageBounds): MepCoveragePoint[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length < 3 || value.length > 128) {
+    throw new Error("mep_region_coverage_scope_polygon_must_have_3_to_128_vertices");
+  }
+  const result = value.map((entry, index) => point(entry, `mep_region_coverage_scope_polygon_${index}`));
+  for (const [index, vertex] of result.entries()) {
+    if (!containsPoint(region, vertex)) throw new Error(`mep_region_coverage_scope_polygon_vertex_outside_region:${index}`);
+    const next = result[(index + 1) % result.length]!;
+    if (vertex.x === next.x && vertex.y === next.y) {
+      throw new Error(`mep_region_coverage_scope_polygon_duplicate_consecutive_vertex:${index}`);
+    }
+  }
+  let twiceArea = 0;
+  for (let index = 0; index < result.length; index += 1) {
+    const current = result[index]!;
+    const next = result[(index + 1) % result.length]!;
+    twiceArea += current.x * next.y - next.x * current.y;
+  }
+  if (Math.abs(twiceArea) <= 1e-7) throw new Error("mep_region_coverage_scope_polygon_has_zero_area");
+  for (let first = 0; first < result.length; first += 1) {
+    const firstNext = (first + 1) % result.length;
+    for (let second = first + 1; second < result.length; second += 1) {
+      const secondNext = (second + 1) % result.length;
+      if (first === second || firstNext === second || secondNext === first) continue;
+      if (segmentsIntersect(result[first]!, result[firstNext]!, result[second]!, result[secondNext]!)) {
+        throw new Error(`mep_region_coverage_scope_polygon_self_intersects:${first}:${second}`);
+      }
+    }
+  }
+  return result;
+}
+
+function insidePolygonOrBoundary(pointValue: MepCoveragePoint, polygonValue: MepCoveragePoint[]): boolean {
+  let inside = false;
+  for (let index = 0, previous = polygonValue.length - 1; index < polygonValue.length; previous = index, index += 1) {
+    const a = polygonValue[previous]!;
+    const b = polygonValue[index]!;
+    if (pointOnSegment(pointValue, a, b)) return true;
+    const crosses = (a.y > pointValue.y) !== (b.y > pointValue.y)
+      && pointValue.x < ((b.x - a.x) * (pointValue.y - a.y)) / (b.y - a.y) + a.x;
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+
 function expectedPrimitive(kind: MepCoverageObservationDescriptor["kind"]): BoundedMepRegionCoverageCandidateV1["primitive"][] {
   if (kind === "pipe_route") return ["linear_trace", "junction"];
   if (kind === "electrical_circuit") return ["circuit_annotation"];
@@ -146,6 +239,7 @@ export function validateBoundedMepRegionCoverageV1(
   };
   const region = bounds(input.region, "mep_region_coverage_region");
   if (!contains(renderBounds, region)) throw new Error("mep_region_coverage_region_outside_registered_render");
+  const scopePolygon = polygon(input.scope_polygon, region);
 
   if (!Array.isArray(input.disciplines) || input.disciplines.length === 0) {
     throw new Error("mep_region_coverage_disciplines_are_required");
@@ -168,16 +262,60 @@ export function validateBoundedMepRegionCoverageV1(
     observations.set(id, observation);
   }
   const candidateIds = new Set<string>();
-  const coveredObservations = new Set<string>();
+  const candidatesById = new Map<string, { candidate: BoundedMepRegionCoverageCandidateV1; index: number }>();
+  for (const [index, candidate] of input.candidates.entries()) {
+    const candidateId = requiredText(candidate.candidate_id, `mep_region_coverage_candidate_${index}_id`);
+    if (candidateIds.has(candidateId)) throw new Error(`mep_region_coverage_duplicate_candidate_id:${candidateId}`);
+    candidateIds.add(candidateId);
+    candidatesById.set(candidateId, { candidate, index });
+  }
+  const observationCandidateIds = new Map<string, string[]>();
   const resolvedCandidateIds: string[] = [];
   const unresolvedCandidateIds: string[] = [];
 
   for (const [index, candidate] of input.candidates.entries()) {
     const candidateId = requiredText(candidate.candidate_id, `mep_region_coverage_candidate_${index}_id`);
-    if (candidateIds.has(candidateId)) throw new Error(`mep_region_coverage_duplicate_candidate_id:${candidateId}`);
-    candidateIds.add(candidateId);
     const candidateBounds = bounds(candidate.pixel_bounds, `mep_region_coverage_candidate_${candidateId}_bounds`);
     if (!contains(region, candidateBounds)) throw new Error(`mep_region_coverage_candidate_outside_region:${candidateId}`);
+    if (candidate.scope_point !== undefined && clean(candidate.scope_anchor_candidate_id)) {
+      throw new Error(`mep_region_coverage_candidate_scope_point_and_anchor_are_mutually_exclusive:${candidateId}`);
+    }
+    let scopePoint: MepCoveragePoint;
+    const anchorCandidateId = clean(candidate.scope_anchor_candidate_id);
+    if (anchorCandidateId) {
+      if (candidate.primitive !== "circuit_annotation") {
+        throw new Error(`mep_region_coverage_scope_anchor_requires_circuit_annotation:${candidateId}`);
+      }
+      if (anchorCandidateId === candidateId) throw new Error(`mep_region_coverage_scope_anchor_cannot_self_reference:${candidateId}`);
+      const anchored = candidatesById.get(anchorCandidateId);
+      if (!anchored) throw new Error(`mep_region_coverage_scope_anchor_unknown_candidate:${candidateId}:${anchorCandidateId}`);
+      if (anchored.candidate.primitive !== "point_symbol") {
+        throw new Error(`mep_region_coverage_scope_anchor_requires_point_symbol:${candidateId}:${anchorCandidateId}`);
+      }
+      if (clean(anchored.candidate.scope_anchor_candidate_id)) {
+        throw new Error(`mep_region_coverage_scope_anchor_cannot_chain:${candidateId}:${anchorCandidateId}`);
+      }
+      const anchoredBounds = bounds(
+        anchored.candidate.pixel_bounds,
+        `mep_region_coverage_candidate_${anchorCandidateId}_bounds`
+      );
+      scopePoint = anchored.candidate.scope_point === undefined
+        ? { x: (anchoredBounds.min.x + anchoredBounds.max.x) / 2, y: (anchoredBounds.min.y + anchoredBounds.max.y) / 2 }
+        : point(anchored.candidate.scope_point, `mep_region_coverage_candidate_${anchorCandidateId}_scope_point`);
+      if (!containsPoint(anchoredBounds, scopePoint)) {
+        throw new Error(`mep_region_coverage_candidate_scope_point_outside_bounds:${anchorCandidateId}`);
+      }
+    } else {
+      scopePoint = candidate.scope_point === undefined
+        ? { x: (candidateBounds.min.x + candidateBounds.max.x) / 2, y: (candidateBounds.min.y + candidateBounds.max.y) / 2 }
+        : point(candidate.scope_point, `mep_region_coverage_candidate_${candidateId}_scope_point`);
+      if (!containsPoint(candidateBounds, scopePoint)) {
+        throw new Error(`mep_region_coverage_candidate_scope_point_outside_bounds:${candidateId}`);
+      }
+    }
+    if (scopePolygon && !insidePolygonOrBoundary(scopePoint, scopePolygon)) {
+      throw new Error(`mep_region_coverage_candidate_outside_scope_polygon:${candidateId}`);
+    }
     if (!["point_symbol", "linear_trace", "junction", "circuit_annotation", "unknown"].includes(candidate.primitive)) {
       throw new Error(`mep_region_coverage_candidate_primitive_invalid:${candidateId}`);
     }
@@ -188,7 +326,7 @@ export function validateBoundedMepRegionCoverageV1(
       throw new Error(`mep_region_coverage_candidate_disposition_invalid:${candidateId}`);
     }
     if (candidate.disposition.status === "unresolved") {
-      if (!["ambiguous_symbol", "illegible_connectivity", "occluded", "clipped_by_region"].includes(candidate.disposition.reason)) {
+      if (!["ambiguous_symbol", "illegible_connectivity", "unresolved_member_classification", "occluded", "clipped_by_region"].includes(candidate.disposition.reason)) {
         throw new Error(`mep_region_coverage_candidate_unresolved_reason_invalid:${candidateId}`);
       }
       if (candidate.visibility === "clear" && candidate.disposition.reason === "occluded") {
@@ -214,15 +352,19 @@ export function validateBoundedMepRegionCoverageV1(
       if (!expectedPrimitive(observation.kind).includes(candidate.primitive)) {
         throw new Error(`mep_region_coverage_candidate_primitive_mismatch:${candidateId}:${observationId}`);
       }
-      if (coveredObservations.has(observationId)) {
+      const existingCandidateIds = observationCandidateIds.get(observationId) ?? [];
+      if (existingCandidateIds.length > 0 && observation.kind !== "electrical_circuit") {
         throw new Error(`mep_region_coverage_observation_linked_multiple_times:${observationId}`);
       }
-      coveredObservations.add(observationId);
+      // A single native circuit may have the same circuit annotation printed beside
+      // several member devices. Preserve every spatial annotation candidate while
+      // keeping one typed circuit observation for the actual membership graph.
+      observationCandidateIds.set(observationId, [...existingCandidateIds, candidateId]);
     }
     resolvedCandidateIds.push(candidateId);
   }
 
-  const missingObservations = [...observations.keys()].filter((id) => !coveredObservations.has(id));
+  const missingObservations = [...observations.keys()].filter((id) => !observationCandidateIds.has(id));
   if (missingObservations.length > 0) {
     throw new Error(`mep_region_coverage_observations_without_candidates:${missingObservations.sort().join(",")}`);
   }
@@ -233,14 +375,15 @@ export function validateBoundedMepRegionCoverageV1(
     registered_render_sha256: renderHash,
     coordinate_space: "registered_render_pixels_top_left" as const,
     region,
-    region_sha256: digest(region),
+    ...(scopePolygon ? { scope_polygon: scopePolygon } : {}),
+    region_sha256: digest(scopePolygon ? { region, scope_polygon: scopePolygon } : region),
     coverage_contract_sha256: digest(input),
     coverage_status: unresolvedCandidateIds.length > 0 ? "partial" as const : "complete" as const,
     disciplines,
     candidate_count: input.candidates.length,
     resolved_candidate_ids: resolvedCandidateIds.sort(),
     unresolved_candidate_ids: unresolvedCandidateIds.sort(),
-    covered_observation_ids: [...coveredObservations].sort()
+    covered_observation_ids: [...observationCandidateIds.keys()].sort()
   };
   return payload;
 }

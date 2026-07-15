@@ -45,6 +45,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             public long? source_element_id { get; set; }
             public string? create_system_type { get; set; }
             public long? panel_element_id { get; set; }
+            public ElementReference? panel_element { get; set; }
             public long? target_element_id { get; set; }
             public int? required_connection_count { get; set; }
             public List<ElementReference>? fixture_elements { get; set; }
@@ -256,12 +257,22 @@ namespace RevitBridge.Logic.Handlers.MEP
                     throw new InvalidOperationException($"source_element_id_required:{operation.action_key}");
                 if (createNew && deferred.source_element_id.HasValue)
                     throw new InvalidOperationException($"new_circuit_cannot_use_source_element_id:{operation.action_key}");
+                if (deferred.panel_element_id.HasValue && deferred.panel_element != null)
+                    throw new InvalidOperationException($"panel_element_id_and_reference_are_mutually_exclusive:{operation.action_key}");
+                long? panelElementId = deferred.panel_element_id;
+                if (deferred.panel_element != null)
+                {
+                    var panelIds = ResolveReference(deferred.panel_element, outputs, operation.action_key, "panel_element");
+                    if (panelIds.Count != 1)
+                        throw new InvalidOperationException($"panel_element_reference_must_resolve_one_id:{operation.action_key}:found={panelIds.Count}");
+                    panelElementId = panelIds[0];
+                }
                 return JsonSerializer.Serialize(new
                 {
                     elementIds,
                     sourceElementId = createNew ? null : deferred.source_element_id,
                     createSystemType = createNew ? "PowerCircuit" : null,
-                    panelElementId = deferred.panel_element_id,
+                    panelElementId,
                     dryRun = false,
                     confirm = true,
                     parameterOnlyFallback = false

@@ -232,6 +232,17 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
     }]
   };
   assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", input));
+  const equipment = structuredClone(input);
+  (equipment.observations[0] as Record<string, unknown>).kind = "electrical_equipment";
+  (equipment.observations[0] as Record<string, unknown>).role = "panelboard";
+  (equipment.observations[0] as Record<string, unknown>).placement = {
+    mode: "hosted_exemplar",
+    source_reference_key: "panel-source",
+    host_reference_key: "architectural-link",
+    host_category: "OST_RvtLinks",
+    copy_distribution_system_from_source: true
+  };
+  assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", equipment));
   const hostedWithoutInventedChainage = structuredClone(input);
   const hostedObservation = hostedWithoutInventedChainage.observations[0];
   hostedObservation.supported_attributes = ["location", "type", "host"];
@@ -340,6 +351,27 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
     }]
   });
   assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", newCircuit));
+  const newPanelCircuit = structuredClone(newCircuit);
+  (newPanelCircuit.observations as Array<Record<string, unknown>>).unshift({
+    kind: "electrical_equipment",
+    discipline: "electrical",
+    observation_id: "panel-p409",
+    visibility: "clear",
+    confidence: 0.96,
+    supported_attributes: ["location", "type"],
+    attribute_evidence: [{
+      attribute: "type",
+      basis: "legible_source_evidence",
+      evidence_role: "registered_source_render",
+      reference: "Panelboard symbol and P409 tag are legible."
+    }],
+    role: "panelboard P409",
+    pixel_point: { x: 45, y: 55 },
+    elevation_ft: 4,
+    placement: { mode: "unhosted_family", family_name: "Panelboard", type_name: "Panel P409" }
+  });
+  ((newPanelCircuit.observations as Array<Record<string, unknown>>).at(-1) as Record<string, unknown>).panel_observation_id = "panel-p409";
+  assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", newPanelCircuit));
   const invalid = structuredClone(input);
   (invalid.observations[0] as Record<string, unknown>).withheld_element_id = 12345;
   assert.throws(

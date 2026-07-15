@@ -6922,10 +6922,26 @@
           }
         },
         {
-          "name": "Atomically place two devices and create a new native power circuit without a retained circuit member",
+          "name": "Atomically place a panel and two devices then create and assign a native power circuit",
           "request": {
             "inputFingerprintSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
             "operations": [
+              {
+                "action_key": "place:panel-p403",
+                "path": "/revit/place-family-instance-on-host",
+                "depends_on": [],
+                "expected_created_min": 1,
+                "expected_created_max": 1,
+                "apply_body": {
+                  "sourceElementId": 11111,
+                  "hostElementId": 99999,
+                  "roomNumber": "403",
+                  "pointXyz": [4, 10, 4],
+                  "parameterNamesToCopy": ["Distribution System"],
+                  "matchElectricalCircuitFromSource": false,
+                  "dryRun": false
+                }
+              },
               {
                 "action_key": "place:receptacle-a",
                 "path": "/revit/place-families",
@@ -6957,7 +6973,7 @@
               {
                 "action_key": "circuit:new-p403-8",
                 "path": "/revit/assign-electrical-circuit",
-                "depends_on": ["place:receptacle-a", "place:receptacle-b"],
+                "depends_on": ["place:receptacle-a", "place:receptacle-b", "place:panel-p403"],
                 "expected_created_min": 1,
                 "expected_created_max": 1,
                 "deferred_body": {
@@ -6966,13 +6982,13 @@
                     { "created_by_action": "place:receptacle-b", "output": "created" }
                   ],
                   "create_system_type": "PowerCircuit",
-                  "panel_element_id": 33333
+                  "panel_element": { "created_by_action": "place:panel-p403", "output": "created" }
                 }
               }
             ],
             "dryRun": true,
             "verify": true,
-            "maximumCreatedElements": 3
+            "maximumCreatedElements": 4
           },
           "expected_response_shape": {
             "schema": "operator.existing_conditions_mep_draft_workflow.v1",
@@ -6980,8 +6996,8 @@
             "transactionGroupRolledBack": true,
             "rollbackVerified": true,
             "atomic": true,
-            "operationCount": 3,
-            "transientCreatedElementIds": [22222, 22223, 44444],
+            "operationCount": 4,
+            "transientCreatedElementIds": [11112, 22222, 22223, 44444],
             "residualCreatedElementIds": []
           }
         }
