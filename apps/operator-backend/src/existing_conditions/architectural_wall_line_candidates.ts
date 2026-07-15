@@ -167,6 +167,7 @@ type RawLine = {
   rank_score: number;
   face_separation_px: number | null;
   supporting_face_pixel_points: [[Point2, Point2], [Point2, Point2]] | null;
+  face_directional_support_overlap?: number | null;
 };
 
 const DEFAULT_POLICY_BASE = {
@@ -174,7 +175,7 @@ const DEFAULT_POLICY_BASE = {
   rho_bin_px: 4,
   support_distance_px: 5,
   maximum_support_gap_px: 54,
-  maximum_wall_interruption_ft: 4,
+  maximum_wall_interruption_ft: 6,
   maximum_source_endpoint_extension_ft: 2.5,
   maximum_source_endpoint_gap_ft: 0.3,
   minimum_length_ft: 2,
@@ -195,8 +196,8 @@ const DEFAULT_POLICY_BASE = {
   minimum_opening_gap_width_ft: 1.5,
   maximum_opening_gap_width_ft: 6,
   opening_gap_flank_ft: 0.25,
-  opening_gap_maximum_internal_ink_ft: 0.15,
-  opening_gap_maximum_ink_ratio: 0.15,
+  opening_gap_maximum_internal_ink_ft: 0.45,
+  opening_gap_maximum_ink_ratio: 0.35,
   opening_gap_minimum_flank_coverage: 0.55,
   opening_gap_minimum_profile_ink_coverage: 0.45,
   minimum_opening_host_source_ink_coverage: 0.7,
@@ -217,6 +218,11 @@ const DEFAULT_POLICY_BASE = {
   minimum_parallel_overlap_ratio: 0.5,
   ambiguity_score_gap: 0.12
 } as const;
+
+const MINIMUM_FACE_PAIR_DIRECTIONAL_SUPPORT_OVERLAP = 0.35;
+const OPENING_GAP_DIRECTIONAL_SUPPORT_HALF_LENGTH_FT = 0.12;
+const OPENING_GAP_MINIMUM_DIRECTIONAL_SUPPORT_COVERAGE = 0.55;
+const OPENING_GAP_MINIMUM_SEED_BLANK_FT = 0.2;
 
 function cleanText(value: unknown): string {
   return String(value ?? "").trim();
@@ -568,6 +574,22 @@ function sameLine(
     && lineOverlap(a, b) >= 0.6;
 }
 
+function sameAcceptedCandidate(
+  a: RawLine,
+  b: RawLine,
+  pixelsPerFoot: number,
+  policy: ArchitecturalWallLineCandidatePolicy
+): boolean {
+  if (a.derivation === "parallel_face_midline" && b.derivation === "parallel_face_midline") {
+    return angleDifference(a.angle_degrees, b.angle_degrees) <= policy.face_pair_angle_tolerance_degrees
+      && perpendicularDistance(a, b) <= policy.hough_peak_duplicate_separation_ft * pixelsPerFoot
+      && lineOverlap(a, b) >= 0.8
+      && Math.abs((a.face_separation_px ?? 0) - (b.face_separation_px ?? 0))
+        <= policy.hough_peak_duplicate_separation_ft * pixelsPerFoot;
+  }
+  return sameLine(a, b, pixelsPerFoot, policy);
+}
+
 function stableCandidateId(line: RawLine): string {
   const payload = [
     line.derivation,
@@ -577,8 +599,66 @@ function stableCandidateId(line: RawLine): string {
   return `line-${crypto.createHash("sha256").update(payload).digest("hex").slice(0, 12)}`;
 }
 
+function nearCardinalFaceSupportOverlap(
+  a: RawLine,
+  b: RawLine,
+  candidateMask: Uint8Array,
+  width: number,
+  height: number,
+  pixelsPerFoot: number,
+  policy: ArchitecturalWallLineCandidatePolicy
+): number {
+  const averageAngle = (a.angle_degrees + b.angle_degrees) / 2;
+  const normalizedAngle = (averageAngle + 180) % 180;
+  const nearestAxis = Math.abs(normalizedAngle - 90) < Math.min(normalizedAngle, 180 - normalizedAngle) ? 90 : 0;
+  const axisDifference = nearestAxis === 90
+    ? Math.abs(normalizedAngle - 90)
+    : Math.min(normalizedAngle, 180 - normalizedAngle);
+  if (axisDifference > policy.opening_gap_axis_snap_tolerance_degrees) return 1;
+  const radians = nearestAxis * Math.PI / 180;
+  const direction = { x: Math.cos(radians), y: Math.sin(radians) };
+  const normal = { x: -direction.y, y: direction.x };
+  const project = (point: Point2): number => point.x * direction.x + point.y * direction.y;
+  const offset = (line: RawLine): number => {
+    const midpoint = {
+      x: (line.pixel_points[0].x + line.pixel_points[1].x) / 2,
+      y: (line.pixel_points[0].y + line.pixel_points[1].y) / 2
+    };
+    return midpoint.x * normal.x + midpoint.y * normal.y;
+  };
+  const aInterval = a.pixel_points.map(project).sort((left, right) => left - right);
+  const bInterval = b.pixel_points.map(project).sort((left, right) => left - right);
+  const start = Math.max(aInterval[0]!, bInterval[0]!);
+  const end = Math.min(aInterval[1]!, bInterval[1]!);
+  if (end <= start) return 0;
+  const offsets = [offset(a), offset(b)];
+  const halfLengthPx = OPENING_GAP_DIRECTIONAL_SUPPORT_HALF_LENGTH_FT * pixelsPerFoot;
+  let both = 0;
+  let either = 0;
+  const stride = Math.max(1, policy.sampling_stride_px);
+  for (let projection = start; projection <= end; projection += stride) {
+    const supported = offsets.map((faceOffset) => maskHasDirectionalInk(
+      candidateMask,
+      width,
+      height,
+      direction.x * projection + normal.x * faceOffset,
+      direction.y * projection + normal.y * faceOffset,
+      direction,
+      halfLengthPx,
+      policy.opening_gap_support_radius_px,
+      OPENING_GAP_MINIMUM_DIRECTIONAL_SUPPORT_COVERAGE
+    ));
+    if (supported[0] || supported[1]) either += 1;
+    if (supported[0] && supported[1]) both += 1;
+  }
+  return either === 0 ? 0 : both / either;
+}
+
 function buildFacePairMidlines(
   raw: RawLine[],
+  candidateMask: Uint8Array,
+  width: number,
+  height: number,
   pixelsPerFoot: number,
   policy: ArchitecturalWallLineCandidatePolicy
 ): RawLine[] {
@@ -622,8 +702,22 @@ function buildFacePairMidlines(
       const baseY = ny * centerRho;
       const candidateCoverage = Math.min(a.candidate_coverage, b.candidate_coverage);
       const sourceCoverage = Math.min(a.source_ink_coverage, b.source_ink_coverage);
-      if (candidateCoverage < policy.minimum_face_pair_candidate_coverage) continue;
-      const score = Math.min(1, (a.rank_score + b.rank_score) / 2 + 0.08 + 0.08 * overlap);
+      const directionalSupportOverlap = nearCardinalFaceSupportOverlap(
+        a,
+        b,
+        candidateMask,
+        width,
+        height,
+        pixelsPerFoot,
+        policy
+      );
+      const ordinaryPair = candidateCoverage >= policy.minimum_face_pair_candidate_coverage
+        && directionalSupportOverlap >= MINIMUM_FACE_PAIR_DIRECTIONAL_SUPPORT_OVERLAP;
+      if (!ordinaryPair) continue;
+      const score = Math.min(1, (a.rank_score + b.rank_score) / 2
+        + 0.02
+        + 0.04 * overlap
+        + 0.16 * directionalSupportOverlap);
       midlines.push({
         derivation: "parallel_face_midline",
         angle_degrees: a.angle_degrees,
@@ -637,11 +731,100 @@ function buildFacePairMidlines(
         source_ink_coverage: sourceCoverage,
         rank_score: score,
         face_separation_px: separationPx,
-        supporting_face_pixel_points: [a.pixel_points, b.pixel_points]
+        supporting_face_pixel_points: [a.pixel_points, b.pixel_points],
+        face_directional_support_overlap: directionalSupportOverlap
       });
     }
   }
   return midlines;
+}
+
+function recoverCardinalFaceLines(
+  points: HoughPoint[],
+  sourceMask: Uint8Array,
+  candidateMask: Uint8Array,
+  width: number,
+  height: number,
+  pixelsPerFoot: number,
+  diagonalFt: number,
+  policy: ArchitecturalWallLineCandidatePolicy
+): RawLine[] {
+  const halfLengthPx = OPENING_GAP_DIRECTIONAL_SUPPORT_HALF_LENGTH_FT * pixelsPerFoot;
+  const verticalCounts = new Map<number, number>();
+  const horizontalCounts = new Map<number, number>();
+  for (const entry of points) {
+    if (maskHasDirectionalInk(
+      candidateMask,
+      width,
+      height,
+      entry.x,
+      entry.y,
+      { x: 0, y: 1 },
+      halfLengthPx,
+      policy.opening_gap_support_radius_px,
+      OPENING_GAP_MINIMUM_DIRECTIONAL_SUPPORT_COVERAGE
+    )) {
+      const coordinate = Math.round(entry.x);
+      verticalCounts.set(coordinate, (verticalCounts.get(coordinate) ?? 0) + 1);
+    }
+    if (maskHasDirectionalInk(
+      candidateMask,
+      width,
+      height,
+      entry.x,
+      entry.y,
+      { x: 1, y: 0 },
+      halfLengthPx,
+      policy.opening_gap_support_radius_px,
+      OPENING_GAP_MINIMUM_DIRECTIONAL_SUPPORT_COVERAGE
+    )) {
+      const coordinate = Math.round(entry.y);
+      horizontalCounts.set(coordinate, (horizontalCounts.get(coordinate) ?? 0) + 1);
+    }
+  }
+  const maximumPerAxis = Math.max(4, Math.floor(policy.maximum_face_pair_inputs / 2));
+  const minimumCoordinateSeparation = Math.max(1, policy.hough_peak_duplicate_separation_ft * pixelsPerFoot);
+  const selectCoordinates = (counts: Map<number, number>): number[] => {
+    const selected: number[] = [];
+    for (const [coordinate] of [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])) {
+      if (selected.some((existing) => Math.abs(existing - coordinate) <= minimumCoordinateSeparation)) continue;
+      selected.push(coordinate);
+      if (selected.length >= maximumPerAxis) break;
+    }
+    return selected;
+  };
+  const recovered: RawLine[] = [];
+  for (const x of selectCoordinates(verticalCounts)) {
+    const line = evaluateLine(
+      points,
+      sourceMask,
+      candidateMask,
+      width,
+      height,
+      90,
+      -x,
+      pixelsPerFoot,
+      diagonalFt,
+      policy
+    );
+    if (line) recovered.push(line);
+  }
+  for (const y of selectCoordinates(horizontalCounts)) {
+    const line = evaluateLine(
+      points,
+      sourceMask,
+      candidateMask,
+      width,
+      height,
+      0,
+      y,
+      pixelsPerFoot,
+      diagonalFt,
+      policy
+    );
+    if (line) recovered.push(line);
+  }
+  return recovered;
 }
 
 function detectLines(
@@ -703,15 +886,51 @@ function detectLines(
       if (evaluated) raw.push(evaluated);
     }
   }
-  raw.sort((a, b) => b.rank_score - a.rank_score || b.length_px - a.length_px || a.angle_degrees - b.angle_degrees);
-  const combined = [...buildFacePairMidlines(raw, pixelsPerFoot, policy), ...raw];
+  const recoveredCardinal = recoverCardinalFaceLines(
+    points,
+    sourceMask,
+    candidateMask,
+    width,
+    height,
+    pixelsPerFoot,
+    diagonalFt,
+    policy
+  );
+  const faceInputs: RawLine[] = [];
+  const sortFaceInputs = (entries: RawLine[]): RawLine[] => entries.sort((a, b) =>
+    b.rank_score - a.rank_score || b.length_px - a.length_px || a.angle_degrees - b.angle_degrees);
+  // Exact cardinal recovery wins only when it is a near-duplicate of a sloped
+  // Hough line. This keeps the measured coordinate used for face pairing and
+  // opening profiles while preserving non-cardinal source geometry separately.
+  for (const entry of [...sortFaceInputs(recoveredCardinal), ...sortFaceInputs(raw)]) {
+    if (faceInputs.some((other) => angleDifference(entry.angle_degrees, other.angle_degrees)
+      <= policy.face_pair_angle_tolerance_degrees
+      && perpendicularDistance(entry, other) <= policy.hough_peak_duplicate_separation_ft * pixelsPerFoot
+      && lineOverlap(entry, other) >= 0.8)) continue;
+    faceInputs.push(entry);
+  }
+  const facePairMidlines = buildFacePairMidlines(faceInputs, candidateMask, width, height, pixelsPerFoot, policy);
+  const boundedFacePairVariants: RawLine[] = [];
+  for (const entry of facePairMidlines
+    .sort((a, b) => b.rank_score - a.rank_score || b.length_px - a.length_px || a.angle_degrees - b.angle_degrees)) {
+    const sameHostVariantCount = boundedFacePairVariants.filter((other) =>
+      angleDifference(entry.angle_degrees, other.angle_degrees) <= policy.face_pair_angle_tolerance_degrees
+      && perpendicularDistance(entry, other) <= policy.duplicate_separation_ft * pixelsPerFoot
+      && lineOverlap(entry, other) >= 0.8).length;
+    if (sameHostVariantCount >= 2) continue;
+    boundedFacePairVariants.push(entry);
+  }
+  const combined = [
+    ...boundedFacePairVariants,
+    ...faceInputs
+  ];
   combined.sort((a, b) => b.rank_score - a.rank_score
     || (a.derivation === b.derivation ? 0 : a.derivation === "parallel_face_midline" ? -1 : 1)
     || b.length_px - a.length_px
     || a.angle_degrees - b.angle_degrees);
   const accepted: RawLine[] = [];
   for (const entry of combined) {
-    if (accepted.some((other) => sameLine(entry, other, pixelsPerFoot, policy))) continue;
+    if (accepted.some((other) => sameAcceptedCandidate(entry, other, pixelsPerFoot, policy))) continue;
     accepted.push(entry);
     if (accepted.length >= policy.maximum_candidates) break;
   }
@@ -820,6 +1039,7 @@ function buildJunctionHypotheses(
 
 type OpeningProfileGap = {
   host: ArchitecturalWallLineCandidate;
+  profile_kind: "single_face" | "paired_face_consensus";
   profile_index: number;
   center_distance_px: number;
   pixel_center: Point2;
@@ -831,22 +1051,41 @@ type OpeningProfileGap = {
   profile_axis_degrees: number;
 };
 
-function maskHasInk(
+/**
+ * Require ink to persist along the proposed wall-face axis. A room-tag leader,
+ * dimension tick, or door-swing arc can cross a face profile and satisfy a
+ * radial proximity check even though it is not wall-face ink.
+ */
+function maskHasDirectionalInk(
   mask: Uint8Array,
   width: number,
   height: number,
   x: number,
   y: number,
-  radius: number
+  direction: Point2,
+  halfLengthPx: number,
+  crossRadiusPx: number,
+  minimumCoverage: number
 ): boolean {
-  const centerX = Math.round(x);
-  const centerY = Math.round(y);
-  for (let row = Math.max(0, centerY - radius); row <= Math.min(height - 1, centerY + radius); row += 1) {
-    for (let column = Math.max(0, centerX - radius); column <= Math.min(width - 1, centerX + radius); column += 1) {
-      if (mask[row * width + column]) return true;
+  const normal = { x: -direction.y, y: direction.x };
+  const half = Math.max(1, Math.round(halfLengthPx));
+  let supported = 0;
+  let sampled = 0;
+  for (let along = -half; along <= half; along += 1) {
+    let present = false;
+    for (let cross = -crossRadiusPx; cross <= crossRadiusPx; cross += 1) {
+      const column = Math.round(x + direction.x * along + normal.x * cross);
+      const row = Math.round(y + direction.y * along + normal.y * cross);
+      if (column < 0 || column >= width || row < 0 || row >= height) continue;
+      if (mask[row * width + column]) {
+        present = true;
+        break;
+      }
     }
+    sampled += 1;
+    if (present) supported += 1;
   }
-  return false;
+  return sampled > 0 && supported / sampled >= minimumCoverage;
 }
 
 function profileOpeningGaps(
@@ -891,6 +1130,7 @@ function profileOpeningGaps(
   const minimumGapPx = Math.ceil(policy.minimum_opening_gap_width_ft * pixelsPerFoot);
   const maximumGapPx = Math.floor(policy.maximum_opening_gap_width_ft * pixelsPerFoot);
   const flankPx = Math.max(1, Math.round(policy.opening_gap_flank_ft * pixelsPerFoot));
+  const minimumSeedBlankPx = Math.max(1, Math.round(OPENING_GAP_MINIMUM_SEED_BLANK_FT * pixelsPerFoot));
   const maximumInternalInkPx = Math.max(0, Math.round(policy.opening_gap_maximum_internal_ink_ft * pixelsPerFoot));
   const hostMidpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
   const faceOffsets = host.supporting_face_pixel_points.map((face) => {
@@ -905,22 +1145,27 @@ function profileOpeningGaps(
   ));
   const sampleLength = Math.max(1, Math.round(lengthPx));
   const gaps: OpeningProfileGap[] = [];
-  for (let profileIndex = 0; profileIndex < profileOffsets.length; profileIndex += 1) {
-    const offsetPx = profileOffsets[profileIndex]!;
-    const supported = new Uint8Array(sampleLength + 1);
-    for (let index = 0; index <= sampleLength; index += 1) {
-      const distancePx = index / sampleLength * lengthPx;
-      const x = start.x + direction.x * distancePx + normal.x * offsetPx;
-      const y = start.y + direction.y * distancePx + normal.y * offsetPx;
-      supported[index] = maskHasInk(
-        sourceMask,
-        width,
-        height,
-        x,
-        y,
-        policy.opening_gap_support_radius_px
-      ) ? 1 : 0;
-    }
+  const directionalSupport = (distancePx: number, offsetPx: number): number => {
+    const x = start.x + direction.x * distancePx + normal.x * offsetPx;
+    const y = start.y + direction.y * distancePx + normal.y * offsetPx;
+    return maskHasDirectionalInk(
+      sourceMask,
+      width,
+      height,
+      x,
+      y,
+      direction,
+      OPENING_GAP_DIRECTIONAL_SUPPORT_HALF_LENGTH_FT * pixelsPerFoot,
+      policy.opening_gap_support_radius_px,
+      OPENING_GAP_MINIMUM_DIRECTIONAL_SUPPORT_COVERAGE
+    ) ? 1 : 0;
+  };
+  const recordProfileGaps = (
+    supported: Uint8Array,
+    profileKind: OpeningProfileGap["profile_kind"],
+    profileIndex: number,
+    offsetPx: number
+  ): void => {
     const blankRuns: Array<{ start: number; end: number }> = [];
     const totalProfileInk = supported.reduce((sum, value) => sum + value, 0);
     let blankStart: number | null = null;
@@ -933,7 +1178,7 @@ function profileOpeningGaps(
     }
     if (blankStart !== null) blankRuns.push({ start: blankStart, end: sampleLength });
     const merged: Array<{ start: number; end: number }> = [];
-    for (const run of blankRuns) {
+    for (const run of blankRuns.filter((entry) => entry.end - entry.start + 1 >= minimumSeedBlankPx)) {
       const previous = merged.at(-1);
       if (previous && run.start - previous.end - 1 <= maximumInternalInkPx) previous.end = run.end;
       else merged.push({ ...run });
@@ -956,6 +1201,7 @@ function profileOpeningGaps(
       if (flankCoverage < policy.opening_gap_minimum_flank_coverage) continue;
       gaps.push({
         host,
+        profile_kind: profileKind,
         profile_index: profileIndex,
         center_distance_px: (run.start + run.end) / 2 / sampleLength * lengthPx,
         pixel_center: {
@@ -969,6 +1215,43 @@ function profileOpeningGaps(
         profile_ink_coverage: profileInkCoverage,
         profile_axis_degrees: profileAxisDegrees
       });
+    }
+  };
+  for (let profileIndex = 0; profileIndex < profileOffsets.length; profileIndex += 1) {
+    const offsetPx = profileOffsets[profileIndex]!;
+    const supported = new Uint8Array(sampleLength + 1);
+    for (let index = 0; index <= sampleLength; index += 1) {
+      supported[index] = directionalSupport(index / sampleLength * lengthPx, offsetPx);
+    }
+    recordProfileGaps(supported, "single_face", profileIndex, offsetPx);
+  }
+  // A plan-view wall band is supported by two persistent, parallel faces. Door
+  // leaves, swing arcs, room tags, and dimensions can imitate one face locally,
+  // but they rarely restore both faces at the same chainage. Paired consensus
+  // profiles therefore recover an opening through bounded symbol ink without
+  // treating a lone annotation stroke as a continuation of the wall.
+  if (faceOffsets.length === 2) {
+    const consensusBandPx = Math.min(faceProfileBandPx, policy.opening_gap_support_radius_px);
+    for (let sampleIndex = 0; sampleIndex < policy.opening_gap_face_profile_sample_count; sampleIndex += 1) {
+      const bandOffset = consensusBandPx
+        * (sampleIndex / (policy.opening_gap_face_profile_sample_count - 1) * 2 - 1);
+      const firstOffset = faceOffsets[0]! + bandOffset;
+      const secondOffset = faceOffsets[1]! + bandOffset;
+      const supported = new Uint8Array(sampleLength + 1);
+      for (let index = 0; index <= sampleLength; index += 1) {
+        const distancePx = index / sampleLength * lengthPx;
+        // A consensus gap exists only when both measured wall faces are absent.
+        // If either face remains directionally supported, preserve it as ink so
+        // a one-sided deletion or occlusion cannot become a false opening.
+        supported[index] = directionalSupport(distancePx, firstOffset)
+          || directionalSupport(distancePx, secondOffset) ? 1 : 0;
+      }
+      recordProfileGaps(
+        supported,
+        "paired_face_consensus",
+        profileOffsets.length + sampleIndex,
+        (firstOffset + secondOffset) / 2
+      );
     }
   }
   return gaps;
@@ -993,9 +1276,11 @@ function buildOpeningGapHypotheses(
   ));
   const groups: OpeningProfileGap[][] = [];
   for (const gap of allGaps.sort((a, b) => a.host.candidate_id.localeCompare(b.host.candidate_id)
+    || a.profile_kind.localeCompare(b.profile_kind)
     || a.center_distance_px - b.center_distance_px
     || a.profile_index - b.profile_index)) {
     const group = groups.find((entries) => entries[0]!.host.candidate_id === gap.host.candidate_id
+      && entries[0]!.profile_kind === gap.profile_kind
       && Math.abs(entries.reduce((sum, entry) => sum + entry.center_distance_px, 0) / entries.length - gap.center_distance_px)
         <= policy.opening_gap_group_center_tolerance_ft * pixelsPerFoot
       && Math.abs(entries.reduce((sum, entry) => sum + entry.width_px, 0) / entries.length - gap.width_px)
@@ -1023,7 +1308,7 @@ function buildOpeningGapHypotheses(
     };
     const modelCenter = pointToModel(pixelCenter, scope, width, height);
     const offsetsFt = group.map((entry) => entry.offset_px / pixelsPerFoot).sort((a, b) => a - b);
-    const profileConfirmation = Math.min(1, confirmingProfiles.size / policy.opening_gap_face_profile_sample_count);
+    const profileConfirmation = Math.min(1, confirmingProfiles.size / policy.opening_gap_minimum_confirming_profiles);
     const evidenceScore = 0.35 * flankCoverage
       + 0.2 * (1 - gapInkCoverage)
       + 0.15 * profileInkCoverage
@@ -1048,9 +1333,49 @@ function buildOpeningGapHypotheses(
       evidence_score: round(Math.min(1, evidenceScore))
     });
   }
-  return hypotheses
-    .sort((a, b) => b.evidence_score - a.evidence_score || a.opening_hypothesis_id.localeCompare(b.opening_hypothesis_id))
-    .filter((entry) => entry.evidence_score >= policy.minimum_opening_gap_evidence_score)
+  const ranked = hypotheses
+    .sort((a, b) => b.evidence_score - a.evidence_score
+      || b.width_ft - a.width_ft
+      || a.opening_hypothesis_id.localeCompare(b.opening_hypothesis_id))
+    .filter((entry) => entry.evidence_score >= policy.minimum_opening_gap_evidence_score);
+  const hostById = new Map(candidates.map((candidate) => [candidate.candidate_id, candidate]));
+  const equivalentHosts = (leftId: string, rightId: string): boolean => {
+    if (leftId === rightId) return true;
+    const left = hostById.get(leftId);
+    const right = hostById.get(rightId);
+    if (!left || !right) return false;
+    if (angleDifference(left.angle_degrees, right.angle_degrees) > policy.face_pair_angle_tolerance_degrees) return false;
+    const radians = left.angle_degrees * Math.PI / 180;
+    const direction = { x: Math.cos(radians), y: Math.sin(radians) };
+    const normal = { x: -direction.y, y: direction.x };
+    const midpoint = (candidate: ArchitecturalWallLineCandidate): Point2 => ({
+      x: (candidate.model_points[0].x + candidate.model_points[1].x) / 2,
+      y: (candidate.model_points[0].y + candidate.model_points[1].y) / 2
+    });
+    const leftMidpoint = midpoint(left);
+    const rightMidpoint = midpoint(right);
+    const perpendicularSeparation = Math.abs(
+      (leftMidpoint.x - rightMidpoint.x) * normal.x
+      + (leftMidpoint.y - rightMidpoint.y) * normal.y
+    );
+    return perpendicularSeparation <= policy.hough_peak_duplicate_separation_ft;
+  };
+  const distinct = ranked.filter((entry, index) => !ranked.slice(0, index).some((accepted) => {
+    if (!equivalentHosts(accepted.host_candidate_id, entry.host_candidate_id)) return false;
+    if (angleDifference(accepted.profile_axis_degrees, entry.profile_axis_degrees)
+      > policy.opening_gap_axis_snap_tolerance_degrees) return false;
+    const radians = accepted.profile_axis_degrees * Math.PI / 180;
+    const axis = { x: Math.cos(radians), y: Math.sin(radians) };
+    const entryCenter = entry.model_center.x * axis.x + entry.model_center.y * axis.y;
+    const acceptedCenter = accepted.model_center.x * axis.x + accepted.model_center.y * axis.y;
+    const entryStart = entryCenter - entry.width_ft / 2;
+    const entryEnd = entryCenter + entry.width_ft / 2;
+    const acceptedStart = acceptedCenter - accepted.width_ft / 2;
+    const acceptedEnd = acceptedCenter + accepted.width_ft / 2;
+    const overlap = Math.max(0, Math.min(entryEnd, acceptedEnd) - Math.max(entryStart, acceptedStart));
+    return overlap / Math.min(entry.width_ft, accepted.width_ft) >= 0.8;
+  }));
+  return distinct
     .slice(0, policy.maximum_opening_gap_hypotheses)
     .map((entry, index) => ({ ...entry, rank: index + 1 }));
 }
@@ -1378,9 +1703,9 @@ export async function buildArchitecturalWallLineCandidates(
     overlay,
     usage_constraints: [
       "Candidates are deterministic image measurements, not selected truth and not native Revit actions.",
-      "Parallel-face midlines are explicit centerline hypotheses derived from two supported face lines; their measured face separation and supporting faces must be reconciled semantically before selection.",
+      "Parallel-face midlines are explicit centerline hypotheses derived from two supported face lines. Near-cardinal face pairs must also share directionally persistent source-only support and meet the ordinary absolute face-coverage gate so synchronized sparse annotations cannot form a false host pair; measured separation and supporting faces still require semantic reconciliation before selection.",
       "Junction hypotheses identify near-endpoint intersections between paired-face centerlines and provide topology evidence only; they do not select either wall or authorize an opening host.",
-      "Opening-gap hypotheses require a bounded low-ink interval across multiple normal wall-band profiles with supported ink on both flanks; they remain unclassified and bind only to a wall candidate, not a selected native host or family type.",
+      "Opening-gap hypotheses require a bounded low-ink interval across multiple normal wall-band profiles with wall-face ink on both flanks. Short room-tag, dimension, and swing-symbol crossings may fragment the blank interval only within the declared internal-ink length and ratio limits; the measured gap ink remains explicit. Hypotheses remain unclassified and bind only to a wall candidate, not a selected native host or family type.",
       "Parallel or near-equal candidates remain explicit ambiguities; rank alone must not authorize a wall or opening host.",
       "Candidate geometry is derived only from hash-bound source-aligned and source-only delta images in the registered frame.",
       "Opening recognition, wall type/thickness, vertical extents, and family/type promotion remain separate evidence-gated steps."

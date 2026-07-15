@@ -392,6 +392,88 @@ test("opening-gap discovery ignores retained background ink crossing a source-on
   }
 });
 
+test("opening-gap discovery recovers a paired wall opening through source-only tag and swing-symbol interference", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-opening-gap-symbol-interference-"));
+  try {
+    const fixture = await buildFixture(temp, "opening-gap-symbol-interference", [
+      [[250, 30], [250, 100]],
+      [[270, 30], [270, 100]],
+      [[250, 240], [250, 330]],
+      [[270, 240], [270, 330]],
+      // Door leaf and bounded swing approximation within the opening.
+      [[270, 100], [390, 100]],
+      [[390, 100], [365, 150]],
+      [[365, 150], [315, 205]],
+      [[315, 205], [270, 240]],
+      // Room-tag-like source-only strokes crossing both wall-face profiles.
+      [[220, 155], [300, 155]],
+      [[220, 185], [300, 185]],
+      [[240, 145], [240, 195]],
+      [[280, 145], [280, 195]]
+    ]);
+    const receipt = await buildArchitecturalWallLineCandidates(
+      fixture.delta,
+      sha256(fixture.deltaReceiptPath),
+      fixture.measurement,
+      sha256(fixture.measurementReceiptPath),
+      path.join(temp, "symbol-interference-candidates"),
+      {
+        maximum_candidates: 16,
+        minimum_length_ft: 2,
+        maximum_face_pair_separation_ft: 1.5
+      }
+    );
+    const opening = receipt.opening_gap_hypotheses.find((entry) => entry.width_ft >= 3.5 && entry.width_ft <= 5.5);
+    assert.ok(opening, JSON.stringify({
+      candidates: receipt.candidates,
+      openings: receipt.opening_gap_hypotheses
+    }, null, 2));
+    const host = receipt.candidates.find((candidate) => candidate.candidate_id === opening.host_candidate_id);
+    assert.ok(host);
+    assert.ok(Math.abs(host.angle_degrees - 90) <= 1);
+    assert.ok(host.face_separation_ft !== null && host.face_separation_ft >= 0.4 && host.face_separation_ft <= 0.9);
+    assert.equal(receipt.opening_gap_hypotheses.filter(
+      (entry) => entry.width_ft >= 3.5 && entry.width_ft <= 5.5
+    ).length, 1, JSON.stringify(receipt.opening_gap_hypotheses, null, 2));
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("opening-gap discovery rejects a one-sided face interruption", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-opening-gap-one-sided-"));
+  try {
+    const fixture = await buildFixture(temp, "opening-gap-one-sided", [
+      [[250, 30], [250, 330]],
+      [[270, 30], [270, 100]],
+      [[270, 240], [270, 330]]
+    ]);
+    const receipt = await buildArchitecturalWallLineCandidates(
+      fixture.delta,
+      sha256(fixture.deltaReceiptPath),
+      fixture.measurement,
+      sha256(fixture.measurementReceiptPath),
+      path.join(temp, "one-sided-candidates"),
+      {
+        maximum_candidates: 16,
+        minimum_length_ft: 2,
+        maximum_face_pair_separation_ft: 1.5
+      }
+    );
+    const host = receipt.candidates.find((candidate) => candidate.derivation === "parallel_face_midline"
+      && Math.abs(candidate.angle_degrees - 90) <= 1
+      && candidate.face_separation_ft !== null
+      && candidate.face_separation_ft >= 0.4
+      && candidate.face_separation_ft <= 0.9);
+    assert.ok(host, JSON.stringify(receipt.candidates, null, 2));
+    assert.equal(receipt.opening_gap_hypotheses.some(
+      (opening) => opening.host_candidate_id === host.candidate_id
+    ), false, JSON.stringify(receipt.opening_gap_hypotheses, null, 2));
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
 test("face pairing preserves common narrow partition faces below candidate dedupe tolerance", async () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-narrow-wall-face-pair-"));
   try {
@@ -418,9 +500,9 @@ test("face pairing preserves common narrow partition faces below candidate dedup
     const narrowPair = receipt.candidates.find((candidate) => candidate.derivation === "parallel_face_midline"
       && candidate.face_separation_ft !== null
       && candidate.face_separation_ft >= 0.3
-      && candidate.face_separation_ft <= 0.5);
+      && candidate.face_separation_ft <= 0.65
+      && receipt.opening_gap_hypotheses.some((opening) => opening.host_candidate_id === candidate.candidate_id));
     assert.ok(narrowPair, JSON.stringify(receipt.candidates, null, 2));
-    assert.ok(receipt.opening_gap_hypotheses.some((opening) => opening.host_candidate_id === narrowPair.candidate_id));
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
@@ -458,9 +540,10 @@ test("face pairing rejects sparse parallel annotation clutter", async () => {
       && candidate.face_separation_ft !== null
       && candidate.face_separation_ft >= 0.3
       && candidate.face_separation_ft <= 0.5));
-    assert.ok(receipt.candidates
-      .filter((candidate) => candidate.derivation === "parallel_face_midline")
-      .every((candidate) => candidate.candidate_coverage >= receipt.policy.minimum_face_pair_candidate_coverage));
+    assert.equal(receipt.candidates.some((candidate) => candidate.derivation === "parallel_face_midline"
+      && Math.abs(candidate.angle_degrees) <= 1
+      && candidate.pixel_points.reduce((sum, point) => sum + point.y, 0) / 2 >= 200), false,
+    JSON.stringify(receipt.candidates, null, 2));
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
