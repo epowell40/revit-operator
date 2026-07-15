@@ -206,7 +206,8 @@ function groundTruth(hostKey = "truth-host-wall-randomized"): ExistingConditions
           key: "truth-door-randomized",
           role: "door",
           location: { x: 5.1, y: 0.1 },
-          host_key: hostKey
+          host_key: hostKey,
+          parameters: { width: "3' - 0\"" }
         }
       ]
     }
@@ -310,6 +311,49 @@ test("scores a collinear containing wall as equivalent when PDF evidence cannot 
   assert.equal(score.wall_matches[0]!.truth_coverage, 1);
   assert.ok(score.wall_matches[0]!.prediction_overlap >= 0.69);
   assert.equal(score.metrics.hosting, 1);
+});
+
+test("scores a bounded PDF host against the native wall clipped to the declared source scope", () => {
+  const candidates = candidateReceipt();
+  candidates.scope_model_bounds = { min: { x: 0, y: -1 }, max: { x: 10, y: 1 } };
+  const truth = groundTruth();
+  const host = truth.snapshot.elements.find((element) => element.key === "truth-host-wall-randomized")!;
+  host.endpoints = [{ x: -40, y: 0.1, z: 0 }, { x: 60, y: 0.1, z: 0 }];
+  const classified = classification();
+  const resolution = resolveArchitecturalOpeningHosts(candidates, HASH_A, classified, HASH_C);
+  const score = scoreArchitecturalOpeningHostResolution(truth, candidates, HASH_A, classified, HASH_C, resolution);
+  assert.equal(score.passed, true, JSON.stringify(score, null, 2));
+  assert.equal(score.wall_matches[0]!.matching_basis, "endpoint");
+  assert.equal(score.wall_matches[0]!.truth_scope_clipped, true);
+  assert.equal(score.wall_matches[0]!.truth_coverage, 1);
+  assert.equal(score.metrics.hosting, 1);
+});
+
+test("rejects plan-visible opening width outside tolerance even when center and host are correct", () => {
+  const candidates = candidateReceipt();
+  candidates.opening_gap_hypotheses[0]!.width_ft = 4;
+  const truth = groundTruth();
+  truth.snapshot.elements.find((element) => element.key === "truth-door-randomized")!.parameters = { width: "36\"" };
+  const classified = classification();
+  const resolution = resolveArchitecturalOpeningHosts(candidates, HASH_A, classified, HASH_C);
+  const score = scoreArchitecturalOpeningHostResolution(truth, candidates, HASH_A, classified, HASH_C, resolution);
+  assert.equal(score.passed, false);
+  assert.ok(score.failure_classifications.includes("opening_width_outside_tolerance"));
+  assert.equal(score.counts.matched_openings, 0);
+});
+
+test("leaves opening width unscored when evaluator truth does not expose it", () => {
+  const truth = groundTruth();
+  const opening = truth.snapshot.elements.find((element) => element.key === "truth-door-randomized")!;
+  delete opening.parameters;
+  const candidates = candidateReceipt();
+  const classified = classification();
+  const resolution = resolveArchitecturalOpeningHosts(candidates, HASH_A, classified, HASH_C);
+  const score = scoreArchitecturalOpeningHostResolution(truth, candidates, HASH_A, classified, HASH_C, resolution);
+  assert.equal(score.passed, true, JSON.stringify(score, null, 2));
+  assert.equal(score.opening_matches[0]!.width_scored, false);
+  assert.equal(score.opening_matches[0]!.truth_width_ft, null);
+  assert.equal(score.opening_matches[0]!.width_score, null);
 });
 
 test("rejects a wrong native host relationship independently of opening location", () => {

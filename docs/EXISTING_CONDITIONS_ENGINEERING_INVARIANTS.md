@@ -73,6 +73,16 @@ Fixture profiles declare required and prohibited services. The evaluator checks 
 - Each service needs one unique fixture-bound native path. Duplicate service summaries, paths that do not begin at the target fixture for a claimed direct connection, ambiguous subtype profiles, and a “vent” claim that merely repeats the sanitary path without a distinct downstream vent continuation fail closed. Exact path element IDs and route geometry are not acceptance targets; alternate native connector/network routes can pass.
 - Flush-tank, flushometer-tank, and flushometer-valve connection-size criteria are separate sourced subtype rules. Manufacturer and project criteria can narrow them. The engine intentionally ships no guessed universal fixture connection sizes.
 
+## Architectural opening invariants
+
+Opening evidence and host evidence are separate. A deleted window can leave a continuous wall in the redacted model while its source-only plan graphics retain parallel glazing/frame strokes, sill lines, and jambs. In that case the source symbol must bind to a paired-face wall measured from the hash-bound redacted capture; the symbol's own parallel strokes may not become their own wall host.
+
+- Source-symbol binding requires at least two separated longitudinal strokes within a bounded wall band plus transverse jamb/frame closure evidence near both ends. A single long annotation, unclosed paired annotation, two strokes away from the wall, or an undersized mark does not produce an opening hypothesis. The longitudinal strokes need not bracket the wall centerline because many legitimate plan symbols are offset toward one wall face.
+- Split glazing strokes may merge across one bounded center-mullion interruption. The inferred full span may extend only to connected source-only jamb/frame ink and only within the measured wall-band limit; ordinary wall piers must not be bridged.
+- Classification remains a separate crop-bound decision. A window still requires visible glazing/sill cues, while a door requires its declared leaf/swing/jamb cues. Neither image stage selects a native Revit element or family type.
+- A bounded source crop cannot prove the full native length of a wall that continues beyond the crop. Host scoring clips evaluator-owned native wall geometry to the declared model-space scope before computing endpoint/overlap coverage, while still requiring the correct native host relationship and plan-visible opening location. When evaluator truth exposes opening width, the measured plan width is a hard matching gate and contributes to opening geometry; absent width remains explicitly unscored rather than guessed.
+- A development fixture that exposes a detector failure remains a regression after the fix. It cannot be relabeled as the independent post-fix holdout.
+
 ## Leakage controls
 
 Evaluation splits must hold out configured source-model families, source regions, PDF/view fingerprints, prompt-template fingerprints, mutation families, and hidden-answer fingerprints. A standards or generative evaluation case cannot be an exact replay of a deleted source pattern or reuse source-model geometry as its sole answer. Useful mutation families include:

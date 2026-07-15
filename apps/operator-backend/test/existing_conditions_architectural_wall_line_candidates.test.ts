@@ -549,6 +549,172 @@ test("face pairing rejects sparse parallel annotation clutter", async () => {
   }
 });
 
+test("window-symbol discovery binds split glazing strokes to a continuous redacted wall host", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-window-symbol-host-"));
+  try {
+    const fixture = await buildFixture(temp, "window-symbol-host", [
+      [[220, 182], [294, 182]],
+      [[306, 182], [380, 182]],
+      [[220, 198], [294, 198]],
+      [[306, 198], [380, 198]],
+      [[210, 175], [210, 205]],
+      [[390, 175], [390, 205]]
+    ], [
+      [[40, 170], [560, 170]],
+      [[40, 210], [560, 210]]
+    ]);
+    const receipt = await buildArchitecturalWallLineCandidates(
+      fixture.delta,
+      sha256(fixture.deltaReceiptPath),
+      fixture.measurement,
+      sha256(fixture.measurementReceiptPath),
+      path.join(temp, "window-symbol-candidates"),
+      {
+        maximum_candidates: 12,
+        minimum_length_ft: 2,
+        maximum_face_pair_separation_ft: 2
+      }
+    );
+    const symbols = receipt.opening_gap_hypotheses.filter(
+      (entry) => entry.kind === "unclassified_opening_symbol"
+    );
+    assert.equal(symbols.length, 1, JSON.stringify(receipt.opening_gap_hypotheses, null, 2));
+    const opening = symbols[0]!;
+    assert.equal(opening.evidence_basis, "source_symbol_on_redacted_wall");
+    assert.ok(opening.width_ft >= 5.2 && opening.width_ft <= 6.1, JSON.stringify(opening, null, 2));
+    assert.ok(opening.pixel_center.x >= 285 && opening.pixel_center.x <= 315);
+    assert.ok(opening.evidence_score >= 0.85);
+    const host = receipt.candidates.find((candidate) => candidate.candidate_id === opening.host_candidate_id);
+    assert.ok(host);
+    assert.equal(host.evidence_source, "redacted_model");
+    assert.equal(host.derivation, "parallel_face_midline");
+    assert.ok(host.supporting_face_pixel_points);
+    assert.ok(Math.abs(host.angle_degrees) <= 1);
+    const crop = receipt.opening_evidence_crops.find(
+      (entry) => entry.opening_hypothesis_id === opening.opening_hypothesis_id
+    );
+    assert.ok(crop);
+    assert.equal(sha256(crop.source_crop.path), crop.source_crop.sha256);
+    assert.equal(sha256(crop.evidence_overlay.path), crop.evidence_overlay.sha256);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("window-symbol discovery rejects one longitudinal stroke on an otherwise continuous wall", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-window-symbol-one-line-"));
+  try {
+    const fixture = await buildFixture(temp, "window-symbol-one-line", [
+      [[210, 190], [390, 190]],
+      [[250, 175], [250, 205]],
+      [[350, 175], [350, 205]]
+    ], [
+      [[40, 170], [560, 170]],
+      [[40, 210], [560, 210]]
+    ]);
+    const receipt = await buildArchitecturalWallLineCandidates(
+      fixture.delta,
+      sha256(fixture.deltaReceiptPath),
+      fixture.measurement,
+      sha256(fixture.measurementReceiptPath),
+      path.join(temp, "one-line-candidates"),
+      { maximum_candidates: 12, minimum_length_ft: 2, maximum_face_pair_separation_ft: 2 }
+    );
+    assert.equal(receipt.opening_gap_hypotheses.some(
+      (entry) => entry.kind === "unclassified_opening_symbol"
+    ), false, JSON.stringify(receipt.opening_gap_hypotheses, null, 2));
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("window-symbol discovery rejects parallel annotation strokes away from the redacted wall band", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-window-symbol-offset-annotation-"));
+  try {
+    const fixture = await buildFixture(temp, "window-symbol-offset-annotation", [
+      [[210, 70], [390, 70]],
+      [[210, 86], [390, 86]]
+    ], [
+      [[40, 170], [560, 170]],
+      [[40, 210], [560, 210]]
+    ]);
+    const receipt = await buildArchitecturalWallLineCandidates(
+      fixture.delta,
+      sha256(fixture.deltaReceiptPath),
+      fixture.measurement,
+      sha256(fixture.measurementReceiptPath),
+      path.join(temp, "offset-annotation-candidates"),
+      { maximum_candidates: 12, minimum_length_ft: 2, maximum_face_pair_separation_ft: 2 }
+    );
+    assert.equal(receipt.opening_gap_hypotheses.some(
+      (entry) => entry.kind === "unclassified_opening_symbol"
+    ), false, JSON.stringify(receipt.opening_gap_hypotheses, null, 2));
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("window-symbol discovery rejects unclosed paired annotation strokes inside the host band", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-window-symbol-same-side-annotation-"));
+  try {
+    const fixture = await buildFixture(temp, "window-symbol-same-side-annotation", [
+      [[210, 174], [390, 174]],
+      [[210, 182], [390, 182]]
+    ], [
+      [[40, 170], [560, 170]],
+      [[40, 210], [560, 210]]
+    ]);
+    const receipt = await buildArchitecturalWallLineCandidates(
+      fixture.delta,
+      sha256(fixture.deltaReceiptPath),
+      fixture.measurement,
+      sha256(fixture.measurementReceiptPath),
+      path.join(temp, "same-side-annotation-candidates"),
+      { maximum_candidates: 12, minimum_length_ft: 2, maximum_face_pair_separation_ft: 2 }
+    );
+    assert.equal(receipt.opening_gap_hypotheses.some(
+      (entry) => entry.kind === "unclassified_opening_symbol"
+    ), false, JSON.stringify(receipt.opening_gap_hypotheses, null, 2));
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("window-symbol discovery keeps adjacent windows separate across an ordinary wall pier", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-window-symbol-adjacent-"));
+  try {
+    const fixture = await buildFixture(temp, "window-symbol-adjacent", [
+      [[140, 182], [240, 182]],
+      [[140, 198], [240, 198]],
+      [[130, 175], [130, 205]],
+      [[250, 175], [250, 205]],
+      [[300, 182], [400, 182]],
+      [[300, 198], [400, 198]],
+      [[290, 175], [290, 205]],
+      [[410, 175], [410, 205]]
+    ], [
+      [[40, 170], [560, 170]],
+      [[40, 210], [560, 210]]
+    ]);
+    const receipt = await buildArchitecturalWallLineCandidates(
+      fixture.delta,
+      sha256(fixture.deltaReceiptPath),
+      fixture.measurement,
+      sha256(fixture.measurementReceiptPath),
+      path.join(temp, "adjacent-window-candidates"),
+      { maximum_candidates: 12, minimum_length_ft: 2, maximum_face_pair_separation_ft: 2 }
+    );
+    const symbols = receipt.opening_gap_hypotheses.filter(
+      (entry) => entry.kind === "unclassified_opening_symbol"
+    );
+    assert.equal(symbols.length, 2, JSON.stringify(symbols, null, 2));
+    assert.ok(symbols.every((entry) => entry.width_ft < 5), JSON.stringify(symbols, null, 2));
+    assert.ok(Math.abs(symbols[0]!.pixel_center.x - symbols[1]!.pixel_center.x) > 100);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
 test("wall-line extraction is geometry-sensitive and rejects hash-bound receipt drift", async () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-wall-line-perturbation-"));
   try {

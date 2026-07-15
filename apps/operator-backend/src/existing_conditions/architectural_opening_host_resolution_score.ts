@@ -17,6 +17,7 @@ export type ArchitecturalOpeningHostResolutionScoringPolicy = {
   minimum_wall_truth_coverage: number;
   minimum_wall_prediction_overlap: number;
   opening_location_tolerance_ft: number;
+  opening_width_tolerance_ft: number;
   minimum_wall_precision: number;
   minimum_wall_recall: number;
   minimum_opening_precision: number;
@@ -31,6 +32,7 @@ export const DEFAULT_ARCHITECTURAL_OPENING_HOST_RESOLUTION_SCORING_POLICY: Archi
   minimum_wall_truth_coverage: 0.9,
   minimum_wall_prediction_overlap: 0.6,
   opening_location_tolerance_ft: 1,
+  opening_width_tolerance_ft: 0.5,
   minimum_wall_precision: 0.8,
   minimum_wall_recall: 0.8,
   minimum_opening_precision: 0.8,
@@ -80,12 +82,18 @@ export type ArchitecturalOpeningHostResolutionScore = {
     truth_coverage: number;
     prediction_overlap: number;
     geometry_score: number;
+    truth_scope_clipped: boolean;
   }>;
   opening_matches: Array<{
     opening_hypothesis_id: string;
     truth_opening_key: string;
     role: "door" | "window";
     location_error_ft: number;
+    predicted_width_ft: number;
+    truth_width_ft: number | null;
+    width_error_ft: number | null;
+    width_score: number | null;
+    width_scored: boolean;
     geometry_score: number;
     expected_truth_host_key: string | null;
     matched_truth_host_key: string | null;
@@ -116,6 +124,40 @@ function endpointError(predicted: [Point2, Point2], truth: [Point2, Point2]): nu
 
 function segmentLength(points: [Point2, Point2]): number {
   return distance(points[0], points[1]);
+}
+
+function clipSegmentToBounds(
+  segment: [Point2, Point2],
+  bounds: ArchitecturalWallLineCandidateReceipt["scope_model_bounds"]
+): [Point2, Point2] | null {
+  if (!bounds) return segment;
+  const dx = segment[1].x - segment[0].x;
+  const dy = segment[1].y - segment[0].y;
+  const p = [-dx, dx, -dy, dy];
+  const q = [
+    segment[0].x - bounds.min.x,
+    bounds.max.x - segment[0].x,
+    segment[0].y - bounds.min.y,
+    bounds.max.y - segment[0].y
+  ];
+  let minimum = 0;
+  let maximum = 1;
+  for (let index = 0; index < p.length; index += 1) {
+    const denominator = p[index]!;
+    const numerator = q[index]!;
+    if (Math.abs(denominator) <= Number.EPSILON) {
+      if (numerator < 0) return null;
+      continue;
+    }
+    const ratio = numerator / denominator;
+    if (denominator < 0) minimum = Math.max(minimum, ratio);
+    else maximum = Math.min(maximum, ratio);
+    if (minimum > maximum) return null;
+  }
+  return [
+    { x: segment[0].x + minimum * dx, y: segment[0].y + minimum * dy },
+    { x: segment[0].x + maximum * dx, y: segment[0].y + maximum * dy }
+  ];
 }
 
 function segmentMatch(
@@ -195,10 +237,53 @@ function ratio(matches: number, total: number, emptyValue: number): number {
   return total === 0 ? emptyValue : matches / total;
 }
 
+function numericToken(value: string): number | null {
+  const normalized = value.trim();
+  if (/^\d+(?:\.\d+)?$/.test(normalized)) return Number(normalized);
+  const mixed = /^(\d+)\s+(\d+)\/(\d+)$/.exec(normalized);
+  if (mixed) {
+    const denominator = Number(mixed[3]);
+    return denominator > 0 ? Number(mixed[1]) + Number(mixed[2]) / denominator : null;
+  }
+  const fraction = /^(\d+)\/(\d+)$/.exec(normalized);
+  if (fraction) {
+    const denominator = Number(fraction[2]);
+    return denominator > 0 ? Number(fraction[1]) / denominator : null;
+  }
+  return null;
+}
+
+function architecturalOpeningWidthFt(element: ExistingConditionsElement): number | null {
+  const nativeWidth = element.size?.width_ft;
+  if (typeof nativeWidth === "number" && Number.isFinite(nativeWidth) && nativeWidth > 0) return nativeWidth;
+  const parameterWidth = element.parameters?.width;
+  if (typeof parameterWidth === "number") {
+    return Number.isFinite(parameterWidth) && parameterWidth > 0 ? parameterWidth : null;
+  }
+  if (typeof parameterWidth !== "string") return null;
+  const normalized = parameterWidth.trim()
+    .replace(/[′’]/g, "'")
+    .replace(/[″]/g, "\"")
+    .replace(/\b(?:feet|foot|ft)\b/gi, "'")
+    .replace(/\b(?:inches|inch|in)\b/gi, "\"");
+  if (/^\d+(?:\.\d+)?$/.test(normalized)) {
+    const value = Number(normalized);
+    return value > 0 ? value : null;
+  }
+  const match = /^(?:(\d+(?:\.\d+)?)\s*')?\s*(?:-\s*)?(?:(\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?)\s*\")?$/.exec(normalized);
+  if (!match || (!match[1] && !match[2])) return null;
+  const feet = match[1] ? Number(match[1]) : 0;
+  const inches = match[2] ? numericToken(match[2]) : 0;
+  if (!Number.isFinite(feet) || inches === null || inches < 0 || (match[1] !== undefined && inches >= 12)) return null;
+  const value = feet + inches / 12;
+  return value > 0 ? value : null;
+}
+
 function validatePolicy(policy: ArchitecturalOpeningHostResolutionScoringPolicy): void {
   if (!Number.isFinite(policy.wall_endpoint_tolerance_ft) || policy.wall_endpoint_tolerance_ft <= 0
     || !Number.isFinite(policy.wall_axis_tolerance_degrees) || policy.wall_axis_tolerance_degrees <= 0 || policy.wall_axis_tolerance_degrees > 45
     || !Number.isFinite(policy.opening_location_tolerance_ft) || policy.opening_location_tolerance_ft <= 0
+    || !Number.isFinite(policy.opening_width_tolerance_ft) || policy.opening_width_tolerance_ft <= 0
     || !Number.isFinite(policy.passing_score) || policy.passing_score < 0 || policy.passing_score > 100) {
     throw new Error("architectural_opening_host_resolution_scoring_policy_invalid");
   }
@@ -254,11 +339,15 @@ export function scoreArchitecturalOpeningHostResolution(
   }])).values()];
   const wallPossibilities = truthHostWalls.flatMap((truthWall) => predictedHostWalls.flatMap((predictedWall) => {
     const truthPoints = truthWall.endpoints as Array<{ x: number; y: number }>;
-    const match = segmentMatch(predictedWall.points, [truthPoints[0]!, truthPoints[1]!], policy);
+    const originalTruth: [Point2, Point2] = [truthPoints[0]!, truthPoints[1]!];
+    const scopedTruth = clipSegmentToBounds(originalTruth, candidates.scope_model_bounds);
+    if (!scopedTruth) return [];
+    const match = segmentMatch(predictedWall.points, scopedTruth, policy);
     if (!match) return [];
     return [{
       selected_host_candidate_id: predictedWall.candidate_id,
       truth_wall_key: truthWall.key,
+      truth_scope_clipped: segmentLength(scopedTruth) + 1e-6 < segmentLength(originalTruth),
       ...match
     }];
   })).sort((a, b) => b.geometry_score - a.geometry_score
@@ -274,10 +363,18 @@ export function scoreArchitecturalOpeningHostResolution(
     return true;
   });
   const hostTruthByCandidate = new Map(wallMatches.map((entry) => [entry.selected_host_candidate_id, entry.truth_wall_key]));
+  const predictedOpeningById = new Map(candidates.opening_gap_hypotheses.map((entry) => [entry.opening_hypothesis_id, entry]));
   const openingPossibilities = truthOpenings.flatMap((truthOpening) => resolvedEntries.flatMap((prediction) => {
     if (role(truthOpening) !== prediction.classification || !truthOpening.location) return [];
     const error = distance(prediction.opening_model_center, truthOpening.location);
     if (error > policy.opening_location_tolerance_ft) return [];
+    const predictedOpening = predictedOpeningById.get(prediction.opening_hypothesis_id);
+    if (!predictedOpening) return [];
+    const truthWidth = architecturalOpeningWidthFt(truthOpening);
+    const widthError = truthWidth === null ? null : Math.abs(predictedOpening.width_ft - truthWidth);
+    if (widthError !== null && widthError > policy.opening_width_tolerance_ft) return [];
+    const locationScore = Math.max(0, 1 - error / policy.opening_location_tolerance_ft);
+    const widthScore = widthError === null ? null : Math.max(0, 1 - widthError / policy.opening_width_tolerance_ft);
     const matchedTruthHostKey = hostTruthByCandidate.get(prediction.selected_host_candidate_id!) ?? null;
     const expectedTruthHostKey = truthOpening.host_key ?? null;
     return [{
@@ -285,7 +382,12 @@ export function scoreArchitecturalOpeningHostResolution(
       truth_opening_key: truthOpening.key,
       role: prediction.classification as "door" | "window",
       location_error_ft: round(error),
-      geometry_score: round(Math.max(0, 1 - error / policy.opening_location_tolerance_ft)),
+      predicted_width_ft: predictedOpening.width_ft,
+      truth_width_ft: truthWidth === null ? null : round(truthWidth),
+      width_error_ft: widthError === null ? null : round(widthError),
+      width_score: widthScore === null ? null : round(widthScore),
+      width_scored: widthScore !== null,
+      geometry_score: round(widthScore === null ? locationScore : 0.5 * locationScore + 0.5 * widthScore),
       expected_truth_host_key: expectedTruthHostKey,
       matched_truth_host_key: matchedTruthHostKey,
       hosting_ok: expectedTruthHostKey !== null && matchedTruthHostKey === expectedTruthHostKey
@@ -328,6 +430,18 @@ export function scoreArchitecturalOpeningHostResolution(
   if (wallMatches.length < predictedHostWalls.length) failures.push("opening_host_wall_false_positive");
   if (openingMatches.length < truthOpenings.length) failures.push("opening_truth_missed");
   if (openingMatches.length < resolvedEntries.length) failures.push("opening_false_positive");
+  const widthOutsideTolerance = truthOpenings.some((truthOpening) => {
+    const truthWidth = architecturalOpeningWidthFt(truthOpening);
+    if (truthWidth === null || !truthOpening.location) return false;
+    const truthLocation = truthOpening.location;
+    return resolvedEntries.some((prediction) => {
+      if (role(truthOpening) !== prediction.classification) return false;
+      if (distance(prediction.opening_model_center, truthLocation) > policy.opening_location_tolerance_ft) return false;
+      const predictedWidth = predictedOpeningById.get(prediction.opening_hypothesis_id)?.width_ft;
+      return predictedWidth === undefined || Math.abs(predictedWidth - truthWidth) > policy.opening_width_tolerance_ft;
+    });
+  });
+  if (widthOutsideTolerance) failures.push("opening_width_outside_tolerance");
   if (wallPrecision < policy.minimum_wall_precision) failures.push("opening_host_wall_precision_below_threshold");
   if (wallRecall < policy.minimum_wall_recall) failures.push("opening_host_wall_recall_below_threshold");
   if (openingPrecision < policy.minimum_opening_precision) failures.push("opening_precision_below_threshold");

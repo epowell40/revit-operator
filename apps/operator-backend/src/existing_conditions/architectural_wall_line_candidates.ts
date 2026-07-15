@@ -72,6 +72,7 @@ export type ArchitecturalWallLineCandidate = {
   candidate_coverage: number;
   source_ink_coverage: number;
   rank_score: number;
+  evidence_source?: "source_delta" | "redacted_model";
 };
 
 export type ArchitecturalWallLineAmbiguity = {
@@ -98,7 +99,7 @@ export type ArchitecturalWallJunctionHypothesis = {
 export type ArchitecturalOpeningGapHypothesis = {
   opening_hypothesis_id: string;
   rank: number;
-  kind: "unclassified_opening_gap";
+  kind: "unclassified_opening_gap" | "unclassified_opening_symbol";
   host_candidate_id: string;
   pixel_center: Point2;
   model_center: Point2;
@@ -112,6 +113,7 @@ export type ArchitecturalOpeningGapHypothesis = {
   gap_ink_coverage: number;
   profile_ink_coverage: number;
   evidence_score: number;
+  evidence_basis?: "wall_face_gap" | "source_symbol_on_redacted_wall";
 };
 
 export type ArchitecturalImageReference = {
@@ -143,6 +145,11 @@ export type ArchitecturalWallLineCandidateReceipt = {
   measurement_receipt_sha256: string;
   source_aligned_sha256: string;
   candidate_delta_mask_sha256: string;
+  redacted_aligned_sha256?: string;
+  scope_model_bounds?: {
+    min: Point2;
+    max: Point2;
+  };
   status: "candidates_ready" | "clarification_required" | "blocked";
   policy: ArchitecturalWallLineCandidatePolicy;
   candidates: ArchitecturalWallLineCandidate[];
@@ -376,12 +383,19 @@ function policyFor(width: number, height: number, override: Partial<Architectura
 async function loadMasks(
   sourcePath: string,
   candidatePath: string,
+  redactedPath: string,
   width: number,
   height: number,
   inkThreshold: number
-): Promise<{ source: Uint8Array; candidate: Uint8Array }> {
-  const [sourceImage, candidateImage] = await Promise.all([loadImage(sourcePath), loadImage(candidatePath)]);
-  if (sourceImage.width !== width || sourceImage.height !== height || candidateImage.width !== width || candidateImage.height !== height) {
+): Promise<{ source: Uint8Array; candidate: Uint8Array; redacted: Uint8Array }> {
+  const [sourceImage, candidateImage, redactedImage] = await Promise.all([
+    loadImage(sourcePath),
+    loadImage(candidatePath),
+    loadImage(redactedPath)
+  ]);
+  if (sourceImage.width !== width || sourceImage.height !== height
+    || candidateImage.width !== width || candidateImage.height !== height
+    || redactedImage.width !== width || redactedImage.height !== height) {
     throw new Error("architectural_wall_line_candidate_image_dimensions_mismatch");
   }
   const sourceCanvas = createCanvas(width, height);
@@ -392,15 +406,24 @@ async function loadMasks(
   const candidateContext = candidateCanvas.getContext("2d");
   candidateContext.drawImage(candidateImage, 0, 0);
   const candidatePixels = candidateContext.getImageData(0, 0, width, height).data;
+  const redactedCanvas = createCanvas(width, height);
+  const redactedContext = redactedCanvas.getContext("2d");
+  redactedContext.drawImage(redactedImage, 0, 0);
+  const redactedPixels = redactedContext.getImageData(0, 0, width, height).data;
   const source = new Uint8Array(width * height);
   const candidate = new Uint8Array(width * height);
+  const redacted = new Uint8Array(width * height);
   for (let index = 0; index < source.length; index += 1) {
     const offset = index * 4;
     const luminance = 0.2126 * sourcePixels[offset]! + 0.7152 * sourcePixels[offset + 1]! + 0.0722 * sourcePixels[offset + 2]!;
+    const redactedLuminance = 0.2126 * redactedPixels[offset]!
+      + 0.7152 * redactedPixels[offset + 1]!
+      + 0.0722 * redactedPixels[offset + 2]!;
     source[index] = sourcePixels[offset + 3]! > 25 && luminance < inkThreshold ? 1 : 0;
     candidate[index] = candidatePixels[offset + 3]! > 25 ? 1 : 0;
+    redacted[index] = redactedPixels[offset + 3]! > 25 && redactedLuminance < inkThreshold ? 1 : 0;
   }
-  return { source, candidate };
+  return { source, candidate, redacted };
 }
 
 function boundaryPoints(mask: Uint8Array, width: number, height: number, stride: number): HoughPoint[] {
@@ -1380,6 +1403,263 @@ function buildOpeningGapHypotheses(
     .map((entry, index) => ({ ...entry, rank: index + 1 }));
 }
 
+function candidateFromRawLine(
+  line: RawLine,
+  rank: number,
+  evidenceSource: "source_delta" | "redacted_model",
+  scope: ArchitecturalSourceDeltaReceipt["scope_model_bounds"],
+  width: number,
+  height: number,
+  pixelsPerFoot: number
+): ArchitecturalWallLineCandidate {
+  const baseId = stableCandidateId(line);
+  const candidateId = evidenceSource === "source_delta"
+    ? baseId
+    : `line-${crypto.createHash("sha256").update(`redacted_model|${baseId}`).digest("hex").slice(0, 12)}`;
+  return {
+    candidate_id: candidateId,
+    rank,
+    derivation: line.derivation,
+    pixel_points: line.pixel_points.map((entry) => ({
+      x: round(Math.max(0, Math.min(width, entry.x))),
+      y: round(Math.max(0, Math.min(height, entry.y)))
+    })) as [Point2, Point2],
+    model_points: line.pixel_points.map((entry) => {
+      const model = pointToModel({
+        x: Math.max(0, Math.min(width, entry.x)),
+        y: Math.max(0, Math.min(height, entry.y))
+      }, scope, width, height);
+      return { x: round(model.x), y: round(model.y) };
+    }) as [Point2, Point2],
+    face_separation_ft: line.face_separation_px === null ? null : round(line.face_separation_px / pixelsPerFoot),
+    supporting_face_pixel_points: line.supporting_face_pixel_points === null ? null : line.supporting_face_pixel_points.map(
+      (face) => face.map((entry) => ({
+        x: round(Math.max(0, Math.min(width, entry.x))),
+        y: round(Math.max(0, Math.min(height, entry.y)))
+      })) as [Point2, Point2]
+    ) as [[Point2, Point2], [Point2, Point2]],
+    supporting_face_model_points: line.supporting_face_pixel_points === null ? null : line.supporting_face_pixel_points.map(
+      (face) => face.map((entry) => {
+        const model = pointToModel({
+          x: Math.max(0, Math.min(width, entry.x)),
+          y: Math.max(0, Math.min(height, entry.y))
+        }, scope, width, height);
+        return { x: round(model.x), y: round(model.y) };
+      }) as [Point2, Point2]
+    ) as [[Point2, Point2], [Point2, Point2]],
+    angle_degrees: line.angle_degrees,
+    length_ft: round(line.length_px / pixelsPerFoot),
+    candidate_coverage: round(line.candidate_coverage),
+    source_ink_coverage: round(line.source_ink_coverage),
+    rank_score: round(line.rank_score),
+    evidence_source: evidenceSource
+  };
+}
+
+function clusteredNormalOffsets(offsets: number[], maximumClusterGapPx: number): number[] {
+  const sorted = [...new Set(offsets)].sort((a, b) => a - b);
+  const centers: number[] = [];
+  let cluster: number[] = [];
+  for (const offset of sorted) {
+    if (cluster.length === 0 || offset - cluster.at(-1)! <= maximumClusterGapPx) cluster.push(offset);
+    else {
+      centers.push(cluster.reduce((sum, value) => sum + value, 0) / cluster.length);
+      cluster = [offset];
+    }
+  }
+  if (cluster.length > 0) centers.push(cluster.reduce((sum, value) => sum + value, 0) / cluster.length);
+  return centers;
+}
+
+/**
+ * A deleted window usually leaves a continuous wall in the redacted model while
+ * the source-only delta retains two or more longitudinal glazing/frame strokes.
+ * Bind those strokes to a hash-bound redacted wall-face pair instead of treating
+ * the window frame itself as a competing wall candidate.
+ */
+function buildOpeningSymbolHypotheses(
+  redactedCandidates: ArchitecturalWallLineCandidate[],
+  candidateMask: Uint8Array,
+  width: number,
+  height: number,
+  pixelsPerFoot: number,
+  scope: ArchitecturalSourceDeltaReceipt["scope_model_bounds"],
+  policy: ArchitecturalWallLineCandidatePolicy
+): { hosts: ArchitecturalWallLineCandidate[]; hypotheses: ArchitecturalOpeningGapHypothesis[] } {
+  const acceptedHosts = new Map<string, ArchitecturalWallLineCandidate>();
+  const hypotheses: Omit<ArchitecturalOpeningGapHypothesis, "rank">[] = [];
+  // Sliding/double windows often split their parallel glazing strokes at a
+  // center mullion. Reuse the existing bounded symbol-ink tolerance so the two
+  // leaves become one opening span without bridging a normal wall pier.
+  const maximumInternalGapPx = Math.max(1, Math.round(
+    policy.opening_gap_maximum_internal_ink_ft * pixelsPerFoot
+  ));
+  const maximumClusterGapPx = Math.max(1, Math.round(0.05 * pixelsPerFoot));
+  const minimumParallelSeparationPx = Math.max(2, Math.round(0.12 * pixelsPerFoot));
+
+  for (const host of redactedCandidates) {
+    if (host.derivation !== "parallel_face_midline"
+      || host.face_separation_ft === null
+      || host.supporting_face_pixel_points === null
+      || host.candidate_coverage < 0.8
+      || host.source_ink_coverage < policy.minimum_opening_host_source_ink_coverage) continue;
+    const start = host.pixel_points[0];
+    const end = host.pixel_points[1];
+    const lengthPx = Math.hypot(end.x - start.x, end.y - start.y);
+    if (lengthPx <= 0) continue;
+    const direction = { x: (end.x - start.x) / lengthPx, y: (end.y - start.y) / lengthPx };
+    const normalizedAngle = (Math.atan2(direction.y, direction.x) * 180 / Math.PI + 180) % 180;
+    const nearestAxis = Math.abs(normalizedAngle - 90) < Math.min(normalizedAngle, 180 - normalizedAngle) ? 90 : 0;
+    const axisDifference = nearestAxis === 90 ? Math.abs(normalizedAngle - 90) : Math.min(normalizedAngle, 180 - normalizedAngle);
+    if (axisDifference > policy.opening_gap_axis_snap_tolerance_degrees) continue;
+    const normal = { x: -direction.y, y: direction.x };
+    const bandHalfWidthPx = Math.max(
+      Math.round(0.5 * pixelsPerFoot),
+      Math.round((host.face_separation_ft / 2 + 0.3) * pixelsPerFoot)
+    );
+    const sampleLength = Math.max(1, Math.round(lengthPx));
+    const supported = new Uint8Array(sampleLength + 1);
+    const anySymbolInk = new Uint8Array(sampleLength + 1);
+    const transverseClosure = new Uint8Array(sampleLength + 1);
+    const minimumClosureSpanPx = Math.max(
+      Math.round(0.3 * pixelsPerFoot),
+      Math.round(host.face_separation_ft * 0.3 * pixelsPerFoot)
+    );
+    for (let sample = 0; sample <= sampleLength; sample += 1) {
+      const distance = sample / sampleLength * lengthPx;
+      const offsets: number[] = [];
+      for (let offset = -bandHalfWidthPx; offset <= bandHalfWidthPx; offset += 1) {
+        const x = Math.round(start.x + direction.x * distance + normal.x * offset);
+        const y = Math.round(start.y + direction.y * distance + normal.y * offset);
+        if (x < 0 || x >= width || y < 0 || y >= height) continue;
+        if (candidateMask[y * width + x]) offsets.push(offset);
+      }
+      const clusters = clusteredNormalOffsets(offsets, maximumClusterGapPx);
+      anySymbolInk[sample] = offsets.length > 0 ? 1 : 0;
+      supported[sample] = clusters.some((first, index) => clusters.slice(index + 1).some(
+        (second) => Math.abs(second - first) >= minimumParallelSeparationPx
+      )) ? 1 : 0;
+      transverseClosure[sample] = offsets.length > 1
+        && Math.max(...offsets) - Math.min(...offsets) >= minimumClosureSpanPx ? 1 : 0;
+    }
+    const runs: Array<{ start: number; end: number; supported: number }> = [];
+    let runStart: number | null = null;
+    let lastSupported = -1;
+    let supportCount = 0;
+    for (let sample = 0; sample <= sampleLength; sample += 1) {
+      if (supported[sample]) {
+        if (runStart === null) runStart = sample;
+        lastSupported = sample;
+        supportCount += 1;
+      }
+      if (runStart !== null && (sample - lastSupported > maximumInternalGapPx || sample === sampleLength)) {
+        runs.push({ start: runStart, end: lastSupported, supported: supportCount });
+        runStart = null;
+        lastSupported = -1;
+        supportCount = 0;
+      }
+    }
+    for (const run of runs) {
+      // Parallel glazing lines commonly stop inside the outer jamb/frame. Grow
+      // only to connected source-only ink, and never farther than half the
+      // measured redacted wall band on either side.
+      const maximumJambExtensionSamples = Math.max(1, Math.round(
+        Math.min(0.75, host.face_separation_ft / 2) * pixelsPerFoot / lengthPx * sampleLength
+      ));
+      const maximumJambInkGapSamples = Math.max(1, Math.round(0.12 * pixelsPerFoot / lengthPx * sampleLength));
+      const closureSearchPadding = maximumJambExtensionSamples;
+      const hasStartClosure = transverseClosure.slice(
+        Math.max(0, run.start - closureSearchPadding),
+        Math.min(sampleLength + 1, run.start + closureSearchPadding + 1)
+      ).some((value) => value === 1);
+      const hasEndClosure = transverseClosure.slice(
+        Math.max(0, run.end - closureSearchPadding),
+        Math.min(sampleLength + 1, run.end + closureSearchPadding + 1)
+      ).some((value) => value === 1);
+      if (!hasStartClosure || !hasEndClosure) continue;
+      let expandedStart = run.start;
+      let expandedEnd = run.end;
+      let blank = 0;
+      for (let sample = run.start - 1; sample >= Math.max(0, run.start - maximumJambExtensionSamples); sample -= 1) {
+        if (anySymbolInk[sample]) {
+          expandedStart = sample;
+          blank = 0;
+        } else if (++blank > maximumJambInkGapSamples) break;
+      }
+      blank = 0;
+      for (let sample = run.end + 1; sample <= Math.min(sampleLength, run.end + maximumJambExtensionSamples); sample += 1) {
+        if (anySymbolInk[sample]) {
+          expandedEnd = sample;
+          blank = 0;
+        } else if (++blank > maximumJambInkGapSamples) break;
+      }
+      const runWidthPx = (expandedEnd - expandedStart + 1) / sampleLength * lengthPx;
+      const runWidthFt = runWidthPx / pixelsPerFoot;
+      if (runWidthFt < policy.minimum_opening_gap_width_ft || runWidthFt > policy.maximum_opening_gap_width_ft) continue;
+      const runSampleCount = run.end - run.start + 1;
+      const symbolCoverage = run.supported / runSampleCount;
+      if (symbolCoverage < 0.55) continue;
+      const centerDistancePx = (expandedStart + expandedEnd) / 2 / sampleLength * lengthPx;
+      const pixelCenter = {
+        x: start.x + direction.x * centerDistancePx,
+        y: start.y + direction.y * centerDistancePx
+      };
+      const modelCenter = pointToModel(pixelCenter, scope, width, height);
+      const evidenceScore = 0.35 * symbolCoverage
+        + 0.25 * host.candidate_coverage
+        + 0.25 * host.source_ink_coverage
+        + 0.15;
+      if (evidenceScore < policy.minimum_opening_gap_evidence_score) continue;
+      const payload = [host.candidate_id, round(centerDistancePx), round(runWidthPx), "source_symbol"].join("|");
+      acceptedHosts.set(host.candidate_id, host);
+      hypotheses.push({
+        opening_hypothesis_id: `opening-${crypto.createHash("sha256").update(payload).digest("hex").slice(0, 12)}`,
+        kind: "unclassified_opening_symbol",
+        host_candidate_id: host.candidate_id,
+        pixel_center: { x: round(pixelCenter.x), y: round(pixelCenter.y) },
+        model_center: { x: round(modelCenter.x), y: round(modelCenter.y) },
+        width_ft: round(runWidthFt),
+        host_chainage_ft: round(centerDistancePx / pixelsPerFoot),
+        host_chainage_ratio: round(centerDistancePx / lengthPx),
+        profile_axis_degrees: nearestAxis,
+        confirming_profile_count: 2,
+        profile_offset_range_ft: [round(-bandHalfWidthPx / pixelsPerFoot), round(bandHalfWidthPx / pixelsPerFoot)],
+        flank_ink_coverage: round(host.candidate_coverage),
+        gap_ink_coverage: 0,
+        profile_ink_coverage: round(symbolCoverage),
+        evidence_score: round(Math.min(1, evidenceScore)),
+        evidence_basis: "source_symbol_on_redacted_wall"
+      });
+    }
+  }
+  const ranked = hypotheses.sort((a, b) => b.evidence_score - a.evidence_score
+    || b.width_ft - a.width_ft
+    || a.opening_hypothesis_id.localeCompare(b.opening_hypothesis_id));
+  const distinct = ranked.filter((entry, index) => !ranked.slice(0, index).some((accepted) => {
+    if (angleDifference(entry.profile_axis_degrees, accepted.profile_axis_degrees)
+      > policy.opening_gap_axis_snap_tolerance_degrees) return false;
+    const axis = entry.profile_axis_degrees === 90 ? "y" : "x";
+    const normalAxis = axis === "x" ? "y" : "x";
+    if (Math.abs(entry.model_center[normalAxis] - accepted.model_center[normalAxis]) > 0.5) return false;
+    const entryInterval = [
+      entry.model_center[axis] - entry.width_ft / 2,
+      entry.model_center[axis] + entry.width_ft / 2
+    ];
+    const acceptedInterval = [
+      accepted.model_center[axis] - accepted.width_ft / 2,
+      accepted.model_center[axis] + accepted.width_ft / 2
+    ];
+    const overlap = Math.max(0, Math.min(entryInterval[1]!, acceptedInterval[1]!)
+      - Math.max(entryInterval[0]!, acceptedInterval[0]!));
+    return overlap / Math.min(entry.width_ft, accepted.width_ft) >= 0.7;
+  }));
+  const retainedHostIds = new Set(distinct.map((entry) => entry.host_candidate_id));
+  return {
+    hosts: [...acceptedHosts.values()].filter((host) => retainedHostIds.has(host.candidate_id)),
+    hypotheses: distinct.slice(0, policy.maximum_opening_gap_hypotheses).map((entry, index) => ({ ...entry, rank: index + 1 }))
+  };
+}
+
 async function writeOverlay(
   sourcePath: string,
   width: number,
@@ -1581,6 +1861,7 @@ export async function buildArchitecturalWallLineCandidates(
   }
   const sourcePath = imageReference(delta.artifacts.source_aligned, "source_aligned", width, height);
   const candidatePath = imageReference(delta.artifacts.candidate_delta_mask, "candidate_delta_mask", width, height);
+  const redactedPath = imageReference(delta.artifacts.redacted_aligned, "redacted_aligned", width, height);
   const resolvedOutDir = path.resolve(outDir);
   if (fs.existsSync(resolvedOutDir) && fs.readdirSync(resolvedOutDir).length > 0) {
     throw new Error(`refusing_to_overwrite_architectural_wall_line_candidates:${resolvedOutDir}`);
@@ -1590,6 +1871,7 @@ export async function buildArchitecturalWallLineCandidates(
   const masks = await loadMasks(
     sourcePath,
     candidatePath,
+    redactedPath,
     width,
     height,
     delta.render_policy.ink_luminance_threshold
@@ -1604,43 +1886,46 @@ export async function buildArchitecturalWallLineCandidates(
     delta.scope_model_bounds.max.y - delta.scope_model_bounds.min.y
   );
   const raw = detectLines(points, masks.source, masks.candidate, width, height, pixelsPerFoot, diagonalFt, policy);
-  const candidates: ArchitecturalWallLineCandidate[] = raw.map((line, index) => ({
-    candidate_id: stableCandidateId(line),
-    rank: index + 1,
-    derivation: line.derivation,
-    pixel_points: line.pixel_points.map((entry) => ({
-      x: round(Math.max(0, Math.min(width, entry.x))),
-      y: round(Math.max(0, Math.min(height, entry.y)))
-    })) as [Point2, Point2],
-    model_points: line.pixel_points.map((entry) => {
-      const model = pointToModel({
-        x: Math.max(0, Math.min(width, entry.x)),
-        y: Math.max(0, Math.min(height, entry.y))
-      }, delta.scope_model_bounds, width, height);
-      return { x: round(model.x), y: round(model.y) };
-    }) as [Point2, Point2],
-    face_separation_ft: line.face_separation_px === null ? null : round(line.face_separation_px / pixelsPerFoot),
-    supporting_face_pixel_points: line.supporting_face_pixel_points === null ? null : line.supporting_face_pixel_points.map(
-      (face) => face.map((entry) => ({
-        x: round(Math.max(0, Math.min(width, entry.x))),
-        y: round(Math.max(0, Math.min(height, entry.y)))
-      })) as [Point2, Point2]
-    ) as [[Point2, Point2], [Point2, Point2]],
-    supporting_face_model_points: line.supporting_face_pixel_points === null ? null : line.supporting_face_pixel_points.map(
-      (face) => face.map((entry) => {
-        const model = pointToModel({
-          x: Math.max(0, Math.min(width, entry.x)),
-          y: Math.max(0, Math.min(height, entry.y))
-        }, delta.scope_model_bounds, width, height);
-        return { x: round(model.x), y: round(model.y) };
-      }) as [Point2, Point2]
-    ) as [[Point2, Point2], [Point2, Point2]],
-    angle_degrees: line.angle_degrees,
-    length_ft: round(line.length_px / pixelsPerFoot),
-    candidate_coverage: round(line.candidate_coverage),
-    source_ink_coverage: round(line.source_ink_coverage),
-    rank_score: round(line.rank_score)
-  }));
+  const sourceCandidates = raw.map((line, index) => candidateFromRawLine(
+    line,
+    index + 1,
+    "source_delta",
+    delta.scope_model_bounds,
+    width,
+    height,
+    pixelsPerFoot
+  ));
+  const redactedPoints = boundaryPoints(masks.redacted, width, height, policy.sampling_stride_px);
+  const redactedRaw = detectLines(
+    redactedPoints,
+    masks.source,
+    masks.redacted,
+    width,
+    height,
+    pixelsPerFoot,
+    diagonalFt,
+    { ...policy, maximum_candidates: Math.max(policy.maximum_candidates, 16) }
+  );
+  const redactedCandidates = redactedRaw.map((line, index) => candidateFromRawLine(
+    line,
+    sourceCandidates.length + index + 1,
+    "redacted_model",
+    delta.scope_model_bounds,
+    width,
+    height,
+    pixelsPerFoot
+  ));
+  const symbolBindings = buildOpeningSymbolHypotheses(
+    redactedCandidates,
+    masks.candidate,
+    width,
+    height,
+    pixelsPerFoot,
+    delta.scope_model_bounds,
+    policy
+  );
+  const candidates = [...sourceCandidates, ...symbolBindings.hosts]
+    .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
   const junctionHypotheses = buildJunctionHypotheses(
     candidates,
     pixelsPerFoot,
@@ -1649,7 +1934,7 @@ export async function buildArchitecturalWallLineCandidates(
     height,
     policy
   );
-  const openingGapHypotheses = buildOpeningGapHypotheses(
+  const gapHypotheses = buildOpeningGapHypotheses(
     candidates,
     masks.candidate,
     width,
@@ -1658,6 +1943,12 @@ export async function buildArchitecturalWallLineCandidates(
     delta.scope_model_bounds,
     policy
   );
+  const openingGapHypotheses = [...gapHypotheses, ...symbolBindings.hypotheses]
+    .sort((a, b) => b.evidence_score - a.evidence_score
+      || b.width_ft - a.width_ft
+      || a.opening_hypothesis_id.localeCompare(b.opening_hypothesis_id))
+    .slice(0, policy.maximum_opening_gap_hypotheses)
+    .map((entry, index) => ({ ...entry, rank: index + 1 }));
   const ambiguities = buildAmbiguities(raw, candidates, pixelsPerFoot, policy);
   const status = candidates.length === 0 ? "blocked" : ambiguities.length > 0 ? "clarification_required" : "candidates_ready";
   const overlay = await writeOverlay(
@@ -1688,6 +1979,8 @@ export async function buildArchitecturalWallLineCandidates(
     measurement_receipt_sha256: measurementHash,
     source_aligned_sha256: delta.artifacts.source_aligned.sha256,
     candidate_delta_mask_sha256: delta.artifacts.candidate_delta_mask.sha256,
+    redacted_aligned_sha256: delta.artifacts.redacted_aligned.sha256,
+    scope_model_bounds: delta.scope_model_bounds,
     status,
     policy,
     candidates,
@@ -1706,8 +1999,9 @@ export async function buildArchitecturalWallLineCandidates(
       "Parallel-face midlines are explicit centerline hypotheses derived from two supported face lines. Near-cardinal face pairs must also share directionally persistent source-only support and meet the ordinary absolute face-coverage gate so synchronized sparse annotations cannot form a false host pair; measured separation and supporting faces still require semantic reconciliation before selection.",
       "Junction hypotheses identify near-endpoint intersections between paired-face centerlines and provide topology evidence only; they do not select either wall or authorize an opening host.",
       "Opening-gap hypotheses require a bounded low-ink interval across multiple normal wall-band profiles with wall-face ink on both flanks. Short room-tag, dimension, and swing-symbol crossings may fragment the blank interval only within the declared internal-ink length and ratio limits; the measured gap ink remains explicit. Hypotheses remain unclassified and bind only to a wall candidate, not a selected native host or family type.",
+      "Source-symbol opening hypotheses require at least two separated longitudinal source-only strokes bound to a continuous paired-face wall measured in the hash-bound redacted model; symbol geometry alone cannot become its own host.",
       "Parallel or near-equal candidates remain explicit ambiguities; rank alone must not authorize a wall or opening host.",
-      "Candidate geometry is derived only from hash-bound source-aligned and source-only delta images in the registered frame.",
+      "Candidate geometry is derived only from hash-bound source-aligned, source-only delta, and redacted-aligned images in the registered frame.",
       "Opening recognition, wall type/thickness, vertical extents, and family/type promotion remain separate evidence-gated steps."
     ]
   };
