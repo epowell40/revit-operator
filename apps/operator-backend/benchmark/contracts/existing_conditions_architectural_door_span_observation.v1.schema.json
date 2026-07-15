@@ -47,7 +47,24 @@
         "minimum_outside_bilateral_coverage",
         "maximum_inside_bilateral_coverage",
         "minimum_transition_contrast",
+        "minimum_jamb_cross_support_coverage",
+        "maximum_crossbar_inside_bilateral_coverage",
+        "jamb_cross_overrun_probe_ft",
+        "maximum_bilateral_jamb_cross_overrun_coverage",
+        "maximum_crossbar_extension_beyond_gap_ft",
+        "maximum_crossbar_extension_bilateral_coverage",
+        "maximum_crossbar_extension_continuous_bilateral_ft",
+        "internal_cross_support_endpoint_exclusion_ft",
+        "maximum_continuous_internal_cross_support_ft",
+        "internal_bilateral_support_endpoint_exclusion_ft",
+        "maximum_continuous_internal_bilateral_support_ft",
+        "maximum_disconnected_internal_bilateral_support_ft",
+        "minimum_crossbar_bilateral_symbol_span_ratio",
+        "bilateral_island_context_ft",
+        "longitudinal_face_window_ft",
+        "minimum_longitudinal_face_coverage",
         "maximum_continuous_one_sided_support_ft",
+        "maximum_total_one_sided_support_ft",
         "maximum_endpoint_extension_beyond_gap_ft",
         "maximum_center_shift_from_gap_ft"
       ],
@@ -65,7 +82,24 @@
         "minimum_outside_bilateral_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
         "maximum_inside_bilateral_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
         "minimum_transition_contrast": { "type": "number", "minimum": 0, "maximum": 1 },
+        "minimum_jamb_cross_support_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+        "maximum_crossbar_inside_bilateral_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+        "jamb_cross_overrun_probe_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "maximum_bilateral_jamb_cross_overrun_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+        "maximum_crossbar_extension_beyond_gap_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "maximum_crossbar_extension_bilateral_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+        "maximum_crossbar_extension_continuous_bilateral_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "internal_cross_support_endpoint_exclusion_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "maximum_continuous_internal_cross_support_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "internal_bilateral_support_endpoint_exclusion_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "maximum_continuous_internal_bilateral_support_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "maximum_disconnected_internal_bilateral_support_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "minimum_crossbar_bilateral_symbol_span_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "bilateral_island_context_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "longitudinal_face_window_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "minimum_longitudinal_face_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
         "maximum_continuous_one_sided_support_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "maximum_total_one_sided_support_ft": { "type": "number", "exclusiveMinimum": 0 },
         "maximum_endpoint_extension_beyond_gap_ft": { "type": "number", "exclusiveMinimum": 0 },
         "maximum_center_shift_from_gap_ft": { "type": "number", "exclusiveMinimum": 0 }
       }
@@ -86,7 +120,16 @@
           "extension_before_gap_ft",
           "extension_after_gap_ft",
           "center_shift_from_gap_ft",
+          "crossbar_extension_bilateral_coverages",
+          "crossbar_extension_longest_bilateral_support_ft",
+          "longest_continuous_internal_cross_support_ft",
+          "longest_continuous_internal_bilateral_support_ft",
+          "total_internal_bilateral_support_ft",
+          "disconnected_internal_bilateral_support_ft",
+          "bounded_internal_bilateral_support_ft",
+          "conservative_one_sided_support_ft",
           "longest_continuous_one_sided_support_ft",
+          "total_one_sided_support_ft",
           "evidence_artifact_sha256s",
           "confidence",
           "rationale",
@@ -105,7 +148,26 @@
           "extension_before_gap_ft": { "type": "number", "minimum": 0 },
           "extension_after_gap_ft": { "type": "number", "minimum": 0 },
           "center_shift_from_gap_ft": { "type": "number", "minimum": 0 },
+          "crossbar_extension_bilateral_coverages": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": { "type": "number", "minimum": 0, "maximum": 1 }
+          },
+          "crossbar_extension_longest_bilateral_support_ft": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": { "type": "number", "minimum": 0 }
+          },
+          "longest_continuous_internal_cross_support_ft": { "type": "number", "minimum": 0 },
+          "longest_continuous_internal_bilateral_support_ft": { "type": "number", "minimum": 0 },
+          "total_internal_bilateral_support_ft": { "type": "number", "minimum": 0 },
+          "disconnected_internal_bilateral_support_ft": { "type": "number", "minimum": 0 },
+          "bounded_internal_bilateral_support_ft": { "type": "number", "minimum": 0 },
+          "conservative_one_sided_support_ft": { "type": "number", "minimum": 0 },
           "longest_continuous_one_sided_support_ft": { "type": "number", "minimum": 0 },
+          "total_one_sided_support_ft": { "type": "number", "minimum": 0 },
           "evidence_artifact_sha256s": {
             "type": "array",
             "minItems": 2,
@@ -134,6 +196,9 @@
                 "outside_bilateral_coverage",
                 "inside_bilateral_coverage",
                 "transition_contrast",
+                "jamb_cross_support_coverage",
+                "jamb_cross_overrun_coverages",
+                "support_basis",
                 "passed"
               ],
               "properties": {
@@ -144,8 +209,54 @@
                 "outside_bilateral_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
                 "inside_bilateral_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
                 "transition_contrast": { "type": "number", "minimum": -1, "maximum": 1 },
+                "jamb_cross_support_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+                "jamb_cross_overrun_coverages": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": { "type": "number", "minimum": 0, "maximum": 1 }
+                },
+                "support_basis": { "type": ["string", "null"], "enum": ["bilateral_transition", "jamb_crossbar", null] },
                 "passed": { "type": "boolean" }
-              }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "required": ["passed"],
+                    "properties": { "passed": { "const": true } }
+                  },
+                  "then": {
+                    "properties": { "support_basis": { "type": "string", "enum": ["bilateral_transition", "jamb_crossbar"] } }
+                  }
+                },
+                {
+                  "if": {
+                    "required": ["passed"],
+                    "properties": { "passed": { "const": false } }
+                  },
+                  "then": {
+                    "properties": { "support_basis": { "type": "null" } }
+                  }
+                },
+                {
+                  "if": {
+                    "required": ["support_basis"],
+                    "properties": { "support_basis": { "const": "bilateral_transition" } }
+                  },
+                  "then": {
+                    "properties": { "transition_contrast": { "type": "number", "exclusiveMinimum": 0 } }
+                  }
+                },
+                {
+                  "if": {
+                    "required": ["support_basis"],
+                    "properties": { "support_basis": { "const": "jamb_crossbar" } }
+                  },
+                  "then": {
+                    "properties": { "jamb_cross_support_coverage": { "type": "number", "exclusiveMinimum": 0 } }
+                  }
+                }
+              ]
             }
           },
           "host_ambiguity_ids": {

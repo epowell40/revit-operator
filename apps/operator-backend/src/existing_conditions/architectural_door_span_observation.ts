@@ -30,7 +30,24 @@ export type ArchitecturalDoorSpanObservationPolicy = {
   minimum_outside_bilateral_coverage: number;
   maximum_inside_bilateral_coverage: number;
   minimum_transition_contrast: number;
+  minimum_jamb_cross_support_coverage: number;
+  maximum_crossbar_inside_bilateral_coverage: number;
+  jamb_cross_overrun_probe_ft: number;
+  maximum_bilateral_jamb_cross_overrun_coverage: number;
+  maximum_crossbar_extension_beyond_gap_ft: number;
+  maximum_crossbar_extension_bilateral_coverage: number;
+  maximum_crossbar_extension_continuous_bilateral_ft: number;
+  internal_cross_support_endpoint_exclusion_ft: number;
+  maximum_continuous_internal_cross_support_ft: number;
+  internal_bilateral_support_endpoint_exclusion_ft: number;
+  maximum_continuous_internal_bilateral_support_ft: number;
+  maximum_disconnected_internal_bilateral_support_ft: number;
+  minimum_crossbar_bilateral_symbol_span_ratio: number;
+  bilateral_island_context_ft: number;
+  longitudinal_face_window_ft: number;
+  minimum_longitudinal_face_coverage: number;
   maximum_continuous_one_sided_support_ft: number;
+  maximum_total_one_sided_support_ft: number;
   maximum_endpoint_extension_beyond_gap_ft: number;
   maximum_center_shift_from_gap_ft: number;
 };
@@ -49,7 +66,24 @@ export const DEFAULT_ARCHITECTURAL_DOOR_SPAN_OBSERVATION_POLICY: ArchitecturalDo
   minimum_outside_bilateral_coverage: 0.7,
   maximum_inside_bilateral_coverage: 0.6,
   minimum_transition_contrast: 0.25,
+  minimum_jamb_cross_support_coverage: 0.75,
+  maximum_crossbar_inside_bilateral_coverage: 0.8,
+  jamb_cross_overrun_probe_ft: 0.2,
+  maximum_bilateral_jamb_cross_overrun_coverage: 0.6,
+  maximum_crossbar_extension_beyond_gap_ft: 0.75,
+  maximum_crossbar_extension_bilateral_coverage: 0.6,
+  maximum_crossbar_extension_continuous_bilateral_ft: 0.25,
+  internal_cross_support_endpoint_exclusion_ft: 0.2,
+  maximum_continuous_internal_cross_support_ft: 0.75,
+  internal_bilateral_support_endpoint_exclusion_ft: 0.2,
+  maximum_continuous_internal_bilateral_support_ft: 0.75,
+  maximum_disconnected_internal_bilateral_support_ft: 0.25,
+  minimum_crossbar_bilateral_symbol_span_ratio: 0.75,
+  bilateral_island_context_ft: 0.5,
+  longitudinal_face_window_ft: 0.75,
+  minimum_longitudinal_face_coverage: 0.6,
   maximum_continuous_one_sided_support_ft: 0.75,
+  maximum_total_one_sided_support_ft: 1,
   maximum_endpoint_extension_beyond_gap_ft: 2,
   maximum_center_shift_from_gap_ft: 1.25
 };
@@ -83,6 +117,9 @@ export type ArchitecturalDoorSpanEndpointTransition = {
   outside_bilateral_coverage: number;
   inside_bilateral_coverage: number;
   transition_contrast: number;
+  jamb_cross_support_coverage: number;
+  jamb_cross_overrun_coverages: [number, number];
+  support_basis: "bilateral_transition" | "jamb_crossbar" | null;
   passed: boolean;
 };
 
@@ -96,7 +133,16 @@ export type ArchitecturalDoorSpanObservation = {
   extension_before_gap_ft: number;
   extension_after_gap_ft: number;
   center_shift_from_gap_ft: number;
+  crossbar_extension_bilateral_coverages: [number, number];
+  crossbar_extension_longest_bilateral_support_ft: [number, number];
+  longest_continuous_internal_cross_support_ft: number;
+  longest_continuous_internal_bilateral_support_ft: number;
+  total_internal_bilateral_support_ft: number;
+  disconnected_internal_bilateral_support_ft: number;
+  bounded_internal_bilateral_support_ft: number;
+  conservative_one_sided_support_ft: number;
   longest_continuous_one_sided_support_ft: number;
+  total_one_sided_support_ft: number;
   evidence_artifact_sha256s: string[];
   confidence: number;
   rationale: string;
@@ -153,7 +199,13 @@ function validatePolicy(policy: ArchitecturalDoorSpanObservationPolicy): void {
     policy.minimum_observation_confidence,
     policy.minimum_outside_bilateral_coverage,
     policy.maximum_inside_bilateral_coverage,
-    policy.minimum_transition_contrast
+    policy.minimum_transition_contrast,
+    policy.minimum_jamb_cross_support_coverage,
+    policy.maximum_crossbar_inside_bilateral_coverage,
+    policy.maximum_bilateral_jamb_cross_overrun_coverage,
+    policy.maximum_crossbar_extension_bilateral_coverage,
+    policy.minimum_longitudinal_face_coverage,
+    policy.minimum_crossbar_bilateral_symbol_span_ratio
   ];
   if (fractions.some((value) => !Number.isFinite(value) || value < 0 || value > 1)) {
     throw new Error("architectural_door_span_observation_fraction_policy_invalid");
@@ -167,7 +219,18 @@ function validatePolicy(policy: ArchitecturalDoorSpanObservationPolicy): void {
     policy.endpoint_outside_window_ft,
     policy.endpoint_inside_window_ft,
     policy.endpoint_window_margin_ft,
+    policy.jamb_cross_overrun_probe_ft,
+    policy.maximum_crossbar_extension_beyond_gap_ft,
+    policy.maximum_crossbar_extension_continuous_bilateral_ft,
+    policy.internal_cross_support_endpoint_exclusion_ft,
+    policy.maximum_continuous_internal_cross_support_ft,
+    policy.internal_bilateral_support_endpoint_exclusion_ft,
+    policy.maximum_continuous_internal_bilateral_support_ft,
+    policy.maximum_disconnected_internal_bilateral_support_ft,
+    policy.bilateral_island_context_ft,
+    policy.longitudinal_face_window_ft,
     policy.maximum_continuous_one_sided_support_ft,
+    policy.maximum_total_one_sided_support_ft,
     policy.maximum_endpoint_extension_beyond_gap_ft,
     policy.maximum_center_shift_from_gap_ft
   ];
@@ -180,6 +243,10 @@ function validatePolicy(policy: ArchitecturalDoorSpanObservationPolicy): void {
   if (policy.endpoint_window_margin_ft >= policy.endpoint_inside_window_ft
     || policy.endpoint_window_margin_ft >= policy.endpoint_outside_window_ft) {
     throw new Error("architectural_door_span_observation_window_margin_invalid");
+  }
+  if (2 * policy.longitudinal_face_window_ft * policy.minimum_longitudinal_face_coverage
+    <= policy.maximum_continuous_internal_cross_support_ft) {
+    throw new Error("architectural_door_span_observation_longitudinal_cross_policy_invalid");
   }
 }
 
@@ -364,7 +431,125 @@ function bilateralCoverage(
   return sampled > 0 ? supported / sampled : 0;
 }
 
-function longestContinuousOneSidedSupportFt(
+function jambCrossSupportCoverage(
+  mask: Mask,
+  hostStart: Point2,
+  direction: Point2,
+  offsets: [number, number],
+  chainagePx: number,
+  alongRadiusPx: number,
+  overrunProbePx: number
+): { coverage: number; overrunCoverages: [number, number] } {
+  const normalCoverage = (minimumOffset: number, maximumOffset: number): number => {
+    if (maximumOffset < minimumOffset) return 0;
+    let supported = 0;
+    let sampled = 0;
+    for (let offset = Math.ceil(minimumOffset); offset <= Math.floor(maximumOffset); offset += 1) {
+      const point = pointAt(hostStart, direction, chainagePx, offset);
+      let present = false;
+      for (let along = -alongRadiusPx; along <= alongRadiusPx; along += 1) {
+        const x = Math.round(point.x + direction.x * along);
+        const y = Math.round(point.y + direction.y * along);
+        if (x < 0 || x >= mask.width || y < 0 || y >= mask.height) continue;
+        if (mask.pixels[y * mask.width + x]) {
+          present = true;
+          break;
+        }
+      }
+      sampled += 1;
+      if (present) supported += 1;
+    }
+    return sampled > 0 ? supported / sampled : 0;
+  };
+  const minimumOffset = Math.min(...offsets);
+  const maximumOffset = Math.max(...offsets);
+  return {
+    coverage: normalCoverage(minimumOffset, maximumOffset),
+    overrunCoverages: [
+      normalCoverage(minimumOffset - overrunProbePx, minimumOffset - 1),
+      normalCoverage(maximumOffset + 1, maximumOffset + overrunProbePx)
+    ]
+  };
+}
+
+function longitudinalFaceSupport(
+  mask: Mask,
+  hostStart: Point2,
+  direction: Point2,
+  offsets: [number, number],
+  chainagePx: number,
+  windowRadiusPx: number,
+  minimumCoverage: number
+): [boolean, boolean] {
+  const radius = Math.max(1, Math.round(windowRadiusPx));
+  return offsets.map((offset) => {
+    let sampled = 0;
+    let current = 0;
+    let longest = 0;
+    for (let along = -radius; along <= radius; along += 1) {
+      const point = pointAt(hostStart, direction, chainagePx + along, offset);
+      const x = Math.round(point.x);
+      const y = Math.round(point.y);
+      if (x < 0 || x >= mask.width || y < 0 || y >= mask.height) continue;
+      sampled += 1;
+      if (mask.pixels[y * mask.width + x]) {
+        current += 1;
+        longest = Math.max(longest, current);
+      } else {
+        current = 0;
+      }
+    }
+    return sampled > 0 && longest / sampled >= minimumCoverage;
+  }) as [boolean, boolean];
+}
+
+function oneSidedSupportLengthsFt(
+  mask: Mask,
+  hostStart: Point2,
+  direction: Point2,
+  offsets: [number, number],
+  fromPx: number,
+  toPx: number,
+  pixelsPerFoot: number,
+  supportRadiusPx: number,
+  longitudinalWindowRadiusPx: number,
+  minimumLongitudinalCoverage: number,
+  minimumCrossCoverage: number
+): { longest: number; total: number } {
+  const start = Math.ceil(Math.min(fromPx, toPx));
+  const end = Math.floor(Math.max(fromPx, toPx));
+  let current = 0;
+  let longest = 0;
+  let total = 0;
+  for (let chainage = start; chainage <= end; chainage += 1) {
+    let support = faceSupport(mask, hostStart, direction, offsets, chainage, pixelsPerFoot, supportRadiusPx);
+    if (Number(support[0]) + Number(support[1]) === 2) {
+      const cross = jambCrossSupportCoverage(mask, hostStart, direction, offsets, chainage, supportRadiusPx, 0);
+      if (cross.coverage >= minimumCrossCoverage) {
+        const longitudinal = longitudinalFaceSupport(
+          mask,
+          hostStart,
+          direction,
+          offsets,
+          chainage,
+          longitudinalWindowRadiusPx,
+          minimumLongitudinalCoverage
+        );
+        if (Number(longitudinal[0]) + Number(longitudinal[1]) === 1) support = longitudinal;
+      }
+    }
+    if (Number(support[0]) + Number(support[1]) === 1) {
+      current += 1;
+      total += 1;
+      longest = Math.max(longest, current);
+    } else {
+      current = 0;
+    }
+  }
+  return { longest: longest / pixelsPerFoot, total: total / pixelsPerFoot };
+}
+
+function bilateralSupportInterval(
   mask: Mask,
   hostStart: Point2,
   direction: Point2,
@@ -373,14 +558,47 @@ function longestContinuousOneSidedSupportFt(
   toPx: number,
   pixelsPerFoot: number,
   supportRadiusPx: number
-): number {
+): { coverage: number; longestFt: number; totalFt: number } {
   const start = Math.ceil(Math.min(fromPx, toPx));
   const end = Math.floor(Math.max(fromPx, toPx));
+  if (end < start) return { coverage: 0, longestFt: 0, totalFt: 0 };
+  let current = 0;
+  let longest = 0;
+  let supported = 0;
+  let sampled = 0;
+  for (let chainage = start; chainage <= end; chainage += 1) {
+    const present = bilateralSupport(mask, hostStart, direction, offsets, chainage, pixelsPerFoot, supportRadiusPx);
+    sampled += 1;
+    if (present) {
+      supported += 1;
+      current += 1;
+      longest = Math.max(longest, current);
+    } else {
+      current = 0;
+    }
+  }
+  return { coverage: supported / sampled, longestFt: longest / pixelsPerFoot, totalFt: supported / pixelsPerFoot };
+}
+
+function longestInternalCrossSupportFt(
+  mask: Mask,
+  hostStart: Point2,
+  direction: Point2,
+  offsets: [number, number],
+  startPx: number,
+  endPx: number,
+  pixelsPerFoot: number,
+  supportRadiusPx: number,
+  endpointExclusionFt: number,
+  minimumCoverage: number
+): number {
+  const start = Math.ceil(startPx + endpointExclusionFt * pixelsPerFoot);
+  const end = Math.floor(endPx - endpointExclusionFt * pixelsPerFoot);
   let current = 0;
   let longest = 0;
   for (let chainage = start; chainage <= end; chainage += 1) {
-    const support = faceSupport(mask, hostStart, direction, offsets, chainage, pixelsPerFoot, supportRadiusPx);
-    if (Number(support[0]) + Number(support[1]) === 1) {
+    const cross = jambCrossSupportCoverage(mask, hostStart, direction, offsets, chainage, supportRadiusPx, 0);
+    if (cross.coverage >= minimumCoverage) {
       current += 1;
       longest = Math.max(longest, current);
     } else {
@@ -388,6 +606,68 @@ function longestContinuousOneSidedSupportFt(
     }
   }
   return longest / pixelsPerFoot;
+}
+
+function boundedBilateralSupportFt(
+  mask: Mask,
+  hostStart: Point2,
+  direction: Point2,
+  offsets: [number, number],
+  fromPx: number,
+  toPx: number,
+  pixelsPerFoot: number,
+  supportRadiusPx: number,
+  contextFt: number,
+  minimumCrossCoverage: number
+): number {
+  const start = Math.ceil(Math.min(fromPx, toPx));
+  const end = Math.floor(Math.max(fromPx, toPx));
+  const states: number[] = [];
+  const crossSupported: boolean[] = [];
+  for (let chainage = start; chainage <= end; chainage += 1) {
+    const support = faceSupport(mask, hostStart, direction, offsets, chainage, pixelsPerFoot, supportRadiusPx);
+    states.push(support[0] && support[1] ? 3 : support[0] ? 1 : support[1] ? 2 : 0);
+    crossSupported.push(
+      jambCrossSupportCoverage(mask, hostStart, direction, offsets, chainage, supportRadiusPx, 0).coverage
+        >= minimumCrossCoverage
+    );
+  }
+  const contextPx = Math.max(1, Math.round(contextFt * pixelsPerFoot));
+  let supported = 0;
+  for (let index = 0; index < states.length;) {
+    if (states[index] !== 3) {
+      index += 1;
+      continue;
+    }
+    const runStart = index;
+    while (index + 1 < states.length && states[index + 1] === 3) index += 1;
+    const runEnd = index;
+    let before = 0;
+    for (let probe = runStart - 1; probe >= Math.max(0, runStart - contextPx); probe -= 1) {
+      if (states[probe] !== 3) {
+        before = states[probe]!;
+        break;
+      }
+    }
+    let after = 0;
+    for (let probe = runEnd + 1; probe <= Math.min(states.length - 1, runEnd + contextPx); probe += 1) {
+      if (states[probe] !== 3) {
+        after = states[probe]!;
+        break;
+      }
+    }
+    const sameOneSidedFace = (before === 1 || before === 2) && before === after;
+    const oppositeOneSidedFaces = (before === 1 && after === 2) || (before === 2 && after === 1);
+    const oneSidedAtGapEdge = (before === 0 && (after === 1 || after === 2))
+      || (after === 0 && (before === 1 || before === 2));
+    if (sameOneSidedFace || oppositeOneSidedFaces || oneSidedAtGapEdge) {
+      for (let probe = runStart; probe <= runEnd; probe += 1) {
+        if (!crossSupported[probe]) supported += 1;
+      }
+    }
+    index += 1;
+  }
+  return supported / pixelsPerFoot;
 }
 
 function endpointTransition(
@@ -406,7 +686,18 @@ function endpointTransition(
   const outsidePx = policy.endpoint_outside_window_ft * pixelsPerFoot;
   const insidePx = policy.endpoint_inside_window_ft * pixelsPerFoot;
   const marginPx = policy.endpoint_window_margin_ft * pixelsPerFoot;
-  const candidates: Array<{ chainage: number; outside: number; inside: number; contrast: number; adjustment: number }> = [];
+  const candidates: Array<{
+    chainage: number;
+    outside: number;
+    inside: number;
+    contrast: number;
+    cross: number;
+    crossOverruns: [number, number];
+    bilateralPassed: boolean;
+    crossPassed: boolean;
+    supportScore: number;
+    adjustment: number;
+  }> = [];
   for (let chainage = Math.ceil(suppliedChainagePx - adjustmentPx); chainage <= Math.floor(suppliedChainagePx + adjustmentPx); chainage += 1) {
     const outside = endpoint === "start"
       ? bilateralCoverage(mask, hostStart, direction, offsets, chainage - outsidePx, chainage - marginPx, pixelsPerFoot, supportRadiusPx)
@@ -414,22 +705,54 @@ function endpointTransition(
     const inside = endpoint === "start"
       ? bilateralCoverage(mask, hostStart, direction, offsets, chainage + marginPx, chainage + insidePx, pixelsPerFoot, supportRadiusPx)
       : bilateralCoverage(mask, hostStart, direction, offsets, chainage - insidePx, chainage - marginPx, pixelsPerFoot, supportRadiusPx);
+    const contrast = outside - inside;
+    const cross = jambCrossSupportCoverage(
+      mask,
+      hostStart,
+      direction,
+      offsets,
+      chainage,
+      supportRadiusPx,
+      policy.jamb_cross_overrun_probe_ft * pixelsPerFoot
+    );
+    const intersectionLikeCross = cross.overrunCoverages.every(
+      (coverage) => coverage >= policy.maximum_bilateral_jamb_cross_overrun_coverage
+    );
+    const bilateralPassed = !intersectionLikeCross
+      && outside >= policy.minimum_outside_bilateral_coverage
+      && inside <= policy.maximum_inside_bilateral_coverage
+      && contrast >= policy.minimum_transition_contrast;
+    const crossPassed = cross.coverage >= policy.minimum_jamb_cross_support_coverage
+      && inside <= policy.maximum_crossbar_inside_bilateral_coverage
+      && !intersectionLikeCross;
     candidates.push({
       chainage,
       outside,
       inside,
-      contrast: outside - inside,
+      contrast,
+      cross: cross.coverage,
+      crossOverruns: cross.overrunCoverages,
+      bilateralPassed,
+      crossPassed,
+      supportScore: Math.max(
+        bilateralPassed ? 1 + contrast : contrast,
+        crossPassed ? 1 + cross.coverage : cross.coverage
+      ),
       adjustment: Math.abs(chainage - suppliedChainagePx)
     });
   }
-  const best = candidates.sort((a, b) => b.contrast - a.contrast
+  const best = candidates.sort((a, b) => b.supportScore - a.supportScore
+    || Number(b.bilateralPassed || b.crossPassed) - Number(a.bilateralPassed || a.crossPassed)
+    || a.adjustment - b.adjustment
+    || b.contrast - a.contrast
+    || b.cross - a.cross
     || b.outside - a.outside
     || a.inside - b.inside
-    || a.adjustment - b.adjustment
     || a.chainage - b.chainage)[0]!;
-  const passed = best.outside >= policy.minimum_outside_bilateral_coverage
-    && best.inside <= policy.maximum_inside_bilateral_coverage
-    && best.contrast >= policy.minimum_transition_contrast;
+  const passed = best.bilateralPassed || best.crossPassed;
+  const supportBasis = best.bilateralPassed && (!best.crossPassed || best.contrast >= best.cross)
+    ? "bilateral_transition"
+    : best.crossPassed ? "jamb_crossbar" : null;
   return {
     endpoint,
     supplied_pixel_point: { x: round(suppliedPoint.x), y: round(suppliedPoint.y) },
@@ -438,6 +761,9 @@ function endpointTransition(
     outside_bilateral_coverage: round(best.outside),
     inside_bilateral_coverage: round(best.inside),
     transition_contrast: round(best.contrast),
+    jamb_cross_support_coverage: round(best.cross),
+    jamb_cross_overrun_coverages: best.crossOverruns.map(round) as [number, number],
+    support_basis: supportBasis,
     passed
   };
 }
@@ -592,13 +918,54 @@ export async function buildArchitecturalDoorSpanObservationReceipt(
       || extensionAfterFt > policy.maximum_endpoint_extension_beyond_gap_ft) {
       blockers.push("door_span_extension_beyond_gap_exceeds_policy");
     }
+    if ((transitions[0]?.support_basis === "jamb_crossbar"
+      && extensionBeforeFt > policy.maximum_crossbar_extension_beyond_gap_ft)
+      || (transitions[1]?.support_basis === "jamb_crossbar"
+        && extensionAfterFt > policy.maximum_crossbar_extension_beyond_gap_ft)) {
+      blockers.push("door_span_crossbar_extension_beyond_gap_exceeds_policy");
+    }
     const centerShiftFt = Math.abs(
       (canonicalStartChainage + canonicalEndChainage) / 2 - openingCenterChainage
     ) / pixelsPerFoot;
     if (centerShiftFt > policy.maximum_center_shift_from_gap_ft) blockers.push("door_span_center_shift_exceeds_policy");
+    const crossbarExtensionCoverage: [number, number] = [0, 0];
+    const crossbarExtensionLongestFt: [number, number] = [0, 0];
+    let longestInternalCrossFt = 0;
+    let longestInternalBilateralFt = 0;
+    let totalInternalBilateralFt = 0;
+    let disconnectedInternalBilateralFt = 0;
+    let boundedInternalBilateralFt = 0;
+    let conservativeCrossbarOneSidedFt = 0;
+    let hasTwoCrossJambAnchors = false;
     let longestOneSidedSupportFt = 0;
+    let totalOneSidedSupportLengthFt = 0;
     if (offsets) {
-      longestOneSidedSupportFt = longestContinuousOneSidedSupportFt(
+      const supportRadiusPx = candidates.policy.opening_gap_support_radius_px;
+      const extensionIntervals: Array<[number, number]> = [
+        [canonicalStartChainage, conservativeStart],
+        [conservativeEnd, canonicalEndChainage]
+      ];
+      for (let index = 0; index < transitions.length; index += 1) {
+        if (transitions[index]!.support_basis !== "jamb_crossbar"
+          || [extensionBeforeFt, extensionAfterFt][index]! <= 0) continue;
+        const interval = bilateralSupportInterval(
+          mask,
+          hostStart,
+          direction,
+          offsets,
+          extensionIntervals[index]![0],
+          extensionIntervals[index]![1],
+          pixelsPerFoot,
+          supportRadiusPx
+        );
+        crossbarExtensionCoverage[index] = interval.coverage;
+        crossbarExtensionLongestFt[index] = interval.longestFt;
+        if (interval.coverage > policy.maximum_crossbar_extension_bilateral_coverage
+          || interval.longestFt > policy.maximum_crossbar_extension_continuous_bilateral_ft) {
+          blockers.push("door_span_crossbar_over_intact_wall");
+        }
+      }
+      longestInternalCrossFt = longestInternalCrossSupportFt(
         mask,
         hostStart,
         direction,
@@ -606,10 +973,84 @@ export async function buildArchitecturalDoorSpanObservationReceipt(
         canonicalStartChainage,
         canonicalEndChainage,
         pixelsPerFoot,
-        candidates.policy.opening_gap_support_radius_px
+        supportRadiusPx,
+        policy.internal_cross_support_endpoint_exclusion_ft,
+        policy.minimum_jamb_cross_support_coverage
       );
+      if (longestInternalCrossFt > policy.maximum_continuous_internal_cross_support_ft) {
+        blockers.push("door_span_internal_cross_stroke_run_exceeds_policy");
+      }
+      const internalBilateral = bilateralSupportInterval(
+        mask,
+        hostStart,
+        direction,
+        offsets,
+        canonicalStartChainage + policy.internal_bilateral_support_endpoint_exclusion_ft * pixelsPerFoot,
+        canonicalEndChainage - policy.internal_bilateral_support_endpoint_exclusion_ft * pixelsPerFoot,
+        pixelsPerFoot,
+        supportRadiusPx
+      );
+      longestInternalBilateralFt = internalBilateral.longestFt;
+      totalInternalBilateralFt = internalBilateral.totalFt;
+      disconnectedInternalBilateralFt = Math.max(0, internalBilateral.totalFt - internalBilateral.longestFt);
+      boundedInternalBilateralFt = boundedBilateralSupportFt(
+        mask,
+        hostStart,
+        direction,
+        offsets,
+        canonicalStartChainage + policy.internal_bilateral_support_endpoint_exclusion_ft * pixelsPerFoot,
+        canonicalEndChainage - policy.internal_bilateral_support_endpoint_exclusion_ft * pixelsPerFoot,
+        pixelsPerFoot,
+        supportRadiusPx,
+        policy.bilateral_island_context_ft,
+        policy.minimum_jamb_cross_support_coverage
+      );
+      hasTwoCrossJambAnchors = transitions.every((transition) => transition.support_basis === "jamb_crossbar");
+      if (!hasTwoCrossJambAnchors
+        && longestInternalBilateralFt > policy.maximum_continuous_internal_bilateral_support_ft) {
+        blockers.push("door_span_internal_bilateral_wall_face_run_exceeds_policy");
+      }
+      if (hasTwoCrossJambAnchors
+        && disconnectedInternalBilateralFt > policy.maximum_disconnected_internal_bilateral_support_ft) {
+        blockers.push("door_span_disconnected_internal_bilateral_support_exceeds_policy");
+      }
+      const oneSidedSupport = oneSidedSupportLengthsFt(
+        mask,
+        hostStart,
+        direction,
+        offsets,
+        canonicalStartChainage,
+        canonicalEndChainage,
+        pixelsPerFoot,
+        candidates.policy.opening_gap_support_radius_px,
+        policy.longitudinal_face_window_ft * pixelsPerFoot,
+        policy.minimum_longitudinal_face_coverage,
+        policy.minimum_jamb_cross_support_coverage
+      );
+      longestOneSidedSupportFt = oneSidedSupport.longest;
+      totalOneSidedSupportLengthFt = oneSidedSupport.total;
+      conservativeCrossbarOneSidedFt = totalOneSidedSupportLengthFt;
+      if (hasTwoCrossJambAnchors) {
+        const hasNearFullSpanBilateralSymbol = longestInternalBilateralFt / widthFt
+          >= policy.minimum_crossbar_bilateral_symbol_span_ratio;
+        const crossbarBilateralAddBack = hasNearFullSpanBilateralSymbol
+          ? disconnectedInternalBilateralFt
+          : totalInternalBilateralFt;
+        conservativeCrossbarOneSidedFt += crossbarBilateralAddBack;
+      } else {
+        conservativeCrossbarOneSidedFt += Math.max(
+          0,
+          boundedInternalBilateralFt - policy.maximum_disconnected_internal_bilateral_support_ft
+        );
+      }
+      if (conservativeCrossbarOneSidedFt > policy.maximum_total_one_sided_support_ft) {
+        blockers.push("door_span_conservative_one_sided_budget_exceeds_policy");
+      }
       if (longestOneSidedSupportFt > policy.maximum_continuous_one_sided_support_ft) {
         blockers.push("door_span_continuous_one_sided_wall_face_exceeds_policy");
+      }
+      if (totalOneSidedSupportLengthFt > policy.maximum_total_one_sided_support_ft) {
+        blockers.push("door_span_total_one_sided_wall_face_exceeds_policy");
       }
     }
     return {
@@ -625,7 +1066,16 @@ export async function buildArchitecturalDoorSpanObservationReceipt(
       extension_before_gap_ft: round(extensionBeforeFt),
       extension_after_gap_ft: round(extensionAfterFt),
       center_shift_from_gap_ft: round(centerShiftFt),
+      crossbar_extension_bilateral_coverages: crossbarExtensionCoverage.map(round) as [number, number],
+      crossbar_extension_longest_bilateral_support_ft: crossbarExtensionLongestFt.map(round) as [number, number],
+      longest_continuous_internal_cross_support_ft: round(longestInternalCrossFt),
+      longest_continuous_internal_bilateral_support_ft: round(longestInternalBilateralFt),
+      total_internal_bilateral_support_ft: round(totalInternalBilateralFt),
+      disconnected_internal_bilateral_support_ft: round(disconnectedInternalBilateralFt),
+      bounded_internal_bilateral_support_ft: round(boundedInternalBilateralFt),
+      conservative_one_sided_support_ft: round(conservativeCrossbarOneSidedFt),
       longest_continuous_one_sided_support_ft: round(longestOneSidedSupportFt),
+      total_one_sided_support_ft: round(totalOneSidedSupportLengthFt),
       evidence_artifact_sha256s: entry.evidence_artifact_sha256s.map((hash) => normalizedHash(hash, "evidence_artifact_sha256")),
       confidence: round(entry.confidence),
       rationale: String(entry.rationale ?? "").trim(),
@@ -662,7 +1112,7 @@ export async function buildArchitecturalDoorSpanObservationReceipt(
     ],
     usage_constraints: [
       "A door span is accepted only from hash-bound crop evidence classified with swing-arc, door-leaf, and paired-jamb cues.",
-      "The supplied endpoints must contain the conservative low-level gap and coincide with bounded bilateral wall-face transitions; the detector never widens a gap automatically.",
+      "The supplied endpoints must contain the conservative low-level gap and coincide with either bounded bilateral wall-face transitions or evidence-bounded cross-wall jamb strokes; the detector never widens a gap automatically.",
       "One-sided wall loss and annotation clutter remain blockers. Parallel host ambiguity may coexist with a plan-width measurement, but this receipt never resolves that ambiguity or selects a host.",
       "The observation records plan-visible width only. It does not select a native Revit host, authorize family placement, or authorize a native write."
     ]

@@ -26,6 +26,16 @@ type FixtureOptions = {
   one_sided_recovery_y?: number;
   missing_start_face?: boolean;
   missing_end_face?: boolean;
+  start_crossbar?: boolean;
+  end_crossbar?: boolean;
+  solid_short_crossbar_y?: number;
+  solid_long_crossbar_y?: number;
+  one_sided_crossbars?: number[];
+  parallel_annotation?: [number, number];
+  parallel_annotations?: Array<[number, number]>;
+  one_sided_extensions?: boolean;
+  one_sided_face_switch?: boolean;
+  upper_wall_end_y?: number;
 };
 
 function writeMask(filePath: string, options: FixtureOptions = {}): void {
@@ -34,17 +44,38 @@ function writeMask(filePath: string, options: FixtureOptions = {}): void {
   context.clearRect(0, 0, 200, 200);
   context.fillStyle = "rgba(230,30,30,0.86)";
   const line = (x: number, y1: number, y2: number) => context.fillRect(x, y1, 1, y2 - y1 + 1);
-  if (options.one_sided_recovery_y !== undefined) {
+  if (options.one_sided_face_switch) {
+    line(98, 10, 80);
+    line(102, 10, 108);
+    line(98, 109, 190);
+    line(102, 120, 190);
+    line(98, 105, 108);
+    line(102, 109, 114);
+    line(102, 117, 118);
+  } else if (options.one_sided_extensions) {
+    line(98, 10, 65);
+    line(102, 10, 72);
+    line(102, 108, 190);
+    line(98, 115, 190);
+  } else if (options.one_sided_recovery_y !== undefined) {
     line(98, 10, 80);
     line(102, 10, 80);
     line(102, 101, 190);
     line(98, options.one_sided_recovery_y, 190);
   } else {
-    if (!options.missing_start_face) line(98, 10, 65);
-    line(102, 10, 65);
+    const upperWallEndY = options.upper_wall_end_y ?? 65;
+    if (!options.missing_start_face) line(98, 10, upperWallEndY);
+    line(102, 10, upperWallEndY);
     line(98, 115, 190);
     if (!options.missing_end_face) line(102, 115, 190);
   }
+  if (options.start_crossbar) context.fillRect(98, 65, 5, 1);
+  if (options.end_crossbar) context.fillRect(98, 115, 5, 1);
+  if (options.solid_short_crossbar_y !== undefined) context.fillRect(98, options.solid_short_crossbar_y, 5, 1);
+  if (options.solid_long_crossbar_y !== undefined) context.fillRect(90, options.solid_long_crossbar_y, 21, 1);
+  for (const y of options.one_sided_crossbars ?? []) context.fillRect(98, y, 5, 1);
+  if (options.parallel_annotation) line(98, options.parallel_annotation[0], options.parallel_annotation[1]);
+  for (const [start, end] of options.parallel_annotations ?? []) line(98, start, end);
   fs.writeFileSync(filePath, canvas.toBuffer("image/png"));
 }
 
@@ -223,7 +254,9 @@ function fixture(t: test.TestContext, options: FixtureOptions = {}): {
     }],
     native_write: false
   } satisfies ArchitecturalOpeningClassificationReceipt;
-  const pixelEndpoints: [{ x: number; y: number }, { x: number; y: number }] = options.one_sided_recovery_y !== undefined
+  const pixelEndpoints: [{ x: number; y: number }, { x: number; y: number }] = options.one_sided_face_switch
+    ? [{ x: 100, y: 80 }, { x: 100, y: 120 }]
+    : options.one_sided_recovery_y !== undefined
     ? [{ x: 100, y: 80 }, { x: 100, y: options.one_sided_recovery_y }]
     : [{ x: 100, y: 115 }, { x: 100, y: 65 }];
   const input = {
@@ -303,6 +336,132 @@ test("reports independent start-only and end-only transition failures", async (t
   const missingEnd = await build(fixture(t, { missing_end_face: true }));
   assert.ok(!missingEnd.observations[0]!.blockers.includes("door_span_start_jamb_transition_not_supported"));
   assert.ok(missingEnd.observations[0]!.blockers.includes("door_span_end_jamb_transition_not_supported"));
+});
+
+test("accepts an explicit cross-wall jamb when the wall does not continue bilaterally outside", async (t) => {
+  const data = fixture(t, { missing_start_face: true, start_crossbar: true });
+  data.candidates.opening_gap_hypotheses[0]!.width_ft = 5;
+  const receipt = await build(data);
+  assert.equal(receipt.status, "measured");
+  assert.equal(receipt.observations[0]!.endpoint_transitions[0]!.support_basis, "jamb_crossbar");
+  assert.equal(receipt.observations[0]!.endpoint_transitions[0]!.passed, true);
+  assert.ok(receipt.observations[0]!.endpoint_transitions[0]!.jamb_cross_support_coverage >= 0.75);
+  assert.ok(receipt.usage_constraints.some((constraint) => constraint.includes("cross-wall jamb strokes")));
+});
+
+test("rejects short annotation and long wall-intersection cross strokes over intact wall", async (t) => {
+  const shortData = fixture(t, { solid_short_crossbar_y: 75, upper_wall_end_y: 80 });
+  shortData.input.observations[0]!.pixel_endpoints = [{ x: 100, y: 75 }, { x: 100, y: 115 }];
+  const shortReceipt = await build(shortData);
+  assert.equal(shortReceipt.status, "clarification_required");
+  assert.ok(shortReceipt.observations[0]!.blockers.includes("door_span_crossbar_over_intact_wall"));
+  assert.ok(shortReceipt.observations[0]!.crossbar_extension_longest_bilateral_support_ft[0] > 0.25);
+
+  const longData = fixture(t, { solid_long_crossbar_y: 75, upper_wall_end_y: 80 });
+  longData.input.observations[0]!.pixel_endpoints = [{ x: 100, y: 75 }, { x: 100, y: 115 }];
+  const longReceipt = await build(longData);
+  assert.equal(longReceipt.status, "clarification_required", JSON.stringify(longReceipt.observations[0]!.endpoint_transitions[0]));
+  assert.ok(longReceipt.observations[0]!.blockers.includes("door_span_start_jamb_transition_not_supported"));
+  assert.ok(longReceipt.observations[0]!.endpoint_transitions[0]!.jamb_cross_overrun_coverages.every((value) => value >= 0.6));
+});
+
+test("total one-face support rejects crossing strokes that split a long one-sided loss", async (t) => {
+  const receipt = await build(fixture(t, {
+    one_sided_recovery_y: 120,
+    one_sided_crossbars: [105, 111, 117]
+  }));
+  assert.equal(receipt.status, "clarification_required");
+  assert.ok(receipt.observations[0]!.blockers.includes("door_span_total_one_sided_wall_face_exceeds_policy"));
+  assert.ok(receipt.observations[0]!.total_one_sided_support_ft > 1);
+});
+
+test("dense crossing strokes cannot erase a one-sided wall-loss signal", async (t) => {
+  const receipt = await build(fixture(t, {
+    one_sided_recovery_y: 120,
+    one_sided_crossbars: Array.from({ length: 13 }, (_, index) => 101 + index)
+  }));
+  assert.equal(receipt.status, "clarification_required");
+  assert.ok(receipt.observations[0]!.blockers.includes("door_span_internal_cross_stroke_run_exceeds_policy"));
+  assert.ok(receipt.observations[0]!.longest_continuous_internal_cross_support_ft > 0.75);
+});
+
+test("separated sub-threshold crossing clusters cannot erase a one-sided wall-loss signal", async (t) => {
+  const receipt = await build(fixture(t, {
+    one_sided_recovery_y: 120,
+    one_sided_crossbars: [101, 102, 103, 104, 105, 112, 113, 114, 115]
+  }));
+  assert.equal(receipt.status, "clarification_required");
+  assert.ok(receipt.observations[0]!.blockers.includes("door_span_total_one_sided_wall_face_exceeds_policy"));
+  assert.ok(receipt.observations[0]!.total_one_sided_support_ft > 1);
+});
+
+test("disconnected crossing clusters cannot aggregate into longitudinal face evidence", async (t) => {
+  const receipt = await build(fixture(t, {
+    one_sided_recovery_y: 120,
+    one_sided_crossbars: [101, 102, 103, 104, 108, 109, 110, 111, 115, 116, 117]
+  }));
+  assert.equal(receipt.status, "clarification_required");
+  assert.ok(receipt.observations[0]!.blockers.includes("door_span_total_one_sided_wall_face_exceeds_policy"));
+  assert.ok(receipt.observations[0]!.total_one_sided_support_ft > 1);
+});
+
+test("a bounded wall-parallel annotation cannot conceal one-sided wall loss", async (t) => {
+  const receipt = await build(fixture(t, {
+    one_sided_recovery_y: 120,
+    parallel_annotation: [101, 113]
+  }));
+  assert.equal(receipt.status, "clarification_required");
+  assert.ok(receipt.observations[0]!.endpoint_transitions.every((transition) => transition.support_basis === "bilateral_transition"));
+  assert.ok(receipt.observations[0]!.blockers.includes("door_span_internal_bilateral_wall_face_run_exceeds_policy"));
+  assert.ok(receipt.observations[0]!.longest_continuous_internal_bilateral_support_ft > 0.75);
+});
+
+test("disconnected parallel marks cannot hide one-sided extensions under two cross-jamb anchors", async (t) => {
+  const data = fixture(t, {
+    one_sided_extensions: true,
+    start_crossbar: true,
+    end_crossbar: true,
+    parallel_annotations: [[68, 69], [71, 72], [108, 109], [112, 113]]
+  });
+  data.candidates.opening_gap_hypotheses[0]!.width_ft = 3.5;
+  const receipt = await build(data);
+  assert.equal(receipt.status, "clarification_required");
+  assert.ok(receipt.observations[0]!.endpoint_transitions.every((transition) => transition.support_basis === "jamb_crossbar"));
+  assert.ok(receipt.observations[0]!.blockers.includes("door_span_disconnected_internal_bilateral_support_exceeds_policy"));
+  assert.ok(receipt.observations[0]!.blockers.includes("door_span_conservative_one_sided_budget_exceeds_policy"));
+  assert.ok(receipt.observations[0]!.disconnected_internal_bilateral_support_ft > 0.25);
+  assert.ok(receipt.observations[0]!.conservative_one_sided_support_ft > 1);
+});
+
+test("bilateral islands bounded by the same one-sided face count against the conservative budget", async (t) => {
+  const receipt = await build(fixture(t, {
+    one_sided_recovery_y: 120,
+    parallel_annotations: [[101, 105], [111, 115]]
+  }));
+  assert.equal(receipt.status, "clarification_required");
+  assert.ok(receipt.observations[0]!.endpoint_transitions.every((transition) => transition.support_basis === "bilateral_transition"));
+  assert.ok(receipt.observations[0]!.bounded_internal_bilateral_support_ft > 0);
+  assert.ok(receipt.observations[0]!.blockers.includes("door_span_conservative_one_sided_budget_exceeds_policy"));
+  assert.ok(receipt.observations[0]!.conservative_one_sided_support_ft > 1);
+});
+
+test("a bilateral run at the conservative gap edge counts against the one-sided budget", async (t) => {
+  const receipt = await build(fixture(t, {
+    one_sided_recovery_y: 120,
+    parallel_annotations: [[101, 108], [112, 114]]
+  }));
+  assert.equal(receipt.status, "clarification_required");
+  assert.ok(receipt.observations[0]!.bounded_internal_bilateral_support_ft > 0.75);
+  assert.ok(receipt.observations[0]!.blockers.includes("door_span_conservative_one_sided_budget_exceeds_policy"));
+  assert.ok(receipt.observations[0]!.conservative_one_sided_support_ft > 1);
+});
+
+test("a bilateral island bounded by opposite one-sided faces counts against the budget", async (t) => {
+  const receipt = await build(fixture(t, { one_sided_face_switch: true }));
+  assert.equal(receipt.status, "clarification_required");
+  assert.ok(receipt.observations[0]!.bounded_internal_bilateral_support_ft > 0.75);
+  assert.ok(receipt.observations[0]!.blockers.includes("door_span_conservative_one_sided_budget_exceeds_policy"));
+  assert.ok(receipt.observations[0]!.conservative_one_sided_support_ft > 1);
 });
 
 test("requires independent swing, leaf, and paired-jamb semantic cues", async (t) => {
@@ -387,4 +546,10 @@ test("schema rejects impossible transition cardinality and status semantics", as
   const measuredWithQuestion = structuredClone(receipt);
   measuredWithQuestion.clarification_question = "This cannot coexist with measured status.";
   assert.throws(() => assertExistingConditionsContract("architectural_door_span_observation", measuredWithQuestion));
+
+  const passedWithoutBasis = structuredClone(receipt);
+  passedWithoutBasis.observations[0]!.endpoint_transitions[0]!.support_basis = null;
+  passedWithoutBasis.observations[0]!.endpoint_transitions[0]!.jamb_cross_support_coverage = 0;
+  passedWithoutBasis.observations[0]!.endpoint_transitions[0]!.transition_contrast = -1;
+  assert.throws(() => assertExistingConditionsContract("architectural_door_span_observation", passedWithoutBasis));
 });
