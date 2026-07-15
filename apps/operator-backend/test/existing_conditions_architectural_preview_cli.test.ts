@@ -15,8 +15,10 @@ test("architectural preview CLI emits a non-writing preview and an evidence-back
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "existing-conditions-architectural-preview-"));
   try {
     const inputPath = path.join(temp, "preview-input.json");
+    const truthPath = path.join(temp, "ground-truth.json");
     const resolutionsPath = path.join(temp, "resolutions.json");
     const previewPath = path.join(temp, "preview.json");
+    const scorePath = path.join(temp, "score.json");
     const promotionPath = path.join(temp, "promotion.json");
     const actionPath = path.join(temp, "action.json");
     writeJson(inputPath, {
@@ -77,6 +79,45 @@ test("architectural preview CLI emits a non-writing preview and an evidence-back
         ]
       }
     ]);
+    writeJson(truthPath, {
+      schema_version: 1,
+      fixture_id: "architectural-preview-cli-v1",
+      scope_id: "scope-cli",
+      discipline: "architectural",
+      visible_evidence: [{ role: "source_pdf", sha256: SOURCE_HASH }],
+      ground_truth_model: { path: "withheld/source.rvt", sha256: "8".repeat(64) },
+      deletion_manifest: {
+        requested_element_ids: [1, 2],
+        deleted_element_ids: [1, 2],
+        dependent_element_ids: [],
+        dry_run_receipt_sha256: "7".repeat(64)
+      },
+      snapshot: {
+        native_readback: true,
+        elements: [
+          {
+            key: "truth-wall-1",
+            kind: "linear_element",
+            discipline: "architectural",
+            role: "wall",
+            category: "Walls",
+            endpoints: [{ x: 0, y: 0, z: 0 }, { x: 10, y: 0, z: 0 }],
+            location: null
+          },
+          {
+            key: "truth-door-1",
+            kind: "family_instance",
+            discipline: "architectural",
+            role: "door",
+            category: "Doors",
+            endpoints: null,
+            location: { x: 5, y: 0, z: 0 }
+          }
+        ],
+        connections: [{ a: "truth-door-1", b: "truth-wall-1", kind: "host" }],
+        open_connector_count: 0
+      }
+    });
 
     const cli = path.resolve(process.cwd(), "dist/src/tools/existing_conditions_fixture.js");
     const previewRun = spawnSync(process.execPath, [
@@ -91,13 +132,19 @@ test("architectural preview CLI emits a non-writing preview and an evidence-back
     const promotionRun = spawnSync(process.execPath, [
       cli, "promote-architectural-preview",
       "--input", inputPath,
+      "--truth", truthPath,
       "--resolutions", resolutionsPath,
       "--out", promotionPath,
+      "--score-out", scorePath,
       "--action-out", actionPath
     ], { cwd: process.cwd(), encoding: "utf8" });
     assert.equal(promotionRun.status, 0, promotionRun.stderr || promotionRun.stdout);
     const promotion = JSON.parse(fs.readFileSync(promotionPath, "utf8"));
+    const score = JSON.parse(fs.readFileSync(scorePath, "utf8"));
     const action = JSON.parse(fs.readFileSync(actionPath, "utf8"));
+    assert.equal(score.valid_run, true);
+    assert.equal(score.passed, true);
+    assert.equal(score.preview_fingerprint_sha256, preview.input_fingerprint_sha256);
     assert.equal(promotion.compiled_plan.status, "ready");
     assert.equal(action.dryRun, true);
     assert.equal(action.requireExactWallTypes, true);
