@@ -1670,8 +1670,48 @@ export function deduplicateArchitecturalOpeningHypotheses(
   policy: Pick<
     ArchitecturalWallLineCandidatePolicy,
     "opening_gap_axis_snap_tolerance_degrees" | "duplicate_separation_ft" | "maximum_opening_gap_hypotheses"
-  >
+  >,
+  hostCandidates: ArchitecturalWallLineCandidate[] = []
 ): ArchitecturalOpeningGapHypothesis[] {
+  const hostsById = new Map(hostCandidates.map((candidate) => [candidate.candidate_id, candidate]));
+  const shareSupportingFace = (
+    entry: ArchitecturalOpeningGapHypothesis,
+    accepted: ArchitecturalOpeningGapHypothesis
+  ): boolean => {
+    const entryFaces = hostsById.get(entry.host_candidate_id)?.supporting_face_model_points;
+    const acceptedFaces = hostsById.get(accepted.host_candidate_id)?.supporting_face_model_points;
+    if (!entryFaces || !acceptedFaces) return false;
+    return entryFaces.some((entryFace) => acceptedFaces.some((acceptedFace) => {
+      const acceptedDx = acceptedFace[1].x - acceptedFace[0].x;
+      const acceptedDy = acceptedFace[1].y - acceptedFace[0].y;
+      const acceptedLength = Math.hypot(acceptedDx, acceptedDy);
+      const entryDx = entryFace[1].x - entryFace[0].x;
+      const entryDy = entryFace[1].y - entryFace[0].y;
+      const entryLength = Math.hypot(entryDx, entryDy);
+      if (acceptedLength <= 0 || entryLength <= 0) return false;
+      const acceptedAngle = (Math.atan2(acceptedDy, acceptedDx) * 180 / Math.PI + 180) % 180;
+      const entryAngle = (Math.atan2(entryDy, entryDx) * 180 / Math.PI + 180) % 180;
+      if (angleDifference(entryAngle, acceptedAngle) > policy.opening_gap_axis_snap_tolerance_degrees) return false;
+      const axis = { x: acceptedDx / acceptedLength, y: acceptedDy / acceptedLength };
+      const normal = { x: -axis.y, y: axis.x };
+      const normalOffset = Math.max(
+        Math.abs((entryFace[0].x - acceptedFace[0].x) * normal.x + (entryFace[0].y - acceptedFace[0].y) * normal.y),
+        Math.abs((entryFace[1].x - acceptedFace[0].x) * normal.x + (entryFace[1].y - acceptedFace[0].y) * normal.y)
+      );
+      if (normalOffset > 0.12) return false;
+      const acceptedInterval = [
+        acceptedFace[0].x * axis.x + acceptedFace[0].y * axis.y,
+        acceptedFace[1].x * axis.x + acceptedFace[1].y * axis.y
+      ].sort((a, b) => a - b);
+      const entryInterval = [
+        entryFace[0].x * axis.x + entryFace[0].y * axis.y,
+        entryFace[1].x * axis.x + entryFace[1].y * axis.y
+      ].sort((a, b) => a - b);
+      const overlap = Math.max(0, Math.min(entryInterval[1]!, acceptedInterval[1]!)
+        - Math.max(entryInterval[0]!, acceptedInterval[0]!));
+      return overlap / Math.min(entryLength, acceptedLength) >= 0.8;
+    }));
+  };
   const ranked = [...hypotheses].sort((a, b) => {
     const aPriority = a.evidence_basis === "source_symbol_on_redacted_wall" ? 0 : 1;
     const bPriority = b.evidence_basis === "source_symbol_on_redacted_wall" ? 0 : 1;
@@ -1695,7 +1735,7 @@ export function deduplicateArchitecturalOpeningHypotheses(
       y: entry.model_center.y - accepted.model_center.y
     };
     const normalSeparation = Math.abs(delta.x * normal.x + delta.y * normal.y);
-    if (normalSeparation > maximumNormalSeparationFt) return false;
+    if (normalSeparation > maximumNormalSeparationFt && !shareSupportingFace(entry, accepted)) return false;
     const entryCenter = entry.model_center.x * axis.x + entry.model_center.y * axis.y;
     const acceptedCenter = accepted.model_center.x * axis.x + accepted.model_center.y * axis.y;
     const entryInterval = [entryCenter - entry.width_ft / 2, entryCenter + entry.width_ft / 2];
@@ -2001,7 +2041,8 @@ export async function buildArchitecturalWallLineCandidates(
   );
   const openingGapHypotheses = deduplicateArchitecturalOpeningHypotheses(
     [...gapHypotheses, ...symbolBindings.hypotheses],
-    policy
+    policy,
+    candidates
   );
   const ambiguities = buildAmbiguities(raw, candidates, pixelsPerFoot, policy);
   const status = candidates.length === 0 ? "blocked" : ambiguities.length > 0 ? "clarification_required" : "candidates_ready";

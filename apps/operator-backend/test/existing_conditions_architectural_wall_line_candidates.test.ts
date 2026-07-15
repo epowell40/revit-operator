@@ -14,7 +14,8 @@ import {
 import {
   buildArchitecturalWallLineCandidates,
   deduplicateArchitecturalOpeningHypotheses,
-  type ArchitecturalOpeningGapHypothesis
+  type ArchitecturalOpeningGapHypothesis,
+  type ArchitecturalWallLineCandidate
 } from "../src/existing_conditions/architectural_wall_line_candidates.js";
 import {
   validateArchitecturalOpeningClassification,
@@ -757,6 +758,62 @@ test("physical opening dedup prefers source-symbol evidence without collapsing a
   });
   assert.deepEqual(distinct.map((entry) => entry.opening_hypothesis_id), ["symbol", "adjacent", "parallel-wall"]);
   assert.deepEqual(distinct.map((entry) => entry.rank), [1, 2, 3]);
+});
+
+test("physical opening dedup collapses alternate hosts that reuse the same wall face", () => {
+  const opening = (id: string, host: string, y: number, width: number): ArchitecturalOpeningGapHypothesis => ({
+    opening_hypothesis_id: id,
+    rank: 1,
+    kind: "unclassified_opening_symbol",
+    host_candidate_id: host,
+    pixel_center: { x: 5, y },
+    model_center: { x: 5, y },
+    width_ft: width,
+    host_chainage_ft: 5,
+    host_chainage_ratio: 0.5,
+    profile_axis_degrees: 0,
+    confirming_profile_count: 2,
+    profile_offset_range_ft: [-0.5, 0.5],
+    flank_ink_coverage: 0.9,
+    gap_ink_coverage: 0,
+    profile_ink_coverage: 0.9,
+    evidence_score: host === "primary" ? 0.96 : 0.88,
+    evidence_basis: "source_symbol_on_redacted_wall"
+  });
+  const host = (
+    id: string,
+    centerY: number,
+    separation: number,
+    faces: [[{ x: number; y: number }, { x: number; y: number }], [{ x: number; y: number }, { x: number; y: number }]]
+  ): ArchitecturalWallLineCandidate => ({
+    candidate_id: id,
+    rank: 1,
+    derivation: "parallel_face_midline",
+    pixel_points: [{ x: 0, y: centerY }, { x: 10, y: centerY }],
+    model_points: [{ x: 0, y: centerY }, { x: 10, y: centerY }],
+    face_separation_ft: separation,
+    supporting_face_pixel_points: faces,
+    supporting_face_model_points: faces,
+    angle_degrees: 0,
+    length_ft: 10,
+    candidate_coverage: 1,
+    source_ink_coverage: 1,
+    rank_score: 1,
+    evidence_source: "redacted_model"
+  });
+  const primary = host("primary", 0, 1, [[{ x: 0, y: -0.5 }, { x: 10, y: -0.5 }], [{ x: 0, y: 0.5 }, { x: 10, y: 0.5 }]]);
+  const alternate = host("alternate", -0.66, 0.32, [[{ x: 0, y: -0.82 }, { x: 10, y: -0.82 }], [{ x: 0, y: -0.5 }, { x: 10, y: -0.5 }]]);
+  const separate = host("separate", 1.2, 0.4, [[{ x: 0, y: 1 }, { x: 10, y: 1 }], [{ x: 0, y: 1.4 }, { x: 10, y: 1.4 }]]);
+  const distinct = deduplicateArchitecturalOpeningHypotheses([
+    opening("primary-opening", "primary", 0, 4.5),
+    opening("alternate-opening", "alternate", -0.66, 4),
+    opening("separate-opening", "separate", 1.2, 4)
+  ], {
+    opening_gap_axis_snap_tolerance_degrees: 8,
+    duplicate_separation_ft: 0.65,
+    maximum_opening_gap_hypotheses: 12
+  }, [primary, alternate, separate]);
+  assert.deepEqual(distinct.map((entry) => entry.opening_hypothesis_id), ["primary-opening", "separate-opening"]);
 });
 
 test("wall-line extraction is geometry-sensitive and rejects hash-bound receipt drift", async () => {
