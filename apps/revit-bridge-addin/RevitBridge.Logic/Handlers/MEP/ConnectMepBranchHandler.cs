@@ -22,6 +22,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             public List<MepRoutingUtil.RoutePoint> branchPoints { get; set; } = new List<MepRoutingUtil.RoutePoint>();
             public string? branchSize { get; set; }
             public List<string>? branchSegmentSizes { get; set; }
+            public string? branchSystemType { get; set; }
+            public string? branchPipeType { get; set; }
             public string? connectionMode { get; set; } = "auto";
             public string? frameId { get; set; }
             public long? viewId { get; set; }
@@ -64,6 +66,50 @@ namespace RevitBridge.Logic.Handlers.MEP
 
             var kind = MepRoutingUtil.NormalizeKind(p.kind);
             var requestedConnectionMode = NormalizeConnectionMode(p.connectionMode);
+            var explicitPipeBranchOverride = !string.IsNullOrWhiteSpace(p.branchSystemType)
+                || !string.IsNullOrWhiteSpace(p.branchPipeType);
+            if (explicitPipeBranchOverride && kind != "pipe")
+            {
+                return Task.FromResult<object>(new
+                {
+                    status = "Blocked",
+                    error = "branchSystemType and branchPipeType are supported only for pipe branches.",
+                    warnings
+                });
+            }
+            if (explicitPipeBranchOverride && requestedConnectionMode != "tee")
+            {
+                return Task.FromResult<object>(new
+                {
+                    status = "Blocked",
+                    error = "An explicit pipe branch system/type override requires connectionMode:\"tee\" so the request cannot fall back to an open connector or tap path.",
+                    warnings
+                });
+            }
+            var explicitBranchSystemType = string.IsNullOrWhiteSpace(p.branchSystemType)
+                ? null
+                : MepRoutingUtil.FindSystemType(doc, p.branchSystemType, "pipe");
+            var explicitBranchPipeType = string.IsNullOrWhiteSpace(p.branchPipeType)
+                ? null
+                : MepRoutingUtil.FindPipeType(doc, p.branchPipeType);
+            if (!string.IsNullOrWhiteSpace(p.branchSystemType) && explicitBranchSystemType == null)
+            {
+                return Task.FromResult<object>(new
+                {
+                    status = "Blocked",
+                    error = $"Could not resolve explicit pipe branch system type '{p.branchSystemType}'.",
+                    warnings
+                });
+            }
+            if (!string.IsNullOrWhiteSpace(p.branchPipeType) && explicitBranchPipeType == null)
+            {
+                return Task.FromResult<object>(new
+                {
+                    status = "Blocked",
+                    error = $"Could not resolve explicit pipe branch pipe type '{p.branchPipeType}'.",
+                    warnings
+                });
+            }
             var mainCategory = main.Category?.Name ?? "";
             var isMainKind =
                 (kind == "duct" && main.Category != null && ElementIdCompat.GetValue(main.Category.Id) == (int)BuiltInCategory.OST_DuctCurves) ||
@@ -226,8 +272,9 @@ namespace RevitBridge.Logic.Handlers.MEP
                             object sizeApplied;
                             if (kind == "pipe")
                             {
-                                var pipeTypeId = main is Pipe mainPipe ? mainPipe.PipeType.Id : (MepRoutingUtil.FindPipeType(doc, null)?.Id ?? ElementId.InvalidElementId);
-                                var systemTypeId = ResolveMainSystemTypeId(doc, main, "pipe");
+                                var pipeTypeId = explicitBranchPipeType?.Id
+                                    ?? (main is Pipe mainPipe ? mainPipe.PipeType.Id : (MepRoutingUtil.FindPipeType(doc, null)?.Id ?? ElementId.InvalidElementId));
+                                var systemTypeId = explicitBranchSystemType?.Id ?? ResolveMainSystemTypeId(doc, main, "pipe");
                                 var levelId = ResolveLevelId(doc, main, ctx.Level, a.Z);
                                 if (pipeTypeId == ElementId.InvalidElementId || systemTypeId == ElementId.InvalidElementId || levelId == ElementId.InvalidElementId)
                                     throw new InvalidOperationException("Could not resolve pipe branch system/type/level from the main element.");
@@ -359,14 +406,14 @@ namespace RevitBridge.Logic.Handlers.MEP
                         if (kind == "pipe")
                         {
                             if (!(main is Pipe mainPipe)) throw new InvalidOperationException("Safe split/tee apply for kind 'pipe' requires a pipe main.");
-                            curveTypeId = mainPipe.PipeType.Id;
+                            curveTypeId = explicitBranchPipeType?.Id ?? mainPipe.PipeType.Id;
                         }
                         else
                         {
                             if (!(main is Duct mainDuct)) throw new InvalidOperationException("Safe split/tee apply for kind 'duct' requires a duct main.");
                             curveTypeId = mainDuct.DuctType.Id;
                         }
-                        var systemTypeId = ResolveMainSystemTypeId(doc, main, kind);
+                        var systemTypeId = explicitBranchSystemType?.Id ?? ResolveMainSystemTypeId(doc, main, kind);
                         var levelId = ResolveLevelId(doc, main, ctx.Level, snapped[0].Z);
                         if (curveTypeId == ElementId.InvalidElementId || systemTypeId == ElementId.InvalidElementId || levelId == ElementId.InvalidElementId)
                             throw new InvalidOperationException($"Could not resolve {kind} branch system/type/level from the main element.");
@@ -551,6 +598,16 @@ namespace RevitBridge.Logic.Handlers.MEP
                         doc.Regenerate();
                         if (FailureHandlingUtil.HasErrors(failures))
                             throw new InvalidOperationException("Revit reported an error while creating the branch split/tee.");
+
+                        if (explicitBranchSystemType != null)
+                        {
+                            var wrongSystem = branchElements
+                                .OfType<Pipe>()
+                                .FirstOrDefault(pipe => ElementIdCompat.GetValue(ResolveMainSystemTypeId(doc, pipe, "pipe"))
+                                    != ElementIdCompat.GetValue(explicitBranchSystemType.Id));
+                            if (wrongSystem != null)
+                                throw new InvalidOperationException($"Created pipe branch did not retain explicit system type '{explicitBranchSystemType.Name}' after tee connection.");
+                        }
 
                         var auditElements = branchElements.Concat(new Element[] { firstMainSegment, secondMainSegment });
                         if (retainedAnchor != null) auditElements = auditElements.Concat(new[] { retainedAnchor });
@@ -754,6 +811,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                     segmentCount = Math.Max(0, branch.Count - 1),
                     requestedSize = string.IsNullOrWhiteSpace(p.branchSize) ? null : p.branchSize,
                     segmentSizes = branchSegmentSizeTexts,
+                    requestedSystemType = string.IsNullOrWhiteSpace(p.branchSystemType) ? null : p.branchSystemType,
+                    requestedPipeType = string.IsNullOrWhiteSpace(p.branchPipeType) ? null : p.branchPipeType,
                     jointPlan = branchJointPlans.Select(j => new
                     {
                         jointIndex = j.JointIndex,
@@ -785,6 +844,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                 {
                     type = DescribeElementType(doc, main),
                     system = DescribeSystemType(doc, main, kind),
+                    branchPipeType = explicitBranchPipeType == null ? null : new { id = ElementIdCompat.GetValue(explicitBranchPipeType.Id), name = explicitBranchPipeType.Name },
+                    branchSystemType = explicitBranchSystemType == null ? null : new { id = ElementIdCompat.GetValue(explicitBranchSystemType.Id), name = explicitBranchSystemType.Name },
                     level = DescribeLevel(doc, main, ctx.Level, branchStart.Z),
                     size = string.IsNullOrWhiteSpace(p.branchSize) ? (kind == "duct" ? "8x8" : "1") : p.branchSize,
                     segmentSizes = branchSegmentSizeTexts,

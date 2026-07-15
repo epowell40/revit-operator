@@ -6911,6 +6911,40 @@
               }
             }
           }
+        },
+        {
+          "name": "Dry-run a downstream vent tee from a sanitary main",
+          "request": {
+            "kind": "pipe",
+            "mainElementId": 1499787,
+            "branchSize": "2 inch",
+            "branchSystemType": "Vent",
+            "branchPipeType": "PVC - DWV",
+            "connectionMode": "tee",
+            "branchPoints": [
+              { "x": 13.5, "y": -6.5, "z": 31.5 },
+              { "x": 13.5, "y": -2.5, "z": 35.5 }
+            ],
+            "dryRun": true,
+            "verify": true,
+            "visualVerify": true
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "branchPlan": {
+              "requestedSystemType": "Vent",
+              "requestedPipeType": "PVC - DWV",
+              "connectionMode": "tee"
+            },
+            "selected": {
+              "branchSystemType": { "name": "Vent" },
+              "branchPipeType": { "name": "PVC - DWV" }
+            },
+            "splitPlan": {
+              "applySupported": true,
+              "expectedFitting": "tee"
+            }
+          }
         }
       ]
     },
