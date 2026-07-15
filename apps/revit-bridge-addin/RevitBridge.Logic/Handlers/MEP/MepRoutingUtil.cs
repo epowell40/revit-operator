@@ -122,6 +122,20 @@ namespace RevitBridge.Logic.Handlers.MEP
             public bool Missing { get; set; }
         }
 
+        internal sealed class DuctTypeResolution
+        {
+            public DuctType? Selected { get; set; }
+            public MepDuctTypeSelection Receipt { get; set; } = new MepDuctTypeSelection();
+        }
+
+        internal sealed class DuctSizeReadback
+        {
+            public string Shape { get; set; } = "unknown";
+            public double? WidthFt { get; set; }
+            public double? HeightFt { get; set; }
+            public double? DiameterFt { get; set; }
+        }
+
         internal static RoutingContext ResolveRoutingContext(Document doc, UIApplication app, RoutingContextRequest req)
         {
             var ctx = new RoutingContext { SystemKind = NormalizeKind(req.systemKind) };
@@ -378,6 +392,24 @@ namespace RevitBridge.Logic.Handlers.MEP
             return all.FirstOrDefault();
         }
 
+        internal static DuctTypeResolution ResolveDuctType(Document doc, long? requestedId, string? requestedName)
+        {
+            var all = new FilteredElementCollector(doc).OfClass(typeof(DuctType)).Cast<DuctType>().ToList();
+            var receipt = MepDuctTypeSelectionPolicy.Resolve(
+                all.Select(x => new MepDuctTypeCandidate
+                {
+                    Id = ElementIdCompat.GetValue(x.Id),
+                    Name = x.Name ?? string.Empty,
+                    FamilyName = x.FamilyName ?? string.Empty
+                }),
+                requestedId,
+                requestedName);
+            var selected = receipt.Selected == null
+                ? null
+                : all.FirstOrDefault(x => ElementIdCompat.GetValue(x.Id) == receipt.Selected.Id);
+            return new DuctTypeResolution { Selected = selected, Receipt = receipt };
+        }
+
         internal static PipeType? FindPipeType(Document doc, string? name)
         {
             var q = (name ?? "").Trim();
@@ -466,6 +498,89 @@ namespace RevitBridge.Logic.Handlers.MEP
             var diameter = size.DiameterFt.HasValue && TrySetBuiltinOrNamedDouble(duct, BuiltInParameter.RBS_CURVE_DIAMETER_PARAM, new[] { "Diameter", "Duct Diameter", "Size" }, size.DiameterFt.Value);
             result = new { width, height, diameter };
             return width || height || diameter;
+        }
+
+        internal static bool ValidateDuctSizeAndShape(
+            Duct duct,
+            SizeChoice size,
+            string? requestedShape,
+            out DuctSizeReadback readback,
+            out string error)
+        {
+            error = string.Empty;
+            readback = ReadDuctSize(duct);
+            var expectedShape = NormalizeDuctShape(requestedShape);
+            if (!string.IsNullOrWhiteSpace(requestedShape) && expectedShape.Length == 0)
+            {
+                error = "ductShape must be round, rectangular, or oval.";
+                return false;
+            }
+            if (expectedShape.Length == 0)
+            {
+                if (size.DiameterFt.HasValue) expectedShape = "round";
+                else if (size.WidthFt.HasValue || size.HeightFt.HasValue) expectedShape = "rectangular";
+            }
+
+            if (expectedShape.Length > 0 && !string.Equals(expectedShape, readback.Shape, StringComparison.OrdinalIgnoreCase))
+            {
+                error = $"Selected duct type created shape '{readback.Shape}', but requested size/ductShape requires '{expectedShape}'.";
+                return false;
+            }
+
+            const double toleranceFt = 1e-4;
+            if (size.DiameterFt.HasValue && (!readback.DiameterFt.HasValue || Math.Abs(readback.DiameterFt.Value - size.DiameterFt.Value) > toleranceFt))
+            {
+                error = $"Native duct diameter readback did not match requested {size.DiameterFt.Value:G9} ft.";
+                return false;
+            }
+            if (size.WidthFt.HasValue && (!readback.WidthFt.HasValue || Math.Abs(readback.WidthFt.Value - size.WidthFt.Value) > toleranceFt))
+            {
+                error = $"Native duct width readback did not match requested {size.WidthFt.Value:G9} ft.";
+                return false;
+            }
+            if (size.HeightFt.HasValue && (!readback.HeightFt.HasValue || Math.Abs(readback.HeightFt.Value - size.HeightFt.Value) > toleranceFt))
+            {
+                error = $"Native duct height readback did not match requested {size.HeightFt.Value:G9} ft.";
+                return false;
+            }
+            return true;
+        }
+
+        private static DuctSizeReadback ReadDuctSize(Duct duct)
+        {
+            var shape = "unknown";
+            try
+            {
+                var connector = GetConnectors(duct).FirstOrDefault();
+                if (connector != null) shape = NormalizeDuctShape(connector.Shape.ToString());
+            }
+            catch { }
+            return new DuctSizeReadback
+            {
+                Shape = shape.Length == 0 ? "unknown" : shape,
+                WidthFt = ReadBuiltinDouble(duct, BuiltInParameter.RBS_CURVE_WIDTH_PARAM),
+                HeightFt = ReadBuiltinDouble(duct, BuiltInParameter.RBS_CURVE_HEIGHT_PARAM),
+                DiameterFt = ReadBuiltinDouble(duct, BuiltInParameter.RBS_CURVE_DIAMETER_PARAM)
+            };
+        }
+
+        private static double? ReadBuiltinDouble(Element element, BuiltInParameter parameter)
+        {
+            try
+            {
+                var value = element.get_Parameter(parameter)?.AsDouble();
+                return value.HasValue && value.Value > 0 ? value : null;
+            }
+            catch { return null; }
+        }
+
+        private static string NormalizeDuctShape(string? value)
+        {
+            var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
+            if (normalized == "round") return "round";
+            if (normalized == "rectangular" || normalized == "rectangle") return "rectangular";
+            if (normalized == "oval") return "oval";
+            return string.Empty;
         }
 
         internal static bool TryApplyPipeSize(Pipe pipe, SizeChoice size, out object result)

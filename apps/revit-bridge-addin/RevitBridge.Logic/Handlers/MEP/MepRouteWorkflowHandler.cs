@@ -22,6 +22,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             public long? levelId { get; set; }
             public string? systemType { get; set; }
             public string? ductType { get; set; }
+            public long? ductTypeId { get; set; }
+            public string? ductShape { get; set; }
             public string? pipeType { get; set; }
             public string? ductSize { get; set; }
             public string? diameter { get; set; }
@@ -266,6 +268,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             levelId = p.levelId,
             systemType = p.systemType,
             ductType = p.ductType,
+            ductTypeId = p.ductTypeId,
+            ductShape = p.ductShape,
             pipeType = p.pipeType,
             ductSize = p.ductSize,
             diameter = p.diameter,

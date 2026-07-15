@@ -24,6 +24,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             public long? levelId { get; set; }
             public string? systemType { get; set; }
             public string? ductType { get; set; }
+            public long? ductTypeId { get; set; }
+            public string? ductShape { get; set; }
             public string? pipeType { get; set; }
             public string? ductSize { get; set; }
             public string? diameter { get; set; }
@@ -137,15 +139,21 @@ namespace RevitBridge.Logic.Handlers.MEP
             }
 
             MEPSystemType? sysType = MepRoutingUtil.FindSystemType(doc, p.systemType, kind);
-            DuctType? dType = kind == "duct" ? MepRoutingUtil.FindDuctType(doc, p.ductType) : null;
+            MepRoutingUtil.DuctTypeResolution? ductTypeResolution = kind == "duct"
+                ? MepRoutingUtil.ResolveDuctType(doc, p.ductTypeId, p.ductType)
+                : null;
+            DuctType? dType = ductTypeResolution?.Selected;
             PipeType? pType = kind == "pipe" ? MepRoutingUtil.FindPipeType(doc, p.pipeType) : null;
             if (sysType == null || (kind == "duct" && dType == null) || (kind == "pipe" && pType == null))
             {
                 return Task.FromResult<object>(new
                 {
                     status = "Blocked",
-                    error = "Could not find required Revit MEP definitions for level/system/type.",
+                    error = kind == "duct" && dType == null && !string.IsNullOrWhiteSpace(ductTypeResolution?.Receipt.Error)
+                        ? ductTypeResolution!.Receipt.Error
+                        : "Could not find required Revit MEP definitions for level/system/type.",
                     selected = BuildSelected(ctx, sysType, dType, pType),
+                    ductTypeCandidates = ductTypeResolution?.Receipt.Candidates,
                     warnings
                 });
             }
@@ -168,6 +176,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         var b = resolvedPoints[i + 1];
                         Element curve;
                         object sizeApplied;
+                        object? nativeSizeReadback = null;
                         var segmentSize = MepRoutingUtil.ChooseSize(
                             kind,
                             kind == "duct" ? segmentSizeTexts[i] : p.ductSize,
@@ -185,6 +194,22 @@ namespace RevitBridge.Logic.Handlers.MEP
                         {
                             var duct = Duct.Create(doc, sysType.Id, dType!.Id, ctx.Level.Id, a, b);
                             MepRoutingUtil.TryApplyDuctSize(duct, segmentSize, out sizeApplied);
+                            doc.Regenerate();
+                            var readbackValid = MepRoutingUtil.ValidateDuctSizeAndShape(duct, segmentSize, p.ductShape, out var readback, out var readbackError);
+                            if (p.verify && !readbackValid)
+                            {
+                                throw new InvalidOperationException(readbackError);
+                            }
+                            else
+                            {
+                                nativeSizeReadback = new
+                                {
+                                    shape = readback.Shape,
+                                    widthFt = readback.WidthFt,
+                                    heightFt = readback.HeightFt,
+                                    diameterFt = readback.DiameterFt
+                                };
+                            }
                             curve = duct;
                         }
 
@@ -207,7 +232,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                                 heightFt = segmentSize.HeightFt,
                                 diameterFt = segmentSize.DiameterFt
                             },
-                            sizeApplied
+                            sizeApplied,
+                            nativeSizeReadback
                         });
                     }
 
@@ -431,7 +457,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 level = ctx.Level == null ? null : new { id = ElementIdCompat.GetValue(ctx.Level.Id), name = ctx.Level.Name, elevation = ctx.Level.Elevation },
                 systemType = sysType == null ? null : new { id = ElementIdCompat.GetValue(sysType.Id), name = sysType.Name },
-                ductType = dType == null ? null : new { id = ElementIdCompat.GetValue(dType.Id), name = dType.Name },
+                ductType = dType == null ? null : new { id = ElementIdCompat.GetValue(dType.Id), name = dType.Name, familyName = dType.FamilyName },
                 pipeType = pType == null ? null : new { id = ElementIdCompat.GetValue(pType.Id), name = pType.Name }
             };
         }
