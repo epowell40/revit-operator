@@ -108,6 +108,16 @@ import {
   type ArchitecturalOpeningHostResolutionReceipt
 } from "../existing_conditions/architectural_opening_host_resolution.js";
 import { scoreArchitecturalOpeningHostResolution } from "../existing_conditions/architectural_opening_host_resolution_score.js";
+import {
+  extractPlanTraces,
+  renderPlanTraceExtractionPreview,
+  type PlanTraceExtractionInput
+} from "../existing_conditions/plan_trace_extraction.js";
+import {
+  validateBoundedMepRegionCoverageV1,
+  type BoundedMepRegionCoverageContext,
+  type BoundedMepRegionCoverageV1
+} from "../existing_conditions/mep_region_coverage.js";
 
 function argument(name: string): string {
   const index = process.argv.indexOf(name);
@@ -164,6 +174,8 @@ function usage(): never {
   throw new Error([
     "Usage:",
     "  npm run existing-conditions -- normalize --visible <export-visible-elements.json> --connectors <get-connectors.json> --ids <id,id,...> --out <snapshot.json>",
+    "  npm run existing-conditions -- extract-plan-traces --input <hash-bound-extraction-policy.json> --out <trace-receipt.json> [--preview-out <diagnostic-overlay.png>]",
+    "  npm run existing-conditions -- validate-mep-region-coverage --input <source-coverage.json> --context <coverage-context.json> --out <coverage-receipt.json>",
     "  npm run existing-conditions -- compile-registered-mep-observations --input <registered-pixel-observations.json> --out <compilation.json> [--package-out <mep-draft-package.json>] [--workflow-out <atomic-dry-run-request.json>] [--max-created <count>]",
     "  npm run existing-conditions -- compile-mep-draft --input <source-observations.json> --out <compiled-plan.json> [--workflow-out <atomic-dry-run-request.json>] [--max-created <count>]",
     "  npm run existing-conditions -- compile-architectural-preview --input <source-observations.json> --out <preview.json>",
@@ -1412,6 +1424,24 @@ async function main(): Promise<void> {
       }
     );
     writeJson(requiredArgument("--out"), snapshot);
+    return;
+  }
+  if (command === "extract-plan-traces") {
+    const input = readJson(requiredArgument("--input")) as PlanTraceExtractionInput;
+    const receipt = await extractPlanTraces(input);
+    const previewOut = argument("--preview-out");
+    const diagnosticPreview = previewOut
+      ? await renderPlanTraceExtractionPreview(input.source_image_path, receipt, previewOut)
+      : undefined;
+    writeJson(requiredArgument("--out"), diagnosticPreview ? { ...receipt, diagnostic_preview: diagnosticPreview } : receipt);
+    return;
+  }
+  if (command === "validate-mep-region-coverage") {
+    const receipt = validateBoundedMepRegionCoverageV1(
+      readJson(requiredArgument("--input")) as BoundedMepRegionCoverageV1,
+      readJson(requiredArgument("--context")) as BoundedMepRegionCoverageContext
+    );
+    writeJson(requiredArgument("--out"), receipt);
     return;
   }
   if (command === "compile-registered-mep-observations") {
