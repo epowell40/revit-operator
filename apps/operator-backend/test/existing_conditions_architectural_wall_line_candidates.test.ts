@@ -178,7 +178,10 @@ test("wall-line extraction preserves overlapping parallel alternatives instead o
       "--out", receiptPath
     ], { cwd: process.cwd(), encoding: "utf8" });
     assert.equal(cliRun.status, 0, cliRun.stderr || cliRun.stdout);
-    assert.equal(JSON.parse(fs.readFileSync(receiptPath, "utf8")).status, "clarification_required");
+    const cliReceipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
+    assert.equal(cliReceipt.status, "clarification_required");
+    assert.equal(cliReceipt.policy.maximum_candidates, 12);
+    assert.equal(cliReceipt.policy.minimum_opening_host_source_ink_coverage, 0.6);
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
@@ -437,6 +440,7 @@ test("opening-gap discovery recovers a paired wall opening through source-only t
     assert.ok(host);
     assert.ok(Math.abs(host.angle_degrees - 90) <= 1);
     assert.ok(host.face_separation_ft !== null && host.face_separation_ft >= 0.4 && host.face_separation_ft <= 0.9);
+    assert.ok(host.source_ink_coverage >= 0.6, JSON.stringify(host, null, 2));
     assert.equal(receipt.opening_gap_hypotheses.filter(
       (entry) => entry.width_ft >= 3.5 && entry.width_ft <= 5.5
     ).length, 1, JSON.stringify(receipt.opening_gap_hypotheses, null, 2));
@@ -471,6 +475,7 @@ test("opening-gap discovery rejects a one-sided face interruption", async () => 
       && candidate.face_separation_ft >= 0.4
       && candidate.face_separation_ft <= 0.9);
     assert.ok(host, JSON.stringify(receipt.candidates, null, 2));
+    assert.equal(receipt.policy.minimum_opening_host_source_ink_coverage, 0.6);
     assert.equal(receipt.opening_gap_hypotheses.some(
       (opening) => opening.host_candidate_id === host.candidate_id
     ), false, JSON.stringify(receipt.opening_gap_hypotheses, null, 2));

@@ -232,6 +232,18 @@ test("resolves a vertical host after axis rotation and does not depend on candid
   assert.deepEqual(resolution.resolutions[0]!.refined_host_model_points, [{ x: 0, y: 0 }, { x: 0, y: 10 }]);
 });
 
+test("anchors a terminating host to the nearer visible face of a paired cross wall", () => {
+  const candidates = candidateReceipt();
+  candidates.candidates[1]!.supporting_face_model_points = [
+    [{ x: -0.3, y: 0 }, { x: -0.3, y: 5 }],
+    [{ x: 0.3, y: 0 }, { x: 0.3, y: 5 }]
+  ];
+  const resolution = resolveArchitecturalOpeningHosts(candidates, HASH_A, classification(), HASH_C);
+  assert.equal(resolution.status, "resolved");
+  assert.deepEqual(resolution.resolutions[0]!.refined_host_model_points, [{ x: 0.3, y: 0 }, { x: 10, y: 0 }]);
+  assert.equal(resolution.resolutions[0]!.endpoint_evidence[0]!.source, "junction");
+});
+
 test("fails closed when the host participates in an ambiguity or classification confidence is low", () => {
   const ambiguous = candidateReceipt();
   ambiguous.candidates.push({
@@ -259,6 +271,17 @@ test("fails closed when the host participates in an ambiguity or classification 
   assert.ok(lowConfidenceResolution.resolutions[0]!.blockers.includes("opening_classification_confidence_below_threshold"));
 });
 
+test("fails closed when paired wall faces have no common longitudinal host extent", () => {
+  const candidates = candidateReceipt();
+  candidates.candidates[0]!.supporting_face_model_points = [
+    [{ x: 0, y: -0.3 }, { x: 4, y: -0.3 }],
+    [{ x: 6, y: 0.3 }, { x: 10, y: 0.3 }]
+  ];
+  const resolution = resolveArchitecturalOpeningHosts(candidates, HASH_A, classification(), HASH_C);
+  assert.equal(resolution.status, "clarification_required");
+  assert.ok(resolution.resolutions[0]!.blockers.includes("opening_host_paired_face_overlap_missing"));
+});
+
 test("ignores a parallel-wall ambiguity that cannot host the opening center", () => {
   const candidates = candidateReceipt();
   candidates.candidates.push({
@@ -284,6 +307,56 @@ test("ignores a parallel-wall ambiguity that cannot host the opening center", ()
   assert.ok(!resolution.resolutions[0]!.blockers.includes("opening_host_candidate_is_ambiguous"));
 });
 
+test("treats near-coincident equal-thickness stroke-edge variants as one physical short-wall host", () => {
+  const candidates = candidateReceipt();
+  const host = candidates.candidates[0]!;
+  host.source_ink_coverage = 0.65;
+  candidates.candidates.push({
+    ...host,
+    candidate_id: "same-wall-stroke-variant-randomized",
+    rank: 3,
+    model_points: [{ x: 0, y: 0.18 }, { x: 10, y: 0.18 }],
+    pixel_points: [{ x: 0, y: 0.18 }, { x: 10, y: 0.18 }],
+    supporting_face_model_points: [
+      [{ x: 0, y: -0.12 }, { x: 10, y: -0.12 }],
+      [{ x: 0, y: 0.48 }, { x: 10, y: 0.48 }]
+    ],
+    supporting_face_pixel_points: [
+      [{ x: 0, y: -0.12 }, { x: 10, y: -0.12 }],
+      [{ x: 0, y: 0.48 }, { x: 10, y: 0.48 }]
+    ]
+  });
+  candidates.ambiguities.push({
+    ambiguity_id: "same-wall-stroke-ambiguity-randomized",
+    candidate_ids: ["host-candidate-randomized", "same-wall-stroke-variant-randomized"],
+    reason: "near_equal_rank",
+    angle_difference_degrees: 0,
+    perpendicular_separation_ft: 0.18,
+    overlap_ratio: 1,
+    score_gap: 0.01
+  });
+  const resolution = resolveArchitecturalOpeningHosts(candidates, HASH_A, classification(), HASH_C);
+  assert.equal(resolution.policy.minimum_host_source_ink_coverage, 0.6);
+  assert.equal(resolution.status, "resolved", JSON.stringify(resolution, null, 2));
+  assert.equal(resolution.resolutions[0]!.selected_host_candidate_id, "host-candidate-randomized");
+  assert.ok(resolution.resolutions[0]!.confidence >= resolution.policy.minimum_resolution_confidence);
+  assert.ok(!resolution.resolutions[0]!.blockers.includes("opening_host_candidate_is_ambiguous"));
+
+  const differentWallBand = structuredClone(candidates);
+  differentWallBand.candidates.at(-1)!.face_separation_ft = 0.9;
+  const blocked = resolveArchitecturalOpeningHosts(differentWallBand, HASH_A, classification(), HASH_C);
+  assert.equal(blocked.status, "clarification_required");
+  assert.ok(blocked.resolutions[0]!.blockers.includes("opening_host_candidate_is_ambiguous"));
+
+  const weakLocalSupport = structuredClone(candidates);
+  weakLocalSupport.candidates[0]!.candidate_coverage = 0.5;
+  weakLocalSupport.candidates[0]!.source_ink_coverage = 0.61;
+  weakLocalSupport.opening_gap_hypotheses[0]!.flank_ink_coverage = 0.1;
+  const weak = resolveArchitecturalOpeningHosts(weakLocalSupport, HASH_A, classification(), HASH_C);
+  assert.equal(weak.status, "clarification_required");
+  assert.ok(weak.resolutions[0]!.blockers.includes("opening_host_resolution_confidence_below_threshold"));
+});
+
 test("scores identity-perturbed host geometry and relationship while ignoring unrelated walls", () => {
   const candidates = candidateReceipt();
   const classified = classification();
@@ -295,6 +368,49 @@ test("scores identity-perturbed host geometry and relationship while ignoring un
   assert.equal(score.counts.matched_openings, 1);
   assert.equal(score.metrics.hosting, 1);
   assert.equal(score.promotion_allowed, false);
+});
+
+test("does not score a safely unknown detector hypothesis as a native false positive", () => {
+  const candidates = candidateReceipt();
+  candidates.opening_gap_hypotheses.push({
+    ...candidates.opening_gap_hypotheses[0]!,
+    opening_hypothesis_id: "opening-screened-unknown",
+    pixel_center: { x: 8, y: 0 },
+    model_center: { x: 8, y: 0 },
+    host_chainage_ft: 8,
+    host_chainage_ratio: 0.8
+  });
+  candidates.opening_evidence_crops.push({
+    ...candidates.opening_evidence_crops[0]!,
+    opening_hypothesis_id: "opening-screened-unknown"
+  });
+  const classified = classification();
+  classified.status = "clarification_required";
+  classified.classifications.push({
+    opening_hypothesis_id: "opening-screened-unknown",
+    host_candidate_id: "host-candidate-randomized",
+    classification: "unknown",
+    confidence: 0.25,
+    cues: ["insufficient_symbol"],
+    evidence_artifact_sha256s: [HASH_A, HASH_B],
+    rationale: "The crop does not contain a defensible door or window symbol.",
+    selected_host_candidate_id: null
+  });
+  const resolution = resolveArchitecturalOpeningHosts(candidates, HASH_A, classified, HASH_C);
+  assert.equal(resolution.status, "clarification_required");
+  assert.ok(resolution.resolutions.at(-1)!.blockers.includes("opening_classification_unknown"));
+  const score = scoreArchitecturalOpeningHostResolution(
+    groundTruth(),
+    candidates,
+    HASH_A,
+    classified,
+    HASH_C,
+    resolution
+  );
+  assert.equal(score.passed, true, JSON.stringify(score, null, 2));
+  assert.equal(score.counts.predicted_openings, 1);
+  assert.equal(score.counts.false_positive_openings, 0);
+  assert.ok(!score.failure_classifications.includes("opening_host_resolution_has_blockers"));
 });
 
 test("scores a collinear containing wall as equivalent when PDF evidence cannot expose native segmentation", () => {

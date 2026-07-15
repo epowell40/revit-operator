@@ -186,7 +186,12 @@ const DEFAULT_POLICY_BASE = {
   maximum_source_endpoint_extension_ft: 2.5,
   maximum_source_endpoint_gap_ft: 0.3,
   minimum_length_ft: 2,
-  maximum_candidates: 8,
+  // Preserve a bounded tail of lower-ranked paired-face candidates. Short
+  // partitions that are mostly occupied by a door, room tag, or accessibility
+  // symbol can rank just below the dominant surrounding walls even when both
+  // measured faces are present. Twelve retained candidates recovered that
+  // evidence without removing the downstream ambiguity/host-selection gate.
+  maximum_candidates: 12,
   maximum_face_pair_inputs: 80,
   hough_peak_duplicate_separation_ft: 0.1,
   duplicate_angle_tolerance_degrees: 8,
@@ -207,7 +212,11 @@ const DEFAULT_POLICY_BASE = {
   opening_gap_maximum_ink_ratio: 0.35,
   opening_gap_minimum_flank_coverage: 0.55,
   opening_gap_minimum_profile_ink_coverage: 0.45,
-  minimum_opening_host_source_ink_coverage: 0.7,
+  // A door can consume nearly half of a short partition in plan. Accept the
+  // resulting conservative paired-face gap at 60% longitudinal source support;
+  // the bilateral profiles, flank checks, classification, and door-span
+  // observation still have to pass before any host can be resolved.
+  minimum_opening_host_source_ink_coverage: 0.6,
   opening_gap_axis_snap_tolerance_degrees: 8,
   opening_gap_face_profile_band_ft: 0.15,
   opening_gap_face_profile_sample_count: 7,

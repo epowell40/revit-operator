@@ -29,7 +29,11 @@ export type ArchitecturalOpeningHostResolutionPolicy = {
 export const DEFAULT_ARCHITECTURAL_OPENING_HOST_RESOLUTION_POLICY: ArchitecturalOpeningHostResolutionPolicy = {
   minimum_classification_confidence: 0.85,
   minimum_gap_evidence_score: 0.85,
-  minimum_host_source_ink_coverage: 0.75,
+  // Keep host resolution aligned with the wall/opening detector. A door can
+  // occupy most of a short partition, leaving only 60% longitudinal wall ink;
+  // classification, gap evidence, paired faces, fit, and ambiguity gates still
+  // apply independently.
+  minimum_host_source_ink_coverage: 0.6,
   maximum_axis_snap_degrees: 8,
   minimum_junction_topology_score: 0.9,
   maximum_junction_endpoint_distance_ft: 1.25,
@@ -145,16 +149,17 @@ function pointAtProjection(center: Point2, unit: Point2, targetProjection: numbe
   return { x: round(center.x + unit.x * delta), y: round(center.y + unit.y * delta) };
 }
 
-function supportingExtentProjections(candidate: ArchitecturalWallLineCandidate, unit: Point2): [number, number] | null {
+function pairedFaceOverlapProjections(candidate: ArchitecturalWallLineCandidate, unit: Point2): [number, number] | null {
   if (!candidate.supporting_face_model_points) return null;
-  const extents = candidate.supporting_face_model_points.map((face) => {
-    const values = face.map((point) => projection(point, unit));
-    return { minimum: Math.min(...values), maximum: Math.max(...values) };
+  const faceExtents = candidate.supporting_face_model_points.map((face) => {
+    const values = face.map((point) => projection(point, unit)).sort((a, b) => a - b);
+    return [values[0]!, values[1]!] as [number, number];
   });
-  return [
-    extents.reduce((sum, extent) => sum + extent.minimum, 0) / extents.length,
-    extents.reduce((sum, extent) => sum + extent.maximum, 0) / extents.length
+  const overlap: [number, number] = [
+    Math.max(...faceExtents.map((extent) => extent[0])),
+    Math.min(...faceExtents.map((extent) => extent[1]))
   ];
+  return overlap[1] > overlap[0] ? overlap : null;
 }
 
 function distanceToSegment(point: Point2, segment: [Point2, Point2]): number {
@@ -172,6 +177,73 @@ function distanceToSegment(point: Point2, segment: [Point2, Point2]): number {
   );
 }
 
+function physicalWallStrokeEquivalent(
+  left: ArchitecturalWallLineCandidate,
+  right: ArchitecturalWallLineCandidate,
+  policy: ArchitecturalOpeningHostResolutionPolicy
+): boolean {
+  if (left.derivation !== "parallel_face_midline" || right.derivation !== "parallel_face_midline") return false;
+  if (left.face_separation_ft === null || right.face_separation_ft === null) return false;
+  if (!left.supporting_face_model_points || !right.supporting_face_model_points) return false;
+  if (lineAngleDifference(left.angle_degrees, right.angle_degrees) > policy.maximum_axis_snap_degrees) return false;
+  // Two centerlines only a few plotted pen-widths apart, with effectively the
+  // same measured wall band, are alternate inner/outer-edge interpretations of
+  // one physical wall. Distinct parallel walls remain ambiguous.
+  if (Math.abs(left.face_separation_ft - right.face_separation_ft) > 0.15) return false;
+  const axis = snappedAxis(left.angle_degrees, policy.maximum_axis_snap_degrees);
+  if (axis === null) return false;
+  const unit = direction(axis);
+  const normal = { x: -unit.y, y: unit.x };
+  const midpoint = (candidate: ArchitecturalWallLineCandidate): Point2 => ({
+    x: (candidate.model_points[0].x + candidate.model_points[1].x) / 2,
+    y: (candidate.model_points[0].y + candidate.model_points[1].y) / 2
+  });
+  const leftMidpoint = midpoint(left);
+  const rightMidpoint = midpoint(right);
+  const centerlineSeparation = Math.abs(
+    (leftMidpoint.x - rightMidpoint.x) * normal.x
+    + (leftMidpoint.y - rightMidpoint.y) * normal.y
+  );
+  if (centerlineSeparation > 0.25) return false;
+  const interval = (candidate: ArchitecturalWallLineCandidate): [number, number] => {
+    const projections = candidate.model_points.map((point) => projection(point, unit)).sort((a, b) => a - b);
+    return [projections[0]!, projections[1]!];
+  };
+  const leftInterval = interval(left);
+  const rightInterval = interval(right);
+  const overlap = Math.max(0, Math.min(leftInterval[1], rightInterval[1]) - Math.max(leftInterval[0], rightInterval[0]));
+  const shorter = Math.min(leftInterval[1] - leftInterval[0], rightInterval[1] - rightInterval[0]);
+  return shorter > 0 && overlap / shorter >= 0.8;
+}
+
+function canonicalPhysicalHost(
+  host: ArchitecturalWallLineCandidate,
+  receipt: ArchitecturalWallLineCandidateReceipt,
+  policy: ArchitecturalOpeningHostResolutionPolicy
+): ArchitecturalWallLineCandidate {
+  const equivalentIds = new Set<string>([host.candidate_id]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const ambiguity of receipt.ambiguities) {
+      if (!ambiguity.candidate_ids.some((candidateId) => equivalentIds.has(candidateId))) continue;
+      const left = receipt.candidates.find((candidate) => candidate.candidate_id === ambiguity.candidate_ids[0]);
+      const right = receipt.candidates.find((candidate) => candidate.candidate_id === ambiguity.candidate_ids[1]);
+      if (!left || !right || !physicalWallStrokeEquivalent(left, right, policy)) continue;
+      const before = equivalentIds.size;
+      equivalentIds.add(left.candidate_id);
+      equivalentIds.add(right.candidate_id);
+      changed ||= equivalentIds.size > before;
+    }
+  }
+  return receipt.candidates.filter((candidate) => equivalentIds.has(candidate.candidate_id))
+    .sort((left, right) => right.rank_score - left.rank_score
+      || right.candidate_coverage - left.candidate_coverage
+      || right.source_ink_coverage - left.source_ink_coverage
+      || left.rank - right.rank
+      || left.candidate_id.localeCompare(right.candidate_id))[0] ?? host;
+}
+
 function ambiguityCompetesForOpening(
   ambiguity: ArchitecturalWallLineAmbiguity,
   opening: ArchitecturalOpeningGapHypothesis,
@@ -183,6 +255,7 @@ function ambiguityCompetesForOpening(
   const alternateId = ambiguity.candidate_ids.find((candidateId) => candidateId !== host.candidate_id);
   const alternate = alternateId ? wallCandidates.get(alternateId) : null;
   if (!alternate) return true;
+  if (physicalWallStrokeEquivalent(host, alternate, policy)) return false;
   const maximumWallThickness = Math.max(host.face_separation_ft ?? 0, alternate.face_separation_ft ?? 0);
   const plausibleCenterlineOffset = Math.max(
     0.75,
@@ -193,22 +266,43 @@ function ambiguityCompetesForOpening(
 
 function junctionForEndpoint(
   candidates: ArchitecturalWallLineCandidateReceipt,
-  hostCandidateId: string,
+  host: ArchitecturalWallLineCandidate,
   endpointProjection: number,
+  openingProjection: number,
   unit: Point2,
   policy: ArchitecturalOpeningHostResolutionPolicy
-): ArchitecturalWallJunctionHypothesis | null {
+): { junction: ArchitecturalWallJunctionHypothesis; projection: number; adjustment: number } | null {
   return candidates.junction_hypotheses.flatMap((junction) => {
-    const hostIndex = junction.candidate_ids.indexOf(hostCandidateId);
+    const hostIndex = junction.candidate_ids.indexOf(host.candidate_id);
     if (hostIndex < 0
       || junction.topology_score < policy.minimum_junction_topology_score
       || junction.endpoint_distances_ft[hostIndex]! > policy.maximum_junction_endpoint_distance_ft) return [];
-    const adjustment = Math.abs(projection(junction.model_point, unit) - endpointProjection);
+    const crossCandidateId = junction.candidate_ids.find((candidateId) => candidateId !== host.candidate_id);
+    const crossCandidate = crossCandidateId
+      ? candidates.candidates.find((candidate) => candidate.candidate_id === crossCandidateId)
+      : null;
+    const centerProjection = projection(junction.model_point, unit);
+    // A wall terminating into another wall is plan-visible at the nearer face,
+    // while the line-line junction is usually measured at centerline. Anchor to
+    // that nearer face when a paired cross-wall band is available. This avoids
+    // lengthening a short host through the full thickness of the joined wall.
+    const crossFacesFollowCandidate = Boolean(crossCandidate?.supporting_face_model_points?.every((face) => {
+      const faceAngle = Math.atan2(face[1].y - face[0].y, face[1].x - face[0].x) * 180 / Math.PI;
+      return lineAngleDifference(faceAngle, crossCandidate.angle_degrees) <= policy.maximum_axis_snap_degrees;
+    }));
+    const faceOffset = !crossFacesFollowCandidate
+      || crossCandidate?.face_separation_ft === null
+      || crossCandidate?.face_separation_ft === undefined
+      ? 0
+      : crossCandidate.face_separation_ft / 2;
+    const adjustedProjection = centerProjection
+      + Math.sign(openingProjection - centerProjection) * faceOffset;
+    const adjustment = Math.abs(adjustedProjection - endpointProjection);
     if (adjustment > policy.maximum_junction_projection_adjustment_ft) return [];
-    return [{ junction, adjustment }];
+    return [{ junction, projection: adjustedProjection, adjustment }];
   }).sort((a, b) => b.junction.topology_score - a.junction.topology_score
     || a.adjustment - b.adjustment
-    || a.junction.junction_id.localeCompare(b.junction.junction_id))[0]?.junction ?? null;
+    || a.junction.junction_id.localeCompare(b.junction.junction_id))[0] ?? null;
 }
 
 function unresolved(
@@ -275,25 +369,51 @@ export function resolveArchitecturalOpeningHosts(
         blockers
       );
     }
-    const unit = direction(axis);
-    const extents = supportingExtentProjections(host, unit)!;
-    const startJunction = junctionForEndpoint(candidates, host.candidate_id, extents[0], unit, policy);
-    const endJunction = junctionForEndpoint(candidates, host.candidate_id, extents[1], unit, policy);
-    const startProjection = startJunction ? projection(startJunction.model_point, unit) : extents[0];
-    const endProjection = endJunction ? projection(endJunction.model_point, unit) : extents[1];
-    if (endProjection - startProjection < policy.minimum_resolved_wall_length_ft) blockers.push("resolved_host_wall_is_too_short");
+    const geometryHost = canonicalPhysicalHost(host, candidates, policy);
+    const geometryAxis = snappedAxis(geometryHost.angle_degrees, policy.maximum_axis_snap_degrees);
+    if (geometryAxis === null || !geometryHost.supporting_face_model_points) {
+      return unresolved(
+        opening.opening_hypothesis_id,
+        classification.classification,
+        opening.model_center,
+        classification.confidence,
+        [...blockers, "opening_host_canonical_geometry_invalid"]
+      );
+    }
+    const unit = direction(geometryAxis);
+    const extents = pairedFaceOverlapProjections(geometryHost, unit);
+    if (!extents) {
+      return unresolved(
+        opening.opening_hypothesis_id,
+        classification.classification,
+        opening.model_center,
+        classification.confidence,
+        [...blockers, "opening_host_paired_face_overlap_missing"]
+      );
+    }
     const openingProjection = projection(opening.model_center, unit);
+    const startJunction = junctionForEndpoint(candidates, geometryHost, extents[0], openingProjection, unit, policy);
+    const endJunction = junctionForEndpoint(candidates, geometryHost, extents[1], openingProjection, unit, policy);
+    const startProjection = startJunction?.projection ?? extents[0];
+    const endProjection = endJunction?.projection ?? extents[1];
+    if (endProjection - startProjection < policy.minimum_resolved_wall_length_ft) blockers.push("resolved_host_wall_is_too_short");
     const requiredClearance = opening.width_ft / 2 + policy.minimum_opening_end_clearance_ft;
     if (openingProjection - startProjection < requiredClearance || endProjection - openingProjection < requiredClearance) {
       blockers.push("opening_does_not_fit_resolved_host_wall");
     }
-    const faceEndpointConfidence = (host.candidate_coverage + host.source_ink_coverage) / 2;
-    const startConfidence = startJunction?.topology_score ?? faceEndpointConfidence;
-    const endConfidence = endJunction?.topology_score ?? faceEndpointConfidence;
-    const confidence = 0.35 * classification.confidence
+    const faceEndpointConfidence = (geometryHost.candidate_coverage + geometryHost.source_ink_coverage) / 2;
+    const startConfidence = startJunction?.junction.topology_score ?? faceEndpointConfidence;
+    const endConfidence = endJunction?.junction.topology_score ?? faceEndpointConfidence;
+    // Global wall support can be reduced legitimately when a door occupies
+    // most of a short partition. Preserve the endpoint evidence term, but also
+    // credit the opening detector's bilateral local flank measurement; this is
+    // direct support that the classified opening belongs to this paired-face
+    // host rather than annotation ink nearby.
+    const confidence = 0.3 * classification.confidence
       + 0.25 * opening.evidence_score
-      + 0.2 * host.source_ink_coverage
-      + 0.2 * ((startConfidence + endConfidence) / 2);
+      + 0.2 * geometryHost.source_ink_coverage
+      + 0.15 * ((startConfidence + endConfidence) / 2)
+      + 0.1 * opening.flank_ink_coverage;
     if (confidence < policy.minimum_resolution_confidence) blockers.push("opening_host_resolution_confidence_below_threshold");
     if (blockers.length > 0) {
       return unresolved(
@@ -304,22 +424,26 @@ export function resolveArchitecturalOpeningHosts(
         blockers
       );
     }
+    const geometryAnchor = {
+      x: (geometryHost.model_points[0].x + geometryHost.model_points[1].x) / 2,
+      y: (geometryHost.model_points[0].y + geometryHost.model_points[1].y) / 2
+    };
     const refinedPoints: [Point2, Point2] = [
-      pointAtProjection(opening.model_center, unit, startProjection),
-      pointAtProjection(opening.model_center, unit, endProjection)
+      pointAtProjection(geometryAnchor, unit, startProjection),
+      pointAtProjection(geometryAnchor, unit, endProjection)
     ];
     const endpointEvidence: [ArchitecturalOpeningHostEndpointEvidence, ArchitecturalOpeningHostEndpointEvidence] = [
       {
         endpoint: "start",
         source: startJunction ? "junction" : "supporting_face_extents",
-        junction_id: startJunction?.junction_id ?? null,
+        junction_id: startJunction?.junction.junction_id ?? null,
         model_point: refinedPoints[0],
         confidence: round(startConfidence)
       },
       {
         endpoint: "end",
         source: endJunction ? "junction" : "supporting_face_extents",
-        junction_id: endJunction?.junction_id ?? null,
+        junction_id: endJunction?.junction.junction_id ?? null,
         model_point: refinedPoints[1],
         confidence: round(endConfidence)
       }
@@ -328,10 +452,10 @@ export function resolveArchitecturalOpeningHosts(
       opening_hypothesis_id: opening.opening_hypothesis_id,
       classification: classification.classification,
       opening_model_center: opening.model_center,
-      selected_host_candidate_id: host.candidate_id,
-      host_wall_observation_id: `wall-${host.candidate_id}`,
+      selected_host_candidate_id: geometryHost.candidate_id,
+      host_wall_observation_id: `wall-${geometryHost.candidate_id}`,
       refined_host_model_points: refinedPoints,
-      axis_degrees: axis,
+      axis_degrees: geometryAxis,
       endpoint_evidence: endpointEvidence,
       confidence: round(confidence),
       blockers: []
