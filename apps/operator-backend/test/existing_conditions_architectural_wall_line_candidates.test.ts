@@ -11,7 +11,11 @@ import {
   buildArchitecturalSourceDelta,
   type ArchitecturalSourceDeltaInput
 } from "../src/existing_conditions/architectural_source_delta.js";
-import { buildArchitecturalWallLineCandidates } from "../src/existing_conditions/architectural_wall_line_candidates.js";
+import {
+  buildArchitecturalWallLineCandidates,
+  deduplicateArchitecturalOpeningHypotheses,
+  type ArchitecturalOpeningGapHypothesis
+} from "../src/existing_conditions/architectural_wall_line_candidates.js";
 import {
   validateArchitecturalOpeningClassification,
   type ArchitecturalOpeningClassificationReceipt
@@ -713,6 +717,46 @@ test("window-symbol discovery keeps adjacent windows separate across an ordinary
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
+});
+
+test("physical opening dedup prefers source-symbol evidence without collapsing an adjacent opening or parallel wall", () => {
+  const opening = (
+    id: string,
+    center: { x: number; y: number },
+    width: number,
+    basis: ArchitecturalOpeningGapHypothesis["evidence_basis"]
+  ): ArchitecturalOpeningGapHypothesis => ({
+    opening_hypothesis_id: id,
+    rank: 1,
+    kind: basis === "source_symbol_on_redacted_wall" ? "unclassified_opening_symbol" : "unclassified_opening_gap",
+    host_candidate_id: `host-${id}`,
+    pixel_center: center,
+    model_center: center,
+    width_ft: width,
+    host_chainage_ft: center.x,
+    host_chainage_ratio: 0.5,
+    profile_axis_degrees: 0,
+    confirming_profile_count: 2,
+    profile_offset_range_ft: [-0.5, 0.5],
+    flank_ink_coverage: 0.9,
+    gap_ink_coverage: 0,
+    profile_ink_coverage: 0.9,
+    evidence_score: basis === "source_symbol_on_redacted_wall" ? 0.91 : 0.95,
+    evidence_basis: basis
+  });
+  const distinct = deduplicateArchitecturalOpeningHypotheses([
+    opening("symbol", { x: 5, y: 0 }, 4.4, "source_symbol_on_redacted_wall"),
+    opening("gap-a", { x: 5.02, y: 0.2 }, 4, "wall_face_gap"),
+    opening("gap-b", { x: 4.98, y: 0.22 }, 4.05, "wall_face_gap"),
+    opening("adjacent", { x: 10, y: 0 }, 3.5, "source_symbol_on_redacted_wall"),
+    opening("parallel-wall", { x: 5, y: 0.6 }, 4, "wall_face_gap")
+  ], {
+    opening_gap_axis_snap_tolerance_degrees: 8,
+    duplicate_separation_ft: 0.65,
+    maximum_opening_gap_hypotheses: 12
+  });
+  assert.deepEqual(distinct.map((entry) => entry.opening_hypothesis_id), ["symbol", "adjacent", "parallel-wall"]);
+  assert.deepEqual(distinct.map((entry) => entry.rank), [1, 2, 3]);
 });
 
 test("wall-line extraction is geometry-sensitive and rejects hash-bound receipt drift", async () => {

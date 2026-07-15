@@ -1660,6 +1660,62 @@ function buildOpeningSymbolHypotheses(
   };
 }
 
+/**
+ * Collapse the same physical opening when independent evidence paths or
+ * near-equivalent wall hosts describe it more than once. Host ambiguity stays
+ * in the candidate receipt; it must not multiply classification obligations.
+ */
+export function deduplicateArchitecturalOpeningHypotheses(
+  hypotheses: ArchitecturalOpeningGapHypothesis[],
+  policy: Pick<
+    ArchitecturalWallLineCandidatePolicy,
+    "opening_gap_axis_snap_tolerance_degrees" | "duplicate_separation_ft" | "maximum_opening_gap_hypotheses"
+  >
+): ArchitecturalOpeningGapHypothesis[] {
+  const ranked = [...hypotheses].sort((a, b) => {
+    const aPriority = a.evidence_basis === "source_symbol_on_redacted_wall" ? 0 : 1;
+    const bPriority = b.evidence_basis === "source_symbol_on_redacted_wall" ? 0 : 1;
+    return aPriority - bPriority
+      || b.evidence_score - a.evidence_score
+      || b.width_ft - a.width_ft
+      || a.opening_hypothesis_id.localeCompare(b.opening_hypothesis_id);
+  });
+  const maximumNormalSeparationFt = Math.min(0.5, policy.duplicate_separation_ft);
+  const equivalent = (
+    entry: ArchitecturalOpeningGapHypothesis,
+    accepted: ArchitecturalOpeningGapHypothesis
+  ): boolean => {
+    if (angleDifference(entry.profile_axis_degrees, accepted.profile_axis_degrees)
+      > policy.opening_gap_axis_snap_tolerance_degrees) return false;
+    const radians = accepted.profile_axis_degrees * Math.PI / 180;
+    const axis = { x: Math.cos(radians), y: Math.sin(radians) };
+    const normal = { x: -axis.y, y: axis.x };
+    const delta = {
+      x: entry.model_center.x - accepted.model_center.x,
+      y: entry.model_center.y - accepted.model_center.y
+    };
+    const normalSeparation = Math.abs(delta.x * normal.x + delta.y * normal.y);
+    if (normalSeparation > maximumNormalSeparationFt) return false;
+    const entryCenter = entry.model_center.x * axis.x + entry.model_center.y * axis.y;
+    const acceptedCenter = accepted.model_center.x * axis.x + accepted.model_center.y * axis.y;
+    const entryInterval = [entryCenter - entry.width_ft / 2, entryCenter + entry.width_ft / 2];
+    const acceptedInterval = [acceptedCenter - accepted.width_ft / 2, acceptedCenter + accepted.width_ft / 2];
+    const overlap = Math.max(0, Math.min(entryInterval[1]!, acceptedInterval[1]!)
+      - Math.max(entryInterval[0]!, acceptedInterval[0]!));
+    return overlap / Math.min(entry.width_ft, accepted.width_ft) >= 0.8;
+  };
+  const distinct: ArchitecturalOpeningGapHypothesis[] = [];
+  for (const entry of ranked) {
+    // Compare only against retained representatives. Comparing against an
+    // already rejected intermediate can incorrectly chain-collapse a real
+    // opening on a nearby parallel wall.
+    if (!distinct.some((accepted) => equivalent(entry, accepted))) distinct.push(entry);
+  }
+  return distinct
+    .slice(0, policy.maximum_opening_gap_hypotheses)
+    .map((entry, index) => ({ ...entry, rank: index + 1 }));
+}
+
 async function writeOverlay(
   sourcePath: string,
   width: number,
@@ -1943,12 +1999,10 @@ export async function buildArchitecturalWallLineCandidates(
     delta.scope_model_bounds,
     policy
   );
-  const openingGapHypotheses = [...gapHypotheses, ...symbolBindings.hypotheses]
-    .sort((a, b) => b.evidence_score - a.evidence_score
-      || b.width_ft - a.width_ft
-      || a.opening_hypothesis_id.localeCompare(b.opening_hypothesis_id))
-    .slice(0, policy.maximum_opening_gap_hypotheses)
-    .map((entry, index) => ({ ...entry, rank: index + 1 }));
+  const openingGapHypotheses = deduplicateArchitecturalOpeningHypotheses(
+    [...gapHypotheses, ...symbolBindings.hypotheses],
+    policy
+  );
   const ambiguities = buildAmbiguities(raw, candidates, pixelsPerFoot, policy);
   const status = candidates.length === 0 ? "blocked" : ambiguities.length > 0 ? "clarification_required" : "candidates_ready";
   const overlay = await writeOverlay(
