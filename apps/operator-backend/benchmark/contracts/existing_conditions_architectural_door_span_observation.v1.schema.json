@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-door-span-observation.v1.schema.json",
+  "title": "Existing conditions architectural door span observation V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_role",
+    "fixture_id",
+    "scope_id",
+    "architectural_delta_receipt_sha256",
+    "candidate_receipt_sha256",
+    "classification_receipt_sha256",
+    "status",
+    "policy",
+    "observations",
+    "clarification_question",
+    "native_write",
+    "promotion_allowed",
+    "promotion_blockers",
+    "usage_constraints"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "artifact_role": { "const": "architectural_door_span_observation" },
+    "fixture_id": { "type": "string", "minLength": 1 },
+    "scope_id": { "type": "string", "minLength": 1 },
+    "architectural_delta_receipt_sha256": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/sha256" },
+    "candidate_receipt_sha256": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/sha256" },
+    "classification_receipt_sha256": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/sha256" },
+    "status": { "type": "string", "enum": ["measured", "clarification_required"] },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minimum_classification_confidence",
+        "minimum_observation_confidence",
+        "maximum_axis_snap_degrees",
+        "minimum_width_ft",
+        "maximum_width_ft",
+        "maximum_endpoint_distance_from_host_ft",
+        "maximum_endpoint_anchor_adjustment_ft",
+        "endpoint_outside_window_ft",
+        "endpoint_inside_window_ft",
+        "endpoint_window_margin_ft",
+        "minimum_outside_bilateral_coverage",
+        "maximum_inside_bilateral_coverage",
+        "minimum_transition_contrast",
+        "maximum_continuous_one_sided_support_ft",
+        "maximum_endpoint_extension_beyond_gap_ft",
+        "maximum_center_shift_from_gap_ft"
+      ],
+      "properties": {
+        "minimum_classification_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "minimum_observation_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "maximum_axis_snap_degrees": { "type": "number", "exclusiveMinimum": 0, "maximum": 45 },
+        "minimum_width_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "maximum_width_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "maximum_endpoint_distance_from_host_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "maximum_endpoint_anchor_adjustment_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "endpoint_outside_window_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "endpoint_inside_window_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "endpoint_window_margin_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "minimum_outside_bilateral_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+        "maximum_inside_bilateral_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+        "minimum_transition_contrast": { "type": "number", "minimum": 0, "maximum": 1 },
+        "maximum_continuous_one_sided_support_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "maximum_endpoint_extension_beyond_gap_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "maximum_center_shift_from_gap_ft": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "observations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "opening_hypothesis_id",
+          "host_candidate_id",
+          "pixel_endpoints",
+          "model_endpoints",
+          "width_ft",
+          "conservative_gap_width_ft",
+          "extension_before_gap_ft",
+          "extension_after_gap_ft",
+          "center_shift_from_gap_ft",
+          "longest_continuous_one_sided_support_ft",
+          "evidence_artifact_sha256s",
+          "confidence",
+          "rationale",
+          "endpoint_transitions",
+          "host_ambiguity_ids",
+          "selected_host_candidate_id",
+          "blockers"
+        ],
+        "properties": {
+          "opening_hypothesis_id": { "type": "string", "minLength": 1 },
+          "host_candidate_id": { "type": "string", "minLength": 1 },
+          "pixel_endpoints": { "$ref": "#/$defs/pointPair" },
+          "model_endpoints": { "$ref": "#/$defs/pointPair" },
+          "width_ft": { "type": "number", "minimum": 0 },
+          "conservative_gap_width_ft": { "type": "number", "minimum": 0 },
+          "extension_before_gap_ft": { "type": "number", "minimum": 0 },
+          "extension_after_gap_ft": { "type": "number", "minimum": 0 },
+          "center_shift_from_gap_ft": { "type": "number", "minimum": 0 },
+          "longest_continuous_one_sided_support_ft": { "type": "number", "minimum": 0 },
+          "evidence_artifact_sha256s": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "uniqueItems": true,
+            "items": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/sha256" }
+          },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "rationale": { "type": "string", "minLength": 1 },
+          "endpoint_transitions": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 2,
+            "oneOf": [
+              { "maxItems": 0 },
+              { "minItems": 2 }
+            ],
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "endpoint",
+                "supplied_pixel_point",
+                "matched_pixel_point",
+                "adjustment_ft",
+                "outside_bilateral_coverage",
+                "inside_bilateral_coverage",
+                "transition_contrast",
+                "passed"
+              ],
+              "properties": {
+                "endpoint": { "type": "string", "enum": ["start", "end"] },
+                "supplied_pixel_point": { "$ref": "#/$defs/point" },
+                "matched_pixel_point": { "$ref": "#/$defs/point" },
+                "adjustment_ft": { "type": "number", "minimum": 0 },
+                "outside_bilateral_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+                "inside_bilateral_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+                "transition_contrast": { "type": "number", "minimum": -1, "maximum": 1 },
+                "passed": { "type": "boolean" }
+              }
+            }
+          },
+          "host_ambiguity_ids": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "selected_host_candidate_id": { "type": "null" },
+          "blockers": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "clarification_question": { "type": ["string", "null"], "minLength": 1 },
+    "native_write": { "const": false },
+    "promotion_allowed": { "const": false },
+    "promotion_blockers": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "usage_constraints": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["status"],
+        "properties": { "status": { "const": "measured" } }
+      },
+      "then": {
+        "properties": {
+          "clarification_question": { "type": "null" },
+          "observations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "blockers": { "type": "array", "maxItems": 0 },
+                "endpoint_transitions": {
+                  "type": "array",
+                  "minItems": 2,
+                  "items": {
+                    "type": "object",
+                    "properties": { "passed": { "const": true } },
+                    "required": ["passed"]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["status"],
+        "properties": { "status": { "const": "clarification_required" } }
+      },
+      "then": {
+        "properties": {
+          "clarification_question": { "type": "string", "minLength": 1 },
+          "observations": {
+            "type": "array",
+            "contains": {
+              "type": "object",
+              "required": ["blockers"],
+              "properties": { "blockers": { "type": "array", "minItems": 1 } }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      }
+    },
+    "pointPair": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "$ref": "#/$defs/point" }
+    }
+  }
+}

@@ -104,6 +104,10 @@ import {
 } from "../existing_conditions/architectural_opening_classification.js";
 import { scoreArchitecturalOpeningClassification } from "../existing_conditions/architectural_opening_classification_score.js";
 import {
+  buildArchitecturalDoorSpanObservationReceipt,
+  type ArchitecturalDoorSpanObservationPackage
+} from "../existing_conditions/architectural_door_span_observation.js";
+import {
   resolveArchitecturalOpeningHosts,
   type ArchitecturalOpeningHostResolutionReceipt
 } from "../existing_conditions/architectural_opening_host_resolution.js";
@@ -132,6 +136,14 @@ function requiredArgument(name: string): string {
 
 function readJson(filePath: string): unknown {
   return JSON.parse(fs.readFileSync(path.resolve(filePath), "utf8"));
+}
+
+function readJsonWithSha256(filePath: string): { value: unknown; sha256: string } {
+  const bytes = fs.readFileSync(path.resolve(filePath));
+  return {
+    value: JSON.parse(bytes.toString("utf8")),
+    sha256: crypto.createHash("sha256").update(bytes).digest("hex")
+  };
 }
 
 function parseIds(value: string): number[] {
@@ -185,6 +197,7 @@ function usage(): never {
     "  npm run existing-conditions -- build-architectural-wall-candidates --delta-receipt <receipt.json> --measurement-receipt <receipt.json> --out-dir <candidate-dir> --out <candidate-receipt.json>",
     "  npm run existing-conditions -- validate-architectural-opening-classification --candidate-receipt <receipt.json> --classification <agent-classification.json> --out <validated-classification.json>",
     "  npm run existing-conditions -- score-architectural-opening-classification --truth <ground-truth.json> --candidate-receipt <receipt.json> --classification <validated-classification.json> --out <score.json>",
+    "  npm run existing-conditions -- validate-architectural-door-span --delta-receipt <receipt.json> --candidate-receipt <receipt.json> --classification <validated-classification.json> --observation <agent-door-span.json> --out <validated-door-span.json>",
     "  npm run existing-conditions -- resolve-architectural-opening-hosts --candidate-receipt <receipt.json> --classification <validated-classification.json> --out <resolution.json>",
     "  npm run existing-conditions -- score-architectural-opening-hosts --truth <ground-truth.json> --candidate-receipt <receipt.json> --classification <validated-classification.json> --resolution <resolution.json> --out <score.json>",
     "  npm run existing-conditions -- compile-architectural-pixel-preview --input <pixel-observations.json> --measurement-receipt <measurement-receipt.json> --out <compiled-preview.json> [--source-out <converted-source-observations.json>] [--compilation-out <compilation.json>]",
@@ -210,7 +223,7 @@ function usage(): never {
     "  npm run existing-conditions -- evaluate-engineering-case --case <case-definition.json> --native-evidence <evaluator-native-evidence.json> --evaluator-provenance <provenance.json> --evaluator-key-file <secret> --out <checks.json>",
     "  npm run existing-conditions -- advance-controller --state <controller-state-or-receipt.json> --event <event.json> --out <next-receipt.json>",
     "  npm run existing-conditions -- evaluator-diff --before-visible <json> --after-visible <json> --package <agent_package.json> --out <receipt.json>",
-    "  npm run existing-conditions -- validate-contract --kind <agent_package|ground_truth|candidate|architectural_preview|architectural_pixel_measurement|registered_mep_observations|mep_region_coverage|architectural_wall_candidate_clarification|architectural_opening_classification|architectural_opening_host_resolution> --file <json>",
+    "  npm run existing-conditions -- validate-contract --kind <agent_package|ground_truth|candidate|architectural_preview|architectural_pixel_measurement|registered_mep_observations|mep_region_coverage|architectural_wall_candidate_clarification|architectural_opening_classification|architectural_door_span_observation|architectural_opening_host_resolution> --file <json>",
     "  npm run existing-conditions -- redact --expected-source <source.rvt> --staging-model <withheld-staging.rvt> --redacted-model <agent-redacted.rvt> --view-id <id> --ids <id,id,...> --anchor-ids <id,id,...> --out-dir <fixture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "Options:",
     "  --allow-missing-connectors  Permit non-MEP normalization without connector readback.",
@@ -928,12 +941,12 @@ function reviewVisualEvidence(): void {
 
 function validateContractFile(): void {
   const kind = requiredArgument("--kind");
-  if (!["agent_package", "ground_truth", "candidate", "architectural_preview", "architectural_pixel_measurement", "registered_mep_observations", "mep_region_coverage", "architectural_wall_candidate_clarification", "architectural_opening_classification", "architectural_opening_host_resolution"].includes(kind)) {
-    throw new Error("--kind must be agent_package, ground_truth, candidate, architectural_preview, architectural_pixel_measurement, registered_mep_observations, mep_region_coverage, architectural_wall_candidate_clarification, architectural_opening_classification, or architectural_opening_host_resolution.");
+  if (!["agent_package", "ground_truth", "candidate", "architectural_preview", "architectural_pixel_measurement", "registered_mep_observations", "mep_region_coverage", "architectural_wall_candidate_clarification", "architectural_opening_classification", "architectural_door_span_observation", "architectural_opening_host_resolution"].includes(kind)) {
+    throw new Error("--kind must be agent_package, ground_truth, candidate, architectural_preview, architectural_pixel_measurement, registered_mep_observations, mep_region_coverage, architectural_wall_candidate_clarification, architectural_opening_classification, architectural_door_span_observation, or architectural_opening_host_resolution.");
   }
   const filePath = path.resolve(requiredArgument("--file"));
   assertExistingConditionsContract(
-    kind as "agent_package" | "ground_truth" | "candidate" | "architectural_preview" | "architectural_pixel_measurement" | "registered_mep_observations" | "mep_region_coverage" | "architectural_wall_candidate_clarification" | "architectural_opening_classification" | "architectural_opening_host_resolution",
+    kind as "agent_package" | "ground_truth" | "candidate" | "architectural_preview" | "architectural_pixel_measurement" | "registered_mep_observations" | "mep_region_coverage" | "architectural_wall_candidate_clarification" | "architectural_opening_classification" | "architectural_door_span_observation" | "architectural_opening_host_resolution",
     readJson(filePath)
   );
   process.stdout.write(`${filePath}: valid ${kind}\n`);
@@ -1565,6 +1578,29 @@ async function main(): Promise<void> {
     );
     writeJson(requiredArgument("--out"), score);
     if (!score.passed) process.exitCode = 1;
+    return;
+  }
+  if (command === "validate-architectural-door-span") {
+    const deltaReceiptPath = path.resolve(requiredArgument("--delta-receipt"));
+    const candidateReceiptPath = path.resolve(requiredArgument("--candidate-receipt"));
+    const classificationPath = path.resolve(requiredArgument("--classification"));
+    const deltaArtifact = readJsonWithSha256(deltaReceiptPath);
+    const candidateArtifact = readJsonWithSha256(candidateReceiptPath);
+    const classificationArtifact = readJsonWithSha256(classificationPath);
+    const classification = classificationArtifact.value as ArchitecturalOpeningClassificationReceipt;
+    assertExistingConditionsContract("architectural_opening_classification", classification);
+    const receipt = await buildArchitecturalDoorSpanObservationReceipt(
+      readJson(requiredArgument("--observation")) as ArchitecturalDoorSpanObservationPackage,
+      deltaArtifact.value as ArchitecturalSourceDeltaReceipt,
+      deltaArtifact.sha256,
+      candidateArtifact.value as ArchitecturalWallLineCandidateReceipt,
+      candidateArtifact.sha256,
+      classification,
+      classificationArtifact.sha256
+    );
+    assertExistingConditionsContract("architectural_door_span_observation", receipt);
+    writeJson(requiredArgument("--out"), receipt);
+    if (receipt.status !== "measured") process.exitCode = 1;
     return;
   }
   if (command === "resolve-architectural-opening-hosts") {
