@@ -68,8 +68,12 @@ namespace RevitBridge.Logic.Handlers.MEP
                     targetElementIds = targetIds,
                     requiredConnectionCount = required,
                     plannedConnectionCount = pairs.Count,
+                    toleranceFt = p.toleranceFt,
+                    sizeToleranceFt = p.sizeToleranceFt,
                     sourceOpenConnectorCount = sourceConnectors.Count,
                     targetOpenConnectorCounts = targetConnectorCounts,
+                    sourceOpenConnectors = sourceConnectors.Select(DescribeConnector).ToList(),
+                    targetOpenConnectors = targets.SelectMany(target => OpenPhysicalConnectors(target).Select(DescribeConnector)).ToList(),
                     connectionPlan = pairs.Select(DescribePair).ToList(),
                     blockReason = feasible ? null : "Not enough compatible open connector pairs were found within tolerance."
                 });
@@ -224,6 +228,35 @@ namespace RevitBridge.Logic.Handlers.MEP
                 shape = pair.Source.Shape.ToString(),
                 sourceOrigin = Point(pair.Source.Origin),
                 targetOrigin = Point(pair.Target.Origin)
+            };
+        }
+
+        private static object DescribeConnector(Connector connector)
+        {
+            double? diameterFt = null;
+            double? widthFt = null;
+            double? heightFt = null;
+            try
+            {
+                if (connector.Shape == ConnectorProfileType.Round)
+                    diameterFt = connector.Radius * 2.0;
+                else if (connector.Shape == ConnectorProfileType.Rectangular || connector.Shape == ConnectorProfileType.Oval)
+                {
+                    widthFt = connector.Width;
+                    heightFt = connector.Height;
+                }
+            }
+            catch { }
+
+            return new
+            {
+                ownerElementId = connector.Owner == null ? 0 : ElementIdCompat.GetValue(connector.Owner.Id),
+                domain = connector.Domain.ToString(),
+                shape = connector.Shape.ToString(),
+                origin = Point(connector.Origin),
+                diameterFt,
+                widthFt,
+                heightFt
             };
         }
 

@@ -283,6 +283,113 @@ test("registered downstream vent pixels compile to tee creation plus exact nativ
   assert.match(result.usage_constraints.join("\n"), /never represents the vent as a direct fixture connector/i);
 });
 
+test("registered downstream vent pixels can reference a sanitary route drafted in the same workflow", async () => {
+  const input = plumbingInput();
+  const nativeHash = "c".repeat(64);
+  input.visible_evidence.push({ role: "native_model_inventory", sha256: nativeHash });
+  input.observations = [
+    {
+      kind: "pipe_route",
+      discipline: "plumbing",
+      observation_id: "sanitary-route-visible-14",
+      visibility: "clear",
+      confidence: 0.98,
+      supported_attributes: ["location", "size", "elevation", "system", "type"],
+      attribute_evidence: [
+        { attribute: "size", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "4 inch sanitary size label" },
+        { attribute: "elevation", basis: "declared_heuristic", evidence_role: "registered_source_render", reference: "plan does not show sanitary Z" },
+        { attribute: "system", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "sanitary line convention" },
+        { attribute: "type", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "approved project DWV type" }
+      ],
+      service: "sanitary",
+      geometry_mode: "source_points",
+      pixel_points: [{ x: 10, y: 80 }, { x: 50, y: 80 }, { x: 90, y: 80 }],
+      elevation_ft: 1.1666666667,
+      pipe_size: "4 inch",
+      pipe_type: "PVC - DWV",
+      system_type: "Sanitary"
+    },
+    {
+      kind: "plumbing_fixture",
+      discipline: "plumbing",
+      observation_id: "water-closet-visible-27",
+      visibility: "clear",
+      confidence: 0.98,
+      supported_attributes: ["location", "type", "service topology"],
+      attribute_evidence: [
+        { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "water closet symbol and keyed fixture note" },
+        { attribute: "service topology", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "sanitary route begins at the bottom-outlet fixture symbol" }
+      ],
+      role: "water closet",
+      pixel_point: { x: 10, y: 80 },
+      elevation_ft: 0,
+      placement: { mode: "unhosted_family", family_name: "WaterClosetConnection", type_name: "Water Closet Connection" },
+      service_route_connections: [{ route_observation_id: "sanitary-route-visible-14", route_endpoint: "start" }],
+      service_boundary: {
+        basis: "source_observation",
+        evidence_role: "registered_source_render",
+        required_services: ["sanitary"],
+        prohibited_services: ["domestic_hot_water"]
+      }
+    },
+    {
+      kind: "pipe_route",
+      discipline: "plumbing",
+      observation_id: "downstream-vent-planned-main-91",
+      visibility: "clear",
+      confidence: 0.97,
+      supported_attributes: ["location", "size", "elevation", "system", "type"],
+      attribute_evidence: [
+        { attribute: "size", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "project vent sizing precedent" },
+        { attribute: "elevation", basis: "declared_heuristic", evidence_role: "registered_source_render", reference: "plan does not show vent rise Z" },
+        { attribute: "system", basis: "user_direction", evidence_role: "registered_source_render", reference: "downstream vent continuation" },
+        { attribute: "type", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "approved project DWV type" }
+      ],
+      service: "vent",
+      geometry_mode: "downstream_vent_tee",
+      main_route_observation_id: "sanitary-route-visible-14",
+      verification_fixture_observation_ids: ["water-closet-visible-27"],
+      pixel_points: [{ x: 20, y: 80 }, { x: 20, y: 30 }],
+      elevation_ft: 5.1666666667,
+      pipe_size: "2 inch",
+      pipe_type: "PVC - DWV",
+      system_type: "Vent"
+    }
+  ];
+
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.status, "ready");
+  assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.action_key), [
+    "route:sanitary-route-visible-14",
+    "place:water-closet-visible-27",
+    "route:downstream-vent-planned-main-91",
+    "connect:water-closet-visible-27:sanitary-route-visible-14",
+    "verify:vent:downstream-vent-planned-main-91"
+  ]);
+  assert.deepEqual(result.compiled_plan.actions[2]?.deferred_body?.main_element, {
+    created_by_action: "route:sanitary-route-visible-14",
+    output: "route_segment",
+    index: 0
+  });
+  assert.deepEqual(result.compiled_plan.actions[2]?.apply_body?.branchPoints, [
+    { x: 102, y: 202, z: 33.1666666667 },
+    { x: 102, y: 207, z: 37.1666666667 }
+  ]);
+  assert.deepEqual(result.compiled_plan.actions[3]?.deferred_body?.target_elements, [{
+    created_by_action: "route:downstream-vent-planned-main-91",
+    output: "split_main_start"
+  }]);
+  assert.deepEqual(result.compiled_plan.actions[4]?.deferred_body?.fixture_elements, [{
+    created_by_action: "place:water-closet-visible-27",
+    output: "created"
+  }]);
+  assert.deepEqual(result.compiled_plan.actions[4]?.depends_on, [
+    "route:downstream-vent-planned-main-91",
+    "place:water-closet-visible-27",
+    "connect:water-closet-visible-27:sanitary-route-visible-14"
+  ]);
+});
+
 test("a plan-absent pipe elevation may proceed only as an explicit declared heuristic", async () => {
   const input = plumbingInput();
   const route = input.observations[0];
@@ -327,6 +434,60 @@ test("registered electrical pixels locate devices but render evidence cannot ass
     membership_basis: "native_source_power_system"
   });
   await assert.rejects(() => compileRegisteredMepObservations(input), /circuit_membership_cannot_use_render_evidence/);
+});
+
+test("registered electrical labels can create a new circuit only with per-member legible evidence", async () => {
+  const input = electricalInput();
+  input.observations.push({
+    kind: "electrical_circuit",
+    discipline: "electrical",
+    observation_id: "new-circuit-from-legible-label",
+    evidence_role: "registered_source_render",
+    visibility: "clear",
+    confidence: 0.99,
+    supported_attributes: ["circuit"],
+    member_observation_ids: ["device-random-17"],
+    circuit_mode: "create_new_power_system",
+    system_type: "PowerCircuit",
+    membership_basis: "legible_source_circuit_label",
+    panel_circuit_label: "P403/8",
+    member_label_evidence: [{
+      member_observation_id: "device-random-17",
+      evidence_role: "registered_source_render",
+      reference: "P403/8 text is legible next to the selected receptacle symbol.",
+      label: "P403/8"
+    }]
+  });
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.status, "ready");
+  assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.action_key), [
+    "place:device-random-17",
+    "circuit:new-circuit-from-legible-label"
+  ]);
+  const circuit = result.compiled_plan.actions[1]!;
+  assert.equal(circuit.deferred_body?.create_system_type, "PowerCircuit");
+  assert.equal(circuit.deferred_body?.source_element_id, undefined);
+  assert.equal(circuit.expected_created_min, 1);
+});
+
+test("registered new circuit rejects missing or mismatched member label evidence", async () => {
+  const input = electricalInput();
+  input.observations.push({
+    kind: "electrical_circuit",
+    discipline: "electrical",
+    observation_id: "new-circuit-incomplete-labels",
+    evidence_role: "registered_source_render",
+    visibility: "clear",
+    confidence: 0.99,
+    supported_attributes: ["circuit"],
+    member_observation_ids: ["device-random-17"],
+    circuit_mode: "create_new_power_system",
+    system_type: "PowerCircuit",
+    membership_basis: "legible_source_circuit_label",
+    panel_circuit_label: "P403/8",
+    member_label_evidence: []
+  });
+  await assert.rejects(() => compileRegisteredMepObservations(input), /member_label_evidence_must_cover_every_member/);
 });
 
 test("hash and dimension mismatches fail before any MEP plan is compiled", async () => {

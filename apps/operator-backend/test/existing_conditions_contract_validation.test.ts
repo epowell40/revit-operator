@@ -282,6 +282,64 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
     system_type: "Vent"
   }];
   assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", downstreamVent));
+  const plannedMainVent = structuredClone(downstreamVent) as Record<string, unknown>;
+  const plannedObservations = plannedMainVent.observations as Array<Record<string, unknown>>;
+  const plannedVent = plannedObservations[0]!;
+  delete plannedVent.main_reference_key;
+  delete plannedVent.main_elevation_ft;
+  plannedVent.main_route_observation_id = "planned-sanitary-main";
+  plannedVent.supported_attributes = (plannedVent.supported_attributes as string[]).filter((entry) => entry !== "main_elevation");
+  plannedVent.attribute_evidence = (plannedVent.attribute_evidence as Array<Record<string, unknown>>)
+    .filter((entry) => entry.attribute !== "main_elevation");
+  plannedObservations.unshift({
+    kind: "pipe_route",
+    discipline: "plumbing",
+    observation_id: "planned-sanitary-main",
+    visibility: "clear",
+    confidence: 0.96,
+    supported_attributes: ["location", "size", "elevation", "system", "type"],
+    attribute_evidence: [
+      { attribute: "size", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "sanitary size label" },
+      { attribute: "elevation", basis: "declared_heuristic", evidence_role: "registered_source_render", reference: "plan does not show Z" },
+      { attribute: "system", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "sanitary line convention" },
+      { attribute: "type", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "approved DWV type" }
+    ],
+    service: "sanitary",
+    pixel_points: [{ x: 10, y: 80 }, { x: 90, y: 80 }],
+    elevation_ft: 1.1666666667,
+    pipe_size: "4 inch",
+    pipe_type: "PVC - DWV",
+    system_type: "Sanitary"
+  });
+  assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", plannedMainVent));
+  plannedVent.main_reference_key = "sanitary-main";
+  plannedVent.main_elevation_ft = 1.1666666667;
+  assert.throws(
+    () => assertExistingConditionsContract("registered_mep_observations", plannedMainVent),
+    /invalid_existing_conditions_registered_mep_observations_contract/
+  );
+  const newCircuit = structuredClone(input);
+  (newCircuit.observations as Array<Record<string, unknown>>).push({
+    kind: "electrical_circuit",
+    discipline: "electrical",
+    observation_id: "new-circuit-1",
+    evidence_role: "registered_source_render",
+    visibility: "clear",
+    confidence: 0.99,
+    supported_attributes: ["circuit"],
+    member_observation_ids: ["device-1"],
+    circuit_mode: "create_new_power_system",
+    system_type: "PowerCircuit",
+    membership_basis: "legible_source_circuit_label",
+    panel_circuit_label: "P403/8",
+    member_label_evidence: [{
+      member_observation_id: "device-1",
+      evidence_role: "registered_source_render",
+      reference: "P403/8 is legible beside device-1.",
+      label: "P403/8"
+    }]
+  });
+  assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", newCircuit));
   const invalid = structuredClone(input);
   (invalid.observations[0] as Record<string, unknown>).withheld_element_id = 12345;
   assert.throws(

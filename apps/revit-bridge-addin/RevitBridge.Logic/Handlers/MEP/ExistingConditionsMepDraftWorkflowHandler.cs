@@ -15,13 +15,17 @@ namespace RevitBridge.Logic.Handlers.MEP
         {
             public string created_by_action { get; set; } = "";
             public string output { get; set; } = "created";
+            public int? index { get; set; }
         }
 
         private sealed class OperationOutput
         {
             public List<long> CreatedElementIds { get; set; } = new List<long>();
+            public List<long> RouteSegmentElementIds { get; set; } = new List<long>();
             public List<long> RouteStartElementIds { get; set; } = new List<long>();
             public List<long> RouteEndElementIds { get; set; } = new List<long>();
+            public List<long> SplitMainStartElementIds { get; set; } = new List<long>();
+            public List<long> SplitMainEndElementIds { get; set; } = new List<long>();
         }
 
         private sealed class OperationReceipt
@@ -35,11 +39,15 @@ namespace RevitBridge.Logic.Handlers.MEP
         public sealed class DeferredBody
         {
             public ElementReference? source_element { get; set; }
+            public ElementReference? main_element { get; set; }
             public List<ElementReference>? target_elements { get; set; }
             public List<ElementReference>? element_ids { get; set; }
             public long? source_element_id { get; set; }
+            public string? create_system_type { get; set; }
+            public long? panel_element_id { get; set; }
             public long? target_element_id { get; set; }
             public int? required_connection_count { get; set; }
+            public List<ElementReference>? fixture_elements { get; set; }
             public List<long>? fixture_element_ids { get; set; }
             public bool? require_downstream_vent { get; set; }
         }
@@ -93,6 +101,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             var doc = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active Revit document.");
             var outputs = new Dictionary<string, OperationOutput>(StringComparer.OrdinalIgnoreCase);
             var receipts = new List<OperationReceipt>();
+            OperationReceipt? failedReceipt = null;
             var allCreatedIds = new HashSet<long>();
             string? workflowFailure = null;
             var transactionGroupRolledBack = false;
@@ -117,7 +126,15 @@ namespace RevitBridge.Logic.Handlers.MEP
                         using var responseDocument = JsonDocument.Parse(JsonSerializer.Serialize(response));
                         var responseJson = responseDocument.RootElement.Clone();
                         if (ResponseFailed(operation.path, responseJson, operation.deferred_body, out var failure))
+                        {
+                            failedReceipt = new OperationReceipt
+                            {
+                                ActionKey = operation.action_key,
+                                Path = operation.path,
+                                Response = response
+                            };
                             throw new InvalidOperationException($"operation_failed:{operation.action_key}:{failure}");
+                        }
                         var output = ExtractOperationOutput(operation.path, responseJson);
                         var createdIds = output.CreatedElementIds;
                         if (operation.expected_created_min < 0
@@ -185,6 +202,12 @@ namespace RevitBridge.Logic.Handlers.MEP
                 transientCreatedElementIds = transactionGroupRolledBack
                     ? allCreatedIds.OrderBy(id => id).ToList()
                     : new List<long>(),
+                failedOperation = failedReceipt == null ? null : new
+                {
+                    actionKey = failedReceipt.ActionKey,
+                    path = failedReceipt.Path,
+                    response = failedReceipt.Response
+                },
                 operations = receipts.Select(receipt => new
                 {
                     actionKey = receipt.ActionKey,
@@ -228,12 +251,17 @@ namespace RevitBridge.Logic.Handlers.MEP
                 var elementIds = ResolveReferences(deferred.element_ids, outputs, operation.action_key, "element_ids");
                 if (elementIds.Count == 0)
                     throw new InvalidOperationException($"electrical_member_references_resolved_empty:{operation.action_key}");
-                if (!deferred.source_element_id.HasValue || deferred.source_element_id.Value <= 0)
+                var createNew = string.Equals(deferred.create_system_type, "PowerCircuit", StringComparison.OrdinalIgnoreCase);
+                if (!createNew && (!deferred.source_element_id.HasValue || deferred.source_element_id.Value <= 0))
                     throw new InvalidOperationException($"source_element_id_required:{operation.action_key}");
+                if (createNew && deferred.source_element_id.HasValue)
+                    throw new InvalidOperationException($"new_circuit_cannot_use_source_element_id:{operation.action_key}");
                 return JsonSerializer.Serialize(new
                 {
                     elementIds,
-                    sourceElementId = deferred.source_element_id.Value,
+                    sourceElementId = createNew ? null : deferred.source_element_id,
+                    createSystemType = createNew ? "PowerCircuit" : null,
+                    panelElementId = deferred.panel_element_id,
                     dryRun = false,
                     confirm = true,
                     parameterOnlyFallback = false
@@ -260,15 +288,38 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (path == "/revit/audit-plumbing-fixture-services")
             {
                 var deferred = operation.deferred_body ?? throw new InvalidOperationException($"deferred_body_required:{operation.action_key}");
-                var fixtureIds = (deferred.fixture_element_ids ?? new List<long>()).Where(id => id > 0).Distinct().ToList();
+                var fixtureIds = (deferred.fixture_element_ids ?? new List<long>()).Where(id => id > 0)
+                    .Concat(deferred.fixture_elements == null || deferred.fixture_elements.Count == 0
+                        ? new List<long>()
+                        : ResolveReferences(deferred.fixture_elements, outputs, operation.action_key, "fixture_elements"))
+                    .Distinct()
+                    .ToList();
                 if (fixtureIds.Count == 0)
                     throw new InvalidOperationException($"fixture_element_ids_required:{operation.action_key}");
+                // Persist the runtime-resolved ids so the post-operation downstream
+                // topology gate verifies the same newly placed fixtures sent to the audit.
+                deferred.fixture_element_ids = fixtureIds;
                 if (!operation.apply_body.HasValue || operation.apply_body.Value.ValueKind != JsonValueKind.Object)
                     throw new InvalidOperationException($"apply_body_required:{operation.action_key}");
                 var auditBody = JsonSerializer.Deserialize<Dictionary<string, object>>(operation.apply_body.Value.GetRawText())
                     ?? new Dictionary<string, object>();
                 auditBody["fixtureElementIds"] = fixtureIds;
                 return JsonSerializer.Serialize(auditBody);
+            }
+            if (path == "/revit/connect-mep-branch" && operation.deferred_body?.main_element != null)
+            {
+                var mainIds = ResolveReference(operation.deferred_body.main_element, outputs, operation.action_key, "main_element");
+                if (mainIds.Count != 1)
+                    throw new InvalidOperationException($"main_element_reference_must_resolve_one_id:{operation.action_key}:found={mainIds.Count}");
+                if (!operation.apply_body.HasValue || operation.apply_body.Value.ValueKind != JsonValueKind.Object)
+                    throw new InvalidOperationException($"apply_body_required:{operation.action_key}");
+                var branchBody = JsonSerializer.Deserialize<Dictionary<string, object>>(operation.apply_body.Value.GetRawText())
+                    ?? new Dictionary<string, object>();
+                branchBody["mainElementId"] = mainIds[0];
+                branchBody["dryRun"] = false;
+                branchBody["verify"] = verify;
+                branchBody["visualVerify"] = false;
+                return JsonSerializer.Serialize(branchBody);
             }
 
             if (!operation.apply_body.HasValue || operation.apply_body.Value.ValueKind != JsonValueKind.Object)
@@ -325,8 +376,14 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 case "":
                 case "created": return output.CreatedElementIds.Distinct().ToList();
+                case "route_segment":
+                    if (!reference.index.HasValue || reference.index.Value < 0 || reference.index.Value >= output.RouteSegmentElementIds.Count)
+                        throw new InvalidOperationException($"{label}_reference_route_segment_index_invalid:{actionKey}:{reference.index}");
+                    return new List<long> { output.RouteSegmentElementIds[reference.index.Value] };
                 case "route_start": return output.RouteStartElementIds.Distinct().ToList();
                 case "route_end": return output.RouteEndElementIds.Distinct().ToList();
+                case "split_main_start": return output.SplitMainStartElementIds.Distinct().ToList();
+                case "split_main_end": return output.SplitMainEndElementIds.Distinct().ToList();
                 default: throw new InvalidOperationException($"{label}_reference_output_invalid:{actionKey}:{reference.output}");
             }
         }
@@ -355,6 +412,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 return new OperationOutput
                 {
                     CreatedElementIds = segmentIds.Concat(fittingIds).Distinct().ToList(),
+                    RouteSegmentElementIds = segmentIds,
                     RouteStartElementIds = segmentIds.Count > 0 ? new List<long> { segmentIds[0] } : new List<long>(),
                     RouteEndElementIds = segmentIds.Count > 0 ? new List<long> { segmentIds[segmentIds.Count - 1] } : new List<long>()
                 };
@@ -378,8 +436,19 @@ namespace RevitBridge.Logic.Handlers.MEP
                 {
                     CreatedElementIds = splitIds.Concat(branchIds).Concat(fittingIds).Distinct().ToList(),
                     RouteStartElementIds = branchIds.Count > 0 ? new List<long> { branchIds[0] } : new List<long>(),
-                    RouteEndElementIds = branchIds.Count > 0 ? new List<long> { branchIds[branchIds.Count - 1] } : new List<long>()
+                    RouteEndElementIds = branchIds.Count > 0 ? new List<long> { branchIds[branchIds.Count - 1] } : new List<long>(),
+                    SplitMainStartElementIds = ReadLong(response, "splitMainStartSegmentId") is var startId && startId > 0
+                        ? new List<long> { startId }
+                        : new List<long>(),
+                    SplitMainEndElementIds = ReadLong(response, "splitMainEndSegmentId") is var endId && endId > 0
+                        ? new List<long> { endId }
+                        : new List<long>()
                 };
+            }
+            if (path == "/revit/assign-electrical-circuit")
+            {
+                var systemId = ReadLong(response, "createdElectricalSystemId");
+                return new OperationOutput { CreatedElementIds = systemId > 0 ? new List<long> { systemId } : new List<long>() };
             }
             return new OperationOutput();
         }

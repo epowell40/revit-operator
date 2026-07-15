@@ -241,6 +241,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             var createdBranchIds = new List<long>();
             var createdFittingIds = new List<long>();
             var splitMainSegmentIds = new List<long>();
+            long? splitMainStartSegmentId = null;
+            long? splitMainEndSegmentId = null;
             var connectionAttempts = new List<object>();
             var openConnectorCount = (int?)null;
             var rolledBack = false;
@@ -354,7 +356,9 @@ namespace RevitBridge.Logic.Handlers.MEP
                             warnings.Add($"Connector verification found {openConnectorCount} open connector(s) across the main and created branch elements.");
                         }
 
-                        tx.Commit();
+                        var commitStatus = tx.Commit();
+                        if (commitStatus != TransactionStatus.Committed)
+                            throw new InvalidOperationException($"Branch connection transaction did not commit: {commitStatus}.");
                     }
                     catch (Exception ex)
                     {
@@ -432,6 +436,14 @@ namespace RevitBridge.Logic.Handlers.MEP
 
                         splitMainSegmentIds.Add(ElementIdCompat.GetValue(firstMainSegment.Id));
                         splitMainSegmentIds.Add(ElementIdCompat.GetValue(secondMainSegment.Id));
+                        splitMainStartSegmentId = FindSegmentContainingEndpoint(
+                            new[] { firstMainSegment, secondMainSegment },
+                            mainStart ?? throw new InvalidOperationException("The original main start point was not available after split."));
+                        splitMainEndSegmentId = FindSegmentContainingEndpoint(
+                            new[] { firstMainSegment, secondMainSegment },
+                            mainEnd ?? throw new InvalidOperationException("The original main end point was not available after split."));
+                        if (!splitMainStartSegmentId.HasValue || !splitMainEndSegmentId.HasValue)
+                            throw new InvalidOperationException("Could not map the split main segments back to the original main start and end points.");
 
                         var branchElements = new List<Element>();
                         for (var i = 0; i < snapped.Count - 1; i++)
@@ -612,7 +624,16 @@ namespace RevitBridge.Logic.Handlers.MEP
                         var auditElements = branchElements.Concat(new Element[] { firstMainSegment, secondMainSegment });
                         if (retainedAnchor != null) auditElements = auditElements.Concat(new[] { retainedAnchor });
                         openConnectorCount = MepRoutingUtil.CountOpenConnectors(auditElements);
-                        tx.Commit();
+                        var commitStatus = tx.Commit();
+                        if (commitStatus != TransactionStatus.Committed || FailureHandlingUtil.HasErrors(failures))
+                        {
+                            var failureText = string.Join(" | ", failures
+                                .Where(failure => string.Equals(failure.severity, "error", StringComparison.OrdinalIgnoreCase)
+                                    || string.Equals(failure.severity, "document_corruption", StringComparison.OrdinalIgnoreCase))
+                                .Select(failure => failure.message)
+                                .Where(message => !string.IsNullOrWhiteSpace(message)));
+                            throw new InvalidOperationException($"Branch split/tee transaction did not commit: {commitStatus}{(string.IsNullOrWhiteSpace(failureText) ? "." : $": {failureText}")}");
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -752,7 +773,16 @@ namespace RevitBridge.Logic.Handlers.MEP
                             throw new InvalidOperationException("Revit reported an error while creating the branch tap/takeoff.");
 
                         openConnectorCount = MepRoutingUtil.CountOpenConnectors(branchElements.Concat(new[] { main }));
-                        tx.Commit();
+                        var commitStatus = tx.Commit();
+                        if (commitStatus != TransactionStatus.Committed || FailureHandlingUtil.HasErrors(failures))
+                        {
+                            var failureText = string.Join(" | ", failures
+                                .Where(failure => string.Equals(failure.severity, "error", StringComparison.OrdinalIgnoreCase)
+                                    || string.Equals(failure.severity, "document_corruption", StringComparison.OrdinalIgnoreCase))
+                                .Select(failure => failure.message)
+                                .Where(message => !string.IsNullOrWhiteSpace(message)));
+                            throw new InvalidOperationException($"Branch tap/takeoff transaction did not commit: {commitStatus}{(string.IsNullOrWhiteSpace(failureText) ? "." : $": {failureText}")}");
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -861,6 +891,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                     }
                     : null,
                 splitMainSegmentIds,
+                splitMainStartSegmentId,
+                splitMainEndSegmentId,
                 createdBranchElementIds = createdBranchIds,
                 createdFittingIds,
                 connectionAttempts,
@@ -895,6 +927,22 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (p.branchSegmentSizes != null && segmentIndex >= 0 && segmentIndex < p.branchSegmentSizes.Count && !string.IsNullOrWhiteSpace(p.branchSegmentSizes[segmentIndex]))
                 return p.branchSegmentSizes[segmentIndex];
             return p.branchSize;
+        }
+
+        private static long? FindSegmentContainingEndpoint(IEnumerable<MEPCurve> segments, XYZ endpoint)
+        {
+            return segments
+                .Select(segment => new
+                {
+                    Id = ElementIdCompat.GetValue(segment.Id),
+                    Distance = segment.Location is LocationCurve location && location.Curve.IsBound
+                        ? Math.Min(location.Curve.GetEndPoint(0).DistanceTo(endpoint), location.Curve.GetEndPoint(1).DistanceTo(endpoint))
+                        : double.PositiveInfinity
+                })
+                .Where(candidate => candidate.Distance <= 0.01)
+                .OrderBy(candidate => candidate.Distance)
+                .Select(candidate => (long?)candidate.Id)
+                .FirstOrDefault();
         }
 
         private static Element CreateRetainedAnchorTeeSeed(

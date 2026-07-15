@@ -6808,6 +6808,182 @@
             "atomic": true,
             "operationCount": 2
           }
+        },
+        {
+          "name": "Atomically dry-run a new water closet, Sanitary route, downstream Vent tee, and network audit",
+          "request": {
+            "inputFingerprintSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "operations": [
+              {
+                "action_key": "route:sanitary-1",
+                "path": "/revit/mep-route-workflow",
+                "depends_on": [],
+                "expected_created_min": 2,
+                "expected_created_max": 3,
+                "apply_body": {
+                  "kind": "pipe",
+                  "levelName": "L4",
+                  "systemType": "Sanitary",
+                  "pipeType": "PVC - DWV",
+                  "pipeSize": "4 inch",
+                  "points": [
+                    { "x": 0, "y": 0, "z": 31.1666666667 },
+                    { "x": 4, "y": 0, "z": 31.1666666667 },
+                    { "x": 8, "y": 0, "z": 31.1666666667 }
+                  ],
+                  "apply": true,
+                  "verify": true,
+                  "visualVerify": false
+                }
+              },
+              {
+                "action_key": "place:water-closet-1",
+                "path": "/revit/place-families",
+                "depends_on": [],
+                "expected_created_min": 1,
+                "expected_created_max": 1,
+                "apply_body": {
+                  "levelName": "L4",
+                  "familyName": "WaterClosetConnection",
+                  "symbolName": "Water Closet Connection",
+                  "instances": [{ "x": 0, "y": 0, "z": 0 }],
+                  "dryRun": false
+                }
+              },
+              {
+                "action_key": "route:vent-tee-1",
+                "path": "/revit/connect-mep-branch",
+                "depends_on": ["route:sanitary-1"],
+                "expected_created_min": 3,
+                "expected_created_max": 6,
+                "apply_body": {
+                  "kind": "pipe",
+                  "branchPoints": [
+                    { "x": 2, "y": 0, "z": 31.1666666667 },
+                    { "x": 2, "y": 4, "z": 35.1666666667 }
+                  ],
+                  "branchSize": "2 inch",
+                  "branchSystemType": "Vent",
+                  "branchPipeType": "PVC - DWV",
+                  "connectionMode": "tee",
+                  "levelName": "L4",
+                  "verify": true,
+                  "visualVerify": false
+                },
+                "deferred_body": {
+                  "main_element": {
+                    "created_by_action": "route:sanitary-1",
+                    "output": "route_segment",
+                    "index": 0
+                  }
+                }
+              },
+              {
+                "action_key": "connect:water-closet-1",
+                "path": "/revit/connect-mep-elements",
+                "depends_on": ["route:sanitary-1", "place:water-closet-1", "route:vent-tee-1"],
+                "expected_created_min": 0,
+                "expected_created_max": 0,
+                "deferred_body": {
+                  "source_element": { "created_by_action": "place:water-closet-1", "output": "created" },
+                  "target_elements": [{ "created_by_action": "route:vent-tee-1", "output": "split_main_start" }],
+                  "required_connection_count": 1
+                }
+              },
+              {
+                "action_key": "verify:vent:vent-tee-1",
+                "path": "/revit/audit-plumbing-fixture-services",
+                "depends_on": ["route:vent-tee-1", "connect:water-closet-1"],
+                "expected_created_min": 0,
+                "expected_created_max": 0,
+                "apply_body": {
+                  "levelName": "L4",
+                  "maxElements": 5000,
+                  "maxVentSearchElements": 10000,
+                  "maxVentSearchHops": 500
+                },
+                "deferred_body": {
+                  "fixture_elements": [{ "created_by_action": "place:water-closet-1", "output": "created" }],
+                  "require_downstream_vent": true
+                }
+              }
+            ],
+            "dryRun": true,
+            "verify": true,
+            "maximumCreatedElements": 12
+          },
+          "expected_response_shape": {
+            "schema": "operator.existing_conditions_mep_draft_workflow.v1",
+            "status": "DryRunReady",
+            "transactionGroupRolledBack": true,
+            "rollbackVerified": true,
+            "atomic": true,
+            "operationCount": 5
+          }
+        },
+        {
+          "name": "Atomically place two devices and create a new native power circuit without a retained circuit member",
+          "request": {
+            "inputFingerprintSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "operations": [
+              {
+                "action_key": "place:receptacle-a",
+                "path": "/revit/place-families",
+                "depends_on": [],
+                "expected_created_min": 1,
+                "expected_created_max": 1,
+                "apply_body": {
+                  "levelName": "L4",
+                  "familyName": "Duplex Receptacle",
+                  "symbolName": "Standard",
+                  "instances": [{ "x": 10, "y": 10, "z": 0 }],
+                  "dryRun": false
+                }
+              },
+              {
+                "action_key": "place:receptacle-b",
+                "path": "/revit/place-families",
+                "depends_on": [],
+                "expected_created_min": 1,
+                "expected_created_max": 1,
+                "apply_body": {
+                  "levelName": "L4",
+                  "familyName": "Duplex Receptacle",
+                  "symbolName": "Standard",
+                  "instances": [{ "x": 16, "y": 10, "z": 0 }],
+                  "dryRun": false
+                }
+              },
+              {
+                "action_key": "circuit:new-p403-8",
+                "path": "/revit/assign-electrical-circuit",
+                "depends_on": ["place:receptacle-a", "place:receptacle-b"],
+                "expected_created_min": 1,
+                "expected_created_max": 1,
+                "deferred_body": {
+                  "element_ids": [
+                    { "created_by_action": "place:receptacle-a", "output": "created" },
+                    { "created_by_action": "place:receptacle-b", "output": "created" }
+                  ],
+                  "create_system_type": "PowerCircuit",
+                  "panel_element_id": 33333
+                }
+              }
+            ],
+            "dryRun": true,
+            "verify": true,
+            "maximumCreatedElements": 3
+          },
+          "expected_response_shape": {
+            "schema": "operator.existing_conditions_mep_draft_workflow.v1",
+            "status": "DryRunReady",
+            "transactionGroupRolledBack": true,
+            "rollbackVerified": true,
+            "atomic": true,
+            "operationCount": 3,
+            "transientCreatedElementIds": [22222, 22223, 44444],
+            "residualCreatedElementIds": []
+          }
         }
       ]
     },
@@ -8875,6 +9051,25 @@
                 "dryRun": true
               }
             ]
+          }
+        },
+        {
+          "name": "Create one native power circuit from newly drafted uncircuitized devices",
+          "request": {
+            "elementIds": [22222, 22223],
+            "createSystemType": "PowerCircuit",
+            "panelElementId": 33333,
+            "dryRun": false,
+            "confirm": true
+          },
+          "expected_response_shape": {
+            "schema": "operator.assign_electrical_circuit.v3",
+            "status": "Applied",
+            "applied": true,
+            "mode": "create_new_power_circuit",
+            "createdElectricalSystemId": 44444,
+            "verifiedMemberElementIds": [22222, 22223],
+            "panelElementId": 33333
           }
         },
         {

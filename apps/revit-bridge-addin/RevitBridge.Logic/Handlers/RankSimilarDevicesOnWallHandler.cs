@@ -490,6 +490,8 @@ namespace RevitBridge.Logic.Handlers
             public string? panelName { get; set; }
             public string? circuitNumber { get; set; }
             public long? sourceElementId { get; set; }
+            public string? createSystemType { get; set; }
+            public long? panelElementId { get; set; }
             public bool dryRun { get; set; } = true;
             public bool confirm { get; set; } = false;
             public bool parameterOnlyFallback { get; set; } = false;
@@ -507,6 +509,14 @@ namespace RevitBridge.Logic.Handlers
             var source = p.sourceElementId.HasValue && p.sourceElementId.Value > 0
                 ? doc.GetElement(ElementIdCompat.Create(p.sourceElementId.Value))
                 : null;
+            var createNewPowerCircuit = string.Equals(p.createSystemType, "PowerCircuit", StringComparison.OrdinalIgnoreCase);
+            if (createNewPowerCircuit)
+            {
+                if (source != null) throw new InvalidOperationException("create_new_power_circuit_cannot_use_source_element");
+                return Task.FromResult(CreateNewPowerCircuit(doc, p, ids));
+            }
+            if (!string.IsNullOrWhiteSpace(p.createSystemType))
+                throw new InvalidOperationException("createSystemType must be PowerCircuit when supplied.");
             var results = new List<object>();
             var warnings = new List<string>();
             var apply = !p.dryRun && p.confirm;
@@ -598,6 +608,131 @@ namespace RevitBridge.Logic.Handlers
                 results,
                 warnings
             });
+        }
+
+        private static object CreateNewPowerCircuit(Document doc, Params p, List<long> ids)
+        {
+            var apply = !p.dryRun && p.confirm;
+            var members = new List<FamilyInstance>();
+            var preflightResults = new List<object>();
+            foreach (var id in ids)
+            {
+                var instance = doc.GetElement(ElementIdCompat.Create(id)) as FamilyInstance;
+                var existingPowerSystemIds = HostedPlacementUtil.GetPowerElectricalSystemIds(instance);
+                var ok = instance != null && existingPowerSystemIds.Count == 0;
+                preflightResults.Add(new
+                {
+                    elementId = id,
+                    ok,
+                    action = apply ? "create_new_power_circuit" : "preflight_create_new_power_circuit",
+                    detail = instance == null
+                        ? "Element is not a family instance."
+                        : existingPowerSystemIds.Count > 0
+                            ? $"Member already belongs to power system(s): {string.Join(",", existingPowerSystemIds)}."
+                            : "Member is available for a new native PowerCircuit.",
+                    before = HostedPlacementUtil.BuildElectricalCircuitAuditPayload(instance),
+                    dryRun = !apply
+                });
+                if (instance != null) members.Add(instance);
+            }
+
+            if (preflightResults.Any(result => !(bool)(result.GetType().GetProperty("ok")?.GetValue(result) ?? false)))
+            {
+                return new
+                {
+                    schema = "operator.assign_electrical_circuit.v3",
+                    status = "Blocked",
+                    applied = false,
+                    mode = "create_new_power_circuit",
+                    createdElectricalSystemId = (long?)null,
+                    panelElementId = p.panelElementId,
+                    results = preflightResults,
+                    warnings = new List<string>(),
+                    limitation = "New-circuit mode creates a real native PowerCircuit only from uncircuitized family instances; it does not infer membership, breaker size, load allocation, or panel capacity."
+                };
+            }
+
+            FamilyInstance? panel = null;
+            if (p.panelElementId.HasValue)
+            {
+                panel = doc.GetElement(ElementIdCompat.Create(p.panelElementId.Value)) as FamilyInstance;
+                if (panel == null) throw new InvalidOperationException($"panel_element_not_family_instance:{p.panelElementId.Value}");
+            }
+
+            if (!apply)
+            {
+                return new
+                {
+                    schema = "operator.assign_electrical_circuit.v3",
+                    status = "Ready",
+                    applied = false,
+                    mode = "create_new_power_circuit",
+                    requestedSystemType = "PowerCircuit",
+                    createdElectricalSystemId = (long?)null,
+                    panelElementId = p.panelElementId,
+                    results = preflightResults,
+                    warnings = new List<string>(),
+                    limitation = "New-circuit mode creates a real native PowerCircuit only from uncircuitized family instances; it does not infer membership, breaker size, load allocation, or panel capacity."
+                };
+            }
+
+            using (var tx = new Transaction(doc, "Create Electrical Circuit"))
+            {
+                tx.Start();
+                try
+                {
+                    var memberIds = members.Select(instance => instance.Id).ToList();
+                    var system = ElectricalSystem.Create(doc, memberIds, ElectricalSystemType.PowerCircuit)
+                        ?? throw new InvalidOperationException("revit_did_not_create_electrical_system");
+                    if (panel != null) system.SelectPanel(panel);
+                    doc.Regenerate();
+
+                    var systemId = ElementIdCompat.GetValue(system.Id);
+                    var verifiedResults = members.Select(instance =>
+                    {
+                        var powerSystemIds = HostedPlacementUtil.GetPowerElectricalSystemIds(instance);
+                        var ok = CircuitMatchPolicy.HasExactMembership(systemId, powerSystemIds);
+                        return (object)new
+                        {
+                            elementId = ElementIdCompat.GetValue(instance.Id),
+                            ok,
+                            action = "create_new_power_circuit",
+                            detail = ok
+                                ? $"Member joined newly created native power system {systemId}."
+                                : $"Expected only new power system {systemId}; actual power systems: {string.Join(",", powerSystemIds)}.",
+                            before = (object?)null,
+                            after = HostedPlacementUtil.BuildElectricalCircuitAuditPayload(instance),
+                            dryRun = false
+                        };
+                    }).ToList();
+                    if (verifiedResults.Any(result => !(bool)(result.GetType().GetProperty("ok")?.GetValue(result) ?? false)))
+                        throw new InvalidOperationException($"new_power_circuit_membership_verification_failed:{systemId}");
+
+                    var commitStatus = tx.Commit();
+                    if (commitStatus != TransactionStatus.Committed)
+                        throw new InvalidOperationException($"new_power_circuit_transaction_not_committed:{commitStatus}");
+
+                    return new
+                    {
+                        schema = "operator.assign_electrical_circuit.v3",
+                        status = "Applied",
+                        applied = true,
+                        mode = "create_new_power_circuit",
+                        requestedSystemType = "PowerCircuit",
+                        createdElectricalSystemId = systemId,
+                        panelElementId = p.panelElementId,
+                        verifiedMemberElementIds = members.Select(instance => ElementIdCompat.GetValue(instance.Id)).OrderBy(id => id).ToList(),
+                        results = verifiedResults,
+                        warnings = new List<string>(),
+                        limitation = "New-circuit mode creates and verifies native PowerCircuit membership; breaker size, load allocation, panel capacity, and code compliance require separate evidence and checks."
+                    };
+                }
+                catch
+                {
+                    if (tx.GetStatus() == TransactionStatus.Started) tx.RollBack();
+                    throw;
+                }
+            }
         }
 
         private static bool TrySetStringParameter(Element element, string name, string? value, bool apply, out string detail)

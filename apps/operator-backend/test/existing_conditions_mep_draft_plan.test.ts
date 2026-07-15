@@ -296,6 +296,126 @@ test("electrical plan compiles host-aware devices before factual circuit assignm
   assert.equal(workflow.maximumCreatedElements, 2);
 });
 
+test("electrical plan creates a new native power circuit without a retained circuit member", () => {
+  const plan = compileMepDraftPlan({
+    schema_version: 1,
+    fixture_id: "electrical-new-circuit-v1",
+    scope_id: "level-4-room-403-new-circuit",
+    source_evidence_sha256: SOURCE_HASH,
+    visible_evidence: visibleEvidence(),
+    native_element_references: nativeReferences(),
+    registration: registration(),
+    level_name: "L4",
+    level_elevation_ft: 0,
+    room_number: "403",
+    observations: [
+      {
+        kind: "electrical_device",
+        observation_id: "receptacle-new-a",
+        discipline: "electrical",
+        role: "duplex receptacle",
+        visibility: "clear",
+        confidence: 0.94,
+        supported_attributes: ["location", "type"],
+        point: { x: 3, y: 4 },
+        elevation_ft: 1.5,
+        placement: { mode: "unhosted_family", family_name: "Receptacle A", type_name: "Duplex B" }
+      },
+      {
+        kind: "electrical_device",
+        observation_id: "receptacle-new-b",
+        discipline: "electrical",
+        role: "duplex receptacle",
+        visibility: "clear",
+        confidence: 0.93,
+        supported_attributes: ["location", "type"],
+        point: { x: 4, y: 4 },
+        elevation_ft: 1.5,
+        placement: { mode: "unhosted_family", family_name: "Receptacle A", type_name: "Duplex B" }
+      },
+      {
+        kind: "electrical_circuit",
+        observation_id: "new-circuit-p403-8",
+        discipline: "electrical",
+        evidence_role: "native_model_inventory",
+        visibility: "clear",
+        confidence: 1,
+        supported_attributes: ["circuit"],
+        member_observation_ids: ["receptacle-new-a", "receptacle-new-b"],
+        circuit_mode: "create_new_power_system",
+        system_type: "PowerCircuit",
+        membership_basis: "user_direction",
+        user_direction_reference: "User directed these two new devices to one new circuit.",
+        panel_circuit_label: "P403/8"
+      }
+    ]
+  });
+  assert.equal(plan.status, "ready");
+  assert.deepEqual(plan.actions.map((entry) => entry.action_key), [
+    "place:receptacle-new-a",
+    "place:receptacle-new-b",
+    "circuit:new-circuit-p403-8"
+  ]);
+  const circuit = plan.actions[2]!;
+  assert.equal(circuit.path, "/revit/assign-electrical-circuit");
+  assert.deepEqual(circuit.depends_on, ["place:receptacle-new-a", "place:receptacle-new-b"]);
+  assert.equal(circuit.deferred_body?.source_element_id, undefined);
+  assert.equal(circuit.deferred_body?.create_system_type, "PowerCircuit");
+  assert.equal(circuit.expected_created_min, 1);
+  assert.equal(circuit.expected_created_max, 1);
+  const workflow = buildAtomicMepDraftWorkflowRequest(plan, { maximum_created_elements: 3 });
+  assert.equal(workflow.operations[2]?.deferred_body?.create_system_type, "PowerCircuit");
+});
+
+test("new source-labeled circuit requires matching legible evidence for every member", () => {
+  const input = {
+    schema_version: 1 as const,
+    fixture_id: "electrical-label-evidence-v1",
+    scope_id: "label-evidence-scope",
+    source_evidence_sha256: SOURCE_HASH,
+    visible_evidence: visibleEvidence(),
+    native_element_references: nativeReferences(),
+    registration: registration(),
+    level_name: "L4",
+    level_elevation_ft: 0,
+    observations: [
+      {
+        kind: "electrical_device" as const,
+        observation_id: "labeled-receptacle-a",
+        discipline: "electrical" as const,
+        role: "duplex receptacle",
+        visibility: "clear" as const,
+        confidence: 0.94,
+        supported_attributes: ["location", "type"],
+        point: { x: 3, y: 4 },
+        elevation_ft: 1.5,
+        placement: { mode: "unhosted_family" as const, family_name: "Receptacle A", type_name: "Duplex B" }
+      },
+      {
+        kind: "electrical_circuit" as const,
+        observation_id: "labeled-new-circuit",
+        discipline: "electrical" as const,
+        evidence_role: "source_pdf",
+        visibility: "clear" as const,
+        confidence: 0.98,
+        supported_attributes: ["circuit"],
+        member_observation_ids: ["labeled-receptacle-a"],
+        circuit_mode: "create_new_power_system" as const,
+        system_type: "PowerCircuit" as const,
+        membership_basis: "legible_source_circuit_label" as const,
+        panel_circuit_label: "P403/8",
+        member_label_evidence: [{
+          member_observation_id: "labeled-receptacle-a",
+          evidence_role: "source_pdf",
+          reference: "Label adjacent to the receptacle symbol",
+          label: "P403/6"
+        }]
+      }
+    ]
+  };
+  assert.throws(() => compileMepDraftPlan(input), /member_label_evidence_label_mismatch/);
+});
+
 test("hosted registered placement may use its world point without an invented chainage", () => {
   const plan = compileMepDraftPlan({
     schema_version: 1,
@@ -877,4 +997,141 @@ test("downstream vent tee rejects direct fixture service wiring and ungrounded m
     ? { ...entry, basis: "declared_heuristic" as const }
     : entry);
   assert.throws(() => compileMepDraftPlan(ungrounded), /declared_heuristic_only_allowed_for_pipe_elevation|main_elevation_must_be_native_model_precedent/);
+});
+
+function plannedMainDownstreamVentPackage(): MepDraftPackage {
+  const input = downstreamVentPackage();
+  input.fixture_id = "planned-sanitary-main-downstream-vent-v1";
+  input.native_element_references = input.native_element_references.filter((entry) => entry.reference_key !== "sanitary-main-random-41");
+  const vent = input.observations[0];
+  if (vent?.kind !== "pipe_route" || vent.geometry_mode !== "downstream_vent_tee") throw new Error("vent_setup_failed");
+  const plannedVent = vent as unknown as Record<string, unknown>;
+  delete plannedVent.main_reference_key;
+  delete plannedVent.main_elevation_ft;
+  plannedVent.main_route_observation_id = "sanitary-route-visible-22";
+  vent.supported_attributes = vent.supported_attributes.filter((attribute) => attribute !== "main_elevation");
+  vent.attribute_provenance = vent.attribute_provenance?.filter((entry) => entry.attribute !== "main_elevation");
+  input.observations.unshift({
+    kind: "pipe_route",
+    observation_id: "sanitary-route-visible-22",
+    discipline: "plumbing",
+    service: "sanitary",
+    geometry_mode: "source_points",
+    points: [{ x: 0, y: 3 }, { x: 4, y: 3 }, { x: 8, y: 3 }],
+    elevation_ft: 1.1666666667,
+    visibility: "clear",
+    confidence: 0.97,
+    supported_attributes: ["location", "size", "elevation", "system", "type"],
+    attribute_provenance: [
+      { attribute: "location", basis: "source_observation", reference: "registered sanitary route centerline" },
+      { attribute: "size", basis: "source_observation", reference: "sanitary size label" },
+      { attribute: "elevation", basis: "declared_heuristic", reference: "plan does not show sanitary Z" },
+      { attribute: "system", basis: "source_observation", reference: "sanitary line convention" },
+      { attribute: "type", basis: "native_model_precedent", reference: "approved project DWV type" }
+    ],
+    pipe_size: "4 inch",
+    pipe_type: "PVC - DWV",
+    system_type: "Sanitary"
+  });
+  return input;
+}
+
+test("downstream vent tee resolves one newly drafted sanitary route segment inside the atomic graph", () => {
+  const plan = compileMepDraftPlan(plannedMainDownstreamVentPackage());
+  assert.equal(plan.status, "ready");
+  assert.deepEqual(plan.actions.map((entry) => entry.action_key), [
+    "route:sanitary-route-visible-22",
+    "route:vent-tee-random-59",
+    "verify:vent:vent-tee-random-59"
+  ]);
+  const branch = plan.actions[1]!;
+  assert.deepEqual(branch.depends_on, ["route:sanitary-route-visible-22"]);
+  assert.equal(branch.apply_body?.mainElementId, undefined);
+  assert.deepEqual(branch.deferred_body?.main_element, {
+    created_by_action: "route:sanitary-route-visible-22",
+    output: "route_segment",
+    index: 0
+  });
+  assert.deepEqual(branch.apply_body?.branchPoints, [
+    { x: 94, y: 204, z: 21.1666666667 },
+    { x: 94, y: 210, z: 25.1666666667 }
+  ]);
+  assert.equal(plan.plan_elements[1]?.assumptions.some((entry) => /created earlier in the same atomic workflow/i.test(entry)), true);
+});
+
+test("planned sanitary main vent takeoff rejects off-route and segment-junction ambiguity", () => {
+  const offRoute = plannedMainDownstreamVentPackage();
+  const offRouteVent = offRoute.observations[1];
+  if (offRouteVent?.kind !== "pipe_route" || offRouteVent.geometry_mode !== "downstream_vent_tee") throw new Error("vent_setup_failed");
+  offRouteVent.points[0] = { x: 2, y: 5 };
+  assert.throws(() => compileMepDraftPlan(offRoute), /planned_main_tee_point_off_route/);
+
+  const ambiguous = plannedMainDownstreamVentPackage();
+  const ambiguousVent = ambiguous.observations[1];
+  if (ambiguousVent?.kind !== "pipe_route" || ambiguousVent.geometry_mode !== "downstream_vent_tee") throw new Error("vent_setup_failed");
+  ambiguousVent.points[0] = { x: 4, y: 3 };
+  assert.throws(() => compileMepDraftPlan(ambiguous), /planned_main_tee_segment_ambiguous/);
+});
+
+test("new fixture, sanitary route, and downstream vent audit form one ordered atomic graph", () => {
+  const input = plannedMainDownstreamVentPackage();
+  input.native_element_references = [];
+  const vent = input.observations[1];
+  if (vent?.kind !== "pipe_route" || vent.geometry_mode !== "downstream_vent_tee") throw new Error("vent_setup_failed");
+  vent.verification_fixture_reference_keys = [];
+  vent.verification_fixture_observation_ids = ["water-closet-visible-77"];
+  input.observations.push({
+    kind: "plumbing_fixture",
+    observation_id: "water-closet-visible-77",
+    discipline: "plumbing",
+    role: "water closet",
+    visibility: "clear",
+    confidence: 0.97,
+    supported_attributes: ["location", "type", "service topology"],
+    attribute_provenance: [
+      { attribute: "location", basis: "source_observation", reference: "registered water-closet symbol" },
+      { attribute: "type", basis: "native_model_precedent", reference: "approved fixture-connection family mapping" },
+      { attribute: "service topology", basis: "source_observation", reference: "fixture joins plotted sanitary route" }
+    ],
+    point: { x: 0, y: 3 },
+    elevation_ft: 0,
+    placement: { mode: "unhosted_family", family_name: "WaterClosetConnection", type_name: "Water Closet Connection" },
+    service_route_connections: [{ route_observation_id: "sanitary-route-visible-22", route_endpoint: "start" }],
+    service_boundary: {
+      basis: "source_observation",
+      evidence_role: "source_pdf",
+      required_services: ["sanitary"],
+      prohibited_services: ["domestic_hot_water"]
+    }
+  });
+
+  const plan = compileMepDraftPlan(input);
+  assert.deepEqual(plan.actions.map((entry) => entry.action_key), [
+    "route:sanitary-route-visible-22",
+    "place:water-closet-visible-77",
+    "route:vent-tee-random-59",
+    "connect:water-closet-visible-77:sanitary-route-visible-22",
+    "verify:vent:vent-tee-random-59"
+  ]);
+  assert.deepEqual(plan.actions[2]?.depends_on, ["route:sanitary-route-visible-22"]);
+  assert.deepEqual(plan.actions[3]?.depends_on, [
+    "place:water-closet-visible-77",
+    "route:sanitary-route-visible-22",
+    "route:vent-tee-random-59"
+  ]);
+  assert.deepEqual(plan.actions[3]?.deferred_body?.target_elements, [{
+    created_by_action: "route:vent-tee-random-59",
+    output: "split_main_start"
+  }]);
+  const audit = plan.actions[4]!;
+  assert.deepEqual(audit.depends_on, [
+    "route:vent-tee-random-59",
+    "place:water-closet-visible-77",
+    "connect:water-closet-visible-77:sanitary-route-visible-22"
+  ]);
+  assert.deepEqual(audit.deferred_body?.fixture_elements, [{
+    created_by_action: "place:water-closet-visible-77",
+    output: "created"
+  }]);
+  assert.deepEqual(audit.deferred_body?.fixture_element_ids, []);
 });

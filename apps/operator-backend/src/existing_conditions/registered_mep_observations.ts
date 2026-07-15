@@ -50,9 +50,11 @@ export type RegisteredPlumbingPipeRouteObservation = Omit<PlumbingSourcePointRou
 
 export type RegisteredPlumbingConnectorBridgeObservation = Omit<PlumbingNativeConnectorBridgeObservation, "attribute_provenance"> & WithAttributeEvidence;
 
-export type RegisteredPlumbingDownstreamVentTeeObservation = Omit<PlumbingDownstreamVentTeeObservation, "points" | "attribute_provenance"> & WithAttributeEvidence & {
-  pixel_points: ExistingConditionsPlanPoint[];
-};
+type RegisteredDownstreamVentVariant<T> = T extends PlumbingDownstreamVentTeeObservation
+  ? Omit<T, "points" | "attribute_provenance"> & WithAttributeEvidence & { pixel_points: ExistingConditionsPlanPoint[] }
+  : never;
+
+export type RegisteredPlumbingDownstreamVentTeeObservation = RegisteredDownstreamVentVariant<PlumbingDownstreamVentTeeObservation>;
 
 export type RegisteredPlumbingFixtureObservation = Omit<PlumbingFixtureObservation, "point"> & WithAttributeEvidence & {
   pixel_point: ExistingConditionsPlanPoint;
@@ -199,7 +201,9 @@ function allowedDiscipline(
 function materialAttributes(observation: Exclude<RegisteredMepPixelObservation, ElectricalCircuitObservation>): string[] {
   if (observation.kind === "pipe_route") {
     if (observation.geometry_mode === "native_connector_bridge") return ["location", "size", "elevation", "system", "type"];
-    if (observation.geometry_mode === "downstream_vent_tee") return ["size", "main elevation", "elevation", "system", "type"];
+    if (observation.geometry_mode === "downstream_vent_tee") {
+      return ["size", ...(clean(observation.main_reference_key) ? ["main elevation"] : []), "elevation", "system", "type"];
+    }
     return ["size", "elevation", "system", "type"];
   }
   if (observation.kind === "plumbing_fixture") {
@@ -307,7 +311,18 @@ export async function compileRegisteredMepObservations(
   const convertedObservations: MepDraftPackage["observations"] = input.observations.map((observation, index) => {
     allowedDiscipline(input.discipline, observation, index);
     if (observation.kind === "electrical_circuit") {
-      if (normalized(observation.evidence_role) === normalized(renderRole)) {
+      const usesRenderEvidence = normalized(observation.evidence_role) === normalized(renderRole);
+      if (observation.circuit_mode === "create_new_power_system"
+        && observation.membership_basis === "legible_source_circuit_label") {
+        if (!usesRenderEvidence) {
+          throw new Error(`${observation.observation_id}_legible_circuit_label_must_use_registered_render`);
+        }
+        for (const evidence of observation.member_label_evidence ?? []) {
+          if (normalized(evidence.evidence_role) !== normalized(renderRole)) {
+            throw new Error(`${observation.observation_id}_member_label_evidence_must_use_registered_render:${evidence.member_observation_id}`);
+          }
+        }
+      } else if (usesRenderEvidence) {
         throw new Error(`${observation.observation_id}_circuit_membership_cannot_use_render_evidence`);
       }
       return { ...observation };
@@ -386,8 +401,8 @@ export async function compileRegisteredMepObservations(
       "Registered pixels establish bounded plan geometry only; material, system, size, elevation, family, type, host, and service-topology claims remain subject to the existing MEP compiler evidence gates.",
       "A pipe elevation may use declared_heuristic provenance when the plan does not show elevation; it remains an explicit inference in the compiled assumptions and is never represented as source-observed truth.",
       "A native_connector_bridge may resolve a short concealed service stub only between an agent-visible fixture observation and an explicit hash-bound native anchor; its endpoints and elevation are runtime native inferences, not registered-pixel observations.",
-      "A downstream_vent_tee uses registered pixels for plan geometry, an exact hash-bound retained sanitary main for the tee, native evidence for the main elevation, and a required post-write fixture-network audit; it never represents the vent as a direct fixture connector.",
-      "Electrical circuit membership cannot be inferred from plotted labels or this registered render and must remain grounded in exact native source power-system evidence.",
+      "A downstream_vent_tee uses registered pixels for plan geometry, either an exact hash-bound retained sanitary main or a source-grounded sanitary route created earlier in the same atomic workflow, and a required post-write fixture-network audit; it never represents the vent as a direct fixture connector.",
+      "Electrical circuit membership may use the registered render only when every newly created member has explicit legible evidence for the same printed circuit label; otherwise it must remain grounded in exact native source power-system evidence or explicit user direction.",
       "The registered render must be agent-visible, hash-bound, dimension-verified, and aligned to the declared model frame.",
       "No evaluator, withheld truth, native target identity, or scorer output is used to convert pixel observations."
     ]

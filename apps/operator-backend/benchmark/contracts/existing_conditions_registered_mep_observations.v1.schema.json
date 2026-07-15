@@ -205,7 +205,35 @@
     "pipe_downstream_vent_tee": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "service", "geometry_mode", "main_reference_key", "verification_fixture_reference_keys", "pixel_points", "main_elevation_ft", "elevation_ft", "pipe_size", "pipe_type", "system_type"],
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "service", "geometry_mode", "pixel_points", "elevation_ft", "pipe_size", "pipe_type", "system_type"],
+      "anyOf": [
+        {
+          "required": ["verification_fixture_reference_keys"],
+          "properties": { "verification_fixture_reference_keys": { "type": "array", "minItems": 1 } }
+        },
+        {
+          "required": ["verification_fixture_observation_ids"],
+          "properties": { "verification_fixture_observation_ids": { "type": "array", "minItems": 1 } }
+        }
+      ],
+      "oneOf": [
+        {
+          "required": ["main_reference_key", "main_elevation_ft"],
+          "properties": {
+            "main_reference_key": { "type": "string", "minLength": 1 },
+            "main_elevation_ft": { "type": "number" },
+            "main_route_observation_id": false
+          }
+        },
+        {
+          "required": ["main_route_observation_id"],
+          "properties": {
+            "main_route_observation_id": { "type": "string", "minLength": 1 },
+            "main_reference_key": false,
+            "main_elevation_ft": false
+          }
+        }
+      ],
       "properties": {
         "kind": { "const": "pipe_route" },
         "discipline": { "const": "plumbing" },
@@ -218,7 +246,14 @@
         "service": { "const": "vent" },
         "geometry_mode": { "const": "downstream_vent_tee" },
         "main_reference_key": { "type": "string", "minLength": 1 },
+        "main_route_observation_id": { "type": "string", "minLength": 1 },
         "verification_fixture_reference_keys": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "verification_fixture_observation_ids": {
           "type": "array",
           "minItems": 1,
           "items": { "type": "string", "minLength": 1 },
@@ -298,7 +333,7 @@
     "electrical_circuit": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "discipline", "observation_id", "evidence_role", "visibility", "confidence", "supported_attributes", "member_observation_ids", "source_reference_key", "expected_power_system_id", "membership_basis"],
+      "required": ["kind", "discipline", "observation_id", "evidence_role", "visibility", "confidence", "supported_attributes", "member_observation_ids", "membership_basis"],
       "properties": {
         "kind": { "const": "electrical_circuit" },
         "discipline": { "const": "electrical" },
@@ -308,11 +343,61 @@
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
         "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
         "member_observation_ids": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "circuit_mode": { "enum": ["match_source_power_system", "create_new_power_system"] },
         "source_reference_key": { "type": "string", "minLength": 1 },
         "expected_power_system_id": { "type": "string", "minLength": 1 },
-        "membership_basis": { "const": "native_source_power_system" },
-        "panel_circuit_label": { "type": "string", "minLength": 1 }
-      }
+        "system_type": { "const": "PowerCircuit" },
+        "membership_basis": { "enum": ["native_source_power_system", "legible_source_circuit_label", "user_direction"] },
+        "panel_circuit_label": { "type": "string", "minLength": 1 },
+        "panel_reference_key": { "type": "string", "minLength": 1 },
+        "user_direction_reference": { "type": "string", "minLength": 1 },
+        "member_label_evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["member_observation_id", "evidence_role", "reference", "label"],
+            "properties": {
+              "member_observation_id": { "type": "string", "minLength": 1 },
+              "evidence_role": { "type": "string", "minLength": 1 },
+              "reference": { "type": "string", "minLength": 1 },
+              "label": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      },
+      "oneOf": [
+        {
+          "required": ["source_reference_key", "expected_power_system_id"],
+          "properties": {
+            "circuit_mode": { "enum": ["match_source_power_system"] },
+            "source_reference_key": { "type": "string", "minLength": 1 },
+            "expected_power_system_id": { "type": "string", "minLength": 1 },
+            "membership_basis": { "const": "native_source_power_system" }
+          }
+        },
+        {
+          "required": ["circuit_mode", "system_type", "panel_circuit_label", "member_label_evidence"],
+          "properties": {
+            "circuit_mode": { "const": "create_new_power_system" },
+            "system_type": { "const": "PowerCircuit" },
+            "panel_circuit_label": { "type": "string", "minLength": 1 },
+            "member_label_evidence": { "type": "array", "minItems": 1 },
+            "membership_basis": { "const": "legible_source_circuit_label" }
+          }
+        },
+        {
+          "required": ["circuit_mode", "system_type", "panel_circuit_label", "user_direction_reference"],
+          "properties": {
+            "circuit_mode": { "const": "create_new_power_system" },
+            "system_type": { "const": "PowerCircuit" },
+            "panel_circuit_label": { "type": "string", "minLength": 1 },
+            "user_direction_reference": { "type": "string", "minLength": 1 },
+            "membership_basis": { "const": "user_direction" }
+          }
+        }
+      ]
     }
   }
 }
