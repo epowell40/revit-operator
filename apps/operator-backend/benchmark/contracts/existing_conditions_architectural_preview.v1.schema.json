@@ -124,6 +124,7 @@
           ]
         },
         "wall_type_name": { "type": "string", "minLength": 1 },
+        "measured_thickness_ft": { "type": "number", "exclusiveMinimum": 0 },
         "thickness_ft": { "type": "number", "exclusiveMinimum": 0 },
         "height_ft": { "type": "number", "exclusiveMinimum": 0 }
       }
@@ -153,6 +154,7 @@
         "host_wall_observation_id": { "type": "string", "minLength": 1 },
         "family_name": { "type": "string", "minLength": 1 },
         "type_name": { "type": "string", "minLength": 1 },
+        "measured_width_ft": { "type": "number", "exclusiveMinimum": 0 },
         "width_ft": { "type": "number", "exclusiveMinimum": 0 },
         "height_ft": { "type": "number", "exclusiveMinimum": 0 }
       }
@@ -182,6 +184,7 @@
         "host_wall_observation_id": { "type": "string", "minLength": 1 },
         "family_name": { "type": "string", "minLength": 1 },
         "type_name": { "type": "string", "minLength": 1 },
+        "measured_width_ft": { "type": "number", "exclusiveMinimum": 0 },
         "width_ft": { "type": "number", "exclusiveMinimum": 0 },
         "height_ft": { "type": "number", "exclusiveMinimum": 0 },
         "sill_height_ft": { "type": "number", "minimum": 0 }

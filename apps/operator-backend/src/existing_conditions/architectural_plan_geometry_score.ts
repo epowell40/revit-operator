@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type {
   ExistingConditionsConnection,
   ExistingConditionsElement,
@@ -31,6 +32,20 @@ export const DEFAULT_ARCHITECTURAL_PLAN_GEOMETRY_SCORING_POLICY: ArchitecturalPl
   minimum_hosting_score: 0.75
 };
 
+const ISSUED_ARCHITECTURAL_PLAN_GEOMETRY_SCORES = new WeakSet<object>();
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+export function isIssuedArchitecturalPlanGeometryScore(value: unknown): value is ArchitecturalPlanGeometryScore {
+  return !!value && typeof value === "object" && ISSUED_ARCHITECTURAL_PLAN_GEOMETRY_SCORES.has(value as object);
+}
+
 export type ArchitecturalPlanGeometryMatchedPair = {
   truth_key: string;
   preview_key: string;
@@ -43,6 +58,9 @@ export type ArchitecturalPlanGeometryScore = {
   schema_version: 1;
   fixture_id: string;
   scope_id: string;
+  preview_fingerprint_sha256: string;
+  scoring_policy: ArchitecturalPlanGeometryScoringPolicy;
+  scoring_policy_fingerprint_sha256: string;
   valid_run: boolean;
   passed: boolean;
   score: number;
@@ -77,6 +95,14 @@ type CandidatePair = ArchitecturalPlanGeometryMatchedPair | null;
 
 function normalized(value: unknown): string {
   return String(value ?? "").trim().toLowerCase().replace(/[\s_-]+/g, " ");
+}
+
+export function architecturalPlanGeometryScoringPolicyFingerprint(policy: ArchitecturalPlanGeometryScoringPolicy): string {
+  const ordered = Object.fromEntries(Object.keys(policy).sort().map((key) => [
+    key,
+    policy[key as keyof ArchitecturalPlanGeometryScoringPolicy]
+  ]));
+  return crypto.createHash("sha256").update(JSON.stringify(ordered)).digest("hex");
 }
 
 function round(value: number): number {
@@ -325,10 +351,13 @@ export function scoreArchitecturalPlanGeometryPreview(
   if (hostingApplicable && hosting < policy.minimum_hosting_score) failures.push("plan_opening_hosting_mismatch");
   if (score < policy.passing_score) failures.push("plan_geometry_score_below_threshold");
   const validRun = invalidReasons.length === 0;
-  return {
+  const receipt: ArchitecturalPlanGeometryScore = {
     schema_version: 1,
     fixture_id: preview.fixture_id,
     scope_id: preview.scope_id,
+    preview_fingerprint_sha256: preview.input_fingerprint_sha256,
+    scoring_policy: policy,
+    scoring_policy_fingerprint_sha256: architecturalPlanGeometryScoringPolicyFingerprint(policy),
     valid_run: validRun,
     passed: validRun && failures.length === 0,
     score: round(score),
@@ -355,4 +384,7 @@ export function scoreArchitecturalPlanGeometryPreview(
     missed_truth_keys: missedTruthKeys,
     false_positive_preview_keys: falsePositivePreviewKeys
   };
+  deepFreeze(receipt);
+  ISSUED_ARCHITECTURAL_PLAN_GEOMETRY_SCORES.add(receipt);
+  return receipt;
 }

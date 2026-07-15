@@ -79,6 +79,11 @@ import {
 } from "../existing_conditions/architectural_plan_geometry_preview.js";
 import { scoreArchitecturalPlanGeometryPreview } from "../existing_conditions/architectural_plan_geometry_score.js";
 import {
+  promoteArchitecturalPlanGeometryWithCatalog,
+  type ArchitecturalPrecedentCatalog,
+  type ArchitecturalPrecedentSignal
+} from "../existing_conditions/architectural_precedent_catalog.js";
+import {
   buildArchitecturalSourceDelta,
   type ArchitecturalSourceDeltaInput,
   type ArchitecturalSourceDeltaReceipt
@@ -203,7 +208,7 @@ function usage(): never {
     "  npm run existing-conditions -- compile-architectural-pixel-preview --input <pixel-observations.json> --measurement-receipt <measurement-receipt.json> --out <compiled-preview.json> [--source-out <converted-source-observations.json>] [--compilation-out <compilation.json>]",
     "  npm run existing-conditions -- audit-architectural-redaction --truth <ground-truth.json> --delta-receipt <receipt.json> --out <gate-receipt.json>",
     "  npm run existing-conditions -- audit-linked-background --model-health <model-health.json> --out <gate-receipt.json> [--link-name-tokens <token,token,...>]",
-    "  npm run existing-conditions -- promote-architectural-preview --input <source-observations.json> --resolutions <evidence-backed-resolutions.json> --out <promotion.json> [--action-out <atomic-import-request.json>] [--apply]",
+    "  npm run existing-conditions -- promote-architectural-preview --input <source-observations.json> --truth <evaluator-ground-truth.json> (--catalog <approved-precedents.json> --mapping-signals <hash-bound-signals.json> | --resolutions <evidence-backed-resolutions.json>) --out <promotion.json> [--score-out <recomputed-plan-score.json>] [--action-out <atomic-import-request.json>] [--apply]",
     "  npm run existing-conditions -- compile-architectural-shell --input <source-observations.json> --out <compiled-plan.json> [--action-out <atomic-import-request.json>] [--apply]",
     "  npm run existing-conditions -- capture --expected-model <model.rvt> (--view-id <id> | --view-ids <id,id,...>) --ids <id,id,...> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "  npm run existing-conditions -- package --fixture-id <id> --scope-id <id> --discipline <mechanical|plumbing|electrical|architectural|mixed> --task-class <exact_reconstruction|standards_compliance_repair|generative_layout> [--standards-profile <json>] [--source-pdf-render <image> --surrounding-model-capture <image> --architectural-delta-receipt <json> [--architectural-measurement-receipt <json> [--architectural-wall-candidate-receipt <json>]]] --redacted-model <agent-redacted.rvt> --source-pdf <source.pdf> --view-id <id> --model-bounds <minX,minY,minZ,maxX,maxY,maxZ> --image-region <minX,minY,maxX,maxY> --allowed-categories <OST_...,OST_...> --out-dir <agent-dir>",
@@ -1670,10 +1675,32 @@ async function main(): Promise<void> {
   if (command === "promote-architectural-preview") {
     const input = readJson(requiredArgument("--input"));
     assertExistingConditionsContract("architectural_preview", input);
-    const promotion = promoteArchitecturalPlanGeometryPreview(
-      input as ArchitecturalPlanGeometryPreviewPackage,
-      readJson(requiredArgument("--resolutions")) as ArchitecturalPlanGeometryResolution[]
+    const truth = readJson(requiredArgument("--truth"));
+    assertExistingConditionsContract("ground_truth", truth);
+    const compiledPreview = compileArchitecturalPlanGeometryPreview(input as ArchitecturalPlanGeometryPreviewPackage);
+    const score = scoreArchitecturalPlanGeometryPreview(
+      truth as ExistingConditionsGroundTruth,
+      compiledPreview
     );
+    const scoreOut = argument("--score-out");
+    if (scoreOut) writeJson(scoreOut, score);
+    const catalogPath = argument("--catalog");
+    const signalsPath = argument("--mapping-signals");
+    if (!!catalogPath !== !!signalsPath) {
+      throw new Error("architectural_precedent_catalog_and_mapping_signals_must_be_supplied_together");
+    }
+    const promotion = catalogPath && signalsPath
+      ? promoteArchitecturalPlanGeometryWithCatalog(
+        input as ArchitecturalPlanGeometryPreviewPackage,
+        readJson(catalogPath) as ArchitecturalPrecedentCatalog,
+        readJson(signalsPath) as ArchitecturalPrecedentSignal[],
+        { plan_geometry_score: score }
+      )
+      : promoteArchitecturalPlanGeometryPreview(
+        input as ArchitecturalPlanGeometryPreviewPackage,
+        readJson(requiredArgument("--resolutions")) as ArchitecturalPlanGeometryResolution[],
+        { plan_geometry_score: score }
+      );
     writeJson(requiredArgument("--out"), promotion);
     const actionOut = argument("--action-out");
     if (actionOut) {

@@ -16,10 +16,16 @@ import {
   type ExistingConditionsRegistrationReceipt
 } from "./registration.js";
 import type { ExistingConditionsAmbiguity, ExistingConditionsSourceObservation } from "./controller.js";
+import {
+  architecturalPlanGeometryScoringPolicyFingerprint,
+  DEFAULT_ARCHITECTURAL_PLAN_GEOMETRY_SCORING_POLICY,
+  isIssuedArchitecturalPlanGeometryScore,
+  type ArchitecturalPlanGeometryScore
+} from "./architectural_plan_geometry_score.js";
 
 type PreviewValue = string | number;
-type ArchitecturalMaterialAttribute = "family" | "type" | "thickness" | "width" | "height" | "sill height";
-type ArchitecturalResolutionBasis = "user_direction" | "project_precedent" | "legible_source_evidence";
+export type ArchitecturalMaterialAttribute = "family" | "type" | "thickness" | "width" | "height" | "sill height";
+export type ArchitecturalResolutionBasis = "user_direction" | "project_precedent" | "legible_source_evidence";
 
 type ArchitecturalPreviewObservationBase = {
   observation_id: string;
@@ -34,6 +40,7 @@ export type ArchitecturalPlanGeometryWallObservation = ArchitecturalPreviewObser
   discipline: "architectural";
   points: [ExistingConditionsPlanPoint, ExistingConditionsPlanPoint];
   wall_type_name?: string;
+  measured_thickness_ft?: number;
   thickness_ft?: number;
   height_ft?: number;
 };
@@ -45,6 +52,7 @@ export type ArchitecturalPlanGeometryOpeningObservation = ArchitecturalPreviewOb
   host_wall_observation_id: string;
   family_name?: string;
   type_name?: string;
+  measured_width_ft?: number;
   width_ft?: number;
   height_ft?: number;
   sill_height_ft?: number;
@@ -125,6 +133,10 @@ export type ArchitecturalPromotionReceipt = {
   value: PreviewValue;
   basis: ArchitecturalResolutionBasis;
   evidence_reference: string;
+};
+
+export type ArchitecturalPlanGeometryPromotionGate = {
+  plan_geometry_score: ArchitecturalPlanGeometryScore;
 };
 
 export type PromotedArchitecturalPlanGeometry = {
@@ -298,9 +310,15 @@ function validateObservation(observation: ArchitecturalPlanGeometryObservation, 
     if (!Array.isArray(observation.points) || observation.points.length !== 2) throw new Error(`${id}_requires_two_points`);
     const points = observation.points.map((entry, pointIndex) => point(entry, `${id}_point_${pointIndex}`));
     if (distance2d(points[0]!, points[1]!) <= 1e-6) throw new Error(`${id}_wall_is_degenerate`);
+    if (observation.measured_thickness_ft !== undefined) {
+      positive(observation.measured_thickness_ft, `${id}_measured_thickness_ft`);
+    }
   } else {
     point(observation.point, `${id}_point`);
     requiredText(observation.host_wall_observation_id, `${id}_host_wall_observation_id`);
+    if (observation.measured_width_ft !== undefined) {
+      positive(observation.measured_width_ft, `${id}_measured_width_ft`);
+    }
   }
   for (const attribute of materialAttributes(observation)) {
     const value = materialValue(observation, attribute);
@@ -539,10 +557,52 @@ function resolutionMap(
 
 export function promoteArchitecturalPlanGeometryPreview(
   input: ArchitecturalPlanGeometryPreviewPackage,
-  resolutions: ArchitecturalPlanGeometryResolution[]
+  resolutions: ArchitecturalPlanGeometryResolution[],
+  gate: ArchitecturalPlanGeometryPromotionGate
 ): PromotedArchitecturalPlanGeometry {
   const preview = compileArchitecturalPlanGeometryPreview(input);
   if (preview.status !== "preview_ready") throw new Error(`architectural_preview_is_not_promotable:${preview.status}`);
+  const score = gate?.plan_geometry_score;
+  if (!score || score.schema_version !== 1) throw new Error("architectural_promotion_requires_plan_geometry_score");
+  if (!isIssuedArchitecturalPlanGeometryScore(score)) {
+    throw new Error("architectural_promotion_requires_evaluator_issued_plan_geometry_score");
+  }
+  if (score.fixture_id !== preview.fixture_id || score.scope_id !== preview.scope_id) {
+    throw new Error("architectural_promotion_score_scope_mismatch");
+  }
+  if (score.preview_fingerprint_sha256 !== preview.input_fingerprint_sha256) {
+    throw new Error("architectural_promotion_score_preview_fingerprint_mismatch");
+  }
+  const policy = score.scoring_policy;
+  const defaults = DEFAULT_ARCHITECTURAL_PLAN_GEOMETRY_SCORING_POLICY;
+  const policyIsAtLeastAsStrict = !!policy &&
+    policy.wall_endpoint_tolerance_ft <= defaults.wall_endpoint_tolerance_ft &&
+    policy.opening_location_tolerance_ft <= defaults.opening_location_tolerance_ft &&
+    policy.passing_score >= defaults.passing_score &&
+    policy.minimum_precision >= defaults.minimum_precision &&
+    policy.minimum_recall >= defaults.minimum_recall &&
+    policy.minimum_geometry_score >= defaults.minimum_geometry_score &&
+    policy.minimum_wall_topology_score >= defaults.minimum_wall_topology_score &&
+    policy.minimum_hosting_score >= defaults.minimum_hosting_score;
+  if (!policyIsAtLeastAsStrict) throw new Error("architectural_promotion_score_policy_is_too_permissive");
+  if (score.scoring_policy_fingerprint_sha256 !== architecturalPlanGeometryScoringPolicyFingerprint(policy)) {
+    throw new Error("architectural_promotion_score_policy_fingerprint_mismatch");
+  }
+  const metricsPass = score.score >= policy.passing_score &&
+    score.metrics.precision >= policy.minimum_precision &&
+    score.metrics.recall >= policy.minimum_recall &&
+    score.metrics.geometry >= policy.minimum_geometry_score &&
+    (!score.applicability.wall_topology || score.metrics.wall_topology >= policy.minimum_wall_topology_score) &&
+    (!score.applicability.hosting || score.metrics.hosting >= policy.minimum_hosting_score);
+  const countsAreConsistent = score.counts.truth === score.counts.matched + score.counts.missed &&
+    score.counts.preview === score.counts.matched + score.counts.false_positive &&
+    score.counts.ungrounded_preview === 0;
+  if (!score.valid_run || !score.passed || score.invalid_reasons.length > 0 || score.failure_classifications.length > 0) {
+    throw new Error("architectural_promotion_requires_passing_plan_geometry_score");
+  }
+  if (!metricsPass || !countsAreConsistent) {
+    throw new Error("architectural_promotion_score_receipt_is_internally_inconsistent");
+  }
   const byObservation = resolutionMap(input, resolutions);
   const receipts: ArchitecturalPromotionReceipt[] = [];
   const observations: ArchitecturalShellObservation[] = input.observations.map((observation, index) => {
