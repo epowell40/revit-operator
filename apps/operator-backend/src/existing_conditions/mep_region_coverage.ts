@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 
 export type MepCoveragePoint = { x: number; y: number };
 export type MepCoverageBounds = { min: MepCoveragePoint; max: MepCoveragePoint };
+export type MepCoverageDiscipline = "mechanical" | "plumbing" | "electrical";
 
 export type BoundedMepRegionCoverageCandidateV1 = {
   candidate_id: string;
@@ -41,14 +42,14 @@ export type BoundedMepRegionCoverageV1 = {
    * by scope_point (or the candidate-bounds center), including the boundary.
    */
   scope_polygon?: MepCoveragePoint[];
-  disciplines: Array<"plumbing" | "electrical">;
+  disciplines: MepCoverageDiscipline[];
   candidates: BoundedMepRegionCoverageCandidateV1[];
 };
 
 export type MepCoverageObservationDescriptor = {
   observation_id: string;
-  kind: "pipe_route" | "plumbing_fixture" | "electrical_device" | "electrical_equipment" | "electrical_circuit";
-  discipline: "plumbing" | "electrical";
+  kind: "duct_route" | "air_terminal" | "mechanical_equipment" | "pipe_route" | "plumbing_fixture" | "electrical_device" | "electrical_equipment" | "electrical_circuit";
+  discipline: MepCoverageDiscipline;
 };
 
 export type BoundedMepRegionCoverageReceiptV1 = {
@@ -62,7 +63,7 @@ export type BoundedMepRegionCoverageReceiptV1 = {
   region_sha256: string;
   coverage_contract_sha256: string;
   coverage_status: "complete" | "partial";
-  disciplines: Array<"plumbing" | "electrical">;
+  disciplines: MepCoverageDiscipline[];
   candidate_count: number;
   resolved_candidate_ids: string[];
   unresolved_candidate_ids: string[];
@@ -75,7 +76,7 @@ export type BoundedMepRegionCoverageContext = {
   registered_render_sha256: string;
   render_width_px: number;
   render_height_px: number;
-  package_discipline: "plumbing" | "electrical" | "mixed";
+  package_discipline: MepCoverageDiscipline | "mixed";
   observations: MepCoverageObservationDescriptor[];
 };
 
@@ -205,7 +206,7 @@ function insidePolygonOrBoundary(pointValue: MepCoveragePoint, polygonValue: Mep
 }
 
 function expectedPrimitive(kind: MepCoverageObservationDescriptor["kind"]): BoundedMepRegionCoverageCandidateV1["primitive"][] {
-  if (kind === "pipe_route") return ["linear_trace", "junction"];
+  if (kind === "pipe_route" || kind === "duct_route") return ["linear_trace", "junction"];
   if (kind === "electrical_circuit") return ["circuit_annotation"];
   return ["point_symbol"];
 }
@@ -245,7 +246,7 @@ export function validateBoundedMepRegionCoverageV1(
     throw new Error("mep_region_coverage_disciplines_are_required");
   }
   const disciplines = [...new Set(input.disciplines)];
-  if (disciplines.length !== input.disciplines.length || disciplines.some((entry) => !["plumbing", "electrical"].includes(entry))) {
+  if (disciplines.length !== input.disciplines.length || disciplines.some((entry) => !["mechanical", "plumbing", "electrical"].includes(entry))) {
     throw new Error("mep_region_coverage_disciplines_invalid");
   }
   if (context.package_discipline !== "mixed" && (disciplines.length !== 1 || disciplines[0] !== context.package_discipline)) {

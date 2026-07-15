@@ -21,6 +21,21 @@
       "properties": {
         "require_evaluator_change_receipt": { "type": "boolean" },
         "elevation_evidence": { "enum": ["plan_visible", "project_context", "not_visible"] },
+        "required_discipline_coverage": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["discipline", "minimum_precision", "minimum_recall"],
+            "properties": {
+              "discipline": { "enum": ["architectural", "mechanical", "plumbing", "electrical"] },
+              "minimum_precision": { "type": "number", "minimum": 0, "maximum": 1 },
+              "minimum_recall": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        },
         "bounded_mep_region_coverage": {
           "type": "object",
           "additionalProperties": false,

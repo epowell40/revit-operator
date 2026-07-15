@@ -733,7 +733,7 @@ test("scores electrical layout, host, room, orientation, and exact circuit relat
   assert.equal(result.score, 100);
   assert.equal(result.metrics.hosting, 1);
   assert.equal(result.metrics.electrical_circuits, 1);
-  assert.deepEqual(result.applicability, { physical_connectivity: false, architectural_topology: false, systems: false, spatial: true, hosting: true, electrical_circuits: true });
+  assert.deepEqual(result.applicability, { physical_connectivity: false, architectural_topology: false, systems: false, spatial: true, hosting: true, electrical_circuits: true, discipline_coverage: false });
 });
 
 test("level-only evidence does not hard-fail an exact linked-hosted reconstruction", () => {
@@ -784,4 +784,240 @@ test("a wrong MEP system cannot pass on geometry and attributes alone", () => {
   assert.equal(result.passed, false);
   assert.equal(result.metrics.systems, 0);
   assert.equal(result.failure_classifications.includes("system_mismatch"), true);
+});
+
+function architecturalWall(key: string, x: number): ExistingConditionsElement {
+  return {
+    key,
+    kind: "linear_element",
+    discipline: "architectural",
+    role: "wall",
+    category: "Walls",
+    type: "Interior Partition",
+    endpoints: [{ x, y: 0, z: 0 }, { x, y: 10, z: 0 }]
+  };
+}
+
+function plumbingFixture(key: string, x: number): ExistingConditionsElement {
+  return {
+    key,
+    kind: "family_instance",
+    discipline: "plumbing",
+    role: "plumbing_fixture",
+    category: "Plumbing Fixtures",
+    family: "Sink",
+    type: "Single Bowl",
+    location: { x, y: 5, z: 0 }
+  };
+}
+
+test("mixed-discipline coverage rejects an omitted small discipline that global recall would hide", () => {
+  const expectedElements = [
+    architecturalWall("truth-wall-1", 0),
+    architecturalWall("truth-wall-2", 2),
+    architecturalWall("truth-wall-3", 4),
+    architecturalWall("truth-wall-4", 6),
+    architecturalWall("truth-wall-5", 8),
+    plumbingFixture("truth-sink", 20)
+  ];
+  const actualElements = expectedElements.slice(0, 5).map((element, index) => ({ ...element, key: `new-wall-${index + 1}` }));
+  const expected = truth(expectedElements);
+  expected.discipline = "mixed";
+  expected.snapshot.connections = [];
+  expected.snapshot.open_connector_count = 0;
+  expected.evaluation_policy = {
+    required_discipline_coverage: [
+      { discipline: "architectural", minimum_precision: 1, minimum_recall: 1 },
+      { discipline: "plumbing", minimum_precision: 1, minimum_recall: 1 }
+    ]
+  };
+  const actual = candidate(actualElements);
+  actual.discipline = "mixed";
+  actual.snapshot.connections = [];
+  actual.snapshot.open_connector_count = 0;
+
+  const result = scoreExistingConditionsReconstruction(expected, actual);
+  assert.equal(result.metrics.recall, 0.833333);
+  assert.equal(result.passed, false);
+  assert.equal(result.applicability.discipline_coverage, true);
+  assert.deepEqual(result.discipline_coverage, [
+    {
+      discipline: "architectural",
+      truth_count: 5,
+      candidate_count: 5,
+      matched_count: 5,
+      precision: 1,
+      recall: 1,
+      minimum_precision: 1,
+      minimum_recall: 1,
+      passed: true
+    },
+    {
+      discipline: "plumbing",
+      truth_count: 1,
+      candidate_count: 0,
+      matched_count: 0,
+      precision: 0,
+      recall: 0,
+      minimum_precision: 1,
+      minimum_recall: 1,
+      passed: false
+    }
+  ]);
+  assert.ok(result.failure_classifications.includes("discipline_plumbing_recall_below_threshold"));
+});
+
+test("mixed-discipline coverage passes only when every required discipline independently passes", () => {
+  const expectedElements = [architecturalWall("truth-wall", 0), plumbingFixture("truth-sink", 20)];
+  const actualElements = [architecturalWall("new-wall", 0), plumbingFixture("new-sink", 20)];
+  const expected = truth(expectedElements);
+  expected.discipline = "mixed";
+  expected.snapshot.connections = [];
+  expected.snapshot.open_connector_count = 0;
+  expected.evaluation_policy = {
+    required_discipline_coverage: [
+      { discipline: "architectural", minimum_precision: 1, minimum_recall: 1 },
+      { discipline: "plumbing", minimum_precision: 1, minimum_recall: 1 }
+    ]
+  };
+  const actual = candidate(actualElements);
+  actual.discipline = "mixed";
+  actual.snapshot.connections = [];
+  actual.snapshot.open_connector_count = 0;
+
+  const result = scoreExistingConditionsReconstruction(expected, actual);
+  assert.equal(result.passed, true);
+  assert.equal(result.score, 100);
+  assert.equal(result.discipline_coverage.every((entry) => entry.passed), true);
+});
+
+test("mixed-discipline coverage must enumerate every truth discipline and rejects invented unconfigured disciplines", () => {
+  const expected = truth([architecturalWall("truth-wall", 0), plumbingFixture("truth-sink", 20)]);
+  expected.discipline = "mixed";
+  expected.snapshot.connections = [];
+  expected.snapshot.open_connector_count = 0;
+  expected.evaluation_policy = {
+    required_discipline_coverage: [
+      { discipline: "architectural", minimum_precision: 1, minimum_recall: 1 },
+      { discipline: "electrical", minimum_precision: 1, minimum_recall: 1 }
+    ]
+  };
+  const missingConfiguration = candidate([architecturalWall("new-wall", 0)]);
+  missingConfiguration.discipline = "mixed";
+  missingConfiguration.snapshot.connections = [];
+  missingConfiguration.snapshot.open_connector_count = 0;
+  const missingResult = scoreExistingConditionsReconstruction(expected, missingConfiguration);
+  assert.equal(missingResult.valid_run, false);
+  assert.ok(missingResult.invalid_reasons.includes("truth_discipline_missing_coverage_requirement:plumbing"));
+  assert.ok(missingResult.invalid_reasons.includes("coverage_requirement_has_no_truth_discipline:electrical"));
+
+  expected.evaluation_policy.required_discipline_coverage = [
+    { discipline: "architectural", minimum_precision: 1, minimum_recall: 1 },
+    { discipline: "plumbing", minimum_precision: 1, minimum_recall: 1 }
+  ];
+  const inventedElectrical = electricalDevice("invented-device", 40);
+  inventedElectrical.room_number = null;
+  inventedElectrical.host_key = null;
+  inventedElectrical.electrical = null;
+  const extraDiscipline = candidate([
+    architecturalWall("new-wall", 0),
+    plumbingFixture("new-sink", 20),
+    inventedElectrical
+  ]);
+  extraDiscipline.discipline = "mixed";
+  extraDiscipline.snapshot.connections = [];
+  extraDiscipline.snapshot.open_connector_count = 0;
+  const extraResult = scoreExistingConditionsReconstruction(expected, extraDiscipline);
+  assert.equal(extraResult.valid_run, false);
+  assert.ok(extraResult.invalid_reasons.includes("candidate_discipline_outside_coverage_requirements:electrical"));
+});
+
+test("mixed fixtures cannot disable discipline coverage with an empty or malformed runtime value", () => {
+  const expected = truth([architecturalWall("truth-wall", 0), plumbingFixture("truth-sink", 20)]);
+  expected.discipline = "mixed";
+  expected.snapshot.connections = [];
+  expected.snapshot.open_connector_count = 0;
+  const actual = candidate([architecturalWall("new-wall", 0), plumbingFixture("new-sink", 20)]);
+  actual.discipline = "mixed";
+  actual.snapshot.connections = [];
+  actual.snapshot.open_connector_count = 0;
+
+  expected.evaluation_policy = { required_discipline_coverage: [] };
+  const empty = scoreExistingConditionsReconstruction(expected, actual);
+  assert.equal(empty.valid_run, false);
+  assert.ok(empty.invalid_reasons.includes("discipline_coverage_requires_multiple_disciplines"));
+
+  expected.evaluation_policy = { required_discipline_coverage: null } as unknown as ExistingConditionsGroundTruth["evaluation_policy"];
+  const malformed = scoreExistingConditionsReconstruction(expected, actual);
+  assert.equal(malformed.valid_run, false);
+  assert.ok(malformed.invalid_reasons.includes("mixed_fixture_requires_discipline_coverage"));
+});
+
+test("mixed-discipline coverage gives route-only HVAC credit through exact plan trace coverage", () => {
+  const truthDuct = duct("truth-duct");
+  truthDuct.discipline = "mechanical";
+  truthDuct.role = "duct";
+  const expected = truth([architecturalWall("truth-wall", 0), truthDuct]);
+  expected.discipline = "mixed";
+  expected.snapshot.connections = [];
+  expected.snapshot.open_connector_count = 0;
+  expected.visible_evidence.push({ role: "registered_source_render", sha256: RENDER_HASH });
+  expected.evaluation_policy = {
+    elevation_evidence: "not_visible",
+    required_discipline_coverage: [
+      { discipline: "architectural", minimum_precision: 1, minimum_recall: 1 },
+      { discipline: "mechanical", minimum_precision: 1, minimum_recall: 1 }
+    ],
+    bounded_mep_region_coverage: {
+      required_coverage_status: "complete",
+      source_evidence_sha256: SOURCE_HASH,
+      registered_render_sha256: RENDER_HASH,
+      coverage_contract_sha256: COVERAGE_HASH,
+      region_sha256: REGION_HASH,
+      clear_plan_visible_family_instance_keys: [],
+      clear_plan_visible_mep_curve_keys: ["truth-duct"],
+      route_trace_tolerance_ft: 0.25,
+      minimum_route_trace_precision: 1,
+      minimum_route_trace_recall: 1
+    }
+  };
+  const firstHalf = duct("new-duct-a");
+  firstHalf.discipline = "mechanical";
+  firstHalf.role = "duct";
+  firstHalf.endpoints = [{ x: 0, y: 10, z: 9 }, { x: 5, y: 10, z: 9 }];
+  const secondHalf = duct("new-duct-b");
+  secondHalf.discipline = "mechanical";
+  secondHalf.role = "duct";
+  secondHalf.endpoints = [{ x: 5, y: 10, z: 9 }, { x: 10, y: 10, z: 9 }];
+  const actual = candidate([architecturalWall("new-wall", 0), firstHalf, secondHalf]);
+  actual.discipline = "mixed";
+  actual.snapshot.connections = [];
+  actual.snapshot.open_connector_count = 0;
+  actual.visible_evidence.push({ role: "registered_source_render", sha256: RENDER_HASH });
+  actual.source_coverage_receipt = {
+    schema_version: 1,
+    scope_id: actual.scope_id,
+    source_evidence_sha256: SOURCE_HASH,
+    registered_render_sha256: RENDER_HASH,
+    coordinate_space: "registered_render_pixels_top_left",
+    region: { min: { x: 100, y: 100 }, max: { x: 900, y: 700 } },
+    region_sha256: REGION_HASH,
+    coverage_contract_sha256: COVERAGE_HASH,
+    coverage_status: "complete",
+    disciplines: ["mechanical"],
+    candidate_count: 1,
+    resolved_candidate_ids: ["candidate:duct-trace"],
+    unresolved_candidate_ids: [],
+    covered_observation_ids: ["duct-observation"]
+  };
+
+  const result = scoreExistingConditionsReconstruction(expected, actual);
+  assert.equal(result.passed, true);
+  assert.equal(result.metrics.mep_route_trace_precision, 1);
+  assert.equal(result.metrics.mep_route_trace_recall, 1);
+  const mechanical = result.discipline_coverage.find((entry) => entry.discipline === "mechanical");
+  assert.equal(mechanical?.truth_count, 0);
+  assert.equal(mechanical?.route_trace_precision, 1);
+  assert.equal(mechanical?.route_trace_recall, 1);
+  assert.equal(mechanical?.passed, true);
 });

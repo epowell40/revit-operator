@@ -66,6 +66,12 @@ export type ExistingConditionsEvidenceReceipt = {
   sha256: string;
 };
 
+export type ExistingConditionsDisciplineCoverageRequirement = {
+  discipline: Exclude<ExistingConditionsDiscipline, "mixed" | "other">;
+  minimum_precision: number;
+  minimum_recall: number;
+};
+
 export type ExistingConditionsGroundTruth = {
   schema_version: 1;
   fixture_id: string;
@@ -83,6 +89,8 @@ export type ExistingConditionsGroundTruth = {
     require_evaluator_change_receipt?: boolean;
     /** Controls how much withheld Z may affect a plan-based reconstruction score. */
     elevation_evidence?: "plan_visible" | "project_context" | "not_visible";
+    /** Prevents a dominant discipline from hiding an omitted or invented smaller discipline in a mixed fixture. */
+    required_discipline_coverage?: ExistingConditionsDisciplineCoverageRequirement[];
     bounded_mep_region_coverage?: {
       required_coverage_status: "complete";
       source_evidence_sha256: string;
@@ -171,6 +179,21 @@ export type ExistingConditionsScore = {
     missed: number;
     false_positive: number;
   };
+  discipline_coverage: Array<{
+    discipline: Exclude<ExistingConditionsDiscipline, "mixed" | "other">;
+    truth_count: number;
+    candidate_count: number;
+    matched_count: number;
+    precision: number;
+    recall: number;
+    minimum_precision: number;
+    minimum_recall: number;
+    route_trace_precision?: number;
+    route_trace_recall?: number;
+    route_truth_length_ft?: number;
+    route_candidate_length_ft?: number;
+    passed: boolean;
+  }>;
   metrics: {
     precision: number;
     recall: number;
@@ -200,6 +223,7 @@ export type ExistingConditionsScore = {
     spatial: boolean;
     hosting: boolean;
     electrical_circuits: boolean;
+    discipline_coverage: boolean;
     bounded_mep_region?: boolean;
     bounded_mep_route_trace?: boolean;
   };
@@ -1022,12 +1046,92 @@ function evidenceMap(receipts: ExistingConditionsEvidenceReceipt[]): Map<string,
   return new Map(receipts.map((entry) => [normalized(entry.role), normalized(entry.sha256)]));
 }
 
+const CORE_RECONSTRUCTION_DISCIPLINES = ["architectural", "mechanical", "plumbing", "electrical"] as const;
+type CoreReconstructionDiscipline = typeof CORE_RECONSTRUCTION_DISCIPLINES[number];
+
+function parseDisciplineCoverageRequirements(truth: ExistingConditionsGroundTruth): {
+  requirements: ExistingConditionsDisciplineCoverageRequirement[];
+  invalid_reasons: string[];
+} {
+  const policy = truth.evaluation_policy as unknown as Record<string, unknown> | undefined;
+  const raw = policy?.required_discipline_coverage;
+  const mixed = normalized(truth.discipline) === "mixed";
+  if (!Array.isArray(raw)) {
+    return {
+      requirements: [],
+      invalid_reasons: mixed ? ["mixed_fixture_requires_discipline_coverage"] :
+        raw === undefined ? [] : ["discipline_coverage_must_be_array"]
+    };
+  }
+  const invalidReasons: string[] = [];
+  if (raw.length < 2) invalidReasons.push("discipline_coverage_requires_multiple_disciplines");
+  const requirements: ExistingConditionsDisciplineCoverageRequirement[] = [];
+  const seen = new Set<string>();
+  for (const [index, entry] of raw.entries()) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      invalidReasons.push(`invalid_discipline_coverage_requirement:${index}`);
+      continue;
+    }
+    const requirement = entry as Record<string, unknown>;
+    const discipline = normalized(requirement.discipline);
+    const minimumPrecision = requirement.minimum_precision;
+    const minimumRecall = requirement.minimum_recall;
+    if (!CORE_RECONSTRUCTION_DISCIPLINES.includes(discipline as CoreReconstructionDiscipline)) {
+      invalidReasons.push(`invalid_discipline_coverage_requirement:${discipline || index}`);
+      continue;
+    }
+    if (seen.has(discipline)) invalidReasons.push(`duplicate_discipline_coverage_requirement:${discipline}`);
+    seen.add(discipline);
+    if (typeof minimumPrecision !== "number" || !Number.isFinite(minimumPrecision) || minimumPrecision < 0 || minimumPrecision > 1) {
+      invalidReasons.push(`invalid_discipline_precision_threshold:${discipline}`);
+      continue;
+    }
+    if (typeof minimumRecall !== "number" || !Number.isFinite(minimumRecall) || minimumRecall < 0 || minimumRecall > 1) {
+      invalidReasons.push(`invalid_discipline_recall_threshold:${discipline}`);
+      continue;
+    }
+    requirements.push({
+      discipline: discipline as ExistingConditionsDisciplineCoverageRequirement["discipline"],
+      minimum_precision: minimumPrecision,
+      minimum_recall: minimumRecall
+    });
+  }
+  return { requirements, invalid_reasons: [...new Set(invalidReasons)] };
+}
+
+function snapshotCoreDisciplines(snapshot: ExistingConditionsSnapshot): Set<CoreReconstructionDiscipline> {
+  return new Set(snapshot.elements
+    .map((element) => normalized(element.discipline))
+    .filter((discipline): discipline is CoreReconstructionDiscipline =>
+      CORE_RECONSTRUCTION_DISCIPLINES.includes(discipline as CoreReconstructionDiscipline)));
+}
+
 function validateRun(truth: ExistingConditionsGroundTruth, candidate: ExistingConditionsCandidate): string[] {
   const reasons: string[] = [];
   if (truth.schema_version !== 1 || candidate.schema_version !== 1) reasons.push("unsupported_schema_version");
   if (truth.fixture_id !== candidate.fixture_id) reasons.push("fixture_id_mismatch");
   if (truth.scope_id !== candidate.scope_id) reasons.push("scope_id_mismatch");
   if (truth.discipline && candidate.discipline && normalized(truth.discipline) !== normalized(candidate.discipline)) reasons.push("discipline_mismatch");
+  const parsedDisciplineCoverage = parseDisciplineCoverageRequirements(truth);
+  reasons.push(...parsedDisciplineCoverage.invalid_reasons);
+  const disciplineCoverage = parsedDisciplineCoverage.requirements;
+  if (disciplineCoverage.length > 0) {
+    if (normalized(truth.discipline) !== "mixed" || normalized(candidate.discipline) !== "mixed") {
+      reasons.push("discipline_coverage_requires_mixed_fixture");
+    }
+    const configured = new Set(disciplineCoverage.map((entry) => entry.discipline));
+    const truthDisciplines = snapshotCoreDisciplines(truth.snapshot);
+    const candidateDisciplines = snapshotCoreDisciplines(candidate.snapshot);
+    for (const discipline of truthDisciplines) {
+      if (!configured.has(discipline)) reasons.push(`truth_discipline_missing_coverage_requirement:${discipline}`);
+    }
+    for (const discipline of configured) {
+      if (!truthDisciplines.has(discipline)) reasons.push(`coverage_requirement_has_no_truth_discipline:${discipline}`);
+    }
+    for (const discipline of candidateDisciplines) {
+      if (!configured.has(discipline)) reasons.push(`candidate_discipline_outside_coverage_requirements:${discipline}`);
+    }
+  }
   if (!truth.snapshot.native_readback || !candidate.snapshot.native_readback) reasons.push("missing_native_readback");
   if (truth.snapshot.elements.length === 0) reasons.push("empty_ground_truth");
   if (candidate.out_of_scope_changed_element_keys.length > 0) reasons.push("out_of_scope_write");
@@ -1048,7 +1152,7 @@ function validateRun(truth: ExistingConditionsGroundTruth, candidate: ExistingCo
     }
     for (const key of boundedCoverage.clear_plan_visible_family_instance_keys) {
       const element = truthByKey.get(key);
-      if (!element || element.kind !== "family_instance" || !["plumbing", "electrical"].includes(normalized(element.discipline))) {
+      if (!element || element.kind !== "family_instance" || !["mechanical", "plumbing", "electrical"].includes(normalized(element.discipline))) {
         reasons.push(`bounded_mep_region_truth_key_invalid:${key}`);
       }
     }
@@ -1148,11 +1252,72 @@ export function scoreExistingConditionsReconstruction(
   const recall = matchingTruthElements.length > 0
     ? pairs.length / matchingTruthElements.length
     : matchingCandidateElements.length === 0 ? 1 : 0;
+  const disciplineCoverage = parseDisciplineCoverageRequirements(truth).requirements.map((requirement) => {
+    const discipline = requirement.discipline;
+    const truthElements = matchingTruthElements.filter((element) => normalized(element.discipline) === normalized(discipline));
+    const candidateElements = matchingCandidateElements.filter((element) => normalized(element.discipline) === normalized(discipline));
+    const disciplineTruthRoutes = truthRouteElements.filter((element) => normalized(element.discipline) === normalized(discipline));
+    const disciplineCandidateRoutes = candidateRouteElements.filter((element) => normalized(element.discipline) === normalized(discipline));
+    const truthKeys = new Set(truthElements.map((element) => element.key));
+    const candidateKeys = new Set(candidateElements.map((element) => element.key));
+    const matchedCount = pairs.filter((pair) => truthKeys.has(pair.truth_key) && candidateKeys.has(pair.candidate_key)).length;
+    const discretePrecision = candidateElements.length > 0
+      ? matchedCount / candidateElements.length
+      : truthElements.length === 0 ? 1 : 0;
+    const discreteRecall = truthElements.length > 0
+      ? matchedCount / truthElements.length
+      : candidateElements.length === 0 ? 1 : 0;
+    const disciplineRouteRecallCoverage = disciplineTruthRoutes.length > 0
+      ? sampledRouteCoverage(disciplineTruthRoutes, disciplineCandidateRoutes, routeToleranceFt)
+      : null;
+    const disciplineRoutePrecisionCoverage = disciplineTruthRoutes.length > 0
+      ? sampledRouteCoverage(disciplineCandidateRoutes, disciplineTruthRoutes, routeToleranceFt)
+      : null;
+    const routeRecall = disciplineRouteRecallCoverage === null || disciplineRoutePrecisionCoverage === null
+      ? null
+      : Math.min(
+          disciplineRouteRecallCoverage.ratio,
+          clamp01(disciplineRoutePrecisionCoverage.total_length_ft / disciplineRouteRecallCoverage.total_length_ft)
+        );
+    const routePrecision = disciplineRouteRecallCoverage === null || disciplineRoutePrecisionCoverage === null
+      ? null
+      : Math.min(
+          disciplineRoutePrecisionCoverage.ratio,
+          clamp01(disciplineRouteRecallCoverage.total_length_ft /
+            Math.max(disciplineRoutePrecisionCoverage.total_length_ft, Number.EPSILON))
+        );
+    const hasDiscreteTruth = truthElements.length > 0;
+    const hasRouteTruth = disciplineTruthRoutes.length > 0;
+    if (!hasDiscreteTruth && !hasRouteTruth) invalidReasons.push(`required_discipline_has_no_scoreable_truth:${discipline}`);
+    const disciplinePrecision = hasDiscreteTruth && routePrecision !== null
+      ? Math.min(discretePrecision, routePrecision)
+      : routePrecision ?? discretePrecision;
+    const disciplineRecall = hasDiscreteTruth && routeRecall !== null
+      ? Math.min(discreteRecall, routeRecall)
+      : routeRecall ?? discreteRecall;
+    return {
+      discipline,
+      truth_count: truthElements.length,
+      candidate_count: candidateElements.length,
+      matched_count: matchedCount,
+      precision: round(disciplinePrecision),
+      recall: round(disciplineRecall),
+      minimum_precision: requirement.minimum_precision,
+      minimum_recall: requirement.minimum_recall,
+      ...(routePrecision === null ? {} : { route_trace_precision: round(routePrecision) }),
+      ...(routeRecall === null ? {} : { route_trace_recall: round(routeRecall) }),
+      ...(disciplineRouteRecallCoverage === null ? {} : { route_truth_length_ft: round(disciplineRouteRecallCoverage.total_length_ft) }),
+      ...(disciplineRoutePrecisionCoverage === null ? {} : { route_candidate_length_ft: round(disciplineRoutePrecisionCoverage.total_length_ft) }),
+      passed: (hasDiscreteTruth || hasRouteTruth) &&
+        disciplinePrecision >= requirement.minimum_precision &&
+        disciplineRecall >= requirement.minimum_recall
+    };
+  });
   const boundedTruthKeys = new Set(boundedCoverage?.clear_plan_visible_family_instance_keys ?? []);
   const boundedPairs = pairs.filter((pair) => boundedTruthKeys.has(pair.truth_key));
   const boundedCandidateElements = boundedCoverage
     ? candidate.snapshot.elements.filter((element) =>
-        element.kind === "family_instance" && ["plumbing", "electrical"].includes(normalized(element.discipline)))
+        element.kind === "family_instance" && ["mechanical", "plumbing", "electrical"].includes(normalized(element.discipline)))
     : [];
   const boundedMatchedCandidateKeys = new Set(boundedPairs.map((pair) => pair.candidate_key));
   const mepRegionPrecision = boundedCoverage && boundedTruthKeys.size > 0
@@ -1239,6 +1404,10 @@ export function scoreExistingConditionsReconstruction(
     if (candidate.snapshot.elements.length === 0) failures.push("no_reconstruction");
     if (recall < policy.minimum_recall) failures.push("incomplete_reconstruction");
     if (precision < policy.minimum_precision) failures.push("false_positive_elements");
+    for (const coverage of disciplineCoverage) {
+      if (coverage.precision < coverage.minimum_precision) failures.push(`discipline_${coverage.discipline}_precision_below_threshold`);
+      if (coverage.recall < coverage.minimum_recall) failures.push(`discipline_${coverage.discipline}_recall_below_threshold`);
+    }
     if (mepRegionRecall !== null && mepRegionRecall < 1) failures.push("bounded_mep_region_incomplete");
     if (mepRegionPrecision !== null && mepRegionPrecision < 1) failures.push("bounded_mep_region_false_positive");
     if (mepRouteTraceRecall !== null && mepRouteTraceRecall < minimumRouteTraceRecall) failures.push("bounded_mep_route_trace_incomplete");
@@ -1260,6 +1429,7 @@ export function scoreExistingConditionsReconstruction(
     weightedScore >= policy.passing_score &&
     precision >= policy.minimum_precision &&
     recall >= policy.minimum_recall &&
+    disciplineCoverage.every((entry) => entry.passed) &&
     (mepRegionPrecision === null || mepRegionPrecision === 1) &&
     (mepRegionRecall === null || mepRegionRecall === 1) &&
     (mepRouteTracePrecision === null || mepRouteTracePrecision >= minimumRouteTracePrecision) &&
@@ -1289,6 +1459,7 @@ export function scoreExistingConditionsReconstruction(
       missed: missedTruthKeys.length,
       false_positive: falsePositiveKeys.length
     },
+    discipline_coverage: disciplineCoverage,
     metrics: {
       precision: round(precision),
       recall: round(recall),
@@ -1318,6 +1489,7 @@ export function scoreExistingConditionsReconstruction(
       spatial: spatialApplicable,
       hosting: hostingApplicable,
       electrical_circuits: electricalCircuitsApplicable,
+      discipline_coverage: disciplineCoverage.length > 0,
       ...(boundedCoverage ? { bounded_mep_region: true } : {}),
       ...(truthRouteElements.length > 0 ? { bounded_mep_route_trace: true } : {})
     },

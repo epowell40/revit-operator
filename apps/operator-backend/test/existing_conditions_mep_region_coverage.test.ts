@@ -83,6 +83,51 @@ test("bounded MEP region coverage produces a deterministic complete receipt", ()
   assert.equal(first.region_sha256, second.region_sha256);
 });
 
+test("bounded MEP region coverage supports HVAC routes and air terminals", () => {
+  const mechanicalContext: BoundedMepRegionCoverageContext = {
+    scope_id: "bounded-hvac-room",
+    source_evidence_sha256: SOURCE_HASH,
+    registered_render_sha256: RENDER_HASH,
+    render_width_px: 1000,
+    render_height_px: 800,
+    package_discipline: "mechanical",
+    observations: [
+      { observation_id: "duct-random-11", kind: "duct_route", discipline: "mechanical" },
+      { observation_id: "terminal-random-12", kind: "air_terminal", discipline: "mechanical" }
+    ]
+  };
+  const input: BoundedMepRegionCoverageV1 = {
+    schema_version: 1,
+    scope_id: mechanicalContext.scope_id,
+    source_evidence_sha256: SOURCE_HASH,
+    registered_render_sha256: RENDER_HASH,
+    coordinate_space: "registered_render_pixels_top_left",
+    region: { min: { x: 100, y: 100 }, max: { x: 900, y: 700 } },
+    disciplines: ["mechanical"],
+    candidates: [
+      {
+        candidate_id: "duct-trace-random-91",
+        primitive: "linear_trace",
+        pixel_bounds: { min: { x: 150, y: 200 }, max: { x: 650, y: 230 } },
+        visibility: "clear",
+        disposition: { status: "resolved", observation_ids: ["duct-random-11"] }
+      },
+      {
+        candidate_id: "terminal-symbol-random-92",
+        primitive: "point_symbol",
+        pixel_bounds: { min: { x: 640, y: 190 }, max: { x: 680, y: 230 } },
+        visibility: "clear",
+        disposition: { status: "resolved", observation_ids: ["terminal-random-12"] }
+      }
+    ]
+  };
+
+  const result = validateBoundedMepRegionCoverageV1(input, mechanicalContext);
+  assert.equal(result.coverage_status, "complete");
+  assert.deepEqual(result.disciplines, ["mechanical"]);
+  assert.deepEqual(result.covered_observation_ids, ["duct-random-11", "terminal-random-12"]);
+});
+
 test("an irregular scope polygon excludes adjacent corridor marks without shrinking annotation bounds", () => {
   const input = coverage();
   input.scope_polygon = [
