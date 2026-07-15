@@ -417,7 +417,9 @@ namespace RevitBridge.Logic.Handlers.MEP
                 return choice;
             }
 
-            var duct = (ductSize ?? "").Trim().Replace("X", "x").Replace("×", "x");
+            var duct = MepRouteSizeInputPolicy.ResolveDuctSize(ductSize, diameter)
+                .Replace("X", "x")
+                .Replace("×", "x");
             choice.RequestedText = duct;
             if (duct.Length == 0)
             {
