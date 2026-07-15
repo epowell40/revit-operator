@@ -498,4 +498,16 @@ test("candidate and withheld contracts bind bounded MEP coverage receipts", () =
     snapshot
   };
   assert.doesNotThrow(() => assertExistingConditionsContract("ground_truth", groundTruth));
+
+  const routeGroundTruth = structuredClone(groundTruth);
+  const routePolicy = routeGroundTruth.evaluation_policy.bounded_mep_region_coverage as Record<string, unknown>;
+  routePolicy.clear_plan_visible_family_instance_keys = [];
+  routePolicy.clear_plan_visible_mep_curve_keys = ["route-1"];
+  routePolicy.route_trace_tolerance_ft = 0.25;
+  routePolicy.minimum_route_trace_precision = 1;
+  routePolicy.minimum_route_trace_recall = 1;
+  assert.doesNotThrow(() => assertExistingConditionsContract("ground_truth", routeGroundTruth));
+
+  routePolicy.route_trace_tolerance_ft = 0.26;
+  assert.throws(() => assertExistingConditionsContract("ground_truth", routeGroundTruth), /invalid_existing_conditions_ground_truth_contract/);
 });

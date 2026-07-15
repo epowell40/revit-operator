@@ -436,6 +436,69 @@ function attachCompleteElectricalCoverage(actual: ExistingConditionsCandidate, o
   };
 }
 
+function plumbingPipe(
+  key: string,
+  startX: number,
+  endX: number,
+  y = 5,
+  systemClassification = "Sanitary"
+): ExistingConditionsElement {
+  return {
+    key,
+    kind: "mep_curve",
+    discipline: "plumbing",
+    role: "pipe",
+    category: "Pipes",
+    system_classification: systemClassification,
+    system_type: `${systemClassification} 1`,
+    endpoints: [
+      { x: startX, y, z: 10 },
+      { x: endX, y, z: 10 }
+    ],
+    size: { shape: "round", diameter_ft: 4 / 12 }
+  };
+}
+
+function requireCompletePlumbingRouteCoverage(expected: ExistingConditionsGroundTruth, keys: string[]): void {
+  expected.visible_evidence.push({ role: "registered_source_render", sha256: RENDER_HASH });
+  expected.evaluation_policy = {
+    ...expected.evaluation_policy,
+    elevation_evidence: "not_visible",
+    bounded_mep_region_coverage: {
+      required_coverage_status: "complete",
+      source_evidence_sha256: SOURCE_HASH,
+      registered_render_sha256: RENDER_HASH,
+      coverage_contract_sha256: COVERAGE_HASH,
+      region_sha256: REGION_HASH,
+      clear_plan_visible_family_instance_keys: [],
+      clear_plan_visible_mep_curve_keys: keys,
+      route_trace_tolerance_ft: 0.25,
+      minimum_route_trace_precision: 1,
+      minimum_route_trace_recall: 1
+    }
+  };
+}
+
+function attachCompletePlumbingCoverage(actual: ExistingConditionsCandidate): void {
+  actual.visible_evidence.push({ role: "registered_source_render", sha256: RENDER_HASH });
+  actual.source_coverage_receipt = {
+    schema_version: 1,
+    scope_id: actual.scope_id,
+    source_evidence_sha256: SOURCE_HASH,
+    registered_render_sha256: RENDER_HASH,
+    coordinate_space: "registered_render_pixels_top_left",
+    region: { min: { x: 100, y: 100 }, max: { x: 900, y: 700 } },
+    region_sha256: REGION_HASH,
+    coverage_contract_sha256: COVERAGE_HASH,
+    coverage_status: "complete",
+    disciplines: ["plumbing"],
+    candidate_count: 1,
+    resolved_candidate_ids: ["candidate:route-observation"],
+    unresolved_candidate_ids: [],
+    covered_observation_ids: ["route-observation"]
+  };
+}
+
 test("bounded MEP completeness requires exact clear-device recall and precision", () => {
   const expected = truth([
     electricalDevice("truth-device-a", 4),
@@ -499,6 +562,155 @@ test("a partial coverage receipt cannot satisfy a complete bounded-region fixtur
   const result = scoreExistingConditionsReconstruction(expected, actual);
   assert.equal(result.valid_run, false);
   assert.ok(result.invalid_reasons.includes("bounded_mep_region_coverage_partial"));
+});
+
+test("bounded MEP route trace is independent of harmless native segment splits", () => {
+  const expected = truth([plumbingPipe("truth-sanitary", 0, 20)]);
+  expected.discipline = "plumbing";
+  expected.snapshot.connections = [];
+  expected.snapshot.open_connector_count = 0;
+  requireCompletePlumbingRouteCoverage(expected, ["truth-sanitary"]);
+  const actual = candidate([
+    plumbingPipe("new-sanitary-a", 0, 10),
+    plumbingPipe("new-sanitary-b", 10, 20),
+    {
+      key: "native-union",
+      kind: "fitting",
+      discipline: "plumbing",
+      role: "pipe_fitting",
+      category: "Pipe Fittings",
+      family: "Union - Generic",
+      type: "4 inch",
+      system_classification: "Sanitary",
+      system_type: "Sanitary 1",
+      location: { x: 10, y: 5, z: 10 }
+    }
+  ]);
+  actual.discipline = "plumbing";
+  attachCompletePlumbingCoverage(actual);
+
+  const result = scoreExistingConditionsReconstruction(expected, actual);
+  assert.equal(result.passed, true);
+  assert.equal(result.metrics.mep_route_trace_precision, 1);
+  assert.equal(result.metrics.mep_route_trace_recall, 1);
+  assert.equal(result.metrics.truth_route_length_ft, 20);
+  assert.equal(result.metrics.candidate_route_length_ft, 20);
+  assert.equal(result.applicability.bounded_mep_route_trace, true);
+  assert.deepEqual(result.missed_truth_keys, []);
+  assert.deepEqual(result.false_positive_candidate_keys, []);
+});
+
+test("bounded MEP route trace rejects omitted, extra, displaced, and wrong-system plan length", () => {
+  const expected = truth([plumbingPipe("truth-sanitary", 0, 20)]);
+  expected.discipline = "plumbing";
+  expected.snapshot.connections = [];
+  expected.snapshot.open_connector_count = 0;
+  requireCompletePlumbingRouteCoverage(expected, ["truth-sanitary"]);
+
+  const score = (elements: ExistingConditionsElement[]) => {
+    const actual = candidate(elements);
+    actual.discipline = "plumbing";
+    actual.snapshot.connections = [];
+    actual.snapshot.open_connector_count = 0;
+    attachCompletePlumbingCoverage(actual);
+    return scoreExistingConditionsReconstruction(expected, actual);
+  };
+
+  const omitted = score([plumbingPipe("short-sanitary", 0, 15)]);
+  assert.equal(omitted.metrics.mep_route_trace_recall, 0.75);
+  assert.equal(omitted.metrics.mep_route_trace_precision, 1);
+  assert.ok(omitted.failure_classifications.includes("bounded_mep_route_trace_incomplete"));
+
+  const branch = plumbingPipe("invented-branch", 10, 15);
+  branch.endpoints = [{ x: 10, y: 5, z: 10 }, { x: 10, y: 10, z: 10 }];
+  const extra = score([plumbingPipe("full-sanitary", 0, 20), branch]);
+  assert.ok((extra.metrics.mep_route_trace_precision ?? 1) < 1);
+  assert.ok(extra.failure_classifications.includes("bounded_mep_route_trace_false_positive"));
+
+  const displaced = score([plumbingPipe("displaced-sanitary", 0, 20, 6)]);
+  assert.equal(displaced.metrics.mep_route_trace_precision, 0);
+  assert.equal(displaced.metrics.mep_route_trace_recall, 0);
+
+  const wrongSystem = score([plumbingPipe("domestic-water", 0, 20, 5, "Domestic Cold Water")]);
+  assert.equal(wrongSystem.metrics.mep_route_trace_precision, 0);
+  assert.equal(wrongSystem.metrics.mep_route_trace_recall, 0);
+
+  const wrongType = plumbingPipe("wrong-sanitary-type", 0, 20);
+  wrongType.system_type = "Sanitary 99";
+  const wrongTypeResult = score([wrongType]);
+  assert.equal(wrongTypeResult.metrics.mep_route_trace_precision, 0);
+  assert.equal(wrongTypeResult.metrics.mep_route_trace_recall, 0);
+
+  const duplicated = score([
+    plumbingPipe("duplicate-a", 0, 20),
+    plumbingPipe("duplicate-b", 0, 20)
+  ]);
+  assert.equal(duplicated.metrics.mep_route_trace_precision, 0.5);
+  assert.equal(duplicated.metrics.mep_route_trace_recall, 1);
+  assert.ok(duplicated.failure_classifications.includes("bounded_mep_route_trace_false_positive"));
+
+  const unrelatedFitting: ExistingConditionsElement = {
+    key: "unrelated-domestic-fitting",
+    kind: "fitting",
+    discipline: "plumbing",
+    role: "pipe_fitting",
+    category: "Pipe Fittings",
+    system_classification: "Domestic Cold Water",
+    system_type: "Domestic Cold Water 1",
+    location: { x: 100, y: 100, z: 10 }
+  };
+  const unrelated = score([plumbingPipe("full-sanitary-with-unrelated-fitting", 0, 20), unrelatedFitting]);
+  assert.ok(unrelated.false_positive_candidate_keys.includes("unrelated-domestic-fitting"));
+  assert.ok(unrelated.failure_classifications.includes("false_positive_elements"));
+
+  const looseInteriorFitting: ExistingConditionsElement = {
+    ...unrelatedFitting,
+    key: "loose-interior-sanitary-fitting",
+    system_classification: "Sanitary",
+    system_type: "Sanitary 1",
+    location: { x: 10, y: 5.1, z: 10 }
+  };
+  const looseInterior = score([plumbingPipe("full-sanitary-with-loose-interior-fitting", 0, 20), looseInteriorFitting]);
+  assert.ok(looseInterior.false_positive_candidate_keys.includes("loose-interior-sanitary-fitting"));
+  assert.ok(looseInterior.failure_classifications.includes("false_positive_elements"));
+});
+
+test("bounded MEP route policy rejects non-curve and degenerate truth keys", () => {
+  const expected = truth([electricalDevice("not-a-route", 4)]);
+  expected.discipline = "plumbing";
+  expected.snapshot.connections = [];
+  expected.snapshot.open_connector_count = 0;
+  requireCompletePlumbingRouteCoverage(expected, ["not-a-route"]);
+  const actual = candidate([electricalDevice("candidate-device", 4)]);
+  actual.discipline = "plumbing";
+  actual.snapshot.connections = [];
+  actual.snapshot.open_connector_count = 0;
+  attachCompletePlumbingCoverage(actual);
+  const result = scoreExistingConditionsReconstruction(expected, actual);
+  assert.equal(result.valid_run, false);
+  assert.ok(result.invalid_reasons.includes("bounded_mep_route_truth_key_invalid:not-a-route"));
+});
+
+test("bounded MEP route policy rejects permissive tolerances and completeness thresholds", () => {
+  const expected = truth([plumbingPipe("truth-sanitary", 0, 20)]);
+  expected.discipline = "plumbing";
+  expected.snapshot.connections = [];
+  expected.snapshot.open_connector_count = 0;
+  requireCompletePlumbingRouteCoverage(expected, ["truth-sanitary"]);
+  expected.evaluation_policy!.bounded_mep_region_coverage!.route_trace_tolerance_ft = 0.26;
+  expected.evaluation_policy!.bounded_mep_region_coverage!.minimum_route_trace_precision = 0.94;
+  expected.evaluation_policy!.bounded_mep_region_coverage!.minimum_route_trace_recall = 0.9;
+  const actual = candidate([plumbingPipe("new-sanitary", 0, 20)]);
+  actual.discipline = "plumbing";
+  actual.snapshot.connections = [];
+  actual.snapshot.open_connector_count = 0;
+  attachCompletePlumbingCoverage(actual);
+
+  const result = scoreExistingConditionsReconstruction(expected, actual);
+  assert.equal(result.valid_run, false);
+  assert.ok(result.invalid_reasons.includes("bounded_mep_route_trace_tolerance_invalid"));
+  assert.ok(result.invalid_reasons.includes("bounded_mep_route_trace_precision_threshold_invalid"));
+  assert.ok(result.invalid_reasons.includes("bounded_mep_route_trace_recall_threshold_invalid"));
 });
 
 test("scores electrical layout, host, room, orientation, and exact circuit relationship", () => {

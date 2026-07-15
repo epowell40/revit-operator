@@ -90,6 +90,12 @@ export type ExistingConditionsGroundTruth = {
       coverage_contract_sha256: string;
       region_sha256: string;
       clear_plan_visible_family_instance_keys: string[];
+      /** Native MEP-curve truth keys whose visible plan trace is complete inside the bounded region. */
+      clear_plan_visible_mep_curve_keys?: string[];
+      /** Plan-distance tolerance used for length-weighted trace coverage. */
+      route_trace_tolerance_ft?: number;
+      minimum_route_trace_precision?: number;
+      minimum_route_trace_recall?: number;
     };
   };
   snapshot: ExistingConditionsSnapshot;
@@ -181,6 +187,11 @@ export type ExistingConditionsScore = {
     drawing_evidence: number;
     mep_region_precision?: number;
     mep_region_recall?: number;
+    mep_route_trace_precision?: number;
+    mep_route_trace_recall?: number;
+    mep_route_trace_f1?: number;
+    truth_route_length_ft?: number;
+    candidate_route_length_ft?: number;
   };
   applicability: {
     physical_connectivity: boolean;
@@ -190,6 +201,7 @@ export type ExistingConditionsScore = {
     hosting: boolean;
     electrical_circuits: boolean;
     bounded_mep_region?: boolean;
+    bounded_mep_route_trace?: boolean;
   };
   matched_pairs: ExistingConditionsMatchedPair[];
   missed_truth_keys: string[];
@@ -571,6 +583,80 @@ function pointToSegmentDistance2d(
   if (denominator <= Number.EPSILON) return Math.hypot(point.x - a.x, point.y - a.y);
   const t = clamp01(((point.x - a.x) * dx + (point.y - a.y) * dy) / denominator);
   return Math.hypot(point.x - (a.x + t * dx), point.y - (a.y + t * dy));
+}
+
+function segmentLength2d(segment: [ExistingConditionsPoint3, ExistingConditionsPoint3]): number {
+  return pointDistance2d(segment[0], segment[1]);
+}
+
+function routeSystemCompatible(source: ExistingConditionsElement, target: ExistingConditionsElement): boolean {
+  if (normalized(source.discipline) !== normalized(target.discipline)) return false;
+  const sourceClassification = normalized(source.system_classification);
+  const targetClassification = normalized(target.system_classification);
+  if ((sourceClassification || targetClassification) && sourceClassification !== targetClassification) return false;
+  const sourceSystemType = normalized(source.system_type);
+  const targetSystemType = normalized(target.system_type);
+  return !(sourceSystemType || targetSystemType) || sourceSystemType === targetSystemType;
+}
+
+function routeTraceCompatible(source: ExistingConditionsElement, target: ExistingConditionsElement): boolean {
+  return source.kind === "mep_curve" && target.kind === "mep_curve" && routeSystemCompatible(source, target);
+}
+
+function isRouteSupportingFitting(
+  element: ExistingConditionsElement,
+  routes: ExistingConditionsElement[],
+  snapshot: ExistingConditionsSnapshot,
+  toleranceFt: number
+): boolean {
+  if (element.kind !== "fitting" || !["pipe_fitting", "duct_fitting"].includes(normalized(element.role))) return false;
+  const routeByKey = new Map(routes.map((route) => [route.key, route]));
+  const physicallyConnectedRoute = snapshot.connections.some((edge) => {
+    if (relationshipKind(edge) !== "physical") return false;
+    const otherKey = edge.a === element.key ? edge.b : edge.b === element.key ? edge.a : null;
+    return otherKey !== null && routeByKey.has(otherKey);
+  });
+  if (physicallyConnectedRoute && routes.some((route) => normalized(route.discipline) === normalized(element.discipline))) return true;
+  if (!element.location) return false;
+  return routes.some((route) => route.endpoints && routeSystemCompatible(route, element) &&
+    Math.min(pointDistance2d(element.location!, route.endpoints[0]), pointDistance2d(element.location!, route.endpoints[1])) <= toleranceFt);
+}
+
+function sampledRouteCoverage(
+  source: ExistingConditionsElement[],
+  target: ExistingConditionsElement[],
+  toleranceFt: number
+): { covered_length_ft: number; total_length_ft: number; ratio: number } {
+  let coveredLength = 0;
+  let totalLength = 0;
+  const sampleSpacingFt = Math.max(0.02, Math.min(0.25, toleranceFt / 2));
+  for (const sourceElement of source) {
+    if (!sourceElement.endpoints) continue;
+    const length = segmentLength2d(sourceElement.endpoints);
+    if (length <= Number.EPSILON) continue;
+    const intervalCount = Math.max(1, Math.ceil(length / sampleSpacingFt));
+    const intervalLength = length / intervalCount;
+    const compatibleTargets = target.filter((targetElement) =>
+      Boolean(targetElement.endpoints) && routeTraceCompatible(sourceElement, targetElement)
+    );
+    totalLength += length;
+    for (let index = 0; index < intervalCount; index += 1) {
+      const t = (index + 0.5) / intervalCount;
+      const point = {
+        x: sourceElement.endpoints[0].x + t * (sourceElement.endpoints[1].x - sourceElement.endpoints[0].x),
+        y: sourceElement.endpoints[0].y + t * (sourceElement.endpoints[1].y - sourceElement.endpoints[0].y),
+        z: sourceElement.endpoints[0].z + t * (sourceElement.endpoints[1].z - sourceElement.endpoints[0].z)
+      };
+      if (compatibleTargets.some((targetElement) => pointToSegmentDistance2d(point, targetElement.endpoints!) <= toleranceFt)) {
+        coveredLength += intervalLength;
+      }
+    }
+  }
+  return {
+    covered_length_ft: coveredLength,
+    total_length_ft: totalLength,
+    ratio: totalLength > Number.EPSILON ? clamp01(coveredLength / totalLength) : 0
+  };
 }
 
 function segmentsMeet2d(
@@ -956,13 +1042,34 @@ function validateRun(truth: ExistingConditionsGroundTruth, candidate: ExistingCo
   const boundedCoverage = truth.evaluation_policy?.bounded_mep_region_coverage;
   if (boundedCoverage) {
     const truthByKey = new Map(truth.snapshot.elements.map((element) => [element.key, element]));
-    if (boundedCoverage.clear_plan_visible_family_instance_keys.length === 0) {
+    const routeKeys = boundedCoverage.clear_plan_visible_mep_curve_keys ?? [];
+    if (boundedCoverage.clear_plan_visible_family_instance_keys.length === 0 && routeKeys.length === 0) {
       reasons.push("bounded_mep_region_has_no_clear_truth_keys");
     }
     for (const key of boundedCoverage.clear_plan_visible_family_instance_keys) {
       const element = truthByKey.get(key);
       if (!element || element.kind !== "family_instance" || !["plumbing", "electrical"].includes(normalized(element.discipline))) {
         reasons.push(`bounded_mep_region_truth_key_invalid:${key}`);
+      }
+    }
+    for (const key of routeKeys) {
+      const element = truthByKey.get(key);
+      if (!element || element.kind !== "mep_curve" || !element.endpoints ||
+          !["plumbing", "mechanical"].includes(normalized(element.discipline)) ||
+          segmentLength2d(element.endpoints) <= Number.EPSILON) {
+        reasons.push(`bounded_mep_route_truth_key_invalid:${key}`);
+      }
+    }
+    const routeTolerance = boundedCoverage.route_trace_tolerance_ft ?? 0.25;
+    if (!Number.isFinite(routeTolerance) || routeTolerance <= 0 || routeTolerance > 0.25) {
+      reasons.push("bounded_mep_route_trace_tolerance_invalid");
+    }
+    for (const [name, threshold] of [
+      ["precision", boundedCoverage.minimum_route_trace_precision ?? 1],
+      ["recall", boundedCoverage.minimum_route_trace_recall ?? 1]
+    ] as const) {
+      if (!Number.isFinite(threshold) || threshold !== 1) {
+        reasons.push(`bounded_mep_route_trace_${name}_threshold_invalid`);
       }
     }
     const receipt = candidate.source_coverage_receipt;
@@ -999,13 +1106,34 @@ export function scoreExistingConditionsReconstruction(
   const policy = { ...DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY, ...policyOverrides };
   const invalidReasons = validateRun(truth, candidate);
   const elevationEvidence = truth.evaluation_policy?.elevation_evidence ?? "plan_visible";
+  const boundedCoverage = truth.evaluation_policy?.bounded_mep_region_coverage;
+  const boundedRouteTruthKeys = new Set(boundedCoverage?.clear_plan_visible_mep_curve_keys ?? []);
+  const truthRouteElements = truth.snapshot.elements.filter((element) => boundedRouteTruthKeys.has(element.key));
+  const routeDisciplines = new Set(truthRouteElements.map((element) => normalized(element.discipline)));
+  const routeToleranceFt = boundedCoverage?.route_trace_tolerance_ft ?? 0.25;
+  const candidateRouteElements = truthRouteElements.length > 0
+    ? candidate.snapshot.elements.filter((element) => element.kind === "mep_curve" && routeDisciplines.has(normalized(element.discipline)))
+    : [];
+  // Fittings are implementation details of native segmentation: the same visible
+  // trace may be represented by one curve, two curves plus a union, or several
+  // elbow-bounded curves. Visible accessories remain discrete scored elements.
+  const truthRouteAbstractionKeys = new Set(truth.snapshot.elements
+    .filter((element) => boundedRouteTruthKeys.has(element.key) ||
+      isRouteSupportingFitting(element, truthRouteElements, truth.snapshot, routeToleranceFt))
+    .map((element) => element.key));
+  const candidateRouteAbstractionKeys = new Set(candidate.snapshot.elements
+    .filter((element) => (element.kind === "mep_curve" && routeDisciplines.has(normalized(element.discipline))) ||
+      isRouteSupportingFitting(element, candidateRouteElements, candidate.snapshot, routeToleranceFt))
+    .map((element) => element.key));
+  const matchingTruthElements = truth.snapshot.elements.filter((element) => !truthRouteAbstractionKeys.has(element.key));
+  const matchingCandidateElements = candidate.snapshot.elements.filter((element) => !candidateRouteAbstractionKeys.has(element.key));
   const pairs = invalidReasons.length === 0
-    ? globallyMatch(truth.snapshot.elements, candidate.snapshot.elements, policy, elevationEvidence)
+    ? globallyMatch(matchingTruthElements, matchingCandidateElements, policy, elevationEvidence)
     : [];
   const matchedTruth = new Set(pairs.map((pair) => pair.truth_key));
   const matchedCandidate = new Set(pairs.map((pair) => pair.candidate_key));
-  const missedTruthKeys = truth.snapshot.elements.filter((element) => !matchedTruth.has(element.key)).map((element) => element.key);
-  const falsePositiveKeys = candidate.snapshot.elements.filter((element) => !matchedCandidate.has(element.key)).map((element) => element.key);
+  const missedTruthKeys = matchingTruthElements.filter((element) => !matchedTruth.has(element.key)).map((element) => element.key);
+  const falsePositiveKeys = matchingCandidateElements.filter((element) => !matchedCandidate.has(element.key)).map((element) => element.key);
   const architecturalOpeningRoles = new Set(["door", "window"]);
   const missedArchitecturalOpenings = truth.snapshot.elements.filter((element) =>
     !matchedTruth.has(element.key) && element.discipline === "architectural" && architecturalOpeningRoles.has(normalized(element.role))
@@ -1014,9 +1142,12 @@ export function scoreExistingConditionsReconstruction(
     !matchedCandidate.has(element.key) && element.discipline === "architectural" && architecturalOpeningRoles.has(normalized(element.role))
   );
   const architecturalOpeningsExact = missedArchitecturalOpenings.length === 0 && falsePositiveArchitecturalOpenings.length === 0;
-  const precision = candidate.snapshot.elements.length > 0 ? pairs.length / candidate.snapshot.elements.length : 0;
-  const recall = truth.snapshot.elements.length > 0 ? pairs.length / truth.snapshot.elements.length : 0;
-  const boundedCoverage = truth.evaluation_policy?.bounded_mep_region_coverage;
+  const precision = matchingCandidateElements.length > 0
+    ? pairs.length / matchingCandidateElements.length
+    : matchingTruthElements.length === 0 ? 1 : 0;
+  const recall = matchingTruthElements.length > 0
+    ? pairs.length / matchingTruthElements.length
+    : matchingCandidateElements.length === 0 ? 1 : 0;
   const boundedTruthKeys = new Set(boundedCoverage?.clear_plan_visible_family_instance_keys ?? []);
   const boundedPairs = pairs.filter((pair) => boundedTruthKeys.has(pair.truth_key));
   const boundedCandidateElements = boundedCoverage
@@ -1024,32 +1155,64 @@ export function scoreExistingConditionsReconstruction(
         element.kind === "family_instance" && ["plumbing", "electrical"].includes(normalized(element.discipline)))
     : [];
   const boundedMatchedCandidateKeys = new Set(boundedPairs.map((pair) => pair.candidate_key));
-  const mepRegionPrecision = boundedCoverage
+  const mepRegionPrecision = boundedCoverage && boundedTruthKeys.size > 0
     ? (boundedCandidateElements.length === 0 ? 0 : boundedCandidateElements.filter((element) => boundedMatchedCandidateKeys.has(element.key)).length / boundedCandidateElements.length)
     : null;
-  const mepRegionRecall = boundedCoverage
-    ? (boundedTruthKeys.size === 0 ? 0 : boundedPairs.length / boundedTruthKeys.size)
+  const mepRegionRecall = boundedCoverage && boundedTruthKeys.size > 0
+    ? boundedPairs.length / boundedTruthKeys.size
     : null;
+  const routeRecallCoverage = truthRouteElements.length > 0
+    ? sampledRouteCoverage(truthRouteElements, candidateRouteElements, routeToleranceFt)
+    : null;
+  const routePrecisionCoverage = truthRouteElements.length > 0
+    ? sampledRouteCoverage(candidateRouteElements, truthRouteElements, routeToleranceFt)
+    : null;
+  // Directed proximity alone can be gamed by overlapping duplicates because
+  // every duplicate sample is still near the same truth line. Total traced
+  // length provides the missing one-to-one capacity bound while remaining
+  // independent of where Revit chose to split the run.
+  const mepRouteTraceRecall = routeRecallCoverage === null || routePrecisionCoverage === null
+    ? null
+    : Math.min(routeRecallCoverage.ratio, clamp01(routePrecisionCoverage.total_length_ft / routeRecallCoverage.total_length_ft));
+  const mepRouteTracePrecision = routeRecallCoverage === null || routePrecisionCoverage === null
+    ? null
+    : Math.min(routePrecisionCoverage.ratio, clamp01(routeRecallCoverage.total_length_ft / Math.max(routePrecisionCoverage.total_length_ft, Number.EPSILON)));
+  const mepRouteTraceF1 = mepRouteTracePrecision === null || mepRouteTraceRecall === null
+    ? null
+    : f1(mepRouteTracePrecision, mepRouteTraceRecall);
   const elementF1 = f1(precision, recall);
-  const geometry = average(pairs.map((pair) => pair.geometry_score), 0);
+  const routeMetric = mepRouteTraceF1 === null ? [] : [mepRouteTraceF1];
+  const geometry = average([...pairs.map((pair) => pair.geometry_score), ...routeMetric], 0);
   const elevation = average(pairs.map((pair) => pair.elevation_score), 1);
-  const attributes = average(pairs.map((pair) => pair.attribute_score), 0);
-  const systems = average(pairs.map((pair) => pair.system_score), 0);
+  const attributes = average([...pairs.map((pair) => pair.attribute_score), ...routeMetric], 0);
+  const systems = average([...pairs.map((pair) => pair.system_score), ...routeMetric], 0);
   const spatial = average(pairs.map((pair) => pair.spatial_score), 0);
-  const connectivity = pairs.length > 0 ? connectivityScore(truth.snapshot, candidate.snapshot, pairs) : 0;
-  const architecturalTopology = pairs.length > 0 ? relationshipF1(truth.snapshot, candidate.snapshot, pairs, "wall_junction") : 0;
-  const hosting = pairs.length > 0 ? relationshipF1(truth.snapshot, candidate.snapshot, pairs, "host") : 0;
-  const electricalCircuits = pairs.length > 0 ? relationshipF1(truth.snapshot, candidate.snapshot, pairs, "electrical_circuit") : 0;
-  const physicalConnectivityApplicable = hasTruthRelationship(truth.snapshot, "physical") || hasTruthRelationship(candidate.snapshot, "physical");
-  const architecturalTopologyApplicable = hasTruthRelationship(truth.snapshot, "wall_junction") || hasTruthRelationship(candidate.snapshot, "wall_junction");
+  const relationshipTruthSnapshot = truthRouteElements.length > 0 ? {
+    ...truth.snapshot,
+    elements: matchingTruthElements,
+    connections: truth.snapshot.connections.filter((edge) => !truthRouteAbstractionKeys.has(edge.a) && !truthRouteAbstractionKeys.has(edge.b)),
+    open_connector_count: 0
+  } : truth.snapshot;
+  const relationshipCandidateSnapshot = truthRouteElements.length > 0 ? {
+    ...candidate.snapshot,
+    elements: matchingCandidateElements,
+    connections: candidate.snapshot.connections.filter((edge) => !candidateRouteAbstractionKeys.has(edge.a) && !candidateRouteAbstractionKeys.has(edge.b)),
+    open_connector_count: 0
+  } : candidate.snapshot;
+  const connectivity = pairs.length > 0 ? connectivityScore(relationshipTruthSnapshot, relationshipCandidateSnapshot, pairs) : 0;
+  const architecturalTopology = pairs.length > 0 ? relationshipF1(relationshipTruthSnapshot, relationshipCandidateSnapshot, pairs, "wall_junction") : 0;
+  const hosting = pairs.length > 0 ? relationshipF1(relationshipTruthSnapshot, relationshipCandidateSnapshot, pairs, "host") : 0;
+  const electricalCircuits = pairs.length > 0 ? relationshipF1(relationshipTruthSnapshot, relationshipCandidateSnapshot, pairs, "electrical_circuit") : 0;
+  const physicalConnectivityApplicable = hasTruthRelationship(relationshipTruthSnapshot, "physical") || hasTruthRelationship(relationshipCandidateSnapshot, "physical");
+  const architecturalTopologyApplicable = hasTruthRelationship(relationshipTruthSnapshot, "wall_junction") || hasTruthRelationship(relationshipCandidateSnapshot, "wall_junction");
   const systemsApplicable = truth.snapshot.elements.some((element) => normalized(element.system_classification) || normalized(element.system_type));
   // Room/space membership is the spatial hard gate. Some linked-face-hosted Revit
   // families expose no writable/readable level after a safe copy even when their
   // world elevation and host are exact; level remains a reported pair metric but
   // cannot by itself make an otherwise grounded reconstruction invalid.
-  const spatialApplicable = truth.snapshot.elements.some((element) => normalized(element.room_number) || normalized(element.space_number));
-  const hostingApplicable = hasTruthRelationship(truth.snapshot, "host") || hasTruthRelationship(candidate.snapshot, "host");
-  const electricalCircuitsApplicable = hasTruthRelationship(truth.snapshot, "electrical_circuit") || hasTruthRelationship(candidate.snapshot, "electrical_circuit");
+  const spatialApplicable = matchingTruthElements.some((element) => normalized(element.room_number) || normalized(element.space_number));
+  const hostingApplicable = hasTruthRelationship(relationshipTruthSnapshot, "host") || hasTruthRelationship(relationshipCandidateSnapshot, "host");
+  const electricalCircuitsApplicable = hasTruthRelationship(relationshipTruthSnapshot, "electrical_circuit") || hasTruthRelationship(relationshipCandidateSnapshot, "electrical_circuit");
   const drawingEvidence = validateExistingConditionsEvaluatorVisualReceipt(candidate.visual_receipt) &&
     candidate.visual_receipt?.evaluator_review.review_status === "pass" ? 1 : 0;
   const weightedComponents = [
@@ -1068,6 +1231,8 @@ export function scoreExistingConditionsReconstruction(
   const weightedScore = invalidReasons.length > 0 || activeWeight <= 0
     ? 0
     : 100 * weightedComponents.filter((entry) => entry.applicable).reduce((sum, entry) => sum + entry.weight * entry.value, 0) / activeWeight;
+  const minimumRouteTracePrecision = boundedCoverage?.minimum_route_trace_precision ?? 1;
+  const minimumRouteTraceRecall = boundedCoverage?.minimum_route_trace_recall ?? 1;
   const failures: string[] = [];
   for (const reason of invalidReasons) failures.push(reason.split(":", 1)[0]!);
   if (invalidReasons.length === 0) {
@@ -1076,6 +1241,8 @@ export function scoreExistingConditionsReconstruction(
     if (precision < policy.minimum_precision) failures.push("false_positive_elements");
     if (mepRegionRecall !== null && mepRegionRecall < 1) failures.push("bounded_mep_region_incomplete");
     if (mepRegionPrecision !== null && mepRegionPrecision < 1) failures.push("bounded_mep_region_false_positive");
+    if (mepRouteTraceRecall !== null && mepRouteTraceRecall < minimumRouteTraceRecall) failures.push("bounded_mep_route_trace_incomplete");
+    if (mepRouteTracePrecision !== null && mepRouteTracePrecision < minimumRouteTracePrecision) failures.push("bounded_mep_route_trace_false_positive");
     if (missedArchitecturalOpenings.length > 0) failures.push("missing_architectural_openings");
     if (falsePositiveArchitecturalOpenings.length > 0) failures.push("false_positive_architectural_openings");
     if (geometry < 0.8) failures.push("geometry_mismatch");
@@ -1095,6 +1262,8 @@ export function scoreExistingConditionsReconstruction(
     recall >= policy.minimum_recall &&
     (mepRegionPrecision === null || mepRegionPrecision === 1) &&
     (mepRegionRecall === null || mepRegionRecall === 1) &&
+    (mepRouteTracePrecision === null || mepRouteTracePrecision >= minimumRouteTracePrecision) &&
+    (mepRouteTraceRecall === null || mepRouteTraceRecall >= minimumRouteTraceRecall) &&
     architecturalOpeningsExact &&
     (!physicalConnectivityApplicable || connectivity >= policy.minimum_connectivity_score) &&
     (!architecturalTopologyApplicable || architecturalTopology >= policy.minimum_architectural_topology_score) &&
@@ -1135,7 +1304,12 @@ export function scoreExistingConditionsReconstruction(
       electrical_circuits: round(electricalCircuits),
       drawing_evidence: drawingEvidence,
       ...(mepRegionPrecision === null ? {} : { mep_region_precision: round(mepRegionPrecision) }),
-      ...(mepRegionRecall === null ? {} : { mep_region_recall: round(mepRegionRecall) })
+      ...(mepRegionRecall === null ? {} : { mep_region_recall: round(mepRegionRecall) }),
+      ...(mepRouteTracePrecision === null ? {} : { mep_route_trace_precision: round(mepRouteTracePrecision) }),
+      ...(mepRouteTraceRecall === null ? {} : { mep_route_trace_recall: round(mepRouteTraceRecall) }),
+      ...(mepRouteTraceF1 === null ? {} : { mep_route_trace_f1: round(mepRouteTraceF1) }),
+      ...(routeRecallCoverage === null ? {} : { truth_route_length_ft: round(routeRecallCoverage.total_length_ft) }),
+      ...(routePrecisionCoverage === null ? {} : { candidate_route_length_ft: round(routePrecisionCoverage.total_length_ft) })
     },
     applicability: {
       physical_connectivity: physicalConnectivityApplicable,
@@ -1144,7 +1318,8 @@ export function scoreExistingConditionsReconstruction(
       spatial: spatialApplicable,
       hosting: hostingApplicable,
       electrical_circuits: electricalCircuitsApplicable,
-      ...(boundedCoverage ? { bounded_mep_region: true } : {})
+      ...(boundedCoverage ? { bounded_mep_region: true } : {}),
+      ...(truthRouteElements.length > 0 ? { bounded_mep_route_trace: true } : {})
     },
     matched_pairs: pairs,
     missed_truth_keys: missedTruthKeys,
@@ -1193,6 +1368,10 @@ function markdownScorecard(result: ExistingConditionsScore): string {
     `| Spatial context | ${result.metrics.spatial.toFixed(3)} |`,
     `| Hosting | ${result.metrics.hosting.toFixed(3)} |`,
     `| Electrical circuits | ${result.metrics.electrical_circuits.toFixed(3)} |`,
+    ...(result.metrics.mep_region_precision === undefined ? [] : [`| Bounded MEP discrete precision | ${result.metrics.mep_region_precision.toFixed(3)} |`]),
+    ...(result.metrics.mep_region_recall === undefined ? [] : [`| Bounded MEP discrete recall | ${result.metrics.mep_region_recall.toFixed(3)} |`]),
+    ...(result.metrics.mep_route_trace_precision === undefined ? [] : [`| Bounded MEP route precision | ${result.metrics.mep_route_trace_precision.toFixed(3)} |`]),
+    ...(result.metrics.mep_route_trace_recall === undefined ? [] : [`| Bounded MEP route recall | ${result.metrics.mep_route_trace_recall.toFixed(3)} |`]),
     `| Drawing evidence | ${result.metrics.drawing_evidence.toFixed(3)} |`,
     "",
     "## Failure classifications",
@@ -1238,6 +1417,15 @@ export async function runExistingConditionsReconstructionEvaluation(
     { name: "drawing_verification_present", ok: result.metrics.drawing_evidence === 1, expected: 1, actual: result.metrics.drawing_evidence },
     { name: "overall_reconstruction_passed", ok: result.passed, expected: true, actual: result.score }
   ];
+  if (result.applicability.bounded_mep_route_trace) {
+    const boundedCoverage = groundTruth.evaluation_policy?.bounded_mep_region_coverage;
+    const minimumPrecision = boundedCoverage?.minimum_route_trace_precision ?? 1;
+    const minimumRecall = boundedCoverage?.minimum_route_trace_recall ?? 1;
+    checks.splice(checks.length - 1, 0,
+      { name: "bounded_mep_route_precision_meets_threshold", ok: (result.metrics.mep_route_trace_precision ?? 0) >= minimumPrecision, expected: minimumPrecision, actual: result.metrics.mep_route_trace_precision ?? 0 },
+      { name: "bounded_mep_route_recall_meets_threshold", ok: (result.metrics.mep_route_trace_recall ?? 0) >= minimumRecall, expected: minimumRecall, actual: result.metrics.mep_route_trace_recall ?? 0 }
+    );
+  }
   return {
     workflow: "existing_conditions_reconstruction",
     success: result.passed,
