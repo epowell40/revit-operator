@@ -20,7 +20,32 @@
       "additionalProperties": false,
       "properties": {
         "require_evaluator_change_receipt": { "type": "boolean" },
-        "elevation_evidence": { "enum": ["plan_visible", "project_context", "not_visible"] }
+        "elevation_evidence": { "enum": ["plan_visible", "project_context", "not_visible"] },
+        "bounded_mep_region_coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "required_coverage_status",
+            "source_evidence_sha256",
+            "registered_render_sha256",
+            "coverage_contract_sha256",
+            "region_sha256",
+            "clear_plan_visible_family_instance_keys"
+          ],
+          "properties": {
+            "required_coverage_status": { "const": "complete" },
+            "source_evidence_sha256": { "$ref": "#/$defs/sha256" },
+            "registered_render_sha256": { "$ref": "#/$defs/sha256" },
+            "coverage_contract_sha256": { "$ref": "#/$defs/sha256" },
+            "region_sha256": { "$ref": "#/$defs/sha256" },
+            "clear_plan_visible_family_instance_keys": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
       }
     },
     "deletion_manifest": {

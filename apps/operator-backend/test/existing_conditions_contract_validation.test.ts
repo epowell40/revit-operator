@@ -364,3 +364,106 @@ test("runtime contract validation requires a standards profile and multi-solutio
   };
   assert.doesNotThrow(() => assertExistingConditionsContract("agent_package", valid));
 });
+
+test("runtime contract validation accepts bounded MEP coverage and rejects an ignored disposition", () => {
+  const coverage = {
+    schema_version: 1,
+    scope_id: "bounded-office",
+    source_evidence_sha256: "a".repeat(64),
+    registered_render_sha256: "b".repeat(64),
+    coordinate_space: "registered_render_pixels_top_left",
+    region: { min: { x: 10, y: 10 }, max: { x: 90, y: 90 } },
+    disciplines: ["electrical"],
+    candidates: [{
+      candidate_id: "device-symbol-1",
+      primitive: "point_symbol",
+      pixel_bounds: { min: { x: 20, y: 70 }, max: { x: 30, y: 80 } },
+      visibility: "clear",
+      disposition: { status: "resolved", observation_ids: ["device-1"] }
+    }]
+  };
+  assert.doesNotThrow(() => assertExistingConditionsContract("mep_region_coverage", coverage));
+
+  const invalid = structuredClone(coverage);
+  invalid.candidates[0]!.disposition = { status: "ignored", observation_ids: ["device-1"] };
+  assert.throws(
+    () => assertExistingConditionsContract("mep_region_coverage", invalid),
+    /invalid_existing_conditions_mep_region_coverage_contract/
+  );
+});
+
+test("candidate and withheld contracts bind bounded MEP coverage receipts", () => {
+  const snapshot = {
+    native_readback: true,
+    elements: [{ key: "device-1", kind: "family_instance", discipline: "electrical", category: "Electrical Fixtures" }],
+    connections: [],
+    open_connector_count: 0
+  };
+  const candidate = {
+    schema_version: 1,
+    fixture_id: "bounded-electrical-v1",
+    scope_id: "bounded-office",
+    discipline: "electrical",
+    visible_evidence: [
+      { role: "source_pdf", sha256: "a".repeat(64) },
+      { role: "registered_source_render", sha256: "b".repeat(64) }
+    ],
+    accessed_artifact_roles: ["source_pdf", "registered_source_render"],
+    out_of_scope_changed_element_keys: [],
+    source_coverage_receipt: {
+      schema_version: 1,
+      scope_id: "bounded-office",
+      source_evidence_sha256: "a".repeat(64),
+      registered_render_sha256: "b".repeat(64),
+      coordinate_space: "registered_render_pixels_top_left",
+      region: { min: { x: 10, y: 10 }, max: { x: 90, y: 90 } },
+      region_sha256: "c".repeat(64),
+      coverage_contract_sha256: "d".repeat(64),
+      coverage_status: "complete",
+      disciplines: ["electrical"],
+      candidate_count: 1,
+      resolved_candidate_ids: ["candidate-1"],
+      unresolved_candidate_ids: [],
+      covered_observation_ids: ["observation-1"]
+    },
+    snapshot,
+    visual_receipt: {
+      post_change_capture_sha256: "e".repeat(64),
+      post_change_pdf_sha256: "f".repeat(64),
+      evaluator_review: {
+        reviewer_role: "evaluator",
+        review_status: "pass",
+        notes: [],
+        receipt_sha256: "1".repeat(64)
+      }
+    }
+  };
+  assert.doesNotThrow(() => assertExistingConditionsContract("candidate", candidate));
+
+  const groundTruth = {
+    schema_version: 1,
+    fixture_id: "bounded-electrical-v1",
+    scope_id: "bounded-office",
+    discipline: "electrical",
+    ground_truth_model: { path: "withheld.rvt", sha256: "9".repeat(64) },
+    visible_evidence: candidate.visible_evidence,
+    evaluation_policy: {
+      bounded_mep_region_coverage: {
+        required_coverage_status: "complete",
+        source_evidence_sha256: "a".repeat(64),
+        registered_render_sha256: "b".repeat(64),
+        coverage_contract_sha256: "d".repeat(64),
+        region_sha256: "c".repeat(64),
+        clear_plan_visible_family_instance_keys: ["device-1"]
+      }
+    },
+    deletion_manifest: {
+      requested_element_ids: [1],
+      deleted_element_ids: [1],
+      dependent_element_ids: [],
+      dry_run_receipt_sha256: "8".repeat(64)
+    },
+    snapshot
+  };
+  assert.doesNotThrow(() => assertExistingConditionsContract("ground_truth", groundTruth));
+});

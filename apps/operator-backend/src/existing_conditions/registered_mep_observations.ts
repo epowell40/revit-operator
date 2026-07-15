@@ -18,6 +18,11 @@ import {
   type ExistingConditionsPlanPoint,
   type ExistingConditionsRegistrationReceipt
 } from "./registration.js";
+import {
+  validateBoundedMepRegionCoverageV1,
+  type BoundedMepRegionCoverageReceiptV1,
+  type BoundedMepRegionCoverageV1
+} from "./mep_region_coverage.js";
 
 type Bounds2d = {
   min: ExistingConditionsPlanPoint;
@@ -80,6 +85,7 @@ export type RegisteredMepObservationPackage = Omit<MepDraftPackage, "observation
     model_bounds: Bounds2d;
   };
   maximum_observations: number;
+  source_coverage?: BoundedMepRegionCoverageV1;
   observations: RegisteredMepPixelObservation[];
 };
 
@@ -90,6 +96,7 @@ export type RegisteredMepObservationCompilation = {
   input_fingerprint_sha256: string;
   registered_render_sha256: string;
   registration: ExistingConditionsRegistrationReceipt;
+  source_coverage_receipt?: BoundedMepRegionCoverageReceiptV1;
   converted_package: MepDraftPackage;
   compiled_plan: CompiledMepDraftPlan;
   usage_constraints: string[];
@@ -308,6 +315,21 @@ export async function compileRegisteredMepObservations(
   if (input.observations.length > maximumObservations) throw new Error("registered_mep_observation_limit_exceeded");
   const ids = input.observations.map((entry, index) => requiredText(entry.observation_id, `observation_${index}_id`));
   if (new Set(ids).size !== ids.length) throw new Error("registered_mep_observation_ids_must_be_unique");
+  const sourceCoverageReceipt = input.source_coverage
+    ? validateBoundedMepRegionCoverageV1(input.source_coverage, {
+        scope_id: scopeId,
+        source_evidence_sha256: sourceHash,
+        registered_render_sha256: renderHash,
+        render_width_px: width,
+        render_height_px: height,
+        package_discipline: input.discipline,
+        observations: input.observations.map((observation) => ({
+          observation_id: observation.observation_id,
+          kind: observation.kind,
+          discipline: observation.discipline
+        }))
+      })
+    : undefined;
   const convertedObservations: MepDraftPackage["observations"] = input.observations.map((observation, index) => {
     allowedDiscipline(input.discipline, observation, index);
     if (observation.kind === "electrical_circuit") {
@@ -388,6 +410,23 @@ export async function compileRegisteredMepObservations(
     ...(input.material_confidence_threshold == null ? {} : { material_confidence_threshold: input.material_confidence_threshold }),
     observations: convertedObservations
   };
+  const compiledPlan = compileMepDraftPlan(convertedPackage);
+  if (sourceCoverageReceipt?.coverage_status === "partial") {
+    compiledPlan.status = "clarification_required";
+    compiledPlan.ambiguities.push({
+      id: "bounded-mep-region-coverage",
+      topic: "bounded MEP region coverage",
+      description: `The registered region still contains unresolved source candidates: ${sourceCoverageReceipt.unresolved_candidate_ids.join(", ")}.`,
+      material: true,
+      confidence: 0,
+      choices: [],
+      material_attributes: ["complete source accounting"],
+      resolution: null,
+      resolution_basis: null,
+      resolution_evidence_reference: null
+    });
+    compiledPlan.warnings.push("Resolved observations remain compiled for review, but no complete-scope workflow may run while bounded MEP region coverage is partial.");
+  }
   return {
     schema_version: 1,
     fixture_id: fixtureId,
@@ -395,8 +434,9 @@ export async function compileRegisteredMepObservations(
     input_fingerprint_sha256: fingerprint(input),
     registered_render_sha256: renderHash,
     registration,
+    ...(sourceCoverageReceipt ? { source_coverage_receipt: sourceCoverageReceipt } : {}),
     converted_package: convertedPackage,
-    compiled_plan: compileMepDraftPlan(convertedPackage),
+    compiled_plan: compiledPlan,
     usage_constraints: [
       "Registered pixels establish bounded plan geometry only; material, system, size, elevation, family, type, host, and service-topology claims remain subject to the existing MEP compiler evidence gates.",
       "A pipe elevation may use declared_heuristic provenance when the plan does not show elevation; it remains an explicit inference in the compiled assumptions and is never represented as source-observed truth.",
@@ -404,7 +444,8 @@ export async function compileRegisteredMepObservations(
       "A downstream_vent_tee uses registered pixels for plan geometry, either an exact hash-bound retained sanitary main or a source-grounded sanitary route created earlier in the same atomic workflow, and a required post-write fixture-network audit; it never represents the vent as a direct fixture connector.",
       "Electrical circuit membership may use the registered render only when every newly created member has explicit legible evidence for the same printed circuit label; otherwise it must remain grounded in exact native source power-system evidence or explicit user direction.",
       "The registered render must be agent-visible, hash-bound, dimension-verified, and aligned to the declared model frame.",
-      "No evaluator, withheld truth, native target identity, or scorer output is used to convert pixel observations."
+      "No evaluator, withheld truth, native target identity, or scorer output is used to convert pixel observations.",
+      "A bounded-region completeness claim requires a hash-bound source-coverage receipt in which every MEP-like candidate is resolved to typed observations or remains explicitly unresolved; partial coverage cannot be reported as complete."
     ]
   };
 }

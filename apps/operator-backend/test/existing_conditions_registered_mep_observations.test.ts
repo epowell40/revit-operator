@@ -10,6 +10,7 @@ import {
   compileRegisteredMepObservations,
   type RegisteredMepObservationPackage
 } from "../src/existing_conditions/registered_mep_observations.js";
+import type { BoundedMepRegionCoverageV1 } from "../src/existing_conditions/mep_region_coverage.js";
 
 const SOURCE_HASH = "a".repeat(64);
 
@@ -145,6 +146,28 @@ function electricalInput(): RegisteredMepObservationPackage {
       pixel_point: { x: 35, y: 65 },
       elevation_ft: 1.5,
       placement: { mode: "unhosted_family", family_name: "Receptacle A", type_name: "Duplex B" }
+    }]
+  };
+}
+
+function electricalCoverage(input: RegisteredMepObservationPackage): BoundedMepRegionCoverageV1 {
+  return {
+    schema_version: 1 as const,
+    scope_id: input.scope_id,
+    source_evidence_sha256: input.source_evidence_sha256,
+    registered_render_sha256: input.registered_render.sha256,
+    coordinate_space: "registered_render_pixels_top_left" as const,
+    region: { min: { x: 20, y: 50 }, max: { x: 90, y: 90 } },
+    disciplines: ["electrical" as const],
+    candidates: [{
+      candidate_id: "bounded-device-symbol-random-17",
+      primitive: "point_symbol" as const,
+      pixel_bounds: { min: { x: 30, y: 60 }, max: { x: 40, y: 70 } },
+      visibility: "clear" as const,
+      disposition: {
+        status: "resolved" as const,
+        observation_ids: [input.observations[0]!.observation_id]
+      }
     }]
   };
 }
@@ -434,6 +457,48 @@ test("registered electrical pixels locate devices but render evidence cannot ass
     membership_basis: "native_source_power_system"
   });
   await assert.rejects(() => compileRegisteredMepObservations(input), /circuit_membership_cannot_use_render_evidence/);
+});
+
+test("registered MEP observations bind a complete bounded-region coverage receipt", async () => {
+  const input = electricalInput();
+  input.source_coverage = electricalCoverage(input);
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.status, "ready");
+  assert.equal(result.source_coverage_receipt?.coverage_status, "complete");
+  assert.deepEqual(result.source_coverage_receipt?.covered_observation_ids, ["device-random-17"]);
+  assert.equal(result.compiled_plan.actions.length, 1);
+  assert.match(result.usage_constraints.join("\n"), /partial coverage cannot be reported as complete/i);
+});
+
+test("partial bounded-region coverage preserves resolved actions but requires clarification", async () => {
+  const input = electricalInput();
+  const sourceCoverage = electricalCoverage(input);
+  sourceCoverage.candidates.push({
+    candidate_id: "unfamiliar-symbol-random-93",
+    primitive: "unknown",
+    pixel_bounds: { min: { x: 60, y: 60 }, max: { x: 70, y: 70 } },
+    visibility: "partial",
+    disposition: {
+      status: "unresolved",
+      reason: "ambiguous_symbol",
+      note: "The visible mark does not match an approved device or fixture mapping."
+    }
+  });
+  input.source_coverage = sourceCoverage;
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.source_coverage_receipt?.coverage_status, "partial");
+  assert.equal(result.compiled_plan.status, "clarification_required");
+  assert.equal(result.compiled_plan.actions.length, 1);
+  assert.equal(result.compiled_plan.ambiguities.at(-1)?.id, "bounded-mep-region-coverage");
+  assert.match(result.compiled_plan.ambiguities.at(-1)?.description ?? "", /unfamiliar-symbol-random-93/);
+});
+
+test("bounded-region coverage rejects observations that were not tied to a source candidate", async () => {
+  const input = electricalInput();
+  const sourceCoverage = electricalCoverage(input);
+  sourceCoverage.candidates = [];
+  input.source_coverage = sourceCoverage;
+  await assert.rejects(() => compileRegisteredMepObservations(input), /candidates_are_required/);
 });
 
 test("registered electrical labels can create a new circuit only with per-member legible evidence", async () => {

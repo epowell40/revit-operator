@@ -198,7 +198,7 @@ function usage(): never {
     "  npm run existing-conditions -- evaluate-engineering-case --case <case-definition.json> --native-evidence <evaluator-native-evidence.json> --evaluator-provenance <provenance.json> --evaluator-key-file <secret> --out <checks.json>",
     "  npm run existing-conditions -- advance-controller --state <controller-state-or-receipt.json> --event <event.json> --out <next-receipt.json>",
     "  npm run existing-conditions -- evaluator-diff --before-visible <json> --after-visible <json> --package <agent_package.json> --out <receipt.json>",
-    "  npm run existing-conditions -- validate-contract --kind <agent_package|ground_truth|candidate|architectural_preview|architectural_pixel_measurement|registered_mep_observations|architectural_wall_candidate_clarification|architectural_opening_classification|architectural_opening_host_resolution> --file <json>",
+    "  npm run existing-conditions -- validate-contract --kind <agent_package|ground_truth|candidate|architectural_preview|architectural_pixel_measurement|registered_mep_observations|mep_region_coverage|architectural_wall_candidate_clarification|architectural_opening_classification|architectural_opening_host_resolution> --file <json>",
     "  npm run existing-conditions -- redact --expected-source <source.rvt> --staging-model <withheld-staging.rvt> --redacted-model <agent-redacted.rvt> --view-id <id> --ids <id,id,...> --anchor-ids <id,id,...> --out-dir <fixture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "Options:",
     "  --allow-missing-connectors  Permit non-MEP normalization without connector readback.",
@@ -916,12 +916,12 @@ function reviewVisualEvidence(): void {
 
 function validateContractFile(): void {
   const kind = requiredArgument("--kind");
-  if (!["agent_package", "ground_truth", "candidate", "architectural_preview", "architectural_pixel_measurement", "registered_mep_observations", "architectural_wall_candidate_clarification", "architectural_opening_classification", "architectural_opening_host_resolution"].includes(kind)) {
-    throw new Error("--kind must be agent_package, ground_truth, candidate, architectural_preview, architectural_pixel_measurement, registered_mep_observations, architectural_wall_candidate_clarification, architectural_opening_classification, or architectural_opening_host_resolution.");
+  if (!["agent_package", "ground_truth", "candidate", "architectural_preview", "architectural_pixel_measurement", "registered_mep_observations", "mep_region_coverage", "architectural_wall_candidate_clarification", "architectural_opening_classification", "architectural_opening_host_resolution"].includes(kind)) {
+    throw new Error("--kind must be agent_package, ground_truth, candidate, architectural_preview, architectural_pixel_measurement, registered_mep_observations, mep_region_coverage, architectural_wall_candidate_clarification, architectural_opening_classification, or architectural_opening_host_resolution.");
   }
   const filePath = path.resolve(requiredArgument("--file"));
   assertExistingConditionsContract(
-    kind as "agent_package" | "ground_truth" | "candidate" | "architectural_preview" | "architectural_pixel_measurement" | "registered_mep_observations" | "architectural_wall_candidate_clarification" | "architectural_opening_classification" | "architectural_opening_host_resolution",
+    kind as "agent_package" | "ground_truth" | "candidate" | "architectural_preview" | "architectural_pixel_measurement" | "registered_mep_observations" | "mep_region_coverage" | "architectural_wall_candidate_clarification" | "architectural_opening_classification" | "architectural_opening_host_resolution",
     readJson(filePath)
   );
   process.stdout.write(`${filePath}: valid ${kind}\n`);

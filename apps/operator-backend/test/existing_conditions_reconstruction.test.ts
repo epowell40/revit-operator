@@ -15,6 +15,9 @@ import path from "node:path";
 import { createExistingConditionsEvaluatorVisualReceipt } from "../src/existing_conditions/evaluator_visual.js";
 
 const SOURCE_HASH = "a".repeat(64);
+const RENDER_HASH = "b".repeat(64);
+const COVERAGE_HASH = "c".repeat(64);
+const REGION_HASH = "d".repeat(64);
 
 test("multi-view visible element exports merge without duplicating host ids", () => {
   const merged = mergeExistingConditionsVisibleElementPayloads([
@@ -397,6 +400,106 @@ function electricalDevice(key: string, x: number, host = "link:44:990", system =
     }
   };
 }
+
+function requireCompleteElectricalCoverage(expected: ExistingConditionsGroundTruth, keys: string[]): void {
+  expected.visible_evidence.push({ role: "registered_source_render", sha256: RENDER_HASH });
+  expected.evaluation_policy = {
+    ...expected.evaluation_policy,
+    bounded_mep_region_coverage: {
+      required_coverage_status: "complete",
+      source_evidence_sha256: SOURCE_HASH,
+      registered_render_sha256: RENDER_HASH,
+      coverage_contract_sha256: COVERAGE_HASH,
+      region_sha256: REGION_HASH,
+      clear_plan_visible_family_instance_keys: keys
+    }
+  };
+}
+
+function attachCompleteElectricalCoverage(actual: ExistingConditionsCandidate, observationIds: string[], status: "complete" | "partial" = "complete"): void {
+  actual.visible_evidence.push({ role: "registered_source_render", sha256: RENDER_HASH });
+  actual.source_coverage_receipt = {
+    schema_version: 1,
+    scope_id: actual.scope_id,
+    source_evidence_sha256: SOURCE_HASH,
+    registered_render_sha256: RENDER_HASH,
+    coordinate_space: "registered_render_pixels_top_left",
+    region: { min: { x: 100, y: 100 }, max: { x: 900, y: 700 } },
+    region_sha256: REGION_HASH,
+    coverage_contract_sha256: COVERAGE_HASH,
+    coverage_status: status,
+    disciplines: ["electrical"],
+    candidate_count: observationIds.length + (status === "partial" ? 1 : 0),
+    resolved_candidate_ids: observationIds.map((id) => `candidate:${id}`),
+    unresolved_candidate_ids: status === "partial" ? ["candidate:unresolved"] : [],
+    covered_observation_ids: observationIds
+  };
+}
+
+test("bounded MEP completeness requires exact clear-device recall and precision", () => {
+  const expected = truth([
+    electricalDevice("truth-device-a", 4),
+    electricalDevice("truth-device-b", 14)
+  ]);
+  expected.discipline = "electrical";
+  expected.snapshot.connections = [];
+  expected.snapshot.open_connector_count = 0;
+  requireCompleteElectricalCoverage(expected, ["truth-device-a", "truth-device-b"]);
+
+  const exact = candidate([
+    electricalDevice("new-device-a", 4),
+    electricalDevice("new-device-b", 14)
+  ]);
+  exact.discipline = "electrical";
+  exact.snapshot.connections = [];
+  exact.snapshot.open_connector_count = 0;
+  attachCompleteElectricalCoverage(exact, ["observation-a", "observation-b"]);
+  const accepted = scoreExistingConditionsReconstruction(expected, exact);
+  assert.equal(accepted.passed, true);
+  assert.equal(accepted.metrics.mep_region_precision, 1);
+  assert.equal(accepted.metrics.mep_region_recall, 1);
+  assert.equal(accepted.applicability.bounded_mep_region, true);
+
+  const missing = candidate([electricalDevice("new-device-a", 4)]);
+  missing.discipline = "electrical";
+  missing.snapshot.connections = [];
+  missing.snapshot.open_connector_count = 0;
+  attachCompleteElectricalCoverage(missing, ["observation-a"]);
+  const missed = scoreExistingConditionsReconstruction(expected, missing);
+  assert.equal(missed.passed, false);
+  assert.equal(missed.metrics.mep_region_recall, 0.5);
+  assert.ok(missed.failure_classifications.includes("bounded_mep_region_incomplete"));
+
+  const extra = candidate([
+    electricalDevice("new-device-a", 4),
+    electricalDevice("new-device-b", 14),
+    electricalDevice("invented-device", 24)
+  ]);
+  extra.discipline = "electrical";
+  extra.snapshot.connections = [];
+  extra.snapshot.open_connector_count = 0;
+  attachCompleteElectricalCoverage(extra, ["observation-a", "observation-b", "observation-extra"]);
+  const falsePositive = scoreExistingConditionsReconstruction(expected, extra);
+  assert.equal(falsePositive.passed, false);
+  assert.equal(falsePositive.metrics.mep_region_precision, 0.666667);
+  assert.ok(falsePositive.failure_classifications.includes("bounded_mep_region_false_positive"));
+});
+
+test("a partial coverage receipt cannot satisfy a complete bounded-region fixture", () => {
+  const expected = truth([electricalDevice("truth-device", 4)]);
+  expected.discipline = "electrical";
+  expected.snapshot.connections = [];
+  expected.snapshot.open_connector_count = 0;
+  requireCompleteElectricalCoverage(expected, ["truth-device"]);
+  const actual = candidate([electricalDevice("new-device", 4)]);
+  actual.discipline = "electrical";
+  actual.snapshot.connections = [];
+  actual.snapshot.open_connector_count = 0;
+  attachCompleteElectricalCoverage(actual, ["observation-a"], "partial");
+  const result = scoreExistingConditionsReconstruction(expected, actual);
+  assert.equal(result.valid_run, false);
+  assert.ok(result.invalid_reasons.includes("bounded_mep_region_coverage_partial"));
+});
 
 test("scores electrical layout, host, room, orientation, and exact circuit relationship", () => {
   const expected = truth([electricalDevice("truth-device", 4)]);

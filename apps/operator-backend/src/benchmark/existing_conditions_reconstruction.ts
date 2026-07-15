@@ -6,6 +6,7 @@ import {
   validateExistingConditionsEvaluatorVisualReceipt,
   type ExistingConditionsEvaluatorVisualReceipt
 } from "../existing_conditions/evaluator_visual.js";
+import type { BoundedMepRegionCoverageReceiptV1 } from "../existing_conditions/mep_region_coverage.js";
 
 export type ExistingConditionsPoint3 = { x: number; y: number; z: number };
 
@@ -82,6 +83,14 @@ export type ExistingConditionsGroundTruth = {
     require_evaluator_change_receipt?: boolean;
     /** Controls how much withheld Z may affect a plan-based reconstruction score. */
     elevation_evidence?: "plan_visible" | "project_context" | "not_visible";
+    bounded_mep_region_coverage?: {
+      required_coverage_status: "complete";
+      source_evidence_sha256: string;
+      registered_render_sha256: string;
+      coverage_contract_sha256: string;
+      region_sha256: string;
+      clear_plan_visible_family_instance_keys: string[];
+    };
   };
   snapshot: ExistingConditionsSnapshot;
 };
@@ -100,6 +109,7 @@ export type ExistingConditionsCandidate = {
     out_of_scope_changed_element_keys: string[];
     receipt_sha256: string;
   } | null;
+  source_coverage_receipt?: BoundedMepRegionCoverageReceiptV1 | null;
   snapshot: ExistingConditionsSnapshot;
   visual_receipt?: ExistingConditionsEvaluatorVisualReceipt | null;
 };
@@ -169,6 +179,8 @@ export type ExistingConditionsScore = {
     hosting: number;
     electrical_circuits: number;
     drawing_evidence: number;
+    mep_region_precision?: number;
+    mep_region_recall?: number;
   };
   applicability: {
     physical_connectivity: boolean;
@@ -177,6 +189,7 @@ export type ExistingConditionsScore = {
     spatial: boolean;
     hosting: boolean;
     electrical_circuits: boolean;
+    bounded_mep_region?: boolean;
   };
   matched_pairs: ExistingConditionsMatchedPair[];
   missed_truth_keys: string[];
@@ -940,6 +953,30 @@ function validateRun(truth: ExistingConditionsGroundTruth, candidate: ExistingCo
       reasons.push("out_of_scope_write");
     }
   }
+  const boundedCoverage = truth.evaluation_policy?.bounded_mep_region_coverage;
+  if (boundedCoverage) {
+    const truthByKey = new Map(truth.snapshot.elements.map((element) => [element.key, element]));
+    if (boundedCoverage.clear_plan_visible_family_instance_keys.length === 0) {
+      reasons.push("bounded_mep_region_has_no_clear_truth_keys");
+    }
+    for (const key of boundedCoverage.clear_plan_visible_family_instance_keys) {
+      const element = truthByKey.get(key);
+      if (!element || element.kind !== "family_instance" || !["plumbing", "electrical"].includes(normalized(element.discipline))) {
+        reasons.push(`bounded_mep_region_truth_key_invalid:${key}`);
+      }
+    }
+    const receipt = candidate.source_coverage_receipt;
+    if (!receipt) {
+      reasons.push("missing_bounded_mep_region_coverage_receipt");
+    } else {
+      if (receipt.scope_id !== truth.scope_id) reasons.push("bounded_mep_region_scope_mismatch");
+      if (receipt.coverage_status !== boundedCoverage.required_coverage_status) reasons.push("bounded_mep_region_coverage_partial");
+      if (normalized(receipt.source_evidence_sha256) !== normalized(boundedCoverage.source_evidence_sha256)) reasons.push("bounded_mep_region_source_hash_mismatch");
+      if (normalized(receipt.registered_render_sha256) !== normalized(boundedCoverage.registered_render_sha256)) reasons.push("bounded_mep_region_render_hash_mismatch");
+      if (normalized(receipt.coverage_contract_sha256) !== normalized(boundedCoverage.coverage_contract_sha256)) reasons.push("bounded_mep_region_contract_hash_mismatch");
+      if (normalized(receipt.region_sha256) !== normalized(boundedCoverage.region_sha256)) reasons.push("bounded_mep_region_bounds_hash_mismatch");
+    }
+  }
   if (!validateExistingConditionsEvaluatorVisualReceipt(candidate.visual_receipt)) {
     reasons.push("missing_or_invalid_evaluator_visual_receipt");
   }
@@ -979,6 +1016,20 @@ export function scoreExistingConditionsReconstruction(
   const architecturalOpeningsExact = missedArchitecturalOpenings.length === 0 && falsePositiveArchitecturalOpenings.length === 0;
   const precision = candidate.snapshot.elements.length > 0 ? pairs.length / candidate.snapshot.elements.length : 0;
   const recall = truth.snapshot.elements.length > 0 ? pairs.length / truth.snapshot.elements.length : 0;
+  const boundedCoverage = truth.evaluation_policy?.bounded_mep_region_coverage;
+  const boundedTruthKeys = new Set(boundedCoverage?.clear_plan_visible_family_instance_keys ?? []);
+  const boundedPairs = pairs.filter((pair) => boundedTruthKeys.has(pair.truth_key));
+  const boundedCandidateElements = boundedCoverage
+    ? candidate.snapshot.elements.filter((element) =>
+        element.kind === "family_instance" && ["plumbing", "electrical"].includes(normalized(element.discipline)))
+    : [];
+  const boundedMatchedCandidateKeys = new Set(boundedPairs.map((pair) => pair.candidate_key));
+  const mepRegionPrecision = boundedCoverage
+    ? (boundedCandidateElements.length === 0 ? 0 : boundedCandidateElements.filter((element) => boundedMatchedCandidateKeys.has(element.key)).length / boundedCandidateElements.length)
+    : null;
+  const mepRegionRecall = boundedCoverage
+    ? (boundedTruthKeys.size === 0 ? 0 : boundedPairs.length / boundedTruthKeys.size)
+    : null;
   const elementF1 = f1(precision, recall);
   const geometry = average(pairs.map((pair) => pair.geometry_score), 0);
   const elevation = average(pairs.map((pair) => pair.elevation_score), 1);
@@ -1023,6 +1074,8 @@ export function scoreExistingConditionsReconstruction(
     if (candidate.snapshot.elements.length === 0) failures.push("no_reconstruction");
     if (recall < policy.minimum_recall) failures.push("incomplete_reconstruction");
     if (precision < policy.minimum_precision) failures.push("false_positive_elements");
+    if (mepRegionRecall !== null && mepRegionRecall < 1) failures.push("bounded_mep_region_incomplete");
+    if (mepRegionPrecision !== null && mepRegionPrecision < 1) failures.push("bounded_mep_region_false_positive");
     if (missedArchitecturalOpenings.length > 0) failures.push("missing_architectural_openings");
     if (falsePositiveArchitecturalOpenings.length > 0) failures.push("false_positive_architectural_openings");
     if (geometry < 0.8) failures.push("geometry_mismatch");
@@ -1040,6 +1093,8 @@ export function scoreExistingConditionsReconstruction(
     weightedScore >= policy.passing_score &&
     precision >= policy.minimum_precision &&
     recall >= policy.minimum_recall &&
+    (mepRegionPrecision === null || mepRegionPrecision === 1) &&
+    (mepRegionRecall === null || mepRegionRecall === 1) &&
     architecturalOpeningsExact &&
     (!physicalConnectivityApplicable || connectivity >= policy.minimum_connectivity_score) &&
     (!architecturalTopologyApplicable || architecturalTopology >= policy.minimum_architectural_topology_score) &&
@@ -1078,7 +1133,9 @@ export function scoreExistingConditionsReconstruction(
       spatial: round(spatial),
       hosting: round(hosting),
       electrical_circuits: round(electricalCircuits),
-      drawing_evidence: drawingEvidence
+      drawing_evidence: drawingEvidence,
+      ...(mepRegionPrecision === null ? {} : { mep_region_precision: round(mepRegionPrecision) }),
+      ...(mepRegionRecall === null ? {} : { mep_region_recall: round(mepRegionRecall) })
     },
     applicability: {
       physical_connectivity: physicalConnectivityApplicable,
@@ -1086,7 +1143,8 @@ export function scoreExistingConditionsReconstruction(
       systems: systemsApplicable,
       spatial: spatialApplicable,
       hosting: hostingApplicable,
-      electrical_circuits: electricalCircuitsApplicable
+      electrical_circuits: electricalCircuitsApplicable,
+      ...(boundedCoverage ? { bounded_mep_region: true } : {})
     },
     matched_pairs: pairs,
     missed_truth_keys: missedTruthKeys,
