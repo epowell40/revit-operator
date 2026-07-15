@@ -4,14 +4,20 @@ import path from "node:path";
 import { loadImage } from "@napi-rs/canvas";
 import {
   compileMepDraftPlan,
+  type AirTerminalObservation,
   type CompiledMepDraftPlan,
   type ElectricalCircuitObservation,
   type ElectricalDeviceObservation,
   type ElectricalEquipmentObservation,
+  type MepDraftPlacement,
   type MepDraftPackage,
+  type MechanicalDuctRouteObservation,
+  type MechanicalEquipmentObservation,
   type PlumbingDownstreamVentTeeObservation,
+  type PlumbingCreatedRouteConnectorBridgeObservation,
   type PlumbingNativeConnectorBridgeObservation,
   type PlumbingFixtureObservation,
+  type PlumbingSourceBranchTeeObservation,
   type PlumbingSourcePointRouteObservation
 } from "./mep_draft_plan.js";
 import {
@@ -54,7 +60,13 @@ export type RegisteredPlumbingPipeRouteObservation = Omit<PlumbingSourcePointRou
   pixel_points: ExistingConditionsPlanPoint[];
 };
 
+export type RegisteredPlumbingSourceBranchTeeObservation = Omit<PlumbingSourceBranchTeeObservation, "points"> & WithAttributeEvidence & {
+  pixel_points: ExistingConditionsPlanPoint[];
+};
+
 export type RegisteredPlumbingConnectorBridgeObservation = Omit<PlumbingNativeConnectorBridgeObservation, "attribute_provenance"> & WithAttributeEvidence;
+
+export type RegisteredPlumbingCreatedRouteConnectorBridgeObservation = Omit<PlumbingCreatedRouteConnectorBridgeObservation, "attribute_provenance"> & WithAttributeEvidence;
 
 type RegisteredDownstreamVentVariant<T> = T extends PlumbingDownstreamVentTeeObservation
   ? Omit<T, "points" | "attribute_provenance"> & WithAttributeEvidence & { pixel_points: ExistingConditionsPlanPoint[] }
@@ -66,6 +78,23 @@ export type RegisteredPlumbingFixtureObservation = Omit<PlumbingFixtureObservati
   pixel_point: ExistingConditionsPlanPoint;
 };
 
+export type RegisteredMechanicalDuctRouteObservation = Omit<MechanicalDuctRouteObservation, "points"> & WithAttributeEvidence & {
+  pixel_points: ExistingConditionsPlanPoint[];
+};
+
+export type RegisteredMechanicalEquipmentObservation = Omit<MechanicalEquipmentObservation, "point"> & WithAttributeEvidence & {
+  pixel_point: ExistingConditionsPlanPoint;
+};
+
+type CreatedRouteBranchPlacement = Extract<MepDraftPlacement, { mode: "created_route_branch" }>;
+type RegisteredAirTerminalPlacement = Exclude<MepDraftPlacement, CreatedRouteBranchPlacement>
+  | (Omit<CreatedRouteBranchPlacement, "branch_points"> & { pixel_branch_points: ExistingConditionsPlanPoint[] });
+
+export type RegisteredAirTerminalObservation = Omit<AirTerminalObservation, "point" | "placement"> & WithAttributeEvidence & {
+  pixel_point: ExistingConditionsPlanPoint;
+  placement: RegisteredAirTerminalPlacement;
+};
+
 export type RegisteredElectricalDeviceObservation = Omit<ElectricalDeviceObservation, "point"> & WithAttributeEvidence & {
   pixel_point: ExistingConditionsPlanPoint;
 };
@@ -75,8 +104,13 @@ export type RegisteredElectricalEquipmentObservation = Omit<ElectricalEquipmentO
 };
 
 export type RegisteredMepPixelObservation =
+  | RegisteredMechanicalDuctRouteObservation
+  | RegisteredMechanicalEquipmentObservation
+  | RegisteredAirTerminalObservation
   | RegisteredPlumbingPipeRouteObservation
+  | RegisteredPlumbingSourceBranchTeeObservation
   | RegisteredPlumbingConnectorBridgeObservation
+  | RegisteredPlumbingCreatedRouteConnectorBridgeObservation
   | RegisteredPlumbingDownstreamVentTeeObservation
   | RegisteredPlumbingFixtureObservation
   | RegisteredElectricalDeviceObservation
@@ -84,7 +118,7 @@ export type RegisteredMepPixelObservation =
   | ElectricalCircuitObservation;
 
 export type RegisteredMepObservationPackage = Omit<MepDraftPackage, "observations"> & {
-  discipline: "plumbing" | "electrical" | "mixed";
+  discipline: "mechanical" | "plumbing" | "electrical" | "mixed";
   coordinate_space: "registered_render_pixels_top_left";
   registered_render: RegisteredRender;
   frame: {
@@ -114,6 +148,16 @@ function clean(value: unknown): string {
 
 function normalized(value: unknown): string {
   return clean(value).toLowerCase().replace(/[\s_-]+/g, " ");
+}
+
+function registeredPipeSizePolicy(
+  observation: RegisteredPlumbingPipeRouteObservation
+    | RegisteredPlumbingSourceBranchTeeObservation
+    | RegisteredPlumbingConnectorBridgeObservation
+    | RegisteredPlumbingCreatedRouteConnectorBridgeObservation
+    | RegisteredPlumbingDownstreamVentTeeObservation
+): "explicit_required" | "unresolved_placeholder" {
+  return observation.pipe_size_policy ?? "explicit_required";
 }
 
 function requiredText(value: unknown, label: string): string {
@@ -204,7 +248,11 @@ function allowedDiscipline(
   observation: RegisteredMepPixelObservation,
   index: number
 ): void {
-  const expected = observation.kind === "pipe_route" || observation.kind === "plumbing_fixture" ? "plumbing" : "electrical";
+  const expected = observation.kind === "duct_route" || observation.kind === "mechanical_equipment" || observation.kind === "air_terminal"
+    ? "mechanical"
+    : observation.kind === "pipe_route" || observation.kind === "plumbing_fixture"
+      ? "plumbing"
+      : "electrical";
   if (observation.discipline !== expected) throw new Error(`observation_${index}_discipline_kind_mismatch`);
   if (packageDiscipline !== "mixed" && packageDiscipline !== expected) {
     throw new Error(`observation_${index}_outside_package_discipline`);
@@ -212,17 +260,29 @@ function allowedDiscipline(
 }
 
 function materialAttributes(observation: Exclude<RegisteredMepPixelObservation, ElectricalCircuitObservation>): string[] {
+  if (observation.kind === "duct_route") return ["size", "elevation", "system", "type"];
   if (observation.kind === "pipe_route") {
-    if (observation.geometry_mode === "native_connector_bridge") return ["location", "size", "elevation", "system", "type"];
-    if (observation.geometry_mode === "downstream_vent_tee") {
-      return ["size", ...(clean(observation.main_reference_key) ? ["main elevation"] : []), "elevation", "system", "type"];
+    const size = registeredPipeSizePolicy(observation) === "explicit_required" ? ["size"] : [];
+    if (observation.geometry_mode === "native_connector_bridge"
+      || observation.geometry_mode === "created_route_connector_bridge") {
+      return ["location", ...size, "elevation", "system", "type"];
     }
-    return ["size", "elevation", "system", "type"];
+    if (observation.geometry_mode === "downstream_vent_tee") {
+      return [...size, ...(clean(observation.main_reference_key) ? ["main elevation"] : []), "elevation", "system", "type"];
+    }
+    return [...size, "elevation", "system", "type"];
   }
   if (observation.kind === "plumbing_fixture") {
-    return observation.placement.mode === "hosted_exemplar" ? ["type", "host", "service topology"] : ["type", "service topology"];
+    return observation.placement.mode === "hosted_exemplar" || observation.placement.mode === "hosted_family_symbol"
+      ? ["type", "host", "service topology"]
+      : ["type", "service topology"];
   }
-  return observation.placement.mode === "hosted_exemplar" ? ["type", "host"] : ["type"];
+  return observation.placement.mode === "hosted_exemplar"
+    || observation.placement.mode === "hosted_family_symbol"
+    || observation.placement.mode === "created_route_host"
+    || observation.placement.mode === "created_route_branch"
+    ? ["type", "host"]
+    : ["type"];
 }
 
 function validateAttributeEvidence(
@@ -255,7 +315,7 @@ function validateAttributeEvidence(
       throw new Error(`${observation.observation_id}_${attribute}_native_precedent_requires_native_evidence`);
     }
     if (claim.basis === "declared_heuristic") {
-      if (observation.kind !== "pipe_route" || attribute !== "elevation") {
+      if ((observation.kind !== "pipe_route" && observation.kind !== "duct_route") || attribute !== "elevation") {
         throw new Error(`${observation.observation_id}_declared_heuristic_only_allowed_for_pipe_elevation`);
       }
       if (!["source pdf", normalized(renderRole)].includes(normalized(evidenceRole))) {
@@ -279,7 +339,7 @@ export async function compileRegisteredMepObservations(
   if (input.coordinate_space !== "registered_render_pixels_top_left") {
     throw new Error("registered_mep_observation_coordinate_space_invalid");
   }
-  if (!["plumbing", "electrical", "mixed"].includes(input.discipline)) {
+  if (!["mechanical", "plumbing", "electrical", "mixed"].includes(input.discipline)) {
     throw new Error("registered_mep_observation_discipline_invalid");
   }
   const fixtureId = requiredText(input.fixture_id, "fixture_id");
@@ -336,7 +396,7 @@ export async function compileRegisteredMepObservations(
         }))
       })
     : undefined;
-  const convertedObservations: MepDraftPackage["observations"] = input.observations.map((observation, index) => {
+  const convertedObservations: MepDraftPackage["observations"] = input.observations.map((observation, index): MepDraftPackage["observations"][number] => {
     allowedDiscipline(input.discipline, observation, index);
     if (observation.kind === "electrical_circuit") {
       const usesRenderEvidence = normalized(observation.evidence_role) === normalized(renderRole);
@@ -348,6 +408,11 @@ export async function compileRegisteredMepObservations(
         for (const evidence of observation.member_label_evidence ?? []) {
           if (normalized(evidence.evidence_role) !== normalized(renderRole)) {
             throw new Error(`${observation.observation_id}_member_label_evidence_must_use_registered_render:${evidence.member_observation_id}`);
+          }
+        }
+        for (const evidence of observation.native_member_label_evidence ?? []) {
+          if (normalized(evidence.evidence_role) !== normalized(renderRole)) {
+            throw new Error(`${observation.observation_id}_native_member_label_evidence_must_use_registered_render:${evidence.native_member_reference_key}`);
           }
         }
       } else if (usesRenderEvidence) {
@@ -363,8 +428,31 @@ export async function compileRegisteredMepObservations(
         : claim.basis,
       reference: claim.reference
     }));
+    if (observation.kind === "duct_route") {
+      if (!Array.isArray(observation.pixel_points) || observation.pixel_points.length < 2) {
+        throw new Error(`${observation.observation_id}_requires_at_least_two_pixel_points`);
+      }
+      const modelPoints = observation.pixel_points.map((entry, pointIndex) => pixelToModel(
+        entry,
+        modelBounds,
+        width,
+        height,
+        `${observation.observation_id}_pixel_point_${pointIndex}`
+      ));
+      if (modelPoints.every((entry) => Math.hypot(entry.x - modelPoints[0]!.x, entry.y - modelPoints[0]!.y) <= Number.EPSILON)) {
+        throw new Error(`${observation.observation_id}_route_is_degenerate`);
+      }
+      const { pixel_points: _pixelPoints, attribute_evidence: _attributeEvidence, ...rest } = observation;
+      return {
+        ...rest,
+        evidence_role: renderRole,
+        attribute_provenance: attributeProvenance,
+        points: modelPoints.map((entry) => modelToSource(entry, registration))
+      };
+    }
     if (observation.kind === "pipe_route") {
-      if (observation.geometry_mode === "native_connector_bridge") {
+      if (observation.geometry_mode === "native_connector_bridge"
+        || observation.geometry_mode === "created_route_connector_bridge") {
         const { attribute_evidence: _attributeEvidence, ...rest } = observation;
         return {
           ...rest,
@@ -399,6 +487,38 @@ export async function compileRegisteredMepObservations(
       height,
       `${observation.observation_id}_pixel_point`
     );
+    if (observation.kind === "air_terminal" && observation.placement.mode === "created_route_branch") {
+      const { pixel_point: _pixelPoint, attribute_evidence: _attributeEvidence, ...rest } = observation;
+      const pixelBranchPoints = observation.placement.pixel_branch_points;
+      if (!Array.isArray(pixelBranchPoints) || pixelBranchPoints.length < 2) {
+        throw new Error(`${observation.observation_id}_requires_at_least_two_pixel_branch_points`);
+      }
+      const branchPoints = pixelBranchPoints.map((entry, pointIndex) => modelToSource(pixelToModel(
+        entry,
+        modelBounds,
+        width,
+        height,
+        `${observation.observation_id}_pixel_branch_point_${pointIndex}`
+      ), registration));
+      const { pixel_branch_points: _pixelBranchPoints, ...placement } = observation.placement;
+      return {
+        ...rest,
+        evidence_role: renderRole,
+        attribute_provenance: attributeProvenance,
+        point: modelToSource(modelPoint, registration),
+        placement: { ...placement, branch_points: branchPoints }
+      };
+    }
+    if (observation.kind === "air_terminal") {
+      const { pixel_point: _pixelPoint, attribute_evidence: _attributeEvidence, ...rest } = observation;
+      return {
+        ...rest,
+        evidence_role: renderRole,
+        attribute_provenance: attributeProvenance,
+        point: modelToSource(modelPoint, registration),
+        placement: observation.placement as MepDraftPlacement
+      };
+    }
     const { pixel_point: _pixelPoint, attribute_evidence: _attributeEvidence, ...rest } = observation;
     return { ...rest, evidence_role: renderRole, attribute_provenance: attributeProvenance, point: modelToSource(modelPoint, registration) };
   });
@@ -445,9 +565,12 @@ export async function compileRegisteredMepObservations(
     compiled_plan: compiledPlan,
     usage_constraints: [
       "Registered pixels establish bounded plan geometry only; material, system, size, elevation, family, type, host, and service-topology claims remain subject to the existing MEP compiler evidence gates.",
-      "A pipe elevation may use declared_heuristic provenance when the plan does not show elevation; it remains an explicit inference in the compiled assumptions and is never represented as source-observed truth.",
+      "A pipe or duct elevation may use declared_heuristic provenance when the plan does not show elevation; it remains an explicit inference in the compiled assumptions and is never represented as source-observed truth.",
+      "A pipe route may use pipe_size_policy=unresolved_placeholder only when size is unreadable, omitted from supported source attributes, and omitted from the observation value; Revit's one-inch drafting placeholder is then explicit, non-scored, and not accepted as an engineered size.",
       "A native_connector_bridge may resolve a short concealed service stub only between an agent-visible fixture observation and an explicit hash-bound native anchor; its endpoints and elevation are runtime native inferences, not registered-pixel observations.",
-      "A downstream_vent_tee uses registered pixels for plan geometry, either an exact hash-bound retained sanitary main or a source-grounded sanitary route created earlier in the same atomic workflow, and a required post-write fixture-network audit; it never represents the vent as a direct fixture connector.",
+      "A created_route_connector_bridge may resolve a short concealed service stub only between an agent-visible fixture observation and an explicit endpoint of source-grounded pipe geometry created earlier in the same atomic workflow; its final connector offsets and elevation are runtime native inferences.",
+      "A fixture with service_connection_mode=plan_proximity records source-visible adjacency to the nearest registered route segment and emits no native connection action; it is a drafting fallback for connectorless graphics, not proof of a physically connected Revit network.",
+      "A downstream_vent_tee uses registered pixels for plan geometry and either an exact hash-bound retained sanitary main or a source-grounded sanitary route created earlier in the same atomic workflow. It never represents the vent as a direct fixture connector. Native fixture reachability remains the acceptance path; plan_topology_only verifies the created sanitary-to-vent tee while explicitly withholding native fixture-reachability credit.",
       "Electrical circuit membership may use the registered render only when every newly created member has explicit legible evidence for the same printed circuit label; otherwise it must remain grounded in exact native source power-system evidence or explicit user direction.",
       "The registered render must be agent-visible, hash-bound, dimension-verified, and aligned to the declared model frame.",
       "No evaluator, withheld truth, native target identity, or scorer output is used to convert pixel observations.",

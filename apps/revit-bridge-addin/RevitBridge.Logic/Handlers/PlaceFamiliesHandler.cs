@@ -37,6 +37,7 @@ namespace RevitBridge.Logic.Handlers
             public double x { get; set; }
             public double y { get; set; }
             public double z { get; set; }
+            public string? coordinateMode { get; set; } // legacy_level_offset | absolute_model
             public double? rotationDegrees { get; set; }
             public long? hostElementId { get; set; }
             public Dictionary<string, string>? parameters { get; set; }
@@ -51,9 +52,18 @@ namespace RevitBridge.Logic.Handlers
             public List<string> warnings { get; set; } = new List<string>();
         }
 
+        private sealed class HostFacePlacement
+        {
+            public FamilyInstance Instance { get; set; } = null!;
+            public XYZ ProjectedPoint { get; set; } = null!;
+            public double ProjectionDistanceFt { get; set; }
+        }
+
         public class PlacementResult
         {
             public string status { get; set; } = "Unknown";
+            public string? familyPlacementType { get; set; }
+            public bool requiresExplicitHost { get; set; }
             public int placedCount { get; set; }
             public int skippedCount { get; set; }
             public int failedCount { get; set; }
@@ -105,6 +115,11 @@ namespace RevitBridge.Logic.Handlers
                         doc.Regenerate();
                     }
 
+                    var familyPlacementType = symbol.Family?.FamilyPlacementType ?? FamilyPlacementType.Invalid;
+                    bool requiresExplicitHost = RequiresExplicitHost(familyPlacementType);
+                    result.familyPlacementType = familyPlacementType.ToString();
+                    result.requiresExplicitHost = requiresExplicitHost;
+
                     List<(long id, XYZ point)> existingPoints = new List<(long id, XYZ point)>();
                     if (useIdempotency && toleranceFt > 0.0)
                     {
@@ -135,11 +150,32 @@ namespace RevitBridge.Logic.Handlers
                             }
                         }
 
+                        bool usesAbsoluteModelCoordinates = string.Equals(
+                            instData.coordinateMode,
+                            "absolute_model",
+                            StringComparison.OrdinalIgnoreCase);
+                        XYZ idempotencyPoint = point;
+                        XYZ levelPlacementPoint = point;
+                        if (usesAbsoluteModelCoordinates)
+                        {
+                            // Revit's level-based overload interprets Z as an offset from the supplied level.
+                            // Keep the external contract in absolute model coordinates and translate only for
+                            // that overload. Hosted and level-free overloads continue to receive absolute XYZ.
+                            levelPlacementPoint = new XYZ(point.X, point.Y, point.Z - instanceLevel.Elevation);
+                        }
+
                         try
                         {
+                            if (requiresExplicitHost && !instData.hostElementId.HasValue)
+                            {
+                                throw new Exception(
+                                    $"Family {symbol.FamilyName} / {symbol.Name} requires an explicit host " +
+                                    $"({familyPlacementType}); provide hostElementId or use a hosted-placement workflow.");
+                            }
+
                             if (useIdempotency && toleranceFt > 0.0)
                             {
-                                var match = FindEquivalent(existingPoints, plannedOrCreatedPoints, point, toleranceFt);
+                                var match = FindEquivalent(existingPoints, plannedOrCreatedPoints, idempotencyPoint, toleranceFt);
                                 if (match.found)
                                 {
                                     instResult.status = "skipped";
@@ -152,6 +188,7 @@ namespace RevitBridge.Logic.Handlers
                             }
 
                             FamilyInstance fi = null;
+                            XYZ actualPlacementPoint = point;
                             if (instData.hostElementId.HasValue)
                             {
                                 Element host = doc.GetElement(ToElementId(instData.hostElementId.Value));
@@ -160,10 +197,32 @@ namespace RevitBridge.Logic.Handlers
 
                                 try
                                 {
-                                    fi = doc.Create.NewFamilyInstance(point, symbol, host, instanceLevel, StructuralType.NonStructural);
+                                    if (familyPlacementType == FamilyPlacementType.WorkPlaneBased)
+                                    {
+                                        var facePlacement = PlaceOnClosestHostFace(doc, host, point, symbol);
+                                        fi = facePlacement.Instance;
+                                        actualPlacementPoint = facePlacement.ProjectedPoint;
+                                        if (facePlacement.ProjectionDistanceFt > 0.5)
+                                        {
+                                            instResult.warnings.Add(
+                                                $"Requested point was projected {facePlacement.ProjectionDistanceFt:0.###} ft to the closest referenced host face.");
+                                        }
+                                    }
+                                    else
+                                    {
+                                        fi = doc.Create.NewFamilyInstance(point, symbol, host, instanceLevel, StructuralType.NonStructural);
+                                    }
                                 }
                                 catch (Exception ex)
                                 {
+                                    if (requiresExplicitHost)
+                                    {
+                                        throw new Exception(
+                                            $"Host placement failed for host-required family " +
+                                            $"{symbol.FamilyName} / {symbol.Name} ({familyPlacementType}). {ex.Message}",
+                                            ex);
+                                    }
+
                                     instResult.warnings.Add($"Host placement failed; falling back to non-hosted/level-hosted. {ex.Message}");
                                 }
                             }
@@ -172,7 +231,7 @@ namespace RevitBridge.Logic.Handlers
                             {
                                 try
                                 {
-                                    fi = doc.Create.NewFamilyInstance(point, symbol, instanceLevel, StructuralType.NonStructural);
+                                    fi = doc.Create.NewFamilyInstance(levelPlacementPoint, symbol, instanceLevel, StructuralType.NonStructural);
                                 }
                                 catch
                                 {
@@ -182,9 +241,17 @@ namespace RevitBridge.Logic.Handlers
 
                             if (fi == null) throw new Exception("Failed to create family instance.");
 
+                            if (instData.hostElementId.HasValue && !MatchesExplicitHost(fi, instData.hostElementId.Value))
+                            {
+                                doc.Delete(fi.Id);
+                                throw new Exception(
+                                    $"Revit created {symbol.FamilyName} / {symbol.Name} without the requested host " +
+                                    $"{instData.hostElementId.Value}; placement was discarded.");
+                            }
+
                             if (instData.rotationDegrees.HasValue && Math.Abs(instData.rotationDegrees.Value) > 1e-9)
                             {
-                                RotateAboutZ(doc, fi.Id, point, instData.rotationDegrees.Value);
+                                RotateAboutZ(doc, fi.Id, TryGetLocationPoint(fi) ?? actualPlacementPoint, instData.rotationDegrees.Value);
                             }
 
                             if (instData.parameters != null)
@@ -196,7 +263,7 @@ namespace RevitBridge.Logic.Handlers
                             }
 
                             SetParameter(fi, "ROS_AutoGenerated", "1");
-                            plannedOrCreatedPoints.Add(point);
+                            plannedOrCreatedPoints.Add(idempotencyPoint);
 
                             if (p.dryRun)
                             {
@@ -245,6 +312,101 @@ namespace RevitBridge.Logic.Handlers
             }
 
             return Task.FromResult<object>(result);
+        }
+
+        private static bool RequiresExplicitHost(FamilyPlacementType familyPlacementType)
+        {
+            return familyPlacementType == FamilyPlacementType.OneLevelBasedHosted ||
+                   familyPlacementType == FamilyPlacementType.WorkPlaneBased;
+        }
+
+        private static HostFacePlacement PlaceOnClosestHostFace(
+            Document doc,
+            Element host,
+            XYZ requestedPoint,
+            FamilySymbol symbol)
+        {
+            var options = new Options
+            {
+                ComputeReferences = true,
+                IncludeNonVisibleObjects = true,
+                DetailLevel = ViewDetailLevel.Fine
+            };
+            var candidates = new List<(Face face, IntersectionResult projection, double distance)>();
+            CollectFaceCandidates(host.get_Geometry(options), requestedPoint, candidates);
+            var selected = candidates
+                .Where(candidate => candidate.face.Reference != null)
+                .OrderBy(candidate => candidate.distance)
+                .FirstOrDefault();
+            if (selected.face == null || selected.projection == null || selected.face.Reference == null)
+            {
+                throw new Exception($"Host element {RevitBridge.Common.ElementIdCompat.GetValue(host.Id)} has no referenced face near the requested point.");
+            }
+
+            var normal = selected.face.ComputeNormal(selected.projection.UVPoint).Normalize();
+            var referenceDirection = TangentDirection(normal);
+            var instance = doc.Create.NewFamilyInstance(
+                selected.face.Reference,
+                selected.projection.XYZPoint,
+                referenceDirection,
+                symbol);
+            if (instance == null) throw new Exception("Revit face-based placement returned no family instance.");
+            return new HostFacePlacement
+            {
+                Instance = instance,
+                ProjectedPoint = selected.projection.XYZPoint,
+                ProjectionDistanceFt = selected.distance
+            };
+        }
+
+        private static void CollectFaceCandidates(
+            GeometryElement? geometry,
+            XYZ requestedPoint,
+            List<(Face face, IntersectionResult projection, double distance)> candidates)
+        {
+            if (geometry == null) return;
+            foreach (var geometryObject in geometry)
+            {
+                if (geometryObject is Solid solid && solid.Volume > 1e-12)
+                {
+                    foreach (Face face in solid.Faces)
+                    {
+                        var projection = face.Project(requestedPoint);
+                        if (projection != null)
+                        {
+                            candidates.Add((face, projection, projection.XYZPoint.DistanceTo(requestedPoint)));
+                        }
+                    }
+                }
+                else if (geometryObject is GeometryInstance instance)
+                {
+                    CollectFaceCandidates(instance.GetInstanceGeometry(), requestedPoint, candidates);
+                }
+            }
+        }
+
+        private static XYZ TangentDirection(XYZ normal)
+        {
+            var direction = XYZ.BasisZ - normal.Multiply(XYZ.BasisZ.DotProduct(normal));
+            if (direction.GetLength() < 1e-9)
+            {
+                direction = XYZ.BasisX - normal.Multiply(XYZ.BasisX.DotProduct(normal));
+            }
+            if (direction.GetLength() < 1e-9)
+            {
+                direction = XYZ.BasisY - normal.Multiply(XYZ.BasisY.DotProduct(normal));
+            }
+            if (direction.GetLength() < 1e-9) throw new Exception("Unable to derive a tangent reference direction for the selected host face.");
+            return direction.Normalize();
+        }
+
+        private static bool MatchesExplicitHost(FamilyInstance instance, long expectedHostElementId)
+        {
+            if (instance.Host != null
+                && RevitBridge.Common.ElementIdCompat.GetValue(instance.Host.Id) == expectedHostElementId) return true;
+            var hostFace = instance.HostFace;
+            return hostFace != null
+                && RevitBridge.Common.ElementIdCompat.GetValue(hostFace.ElementId) == expectedHostElementId;
         }
 
         private static (bool found, long? existingElementId) FindEquivalent(List<(long id, XYZ point)> existing, List<XYZ> plannedOrCreated, XYZ target, double toleranceFt)

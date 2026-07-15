@@ -86,6 +86,9 @@ namespace RevitBridge.Logic.Handlers
                         tempView = doc.GetElement(tempViewId) as View;
                         if (tempView == null) throw new Exception("Failed to duplicate view.");
 
+                        if (TryClearScopeBox(tempView))
+                            warnings.Add("Temp view scope box cleared to enable the requested region crop.");
+
                         var templateCleared = false;
                         void TryClearTemplateForCrop()
                         {
@@ -199,7 +202,7 @@ namespace RevitBridge.Logic.Handlers
                     }
 
                     // Apply region crop to temp view.
-                    ApplyRegionCrop(doc, exportView, p.region, warnings);
+                    ApplyRegionCrop(doc, exportView, p.region, warnings, clearScopeBox: true);
 
                     // Ensure annotation/tag text reflects the latest model state before export.
                     try { doc.Regenerate(); } catch { }
@@ -230,7 +233,7 @@ namespace RevitBridge.Logic.Handlers
                     var restored = false;
                     try
                     {
-                        ApplyRegionCrop(doc, view, p.region, warnings);
+                        ApplyRegionCrop(doc, view, p.region, warnings, clearScopeBox: false);
                         try { doc.Regenerate(); } catch { }
                         try { uidoc.RefreshActiveView(); } catch { }
                         path = SelectionUtil.ExportViewImage(doc, view, imageSize, folder, stem);
@@ -363,11 +366,28 @@ namespace RevitBridge.Logic.Handlers
             }
         }
 
-        private static void ApplyRegionCrop(Document doc, View view, RegionSpec region, List<string> warnings)
+        private static void ApplyRegionCrop(
+            Document doc,
+            View view,
+            RegionSpec region,
+            List<string> warnings,
+            bool clearScopeBox)
         {
             using (var tx = new Transaction(doc, "Operator Export View Region (Temp Crop)"))
             {
                 tx.Start();
+
+                if (clearScopeBox)
+                {
+                    if (TryClearScopeBox(view))
+                        warnings.Add("Temp view scope box cleared before applying the requested region crop.");
+                }
+                else if (HasAssignedScopeBox(view))
+                {
+                    throw new InvalidOperationException(
+                        "The original view has an assigned scope box and no temporary view was available. " +
+                        "Refusing to clear the user's scope box; duplicate or activate a view without one and retry.");
+                }
 
                 try { view.CropBoxActive = true; }
                 catch { throw new ArgumentException("View does not support crop regions; export-view-region is not supported for this view type."); }
@@ -391,6 +411,38 @@ namespace RevitBridge.Logic.Handlers
                 try { view.CropBoxVisible = false; } catch { }
                 doc.Regenerate();
                 tx.Commit();
+            }
+        }
+
+        private static bool HasAssignedScopeBox(View view)
+        {
+            try
+            {
+                var parameter = view.get_Parameter(BuiltInParameter.VIEWER_VOLUME_OF_INTEREST_CROP);
+                if (parameter == null) return false;
+                var current = parameter.AsElementId();
+                return current != null && current != ElementId.InvalidElementId;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryClearScopeBox(View view)
+        {
+            try
+            {
+                var parameter = view.get_Parameter(BuiltInParameter.VIEWER_VOLUME_OF_INTEREST_CROP);
+                if (parameter == null || parameter.IsReadOnly) return false;
+                var current = parameter.AsElementId();
+                if (current == null || current == ElementId.InvalidElementId) return false;
+                parameter.Set(ElementId.InvalidElementId);
+                return true;
+            }
+            catch
+            {
+                return false;
             }
         }
 

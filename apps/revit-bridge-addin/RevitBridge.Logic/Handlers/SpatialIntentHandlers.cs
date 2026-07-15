@@ -334,6 +334,12 @@ namespace RevitBridge.Logic.Handlers
             var electricalCircuit = e is FamilyInstance circuitFamilyInstance
                 ? HostedPlacementUtil.BuildElectricalCircuitAuditPayload(circuitFamilyInstance)
                 : null;
+            // A null requested name makes this a read-only audit. This exposes the
+            // document's exact electrical settings and the equipment type's compatible
+            // systems without mutating the source model or guessing voltage settings.
+            var electricalDistributionSystem = e is FamilyInstance electricalFamilyInstance
+                ? HostedPlacementUtil.ApplyAndAuditElectricalDistributionSystem(doc, electricalFamilyInstance, null)
+                : null;
             var roomWallContext = requestedRoom != null && !string.IsNullOrWhiteSpace(p.roomSide)
                 ? HostedPlacementUtil.ResolveRoomWalls(doc, requestedRoom, view ?? doc.ActiveView, p.roomSide, 4)
                 : new List<RoomWallResolution>();
@@ -431,6 +437,7 @@ namespace RevitBridge.Logic.Handlers
                 placementHost = HostedPlacementUtil.BuildPlacementHostPayload(placementHost),
                 placementHostContext,
                 electricalCircuit,
+                electricalDistributionSystem,
                 orientation = HostedPlacementUtil.BuildOrientationPayload(e),
                 wallPlacement,
                 hostLocalFrame = HostedPlacementUtil.BuildHostLocalFramePayload(placementFrame, e),

@@ -678,7 +678,13 @@ namespace RevitBridge.Logic.Handlers
 
             using (var tx = new Transaction(doc, "Create Electrical Circuit"))
             {
+                var nativeFailures = new List<CapturedFailure>();
                 tx.Start();
+                tx.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(
+                    tx,
+                    nativeFailures,
+                    rollbackOnErrors: true,
+                    deleteWarnings: true));
                 try
                 {
                     var memberIds = members.Select(instance => instance.Id).ToList();
@@ -711,6 +717,8 @@ namespace RevitBridge.Logic.Handlers
                     var commitStatus = tx.Commit();
                     if (commitStatus != TransactionStatus.Committed)
                         throw new InvalidOperationException($"new_power_circuit_transaction_not_committed:{commitStatus}");
+                    if (FailureHandlingUtil.HasErrors(nativeFailures))
+                        throw new InvalidOperationException("new_power_circuit_native_failure");
 
                     return new
                     {
@@ -723,7 +731,13 @@ namespace RevitBridge.Logic.Handlers
                         panelElementId = p.panelElementId,
                         verifiedMemberElementIds = members.Select(instance => ElementIdCompat.GetValue(instance.Id)).OrderBy(id => id).ToList(),
                         results = verifiedResults,
-                        warnings = new List<string>(),
+                        warnings = nativeFailures
+                            .Where(failure => string.Equals(failure.severity, "warning", StringComparison.OrdinalIgnoreCase))
+                            .Select(failure => failure.message)
+                            .Where(message => !string.IsNullOrWhiteSpace(message))
+                            .Distinct()
+                            .ToList(),
+                        nativeFailures,
                         limitation = "New-circuit mode creates and verifies native PowerCircuit membership; breaker size, load allocation, panel capacity, and code compliance require separate evidence and checks."
                     };
                 }

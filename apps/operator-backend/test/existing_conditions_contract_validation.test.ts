@@ -243,6 +243,81 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
     copy_distribution_system_from_source: true
   };
   assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", equipment));
+  const mechanical = structuredClone(input) as Record<string, unknown>;
+  mechanical.discipline = "mechanical";
+  mechanical.observations = [{
+    kind: "duct_route",
+    discipline: "mechanical",
+    observation_id: "outside-air-1",
+    visibility: "clear",
+    confidence: 0.98,
+    supported_attributes: ["location", "size", "elevation", "system", "type"],
+    attribute_evidence: [
+      { attribute: "size", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "8 inch diameter label" },
+      { attribute: "elevation", basis: "declared_heuristic", evidence_role: "registered_source_render", reference: "plan does not show duct elevation" },
+      { attribute: "system", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "outside-air notation" },
+      { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "round duct graphics" }
+    ],
+    service: "outside_air",
+    pixel_points: [{ x: 20, y: 80 }, { x: 80, y: 80 }],
+    duct_size: "8 inch",
+    duct_type: "Round Duct",
+    system_type: "Outside Air",
+    elevation_ft: 10
+  }, {
+    kind: "mechanical_equipment",
+    discipline: "mechanical",
+    observation_id: "hru-404",
+    visibility: "clear",
+    confidence: 0.97,
+    supported_attributes: ["location", "type"],
+    attribute_evidence: [{
+      attribute: "type",
+      basis: "legible_source_evidence",
+      evidence_role: "registered_source_render",
+      reference: "HRU equipment symbol and tag"
+    }],
+    role: "heat recovery unit",
+    pixel_point: { x: 25, y: 75 },
+    elevation_ft: 0,
+    placement: { mode: "unhosted_family", family_name: "Heat Recovery Unit", type_name: "HRU" }
+  }];
+  assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", mechanical));
+  (mechanical.observations as Array<Record<string, unknown>>).push({
+    kind: "air_terminal",
+    discipline: "mechanical",
+    observation_id: "supply-grille-1",
+    visibility: "clear",
+    confidence: 0.95,
+    supported_attributes: ["location", "type", "host"],
+    attribute_evidence: [
+      { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "supply grille symbol and type note" },
+      { attribute: "host", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "grille center lies on the selected route segment" }
+    ],
+    role: "supply grille",
+    pixel_point: { x: 50, y: 80 },
+    elevation_ft: 10,
+    placement: {
+      mode: "created_route_host",
+      family_name: "M_Supply Grille",
+      type_name: "16x4 Connection 8 Diameter",
+      route_observation_id: "outside-air-1",
+      route_segment_index: 0
+    }
+  });
+  assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", mechanical));
+  const invalidCreatedRouteHost = structuredClone(mechanical);
+  (invalidCreatedRouteHost.observations as Array<Record<string, unknown>>)[1]!.placement = {
+    mode: "created_route_host",
+    family_name: "Heat Recovery Unit",
+    type_name: "HRU",
+    route_observation_id: "outside-air-1",
+    route_segment_index: 0
+  };
+  assert.throws(
+    () => assertExistingConditionsContract("registered_mep_observations", invalidCreatedRouteHost),
+    /invalid_existing_conditions_registered_mep_observations_contract/
+  );
   const hostedWithoutInventedChainage = structuredClone(input);
   const hostedObservation = hostedWithoutInventedChainage.observations[0];
   hostedObservation.supported_attributes = ["location", "type", "host"];
@@ -327,6 +402,57 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
   plannedVent.main_elevation_ft = 1.1666666667;
   assert.throws(
     () => assertExistingConditionsContract("registered_mep_observations", plannedMainVent),
+    /invalid_existing_conditions_registered_mep_observations_contract/
+  );
+  const planOnlyPlumbing = structuredClone(input) as unknown as Record<string, unknown>;
+  planOnlyPlumbing.discipline = "plumbing";
+  planOnlyPlumbing.observations = [{
+    kind: "pipe_route",
+    discipline: "plumbing",
+    observation_id: "unreadable-sanitary-size",
+    visibility: "clear",
+    confidence: 0.94,
+    supported_attributes: ["location", "elevation", "system", "type"],
+    attribute_evidence: [
+      { attribute: "elevation", basis: "declared_heuristic", evidence_role: "registered_source_render", reference: "plan does not show Z" },
+      { attribute: "system", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "sanitary line convention" },
+      { attribute: "type", basis: "user_direction", evidence_role: "registered_source_render", reference: "use the loaded default pipe type for drafting" }
+    ],
+    service: "sanitary",
+    pixel_points: [{ x: 20, y: 80 }, { x: 80, y: 80 }],
+    pipe_size_policy: "unresolved_placeholder",
+    pipe_type: "Default",
+    system_type: "Sanitary",
+    elevation_ft: 1
+  }, {
+    kind: "plumbing_fixture",
+    discipline: "plumbing",
+    observation_id: "connectorless-fixture-graphic",
+    visibility: "clear",
+    confidence: 0.95,
+    supported_attributes: ["location", "type", "service topology"],
+    attribute_evidence: [
+      { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "water-closet symbol" },
+      { attribute: "service topology", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "sanitary trace is adjacent to the fixture symbol" }
+    ],
+    role: "water closet graphic",
+    pixel_point: { x: 20, y: 78 },
+    elevation_ft: 0,
+    placement: { mode: "unhosted_family", family_name: "Connectorless Fixture", type_name: "Water Closet" },
+    service_connection_mode: "plan_proximity",
+    service_route_connections: [{ route_observation_id: "unreadable-sanitary-size", route_endpoint: "nearest_plan_segment", maximum_plan_distance_ft: 2 }],
+    service_boundary: {
+      basis: "source_observation",
+      evidence_role: "registered_source_render",
+      required_services: ["sanitary"],
+      prohibited_services: ["domestic_hot_water"]
+    }
+  }];
+  assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", planOnlyPlumbing));
+  const falseSizeClaim = structuredClone(planOnlyPlumbing);
+  (falseSizeClaim.observations as Array<Record<string, unknown>>)[0]!.pipe_size = "2 inch";
+  assert.throws(
+    () => assertExistingConditionsContract("registered_mep_observations", falseSizeClaim),
     /invalid_existing_conditions_registered_mep_observations_contract/
   );
   const newCircuit = structuredClone(input);

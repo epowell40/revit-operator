@@ -6202,6 +6202,21 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalBool(obj.Value, "copyRotation", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "copyFacingHandState", out error)) return false;
                 if (!ValidateOptionalStringArray(obj.Value, "parameterNamesToCopy", maxCount: 100, maxLen: 128, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "distributionSystemName", maxLen: 128, out error)) return false;
+                if (obj.Value.TryGetProperty("ensureDistributionSystem", out var ensureDistributionSystem) && ensureDistributionSystem.ValueKind != JsonValueKind.Null)
+                {
+                    if (ensureDistributionSystem.ValueKind != JsonValueKind.Object)
+                    {
+                        error = "ensureDistributionSystem must be an object.";
+                        return false;
+                    }
+                    if (!ValidateRequiredString(ensureDistributionSystem, "name", maxLen: 128, out error)) return false;
+                    if (!ValidateRequiredString(ensureDistributionSystem, "electricalPhase", maxLen: 32, out error)) return false;
+                    if (!ValidateRequiredString(ensureDistributionSystem, "phaseConfiguration", maxLen: 32, out error)) return false;
+                    if (!ValidateRequiredInt(ensureDistributionSystem, "numWires", out error)) return false;
+                    if (!ValidateOptionalElectricalVoltageDefinition(ensureDistributionSystem, "voltageLineToLine", out error)) return false;
+                    if (!ValidateOptionalElectricalVoltageDefinition(ensureDistributionSystem, "voltageLineToGround", out error)) return false;
+                }
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includePreviewImage", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "previewViewId", out error)) return false;
@@ -8315,7 +8330,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/save-family-doc", StringComparison.OrdinalIgnoreCase))
             {
-                // { docId?: string, familyDocumentId?: string, overwrite?: bool }
+                // { docId?: string, familyDocumentId?: string, filePath?: string, overwrite?: bool }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "save-family-doc body must be an object.";
@@ -8331,6 +8346,7 @@ namespace RevitBridge.Operator
                     return false;
                 }
                 if (!ValidateOptionalBool(obj.Value, "overwrite", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "filePath", maxLen: 1024, out error)) return false;
                 return true;
             }
 
@@ -8378,13 +8394,14 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/edit-family-from-instance", StringComparison.OrdinalIgnoreCase))
             {
-                // { elementId: number }
+                // { elementId: number, allowNonTitleblock?: bool }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "edit-family-from-instance body must be an object.";
                     return false;
                 }
                 if (!ValidateRequiredLong(obj.Value, "elementId", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "allowNonTitleblock", out error)) return false;
                 return true;
             }
 
@@ -8718,6 +8735,22 @@ namespace RevitBridge.Operator
                 error = $"{name} is too long.";
                 return false;
             }
+            return true;
+        }
+
+        private static bool ValidateOptionalElectricalVoltageDefinition(JsonElement obj, string name, out string? error)
+        {
+            error = null;
+            if (!obj.TryGetProperty(name, out var definition) || definition.ValueKind == JsonValueKind.Null) return true;
+            if (definition.ValueKind != JsonValueKind.Object)
+            {
+                error = $"{name} must be an object.";
+                return false;
+            }
+            if (!ValidateRequiredString(definition, "name", maxLen: 128, out error)) return false;
+            if (!ValidateRequiredNumber(definition, "actualValue", out error)) return false;
+            if (!ValidateRequiredNumber(definition, "minValue", out error)) return false;
+            if (!ValidateRequiredNumber(definition, "maxValue", out error)) return false;
             return true;
         }
 

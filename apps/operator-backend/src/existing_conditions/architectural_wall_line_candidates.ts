@@ -1982,9 +1982,18 @@ export async function buildArchitecturalWallLineCandidates(
     delta.render_policy.ink_luminance_threshold
   );
   const points = boundaryPoints(masks.candidate, width, height, policy.sampling_stride_px);
-  const pixelsPerFootX = width / (delta.scope_model_bounds.max.x - delta.scope_model_bounds.min.x);
-  const pixelsPerFootY = height / (delta.scope_model_bounds.max.y - delta.scope_model_bounds.min.y);
-  if (Math.abs(pixelsPerFootX - pixelsPerFootY) > 1e-6) throw new Error("architectural_wall_line_requires_isotropic_registered_pixels");
+  const spanX = delta.scope_model_bounds.max.x - delta.scope_model_bounds.min.x;
+  const spanY = delta.scope_model_bounds.max.y - delta.scope_model_bounds.min.y;
+  const pixelsPerFootX = width / spanX;
+  const pixelsPerFootY = height / spanY;
+  // The delta raster has integer dimensions, so one axis can differ from the
+  // ideal isotropic size by up to half a pixel after aspect-ratio rounding.
+  // Accept only that quantization error; materially stretched registrations
+  // still fail closed.
+  const rasterQuantizationTolerance = 0.5 / spanX + 0.5 / spanY + 1e-6;
+  if (Math.abs(pixelsPerFootX - pixelsPerFootY) > rasterQuantizationTolerance) {
+    throw new Error("architectural_wall_line_requires_isotropic_registered_pixels");
+  }
   const pixelsPerFoot = (pixelsPerFootX + pixelsPerFootY) / 2;
   const diagonalFt = Math.hypot(
     delta.scope_model_bounds.max.x - delta.scope_model_bounds.min.x,

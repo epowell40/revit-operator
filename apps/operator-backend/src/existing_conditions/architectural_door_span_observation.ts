@@ -813,10 +813,14 @@ export async function buildArchitecturalDoorSpanObservationReceipt(
   );
   if (input.observations.length === 0) throw new Error("architectural_door_span_observation_requires_observations");
   const mask = await loadCandidateMask(delta);
-  const pixelsPerFootX = mask.width / (delta.scope_model_bounds.max.x - delta.scope_model_bounds.min.x);
-  const pixelsPerFootY = mask.height / (delta.scope_model_bounds.max.y - delta.scope_model_bounds.min.y);
+  const spanX = delta.scope_model_bounds.max.x - delta.scope_model_bounds.min.x;
+  const spanY = delta.scope_model_bounds.max.y - delta.scope_model_bounds.min.y;
+  const pixelsPerFootX = mask.width / spanX;
+  const pixelsPerFootY = mask.height / spanY;
+  const rasterQuantizationTolerance = 0.5 / spanX + 0.5 / spanY + 1e-6;
   if (!Number.isFinite(pixelsPerFootX) || !Number.isFinite(pixelsPerFootY)
-    || pixelsPerFootX <= 0 || Math.abs(pixelsPerFootX - pixelsPerFootY) > 1e-6) {
+    || pixelsPerFootX <= 0 || pixelsPerFootY <= 0
+    || Math.abs(pixelsPerFootX - pixelsPerFootY) > rasterQuantizationTolerance) {
     throw new Error("architectural_door_span_observation_requires_isotropic_registered_pixels");
   }
   const pixelsPerFoot = (pixelsPerFootX + pixelsPerFootY) / 2;

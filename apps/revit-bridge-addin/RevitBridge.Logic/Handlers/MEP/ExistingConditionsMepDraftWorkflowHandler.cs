@@ -38,10 +38,13 @@ namespace RevitBridge.Logic.Handlers.MEP
 
         public sealed class DeferredBody
         {
+            public ElementReference? host_element { get; set; }
             public ElementReference? source_element { get; set; }
             public ElementReference? main_element { get; set; }
+            public ElementReference? target_element { get; set; }
             public List<ElementReference>? target_elements { get; set; }
             public List<ElementReference>? element_ids { get; set; }
+            public List<long>? existing_element_ids { get; set; }
             public long? source_element_id { get; set; }
             public string? create_system_type { get; set; }
             public long? panel_element_id { get; set; }
@@ -121,7 +124,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                                 throw new InvalidOperationException($"operation_dependency_not_completed:{operation.action_key}:{dependency}");
                         }
 
-                        var requestJson = BuildRequest(operation, outputs, p.verify);
+                        var requestJson = BuildRequest(operation, outputs, p.verify, doc);
                         var handler = ResolveHandler(operation.path);
                         var response = handler.Handle(app, requestJson).GetAwaiter().GetResult();
                         using var responseDocument = JsonDocument.Parse(JsonSerializer.Serialize(response));
@@ -223,9 +226,25 @@ namespace RevitBridge.Logic.Handlers.MEP
         private static string BuildRequest(
             Operation operation,
             IReadOnlyDictionary<string, OperationOutput> outputs,
-            bool verify)
+            bool verify,
+            Document doc)
         {
             var path = NormalizePath(operation.path);
+            if (path == "/revit/place-families" && operation.deferred_body?.host_element != null)
+            {
+                var hostIds = ResolveReference(operation.deferred_body.host_element, outputs, operation.action_key, "host_element");
+                if (hostIds.Count != 1)
+                    throw new InvalidOperationException($"host_element_reference_must_resolve_one_id:{operation.action_key}:found={hostIds.Count}");
+                if (!operation.apply_body.HasValue || operation.apply_body.Value.ValueKind != JsonValueKind.Object)
+                    throw new InvalidOperationException($"apply_body_required:{operation.action_key}");
+                var placementBody = JsonSerializer.Deserialize<PlaceFamiliesHandler.PlacementRequest>(operation.apply_body.Value.GetRawText())
+                    ?? throw new InvalidOperationException($"place_families_body_invalid:{operation.action_key}");
+                if (placementBody.instances == null || placementBody.instances.Count == 0)
+                    throw new InvalidOperationException($"place_families_instances_required:{operation.action_key}");
+                foreach (var instance in placementBody.instances) instance.hostElementId = hostIds[0];
+                placementBody.dryRun = false;
+                return JsonSerializer.Serialize(placementBody);
+            }
             if (path == "/revit/connect-mep-elements")
             {
                 var deferred = operation.deferred_body ?? throw new InvalidOperationException($"deferred_body_required:{operation.action_key}");
@@ -249,9 +268,21 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (path == "/revit/assign-electrical-circuit")
             {
                 var deferred = operation.deferred_body ?? throw new InvalidOperationException($"deferred_body_required:{operation.action_key}");
-                var elementIds = ResolveReferences(deferred.element_ids, outputs, operation.action_key, "element_ids");
+                var elementIds = (deferred.existing_element_ids ?? new List<long>())
+                    .Where(id => id > 0)
+                    .Concat(deferred.element_ids == null || deferred.element_ids.Count == 0
+                        ? new List<long>()
+                        : ResolveReferences(deferred.element_ids, outputs, operation.action_key, "element_ids"))
+                    .Distinct()
+                    .ToList();
                 if (elementIds.Count == 0)
                     throw new InvalidOperationException($"electrical_member_references_resolved_empty:{operation.action_key}");
+                var missingExistingIds = (deferred.existing_element_ids ?? new List<long>())
+                    .Where(id => id > 0 && doc.GetElement(ElementIdCompat.Create(id)) == null)
+                    .Distinct()
+                    .ToList();
+                if (missingExistingIds.Count > 0)
+                    throw new InvalidOperationException($"electrical_existing_member_ids_missing:{operation.action_key}:{string.Join(",", missingExistingIds)}");
                 var createNew = string.Equals(deferred.create_system_type, "PowerCircuit", StringComparison.OrdinalIgnoreCase);
                 if (!createNew && (!deferred.source_element_id.HasValue || deferred.source_element_id.Value <= 0))
                     throw new InvalidOperationException($"source_element_id_required:{operation.action_key}");
@@ -284,14 +315,27 @@ namespace RevitBridge.Logic.Handlers.MEP
                 var sourceIds = ResolveReference(deferred.source_element, outputs, operation.action_key, "source_element");
                 if (sourceIds.Count != 1)
                     throw new InvalidOperationException($"source_element_reference_must_resolve_one_id:{operation.action_key}:found={sourceIds.Count}");
-                if (!deferred.target_element_id.HasValue || deferred.target_element_id.Value <= 0)
-                    throw new InvalidOperationException($"target_element_id_required:{operation.action_key}");
+                if (deferred.target_element_id.HasValue && deferred.target_element != null)
+                    throw new InvalidOperationException($"target_element_id_and_reference_are_mutually_exclusive:{operation.action_key}");
+                long targetElementId;
+                if (deferred.target_element != null)
+                {
+                    var targetIds = ResolveReference(deferred.target_element, outputs, operation.action_key, "target_element");
+                    if (targetIds.Count != 1)
+                        throw new InvalidOperationException($"target_element_reference_must_resolve_one_id:{operation.action_key}:found={targetIds.Count}");
+                    targetElementId = targetIds[0];
+                }
+                else if (deferred.target_element_id.HasValue && deferred.target_element_id.Value > 0)
+                {
+                    targetElementId = deferred.target_element_id.Value;
+                }
+                else throw new InvalidOperationException($"target_element_id_or_reference_required:{operation.action_key}");
                 if (!operation.apply_body.HasValue || operation.apply_body.Value.ValueKind != JsonValueKind.Object)
                     throw new InvalidOperationException($"apply_body_required:{operation.action_key}");
                 var bridgeBody = JsonSerializer.Deserialize<Dictionary<string, object>>(operation.apply_body.Value.GetRawText())
                     ?? new Dictionary<string, object>();
                 bridgeBody["sourceElementId"] = sourceIds[0];
-                bridgeBody["targetElementId"] = deferred.target_element_id.Value;
+                bridgeBody["targetElementId"] = targetElementId;
                 bridgeBody["dryRun"] = false;
                 bridgeBody["verify"] = verify;
                 return JsonSerializer.Serialize(bridgeBody);

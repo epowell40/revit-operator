@@ -12,6 +12,7 @@ namespace RevitBridge.Logic.Handlers
         public sealed class Params
         {
             public long elementId { get; set; }
+            public bool allowNonTitleblock { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -33,17 +34,11 @@ namespace RevitBridge.Logic.Handlers
             var fam = symbol.Family;
             if (fam == null) throw new InvalidOperationException("FamilyInstance type has no Family.");
 
-            // Only allow titleblock instances for now (explicit scope for safety).
-            try
-            {
-                var catId = RevitBridge.Common.ElementIdCompat.GetValue(fi.Category?.Id);
-                if (catId != (int)BuiltInCategory.OST_TitleBlocks)
-                    throw new InvalidOperationException("Only titleblock instances are supported for edit-family-from-instance.");
-            }
-            catch
-            {
-                // best effort; if category read fails, continue
-            }
+            var catId = RevitBridge.Common.ElementIdCompat.GetValue(fi.Category?.Id);
+            if (!p.allowNonTitleblock && catId != (int)BuiltInCategory.OST_TitleBlocks)
+                throw new InvalidOperationException(
+                    "Only titleblock instances are supported by default. " +
+                    "Set allowNonTitleblock=true to explicitly open another loaded family.");
 
             Document? famDoc = null;
             try
@@ -63,6 +58,8 @@ namespace RevitBridge.Logic.Handlers
                 familyDocumentId = session.SessionId,
                 familyName = session.FamilyName,
                 familyId = session.FamilyId,
+                sourceCategory = fi.Category?.Name ?? "",
+                nonTitleblockExplicitlyAllowed = p.allowNonTitleblock,
                 titleblockTypeId = session.TitleblockTypeId,
                 instanceElementId = RevitBridge.Common.ElementIdCompat.GetValue(fi.Id)
             });

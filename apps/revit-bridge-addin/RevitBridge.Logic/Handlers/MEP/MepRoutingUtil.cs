@@ -368,8 +368,12 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 var exact = all.FirstOrDefault(x => x.Name.Equals(q, StringComparison.OrdinalIgnoreCase));
                 if (exact != null) return exact;
+                var exactFamily = all.FirstOrDefault(x => x.FamilyName.Equals(q, StringComparison.OrdinalIgnoreCase));
+                if (exactFamily != null) return exactFamily;
                 var contains = all.FirstOrDefault(x => x.Name.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0);
                 if (contains != null) return contains;
+                var familyContains = all.FirstOrDefault(x => x.FamilyName.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0);
+                if (familyContains != null) return familyContains;
             }
             return all.FirstOrDefault();
         }

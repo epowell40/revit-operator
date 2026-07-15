@@ -150,6 +150,54 @@ function electricalInput(): RegisteredMepObservationPackage {
   };
 }
 
+function mechanicalInput(): RegisteredMepObservationPackage {
+  const plumbing = plumbingInput();
+  return {
+    ...plumbing,
+    fixture_id: "registered-mechanical-independent-v1",
+    scope_id: "unseen-mechanical-room-gamma",
+    discipline: "mechanical",
+    native_element_references: [],
+    observations: [
+      {
+        kind: "duct_route",
+        discipline: "mechanical",
+        observation_id: "outside-air-route-random-63",
+        visibility: "clear",
+        confidence: 0.98,
+        supported_attributes: ["location", "size", "elevation", "system", "type"],
+        attribute_evidence: [
+          { attribute: "size", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "8 inch diameter label adjacent to the selected route" },
+          { attribute: "elevation", basis: "declared_heuristic", evidence_role: "registered_source_render", reference: "No elevation is shown in plan; assume 10 feet above L4 in the plenum." },
+          { attribute: "system", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "outside-air system notation on the selected route" },
+          { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "round duct graphics and diameter symbol" }
+        ],
+        service: "outside_air",
+        pixel_points: [{ x: 20, y: 80 }, { x: 80, y: 80 }],
+        duct_size: "8 inch",
+        duct_type: "Round Duct",
+        system_type: "Outside Air",
+        elevation_ft: 10
+      },
+      {
+        kind: "mechanical_equipment",
+        discipline: "mechanical",
+        observation_id: "hru-random-28",
+        visibility: "clear",
+        confidence: 0.97,
+        supported_attributes: ["location", "type"],
+        attribute_evidence: [
+          { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "HRU equipment symbol and tag at the selected pixel" }
+        ],
+        role: "heat recovery unit",
+        pixel_point: { x: 20, y: 80 },
+        elevation_ft: 0,
+        placement: { mode: "unhosted_family", family_name: "Heat Recovery Unit", type_name: "HRU" }
+      }
+    ]
+  };
+}
+
 function electricalCoverage(input: RegisteredMepObservationPackage): BoundedMepRegionCoverageV1 {
   return {
     schema_version: 1 as const,
@@ -185,6 +233,197 @@ test("registered plumbing pixels compile through existing route, placement, and 
     { x: 108, y: 202, z: 41 }
   ]);
   assert.deepEqual(result.compiled_plan.actions[1]?.expected_model_point, { x: 102, y: 202, z: 32 });
+  assert.deepEqual(result.compiled_plan.actions[1]?.dry_run_body?.instances, [{
+    x: 102,
+    y: 202,
+    z: 32,
+    coordinateMode: "absolute_model"
+  }]);
+});
+
+test("registered plumbing pixels preserve unreadable sizes and connectorless fixtures as plan-only drafting evidence", async () => {
+  const input = plumbingInput();
+  const route = input.observations[0];
+  const fixture = input.observations[1];
+  if (route?.kind !== "pipe_route" || route.geometry_mode === "native_connector_bridge"
+    || route.geometry_mode === "created_route_connector_bridge") throw new Error("route_setup_failed");
+  if (fixture?.kind !== "plumbing_fixture") throw new Error("fixture_setup_failed");
+  delete route.pipe_size;
+  route.pipe_size_policy = "unresolved_placeholder";
+  route.supported_attributes = route.supported_attributes.filter((attribute) => attribute !== "size");
+  route.attribute_evidence = route.attribute_evidence.filter((entry) => entry.attribute !== "size");
+  fixture.service_connection_mode = "plan_proximity";
+  fixture.service_route_connections = [{
+    route_observation_id: route.observation_id,
+    route_endpoint: "nearest_plan_segment",
+    maximum_plan_distance_ft: 1
+  }];
+
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.status, "ready");
+  assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.path), [
+    "/revit/mep-route-workflow",
+    "/revit/place-families"
+  ]);
+  assert.equal(result.compiled_plan.actions[0]?.apply_body?.sizePolicy, "placeholder_allowed");
+  assert.equal(result.compiled_plan.actions[0]?.apply_body?.pipeSize, undefined);
+  assert.match(result.compiled_plan.warnings.join("\n"), /one-inch drafting placeholder/i);
+  assert.match(result.usage_constraints.join("\n"), /no native connection action/i);
+});
+
+test("registered plumbing branch pixels compile an atomic tee from a shared main", async () => {
+  const input = plumbingInput();
+  input.observations.push({
+    kind: "pipe_route",
+    discipline: "plumbing",
+    observation_id: "cold-branch-random-73",
+    geometry_mode: "source_branch_tee",
+    main_route_observation_id: "cold-route-random-81",
+    visibility: "clear",
+    confidence: 0.97,
+    supported_attributes: ["location", "size", "elevation", "system", "type"],
+    attribute_evidence: [
+      { attribute: "size", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "1/2 inch branch label is legible" },
+      { attribute: "elevation", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "9 foot elevation note applies to this branch" },
+      { attribute: "system", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "cold-water line convention is visible" },
+      { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "copper pipe note applies to the branch" }
+    ],
+    service: "domestic_cold_water",
+    pixel_points: [{ x: 50, y: 80 }, { x: 50, y: 60 }],
+    pipe_size: "1/2 inch",
+    pipe_type: "Copper",
+    system_type: "Domestic Cold Water",
+    elevation_ft: 9,
+    tee_family_name: "Tee - Generic",
+    tee_type_name: "Standard"
+  });
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.status, "ready");
+  assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.action_key), [
+    "route:cold-route-random-81",
+    "place:fixture-random-42",
+    "route:cold-branch-random-73",
+    "connect:fixture-random-42:cold-route-random-81"
+  ]);
+  const branch = result.compiled_plan.actions[2]!;
+  assert.equal(branch.path, "/revit/connect-mep-branch");
+  assert.deepEqual(branch.apply_body?.branchPoints, [
+    { x: 105, y: 202, z: 41 },
+    { x: 105, y: 204, z: 41 }
+  ]);
+  assert.deepEqual(branch.deferred_body?.main_element, {
+    created_by_action: "route:cold-route-random-81",
+    output: "route_segment",
+    index: 0
+  });
+});
+
+test("registered mechanical pixels compile duct routing and equipment placement without plumbing coercion", async () => {
+  const result = await compileRegisteredMepObservations(mechanicalInput());
+  assert.equal(result.compiled_plan.status, "ready");
+  assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.path), [
+    "/revit/mep-route-workflow",
+    "/revit/place-families"
+  ]);
+  assert.equal(result.compiled_plan.actions[0]?.apply_body?.kind, "duct");
+  assert.equal(result.compiled_plan.actions[0]?.apply_body?.ductSize, "8 inch");
+  assert.equal(result.compiled_plan.actions[0]?.apply_body?.ductType, "Round Duct");
+  assert.deepEqual(result.compiled_plan.actions[0]?.apply_body?.points, [
+    { x: 102, y: 202, z: 42 },
+    { x: 108, y: 202, z: 42 }
+  ]);
+  assert.equal(result.compiled_plan.plan_elements[0]?.category, "OST_DuctCurves");
+  assert.equal(result.compiled_plan.plan_elements[1]?.category, "OST_MechanicalEquipment");
+  assert.match(result.compiled_plan.warnings.join("\n"), /elevation inferred by declared heuristic/);
+});
+
+test("registered air terminal pixels can target an explicit segment of a newly drafted duct route", async () => {
+  const input = mechanicalInput();
+  input.observations.push({
+    kind: "air_terminal",
+    discipline: "mechanical",
+    observation_id: "supply-grille-random-41",
+    visibility: "clear",
+    confidence: 0.95,
+    supported_attributes: ["location", "type", "host"],
+    attribute_evidence: [
+      { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "supply grille symbol and type note at the selected pixel" },
+      { attribute: "host", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "grille center lies on the selected outside-air route segment" }
+    ],
+    role: "supply grille",
+    pixel_point: { x: 50, y: 80 },
+    elevation_ft: 10,
+    placement: {
+      mode: "created_route_host",
+      family_name: "M_Supply Grille",
+      type_name: "16x4 Connection 8 Diameter",
+      route_observation_id: "outside-air-route-random-63",
+      route_segment_index: 0
+    }
+  });
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.status, "ready");
+  const terminalAction = result.compiled_plan.actions[2]!;
+  assert.equal(terminalAction.action_key, "place:supply-grille-random-41");
+  assert.deepEqual(terminalAction.depends_on, ["route:outside-air-route-random-63"]);
+  assert.deepEqual(terminalAction.deferred_body?.host_element, {
+    created_by_action: "route:outside-air-route-random-63",
+    output: "route_segment",
+    index: 0
+  });
+  assert.deepEqual(terminalAction.expected_model_point, { x: 105, y: 202, z: 42 });
+});
+
+test("registered air terminal branch pixels compile a tee branch and terminal connection without hidden geometry", async () => {
+  const input = mechanicalInput();
+  input.observations.push({
+    kind: "air_terminal",
+    discipline: "mechanical",
+    observation_id: "supply-grille-branch-random-17",
+    visibility: "clear",
+    confidence: 0.95,
+    supported_attributes: ["location", "type", "host"],
+    attribute_evidence: [
+      { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "supply grille symbol and keyed type are legible" },
+      { attribute: "host", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "branch centerline visibly joins the selected duct segment and grille" }
+    ],
+    role: "supply grille",
+    pixel_point: { x: 50, y: 60 },
+    elevation_ft: 10,
+    placement: {
+      mode: "created_route_branch",
+      family_name: "M_Supply Grille",
+      type_name: "16x4 Connection 8 Diameter",
+      route_observation_id: "outside-air-route-random-63",
+      route_segment_index: 0,
+      pixel_branch_points: [{ x: 50, y: 80 }, { x: 50, y: 60 }],
+      branch_size: "16x4",
+      tee_family_name: "Rectangular Tee",
+      tee_type_name: "Standard"
+    }
+  });
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.status, "ready");
+  assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.action_key), [
+    "route:outside-air-route-random-63",
+    "place:hru-random-28",
+    "place:supply-grille-branch-random-17",
+    "branch:supply-grille-branch-random-17",
+    "connect:supply-grille-branch-random-17"
+  ]);
+  const branch = result.compiled_plan.actions[3]!;
+  assert.deepEqual(branch.apply_body?.branchPoints, [
+    { x: 105, y: 202, z: 42 },
+    { x: 105, y: 204, z: 42 }
+  ]);
+  assert.deepEqual(result.converted_package.observations[2]?.kind === "air_terminal"
+    && result.converted_package.observations[2].placement.mode === "created_route_branch"
+    ? result.converted_package.observations[2].placement.branch_points
+    : null, [
+    { x: 5, y: 2 },
+    { x: 5, y: 4 }
+  ]);
+  assert.equal(result.compiled_plan.actions[4]?.path, "/revit/connect-mep-elements");
 });
 
 test("registered fixture pixels compose with concealed native connector bridge geometry", async () => {
@@ -242,6 +481,59 @@ test("registered fixture pixels compose with concealed native connector bridge g
   assert.deepEqual(result.compiled_plan.actions[0]?.expected_model_point, { x: 102, y: 202, z: 32 });
   assert.equal(result.compiled_plan.actions[1]?.deferred_body?.target_element_id, 701);
   assert.match(result.usage_constraints.join("\n"), /plan geometry/i);
+});
+
+test("registered fixture pixels compose with a concealed bridge to a created route endpoint", async () => {
+  const input = plumbingInput();
+  const nativeHash = "d".repeat(64);
+  input.visible_evidence.push({ role: "native_model_inventory", sha256: nativeHash });
+  input.observations.splice(1, 0, {
+    kind: "pipe_route",
+    discipline: "plumbing",
+    observation_id: "created-route-cold-bridge-19",
+    evidence_role: "native_model_inventory",
+    visibility: "occluded",
+    confidence: 0.98,
+    supported_attributes: ["location", "size", "elevation", "system", "type"],
+    attribute_evidence: [
+      { attribute: "location", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "runtime fixture and created-route connectors" },
+      { attribute: "size", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "matching native half-inch connectors" },
+      { attribute: "elevation", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "runtime connector elevations" },
+      { attribute: "system", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "native Domestic Cold Water connectors" },
+      { attribute: "type", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "project pipe type" }
+    ],
+    service: "domestic_cold_water",
+    geometry_mode: "created_route_connector_bridge",
+    source_fixture_observation_id: "fixture-random-42",
+    target_route_observation_id: "cold-route-random-81",
+    target_route_endpoint: "end",
+    maximum_length_ft: 3,
+    pipe_size: "1/2 inch",
+    pipe_type: "Copper",
+    system_type: "Domestic Cold Water"
+  });
+  const fixture = input.observations[2];
+  if (fixture?.kind !== "plumbing_fixture") throw new Error("fixture_setup_failed");
+  fixture.service_route_connections = [{ route_observation_id: "created-route-cold-bridge-19", route_endpoint: "native_source" }];
+  fixture.service_boundary = {
+    basis: "native_model_precedent",
+    evidence_role: "native_model_inventory",
+    required_services: ["domestic_cold_water"],
+    prohibited_services: ["domestic_hot_water"]
+  };
+
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.status, "ready");
+  assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.path), [
+    "/revit/mep-route-workflow",
+    "/revit/place-families",
+    "/revit/create-pipe-between-connectors"
+  ]);
+  assert.deepEqual(result.compiled_plan.actions[2]?.deferred_body?.target_element, {
+    created_by_action: "route:cold-route-random-81",
+    output: "route_end"
+  });
+  assert.match(result.usage_constraints.join("\n"), /created_route_connector_bridge/);
 });
 
 test("registered downstream vent pixels compile to tee creation plus exact native fixture audit", async () => {
@@ -467,11 +759,13 @@ test("registered electrical equipment pixels compile as native electrical equipm
     observation_id: "equipment-random-31",
     visibility: "clear",
     confidence: 0.96,
-    supported_attributes: ["location", "type"],
+    supported_attributes: ["location", "type", "panel name"],
     attribute_evidence: [
-      { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "panelboard symbol and tag are legible at the selected pixel" }
+      { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "panelboard symbol and tag are legible at the selected pixel" },
+      { attribute: "panel name", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "P431 panel tag is legible at the selected pixel" }
     ],
     role: "panelboard",
+    panel_name: "P431",
     pixel_point: { x: 45, y: 55 },
     elevation_ft: 4,
     placement: { mode: "unhosted_family", family_name: "Panelboard A", type_name: "Panel B" }
@@ -491,6 +785,95 @@ test("registered electrical equipment pixels compile as native electrical equipm
   assert.equal(result.compiled_plan.plan_elements[0]?.category, "OST_ElectricalEquipment");
   assert.equal(result.converted_package.observations[0]?.kind, "electrical_equipment");
   assert.equal(result.compiled_plan.actions[0]?.path, "/revit/place-families");
+  assert.deepEqual(result.compiled_plan.actions[0]?.apply_body?.instances, [{
+    x: 104.5,
+    y: 204.5,
+    z: 36,
+    coordinateMode: "absolute_model",
+    parameters: { "Panel Name": "P431" }
+  }]);
+});
+
+test("registered electrical pixels compile an exact loaded family type onto a hash-bound native wall host", async () => {
+  const input = electricalInput();
+  const hostHash = "b".repeat(64);
+  input.visible_evidence.push({ role: "native_model_inventory", sha256: hostHash });
+  input.native_element_references = [{
+    reference_key: "room404-west-wall",
+    element_id: 1313708,
+    category: "OST_Walls",
+    role: "Room 404 west wall host",
+    evidence_role: "native_model_inventory",
+    evidence_sha256: hostHash
+  }];
+  const device = input.observations[0];
+  if (!device || device.kind !== "electrical_device") throw new Error("fixture_setup_failed");
+  device.supported_attributes.push("host");
+  device.attribute_evidence.push({
+    attribute: "host",
+    basis: "native_model_precedent",
+    evidence_role: "native_model_inventory",
+    reference: "Exact Room 404 wall host resolved from the active target model."
+  });
+  device.supported_attributes.push("spatial membership");
+  device.attribute_evidence.push({
+    attribute: "spatial membership",
+    basis: "legible_source_evidence",
+    evidence_role: "registered_source_render",
+    reference: "The device symbol is visibly outside the target room boundary but inside the registered crop."
+  });
+  device.placement = {
+    mode: "hosted_family_symbol",
+    family_name: "Receptacle A",
+    type_name: "Duplex B",
+    host_reference_key: "room404-west-wall",
+    host_category: "OST_Walls",
+    require_room_membership_validation: false
+  };
+
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.status, "ready");
+  assert.equal(result.compiled_plan.actions[0]?.path, "/revit/place-family-instance-on-host");
+  assert.equal(result.compiled_plan.actions[0]?.dry_run_body?.hostElementId, 1313708);
+  assert.equal(result.compiled_plan.actions[0]?.dry_run_body?.familyName, "Receptacle A");
+  assert.equal(Object.hasOwn(result.compiled_plan.actions[0]?.dry_run_body ?? {}, "sourceElementId"), false);
+  assert.equal(Object.hasOwn(result.compiled_plan.actions[0]?.dry_run_body ?? {}, "roomNumber"), false);
+});
+
+test("registered hosted observations cannot disable room validation without explicit spatial-membership evidence", async () => {
+  const input = electricalInput();
+  const hostHash = "b".repeat(64);
+  input.visible_evidence.push({ role: "native_model_inventory", sha256: hostHash });
+  input.native_element_references = [{
+    reference_key: "room404-west-wall",
+    element_id: 1313708,
+    category: "OST_Walls",
+    role: "Room 404 west wall host",
+    evidence_role: "native_model_inventory",
+    evidence_sha256: hostHash
+  }];
+  const device = input.observations[0];
+  if (!device || device.kind !== "electrical_device") throw new Error("fixture_setup_failed");
+  device.supported_attributes.push("host");
+  device.attribute_evidence.push({
+    attribute: "host",
+    basis: "native_model_precedent",
+    evidence_role: "native_model_inventory",
+    reference: "Exact Room 404 wall host resolved from the active target model."
+  });
+  device.placement = {
+    mode: "hosted_family_symbol",
+    family_name: "Receptacle A",
+    type_name: "Duplex B",
+    host_reference_key: "room404-west-wall",
+    host_category: "OST_Walls",
+    require_room_membership_validation: false
+  };
+
+  await assert.rejects(
+    compileRegisteredMepObservations(input),
+    /adjacent_scope_requires_spatial_membership_support/
+  );
 });
 
 test("registered MEP observations bind a complete bounded-region coverage receipt", async () => {
@@ -603,13 +986,17 @@ test("hash and dimension mismatches fail before any MEP plan is compiled", async
 test("out-of-frame, degenerate, duplicate, and wrong-discipline observations fail closed", async () => {
   const outside = plumbingInput();
   const outsideRoute = outside.observations[0];
-  if (outsideRoute?.kind !== "pipe_route" || outsideRoute.geometry_mode === "native_connector_bridge") throw new Error("fixture_setup_failed");
+  if (outsideRoute?.kind !== "pipe_route"
+    || outsideRoute.geometry_mode === "native_connector_bridge"
+    || outsideRoute.geometry_mode === "created_route_connector_bridge") throw new Error("fixture_setup_failed");
   outsideRoute.pixel_points[1] = { x: 101, y: 80 };
   await assert.rejects(() => compileRegisteredMepObservations(outside), /outside_registered_render/);
 
   const degenerate = plumbingInput();
   const degenerateRoute = degenerate.observations[0];
-  if (degenerateRoute?.kind !== "pipe_route" || degenerateRoute.geometry_mode === "native_connector_bridge") throw new Error("fixture_setup_failed");
+  if (degenerateRoute?.kind !== "pipe_route"
+    || degenerateRoute.geometry_mode === "native_connector_bridge"
+    || degenerateRoute.geometry_mode === "created_route_connector_bridge") throw new Error("fixture_setup_failed");
   degenerateRoute.pixel_points[1] = { ...degenerateRoute.pixel_points[0]! };
   await assert.rejects(() => compileRegisteredMepObservations(degenerate), /route_is_degenerate/);
 

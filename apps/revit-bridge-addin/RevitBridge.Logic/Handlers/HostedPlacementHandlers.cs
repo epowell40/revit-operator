@@ -155,6 +155,24 @@ namespace RevitBridge.Logic.Handlers
         public double faceDistanceFt { get; set; }
     }
 
+    public sealed class ElectricalVoltageDefinitionRequest
+    {
+        public string? name { get; set; }
+        public double actualValue { get; set; }
+        public double minValue { get; set; }
+        public double maxValue { get; set; }
+    }
+
+    public sealed class ElectricalDistributionSystemDefinitionRequest
+    {
+        public string? name { get; set; }
+        public string? electricalPhase { get; set; }
+        public string? phaseConfiguration { get; set; }
+        public int numWires { get; set; }
+        public ElectricalVoltageDefinitionRequest? voltageLineToLine { get; set; }
+        public ElectricalVoltageDefinitionRequest? voltageLineToGround { get; set; }
+    }
+
     internal static class HostedPlacementUtil
     {
         internal sealed class PlacementValidationSummary
@@ -1282,8 +1300,16 @@ namespace RevitBridge.Logic.Handlers
             List<string> warnings,
             string? sourceStableReferencePattern = null)
         {
-            if (host is not RevitLinkInstance link || roomWall?.linkedElementId == null || roomWall.linkedElementId.Value <= 0)
-                return null;
+            if (host is not RevitLinkInstance link)
+            {
+                return TryResolveNativeFaceHostedPlacementReference(
+                    host,
+                    worldPoint,
+                    preferredReferenceDirection,
+                    warnings
+                );
+            }
+            if (roomWall?.linkedElementId == null || roomWall.linkedElementId.Value <= 0) return null;
             var preferredDirection = preferredReferenceDirection != null && preferredReferenceDirection.GetLength() > 1e-9
                 ? preferredReferenceDirection.Normalize()
                 : roomWall.tangent != null && roomWall.tangent.GetLength() > 1e-9
@@ -1324,6 +1350,96 @@ namespace RevitBridge.Logic.Handlers
                 basis = "linked_face_reference",
                 linkedElementId = roomWall.linkedElementId,
                 faceDistanceFt = resolution.DistanceFt
+            };
+        }
+
+        private static FaceHostedPlacementReference? TryResolveNativeFaceHostedPlacementReference(
+            Element host,
+            XYZ worldPoint,
+            XYZ? preferredReferenceDirection,
+            List<string> warnings)
+        {
+            var referenceView = LinkedFaceReferenceUtil.FindReferenceView(host.Document);
+            if (referenceView == null)
+            {
+                warnings.Add("Native face placement requires a non-template 3D reference view, but none was available.");
+                return null;
+            }
+
+            var directions = new[]
+            {
+                XYZ.BasisX, XYZ.BasisX.Negate(),
+                XYZ.BasisY, XYZ.BasisY.Negate(),
+                XYZ.BasisZ, XYZ.BasisZ.Negate()
+            };
+            Reference? bestReference = null;
+            XYZ? bestPoint = null;
+            XYZ? bestNormal = null;
+            var bestDistance = double.MaxValue;
+            var filter = new ElementIdSetFilter(new List<ElementId> { host.Id });
+            var intersector = new ReferenceIntersector(filter, FindReferenceTarget.Face, referenceView)
+            {
+                FindReferencesInRevitLinks = false
+            };
+
+            const double rayOffsetFt = 4.0;
+            foreach (var outward in directions)
+            {
+                var origin = worldPoint + outward.Multiply(rayOffsetFt);
+                var hit = intersector.FindNearest(origin, outward.Negate());
+                var reference = hit?.GetReference();
+                var point = reference?.GlobalPoint;
+                if (reference == null || point == null || reference.ElementId != host.Id) continue;
+                var distance = point.DistanceTo(worldPoint);
+                if (distance > 1.25 || distance >= bestDistance) continue;
+
+                XYZ? normal = null;
+                try
+                {
+                    if (host.GetGeometryObjectFromReference(reference) is Face face)
+                    {
+                        normal = face.ComputeNormal(reference.UVPoint);
+                    }
+                }
+                catch { }
+                if (host is Wall && normal != null && Math.Abs(normal.Normalize().DotProduct(XYZ.BasisZ)) > 0.25)
+                    continue;
+
+                bestReference = reference;
+                bestPoint = point;
+                bestNormal = normal;
+                bestDistance = distance;
+            }
+
+            if (bestReference == null || bestPoint == null)
+            {
+                warnings.Add($"Native face placement could not resolve a compatible face on element {ElementIdCompat.GetValue(host.Id)} within 1.25 ft of the requested point.");
+                return null;
+            }
+
+            var preferred = preferredReferenceDirection != null && preferredReferenceDirection.GetLength() > 1e-9
+                ? preferredReferenceDirection.Normalize()
+                : XYZ.BasisX;
+            var normalVector = bestNormal != null && bestNormal.GetLength() > 1e-9
+                ? bestNormal.Normalize()
+                : XYZ.BasisZ;
+            var referenceDirection = preferred - normalVector.Multiply(preferred.DotProduct(normalVector));
+            if (referenceDirection.GetLength() <= 1e-9)
+            {
+                referenceDirection = XYZ.BasisZ.CrossProduct(normalVector);
+                if (referenceDirection.GetLength() <= 1e-9)
+                    referenceDirection = XYZ.BasisX.CrossProduct(normalVector);
+            }
+            referenceDirection = referenceDirection.Normalize();
+
+            return new FaceHostedPlacementReference
+            {
+                faceReference = bestReference,
+                placementPoint = bestPoint,
+                referenceDirection = referenceDirection,
+                basis = "native_face_reference",
+                linkedElementId = null,
+                faceDistanceFt = bestDistance
             };
         }
 
@@ -1686,6 +1802,246 @@ namespace RevitBridge.Logic.Handlers
                     warnings.Add($"Failed to set parameter '{name}': {ex.Message}");
                 }
             }
+        }
+
+        internal static object? ApplyAndAuditElectricalDistributionSystem(
+            Document doc,
+            FamilyInstance instance,
+            string? requestedName)
+        {
+            if (instance == null || instance.Category?.BuiltInCategory != BuiltInCategory.OST_ElectricalEquipment)
+            {
+                if (!string.IsNullOrWhiteSpace(requestedName))
+                    throw new InvalidOperationException("distributionSystemName requires an electrical-equipment family instance.");
+                return null;
+            }
+
+            var settings = ElectricalSetting.GetElectricalSettings(doc)
+                ?? throw new InvalidOperationException("Electrical settings are unavailable in the active document.");
+            var all = new List<DistributionSysType>();
+            foreach (DistributionSysType candidate in settings.DistributionSysTypes)
+            {
+                if (candidate != null) all.Add(candidate);
+            }
+
+            var equipment = instance.MEPModel as ElectricalEquipment
+                ?? throw new InvalidOperationException("electrical_equipment_mep_model_unavailable");
+            var compatible = all.Where(candidate =>
+            {
+                try { return equipment.IsValidDistributionSystem(candidate); }
+                catch { return false; }
+            }).OrderBy(candidate => candidate.Name, StringComparer.OrdinalIgnoreCase).ToList();
+
+            var requested = (requestedName ?? "").Trim();
+            if (requested.Length > 0)
+            {
+                var exact = all.Where(candidate => string.Equals(candidate.Name, requested, StringComparison.OrdinalIgnoreCase)).ToList();
+                if (exact.Count != 1)
+                    throw new InvalidOperationException($"distribution_system_name_not_unique:{requested}:matches={exact.Count}");
+                if (!compatible.Any(candidate => candidate.Id == exact[0].Id))
+                {
+                    var compatibleNames = compatible.Count == 0 ? "none" : string.Join(", ", compatible.Select(candidate => candidate.Name));
+                    throw new InvalidOperationException($"distribution_system_not_compatible:{requested}:compatible={compatibleNames}");
+                }
+                equipment.DistributionSystem = exact[0];
+                doc.Regenerate();
+                if (equipment.DistributionSystem == null || equipment.DistributionSystem.Id != exact[0].Id)
+                    throw new InvalidOperationException($"distribution_system_assignment_not_verified:{requested}");
+            }
+
+            var assigned = equipment.DistributionSystem;
+            return new
+            {
+                requestedName = requested.Length > 0 ? requested : null,
+                assigned = assigned == null ? null : new
+                {
+                    id = ElementIdCompat.GetValue(assigned.Id),
+                    name = assigned.Name,
+                    electricalPhase = assigned.ElectricalPhase.ToString(),
+                    phaseConfiguration = assigned.ElectricalPhaseConfiguration.ToString(),
+                    numWires = assigned.NumWires,
+                    voltageLineToLine = assigned.VoltageLineToLine?.ActualValue,
+                    voltageLineToGround = assigned.VoltageLineToGround?.ActualValue,
+                    voltageLineToLineDefinition = assigned.VoltageLineToLine == null ? null : new
+                    {
+                        id = ElementIdCompat.GetValue(assigned.VoltageLineToLine.Id),
+                        name = assigned.VoltageLineToLine.Name,
+                        actualValue = assigned.VoltageLineToLine.ActualValue,
+                        minValue = assigned.VoltageLineToLine.MinValue,
+                        maxValue = assigned.VoltageLineToLine.MaxValue
+                    },
+                    voltageLineToGroundDefinition = assigned.VoltageLineToGround == null ? null : new
+                    {
+                        id = ElementIdCompat.GetValue(assigned.VoltageLineToGround.Id),
+                        name = assigned.VoltageLineToGround.Name,
+                        actualValue = assigned.VoltageLineToGround.ActualValue,
+                        minValue = assigned.VoltageLineToGround.MinValue,
+                        maxValue = assigned.VoltageLineToGround.MaxValue
+                    }
+                },
+                available = all.OrderBy(candidate => candidate.Name, StringComparer.OrdinalIgnoreCase).Select(candidate => new
+                {
+                    id = ElementIdCompat.GetValue(candidate.Id),
+                    name = candidate.Name,
+                    electricalPhase = candidate.ElectricalPhase.ToString(),
+                    phaseConfiguration = candidate.ElectricalPhaseConfiguration.ToString(),
+                    numWires = candidate.NumWires,
+                    voltageLineToLine = candidate.VoltageLineToLine?.ActualValue,
+                    voltageLineToGround = candidate.VoltageLineToGround?.ActualValue,
+                    voltageLineToLineDefinition = candidate.VoltageLineToLine == null ? null : new
+                    {
+                        id = ElementIdCompat.GetValue(candidate.VoltageLineToLine.Id),
+                        name = candidate.VoltageLineToLine.Name,
+                        actualValue = candidate.VoltageLineToLine.ActualValue,
+                        minValue = candidate.VoltageLineToLine.MinValue,
+                        maxValue = candidate.VoltageLineToLine.MaxValue
+                    },
+                    voltageLineToGroundDefinition = candidate.VoltageLineToGround == null ? null : new
+                    {
+                        id = ElementIdCompat.GetValue(candidate.VoltageLineToGround.Id),
+                        name = candidate.VoltageLineToGround.Name,
+                        actualValue = candidate.VoltageLineToGround.ActualValue,
+                        minValue = candidate.VoltageLineToGround.MinValue,
+                        maxValue = candidate.VoltageLineToGround.MaxValue
+                    }
+                }).ToList(),
+                compatible = compatible.Select(candidate => new
+                {
+                    id = ElementIdCompat.GetValue(candidate.Id),
+                    name = candidate.Name,
+                    electricalPhase = candidate.ElectricalPhase.ToString(),
+                    phaseConfiguration = candidate.ElectricalPhaseConfiguration.ToString(),
+                    numWires = candidate.NumWires,
+                    voltageLineToLine = candidate.VoltageLineToLine?.ActualValue,
+                    voltageLineToGround = candidate.VoltageLineToGround?.ActualValue,
+                    voltageLineToLineDefinition = candidate.VoltageLineToLine == null ? null : new
+                    {
+                        id = ElementIdCompat.GetValue(candidate.VoltageLineToLine.Id),
+                        name = candidate.VoltageLineToLine.Name,
+                        actualValue = candidate.VoltageLineToLine.ActualValue,
+                        minValue = candidate.VoltageLineToLine.MinValue,
+                        maxValue = candidate.VoltageLineToLine.MaxValue
+                    },
+                    voltageLineToGroundDefinition = candidate.VoltageLineToGround == null ? null : new
+                    {
+                        id = ElementIdCompat.GetValue(candidate.VoltageLineToGround.Id),
+                        name = candidate.VoltageLineToGround.Name,
+                        actualValue = candidate.VoltageLineToGround.ActualValue,
+                        minValue = candidate.VoltageLineToGround.MinValue,
+                        maxValue = candidate.VoltageLineToGround.MaxValue
+                    }
+                }).ToList()
+            };
+        }
+
+        internal static object? EnsureElectricalDistributionSystem(
+            Document doc,
+            ElectricalDistributionSystemDefinitionRequest? request)
+        {
+            if (request == null) return null;
+            var requestedName = (request.name ?? "").Trim();
+            if (requestedName.Length == 0) throw new InvalidOperationException("ensureDistributionSystem.name is required.");
+            if (!Enum.TryParse(request.electricalPhase ?? "", true, out ElectricalPhase phase))
+                throw new InvalidOperationException($"invalid_electrical_phase:{request.electricalPhase}");
+            if (!Enum.TryParse(request.phaseConfiguration ?? "", true, out ElectricalPhaseConfiguration phaseConfiguration))
+                throw new InvalidOperationException($"invalid_electrical_phase_configuration:{request.phaseConfiguration}");
+            if (request.numWires < 2 || request.numWires > 4)
+                throw new InvalidOperationException($"invalid_distribution_system_wire_count:{request.numWires}");
+
+            var settings = ElectricalSetting.GetElectricalSettings(doc)
+                ?? throw new InvalidOperationException("Electrical settings are unavailable in the active document.");
+            var createdVoltageTypeNames = new List<string>();
+
+            VoltageType? ResolveVoltage(ElectricalVoltageDefinitionRequest? definition, string role)
+            {
+                if (definition == null) return null;
+                var name = (definition.name ?? "").Trim();
+                if (name.Length == 0) throw new InvalidOperationException($"ensureDistributionSystem.{role}.name is required.");
+                if (definition.minValue > definition.actualValue || definition.actualValue > definition.maxValue)
+                    throw new InvalidOperationException($"invalid_voltage_range:{role}:{definition.minValue}:{definition.actualValue}:{definition.maxValue}");
+
+                var matches = new List<VoltageType>();
+                foreach (VoltageType voltageType in settings.VoltageTypes)
+                {
+                    if (voltageType != null && string.Equals(voltageType.Name, name, StringComparison.OrdinalIgnoreCase))
+                        matches.Add(voltageType);
+                }
+                if (matches.Count > 1) throw new InvalidOperationException($"voltage_type_name_not_unique:{name}:matches={matches.Count}");
+                if (matches.Count == 1)
+                {
+                    var existing = matches[0];
+                    if (Math.Abs(existing.ActualValue - definition.actualValue) > 1e-6 ||
+                        Math.Abs(existing.MinValue - definition.minValue) > 1e-6 ||
+                        Math.Abs(existing.MaxValue - definition.maxValue) > 1e-6)
+                    {
+                        throw new InvalidOperationException($"voltage_type_definition_mismatch:{name}");
+                    }
+                    return existing;
+                }
+
+                var created = settings.AddVoltageType(name, definition.actualValue, definition.minValue, definition.maxValue);
+                createdVoltageTypeNames.Add(name);
+                return created;
+            }
+
+            var voltageLineToLine = ResolveVoltage(request.voltageLineToLine, "voltageLineToLine");
+            var voltageLineToGround = ResolveVoltage(request.voltageLineToGround, "voltageLineToGround");
+            var distributionMatches = new List<DistributionSysType>();
+            foreach (DistributionSysType candidate in settings.DistributionSysTypes)
+            {
+                if (candidate != null && string.Equals(candidate.Name, requestedName, StringComparison.OrdinalIgnoreCase))
+                    distributionMatches.Add(candidate);
+            }
+            if (distributionMatches.Count > 1)
+                throw new InvalidOperationException($"distribution_system_name_not_unique:{requestedName}:matches={distributionMatches.Count}");
+
+            var createdDistributionSystem = false;
+            DistributionSysType distributionSystem;
+            if (distributionMatches.Count == 1)
+            {
+                distributionSystem = distributionMatches[0];
+                var definitionMatches = distributionSystem.ElectricalPhase == phase &&
+                    distributionSystem.ElectricalPhaseConfiguration == phaseConfiguration &&
+                    distributionSystem.NumWires == request.numWires &&
+                    (voltageLineToLine == null
+                        ? distributionSystem.VoltageLineToLine == null
+                        : distributionSystem.VoltageLineToLine?.Id == voltageLineToLine.Id) &&
+                    (voltageLineToGround == null
+                        ? distributionSystem.VoltageLineToGround == null
+                        : distributionSystem.VoltageLineToGround?.Id == voltageLineToGround.Id);
+                if (!definitionMatches)
+                    throw new InvalidOperationException($"distribution_system_definition_mismatch:{requestedName}");
+            }
+            else
+            {
+                distributionSystem = settings.AddDistributionSysType(
+                    requestedName,
+                    phase,
+                    phaseConfiguration,
+                    request.numWires,
+                    voltageLineToLine,
+                    voltageLineToGround);
+                createdDistributionSystem = true;
+            }
+
+            doc.Regenerate();
+            return new
+            {
+                requestedName,
+                createdDistributionSystem,
+                createdVoltageTypeNames,
+                verified = distributionSystem != null && string.Equals(distributionSystem.Name, requestedName, StringComparison.OrdinalIgnoreCase),
+                distributionSystem = new
+                {
+                    id = ElementIdCompat.GetValue(distributionSystem.Id),
+                    name = distributionSystem.Name,
+                    electricalPhase = distributionSystem.ElectricalPhase.ToString(),
+                    phaseConfiguration = distributionSystem.ElectricalPhaseConfiguration.ToString(),
+                    numWires = distributionSystem.NumWires,
+                    voltageLineToLine = distributionSystem.VoltageLineToLine?.ActualValue,
+                    voltageLineToGround = distributionSystem.VoltageLineToGround?.ActualValue
+                }
+            };
         }
 
         internal static bool TryMatchElectricalCircuitFromSource(
@@ -2621,6 +2977,8 @@ namespace RevitBridge.Logic.Handlers
             public bool requireElectricalCircuitMatch { get; set; } = false;
             public List<string>? parameterNamesToCopy { get; set; }
             public Dictionary<string, string>? parameterOverrides { get; set; }
+            public string? distributionSystemName { get; set; }
+            public ElectricalDistributionSystemDefinitionRequest? ensureDistributionSystem { get; set; }
             public bool dryRun { get; set; } = true;
             public bool includePreviewImage { get; set; } = true;
             public long? previewViewId { get; set; }
@@ -2716,12 +3074,14 @@ namespace RevitBridge.Logic.Handlers
                 warnings,
                 sourceHostFaceStableReference
             );
-            if (HostedPlacementUtil.RequiresLinkedFaceHostedPlacement(host, roomWall) && facePlacement == null)
+            var requiresFaceHostedPlacement = HostedPlacementUtil.RequiresLinkedFaceHostedPlacement(host, roomWall)
+                || symbol.Family.FamilyPlacementType == FamilyPlacementType.WorkPlaneBased;
+            if (requiresFaceHostedPlacement && facePlacement == null)
             {
                 var resolutionDetail = warnings.LastOrDefault(value => value.StartsWith("Linked face placement", StringComparison.OrdinalIgnoreCase));
                 throw new InvalidOperationException(
-                    $"Linked-wall hosted placement requires a resolved face reference for linked element {roomWall?.linkedElementId}. " +
-                    "Refusing to fall back to generic RevitLinkInstance host placement because Revit can create an unhosted/off-room device." +
+                    $"Face-hosted placement requires a resolved face reference for host {ElementIdCompat.GetValue(host.Id)}. " +
+                    "Refusing to fall back to generic host placement because Revit can create an unhosted/off-room device." +
                     (string.IsNullOrWhiteSpace(resolutionDetail) ? string.Empty : $" Detail: {resolutionDetail}")
                 );
             }
@@ -2734,12 +3094,15 @@ namespace RevitBridge.Logic.Handlers
             HostedPlacementUtil.PlacementValidationSummary? placementValidation = null;
             var failures = new List<CapturedFailure>();
             string? transactionStatus = null;
+            object? electricalDistributionSystem = null;
+            object? electricalDistributionSystemPreparation = null;
             var sourceElectricalCircuit = sourceElement is FamilyInstance sourceFamilyInstance
                 ? HostedPlacementUtil.BuildElectricalCircuitAuditPayload(sourceFamilyInstance)
                 : null;
 
             void CreateOne()
             {
+                electricalDistributionSystemPreparation = HostedPlacementUtil.EnsureElectricalDistributionSystem(doc, p.ensureDistributionSystem);
                 if (!symbol.IsActive)
                 {
                     symbol.Activate();
@@ -2751,6 +3114,15 @@ namespace RevitBridge.Logic.Handlers
                     : doc.Create.NewFamilyInstance(apiPoint, symbol, host, level, StructuralType.NonStructural);
                 if (sourceElement != null) HostedPlacementUtil.CopyParameters(sourceElement, created, p.parameterNamesToCopy, warnings);
                 HostedPlacementUtil.ApplyParameterValues(created, p.parameterOverrides, warnings);
+                var requestedDistributionSystemName = !string.IsNullOrWhiteSpace(p.distributionSystemName)
+                    ? p.distributionSystemName
+                    : p.ensureDistributionSystem?.name;
+                if (!string.IsNullOrWhiteSpace(p.distributionSystemName) && p.ensureDistributionSystem != null &&
+                    !string.Equals(p.distributionSystemName.Trim(), (p.ensureDistributionSystem.name ?? "").Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException("distributionSystemName must match ensureDistributionSystem.name when both are provided.");
+                }
+                electricalDistributionSystem = HostedPlacementUtil.ApplyAndAuditElectricalDistributionSystem(doc, created, requestedDistributionSystemName);
                 var matchOrientation = p.matchOrientationFromSource ?? true;
                 // Face-hosted creation already uses the resolved reference direction. Rotating the
                 // new instance again can make Revit reject an otherwise valid linked-face placement.
@@ -2857,6 +3229,8 @@ namespace RevitBridge.Logic.Handlers
                     },
                     hostLocalFrame = HostedPlacementUtil.BuildHostLocalFramePayload(HostedPlacementUtil.BuildHostLocalFrameData(host, roomWall, finalPoint), orientationSource),
                     placementValidation,
+                    electricalDistributionSystemPreparation,
+                    electricalDistributionSystem,
                     preview = previewPath != null ? new { path = previewPath, widthPx = previewWidth, heightPx = previewHeight } : null,
                     warnings
                 });
@@ -2964,6 +3338,8 @@ namespace RevitBridge.Logic.Handlers
                 transactionStatus,
                 failures,
                 electricalCircuit = HostedPlacementUtil.BuildElectricalCircuitAuditPayload(createdFamilyInstance),
+                electricalDistributionSystemPreparation,
+                electricalDistributionSystem,
                 preview = previewPath != null ? new { path = previewPath, widthPx = previewWidth, heightPx = previewHeight } : null,
                 warnings
             });

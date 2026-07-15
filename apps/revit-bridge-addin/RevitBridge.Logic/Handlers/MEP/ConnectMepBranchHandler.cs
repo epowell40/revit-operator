@@ -38,6 +38,10 @@ namespace RevitBridge.Logic.Handlers.MEP
             public double focusPaddingFt { get; set; } = 4.0;
             public string? takeoffFamilyName { get; set; }
             public string? takeoffTypeName { get; set; }
+            public string? teeFamilyName { get; set; }
+            public string? teeTypeName { get; set; }
+            public string? transitionFamilyName { get; set; }
+            public string? transitionTypeName { get; set; }
             public long? existingBranchAnchorElementId { get; set; }
         }
 
@@ -206,6 +210,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 && requestedConnectionMode == "tap"
                 && pipeTapHasExplicitTakeoffPreference;
             var feasibleSplitTee = splitPrecheck.ApplySupported
+                && requestedConnectionMode != "tap"
                 && retainedAnchorModeSupported
                 && (!existingBranchAnchorPlan.Requested || existingBranchAnchorPlan.ApplySupported);
             var status = p.dryRun
@@ -287,7 +292,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                             }
                             else
                             {
-                                var ductTypeId = main is Duct mainDuct ? mainDuct.DuctType.Id : (MepRoutingUtil.FindDuctType(doc, null)?.Id ?? ElementId.InvalidElementId);
+                                var fallbackDuctTypeId = main is Duct mainDuct ? mainDuct.DuctType.Id : (MepRoutingUtil.FindDuctType(doc, null)?.Id ?? ElementId.InvalidElementId);
+                                var ductTypeId = ResolveDuctTypeIdForSize(doc, size, fallbackDuctTypeId);
                                 var systemTypeId = ResolveMainSystemTypeId(doc, main, "duct");
                                 var levelId = ResolveLevelId(doc, main, ctx.Level, a.Z);
                                 if (ductTypeId == ElementId.InvalidElementId || systemTypeId == ElementId.InvalidElementId || levelId == ElementId.InvalidElementId)
@@ -328,7 +334,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                             var b = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(branchElements[i + 1]), shared, 0.25);
                             var jointPlan = branchJointPlans.FirstOrDefault(j => j.JointIndex == i);
                             var expectTransition = string.Equals(jointPlan?.ExpectedFitting, "transition", StringComparison.OrdinalIgnoreCase);
-                            var ok = MepRoutingUtil.TryCreateTransitionElbowOrConnect(doc, a, b, expectTransition, out var fittingId, out var method, out var err);
+                            var ok = TryCreateTransitionElbowOrConnect(doc, doc.GetElement(main.GetTypeId()) as ElementType, kind, a, b, expectTransition,
+                                p.transitionFamilyName, p.transitionTypeName, out var fittingId, out var method, out var err);
                             if (fittingId.HasValue) createdFittingIds.Add(fittingId.Value);
                             connectionAttempts.Add(new
                             {
@@ -465,7 +472,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                             }
                             else
                             {
-                                var duct = Duct.Create(doc, systemTypeId, curveTypeId, levelId, a, b);
+                                var ductTypeId = ResolveDuctTypeIdForSize(doc, size, curveTypeId);
+                                var duct = Duct.Create(doc, systemTypeId, ductTypeId, levelId, a, b);
                                 MepRoutingUtil.TryApplyDuctSize(duct, size, out _);
                                 curve = duct;
                             }
@@ -502,7 +510,18 @@ namespace RevitBridge.Logic.Handlers.MEP
                         {
                             teeBranchConnector = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(branchElements[0]), splitPrecheck.SplitPoint, 0.25);
                         }
-                        var teeOk = TryCreateTeeFitting(doc, mainA, mainB, teeBranchConnector, out var teeFittingId, out var teeMethod, out var teeError);
+                        var teeOk = TryCreateTeeFitting(
+                            doc,
+                            mainCurveType,
+                            kind,
+                            p.teeFamilyName,
+                            p.teeTypeName,
+                            mainA,
+                            mainB,
+                            teeBranchConnector,
+                            out var teeFittingId,
+                            out var teeMethod,
+                            out var teeError);
                         if (teeFittingId.HasValue) createdFittingIds.Add(teeFittingId.Value);
                         connectionAttempts.Add(new
                         {
@@ -512,6 +531,11 @@ namespace RevitBridge.Logic.Handlers.MEP
                             connected = teeOk,
                             method = teeMethod,
                             fittingId = teeFittingId,
+                            requestedTee = new
+                            {
+                                familyName = string.IsNullOrWhiteSpace(p.teeFamilyName) ? null : p.teeFamilyName,
+                                typeName = string.IsNullOrWhiteSpace(p.teeTypeName) ? null : p.teeTypeName
+                            },
                             error = teeError
                         });
                         if (!teeOk)
@@ -588,7 +612,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                             var b = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(branchElements[i + 1]), shared, 0.25);
                             var jointPlan = branchJointPlans.FirstOrDefault(j => j.JointIndex == i);
                             var expectTransition = string.Equals(jointPlan?.ExpectedFitting, "transition", StringComparison.OrdinalIgnoreCase);
-                            var ok = MepRoutingUtil.TryCreateTransitionElbowOrConnect(doc, a, b, expectTransition, out var fittingId, out var method, out var err);
+                            var ok = TryCreateTransitionElbowOrConnect(doc, doc.GetElement(main.GetTypeId()) as ElementType, kind, a, b, expectTransition,
+                                p.transitionFamilyName, p.transitionTypeName, out var fittingId, out var method, out var err);
                             if (fittingId.HasValue) createdFittingIds.Add(fittingId.Value);
                             connectionAttempts.Add(new
                             {
@@ -698,7 +723,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                             }
                             else
                             {
-                                var duct = Duct.Create(doc, systemTypeId, curveTypeId, levelId, a, b);
+                                var ductTypeId = ResolveDuctTypeIdForSize(doc, size, curveTypeId);
+                                var duct = Duct.Create(doc, systemTypeId, ductTypeId, levelId, a, b);
                                 MepRoutingUtil.TryApplyDuctSize(duct, size, out _);
                                 curve = duct;
                             }
@@ -749,7 +775,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                             var b = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(branchElements[i + 1]), shared, 0.25);
                             var jointPlan = branchJointPlans.FirstOrDefault(j => j.JointIndex == i);
                             var expectTransition = string.Equals(jointPlan?.ExpectedFitting, "transition", StringComparison.OrdinalIgnoreCase);
-                            var ok = MepRoutingUtil.TryCreateTransitionElbowOrConnect(doc, a, b, expectTransition, out var fittingId, out var method, out var err);
+                            var ok = TryCreateTransitionElbowOrConnect(doc, doc.GetElement(main.GetTypeId()) as ElementType, kind, a, b, expectTransition,
+                                p.transitionFamilyName, p.transitionTypeName, out var fittingId, out var method, out var err);
                             if (fittingId.HasValue) createdFittingIds.Add(fittingId.Value);
                             connectionAttempts.Add(new
                             {
@@ -1168,7 +1195,18 @@ namespace RevitBridge.Logic.Handlers.MEP
             }
         }
 
-        private static bool TryCreateTeeFitting(Document doc, Connector? a, Connector? b, Connector? c, out long? fittingId, out string method, out string? error)
+        private static bool TryCreateTeeFitting(
+            Document doc,
+            ElementType? curveType,
+            string kind,
+            string? requestedFamilyName,
+            string? requestedTypeName,
+            Connector? a,
+            Connector? b,
+            Connector? c,
+            out long? fittingId,
+            out string method,
+            out string? error)
         {
             fittingId = null;
             method = "none";
@@ -1206,8 +1244,198 @@ namespace RevitBridge.Logic.Handlers.MEP
                     error = string.IsNullOrWhiteSpace(error) ? ex.Message : error;
                 }
             }
+
+            var explicitFamily = (requestedFamilyName ?? "").Trim();
+            var explicitType = (requestedTypeName ?? "").Trim();
+            if (explicitFamily.Length == 0 && explicitType.Length == 0)
+            {
+                method = "failed";
+                return false;
+            }
+
+            var requestedSymbol = FindRequestedJunctionSymbol(doc, kind, explicitFamily, explicitType);
+            if (requestedSymbol == null)
+            {
+                error = $"Requested tee family/type was not found: family='{explicitFamily}', type='{explicitType}'.";
+                method = "explicit_tee_not_found";
+                return false;
+            }
+
+            var routingManager = GetRoutingPreferenceManager(curveType);
+            if (routingManager == null)
+            {
+                error = $"The selected {kind} curve type does not expose a routing preference manager.";
+                method = "explicit_tee_routing_unavailable";
+                return false;
+            }
+
+            var originalJunctionType = routingManager.PreferredJunctionType;
+            var temporaryRuleAdded = false;
+            var explicitTeeCreated = false;
+            var cleanupSucceeded = true;
+            try
+            {
+                using (var rule = new RoutingPreferenceRule(requestedSymbol.Id, "Revit Operator temporary explicit tee precedent"))
+                {
+                    rule.AddCriterion(PrimarySizeCriterion.All());
+                    routingManager.AddRule(RoutingPreferenceRuleGroupType.Junctions, rule, 0);
+                    temporaryRuleAdded = true;
+                }
+                routingManager.PreferredJunctionType = PreferredJunctionType.Tee;
+                doc.Regenerate();
+
+                foreach (var p in permutations)
+                {
+                    try
+                    {
+                        var fitting = doc.Create.NewTeeFitting(p[0], p[1], p[2]);
+                        if (fitting == null) continue;
+                        fittingId = ElementIdCompat.GetValue(fitting.Id);
+                        method = "new_tee_fitting_with_temporary_explicit_preference";
+                        error = null;
+                        explicitTeeCreated = true;
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        error = ex.Message;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+            }
+            finally
+            {
+                try
+                {
+                    if (temporaryRuleAdded) routingManager.RemoveRule(RoutingPreferenceRuleGroupType.Junctions, 0);
+                    routingManager.PreferredJunctionType = originalJunctionType;
+                    doc.Regenerate();
+                }
+                catch (Exception cleanupError)
+                {
+                    cleanupSucceeded = false;
+                    fittingId = null;
+                    method = "explicit_tee_preference_cleanup_failed";
+                    error = $"Temporary tee routing preference cleanup failed: {cleanupError.Message}";
+                }
+            }
+            if (explicitTeeCreated && cleanupSucceeded) return true;
+            if (!cleanupSucceeded) return false;
             method = "failed";
             return false;
+        }
+
+        private static RoutingPreferenceManager? GetRoutingPreferenceManager(ElementType? curveType)
+        {
+            if (curveType is DuctType ductType) return ductType.RoutingPreferenceManager;
+            if (curveType is PipeType pipeType) return pipeType.RoutingPreferenceManager;
+            return null;
+        }
+
+        private static ElementId ResolveDuctTypeIdForSize(
+            Document doc,
+            MepRoutingUtil.SizeChoice size,
+            ElementId fallbackTypeId)
+        {
+            DuctType? requestedShapeType = null;
+            if (size.WidthFt.HasValue && size.HeightFt.HasValue)
+                requestedShapeType = MepRoutingUtil.FindDuctType(doc, "Rectangular Duct");
+            else if (size.DiameterFt.HasValue)
+                requestedShapeType = MepRoutingUtil.FindDuctType(doc, "Round Duct");
+            return requestedShapeType?.Id ?? fallbackTypeId;
+        }
+
+        private static bool TryCreateTransitionElbowOrConnect(
+            Document doc,
+            ElementType? curveType,
+            string kind,
+            Connector? a,
+            Connector? b,
+            bool preferTransition,
+            string? requestedFamilyName,
+            string? requestedTypeName,
+            out long? fittingId,
+            out string method,
+            out string? error)
+        {
+            if (MepRoutingUtil.TryCreateTransitionElbowOrConnect(doc, a, b, preferTransition,
+                out fittingId, out method, out error)) return true;
+
+            var family = (requestedFamilyName ?? "").Trim();
+            var type = (requestedTypeName ?? "").Trim();
+            if (!preferTransition || (family.Length == 0 && type.Length == 0)) return false;
+
+            var symbol = FindRequestedJunctionSymbol(doc, kind, family, type);
+            if (symbol == null)
+            {
+                method = "explicit_transition_not_found";
+                error = $"Requested transition family/type was not found: family='{family}', type='{type}'.";
+                return false;
+            }
+            var manager = GetRoutingPreferenceManager(curveType);
+            if (manager == null)
+            {
+                method = "explicit_transition_routing_unavailable";
+                error = $"The selected {kind} curve type does not expose a routing preference manager.";
+                return false;
+            }
+
+            var temporaryRuleAdded = false;
+            var created = false;
+            var cleanupSucceeded = true;
+            try
+            {
+                using (var rule = new RoutingPreferenceRule(symbol.Id, "Revit Operator temporary explicit transition precedent"))
+                {
+                    rule.AddCriterion(PrimarySizeCriterion.All());
+                    manager.AddRule(RoutingPreferenceRuleGroupType.Transitions, rule, 0);
+                    temporaryRuleAdded = true;
+                }
+                doc.Regenerate();
+                created = MepRoutingUtil.TryCreateTransitionElbowOrConnect(doc, a, b, true,
+                    out fittingId, out method, out error);
+                if (created) method = "new_transition_fitting_with_temporary_explicit_preference";
+            }
+            catch (Exception ex)
+            {
+                fittingId = null;
+                method = "explicit_transition_failed";
+                error = ex.Message;
+            }
+            finally
+            {
+                try
+                {
+                    if (temporaryRuleAdded) manager.RemoveRule(RoutingPreferenceRuleGroupType.Transitions, 0);
+                    doc.Regenerate();
+                }
+                catch (Exception cleanupError)
+                {
+                    cleanupSucceeded = false;
+                    fittingId = null;
+                    method = "explicit_transition_preference_cleanup_failed";
+                    error = $"Temporary transition routing preference cleanup failed: {cleanupError.Message}";
+                }
+            }
+            return created && cleanupSucceeded;
+        }
+
+        private static FamilySymbol? FindRequestedJunctionSymbol(Document doc, string kind, string familyName, string typeName)
+        {
+            var expectedCategoryId = string.Equals(kind, "pipe", StringComparison.OrdinalIgnoreCase)
+                ? (int)BuiltInCategory.OST_PipeFitting
+                : (int)BuiltInCategory.OST_DuctFitting;
+            return new FilteredElementCollector(doc)
+                .OfClass(typeof(FamilySymbol))
+                .Cast<FamilySymbol>()
+                .Where(symbol => symbol.Category != null && ElementIdCompat.GetValue(symbol.Category.Id) == expectedCategoryId)
+                .Where(symbol => familyName.Length == 0 || string.Equals(symbol.FamilyName, familyName, StringComparison.OrdinalIgnoreCase))
+                .Where(symbol => typeName.Length == 0 || string.Equals(symbol.Name, typeName, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(symbol => ElementIdCompat.GetValue(symbol.Id))
+                .FirstOrDefault();
         }
 
         private static bool TryCreateTakeoffFitting(Document doc, Connector? branchConnector, MEPCurve main, out long? fittingId, out string method, out string? error)

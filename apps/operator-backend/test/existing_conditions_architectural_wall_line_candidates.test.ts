@@ -65,7 +65,12 @@ function drawFixture(
   fs.writeFileSync(filePath, canvas.toBuffer("image/png"));
 }
 
-function deltaInput(sourcePath: string, redactedPath: string, fixtureId: string): ArchitecturalSourceDeltaInput {
+function deltaInput(
+  sourcePath: string,
+  redactedPath: string,
+  fixtureId: string,
+  scopeHeight = 12
+): ArchitecturalSourceDeltaInput {
   return {
     schema_version: 1,
     fixture_id: fixtureId,
@@ -96,12 +101,12 @@ function deltaInput(sourcePath: string, redactedPath: string, fixtureId: string)
       width_px: 600,
       height_px: 360,
       model_frame: {
-        top_left: { x: 0, y: 12 },
-        top_right: { x: 20, y: 12 },
+        top_left: { x: 0, y: scopeHeight },
+        top_right: { x: 20, y: scopeHeight },
         bottom_left: { x: 0, y: 0 }
       }
     },
-    scope_model_bounds: { min: { x: 0, y: 0 }, max: { x: 20, y: 12 } },
+    scope_model_bounds: { min: { x: 0, y: 0 }, max: { x: 20, y: scopeHeight } },
     output_width_px: 600,
     ink_luminance_threshold: 220,
     redacted_ink_dilation_px: 2
@@ -133,6 +138,49 @@ async function buildFixture(
   fs.writeFileSync(measurementReceiptPath, `${JSON.stringify(measurement, null, 2)}\n`, "utf8");
   return { delta, deltaReceiptPath, measurement, measurementReceiptPath };
 }
+
+test("wall-line extraction accepts integer-raster aspect quantization but rejects material stretch", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-wall-line-isotropy-"));
+  try {
+    const sourcePath = path.join(temp, "source.png");
+    const redactedPath = path.join(temp, "redacted.png");
+    drawFixture(sourcePath, true, [[[60, 80], [540, 280]]]);
+    drawFixture(redactedPath, false, []);
+    const delta = await buildArchitecturalSourceDelta(
+      deltaInput(sourcePath, redactedPath, "quantized-aspect", 12.01),
+      path.join(temp, "delta")
+    );
+    const deltaReceiptPath = path.join(temp, "delta-receipt.json");
+    fs.writeFileSync(deltaReceiptPath, `${JSON.stringify(delta, null, 2)}\n`, "utf8");
+    const measurement = await buildArchitecturalMeasurementOverlay(
+      delta,
+      sha256(deltaReceiptPath),
+      path.join(temp, "measurement")
+    );
+    const measurementReceiptPath = path.join(temp, "measurement-receipt.json");
+    fs.writeFileSync(measurementReceiptPath, `${JSON.stringify(measurement, null, 2)}\n`, "utf8");
+
+    await assert.doesNotReject(buildArchitecturalWallLineCandidates(
+      delta,
+      sha256(deltaReceiptPath),
+      measurement,
+      sha256(measurementReceiptPath),
+      path.join(temp, "quantized-candidates")
+    ));
+
+    const stretched = structuredClone(delta);
+    stretched.scope_model_bounds.max.y = 10;
+    await assert.rejects(buildArchitecturalWallLineCandidates(
+      stretched,
+      sha256(deltaReceiptPath),
+      measurement,
+      sha256(measurementReceiptPath),
+      path.join(temp, "stretched-candidates")
+    ), /architectural_wall_line_requires_isotropic_registered_pixels/);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
 
 test("wall-line extraction preserves overlapping parallel alternatives instead of auto-selecting one", async () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "architectural-wall-line-candidates-"));
