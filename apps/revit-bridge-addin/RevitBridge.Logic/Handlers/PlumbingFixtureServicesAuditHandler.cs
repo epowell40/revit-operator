@@ -23,6 +23,7 @@ namespace RevitBridge.Logic.Handlers
         public sealed class Params
         {
             public string levelName { get; set; } = string.Empty;
+            public List<long> fixtureElementIds { get; set; } = new List<long>();
             public List<string> familyMatchTokens { get; set; } = new List<string>();
             public List<string> typeMatchTokens { get; set; } = new List<string>();
             public int maxElements { get; set; } = 5000;
@@ -49,11 +50,12 @@ namespace RevitBridge.Logic.Handlers
                 ? new Params()
                 : JsonSerializer.Deserialize<Params>(jsonData) ?? new Params();
             var levelName = (request.levelName ?? string.Empty).Trim();
+            var requestedFixtureIds = new HashSet<long>((request.fixtureElementIds ?? new List<long>()).Where(id => id > 0));
             var familyTokens = NormalizeTokens(request.familyMatchTokens);
             var typeTokens = NormalizeTokens(request.typeMatchTokens);
             if (string.IsNullOrWhiteSpace(levelName)) throw new ArgumentException("levelName is required.");
-            if (familyTokens.Count == 0) throw new ArgumentException("familyMatchTokens is required.");
-            if (typeTokens.Count == 0) throw new ArgumentException("typeMatchTokens is required.");
+            if (requestedFixtureIds.Count == 0 && familyTokens.Count == 0) throw new ArgumentException("familyMatchTokens is required when fixtureElementIds is empty.");
+            if (requestedFixtureIds.Count == 0 && typeTokens.Count == 0) throw new ArgumentException("typeMatchTokens is required when fixtureElementIds is empty.");
             var maximum = request.maxElements <= 0 ? 5000 : Math.Min(request.maxElements, 5000);
             var ventMaximum = request.maxVentSearchElements <= 0 ? 2000 : Math.Min(request.maxVentSearchElements, 10000);
             var ventHops = request.maxVentSearchHops <= 0 ? 40 : Math.Min(request.maxVentSearchHops, 500);
@@ -74,14 +76,19 @@ namespace RevitBridge.Logic.Handlers
 
             var levelFixtures = discovered.Where(instance => string.Equals(
                 GetLevelName(document, instance), levelName, StringComparison.OrdinalIgnoreCase)).ToList();
-            var selected = levelFixtures.Where(instance =>
-            {
-                var symbol = document.GetElement(instance.GetTypeId()) as FamilySymbol;
-                var family = symbol?.FamilyName ?? symbol?.Family?.Name ?? string.Empty;
-                var typeName = symbol?.Name ?? instance.Name ?? string.Empty;
-                return MatchesAny(family, familyTokens) && MatchesAny(typeName, typeTokens);
-            }).ToList();
+            var selected = requestedFixtureIds.Count > 0
+                ? levelFixtures.Where(instance => requestedFixtureIds.Contains(ElementIdCompat.GetValue(instance.Id))).ToList()
+                : levelFixtures.Where(instance =>
+                {
+                    var symbol = document.GetElement(instance.GetTypeId()) as FamilySymbol;
+                    var family = symbol?.FamilyName ?? symbol?.Family?.Name ?? string.Empty;
+                    var typeName = symbol?.Name ?? instance.Name ?? string.Empty;
+                    return MatchesAny(family, familyTokens) && MatchesAny(typeName, typeTokens);
+                }).ToList();
             if (selected.Count == 0) throw new InvalidOperationException("plumbing_audit_scoped_fixtures_missing");
+            var missingRequestedFixtureIds = requestedFixtureIds.Except(selected.Select(instance => ElementIdCompat.GetValue(instance.Id))).OrderBy(id => id).ToList();
+            if (missingRequestedFixtureIds.Count > 0)
+                throw new InvalidOperationException("plumbing_audit_requested_fixtures_missing:" + string.Join(",", missingRequestedFixtureIds));
 
             var rows = new List<object>();
             var allComplete = true;
@@ -150,8 +157,9 @@ namespace RevitBridge.Logic.Handlers
                 schema = "revit-operator.plumbing-fixture-services-audit.v1",
                 modelSha256 = Sha256(document.PathName),
                 documentPath = document.PathName,
-                scopeMode = "level_inventory",
+                scopeMode = requestedFixtureIds.Count > 0 ? "exact_fixture_ids" : "level_inventory",
                 selectedLevelName = levelName,
+                fixtureElementIds = requestedFixtureIds.OrderBy(id => id).ToList(),
                 familyMatchTokens = familyTokens,
                 typeMatchTokens = typeTokens,
                 fixtures = rows,

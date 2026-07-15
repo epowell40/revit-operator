@@ -59,6 +59,7 @@
         "oneOf": [
           { "$ref": "#/$defs/pipe_route" },
           { "$ref": "#/$defs/pipe_connector_bridge" },
+          { "$ref": "#/$defs/pipe_downstream_vent_tee" },
           { "$ref": "#/$defs/plumbing_fixture" },
           { "$ref": "#/$defs/electrical_device" },
           { "$ref": "#/$defs/electrical_circuit" }
@@ -199,6 +200,38 @@
         "pipe_size": { "type": "string", "minLength": 1 },
         "pipe_type": { "type": "string", "minLength": 1 },
         "system_type": { "type": "string", "minLength": 1 }
+      }
+    },
+    "pipe_downstream_vent_tee": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "service", "geometry_mode", "main_reference_key", "verification_fixture_reference_keys", "pixel_points", "main_elevation_ft", "elevation_ft", "pipe_size", "pipe_type", "system_type"],
+      "properties": {
+        "kind": { "const": "pipe_route" },
+        "discipline": { "const": "plumbing" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
+        "service": { "const": "vent" },
+        "geometry_mode": { "const": "downstream_vent_tee" },
+        "main_reference_key": { "type": "string", "minLength": 1 },
+        "verification_fixture_reference_keys": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "pixel_points": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/point" } },
+        "main_elevation_ft": { "type": "number" },
+        "elevation_ft": { "type": "number" },
+        "max_vent_search_elements": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "max_vent_search_hops": { "type": "integer", "minimum": 1, "maximum": 500 },
+        "pipe_size": { "type": "string", "minLength": 1 },
+        "pipe_type": { "type": "string", "minLength": 1 },
+        "system_type": { "const": "Vent" }
       }
     },
     "plumbing_fixture": {

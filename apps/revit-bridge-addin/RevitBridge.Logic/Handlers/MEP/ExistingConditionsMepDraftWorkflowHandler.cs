@@ -40,6 +40,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             public long? source_element_id { get; set; }
             public long? target_element_id { get; set; }
             public int? required_connection_count { get; set; }
+            public List<long>? fixture_element_ids { get; set; }
+            public bool? require_downstream_vent { get; set; }
         }
 
         public sealed class Operation
@@ -114,7 +116,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         var response = handler.Handle(app, requestJson).GetAwaiter().GetResult();
                         using var responseDocument = JsonDocument.Parse(JsonSerializer.Serialize(response));
                         var responseJson = responseDocument.RootElement.Clone();
-                        if (ResponseFailed(responseJson, out var failure))
+                        if (ResponseFailed(operation.path, responseJson, operation.deferred_body, out var failure))
                             throw new InvalidOperationException($"operation_failed:{operation.action_key}:{failure}");
                         var output = ExtractOperationOutput(operation.path, responseJson);
                         var createdIds = output.CreatedElementIds;
@@ -255,6 +257,19 @@ namespace RevitBridge.Logic.Handlers.MEP
                 bridgeBody["verify"] = verify;
                 return JsonSerializer.Serialize(bridgeBody);
             }
+            if (path == "/revit/audit-plumbing-fixture-services")
+            {
+                var deferred = operation.deferred_body ?? throw new InvalidOperationException($"deferred_body_required:{operation.action_key}");
+                var fixtureIds = (deferred.fixture_element_ids ?? new List<long>()).Where(id => id > 0).Distinct().ToList();
+                if (fixtureIds.Count == 0)
+                    throw new InvalidOperationException($"fixture_element_ids_required:{operation.action_key}");
+                if (!operation.apply_body.HasValue || operation.apply_body.Value.ValueKind != JsonValueKind.Object)
+                    throw new InvalidOperationException($"apply_body_required:{operation.action_key}");
+                var auditBody = JsonSerializer.Deserialize<Dictionary<string, object>>(operation.apply_body.Value.GetRawText())
+                    ?? new Dictionary<string, object>();
+                auditBody["fixtureElementIds"] = fixtureIds;
+                return JsonSerializer.Serialize(auditBody);
+            }
 
             if (!operation.apply_body.HasValue || operation.apply_body.Value.ValueKind != JsonValueKind.Object)
                 throw new InvalidOperationException($"apply_body_required:{operation.action_key}");
@@ -265,6 +280,12 @@ namespace RevitBridge.Logic.Handlers.MEP
                 body["apply"] = true;
                 body["visualVerify"] = false;
                 body["verify"] = verify;
+            }
+            else if (path == "/revit/connect-mep-branch")
+            {
+                body["dryRun"] = false;
+                body["verify"] = verify;
+                body["visualVerify"] = false;
             }
             else
             {
@@ -283,6 +304,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                 case "/revit/place-family-instance-on-host": return new PlaceFamilyInstanceOnHostHandler();
                 case "/revit/connect-mep-elements": return new ConnectMepElementsHandler();
                 case "/revit/create-pipe-between-connectors": return new CreatePipeBetweenConnectorsHandler();
+                case "/revit/connect-mep-branch": return new ConnectMepBranchHandler();
+                case "/revit/audit-plumbing-fixture-services": return new PlumbingFixtureServicesAuditHandler();
                 case "/revit/assign-electrical-circuit": return new AssignElectricalCircuitHandler();
                 default: throw new InvalidOperationException($"unsupported_mep_draft_operation_path:{rawPath}");
             }
@@ -345,10 +368,23 @@ namespace RevitBridge.Logic.Handlers.MEP
             }
             if (path == "/revit/create-pipe-between-connectors")
                 return new OperationOutput { CreatedElementIds = ReadLongArray(response, "createdElementIds") };
+            if (path == "/revit/connect-mep-branch")
+            {
+                var mainId = response.TryGetProperty("main", out var main) ? ReadLong(main, "id") : 0;
+                var splitIds = ReadLongArray(response, "splitMainSegmentIds").Where(id => id != mainId);
+                var branchIds = ReadLongArray(response, "createdBranchElementIds");
+                var fittingIds = ReadLongArray(response, "createdFittingIds");
+                return new OperationOutput
+                {
+                    CreatedElementIds = splitIds.Concat(branchIds).Concat(fittingIds).Distinct().ToList(),
+                    RouteStartElementIds = branchIds.Count > 0 ? new List<long> { branchIds[0] } : new List<long>(),
+                    RouteEndElementIds = branchIds.Count > 0 ? new List<long> { branchIds[branchIds.Count - 1] } : new List<long>()
+                };
+            }
             return new OperationOutput();
         }
 
-        private static bool ResponseFailed(JsonElement response, out string reason)
+        private static bool ResponseFailed(string rawPath, JsonElement response, DeferredBody? deferred, out string reason)
         {
             reason = "";
             if (response.ValueKind != JsonValueKind.Object)
@@ -388,6 +424,44 @@ namespace RevitBridge.Logic.Handlers.MEP
                         && ok.ValueKind == JsonValueKind.False)
                     {
                         reason = "result_ok_false";
+                        return true;
+                    }
+                }
+            }
+            if (NormalizePath(rawPath) == "/revit/audit-plumbing-fixture-services" && deferred?.require_downstream_vent == true)
+            {
+                var requiredFixtureIds = (deferred.fixture_element_ids ?? new List<long>()).Where(id => id > 0).Distinct().ToList();
+                if (requiredFixtureIds.Count == 0)
+                {
+                    reason = "downstream_vent_verification_fixture_ids_missing";
+                    return true;
+                }
+                if (!response.TryGetProperty("fixtures", out var fixtures) || fixtures.ValueKind != JsonValueKind.Array)
+                {
+                    reason = "downstream_vent_verification_fixtures_missing";
+                    return true;
+                }
+                foreach (var fixtureId in requiredFixtureIds)
+                {
+                    var fixture = fixtures.EnumerateArray().FirstOrDefault(item => ReadLong(item, "elementId") == fixtureId);
+                    if (fixture.ValueKind != JsonValueKind.Object
+                        || !fixture.TryGetProperty("connectors", out var connectors)
+                        || connectors.ValueKind != JsonValueKind.Array)
+                    {
+                        reason = $"downstream_vent_fixture_missing:{fixtureId}";
+                        return true;
+                    }
+                    var verified = connectors.EnumerateArray().Any(connector =>
+                    {
+                        if (!string.Equals(ReadString(connector, "pipeSystemType"), "Sanitary", StringComparison.OrdinalIgnoreCase)) return false;
+                        if (!connector.TryGetProperty("ventContinuation", out var continuation) || continuation.ValueKind != JsonValueKind.Object) return false;
+                        return continuation.TryGetProperty("found", out var found) && found.ValueKind == JsonValueKind.True
+                            && continuation.TryGetProperty("complete", out var complete) && complete.ValueKind == JsonValueKind.True
+                            && continuation.TryGetProperty("truncated", out var truncated) && truncated.ValueKind == JsonValueKind.False;
+                    });
+                    if (!verified)
+                    {
+                        reason = $"downstream_vent_not_verified:{fixtureId}";
                         return true;
                     }
                 }

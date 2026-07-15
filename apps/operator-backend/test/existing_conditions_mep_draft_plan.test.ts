@@ -773,3 +773,108 @@ test("connector bridges reject hidden geometry claims without native provenance 
   secondRoute.target_reference_key = "not-in-inventory";
   assert.throws(() => compileMepDraftPlan(unknownAnchor), /target_reference_unknown/);
 });
+
+function downstreamVentPackage(): MepDraftPackage {
+  return {
+    schema_version: 1,
+    fixture_id: "downstream-vent-tee-independent-v1",
+    scope_id: "unseen-restroom-vent-alpha",
+    source_evidence_sha256: SOURCE_HASH,
+    visible_evidence: visibleEvidence(),
+    native_element_references: [
+      { reference_key: "sanitary-main-random-41", element_id: 941, category: "OST_PipeCurves", role: "retained sanitary main", evidence_role: "native_model_inventory", evidence_sha256: MODEL_HASH },
+      { reference_key: "fixture-random-73", element_id: 873, category: "OST_PlumbingFixtures", role: "water closet served downstream", evidence_role: "native_model_inventory", evidence_sha256: MODEL_HASH }
+    ],
+    registration: registration(),
+    level_name: "Benchmark L2",
+    level_elevation_ft: 20,
+    observations: [
+      {
+        kind: "pipe_route",
+        observation_id: "vent-tee-random-59",
+        discipline: "plumbing",
+        service: "vent",
+        geometry_mode: "downstream_vent_tee",
+        main_reference_key: "sanitary-main-random-41",
+        verification_fixture_reference_keys: ["fixture-random-73"],
+        points: [{ x: 2, y: 3 }, { x: 5, y: 3 }],
+        main_elevation_ft: 1.1666666667,
+        elevation_ft: 5.1666666667,
+        visibility: "clear",
+        confidence: 0.96,
+        supported_attributes: ["location", "size", "main_elevation", "elevation", "system", "type"],
+        attribute_provenance: [
+          { attribute: "location", basis: "source_observation", reference: "registered plan branch path" },
+          { attribute: "size", basis: "native_model_precedent", reference: "project vent sizing precedent" },
+          { attribute: "main_elevation", basis: "native_model_precedent", reference: "retained sanitary main centerline" },
+          { attribute: "elevation", basis: "declared_heuristic", reference: "typical downstream vent rise above ceiling" },
+          { attribute: "system", basis: "user_direction", reference: "downstream vent continuation" },
+          { attribute: "type", basis: "native_model_precedent", reference: "project DWV pipe type" }
+        ],
+        pipe_size: "2 inch",
+        pipe_type: "PVC - DWV",
+        system_type: "Vent"
+      }
+    ]
+  };
+}
+
+test("downstream vent tee compiles a native branch plus mandatory exact-fixture reachability audit", () => {
+  const plan = compileMepDraftPlan(downstreamVentPackage());
+  assert.equal(plan.status, "ready");
+  assert.deepEqual(plan.actions.map((entry) => entry.path), [
+    "/revit/connect-mep-branch",
+    "/revit/audit-plumbing-fixture-services"
+  ]);
+  const branch = plan.actions[0]!;
+  assert.equal(branch.apply_body?.mainElementId, 941);
+  assert.equal(branch.apply_body?.connectionMode, "tee");
+  assert.equal(branch.apply_body?.branchSystemType, "Vent");
+  assert.deepEqual(branch.apply_body?.branchPoints, [
+    { x: 94, y: 204, z: 21.1666666667 },
+    { x: 94, y: 210, z: 25.1666666667 }
+  ]);
+  const audit = plan.actions[1]!;
+  assert.deepEqual(audit.depends_on, ["route:vent-tee-random-59"]);
+  assert.deepEqual(audit.deferred_body?.fixture_element_ids, [873]);
+  assert.equal(audit.deferred_body?.require_downstream_vent, true);
+  assert.equal(plan.plan_elements[0]?.assumptions.some((entry) => /no direct fixture Vent connector/i.test(entry)), true);
+
+  const workflow = buildAtomicMepDraftWorkflowRequest(plan);
+  assert.deepEqual(workflow.operations.map((entry) => entry.action_key), [
+    "route:vent-tee-random-59",
+    "verify:vent:vent-tee-random-59"
+  ]);
+});
+
+test("downstream vent tee rejects direct fixture service wiring and ungrounded main elevation", () => {
+  const direct = downstreamVentPackage();
+  direct.observations.push({
+    kind: "plumbing_fixture",
+    observation_id: "fixture-visible-random-12",
+    discipline: "plumbing",
+    role: "water closet",
+    visibility: "clear",
+    confidence: 0.95,
+    supported_attributes: ["location", "type", "service_topology"],
+    point: { x: 1, y: 1 },
+    elevation_ft: 0,
+    placement: { mode: "unhosted_family", family_name: "Fixture Connections", type_name: "Water Closet" },
+    service_route_connections: [{ route_observation_id: "vent-tee-random-59", route_endpoint: "start" }],
+    service_boundary: {
+      basis: "native_model_precedent",
+      evidence_role: "native_model_inventory",
+      required_services: ["vent"],
+      prohibited_services: []
+    }
+  });
+  assert.throws(() => compileMepDraftPlan(direct), /downstream_vent_cannot_be_direct_fixture_connection/);
+
+  const ungrounded = downstreamVentPackage();
+  const route = ungrounded.observations[0];
+  if (route?.kind !== "pipe_route" || route.geometry_mode !== "downstream_vent_tee") throw new Error("route_setup_failed");
+  route.attribute_provenance = route.attribute_provenance?.map((entry) => entry.attribute === "main_elevation"
+    ? { ...entry, basis: "declared_heuristic" as const }
+    : entry);
+  assert.throws(() => compileMepDraftPlan(ungrounded), /declared_heuristic_only_allowed_for_pipe_elevation|main_elevation_must_be_native_model_precedent/);
+});

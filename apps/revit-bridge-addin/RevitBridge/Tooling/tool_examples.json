@@ -6750,6 +6750,64 @@
             "createdElementIds": [],
             "transientCreatedElementIds": [101, 102]
           }
+        },
+        {
+          "name": "Atomically dry-run a downstream Vent tee and exact-fixture reachability audit",
+          "request": {
+            "inputFingerprintSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "operations": [
+              {
+                "action_key": "route:vent-tee-1",
+                "path": "/revit/connect-mep-branch",
+                "depends_on": [],
+                "expected_created_min": 3,
+                "expected_created_max": 6,
+                "apply_body": {
+                  "kind": "pipe",
+                  "mainElementId": 1499787,
+                  "branchPoints": [
+                    { "x": 17, "y": -6.56, "z": 31.1666666667 },
+                    { "x": 17, "y": -2.5, "z": 35.1666666667 }
+                  ],
+                  "branchSize": "2 inch",
+                  "branchSystemType": "Vent",
+                  "branchPipeType": "PVC - DWV",
+                  "connectionMode": "tee",
+                  "levelName": "L4",
+                  "verify": true,
+                  "visualVerify": false
+                }
+              },
+              {
+                "action_key": "verify:vent:vent-tee-1",
+                "path": "/revit/audit-plumbing-fixture-services",
+                "depends_on": ["route:vent-tee-1"],
+                "expected_created_min": 0,
+                "expected_created_max": 0,
+                "apply_body": {
+                  "levelName": "L4",
+                  "maxElements": 5000,
+                  "maxVentSearchElements": 10000,
+                  "maxVentSearchHops": 500
+                },
+                "deferred_body": {
+                  "fixture_element_ids": [1372407],
+                  "require_downstream_vent": true
+                }
+              }
+            ],
+            "dryRun": true,
+            "verify": true,
+            "maximumCreatedElements": 8
+          },
+          "expected_response_shape": {
+            "schema": "operator.existing_conditions_mep_draft_workflow.v1",
+            "status": "DryRunReady",
+            "transactionGroupRolledBack": true,
+            "rollbackVerified": true,
+            "atomic": true,
+            "operationCount": 2
+          }
         }
       ]
     },
@@ -9188,9 +9246,26 @@
             }
           },
           "notes": [
-            "Discovery is level and family/type-token based; target fixture IDs and expected paths are not accepted.",
+            "Use family/type tokens for a complete level-scoped inventory, or fixtureElementIds for an exact bounded post-write verification scope.",
             "The endpoint reports factual native evidence only; the evaluator applies fixture service and size profiles."
           ]
+        },
+        {
+          "name": "Audit exact fixtures for downstream Vent reachability",
+          "request": {
+            "levelName": "L4",
+            "fixtureElementIds": [1372407],
+            "maxElements": 5000,
+            "maxVentSearchElements": 10000,
+            "maxVentSearchHops": 500
+          },
+          "expected_response_shape": {
+            "schema": "revit-operator.plumbing-fixture-services-audit.v1",
+            "scopeMode": "exact_fixture_ids",
+            "selectedLevelName": "L4",
+            "fixtureElementIds": [1372407],
+            "fixtures": []
+          }
         }
       ]
     }

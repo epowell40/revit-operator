@@ -249,6 +249,39 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
     host_category: "OST_RvtLinks"
   };
   assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", hostedWithoutInventedChainage));
+  const downstreamVent = structuredClone(input) as unknown as Record<string, unknown>;
+  downstreamVent.discipline = "plumbing";
+  (downstreamVent.visible_evidence as Array<{ role: string; sha256: string }>).push({ role: "native_model_inventory", sha256: "c".repeat(64) });
+  downstreamVent.native_element_references = [
+    { reference_key: "sanitary-main", element_id: 41, category: "OST_PipeCurves", role: "retained sanitary main", evidence_role: "native_model_inventory", evidence_sha256: "c".repeat(64) },
+    { reference_key: "served-fixture", element_id: 73, category: "OST_PlumbingFixtures", role: "served water closet", evidence_role: "native_model_inventory", evidence_sha256: "c".repeat(64) }
+  ];
+  downstreamVent.observations = [{
+    kind: "pipe_route",
+    discipline: "plumbing",
+    observation_id: "downstream-vent-1",
+    visibility: "clear",
+    confidence: 0.95,
+    supported_attributes: ["location", "size", "main_elevation", "elevation", "system", "type"],
+    attribute_evidence: [
+      { attribute: "size", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "project sizing precedent" },
+      { attribute: "main_elevation", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "retained main centerline" },
+      { attribute: "elevation", basis: "declared_heuristic", evidence_role: "registered_source_render", reference: "typical vent rise" },
+      { attribute: "system", basis: "user_direction", evidence_role: "registered_source_render", reference: "vent continuation" },
+      { attribute: "type", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "project DWV type" }
+    ],
+    service: "vent",
+    geometry_mode: "downstream_vent_tee",
+    main_reference_key: "sanitary-main",
+    verification_fixture_reference_keys: ["served-fixture"],
+    pixel_points: [{ x: 20, y: 80 }, { x: 20, y: 30 }],
+    main_elevation_ft: 1.1666666667,
+    elevation_ft: 5.1666666667,
+    pipe_size: "2 inch",
+    pipe_type: "PVC - DWV",
+    system_type: "Vent"
+  }];
+  assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", downstreamVent));
   const invalid = structuredClone(input);
   (invalid.observations[0] as Record<string, unknown>).withheld_element_id = 12345;
   assert.throws(

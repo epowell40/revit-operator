@@ -598,6 +598,35 @@ test("accepts equivalent native plumbing topology with different element identit
   assert.deepEqual(check.fixtures.map((fixture) => fixture.element_key), ["host:4101", "host:4102"]);
 });
 
+test("accepts a vent reached downstream of the fixture sanitary connection", () => {
+  const audit = plumbingAudit();
+  const sanitary = audit.fixtures[1]!.connectors.find((connector) => connector.pipeSystemType === "Sanitary")!;
+  sanitary.ventContinuation = {
+    found: true,
+    complete: true,
+    truncated: false,
+    pathElementIds: [102, 205, 405, 505, 605],
+    pathEdges: [
+      { fromElementId: 102, toElementId: 205 },
+      { fromElementId: 205, toElementId: 405 },
+      { fromElementId: 405, toElementId: 505 },
+      { fromElementId: 505, toElementId: 605 }
+    ],
+    ventSystemElementIds: [951],
+    ventSystemNames: ["Downstream Building Vent"],
+    pathElementCategories: ["OST_PipeCurves", "OST_PipeFitting", "OST_PipeCurves"]
+  };
+
+  const evidence = collectPlumbingFixtureServicesNativeEvidence(plumbingConfig(), audit);
+  const check = evidence.checks[0];
+  assert.equal(check?.type, "plumbing_fixture_services");
+  if (check?.type !== "plumbing_fixture_services") return;
+  const vent = check.fixtures[1]?.services.find((service) => service.service === "vented_drainage");
+  assert.equal(vent?.native_reachable, true);
+  assert.equal(vent?.direct_connection, false);
+  assert.deepEqual(vent?.path_element_keys, ["host:102", "host:205", "host:405", "host:505", "host:605"]);
+});
+
 test("does not promote an arbitrary third node to native Vent-system evidence", () => {
   const audit = plumbingAudit();
   audit.fixtures[0]!.connectors[0]!.ventContinuation = { ...audit.fixtures[0]!.connectors[0]!.ventContinuation, found: false, ventSystemElementIds: [] };

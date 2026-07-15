@@ -221,6 +221,68 @@ test("registered fixture pixels compose with concealed native connector bridge g
   assert.match(result.usage_constraints.join("\n"), /plan geometry/i);
 });
 
+test("registered downstream vent pixels compile to tee creation plus exact native fixture audit", async () => {
+  const input = plumbingInput();
+  const nativeHash = "c".repeat(64);
+  input.visible_evidence.push({ role: "native_model_inventory", sha256: nativeHash });
+  input.native_element_references = [
+    {
+      reference_key: "retained-sanitary-main-419",
+      element_id: 419,
+      category: "OST_PipeCurves",
+      role: "retained sanitary main",
+      evidence_role: "native_model_inventory",
+      evidence_sha256: nativeHash
+    },
+    {
+      reference_key: "served-water-closet-827",
+      element_id: 827,
+      category: "OST_PlumbingFixtures",
+      role: "water closet verified downstream",
+      evidence_role: "native_model_inventory",
+      evidence_sha256: nativeHash
+    }
+  ];
+  input.observations = [{
+    kind: "pipe_route",
+    discipline: "plumbing",
+    observation_id: "downstream-vent-tee-63",
+    visibility: "clear",
+    confidence: 0.97,
+    supported_attributes: ["location", "size", "main_elevation", "elevation", "system", "type"],
+    attribute_evidence: [
+      { attribute: "size", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "project vent sizing precedent" },
+      { attribute: "main_elevation", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "retained main centerline elevation" },
+      { attribute: "elevation", basis: "declared_heuristic", evidence_role: "registered_source_render", reference: "plan does not show Z; use a labeled typical vent rise" },
+      { attribute: "system", basis: "user_direction", evidence_role: "registered_source_render", reference: "downstream vent continuation" },
+      { attribute: "type", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "project PVC-DWV precedent" }
+    ],
+    service: "vent",
+    geometry_mode: "downstream_vent_tee",
+    main_reference_key: "retained-sanitary-main-419",
+    verification_fixture_reference_keys: ["served-water-closet-827"],
+    pixel_points: [{ x: 20, y: 80 }, { x: 20, y: 30 }],
+    main_elevation_ft: 1.1666666667,
+    elevation_ft: 5.1666666667,
+    pipe_size: "2 inch",
+    pipe_type: "PVC - DWV",
+    system_type: "Vent"
+  }];
+
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.status, "ready");
+  assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.path), [
+    "/revit/connect-mep-branch",
+    "/revit/audit-plumbing-fixture-services"
+  ]);
+  assert.deepEqual(result.compiled_plan.actions[0]?.apply_body?.branchPoints, [
+    { x: 102, y: 202, z: 33.1666666667 },
+    { x: 102, y: 207, z: 37.1666666667 }
+  ]);
+  assert.deepEqual(result.compiled_plan.actions[1]?.deferred_body?.fixture_element_ids, [827]);
+  assert.match(result.usage_constraints.join("\n"), /never represents the vent as a direct fixture connector/i);
+});
+
 test("a plan-absent pipe elevation may proceed only as an explicit declared heuristic", async () => {
   const input = plumbingInput();
   const route = input.observations[0];
