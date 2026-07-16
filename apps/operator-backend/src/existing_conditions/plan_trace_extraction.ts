@@ -16,6 +16,9 @@ export type PlanTraceExtractionInput = {
   scope_polygon?: PlanTracePoint[];
   minimum_component_pixels?: number;
   simplify_tolerance_px?: number;
+  interpretation_mode?: "ink_centerline" | "outlined_network_centerline";
+  maximum_interior_span_px?: number;
+  minimum_parallel_support_px?: number;
 };
 
 export type PlanTracePolyline = {
@@ -45,10 +48,14 @@ export type PlanTraceExtractionReceipt = {
     scope_polygon: PlanTracePoint[] | null;
     minimum_component_pixels: number;
     simplify_tolerance_px: number;
+    interpretation_mode?: "outlined_network_centerline";
+    maximum_interior_span_px?: number;
+    minimum_parallel_support_px?: number;
   };
   extraction_policy_sha256: string;
   matched_pixel_count: number;
   retained_pixel_count: number;
+  derived_fill_pixel_count?: number;
   components: PlanTraceComponent[];
   usage_constraints: string[];
 };
@@ -216,6 +223,92 @@ function connectedComponents(mask: Uint8Array, width: number, height: number): n
     result.push(component);
   }
   return result;
+}
+
+function contiguousRuns(values: number[]): Array<{ start: number; end: number }> {
+  const runs: Array<{ start: number; end: number }> = [];
+  let start = -1;
+  for (let index = 0; index <= values.length; index += 1) {
+    if (index < values.length && values[index]) {
+      if (start < 0) start = index;
+    } else if (start >= 0) {
+      runs.push({ start, end: index - 1 });
+      start = -1;
+    }
+  }
+  return runs;
+}
+
+function retainSupportedGapFill(
+  proposals: Uint8Array,
+  width: number,
+  height: number,
+  minimumParallelSupport: number,
+  supportAxis: "x" | "y"
+): Uint8Array {
+  const retained = new Uint8Array(proposals.length);
+  for (const component of connectedComponents(proposals, width, height)) {
+    let minX = width;
+    let maxX = 0;
+    let minY = height;
+    let maxY = 0;
+    for (const pixel of component) {
+      const x = pixel % width;
+      const y = Math.floor(pixel / width);
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+    const support = supportAxis === "x" ? maxX - minX + 1 : maxY - minY + 1;
+    if (support < minimumParallelSupport) continue;
+    for (const pixel of component) retained[pixel] = 1;
+  }
+  return retained;
+}
+
+function fillOutlinedNetworkInteriors(
+  boundaryMask: Uint8Array,
+  width: number,
+  height: number,
+  maximumInteriorSpan: number,
+  minimumParallelSupport: number
+): { mask: Uint8Array; derivedFillPixelCount: number } {
+  const rowProposals = new Uint8Array(boundaryMask.length);
+  for (let y = 0; y < height; y += 1) {
+    const row = Array.from({ length: width }, (_, x) => boundaryMask[indexOf(x, y, width)]!);
+    const runs = contiguousRuns(row);
+    for (let index = 0; index < runs.length - 1; index += 1) {
+      const left = runs[index]!;
+      const right = runs[index + 1]!;
+      const gap = right.start - left.end - 1;
+      if (gap <= 0 || gap > maximumInteriorSpan) continue;
+      for (let x = left.end + 1; x < right.start; x += 1) rowProposals[indexOf(x, y, width)] = 1;
+    }
+  }
+  const columnProposals = new Uint8Array(boundaryMask.length);
+  for (let x = 0; x < width; x += 1) {
+    const column = Array.from({ length: height }, (_, y) => boundaryMask[indexOf(x, y, width)]!);
+    const runs = contiguousRuns(column);
+    for (let index = 0; index < runs.length - 1; index += 1) {
+      const top = runs[index]!;
+      const bottom = runs[index + 1]!;
+      const gap = bottom.start - top.end - 1;
+      if (gap <= 0 || gap > maximumInteriorSpan) continue;
+      for (let y = top.end + 1; y < bottom.start; y += 1) columnProposals[indexOf(x, y, width)] = 1;
+    }
+  }
+  const supportedRows = retainSupportedGapFill(rowProposals, width, height, minimumParallelSupport, "y");
+  const supportedColumns = retainSupportedGapFill(columnProposals, width, height, minimumParallelSupport, "x");
+  const result = boundaryMask.slice();
+  let derivedFillPixelCount = 0;
+  for (let index = 0; index < result.length; index += 1) {
+    if (!result[index] && (supportedRows[index] || supportedColumns[index])) {
+      result[index] = 1;
+      derivedFillPixelCount += 1;
+    }
+  }
+  return { mask: result, derivedFillPixelCount };
 }
 
 function transitions(values: number[]): number {
@@ -505,6 +598,20 @@ export function extractPlanTracesFromPixels(
     ? 1
     : finite(input.simplify_tolerance_px, "simplify_tolerance_px");
   if (simplifyTolerance < 0 || simplifyTolerance > 10) throw new Error("simplify_tolerance_px_out_of_range");
+  const interpretationMode = input.interpretation_mode ?? "ink_centerline";
+  if (!["ink_centerline", "outlined_network_centerline"].includes(interpretationMode)) {
+    throw new Error("interpretation_mode_invalid");
+  }
+  let maximumInteriorSpan: number | undefined;
+  let minimumParallelSupport: number | undefined;
+  if (interpretationMode === "outlined_network_centerline") {
+    maximumInteriorSpan = positiveInteger(input.maximum_interior_span_px, "maximum_interior_span_px");
+    minimumParallelSupport = positiveInteger(input.minimum_parallel_support_px, "minimum_parallel_support_px");
+    if (maximumInteriorSpan > 500) throw new Error("maximum_interior_span_px_out_of_range");
+    if (minimumParallelSupport > 500) throw new Error("minimum_parallel_support_px_out_of_range");
+  } else if (input.maximum_interior_span_px != null || input.minimum_parallel_support_px != null) {
+    throw new Error("outlined_network_parameters_require_outlined_network_centerline_mode");
+  }
   const polygon = validatePolygon(input.scope_polygon, width, height);
 
   const mask = new Uint8Array(width * height);
@@ -526,7 +633,10 @@ export function extractPlanTracesFromPixels(
     }
   }
 
-  const retained = connectedComponents(mask, width, height)
+  const interpreted = interpretationMode === "outlined_network_centerline"
+    ? fillOutlinedNetworkInteriors(mask, width, height, maximumInteriorSpan!, minimumParallelSupport!)
+    : { mask, derivedFillPixelCount: 0 };
+  const retained = connectedComponents(interpreted.mask, width, height)
     .filter((component) => component.length >= minimumComponentPixels)
     .sort((a, b) => b.length - a.length || a[0]! - b[0]!);
   let retainedPixelCount = 0;
@@ -565,6 +675,11 @@ export function extractPlanTracesFromPixels(
     scope_polygon: polygon,
     minimum_component_pixels: minimumComponentPixels,
     simplify_tolerance_px: simplifyTolerance
+    ,...(interpretationMode === "outlined_network_centerline" ? {
+      interpretation_mode: interpretationMode,
+      maximum_interior_span_px: maximumInteriorSpan,
+      minimum_parallel_support_px: minimumParallelSupport
+    } : {})
   };
   return {
     schema_version: 1,
@@ -575,12 +690,19 @@ export function extractPlanTracesFromPixels(
     extraction_policy_sha256: digest(extractionPolicy),
     matched_pixel_count: matchedPixelCount,
     retained_pixel_count: retainedPixelCount,
+    ...(interpretationMode === "outlined_network_centerline"
+      ? { derived_fill_pixel_count: interpreted.derivedFillPixelCount }
+      : {}),
     components,
     usage_constraints: [
       "Extracted polylines represent only raster pixels satisfying the declared color, scope, and component policy.",
       "Polyline segmentation is an image-processing artifact and must not be treated as native Revit element segmentation.",
       "Color extraction does not establish discipline, system classification, size, elevation, family, type, connectivity, or venting topology.",
       "Ambiguous, occluded, monochrome, or out-of-scope routes remain unresolved unless supported by separate source-visible evidence."
+      ,...(interpretationMode === "outlined_network_centerline" ? [
+        "Outlined-network centerlines are derived only where paired boundary ink has the declared span and parallel-support evidence.",
+        "Derived centerlines may still include connected symbols, terminals, fittings, or compact loops and require explicit source accounting before promotion."
+      ] : [])
     ]
   };
 }

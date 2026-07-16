@@ -204,6 +204,30 @@ export type PlumbingPipeRouteObservation =
   | PlumbingCreatedRouteConnectorBridgeObservation
   | PlumbingDownstreamVentTeeObservation;
 
+export type MechanicalHydronicPipeRouteObservation = MepDraftObservationBase & {
+  kind: "pipe_route";
+  discipline: "mechanical";
+  service:
+    | "heating_hot_water_supply"
+    | "heating_hot_water_return"
+    | "chilled_water_supply"
+    | "chilled_water_return"
+    | "condenser_water_supply"
+    | "condenser_water_return";
+  geometry_mode?: "source_points";
+  points: ExistingConditionsPlanPoint[];
+  elevation_ft: number;
+  pipe_size?: string;
+  pipe_size_policy?: "explicit_required" | "unresolved_placeholder";
+  pipe_type: string;
+  system_type: string;
+  connect_to_existing?: boolean;
+  require_existing_endpoint_connections?: boolean;
+  external_connection_tolerance_ft?: number;
+};
+
+export type MepPipeRouteObservation = PlumbingPipeRouteObservation | MechanicalHydronicPipeRouteObservation;
+
 export type PlumbingFixtureObservation = MepDraftObservationBase & {
   kind: "plumbing_fixture";
   discipline: "plumbing";
@@ -339,6 +363,7 @@ export type MepDraftObservation =
   | MechanicalEquipmentObservation
   | AirTerminalObservation
   | PlumbingPipeRouteObservation
+  | MechanicalHydronicPipeRouteObservation
   | PlumbingFixtureObservation
   | ElectricalDeviceObservation
   | ElectricalEquipmentObservation
@@ -444,7 +469,7 @@ function normalized(value: unknown): string {
   return clean(value).toLowerCase().replace(/[\s_-]+/g, " ");
 }
 
-function pipeSizePolicy(observation: PlumbingPipeRouteObservation): "explicit_required" | "unresolved_placeholder" {
+function pipeSizePolicy(observation: MepPipeRouteObservation): "explicit_required" | "unresolved_placeholder" {
   return observation.pipe_size_policy ?? "explicit_required";
 }
 
@@ -456,7 +481,7 @@ function fixtureConnectionMode(observation: PlumbingFixtureObservation): "native
   return observation.service_connection_mode ?? "native_connectivity";
 }
 
-function routePlanPoints(observation: PlumbingPipeRouteObservation): ExistingConditionsPlanPoint[] | null {
+function routePlanPoints(observation: MepPipeRouteObservation): ExistingConditionsPlanPoint[] | null {
   return observation.geometry_mode === "native_connector_bridge"
     || observation.geometry_mode === "created_route_connector_bridge"
     ? null
@@ -761,6 +786,25 @@ function validateObservation(observation: MepDraftObservation, index: number): v
     return;
   }
   if (observation.kind === "pipe_route") {
+    const plumbingServices = ["domestic_cold_water", "domestic_hot_water", "sanitary", "vent"];
+    const mechanicalServices = [
+      "heating_hot_water_supply",
+      "heating_hot_water_return",
+      "chilled_water_supply",
+      "chilled_water_return",
+      "condenser_water_supply",
+      "condenser_water_return"
+    ];
+    if (observation.discipline === "plumbing" && !plumbingServices.includes(observation.service)) {
+      throw new Error(`${id}_plumbing_pipe_service_invalid`);
+    }
+    if (observation.discipline === "mechanical" && !mechanicalServices.includes(observation.service)) {
+      throw new Error(`${id}_mechanical_pipe_service_invalid`);
+    }
+    if (observation.discipline === "mechanical" && observation.geometry_mode !== undefined
+      && observation.geometry_mode !== "source_points") {
+      throw new Error(`${id}_mechanical_pipe_geometry_mode_invalid`);
+    }
     const sizePolicy = pipeSizePolicy(observation);
     if (!['explicit_required', 'unresolved_placeholder'].includes(sizePolicy)) {
       throw new Error(`${id}_pipe_size_policy_invalid`);

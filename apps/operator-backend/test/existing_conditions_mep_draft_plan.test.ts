@@ -520,6 +520,64 @@ test("mechanical plan compiles explicit duct routes and unhosted equipment place
   assert.equal(plan.plan_elements[1]?.category, "OST_MechanicalEquipment");
 });
 
+test("mechanical plan compiles hydronic supply and return as native pipe routes without plumbing coercion", () => {
+  const plan = compileMepDraftPlan({
+    schema_version: 1,
+    fixture_id: "mechanical-hydronic-independent-v1",
+    scope_id: "level-3-corridor-alpha",
+    source_evidence_sha256: SOURCE_HASH,
+    visible_evidence: visibleEvidence(),
+    native_element_references: [],
+    registration: registration(),
+    level_name: "L3",
+    level_elevation_ft: 24,
+    observations: [
+      {
+        kind: "pipe_route",
+        observation_id: "heating-supply-random-31",
+        discipline: "mechanical",
+        service: "heating_hot_water_supply",
+        visibility: "clear",
+        confidence: 0.98,
+        supported_attributes: ["location", "size", "elevation", "system", "type"],
+        attribute_provenance: [
+          { attribute: "elevation", basis: "declared_heuristic", reference: "No elevation is shown in plan; use a declared plenum offset." }
+        ],
+        points: [{ x: 2, y: 1 }, { x: 8, y: 1 }],
+        pipe_size: "3/4 inch",
+        pipe_type: "Small Radius Elbows",
+        system_type: "Heating Hot Water Supply",
+        elevation_ft: 10
+      },
+      {
+        kind: "pipe_route",
+        observation_id: "heating-return-random-44",
+        discipline: "mechanical",
+        service: "heating_hot_water_return",
+        visibility: "clear",
+        confidence: 0.98,
+        supported_attributes: ["location", "size", "elevation", "system", "type"],
+        attribute_provenance: [
+          { attribute: "elevation", basis: "declared_heuristic", reference: "No elevation is shown in plan; use a declared plenum offset." }
+        ],
+        points: [{ x: 2, y: 2 }, { x: 8, y: 2 }],
+        pipe_size: "3/4 inch",
+        pipe_type: "Small Radius Elbows",
+        system_type: "Heating Hot Water Return",
+        elevation_ft: 10
+      }
+    ]
+  });
+  assert.equal(plan.status, "ready");
+  assert.deepEqual(plan.actions.map((entry) => entry.apply_body?.kind), ["pipe", "pipe"]);
+  assert.deepEqual(plan.actions.map((entry) => entry.apply_body?.systemType), [
+    "Heating Hot Water Supply",
+    "Heating Hot Water Return"
+  ]);
+  assert.deepEqual(plan.plan_elements.map((entry) => entry.category), ["OST_PipeCurves", "OST_PipeCurves"]);
+  assert.deepEqual(plan.source_observations.map((entry) => entry.discipline), ["mechanical", "mechanical"]);
+});
+
 function createdRouteHostedTerminalPackage(): MepDraftPackage {
   return {
     schema_version: 1,

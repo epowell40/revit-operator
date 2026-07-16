@@ -61,6 +61,7 @@
           { "$ref": "#/$defs/duct_route" },
           { "$ref": "#/$defs/mechanical_equipment" },
           { "$ref": "#/$defs/air_terminal" },
+          { "$ref": "#/$defs/mechanical_pipe_route" },
           { "$ref": "#/$defs/pipe_route" },
           { "$ref": "#/$defs/pipe_source_branch_tee" },
           { "$ref": "#/$defs/pipe_connector_bridge" },
@@ -330,6 +331,39 @@
         "pixel_point": { "$ref": "#/$defs/point" },
         "elevation_ft": { "type": "number" },
         "placement": { "$ref": "#/$defs/air_terminal_placement" }
+      }
+    },
+    "mechanical_pipe_route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "service", "pixel_points", "pipe_type", "system_type", "elevation_ft"],
+      "allOf": [
+        {
+          "if": { "required": ["pipe_size_policy"], "properties": { "pipe_size_policy": { "const": "unresolved_placeholder" } } },
+          "then": { "properties": { "pipe_size": false } },
+          "else": { "required": ["pipe_size"], "properties": { "pipe_size": { "type": "string", "minLength": 1 } } }
+        }
+      ],
+      "properties": {
+        "kind": { "const": "pipe_route" },
+        "discipline": { "const": "mechanical" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
+        "service": { "enum": ["heating_hot_water_supply", "heating_hot_water_return", "chilled_water_supply", "chilled_water_return", "condenser_water_supply", "condenser_water_return"] },
+        "geometry_mode": { "const": "source_points" },
+        "pixel_points": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/point" } },
+        "pipe_size": { "type": "string", "minLength": 1 },
+        "pipe_size_policy": { "enum": ["explicit_required", "unresolved_placeholder"] },
+        "pipe_type": { "type": "string", "minLength": 1 },
+        "system_type": { "type": "string", "minLength": 1 },
+        "elevation_ft": { "type": "number" },
+        "connect_to_existing": { "type": "boolean" },
+        "require_existing_endpoint_connections": { "type": "boolean" },
+        "external_connection_tolerance_ft": { "type": "number", "exclusiveMinimum": 0 }
       }
     },
     "pipe_route": {

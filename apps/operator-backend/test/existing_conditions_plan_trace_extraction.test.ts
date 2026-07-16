@@ -178,6 +178,71 @@ test("preserves distinct raw branches when simplification would collapse them to
   assert.equal(receipt.components[0]!.polylines.some((polyline) => polyline.points.length > 2), true);
 });
 
+test("derives one centerline from a solid outlined network instead of promoting both boundaries", () => {
+  const canvas = createCanvas(140, 90);
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.strokeStyle = "rgb(20, 180, 70)";
+  context.lineWidth = 3;
+  context.strokeRect(15, 25, 105, 30);
+  const receipt = extractPlanTracesFromPixels(pixelsFromCanvas(canvas), {
+    ...topologyInput(),
+    interpretation_mode: "outlined_network_centerline",
+    maximum_interior_span_px: 40,
+    minimum_parallel_support_px: 20,
+    simplify_tolerance_px: 2
+  });
+  assert.equal(receipt.components.length, 1);
+  assert.equal((receipt.derived_fill_pixel_count ?? 0) > 2_000, true);
+  const longLines = receipt.components[0]!.polylines.filter((polyline) => polyline.length_px > 70);
+  assert.equal(longLines.length, 1);
+  const meanY = longLines[0]!.points.reduce((sum, point) => sum + point.y, 0) / longLines[0]!.points.length;
+  assert.equal(Math.abs(meanY - 40) <= 2, true);
+  assert.equal(longLines[0]!.points.some((point) => Math.abs(point.y - 25) <= 2), false);
+  assert.equal(longLines[0]!.points.some((point) => Math.abs(point.y - 55) <= 2), false);
+  assert.match(receipt.usage_constraints.join(" "), /connected symbols.*explicit source accounting/i);
+});
+
+test("outlined-network mode does not bridge short dashed boundary fragments without parallel support", () => {
+  const canvas = createCanvas(140, 90);
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.strokeStyle = "rgb(20, 180, 70)";
+  context.lineWidth = 3;
+  context.setLineDash([8, 12]);
+  context.beginPath();
+  context.moveTo(10, 25);
+  context.lineTo(130, 25);
+  context.moveTo(10, 55);
+  context.lineTo(130, 55);
+  context.stroke();
+  const receipt = extractPlanTracesFromPixels(pixelsFromCanvas(canvas), {
+    ...topologyInput(),
+    interpretation_mode: "outlined_network_centerline",
+    maximum_interior_span_px: 40,
+    minimum_parallel_support_px: 15,
+    simplify_tolerance_px: 1
+  });
+  assert.equal(receipt.derived_fill_pixel_count, 0);
+  assert.equal(receipt.components.length > 2, true);
+});
+
+test("outlined-network parameters fail closed outside their explicit mode", () => {
+  assert.throws(
+    () => extractPlanTracesFromPixels(rgbaFixture(), { ...extractionInput(), maximum_interior_span_px: 30 }),
+    /parameters_require_outlined_network_centerline_mode/
+  );
+  assert.throws(
+    () => extractPlanTracesFromPixels(rgbaFixture(), {
+      ...extractionInput(),
+      interpretation_mode: "outlined_network_centerline"
+    }),
+    /maximum_interior_span_px_must_be_finite/
+  );
+});
+
 test("scope and color policy prevent unrelated or low-chroma lines from entering the trace", () => {
   const fixture = rgbaFixture();
   const outsideScope = extractPlanTracesFromPixels(fixture, {

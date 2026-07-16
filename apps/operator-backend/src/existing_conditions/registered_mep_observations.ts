@@ -13,6 +13,7 @@ import {
   type MepDraftPlacement,
   type MepDraftPackage,
   type MechanicalDuctRouteObservation,
+  type MechanicalHydronicPipeRouteObservation,
   type MechanicalEquipmentObservation,
   type PlumbingDownstreamVentTeeObservation,
   type PlumbingCreatedRouteConnectorBridgeObservation,
@@ -58,6 +59,10 @@ type WithAttributeEvidence = {
 };
 
 export type RegisteredPlumbingPipeRouteObservation = Omit<PlumbingSourcePointRouteObservation, "points"> & WithAttributeEvidence & {
+  pixel_points: ExistingConditionsPlanPoint[];
+};
+
+export type RegisteredMechanicalHydronicPipeRouteObservation = Omit<MechanicalHydronicPipeRouteObservation, "points"> & WithAttributeEvidence & {
   pixel_points: ExistingConditionsPlanPoint[];
 };
 
@@ -112,6 +117,7 @@ export type RegisteredMepPixelObservation =
   | RegisteredMechanicalDuctRouteObservation
   | RegisteredMechanicalEquipmentObservation
   | RegisteredAirTerminalObservation
+  | RegisteredMechanicalHydronicPipeRouteObservation
   | RegisteredPlumbingPipeRouteObservation
   | RegisteredPlumbingSourceBranchTeeObservation
   | RegisteredPlumbingConnectorBridgeObservation
@@ -158,6 +164,7 @@ function normalized(value: unknown): string {
 
 function registeredPipeSizePolicy(
   observation: RegisteredPlumbingPipeRouteObservation
+    | RegisteredMechanicalHydronicPipeRouteObservation
     | RegisteredPlumbingSourceBranchTeeObservation
     | RegisteredPlumbingConnectorBridgeObservation
     | RegisteredPlumbingCreatedRouteConnectorBridgeObservation
@@ -266,6 +273,7 @@ function allowedDiscipline(
   index: number
 ): void {
   const expected = observation.kind === "duct_route" || observation.kind === "mechanical_equipment" || observation.kind === "air_terminal"
+    || (observation.kind === "pipe_route" && observation.discipline === "mechanical")
     ? "mechanical"
     : observation.kind === "pipe_route" || observation.kind === "plumbing_fixture"
       ? "plumbing"
