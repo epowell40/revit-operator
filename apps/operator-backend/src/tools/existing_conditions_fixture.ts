@@ -80,6 +80,10 @@ import {
   type ExistingConditionsRegistrationInput
 } from "../existing_conditions/registration.js";
 import {
+  assessExistingConditionsRegistrationAmbiguity,
+  type ExistingConditionsRegistrationAmbiguityInputV1
+} from "../existing_conditions/registration_ambiguity.js";
+import {
   compileArchitecturalShellPlan,
   type ArchitecturalShellPackage
 } from "../existing_conditions/architectural_shell_plan.js";
@@ -249,6 +253,7 @@ function usage(): never {
     "  npm run existing-conditions -- inventory (--expected-model <model.rvt> | --expected-document-title <exact-title> --allow-title-only-development) --view-id <id> --out-dir <inventory-dir> --token-file <operator_token.txt> --grant-file <write_grant.json> [--categories <OST_...,OST_...>] [--include-linked] [--model-bounds <minX,minY,minZ,maxX,maxY,maxZ>]",
     "  npm run existing-conditions -- scope-image-region --visible <export-visible-elements.json> --image-region <minX,minY,maxX,maxY> --out <scope.json> [--padding-px <pixels>] [--include-linked-scope] [--level-names <name,name>]",
     "  npm run existing-conditions -- solve-registration --input <registration-input-or-wrapper.json> --out <registration-receipt.json>",
+    "  npm run existing-conditions -- assess-registration-ambiguity --input <candidate-search.json> --out <ambiguity-receipt.json>",
     "  npm run existing-conditions -- extract-plan-traces --input <hash-bound-extraction-policy.json> --out <trace-receipt.json> [--preview-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- detect-repeated-mep-symbols --input <hash-bound-template-search.json> --out <candidate-receipt.json>",
     "  npm run existing-conditions -- validate-mep-region-coverage --input <source-coverage.json> --context <coverage-context.json> --out <coverage-receipt.json>",
@@ -288,7 +293,7 @@ function usage(): never {
     "  npm run existing-conditions -- evaluate-engineering-case --case <case-definition.json> --native-evidence <evaluator-native-evidence.json> --evaluator-provenance <provenance.json> --evaluator-key-file <secret> --out <checks.json>",
     "  npm run existing-conditions -- advance-controller --state <controller-state-or-receipt.json> --event <event.json> --out <next-receipt.json>",
     "  npm run existing-conditions -- evaluator-diff --before-visible <json> --after-visible <json> --package <agent_package.json> --out <receipt.json>",
-    "  npm run existing-conditions -- validate-contract --kind <agent_package|ground_truth|candidate|architectural_preview|architectural_pixel_measurement|registered_mep_observations|mep_region_coverage|architectural_wall_candidate_clarification|architectural_opening_classification|architectural_door_span_observation|architectural_opening_host_resolution> --file <json>",
+    "  npm run existing-conditions -- validate-contract --kind <agent_package|ground_truth|candidate|architectural_preview|architectural_pixel_measurement|registered_mep_observations|mep_region_coverage|registration_ambiguity|architectural_wall_candidate_clarification|architectural_opening_classification|architectural_door_span_observation|architectural_opening_host_resolution> --file <json>",
     "  npm run existing-conditions -- redact --expected-source <source.rvt> --staging-model <withheld-staging.rvt> --redacted-model <agent-redacted.rvt> --view-id <id> --ids <id,id,...> --anchor-ids <id,id,...> --out-dir <fixture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "Options:",
     "  --allow-missing-connectors  Permit non-MEP normalization without connector readback.",
@@ -1708,6 +1713,15 @@ async function main(): Promise<void> {
     const root = asObject(input);
     const registrationInput = asObject(root.registration_input ?? input) as ExistingConditionsRegistrationInput;
     writeJson(requiredArgument("--out"), solveExistingConditionsRegistration(registrationInput));
+    return;
+  }
+  if (command === "assess-registration-ambiguity") {
+    const input = readJson(requiredArgument("--input"));
+    assertExistingConditionsContract("registration_ambiguity", input);
+    writeJson(
+      requiredArgument("--out"),
+      assessExistingConditionsRegistrationAmbiguity(input as ExistingConditionsRegistrationAmbiguityInputV1)
+    );
     return;
   }
   if (command === "extract-plan-traces") {

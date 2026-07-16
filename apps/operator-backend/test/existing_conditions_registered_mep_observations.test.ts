@@ -10,6 +10,7 @@ import {
   compileRegisteredMepObservations,
   type RegisteredMepObservationPackage
 } from "../src/existing_conditions/registered_mep_observations.js";
+import { assertExistingConditionsContract } from "../src/existing_conditions/contract_validation.js";
 import type { BoundedMepRegionCoverageV1, BoundedMepRegionCoverageV2 } from "../src/existing_conditions/mep_region_coverage.js";
 
 const SOURCE_HASH = "a".repeat(64);
@@ -142,6 +143,92 @@ function plumbingInput(): RegisteredMepObservationPackage {
     ]
   };
 }
+
+function repeatedModuleAmbiguity() {
+  return {
+    schema_version: 1 as const,
+    source_evidence_sha256: SOURCE_HASH,
+    selected_candidate_id: "selected-module",
+    source_bounds: { min: { x: 0, y: 0 }, max: { x: 100, y: 100 } },
+    candidate_search_complete: true as const,
+    evaluated_candidate_count: 250,
+    candidates: [
+      {
+        candidate_id: "selected-module",
+        registration: registration(),
+        independent_evidence_score: 0.8,
+        independent_evidence_support_count: 10,
+        evidence_kind: "retained_non_target_mask" as const,
+        evidence_role: "registration_independent_evidence",
+        evidence_sha256: "d".repeat(64),
+        access_scope: "agent_visible" as const,
+        target_regions_excluded: true as const
+      },
+      {
+        candidate_id: "alternate-module",
+        registration: {
+          ...registration(),
+          control_points: registration().control_points.map((entry) => ({
+            source: entry.source,
+            model: { x: entry.model.x + 40, y: entry.model.y }
+          }))
+        },
+        independent_evidence_score: 0.5,
+        independent_evidence_support_count: 10,
+        evidence_kind: "retained_non_target_mask" as const,
+        evidence_role: "registration_independent_evidence",
+        evidence_sha256: "d".repeat(64),
+        access_scope: "agent_visible" as const,
+        target_regions_excluded: true as const
+      }
+    ]
+  };
+}
+
+test("registered MEP compilation binds a decisive repeated-module registration selection", async () => {
+  const accepted = plumbingInput();
+  accepted.visible_evidence.push({ role: "registration_independent_evidence", sha256: "d".repeat(64) });
+  accepted.registration_ambiguity = repeatedModuleAmbiguity();
+  assertExistingConditionsContract("registered_mep_observations", accepted);
+  const compilation = await compileRegisteredMepObservations(accepted);
+  assert.equal(compilation.registration_ambiguity_receipt?.verified, true);
+  assert.equal(compilation.registration_ambiguity_receipt?.accepted_basis, "independent_evidence_margin");
+
+  const tied = plumbingInput();
+  tied.visible_evidence.push({ role: "registration_independent_evidence", sha256: "d".repeat(64) });
+  tied.registration_ambiguity = repeatedModuleAmbiguity();
+  tied.registration_ambiguity.candidates[1]!.independent_evidence_score = 0.79;
+  await assert.rejects(
+    () => compileRegisteredMepObservations(tied),
+    /registered_mep_registration_ambiguity_not_resolved/
+  );
+
+  const mismatched = plumbingInput();
+  mismatched.visible_evidence.push({ role: "registration_independent_evidence", sha256: "d".repeat(64) });
+  mismatched.registration_ambiguity = repeatedModuleAmbiguity();
+  mismatched.registration.control_points = mismatched.registration.control_points.map((entry) => ({
+    source: entry.source,
+    model: { x: entry.model.x + 1, y: entry.model.y }
+  }));
+  await assert.rejects(
+    () => compileRegisteredMepObservations(mismatched),
+    /registration_does_not_match_ambiguity_selection|registration_receipt_does_not_match_ambiguity_selection/
+  );
+
+  const unboundEvidence = plumbingInput();
+  unboundEvidence.registration_ambiguity = repeatedModuleAmbiguity();
+  await assert.rejects(
+    () => compileRegisteredMepObservations(unboundEvidence),
+    /registration_ambiguity_evidence_not_visible/
+  );
+
+  const nullGate = plumbingInput();
+  (nullGate as unknown as { registration_ambiguity: null }).registration_ambiguity = null;
+  await assert.rejects(
+    () => compileRegisteredMepObservations(nullGate),
+    /invalid_existing_conditions_registration_ambiguity_contract/
+  );
+});
 
 test("registered plumbing observations fail closed on fixture versus MEP connection ambiguity", async () => {
   const mismatch = plumbingInput();

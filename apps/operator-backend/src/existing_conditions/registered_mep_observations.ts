@@ -29,6 +29,11 @@ import {
   type ExistingConditionsRegistrationReceipt
 } from "./registration.js";
 import {
+  assessExistingConditionsRegistrationAmbiguity,
+  type ExistingConditionsRegistrationAmbiguityInputV1,
+  type ExistingConditionsRegistrationAmbiguityReceiptV1
+} from "./registration_ambiguity.js";
+import {
   validateBoundedMepRegionCoverage,
   type BoundedMepRegionCoverageReceiptV1,
   type BoundedMepRegionCoverageReceiptV2,
@@ -146,6 +151,7 @@ export type RegisteredMepObservationPackage = Omit<MepDraftPackage, "observation
     model_bounds: Bounds2d;
   };
   maximum_observations: number;
+  registration_ambiguity?: ExistingConditionsRegistrationAmbiguityInputV1;
   source_coverage?: BoundedMepRegionCoverageV1 | BoundedMepRegionCoverageV2;
   observations: RegisteredMepPixelObservation[];
 };
@@ -157,6 +163,7 @@ export type RegisteredMepObservationCompilation = {
   input_fingerprint_sha256: string;
   registered_render_sha256: string;
   registration: ExistingConditionsRegistrationReceipt;
+  registration_ambiguity_receipt?: ExistingConditionsRegistrationAmbiguityReceiptV1;
   source_coverage_receipt?: BoundedMepRegionCoverageReceiptV1 | BoundedMepRegionCoverageReceiptV2;
   converted_package: MepDraftPackage;
   compiled_plan: CompiledMepDraftPlan;
@@ -432,6 +439,41 @@ export async function compileRegisteredMepObservations(
   const registration = solveExistingConditionsRegistration(input.registration);
   if (!registration.verified) throw new Error("registered_mep_registration_not_verified");
   if (registration.source_evidence_sha256 !== sourceHash) throw new Error("registered_mep_registration_source_hash_mismatch");
+  const hasRegistrationAmbiguity = Object.prototype.hasOwnProperty.call(input, "registration_ambiguity");
+  const registrationAmbiguityReceipt = hasRegistrationAmbiguity
+    ? assessExistingConditionsRegistrationAmbiguity(input.registration_ambiguity as ExistingConditionsRegistrationAmbiguityInputV1)
+    : undefined;
+  if (registrationAmbiguityReceipt) {
+    const ambiguityEvidence = [
+      ...input.registration_ambiguity!.candidates.map((entry) => ({
+        role: entry.evidence_role,
+        sha256: entry.evidence_sha256
+      })),
+      ...(input.registration_ambiguity!.semantic_anchors ?? []).map((entry) => ({
+        role: entry.evidence_role,
+        sha256: entry.evidence_sha256
+      }))
+    ];
+    for (const [index, entry] of ambiguityEvidence.entries()) {
+      const role = normalized(requiredText(entry.role, `registration_ambiguity_evidence_${index}_role`));
+      const hash = sha256Text(entry.sha256, `registration_ambiguity_evidence_${index}_sha256`);
+      if (evidenceByRole.get(role) !== hash) {
+        throw new Error(`registered_mep_registration_ambiguity_evidence_not_visible:${entry.role}`);
+      }
+    }
+    if (!registrationAmbiguityReceipt.verified) {
+      throw new Error(`registered_mep_registration_ambiguity_not_resolved:${registrationAmbiguityReceipt.blockers.join("|")}`);
+    }
+    const selectedCandidate = input.registration_ambiguity!.candidates.find((entry) =>
+      entry.candidate_id.trim() === input.registration_ambiguity!.selected_candidate_id.trim()
+    );
+    if (!selectedCandidate || canonicalJson(selectedCandidate.registration) !== canonicalJson(input.registration)) {
+      throw new Error("registered_mep_registration_does_not_match_ambiguity_selection");
+    }
+    if (canonicalJson(registrationAmbiguityReceipt.selected_registration) !== canonicalJson(registration)) {
+      throw new Error("registered_mep_registration_receipt_does_not_match_ambiguity_selection");
+    }
+  }
   const maximumObservations = positiveInteger(input.maximum_observations, "maximum_observations");
   if (!Array.isArray(input.observations) || input.observations.length === 0) {
     throw new Error("registered_mep_observations_are_required");
@@ -625,6 +667,7 @@ export async function compileRegisteredMepObservations(
     input_fingerprint_sha256: fingerprint(input),
     registered_render_sha256: renderHash,
     registration,
+    ...(registrationAmbiguityReceipt ? { registration_ambiguity_receipt: registrationAmbiguityReceipt } : {}),
     ...(sourceCoverageReceipt ? { source_coverage_receipt: sourceCoverageReceipt } : {}),
     converted_package: convertedPackage,
     compiled_plan: compiledPlan,
@@ -640,6 +683,7 @@ export async function compileRegisteredMepObservations(
       "Electrical circuit membership may use the registered render only when every newly created member has explicit legible evidence for the same printed circuit label; otherwise it must remain grounded in exact native source power-system evidence or explicit user direction.",
       "A conduit service classification requires its own evidence and never establishes panel association, circuit membership, or endpoint connectivity from route proximity or nearby text.",
       "The registered render must be agent-visible, hash-bound, dimension-verified, and aligned to the declared model frame.",
+      "When a registration came from a repeated-image candidate search, attach registration_ambiguity so compilation can require either multiple non-repeating agent-visible anchors or a decisive independent-evidence margin over a materially distinct alternate transform.",
       "No evaluator, withheld truth, native target identity, or scorer output is used to convert pixel observations.",
       "A bounded-region completeness claim requires a hash-bound source-coverage receipt in which every MEP-like candidate is resolved to typed observations or remains explicitly unresolved; partial coverage cannot be reported as complete."
     ]

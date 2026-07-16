@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bimtools.com/schemas/revit-operator/existing-conditions-registration-ambiguity.v1.schema.json",
+  "title": "Existing conditions registration ambiguity gate V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "source_evidence_sha256",
+    "selected_candidate_id",
+    "source_bounds",
+    "candidate_search_complete",
+    "evaluated_candidate_count",
+    "candidates"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "source_evidence_sha256": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/sha256" },
+    "selected_candidate_id": { "type": "string", "minLength": 1 },
+    "source_bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max"],
+      "properties": {
+        "min": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/point" },
+        "max": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/point" }
+      }
+    },
+    "candidate_search_complete": { "const": true },
+    "evaluated_candidate_count": { "type": "integer", "minimum": 1 },
+    "candidates": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 1000,
+      "items": { "$ref": "#/$defs/candidate" }
+    },
+    "semantic_anchors": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": { "$ref": "#/$defs/semantic_anchor" }
+    },
+    "policy": { "$ref": "#/$defs/policy" }
+  },
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_id",
+        "registration",
+        "independent_evidence_score",
+        "independent_evidence_support_count",
+        "evidence_kind",
+        "evidence_role",
+        "evidence_sha256",
+        "access_scope",
+        "target_regions_excluded"
+      ],
+      "properties": {
+        "candidate_id": { "type": "string", "minLength": 1 },
+        "registration": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/registration" },
+        "independent_evidence_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "independent_evidence_support_count": { "type": "integer", "minimum": 1 },
+        "evidence_kind": { "enum": ["retained_non_target_mask", "agent_visible_context_render", "agent_visible_semantic_crop_set"] },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "evidence_sha256": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/sha256" },
+        "access_scope": { "const": "agent_visible" },
+        "target_regions_excluded": { "const": true }
+      }
+    },
+    "semantic_anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "anchor_id",
+        "source",
+        "model",
+        "evidence_role",
+        "evidence_sha256",
+        "access_scope",
+        "non_repeating_context",
+        "target_regions_excluded"
+      ],
+      "properties": {
+        "anchor_id": { "type": "string", "minLength": 1 },
+        "source": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/point" },
+        "model": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/point" },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "evidence_sha256": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/sha256" },
+        "access_scope": { "const": "agent_visible" },
+        "non_repeating_context": { "const": true },
+        "target_regions_excluded": { "const": true }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "minimum_distinct_candidate_displacement_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "minimum_independent_evidence_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "minimum_independent_evidence_margin": { "type": "number", "minimum": 0, "maximum": 1 },
+        "minimum_independent_evidence_support_count": { "type": "integer", "minimum": 1 },
+        "minimum_semantic_anchor_count": { "type": "integer", "minimum": 1 },
+        "maximum_semantic_anchor_error_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "minimum_semantic_anchor_rms_margin_ft": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    }
+  }
+}

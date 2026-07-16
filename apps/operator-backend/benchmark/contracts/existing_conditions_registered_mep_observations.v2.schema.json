@@ -37,6 +37,7 @@
       "items": { "$ref": "#/$defs/native_reference" }
     },
     "registration": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/registration" },
+    "registration_ambiguity": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-registration-ambiguity.v1.schema.json" },
     "coordinate_space": { "const": "registered_render_pixels_top_left" },
     "registered_render": { "$ref": "#/$defs/registered_render" },
     "frame": {
