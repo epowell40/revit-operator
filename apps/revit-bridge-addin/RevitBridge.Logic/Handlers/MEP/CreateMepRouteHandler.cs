@@ -23,6 +23,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             public string? roomNumber { get; set; }
             public string? levelName { get; set; }
             public long? levelId { get; set; }
+            public string? worksetName { get; set; }
+            public long? worksetId { get; set; }
             public string? systemType { get; set; }
             public string? ductType { get; set; }
             public long? ductTypeId { get; set; }
@@ -70,6 +72,11 @@ namespace RevitBridge.Logic.Handlers.MEP
             }
 
             var doc = app.ActiveUIDocument.Document;
+            var requestedWorkset = ResolveRequestedWorkset(doc, p.worksetId, p.worksetName, out var worksetError);
+            if (!string.IsNullOrWhiteSpace(worksetError))
+            {
+                return Task.FromResult<object>(new { status = "Blocked", error = worksetError, warnings });
+            }
             var ctxReq = new MepRoutingUtil.RoutingContextRequest
             {
                 viewId = p.viewId,
@@ -190,6 +197,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         var b = resolvedPoints[i + 1];
                         Element curve;
                         object sizeApplied;
+                        object? worksetApplied = null;
                         object? nativeSizeReadback = null;
                         object? nativeGeometryReadback = null;
                         var segmentSize = MepRoutingUtil.ChooseSize(
@@ -238,6 +246,11 @@ namespace RevitBridge.Logic.Handlers.MEP
                             curve = duct;
                         }
 
+                        if (requestedWorkset != null)
+                        {
+                            worksetApplied = ApplyAndVerifyWorkset(curve, requestedWorkset, p.verify);
+                        }
+
                         doc.Regenerate();
                         nativeGeometryReadback = BuildNativeGeometryReadback(curve);
 
@@ -261,6 +274,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                                 diameterFt = segmentSize.DiameterFt
                             },
                             sizeApplied,
+                            worksetApplied,
                             nativeSizeReadback,
                             nativeGeometryReadback
                         });
@@ -333,6 +347,18 @@ namespace RevitBridge.Logic.Handlers.MEP
                         }
                     }
 
+                    var createdFittingWorksets = new List<object>();
+                    if (requestedWorkset != null)
+                    {
+                        foreach (var fittingId in fittingIds.Distinct())
+                        {
+                            var fitting = doc.GetElement(ElementIdCompat.Create(fittingId));
+                            if (fitting == null) throw new InvalidOperationException($"Created route fitting {fittingId} was not found for workset assignment.");
+                            createdFittingWorksets.Add(ApplyAndVerifyWorkset(fitting, requestedWorkset, p.verify));
+                        }
+                        doc.Regenerate();
+                    }
+
                     var openConnectorCount = p.verify ? MepRoutingUtil.CountOpenConnectors(created) : (int?)null;
                     var postConnectionGeometryReadback = created.Select((element, index) => new
                     {
@@ -358,6 +384,11 @@ namespace RevitBridge.Logic.Handlers.MEP
                         segmentCount = resolvedPoints.Count - 1,
                         totalLengthFt = totalLength,
                         selected = BuildSelected(ctx, sysType, dType, pType, conduitType),
+                        selectedWorkset = requestedWorkset == null ? null : new
+                        {
+                            id = requestedWorkset.Id.IntegerValue,
+                            name = requestedWorkset.Name
+                        },
                         chosenSize = new
                         {
                             requested = size.RequestedText.Length == 0 ? null : size.RequestedText,
@@ -382,6 +413,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         dryRunElementIds = p.dryRun ? createdIds : new List<long>(),
                         dryRunFittingIds = p.dryRun ? fittingIds : new List<long>(),
                         segments = segmentResults,
+                        createdFittingWorksets,
                         postConnectionGeometryReadback,
                         connectionAttempts,
                         internalConnectionsVerified = !p.connectSegments || internalConnectionFailures == 0,
@@ -533,6 +565,70 @@ namespace RevitBridge.Logic.Handlers.MEP
         }
 
         private static object ToPointObject(XYZ p) => new { x = p.X, y = p.Y, z = p.Z };
+
+        private static Workset? ResolveRequestedWorkset(Document doc, long? worksetId, string? worksetName, out string? error)
+        {
+            error = null;
+            var requestedName = (worksetName ?? "").Trim();
+            var hasId = worksetId.HasValue && worksetId.Value > 0;
+            var hasName = requestedName.Length > 0;
+            if (!hasId && !hasName) return null;
+            if (!doc.IsWorkshared)
+            {
+                error = "An explicit MEP route workset was requested, but the active document is not workshared.";
+                return null;
+            }
+
+            var worksets = new FilteredWorksetCollector(doc)
+                .OfKind(WorksetKind.UserWorkset)
+                .ToWorksets()
+                .ToList();
+            var byId = hasId ? worksets.FirstOrDefault(x => x.Id.IntegerValue == worksetId!.Value) : null;
+            var byName = hasName ? worksets.FirstOrDefault(x => string.Equals(x.Name, requestedName, StringComparison.OrdinalIgnoreCase)) : null;
+            if (hasId && byId == null)
+            {
+                error = $"MEP route workset id {worksetId} was not found as a user workset.";
+                return null;
+            }
+            if (hasName && byName == null)
+            {
+                error = $"MEP route workset '{requestedName}' was not found as a user workset.";
+                return null;
+            }
+            if (byId != null && byName != null && byId.Id.IntegerValue != byName.Id.IntegerValue)
+            {
+                error = $"MEP route workset id {worksetId} does not match workset name '{requestedName}'.";
+                return null;
+            }
+            return byId ?? byName;
+        }
+
+        private static object ApplyAndVerifyWorkset(Element element, Workset workset, bool verify)
+        {
+            var parameter = element.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM);
+            if (parameter == null || parameter.IsReadOnly)
+            {
+                throw new InvalidOperationException($"Element {ElementIdCompat.GetValue(element.Id)} cannot be assigned to workset '{workset.Name}'.");
+            }
+            if (!parameter.Set(workset.Id.IntegerValue))
+            {
+                throw new InvalidOperationException($"Element {ElementIdCompat.GetValue(element.Id)} rejected workset '{workset.Name}'.");
+            }
+            var readbackId = parameter.AsInteger();
+            var verified = readbackId == workset.Id.IntegerValue;
+            if (verify && !verified)
+            {
+                throw new InvalidOperationException($"Element {ElementIdCompat.GetValue(element.Id)} workset readback {readbackId} did not match requested workset {workset.Id.IntegerValue}.");
+            }
+            return new
+            {
+                elementId = ElementIdCompat.GetValue(element.Id),
+                requestedWorksetId = workset.Id.IntegerValue,
+                requestedWorksetName = workset.Name,
+                readbackWorksetId = readbackId,
+                verified
+            };
+        }
 
         private static object? BuildNativeGeometryReadback(Element element)
         {

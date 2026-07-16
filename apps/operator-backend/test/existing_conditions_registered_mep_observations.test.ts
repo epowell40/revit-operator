@@ -368,6 +368,7 @@ test("registered mechanical pixels compile duct routing and equipment placement 
 test("registered mechanical hydronic pixels compile exact heating supply and return pipe systems", async () => {
   const input = mechanicalInput();
   input.fixture_id = "registered-mechanical-hydronic-independent-v1";
+  input.visible_evidence.push({ role: "native_model_inventory", sha256: "f".repeat(64) });
   input.observations = [
     {
       kind: "pipe_route",
@@ -375,18 +376,20 @@ test("registered mechanical hydronic pixels compile exact heating supply and ret
       observation_id: "heating-supply-random-51",
       visibility: "clear",
       confidence: 0.98,
-      supported_attributes: ["location", "size", "elevation", "system", "type"],
+      supported_attributes: ["location", "size", "elevation", "system", "type", "workset"],
       attribute_evidence: [
         { attribute: "size", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "3/4 inch label applies to the selected solid run" },
         { attribute: "elevation", basis: "declared_heuristic", evidence_role: "registered_source_render", reference: "No elevation is shown in plan; assume 10 feet above the level in the plenum." },
         { attribute: "system", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "HS label identifies the solid heating supply run" },
-        { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "project pipe-type note applies to the selected run" }
+        { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "project pipe-type note applies to the selected run" },
+        { attribute: "workset", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "retained hydronic routes use the mechanical piping workset" }
       ],
       service: "heating_hot_water_supply",
       pixel_points: [{ x: 20, y: 70 }, { x: 80, y: 70 }],
       pipe_size: "3/4 inch",
       pipe_type: "Small Radius Elbows",
       system_type: "Heating Hot Water Supply",
+      workset_name: "MECH-PIPING",
       elevation_ft: 10
     },
     {
@@ -395,18 +398,20 @@ test("registered mechanical hydronic pixels compile exact heating supply and ret
       observation_id: "heating-return-random-62",
       visibility: "clear",
       confidence: 0.98,
-      supported_attributes: ["location", "size", "elevation", "system", "type"],
+      supported_attributes: ["location", "size", "elevation", "system", "type", "workset"],
       attribute_evidence: [
         { attribute: "size", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "3/4 inch label applies to the selected dashed run" },
         { attribute: "elevation", basis: "declared_heuristic", evidence_role: "registered_source_render", reference: "No elevation is shown in plan; assume 10 feet above the level in the plenum." },
         { attribute: "system", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "HR label identifies the dashed heating return run" },
-        { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "project pipe-type note applies to the selected run" }
+        { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "project pipe-type note applies to the selected run" },
+        { attribute: "workset", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "retained hydronic routes use the mechanical piping workset" }
       ],
       service: "heating_hot_water_return",
       pixel_points: [{ x: 20, y: 80 }, { x: 80, y: 80 }],
       pipe_size: "3/4 inch",
       pipe_type: "Small Radius Elbows",
       system_type: "Heating Hot Water Return",
+      workset_name: "MECH-PIPING",
       elevation_ft: 10
     }
   ];
@@ -417,6 +422,7 @@ test("registered mechanical hydronic pixels compile exact heating supply and ret
     "Heating Hot Water Supply",
     "Heating Hot Water Return"
   ]);
+  assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.apply_body?.worksetName), ["MECH-PIPING", "MECH-PIPING"]);
   assert.deepEqual(result.compiled_plan.plan_elements.map((entry) => entry.discipline), ["mechanical", "mechanical"]);
 });
 

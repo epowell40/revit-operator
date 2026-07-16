@@ -20,6 +20,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             public string? roomNumber { get; set; }
             public string? levelName { get; set; }
             public long? levelId { get; set; }
+            public string? worksetName { get; set; }
+            public long? worksetId { get; set; }
             public string? systemType { get; set; }
             public string? ductType { get; set; }
             public long? ductTypeId { get; set; }
@@ -290,6 +292,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             roomNumber = p.roomNumber,
             levelName = p.levelName,
             levelId = p.levelId,
+            worksetName = p.worksetName,
+            worksetId = p.worksetId,
             systemType = p.systemType,
             ductType = p.ductType,
             ductTypeId = p.ductTypeId,

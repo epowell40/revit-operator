@@ -285,25 +285,27 @@ function allowedDiscipline(
 }
 
 function materialAttributes(observation: Exclude<RegisteredMepPixelObservation, ElectricalCircuitObservation>): string[] {
-  if (observation.kind === "duct_route") return ["size", "elevation", "system", "type"];
+  const workset = clean((observation as { workset_name?: string }).workset_name) ? ["workset"] : [];
+  if (observation.kind === "duct_route") return ["size", "elevation", "system", "type", ...workset];
   if (observation.kind === "conduit_route") {
     return [
       ...(registeredConduitSizePolicy(observation) === "explicit_required" ? ["size"] : []),
       "elevation",
       ...(observation.service === "unclassified" ? [] : ["system"]),
-      "type"
+      "type",
+      ...workset
     ];
   }
   if (observation.kind === "pipe_route") {
     const size = registeredPipeSizePolicy(observation) === "explicit_required" ? ["size"] : [];
     if (observation.geometry_mode === "native_connector_bridge"
       || observation.geometry_mode === "created_route_connector_bridge") {
-      return ["location", ...size, "elevation", "system", "type"];
+      return ["location", ...size, "elevation", "system", "type", ...workset];
     }
     if (observation.geometry_mode === "downstream_vent_tee") {
-      return [...size, ...(clean(observation.main_reference_key) ? ["main elevation"] : []), "elevation", "system", "type"];
+      return [...size, ...(clean(observation.main_reference_key) ? ["main elevation"] : []), "elevation", "system", "type", ...workset];
     }
-    return [...size, "elevation", "system", "type"];
+    return [...size, "elevation", "system", "type", ...workset];
   }
   if (observation.kind === "plumbing_fixture") {
     return observation.placement.mode === "hosted_exemplar" || observation.placement.mode === "hosted_family_symbol"

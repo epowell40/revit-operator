@@ -115,6 +115,8 @@ export type PlumbingSourcePointRouteObservation = PlumbingPipeRouteObservationBa
   geometry_mode?: "source_points";
   points: ExistingConditionsPlanPoint[];
   elevation_ft: number;
+  /** Exact project workset name, supported by project-native precedent or explicit direction. */
+  workset_name?: string;
   connect_to_existing?: boolean;
   require_existing_endpoint_connections?: boolean;
   external_connection_tolerance_ft?: number;
@@ -217,6 +219,8 @@ export type MechanicalHydronicPipeRouteObservation = MepDraftObservationBase & {
   geometry_mode?: "source_points";
   points: ExistingConditionsPlanPoint[];
   elevation_ft: number;
+  /** Exact project workset name, supported by project-native precedent or explicit direction. */
+  workset_name?: string;
   pipe_size?: string;
   pipe_size_policy?: "explicit_required" | "unresolved_placeholder";
   pipe_type: string;
@@ -259,6 +263,8 @@ export type MechanicalDuctRouteObservation = MepDraftObservationBase & {
   service: "supply_air" | "return_air" | "exhaust_air" | "outside_air";
   points: ExistingConditionsPlanPoint[];
   elevation_ft: number;
+  /** Exact project workset name, supported by project-native precedent or explicit direction. */
+  workset_name?: string;
   duct_size: string;
   duct_type: string;
   system_type: string;
@@ -273,6 +279,8 @@ export type ElectricalConduitRouteObservation = MepDraftObservationBase & {
   service: "branch_circuit" | "feeder" | "communications" | "fire_alarm" | "other" | "unclassified";
   points: ExistingConditionsPlanPoint[];
   elevation_ft: number;
+  /** Exact project workset name, supported by project-native precedent or explicit direction. */
+  workset_name?: string;
   /** Omit only when conduit_size_policy records a non-scored drafting placeholder. */
   conduit_size?: string;
   conduit_size_policy?: "explicit_required" | "unresolved_placeholder";
@@ -467,6 +475,10 @@ function clean(value: unknown): string {
 
 function normalized(value: unknown): string {
   return clean(value).toLowerCase().replace(/[\s_-]+/g, " ");
+}
+
+function routeWorksetName(observation: MepDraftObservation): string {
+  return clean((observation as { workset_name?: string }).workset_name);
 }
 
 function pipeSizePolicy(observation: MepPipeRouteObservation): "explicit_required" | "unresolved_placeholder" {
@@ -750,6 +762,7 @@ function validateObservation(observation: MepDraftObservation, index: number): v
     requiredText(observation.duct_size, `${id}_duct_size`);
     requiredText(observation.duct_type, `${id}_duct_type`);
     requiredText(observation.system_type, `${id}_system_type`);
+    if (routeWorksetName(observation)) requiredText(routeWorksetName(observation), `${id}_workset_name`);
     if (observation.require_existing_endpoint_connections && !observation.connect_to_existing) {
       throw new Error(`${id}_required_endpoint_connections_need_connect_to_existing`);
     }
@@ -779,6 +792,7 @@ function validateObservation(observation: MepDraftObservation, index: number): v
       throw new Error(`${id}_unclassified_conduit_cannot_claim_system_support`);
     }
     requiredText(observation.conduit_type, `${id}_conduit_type`);
+    if (routeWorksetName(observation)) requiredText(routeWorksetName(observation), `${id}_workset_name`);
     if (observation.conduit_type_id != null) positiveInteger(observation.conduit_type_id, `${id}_conduit_type_id`);
     if (observation.require_existing_endpoint_connections && !observation.connect_to_existing) {
       throw new Error(`${id}_required_endpoint_connections_need_connect_to_existing`);
@@ -823,6 +837,7 @@ function validateObservation(observation: MepDraftObservation, index: number): v
     }
     requiredText(observation.pipe_type, `${id}_pipe_type`);
     requiredText(observation.system_type, `${id}_system_type`);
+    if (routeWorksetName(observation)) requiredText(routeWorksetName(observation), `${id}_workset_name`);
     if (observation.geometry_mode === "native_connector_bridge"
       || observation.geometry_mode === "created_route_connector_bridge") {
       requiredText(observation.source_fixture_observation_id, `${id}_source_fixture_observation_id`);
@@ -1729,6 +1744,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
           verify: true,
           visualVerify: true
         };
+        if (observation.workset_name) common.worksetName = observation.workset_name;
         if (input.room_number) common.roomNumber = input.room_number;
         actions.push({
           action_key: `route:${observation.observation_id}`,
@@ -1764,6 +1780,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
           visualVerify: true
         };
         if (observation.conduit_type_id != null) common.conduitTypeId = observation.conduit_type_id;
+        if (observation.workset_name) common.worksetName = observation.workset_name;
         if (input.room_number) common.roomNumber = input.room_number;
         actions.push({
           action_key: `route:${observation.observation_id}`,
@@ -1803,6 +1820,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
           verify: true,
           visualVerify: true
         };
+        if (routeWorksetName(observation)) common.worksetName = routeWorksetName(observation);
         if (input.room_number) common.roomNumber = input.room_number;
         actions.push({
           action_key: `route:${observation.observation_id}`,

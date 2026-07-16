@@ -539,14 +539,16 @@ test("mechanical plan compiles hydronic supply and return as native pipe routes 
         service: "heating_hot_water_supply",
         visibility: "clear",
         confidence: 0.98,
-        supported_attributes: ["location", "size", "elevation", "system", "type"],
+        supported_attributes: ["location", "size", "elevation", "system", "type", "workset"],
         attribute_provenance: [
-          { attribute: "elevation", basis: "declared_heuristic", reference: "No elevation is shown in plan; use a declared plenum offset." }
+          { attribute: "elevation", basis: "declared_heuristic", reference: "No elevation is shown in plan; use a declared plenum offset." },
+          { attribute: "workset", basis: "native_model_precedent", reference: "Retained hydronic routes use the mechanical piping workset." }
         ],
         points: [{ x: 2, y: 1 }, { x: 8, y: 1 }],
         pipe_size: "3/4 inch",
         pipe_type: "Small Radius Elbows",
         system_type: "Heating Hot Water Supply",
+        workset_name: "MECH-PIPING",
         elevation_ft: 10
       },
       {
@@ -556,14 +558,16 @@ test("mechanical plan compiles hydronic supply and return as native pipe routes 
         service: "heating_hot_water_return",
         visibility: "clear",
         confidence: 0.98,
-        supported_attributes: ["location", "size", "elevation", "system", "type"],
+        supported_attributes: ["location", "size", "elevation", "system", "type", "workset"],
         attribute_provenance: [
-          { attribute: "elevation", basis: "declared_heuristic", reference: "No elevation is shown in plan; use a declared plenum offset." }
+          { attribute: "elevation", basis: "declared_heuristic", reference: "No elevation is shown in plan; use a declared plenum offset." },
+          { attribute: "workset", basis: "native_model_precedent", reference: "Retained hydronic routes use the mechanical piping workset." }
         ],
         points: [{ x: 2, y: 2 }, { x: 8, y: 2 }],
         pipe_size: "3/4 inch",
         pipe_type: "Small Radius Elbows",
         system_type: "Heating Hot Water Return",
+        workset_name: "MECH-PIPING",
         elevation_ft: 10
       }
     ]
@@ -574,6 +578,7 @@ test("mechanical plan compiles hydronic supply and return as native pipe routes 
     "Heating Hot Water Supply",
     "Heating Hot Water Return"
   ]);
+  assert.deepEqual(plan.actions.map((entry) => entry.apply_body?.worksetName), ["MECH-PIPING", "MECH-PIPING"]);
   assert.deepEqual(plan.plan_elements.map((entry) => entry.category), ["OST_PipeCurves", "OST_PipeCurves"]);
   assert.deepEqual(plan.source_observations.map((entry) => entry.discipline), ["mechanical", "mechanical"]);
 });
