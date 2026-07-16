@@ -321,6 +321,13 @@ function length(points: PlanTracePoint[]): number {
   }, 0);
 }
 
+function directionIndependentPointKey(points: PlanTracePoint[]): string {
+  const encode = (entries: PlanTracePoint[]) => entries.map((point) => `${point.x},${point.y}`).join(";");
+  const forward = encode(points);
+  const reverse = encode([...points].reverse());
+  return forward < reverse ? forward : reverse;
+}
+
 function traceSkeleton(mask: Uint8Array, width: number, height: number, tolerance: number): PlanTracePolyline[] {
   const pixels: number[] = [];
   for (let i = 0; i < mask.length; i += 1) if (mask[i]) pixels.push(i);
@@ -435,12 +442,36 @@ function traceSkeleton(mask: Uint8Array, width: number, height: number, toleranc
   const missingEdges = [...expectedEdges].filter((edge) => !visited.has(edge));
   if (missingEdges.length > 0) throw new Error(`plan_trace_graph_edge_coverage_incomplete:${missingEdges.length}`);
 
-  return rawPaths
-    .map((entry) => {
-      const simplified = entry.closed ? entry.points : simplify(entry.points, tolerance);
-      return { points: simplified, length_px: length(entry.points), closed: entry.closed };
-    })
-    .filter((entry) => entry.points.length >= 2 && entry.length_px > 0)
+  const traced = rawPaths
+    .map((entry) => ({
+      raw_points: entry.points,
+      points: entry.closed ? entry.points : simplify(entry.points, tolerance),
+      length_px: length(entry.points),
+      closed: entry.closed
+    }))
+    .filter((entry) => entry.points.length >= 2 && entry.length_px > 0);
+  const simplifiedKeyCounts = new Map<string, number>();
+  for (const entry of traced) {
+    const key = directionIndependentPointKey(entry.points);
+    simplifiedKeyCounts.set(key, (simplifiedKeyCounts.get(key) ?? 0) + 1);
+  }
+  // Distinct skeleton branches can share endpoints and collapse to the same
+  // two-point line under simplification (common around compact fitting/symbol
+  // loops). Preserve their raw paths instead of emitting duplicate geometry.
+  const result = traced.map((entry) => ({
+    points: (simplifiedKeyCounts.get(directionIndependentPointKey(entry.points)) ?? 0) > 1
+      ? entry.raw_points
+      : entry.points,
+    length_px: entry.length_px,
+    closed: entry.closed
+  }));
+  const finalKeys = new Set<string>();
+  for (const entry of result) {
+    const key = directionIndependentPointKey(entry.points);
+    if (finalKeys.has(key)) throw new Error("plan_trace_duplicate_geometry_after_raw_path_preservation");
+    finalKeys.add(key);
+  }
+  return result
     .sort((a, b) => b.length_px - a.length_px || a.points[0]!.y - b.points[0]!.y || a.points[0]!.x - b.points[0]!.x);
 }
 

@@ -147,6 +147,37 @@ test("does not invent continuity across a dashed plan trace", () => {
   assert.equal(receipt.components.every((component) => component.polylines.length === 1), true);
 });
 
+test("preserves distinct raw branches when simplification would collapse them to duplicate endpoints", () => {
+  const canvas = createCanvas(90, 70);
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.strokeStyle = "rgb(20, 180, 70)";
+  context.lineWidth = 3;
+  context.beginPath();
+  context.moveTo(8, 35);
+  context.lineTo(28, 35);
+  context.lineTo(43, 29);
+  context.lineTo(58, 35);
+  context.lineTo(43, 41);
+  context.lineTo(28, 35);
+  context.moveTo(58, 35);
+  context.lineTo(80, 35);
+  context.stroke();
+  const receipt = extractPlanTracesFromPixels(pixelsFromCanvas(canvas), {
+    ...topologyInput(),
+    simplify_tolerance_px: 8
+  });
+  const keys = receipt.components[0]!.polylines.map((polyline) => {
+    const encode = (points: typeof polyline.points) => points.map((point) => `${point.x},${point.y}`).join(";");
+    const forward = encode(polyline.points);
+    const reverse = encode([...polyline.points].reverse());
+    return forward < reverse ? forward : reverse;
+  });
+  assert.equal(new Set(keys).size, keys.length);
+  assert.equal(receipt.components[0]!.polylines.some((polyline) => polyline.points.length > 2), true);
+});
+
 test("scope and color policy prevent unrelated or low-chroma lines from entering the trace", () => {
   const fixture = rgbaFixture();
   const outsideScope = extractPlanTracesFromPixels(fixture, {
