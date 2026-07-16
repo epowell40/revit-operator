@@ -267,6 +267,8 @@ export type MechanicalDuctRouteObservation = MepDraftObservationBase & {
   workset_name?: string;
   duct_size: string;
   duct_type: string;
+  /** Optional stable native type id used to disambiguate duplicate duct type names. */
+  duct_type_id?: number;
   system_type: string;
   connect_to_existing?: boolean;
   require_existing_endpoint_connections?: boolean;
@@ -296,6 +298,8 @@ type MechanicalFamilyInstanceObservationBase = MepDraftObservationBase & {
   role: string;
   point: ExistingConditionsPlanPoint;
   elevation_ft: number;
+  /** Exact project workset name, supported by project-native precedent or explicit direction. */
+  workset_name?: string;
   placement: MepDraftPlacement;
 };
 
@@ -305,6 +309,8 @@ export type MechanicalEquipmentObservation = MechanicalFamilyInstanceObservation
 
 export type AirTerminalObservation = MechanicalFamilyInstanceObservationBase & {
   kind: "air_terminal";
+  /** Source-visible terminal airflow in engineer-facing CFM. */
+  airflow_cfm?: number;
 };
 
 type ElectricalFamilyInstanceObservationBase = MepDraftObservationBase & {
@@ -615,12 +621,17 @@ function materialAttributes(observation: MepDraftObservation): string[] {
   }
   if (observation.kind === "mechanical_equipment" || observation.kind === "air_terminal"
     || observation.kind === "electrical_device" || observation.kind === "electrical_equipment") {
-    return observation.placement.mode === "hosted_exemplar"
+    const placementAttributes = observation.placement.mode === "hosted_exemplar"
       || observation.placement.mode === "hosted_family_symbol"
       || observation.placement.mode === "created_route_host"
       || observation.placement.mode === "created_route_branch"
       ? ["location", "type", "host"]
       : ["location", "type"];
+    if (observation.kind === "air_terminal") {
+      if (observation.airflow_cfm != null) placementAttributes.push("airflow");
+      if (routeWorksetName(observation)) placementAttributes.push("workset");
+    }
+    return placementAttributes;
   }
   return ["circuit"];
 }
@@ -761,6 +772,7 @@ function validateObservation(observation: MepDraftObservation, index: number): v
     finite(observation.elevation_ft, `${id}_elevation_ft`);
     requiredText(observation.duct_size, `${id}_duct_size`);
     requiredText(observation.duct_type, `${id}_duct_type`);
+    if (observation.duct_type_id != null) positiveInteger(observation.duct_type_id, `${id}_duct_type_id`);
     requiredText(observation.system_type, `${id}_system_type`);
     if (routeWorksetName(observation)) requiredText(routeWorksetName(observation), `${id}_workset_name`);
     if (observation.require_existing_endpoint_connections && !observation.connect_to_existing) {
@@ -922,6 +934,21 @@ function validateObservation(observation: MepDraftObservation, index: number): v
     finite(observation.point.y, `${id}_point_y`);
     finite(observation.elevation_ft, `${id}_elevation_ft`);
     validatePlacement(observation.placement, id);
+    if (observation.kind === "air_terminal") {
+      if (observation.airflow_cfm != null) {
+        const airflow = finite(observation.airflow_cfm, `${id}_airflow_cfm`);
+        if (airflow <= 0) throw new Error(`${id}_airflow_cfm_must_be_positive`);
+        if (observation.placement.mode === "hosted_exemplar") {
+          throw new Error(`${id}_airflow_cfm_cannot_override_hosted_exemplar`);
+        }
+      }
+      if (routeWorksetName(observation)) {
+        requiredText(routeWorksetName(observation), `${id}_workset_name`);
+        if (observation.placement.mode === "hosted_exemplar" || observation.placement.mode === "hosted_family_symbol") {
+          throw new Error(`${id}_workset_name_requires_place_families_mode`);
+        }
+      }
+    }
     if (observation.kind === "electrical_equipment" && observation.panel_name != null) {
       requiredText(observation.panel_name, `${id}_panel_name`);
       const supported = new Set(observation.supported_attributes.map(normalized));
@@ -1053,6 +1080,9 @@ function pointAction(
 ): MepDraftAction {
   const actionKey = `place:${observation.observation_id}`;
   const expected = { ...transformed, z: levelElevationFt + observation.elevation_ft };
+  const airTerminalParameters = observation.kind === "air_terminal" && observation.airflow_cfm != null
+    ? { Flow: String(observation.airflow_cfm / 60) }
+    : undefined;
   if (observation.placement.mode === "unhosted_family") {
     const instance: JsonMap = {
       x: transformed.x,
@@ -1061,6 +1091,7 @@ function pointAction(
       coordinateMode: "absolute_model"
     };
     if (observation.placement.rotation_degrees != null) instance.rotationDegrees = observation.placement.rotation_degrees;
+    if (airTerminalParameters) instance.parameters = airTerminalParameters;
     if (observation.kind === "electrical_equipment" && observation.panel_name) {
       instance.parameters = { "Panel Name": observation.panel_name };
     }
@@ -1072,6 +1103,8 @@ function pointAction(
       idempotency: { enabled: true, toleranceFt: 0.05 },
       behavior: "allOrNothing"
     };
+    if (observation.kind === "air_terminal") common.allowUnhostedWorkPlanePlacement = true;
+    if (observation.kind === "air_terminal" && observation.workset_name) common.worksetName = observation.workset_name;
     return {
       action_key: actionKey,
       observation_ids: [observation.observation_id],
@@ -1093,6 +1126,7 @@ function pointAction(
       coordinateMode: "absolute_model"
     };
     if (observation.placement.rotation_degrees != null) instance.rotationDegrees = observation.placement.rotation_degrees;
+    if (airTerminalParameters) instance.parameters = airTerminalParameters;
     const common: JsonMap = {
       levelName,
       familyName: observation.placement.family_name,
@@ -1101,6 +1135,7 @@ function pointAction(
       idempotency: { enabled: true, toleranceFt: 0.05 },
       behavior: "allOrNothing"
     };
+    if (observation.kind === "air_terminal" && observation.workset_name) common.worksetName = observation.workset_name;
     const routeActionKey = `route:${observation.placement.route_observation_id}`;
     return {
       action_key: actionKey,
@@ -1130,6 +1165,7 @@ function pointAction(
       coordinateMode: "absolute_model"
     };
     if (observation.placement.rotation_degrees != null) instance.rotationDegrees = observation.placement.rotation_degrees;
+    if (airTerminalParameters) instance.parameters = airTerminalParameters;
     const common: JsonMap = {
       levelName,
       familyName: observation.placement.family_name,
@@ -1138,6 +1174,7 @@ function pointAction(
       idempotency: { enabled: true, toleranceFt: 0.05 },
       behavior: "allOrNothing"
     };
+    if (observation.kind === "air_terminal" && observation.workset_name) common.worksetName = observation.workset_name;
     const routeActionKey = `route:${observation.placement.route_observation_id}`;
     return {
       action_key: actionKey,
@@ -1187,6 +1224,7 @@ function pointAction(
     if (observation.kind === "electrical_equipment" && observation.panel_name) {
       common.parameterOverrides = { "Panel Name": observation.panel_name };
     }
+    if (airTerminalParameters) common.parameterOverrides = airTerminalParameters;
     return {
       action_key: actionKey,
       observation_ids: [observation.observation_id],
@@ -1744,6 +1782,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
           verify: true,
           visualVerify: true
         };
+        if (observation.duct_type_id != null) common.ductTypeId = observation.duct_type_id;
         if (observation.workset_name) common.worksetName = observation.workset_name;
         if (input.room_number) common.roomNumber = input.room_number;
         actions.push({

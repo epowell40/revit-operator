@@ -312,12 +312,17 @@ function materialAttributes(observation: Exclude<RegisteredMepPixelObservation, 
       ? ["type", "host", "service topology"]
       : ["type", "service topology"];
   }
-  return observation.placement.mode === "hosted_exemplar"
+  const placementAttributes = observation.placement.mode === "hosted_exemplar"
     || observation.placement.mode === "hosted_family_symbol"
     || observation.placement.mode === "created_route_host"
     || observation.placement.mode === "created_route_branch"
     ? ["type", "host"]
     : ["type"];
+  if (observation.kind === "air_terminal") {
+    if (observation.airflow_cfm != null) placementAttributes.push("airflow");
+    if (clean(observation.workset_name)) placementAttributes.push("workset");
+  }
+  return placementAttributes;
 }
 
 function validateAttributeEvidence(

@@ -508,6 +508,7 @@ test("mechanical plan compiles explicit duct routes and unhosted equipment place
         points: [{ x: 2, y: 1 }, { x: 6, y: 1 }],
         duct_size: "8 inch",
         duct_type: "Round Duct",
+        duct_type_id: 139185,
         system_type: "Outside Air",
         elevation_ft: 10
       },
@@ -533,7 +534,9 @@ test("mechanical plan compiles explicit duct routes and unhosted equipment place
   ]);
   assert.equal(plan.actions[0]?.apply_body?.kind, "duct");
   assert.equal(plan.actions[0]?.apply_body?.ductSize, "8 inch");
+  assert.equal(plan.actions[0]?.apply_body?.ductTypeId, 139185);
   assert.equal(plan.actions[1]?.dry_run_body?.familyName, "Heat Recovery Unit");
+  assert.equal(plan.actions[1]?.dry_run_body?.allowUnhostedWorkPlanePlacement, undefined);
   assert.deepEqual(plan.actions[1]?.dry_run_body?.instances, [{
     x: 98,
     y: 204,
@@ -681,6 +684,49 @@ function createdRouteBranchTerminalPackage(): MepDraftPackage {
   };
   return input;
 }
+
+test("air terminal carries source-grounded airflow and workset into atomic family placement", () => {
+  const input = createdRouteHostedTerminalPackage();
+  const terminal = input.observations[1];
+  if (terminal?.kind !== "air_terminal") assert.fail("terminal fixture invalid");
+  terminal.airflow_cfm = 140;
+  terminal.workset_name = "MECH-T-01";
+  terminal.supported_attributes.push("airflow", "workset");
+  terminal.attribute_provenance = [
+    ...(terminal.attribute_provenance ?? []),
+    { attribute: "airflow", basis: "source_observation", reference: "140 CFM is legible beside the selected terminal." },
+    { attribute: "workset", basis: "native_model_precedent", reference: "Retained Level 03 mechanical elements use MECH-T-01." }
+  ];
+
+  const plan = compileMepDraftPlan(input);
+  assert.equal(plan.status, "ready");
+  const placement = plan.actions.find((entry) => entry.action_key === "place:supply-grille-visible-1")!;
+  assert.equal(placement.apply_body?.worksetName, "MECH-T-01");
+  assert.deepEqual(placement.apply_body?.instances, [{
+    x: 98,
+    y: 214,
+    z: 42,
+    coordinateMode: "absolute_model",
+    rotationDegrees: 90,
+    parameters: { Flow: String(140 / 60) }
+  }]);
+});
+
+test("unhosted air terminal explicitly opts into work-plane placement without weakening other families", () => {
+  const input = createdRouteHostedTerminalPackage();
+  const terminal = input.observations[1];
+  if (terminal?.kind !== "air_terminal") assert.fail("terminal fixture invalid");
+  terminal.placement = {
+    mode: "unhosted_family",
+    family_name: "M_Supply Grille",
+    type_name: "16x4 Connection 8 Diameter"
+  };
+
+  const plan = compileMepDraftPlan(input);
+  const placement = plan.actions.find((entry) => entry.action_key === "place:supply-grille-visible-1")!;
+  assert.equal(placement.apply_body?.allowUnhostedWorkPlanePlacement, true);
+  assert.equal(placement.dry_run_body?.allowUnhostedWorkPlanePlacement, true);
+});
 
 test("air terminal compiles a source-grounded branch tee and native terminal connection", () => {
   const plan = compileMepDraftPlan(createdRouteBranchTerminalPackage());

@@ -537,14 +537,18 @@ test("registered air terminal pixels can target an explicit segment of a newly d
     observation_id: "supply-grille-random-41",
     visibility: "clear",
     confidence: 0.95,
-    supported_attributes: ["location", "type", "host"],
+    supported_attributes: ["location", "type", "host", "airflow", "workset"],
     attribute_evidence: [
       { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "supply grille symbol and type note at the selected pixel" },
-      { attribute: "host", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "grille center lies on the selected outside-air route segment" }
+      { attribute: "host", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "grille center lies on the selected outside-air route segment" },
+      { attribute: "airflow", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "140 CFM is legible beside the selected grille" },
+      { attribute: "workset", basis: "user_direction", evidence_role: "registered_source_render", reference: "Place reconstructed mechanical elements on MECH-T-01." }
     ],
     role: "supply grille",
     pixel_point: { x: 50, y: 80 },
     elevation_ft: 10,
+    airflow_cfm: 140,
+    workset_name: "MECH-T-01",
     placement: {
       mode: "created_route_host",
       family_name: "M_Supply Grille",
@@ -564,6 +568,14 @@ test("registered air terminal pixels can target an explicit segment of a newly d
     index: 0
   });
   assert.deepEqual(terminalAction.expected_model_point, { x: 105, y: 202, z: 42 });
+  assert.equal(terminalAction.apply_body?.worksetName, "MECH-T-01");
+  assert.deepEqual(terminalAction.apply_body?.instances, [{
+    x: 105,
+    y: 202,
+    z: 42,
+    coordinateMode: "absolute_model",
+    parameters: { Flow: String(140 / 60) }
+  }]);
 });
 
 test("registered air terminal branch pixels compile a tee branch and terminal connection without hidden geometry", async () => {

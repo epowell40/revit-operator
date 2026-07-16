@@ -18,6 +18,9 @@ namespace RevitBridge.Logic.Handlers
             public string? levelName { get; set; }
             public string? familyName { get; set; }
             public string symbolName { get; set; } = "";
+            public long? worksetId { get; set; }
+            public string? worksetName { get; set; }
+            public bool allowUnhostedWorkPlanePlacement { get; set; } = false;
             public List<InstanceData> instances { get; set; } = new List<InstanceData>();
 
             public bool dryRun { get; set; } = false;
@@ -49,6 +52,9 @@ namespace RevitBridge.Logic.Handlers
             public string status { get; set; } = ""; // created | skipped | failed | planned
             public long? elementId { get; set; }
             public string? reason { get; set; }
+            public long? worksetId { get; set; }
+            public string? worksetName { get; set; }
+            public bool? worksetVerified { get; set; }
             public List<string> warnings { get; set; } = new List<string>();
         }
 
@@ -64,9 +70,12 @@ namespace RevitBridge.Logic.Handlers
             public string status { get; set; } = "Unknown";
             public string? familyPlacementType { get; set; }
             public bool requiresExplicitHost { get; set; }
+            public bool unhostedWorkPlanePlacementAllowed { get; set; }
             public int placedCount { get; set; }
             public int skippedCount { get; set; }
             public int failedCount { get; set; }
+            public long? selectedWorksetId { get; set; }
+            public string? selectedWorksetName { get; set; }
             public List<long> elementIds { get; set; } = new List<long>();
             public List<InstanceResult> results { get; set; } = new List<InstanceResult>();
             public List<string> warnings { get; set; } = new List<string>();
@@ -93,6 +102,13 @@ namespace RevitBridge.Logic.Handlers
                         .Cast<Level>()
                         .ToList();
 
+                    var requestedWorkset = ResolveRequestedWorkset(doc, p.worksetId, p.worksetName);
+                    if (requestedWorkset != null)
+                    {
+                        result.selectedWorksetId = requestedWorkset.Id.IntegerValue;
+                        result.selectedWorksetName = requestedWorkset.Name;
+                    }
+
                     var defaultLevel = levels
                         .FirstOrDefault(l => l.Name.Equals(p.levelName ?? "", StringComparison.OrdinalIgnoreCase));
                     if (defaultLevel == null) throw new Exception($"Level {p.levelName} not found.");
@@ -116,9 +132,12 @@ namespace RevitBridge.Logic.Handlers
                     }
 
                     var familyPlacementType = symbol.Family?.FamilyPlacementType ?? FamilyPlacementType.Invalid;
-                    bool requiresExplicitHost = RequiresExplicitHost(familyPlacementType);
+                    bool unhostedWorkPlanePlacementAllowed =
+                        p.allowUnhostedWorkPlanePlacement && familyPlacementType == FamilyPlacementType.WorkPlaneBased;
+                    bool requiresExplicitHost = RequiresExplicitHost(familyPlacementType) && !unhostedWorkPlanePlacementAllowed;
                     result.familyPlacementType = familyPlacementType.ToString();
                     result.requiresExplicitHost = requiresExplicitHost;
+                    result.unhostedWorkPlanePlacementAllowed = unhostedWorkPlanePlacementAllowed;
 
                     List<(long id, XYZ point)> existingPoints = new List<(long id, XYZ point)>();
                     if (useIdempotency && toleranceFt > 0.0)
@@ -231,7 +250,14 @@ namespace RevitBridge.Logic.Handlers
                             {
                                 try
                                 {
-                                    fi = doc.Create.NewFamilyInstance(levelPlacementPoint, symbol, instanceLevel, StructuralType.NonStructural);
+                                    // The level-based overload treats Z as a level offset for ordinary
+                                    // level-based families, but as an absolute model coordinate for the
+                                    // explicitly allowed unhosted WorkPlaneBased case. Preserve the public
+                                    // absolute_model contract in both native placement modes.
+                                    var nativePlacementPoint = unhostedWorkPlanePlacementAllowed
+                                        ? point
+                                        : levelPlacementPoint;
+                                    fi = doc.Create.NewFamilyInstance(nativePlacementPoint, symbol, instanceLevel, StructuralType.NonStructural);
                                 }
                                 catch
                                 {
@@ -240,6 +266,14 @@ namespace RevitBridge.Logic.Handlers
                             }
 
                             if (fi == null) throw new Exception("Failed to create family instance.");
+
+                            if (requestedWorkset != null)
+                            {
+                                AssignAndVerifyWorkset(fi, requestedWorkset);
+                                instResult.worksetId = requestedWorkset.Id.IntegerValue;
+                                instResult.worksetName = requestedWorkset.Name;
+                                instResult.worksetVerified = true;
+                            }
 
                             if (instData.hostElementId.HasValue && !MatchesExplicitHost(fi, instData.hostElementId.Value))
                             {
@@ -439,6 +473,41 @@ namespace RevitBridge.Logic.Handlers
         {
             if (id < int.MinValue || id > int.MaxValue) throw new Exception($"ElementId {id} is outside 32-bit range.");
             return RevitBridge.Common.ElementIdCompat.Create((int)id);
+        }
+
+        private static Workset? ResolveRequestedWorkset(Document doc, long? requestedId, string? requestedName)
+        {
+            var hasId = requestedId.HasValue && requestedId.Value > 0;
+            var cleanName = (requestedName ?? "").Trim();
+            if (!hasId && cleanName.Length == 0) return null;
+            if (!doc.IsWorkshared) throw new Exception("A workset was requested, but the active document is not workshared.");
+
+            var worksets = new FilteredWorksetCollector(doc)
+                .OfKind(WorksetKind.UserWorkset)
+                .ToWorksets()
+                .ToList();
+            var byId = hasId
+                ? worksets.FirstOrDefault(workset => workset.Id.IntegerValue == requestedId!.Value)
+                : null;
+            var byName = cleanName.Length > 0
+                ? worksets.FirstOrDefault(workset => string.Equals(workset.Name, cleanName, StringComparison.OrdinalIgnoreCase))
+                : null;
+            if (hasId && byId == null) throw new Exception($"Workset id {requestedId} was not found.");
+            if (cleanName.Length > 0 && byName == null) throw new Exception($"Workset '{cleanName}' was not found.");
+            if (byId != null && byName != null && byId.Id.IntegerValue != byName.Id.IntegerValue)
+                throw new Exception($"Requested workset id {requestedId} does not match workset name '{cleanName}'.");
+            return byId ?? byName;
+        }
+
+        private static void AssignAndVerifyWorkset(Element element, Workset workset)
+        {
+            var parameter = element.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM);
+            if (parameter == null || parameter.IsReadOnly)
+                throw new Exception($"Element {ElementIdCompat.GetValue(element.Id)} cannot be assigned to workset '{workset.Name}'.");
+            if (!parameter.Set(workset.Id.IntegerValue))
+                throw new Exception($"Revit rejected workset '{workset.Name}' for element {ElementIdCompat.GetValue(element.Id)}.");
+            if (element.WorksetId.IntegerValue != workset.Id.IntegerValue)
+                throw new Exception($"Workset verification failed for element {ElementIdCompat.GetValue(element.Id)}.");
         }
 
         private void SetParameter(Element e, string name, string value)

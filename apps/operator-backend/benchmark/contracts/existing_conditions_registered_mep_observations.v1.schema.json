@@ -256,6 +256,7 @@
         "pixel_points": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/point" } },
         "duct_size": { "type": "string", "minLength": 1 },
         "duct_type": { "type": "string", "minLength": 1 },
+        "duct_type_id": { "type": "integer", "minimum": 1 },
         "system_type": { "type": "string", "minLength": 1 },
         "elevation_ft": { "type": "number" },
         "workset_name": { "type": "string", "minLength": 1 },
@@ -332,6 +333,8 @@
         "role": { "type": "string", "minLength": 1 },
         "pixel_point": { "$ref": "#/$defs/point" },
         "elevation_ft": { "type": "number" },
+        "airflow_cfm": { "type": "number", "exclusiveMinimum": 0 },
+        "workset_name": { "type": "string", "minLength": 1 },
         "placement": { "$ref": "#/$defs/air_terminal_placement" }
       }
     },

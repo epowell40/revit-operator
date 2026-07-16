@@ -304,6 +304,7 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
     pixel_points: [{ x: 20, y: 80 }, { x: 80, y: 80 }],
     duct_size: "8 inch",
     duct_type: "Round Duct",
+    duct_type_id: 139185,
     system_type: "Outside Air",
     elevation_ft: 10
   }, {
@@ -331,14 +332,18 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
     observation_id: "supply-grille-1",
     visibility: "clear",
     confidence: 0.95,
-    supported_attributes: ["location", "type", "host"],
+    supported_attributes: ["location", "type", "host", "airflow", "workset"],
     attribute_evidence: [
       { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "supply grille symbol and type note" },
-      { attribute: "host", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "grille center lies on the selected route segment" }
+      { attribute: "host", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "grille center lies on the selected route segment" },
+      { attribute: "airflow", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "140 CFM is legible beside the grille" },
+      { attribute: "workset", basis: "user_direction", evidence_role: "registered_source_render", reference: "Place mechanical elements on MECH-T-01" }
     ],
     role: "supply grille",
     pixel_point: { x: 50, y: 80 },
     elevation_ft: 10,
+    airflow_cfm: 140,
+    workset_name: "MECH-T-01",
     placement: {
       mode: "created_route_host",
       family_name: "M_Supply Grille",
