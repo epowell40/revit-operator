@@ -193,6 +193,7 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
     native_element_references: [],
     registration: {
       source_evidence_sha256: "a".repeat(64),
+      allow_reflection: true,
       control_points: [
         { source: { x: 0, y: 0 }, model: { x: 0, y: 0 } },
         { source: { x: 10, y: 0 }, model: { x: 10, y: 0 } },
@@ -250,10 +251,11 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
     observation_id: "feeder-conduit-1",
     visibility: "clear",
     confidence: 0.97,
-    supported_attributes: ["location", "size", "elevation", "type"],
+    supported_attributes: ["location", "size", "elevation", "system", "type"],
     attribute_evidence: [
       { attribute: "size", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "one-inch conduit note" },
       { attribute: "elevation", basis: "declared_heuristic", evidence_role: "registered_source_render", reference: "plan does not show conduit elevation" },
+      { attribute: "system", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "feeder designation applies to the selected run" },
       { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "EMT note applies to the selected run" }
     ],
     service: "feeder",
@@ -264,6 +266,25 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
     elevation_ft: 10
   }];
   assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", conduit));
+  const placeholderConduit = structuredClone(conduit) as Record<string, unknown>;
+  placeholderConduit.observations = [{
+    kind: "conduit_route",
+    discipline: "electrical",
+    observation_id: "unclassified-conduit-1",
+    visibility: "clear",
+    confidence: 0.91,
+    supported_attributes: ["location", "elevation", "type"],
+    attribute_evidence: [
+      { attribute: "elevation", basis: "declared_heuristic", evidence_role: "registered_source_render", reference: "plan does not show conduit elevation" },
+      { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "generic conduit graphics" }
+    ],
+    service: "unclassified",
+    pixel_points: [{ x: 20, y: 80 }, { x: 80, y: 80 }],
+    conduit_size_policy: "unresolved_placeholder",
+    conduit_type: "EMT",
+    elevation_ft: 10
+  }];
+  assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", placeholderConduit));
   const mechanical = structuredClone(input) as Record<string, unknown>;
   mechanical.discipline = "mechanical";
   mechanical.observations = [{

@@ -139,6 +139,30 @@ test("registration solves scale rotation translation and reports residual", () =
   assert.ok(Math.abs(transformed.y - 208) < 1e-9);
 });
 
+test("registration explicitly supports top-left raster Y reflection", () => {
+  const reflectedInput = {
+    source_evidence_sha256: SOURCE_HASH,
+    control_points: [
+      { source: { x: 0, y: 0 }, model: { x: 100, y: 200 } },
+      { source: { x: 10, y: 0 }, model: { x: 110, y: 200 } },
+      { source: { x: 0, y: 10 }, model: { x: 100, y: 190 } }
+    ],
+    max_rms_error_ft: 0.001,
+    max_point_error_ft: 0.001
+  };
+  const blocked = solveExistingConditionsRegistration(reflectedInput);
+  assert.equal(blocked.verified, false);
+  assert.equal(blocked.reflection_applied, false);
+
+  const receipt = solveExistingConditionsRegistration({ ...reflectedInput, allow_reflection: true });
+  assert.equal(receipt.verified, true);
+  assert.equal(receipt.reflection_applied, true);
+  assert.ok(receipt.rms_error_ft < 1e-9);
+  const transformed = transformExistingConditionsPlanPoint(receipt, { x: 4, y: 3 });
+  assert.ok(Math.abs(transformed.x - 104) < 1e-9);
+  assert.ok(Math.abs(transformed.y - 197) < 1e-9);
+});
+
 test("registration rejects degenerate source controls", () => {
   assert.throws(() => solveExistingConditionsRegistration({
     source_evidence_sha256: SOURCE_HASH,

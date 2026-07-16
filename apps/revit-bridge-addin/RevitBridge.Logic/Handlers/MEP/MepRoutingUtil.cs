@@ -466,6 +466,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             var choice = new SizeChoice();
             if (k == "pipe" || k == "conduit")
             {
+                var label = k == "conduit" ? "Conduit" : "Pipe";
                 var requested = FirstNonEmpty(diameter, pipeSize);
                 choice.RequestedText = requested;
                 if (requested.Length == 0)
@@ -475,12 +476,12 @@ namespace RevitBridge.Logic.Handlers.MEP
                     choice.AppliedText = "1";
                     choice.DiameterFt = 1.0 / 12.0;
                     choice.UsedDefault = true;
-                    warnings.Add("Pipe size was missing; using conservative placeholder 1 inch diameter.");
+                    warnings.Add($"{label} size was missing; using conservative placeholder 1 inch diameter.");
                     return choice;
                 }
                 choice.AppliedText = requested;
                 choice.DiameterFt = ParseLengthFeet(requested);
-                if (!choice.DiameterFt.HasValue) warnings.Add($"Could not parse pipe size '{requested}'.");
+                if (!choice.DiameterFt.HasValue) warnings.Add($"Could not parse {label.ToLowerInvariant()} size '{requested}'.");
                 return choice;
             }
 

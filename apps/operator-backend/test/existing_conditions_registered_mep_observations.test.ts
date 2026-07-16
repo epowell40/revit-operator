@@ -161,10 +161,11 @@ function electricalConduitInput(): RegisteredMepObservationPackage {
     observation_id: "feeder-conduit-random-52",
     visibility: "clear",
     confidence: 0.97,
-    supported_attributes: ["location", "size", "elevation", "type"],
+    supported_attributes: ["location", "size", "elevation", "system", "type"],
     attribute_evidence: [
       { attribute: "size", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "one-inch conduit size note adjacent to the selected run" },
       { attribute: "elevation", basis: "declared_heuristic", evidence_role: "registered_source_render", reference: "No elevation is shown in plan; assume 10 feet above L4 in the plenum." },
+      { attribute: "system", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "feeder designation applies to the selected run" },
       { attribute: "type", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "exact project EMT conduit type inventory entry 4242" }
     ],
     service: "feeder",
@@ -381,7 +382,73 @@ test("registered electrical linework compiles a source-grounded native conduit r
     { x: 105, y: 204, z: 42 }
   ]);
   assert.equal(result.compiled_plan.plan_elements[0]?.category, "OST_Conduit");
+  assert.match(result.compiled_plan.plan_elements[0]?.assumptions.join("\n") ?? "", /does not establish panel association, circuit membership, or endpoint connectivity/);
+  assert.match(result.usage_constraints.join("\n"), /never establishes panel association, circuit membership, or endpoint connectivity/);
   assert.match(result.compiled_plan.warnings.join("\n"), /elevation inferred by declared heuristic/);
+});
+
+test("registered top-left pixels round-trip through reflected registration", async () => {
+  const input = electricalConduitInput();
+  input.registration = {
+    source_evidence_sha256: SOURCE_HASH,
+    allow_reflection: true,
+    control_points: [
+      { source: { x: 0, y: 0 }, model: { x: 100, y: 210 } },
+      { source: { x: 100, y: 0 }, model: { x: 200, y: 210 } },
+      { source: { x: 0, y: 100 }, model: { x: 100, y: 110 } }
+    ],
+    max_rms_error_ft: 0.001,
+    max_point_error_ft: 0.001
+  };
+  input.frame = { model_bounds: { min: { x: 100, y: 110 }, max: { x: 200, y: 210 } } };
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.registration.reflection_applied, true);
+  assert.deepEqual(result.compiled_plan.actions[0]?.apply_body?.points, [
+    { x: 120, y: 130, z: 42 },
+    { x: 150, y: 130, z: 42 },
+    { x: 150, y: 150, z: 42 }
+  ]);
+});
+
+test("conduit proximity to a panel label cannot substitute for service evidence", async () => {
+  const unresolved = electricalConduitInput();
+  const route = unresolved.observations[0];
+  if (route?.kind !== "conduit_route") throw new Error("fixture_setup_failed");
+  route.supported_attributes = route.supported_attributes.filter((attribute) => attribute !== "system");
+  route.attribute_evidence = route.attribute_evidence.filter((claim) => claim.attribute !== "system");
+  const result = await compileRegisteredMepObservations(unresolved);
+  assert.equal(result.compiled_plan.status, "clarification_required");
+  assert.equal(result.compiled_plan.actions.length, 0);
+  assert.ok(result.compiled_plan.ambiguities[0]?.material_attributes?.includes("system"));
+
+  const unsupported = electricalConduitInput();
+  const unsupportedRoute = unsupported.observations[0];
+  if (unsupportedRoute?.kind !== "conduit_route") throw new Error("fixture_setup_failed");
+  unsupportedRoute.attribute_evidence = unsupportedRoute.attribute_evidence.filter((claim) => claim.attribute !== "system");
+  await assert.rejects(
+    () => compileRegisteredMepObservations(unsupported),
+    /supported_attribute_lacks_evidence:system/
+  );
+});
+
+test("unclassified conduit can preserve plan geometry with a non-scored size placeholder", async () => {
+  const input = electricalConduitInput();
+  const route = input.observations[0];
+  if (route?.kind !== "conduit_route") throw new Error("fixture_setup_failed");
+  route.service = "unclassified";
+  route.conduit_size_policy = "unresolved_placeholder";
+  delete route.conduit_size;
+  route.supported_attributes = route.supported_attributes.filter((attribute) => !["size", "system"].includes(attribute));
+  route.attribute_evidence = route.attribute_evidence.filter((claim) => !["size", "system"].includes(claim.attribute));
+
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.status, "ready");
+  assert.equal(result.compiled_plan.actions.length, 1);
+  assert.equal(result.compiled_plan.actions[0]?.apply_body?.sizePolicy, "placeholder_allowed");
+  assert.equal(result.compiled_plan.actions[0]?.apply_body?.diameter, undefined);
+  assert.match(result.compiled_plan.plan_elements[0]?.assumptions.join("\n") ?? "", /one-inch drafting placeholder/);
+  assert.match(result.compiled_plan.warnings.join("\n"), /size receives no source-evidence credit/);
+  assert.match(result.usage_constraints.join("\n"), /cannot establish feeder, panel, or circuit meaning/);
 });
 
 test("registered air terminal pixels can target an explicit segment of a newly drafted duct route", async () => {

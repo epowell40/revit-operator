@@ -633,7 +633,7 @@ function isRouteSupportingFitting(
   snapshot: ExistingConditionsSnapshot,
   toleranceFt: number
 ): boolean {
-  if (element.kind !== "fitting" || !["pipe_fitting", "duct_fitting"].includes(normalized(element.role))) return false;
+  if (element.kind !== "fitting" || !["pipe_fitting", "duct_fitting", "conduit_fitting"].includes(normalized(element.role))) return false;
   const routeByKey = new Map(routes.map((route) => [route.key, route]));
   const physicallyConnectedRoute = snapshot.connections.some((edge) => {
     if (relationshipKind(edge) !== "physical") return false;
@@ -1159,7 +1159,7 @@ function validateRun(truth: ExistingConditionsGroundTruth, candidate: ExistingCo
     for (const key of routeKeys) {
       const element = truthByKey.get(key);
       if (!element || element.kind !== "mep_curve" || !element.endpoints ||
-          !["plumbing", "mechanical"].includes(normalized(element.discipline)) ||
+          !["plumbing", "mechanical", "electrical"].includes(normalized(element.discipline)) ||
           segmentLength2d(element.endpoints) <= Number.EPSILON) {
         reasons.push(`bounded_mep_route_truth_key_invalid:${key}`);
       }

@@ -166,6 +166,12 @@ function registeredPipeSizePolicy(
   return observation.pipe_size_policy ?? "explicit_required";
 }
 
+function registeredConduitSizePolicy(
+  observation: RegisteredElectricalConduitRouteObservation
+): "explicit_required" | "unresolved_placeholder" {
+  return observation.conduit_size_policy ?? "explicit_required";
+}
+
 function requiredText(value: unknown, label: string): string {
   const result = clean(value);
   if (!result) throw new Error(`${label}_is_required`);
@@ -243,10 +249,15 @@ function modelToSource(
   const sin = Math.sin(radians);
   const dx = model.x - registration.translation_ft.x;
   const dy = model.y - registration.translation_ft.y;
-  return {
-    x: (cos * dx + sin * dy) / registration.scale,
-    y: (-sin * dx + cos * dy) / registration.scale
-  };
+  return registration.reflection_applied === true
+    ? {
+        x: (cos * dx + sin * dy) / registration.scale,
+        y: (sin * dx - cos * dy) / registration.scale
+      }
+    : {
+        x: (cos * dx + sin * dy) / registration.scale,
+        y: (-sin * dx + cos * dy) / registration.scale
+      };
 }
 
 function allowedDiscipline(
@@ -267,7 +278,14 @@ function allowedDiscipline(
 
 function materialAttributes(observation: Exclude<RegisteredMepPixelObservation, ElectricalCircuitObservation>): string[] {
   if (observation.kind === "duct_route") return ["size", "elevation", "system", "type"];
-  if (observation.kind === "conduit_route") return ["size", "elevation", "type"];
+  if (observation.kind === "conduit_route") {
+    return [
+      ...(registeredConduitSizePolicy(observation) === "explicit_required" ? ["size"] : []),
+      "elevation",
+      ...(observation.service === "unclassified" ? [] : ["system"]),
+      "type"
+    ];
+  }
   if (observation.kind === "pipe_route") {
     const size = registeredPipeSizePolicy(observation) === "explicit_required" ? ["size"] : [];
     if (observation.geometry_mode === "native_connector_bridge"
@@ -574,11 +592,13 @@ export async function compileRegisteredMepObservations(
       "Registered pixels establish bounded plan geometry only; material, system, size, elevation, family, type, host, and service-topology claims remain subject to the existing MEP compiler evidence gates.",
       "A pipe or duct elevation may use declared_heuristic provenance when the plan does not show elevation; it remains an explicit inference in the compiled assumptions and is never represented as source-observed truth.",
       "A pipe route may use pipe_size_policy=unresolved_placeholder only when size is unreadable, omitted from supported source attributes, and omitted from the observation value; Revit's one-inch drafting placeholder is then explicit, non-scored, and not accepted as an engineered size.",
+      "An unclassified conduit route may use conduit_size_policy=unresolved_placeholder only when service and size are not source-supported; its one-inch drafting diameter is explicit, non-scored, and cannot establish feeder, panel, or circuit meaning.",
       "A native_connector_bridge may resolve a short concealed service stub only between an agent-visible fixture observation and an explicit hash-bound native anchor; its endpoints and elevation are runtime native inferences, not registered-pixel observations.",
       "A created_route_connector_bridge may resolve a short concealed service stub only between an agent-visible fixture observation and an explicit endpoint of source-grounded pipe geometry created earlier in the same atomic workflow; its final connector offsets and elevation are runtime native inferences.",
       "A fixture with service_connection_mode=plan_proximity records source-visible adjacency to the nearest registered route segment and emits no native connection action; it is a drafting fallback for connectorless graphics, not proof of a physically connected Revit network.",
       "A downstream_vent_tee uses registered pixels for plan geometry and either an exact hash-bound retained sanitary main or a source-grounded sanitary route created earlier in the same atomic workflow. It never represents the vent as a direct fixture connector. Native fixture reachability remains the acceptance path; plan_topology_only verifies the created sanitary-to-vent tee while explicitly withholding native fixture-reachability credit.",
       "Electrical circuit membership may use the registered render only when every newly created member has explicit legible evidence for the same printed circuit label; otherwise it must remain grounded in exact native source power-system evidence or explicit user direction.",
+      "A conduit service classification requires its own evidence and never establishes panel association, circuit membership, or endpoint connectivity from route proximity or nearby text.",
       "The registered render must be agent-visible, hash-bound, dimension-verified, and aligned to the declared model frame.",
       "No evaluator, withheld truth, native target identity, or scorer output is used to convert pixel observations.",
       "A bounded-region completeness claim requires a hash-bound source-coverage receipt in which every MEP-like candidate is resolved to typed observations or remains explicitly unresolved; partial coverage cannot be reported as complete."

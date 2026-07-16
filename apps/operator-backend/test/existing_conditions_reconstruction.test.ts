@@ -459,6 +459,29 @@ function plumbingPipe(
   };
 }
 
+function electricalConduit(
+  key: string,
+  startX: number,
+  endX: number,
+  y = 7,
+  service = "feeder"
+): ExistingConditionsElement {
+  return {
+    key,
+    kind: "mep_curve",
+    discipline: "electrical",
+    role: "conduit",
+    category: "Conduits",
+    system_classification: service,
+    system_type: service,
+    endpoints: [
+      { x: startX, y, z: 10 },
+      { x: endX, y, z: 10 }
+    ],
+    size: { shape: "round", diameter_ft: 1 / 12 }
+  };
+}
+
 function requireCompletePlumbingRouteCoverage(expected: ExistingConditionsGroundTruth, keys: string[]): void {
   expected.visible_evidence.push({ role: "registered_source_render", sha256: RENDER_HASH });
   expected.evaluation_policy = {
@@ -496,6 +519,50 @@ function attachCompletePlumbingCoverage(actual: ExistingConditionsCandidate): vo
     resolved_candidate_ids: ["candidate:route-observation"],
     unresolved_candidate_ids: [],
     covered_observation_ids: ["route-observation"]
+  };
+}
+
+function requireCompleteElectricalRouteCoverage(expected: ExistingConditionsGroundTruth, keys: string[]): void {
+  expected.visible_evidence.push({ role: "registered_source_render", sha256: RENDER_HASH });
+  expected.evaluation_policy = {
+    ...expected.evaluation_policy,
+    elevation_evidence: "not_visible",
+    required_discipline_coverage: [
+      { discipline: "architectural", minimum_precision: 1, minimum_recall: 1 },
+      { discipline: "electrical", minimum_precision: 1, minimum_recall: 1 }
+    ],
+    bounded_mep_region_coverage: {
+      required_coverage_status: "complete",
+      source_evidence_sha256: SOURCE_HASH,
+      registered_render_sha256: RENDER_HASH,
+      coverage_contract_sha256: COVERAGE_HASH,
+      region_sha256: REGION_HASH,
+      clear_plan_visible_family_instance_keys: [],
+      clear_plan_visible_mep_curve_keys: keys,
+      route_trace_tolerance_ft: 0.25,
+      minimum_route_trace_precision: 1,
+      minimum_route_trace_recall: 1
+    }
+  };
+}
+
+function attachCompleteElectricalRouteCoverage(actual: ExistingConditionsCandidate): void {
+  actual.visible_evidence.push({ role: "registered_source_render", sha256: RENDER_HASH });
+  actual.source_coverage_receipt = {
+    schema_version: 1,
+    scope_id: actual.scope_id,
+    source_evidence_sha256: SOURCE_HASH,
+    registered_render_sha256: RENDER_HASH,
+    coordinate_space: "registered_render_pixels_top_left",
+    region: { min: { x: 100, y: 100 }, max: { x: 900, y: 700 } },
+    region_sha256: REGION_HASH,
+    coverage_contract_sha256: COVERAGE_HASH,
+    coverage_status: "complete",
+    disciplines: ["electrical"],
+    candidate_count: 1,
+    resolved_candidate_ids: ["candidate:electrical-conduit-route"],
+    unresolved_candidate_ids: [],
+    covered_observation_ids: ["electrical-conduit-route"]
   };
 }
 
@@ -598,6 +665,63 @@ test("bounded MEP route trace is independent of harmless native segment splits",
   assert.equal(result.applicability.bounded_mep_route_trace, true);
   assert.deepEqual(result.missed_truth_keys, []);
   assert.deepEqual(result.false_positive_candidate_keys, []);
+});
+
+test("mixed electrical conduit scoring accepts native splits but rejects an unsupported service claim", () => {
+  const expected = truth([
+    architecturalWall("truth-wall", 0),
+    electricalConduit("truth-feeder-conduit", 0, 20)
+  ]);
+  expected.discipline = "mixed";
+  expected.snapshot.connections = [];
+  expected.snapshot.open_connector_count = 0;
+  requireCompleteElectricalRouteCoverage(expected, ["truth-feeder-conduit"]);
+
+  const firstHalf = electricalConduit("candidate-conduit-a", 0, 10);
+  const secondHalf = electricalConduit("candidate-conduit-b", 10, 20);
+  const elbow: ExistingConditionsElement = {
+    key: "candidate-conduit-elbow",
+    kind: "fitting",
+    discipline: "electrical",
+    role: "conduit_fitting",
+    category: "Conduit Fittings",
+    system_classification: "feeder",
+    system_type: "feeder",
+    location: { x: 10, y: 7, z: 10 }
+  };
+  const actual = candidate([architecturalWall("candidate-wall", 0), firstHalf, secondHalf, elbow]);
+  actual.discipline = "mixed";
+  actual.snapshot.connections = [
+    { a: firstHalf.key, b: elbow.key, kind: "physical" },
+    { a: elbow.key, b: secondHalf.key, kind: "physical" }
+  ];
+  actual.snapshot.open_connector_count = 2;
+  attachCompleteElectricalRouteCoverage(actual);
+
+  const accepted = scoreExistingConditionsReconstruction(expected, actual);
+  assert.equal(accepted.passed, true, JSON.stringify(accepted, null, 2));
+  assert.equal(accepted.metrics.mep_route_trace_precision, 1);
+  assert.equal(accepted.metrics.mep_route_trace_recall, 1);
+  assert.deepEqual(accepted.false_positive_candidate_keys, []);
+  const electrical = accepted.discipline_coverage.find((entry) => entry.discipline === "electrical");
+  assert.equal(electrical?.route_trace_precision, 1);
+  assert.equal(electrical?.route_trace_recall, 1);
+  assert.equal(electrical?.passed, true);
+
+  const wrongService = candidate([
+    architecturalWall("candidate-wall", 0),
+    electricalConduit("candidate-branch-circuit", 0, 20, 7, "branch_circuit")
+  ]);
+  wrongService.discipline = "mixed";
+  wrongService.snapshot.connections = [];
+  wrongService.snapshot.open_connector_count = 0;
+  attachCompleteElectricalRouteCoverage(wrongService);
+  const rejected = scoreExistingConditionsReconstruction(expected, wrongService);
+  assert.equal(rejected.passed, false);
+  assert.equal(rejected.metrics.mep_route_trace_precision, 0);
+  assert.equal(rejected.metrics.mep_route_trace_recall, 0);
+  assert.ok(rejected.failure_classifications.includes("bounded_mep_route_trace_incomplete"));
+  assert.ok(rejected.failure_classifications.includes("bounded_mep_route_trace_false_positive"));
 });
 
 test("bounded MEP route trace rejects omitted, extra, displaced, and wrong-system plan length", () => {

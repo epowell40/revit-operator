@@ -246,10 +246,12 @@ export type MechanicalDuctRouteObservation = MepDraftObservationBase & {
 export type ElectricalConduitRouteObservation = MepDraftObservationBase & {
   kind: "conduit_route";
   discipline: "electrical";
-  service: "branch_circuit" | "feeder" | "communications" | "fire_alarm" | "other";
+  service: "branch_circuit" | "feeder" | "communications" | "fire_alarm" | "other" | "unclassified";
   points: ExistingConditionsPlanPoint[];
   elevation_ft: number;
-  conduit_size: string;
+  /** Omit only when conduit_size_policy records a non-scored drafting placeholder. */
+  conduit_size?: string;
+  conduit_size_policy?: "explicit_required" | "unresolved_placeholder";
   conduit_type: string;
   conduit_type_id?: number;
   connect_to_existing?: boolean;
@@ -446,6 +448,10 @@ function pipeSizePolicy(observation: PlumbingPipeRouteObservation): "explicit_re
   return observation.pipe_size_policy ?? "explicit_required";
 }
 
+function conduitSizePolicy(observation: ElectricalConduitRouteObservation): "explicit_required" | "unresolved_placeholder" {
+  return observation.conduit_size_policy ?? "explicit_required";
+}
+
 function fixtureConnectionMode(observation: PlumbingFixtureObservation): "native_connectivity" | "plan_proximity" {
   return observation.service_connection_mode ?? "native_connectivity";
 }
@@ -550,7 +556,15 @@ function inputFingerprint(input: MepDraftPackage): string {
 
 function materialAttributes(observation: MepDraftObservation): string[] {
   if (observation.kind === "duct_route") return ["location", "size", "elevation", "system", "type"];
-  if (observation.kind === "conduit_route") return ["location", "size", "elevation", "type"];
+  if (observation.kind === "conduit_route") {
+    return [
+      "location",
+      ...(conduitSizePolicy(observation) === "explicit_required" ? ["size"] : []),
+      "elevation",
+      ...(observation.service === "unclassified" ? [] : ["system"]),
+      "type"
+    ];
+  }
   if (observation.kind === "pipe_route") {
     const size = pipeSizePolicy(observation) === "explicit_required" ? ["size"] : [];
     return observation.geometry_mode === "downstream_vent_tee"
@@ -723,7 +737,22 @@ function validateObservation(observation: MepDraftObservation, index: number): v
       finite(entry.y, `${id}_point_${pointIndex}_y`);
     });
     finite(observation.elevation_ft, `${id}_elevation_ft`);
-    requiredText(observation.conduit_size, `${id}_conduit_size`);
+    const sizePolicy = conduitSizePolicy(observation);
+    if (!['explicit_required', 'unresolved_placeholder'].includes(sizePolicy)) {
+      throw new Error(`${id}_conduit_size_policy_invalid`);
+    }
+    if (sizePolicy === "explicit_required") {
+      requiredText(observation.conduit_size, `${id}_conduit_size`);
+    } else {
+      if (clean(observation.conduit_size)) throw new Error(`${id}_unresolved_placeholder_must_omit_conduit_size`);
+      if (observation.supported_attributes.some((attribute) => normalized(attribute) === "size")) {
+        throw new Error(`${id}_unresolved_placeholder_cannot_claim_size_support`);
+      }
+    }
+    if (observation.service === "unclassified"
+      && observation.supported_attributes.some((attribute) => normalized(attribute) === "system")) {
+      throw new Error(`${id}_unclassified_conduit_cannot_claim_system_support`);
+    }
     requiredText(observation.conduit_type, `${id}_conduit_type`);
     if (observation.conduit_type_id != null) positiveInteger(observation.conduit_type_id, `${id}_conduit_type_id`);
     if (observation.require_existing_endpoint_connections && !observation.connect_to_existing) {
@@ -1545,9 +1574,16 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
       && pipeSizePolicy(observation) === "unresolved_placeholder"
       ? ["pipe size is unreadable in the source plan; runtime creates a clearly labeled one-inch drafting placeholder and size receives no source-evidence credit"]
       : [];
+    const unresolvedConduitSizeAssumptions = observation.kind === "conduit_route"
+      && conduitSizePolicy(observation) === "unresolved_placeholder"
+      ? ["conduit size is unreadable in the source plan; runtime creates a clearly labeled one-inch drafting placeholder and size receives no source-evidence credit"]
+      : [];
     const planProximityAssumptions = observation.kind === "plumbing_fixture"
       && fixtureConnectionMode(observation) === "plan_proximity"
       ? ["fixture service associations are source-visible plan proximity only; no native Revit connector relationship is claimed"]
+      : [];
+    const conduitAssociationAssumptions = observation.kind === "conduit_route"
+      ? [`conduit service classification ${observation.service} is source-evidence metadata only; it does not establish panel association, circuit membership, or endpoint connectivity`]
       : [];
     sourceObservations.push({
       observation_id: observation.observation_id,
@@ -1571,7 +1607,9 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         ...nativeConnectorAssumptions,
         ...downstreamVentAssumptions,
         ...unresolvedSizeAssumptions,
-        ...planProximityAssumptions
+        ...unresolvedConduitSizeAssumptions,
+        ...planProximityAssumptions,
+        ...conduitAssociationAssumptions
       ],
       source_observation_ids: [observation.observation_id],
       required_source_attributes: requiredAttributes
@@ -1606,6 +1644,9 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
     }
     if (unresolvedSizeAssumptions.length > 0) {
       warnings.push(`${observation.observation_id}: ${unresolvedSizeAssumptions.join("; ")}`);
+    }
+    if (unresolvedConduitSizeAssumptions.length > 0) {
+      warnings.push(`${observation.observation_id}: ${unresolvedConduitSizeAssumptions.join("; ")}`);
     }
     if (planProximityAssumptions.length > 0) {
       warnings.push(`${observation.observation_id}: ${planProximityAssumptions.join("; ")}`);
@@ -1667,8 +1708,8 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
           kind: "conduit",
           levelName,
           conduitType: observation.conduit_type,
-          diameter: observation.conduit_size,
-          sizePolicy: "explicit_required",
+          ...(conduitSizePolicy(observation) === "explicit_required" ? { diameter: observation.conduit_size! } : {}),
+          sizePolicy: conduitSizePolicy(observation) === "explicit_required" ? "explicit_required" : "placeholder_allowed",
           elevationPolicy: "explicit_points",
           points,
           connectSegments: true,

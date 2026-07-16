@@ -84,6 +84,7 @@
             }
           }
         },
+        "allow_reflection": { "type": "boolean" },
         "max_rms_error_ft": { "type": "number", "minimum": 0 },
         "max_point_error_ft": { "type": "number", "minimum": 0 }
       }

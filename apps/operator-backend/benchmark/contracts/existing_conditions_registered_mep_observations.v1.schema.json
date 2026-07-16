@@ -265,7 +265,14 @@
     "conduit_route": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "service", "pixel_points", "conduit_size", "conduit_type", "elevation_ft"],
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "service", "pixel_points", "conduit_type", "elevation_ft"],
+      "allOf": [
+        {
+          "if": { "required": ["conduit_size_policy"], "properties": { "conduit_size_policy": { "const": "unresolved_placeholder" } } },
+          "then": { "properties": { "conduit_size": false, "service": { "const": "unclassified" } } },
+          "else": { "required": ["conduit_size"], "properties": { "conduit_size": { "type": "string", "minLength": 1 } } }
+        }
+      ],
       "properties": {
         "kind": { "const": "conduit_route" },
         "discipline": { "const": "electrical" },
@@ -275,9 +282,10 @@
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
         "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
         "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
-        "service": { "enum": ["branch_circuit", "feeder", "communications", "fire_alarm", "other"] },
+        "service": { "enum": ["branch_circuit", "feeder", "communications", "fire_alarm", "other", "unclassified"] },
         "pixel_points": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/point" } },
         "conduit_size": { "type": "string", "minLength": 1 },
+        "conduit_size_policy": { "enum": ["explicit_required", "unresolved_placeholder"] },
         "conduit_type": { "type": "string", "minLength": 1 },
         "conduit_type_id": { "type": "integer", "minimum": 1 },
         "elevation_ft": { "type": "number" },

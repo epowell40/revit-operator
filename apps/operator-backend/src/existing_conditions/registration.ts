@@ -11,6 +11,8 @@ export type ExistingConditionsRegistrationControlPoint = {
 export type ExistingConditionsRegistrationInput = {
   source_evidence_sha256: string;
   control_points: ExistingConditionsRegistrationControlPoint[];
+  /** Permit a handedness flip, as required when top-left raster Y maps to increasing plan north. */
+  allow_reflection?: boolean;
   max_rms_error_ft?: number;
   max_point_error_ft?: number;
 };
@@ -21,6 +23,7 @@ export type ExistingConditionsRegistrationReceipt = {
   control_point_count: number;
   scale: number;
   rotation_degrees: number;
+  reflection_applied?: boolean;
   translation_ft: ExistingConditionsPlanPoint;
   rms_error_ft: number;
   maximum_error_ft: number;
@@ -92,40 +95,70 @@ export function solveExistingConditionsRegistration(
   modelCentroid.y /= controls.length;
 
   let denominator = 0;
-  let real = 0;
-  let imaginary = 0;
+  let properA = 0;
+  let properB = 0;
+  let reflectedA = 0;
+  let reflectedB = 0;
   for (const entry of controls) {
     const sx = entry.source.x - sourceCentroid.x;
     const sy = entry.source.y - sourceCentroid.y;
     const mx = entry.model.x - modelCentroid.x;
     const my = entry.model.y - modelCentroid.y;
     denominator += sx * sx + sy * sy;
-    real += sx * mx + sy * my;
-    imaginary += sx * my - sy * mx;
+    properA += sx * mx + sy * my;
+    properB += sx * my - sy * mx;
+    reflectedA += sx * mx - sy * my;
+    reflectedB += sy * mx + sx * my;
   }
   if (denominator <= 1e-12) throw new Error("registration_source_control_points_are_degenerate");
 
-  const a = real / denominator;
-  const b = imaginary / denominator;
+  type Candidate = {
+    a: number;
+    b: number;
+    reflected: boolean;
+    translation: ExistingConditionsPlanPoint;
+    squared_error: number;
+    maximum_error_ft: number;
+  };
+  const buildCandidate = (a: number, b: number, reflected: boolean): Candidate => {
+    const translation = reflected
+      ? {
+          x: modelCentroid.x - (a * sourceCentroid.x + b * sourceCentroid.y),
+          y: modelCentroid.y - (b * sourceCentroid.x - a * sourceCentroid.y)
+        }
+      : {
+          x: modelCentroid.x - (a * sourceCentroid.x - b * sourceCentroid.y),
+          y: modelCentroid.y - (b * sourceCentroid.x + a * sourceCentroid.y)
+        };
+    let squaredError = 0;
+    let maximumErrorFt = 0;
+    for (const entry of controls) {
+      const transformed = reflected
+        ? {
+            x: a * entry.source.x + b * entry.source.y + translation.x,
+            y: b * entry.source.x - a * entry.source.y + translation.y
+          }
+        : {
+            x: a * entry.source.x - b * entry.source.y + translation.x,
+            y: b * entry.source.x + a * entry.source.y + translation.y
+          };
+      const error = Math.hypot(transformed.x - entry.model.x, transformed.y - entry.model.y);
+      squaredError += error * error;
+      maximumErrorFt = Math.max(maximumErrorFt, error);
+    }
+    return { a, b, reflected, translation, squared_error: squaredError, maximum_error_ft: maximumErrorFt };
+  };
+  const candidates = [buildCandidate(properA / denominator, properB / denominator, false)];
+  if (input.allow_reflection === true) {
+    candidates.push(buildCandidate(reflectedA / denominator, reflectedB / denominator, true));
+  }
+  const selected = candidates.reduce((best, candidate) =>
+    candidate.squared_error < best.squared_error ? candidate : best
+  );
+  const { a, b } = selected;
   const scale = Math.hypot(a, b);
   if (!Number.isFinite(scale) || scale <= 1e-12) throw new Error("registration_scale_is_degenerate");
-  const translation = {
-    x: modelCentroid.x - (a * sourceCentroid.x - b * sourceCentroid.y),
-    y: modelCentroid.y - (b * sourceCentroid.x + a * sourceCentroid.y)
-  };
-
-  let squaredError = 0;
-  let maximumErrorFt = 0;
-  for (const entry of controls) {
-    const transformed = {
-      x: a * entry.source.x - b * entry.source.y + translation.x,
-      y: b * entry.source.x + a * entry.source.y + translation.y
-    };
-    const error = Math.hypot(transformed.x - entry.model.x, transformed.y - entry.model.y);
-    squaredError += error * error;
-    maximumErrorFt = Math.max(maximumErrorFt, error);
-  }
-  const rmsErrorFt = Math.sqrt(squaredError / controls.length);
+  const rmsErrorFt = Math.sqrt(selected.squared_error / controls.length);
 
   return {
     schema_version: 1,
@@ -133,12 +166,13 @@ export function solveExistingConditionsRegistration(
     control_point_count: controls.length,
     scale,
     rotation_degrees: Math.atan2(b, a) * 180 / Math.PI,
-    translation_ft: translation,
+    reflection_applied: selected.reflected,
+    translation_ft: selected.translation,
     rms_error_ft: rmsErrorFt,
-    maximum_error_ft: maximumErrorFt,
+    maximum_error_ft: selected.maximum_error_ft,
     max_rms_error_ft: maxRmsErrorFt,
     max_point_error_ft: maxPointErrorFt,
-    verified: rmsErrorFt <= maxRmsErrorFt && maximumErrorFt <= maxPointErrorFt
+    verified: rmsErrorFt <= maxRmsErrorFt && selected.maximum_error_ft <= maxPointErrorFt
   };
 }
 
@@ -150,8 +184,13 @@ export function transformExistingConditionsPlanPoint(
   const radians = receipt.rotation_degrees * Math.PI / 180;
   const a = receipt.scale * Math.cos(radians);
   const b = receipt.scale * Math.sin(radians);
-  return {
-    x: a * value.x - b * value.y + receipt.translation_ft.x,
-    y: b * value.x + a * value.y + receipt.translation_ft.y
-  };
+  return receipt.reflection_applied === true
+    ? {
+        x: a * value.x + b * value.y + receipt.translation_ft.x,
+        y: b * value.x - a * value.y + receipt.translation_ft.y
+      }
+    : {
+        x: a * value.x - b * value.y + receipt.translation_ft.x,
+        y: b * value.x + a * value.y + receipt.translation_ft.y
+      };
 }
