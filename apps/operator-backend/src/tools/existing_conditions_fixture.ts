@@ -200,7 +200,7 @@ function usage(): never {
     "Usage:",
     "  npm run existing-conditions -- normalize --visible <export-visible-elements.json> --connectors <get-connectors.json> --ids <id,id,...> --out <snapshot.json>",
     "  npm run existing-conditions -- inventory (--expected-model <model.rvt> | --expected-document-title <exact-title> --allow-title-only-development) --view-id <id> --out-dir <inventory-dir> --token-file <operator_token.txt> --grant-file <write_grant.json> [--categories <OST_...,OST_...>] [--include-linked]",
-    "  npm run existing-conditions -- scope-image-region --visible <export-visible-elements.json> --image-region <minX,minY,maxX,maxY> --out <scope.json> [--padding-px <pixels>]",
+    "  npm run existing-conditions -- scope-image-region --visible <export-visible-elements.json> --image-region <minX,minY,maxX,maxY> --out <scope.json> [--padding-px <pixels>] [--include-linked-scope] [--level-names <name,name>]",
     "  npm run existing-conditions -- solve-registration --input <registration-input-or-wrapper.json> --out <registration-receipt.json>",
     "  npm run existing-conditions -- extract-plan-traces --input <hash-bound-extraction-policy.json> --out <trace-receipt.json> [--preview-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- validate-mep-region-coverage --input <source-coverage.json> --context <coverage-context.json> --out <coverage-receipt.json>",
@@ -362,6 +362,9 @@ function selectedIdsFromArguments(viewIds: number[]): { ids: number[]; scope: Ex
   if (scopePath && argument("--ids")) throw new Error("Use either --ids or --scope, not both.");
   if (!scopePath) return { ids: parseIds(requiredArgument("--ids")), scope: null };
   const scope = asObject(readJson(scopePath));
+  if (scope.host_scope_required !== true) {
+    throw new Error("--scope must be host-only for native connector capture; linked scopes are evaluator-only.");
+  }
   const scopeViewId = Number(scope.view_id ?? scope.viewId);
   const scopeFrameId = String(scope.frame_id ?? scope.frameId ?? "").trim();
   if (!Number.isSafeInteger(scopeViewId) || !viewIds.includes(scopeViewId)) {
@@ -472,7 +475,9 @@ function buildImageScopeReceipt(): void {
   const receipt = selectExistingConditionsImageScope(visible, {
     min_x_px: minX!, min_y_px: minY!, max_x_px: maxX!, max_y_px: maxY!
   }, {
-    padding_px: padding
+    padding_px: padding,
+    include_linked: process.argv.includes("--include-linked-scope"),
+    level_names: argument("--level-names") ? parseCsv(argument("--level-names"), "--level-names") : undefined
   });
   if (receipt.selected_count === 0) throw new Error("Registered image region did not select any visible elements.");
   writeJson(requiredArgument("--out"), receipt);

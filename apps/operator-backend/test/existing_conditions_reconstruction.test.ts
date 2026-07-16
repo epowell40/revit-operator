@@ -140,6 +140,8 @@ test("registered image scope selects host curves and instances by visible overla
 
   assert.equal(receipt.frame_id, "frame-a");
   assert.deepEqual(receipt.selected_element_ids, [10, 20, 30]);
+  assert.deepEqual(receipt.selected_scoped_ids, ["host:10", "host:20", "host:30"]);
+  assert.equal(receipt.scope_mode, "host_only");
   assert.deepEqual(receipt.selected_by_category, {
     Ducts: 1,
     Pipes: 1,
@@ -150,6 +152,108 @@ test("registered image scope selects host curves and instances by visible overla
     "geometry_intersection",
     "point_inside"
   ]);
+});
+
+test("registered image scope can preserve linked evaluator truth without weakening native capture ids", () => {
+  const mapping = { mode: "2d_affine", topLeftXyz: [0, 10, 0], topRightXyz: [10, 10, 0], bottomLeftXyz: [0, 0, 0] };
+  const visible = {
+    frameId: "frame-linked",
+    viewId: 101,
+    widthPx: 1000,
+    heightPx: 800,
+    mapping,
+    truncated: false,
+    items: [
+      {
+        id: 50,
+        sourceScopedId: "host:50",
+        source: { scope: "host" },
+        category: "Walls",
+        levelName: "Level 3",
+        bbox: { image: { minX: 110, minY: 110, maxX: 190, maxY: 190 } }
+      },
+      {
+        id: 50,
+        sourceScopedId: "link:9:50",
+        source: { scope: "linked" },
+        category: "Walls",
+        levelName: "Level 3",
+        bbox: { image: { minX: 120, minY: 120, maxX: 180, maxY: 180 } }
+      },
+      {
+        id: 60,
+        sourceScopedId: "link:10:60",
+        source: { scope: "linked" },
+        category: "Doors",
+        levelName: "Level 3",
+        anchor: { image: { x: 150, y: 150 } }
+      },
+      {
+        id: 70,
+        sourceScopedId: "link:bad:70",
+        source: { scope: "linked" },
+        category: "Windows",
+        levelName: "Level 3",
+        anchor: { image: { x: 150, y: 150 } }
+      },
+      {
+        id: 80,
+        sourceScopedId: "link:10:80",
+        source: { scope: "linked" },
+        category: "Doors",
+        levelName: "Level 4",
+        anchor: { image: { x: 150, y: 150 } }
+      }
+    ]
+  };
+  const region = { min_x_px: 100, min_y_px: 100, max_x_px: 200, max_y_px: 200 };
+  const receipt = selectExistingConditionsImageScope(visible, region, { include_linked: true, level_names: ["Level 3"] });
+
+  assert.equal(receipt.host_scope_required, false);
+  assert.equal(receipt.scope_mode, "host_and_linked");
+  assert.deepEqual(receipt.level_names, ["Level 3"]);
+  assert.deepEqual(receipt.selected_element_ids, [50]);
+  assert.deepEqual(receipt.selected_scoped_ids, ["host:50", "link:9:50", "link:10:60"]);
+  assert.deepEqual(receipt.selected.map((entry) => entry.source_scope), ["host", "linked", "linked"]);
+  assert.deepEqual(validateExistingConditionsImageScopeAgainstVisibleInventory(receipt, {
+    ...visible,
+    frameId: "frame-linked-fresh"
+  }).selected_scoped_ids, receipt.selected_scoped_ids);
+});
+
+test("legacy host-only image scopes retain numeric element ordering", () => {
+  const mapping = { mode: "2d_affine", topLeftXyz: [0, 10, 0], topRightXyz: [10, 10, 0], bottomLeftXyz: [0, 0, 0] };
+  const visible = {
+    frameId: "frame-legacy",
+    viewId: 101,
+    widthPx: 1000,
+    heightPx: 800,
+    mapping,
+    truncated: false,
+    items: [10, 2].map((id) => ({
+      id,
+      sourceScopedId: `host:${id}`,
+      source: { scope: "host" },
+      category: "Ducts",
+      anchor: { image: { x: 150, y: 150 } }
+    }))
+  };
+  const current = selectExistingConditionsImageScope(visible, {
+    min_x_px: 100, min_y_px: 100, max_x_px: 200, max_y_px: 200
+  });
+  const legacy = {
+    ...current,
+    scope_mode: undefined,
+    selected_scoped_ids: undefined,
+    selected: current.selected.map(({ source_scope: _sourceScope, ...entry }) => entry)
+  };
+
+  assert.deepEqual(current.selected_element_ids, [2, 10]);
+  assert.deepEqual(current.selected_scoped_ids, ["host:2", "host:10"]);
+  assert.deepEqual(validateExistingConditionsImageScopeAgainstVisibleInventory(legacy, {
+    ...visible,
+    frameId: "frame-legacy-fresh"
+  }).selected_element_ids, [2, 10]);
 });
 
 test("registered image scope rejects truncated truth inventories and invalid regions", () => {

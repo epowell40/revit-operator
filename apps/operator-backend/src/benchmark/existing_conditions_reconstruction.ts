@@ -664,13 +664,21 @@ export type ExistingConditionsImageScopeReceipt = {
   raster_mapping: JsonMap;
   region: ExistingConditionsImageRegion;
   padding_px: number;
-  host_scope_required: true;
+  /**
+   * True for receipts that may be passed to the native connector-capture lane.
+   * False marks an evaluator-only scope that may contain link-scoped elements.
+   */
+  host_scope_required: boolean;
+  scope_mode?: "host_only" | "host_and_linked";
+  level_names?: string[];
   selected_element_ids: number[];
+  selected_scoped_ids?: string[];
   selected_count: number;
   selected_by_category: Record<string, number>;
   selected: Array<{
     element_id: number;
     source_scoped_id: string;
+    source_scope?: "host" | "linked";
     category: string;
     selection_basis: "bbox_intersection" | "geometry_intersection" | "point_inside";
   }>;
@@ -728,7 +736,7 @@ function pointInsideRegion(point: { x: number; y: number }, region: ExistingCond
 export function selectExistingConditionsImageScope(
   visibleElementsPayload: unknown,
   requestedRegion: ExistingConditionsImageRegion,
-  options: { padding_px?: number } = {}
+  options: { padding_px?: number; include_linked?: boolean; level_names?: string[] } = {}
 ): ExistingConditionsImageScopeReceipt {
   const root = asObject(visibleElementsPayload);
   if (root.truncated === true) throw new Error("visible_element_inventory_is_truncated");
@@ -759,12 +767,21 @@ export function selectExistingConditionsImageScope(
     max_y_px: Math.min(height, requestedRegion.max_y_px + padding)
   };
   const selected: ExistingConditionsImageScopeReceipt["selected"] = [];
+  const includeLinked = options.include_linked === true;
+  const levelNames = [...new Set((options.level_names ?? []).map((entry) => String(entry).trim()).filter(Boolean))];
+  const normalizedLevelNames = new Set(levelNames.map(normalized));
   for (const row of objectRows(root.items ?? root.elements)) {
     const id = finiteNumber(row.elementId ?? row.element_id ?? row.id);
     if (id === null || !Number.isSafeInteger(id) || id <= 0) continue;
     const sourceScopedId = firstText(row.sourceScopedId, row.source_scoped_id);
     const sourceScope = normalized(asObject(row.source).scope);
-    if (sourceScope !== "host" || normalized(sourceScopedId) !== `host:${Math.trunc(id)}`) continue;
+    const normalizedScopedId = normalized(sourceScopedId);
+    const validHostIdentity = sourceScope === "host" && normalizedScopedId === `host:${Math.trunc(id)}`;
+    const linkedIdentityMatch = /^link:(\d+):(\d+)$/.exec(normalizedScopedId);
+    const validLinkedIdentity = sourceScope === "linked" && linkedIdentityMatch !== null &&
+      Number(linkedIdentityMatch[1]) > 0 && Number(linkedIdentityMatch[2]) === Math.trunc(id);
+    if (!validHostIdentity && !(includeLinked && validLinkedIdentity)) continue;
+    if (normalizedLevelNames.size > 0 && !normalizedLevelNames.has(normalized(row.levelName ?? row.level_name))) continue;
     const bbox = imageBounds(asObject(row.bbox).image ?? row.bbox);
     const geometryBounds = geometryImageBounds(row);
     const anchor = imagePoint(asObject(row.anchor).image);
@@ -779,11 +796,18 @@ export function selectExistingConditionsImageScope(
     selected.push({
       element_id: Math.trunc(id),
       source_scoped_id: sourceScopedId!,
+      source_scope: validHostIdentity ? "host" : "linked",
       category: firstText(row.category, row.categoryToken, row.category_token, row.builtInCategory, row.built_in_category) ?? "Unknown",
       selection_basis: selectionBasis
     });
   }
-  selected.sort((a, b) => a.element_id - b.element_id);
+  selected.sort((a, b) => {
+    if (a.source_scope !== b.source_scope) return a.source_scope === "host" ? -1 : 1;
+    if (a.source_scope === "host") return a.element_id - b.element_id;
+    const aLinkId = Number(/^link:(\d+):/.exec(a.source_scoped_id)?.[1] ?? 0);
+    const bLinkId = Number(/^link:(\d+):/.exec(b.source_scoped_id)?.[1] ?? 0);
+    return aLinkId - bLinkId || a.element_id - b.element_id;
+  });
   const selectedByCategory: Record<string, number> = {};
   for (const row of selected) selectedByCategory[row.category] = (selectedByCategory[row.category] ?? 0) + 1;
   return {
@@ -795,8 +819,11 @@ export function selectExistingConditionsImageScope(
     raster_mapping: rasterMapping,
     region,
     padding_px: padding,
-    host_scope_required: true,
-    selected_element_ids: selected.map((entry) => entry.element_id),
+    host_scope_required: !includeLinked,
+    scope_mode: includeLinked ? "host_and_linked" : "host_only",
+    ...(levelNames.length > 0 ? { level_names: levelNames } : {}),
+    selected_element_ids: selected.filter((entry) => entry.source_scope === "host").map((entry) => entry.element_id).sort((a, b) => a - b),
+    selected_scoped_ids: selected.map((entry) => entry.source_scoped_id),
     selected_count: selected.length,
     selected_by_category: selectedByCategory,
     selected
@@ -808,7 +835,7 @@ export function validateExistingConditionsImageScopeAgainstVisibleInventory(
   scope: ExistingConditionsImageScopeReceipt,
   visibleElementsPayload: unknown
 ): ExistingConditionsImageScopeReceipt {
-  if (!scope || scope.schema_version !== 1 || scope.host_scope_required !== true) {
+  if (!scope || scope.schema_version !== 1 || typeof scope.host_scope_required !== "boolean") {
     throw new Error("image_scope_receipt_is_invalid");
   }
   const root = asObject(visibleElementsPayload);
@@ -817,12 +844,24 @@ export function validateExistingConditionsImageScopeAgainstVisibleInventory(
   if (JSON.stringify(asObject(root.mapping)) !== JSON.stringify(asObject(scope.raster_mapping))) {
     throw new Error("image_scope_raster_mapping_mismatch");
   }
-  const recomputed = selectExistingConditionsImageScope(visibleElementsPayload, scope.region);
+  const recomputed = selectExistingConditionsImageScope(visibleElementsPayload, scope.region, {
+    include_linked: scope.host_scope_required === false,
+    level_names: scope.level_names
+  });
   if (recomputed.raster_width_px !== scope.raster_width_px || recomputed.raster_height_px !== scope.raster_height_px) {
     throw new Error("image_scope_raster_dimensions_mismatch");
   }
-  if (JSON.stringify(recomputed.selected_element_ids) !== JSON.stringify(scope.selected_element_ids) ||
-      JSON.stringify(recomputed.selected) !== JSON.stringify(scope.selected)) {
+  const expectedScopeMode = scope.scope_mode ?? (scope.host_scope_required ? "host_only" : "host_and_linked");
+  const expectedScopedIds = scope.selected_scoped_ids ?? scope.selected.map((entry) => entry.source_scoped_id);
+  const legacySelectedRows = scope.selected.every((entry) => entry.source_scope === undefined);
+  const comparableRecomputedSelected = legacySelectedRows
+    ? recomputed.selected.map(({ source_scope: _sourceScope, ...entry }) => entry)
+    : recomputed.selected;
+  if (recomputed.scope_mode !== expectedScopeMode ||
+      JSON.stringify(recomputed.level_names ?? []) !== JSON.stringify(scope.level_names ?? []) ||
+      JSON.stringify(recomputed.selected_element_ids) !== JSON.stringify(scope.selected_element_ids) ||
+      JSON.stringify(recomputed.selected_scoped_ids) !== JSON.stringify(expectedScopedIds) ||
+      JSON.stringify(comparableRecomputedSelected) !== JSON.stringify(scope.selected)) {
     throw new Error("image_scope_selected_elements_mismatch");
   }
   return recomputed;

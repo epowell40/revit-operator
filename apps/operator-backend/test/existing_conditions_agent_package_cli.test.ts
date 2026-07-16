@@ -200,3 +200,33 @@ test("package CLI copies and hash-binds optional registration, type-catalog, and
     fs.rmSync(temp, { recursive: true, force: true });
   }
 });
+
+test("capture CLI rejects evaluator-only linked scopes before native bridge access", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "existing-conditions-linked-scope-"));
+  try {
+    const scopePath = path.join(temp, "linked-scope.json");
+    fs.writeFileSync(scopePath, `${JSON.stringify({
+      schema_version: 1,
+      frame_id: "frame-linked",
+      view_id: 101,
+      host_scope_required: false,
+      scope_mode: "host_and_linked",
+      selected_element_ids: [],
+      selected_scoped_ids: ["link:9:50"],
+      selected_count: 1,
+      selected: [{ element_id: 50, source_scoped_id: "link:9:50", source_scope: "linked", category: "Doors", selection_basis: "point_inside" }]
+    })}\n`, "utf8");
+    const cli = path.resolve(process.cwd(), "dist/src/tools/existing_conditions_fixture.js");
+    const result = spawnSync(process.execPath, [
+      cli, "capture",
+      "--view-id", "101",
+      "--scope", scopePath,
+      "--out-dir", path.join(temp, "capture")
+    ], { cwd: process.cwd(), encoding: "utf8" });
+
+    assert.notEqual(result.status, 0);
+    assert.match(`${result.stderr}\n${result.stdout}`, /linked scopes are evaluator-only/);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
