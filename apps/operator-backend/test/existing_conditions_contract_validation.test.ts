@@ -243,6 +243,27 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
     copy_distribution_system_from_source: true
   };
   assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", equipment));
+  const conduit = structuredClone(input) as Record<string, unknown>;
+  conduit.observations = [{
+    kind: "conduit_route",
+    discipline: "electrical",
+    observation_id: "feeder-conduit-1",
+    visibility: "clear",
+    confidence: 0.97,
+    supported_attributes: ["location", "size", "elevation", "type"],
+    attribute_evidence: [
+      { attribute: "size", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "one-inch conduit note" },
+      { attribute: "elevation", basis: "declared_heuristic", evidence_role: "registered_source_render", reference: "plan does not show conduit elevation" },
+      { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "EMT note applies to the selected run" }
+    ],
+    service: "feeder",
+    pixel_points: [{ x: 20, y: 80 }, { x: 50, y: 80 }, { x: 50, y: 60 }],
+    conduit_size: "1 inch",
+    conduit_type: "EMT",
+    conduit_type_id: 4242,
+    elevation_ft: 10
+  }];
+  assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", conduit));
   const mechanical = structuredClone(input) as Record<string, unknown>;
   mechanical.discipline = "mechanical";
   mechanical.observations = [{

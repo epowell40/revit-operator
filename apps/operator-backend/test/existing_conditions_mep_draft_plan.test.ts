@@ -1923,7 +1923,7 @@ test("downstream vent tee rejects direct fixture service wiring and ungrounded m
   route.attribute_provenance = route.attribute_provenance?.map((entry) => entry.attribute === "main_elevation"
     ? { ...entry, basis: "declared_heuristic" as const }
     : entry);
-  assert.throws(() => compileMepDraftPlan(ungrounded), /declared_heuristic_only_allowed_for_pipe_elevation|main_elevation_must_be_native_model_precedent/);
+  assert.throws(() => compileMepDraftPlan(ungrounded), /declared_heuristic_only_allowed_for_route_elevation|main_elevation_must_be_native_model_precedent/);
 });
 
 function plannedMainDownstreamVentPackage(): MepDraftPackage {

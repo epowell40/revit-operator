@@ -7,6 +7,7 @@ import {
   type AirTerminalObservation,
   type CompiledMepDraftPlan,
   type ElectricalCircuitObservation,
+  type ElectricalConduitRouteObservation,
   type ElectricalDeviceObservation,
   type ElectricalEquipmentObservation,
   type MepDraftPlacement,
@@ -99,6 +100,10 @@ export type RegisteredElectricalDeviceObservation = Omit<ElectricalDeviceObserva
   pixel_point: ExistingConditionsPlanPoint;
 };
 
+export type RegisteredElectricalConduitRouteObservation = Omit<ElectricalConduitRouteObservation, "points"> & WithAttributeEvidence & {
+  pixel_points: ExistingConditionsPlanPoint[];
+};
+
 export type RegisteredElectricalEquipmentObservation = Omit<ElectricalEquipmentObservation, "point"> & WithAttributeEvidence & {
   pixel_point: ExistingConditionsPlanPoint;
 };
@@ -113,6 +118,7 @@ export type RegisteredMepPixelObservation =
   | RegisteredPlumbingCreatedRouteConnectorBridgeObservation
   | RegisteredPlumbingDownstreamVentTeeObservation
   | RegisteredPlumbingFixtureObservation
+  | RegisteredElectricalConduitRouteObservation
   | RegisteredElectricalDeviceObservation
   | RegisteredElectricalEquipmentObservation
   | ElectricalCircuitObservation;
@@ -261,6 +267,7 @@ function allowedDiscipline(
 
 function materialAttributes(observation: Exclude<RegisteredMepPixelObservation, ElectricalCircuitObservation>): string[] {
   if (observation.kind === "duct_route") return ["size", "elevation", "system", "type"];
+  if (observation.kind === "conduit_route") return ["size", "elevation", "type"];
   if (observation.kind === "pipe_route") {
     const size = registeredPipeSizePolicy(observation) === "explicit_required" ? ["size"] : [];
     if (observation.geometry_mode === "native_connector_bridge"
@@ -315,8 +322,8 @@ function validateAttributeEvidence(
       throw new Error(`${observation.observation_id}_${attribute}_native_precedent_requires_native_evidence`);
     }
     if (claim.basis === "declared_heuristic") {
-      if ((observation.kind !== "pipe_route" && observation.kind !== "duct_route") || attribute !== "elevation") {
-        throw new Error(`${observation.observation_id}_declared_heuristic_only_allowed_for_pipe_elevation`);
+      if ((observation.kind !== "pipe_route" && observation.kind !== "duct_route" && observation.kind !== "conduit_route") || attribute !== "elevation") {
+        throw new Error(`${observation.observation_id}_declared_heuristic_only_allowed_for_route_elevation`);
       }
       if (!["source pdf", normalized(renderRole)].includes(normalized(evidenceRole))) {
         throw new Error(`${observation.observation_id}_elevation_heuristic_requires_plan_context`);
@@ -428,7 +435,7 @@ export async function compileRegisteredMepObservations(
         : claim.basis,
       reference: claim.reference
     }));
-    if (observation.kind === "duct_route") {
+    if (observation.kind === "duct_route" || observation.kind === "conduit_route") {
       if (!Array.isArray(observation.pixel_points) || observation.pixel_points.length < 2) {
         throw new Error(`${observation.observation_id}_requires_at_least_two_pixel_points`);
       }

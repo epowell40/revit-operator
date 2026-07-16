@@ -25,6 +25,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             public long? ductTypeId { get; set; }
             public string? ductShape { get; set; }
             public string? pipeType { get; set; }
+            public string? conduitType { get; set; }
+            public long? conduitTypeId { get; set; }
             public string? ductSize { get; set; }
             public string? diameter { get; set; }
             public string? pipeSize { get; set; }
@@ -218,12 +220,34 @@ namespace RevitBridge.Logic.Handlers.MEP
 
                 var capture = Invoke(new HighlightAndExportHandler(), app, captureRequest);
                 var captureJson = ToElement(capture);
+                var visibilityJson = captureJson.ValueKind == JsonValueKind.Object &&
+                    captureJson.TryGetProperty("elementVisibility", out var visibilityValue)
+                    ? visibilityValue.Clone()
+                    : default;
+                var allCreatedElementsVisible = ReadBool(visibilityJson, "allRequestedElementsVisible");
+                var notVisibleElementIds = ReadLongArray(visibilityJson, "notVisibleElementIds");
+                if (allCreatedElementsVisible != true)
+                {
+                    return new
+                    {
+                        status = "CreatedElementsNotVisibleInView",
+                        reason = "The post-change export completed, but one or more created elements were not verifiably visible in the requested view.",
+                        capture,
+                        createdElementIds,
+                        createdFittingIds,
+                        notVisibleElementIds,
+                        elementVisibility = visibilityJson.ValueKind == JsonValueKind.Undefined ? (object?)null : visibilityJson,
+                        capturePath = ReadString(captureJson, "path"),
+                        nextStep = "Choose a view whose range, category visibility, phase, filters, and crop include every created element, then rerun visual verification."
+                    };
+                }
                 return new
                 {
                     status = "CaptureReadyForAIReview",
                     capture,
                     createdElementIds,
                     createdFittingIds,
+                    elementVisibility = visibilityJson,
                     expected = new
                     {
                         orderedPoints = ReadObjectArray(applyJson, "plannedPoints"),
@@ -271,6 +295,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             ductTypeId = p.ductTypeId,
             ductShape = p.ductShape,
             pipeType = p.pipeType,
+            conduitType = p.conduitType,
+            conduitTypeId = p.conduitTypeId,
             ductSize = p.ductSize,
             diameter = p.diameter,
             pipeSize = p.pipeSize,
@@ -336,6 +362,17 @@ namespace RevitBridge.Logic.Handlers.MEP
                 value.TryGetInt32(out var result))
             {
                 return result;
+            }
+            return null;
+        }
+
+        private static bool? ReadBool(JsonElement obj, string name)
+        {
+            if (obj.ValueKind == JsonValueKind.Object &&
+                obj.TryGetProperty(name, out var value) &&
+                (value.ValueKind == JsonValueKind.True || value.ValueKind == JsonValueKind.False))
+            {
+                return value.GetBoolean();
             }
             return null;
         }

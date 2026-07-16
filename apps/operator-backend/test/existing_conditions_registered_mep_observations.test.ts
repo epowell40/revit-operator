@@ -150,6 +150,33 @@ function electricalInput(): RegisteredMepObservationPackage {
   };
 }
 
+function electricalConduitInput(): RegisteredMepObservationPackage {
+  const input = electricalInput();
+  input.fixture_id = "registered-electrical-conduit-independent-v1";
+  input.scope_id = "unseen-electrical-corridor-delta";
+  input.visible_evidence.push({ role: "native_model_inventory", sha256: "b".repeat(64) });
+  input.observations = [{
+    kind: "conduit_route",
+    discipline: "electrical",
+    observation_id: "feeder-conduit-random-52",
+    visibility: "clear",
+    confidence: 0.97,
+    supported_attributes: ["location", "size", "elevation", "type"],
+    attribute_evidence: [
+      { attribute: "size", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "one-inch conduit size note adjacent to the selected run" },
+      { attribute: "elevation", basis: "declared_heuristic", evidence_role: "registered_source_render", reference: "No elevation is shown in plan; assume 10 feet above L4 in the plenum." },
+      { attribute: "type", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "exact project EMT conduit type inventory entry 4242" }
+    ],
+    service: "feeder",
+    pixel_points: [{ x: 20, y: 80 }, { x: 50, y: 80 }, { x: 50, y: 60 }],
+    conduit_size: "1 inch",
+    conduit_type: "EMT",
+    conduit_type_id: 4242,
+    elevation_ft: 10
+  }];
+  return input;
+}
+
 function mechanicalInput(): RegisteredMepObservationPackage {
   const plumbing = plumbingInput();
   return {
@@ -334,6 +361,26 @@ test("registered mechanical pixels compile duct routing and equipment placement 
   ]);
   assert.equal(result.compiled_plan.plan_elements[0]?.category, "OST_DuctCurves");
   assert.equal(result.compiled_plan.plan_elements[1]?.category, "OST_MechanicalEquipment");
+  assert.match(result.compiled_plan.warnings.join("\n"), /elevation inferred by declared heuristic/);
+});
+
+test("registered electrical linework compiles a source-grounded native conduit route", async () => {
+  const result = await compileRegisteredMepObservations(electricalConduitInput());
+  assert.equal(result.compiled_plan.status, "ready");
+  assert.equal(result.compiled_plan.actions.length, 1);
+  const route = result.compiled_plan.actions[0];
+  assert.equal(route?.path, "/revit/mep-route-workflow");
+  assert.equal(route?.apply_body?.kind, "conduit");
+  assert.equal(route?.apply_body?.diameter, "1 inch");
+  assert.equal(route?.apply_body?.conduitType, "EMT");
+  assert.equal(route?.apply_body?.conduitTypeId, 4242);
+  assert.equal(route?.apply_body?.sizePolicy, "explicit_required");
+  assert.deepEqual(route?.apply_body?.points, [
+    { x: 102, y: 202, z: 42 },
+    { x: 105, y: 202, z: 42 },
+    { x: 105, y: 204, z: 42 }
+  ]);
+  assert.equal(result.compiled_plan.plan_elements[0]?.category, "OST_Conduit");
   assert.match(result.compiled_plan.warnings.join("\n"), /elevation inferred by declared heuristic/);
 });
 
@@ -730,7 +777,7 @@ test("declared heuristics cannot invent pipe size, type, or system", async () =>
   const sizeClaim = route.attribute_evidence.find((entry) => entry.attribute === "size");
   if (!sizeClaim) throw new Error("size_claim_setup_failed");
   sizeClaim.basis = "declared_heuristic";
-  await assert.rejects(() => compileRegisteredMepObservations(input), /declared_heuristic_only_allowed_for_pipe_elevation/);
+  await assert.rejects(() => compileRegisteredMepObservations(input), /declared_heuristic_only_allowed_for_route_elevation/);
 });
 
 test("registered electrical pixels locate devices but render evidence cannot assert circuit membership", async () => {

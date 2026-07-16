@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Architecture;
+using Autodesk.Revit.DB.Electrical;
 using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Plumbing;
 using Autodesk.Revit.UI;
@@ -134,6 +135,13 @@ namespace RevitBridge.Logic.Handlers.MEP
             public double? WidthFt { get; set; }
             public double? HeightFt { get; set; }
             public double? DiameterFt { get; set; }
+        }
+
+        internal sealed class ConduitTypeResolution
+        {
+            public ConduitType? Selected { get; set; }
+            public IReadOnlyList<MepDuctTypeCandidate> Candidates { get; set; } = Array.Empty<MepDuctTypeCandidate>();
+            public string Error { get; set; } = string.Empty;
         }
 
         internal static RoutingContext ResolveRoutingContext(Document doc, UIApplication app, RoutingContextRequest req)
@@ -424,12 +432,39 @@ namespace RevitBridge.Logic.Handlers.MEP
             return all.FirstOrDefault();
         }
 
+        internal static ConduitTypeResolution ResolveConduitType(Document doc, long? requestedId, string? requestedName)
+        {
+            var all = new FilteredElementCollector(doc).OfClass(typeof(ConduitType)).Cast<ConduitType>().ToList();
+            var receipt = MepDuctTypeSelectionPolicy.Resolve(
+                all.Select(x => new MepDuctTypeCandidate
+                {
+                    Id = ElementIdCompat.GetValue(x.Id),
+                    Name = x.Name ?? string.Empty,
+                    FamilyName = "Conduit Type"
+                }),
+                requestedId,
+                requestedName);
+            var selected = receipt.Selected == null
+                ? null
+                : all.FirstOrDefault(x => ElementIdCompat.GetValue(x.Id) == receipt.Selected.Id);
+            return new ConduitTypeResolution
+            {
+                Selected = selected,
+                Candidates = receipt.Candidates,
+                Error = receipt.Error
+                    .Replace("Duct type", "Conduit type")
+                    .Replace("duct type", "conduit type")
+                    .Replace("ductTypeId", "conduitTypeId")
+                    .Replace("ductType", "conduitType")
+            };
+        }
+
         internal static SizeChoice ChooseSize(string kind, string? ductSize, string? diameter, string? pipeSize, string? sizePolicy, List<string> warnings)
         {
             var k = NormalizeKind(kind);
             var explicitRequired = string.Equals((sizePolicy ?? "").Trim(), "explicit_required", StringComparison.OrdinalIgnoreCase);
             var choice = new SizeChoice();
-            if (k == "pipe")
+            if (k == "pipe" || k == "conduit")
             {
                 var requested = FirstNonEmpty(diameter, pipeSize);
                 choice.RequestedText = requested;
@@ -588,6 +623,27 @@ namespace RevitBridge.Logic.Handlers.MEP
             var diameter = size.DiameterFt.HasValue && TrySetBuiltinOrNamedDouble(pipe, BuiltInParameter.RBS_PIPE_DIAMETER_PARAM, new[] { "Diameter", "Pipe Diameter", "Size" }, size.DiameterFt.Value);
             result = new { diameter };
             return diameter;
+        }
+
+        internal static bool TryApplyConduitSize(Conduit conduit, SizeChoice size, out object result)
+        {
+            var diameter = size.DiameterFt.HasValue && TrySetBuiltinOrNamedDouble(conduit, BuiltInParameter.RBS_CONDUIT_DIAMETER_PARAM, new[] { "Diameter", "Conduit Diameter", "Size" }, size.DiameterFt.Value);
+            var readback = ReadBuiltinDouble(conduit, BuiltInParameter.RBS_CONDUIT_DIAMETER_PARAM);
+            result = new { diameter, diameterFt = readback };
+            return diameter;
+        }
+
+        internal static bool ValidateConduitSize(Conduit conduit, SizeChoice size, out double? diameterFt, out string error)
+        {
+            error = string.Empty;
+            diameterFt = ReadBuiltinDouble(conduit, BuiltInParameter.RBS_CONDUIT_DIAMETER_PARAM);
+            if (!size.DiameterFt.HasValue) return true;
+            if (!diameterFt.HasValue || Math.Abs(diameterFt.Value - size.DiameterFt.Value) > 1e-4)
+            {
+                error = $"Native conduit diameter readback did not match requested {size.DiameterFt.Value:G9} ft.";
+                return false;
+            }
+            return true;
         }
 
         internal static List<Connector> GetConnectors(Element e)
@@ -844,6 +900,7 @@ namespace RevitBridge.Logic.Handlers.MEP
         {
             var k = (kind ?? "").Trim().ToLowerInvariant();
             if (k == "pipe" || k == "piping") return "pipe";
+            if (k == "conduit" || k == "electrical_conduit") return "conduit";
             return "duct";
         }
 

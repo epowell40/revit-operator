@@ -243,6 +243,20 @@ export type MechanicalDuctRouteObservation = MepDraftObservationBase & {
   external_connection_tolerance_ft?: number;
 };
 
+export type ElectricalConduitRouteObservation = MepDraftObservationBase & {
+  kind: "conduit_route";
+  discipline: "electrical";
+  service: "branch_circuit" | "feeder" | "communications" | "fire_alarm" | "other";
+  points: ExistingConditionsPlanPoint[];
+  elevation_ft: number;
+  conduit_size: string;
+  conduit_type: string;
+  conduit_type_id?: number;
+  connect_to_existing?: boolean;
+  require_existing_endpoint_connections?: boolean;
+  external_connection_tolerance_ft?: number;
+};
+
 type MechanicalFamilyInstanceObservationBase = MepDraftObservationBase & {
   discipline: "mechanical";
   role: string;
@@ -319,6 +333,7 @@ export type ElectricalCircuitObservation = ElectricalSourceCircuitObservation | 
 
 export type MepDraftObservation =
   | MechanicalDuctRouteObservation
+  | ElectricalConduitRouteObservation
   | MechanicalEquipmentObservation
   | AirTerminalObservation
   | PlumbingPipeRouteObservation
@@ -535,6 +550,7 @@ function inputFingerprint(input: MepDraftPackage): string {
 
 function materialAttributes(observation: MepDraftObservation): string[] {
   if (observation.kind === "duct_route") return ["location", "size", "elevation", "system", "type"];
+  if (observation.kind === "conduit_route") return ["location", "size", "elevation", "type"];
   if (observation.kind === "pipe_route") {
     const size = pipeSizePolicy(observation) === "explicit_required" ? ["size"] : [];
     return observation.geometry_mode === "downstream_vent_tee"
@@ -560,6 +576,7 @@ function materialAttributes(observation: MepDraftObservation): string[] {
 
 function category(observation: MepDraftObservation): string {
   if (observation.kind === "duct_route") return "OST_DuctCurves";
+  if (observation.kind === "conduit_route") return "OST_Conduit";
   if (observation.kind === "mechanical_equipment") return "OST_MechanicalEquipment";
   if (observation.kind === "air_terminal") return "OST_DuctTerminal";
   if (observation.kind === "pipe_route") return "OST_PipeCurves";
@@ -570,6 +587,7 @@ function category(observation: MepDraftObservation): string {
 
 function role(observation: MepDraftObservation): string {
   if (observation.kind === "duct_route") return observation.service.replaceAll("_", " ");
+  if (observation.kind === "conduit_route") return `${observation.service.replaceAll("_", " ")} conduit`;
   if (observation.kind === "pipe_route") return observation.service.replaceAll("_", " ");
   if (observation.kind === "electrical_circuit") return observation.panel_circuit_label
     ? `electrical circuit ${observation.panel_circuit_label}`
@@ -677,8 +695,8 @@ function validateObservation(observation: MepDraftObservation, index: number): v
         throw new Error(`${id}_attribute_provenance_basis_invalid:${attribute}`);
       }
       if (provenance.basis === "declared_heuristic"
-        && ((observation.kind !== "pipe_route" && observation.kind !== "duct_route") || attribute !== "elevation")) {
-        throw new Error(`${id}_declared_heuristic_only_allowed_for_pipe_elevation`);
+        && ((observation.kind !== "pipe_route" && observation.kind !== "duct_route" && observation.kind !== "conduit_route") || attribute !== "elevation")) {
+        throw new Error(`${id}_declared_heuristic_only_allowed_for_route_elevation`);
       }
       requiredText(provenance.reference, `${id}_${attribute}_provenance_reference`);
     }
@@ -693,6 +711,21 @@ function validateObservation(observation: MepDraftObservation, index: number): v
     requiredText(observation.duct_size, `${id}_duct_size`);
     requiredText(observation.duct_type, `${id}_duct_type`);
     requiredText(observation.system_type, `${id}_system_type`);
+    if (observation.require_existing_endpoint_connections && !observation.connect_to_existing) {
+      throw new Error(`${id}_required_endpoint_connections_need_connect_to_existing`);
+    }
+    return;
+  }
+  if (observation.kind === "conduit_route") {
+    if (!Array.isArray(observation.points) || observation.points.length < 2) throw new Error(`${id}_requires_at_least_two_points`);
+    observation.points.forEach((entry, pointIndex) => {
+      finite(entry.x, `${id}_point_${pointIndex}_x`);
+      finite(entry.y, `${id}_point_${pointIndex}_y`);
+    });
+    finite(observation.elevation_ft, `${id}_elevation_ft`);
+    requiredText(observation.conduit_size, `${id}_conduit_size`);
+    requiredText(observation.conduit_type, `${id}_conduit_type`);
+    if (observation.conduit_type_id != null) positiveInteger(observation.conduit_type_id, `${id}_conduit_type_id`);
     if (observation.require_existing_endpoint_connections && !observation.connect_to_existing) {
       throw new Error(`${id}_required_endpoint_connections_need_connect_to_existing`);
     }
@@ -1611,6 +1644,41 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
           verify: true,
           visualVerify: true
         };
+        if (input.room_number) common.roomNumber = input.room_number;
+        actions.push({
+          action_key: `route:${observation.observation_id}`,
+          observation_ids: [observation.observation_id],
+          method: "POST",
+          path: "/revit/mep-route-workflow",
+          depends_on: [],
+          dry_run_body: { ...common, apply: false },
+          apply_body: { ...common, apply: true },
+          expected_created_min: observation.points.length - 1,
+          expected_created_max: (observation.points.length - 1) + Math.max(0, observation.points.length - 2)
+        });
+        continue;
+      }
+      if (observation.kind === "conduit_route") {
+        const points = observation.points.map((entry) => ({
+          ...transformExistingConditionsPlanPoint(registration, entry),
+          z: levelElevationFt + observation.elevation_ft
+        }));
+        const common: JsonMap = {
+          kind: "conduit",
+          levelName,
+          conduitType: observation.conduit_type,
+          diameter: observation.conduit_size,
+          sizePolicy: "explicit_required",
+          elevationPolicy: "explicit_points",
+          points,
+          connectSegments: true,
+          connectToExisting: observation.connect_to_existing === true,
+          requireExistingEndpointConnections: observation.require_existing_endpoint_connections === true,
+          externalConnectionToleranceFt: observation.external_connection_tolerance_ft ?? 0.1,
+          verify: true,
+          visualVerify: true
+        };
+        if (observation.conduit_type_id != null) common.conduitTypeId = observation.conduit_type_id;
         if (input.room_number) common.roomNumber = input.room_number;
         actions.push({
           action_key: `route:${observation.observation_id}`,

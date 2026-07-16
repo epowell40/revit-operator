@@ -48,7 +48,7 @@ export type BoundedMepRegionCoverageV1 = {
 
 export type MepCoverageObservationDescriptor = {
   observation_id: string;
-  kind: "duct_route" | "air_terminal" | "mechanical_equipment" | "pipe_route" | "plumbing_fixture" | "electrical_device" | "electrical_equipment" | "electrical_circuit";
+  kind: "duct_route" | "conduit_route" | "air_terminal" | "mechanical_equipment" | "pipe_route" | "plumbing_fixture" | "electrical_device" | "electrical_equipment" | "electrical_circuit";
   discipline: MepCoverageDiscipline;
 };
 
@@ -206,7 +206,7 @@ function insidePolygonOrBoundary(pointValue: MepCoveragePoint, polygonValue: Mep
 }
 
 function expectedPrimitive(kind: MepCoverageObservationDescriptor["kind"]): BoundedMepRegionCoverageCandidateV1["primitive"][] {
-  if (kind === "pipe_route" || kind === "duct_route") return ["linear_trace", "junction"];
+  if (kind === "pipe_route" || kind === "duct_route" || kind === "conduit_route") return ["linear_trace", "junction"];
   if (kind === "electrical_circuit") return ["circuit_annotation"];
   return ["point_symbol"];
 }
