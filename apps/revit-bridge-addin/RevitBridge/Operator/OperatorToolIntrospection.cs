@@ -834,11 +834,12 @@ namespace RevitBridge.Operator
                 if (p == "/revit/export-visible-elements")
                 {
                     unitNotes.Add(new { unit = "pixels", fields = new[] { "imageSize", "items[*].anchor.image.x", "items[*].anchor.image.y", "items[*].bbox.image.minX", "items[*].bbox.image.minY", "items[*].bbox.image.maxX", "items[*].bbox.image.maxY" } });
-                    unitNotes.Add(new { unit = "feet", fields = new[] { "items[*].anchor.model.x", "items[*].anchor.model.y", "items[*].anchor.model.z", "items[*].bbox.model.min.x", "items[*].bbox.model.min.y", "items[*].bbox.model.min.z", "items[*].bbox.model.max.x", "items[*].bbox.model.max.y", "items[*].bbox.model.max.z", "items[*].geometry.lengthFt" } });
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "modelBounds[*]", "modelBoundsFt.min.x", "modelBoundsFt.min.y", "modelBoundsFt.min.z", "modelBoundsFt.max.x", "modelBoundsFt.max.y", "modelBoundsFt.max.z", "items[*].anchor.model.x", "items[*].anchor.model.y", "items[*].anchor.model.z", "items[*].bbox.model.min.x", "items[*].bbox.model.min.y", "items[*].bbox.model.min.z", "items[*].bbox.model.max.x", "items[*].bbox.model.max.y", "items[*].bbox.model.max.z", "items[*].geometry.lengthFt" } });
                     notes.Add("Use this when you need a full visible-element manifest tied to the same exported image and affine mapping basis.");
                     notes.Add("Supported for crop-box-backed 2D views only; use sheet-aware tools for DrawingSheet workflows.");
                     notes.Add("categories/excludeCategories accept BuiltInCategory tokens and exact category names when tokens are unavailable.");
                     notes.Add("includeLinked=true keeps link-scoped ids and transformed source/host/hostingSurface payloads so linked rows can be consumed without re-deriving host coordinates.");
+                    notes.Add("modelBounds=[minX,minY,minZ,maxX,maxY,maxZ] applies a host-coordinate bounding-box intersection filter before the result limit, including transformed linked-element bounds.");
                     notes.Add("Orientation payloads include facing/hand vectors plus plan-azimuth and basis vectors when available; linked rows are transformed into host coordinates.");
                     notes.Add("Mapping corners are emitted from the saved raster frame; crop-box corners are included only as reference metadata when the raster aspect differs.");
                 }

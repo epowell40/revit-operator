@@ -966,7 +966,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/export-visible-elements", StringComparison.OrdinalIgnoreCase))
             {
-                // Allow: null or { viewId?:number, imageSize?:number, includeMapping?:bool, categories?:string[], excludeCategories?:string[], includeGeometry?:bool, limit?:int }
+                // Allow: null or { viewId?:number, imageSize?:number, includeMapping?:bool, categories?:string[], excludeCategories?:string[], includeGeometry?:bool, includeLinked?:bool, modelBounds?:number[6], limit?:int }
                 if (!IsNullOrObject(body, out var obj))
                 {
                     error = "export-visible-elements body must be an object.";
@@ -983,8 +983,33 @@ namespace RevitBridge.Operator
                     if (!ValidateOptionalInt(obj.Value, "imageSize", out error)) return false;
                     if (!ValidateOptionalBool(obj.Value, "includeMapping", out error)) return false;
                     if (!ValidateOptionalBool(obj.Value, "includeGeometry", out error)) return false;
+                    if (!ValidateOptionalBool(obj.Value, "includeLinked", out error)) return false;
                     if (!ValidateOptionalStringArray(obj.Value, "categories", maxCount: 100, maxLen: 96, out error)) return false;
                     if (!ValidateOptionalStringArray(obj.Value, "excludeCategories", maxCount: 100, maxLen: 96, out error)) return false;
+
+                    if (obj.Value.TryGetProperty("modelBounds", out var modelBounds) && modelBounds.ValueKind != JsonValueKind.Null)
+                    {
+                        if (modelBounds.ValueKind != JsonValueKind.Array || modelBounds.GetArrayLength() != 6)
+                        {
+                            error = "export-visible-elements.modelBounds must contain exactly six numbers.";
+                            return false;
+                        }
+                        var coordinates = new List<double>();
+                        foreach (var coordinate in modelBounds.EnumerateArray())
+                        {
+                            if (coordinate.ValueKind != JsonValueKind.Number || !coordinate.TryGetDouble(out var value) || double.IsNaN(value) || double.IsInfinity(value))
+                            {
+                                error = "export-visible-elements.modelBounds must contain exactly six finite numbers.";
+                                return false;
+                            }
+                            coordinates.Add(value);
+                        }
+                        if (coordinates[0] >= coordinates[3] || coordinates[1] >= coordinates[4] || coordinates[2] >= coordinates[5])
+                        {
+                            error = "export-visible-elements.modelBounds minimum coordinates must be strictly below maximum coordinates.";
+                            return false;
+                        }
+                    }
 
                     if (obj.Value.TryGetProperty("limit", out var lim) && lim.ValueKind != JsonValueKind.Null)
                     {

@@ -3886,12 +3886,21 @@
               "OST_ElectricalDevices",
               "OST_ElectricalFixtures"
             ],
+            "modelBounds": [
+              10.0,
+              20.0,
+              -1000.0,
+              40.0,
+              60.0,
+              1000.0
+            ],
             "limit": 250
           },
           "expected_response_shape": {
             "frameId": "frame_...",
             "path": "C:\\\\...\\\\inventory.png",
             "count": 42,
+            "modelBoundsApplied": true,
             "items": [
               {
                 "elementId": 111,

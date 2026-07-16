@@ -203,7 +203,7 @@ function usage(): never {
   throw new Error([
     "Usage:",
     "  npm run existing-conditions -- normalize --visible <export-visible-elements.json> --connectors <get-connectors.json> --ids <id,id,...> --out <snapshot.json>",
-    "  npm run existing-conditions -- inventory (--expected-model <model.rvt> | --expected-document-title <exact-title> --allow-title-only-development) --view-id <id> --out-dir <inventory-dir> --token-file <operator_token.txt> --grant-file <write_grant.json> [--categories <OST_...,OST_...>] [--include-linked]",
+    "  npm run existing-conditions -- inventory (--expected-model <model.rvt> | --expected-document-title <exact-title> --allow-title-only-development) --view-id <id> --out-dir <inventory-dir> --token-file <operator_token.txt> --grant-file <write_grant.json> [--categories <OST_...,OST_...>] [--include-linked] [--model-bounds <minX,minY,minZ,maxX,maxY,maxZ>]",
     "  npm run existing-conditions -- scope-image-region --visible <export-visible-elements.json> --image-region <minX,minY,maxX,maxY> --out <scope.json> [--padding-px <pixels>] [--include-linked-scope] [--level-names <name,name>]",
     "  npm run existing-conditions -- solve-registration --input <registration-input-or-wrapper.json> --out <registration-receipt.json>",
     "  npm run existing-conditions -- extract-plan-traces --input <hash-bound-extraction-policy.json> --out <trace-receipt.json> [--preview-out <diagnostic-overlay.png>]",
@@ -388,7 +388,8 @@ async function exportCompleteVisibleInventory(
   viewId: number,
   categories: string[],
   imageSize: number,
-  includeLinked: boolean
+  includeLinked: boolean,
+  modelBounds?: number[]
 ): Promise<unknown> {
   const exportBatch = async (batch: string[]): Promise<unknown[]> => {
     const payload = await client.post("/revit/export-visible-elements", {
@@ -397,6 +398,7 @@ async function exportCompleteVisibleInventory(
       includeMapping: true,
       includeGeometry: true,
       includeLinked,
+      ...(modelBounds ? { modelBounds } : {}),
       limit: 2000,
       categories: batch
     });
@@ -427,6 +429,12 @@ async function captureVisibleInventory(): Promise<void> {
   const categories = argument("--categories")
     ? parseCsv(argument("--categories"), "--categories")
     : DEFAULT_EXISTING_CONDITIONS_CATEGORIES;
+  const modelBounds = argument("--model-bounds")
+    ? parseNumbers(argument("--model-bounds"), 6, "--model-bounds")
+    : undefined;
+  if (modelBounds && (modelBounds[0]! >= modelBounds[3]! || modelBounds[1]! >= modelBounds[4]! || modelBounds[2]! >= modelBounds[5]!)) {
+    throw new Error("--model-bounds minimum coordinates must be strictly below maximum coordinates.");
+  }
   const imageSize = Number(argument("--image-size") || "3000");
   if (!Number.isSafeInteger(imageSize) || imageSize < 512 || imageSize > 6000) {
     throw new Error("--image-size must be an integer from 512 through 6000.");
@@ -439,7 +447,8 @@ async function captureVisibleInventory(): Promise<void> {
     viewId,
     categories,
     imageSize,
-    process.argv.includes("--include-linked")
+    process.argv.includes("--include-linked"),
+    modelBounds
   );
   const visibleObject = asObject(visible);
   if (visibleObject.truncated === true) throw new Error("Visible-element inventory is truncated; narrow --categories before using it as evaluator truth.");
@@ -465,6 +474,7 @@ async function captureVisibleInventory(): Promise<void> {
     active_document_title: activeDocumentTitle(context),
     active_document_path: activeDocumentPath(context),
     include_linked: process.argv.includes("--include-linked"),
+    model_bounds_ft: modelBounds ?? null,
     categories,
     count: Number(visibleObject.count ?? 0),
     scanned: Number(visibleObject.scanned ?? 0),

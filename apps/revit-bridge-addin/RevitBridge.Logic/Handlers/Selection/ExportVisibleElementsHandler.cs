@@ -49,6 +49,7 @@ namespace RevitBridge.Logic.Handlers
             public List<string>? excludeCategories { get; set; }
             public bool includeGeometry { get; set; } = true;
             public bool includeLinked { get; set; } = true;
+            public List<double>? modelBounds { get; set; }
             public int? limit { get; set; } = 500;
         }
 
@@ -119,6 +120,7 @@ namespace RevitBridge.Logic.Handlers
                 var includeRaw = NormalizeCategoryList(p.categories);
                 var excludeRaw = NormalizeCategoryList(p.excludeCategories);
                 var limit = p.limit.HasValue ? Math.Max(1, Math.Min(2000, p.limit.Value)) : 500;
+                var modelBounds = ResolveModelBounds(p.modelBounds);
 
                 FilteredElementCollector collector;
                 try
@@ -135,6 +137,11 @@ namespace RevitBridge.Logic.Handlers
                 {
                     var bicIds = includeBics.Select(x => ElementIdCompat.Create((long)x)).ToList();
                     collector = collector.WherePasses(new ElementMulticategoryFilter(bicIds));
+                }
+                if (modelBounds != null)
+                {
+                    collector = collector.WherePasses(new BoundingBoxIntersectsFilter(modelBounds));
+                    warnings.Add("Visible-element inventory restricted to the requested host-model bounding box.");
                 }
 
                 var items = new List<object>();
@@ -191,6 +198,7 @@ namespace RevitBridge.Logic.Handlers
                             if (excludeBics.Count > 0 && IsInCategories(linkedElement, excludeBics)) continue;
                             if (includeRaw.Count > 0 && !MatchesCategoryFilter(linkedElement, includeRaw)) continue;
                             if (excludeRaw.Count > 0 && MatchesCategoryFilter(linkedElement, excludeRaw)) continue;
+                            if (modelBounds != null && !LinkedElementIntersectsModelBounds(linkedElement, link, modelBounds)) continue;
                             if (!ShouldIncludeLinkedElement(linkedElement, link, widthPx, heightPx, frame.TopLeft, frame.TopRight, frame.BottomLeft)) continue;
 
                             var scopedId = DatasetExportUtil.CreateSourceScopedId(linkedElement, link);
@@ -228,6 +236,12 @@ namespace RevitBridge.Logic.Handlers
                     count = items.Count,
                     scanned,
                     truncated,
+                    modelBoundsApplied = modelBounds != null,
+                    modelBoundsFt = modelBounds == null ? null : new
+                    {
+                        min = new { x = modelBounds.MinimumPoint.X, y = modelBounds.MinimumPoint.Y, z = modelBounds.MinimumPoint.Z },
+                        max = new { x = modelBounds.MaximumPoint.X, y = modelBounds.MaximumPoint.Y, z = modelBounds.MaximumPoint.Z }
+                    },
                     items,
                     warnings = warnings.Count > 0 ? warnings : null
                 });
@@ -429,6 +443,37 @@ namespace RevitBridge.Logic.Handlers
             var bbox = DatasetExportUtil.TryGetBoundingBoxInHostCoordinates(element, null, linkInstance);
             if (bbox == null) return false;
             return BoundingBoxIntersectsFrame(bbox, widthPx, heightPx, topLeft, topRight, bottomLeft);
+        }
+
+        private static Outline? ResolveModelBounds(List<double>? values)
+        {
+            if (values == null || values.Count == 0) return null;
+            if (values.Count != 6 || values.Any(value => !IsFinite(value)))
+                throw new ArgumentException("modelBounds must contain exactly six finite numbers: minX,minY,minZ,maxX,maxY,maxZ.");
+
+            var min = new XYZ(values[0], values[1], values[2]);
+            var max = new XYZ(values[3], values[4], values[5]);
+            if (min.X >= max.X || min.Y >= max.Y || min.Z >= max.Z)
+                throw new ArgumentException("modelBounds minimum coordinates must be strictly below maximum coordinates.");
+            return new Outline(min, max);
+        }
+
+        private static bool LinkedElementIntersectsModelBounds(Element element, RevitLinkInstance linkInstance, Outline modelBounds)
+        {
+            var bbox = DatasetExportUtil.TryGetBoundingBoxInHostCoordinates(element, null, linkInstance);
+            if (bbox == null) return false;
+
+            var corners = GetBoundingBoxWorldCorners(bbox).ToList();
+            if (corners.Count == 0) return false;
+            var minX = corners.Min(point => point.X);
+            var minY = corners.Min(point => point.Y);
+            var minZ = corners.Min(point => point.Z);
+            var maxX = corners.Max(point => point.X);
+            var maxY = corners.Max(point => point.Y);
+            var maxZ = corners.Max(point => point.Z);
+            return maxX >= modelBounds.MinimumPoint.X && minX <= modelBounds.MaximumPoint.X
+                && maxY >= modelBounds.MinimumPoint.Y && minY <= modelBounds.MaximumPoint.Y
+                && maxZ >= modelBounds.MinimumPoint.Z && minZ <= modelBounds.MaximumPoint.Z;
         }
 
         private static List<string> NormalizeCategoryList(List<string>? categories)
