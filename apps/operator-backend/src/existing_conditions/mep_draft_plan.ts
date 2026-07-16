@@ -527,6 +527,8 @@ export type AtomicMepDraftWorkflowRequest = {
   dryRun: boolean;
   verify: boolean;
   maximumCreatedElements: number;
+  benchmarkCredit?: false;
+  authorizationBasis?: "explicit_unscored_user_direction";
 };
 
 function clean(value: unknown): string {

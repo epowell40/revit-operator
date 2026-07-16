@@ -64,12 +64,17 @@ import {
 import {
   buildAtomicMepDraftWorkflowRequest,
   compileMepDraftPlan,
+  type AtomicMepDraftWorkflowRequest,
   type MepDraftPackage
 } from "../existing_conditions/mep_draft_plan.js";
 import {
   compileRegisteredMepObservations,
   type RegisteredMepObservationPackage
 } from "../existing_conditions/registered_mep_observations.js";
+import {
+  promoteScoreGatedMepWorkflow,
+  scoreMepPreApplyGeometry
+} from "../existing_conditions/mep_pre_apply_geometry_gate.js";
 import {
   solveExistingConditionsRegistration,
   type ExistingConditionsRegistrationInput
@@ -204,6 +209,39 @@ function writeJson(filePath: string, value: unknown): void {
   process.stdout.write(`${resolved}\n`);
 }
 
+function writeFreshJson(filePath: string, value: unknown): void {
+  const resolved = path.resolve(filePath);
+  fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  const handle = fs.openSync(resolved, "wx");
+  try {
+    fs.writeFileSync(handle, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  } finally {
+    fs.closeSync(handle);
+  }
+  process.stdout.write(`${resolved}\n`);
+}
+
+function assertFreshDistinctOutputPaths(entries: Array<{ flag: string; value: string }>): void {
+  const seen = new Map<string, string>();
+  for (const entry of entries) {
+    const resolved = canonicalPath(entry.value);
+    const prior = seen.get(resolved);
+    if (prior) throw new Error(`${entry.flag} must not reuse the same path as ${prior}.`);
+    seen.set(resolved, entry.flag);
+    if (fs.existsSync(path.resolve(entry.value))) {
+      throw new Error(`${entry.flag} must identify a fresh output path so a stale artifact cannot be mistaken for this run.`);
+    }
+  }
+}
+
+function markExplicitUnscoredUserWorkflow(workflow: AtomicMepDraftWorkflowRequest): AtomicMepDraftWorkflowRequest {
+  return {
+    ...workflow,
+    benchmarkCredit: false,
+    authorizationBasis: "explicit_unscored_user_direction"
+  };
+}
+
 function usage(): never {
   throw new Error([
     "Usage:",
@@ -214,8 +252,9 @@ function usage(): never {
     "  npm run existing-conditions -- extract-plan-traces --input <hash-bound-extraction-policy.json> --out <trace-receipt.json> [--preview-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- detect-repeated-mep-symbols --input <hash-bound-template-search.json> --out <candidate-receipt.json>",
     "  npm run existing-conditions -- validate-mep-region-coverage --input <source-coverage.json> --context <coverage-context.json> --out <coverage-receipt.json>",
-    "  npm run existing-conditions -- compile-registered-mep-observations --input <registered-pixel-observations.json> --out <compilation.json> [--package-out <mep-draft-package.json>] [--workflow-out <atomic-dry-run-request.json>] [--max-created <count>]",
-    "  npm run existing-conditions -- compile-mep-draft --input <source-observations.json> --out <compiled-plan.json> [--workflow-out <atomic-dry-run-request.json>] [--max-created <count>]",
+    "  npm run existing-conditions -- compile-registered-mep-observations --input <registered-pixel-observations.json> --out <compilation.json> [--package-out <mep-draft-package.json>] [--workflow-out <atomic-dry-run-request.json> --allow-unscored-user-workflow] [--max-created <count>]",
+    "  npm run existing-conditions -- promote-registered-mep-observations --input <registered-pixel-observations.json> --truth <evaluator-ground-truth.json> --out <promotion.json> --score-out <pre-apply-score.json> --workflow-out <atomic-request.json> [--max-created <count>] [--apply]",
+    "  npm run existing-conditions -- compile-mep-draft --input <source-observations.json> --out <compiled-plan.json> [--workflow-out <atomic-dry-run-request.json> --allow-unscored-user-workflow] [--max-created <count>]",
     "  npm run existing-conditions -- compile-architectural-preview --input <source-observations.json> --out <preview.json>",
     "  npm run existing-conditions -- score-architectural-preview --truth <ground-truth.json> --preview <compiled-preview.json> --out <score.json>",
     "  npm run existing-conditions -- build-architectural-delta --input <registered-source-and-redacted-capture.json> --out-dir <derived-artifacts-dir> --out <receipt.json>",
@@ -1697,26 +1736,71 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "compile-registered-mep-observations") {
+    const workflowOut = argument("--workflow-out");
+    if (workflowOut) assertFreshDistinctOutputPaths([{ flag: "--workflow-out", value: workflowOut }]);
     const input = readJson(requiredArgument("--input"));
     assertExistingConditionsContract("registered_mep_observations", input);
     const compilation = await compileRegisteredMepObservations(input as RegisteredMepObservationPackage);
     writeJson(requiredArgument("--out"), compilation);
     const packageOut = argument("--package-out");
     if (packageOut) writeJson(packageOut, compilation.converted_package);
-    const workflowOut = argument("--workflow-out");
     if (workflowOut && compilation.compiled_plan.status === "ready") {
+      if (!process.argv.includes("--allow-unscored-user-workflow")) {
+        throw new Error("registered_mep_workflow_requires_pre_apply_score_or_explicit_unscored_user_direction");
+      }
       const maxCreated = Number(argument("--max-created") || Math.max(1, compilation.compiled_plan.plan_elements.filter((entry) => entry.action === "create").length * 4));
-      writeJson(workflowOut, buildAtomicMepDraftWorkflowRequest(compilation.compiled_plan, { maximum_created_elements: maxCreated }));
+      writeFreshJson(workflowOut, markExplicitUnscoredUserWorkflow(
+        buildAtomicMepDraftWorkflowRequest(compilation.compiled_plan, { maximum_created_elements: maxCreated })
+      ));
     }
     return;
   }
+  if (command === "promote-registered-mep-observations") {
+    const inputPath = requiredArgument("--input");
+    const truthPath = requiredArgument("--truth");
+    const promotionOut = requiredArgument("--out");
+    const scoreOut = requiredArgument("--score-out");
+    const workflowOut = requiredArgument("--workflow-out");
+    assertFreshDistinctOutputPaths([
+      { flag: "--out", value: promotionOut },
+      { flag: "--score-out", value: scoreOut },
+      { flag: "--workflow-out", value: workflowOut }
+    ]);
+    const protectedInputs = new Set([canonicalPath(inputPath), canonicalPath(truthPath)]);
+    for (const [flag, value] of [["--out", promotionOut], ["--score-out", scoreOut], ["--workflow-out", workflowOut]] as const) {
+      if (protectedInputs.has(canonicalPath(value))) throw new Error(`${flag} must not overwrite evaluator inputs.`);
+    }
+    const input = readJson(inputPath);
+    assertExistingConditionsContract("registered_mep_observations", input);
+    const truth = readJson(truthPath);
+    assertExistingConditionsContract("ground_truth", truth);
+    const compilation = await compileRegisteredMepObservations(input as RegisteredMepObservationPackage);
+    const score = scoreMepPreApplyGeometry(truth as ExistingConditionsGroundTruth, compilation);
+    writeFreshJson(scoreOut, score);
+    const maxCreated = Number(argument("--max-created") || Math.max(1, compilation.compiled_plan.plan_elements.filter((entry) => entry.action === "create").length * 4));
+    const promotion = promoteScoreGatedMepWorkflow(compilation, score, {
+      dry_run: !process.argv.includes("--apply"),
+      maximum_created_elements: maxCreated
+    });
+    writeFreshJson(promotionOut, promotion);
+    writeFreshJson(workflowOut, promotion.workflow);
+    return;
+  }
   if (command === "compile-mep-draft") {
+    const workflowOut = argument("--workflow-out");
+    if (workflowOut) {
+      assertFreshDistinctOutputPaths([{ flag: "--workflow-out", value: workflowOut }]);
+      if (!process.argv.includes("--allow-unscored-user-workflow")) {
+        throw new Error("mep_draft_workflow_requires_pre_apply_score_or_explicit_unscored_user_direction");
+      }
+    }
     const plan = compileMepDraftPlan(readJson(requiredArgument("--input")) as MepDraftPackage);
     writeJson(requiredArgument("--out"), plan);
-    const workflowOut = argument("--workflow-out");
     if (workflowOut && plan.status === "ready") {
       const maxCreated = Number(argument("--max-created") || Math.max(1, plan.plan_elements.filter((entry) => entry.action === "create").length * 4));
-      writeJson(workflowOut, buildAtomicMepDraftWorkflowRequest(plan, { maximum_created_elements: maxCreated }));
+      writeFreshJson(workflowOut, markExplicitUnscoredUserWorkflow(
+        buildAtomicMepDraftWorkflowRequest(plan, { maximum_created_elements: maxCreated })
+      ));
     }
     return;
   }

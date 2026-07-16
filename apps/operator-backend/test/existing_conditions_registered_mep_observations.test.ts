@@ -1418,7 +1418,7 @@ test("registered lighting pixels compile to native lighting fixtures with work-p
   assert.equal(tag?.apply_body?.viewId, 5301);
 });
 
-test("CLI emits the validated package, compiled plan, and atomic dry-run workflow", () => {
+test("CLI requires explicit user direction before emitting an unscored registered-MEP workflow", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "registered-mep-cli-"));
   const inputPath = path.join(directory, "input.json");
   const compilationPath = path.join(directory, "compilation.json");
@@ -1426,7 +1426,7 @@ test("CLI emits the validated package, compiled plan, and atomic dry-run workflo
   const workflowPath = path.join(directory, "workflow.json");
   fs.writeFileSync(inputPath, `${JSON.stringify(plumbingInput(), null, 2)}\n`, "utf8");
   const cli = path.resolve(process.cwd(), "dist/src/tools/existing_conditions_fixture.js");
-  execFileSync(process.execPath, [
+  const unscoredArguments = [
     cli,
     "compile-registered-mep-observations",
     "--input", inputPath,
@@ -1434,13 +1434,166 @@ test("CLI emits the validated package, compiled plan, and atomic dry-run workflo
     "--package-out", packagePath,
     "--workflow-out", workflowPath,
     "--max-created", "4"
-  ], { stdio: "pipe" });
+  ];
+  assert.throws(
+    () => execFileSync(process.execPath, unscoredArguments, { stdio: "pipe" }),
+    /Command failed/
+  );
+  execFileSync(process.execPath, [...unscoredArguments, "--allow-unscored-user-workflow"], { stdio: "pipe" });
   const compilation = JSON.parse(fs.readFileSync(compilationPath, "utf8")) as { compiled_plan: { status: string } };
   const converted = JSON.parse(fs.readFileSync(packagePath, "utf8")) as { observations: Array<{ points?: unknown[] }> };
-  const workflow = JSON.parse(fs.readFileSync(workflowPath, "utf8")) as { dryRun: boolean; maximumCreatedElements: number; operations: unknown[] };
+  const workflow = JSON.parse(fs.readFileSync(workflowPath, "utf8")) as {
+    dryRun: boolean;
+    maximumCreatedElements: number;
+    operations: unknown[];
+    benchmarkCredit: boolean;
+    authorizationBasis: string;
+  };
   assert.equal(compilation.compiled_plan.status, "ready");
   assert.equal(converted.observations[0]?.points?.length, 2);
   assert.equal(workflow.dryRun, true);
   assert.equal(workflow.maximumCreatedElements, 4);
   assert.equal(workflow.operations.length, 3);
+  assert.equal(workflow.benchmarkCredit, false);
+  assert.equal(workflow.authorizationBasis, "explicit_unscored_user_direction");
+
+  const directPlanPath = path.join(directory, "direct-plan.json");
+  const directWorkflowPath = path.join(directory, "direct-workflow.json");
+  const directArguments = [
+    cli,
+    "compile-mep-draft",
+    "--input", packagePath,
+    "--out", directPlanPath,
+    "--workflow-out", directWorkflowPath,
+    "--max-created", "4"
+  ];
+  assert.throws(
+    () => execFileSync(process.execPath, directArguments, { stdio: "pipe" }),
+    /Command failed/
+  );
+  execFileSync(process.execPath, [...directArguments, "--allow-unscored-user-workflow"], { stdio: "pipe" });
+  const directWorkflow = JSON.parse(fs.readFileSync(directWorkflowPath, "utf8")) as {
+    dryRun: boolean;
+    benchmarkCredit: boolean;
+    authorizationBasis: string;
+  };
+  assert.equal(directWorkflow.dryRun, true);
+  assert.equal(directWorkflow.benchmarkCredit, false);
+  assert.equal(directWorkflow.authorizationBasis, "explicit_unscored_user_direction");
+});
+
+test("CLI recomputes an evaluator score and emits only the exact passing registered-MEP workflow", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "registered-mep-score-gate-cli-"));
+  const input = plumbingInput();
+  const compiled = await compileRegisteredMepObservations(input);
+  const route = compiled.converted_package.observations[0];
+  const fixture = compiled.converted_package.observations[1];
+  if (route?.kind !== "pipe_route" || !("points" in route) || !Array.isArray(route.points)
+    || fixture?.kind !== "plumbing_fixture") throw new Error("score_gate_setup_failed");
+  const routePoints = route.points;
+  const inputPath = path.join(directory, "input.json");
+  const truthPath = path.join(directory, "truth.json");
+  const promotionPath = path.join(directory, "promotion.json");
+  const scorePath = path.join(directory, "score.json");
+  const workflowPath = path.join(directory, "workflow.json");
+  const groundTruthModelPath = path.join(directory, "ground-truth.rvt");
+  fs.writeFileSync(groundTruthModelPath, "synthetic evaluator truth", "utf8");
+  const point3 = (value: { x: number; y: number; z?: number }) => ({ x: value.x, y: value.y, z: value.z ?? 0 });
+  fs.writeFileSync(inputPath, `${JSON.stringify(input, null, 2)}\n`, "utf8");
+  fs.writeFileSync(truthPath, `${JSON.stringify({
+    schema_version: 1,
+    fixture_id: compiled.fixture_id,
+    scope_id: compiled.scope_id,
+    discipline: "plumbing",
+    visible_evidence: input.visible_evidence,
+    ground_truth_model: { path: groundTruthModelPath, sha256: sha256(fs.readFileSync(groundTruthModelPath)) },
+    deletion_manifest: {
+      requested_element_ids: [101, 102],
+      deleted_element_ids: [101, 102],
+      dependent_element_ids: [],
+      dry_run_receipt_sha256: "d".repeat(64)
+    },
+    evaluation_policy: {
+      elevation_evidence: "not_visible",
+      bounded_mep_region_coverage: {
+        required_coverage_status: "complete",
+        source_evidence_sha256: input.source_evidence_sha256,
+        registered_render_sha256: compiled.registered_render_sha256,
+        coverage_contract_sha256: "e".repeat(64),
+        region_sha256: "f".repeat(64),
+        clear_plan_visible_family_instance_keys: ["truth:fixture"],
+        clear_plan_visible_mep_curve_keys: ["truth:route"]
+      }
+    },
+    snapshot: {
+      native_readback: true,
+      elements: [
+        {
+          key: "truth:route",
+          kind: "mep_curve",
+          discipline: "plumbing",
+          role: "pipe_route",
+          category: "Pipes",
+          endpoints: [point3(routePoints[0]!), point3(routePoints.at(-1)!)]
+        },
+        {
+          key: "truth:fixture",
+          kind: "family_instance",
+          discipline: "plumbing",
+          role: "plumbing_fixture",
+          category: "Plumbing Fixtures",
+          location: point3(fixture.point)
+        }
+      ],
+      connections: [],
+      open_connector_count: 0
+    }
+  }, null, 2)}\n`, "utf8");
+  const cli = path.resolve(process.cwd(), "dist/src/tools/existing_conditions_fixture.js");
+  execFileSync(process.execPath, [
+    cli,
+    "promote-registered-mep-observations",
+    "--input", inputPath,
+    "--truth", truthPath,
+    "--out", promotionPath,
+    "--score-out", scorePath,
+    "--workflow-out", workflowPath,
+    "--max-created", "4"
+  ], { stdio: "pipe" });
+  const score = JSON.parse(fs.readFileSync(scorePath, "utf8")) as { passed: boolean; counts: { false_positive: number; missed: number } };
+  const promotion = JSON.parse(fs.readFileSync(promotionPath, "utf8")) as { capability_boundary: string };
+  const workflow = JSON.parse(fs.readFileSync(workflowPath, "utf8")) as { dryRun: boolean; operations: unknown[] };
+  assert.equal(score.passed, true);
+  assert.deepEqual(score.counts, { truth: 2, proposal: 2, matched: 2, missed: 0, false_positive: 0 });
+  assert.equal(workflow.dryRun, true);
+  assert.equal(workflow.operations.length, 3);
+  assert.match(promotion.capability_boundary, /evaluator-issued score/i);
+
+  const wrongTruthPath = path.join(directory, "wrong-truth.json");
+  const failedScorePath = path.join(directory, "failed-score.json");
+  const blockedWorkflowPath = path.join(directory, "blocked-workflow.json");
+  const wrongTruth = JSON.parse(fs.readFileSync(truthPath, "utf8")) as {
+    snapshot: { elements: Array<{ location?: { x: number }; endpoints?: Array<{ x: number }> }> };
+  };
+  for (const element of wrongTruth.snapshot.elements) {
+    if (element.location) element.location.x += 20;
+    for (const endpoint of element.endpoints ?? []) endpoint.x += 20;
+  }
+  fs.writeFileSync(wrongTruthPath, `${JSON.stringify(wrongTruth, null, 2)}\n`, "utf8");
+  assert.throws(
+    () => execFileSync(process.execPath, [
+      cli,
+      "promote-registered-mep-observations",
+      "--input", inputPath,
+      "--truth", wrongTruthPath,
+      "--out", path.join(directory, "blocked-promotion.json"),
+      "--score-out", failedScorePath,
+      "--workflow-out", blockedWorkflowPath
+    ], { stdio: "pipe" }),
+    /Command failed/
+  );
+  const failedScore = JSON.parse(fs.readFileSync(failedScorePath, "utf8")) as { passed: boolean; failure_classifications: string[] };
+  assert.equal(failedScore.passed, false);
+  assert.ok(failedScore.failure_classifications.includes("mep_pre_apply_geometry_mismatch"));
+  assert.equal(fs.existsSync(blockedWorkflowPath), false);
 });
