@@ -588,6 +588,246 @@ export function mergeExistingConditionsVisibleElementPayloads(
   };
 }
 
+/**
+ * Merges category-batched exports from one unchanged view while retaining the
+ * first export's raster frame. Linked rows require sourceScopedId so identical
+ * native ElementIds from different documents cannot collide.
+ */
+export function mergeExistingConditionsSameViewVisibleElementPayloads(
+  payloads: unknown[],
+  viewId: number,
+  includeLinked: boolean
+): Record<string, unknown> {
+  if (payloads.length === 0) throw new Error("visible_element_payloads_required");
+  if (!Number.isSafeInteger(viewId) || viewId <= 0) throw new Error("visible_element_view_id_is_required");
+  const first = asObject(payloads[0]);
+  const firstWidth = finiteNumber(first.widthPx ?? first.width_px);
+  const firstHeight = finiteNumber(first.heightPx ?? first.height_px);
+  const firstMapping = JSON.stringify(asObject(first.mapping));
+  if (firstWidth === null || firstHeight === null || firstWidth <= 0 || firstHeight <= 0 || !firstMapping || firstMapping === "{}") {
+    throw new Error("visible_element_stable_raster_mapping_is_required");
+  }
+  const itemsByScope = new Map<string, JsonMap>();
+  const warnings: string[] = [];
+  let scanned = 0;
+  for (const payload of payloads) {
+    const root = asObject(payload);
+    if (root.truncated === true) throw new Error("visible_element_inventory_is_truncated");
+    if (finiteNumber(root.viewId ?? root.view_id) !== viewId ||
+        finiteNumber(root.widthPx ?? root.width_px) !== firstWidth ||
+        finiteNumber(root.heightPx ?? root.height_px) !== firstHeight ||
+        JSON.stringify(asObject(root.mapping)) !== firstMapping) {
+      throw new Error("visible_element_batch_raster_mismatch");
+    }
+    scanned += finiteNumber(root.scanned) ?? 0;
+    for (const warning of Array.isArray(root.warnings) ? root.warnings : []) {
+      const text = String(warning ?? "").trim();
+      if (text) warnings.push(text);
+    }
+    for (const row of objectRows(root.items ?? root.elements)) {
+      const id = finiteNumber(row.elementId ?? row.element_id ?? row.id);
+      if (id === null || !Number.isSafeInteger(id) || id <= 0) continue;
+      const scopedId = firstText(row.sourceScopedId, row.source_scoped_id);
+      if (includeLinked && !scopedId) throw new Error("linked_visible_element_requires_source_scoped_id");
+      const key = normalized(scopedId ?? `host:${Math.trunc(id)}`);
+      if (!itemsByScope.has(key)) itemsByScope.set(key, row);
+    }
+  }
+  const items = [...itemsByScope.values()];
+  return {
+    ...first,
+    count: items.length,
+    scanned,
+    truncated: false,
+    items,
+    warnings: [...new Set(warnings)],
+    categoryBatches: payloads.map((payload) => {
+      const root = asObject(payload);
+      return { frameId: root.frameId ?? root.frame_id ?? null, count: root.count ?? 0 };
+    })
+  };
+}
+
+export type ExistingConditionsImageRegion = {
+  min_x_px: number;
+  min_y_px: number;
+  max_x_px: number;
+  max_y_px: number;
+};
+
+export type ExistingConditionsImageScopeReceipt = {
+  schema_version: 1;
+  frame_id: string;
+  view_id: number;
+  raster_width_px: number;
+  raster_height_px: number;
+  raster_mapping: JsonMap;
+  region: ExistingConditionsImageRegion;
+  padding_px: number;
+  host_scope_required: true;
+  selected_element_ids: number[];
+  selected_count: number;
+  selected_by_category: Record<string, number>;
+  selected: Array<{
+    element_id: number;
+    source_scoped_id: string;
+    category: string;
+    selection_basis: "bbox_intersection" | "geometry_intersection" | "point_inside";
+  }>;
+};
+
+function imagePoint(value: unknown): { x: number; y: number } | null {
+  const obj = asObject(value);
+  const x = finiteNumber(obj.x ?? obj.X);
+  const y = finiteNumber(obj.y ?? obj.Y);
+  return x === null || y === null ? null : { x, y };
+}
+
+function imageBounds(value: unknown): ExistingConditionsImageRegion | null {
+  const image = asObject(value);
+  const minX = finiteNumber(image.minX ?? image.min_x);
+  const minY = finiteNumber(image.minY ?? image.min_y);
+  const maxX = finiteNumber(image.maxX ?? image.max_x);
+  const maxY = finiteNumber(image.maxY ?? image.max_y);
+  if (minX === null || minY === null || maxX === null || maxY === null || maxX < minX || maxY < minY) return null;
+  return { min_x_px: minX, min_y_px: minY, max_x_px: maxX, max_y_px: maxY };
+}
+
+function geometryImageBounds(row: JsonMap): ExistingConditionsImageRegion | null {
+  const geometry = asObject(row.geometry);
+  const points = [
+    imagePoint(asObject(geometry.start).image),
+    imagePoint(asObject(geometry.end).image),
+    imagePoint(asObject(geometry.point).image),
+    imagePoint(asObject(geometry.location).image)
+  ].filter((entry): entry is { x: number; y: number } => entry !== null);
+  if (points.length === 0) return null;
+  return {
+    min_x_px: Math.min(...points.map((entry) => entry.x)),
+    min_y_px: Math.min(...points.map((entry) => entry.y)),
+    max_x_px: Math.max(...points.map((entry) => entry.x)),
+    max_y_px: Math.max(...points.map((entry) => entry.y))
+  };
+}
+
+function regionsIntersect(a: ExistingConditionsImageRegion, b: ExistingConditionsImageRegion): boolean {
+  return a.max_x_px >= b.min_x_px && a.min_x_px <= b.max_x_px &&
+    a.max_y_px >= b.min_y_px && a.min_y_px <= b.max_y_px;
+}
+
+function pointInsideRegion(point: { x: number; y: number }, region: ExistingConditionsImageRegion): boolean {
+  return point.x >= region.min_x_px && point.x <= region.max_x_px &&
+    point.y >= region.min_y_px && point.y <= region.max_y_px;
+}
+
+/**
+ * Selects native host elements that overlap a registered plan-image region.
+ * The input is the unmodified result of /revit/export-visible-elements for one
+ * view. A truncated inventory is rejected because it cannot be evaluator truth.
+ */
+export function selectExistingConditionsImageScope(
+  visibleElementsPayload: unknown,
+  requestedRegion: ExistingConditionsImageRegion,
+  options: { padding_px?: number } = {}
+): ExistingConditionsImageScopeReceipt {
+  const root = asObject(visibleElementsPayload);
+  if (root.truncated === true) throw new Error("visible_element_inventory_is_truncated");
+  const width = finiteNumber(root.widthPx ?? root.width_px);
+  const height = finiteNumber(root.heightPx ?? root.height_px);
+  const viewId = finiteNumber(root.viewId ?? root.view_id);
+  const frameId = firstText(root.frameId, root.frame_id);
+  const rasterMapping = asObject(root.mapping);
+  if (width === null || height === null || width <= 0 || height <= 0) throw new Error("visible_element_raster_dimensions_are_required");
+  if (viewId === null || !Number.isSafeInteger(viewId) || viewId <= 0) throw new Error("visible_element_view_id_is_required");
+  if (!frameId) throw new Error("visible_element_frame_id_is_required");
+  if (Object.keys(rasterMapping).length === 0 || !["2d_affine", "2d affine"].includes(normalized(rasterMapping.mode))) {
+    throw new Error("visible_element_2d_affine_mapping_is_required");
+  }
+  const regionValues = [requestedRegion.min_x_px, requestedRegion.min_y_px, requestedRegion.max_x_px, requestedRegion.max_y_px];
+  if (regionValues.some((value) => typeof value !== "number" || !Number.isFinite(value))) throw new Error("image_region_must_be_finite");
+  if (requestedRegion.min_x_px < 0 || requestedRegion.min_y_px < 0 ||
+      requestedRegion.max_x_px > width || requestedRegion.max_y_px > height ||
+      requestedRegion.max_x_px <= requestedRegion.min_x_px || requestedRegion.max_y_px <= requestedRegion.min_y_px) {
+    throw new Error("image_region_must_be_inside_raster");
+  }
+  const padding = options.padding_px ?? 0;
+  if (!Number.isFinite(padding) || padding < 0) throw new Error("image_region_padding_must_be_nonnegative");
+  const region: ExistingConditionsImageRegion = {
+    min_x_px: Math.max(0, requestedRegion.min_x_px - padding),
+    min_y_px: Math.max(0, requestedRegion.min_y_px - padding),
+    max_x_px: Math.min(width, requestedRegion.max_x_px + padding),
+    max_y_px: Math.min(height, requestedRegion.max_y_px + padding)
+  };
+  const selected: ExistingConditionsImageScopeReceipt["selected"] = [];
+  for (const row of objectRows(root.items ?? root.elements)) {
+    const id = finiteNumber(row.elementId ?? row.element_id ?? row.id);
+    if (id === null || !Number.isSafeInteger(id) || id <= 0) continue;
+    const sourceScopedId = firstText(row.sourceScopedId, row.source_scoped_id);
+    const sourceScope = normalized(asObject(row.source).scope);
+    if (sourceScope !== "host" || normalized(sourceScopedId) !== `host:${Math.trunc(id)}`) continue;
+    const bbox = imageBounds(asObject(row.bbox).image ?? row.bbox);
+    const geometryBounds = geometryImageBounds(row);
+    const anchor = imagePoint(asObject(row.anchor).image);
+    const selectionBasis = bbox && regionsIntersect(bbox, region)
+      ? "bbox_intersection"
+      : geometryBounds && regionsIntersect(geometryBounds, region)
+        ? "geometry_intersection"
+        : anchor && pointInsideRegion(anchor, region)
+          ? "point_inside"
+          : null;
+    if (!selectionBasis) continue;
+    selected.push({
+      element_id: Math.trunc(id),
+      source_scoped_id: sourceScopedId!,
+      category: firstText(row.category, row.categoryToken, row.category_token, row.builtInCategory, row.built_in_category) ?? "Unknown",
+      selection_basis: selectionBasis
+    });
+  }
+  selected.sort((a, b) => a.element_id - b.element_id);
+  const selectedByCategory: Record<string, number> = {};
+  for (const row of selected) selectedByCategory[row.category] = (selectedByCategory[row.category] ?? 0) + 1;
+  return {
+    schema_version: 1,
+    frame_id: frameId,
+    view_id: Math.trunc(viewId),
+    raster_width_px: width,
+    raster_height_px: height,
+    raster_mapping: rasterMapping,
+    region,
+    padding_px: padding,
+    host_scope_required: true,
+    selected_element_ids: selected.map((entry) => entry.element_id),
+    selected_count: selected.length,
+    selected_by_category: selectedByCategory,
+    selected
+  };
+}
+
+/** Recomputes a stored scope against a fresh export before native capture. */
+export function validateExistingConditionsImageScopeAgainstVisibleInventory(
+  scope: ExistingConditionsImageScopeReceipt,
+  visibleElementsPayload: unknown
+): ExistingConditionsImageScopeReceipt {
+  if (!scope || scope.schema_version !== 1 || scope.host_scope_required !== true) {
+    throw new Error("image_scope_receipt_is_invalid");
+  }
+  const root = asObject(visibleElementsPayload);
+  const currentViewId = finiteNumber(root.viewId ?? root.view_id);
+  if (currentViewId !== scope.view_id) throw new Error("image_scope_view_mismatch");
+  if (JSON.stringify(asObject(root.mapping)) !== JSON.stringify(asObject(scope.raster_mapping))) {
+    throw new Error("image_scope_raster_mapping_mismatch");
+  }
+  const recomputed = selectExistingConditionsImageScope(visibleElementsPayload, scope.region);
+  if (recomputed.raster_width_px !== scope.raster_width_px || recomputed.raster_height_px !== scope.raster_height_px) {
+    throw new Error("image_scope_raster_dimensions_mismatch");
+  }
+  if (JSON.stringify(recomputed.selected_element_ids) !== JSON.stringify(scope.selected_element_ids) ||
+      JSON.stringify(recomputed.selected) !== JSON.stringify(scope.selected)) {
+    throw new Error("image_scope_selected_elements_mismatch");
+  }
+  return recomputed;
+}
+
 function pointDistance(a: ExistingConditionsPoint3, b: ExistingConditionsPoint3): number {
   return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 }

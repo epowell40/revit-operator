@@ -4,9 +4,13 @@ import crypto from "node:crypto";
 import {
   normalizeExistingConditionsSnapshot,
   mergeExistingConditionsVisibleElementPayloads,
+  mergeExistingConditionsSameViewVisibleElementPayloads,
+  selectExistingConditionsImageScope,
+  validateExistingConditionsImageScopeAgainstVisibleInventory,
   scoreExistingConditionsReconstruction,
   type ExistingConditionsCandidate,
   type ExistingConditionsGroundTruth,
+  type ExistingConditionsImageScopeReceipt,
   type ExistingConditionsSnapshot
 } from "../benchmark/existing_conditions_reconstruction.js";
 import {
@@ -66,6 +70,10 @@ import {
   compileRegisteredMepObservations,
   type RegisteredMepObservationPackage
 } from "../existing_conditions/registered_mep_observations.js";
+import {
+  solveExistingConditionsRegistration,
+  type ExistingConditionsRegistrationInput
+} from "../existing_conditions/registration.js";
 import {
   compileArchitecturalShellPlan,
   type ArchitecturalShellPackage
@@ -191,6 +199,9 @@ function usage(): never {
   throw new Error([
     "Usage:",
     "  npm run existing-conditions -- normalize --visible <export-visible-elements.json> --connectors <get-connectors.json> --ids <id,id,...> --out <snapshot.json>",
+    "  npm run existing-conditions -- inventory (--expected-model <model.rvt> | --expected-document-title <exact-title> --allow-title-only-development) --view-id <id> --out-dir <inventory-dir> --token-file <operator_token.txt> --grant-file <write_grant.json> [--categories <OST_...,OST_...>] [--include-linked]",
+    "  npm run existing-conditions -- scope-image-region --visible <export-visible-elements.json> --image-region <minX,minY,maxX,maxY> --out <scope.json> [--padding-px <pixels>]",
+    "  npm run existing-conditions -- solve-registration --input <registration-input-or-wrapper.json> --out <registration-receipt.json>",
     "  npm run existing-conditions -- extract-plan-traces --input <hash-bound-extraction-policy.json> --out <trace-receipt.json> [--preview-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- validate-mep-region-coverage --input <source-coverage.json> --context <coverage-context.json> --out <coverage-receipt.json>",
     "  npm run existing-conditions -- compile-registered-mep-observations --input <registered-pixel-observations.json> --out <compilation.json> [--package-out <mep-draft-package.json>] [--workflow-out <atomic-dry-run-request.json>] [--max-created <count>]",
@@ -210,7 +221,7 @@ function usage(): never {
     "  npm run existing-conditions -- audit-linked-background --model-health <model-health.json> --out <gate-receipt.json> [--link-name-tokens <token,token,...>]",
     "  npm run existing-conditions -- promote-architectural-preview --input <source-observations.json> --truth <evaluator-ground-truth.json> (--catalog <approved-precedents.json> --mapping-signals <hash-bound-signals.json> | --resolutions <evidence-backed-resolutions.json>) --out <promotion.json> [--score-out <recomputed-plan-score.json>] [--action-out <atomic-import-request.json>] [--apply]",
     "  npm run existing-conditions -- compile-architectural-shell --input <source-observations.json> --out <compiled-plan.json> [--action-out <atomic-import-request.json>] [--apply]",
-    "  npm run existing-conditions -- capture --expected-model <model.rvt> (--view-id <id> | --view-ids <id,id,...>) --ids <id,id,...> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
+    "  npm run existing-conditions -- capture (--expected-model <model.rvt> | --expected-document-title <exact-title> --allow-title-only-development) (--view-id <id> | --view-ids <id,id,...>) (--ids <id,id,...> | --scope <scope.json>) --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "  npm run existing-conditions -- package --fixture-id <id> --scope-id <id> --discipline <mechanical|plumbing|electrical|architectural|mixed> --task-class <exact_reconstruction|standards_compliance_repair|generative_layout> [--standards-profile <json>] [--source-pdf-render <image> --surrounding-model-capture <image> --architectural-delta-receipt <json> [--architectural-measurement-receipt <json> [--architectural-wall-candidate-receipt <json>]]] --redacted-model <agent-redacted.rvt> --source-pdf <source.pdf> --view-id <id> --model-bounds <minX,minY,minZ,maxX,maxY,maxZ> --image-region <minX,minY,maxX,maxY> --allowed-categories <OST_...,OST_...> --out-dir <agent-dir>",
     "  npm run existing-conditions -- seal-truth --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --ground-truth-model <source.rvt> --deletion-manifest <json> --delete-dry-run <json> --out <truth.json>",
     "  npm run existing-conditions -- evaluator-review-visual --post-capture <image> --post-pdf <pdf> --status <pass|needs_review|fail> --out <receipt.json>",
@@ -311,39 +322,188 @@ function activeDocumentPath(contextValue: unknown): string {
   return String(asObject(context.document).path ?? asObject(context.readiness).active_document_path ?? "").trim();
 }
 
+function activeDocumentTitle(contextValue: unknown): string {
+  const context = asObject(contextValue);
+  return String(asObject(context.document).title ?? asObject(context.readiness).active_document_name ?? "").trim();
+}
+
+function assertExpectedActiveDocument(context: unknown): {
+  expected_model_path: string | null;
+  expected_document_title: string | null;
+  identity_assurance: "path_bound" | "path_and_title_bound" | "title_only_development";
+  evaluator_truth_eligible: boolean;
+} {
+  const expectedModelValue = argument("--expected-model");
+  const expectedTitle = argument("--expected-document-title");
+  if (!expectedModelValue && !expectedTitle) throw new Error("--expected-model or --expected-document-title is required.");
+  const expectedModel = expectedModelValue ? path.resolve(expectedModelValue) : null;
+  if (!expectedModel && expectedTitle && !process.argv.includes("--allow-title-only-development")) {
+    throw new Error("--expected-document-title without --expected-model is development-only and requires --allow-title-only-development.");
+  }
+  if (expectedModel && !fs.existsSync(expectedModel)) throw new Error(`Expected model does not exist: ${expectedModel}`);
+  if (expectedModel && canonicalPath(activeDocumentPath(context)) !== canonicalPath(expectedModel)) {
+    throw new Error(`Active document is not the expected model: ${activeDocumentPath(context)}`);
+  }
+  if (expectedTitle && activeDocumentTitle(context) !== expectedTitle) {
+    throw new Error(`Active document title '${activeDocumentTitle(context)}' does not match expected title '${expectedTitle}'.`);
+  }
+  return {
+    expected_model_path: expectedModel,
+    expected_document_title: expectedTitle || null,
+    identity_assurance: expectedModel
+      ? (expectedTitle ? "path_and_title_bound" : "path_bound")
+      : "title_only_development",
+    evaluator_truth_eligible: expectedModel !== null
+  };
+}
+
+function selectedIdsFromArguments(viewIds: number[]): { ids: number[]; scope: ExistingConditionsImageScopeReceipt | null } {
+  const scopePath = argument("--scope");
+  if (scopePath && argument("--ids")) throw new Error("Use either --ids or --scope, not both.");
+  if (!scopePath) return { ids: parseIds(requiredArgument("--ids")), scope: null };
+  const scope = asObject(readJson(scopePath));
+  const scopeViewId = Number(scope.view_id ?? scope.viewId);
+  const scopeFrameId = String(scope.frame_id ?? scope.frameId ?? "").trim();
+  if (!Number.isSafeInteger(scopeViewId) || !viewIds.includes(scopeViewId)) {
+    throw new Error("--scope view_id must match one of the requested capture views.");
+  }
+  if (!scopeFrameId) throw new Error("--scope frame_id is required.");
+  const ids = Array.isArray(scope.selected_element_ids)
+    ? scope.selected_element_ids.map(Number).filter((id) => Number.isSafeInteger(id) && id > 0)
+    : [];
+  if (ids.length === 0) throw new Error("--scope must contain selected_element_ids with at least one positive integer.");
+  return { ids: [...new Set(ids)], scope: scope as ExistingConditionsImageScopeReceipt };
+}
+
+async function exportCompleteVisibleInventory(
+  client: BridgeClient,
+  viewId: number,
+  categories: string[],
+  imageSize: number,
+  includeLinked: boolean
+): Promise<unknown> {
+  const exportBatch = async (batch: string[]): Promise<unknown[]> => {
+    const payload = await client.post("/revit/export-visible-elements", {
+      viewId,
+      imageSize,
+      includeMapping: true,
+      includeGeometry: true,
+      includeLinked,
+      limit: 2000,
+      categories: batch
+    });
+    const root = asObject(payload);
+    if (root.truncated !== true) return [payload];
+    if (batch.length === 1) {
+      throw new Error(`Visible-element category '${batch[0]}' exceeds the native 2,000-element limit; narrow the view or category before using it as evaluator truth.`);
+    }
+    const middle = Math.ceil(batch.length / 2);
+    return [
+      ...await exportBatch(batch.slice(0, middle)),
+      ...await exportBatch(batch.slice(middle))
+    ];
+  };
+
+  const payloads = await exportBatch(categories);
+  if (payloads.length === 1) return payloads[0];
+  return mergeExistingConditionsSameViewVisibleElementPayloads(payloads, viewId, includeLinked);
+}
+
+async function captureVisibleInventory(): Promise<void> {
+  const outDir = path.resolve(requiredArgument("--out-dir"));
+  const viewId = Number(requiredArgument("--view-id"));
+  if (!Number.isSafeInteger(viewId) || viewId <= 0) throw new Error("--view-id must be a positive integer.");
+  if (fs.existsSync(outDir) && fs.readdirSync(outDir).length > 0) {
+    throw new Error(`Refusing to overwrite a non-empty inventory directory: ${outDir}`);
+  }
+  const categories = argument("--categories")
+    ? parseCsv(argument("--categories"), "--categories")
+    : DEFAULT_EXISTING_CONDITIONS_CATEGORIES;
+  const imageSize = Number(argument("--image-size") || "3000");
+  if (!Number.isSafeInteger(imageSize) || imageSize < 512 || imageSize > 6000) {
+    throw new Error("--image-size must be an integer from 512 through 6000.");
+  }
+  const client = bridgeClient();
+  const context = await client.get("/revit/context");
+  const expected = assertExpectedActiveDocument(context);
+  const visible = await exportCompleteVisibleInventory(
+    client,
+    viewId,
+    categories,
+    imageSize,
+    process.argv.includes("--include-linked")
+  );
+  const visibleObject = asObject(visible);
+  if (visibleObject.truncated === true) throw new Error("Visible-element inventory is truncated; narrow --categories before using it as evaluator truth.");
+  fs.mkdirSync(outDir, { recursive: true });
+  const sourceCapturePath = String(visibleObject.path ?? "").trim();
+  let durableCapture: { path: string; sha256: string } | null = null;
+  if (sourceCapturePath && fs.existsSync(sourceCapturePath)) {
+    const extension = path.extname(sourceCapturePath) || ".jpg";
+    const destination = path.join(outDir, `visible_inventory${extension}`);
+    fs.copyFileSync(sourceCapturePath, destination, fs.constants.COPYFILE_EXCL);
+    durableCapture = { path: destination, sha256: sha256(destination) };
+  }
+  writeJson(path.join(outDir, "context.json"), context);
+  writeJson(path.join(outDir, "visible_elements.json"), visible);
+  writeJson(path.join(outDir, "inventory_receipt.json"), {
+    schema_version: 1,
+    view_id: viewId,
+    expected_model_path: expected.expected_model_path,
+    expected_model_sha256: expected.expected_model_path ? sha256(expected.expected_model_path) : null,
+    expected_document_title: expected.expected_document_title,
+    identity_assurance: expected.identity_assurance,
+    evaluator_truth_eligible: expected.evaluator_truth_eligible,
+    active_document_title: activeDocumentTitle(context),
+    active_document_path: activeDocumentPath(context),
+    include_linked: process.argv.includes("--include-linked"),
+    categories,
+    count: Number(visibleObject.count ?? 0),
+    scanned: Number(visibleObject.scanned ?? 0),
+    truncated: visibleObject.truncated === true,
+    durable_capture: durableCapture
+  });
+}
+
+function buildImageScopeReceipt(): void {
+  const visible = readJson(requiredArgument("--visible"));
+  const [minX, minY, maxX, maxY] = parseNumbers(requiredArgument("--image-region"), 4, "--image-region");
+  const padding = Number(argument("--padding-px") || "0");
+  const receipt = selectExistingConditionsImageScope(visible, {
+    min_x_px: minX!, min_y_px: minY!, max_x_px: maxX!, max_y_px: maxY!
+  }, {
+    padding_px: padding
+  });
+  if (receipt.selected_count === 0) throw new Error("Registered image region did not select any visible elements.");
+  writeJson(requiredArgument("--out"), receipt);
+}
+
 async function captureNativeSnapshot(): Promise<void> {
-  const expectedModel = path.resolve(requiredArgument("--expected-model"));
   const outDir = path.resolve(requiredArgument("--out-dir"));
   const viewIds = argument("--view-ids")
     ? parseIds(argument("--view-ids"))
     : [Number(requiredArgument("--view-id"))];
-  const ids = parseIds(requiredArgument("--ids"));
+  const selection = selectedIdsFromArguments(viewIds);
+  const ids = selection.ids;
   if (viewIds.some((viewId) => !Number.isInteger(viewId) || viewId <= 0)) {
     throw new Error("--view-id/--view-ids must contain positive integers.");
   }
-  if (!fs.existsSync(expectedModel)) throw new Error(`Expected model does not exist: ${expectedModel}`);
   if (fs.existsSync(outDir) && fs.readdirSync(outDir).length > 0) {
     throw new Error(`Refusing to overwrite a non-empty capture directory: ${outDir}`);
   }
   const client = bridgeClient();
   const context = await client.get("/revit/context");
-  if (canonicalPath(activeDocumentPath(context)) !== canonicalPath(expectedModel)) {
-    throw new Error(`Active document is not the expected model: ${activeDocumentPath(context)}`);
-  }
+  const expected = assertExpectedActiveDocument(context);
   const categories = argument("--categories")
     ? parseCsv(argument("--categories"), "--categories")
     : DEFAULT_EXISTING_CONDITIONS_CATEGORIES;
   const visibleByView: unknown[] = [];
   for (const viewId of viewIds) {
-    visibleByView.push(await client.post("/revit/export-visible-elements", {
-      viewId,
-      imageSize: 3000,
-      includeMapping: true,
-      includeGeometry: true,
-      includeLinked: false,
-      limit: 2000,
-      categories
-    }));
+    visibleByView.push(await exportCompleteVisibleInventory(client, viewId, categories, 3000, false));
+  }
+  if (selection.scope) {
+    const scopeViewIndex = viewIds.indexOf(selection.scope.view_id);
+    validateExistingConditionsImageScopeAgainstVisibleInventory(selection.scope, visibleByView[scopeViewIndex]);
   }
   const visible = visibleByView.length === 1
     ? visibleByView[0]
@@ -373,8 +533,12 @@ async function captureNativeSnapshot(): Promise<void> {
   writeJson(path.join(outDir, "snapshot.json"), snapshot);
   writeJson(path.join(outDir, "capture_receipt.json"), {
     schema_version: 1,
-    model_path: expectedModel,
-    model_sha256: sha256(expectedModel),
+    model_path: expected.expected_model_path ?? activeDocumentPath(context),
+    model_sha256: expected.expected_model_path ? sha256(expected.expected_model_path) : null,
+    expected_document_title: expected.expected_document_title,
+    active_document_title: activeDocumentTitle(context),
+    identity_assurance: expected.identity_assurance,
+    evaluator_truth_eligible: expected.evaluator_truth_eligible,
     view_id: viewIds[0],
     view_ids: viewIds,
     selected_element_count: ids.length,
@@ -1442,6 +1606,21 @@ async function main(): Promise<void> {
       }
     );
     writeJson(requiredArgument("--out"), snapshot);
+    return;
+  }
+  if (command === "inventory") {
+    await captureVisibleInventory();
+    return;
+  }
+  if (command === "scope-image-region") {
+    buildImageScopeReceipt();
+    return;
+  }
+  if (command === "solve-registration") {
+    const input = readJson(requiredArgument("--input"));
+    const root = asObject(input);
+    const registrationInput = asObject(root.registration_input ?? input) as ExistingConditionsRegistrationInput;
+    writeJson(requiredArgument("--out"), solveExistingConditionsRegistration(registrationInput));
     return;
   }
   if (command === "extract-plan-traces") {

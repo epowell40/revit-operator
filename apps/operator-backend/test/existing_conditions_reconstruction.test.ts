@@ -4,6 +4,9 @@ import {
   scoreExistingConditionsReconstruction,
   normalizeExistingConditionsSnapshot,
   mergeExistingConditionsVisibleElementPayloads,
+  mergeExistingConditionsSameViewVisibleElementPayloads,
+  selectExistingConditionsImageScope,
+  validateExistingConditionsImageScopeAgainstVisibleInventory,
   type ExistingConditionsCandidate,
   type ExistingConditionsElement,
   type ExistingConditionsGroundTruth
@@ -29,6 +32,166 @@ test("multi-view visible element exports merge without duplicating host ids", ()
   assert.equal(merged.scanned, 4);
   assert.deepEqual((merged.items as Array<{ id: number }>).map((entry) => entry.id), [10, 20, 30]);
   assert.deepEqual(merged.warnings, ["first", "second"]);
+});
+
+test("same-view category batches preserve linked source identity and one stable raster", () => {
+  const mapping = { mode: "2d_affine", topLeftXyz: [0, 10, 0], topRightXyz: [10, 10, 0], bottomLeftXyz: [0, 0, 0] };
+  const merged = mergeExistingConditionsSameViewVisibleElementPayloads([
+    {
+      frameId: "frame-a", viewId: 101, widthPx: 1000, heightPx: 800, mapping, scanned: 2, truncated: false,
+      items: [{ id: 10, sourceScopedId: "host:10" }, { id: 10, sourceScopedId: "link:7:10" }]
+    },
+    {
+      frameId: "frame-b", viewId: 101, widthPx: 1000, heightPx: 800, mapping, scanned: 2, truncated: false,
+      items: [{ id: 10, sourceScopedId: "host:10" }, { id: 10, sourceScopedId: "link:8:10" }]
+    }
+  ], 101, true);
+  assert.equal(merged.count, 3);
+  assert.deepEqual((merged.items as Array<{ sourceScopedId: string }>).map((entry) => entry.sourceScopedId), [
+    "host:10", "link:7:10", "link:8:10"
+  ]);
+  assert.throws(() => mergeExistingConditionsSameViewVisibleElementPayloads([
+    { frameId: "frame-a", viewId: 101, widthPx: 1000, heightPx: 800, mapping, truncated: false, items: [] },
+    { frameId: "frame-b", viewId: 101, widthPx: 1000, heightPx: 800, mapping: { ...mapping, topLeftXyz: [1, 10, 0] }, truncated: false, items: [] }
+  ], 101, false), /batch_raster_mismatch/);
+});
+
+test("registered image scope selects host curves and instances by visible overlap", () => {
+  const receipt = selectExistingConditionsImageScope({
+    frameId: "frame-a",
+    viewId: 101,
+    widthPx: 1000,
+    heightPx: 800,
+    mapping: { mode: "2d_affine", topLeftXyz: [0, 10, 0], topRightXyz: [10, 10, 0], bottomLeftXyz: [0, 0, 0] },
+    truncated: false,
+    items: [
+      {
+        id: 10,
+        sourceScopedId: "host:10",
+        source: { scope: "host" },
+        category: "Ducts",
+        bbox: { image: { minX: 80, minY: 100, maxX: 130, maxY: 140 } }
+      },
+      {
+        id: 20,
+        sourceScopedId: "host:20",
+        source: { scope: "host" },
+        category: "Pipes",
+        geometry: {
+          start: { image: { x: 40, y: 150 } },
+          end: { image: { x: 240, y: 150 } }
+        }
+      },
+      {
+        id: 30,
+        sourceScopedId: "host:30",
+        source: { scope: "host" },
+        category: "Electrical Fixtures",
+        anchor: { image: { x: 180, y: 180 } }
+      },
+      {
+        id: 40,
+        sourceScopedId: "host:40",
+        source: { scope: "host" },
+        category: "Ducts",
+        bbox: { image: { minX: 700, minY: 600, maxX: 760, maxY: 660 } }
+      },
+      {
+        id: 50,
+        sourceScopedId: "link:9:50",
+        category: "Walls",
+        source: { scope: "linked" },
+        bbox: { image: { minX: 110, minY: 110, maxX: 190, maxY: 190 } }
+      },
+      {
+        id: 60,
+        sourceScopedId: "host:60",
+        source: { scope: "host" },
+        category: "Mechanical Equipment",
+        point: { x: 150, y: 150, z: 9 }
+      },
+      {
+        id: 70,
+        sourceScopedId: "host:70",
+        category: "Ducts",
+        anchor: { image: { x: 150, y: 150 } }
+      },
+      {
+        id: 80,
+        sourceScopedId: "host:81",
+        source: { scope: "host" },
+        category: "Ducts",
+        anchor: { image: { x: 150, y: 150 } }
+      },
+      {
+        id: 90,
+        sourceScopedId: "host:90",
+        source: { scope: "unknown" },
+        category: "Ducts",
+        anchor: { image: { x: 150, y: 150 } }
+      }
+    ]
+  }, {
+    min_x_px: 100,
+    min_y_px: 100,
+    max_x_px: 200,
+    max_y_px: 200
+  });
+
+  assert.equal(receipt.frame_id, "frame-a");
+  assert.deepEqual(receipt.selected_element_ids, [10, 20, 30]);
+  assert.deepEqual(receipt.selected_by_category, {
+    Ducts: 1,
+    Pipes: 1,
+    "Electrical Fixtures": 1
+  });
+  assert.deepEqual(receipt.selected.map((entry) => entry.selection_basis), [
+    "bbox_intersection",
+    "geometry_intersection",
+    "point_inside"
+  ]);
+});
+
+test("registered image scope rejects truncated truth inventories and invalid regions", () => {
+  const base = {
+    frameId: "frame-a",
+    viewId: 101,
+    widthPx: 1000,
+    heightPx: 800,
+    mapping: { mode: "2d_affine", topLeftXyz: [0, 10, 0], topRightXyz: [10, 10, 0], bottomLeftXyz: [0, 0, 0] },
+    items: []
+  };
+  assert.throws(() => selectExistingConditionsImageScope({ ...base, truncated: true }, {
+    min_x_px: 0, min_y_px: 0, max_x_px: 10, max_y_px: 10
+  }), /inventory_is_truncated/);
+  assert.throws(() => selectExistingConditionsImageScope({ ...base, truncated: false }, {
+    min_x_px: -1, min_y_px: 0, max_x_px: 10, max_y_px: 10
+  }), /inside_raster/);
+});
+
+test("stored image scope is recomputed against a fresh frame before capture", () => {
+  const mapping = { mode: "2d_affine", topLeftXyz: [0, 10, 0], topRightXyz: [10, 10, 0], bottomLeftXyz: [0, 0, 0] };
+  const row = {
+    id: 10,
+    sourceScopedId: "host:10",
+    source: { scope: "host" },
+    category: "Ducts",
+    bbox: { image: { minX: 80, minY: 100, maxX: 130, maxY: 140 } }
+  };
+  const original = { frameId: "frame-a", viewId: 101, widthPx: 1000, heightPx: 800, mapping, truncated: false, items: [row] };
+  const scope = selectExistingConditionsImageScope(original, {
+    min_x_px: 100, min_y_px: 100, max_x_px: 200, max_y_px: 200
+  });
+  const fresh = { ...original, frameId: "frame-b" };
+  assert.deepEqual(validateExistingConditionsImageScopeAgainstVisibleInventory(scope, fresh).selected_element_ids, [10]);
+  assert.throws(() => validateExistingConditionsImageScopeAgainstVisibleInventory(scope, {
+    ...fresh,
+    mapping: { ...mapping, topLeftXyz: [1, 10, 0] }
+  }), /raster_mapping_mismatch/);
+  assert.throws(() => validateExistingConditionsImageScopeAgainstVisibleInventory(scope, {
+    ...fresh,
+    items: [{ ...row, bbox: { image: { minX: 700, minY: 600, maxX: 760, maxY: 660 } } }]
+  }), /selected_elements_mismatch/);
 });
 
 function duct(key: string, y = 10, size = 1): ExistingConditionsElement {
