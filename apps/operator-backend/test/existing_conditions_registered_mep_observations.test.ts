@@ -269,6 +269,23 @@ test("registered plumbing pixels compile through existing route, placement, and 
   }]);
 });
 
+test("registered plumbing pixels preserve domestic hot-water return without coercing it to hot water", async () => {
+  const input = plumbingInput();
+  const route = input.observations[0];
+  if (route?.kind !== "pipe_route") assert.fail("plumbing route fixture invalid");
+  route.service = "domestic_hot_water_return";
+  route.system_type = "Domestic Hot Water Recirc";
+  route.pipe_size = "3/4 inch";
+  input.observations = [route];
+
+  const compiled = await compileRegisteredMepObservations(input);
+  assert.equal(compiled.compiled_plan.status, "ready");
+  assert.equal(compiled.converted_package.observations[0]?.kind, "pipe_route");
+  assert.equal(compiled.converted_package.observations[0]?.service, "domestic_hot_water_return");
+  assert.equal(compiled.compiled_plan.actions[0]?.dry_run_body?.systemType, "Domestic Hot Water Recirc");
+  assert.equal(compiled.compiled_plan.actions[0]?.dry_run_body?.pipeSize, "3/4 inch");
+});
+
 test("registered plumbing pixels preserve unreadable sizes and connectorless fixtures as plan-only drafting evidence", async () => {
   const input = plumbingInput();
   const route = input.observations[0];

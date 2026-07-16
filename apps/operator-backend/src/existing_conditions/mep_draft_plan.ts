@@ -99,7 +99,7 @@ export type MepDraftPlacement =
 type PlumbingPipeRouteObservationBase = MepDraftObservationBase & {
   kind: "pipe_route";
   discipline: "plumbing";
-  service: "domestic_cold_water" | "domestic_hot_water" | "sanitary" | "vent";
+  service: "domestic_cold_water" | "domestic_hot_water" | "domestic_hot_water_return" | "sanitary" | "vent";
   /**
    * Explicit source- or precedent-grounded size. Omit only when the plotted
    * source is genuinely unreadable and pipe_size_policy records that the
@@ -800,7 +800,7 @@ function validateObservation(observation: MepDraftObservation, index: number): v
     return;
   }
   if (observation.kind === "pipe_route") {
-    const plumbingServices = ["domestic_cold_water", "domestic_hot_water", "sanitary", "vent"];
+    const plumbingServices = ["domestic_cold_water", "domestic_hot_water", "domestic_hot_water_return", "sanitary", "vent"];
     const mechanicalServices = [
       "heating_hot_water_supply",
       "heating_hot_water_return",

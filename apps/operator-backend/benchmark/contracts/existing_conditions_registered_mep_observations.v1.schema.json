@@ -389,7 +389,7 @@
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
         "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
         "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
-        "service": { "enum": ["domestic_cold_water", "domestic_hot_water", "sanitary", "vent"] },
+        "service": { "enum": ["domestic_cold_water", "domestic_hot_water", "domestic_hot_water_return", "sanitary", "vent"] },
         "pixel_points": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/point" } },
         "pipe_size": { "type": "string", "minLength": 1 },
         "pipe_size_policy": { "enum": ["explicit_required", "unresolved_placeholder"] },

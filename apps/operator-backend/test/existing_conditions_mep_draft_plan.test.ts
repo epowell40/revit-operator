@@ -277,6 +277,31 @@ test("plumbing plan compiles registered routes fixture placement and deferred na
   assert.equal(workflow.operations[2]?.deferred_body?.required_connection_count, 1);
 });
 
+test("plumbing plan preserves domestic hot-water return as an explicit native route service", () => {
+  const input = plumbingTopologyPackage();
+  input.observations = [{
+    kind: "pipe_route",
+    observation_id: "route-hwr-independent-17",
+    discipline: "plumbing",
+    service: "domestic_hot_water_return",
+    visibility: "clear",
+    confidence: 0.98,
+    supported_attributes: ["location", "size", "elevation", "system", "type"],
+    points: [{ x: 0, y: 0 }, { x: 5, y: 0 }],
+    pipe_size: "3/4 inch",
+    pipe_type: "Copper Type L",
+    system_type: "Domestic Hot Water Recirc",
+    elevation_ft: 8.5
+  }];
+
+  const plan = compileMepDraftPlan(input);
+  assert.equal(plan.status, "ready");
+  assert.equal(plan.plan_elements[0]?.role, "domestic hot water return");
+  assert.equal(plan.actions[0]?.path, "/revit/mep-route-workflow");
+  assert.equal(plan.actions[0]?.dry_run_body?.systemType, "Domestic Hot Water Recirc");
+  assert.equal(plan.actions[0]?.dry_run_body?.pipeSize, "3/4 inch");
+});
+
 test("plumbing source branch compiles an exact tee against a prior route segment", () => {
   const input = plumbingTopologyPackage();
   input.observations = [
