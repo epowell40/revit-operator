@@ -44,7 +44,22 @@ export type MepDraftPlacement =
       mode: "hosted_family_symbol";
       family_name: string;
       type_name: string;
+      /** Optional same-category native precedent used only for project metadata such as workset assignment. */
+      metadata_source_reference_key?: string;
+      /** Optional same-category precedent used only to establish plan-readable family orientation. */
+      orientation_source_reference_key?: string;
+      /** Exact view-bound annotation tags required to reproduce source-visible labels. */
+      annotation_tags?: Array<{
+        view_reference_key: string;
+        family_name: string;
+        type_name: string;
+        offset_x_ft: number;
+        offset_y_ft: number;
+        add_leader?: boolean;
+      }>;
       host_reference_key: string;
+      /** Exact wall element inside a linked-model host, resolved from a separate hash-bound native reference. */
+      linked_host_reference_key?: string;
       host_category: string;
       room_side?: string;
       /** Omit package room validation only when source evidence proves the observed instance is in adjacent visible scope. */
@@ -323,6 +338,8 @@ type ElectricalFamilyInstanceObservationBase = MepDraftObservationBase & {
 
 export type ElectricalDeviceObservation = ElectricalFamilyInstanceObservationBase & {
   kind: "electrical_device";
+  /** Source-visible, non-membership instance parameters such as GFI labels or mounting graphics. */
+  instance_parameters?: Record<string, string>;
 };
 
 export type ElectricalEquipmentObservation = ElectricalFamilyInstanceObservationBase & {
@@ -425,7 +442,8 @@ export type MepDraftAction = {
     | "/revit/create-pipe-between-connectors"
     | "/revit/connect-mep-branch"
     | "/revit/audit-plumbing-fixture-services"
-    | "/revit/assign-electrical-circuit";
+    | "/revit/assign-electrical-circuit"
+    | "/revit/tag-elements";
   depends_on: string[];
   dry_run_body?: JsonMap;
   apply_body?: JsonMap;
@@ -446,6 +464,7 @@ export type MepDraftAction = {
     fixture_elements?: MepDraftElementReference[];
     fixture_element_ids?: number[];
     require_downstream_vent?: boolean;
+    tag_element?: MepDraftElementReference;
   };
   expected_model_point?: ExistingConditionsPlanPoint & { z: number };
   expected_created_min: number;
@@ -481,6 +500,19 @@ function clean(value: unknown): string {
 
 function normalized(value: unknown): string {
   return clean(value).toLowerCase().replace(/[\s_-]+/g, " ");
+}
+
+function isCircuitMembershipParameterName(value: unknown): boolean {
+  const canonical = clean(value).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (!canonical) return false;
+  const tokens = new Set(canonical.split(/\s+/));
+  return tokens.has("panel")
+    || tokens.has("panelboard")
+    || tokens.has("circuit")
+    || tokens.has("ckt")
+    || canonical.includes("distribution system")
+    || canonical.includes("electrical data")
+    || canonical.includes("power system");
 }
 
 function routeWorksetName(observation: MepDraftObservation): string {
@@ -631,6 +663,9 @@ function materialAttributes(observation: MepDraftObservation): string[] {
       if (observation.airflow_cfm != null) placementAttributes.push("airflow");
       if (routeWorksetName(observation)) placementAttributes.push("workset");
     }
+    if (observation.kind === "electrical_device" && observation.instance_parameters != null) {
+      placementAttributes.push("instance parameters");
+    }
     return placementAttributes;
   }
   return ["circuit"];
@@ -672,6 +707,9 @@ function validatePlacement(placement: MepDraftPlacement, observationId: string):
     requiredText(placement.family_name, `${observationId}_family_name`);
     requiredText(placement.type_name, `${observationId}_type_name`);
     requiredText(placement.host_reference_key, `${observationId}_host_reference_key`);
+    if (placement.linked_host_reference_key != null) {
+      requiredText(placement.linked_host_reference_key, `${observationId}_linked_host_reference_key`);
+    }
     requiredText(placement.host_category, `${observationId}_host_category`);
     if (placement.room_side != null) requiredText(placement.room_side, `${observationId}_room_side`);
     if (placement.require_room_membership_validation === false && placement.room_side != null) {
@@ -959,6 +997,30 @@ function validateObservation(observation: MepDraftObservation, index: number): v
         throw new Error(`${id}_panel_name_requires_source_or_directed_evidence`);
       }
     }
+    if (observation.kind === "electrical_device" && observation.instance_parameters != null) {
+      if (typeof observation.instance_parameters !== "object" || Array.isArray(observation.instance_parameters)) {
+        throw new Error(`${id}_instance_parameters_must_be_object`);
+      }
+      const entries = Object.entries(observation.instance_parameters);
+      if (entries.length === 0 || entries.length > 16) throw new Error(`${id}_instance_parameters_count_out_of_range`);
+      for (const [parameterName, parameterValue] of entries) {
+        const name = requiredText(parameterName, `${id}_instance_parameter_name`);
+        if (name.length > 128) throw new Error(`${id}_instance_parameter_name_too_long`);
+        if (isCircuitMembershipParameterName(name)) {
+          throw new Error(`${id}_instance_parameter_cannot_assert_circuit_membership:${name}`);
+        }
+        if (typeof parameterValue !== "string" || parameterValue.length > 512) {
+          throw new Error(`${id}_instance_parameter_value_invalid:${name}`);
+        }
+      }
+      const supported = new Set(observation.supported_attributes.map(normalized));
+      const provenance = new Map((observation.attribute_provenance ?? []).map((entry) => [normalized(entry.attribute), entry]));
+      if (!supported.has("instance parameters")) throw new Error(`${id}_instance_parameters_require_supported_attribute`);
+      const parameterEvidence = provenance.get("instance parameters");
+      if (!parameterEvidence || parameterEvidence.basis === "declared_heuristic") {
+        throw new Error(`${id}_instance_parameters_require_source_or_directed_evidence`);
+      }
+    }
     if ((observation.placement.mode === "hosted_exemplar" || observation.placement.mode === "hosted_family_symbol")
       && observation.placement.require_room_membership_validation === false) {
       const supported = new Set(observation.supported_attributes.map(normalized));
@@ -1083,6 +1145,9 @@ function pointAction(
   const airTerminalParameters = observation.kind === "air_terminal" && observation.airflow_cfm != null
     ? { Flow: String(observation.airflow_cfm / 60) }
     : undefined;
+  const electricalDeviceParameters = observation.kind === "electrical_device"
+    ? observation.instance_parameters
+    : undefined;
   if (observation.placement.mode === "unhosted_family") {
     const instance: JsonMap = {
       x: transformed.x,
@@ -1092,6 +1157,7 @@ function pointAction(
     };
     if (observation.placement.rotation_degrees != null) instance.rotationDegrees = observation.placement.rotation_degrees;
     if (airTerminalParameters) instance.parameters = airTerminalParameters;
+    if (electricalDeviceParameters) instance.parameters = electricalDeviceParameters;
     if (observation.kind === "electrical_equipment" && observation.panel_name) {
       instance.parameters = { "Panel Name": observation.panel_name };
     }
@@ -1191,17 +1257,32 @@ function pointAction(
   }
   if (observation.placement.mode === "hosted_family_symbol") {
     const hostReference = nativeReferences.get(observation.placement.host_reference_key)!;
+    const linkedHostReference = observation.placement.linked_host_reference_key
+      ? nativeReferences.get(observation.placement.linked_host_reference_key)
+      : undefined;
+    const metadataSourceReference = observation.placement.metadata_source_reference_key
+      ? nativeReferences.get(observation.placement.metadata_source_reference_key)
+      : undefined;
+    const orientationSourceReference = observation.placement.orientation_source_reference_key
+      ? nativeReferences.get(observation.placement.orientation_source_reference_key)
+      : undefined;
     const common: JsonMap = {
       familyName: observation.placement.family_name,
       symbolName: observation.placement.type_name,
       levelName,
       hostElementId: hostReference.element_id,
       pointXyz: [expected.x, expected.y, expected.z],
-      matchOrientationFromSource: false,
+      matchOrientationFromSource: Boolean(orientationSourceReference),
       copyRotation: false,
       copyFacingHandState: false,
       includePreviewImage: true
     };
+    if (linkedHostReference) common.linkedHostElementId = linkedHostReference.element_id;
+    if (metadataSourceReference) {
+      common.sourceElementId = metadataSourceReference.element_id;
+      common.parameterNamesToCopy = ["Workset"];
+    }
+    if (orientationSourceReference) common.orientationSourceElementId = orientationSourceReference.element_id;
     if (roomNumber && observation.placement.require_room_membership_validation !== false) common.roomNumber = roomNumber;
     if (observation.placement.room_side) common.roomSide = observation.placement.room_side;
     if (observation.placement.ensure_distribution_system) {
@@ -1225,6 +1306,7 @@ function pointAction(
       common.parameterOverrides = { "Panel Name": observation.panel_name };
     }
     if (airTerminalParameters) common.parameterOverrides = airTerminalParameters;
+    if (electricalDeviceParameters) common.parameterOverrides = electricalDeviceParameters;
     return {
       action_key: actionKey,
       observation_ids: [observation.observation_id],
@@ -1259,6 +1341,7 @@ function pointAction(
   if (observation.kind === "electrical_equipment" && observation.placement.copy_distribution_system_from_source === true) {
     common.parameterNamesToCopy = ["Distribution System"];
   }
+  if (electricalDeviceParameters) common.parameterOverrides = electricalDeviceParameters;
   return {
     action_key: actionKey,
     observation_ids: [observation.observation_id],
@@ -1526,6 +1609,55 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         if (!hostReference) throw new Error(`${observation.observation_id}_host_reference_unknown`);
         if (normalized(hostReference.category) !== normalized(observation.placement.host_category)) {
           throw new Error(`${observation.observation_id}_host_reference_category_mismatch`);
+        }
+        if (normalized(hostReference.category) === normalized("OST_RvtLinks")
+          && !observation.placement.linked_host_reference_key) {
+          throw new Error(`${observation.observation_id}_revit_link_host_requires_exact_linked_wall_reference`);
+        }
+        if (observation.placement.linked_host_reference_key) {
+          if (normalized(hostReference.category) !== normalized("OST_RvtLinks")) {
+            throw new Error(`${observation.observation_id}_linked_host_reference_requires_revit_link_host`);
+          }
+          const linkedHostReference = nativeReferences.get(observation.placement.linked_host_reference_key);
+          if (!linkedHostReference) throw new Error(`${observation.observation_id}_linked_host_reference_unknown`);
+          if (normalized(linkedHostReference.category) !== normalized("OST_Walls")) {
+            throw new Error(`${observation.observation_id}_linked_host_reference_category_mismatch`);
+          }
+        }
+        if (observation.placement.metadata_source_reference_key) {
+          const metadataSourceReference = nativeReferences.get(observation.placement.metadata_source_reference_key);
+          if (!metadataSourceReference) throw new Error(`${observation.observation_id}_metadata_source_reference_unknown`);
+          if (normalized(metadataSourceReference.category) !== normalized(category(observation))) {
+            throw new Error(`${observation.observation_id}_metadata_source_reference_category_mismatch`);
+          }
+        }
+        if (observation.placement.orientation_source_reference_key) {
+          const orientationSourceReference = nativeReferences.get(observation.placement.orientation_source_reference_key);
+          if (!orientationSourceReference) throw new Error(`${observation.observation_id}_orientation_source_reference_unknown`);
+          if (normalized(orientationSourceReference.category) !== normalized(category(observation))) {
+            throw new Error(`${observation.observation_id}_orientation_source_reference_category_mismatch`);
+          }
+        }
+        if (observation.placement.annotation_tags != null) {
+          if (!Array.isArray(observation.placement.annotation_tags)
+            || observation.placement.annotation_tags.length < 1
+            || observation.placement.annotation_tags.length > 4) {
+            throw new Error(`${observation.observation_id}_annotation_tags_count_out_of_range`);
+          }
+          observation.placement.annotation_tags.forEach((tag, index) => {
+            requiredText(tag.family_name, `${observation.observation_id}_annotation_tag_family_${index}`);
+            requiredText(tag.type_name, `${observation.observation_id}_annotation_tag_type_${index}`);
+            const viewReference = nativeReferences.get(requiredText(tag.view_reference_key, `${observation.observation_id}_annotation_tag_view_${index}`));
+            if (!viewReference) throw new Error(`${observation.observation_id}_annotation_tag_view_reference_unknown:${index}`);
+            if (!new Set(["view", "ost views"]).has(normalized(viewReference.category))) {
+              throw new Error(`${observation.observation_id}_annotation_tag_view_reference_category_mismatch:${index}`);
+            }
+            const offsetX = finite(tag.offset_x_ft, `${observation.observation_id}_annotation_tag_offset_x_${index}`);
+            const offsetY = finite(tag.offset_y_ft, `${observation.observation_id}_annotation_tag_offset_y_${index}`);
+            if (Math.abs(offsetX) > 10 || Math.abs(offsetY) > 10) {
+              throw new Error(`${observation.observation_id}_annotation_tag_offset_out_of_range:${index}`);
+            }
+          });
         }
         continue;
       }
@@ -2208,6 +2340,43 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         });
       }
     }
+    for (const observation of input.observations) {
+      if ((observation.kind !== "electrical_device" && observation.kind !== "electrical_equipment")
+        || observation.placement.mode !== "hosted_family_symbol"
+        || !observation.placement.annotation_tags?.length) continue;
+      const placementAction = `place:${observation.observation_id}`;
+      const circuitDependencies = actions
+        .filter((action) => action.path === "/revit/assign-electrical-circuit"
+          && action.observation_ids.includes(observation.observation_id))
+        .map((action) => action.action_key);
+      observation.placement.annotation_tags.forEach((tag, index) => {
+        const viewReference = nativeReferences.get(tag.view_reference_key)!;
+        actions.push({
+          action_key: `tag:${observation.observation_id}:${index + 1}`,
+          observation_ids: [observation.observation_id],
+          method: "POST",
+          path: "/revit/tag-elements",
+          depends_on: unique([placementAction, ...circuitDependencies]),
+          apply_body: {
+            viewId: viewReference.element_id,
+            tagFamilyName: tag.family_name,
+            tagTypeName: tag.type_name,
+            onlyUntagged: false,
+            addLeader: tag.add_leader === true,
+            orientation: "horizontal",
+            placementMode: "offset",
+            offsetX: tag.offset_x_ft,
+            offsetY: tag.offset_y_ft,
+            max: 1
+          },
+          deferred_body: {
+            tag_element: { created_by_action: placementAction, output: "created" }
+          },
+          expected_created_min: 1,
+          expected_created_max: 1
+        });
+      });
+    }
     actions.push(...pendingVentAudits);
   }
 
@@ -2232,7 +2401,10 @@ export function buildAtomicMepDraftWorkflowRequest(
   options: { dry_run?: boolean; maximum_created_elements?: number } = {}
 ): AtomicMepDraftWorkflowRequest {
   if (plan.status !== "ready") throw new Error(`mep_draft_plan_not_ready:${plan.status}`);
-  const maximumCreatedElements = options.maximum_created_elements ?? Math.max(1, plan.plan_elements.filter((entry) => entry.action === "create").length * 4);
+  const maximumCreatedElements = options.maximum_created_elements ?? Math.max(
+    1,
+    plan.actions.reduce((total, action) => total + Math.max(0, action.expected_created_max), 0)
+  );
   if (!Number.isInteger(maximumCreatedElements) || maximumCreatedElements < 1 || maximumCreatedElements > 500) {
     throw new Error("maximum_created_elements_must_be_between_1_and_500");
   }

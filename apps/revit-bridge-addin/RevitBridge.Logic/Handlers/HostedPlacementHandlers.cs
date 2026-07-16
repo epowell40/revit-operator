@@ -82,6 +82,7 @@ namespace RevitBridge.Logic.Handlers
         public XYZ? midpoint { get; set; }
         public XYZ? tangent { get; set; }
         public XYZ? projectedRoomPoint { get; set; }
+        public XYZ? faceSidePreferencePoint { get; set; }
         public XYZ? interiorDirection { get; set; }
         public bool supportsPlacement { get; set; }
         public List<RoomWallSegmentGeometry> geometrySegments { get; set; } = new List<RoomWallSegmentGeometry>();
@@ -741,6 +742,97 @@ namespace RevitBridge.Logic.Handlers
             };
         }
 
+        internal static RoomWallResolution? ResolveExplicitLinkedWallHost(
+            RevitLinkInstance link,
+            long linkedElementId,
+            XYZ worldPoint,
+            List<string> warnings)
+        {
+            if (link == null || linkedElementId <= 0) return null;
+            var linkDoc = link.GetLinkDocument();
+            if (linkDoc == null)
+            {
+                warnings.Add($"Explicit linked wall {linkedElementId} could not be resolved because link {ElementIdCompat.GetValue(link.Id)} is unloaded.");
+                return null;
+            }
+
+            var linkedElement = linkDoc.GetElement(ElementIdCompat.Create(linkedElementId));
+            if (linkedElement is not Wall linkedWall || linkedWall.Location is not LocationCurve locationCurve)
+            {
+                warnings.Add($"Explicit linked host element {linkedElementId} is missing or is not a curve-based Wall.");
+                return null;
+            }
+
+            Transform transform;
+            try { transform = link.GetTotalTransform(); }
+            catch { transform = link.GetTransform(); }
+            var tessellated = locationCurve.Curve.Tessellate().Select(transform.OfPoint).ToList();
+            if (tessellated.Count < 2)
+            {
+                warnings.Add($"Explicit linked wall {linkedElementId} did not expose enough curve geometry for placement.");
+                return null;
+            }
+
+            var geometrySegments = new List<RoomWallSegmentGeometry>();
+            for (var index = 0; index < tessellated.Count - 1; index++)
+            {
+                var start = tessellated[index];
+                var end = tessellated[index + 1];
+                var delta = end - start;
+                var length = delta.GetLength();
+                if (length <= 1e-9) continue;
+                geometrySegments.Add(new RoomWallSegmentGeometry
+                {
+                    start = start,
+                    end = end,
+                    midpoint = (start + end) * 0.5,
+                    direction = delta / length,
+                    lengthFt = length
+                });
+            }
+            if (geometrySegments.Count == 0)
+            {
+                warnings.Add($"Explicit linked wall {linkedElementId} produced only zero-length placement geometry.");
+                return null;
+            }
+
+            var resolution = new RoomWallResolution
+            {
+                hostElementId = ElementIdCompat.GetValue(link.Id),
+                boundaryElementId = linkedElementId,
+                linkedElementId = linkedElementId,
+                hostElement = link,
+                boundaryElement = linkedWall,
+                wall = null,
+                boundaryLengthFt = geometrySegments.Sum(segment => segment.lengthFt),
+                midpoint = new XYZ(
+                    geometrySegments.Average(segment => segment.midpoint.X),
+                    geometrySegments.Average(segment => segment.midpoint.Y),
+                    geometrySegments.Average(segment => segment.midpoint.Z)),
+                tangent = geometrySegments.OrderBy(segment => segment.midpoint.DistanceTo(worldPoint)).First().direction,
+                supportsPlacement = true,
+                geometrySegments = geometrySegments,
+                segments = geometrySegments.Select((segment, index) => (object)new
+                {
+                    segmentIndex = index,
+                    hostElementId = ElementIdCompat.GetValue(link.Id),
+                    boundaryElementId = linkedElementId,
+                    linkedElementId,
+                    start = BuildVector(segment.start),
+                    end = BuildVector(segment.end),
+                    midpoint = BuildVector(segment.midpoint),
+                    direction = BuildVector(segment.direction),
+                    lengthFt = segment.lengthFt
+                }).ToList()
+            };
+            if (TryProjectPointToRoomWall(resolution, worldPoint, out var projected, out var tangent, out _, out _))
+            {
+                resolution.projectedRoomPoint = projected;
+                resolution.tangent = tangent;
+            }
+            return resolution;
+        }
+
         internal static string? BuildPlacementPreviewSecondaryText(HostLocalFrameData? frame, Element? orientationElement = null)
         {
             if (frame == null) return null;
@@ -1336,7 +1428,8 @@ namespace RevitBridge.Logic.Handlers
                     maximumResolvedDisplacementFt: 1.0,
                     maximumVerticalDisplacementFt: 0.5,
                     requireVerticalFace: true,
-                    sourceStableReferencePattern: sourceStableReferencePattern) || resolution == null)
+                    sourceStableReferencePattern: sourceStableReferencePattern,
+                    preferredFaceSidePoint: roomWall?.faceSidePreferencePoint) || resolution == null)
             {
                 warnings.Add($"Linked face placement could not resolve linked element {roomWall.linkedElementId.Value}: {error}");
                 return null;
@@ -1802,6 +1895,95 @@ namespace RevitBridge.Logic.Handlers
                     warnings.Add($"Failed to set parameter '{name}': {ex.Message}");
                 }
             }
+        }
+
+        internal static void ApplyParameterValuesStrict(Element target, IDictionary<string, string>? values)
+        {
+            if (target == null) throw new InvalidOperationException("Parameter override target is required.");
+            if (values == null || values.Count == 0) return;
+
+            foreach (var kvp in values)
+            {
+                var name = (kvp.Key ?? "").Trim();
+                if (name.Length == 0) throw new InvalidOperationException("Parameter override name is required.");
+                var param = target.LookupParameter(name)
+                    ?? throw new InvalidOperationException($"Parameter override '{name}' was not found on the created instance.");
+                if (param.IsReadOnly) throw new InvalidOperationException($"Parameter override '{name}' is read-only on the created instance.");
+
+                var value = kvp.Value ?? "";
+                bool changed;
+                switch (param.StorageType)
+                {
+                    case StorageType.String:
+                        changed = param.Set(value);
+                        break;
+                    case StorageType.Integer:
+                        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var integerValue))
+                            throw new InvalidOperationException($"Parameter override '{name}' requires an integer value.");
+                        changed = param.Set(integerValue);
+                        break;
+                    case StorageType.Double:
+                        if (!double.TryParse(value, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var doubleValue))
+                            throw new InvalidOperationException($"Parameter override '{name}' requires a numeric internal-unit value.");
+                        changed = param.Set(doubleValue);
+                        break;
+                    case StorageType.ElementId:
+                        if (!long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var elementIdValue))
+                            throw new InvalidOperationException($"Parameter override '{name}' requires an element id value.");
+                        changed = param.Set(ElementIdCompat.Create(elementIdValue));
+                        break;
+                    default:
+                        throw new InvalidOperationException($"Parameter override '{name}' has unsupported storage type {param.StorageType}.");
+                }
+
+                if (!changed) throw new InvalidOperationException($"Parameter override '{name}' was rejected by Revit.");
+            }
+
+            target.Document.Regenerate();
+            foreach (var kvp in values)
+            {
+                var name = (kvp.Key ?? "").Trim();
+                var value = kvp.Value ?? "";
+                var param = target.LookupParameter(name)
+                    ?? throw new InvalidOperationException($"Parameter override '{name}' disappeared before readback.");
+                var matches = param.StorageType switch
+                {
+                    StorageType.String => string.Equals(param.AsString() ?? "", value, StringComparison.Ordinal),
+                    StorageType.Integer => int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var integerValue)
+                        && param.AsInteger() == integerValue,
+                    StorageType.Double => double.TryParse(value, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var doubleValue)
+                        && Math.Abs(param.AsDouble() - doubleValue) <= 1e-9,
+                    StorageType.ElementId => long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var elementIdValue)
+                        && ElementIdCompat.GetValue(param.AsElementId()) == elementIdValue,
+                    _ => false
+                };
+                if (!matches) throw new InvalidOperationException($"Parameter override '{name}' did not match requested value after readback.");
+            }
+        }
+
+        internal static void ApplyResolvedLevelToFaceHostedInstance(FamilyInstance instance, Level level, List<string> warnings)
+        {
+            if (instance == null || level == null) return;
+            var candidates = new[]
+            {
+                instance.get_Parameter(BuiltInParameter.INSTANCE_SCHEDULE_ONLY_LEVEL_PARAM),
+                instance.get_Parameter(BuiltInParameter.FAMILY_LEVEL_PARAM),
+                instance.get_Parameter(BuiltInParameter.INSTANCE_REFERENCE_LEVEL_PARAM)
+            };
+            foreach (var parameter in candidates.Where(value => value != null).Distinct())
+            {
+                if (parameter == null || parameter.IsReadOnly || parameter.StorageType != StorageType.ElementId) continue;
+                try
+                {
+                    parameter.Set(level.Id);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    warnings.Add($"Failed to set face-hosted instance level '{level.Name}': {ex.Message}");
+                }
+            }
+            warnings.Add($"Face-hosted instance did not expose a writable schedule/reference level for '{level.Name}'.");
         }
 
         internal static object? ApplyAndAuditElectricalDistributionSystem(
@@ -2958,6 +3140,7 @@ namespace RevitBridge.Logic.Handlers
             public string? symbolName { get; set; }
             public string? levelName { get; set; }
             public long hostElementId { get; set; }
+            public long? linkedHostElementId { get; set; }
             public long? roomId { get; set; }
             public string? roomNumber { get; set; }
             public string? roomSide { get; set; }
@@ -3005,13 +3188,30 @@ namespace RevitBridge.Logic.Handlers
             var warnings = new List<string>();
             var requestedHost = doc.GetElement(ElementIdCompat.Create(p.hostElementId)) ?? throw new InvalidOperationException($"Host element {p.hostElementId} not found.");
             var host = HostedPlacementUtil.ResolveSupportedPlacementHost(doc, previewView, requestedHost, referenceElement ?? sourceElement, p.roomId, p.roomNumber, p.roomSide, warnings, "hosted placement");
+            if (host is RevitLinkInstance && (!p.linkedHostElementId.HasValue || p.linkedHostElementId.Value <= 0))
+                throw new InvalidOperationException("A RevitLinkInstance host requires linkedHostElementId for an exact linked wall; arbitrary linked-face fallback is not permitted.");
             var level = HostedPlacementUtil.ResolveLevel(doc, p.levelName, sourceElement, host) ?? throw new InvalidOperationException("Unable to resolve level.");
-            var roomWall = HostedPlacementUtil.ResolveRoomWallForHost(doc, previewView, host, p.roomId, p.roomNumber, p.roomSide)
-                ?? HostedPlacementUtil.ResolveLinkedFaceHostFallback(doc, host, sourceElement as FamilyInstance);
-
             var basePoint = (p.pointXyz != null && p.pointXyz.Length >= 3)
                 ? new XYZ(p.pointXyz[0], p.pointXyz[1], p.pointXyz[2])
                 : HostedPlacementUtil.TryGetElementPoint(referenceElement) ?? HostedPlacementUtil.TryGetElementPoint(host) ?? XYZ.Zero;
+
+            RoomWallResolution? roomWall;
+            if (p.linkedHostElementId.HasValue && p.linkedHostElementId.Value > 0)
+            {
+                if (host is not RevitLinkInstance explicitLink)
+                    throw new InvalidOperationException("linkedHostElementId requires hostElementId to identify a RevitLinkInstance.");
+                roomWall = HostedPlacementUtil.ResolveExplicitLinkedWallHost(explicitLink, p.linkedHostElementId.Value, basePoint, warnings)
+                    ?? throw new InvalidOperationException($"Explicit linked wall {p.linkedHostElementId.Value} could not be resolved for hosted placement.");
+                roomWall.faceSidePreferencePoint = basePoint;
+                if (!HostedPlacementUtil.TryProjectPointToRoomWall(roomWall, basePoint, out var projectedExplicitWallPoint, out _, out _, out _))
+                    throw new InvalidOperationException($"Requested point could not be projected onto explicit linked wall {p.linkedHostElementId.Value}.");
+                basePoint = new XYZ(projectedExplicitWallPoint.X, projectedExplicitWallPoint.Y, basePoint.Z);
+            }
+            else
+            {
+                roomWall = HostedPlacementUtil.ResolveRoomWallForHost(doc, previewView, host, p.roomId, p.roomNumber, p.roomSide)
+                    ?? HostedPlacementUtil.ResolveLinkedFaceHostFallback(doc, host, sourceElement as FamilyInstance);
+            }
 
             if ((p.targetChainageFt.HasValue || p.targetNormalizedChainage.HasValue) && host is Wall chainageWall)
             {
@@ -3066,11 +3266,22 @@ namespace RevitBridge.Logic.Handlers
                 try { sourceHostFaceStableReference = sourceHostFamilyInstance.HostFace?.ConvertToStableRepresentation(doc); }
                 catch { }
             }
+            var preferredFaceReferenceDirection = roomWall?.tangent;
+            if (orientationSource is FamilyInstance orientationSourceInstance)
+            {
+                try
+                {
+                    var orientationBasisX = orientationSourceInstance.GetTransform().BasisX;
+                    if (orientationBasisX != null && orientationBasisX.GetLength() > 1e-9)
+                        preferredFaceReferenceDirection = orientationBasisX;
+                }
+                catch { }
+            }
             var facePlacement = HostedPlacementUtil.TryResolveFaceHostedPlacementReference(
                 host,
                 roomWall,
                 finalPoint,
-                roomWall?.tangent,
+                preferredFaceReferenceDirection,
                 warnings,
                 sourceHostFaceStableReference
             );
@@ -3088,6 +3299,7 @@ namespace RevitBridge.Logic.Handlers
             var placementPointForCreate = facePlacement?.placementPoint ?? finalPoint;
             var apiPoint = facePlacement?.placementPoint ?? HostedPlacementUtil.ConvertWorldPointForHost(host, finalPoint);
             long createdId = 0;
+            long? verifiedCreatedLinkedElementId = null;
             string? previewPath = null;
             int? previewWidth = null;
             int? previewHeight = null;
@@ -3112,8 +3324,23 @@ namespace RevitBridge.Logic.Handlers
                 var created = facePlacement != null
                     ? doc.Create.NewFamilyInstance(facePlacement.faceReference, placementPointForCreate, facePlacement.referenceDirection, symbol)
                     : doc.Create.NewFamilyInstance(apiPoint, symbol, host, level, StructuralType.NonStructural);
+                if (p.linkedHostElementId.HasValue && p.linkedHostElementId.Value > 0)
+                {
+                    doc.Regenerate();
+                    var createdHostFace = created.HostFace;
+                    if (createdHostFace == null || createdHostFace.ElementId != host.Id ||
+                        createdHostFace.LinkedElementId == ElementId.InvalidElementId ||
+                        ElementIdCompat.GetValue(createdHostFace.LinkedElementId) != p.linkedHostElementId.Value)
+                    {
+                        throw new InvalidOperationException(
+                            $"Created instance did not retain explicit linked wall host {p.linkedHostElementId.Value}."
+                        );
+                    }
+                    verifiedCreatedLinkedElementId = ElementIdCompat.GetValue(createdHostFace.LinkedElementId);
+                }
+                if (facePlacement != null) HostedPlacementUtil.ApplyResolvedLevelToFaceHostedInstance(created, level, warnings);
                 if (sourceElement != null) HostedPlacementUtil.CopyParameters(sourceElement, created, p.parameterNamesToCopy, warnings);
-                HostedPlacementUtil.ApplyParameterValues(created, p.parameterOverrides, warnings);
+                HostedPlacementUtil.ApplyParameterValuesStrict(created, p.parameterOverrides);
                 var requestedDistributionSystemName = !string.IsNullOrWhiteSpace(p.distributionSystemName)
                     ? p.distributionSystemName
                     : p.ensureDistributionSystem?.name;
@@ -3223,6 +3450,7 @@ namespace RevitBridge.Logic.Handlers
                     {
                         basis = facePlacement.basis,
                         linkedElementId = facePlacement.linkedElementId,
+                        verifiedCreatedLinkedElementId,
                         faceDistanceFt = facePlacement.faceDistanceFt,
                         point = HostedPlacementUtil.BuildVector(facePlacement.placementPoint),
                         referenceDirection = HostedPlacementUtil.BuildVector(facePlacement.referenceDirection)
@@ -3329,6 +3557,7 @@ namespace RevitBridge.Logic.Handlers
                 {
                     basis = facePlacement.basis,
                     linkedElementId = facePlacement.linkedElementId,
+                    verifiedCreatedLinkedElementId,
                     faceDistanceFt = facePlacement.faceDistanceFt,
                     point = HostedPlacementUtil.BuildVector(facePlacement.placementPoint),
                     referenceDirection = HostedPlacementUtil.BuildVector(facePlacement.referenceDirection)

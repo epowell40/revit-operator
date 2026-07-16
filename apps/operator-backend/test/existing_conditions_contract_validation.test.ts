@@ -227,6 +227,7 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
         reference: "duplex receptacle symbol at selected pixel"
       }],
       role: "duplex receptacle",
+      instance_parameters: { "Receptacle Label": "GFI", "Counter 54in": "1" },
       pixel_point: { x: 25, y: 75 },
       elevation_ft: 1.5,
       placement: { mode: "unhosted_family", family_name: "Receptacle", type_name: "Duplex" }
@@ -236,6 +237,7 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
   const equipment = structuredClone(input);
   (equipment.observations[0] as Record<string, unknown>).kind = "electrical_equipment";
   (equipment.observations[0] as Record<string, unknown>).role = "panelboard";
+  delete (equipment.observations[0] as Record<string, unknown>).instance_parameters;
   (equipment.observations[0] as Record<string, unknown>).placement = {
     mode: "hosted_exemplar",
     source_reference_key: "panel-source",

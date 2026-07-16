@@ -71,7 +71,8 @@ namespace RevitBridge.Logic.Handlers
             double maximumResolvedDisplacementFt = DefaultMaximumResolvedDisplacementFt,
             double maximumVerticalDisplacementFt = DefaultMaximumVerticalDisplacementFt,
             bool requireVerticalFace = true,
-            string? sourceStableReferencePattern = null)
+            string? sourceStableReferencePattern = null,
+            XYZ? preferredFaceSidePoint = null)
         {
             resolution = null;
             error = string.Empty;
@@ -148,8 +149,13 @@ namespace RevitBridge.Logic.Handlers
                 }
             }
 
+            var hasFaceSidePreference = preferredFaceSidePoint != null && IsFinite(preferredFaceSidePoint);
+            double FaceSideDistance(Candidate candidate) => hasFaceSidePreference
+                ? candidate.Point.DistanceTo(preferredFaceSidePoint)
+                : 0.0;
             var ordered = byStableReference.Values
                 .OrderBy(candidate => candidate.DistanceFt)
+                .ThenBy(FaceSideDistance)
                 .ThenBy(candidate => candidate.Fingerprint, StringComparer.Ordinal)
                 .ThenBy(candidate => candidate.StableReference, StringComparer.Ordinal)
                 .ToList();
@@ -158,7 +164,7 @@ namespace RevitBridge.Logic.Handlers
             {
                 ordered.AddRange(ResolveFromOriginalSymbolGeometry(document, linkInstance, linkedElement, targetPoint, preferredReferenceDirection,
                     maximumResolvedDisplacementFt, maximumVerticalDisplacementFt, requireVerticalFace, out symbolGeometryError));
-                ordered = ordered.OrderBy(candidate => candidate.DistanceFt).ThenBy(candidate => candidate.Fingerprint, StringComparer.Ordinal).ThenBy(candidate => candidate.StableReference, StringComparer.Ordinal).ToList();
+                ordered = ordered.OrderBy(candidate => candidate.DistanceFt).ThenBy(FaceSideDistance).ThenBy(candidate => candidate.Fingerprint, StringComparer.Ordinal).ThenBy(candidate => candidate.StableReference, StringComparer.Ordinal).ToList();
             }
             var reboundError = string.Empty;
             if (ordered.Count == 0 && !string.IsNullOrWhiteSpace(sourceStableReferencePattern))
@@ -174,7 +180,8 @@ namespace RevitBridge.Logic.Handlers
                 return false;
             }
             if (ordered.Count > 1 && Math.Abs(ordered[1].DistanceFt - ordered[0].DistanceFt) <= ambiguityToleranceFt &&
-                !string.Equals(ordered[1].Fingerprint, ordered[0].Fingerprint, StringComparison.Ordinal))
+                !string.Equals(ordered[1].Fingerprint, ordered[0].Fingerprint, StringComparison.Ordinal) &&
+                (!hasFaceSidePreference || Math.Abs(FaceSideDistance(ordered[1]) - FaceSideDistance(ordered[0])) <= ambiguityToleranceFt))
             {
                 error = "linked_face_reference_ambiguous";
                 return false;

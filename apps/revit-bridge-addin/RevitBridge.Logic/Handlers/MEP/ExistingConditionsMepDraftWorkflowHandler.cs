@@ -54,6 +54,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             public List<ElementReference>? fixture_elements { get; set; }
             public List<long>? fixture_element_ids { get; set; }
             public bool? require_downstream_vent { get; set; }
+            public ElementReference? tag_element { get; set; }
         }
 
         public sealed class Operation
@@ -129,18 +130,20 @@ namespace RevitBridge.Logic.Handlers.MEP
                         var response = handler.Handle(app, requestJson).GetAwaiter().GetResult();
                         using var responseDocument = JsonDocument.Parse(JsonSerializer.Serialize(response));
                         var responseJson = responseDocument.RootElement.Clone();
-                        if (ResponseFailed(operation.path, responseJson, operation.deferred_body, out var failure))
+                        var output = ExtractOperationOutput(operation.path, responseJson);
+                        var createdIds = output.CreatedElementIds;
+                        if (ResponseFailed(operation.path, responseJson, operation.apply_body, operation.deferred_body, out var failure))
                         {
+                            foreach (var id in createdIds) allCreatedIds.Add(id);
                             failedReceipt = new OperationReceipt
                             {
                                 ActionKey = operation.action_key,
                                 Path = operation.path,
+                                ElementIds = createdIds,
                                 Response = response
                             };
                             throw new InvalidOperationException($"operation_failed:{operation.action_key}:{failure}");
                         }
-                        var output = ExtractOperationOutput(operation.path, responseJson);
-                        var createdIds = output.CreatedElementIds;
                         if (operation.expected_created_min < 0
                             || operation.expected_created_max < operation.expected_created_min
                             || createdIds.Count < operation.expected_created_min
@@ -210,6 +213,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                 {
                     actionKey = failedReceipt.ActionKey,
                     path = failedReceipt.Path,
+                    createdElementIds = transactionGroupRolledBack ? new List<long>() : failedReceipt.ElementIds,
+                    transientCreatedElementIds = transactionGroupRolledBack ? failedReceipt.ElementIds : new List<long>(),
                     response = failedReceipt.Response
                 },
                 operations = receipts.Select(receipt => new
@@ -308,6 +313,20 @@ namespace RevitBridge.Logic.Handlers.MEP
                     confirm = true,
                     parameterOnlyFallback = false
                 });
+            }
+            if (path == "/revit/tag-elements")
+            {
+                var deferred = operation.deferred_body ?? throw new InvalidOperationException($"deferred_body_required:{operation.action_key}");
+                var elementIds = ResolveReference(deferred.tag_element, outputs, operation.action_key, "tag_element");
+                if (elementIds.Count != 1)
+                    throw new InvalidOperationException($"tag_element_reference_must_resolve_one_id:{operation.action_key}:found={elementIds.Count}");
+                if (!operation.apply_body.HasValue || operation.apply_body.Value.ValueKind != JsonValueKind.Object)
+                    throw new InvalidOperationException($"apply_body_required:{operation.action_key}");
+                var tagBody = JsonSerializer.Deserialize<RevitBridge.Logic.Handlers.TagElementsHandler.TagRequest>(operation.apply_body.Value.GetRawText())
+                    ?? throw new InvalidOperationException($"tag_elements_body_invalid:{operation.action_key}");
+                tagBody.elementIds = elementIds;
+                tagBody.dryRun = false;
+                return JsonSerializer.Serialize(tagBody);
             }
             if (path == "/revit/create-pipe-between-connectors")
             {
@@ -413,6 +432,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 case "/revit/connect-mep-branch": return new ConnectMepBranchHandler();
                 case "/revit/audit-plumbing-fixture-services": return new PlumbingFixtureServicesAuditHandler();
                 case "/revit/assign-electrical-circuit": return new AssignElectricalCircuitHandler();
+                case "/revit/tag-elements": return new RevitBridge.Logic.Handlers.TagElementsHandler();
                 default: throw new InvalidOperationException($"unsupported_mep_draft_operation_path:{rawPath}");
             }
         }
@@ -479,6 +499,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                 var id = ReadLong(response, "elementId");
                 return new OperationOutput { CreatedElementIds = id > 0 ? new List<long> { id } : new List<long>() };
             }
+            if (path == "/revit/tag-elements")
+                return new OperationOutput { CreatedElementIds = ReadLongArray(response, "tagIds") };
             if (path == "/revit/create-pipe-between-connectors")
                 return new OperationOutput { CreatedElementIds = ReadLongArray(response, "createdElementIds") };
             if (path == "/revit/connect-mep-branch")
@@ -508,7 +530,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             return new OperationOutput();
         }
 
-        private static bool ResponseFailed(string rawPath, JsonElement response, DeferredBody? deferred, out string reason)
+        private static bool ResponseFailed(string rawPath, JsonElement response, JsonElement? applyBody, DeferredBody? deferred, out string reason)
         {
             reason = "";
             if (response.ValueKind != JsonValueKind.Object)
@@ -538,6 +560,18 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 reason = $"failedCount={failures}";
                 return true;
+            }
+            if (NormalizePath(rawPath) == "/revit/tag-elements")
+            {
+                var errorCount = ReadLong(response, "errorCount");
+                var taggedCount = ReadLong(response, "taggedCount");
+                if (errorCount > 0 || taggedCount != 1)
+                {
+                    reason = $"tag_elements_incomplete:tagged={taggedCount}:errors={errorCount}";
+                    return true;
+                }
+                if (!ExactTagTypeReadbackMatches(response, applyBody, out reason))
+                    return true;
             }
             if (response.TryGetProperty("results", out var results) && results.ValueKind == JsonValueKind.Array)
             {
@@ -591,6 +625,40 @@ namespace RevitBridge.Logic.Handlers.MEP
                 }
             }
             return false;
+        }
+
+        private static bool ExactTagTypeReadbackMatches(JsonElement response, JsonElement? applyBody, out string reason)
+        {
+            reason = "";
+            if (!applyBody.HasValue || applyBody.Value.ValueKind != JsonValueKind.Object)
+            {
+                reason = "tag_elements_request_missing";
+                return false;
+            }
+
+            var expectedFamily = ReadString(applyBody.Value, "tagFamilyName");
+            var expectedType = ReadString(applyBody.Value, "tagTypeName");
+            if (string.IsNullOrWhiteSpace(expectedFamily) || string.IsNullOrWhiteSpace(expectedType))
+            {
+                reason = "tag_elements_exact_type_required";
+                return false;
+            }
+            if (!response.TryGetProperty("tags", out var tags) || tags.ValueKind != JsonValueKind.Array || tags.GetArrayLength() != 1)
+            {
+                reason = "tag_elements_readback_missing";
+                return false;
+            }
+
+            var tag = tags.EnumerateArray().First();
+            var actualFamily = ReadString(tag, "tagFamilyName");
+            var actualType = ReadString(tag, "tagTypeName");
+            if (!string.Equals(actualFamily, expectedFamily, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(actualType, expectedType, StringComparison.OrdinalIgnoreCase))
+            {
+                reason = $"tag_elements_type_mismatch:expected={expectedFamily}:{expectedType}:actual={actualFamily}:{actualType}";
+                return false;
+            }
+            return true;
         }
 
         private static List<long> ReadLongArray(JsonElement node, string propertyName)

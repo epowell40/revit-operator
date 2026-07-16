@@ -979,6 +979,220 @@ test("electrical plan compiles an exact loaded family type onto an exact native 
   assert.throws(() => compileMepDraftPlan(wrongCategory), /host_reference_category_mismatch/);
 });
 
+test("electrical device placement carries source-grounded non-membership instance parameters", () => {
+  const input: MepDraftPackage = {
+    schema_version: 1,
+    fixture_id: "electrical-gfi-parameters-v1",
+    scope_id: "level-3-patient-toilet",
+    source_evidence_sha256: SOURCE_HASH,
+    visible_evidence: visibleEvidence(),
+    native_element_references: nativeReferences(),
+    registration: registration(),
+    level_name: "L3",
+    level_elevation_ft: 32,
+    room_number: "PT-101",
+    observations: [{
+      kind: "electrical_device",
+      observation_id: "patient-toilet-gfi",
+      discipline: "electrical",
+      role: "GFI duplex receptacle",
+      visibility: "clear",
+      confidence: 0.98,
+      supported_attributes: ["location", "type", "host", "instance parameters"],
+      attribute_provenance: [{
+        attribute: "instance parameters",
+        basis: "source_observation",
+        reference: "The registered power plan prints GFI and +54 inches at the device."
+      }],
+      point: { x: 3, y: 4 },
+      elevation_ft: 4.5,
+      instance_parameters: {
+        "Receptacle Label": "GFI",
+        "Counter 54in": "1"
+      },
+      placement: {
+        mode: "hosted_family_symbol",
+        family_name: "262726_Receptacles",
+        type_name: "Duplex Receptacle",
+        host_reference_key: "south-wall-host",
+        host_category: "OST_Walls",
+        room_side: "top"
+      }
+    }]
+  };
+
+  const plan = compileMepDraftPlan(input);
+  assert.equal(plan.status, "ready");
+  assert.deepEqual(plan.actions[0]?.dry_run_body?.parameterOverrides, {
+    "Receptacle Label": "GFI",
+    "Counter 54in": "1"
+  });
+
+  const missingEvidence = structuredClone(input);
+  const missingEvidenceDevice = missingEvidence.observations[0];
+  if (!missingEvidenceDevice || missingEvidenceDevice.kind !== "electrical_device") throw new Error("test_setup_failed");
+  missingEvidenceDevice.attribute_provenance = [];
+  assert.throws(() => compileMepDraftPlan(missingEvidence), /instance_parameters_require_source_or_directed_evidence/);
+
+  const fakeCircuit = structuredClone(input);
+  const fakeCircuitDevice = fakeCircuit.observations[0];
+  if (!fakeCircuitDevice || fakeCircuitDevice.kind !== "electrical_device") throw new Error("test_setup_failed");
+  fakeCircuitDevice.instance_parameters = { "Circuit Number": "47" };
+  assert.throws(() => compileMepDraftPlan(fakeCircuit), /instance_parameter_cannot_assert_circuit_membership/);
+
+  for (const alias of ["Branch Circuit", "CKT #", "Panel Name", "Panelboard", "Power-System", "Electrical_Data"]) {
+    const aliasedCircuit = structuredClone(input);
+    const aliasedDevice = aliasedCircuit.observations[0];
+    if (!aliasedDevice || aliasedDevice.kind !== "electrical_device") throw new Error("test_setup_failed");
+    aliasedDevice.instance_parameters = { [alias]: "A" };
+    assert.throws(() => compileMepDraftPlan(aliasedCircuit), /instance_parameter_cannot_assert_circuit_membership/);
+  }
+});
+
+test("electrical hosted symbol can resolve an exact wall inside an exact linked-model host", () => {
+  const input: MepDraftPackage = {
+    schema_version: 1,
+    fixture_id: "electrical-explicit-linked-wall-v1",
+    scope_id: "bounded-linked-wall-device",
+    source_evidence_sha256: SOURCE_HASH,
+    visible_evidence: visibleEvidence(),
+    native_element_references: [
+      ...nativeReferences(),
+      {
+        reference_key: "orientation-source",
+        element_id: 112,
+        category: "OST_ElectricalFixtures",
+        role: "parallel-wall receptacle orientation precedent",
+        evidence_role: "native_model_inventory",
+        evidence_sha256: MODEL_HASH
+      },
+      {
+        reference_key: "power-view",
+        element_id: 902,
+        category: "OST_Views",
+        role: "power plan annotation view",
+        evidence_role: "native_model_inventory",
+        evidence_sha256: MODEL_HASH
+      },
+      {
+        reference_key: "architectural-link",
+        element_id: 900,
+        category: "OST_RvtLinks",
+        role: "loaded architectural link",
+        evidence_role: "native_model_inventory",
+        evidence_sha256: MODEL_HASH
+      },
+      {
+        reference_key: "linked-wall",
+        element_id: 901,
+        category: "OST_Walls",
+        role: "exact wall inside architectural link",
+        evidence_role: "native_model_inventory",
+        evidence_sha256: MODEL_HASH
+      }
+    ],
+    registration: registration(),
+    level_name: "L3",
+    level_elevation_ft: 32,
+    observations: [{
+      kind: "electrical_device",
+      observation_id: "linked-wall-receptacle",
+      discipline: "electrical",
+      role: "duplex receptacle",
+      visibility: "clear",
+      confidence: 0.98,
+      supported_attributes: ["location", "type", "host"],
+      point: { x: 3, y: 4 },
+      elevation_ft: 1.5,
+      placement: {
+        mode: "hosted_family_symbol",
+        family_name: "Receptacle",
+        type_name: "Duplex",
+        metadata_source_reference_key: "receptacle-source",
+        orientation_source_reference_key: "orientation-source",
+        annotation_tags: [
+          {
+            view_reference_key: "power-view",
+            family_name: "Receptacle Tag",
+            type_name: "Condition Label",
+            offset_x_ft: 0.5,
+            offset_y_ft: 0.75,
+            add_leader: false
+          },
+          {
+            view_reference_key: "power-view",
+            family_name: "Receptacle Tag",
+            type_name: "Mounting Label",
+            offset_x_ft: 0.5,
+            offset_y_ft: 0.25,
+            add_leader: false
+          },
+          {
+            view_reference_key: "power-view",
+            family_name: "Receptacle Tag",
+            type_name: "Protection Label",
+            offset_x_ft: 0.5,
+            offset_y_ft: -0.25,
+            add_leader: false
+          },
+          {
+            view_reference_key: "power-view",
+            family_name: "Receptacle Tag",
+            type_name: "Circuit Label",
+            offset_x_ft: 0,
+            offset_y_ft: -0.75,
+            add_leader: false
+          }
+        ],
+        host_reference_key: "architectural-link",
+        linked_host_reference_key: "linked-wall",
+        host_category: "OST_RvtLinks"
+      }
+    }]
+  };
+
+  const plan = compileMepDraftPlan(input);
+  assert.equal(plan.status, "ready");
+  assert.equal(plan.actions[0]?.dry_run_body?.hostElementId, 900);
+  assert.equal(plan.actions[0]?.dry_run_body?.linkedHostElementId, 901);
+  assert.equal(plan.actions[0]?.dry_run_body?.sourceElementId, 111);
+  assert.equal(plan.actions[0]?.dry_run_body?.orientationSourceElementId, 112);
+  assert.equal(plan.actions[0]?.dry_run_body?.matchOrientationFromSource, true);
+  assert.deepEqual(plan.actions[0]?.dry_run_body?.parameterNamesToCopy, ["Workset"]);
+  const tagAction = plan.actions.find((entry) => entry.action_key === "tag:linked-wall-receptacle:1");
+  assert.equal(tagAction?.path, "/revit/tag-elements");
+  assert.deepEqual(tagAction?.depends_on, ["place:linked-wall-receptacle"]);
+  assert.equal(tagAction?.apply_body?.viewId, 902);
+  assert.equal(tagAction?.apply_body?.tagTypeName, "Condition Label");
+  assert.deepEqual(tagAction?.deferred_body?.tag_element, { created_by_action: "place:linked-wall-receptacle", output: "created" });
+  const workflow = buildAtomicMepDraftWorkflowRequest(plan);
+  assert.equal(workflow.operations.filter((entry) => entry.path === "/revit/tag-elements").length, 4);
+  assert.equal(workflow.maximumCreatedElements, 5);
+
+  const wrongLinkedCategory = structuredClone(input);
+  wrongLinkedCategory.native_element_references.find((entry) => entry.reference_key === "linked-wall")!.category = "OST_Ceilings";
+  assert.throws(() => compileMepDraftPlan(wrongLinkedCategory), /linked_host_reference_category_mismatch/);
+
+  const wrongMetadataCategory = structuredClone(input);
+  wrongMetadataCategory.native_element_references.find((entry) => entry.reference_key === "receptacle-source")!.category = "OST_MechanicalEquipment";
+  assert.throws(() => compileMepDraftPlan(wrongMetadataCategory), /metadata_source_reference_category_mismatch/);
+
+  const wrongOrientationCategory = structuredClone(input);
+  wrongOrientationCategory.native_element_references.find((entry) => entry.reference_key === "orientation-source")!.category = "OST_MechanicalEquipment";
+  assert.throws(() => compileMepDraftPlan(wrongOrientationCategory), /orientation_source_reference_category_mismatch/);
+
+  const wrongTagViewCategory = structuredClone(input);
+  wrongTagViewCategory.native_element_references.find((entry) => entry.reference_key === "power-view")!.category = "OST_Walls";
+  assert.throws(() => compileMepDraftPlan(wrongTagViewCategory), /annotation_tag_view_reference_category_mismatch/);
+
+  const missingExactLinkedWall = structuredClone(input);
+  const missingExactLinkedWallDevice = missingExactLinkedWall.observations[0];
+  if (!missingExactLinkedWallDevice || missingExactLinkedWallDevice.kind !== "electrical_device"
+    || missingExactLinkedWallDevice.placement.mode !== "hosted_family_symbol") throw new Error("test_setup_failed");
+  delete missingExactLinkedWallDevice.placement.linked_host_reference_key;
+  assert.throws(() => compileMepDraftPlan(missingExactLinkedWall), /revit_link_host_requires_exact_linked_wall_reference/);
+});
+
 test("electrical equipment retains its native category and can participate in a factual circuit", () => {
   const references = [
     ...nativeReferences(),

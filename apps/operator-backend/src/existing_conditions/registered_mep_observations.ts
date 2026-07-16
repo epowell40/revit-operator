@@ -322,6 +322,9 @@ function materialAttributes(observation: Exclude<RegisteredMepPixelObservation, 
     if (observation.airflow_cfm != null) placementAttributes.push("airflow");
     if (clean(observation.workset_name)) placementAttributes.push("workset");
   }
+  if (observation.kind === "electrical_device" && observation.instance_parameters != null) {
+    placementAttributes.push("instance parameters");
+  }
   return placementAttributes;
 }
 

@@ -1019,6 +1019,14 @@ test("registered electrical pixels compile an exact loaded family type onto a ha
     evidence_role: "native_model_inventory",
     reference: "Exact Room 404 wall host resolved from the active target model."
   });
+  device.supported_attributes.push("instance parameters");
+  device.attribute_evidence.push({
+    attribute: "instance parameters",
+    basis: "legible_source_evidence",
+    evidence_role: "registered_source_render",
+    reference: "The source plan prints GFI and +54 inches beside the receptacle symbol."
+  });
+  device.instance_parameters = { "Receptacle Label": "GFI", "Counter 54in": "1" };
   device.supported_attributes.push("spatial membership");
   device.attribute_evidence.push({
     attribute: "spatial membership",
@@ -1040,6 +1048,10 @@ test("registered electrical pixels compile an exact loaded family type onto a ha
   assert.equal(result.compiled_plan.actions[0]?.path, "/revit/place-family-instance-on-host");
   assert.equal(result.compiled_plan.actions[0]?.dry_run_body?.hostElementId, 1313708);
   assert.equal(result.compiled_plan.actions[0]?.dry_run_body?.familyName, "Receptacle A");
+  assert.deepEqual(result.compiled_plan.actions[0]?.dry_run_body?.parameterOverrides, {
+    "Receptacle Label": "GFI",
+    "Counter 54in": "1"
+  });
   assert.equal(Object.hasOwn(result.compiled_plan.actions[0]?.dry_run_body ?? {}, "sourceElementId"), false);
   assert.equal(Object.hasOwn(result.compiled_plan.actions[0]?.dry_run_body ?? {}, "roomNumber"), false);
 });
