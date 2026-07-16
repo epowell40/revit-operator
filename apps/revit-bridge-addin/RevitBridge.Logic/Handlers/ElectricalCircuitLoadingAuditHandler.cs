@@ -77,30 +77,37 @@ namespace RevitBridge.Logic.Handlers
             var panelInventoryComplete = false;
             if (!string.IsNullOrWhiteSpace(requestedPanelName))
             {
-                var panelSystems = discoveredSystemsByElement.Values.SelectMany(value => value)
-                    .GroupBy(system => ElementIdCompat.GetValue(system.Id)).Select(group => group.First())
+                var panelSystems = new FilteredElementCollector(document)
+                    .OfClass(typeof(ElectricalSystem))
+                    .Cast<ElectricalSystem>()
+                    .Where(system => system.SystemType == ElectricalSystemType.PowerCircuit)
                     .Where(system => string.Equals(SafeString(() => system.PanelName), requestedPanelName, StringComparison.OrdinalIgnoreCase))
                     .OrderBy(system => ElementIdCompat.GetValue(system.Id)).ToList();
                 if (panelSystems.Count == 0) throw new InvalidOperationException("circuit_audit_panel_not_found:" + requestedPanelName);
+                if (panelSystems.Count > maximum) throw new InvalidOperationException($"Selected panel circuit inventory exceeds maxElements ({maximum}).");
                 var panelElementIds = panelSystems.Select(system => SafeElementId(() => system.BaseEquipment?.Id))
                     .Where(id => id.HasValue).Select(id => id!.Value).Distinct().OrderBy(id => id).ToList();
                 if (panelElementIds.Count != 1) throw new InvalidOperationException("circuit_audit_panel_identity_ambiguous:" + requestedPanelName);
                 selectedPanelElementId = panelElementIds[0];
-                foreach (var system in panelSystems) systems[ElementIdCompat.GetValue(system.Id)] = system;
-                foreach (var pair in discoveredFixtures)
+                foreach (var system in panelSystems)
                 {
-                    var selectedSystemIds = discoveredSystemsByElement[pair.Key]
-                        .Select(system => ElementIdCompat.GetValue(system.Id)).Where(systems.ContainsKey).OrderBy(id => id).ToList();
-                    if (selectedSystemIds.Count == 0) continue;
-                    scopedInstances[pair.Key] = pair.Value;
-                    systemsByElement[pair.Key] = selectedSystemIds;
+                    var systemId = ElementIdCompat.GetValue(system.Id);
+                    systems[systemId] = system;
+                    foreach (var memberId in GetSystemMemberIds(system))
+                    {
+                        if (!discoveredFixtures.TryGetValue(memberId, out var fixture)) continue;
+                        scopedInstances[memberId] = fixture;
+                        if (!systemsByElement.TryGetValue(memberId, out var selectedSystemIds))
+                        {
+                            selectedSystemIds = new List<long>();
+                            systemsByElement[memberId] = selectedSystemIds;
+                        }
+                        if (!selectedSystemIds.Contains(systemId)) selectedSystemIds.Add(systemId);
+                    }
                 }
+                foreach (var selectedSystemIds in systemsByElement.Values) selectedSystemIds.Sort();
                 requestedIds = scopedInstances.Keys.OrderBy(id => id).ToList();
-                var independentlySelectedIds = discoveredSystemsByElement
-                    .Where(pair => pair.Value.Any(system => systems.ContainsKey(ElementIdCompat.GetValue(system.Id))))
-                    .Select(pair => pair.Key).OrderBy(id => id).ToList();
                 panelInventoryComplete = systems.Count == panelSystems.Count
-                    && requestedIds.SequenceEqual(independentlySelectedIds)
                     && systems.Values.All(system => string.Equals(SafeString(() => system.PanelName), requestedPanelName, StringComparison.OrdinalIgnoreCase))
                     && systems.Values.All(system => SafeElementId(() => system.BaseEquipment?.Id) == selectedPanelElementId);
                 if (!panelInventoryComplete) throw new InvalidOperationException("circuit_audit_panel_inventory_incomplete:" + requestedPanelName);
@@ -195,8 +202,7 @@ namespace RevitBridge.Logic.Handlers
             var wireSize = ReadText(system, "Wire Size");
             if (string.IsNullOrWhiteSpace(wireSize)) wireSize = SafeString(() => system.WireSizeString);
             var matchingProfiles = wireProfiles.Where(profile =>
-                !string.IsNullOrWhiteSpace(profile.wireSizeToken)
-                && wireSize.IndexOf(profile.wireSizeToken, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+                ElectricalWireSizeProfilePolicy.Matches(wireSize, profile.wireSizeToken)).ToList();
             var conductorAmpacity = matchingProfiles.Count == 1 ? matchingProfiles[0].ampacityAmps : (double?)null;
             var closedScope = allMemberIds.Count > 0
                 && allMemberIds.All(scopedInstances.ContainsKey)
@@ -211,7 +217,7 @@ namespace RevitBridge.Logic.Handlers
                 phaseCount = poles == 3 ? 3 : 1,
                 poles,
                 breakerAmps = breaker,
-                nativeMembershipVerified = scopedMemberIds.Count > 0,
+                nativeMembershipVerified = allMemberIds.Count > 0,
                 nativeOcpdVerified = breaker.HasValue && breaker.Value > 0,
                 nativeConductorVerified = !string.IsNullOrWhiteSpace(wireSize) && conductorAmpacity.HasValue,
                 wireSize,
@@ -247,7 +253,12 @@ namespace RevitBridge.Logic.Handlers
                     .OrderBy(system => ElementIdCompat.GetValue(system.Id))
                     .ToList();
             }
-            catch { return new List<ElectricalSystem>(); }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    "circuit_audit_device_system_read_failed:" + ElementIdCompat.GetValue(instance.Id).ToString(CultureInfo.InvariantCulture),
+                    ex);
+            }
         }
 
         private static List<long> GetSystemMemberIds(ElectricalSystem system)
@@ -260,7 +271,12 @@ namespace RevitBridge.Logic.Handlers
                     if (element?.Id != null) ids.Add(ElementIdCompat.GetValue(element.Id));
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    "circuit_audit_system_membership_read_failed:" + ElementIdCompat.GetValue(system.Id).ToString(CultureInfo.InvariantCulture),
+                    ex);
+            }
             return ids.Distinct().ToList();
         }
 
@@ -271,7 +287,7 @@ namespace RevitBridge.Logic.Handlers
             if (rows.Any(row => string.IsNullOrWhiteSpace(row.wireSizeToken) || double.IsNaN(row.ampacityAmps)
                 || double.IsInfinity(row.ampacityAmps) || row.ampacityAmps <= 0))
                 throw new ArgumentException("wireAmpacityProfiles contains an invalid token or ampacity.");
-            if (rows.GroupBy(row => row.wireSizeToken.Trim(), StringComparer.OrdinalIgnoreCase).Any(group => group.Count() > 1))
+            if (rows.GroupBy(row => ElectricalWireSizeProfilePolicy.Canonicalize(row.wireSizeToken), StringComparer.Ordinal).Any(group => group.Count() > 1))
                 throw new ArgumentException("wireAmpacityProfiles contains duplicate wire-size tokens.");
         }
 
