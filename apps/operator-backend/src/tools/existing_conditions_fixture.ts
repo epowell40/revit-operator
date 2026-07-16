@@ -98,6 +98,10 @@ import {
 } from "../existing_conditions/architectural_source_delta.js";
 import { auditArchitecturalRedactionVisibility } from "../existing_conditions/architectural_redaction_visibility_gate.js";
 import {
+  buildExistingConditionsDeleteRequest,
+  verifyExistingConditionsDeletedElementReadback
+} from "../existing_conditions/redaction_delete_request.js";
+import {
   auditLinkedBackgroundModelHealth,
   DEFAULT_LINKED_BACKGROUND_MODEL_GATE_POLICY
 } from "../existing_conditions/linked_background_model_gate.js";
@@ -250,6 +254,7 @@ function usage(): never {
     "  --evaluator-visual-receipt <json>  Attach a separately generated evaluator visual-review receipt.",
     "  --notes <text|text>        Pipe-delimited evaluator notes for evaluator-review-visual.",
     "  --resume-staging            Resume from the already active --staging-model after a prior safety stop.",
+    "  --resume-redacted           Finalize receipts from the already active --redacted-model after verifying every requested ID is absent.",
     "  --bridge-url <url>          Default: http://localhost:5000."
   ].join("\n"));
 }
@@ -1496,61 +1501,80 @@ async function runRedaction(): Promise<void> {
   const ids = parseIds(requiredArgument("--ids"));
   const anchorIds = parseIds(requiredArgument("--anchor-ids"));
   const resumeStaging = process.argv.includes("--resume-staging");
+  const resumeRedacted = process.argv.includes("--resume-redacted");
+  if (resumeStaging && resumeRedacted) throw new Error("--resume-staging and --resume-redacted are mutually exclusive.");
   if (!Number.isInteger(viewId) || viewId <= 0) throw new Error("--view-id must be a positive integer.");
   if (!fs.existsSync(expectedSource)) throw new Error(`Expected source does not exist: ${expectedSource}`);
   if (canonicalPath(expectedSource) === canonicalPath(stagingModel) || canonicalPath(expectedSource) === canonicalPath(redactedModel)) {
     throw new Error("Source, staging, and redacted model paths must be distinct.");
   }
   if (canonicalPath(stagingModel) === canonicalPath(redactedModel)) throw new Error("Staging and redacted model paths must be distinct.");
-  if ((!resumeStaging && fs.existsSync(stagingModel)) || fs.existsSync(redactedModel)) throw new Error("Refusing to overwrite an existing staging or redacted model.");
+  if (!resumeStaging && !resumeRedacted && (fs.existsSync(stagingModel) || fs.existsSync(redactedModel))) {
+    throw new Error("Refusing to overwrite an existing staging or redacted model.");
+  }
+  if (resumeStaging && fs.existsSync(redactedModel)) throw new Error("--resume-staging refuses an existing redacted model.");
   if (resumeStaging && !fs.existsSync(stagingModel)) throw new Error("--resume-staging requires an existing staging model.");
+  if (resumeRedacted && !fs.existsSync(redactedModel)) throw new Error("--resume-redacted requires an existing redacted model.");
   const withheldDir = path.join(outDir, "withheld");
   const agentDir = path.join(outDir, "agent");
   fs.mkdirSync(withheldDir, { recursive: true });
   fs.mkdirSync(agentDir, { recursive: true });
   const client = bridgeClient();
   const sourceContext = await client.get("/revit/context");
-  const expectedActivePath = resumeStaging ? stagingModel : expectedSource;
+  const expectedActivePath = resumeRedacted ? redactedModel : resumeStaging ? stagingModel : expectedSource;
   if (canonicalPath(activeDocumentPath(sourceContext)) !== canonicalPath(expectedActivePath)) {
-    throw new Error(`Active document is not the expected ${resumeStaging ? "staging model" : "source"}: ${activeDocumentPath(sourceContext)}`);
+    const expectedRole = resumeRedacted ? "redacted model" : resumeStaging ? "staging model" : "source";
+    throw new Error(`Active document is not the expected ${expectedRole}: ${activeDocumentPath(sourceContext)}`);
   }
-  const stagingPlan = resumeStaging
-    ? { status: "Skipped", reason: "resume_staging" }
+  const stagingPlan = resumeStaging || resumeRedacted
+    ? { status: "Skipped", reason: resumeRedacted ? "resume_redacted" : "resume_staging" }
     : await client.post("/revit/save-as", {
       filePath: stagingModel, overwrite: false, compact: true, maximumBackups: 1, dryRun: true
     }, true);
-  const stagingSave = resumeStaging
-    ? { status: "Skipped", reason: "resume_staging", path: stagingModel }
+  const stagingSave = resumeStaging || resumeRedacted
+    ? { status: "Skipped", reason: resumeRedacted ? "resume_redacted" : "resume_staging", path: stagingModel }
     : await client.post("/revit/save-as", {
       filePath: stagingModel, overwrite: false, compact: true, maximumBackups: 1, dryRun: false
     }, true);
-  const stagingContext = await client.get("/revit/context");
-  if (canonicalPath(activeDocumentPath(stagingContext)) !== canonicalPath(stagingModel)) {
+  const stagingContext = resumeRedacted ? sourceContext : await client.get("/revit/context");
+  if (!resumeRedacted && canonicalPath(activeDocumentPath(stagingContext)) !== canonicalPath(stagingModel)) {
     throw new Error(`Save As did not activate the staging model: ${activeDocumentPath(stagingContext)}`);
   }
-  const deletePlan = await client.post("/revit/delete", { ids, apply: false }, true);
-  const plannedDeleteIds = responseIds(deletePlan);
   const requested = [...ids].sort((a, b) => a - b);
-  const dependentIds = plannedDeleteIds.filter((id) => !requested.includes(id));
-  if (!process.argv.includes("--allow-dependent-deletes") && dependentIds.length > 0) {
-    throw new Error(`Delete dry-run included dependent IDs: ${dependentIds.join(",")}`);
+  const deletePlan = resumeRedacted
+    ? { status: "Skipped", reason: "resume_redacted_requires_native_absence_readback" }
+    : await client.post("/revit/delete", buildExistingConditionsDeleteRequest(ids, false), true);
+  const plannedDeleteIds = resumeRedacted ? requested : responseIds(deletePlan);
+  const dependentIds = resumeRedacted ? [] : plannedDeleteIds.filter((id) => !requested.includes(id));
+  if (!resumeRedacted) {
+    if (!process.argv.includes("--allow-dependent-deletes") && dependentIds.length > 0) {
+      throw new Error(`Delete dry-run included dependent IDs: ${dependentIds.join(",")}`);
+    }
+    if (requested.some((id) => !plannedDeleteIds.includes(id))) throw new Error("Delete dry-run did not cover every requested ID.");
   }
-  if (requested.some((id) => !plannedDeleteIds.includes(id))) throw new Error("Delete dry-run did not cover every requested ID.");
-  const deleteApply = await client.post("/revit/delete", { ids, apply: true }, true);
-  const appliedDeleteIds = responseIds(deleteApply);
-  if (JSON.stringify(appliedDeleteIds) !== JSON.stringify(plannedDeleteIds)) {
+  const deleteApply = resumeRedacted
+    ? { status: "Skipped", reason: "resume_redacted_requires_native_absence_readback" }
+    : await client.post("/revit/delete", buildExistingConditionsDeleteRequest(ids, true), true);
+  const appliedDeleteIds = resumeRedacted ? requested : responseIds(deleteApply);
+  if (!resumeRedacted && JSON.stringify(appliedDeleteIds) !== JSON.stringify(plannedDeleteIds)) {
     throw new Error(`Delete apply IDs differ from dry-run IDs: planned=${plannedDeleteIds.join(",")} applied=${appliedDeleteIds.join(",")}`);
   }
-  const finalPlan = await client.post("/revit/save-as", {
-    filePath: redactedModel, overwrite: false, compact: true, maximumBackups: 1, dryRun: true
-  }, true);
-  const finalSave = await client.post("/revit/save-as", {
-    filePath: redactedModel, overwrite: false, compact: true, maximumBackups: 1, dryRun: false
-  }, true);
+  const finalPlan = resumeRedacted
+    ? { status: "Skipped", reason: "resume_redacted", path: redactedModel }
+    : await client.post("/revit/save-as", {
+      filePath: redactedModel, overwrite: false, compact: true, maximumBackups: 1, dryRun: true
+    }, true);
+  const finalSave = resumeRedacted
+    ? { status: "Skipped", reason: "resume_redacted", path: redactedModel }
+    : await client.post("/revit/save-as", {
+      filePath: redactedModel, overwrite: false, compact: true, maximumBackups: 1, dryRun: false
+    }, true);
   const finalContext = await client.get("/revit/context");
   if (canonicalPath(activeDocumentPath(finalContext)) !== canonicalPath(redactedModel)) {
     throw new Error(`Final Save As did not activate the redacted model: ${activeDocumentPath(finalContext)}`);
   }
+  const deletedElementReadback = await client.post("/revit/get-element-summary", { elementIds: requested });
+  verifyExistingConditionsDeletedElementReadback(deletedElementReadback, requested);
   const visibleAfter = await client.post("/revit/export-visible-elements", {
     viewId,
     imageSize: 3000,
@@ -1574,6 +1598,7 @@ async function runRedaction(): Promise<void> {
   writeJson(path.join(withheldDir, "delete_apply.json"), deleteApply);
   writeJson(path.join(withheldDir, "final_save_plan.json"), finalPlan);
   writeJson(path.join(withheldDir, "final_save_result.json"), finalSave);
+  writeJson(path.join(withheldDir, "deleted_element_absence_readback.json"), deletedElementReadback);
   writeJson(path.join(withheldDir, "redaction_manifest.json"), {
     schema_version: 1,
     expected_source: expectedSource,
@@ -1583,7 +1608,9 @@ async function runRedaction(): Promise<void> {
     redacted_model_sha256: sha256(redactedModel),
     requested_element_ids: requested,
     deleted_element_ids: appliedDeleteIds,
-    dependent_element_ids: dependentIds,
+    dependent_element_ids: resumeRedacted ? null : dependentIds,
+    dependent_element_ids_status: resumeRedacted ? "unavailable_after_interrupted_controller" : "recorded_from_delete_dry_run",
+    requested_element_absence_verified: true,
     view_id: viewId,
     anchor_element_ids: anchorIds
   });
