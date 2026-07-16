@@ -10,6 +10,7 @@ import {
   type ElectricalConduitRouteObservation,
   type ElectricalDeviceObservation,
   type ElectricalEquipmentObservation,
+  type LightFixtureObservation,
   type MepDraftPlacement,
   type MepDraftPackage,
   type MechanicalDuctRouteObservation,
@@ -105,6 +106,10 @@ export type RegisteredElectricalDeviceObservation = Omit<ElectricalDeviceObserva
   pixel_point: ExistingConditionsPlanPoint;
 };
 
+export type RegisteredLightFixtureObservation = Omit<LightFixtureObservation, "point"> & WithAttributeEvidence & {
+  pixel_point: ExistingConditionsPlanPoint;
+};
+
 export type RegisteredElectricalConduitRouteObservation = Omit<ElectricalConduitRouteObservation, "points"> & WithAttributeEvidence & {
   pixel_points: ExistingConditionsPlanPoint[];
 };
@@ -126,6 +131,7 @@ export type RegisteredMepPixelObservation =
   | RegisteredPlumbingFixtureObservation
   | RegisteredElectricalConduitRouteObservation
   | RegisteredElectricalDeviceObservation
+  | RegisteredLightFixtureObservation
   | RegisteredElectricalEquipmentObservation
   | ElectricalCircuitObservation;
 
@@ -320,6 +326,10 @@ function materialAttributes(observation: Exclude<RegisteredMepPixelObservation, 
     : ["type"];
   if (observation.kind === "air_terminal") {
     if (observation.airflow_cfm != null) placementAttributes.push("airflow");
+    if (clean(observation.workset_name)) placementAttributes.push("workset");
+  }
+  if (observation.kind === "light_fixture") {
+    placementAttributes.push("elevation");
     if (clean(observation.workset_name)) placementAttributes.push("workset");
   }
   if (observation.kind === "electrical_device" && observation.instance_parameters != null) {

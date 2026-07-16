@@ -234,6 +234,45 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
     }]
   };
   assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", input));
+  const lightFixture = structuredClone(input) as unknown as {
+    visible_evidence: Array<{ role: string; sha256: string }>;
+    native_element_references: Array<{
+      reference_key: string;
+      element_id: number;
+      category: string;
+      role: string;
+      evidence_role: string;
+      evidence_sha256: string;
+    }>;
+    observations: Array<Record<string, unknown>>;
+  };
+  lightFixture.visible_evidence.push({ role: "native_model_inventory", sha256: "c".repeat(64) });
+  lightFixture.native_element_references = [{
+    reference_key: "lighting-view",
+    element_id: 5301,
+    category: "View",
+    role: "lighting plan",
+    evidence_role: "native_model_inventory",
+    evidence_sha256: "c".repeat(64)
+  }];
+  lightFixture.observations[0]!.kind = "light_fixture";
+  delete lightFixture.observations[0]!.instance_parameters;
+  lightFixture.observations[0]!.role = "linear light fixture";
+  lightFixture.observations[0]!.workset_name = "E-LIGHTING";
+  lightFixture.observations[0]!.placement = {
+    mode: "unhosted_family",
+    family_name: "Linear Light",
+    type_name: "Linear 2 Foot",
+    annotation_tags: [{
+      view_reference_key: "lighting-view",
+      family_name: "Lighting Fixture Tag",
+      type_name: "Type Mark",
+      offset_x_ft: 0.75,
+      offset_y_ft: 0.5,
+      add_leader: false
+    }]
+  };
+  assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", lightFixture));
   const equipment = structuredClone(input);
   (equipment.observations[0] as Record<string, unknown>).kind = "electrical_equipment";
   (equipment.observations[0] as Record<string, unknown>).role = "panelboard";

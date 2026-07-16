@@ -70,6 +70,7 @@
           { "$ref": "#/$defs/plumbing_fixture" },
           { "$ref": "#/$defs/conduit_route" },
           { "$ref": "#/$defs/electrical_device" },
+          { "$ref": "#/$defs/light_fixture" },
           { "$ref": "#/$defs/electrical_equipment" },
           { "$ref": "#/$defs/electrical_circuit" }
         ]
@@ -130,7 +131,25 @@
             "mode": { "const": "unhosted_family" },
             "family_name": { "type": "string", "minLength": 1 },
             "type_name": { "type": "string", "minLength": 1 },
-            "rotation_degrees": { "type": "number" }
+            "rotation_degrees": { "type": "number" },
+            "annotation_tags": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 4,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["view_reference_key", "family_name", "type_name", "offset_x_ft", "offset_y_ft"],
+                "properties": {
+                  "view_reference_key": { "type": "string", "minLength": 1 },
+                  "family_name": { "type": "string", "minLength": 1 },
+                  "type_name": { "type": "string", "minLength": 1 },
+                  "offset_x_ft": { "type": "number", "minimum": -10, "maximum": 10 },
+                  "offset_y_ft": { "type": "number", "minimum": -10, "maximum": 10 },
+                  "add_leader": { "type": "boolean" }
+                }
+              }
+            }
           }
         },
         {
@@ -651,6 +670,26 @@
         },
         "pixel_point": { "$ref": "#/$defs/point" },
         "elevation_ft": { "type": "number" },
+        "placement": { "$ref": "#/$defs/placement" }
+      }
+    },
+    "light_fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "role", "pixel_point", "elevation_ft", "placement"],
+      "properties": {
+        "kind": { "const": "light_fixture" },
+        "discipline": { "const": "electrical" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
+        "role": { "type": "string", "minLength": 1 },
+        "pixel_point": { "$ref": "#/$defs/point" },
+        "elevation_ft": { "type": "number" },
+        "workset_name": { "type": "string", "minLength": 1 },
         "placement": { "$ref": "#/$defs/placement" }
       }
     },

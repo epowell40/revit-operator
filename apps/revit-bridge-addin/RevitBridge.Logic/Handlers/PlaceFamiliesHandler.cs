@@ -285,7 +285,12 @@ namespace RevitBridge.Logic.Handlers
 
                             if (instData.rotationDegrees.HasValue && Math.Abs(instData.rotationDegrees.Value) > 1e-9)
                             {
-                                RotateAboutZ(doc, fi.Id, TryGetLocationPoint(fi) ?? actualPlacementPoint, instData.rotationDegrees.Value);
+                                // Some level-based families expose a LocationPoint at the family origin rather
+                                // than at the requested model-space insertion point. Rotating about that value
+                                // can orbit the new instance around the project origin. The placement workflow
+                                // already tracks the authoritative insertion point (or projected host point), so
+                                // keep rotation local to that point.
+                                RotateAboutZ(doc, fi.Id, actualPlacementPoint, instData.rotationDegrees.Value);
                             }
 
                             if (instData.parameters != null)

@@ -48,7 +48,7 @@ export type BoundedMepRegionCoverageV1 = {
 
 export type MepCoverageObservationDescriptor = {
   observation_id: string;
-  kind: "duct_route" | "conduit_route" | "air_terminal" | "mechanical_equipment" | "pipe_route" | "plumbing_fixture" | "electrical_device" | "electrical_equipment" | "electrical_circuit";
+  kind: "duct_route" | "conduit_route" | "air_terminal" | "mechanical_equipment" | "pipe_route" | "plumbing_fixture" | "electrical_device" | "light_fixture" | "electrical_equipment" | "electrical_circuit";
   discipline: MepCoverageDiscipline;
 };
 

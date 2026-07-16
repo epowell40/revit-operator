@@ -23,6 +23,15 @@ export type MepDraftAttributeProvenance = {
   reference: string;
 };
 
+export type MepDraftAnnotationTag = {
+  view_reference_key: string;
+  family_name: string;
+  type_name: string;
+  offset_x_ft: number;
+  offset_y_ft: number;
+  add_leader?: boolean;
+};
+
 type MepDraftObservationBase = {
   observation_id: string;
   evidence_role?: string;
@@ -38,6 +47,8 @@ export type MepDraftPlacement =
       family_name: string;
       type_name: string;
       rotation_degrees?: number;
+      /** Exact view-bound annotation tags required to reproduce source-visible labels. */
+      annotation_tags?: MepDraftAnnotationTag[];
     }
   | {
       /** Place an exact loaded family/type on an exact native host face without borrowing a source exemplar. */
@@ -49,14 +60,7 @@ export type MepDraftPlacement =
       /** Optional same-category precedent used only to establish plan-readable family orientation. */
       orientation_source_reference_key?: string;
       /** Exact view-bound annotation tags required to reproduce source-visible labels. */
-      annotation_tags?: Array<{
-        view_reference_key: string;
-        family_name: string;
-        type_name: string;
-        offset_x_ft: number;
-        offset_y_ft: number;
-        add_leader?: boolean;
-      }>;
+      annotation_tags?: MepDraftAnnotationTag[];
       host_reference_key: string;
       /** Exact wall element inside a linked-model host, resolved from a separate hash-bound native reference. */
       linked_host_reference_key?: string;
@@ -342,6 +346,12 @@ export type ElectricalDeviceObservation = ElectricalFamilyInstanceObservationBas
   instance_parameters?: Record<string, string>;
 };
 
+export type LightFixtureObservation = ElectricalFamilyInstanceObservationBase & {
+  kind: "light_fixture";
+  /** Exact project workset name, supported by project-native precedent or explicit direction. */
+  workset_name?: string;
+};
+
 export type ElectricalEquipmentObservation = ElectricalFamilyInstanceObservationBase & {
   kind: "electrical_equipment";
   /** Source-visible panel identity applied to Revit's writable Panel Name parameter. */
@@ -397,6 +407,7 @@ export type MepDraftObservation =
   | MechanicalHydronicPipeRouteObservation
   | PlumbingFixtureObservation
   | ElectricalDeviceObservation
+  | LightFixtureObservation
   | ElectricalEquipmentObservation
   | ElectricalCircuitObservation;
 
@@ -652,7 +663,7 @@ function materialAttributes(observation: MepDraftObservation): string[] {
       : ["location", "type", "service topology"];
   }
   if (observation.kind === "mechanical_equipment" || observation.kind === "air_terminal"
-    || observation.kind === "electrical_device" || observation.kind === "electrical_equipment") {
+    || observation.kind === "electrical_device" || observation.kind === "light_fixture" || observation.kind === "electrical_equipment") {
     const placementAttributes = observation.placement.mode === "hosted_exemplar"
       || observation.placement.mode === "hosted_family_symbol"
       || observation.placement.mode === "created_route_host"
@@ -661,6 +672,10 @@ function materialAttributes(observation: MepDraftObservation): string[] {
       : ["location", "type"];
     if (observation.kind === "air_terminal") {
       if (observation.airflow_cfm != null) placementAttributes.push("airflow");
+      if (routeWorksetName(observation)) placementAttributes.push("workset");
+    }
+    if (observation.kind === "light_fixture") {
+      placementAttributes.push("elevation");
       if (routeWorksetName(observation)) placementAttributes.push("workset");
     }
     if (observation.kind === "electrical_device" && observation.instance_parameters != null) {
@@ -678,6 +693,7 @@ function category(observation: MepDraftObservation): string {
   if (observation.kind === "air_terminal") return "OST_DuctTerminal";
   if (observation.kind === "pipe_route") return "OST_PipeCurves";
   if (observation.kind === "plumbing_fixture") return "OST_PlumbingFixtures";
+  if (observation.kind === "light_fixture") return "OST_LightingFixtures";
   if (observation.kind === "electrical_equipment") return "OST_ElectricalEquipment";
   return "OST_ElectricalFixtures";
 }
@@ -773,6 +789,34 @@ function validatePlacement(placement: MepDraftPlacement, observationId: string):
   if (placement.require_room_membership_validation === false && placement.room_side != null) {
     throw new Error(`${observationId}_room_side_requires_room_membership_validation`);
   }
+}
+
+function validateAnnotationTags(
+  placement: MepDraftPlacement,
+  observationId: string,
+  nativeReferences: Map<string, MepDraftPackage["native_element_references"][number]>
+): void {
+  if (placement.mode !== "unhosted_family" && placement.mode !== "hosted_family_symbol") return;
+  if (placement.annotation_tags == null) return;
+  if (!Array.isArray(placement.annotation_tags)
+    || placement.annotation_tags.length < 1
+    || placement.annotation_tags.length > 4) {
+    throw new Error(`${observationId}_annotation_tags_count_out_of_range`);
+  }
+  placement.annotation_tags.forEach((tag, index) => {
+    requiredText(tag.family_name, `${observationId}_annotation_tag_family_${index}`);
+    requiredText(tag.type_name, `${observationId}_annotation_tag_type_${index}`);
+    const viewReference = nativeReferences.get(requiredText(tag.view_reference_key, `${observationId}_annotation_tag_view_${index}`));
+    if (!viewReference) throw new Error(`${observationId}_annotation_tag_view_reference_unknown:${index}`);
+    if (!new Set(["view", "ost views"]).has(normalized(viewReference.category))) {
+      throw new Error(`${observationId}_annotation_tag_view_reference_category_mismatch:${index}`);
+    }
+    const offsetX = finite(tag.offset_x_ft, `${observationId}_annotation_tag_offset_x_${index}`);
+    const offsetY = finite(tag.offset_y_ft, `${observationId}_annotation_tag_offset_y_${index}`);
+    if (Math.abs(offsetX) > 10 || Math.abs(offsetY) > 10) {
+      throw new Error(`${observationId}_annotation_tag_offset_out_of_range:${index}`);
+    }
+  });
 }
 
 function validateObservation(observation: MepDraftObservation, index: number): void {
@@ -966,7 +1010,7 @@ function validateObservation(observation: MepDraftObservation, index: number): v
     return;
   }
   if (observation.kind === "mechanical_equipment" || observation.kind === "air_terminal"
-    || observation.kind === "plumbing_fixture" || observation.kind === "electrical_device" || observation.kind === "electrical_equipment") {
+    || observation.kind === "plumbing_fixture" || observation.kind === "electrical_device" || observation.kind === "light_fixture" || observation.kind === "electrical_equipment") {
     requiredText(observation.role, `${id}_role`);
     finite(observation.point.x, `${id}_point_x`);
     finite(observation.point.y, `${id}_point_y`);
@@ -985,6 +1029,12 @@ function validateObservation(observation: MepDraftObservation, index: number): v
         if (observation.placement.mode === "hosted_exemplar" || observation.placement.mode === "hosted_family_symbol") {
           throw new Error(`${id}_workset_name_requires_place_families_mode`);
         }
+      }
+    }
+    if (observation.kind === "light_fixture" && routeWorksetName(observation)) {
+      requiredText(routeWorksetName(observation), `${id}_workset_name`);
+      if (observation.placement.mode !== "unhosted_family") {
+        throw new Error(`${id}_workset_name_requires_place_families_mode`);
       }
     }
     if (observation.kind === "electrical_equipment" && observation.panel_name != null) {
@@ -1133,7 +1183,7 @@ function validateObservation(observation: MepDraftObservation, index: number): v
 }
 
 function pointAction(
-  observation: MechanicalEquipmentObservation | AirTerminalObservation | PlumbingFixtureObservation | ElectricalDeviceObservation | ElectricalEquipmentObservation,
+  observation: MechanicalEquipmentObservation | AirTerminalObservation | PlumbingFixtureObservation | ElectricalDeviceObservation | LightFixtureObservation | ElectricalEquipmentObservation,
   transformed: ExistingConditionsPlanPoint,
   levelName: string,
   levelElevationFt: number,
@@ -1169,8 +1219,8 @@ function pointAction(
       idempotency: { enabled: true, toleranceFt: 0.05 },
       behavior: "allOrNothing"
     };
-    if (observation.kind === "air_terminal") common.allowUnhostedWorkPlanePlacement = true;
-    if (observation.kind === "air_terminal" && observation.workset_name) common.worksetName = observation.workset_name;
+    if (observation.kind === "air_terminal" || observation.kind === "light_fixture") common.allowUnhostedWorkPlanePlacement = true;
+    if ((observation.kind === "air_terminal" || observation.kind === "light_fixture") && observation.workset_name) common.worksetName = observation.workset_name;
     return {
       action_key: actionKey,
       observation_ids: [observation.observation_id],
@@ -1602,7 +1652,12 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         }
       }
     }
-    if ((observation.kind === "plumbing_fixture" || observation.kind === "electrical_device" || observation.kind === "electrical_equipment")
+    if (observation.kind === "mechanical_equipment" || observation.kind === "air_terminal"
+      || observation.kind === "plumbing_fixture" || observation.kind === "electrical_device"
+      || observation.kind === "light_fixture" || observation.kind === "electrical_equipment") {
+      validateAnnotationTags(observation.placement, observation.observation_id, nativeReferences);
+    }
+    if ((observation.kind === "plumbing_fixture" || observation.kind === "electrical_device" || observation.kind === "light_fixture" || observation.kind === "electrical_equipment")
       && (observation.placement.mode === "hosted_exemplar" || observation.placement.mode === "hosted_family_symbol")) {
       if (observation.placement.mode === "hosted_family_symbol") {
         const hostReference = nativeReferences.get(observation.placement.host_reference_key);
@@ -1638,27 +1693,6 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
             throw new Error(`${observation.observation_id}_orientation_source_reference_category_mismatch`);
           }
         }
-        if (observation.placement.annotation_tags != null) {
-          if (!Array.isArray(observation.placement.annotation_tags)
-            || observation.placement.annotation_tags.length < 1
-            || observation.placement.annotation_tags.length > 4) {
-            throw new Error(`${observation.observation_id}_annotation_tags_count_out_of_range`);
-          }
-          observation.placement.annotation_tags.forEach((tag, index) => {
-            requiredText(tag.family_name, `${observation.observation_id}_annotation_tag_family_${index}`);
-            requiredText(tag.type_name, `${observation.observation_id}_annotation_tag_type_${index}`);
-            const viewReference = nativeReferences.get(requiredText(tag.view_reference_key, `${observation.observation_id}_annotation_tag_view_${index}`));
-            if (!viewReference) throw new Error(`${observation.observation_id}_annotation_tag_view_reference_unknown:${index}`);
-            if (!new Set(["view", "ost views"]).has(normalized(viewReference.category))) {
-              throw new Error(`${observation.observation_id}_annotation_tag_view_reference_category_mismatch:${index}`);
-            }
-            const offsetX = finite(tag.offset_x_ft, `${observation.observation_id}_annotation_tag_offset_x_${index}`);
-            const offsetY = finite(tag.offset_y_ft, `${observation.observation_id}_annotation_tag_offset_y_${index}`);
-            if (Math.abs(offsetX) > 10 || Math.abs(offsetY) > 10) {
-              throw new Error(`${observation.observation_id}_annotation_tag_offset_out_of_range:${index}`);
-            }
-          });
-        }
         continue;
       }
       const sourceReference = nativeReferences.get(observation.placement.source_reference_key);
@@ -1680,7 +1714,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
       }
       for (const memberId of observation.member_observation_ids) {
         const member = byId.get(memberId);
-        if (!member || (member.kind !== "electrical_device" && member.kind !== "electrical_equipment")) {
+        if (!member || (member.kind !== "electrical_device" && member.kind !== "light_fixture" && member.kind !== "electrical_equipment")) {
           throw new Error(`${observation.observation_id}_references_unknown_electrical_device:${memberId}`);
         }
         const existingCircuit = assignedElectricalDevices.get(memberId);
@@ -1692,7 +1726,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
       for (const referenceKey of nativeMemberReferenceKeys) {
         const memberReference = nativeReferences.get(referenceKey);
         if (!memberReference) throw new Error(`${observation.observation_id}_native_member_reference_unknown:${referenceKey}`);
-        if (!["OST_ElectricalFixtures", "OST_ElectricalEquipment", "OST_MechanicalEquipment"].map(normalized).includes(normalized(memberReference.category))) {
+        if (!["OST_ElectricalFixtures", "OST_LightingFixtures", "OST_ElectricalEquipment", "OST_MechanicalEquipment"].map(normalized).includes(normalized(memberReference.category))) {
           throw new Error(`${observation.observation_id}_native_member_reference_category_mismatch:${referenceKey}`);
         }
         const assignmentKey = `native:${referenceKey}`;
@@ -1749,7 +1783,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
       }
       const sourceReference = nativeReferences.get(observation.source_reference_key);
       if (!sourceReference) throw new Error(`${observation.observation_id}_source_reference_unknown`);
-      if (!["OST_ElectricalFixtures", "OST_ElectricalEquipment"].map(normalized).includes(normalized(sourceReference.category))) {
+      if (!["OST_ElectricalFixtures", "OST_LightingFixtures", "OST_ElectricalEquipment"].map(normalized).includes(normalized(sourceReference.category))) {
         throw new Error(`${observation.observation_id}_source_reference_category_mismatch`);
       }
       const powerSystemIds = unique(sourceReference.power_system_ids ?? []);
@@ -2007,7 +2041,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         continue;
       }
       if (observation.kind === "mechanical_equipment" || observation.kind === "air_terminal"
-        || observation.kind === "plumbing_fixture" || observation.kind === "electrical_device" || observation.kind === "electrical_equipment") {
+        || observation.kind === "plumbing_fixture" || observation.kind === "electrical_device" || observation.kind === "light_fixture" || observation.kind === "electrical_equipment") {
         actions.push(pointAction(
           observation,
           transformExistingConditionsPlanPoint(registration, observation.point),
@@ -2341,8 +2375,10 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
       }
     }
     for (const observation of input.observations) {
-      if ((observation.kind !== "electrical_device" && observation.kind !== "electrical_equipment")
-        || observation.placement.mode !== "hosted_family_symbol"
+      if ((observation.kind !== "mechanical_equipment" && observation.kind !== "air_terminal"
+          && observation.kind !== "plumbing_fixture" && observation.kind !== "electrical_device"
+          && observation.kind !== "light_fixture" && observation.kind !== "electrical_equipment")
+        || (observation.placement.mode !== "unhosted_family" && observation.placement.mode !== "hosted_family_symbol")
         || !observation.placement.annotation_tags?.length) continue;
       const placementAction = `place:${observation.observation_id}`;
       const circuitDependencies = actions

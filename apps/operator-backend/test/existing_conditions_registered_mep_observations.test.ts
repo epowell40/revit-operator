@@ -1272,6 +1272,63 @@ test("registered render evidence cannot be labeled as evaluator or withheld trut
   await assert.rejects(() => compileRegisteredMepObservations(input), /render_evidence_role_forbidden/);
 });
 
+test("registered lighting pixels compile to native lighting fixtures with work-plane placement and a readable type tag", async () => {
+  const input = electricalInput();
+  const modelHash = "c".repeat(64);
+  input.fixture_id = "registered-lighting-independent-v1";
+  input.scope_id = "unseen-lighting-bay-beta";
+  input.visible_evidence.push({ role: "native_model_inventory", sha256: modelHash });
+  input.native_element_references = [{
+    reference_key: "lighting-view",
+    element_id: 5301,
+    category: "View",
+    role: "lighting plan",
+    evidence_role: "native_model_inventory",
+    evidence_sha256: modelHash
+  }];
+  input.observations = [{
+    kind: "light_fixture",
+    discipline: "electrical",
+    observation_id: "light-random-91",
+    visibility: "clear",
+    confidence: 0.96,
+    supported_attributes: ["location", "type", "elevation", "workset"],
+    attribute_evidence: [
+      { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "linear fixture symbol and type mark are legible at the selected pixel" },
+      { attribute: "elevation", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "same-family project level-offset precedent" },
+      { attribute: "workset", basis: "native_model_precedent", evidence_role: "native_model_inventory", reference: "same-category project lighting precedent" }
+    ],
+    role: "linear light fixture",
+    pixel_point: { x: 35, y: 65 },
+    elevation_ft: 0.5,
+    workset_name: "E-LIGHTING",
+    placement: {
+      mode: "unhosted_family",
+      family_name: "Linear Light",
+      type_name: "Linear 2 Foot",
+      rotation_degrees: 0,
+      annotation_tags: [{
+        view_reference_key: "lighting-view",
+        family_name: "Lighting Fixture Tag",
+        type_name: "Type Mark",
+        offset_x_ft: 0.75,
+        offset_y_ft: 0.5,
+        add_leader: false
+      }]
+    }
+  }];
+  input.source_coverage = electricalCoverage(input);
+
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.status, "ready");
+  assert.equal(result.compiled_plan.plan_elements[0]?.category, "OST_LightingFixtures");
+  assert.equal(result.compiled_plan.actions[0]?.apply_body?.allowUnhostedWorkPlanePlacement, true);
+  assert.equal(result.compiled_plan.actions[0]?.apply_body?.worksetName, "E-LIGHTING");
+  assert.deepEqual(result.compiled_plan.actions[0]?.expected_model_point, { x: 103.5, y: 203.5, z: 32.5 });
+  const tag = result.compiled_plan.actions.find((entry) => entry.path === "/revit/tag-elements");
+  assert.equal(tag?.apply_body?.viewId, 5301);
+});
+
 test("CLI emits the validated package, compiled plan, and atomic dry-run workflow", () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "registered-mep-cli-"));
   const inputPath = path.join(directory, "input.json");

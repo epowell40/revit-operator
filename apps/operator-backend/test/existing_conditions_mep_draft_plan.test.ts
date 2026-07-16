@@ -2434,3 +2434,96 @@ test("new fixture, sanitary route, and downstream vent audit form one ordered at
   }]);
   assert.deepEqual(audit.deferred_body?.fixture_element_ids, []);
 });
+
+test("light fixtures use the lighting category, work-plane placement, plan tags, and explicit circuit evidence", () => {
+  const input: MepDraftPackage = {
+    schema_version: 1,
+    fixture_id: "independent-lighting-layout-v1",
+    scope_id: "unseen-lighting-bay-alpha",
+    source_evidence_sha256: SOURCE_HASH,
+    visible_evidence: visibleEvidence(),
+    native_element_references: [
+      ...nativeReferences(),
+      {
+        reference_key: "lighting-precedent",
+        element_id: 777,
+        category: "OST_LightingFixtures",
+        role: "loaded linear lighting type and circuit precedent",
+        evidence_role: "native_model_inventory",
+        evidence_sha256: MODEL_HASH,
+        power_system_ids: ["system-777"]
+      },
+      {
+        reference_key: "lighting-view",
+        element_id: 778,
+        category: "View",
+        role: "lighting plan",
+        evidence_role: "native_model_inventory",
+        evidence_sha256: MODEL_HASH
+      }
+    ],
+    registration: registration(),
+    level_name: "Benchmark L3",
+    level_elevation_ft: 30,
+    observations: [
+      {
+        kind: "light_fixture",
+        observation_id: "light-random-67",
+        discipline: "electrical",
+        role: "linear light fixture",
+        visibility: "clear",
+        confidence: 0.97,
+        supported_attributes: ["location", "type", "elevation", "workset"],
+        attribute_provenance: [
+          { attribute: "location", basis: "source_observation", reference: "registered source symbol center" },
+          { attribute: "type", basis: "native_model_precedent", reference: "loaded same-family lighting precedent" },
+          { attribute: "elevation", basis: "native_model_precedent", reference: "same-family level-offset precedent" },
+          { attribute: "workset", basis: "native_model_precedent", reference: "same-category project workset precedent" }
+        ],
+        point: { x: 3, y: 4 },
+        elevation_ft: 0.5,
+        workset_name: "E-LIGHTING",
+        placement: {
+          mode: "unhosted_family",
+          family_name: "Linear Light",
+          type_name: "Linear 2 Foot",
+          rotation_degrees: 0,
+          annotation_tags: [{
+            view_reference_key: "lighting-view",
+            family_name: "Lighting Fixture Tag",
+            type_name: "Type Mark",
+            offset_x_ft: 0.75,
+            offset_y_ft: 0.5,
+            add_leader: false
+          }]
+        }
+      },
+      {
+        kind: "electrical_circuit",
+        observation_id: "lighting-circuit-random-68",
+        discipline: "electrical",
+        evidence_role: "native_model_inventory",
+        visibility: "clear",
+        confidence: 0.95,
+        supported_attributes: ["circuit"],
+        member_observation_ids: ["light-random-67"],
+        source_reference_key: "lighting-precedent",
+        expected_power_system_id: "system-777",
+        membership_basis: "native_source_power_system"
+      }
+    ]
+  };
+
+  const plan = compileMepDraftPlan(input);
+  assert.equal(plan.status, "ready");
+  assert.equal(plan.plan_elements[0]?.category, "OST_LightingFixtures");
+  assert.equal(plan.actions[0]?.path, "/revit/place-families");
+  assert.equal(plan.actions[0]?.apply_body?.allowUnhostedWorkPlanePlacement, true);
+  assert.equal(plan.actions[0]?.apply_body?.worksetName, "E-LIGHTING");
+  const circuit = plan.actions.find((entry) => entry.path === "/revit/assign-electrical-circuit");
+  assert.deepEqual(circuit?.depends_on, ["place:light-random-67"]);
+  const tag = plan.actions.find((entry) => entry.path === "/revit/tag-elements");
+  assert.deepEqual(tag?.depends_on, ["place:light-random-67", "circuit:lighting-circuit-random-68"]);
+  assert.equal(tag?.apply_body?.viewId, 778);
+  assert.deepEqual(tag?.deferred_body?.tag_element, { created_by_action: "place:light-random-67", output: "created" });
+});
