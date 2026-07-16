@@ -135,7 +135,8 @@ export type RegisteredMepPixelObservation =
   | RegisteredElectricalEquipmentObservation
   | ElectricalCircuitObservation;
 
-export type RegisteredMepObservationPackage = Omit<MepDraftPackage, "observations"> & {
+export type RegisteredMepObservationPackage = Omit<MepDraftPackage, "observations" | "schema_version"> & {
+  schema_version: 1 | 2;
   discipline: "mechanical" | "plumbing" | "electrical" | "mixed";
   coordinate_space: "registered_render_pixels_top_left";
   registered_render: RegisteredRender;
@@ -388,7 +389,9 @@ function validateAttributeEvidence(
 export async function compileRegisteredMepObservations(
   input: RegisteredMepObservationPackage
 ): Promise<RegisteredMepObservationCompilation> {
-  if (input.schema_version !== 1) throw new Error("registered_mep_observations_require_schema_v1");
+  if (input.schema_version !== 1 && input.schema_version !== 2) {
+    throw new Error("registered_mep_observations_require_schema_v1_or_v2");
+  }
   if (input.coordinate_space !== "registered_render_pixels_top_left") {
     throw new Error("registered_mep_observation_coordinate_space_invalid");
   }
@@ -432,6 +435,9 @@ export async function compileRegisteredMepObservations(
     throw new Error("registered_mep_observations_are_required");
   }
   if (input.observations.length > maximumObservations) throw new Error("registered_mep_observation_limit_exceeded");
+  if (input.schema_version === 1 && input.observations.some((observation) => observation.kind === "plumbing_fixture")) {
+    throw new Error("registered_plumbing_fixture_requires_schema_v2");
+  }
   const ids = input.observations.map((entry, index) => requiredText(entry.observation_id, `observation_${index}_id`));
   if (new Set(ids).size !== ids.length) throw new Error("registered_mep_observation_ids_must_be_unique");
   const sourceCoverageReceipt = input.source_coverage

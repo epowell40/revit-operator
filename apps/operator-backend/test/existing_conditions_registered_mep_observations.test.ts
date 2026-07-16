@@ -13,6 +13,23 @@ import {
 import type { BoundedMepRegionCoverageV1 } from "../src/existing_conditions/mep_region_coverage.js";
 
 const SOURCE_HASH = "a".repeat(64);
+const TYPE_CATALOG_HASH = "c".repeat(64);
+function registeredMepConnectionClassification(familyName: string, typeName: string) {
+  return {
+    source_graphic: "mep_connection_symbol" as const,
+    native_target: "mep_connection" as const,
+    basis: "source_observation" as const,
+    evidence_role: "registered_source_render",
+    reference: "Distinct source-visible MEP connection symbol",
+    native_target_evidence: {
+      basis: "native_model_precedent" as const,
+      evidence_role: "approved_type_catalog",
+      reference: "Approved exact family/type mapping in the loaded project",
+      family_name: familyName,
+      type_name: typeName
+    }
+  };
+}
 
 function sha256(buffer: Buffer): string {
   return crypto.createHash("sha256").update(buffer).digest("hex");
@@ -51,14 +68,15 @@ function registration() {
 function plumbingInput(): RegisteredMepObservationPackage {
   const render = registeredRender();
   return {
-    schema_version: 1,
+    schema_version: 2,
     fixture_id: "registered-plumbing-independent-v1",
     scope_id: "unseen-room-alpha",
     discipline: "plumbing",
     source_evidence_sha256: SOURCE_HASH,
     visible_evidence: [
       { role: "source_pdf", sha256: SOURCE_HASH },
-      { role: "registered_source_render", sha256: render.sha256 }
+      { role: "registered_source_render", sha256: render.sha256 },
+      { role: "approved_type_catalog", sha256: TYPE_CATALOG_HASH }
     ],
     native_element_references: [],
     registration: registration(),
@@ -101,6 +119,7 @@ function plumbingInput(): RegisteredMepObservationPackage {
         kind: "plumbing_fixture",
         discipline: "plumbing",
         observation_id: "fixture-random-42",
+        representation_classification: registeredMepConnectionClassification("Fixture A", "Type Z"),
         visibility: "clear",
         confidence: 0.97,
         supported_attributes: ["location", "type", "service topology"],
@@ -123,6 +142,45 @@ function plumbingInput(): RegisteredMepObservationPackage {
     ]
   };
 }
+
+test("registered plumbing observations fail closed on fixture versus MEP connection ambiguity", async () => {
+  const mismatch = plumbingInput();
+  const fixture = mismatch.observations[1];
+  if (fixture?.kind !== "plumbing_fixture") throw new Error("fixture_setup_failed");
+  fixture.representation_classification = {
+    ...fixture.representation_classification,
+    source_graphic: "architectural_fixture",
+    native_target: "mep_connection",
+    basis: "source_observation",
+    evidence_role: "registered_source_render",
+    reference: "Visible architectural sink graphic without a distinct MEP connection symbol"
+  };
+  await assert.rejects(
+    () => compileRegisteredMepObservations(mismatch),
+    /architectural_fixture_cannot_create_mep_connection/
+  );
+
+  const grounded = await compileRegisteredMepObservations(plumbingInput());
+  assert.equal(grounded.compiled_plan.status, "ready");
+
+  const wrongSourceProvenance = plumbingInput();
+  const wrongSourceFixture = wrongSourceProvenance.observations[1];
+  if (wrongSourceFixture?.kind !== "plumbing_fixture") throw new Error("fixture_setup_failed");
+  wrongSourceFixture.representation_classification.evidence_role = "approved_type_catalog";
+  await assert.rejects(
+    () => compileRegisteredMepObservations(wrongSourceProvenance),
+    /source_classification_must_use_observation_evidence/
+  );
+
+  const legacyV1 = plumbingInput();
+  legacyV1.schema_version = 1;
+  const legacyFixture = legacyV1.observations[1] as unknown as Record<string, unknown>;
+  delete legacyFixture.representation_classification;
+  await assert.rejects(
+    () => compileRegisteredMepObservations(legacyV1),
+    /registered_plumbing_fixture_requires_schema_v2/
+  );
+});
 
 function electricalInput(): RegisteredMepObservationPackage {
   const plumbing = plumbingInput();
@@ -832,6 +890,7 @@ test("registered downstream vent pixels can reference a sanitary route drafted i
       kind: "plumbing_fixture",
       discipline: "plumbing",
       observation_id: "water-closet-visible-27",
+      representation_classification: registeredMepConnectionClassification("WaterClosetConnection", "Water Closet Connection"),
       visibility: "clear",
       confidence: 0.98,
       supported_attributes: ["location", "type", "service topology"],

@@ -251,6 +251,29 @@ export type MechanicalHydronicPipeRouteObservation = MepDraftObservationBase & {
 
 export type MepPipeRouteObservation = PlumbingPipeRouteObservation | MechanicalHydronicPipeRouteObservation;
 
+export type PlumbingFixtureRepresentationClassification = {
+  /** What the source-visible plan graphic actually depicts. */
+  source_graphic:
+    | "architectural_fixture"
+    | "mep_connection_symbol"
+    | "combined_fixture_and_connection"
+    | "unresolved";
+  /** What the compiled native placement will create. */
+  native_target: "architectural_fixture" | "mep_connection";
+  /** Classification must be grounded in the visible source or explicit direction, never an implicit family-name guess. */
+  basis: "source_observation" | "user_direction";
+  evidence_role: string;
+  reference: string;
+  /** Exact family/type mapping for the declared native target representation. */
+  native_target_evidence: {
+    basis: "native_model_precedent" | "user_direction";
+    evidence_role: string;
+    reference: string;
+    family_name: string;
+    type_name: string;
+  };
+};
+
 export type PlumbingFixtureObservation = MepDraftObservationBase & {
   kind: "plumbing_fixture";
   discipline: "plumbing";
@@ -258,6 +281,7 @@ export type PlumbingFixtureObservation = MepDraftObservationBase & {
   point: ExistingConditionsPlanPoint;
   elevation_ft: number;
   placement: MepDraftPlacement;
+  representation_classification: PlumbingFixtureRepresentationClassification;
   /**
    * Plan proximity places visible fixture graphics and records source-visible
    * service adjacency without claiming a native Revit connector relationship.
@@ -1093,6 +1117,51 @@ function validateObservation(observation: MepDraftObservation, index: number): v
       throw new Error(`${id}_distribution_system_copy_requires_electrical_equipment`);
     }
     if (observation.kind === "plumbing_fixture") {
+      const classification = observation.representation_classification;
+      if (!classification || typeof classification !== "object") {
+        throw new Error(`${id}_representation_classification_is_required`);
+      }
+      if (!["architectural_fixture", "mep_connection_symbol", "combined_fixture_and_connection", "unresolved"].includes(classification.source_graphic)) {
+        throw new Error(`${id}_source_graphic_classification_invalid`);
+      }
+      if (!["architectural_fixture", "mep_connection"].includes(classification.native_target)) {
+        throw new Error(`${id}_native_target_classification_invalid`);
+      }
+      if (!["source_observation", "user_direction"].includes(classification.basis)) {
+        throw new Error(`${id}_representation_classification_basis_invalid`);
+      }
+      requiredText(classification.evidence_role, `${id}_representation_classification_evidence_role`);
+      requiredText(classification.reference, `${id}_representation_classification_reference`);
+      const targetEvidence = classification.native_target_evidence;
+      if (!targetEvidence || typeof targetEvidence !== "object") {
+        throw new Error(`${id}_native_target_evidence_is_required`);
+      }
+      if (!["native_model_precedent", "user_direction"].includes(targetEvidence.basis)) {
+        throw new Error(`${id}_native_target_evidence_basis_invalid`);
+      }
+      requiredText(targetEvidence.evidence_role, `${id}_native_target_evidence_role`);
+      requiredText(targetEvidence.reference, `${id}_native_target_evidence_reference`);
+      const targetFamily = requiredText(targetEvidence.family_name, `${id}_native_target_family_name`);
+      const targetType = requiredText(targetEvidence.type_name, `${id}_native_target_type_name`);
+      if (observation.placement.mode === "hosted_exemplar") {
+        throw new Error(`${id}_plumbing_fixture_hosted_exemplar_cannot_bind_target_family`);
+      }
+      if (observation.placement.mode !== "unhosted_family" && observation.placement.mode !== "hosted_family_symbol") {
+        throw new Error(`${id}_plumbing_fixture_placement_mode_invalid`);
+      }
+      if (targetFamily !== clean(observation.placement.family_name)
+        || targetType !== clean(observation.placement.type_name)) {
+        throw new Error(`${id}_native_target_family_type_mismatch`);
+      }
+      if (classification.source_graphic === "unresolved") {
+        throw new Error(`${id}_source_graphic_unresolved_no_native_placement`);
+      }
+      if (classification.source_graphic === "architectural_fixture" && classification.native_target !== "architectural_fixture") {
+        throw new Error(`${id}_architectural_fixture_cannot_create_mep_connection`);
+      }
+      if (classification.source_graphic === "mep_connection_symbol" && classification.native_target !== "mep_connection") {
+        throw new Error(`${id}_mep_connection_symbol_cannot_create_architectural_fixture`);
+      }
       if (!Array.isArray(observation.service_route_connections)) {
         throw new Error(`${id}_service_route_connections_must_be_array`);
       }
@@ -1445,6 +1514,9 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
   const ids = input.observations.map((entry) => entry.observation_id);
   if (new Set(ids).size !== ids.length) throw new Error("observation_ids_must_be_unique");
   const byId = new Map(input.observations.map((entry) => [entry.observation_id, entry]));
+  const nativeEvidenceRoles = new Set(
+    [...nativeReferences.values()].map((reference) => normalized(reference.evidence_role))
+  );
   const claimedPipeEndpoints = new Map<string, string>();
   const assignedElectricalDevices = new Map<string, string>();
   for (const observation of input.observations) {
@@ -1558,6 +1630,33 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
       }
     }
     if (observation.kind === "plumbing_fixture") {
+      const classificationRole = requiredText(
+        observation.representation_classification.evidence_role,
+        `${observation.observation_id}_representation_classification_evidence_role`
+      );
+      if (!visibleEvidenceByRole.has(normalized(classificationRole))) {
+        throw new Error(`${observation.observation_id}_representation_classification_evidence_role_unknown`);
+      }
+      const observationEvidenceRole = clean(observation.evidence_role) || "source_pdf";
+      if (observation.representation_classification.basis === "source_observation"
+        && normalized(classificationRole) !== normalized(observationEvidenceRole)) {
+        throw new Error(`${observation.observation_id}_source_classification_must_use_observation_evidence`);
+      }
+      if (observation.representation_classification.basis === "source_observation"
+        && nativeEvidenceRoles.has(normalized(classificationRole))) {
+        throw new Error(`${observation.observation_id}_source_classification_cannot_use_native_evidence`);
+      }
+      const targetEvidenceRole = requiredText(
+        observation.representation_classification.native_target_evidence.evidence_role,
+        `${observation.observation_id}_native_target_evidence_role`
+      );
+      if (!visibleEvidenceByRole.has(normalized(targetEvidenceRole))) {
+        throw new Error(`${observation.observation_id}_native_target_evidence_role_unknown`);
+      }
+      if (observation.representation_classification.native_target_evidence.basis === "native_model_precedent"
+        && normalized(targetEvidenceRole) === normalized(observationEvidenceRole)) {
+        throw new Error(`${observation.observation_id}_native_target_precedent_cannot_use_source_observation`);
+      }
       const connectionMode = fixtureConnectionMode(observation);
       if (!['native_connectivity', 'plan_proximity'].includes(connectionMode)) {
         throw new Error(`${observation.observation_id}_service_connection_mode_invalid`);

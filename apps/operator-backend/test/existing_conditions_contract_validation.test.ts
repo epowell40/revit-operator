@@ -493,7 +493,12 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
     /invalid_existing_conditions_registered_mep_observations_contract/
   );
   const planOnlyPlumbing = structuredClone(input) as unknown as Record<string, unknown>;
+  planOnlyPlumbing.schema_version = 2;
   planOnlyPlumbing.discipline = "plumbing";
+  (planOnlyPlumbing.visible_evidence as Array<Record<string, unknown>>).push({
+    role: "approved_type_catalog",
+    sha256: "c".repeat(64)
+  });
   planOnlyPlumbing.observations = [{
     kind: "pipe_route",
     discipline: "plumbing",
@@ -524,6 +529,20 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
       { attribute: "service topology", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "sanitary trace is adjacent to the fixture symbol" }
     ],
     role: "water closet graphic",
+    representation_classification: {
+      source_graphic: "architectural_fixture",
+      native_target: "architectural_fixture",
+      basis: "source_observation",
+      evidence_role: "registered_source_render",
+      reference: "Distinct source-visible architectural water-closet graphic",
+      native_target_evidence: {
+        basis: "native_model_precedent",
+        evidence_role: "approved_type_catalog",
+        reference: "Approved exact family/type mapping in the loaded project",
+        family_name: "Connectorless Fixture",
+        type_name: "Water Closet"
+      }
+    },
     pixel_point: { x: 20, y: 78 },
     elevation_ft: 0,
     placement: { mode: "unhosted_family", family_name: "Connectorless Fixture", type_name: "Water Closet" },
@@ -542,6 +561,65 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
   assert.throws(
     () => assertExistingConditionsContract("registered_mep_observations", falseSizeClaim),
     /invalid_existing_conditions_registered_mep_observations_contract/
+  );
+  const representationMismatch = structuredClone(planOnlyPlumbing);
+  const mismatchFixture = (representationMismatch.observations as Array<Record<string, unknown>>)[1]!;
+  mismatchFixture.representation_classification = {
+    source_graphic: "architectural_fixture",
+    native_target: "mep_connection",
+    basis: "source_observation",
+    evidence_role: "registered_source_render",
+    reference: "Architectural silhouette only",
+    native_target_evidence: {
+      basis: "native_model_precedent",
+      evidence_role: "approved_type_catalog",
+      reference: "Approved exact family/type mapping in the loaded project",
+      family_name: "Connectorless Fixture",
+      type_name: "Water Closet"
+    }
+  };
+  assert.throws(
+    () => assertExistingConditionsContract("registered_mep_observations", representationMismatch),
+    /invalid_existing_conditions_registered_mep_observations_contract/
+  );
+  const unresolvedRepresentation = structuredClone(planOnlyPlumbing);
+  const unresolvedFixture = (unresolvedRepresentation.observations as Array<Record<string, unknown>>)[1]!;
+  unresolvedFixture.representation_classification = {
+    source_graphic: "unresolved",
+    native_target: "mep_connection",
+    basis: "source_observation",
+    evidence_role: "registered_source_render",
+    reference: "Overlapping symbols cannot be separated",
+    native_target_evidence: {
+      basis: "native_model_precedent",
+      evidence_role: "approved_type_catalog",
+      reference: "Approved exact family/type mapping in the loaded project",
+      family_name: "Connectorless Fixture",
+      type_name: "Water Closet"
+    }
+  };
+  assert.throws(
+    () => assertExistingConditionsContract("registered_mep_observations", unresolvedRepresentation),
+    /invalid_existing_conditions_registered_mep_observations_contract/
+  );
+  const hostedExemplarFixture = structuredClone(planOnlyPlumbing);
+  const hostedFixture = (hostedExemplarFixture.observations as Array<Record<string, unknown>>)[1]!;
+  hostedFixture.placement = {
+    mode: "hosted_exemplar",
+    source_reference_key: "fixture-source",
+    host_reference_key: "wall-host",
+    host_category: "OST_Walls"
+  };
+  assert.throws(
+    () => assertExistingConditionsContract("registered_mep_observations", hostedExemplarFixture),
+    /invalid_existing_conditions_registered_mep_observations_contract/
+  );
+  const legacyV1Plumbing = structuredClone(planOnlyPlumbing);
+  legacyV1Plumbing.schema_version = 1;
+  const legacyFixture = (legacyV1Plumbing.observations as Array<Record<string, unknown>>)[1]!;
+  delete legacyFixture.representation_classification;
+  assert.doesNotThrow(
+    () => assertExistingConditionsContract("registered_mep_observations", legacyV1Plumbing)
   );
   const newCircuit = structuredClone(input);
   (newCircuit.observations as Array<Record<string, unknown>>).push({

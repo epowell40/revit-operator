@@ -12,6 +12,29 @@ import {
 
 const SOURCE_HASH = "a".repeat(64);
 const MODEL_HASH = "b".repeat(64);
+function fixtureRepresentationClassification(
+  sourceGraphic: "architectural_fixture" | "mep_connection_symbol",
+  nativeTarget: "architectural_fixture" | "mep_connection",
+  familyName: string,
+  typeName: string
+) {
+  return {
+    source_graphic: sourceGraphic,
+    native_target: nativeTarget,
+    basis: "source_observation" as const,
+    evidence_role: "source_pdf",
+    reference: sourceGraphic === "architectural_fixture"
+      ? "Distinct source-visible architectural fixture graphic"
+      : "Distinct source-visible MEP connection symbol",
+    native_target_evidence: {
+      basis: "native_model_precedent" as const,
+      evidence_role: "native_model_inventory",
+      reference: "Approved exact family/type mapping in the loaded project",
+      family_name: familyName,
+      type_name: typeName
+    }
+  };
+}
 
 function visibleEvidence() {
   return [
@@ -110,6 +133,7 @@ function plumbingTopologyPackage(): MepDraftPackage {
         observation_id: "fixture-random-29",
         discipline: "plumbing",
         role: "source-defined cold-water fixture",
+        representation_classification: fixtureRepresentationClassification("mep_connection_symbol", "mep_connection", "Benchmark Fixture", "Cold Only"),
         visibility: "clear",
         confidence: 0.96,
         supported_attributes: ["location", "type", "service_topology"],
@@ -127,6 +151,95 @@ function plumbingTopologyPackage(): MepDraftPackage {
     ]
   };
 }
+
+test("plumbing fixture representation gate prevents architectural graphics from becoming MEP connection families", () => {
+  const mismatch = plumbingTopologyPackage();
+  const fixture = mismatch.observations[1];
+  if (fixture?.kind !== "plumbing_fixture") throw new Error("fixture_setup_failed");
+  fixture.representation_classification = {
+    ...fixture.representation_classification,
+    source_graphic: "architectural_fixture",
+    native_target: "mep_connection",
+    basis: "source_observation",
+    evidence_role: "source_pdf",
+    reference: "Visible sink bowl and countertop outline only"
+  };
+  assert.throws(
+    () => compileMepDraftPlan(mismatch),
+    /architectural_fixture_cannot_create_mep_connection/
+  );
+
+  const unresolved = plumbingTopologyPackage();
+  const unresolvedFixture = unresolved.observations[1];
+  if (unresolvedFixture?.kind !== "plumbing_fixture") throw new Error("fixture_setup_failed");
+  unresolvedFixture.representation_classification = {
+    ...unresolvedFixture.representation_classification,
+    source_graphic: "unresolved",
+    native_target: "mep_connection",
+    basis: "source_observation",
+    evidence_role: "source_pdf",
+    reference: "Overlapping fixture silhouette and route endpoint cannot be separated"
+  };
+  assert.throws(
+    () => compileMepDraftPlan(unresolved),
+    /source_graphic_unresolved_no_native_placement/
+  );
+
+  const grounded = compileMepDraftPlan(plumbingTopologyPackage());
+  assert.equal(grounded.status, "ready");
+  assert.equal(grounded.actions.some((entry) => entry.action_key === "place:fixture-random-29"), true);
+});
+
+test("plumbing fixture representation classification must cite visible evidence", () => {
+  const input = plumbingTopologyPackage();
+  const fixture = input.observations[1];
+  if (fixture?.kind !== "plumbing_fixture") throw new Error("fixture_setup_failed");
+  fixture.representation_classification = {
+    ...fixture.representation_classification,
+    evidence_role: "withheld_native_truth"
+  };
+  assert.throws(
+    () => compileMepDraftPlan(input),
+    /representation_classification_evidence_role_unknown/
+  );
+
+  const familyMismatch = plumbingTopologyPackage();
+  const mismatchedFixture = familyMismatch.observations[1];
+  if (mismatchedFixture?.kind !== "plumbing_fixture") throw new Error("fixture_setup_failed");
+  mismatchedFixture.representation_classification.native_target_evidence.family_name = "Different Family";
+  assert.throws(
+    () => compileMepDraftPlan(familyMismatch),
+    /native_target_family_type_mismatch/
+  );
+
+  const punctuationCollision = plumbingTopologyPackage();
+  const punctuationFixture = punctuationCollision.observations[1];
+  if (punctuationFixture?.kind !== "plumbing_fixture") throw new Error("fixture_setup_failed");
+  punctuationFixture.representation_classification.native_target_evidence.family_name = "Benchmark-Fixture";
+  assert.throws(
+    () => compileMepDraftPlan(punctuationCollision),
+    /native_target_family_type_mismatch/
+  );
+
+  const sourceAsTargetPrecedent = plumbingTopologyPackage();
+  const sourceBackedFixture = sourceAsTargetPrecedent.observations[1];
+  if (sourceBackedFixture?.kind !== "plumbing_fixture") throw new Error("fixture_setup_failed");
+  sourceBackedFixture.representation_classification.native_target_evidence.evidence_role = "source_pdf";
+  assert.throws(
+    () => compileMepDraftPlan(sourceAsTargetPrecedent),
+    /native_target_precedent_cannot_use_source_observation/
+  );
+
+  const nativeAsSource = plumbingTopologyPackage();
+  const nativeBackedFixture = nativeAsSource.observations[1];
+  if (nativeBackedFixture?.kind !== "plumbing_fixture") throw new Error("fixture_setup_failed");
+  nativeBackedFixture.evidence_role = "native_model_inventory";
+  nativeBackedFixture.representation_classification.evidence_role = "native_model_inventory";
+  assert.throws(
+    () => compileMepDraftPlan(nativeAsSource),
+    /source_classification_cannot_use_native_evidence/
+  );
+});
 
 test("registration solves scale rotation translation and reports residual", () => {
   const receipt = solveExistingConditionsRegistration(registration());
@@ -225,6 +338,7 @@ test("plumbing plan compiles registered routes fixture placement and deferred na
         observation_id: "lav-1",
         discipline: "plumbing",
         role: "lavatory",
+        representation_classification: fixtureRepresentationClassification("mep_connection_symbol", "mep_connection", "SinkConnection", "Vanity"),
         visibility: "clear",
         confidence: 0.96,
         supported_attributes: ["location", "type", "service_topology"],
@@ -397,6 +511,7 @@ test("connectorless plumbing graphics compile as non-scored placeholder routes a
         observation_id: "connectorless-water-closet-graphic",
         discipline: "plumbing",
         role: "water closet graphic",
+        representation_classification: fixtureRepresentationClassification("architectural_fixture", "architectural_fixture", "Connectorless Fixture", "Water Closet"),
         visibility: "clear",
         confidence: 0.96,
         supported_attributes: ["location", "type", "service topology"],
@@ -1712,6 +1827,7 @@ test("plumbing service boundaries block an incomplete fixture cluster without ha
         observation_id: "fixture-a",
         discipline: "plumbing",
         role: "source-defined fixture",
+        representation_classification: fixtureRepresentationClassification("mep_connection_symbol", "mep_connection", "Fixture", "Type A"),
         visibility: "clear",
         confidence: 1,
         supported_attributes: ["location", "type", "service_topology"],
@@ -2023,6 +2139,7 @@ function concealedLavatoryClusterPackage(): MepDraftPackage {
         observation_id: "fixture-visible-31",
         discipline: "plumbing",
         role: "lavatory",
+        representation_classification: fixtureRepresentationClassification("mep_connection_symbol", "mep_connection", "Fixture Connections", "Vanity"),
         visibility: "clear",
         confidence: 0.99,
         supported_attributes: ["location", "type", "service_topology"],
@@ -2154,6 +2271,7 @@ test("created-route connector bridge composes a placed fixture with a source-gro
         observation_id: "lavatory-visible-29",
         discipline: "plumbing",
         role: "lavatory",
+        representation_classification: fixtureRepresentationClassification("architectural_fixture", "architectural_fixture", "Sink Vanity-Round", "19\" x 19\""),
         visibility: "clear",
         confidence: 0.99,
         evidence_role: "source_pdf",
@@ -2273,6 +2391,7 @@ test("downstream vent tee rejects direct fixture service wiring and ungrounded m
     observation_id: "fixture-visible-random-12",
     discipline: "plumbing",
     role: "water closet",
+    representation_classification: fixtureRepresentationClassification("mep_connection_symbol", "mep_connection", "Fixture Connections", "Water Closet"),
     visibility: "clear",
     confidence: 0.95,
     supported_attributes: ["location", "type", "service_topology"],
@@ -2384,6 +2503,7 @@ test("new fixture, sanitary route, and downstream vent audit form one ordered at
     observation_id: "water-closet-visible-77",
     discipline: "plumbing",
     role: "water closet",
+    representation_classification: fixtureRepresentationClassification("mep_connection_symbol", "mep_connection", "WaterClosetConnection", "Water Closet Connection"),
     visibility: "clear",
     confidence: 0.97,
     supported_attributes: ["location", "type", "service topology"],

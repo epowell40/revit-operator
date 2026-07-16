@@ -18,8 +18,10 @@ const FILES: Record<ExistingConditionsContractName, string> = {
   architectural_door_span_observation: "existing_conditions_architectural_door_span_observation.v1.schema.json",
   architectural_opening_host_resolution: "existing_conditions_architectural_opening_host_resolution.v1.schema.json"
 };
+const REGISTERED_MEP_V2_FILE = "existing_conditions_registered_mep_observations.v2.schema.json";
 
 let validators: Record<ExistingConditionsContractName, ValidateFunction> | null = null;
+let registeredMepV2Validator: ValidateFunction | null = null;
 
 function contractsDirectory(): string {
   const candidates = [
@@ -35,8 +37,11 @@ function loadValidators(): Record<ExistingConditionsContractName, ValidateFuncti
   if (validators) return validators;
   const directory = contractsDirectory();
   const schemas = Object.values(FILES).map((file) => JSON.parse(fs.readFileSync(path.join(directory, file), "utf8")) as Record<string, unknown>);
+  const registeredMepV2Schema = JSON.parse(fs.readFileSync(path.join(directory, REGISTERED_MEP_V2_FILE), "utf8")) as Record<string, unknown>;
   const ajv = new Ajv2020({ allErrors: true, strict: true });
   for (const schema of schemas) ajv.addSchema(schema);
+  ajv.addSchema(registeredMepV2Schema);
+  registeredMepV2Validator = ajv.getSchema(String(registeredMepV2Schema.$id))!;
   validators = Object.fromEntries(
     (Object.keys(FILES) as ExistingConditionsContractName[]).map((name, index) => [name, ajv.getSchema(String(schemas[index]!.$id))!])
   ) as Record<ExistingConditionsContractName, ValidateFunction>;
@@ -48,6 +53,12 @@ function formatErrors(errors: ErrorObject[] | null | undefined): string {
 }
 
 export function assertExistingConditionsContract(name: ExistingConditionsContractName, value: unknown): void {
-  const validator = loadValidators()[name];
+  const loaded = loadValidators();
+  const schemaVersion = value != null && typeof value === "object" && "schema_version" in value
+    ? (value as { schema_version?: unknown }).schema_version
+    : undefined;
+  const validator = name === "registered_mep_observations" && schemaVersion === 2
+    ? registeredMepV2Validator!
+    : loaded[name];
   if (!validator(value)) throw new Error(`invalid_existing_conditions_${name}_contract:${formatErrors(validator.errors)}`);
 }

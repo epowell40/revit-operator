@@ -1,0 +1,852 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bimtools.com/schemas/revit-operator/existing-conditions-registered-mep-observations.v2.schema.json",
+  "title": "Existing conditions registered MEP pixel observations V2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "fixture_id",
+    "scope_id",
+    "discipline",
+    "source_evidence_sha256",
+    "visible_evidence",
+    "native_element_references",
+    "registration",
+    "coordinate_space",
+    "registered_render",
+    "frame",
+    "level_name",
+    "level_elevation_ft",
+    "maximum_observations",
+    "observations"
+  ],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "fixture_id": { "type": "string", "minLength": 1 },
+    "scope_id": { "type": "string", "minLength": 1 },
+    "discipline": { "enum": ["mechanical", "plumbing", "electrical", "mixed"] },
+    "source_evidence_sha256": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/sha256" },
+    "visible_evidence": {
+      "type": "array",
+      "minItems": 2,
+      "items": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/evidence" }
+    },
+    "native_element_references": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/native_reference" }
+    },
+    "registration": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/registration" },
+    "coordinate_space": { "const": "registered_render_pixels_top_left" },
+    "registered_render": { "$ref": "#/$defs/registered_render" },
+    "frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_bounds"],
+      "properties": {
+        "model_bounds": { "$ref": "#/$defs/bounds" }
+      }
+    },
+    "level_name": { "type": "string", "minLength": 1 },
+    "level_elevation_ft": { "type": "number" },
+    "room_number": { "type": "string", "minLength": 1 },
+    "material_confidence_threshold": { "type": "number", "minimum": 0, "maximum": 1 },
+    "maximum_observations": { "type": "integer", "minimum": 1 },
+    "source_coverage": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-mep-region-coverage.v1.schema.json" },
+    "observations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/duct_route" },
+          { "$ref": "#/$defs/mechanical_equipment" },
+          { "$ref": "#/$defs/air_terminal" },
+          { "$ref": "#/$defs/mechanical_pipe_route" },
+          { "$ref": "#/$defs/pipe_route" },
+          { "$ref": "#/$defs/pipe_source_branch_tee" },
+          { "$ref": "#/$defs/pipe_connector_bridge" },
+          { "$ref": "#/$defs/pipe_created_route_connector_bridge" },
+          { "$ref": "#/$defs/pipe_downstream_vent_tee" },
+          { "$ref": "#/$defs/plumbing_fixture" },
+          { "$ref": "#/$defs/conduit_route" },
+          { "$ref": "#/$defs/electrical_device" },
+          { "$ref": "#/$defs/light_fixture" },
+          { "$ref": "#/$defs/electrical_equipment" },
+          { "$ref": "#/$defs/electrical_circuit" }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "point": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/point" },
+    "visibility": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/visibility" },
+    "supported_attributes": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/supported_attributes" },
+    "bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max"],
+      "properties": {
+        "min": { "$ref": "#/$defs/point" },
+        "max": { "$ref": "#/$defs/point" }
+      }
+    },
+    "registered_render": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "width_px", "height_px", "evidence_role", "access_scope"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/sha256" },
+        "width_px": { "type": "integer", "minimum": 1 },
+        "height_px": { "type": "integer", "minimum": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "access_scope": { "const": "agent_visible" }
+      }
+    },
+    "native_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reference_key", "element_id", "category", "role", "evidence_role", "evidence_sha256"],
+      "properties": {
+        "reference_key": { "type": "string", "minLength": 1 },
+        "element_id": { "type": "integer", "minimum": 1 },
+        "category": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "evidence_sha256": { "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/sha256" },
+        "power_system_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    },
+    "placement": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "family_name", "type_name"],
+          "properties": {
+            "mode": { "const": "unhosted_family" },
+            "family_name": { "type": "string", "minLength": 1 },
+            "type_name": { "type": "string", "minLength": 1 },
+            "rotation_degrees": { "type": "number" },
+            "annotation_tags": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 4,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["view_reference_key", "family_name", "type_name", "offset_x_ft", "offset_y_ft"],
+                "properties": {
+                  "view_reference_key": { "type": "string", "minLength": 1 },
+                  "family_name": { "type": "string", "minLength": 1 },
+                  "type_name": { "type": "string", "minLength": 1 },
+                  "offset_x_ft": { "type": "number", "minimum": -10, "maximum": 10 },
+                  "offset_y_ft": { "type": "number", "minimum": -10, "maximum": 10 },
+                  "add_leader": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "source_reference_key", "host_reference_key", "host_category"],
+          "properties": {
+            "mode": { "const": "hosted_exemplar" },
+            "source_reference_key": { "type": "string", "minLength": 1 },
+            "host_reference_key": { "type": "string", "minLength": 1 },
+            "host_category": { "type": "string", "minLength": 1 },
+            "target_chainage_ft": { "type": "number", "minimum": 0 },
+            "room_side": { "type": "string", "minLength": 1 },
+            "require_room_membership_validation": { "type": "boolean" },
+            "match_orientation_from_source": { "type": "boolean" },
+            "copy_distribution_system_from_source": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "family_name", "type_name", "host_reference_key", "host_category"],
+          "properties": {
+            "mode": { "const": "hosted_family_symbol" },
+            "family_name": { "type": "string", "minLength": 1 },
+            "type_name": { "type": "string", "minLength": 1 },
+            "metadata_source_reference_key": { "type": "string", "minLength": 1 },
+            "orientation_source_reference_key": { "type": "string", "minLength": 1 },
+            "annotation_tags": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 4,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["view_reference_key", "family_name", "type_name", "offset_x_ft", "offset_y_ft"],
+                "properties": {
+                  "view_reference_key": { "type": "string", "minLength": 1 },
+                  "family_name": { "type": "string", "minLength": 1 },
+                  "type_name": { "type": "string", "minLength": 1 },
+                  "offset_x_ft": { "type": "number", "minimum": -10, "maximum": 10 },
+                  "offset_y_ft": { "type": "number", "minimum": -10, "maximum": 10 },
+                  "add_leader": { "type": "boolean" }
+                }
+              }
+            },
+            "host_reference_key": { "type": "string", "minLength": 1 },
+            "linked_host_reference_key": { "type": "string", "minLength": 1 },
+            "host_category": { "type": "string", "minLength": 1 },
+            "room_side": { "type": "string", "minLength": 1 },
+            "require_room_membership_validation": { "type": "boolean" },
+            "ensure_distribution_system": { "$ref": "#/$defs/distribution_system_definition" }
+          }
+        }
+      ]
+    },
+    "voltage_definition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "actual_value", "min_value", "max_value"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "actual_value": { "type": "number" },
+        "min_value": { "type": "number" },
+        "max_value": { "type": "number" }
+      }
+    },
+    "distribution_system_definition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "electrical_phase", "phase_configuration", "num_wires"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "electrical_phase": { "enum": ["SinglePhase", "ThreePhase"] },
+        "phase_configuration": { "enum": ["Undefined", "Delta", "Wye"] },
+        "num_wires": { "type": "integer", "minimum": 2, "maximum": 4 },
+        "voltage_line_to_line": { "$ref": "#/$defs/voltage_definition" },
+        "voltage_line_to_ground": { "$ref": "#/$defs/voltage_definition" }
+      }
+    },
+    "air_terminal_placement": {
+      "oneOf": [
+        { "$ref": "#/$defs/placement" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "family_name", "type_name", "route_observation_id", "route_segment_index"],
+          "properties": {
+            "mode": { "const": "created_route_host" },
+            "family_name": { "type": "string", "minLength": 1 },
+            "type_name": { "type": "string", "minLength": 1 },
+            "route_observation_id": { "type": "string", "minLength": 1 },
+            "route_segment_index": { "type": "integer", "minimum": 0 },
+            "rotation_degrees": { "type": "number" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "family_name", "type_name", "route_observation_id", "route_segment_index", "pixel_branch_points", "branch_size", "tee_family_name", "tee_type_name"],
+          "properties": {
+            "mode": { "const": "created_route_branch" },
+            "family_name": { "type": "string", "minLength": 1 },
+            "type_name": { "type": "string", "minLength": 1 },
+            "route_observation_id": { "type": "string", "minLength": 1 },
+            "route_segment_index": { "type": "integer", "minimum": 0 },
+            "pixel_branch_points": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/point" } },
+            "branch_size": { "type": "string", "minLength": 1 },
+            "tee_family_name": { "type": "string", "minLength": 1 },
+            "tee_type_name": { "type": "string", "minLength": 1 },
+            "rotation_degrees": { "type": "number" }
+          }
+        }
+      ]
+    },
+    "attribute_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["attribute", "basis", "evidence_role", "reference"],
+        "properties": {
+          "attribute": { "type": "string", "minLength": 1 },
+          "basis": { "enum": ["legible_source_evidence", "native_model_precedent", "user_direction", "declared_heuristic"] },
+          "evidence_role": { "type": "string", "minLength": 1 },
+          "reference": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "duct_route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "service", "pixel_points", "duct_size", "duct_type", "system_type", "elevation_ft"],
+      "properties": {
+        "kind": { "const": "duct_route" },
+        "discipline": { "const": "mechanical" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
+        "service": { "enum": ["supply_air", "return_air", "exhaust_air", "outside_air"] },
+        "pixel_points": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/point" } },
+        "duct_size": { "type": "string", "minLength": 1 },
+        "duct_type": { "type": "string", "minLength": 1 },
+        "duct_type_id": { "type": "integer", "minimum": 1 },
+        "system_type": { "type": "string", "minLength": 1 },
+        "elevation_ft": { "type": "number" },
+        "workset_name": { "type": "string", "minLength": 1 },
+        "connect_to_existing": { "type": "boolean" },
+        "require_existing_endpoint_connections": { "type": "boolean" },
+        "external_connection_tolerance_ft": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "conduit_route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "service", "pixel_points", "conduit_type", "elevation_ft"],
+      "allOf": [
+        {
+          "if": { "required": ["conduit_size_policy"], "properties": { "conduit_size_policy": { "const": "unresolved_placeholder" } } },
+          "then": { "properties": { "conduit_size": false, "service": { "const": "unclassified" } } },
+          "else": { "required": ["conduit_size"], "properties": { "conduit_size": { "type": "string", "minLength": 1 } } }
+        }
+      ],
+      "properties": {
+        "kind": { "const": "conduit_route" },
+        "discipline": { "const": "electrical" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
+        "service": { "enum": ["branch_circuit", "feeder", "communications", "fire_alarm", "other", "unclassified"] },
+        "pixel_points": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/point" } },
+        "conduit_size": { "type": "string", "minLength": 1 },
+        "conduit_size_policy": { "enum": ["explicit_required", "unresolved_placeholder"] },
+        "conduit_type": { "type": "string", "minLength": 1 },
+        "conduit_type_id": { "type": "integer", "minimum": 1 },
+        "elevation_ft": { "type": "number" },
+        "workset_name": { "type": "string", "minLength": 1 },
+        "connect_to_existing": { "type": "boolean" },
+        "require_existing_endpoint_connections": { "type": "boolean" },
+        "external_connection_tolerance_ft": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "mechanical_equipment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "role", "pixel_point", "elevation_ft", "placement"],
+      "properties": {
+        "kind": { "const": "mechanical_equipment" },
+        "discipline": { "const": "mechanical" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
+        "role": { "type": "string", "minLength": 1 },
+        "pixel_point": { "$ref": "#/$defs/point" },
+        "elevation_ft": { "type": "number" },
+        "placement": { "$ref": "#/$defs/placement" }
+      }
+    },
+    "air_terminal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "role", "pixel_point", "elevation_ft", "placement"],
+      "properties": {
+        "kind": { "const": "air_terminal" },
+        "discipline": { "const": "mechanical" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
+        "role": { "type": "string", "minLength": 1 },
+        "pixel_point": { "$ref": "#/$defs/point" },
+        "elevation_ft": { "type": "number" },
+        "airflow_cfm": { "type": "number", "exclusiveMinimum": 0 },
+        "workset_name": { "type": "string", "minLength": 1 },
+        "placement": { "$ref": "#/$defs/air_terminal_placement" }
+      }
+    },
+    "mechanical_pipe_route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "service", "pixel_points", "pipe_type", "system_type", "elevation_ft"],
+      "allOf": [
+        {
+          "if": { "required": ["pipe_size_policy"], "properties": { "pipe_size_policy": { "const": "unresolved_placeholder" } } },
+          "then": { "properties": { "pipe_size": false } },
+          "else": { "required": ["pipe_size"], "properties": { "pipe_size": { "type": "string", "minLength": 1 } } }
+        }
+      ],
+      "properties": {
+        "kind": { "const": "pipe_route" },
+        "discipline": { "const": "mechanical" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
+        "service": { "enum": ["heating_hot_water_supply", "heating_hot_water_return", "chilled_water_supply", "chilled_water_return", "condenser_water_supply", "condenser_water_return"] },
+        "geometry_mode": { "const": "source_points" },
+        "pixel_points": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/point" } },
+        "pipe_size": { "type": "string", "minLength": 1 },
+        "pipe_size_policy": { "enum": ["explicit_required", "unresolved_placeholder"] },
+        "pipe_type": { "type": "string", "minLength": 1 },
+        "system_type": { "type": "string", "minLength": 1 },
+        "elevation_ft": { "type": "number" },
+        "workset_name": { "type": "string", "minLength": 1 },
+        "connect_to_existing": { "type": "boolean" },
+        "require_existing_endpoint_connections": { "type": "boolean" },
+        "external_connection_tolerance_ft": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "pipe_route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "service", "pixel_points", "pipe_type", "system_type", "elevation_ft"],
+      "allOf": [
+        {
+          "if": { "required": ["pipe_size_policy"], "properties": { "pipe_size_policy": { "const": "unresolved_placeholder" } } },
+          "then": { "properties": { "pipe_size": false } },
+          "else": { "required": ["pipe_size"], "properties": { "pipe_size": { "type": "string", "minLength": 1 } } }
+        }
+      ],
+      "properties": {
+        "kind": { "const": "pipe_route" },
+        "discipline": { "const": "plumbing" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
+        "service": { "enum": ["domestic_cold_water", "domestic_hot_water", "domestic_hot_water_return", "sanitary", "vent"] },
+        "pixel_points": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/point" } },
+        "pipe_size": { "type": "string", "minLength": 1 },
+        "pipe_size_policy": { "enum": ["explicit_required", "unresolved_placeholder"] },
+        "pipe_type": { "type": "string", "minLength": 1 },
+        "system_type": { "type": "string", "minLength": 1 },
+        "elevation_ft": { "type": "number" },
+        "workset_name": { "type": "string", "minLength": 1 },
+        "connect_to_existing": { "type": "boolean" },
+        "require_existing_endpoint_connections": { "type": "boolean" },
+        "external_connection_tolerance_ft": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "pipe_connector_bridge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "service", "geometry_mode", "source_fixture_observation_id", "target_reference_key", "pipe_size", "pipe_type", "system_type"],
+      "properties": {
+        "kind": { "const": "pipe_route" },
+        "discipline": { "const": "plumbing" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
+        "service": { "enum": ["domestic_cold_water", "domestic_hot_water", "sanitary", "vent"] },
+        "geometry_mode": { "const": "native_connector_bridge" },
+        "source_fixture_observation_id": { "type": "string", "minLength": 1 },
+        "target_reference_key": { "type": "string", "minLength": 1 },
+        "maximum_length_ft": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 },
+        "size_tolerance_ft": { "type": "number", "minimum": 0, "maximum": 0.25 },
+        "pipe_size": { "type": "string", "minLength": 1 },
+        "pipe_type": { "type": "string", "minLength": 1 },
+        "system_type": { "type": "string", "minLength": 1 }
+      }
+    },
+    "pipe_created_route_connector_bridge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "service", "geometry_mode", "source_fixture_observation_id", "target_route_observation_id", "target_route_endpoint", "pipe_size", "pipe_type", "system_type"],
+      "properties": {
+        "kind": { "const": "pipe_route" },
+        "discipline": { "const": "plumbing" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
+        "service": { "enum": ["domestic_cold_water", "domestic_hot_water", "sanitary", "vent"] },
+        "geometry_mode": { "const": "created_route_connector_bridge" },
+        "source_fixture_observation_id": { "type": "string", "minLength": 1 },
+        "target_route_observation_id": { "type": "string", "minLength": 1 },
+        "target_route_endpoint": { "enum": ["start", "end"] },
+        "maximum_length_ft": { "type": "number", "exclusiveMinimum": 0, "maximum": 100 },
+        "size_tolerance_ft": { "type": "number", "minimum": 0, "maximum": 0.25 },
+        "pipe_size": { "type": "string", "minLength": 1 },
+        "pipe_type": { "type": "string", "minLength": 1 },
+        "system_type": { "type": "string", "minLength": 1 }
+      }
+    },
+    "pipe_source_branch_tee": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "service", "geometry_mode", "main_route_observation_id", "pixel_points", "pipe_type", "system_type", "elevation_ft", "tee_family_name", "tee_type_name"],
+      "allOf": [
+        {
+          "if": { "required": ["pipe_size_policy"], "properties": { "pipe_size_policy": { "const": "unresolved_placeholder" } } },
+          "then": { "properties": { "pipe_size": false } },
+          "else": { "required": ["pipe_size"], "properties": { "pipe_size": { "type": "string", "minLength": 1 } } }
+        }
+      ],
+      "properties": {
+        "kind": { "const": "pipe_route" },
+        "discipline": { "const": "plumbing" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
+        "service": { "enum": ["domestic_cold_water", "domestic_hot_water", "sanitary", "vent"] },
+        "geometry_mode": { "const": "source_branch_tee" },
+        "main_route_observation_id": { "type": "string", "minLength": 1 },
+        "pixel_points": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/point" } },
+        "pipe_size": { "type": "string", "minLength": 1 },
+        "pipe_size_policy": { "enum": ["explicit_required", "unresolved_placeholder"] },
+        "pipe_type": { "type": "string", "minLength": 1 },
+        "system_type": { "type": "string", "minLength": 1 },
+        "elevation_ft": { "type": "number" },
+        "tee_family_name": { "type": "string", "minLength": 1 },
+        "tee_type_name": { "type": "string", "minLength": 1 }
+      }
+    },
+    "pipe_downstream_vent_tee": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "service", "geometry_mode", "pixel_points", "elevation_ft", "pipe_type", "system_type"],
+      "allOf": [
+        {
+          "if": { "required": ["pipe_size_policy"], "properties": { "pipe_size_policy": { "const": "unresolved_placeholder" } } },
+          "then": { "properties": { "pipe_size": false } },
+          "else": { "required": ["pipe_size"], "properties": { "pipe_size": { "type": "string", "minLength": 1 } } }
+        }
+      ],
+      "anyOf": [
+        {
+          "required": ["verification_fixture_reference_keys"],
+          "properties": { "verification_fixture_reference_keys": { "type": "array", "minItems": 1 } }
+        },
+        {
+          "required": ["verification_fixture_observation_ids"],
+          "properties": { "verification_fixture_observation_ids": { "type": "array", "minItems": 1 } }
+        }
+      ],
+      "oneOf": [
+        {
+          "required": ["main_reference_key", "main_elevation_ft"],
+          "properties": {
+            "main_reference_key": { "type": "string", "minLength": 1 },
+            "main_elevation_ft": { "type": "number" },
+            "main_route_observation_id": false
+          }
+        },
+        {
+          "required": ["main_route_observation_id"],
+          "properties": {
+            "main_route_observation_id": { "type": "string", "minLength": 1 },
+            "main_reference_key": false,
+            "main_elevation_ft": false
+          }
+        }
+      ],
+      "properties": {
+        "kind": { "const": "pipe_route" },
+        "discipline": { "const": "plumbing" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
+        "service": { "const": "vent" },
+        "geometry_mode": { "const": "downstream_vent_tee" },
+        "main_reference_key": { "type": "string", "minLength": 1 },
+        "main_route_observation_id": { "type": "string", "minLength": 1 },
+        "verification_fixture_reference_keys": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "verification_fixture_observation_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "verification_mode": { "enum": ["native_fixture_reachability", "plan_topology_only"] },
+        "pixel_points": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/point" } },
+        "main_elevation_ft": { "type": "number" },
+        "elevation_ft": { "type": "number" },
+        "max_vent_search_elements": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "max_vent_search_hops": { "type": "integer", "minimum": 1, "maximum": 500 },
+        "pipe_size": { "type": "string", "minLength": 1 },
+        "pipe_size_policy": { "enum": ["explicit_required", "unresolved_placeholder"] },
+        "pipe_type": { "type": "string", "minLength": 1 },
+        "system_type": { "const": "Vent" }
+      }
+    },
+    "plumbing_fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "not": {
+            "type": "object",
+            "properties": {
+              "placement": {
+                "type": "object",
+                "properties": { "mode": { "const": "hosted_exemplar" } },
+                "required": ["mode"]
+              }
+            },
+            "required": ["placement"]
+          }
+        }
+      ],
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "role", "pixel_point", "elevation_ft", "placement", "representation_classification", "service_route_connections", "service_boundary"],
+      "properties": {
+        "kind": { "const": "plumbing_fixture" },
+        "discipline": { "const": "plumbing" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
+        "role": { "type": "string", "minLength": 1 },
+        "pixel_point": { "$ref": "#/$defs/point" },
+        "elevation_ft": { "type": "number" },
+        "placement": { "$ref": "#/$defs/placement" },
+        "representation_classification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source_graphic", "native_target", "basis", "evidence_role", "reference", "native_target_evidence"],
+          "allOf": [
+            {
+              "if": { "properties": { "source_graphic": { "const": "architectural_fixture" } }, "required": ["source_graphic"] },
+              "then": { "properties": { "native_target": { "const": "architectural_fixture" } } }
+            },
+            {
+              "if": { "properties": { "source_graphic": { "const": "mep_connection_symbol" } }, "required": ["source_graphic"] },
+              "then": { "properties": { "native_target": { "const": "mep_connection" } } }
+            },
+            { "not": { "properties": { "source_graphic": { "const": "unresolved" } }, "required": ["source_graphic"] } }
+          ],
+          "properties": {
+            "source_graphic": { "enum": ["architectural_fixture", "mep_connection_symbol", "combined_fixture_and_connection", "unresolved"] },
+            "native_target": { "enum": ["architectural_fixture", "mep_connection"] },
+            "basis": { "enum": ["source_observation", "user_direction"] },
+            "evidence_role": { "type": "string", "minLength": 1 },
+            "reference": { "type": "string", "minLength": 1 },
+            "native_target_evidence": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["basis", "evidence_role", "reference", "family_name", "type_name"],
+              "properties": {
+                "basis": { "enum": ["native_model_precedent", "user_direction"] },
+                "evidence_role": { "type": "string", "minLength": 1 },
+                "reference": { "type": "string", "minLength": 1 },
+                "family_name": { "type": "string", "minLength": 1 },
+                "type_name": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        },
+        "service_connection_mode": { "enum": ["native_connectivity", "plan_proximity"] },
+        "service_route_connections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["route_observation_id", "route_endpoint"],
+            "properties": {
+              "route_observation_id": { "type": "string", "minLength": 1 },
+              "route_endpoint": { "enum": ["start", "end", "native_source", "nearest_plan_segment"] },
+              "maximum_plan_distance_ft": { "type": "number", "exclusiveMinimum": 0, "maximum": 25 }
+            }
+          }
+        },
+        "service_boundary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["basis", "evidence_role", "required_services", "prohibited_services"],
+          "properties": {
+            "basis": { "enum": ["source_observation", "native_model_precedent"] },
+            "evidence_role": { "type": "string", "minLength": 1 },
+            "required_services": { "type": "array", "items": { "enum": ["domestic_cold_water", "domestic_hot_water", "sanitary", "vent"] }, "uniqueItems": true },
+            "prohibited_services": { "type": "array", "items": { "enum": ["domestic_cold_water", "domestic_hot_water", "sanitary", "vent"] }, "uniqueItems": true }
+          }
+        }
+      }
+    },
+    "electrical_device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "role", "pixel_point", "elevation_ft", "placement"],
+      "properties": {
+        "kind": { "const": "electrical_device" },
+        "discipline": { "const": "electrical" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
+        "role": { "type": "string", "minLength": 1 },
+        "instance_parameters": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 16,
+          "propertyNames": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "additionalProperties": { "type": "string", "maxLength": 512 }
+        },
+        "pixel_point": { "$ref": "#/$defs/point" },
+        "elevation_ft": { "type": "number" },
+        "placement": { "$ref": "#/$defs/placement" }
+      }
+    },
+    "light_fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "role", "pixel_point", "elevation_ft", "placement"],
+      "properties": {
+        "kind": { "const": "light_fixture" },
+        "discipline": { "const": "electrical" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
+        "role": { "type": "string", "minLength": 1 },
+        "pixel_point": { "$ref": "#/$defs/point" },
+        "elevation_ft": { "type": "number" },
+        "workset_name": { "type": "string", "minLength": 1 },
+        "placement": { "$ref": "#/$defs/placement" }
+      }
+    },
+    "electrical_equipment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "role", "pixel_point", "elevation_ft", "placement"],
+      "properties": {
+        "kind": { "const": "electrical_equipment" },
+        "discipline": { "const": "electrical" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "attribute_evidence": { "$ref": "#/$defs/attribute_evidence" },
+        "role": { "type": "string", "minLength": 1 },
+        "panel_name": { "type": "string", "minLength": 1 },
+        "pixel_point": { "$ref": "#/$defs/point" },
+        "elevation_ft": { "type": "number" },
+        "placement": { "$ref": "#/$defs/placement" }
+      }
+    },
+    "electrical_circuit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "discipline", "observation_id", "evidence_role", "visibility", "confidence", "supported_attributes", "member_observation_ids", "membership_basis"],
+      "properties": {
+        "kind": { "const": "electrical_circuit" },
+        "discipline": { "const": "electrical" },
+        "observation_id": { "type": "string", "minLength": 1 },
+        "evidence_role": { "type": "string", "minLength": 1 },
+        "visibility": { "$ref": "#/$defs/visibility" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "supported_attributes": { "$ref": "#/$defs/supported_attributes" },
+        "member_observation_ids": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "native_member_reference_keys": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "circuit_mode": { "enum": ["match_source_power_system", "create_new_power_system"] },
+        "source_reference_key": { "type": "string", "minLength": 1 },
+        "expected_power_system_id": { "type": "string", "minLength": 1 },
+        "system_type": { "const": "PowerCircuit" },
+        "membership_basis": { "enum": ["native_source_power_system", "legible_source_circuit_label", "user_direction"] },
+        "panel_circuit_label": { "type": "string", "minLength": 1 },
+        "panel_reference_key": { "type": "string", "minLength": 1 },
+        "panel_observation_id": { "type": "string", "minLength": 1 },
+        "user_direction_reference": { "type": "string", "minLength": 1 },
+        "member_label_evidence": {
+          "type": "array",
+          "minItems": 0,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["member_observation_id", "evidence_role", "reference", "label"],
+            "properties": {
+              "member_observation_id": { "type": "string", "minLength": 1 },
+              "evidence_role": { "type": "string", "minLength": 1 },
+              "reference": { "type": "string", "minLength": 1 },
+              "label": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "native_member_label_evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["native_member_reference_key", "evidence_role", "reference", "label"],
+            "properties": {
+              "native_member_reference_key": { "type": "string", "minLength": 1 },
+              "evidence_role": { "type": "string", "minLength": 1 },
+              "reference": { "type": "string", "minLength": 1 },
+              "label": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      },
+      "oneOf": [
+        {
+          "required": ["source_reference_key", "expected_power_system_id"],
+          "properties": {
+            "circuit_mode": { "enum": ["match_source_power_system"] },
+            "source_reference_key": { "type": "string", "minLength": 1 },
+            "expected_power_system_id": { "type": "string", "minLength": 1 },
+            "membership_basis": { "const": "native_source_power_system" }
+          }
+        },
+        {
+          "required": ["circuit_mode", "system_type", "panel_circuit_label"],
+          "properties": {
+            "circuit_mode": { "const": "create_new_power_system" },
+            "system_type": { "const": "PowerCircuit" },
+            "panel_circuit_label": { "type": "string", "minLength": 1 },
+            "member_label_evidence": { "type": "array" },
+            "membership_basis": { "const": "legible_source_circuit_label" }
+          }
+        },
+        {
+          "required": ["circuit_mode", "system_type", "panel_circuit_label", "user_direction_reference"],
+          "properties": {
+            "circuit_mode": { "const": "create_new_power_system" },
+            "system_type": { "const": "PowerCircuit" },
+            "panel_circuit_label": { "type": "string", "minLength": 1 },
+            "user_direction_reference": { "type": "string", "minLength": 1 },
+            "membership_basis": { "const": "user_direction" }
+          }
+        }
+      ]
+    }
+  }
+}
