@@ -19,9 +19,11 @@ const FILES: Record<ExistingConditionsContractName, string> = {
   architectural_opening_host_resolution: "existing_conditions_architectural_opening_host_resolution.v1.schema.json"
 };
 const REGISTERED_MEP_V2_FILE = "existing_conditions_registered_mep_observations.v2.schema.json";
+const MEP_REGION_COVERAGE_V2_FILE = "existing_conditions_mep_region_coverage.v2.schema.json";
 
 let validators: Record<ExistingConditionsContractName, ValidateFunction> | null = null;
 let registeredMepV2Validator: ValidateFunction | null = null;
+let mepRegionCoverageV2Validator: ValidateFunction | null = null;
 
 function contractsDirectory(): string {
   const candidates = [
@@ -38,10 +40,13 @@ function loadValidators(): Record<ExistingConditionsContractName, ValidateFuncti
   const directory = contractsDirectory();
   const schemas = Object.values(FILES).map((file) => JSON.parse(fs.readFileSync(path.join(directory, file), "utf8")) as Record<string, unknown>);
   const registeredMepV2Schema = JSON.parse(fs.readFileSync(path.join(directory, REGISTERED_MEP_V2_FILE), "utf8")) as Record<string, unknown>;
+  const mepRegionCoverageV2Schema = JSON.parse(fs.readFileSync(path.join(directory, MEP_REGION_COVERAGE_V2_FILE), "utf8")) as Record<string, unknown>;
   const ajv = new Ajv2020({ allErrors: true, strict: true });
   for (const schema of schemas) ajv.addSchema(schema);
   ajv.addSchema(registeredMepV2Schema);
+  ajv.addSchema(mepRegionCoverageV2Schema);
   registeredMepV2Validator = ajv.getSchema(String(registeredMepV2Schema.$id))!;
+  mepRegionCoverageV2Validator = ajv.getSchema(String(mepRegionCoverageV2Schema.$id))!;
   validators = Object.fromEntries(
     (Object.keys(FILES) as ExistingConditionsContractName[]).map((name, index) => [name, ajv.getSchema(String(schemas[index]!.$id))!])
   ) as Record<ExistingConditionsContractName, ValidateFunction>;
@@ -59,6 +64,8 @@ export function assertExistingConditionsContract(name: ExistingConditionsContrac
     : undefined;
   const validator = name === "registered_mep_observations" && schemaVersion === 2
     ? registeredMepV2Validator!
+    : name === "mep_region_coverage" && schemaVersion === 2
+      ? mepRegionCoverageV2Validator!
     : loaded[name];
   if (!validator(value)) throw new Error(`invalid_existing_conditions_${name}_contract:${formatErrors(validator.errors)}`);
 }

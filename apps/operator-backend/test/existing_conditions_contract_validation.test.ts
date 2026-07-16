@@ -234,6 +234,32 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
     }]
   };
   assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", input));
+  const representationAwareInput = structuredClone(input) as Record<string, any>;
+  representationAwareInput.schema_version = 2;
+  representationAwareInput.source_coverage = {
+    schema_version: 2,
+    scope_id: input.scope_id,
+    source_evidence_sha256: input.source_evidence_sha256,
+    registered_render_sha256: input.registered_render.sha256,
+    coordinate_space: "registered_render_pixels_top_left",
+    region: { min: { x: 0, y: 0 }, max: { x: 100, y: 100 } },
+    disciplines: ["electrical"],
+    candidates: [{
+      candidate_id: "device-symbol-contract-v2",
+      primitive: "point_symbol",
+      pixel_bounds: { min: { x: 20, y: 70 }, max: { x: 30, y: 80 } },
+      visibility: "clear",
+      representation: {
+        kind: "single_model_symbol",
+        role: "electrical_device",
+        evidence: "direct_symbol_geometry",
+        symbol_count: 1,
+        clipped_by_region: false
+      },
+      disposition: { status: "resolved", observation_ids: ["device-1"] }
+    }]
+  };
+  assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", representationAwareInput));
   const lightFixture = structuredClone(input) as unknown as {
     visible_evidence: Array<{ role: string; sha256: string }>;
     native_element_references: Array<{
@@ -712,6 +738,40 @@ test("runtime contract validation accepts bounded MEP coverage and rejects an ig
   invalid.candidates[0]!.disposition = { status: "ignored", observation_ids: ["device-1"] };
   assert.throws(
     () => assertExistingConditionsContract("mep_region_coverage", invalid),
+    /invalid_existing_conditions_mep_region_coverage_contract/
+  );
+});
+
+test("runtime contract validation accepts representation-aware bounded MEP coverage V2", () => {
+  const coverage = {
+    schema_version: 2,
+    scope_id: "bounded-office-v2",
+    source_evidence_sha256: "a".repeat(64),
+    registered_render_sha256: "b".repeat(64),
+    coordinate_space: "registered_render_pixels_top_left",
+    region: { min: { x: 10, y: 10 }, max: { x: 90, y: 90 } },
+    disciplines: ["electrical"],
+    candidates: [{
+      candidate_id: "device-symbol-v2-1",
+      primitive: "point_symbol",
+      pixel_bounds: { min: { x: 20, y: 70 }, max: { x: 30, y: 80 } },
+      visibility: "clear",
+      representation: {
+        kind: "single_model_symbol",
+        role: "electrical_device",
+        evidence: "direct_symbol_geometry",
+        symbol_count: 1,
+        clipped_by_region: false
+      },
+      disposition: { status: "resolved", observation_ids: ["device-1"] }
+    }]
+  };
+  assert.doesNotThrow(() => assertExistingConditionsContract("mep_region_coverage", coverage));
+
+  const missingRepresentation = structuredClone(coverage) as Record<string, any>;
+  delete missingRepresentation.candidates[0].representation;
+  assert.throws(
+    () => assertExistingConditionsContract("mep_region_coverage", missingRepresentation),
     /invalid_existing_conditions_mep_region_coverage_contract/
   );
 });

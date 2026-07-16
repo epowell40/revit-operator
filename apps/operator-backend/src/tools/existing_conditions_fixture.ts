@@ -135,10 +135,15 @@ import {
   type PlanTraceExtractionInput
 } from "../existing_conditions/plan_trace_extraction.js";
 import {
-  validateBoundedMepRegionCoverageV1,
+  validateBoundedMepRegionCoverage,
   type BoundedMepRegionCoverageContext,
-  type BoundedMepRegionCoverageV1
+  type BoundedMepRegionCoverageV1,
+  type BoundedMepRegionCoverageV2
 } from "../existing_conditions/mep_region_coverage.js";
+import {
+  detectRepeatedMepSymbols,
+  type MepRepeatedSymbolDetectionInputV1
+} from "../existing_conditions/mep_repeated_symbol_detection.js";
 
 function argument(name: string): string {
   const index = process.argv.indexOf(name);
@@ -207,6 +212,7 @@ function usage(): never {
     "  npm run existing-conditions -- scope-image-region --visible <export-visible-elements.json> --image-region <minX,minY,maxX,maxY> --out <scope.json> [--padding-px <pixels>] [--include-linked-scope] [--level-names <name,name>]",
     "  npm run existing-conditions -- solve-registration --input <registration-input-or-wrapper.json> --out <registration-receipt.json>",
     "  npm run existing-conditions -- extract-plan-traces --input <hash-bound-extraction-policy.json> --out <trace-receipt.json> [--preview-out <diagnostic-overlay.png>]",
+    "  npm run existing-conditions -- detect-repeated-mep-symbols --input <hash-bound-template-search.json> --out <candidate-receipt.json>",
     "  npm run existing-conditions -- validate-mep-region-coverage --input <source-coverage.json> --context <coverage-context.json> --out <coverage-receipt.json>",
     "  npm run existing-conditions -- compile-registered-mep-observations --input <registered-pixel-observations.json> --out <compilation.json> [--package-out <mep-draft-package.json>] [--workflow-out <atomic-dry-run-request.json>] [--max-created <count>]",
     "  npm run existing-conditions -- compile-mep-draft --input <source-observations.json> --out <compiled-plan.json> [--workflow-out <atomic-dry-run-request.json>] [--max-created <count>]",
@@ -1675,9 +1681,16 @@ async function main(): Promise<void> {
     writeJson(requiredArgument("--out"), diagnosticPreview ? { ...receipt, diagnostic_preview: diagnosticPreview } : receipt);
     return;
   }
+  if (command === "detect-repeated-mep-symbols") {
+    const receipt = await detectRepeatedMepSymbols(
+      readJson(requiredArgument("--input")) as MepRepeatedSymbolDetectionInputV1
+    );
+    writeJson(requiredArgument("--out"), receipt);
+    return;
+  }
   if (command === "validate-mep-region-coverage") {
-    const receipt = validateBoundedMepRegionCoverageV1(
-      readJson(requiredArgument("--input")) as BoundedMepRegionCoverageV1,
+    const receipt = validateBoundedMepRegionCoverage(
+      readJson(requiredArgument("--input")) as BoundedMepRegionCoverageV1 | BoundedMepRegionCoverageV2,
       readJson(requiredArgument("--context")) as BoundedMepRegionCoverageContext
     );
     writeJson(requiredArgument("--out"), receipt);

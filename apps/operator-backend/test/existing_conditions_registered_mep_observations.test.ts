@@ -10,7 +10,7 @@ import {
   compileRegisteredMepObservations,
   type RegisteredMepObservationPackage
 } from "../src/existing_conditions/registered_mep_observations.js";
-import type { BoundedMepRegionCoverageV1 } from "../src/existing_conditions/mep_region_coverage.js";
+import type { BoundedMepRegionCoverageV1, BoundedMepRegionCoverageV2 } from "../src/existing_conditions/mep_region_coverage.js";
 
 const SOURCE_HASH = "a".repeat(64);
 const TYPE_CATALOG_HASH = "c".repeat(64);
@@ -303,6 +303,24 @@ function electricalCoverage(input: RegisteredMepObservationPackage): BoundedMepR
         observation_ids: [input.observations[0]!.observation_id]
       }
     }]
+  };
+}
+
+function electricalCoverageV2(input: RegisteredMepObservationPackage): BoundedMepRegionCoverageV2 {
+  const v1 = electricalCoverage(input);
+  return {
+    ...v1,
+    schema_version: 2,
+    candidates: v1.candidates.map((candidate) => ({
+      ...candidate,
+      representation: {
+        kind: "single_model_symbol",
+        role: "electrical_device",
+        evidence: "direct_symbol_geometry",
+        symbol_count: 1,
+        clipped_by_region: false
+      }
+    }))
   };
 }
 
@@ -1160,6 +1178,18 @@ test("registered MEP observations bind a complete bounded-region coverage receip
   assert.deepEqual(result.source_coverage_receipt?.covered_observation_ids, ["device-random-17"]);
   assert.equal(result.compiled_plan.actions.length, 1);
   assert.match(result.usage_constraints.join("\n"), /partial coverage cannot be reported as complete/i);
+});
+
+test("registered MEP schema V2 compiles representation-aware individual device coverage", async () => {
+  const input = electricalInput();
+  input.schema_version = 2;
+  input.source_coverage = electricalCoverageV2(input);
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.status, "ready");
+  assert.equal(result.source_coverage_receipt?.schema_version, 2);
+  assert.equal(result.source_coverage_receipt?.coverage_status, "complete");
+  if (result.source_coverage_receipt?.schema_version !== 2) assert.fail("expected coverage V2 receipt");
+  assert.equal(result.source_coverage_receipt.representation_counts.single_model_symbol, 1);
 });
 
 test("partial bounded-region coverage preserves resolved actions but requires clarification", async () => {

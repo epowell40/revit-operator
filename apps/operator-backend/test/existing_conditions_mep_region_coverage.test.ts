@@ -2,8 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   validateBoundedMepRegionCoverageV1,
+  validateBoundedMepRegionCoverageV2,
   type BoundedMepRegionCoverageContext,
-  type BoundedMepRegionCoverageV1
+  type BoundedMepRegionCoverageV1,
+  type BoundedMepRegionCoverageV2
 } from "../src/existing_conditions/mep_region_coverage.js";
 
 const SOURCE_HASH = "a".repeat(64);
@@ -21,7 +23,7 @@ function context(): BoundedMepRegionCoverageContext {
       { observation_id: "pipe-random-31", kind: "pipe_route", discipline: "plumbing" },
       { observation_id: "fixture-random-72", kind: "plumbing_fixture", discipline: "plumbing" },
       { observation_id: "device-random-18", kind: "electrical_device", discipline: "electrical" },
-      { observation_id: "circuit-random-44", kind: "electrical_circuit", discipline: "electrical" }
+      { observation_id: "circuit-random-44", kind: "electrical_circuit", discipline: "electrical", member_observation_ids: ["device-random-18"] }
     ]
   };
 }
@@ -68,6 +70,34 @@ function coverage(): BoundedMepRegionCoverageV1 {
   };
 }
 
+function coverageV2(): BoundedMepRegionCoverageV2 {
+  const input = coverage();
+  return {
+    ...input,
+    schema_version: 2,
+    candidates: input.candidates.map((candidate) => {
+      if (candidate.primitive === "linear_trace") {
+        return {
+          ...candidate,
+          representation: { kind: "linear_model_primitive", role: "pipe_route", evidence: "direct_symbol_geometry", symbol_count: 0, clipped_by_region: false }
+        };
+      }
+      if (candidate.primitive === "circuit_annotation") {
+        return {
+          ...candidate,
+          scope_anchor_candidate_id: "symbol-random-803",
+          representation: { kind: "annotation_cluster", role: "electrical_circuit", evidence: "text_only", symbol_count: 0, clipped_by_region: false }
+        };
+      }
+      const role = candidate.candidate_id === "symbol-random-802" ? "plumbing_fixture" : "electrical_device";
+      return {
+        ...candidate,
+        representation: { kind: "single_model_symbol", role, evidence: "direct_symbol_geometry", symbol_count: 1, clipped_by_region: false }
+      };
+    })
+  };
+}
+
 test("bounded MEP region coverage produces a deterministic complete receipt", () => {
   const first = validateBoundedMepRegionCoverageV1(coverage(), context());
   const second = validateBoundedMepRegionCoverageV1(coverage(), context());
@@ -81,6 +111,214 @@ test("bounded MEP region coverage produces a deterministic complete receipt", ()
   ]);
   assert.equal(first.coverage_contract_sha256, second.coverage_contract_sha256);
   assert.equal(first.region_sha256, second.region_sha256);
+});
+
+test("V2 requires individual model-symbol evidence and preserves a deterministic receipt", () => {
+  const first = validateBoundedMepRegionCoverageV2(coverageV2(), context());
+  const second = validateBoundedMepRegionCoverageV2(coverageV2(), context());
+  assert.equal(first.schema_version, 2);
+  assert.equal(first.coverage_status, "complete");
+  assert.equal(first.representation_counts.single_model_symbol, 2);
+  assert.equal(first.representation_counts.annotation_cluster, 1);
+  assert.equal(first.coverage_contract_sha256, second.coverage_contract_sha256);
+
+  const invalidRole = coverageV2();
+  (invalidRole.candidates[0]!.representation as { role: string }).role = "invented_role";
+  assert.throws(
+    () => validateBoundedMepRegionCoverageV2(invalidRole, context()),
+    /representation_role_invalid/
+  );
+});
+
+test("V2 refuses to resolve grouped annotation or multiple plotted symbols as one device", () => {
+  const annotationAsDevice = coverageV2();
+  annotationAsDevice.candidates[2]!.representation = {
+    kind: "annotation_cluster",
+    role: "electrical_device",
+    evidence: "text_only",
+    symbol_count: 0,
+    clipped_by_region: false
+  };
+  assert.throws(
+    () => validateBoundedMepRegionCoverageV2(annotationAsDevice, context()),
+    /annotation_cluster_invalid/
+  );
+
+  const groupedBank = coverageV2();
+  groupedBank.candidates[2]!.representation = {
+    kind: "multi_symbol_cluster",
+    role: "electrical_device",
+    evidence: "mixed_or_overlapped",
+    symbol_count: 4,
+    clipped_by_region: false
+  };
+  assert.throws(
+    () => validateBoundedMepRegionCoverageV2(groupedBank, context()),
+    /multi_symbol_cluster_must_be_unresolved/
+  );
+
+  groupedBank.candidates[2]!.disposition = {
+    status: "unresolved",
+    reason: "unresolved_member_classification",
+    note: "Four visible marks must be segmented into individual symbols before model observations are proposed."
+  };
+  groupedBank.candidates[3]!.disposition = {
+    status: "unresolved",
+    reason: "unresolved_member_classification",
+    note: "Circuit text cannot establish membership while the associated device bank is unresolved."
+  };
+  const result = validateBoundedMepRegionCoverageV2(groupedBank, {
+    ...context(),
+    observations: context().observations.filter((entry) => !["device-random-18", "circuit-random-44"].includes(entry.observation_id))
+  });
+  assert.equal(result.coverage_status, "partial");
+  assert.deepEqual(result.unresolved_candidate_ids, ["annotation-random-804", "symbol-random-803"]);
+});
+
+test("V2 refuses to use one individual symbol as evidence for multiple model observations", () => {
+  const input = coverageV2();
+  input.candidates[2]!.disposition = {
+    status: "resolved",
+    observation_ids: ["device-random-18", "device-random-19"]
+  };
+  const expandedContext = context();
+  expandedContext.observations.push({ observation_id: "device-random-19", kind: "electrical_device", discipline: "electrical" });
+  assert.throws(
+    () => validateBoundedMepRegionCoverageV2(input, expandedContext),
+    /resolved_candidate_requires_exactly_one_observation:symbol-random-803/
+  );
+});
+
+test("V2 separates lighting fixtures from lighting control devices", () => {
+  const lightingContext: BoundedMepRegionCoverageContext = {
+    scope_id: "bounded-lighting-room",
+    source_evidence_sha256: SOURCE_HASH,
+    registered_render_sha256: RENDER_HASH,
+    render_width_px: 1000,
+    render_height_px: 800,
+    package_discipline: "electrical",
+    observations: [
+      { observation_id: "fixture-random-201", kind: "light_fixture", discipline: "electrical" },
+      { observation_id: "control-random-202", kind: "lighting_device", discipline: "electrical" }
+    ]
+  };
+  const input: BoundedMepRegionCoverageV2 = {
+    schema_version: 2,
+    scope_id: lightingContext.scope_id,
+    source_evidence_sha256: SOURCE_HASH,
+    registered_render_sha256: RENDER_HASH,
+    coordinate_space: "registered_render_pixels_top_left",
+    region: { min: { x: 100, y: 100 }, max: { x: 900, y: 700 } },
+    disciplines: ["electrical"],
+    candidates: [
+      {
+        candidate_id: "fixture-symbol-random-211",
+        primitive: "point_symbol",
+        pixel_bounds: { min: { x: 200, y: 200 }, max: { x: 235, y: 235 } },
+        visibility: "clear",
+        representation: { kind: "single_model_symbol", role: "light_fixture", evidence: "direct_symbol_geometry", symbol_count: 1, clipped_by_region: false },
+        disposition: { status: "resolved", observation_ids: ["fixture-random-201"] }
+      },
+      {
+        candidate_id: "control-symbol-random-212",
+        primitive: "point_symbol",
+        pixel_bounds: { min: { x: 300, y: 200 }, max: { x: 325, y: 225 } },
+        visibility: "clear",
+        representation: { kind: "single_model_symbol", role: "lighting_device", evidence: "direct_symbol_geometry", symbol_count: 1, clipped_by_region: false },
+        disposition: { status: "resolved", observation_ids: ["control-random-202"] }
+      }
+    ]
+  };
+  assert.throws(
+    () => validateBoundedMepRegionCoverageV2(input, lightingContext),
+    /lighting_device_native_observation_not_supported:control-symbol-random-212/
+  );
+  input.candidates[1]!.representation.role = "light_fixture";
+  assert.throws(
+    () => validateBoundedMepRegionCoverageV2(input, lightingContext),
+    /representation_role_mismatch:control-symbol-random-212:control-random-202/
+  );
+});
+
+test("V2 keeps boundary-clipped air-terminal symbols unresolved until a complete symbol is visible", () => {
+  const mechanicalContext: BoundedMepRegionCoverageContext = {
+    scope_id: "bounded-terminal-edge",
+    source_evidence_sha256: SOURCE_HASH,
+    registered_render_sha256: RENDER_HASH,
+    render_width_px: 1000,
+    render_height_px: 800,
+    package_discipline: "mechanical",
+    observations: [{ observation_id: "terminal-random-301", kind: "air_terminal", discipline: "mechanical" }]
+  };
+  const input: BoundedMepRegionCoverageV2 = {
+    schema_version: 2,
+    scope_id: mechanicalContext.scope_id,
+    source_evidence_sha256: SOURCE_HASH,
+    registered_render_sha256: RENDER_HASH,
+    coordinate_space: "registered_render_pixels_top_left",
+    region: { min: { x: 100, y: 100 }, max: { x: 900, y: 700 } },
+    disciplines: ["mechanical"],
+    candidates: [{
+      candidate_id: "terminal-symbol-random-311",
+      primitive: "point_symbol",
+      pixel_bounds: { min: { x: 100, y: 250 }, max: { x: 125, y: 285 } },
+      visibility: "partial",
+      representation: { kind: "single_model_symbol", role: "air_terminal", evidence: "direct_symbol_geometry", symbol_count: 1, clipped_by_region: true },
+      disposition: { status: "resolved", observation_ids: ["terminal-random-301"] }
+    }]
+  };
+  assert.throws(
+    () => validateBoundedMepRegionCoverageV2(input, mechanicalContext),
+    /resolved_symbol_must_be_complete_and_clear/
+  );
+  input.candidates[0]!.disposition = { status: "unresolved", reason: "clipped_by_region", note: "The symbol crosses the frozen source boundary." };
+  const partial = validateBoundedMepRegionCoverageV2(input, { ...mechanicalContext, observations: [] });
+  assert.equal(partial.coverage_status, "partial");
+  input.candidates[0]!.visibility = "clear";
+  input.candidates[0]!.representation.clipped_by_region = false;
+  input.candidates[0]!.disposition = { status: "resolved", observation_ids: ["terminal-random-301"] };
+  assert.equal(validateBoundedMepRegionCoverageV2(input, mechanicalContext).coverage_status, "complete");
+});
+
+test("V2 circuit annotations require an explicit individual device-symbol anchor", () => {
+  const input = coverageV2();
+  delete input.candidates[3]!.scope_anchor_candidate_id;
+  assert.throws(
+    () => validateBoundedMepRegionCoverageV2(input, context()),
+    /circuit_annotation_requires_symbol_anchor/
+  );
+
+  input.candidates[3]!.scope_anchor_candidate_id = "symbol-random-803";
+  const missingMembership = context();
+  delete missingMembership.observations[3]!.member_observation_ids;
+  assert.throws(
+    () => validateBoundedMepRegionCoverageV2(input, missingMembership),
+    /circuit_membership_context_required/
+  );
+
+  const wrongMembership = context();
+  wrongMembership.observations[3]!.member_observation_ids = ["some-other-device"];
+  assert.throws(
+    () => validateBoundedMepRegionCoverageV2(input, wrongMembership),
+    /circuit_member_unknown_or_unsupported/
+  );
+
+  const fabricatedExtraMember = context();
+  fabricatedExtraMember.observations[3]!.member_observation_ids = ["device-random-18", "ghost-device"];
+  assert.throws(
+    () => validateBoundedMepRegionCoverageV2(input, fabricatedExtraMember),
+    /circuit_member_unknown_or_unsupported:circuit-random-44:ghost-device/
+  );
+});
+
+test("V2 circuit annotations may anchor to an individual lighting fixture member", () => {
+  const input = coverageV2();
+  const lightingContext = context();
+  input.candidates[2]!.representation.role = "light_fixture";
+  lightingContext.observations[2]!.kind = "light_fixture";
+  const result = validateBoundedMepRegionCoverageV2(input, lightingContext);
+  assert.equal(result.coverage_status, "complete");
+  assert.equal(result.representation_counts.single_model_symbol, 2);
 });
 
 test("bounded MEP region coverage supports HVAC routes and air terminals", () => {
@@ -336,5 +574,21 @@ test("direct validation rejects primitive and unresolved-reason values outside t
   assert.throws(
     () => validateBoundedMepRegionCoverageV1(invalidReason, context()),
     /candidate_unresolved_reason_invalid/
+  );
+});
+
+test("V2 direct validation fails closed on malformed candidates and context observations", () => {
+  const malformedCandidate = coverageV2();
+  (malformedCandidate.candidates as unknown[])[0] = null;
+  assert.throws(
+    () => validateBoundedMepRegionCoverageV2(malformedCandidate, context()),
+    /candidate_0_must_be_object/
+  );
+
+  const malformedContext = context();
+  (malformedContext.observations as unknown[])[0] = null;
+  assert.throws(
+    () => validateBoundedMepRegionCoverageV2(coverageV2(), malformedContext),
+    /context_observation_must_be_object/
   );
 });

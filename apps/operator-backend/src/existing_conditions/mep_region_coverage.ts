@@ -48,8 +48,27 @@ export type BoundedMepRegionCoverageV1 = {
 
 export type MepCoverageObservationDescriptor = {
   observation_id: string;
-  kind: "duct_route" | "conduit_route" | "air_terminal" | "mechanical_equipment" | "pipe_route" | "plumbing_fixture" | "electrical_device" | "light_fixture" | "electrical_equipment" | "electrical_circuit";
+  kind: "duct_route" | "conduit_route" | "air_terminal" | "mechanical_equipment" | "pipe_route" | "plumbing_fixture" | "electrical_device" | "light_fixture" | "lighting_device" | "electrical_equipment" | "electrical_circuit";
   discipline: MepCoverageDiscipline;
+  member_observation_ids?: string[];
+};
+
+export type MepCoverageModelRole = Exclude<MepCoverageObservationDescriptor["kind"], "electrical_circuit">;
+export type MepCoverageRepresentationV2 = {
+  kind: "single_model_symbol" | "multi_symbol_cluster" | "annotation_cluster" | "linear_model_primitive" | "junction_model_primitive" | "unknown";
+  role: MepCoverageModelRole | "electrical_circuit" | "device_tag" | "leader" | "unknown";
+  evidence: "direct_symbol_geometry" | "leader_endpoint" | "text_only" | "mixed_or_overlapped";
+  symbol_count: number;
+  clipped_by_region: boolean;
+};
+
+export type BoundedMepRegionCoverageCandidateV2 = BoundedMepRegionCoverageCandidateV1 & {
+  representation: MepCoverageRepresentationV2;
+};
+
+export type BoundedMepRegionCoverageV2 = Omit<BoundedMepRegionCoverageV1, "schema_version" | "candidates"> & {
+  schema_version: 2;
+  candidates: BoundedMepRegionCoverageCandidateV2[];
 };
 
 export type BoundedMepRegionCoverageReceiptV1 = {
@@ -68,6 +87,11 @@ export type BoundedMepRegionCoverageReceiptV1 = {
   resolved_candidate_ids: string[];
   unresolved_candidate_ids: string[];
   covered_observation_ids: string[];
+};
+
+export type BoundedMepRegionCoverageReceiptV2 = Omit<BoundedMepRegionCoverageReceiptV1, "schema_version"> & {
+  schema_version: 2;
+  representation_counts: Record<MepCoverageRepresentationV2["kind"], number>;
 };
 
 export type BoundedMepRegionCoverageContext = {
@@ -211,6 +235,104 @@ function expectedPrimitive(kind: MepCoverageObservationDescriptor["kind"]): Boun
   return ["point_symbol"];
 }
 
+function validateRepresentationV2(
+  candidate: BoundedMepRegionCoverageCandidateV2,
+  observations: Map<string, MepCoverageObservationDescriptor>
+): void {
+  const candidateId = requiredText(candidate.candidate_id, "mep_region_coverage_v2_candidate_id");
+  const representation = candidate.representation;
+  if (!representation || typeof representation !== "object") {
+    throw new Error(`mep_region_coverage_v2_representation_required:${candidateId}`);
+  }
+  if (!["single_model_symbol", "multi_symbol_cluster", "annotation_cluster", "linear_model_primitive", "junction_model_primitive", "unknown"].includes(representation.kind)) {
+    throw new Error(`mep_region_coverage_v2_representation_kind_invalid:${candidateId}`);
+  }
+  if (!["direct_symbol_geometry", "leader_endpoint", "text_only", "mixed_or_overlapped"].includes(representation.evidence)) {
+    throw new Error(`mep_region_coverage_v2_representation_evidence_invalid:${candidateId}`);
+  }
+  if (!["duct_route", "conduit_route", "air_terminal", "mechanical_equipment", "pipe_route", "plumbing_fixture", "electrical_device", "light_fixture", "lighting_device", "electrical_equipment", "electrical_circuit", "device_tag", "leader", "unknown"].includes(representation.role)) {
+    throw new Error(`mep_region_coverage_v2_representation_role_invalid:${candidateId}`);
+  }
+  if (!Number.isSafeInteger(representation.symbol_count) || representation.symbol_count < 0 || representation.symbol_count > 1000) {
+    throw new Error(`mep_region_coverage_v2_symbol_count_invalid:${candidateId}`);
+  }
+  if (typeof representation.clipped_by_region !== "boolean") {
+    throw new Error(`mep_region_coverage_v2_clipped_by_region_invalid:${candidateId}`);
+  }
+  if (!candidate.disposition || !["resolved", "unresolved"].includes(candidate.disposition.status)) {
+    throw new Error(`mep_region_coverage_candidate_disposition_invalid:${candidateId}`);
+  }
+
+  const unresolved = candidate.disposition.status === "unresolved";
+  if (representation.kind === "single_model_symbol") {
+    if (representation.symbol_count !== 1 || representation.evidence !== "direct_symbol_geometry") {
+      throw new Error(`mep_region_coverage_v2_single_symbol_requires_direct_geometry:${candidateId}`);
+    }
+    if (candidate.primitive !== "point_symbol") {
+      throw new Error(`mep_region_coverage_v2_single_symbol_requires_point_primitive:${candidateId}`);
+    }
+    if (!unresolved && (candidate.visibility !== "clear" || representation.clipped_by_region)) {
+      throw new Error(`mep_region_coverage_v2_resolved_symbol_must_be_complete_and_clear:${candidateId}`);
+    }
+  } else if (representation.kind === "multi_symbol_cluster") {
+    if (representation.symbol_count < 2 || candidate.primitive !== "point_symbol") {
+      throw new Error(`mep_region_coverage_v2_multi_symbol_cluster_invalid:${candidateId}`);
+    }
+    const expectedReason = representation.clipped_by_region ? "clipped_by_region" : "unresolved_member_classification";
+    if (candidate.disposition.status !== "unresolved" || candidate.disposition.reason !== expectedReason) {
+      throw new Error(`mep_region_coverage_v2_multi_symbol_cluster_must_be_unresolved:${candidateId}`);
+    }
+  } else if (representation.kind === "annotation_cluster") {
+    if (representation.symbol_count !== 0 || !["circuit_annotation", "unknown"].includes(candidate.primitive)) {
+      throw new Error(`mep_region_coverage_v2_annotation_cluster_invalid:${candidateId}`);
+    }
+    if (!unresolved && representation.role !== "electrical_circuit") {
+      throw new Error(`mep_region_coverage_v2_annotation_cannot_resolve_model_element:${candidateId}`);
+    }
+    if (!unresolved && !clean(candidate.scope_anchor_candidate_id)) {
+      throw new Error(`mep_region_coverage_v2_circuit_annotation_requires_symbol_anchor:${candidateId}`);
+    }
+  } else if (representation.kind === "linear_model_primitive") {
+    if (representation.symbol_count !== 0 || representation.evidence !== "direct_symbol_geometry" || candidate.primitive !== "linear_trace") {
+      throw new Error(`mep_region_coverage_v2_linear_representation_invalid:${candidateId}`);
+    }
+  } else if (representation.kind === "junction_model_primitive") {
+    if (representation.symbol_count !== 0 || representation.evidence !== "direct_symbol_geometry" || candidate.primitive !== "junction") {
+      throw new Error(`mep_region_coverage_v2_junction_representation_invalid:${candidateId}`);
+    }
+  } else if (!unresolved || candidate.primitive !== "unknown" || representation.role !== "unknown" || representation.symbol_count !== 0) {
+    throw new Error(`mep_region_coverage_v2_unknown_representation_must_be_unresolved:${candidateId}`);
+  }
+
+  if (candidate.disposition.status === "unresolved") {
+    if (representation.clipped_by_region && candidate.disposition.reason !== "clipped_by_region") {
+      throw new Error(`mep_region_coverage_v2_clipped_candidate_reason_mismatch:${candidateId}`);
+    }
+    return;
+  }
+
+  if (!Array.isArray(candidate.disposition.observation_ids) || candidate.disposition.observation_ids.length !== 1) {
+    throw new Error(`mep_region_coverage_v2_resolved_candidate_requires_exactly_one_observation:${candidateId}`);
+  }
+
+  for (const observationId of candidate.disposition.observation_ids) {
+    const observation = observations.get(observationId);
+    if (!observation) continue;
+    if (representation.role !== observation.kind) {
+      throw new Error(`mep_region_coverage_v2_representation_role_mismatch:${candidateId}:${observationId}`);
+    }
+    if (candidate.primitive === "point_symbol" && representation.kind !== "single_model_symbol") {
+      throw new Error(`mep_region_coverage_v2_resolved_point_requires_single_symbol:${candidateId}`);
+    }
+    if (candidate.primitive === "linear_trace" && representation.kind !== "linear_model_primitive") {
+      throw new Error(`mep_region_coverage_v2_resolved_trace_requires_linear_representation:${candidateId}`);
+    }
+    if (candidate.primitive === "junction" && representation.kind !== "junction_model_primitive") {
+      throw new Error(`mep_region_coverage_v2_resolved_junction_requires_junction_representation:${candidateId}`);
+    }
+  }
+}
+
 export function validateBoundedMepRegionCoverageV1(
   input: BoundedMepRegionCoverageV1,
   context: BoundedMepRegionCoverageContext
@@ -256,8 +378,12 @@ export function validateBoundedMepRegionCoverageV1(
   if (!Array.isArray(input.candidates) || input.candidates.length === 0) {
     throw new Error("mep_region_coverage_candidates_are_required");
   }
+  if (!context || !Array.isArray(context.observations)) {
+    throw new Error("mep_region_coverage_context_observations_are_required");
+  }
   const observations = new Map<string, MepCoverageObservationDescriptor>();
   for (const observation of context.observations) {
+    if (!observation || typeof observation !== "object") throw new Error("mep_region_coverage_context_observation_must_be_object");
     const id = requiredText(observation.observation_id, "mep_region_coverage_observation_id");
     if (observations.has(id)) throw new Error(`mep_region_coverage_duplicate_observation_id:${id}`);
     observations.set(id, observation);
@@ -387,4 +513,107 @@ export function validateBoundedMepRegionCoverageV1(
     covered_observation_ids: [...observationCandidateIds.keys()].sort()
   };
   return payload;
+}
+
+export function validateBoundedMepRegionCoverageV2(
+  input: BoundedMepRegionCoverageV2,
+  context: BoundedMepRegionCoverageContext
+): BoundedMepRegionCoverageReceiptV2 {
+  if (!input || input.schema_version !== 2) throw new Error("mep_region_coverage_requires_schema_v2");
+  if (!Array.isArray(input.candidates) || input.candidates.length === 0) {
+    throw new Error("mep_region_coverage_candidates_are_required");
+  }
+  if (!context || !Array.isArray(context.observations)) {
+    throw new Error("mep_region_coverage_context_observations_are_required");
+  }
+  const observations = new Map<string, MepCoverageObservationDescriptor>();
+  for (const observation of context.observations) {
+    if (!observation || typeof observation !== "object") throw new Error("mep_region_coverage_context_observation_must_be_object");
+    const observationId = requiredText(observation.observation_id, "mep_region_coverage_observation_id");
+    if (observations.has(observationId)) throw new Error(`mep_region_coverage_duplicate_observation_id:${observationId}`);
+    observations.set(observationId, observation);
+  }
+  const circuitByMember = new Map<string, string>();
+  for (const observation of observations.values()) {
+    if (observation.kind !== "electrical_circuit") continue;
+    if (!Array.isArray(observation.member_observation_ids) || observation.member_observation_ids.length === 0) {
+      throw new Error(`mep_region_coverage_v2_circuit_membership_context_required:${observation.observation_id}`);
+    }
+    if (new Set(observation.member_observation_ids).size !== observation.member_observation_ids.length) {
+      throw new Error(`mep_region_coverage_v2_circuit_member_ids_must_be_unique:${observation.observation_id}`);
+    }
+    for (const memberId of observation.member_observation_ids) {
+      const member = observations.get(memberId);
+      if (!member || !["electrical_device", "electrical_equipment", "light_fixture"].includes(member.kind)) {
+        throw new Error(`mep_region_coverage_v2_circuit_member_unknown_or_unsupported:${observation.observation_id}:${memberId}`);
+      }
+      const existingCircuitId = circuitByMember.get(memberId);
+      if (existingCircuitId) {
+        throw new Error(`mep_region_coverage_v2_member_assigned_to_multiple_circuits:${memberId}:${existingCircuitId}:${observation.observation_id}`);
+      }
+      circuitByMember.set(memberId, observation.observation_id);
+    }
+  }
+  for (const [index, candidate] of input.candidates.entries()) {
+    if (!candidate || typeof candidate !== "object") throw new Error(`mep_region_coverage_candidate_${index}_must_be_object`);
+  }
+  const candidates = new Map(input.candidates.map((candidate) => [candidate.candidate_id, candidate]));
+  for (const candidate of input.candidates) {
+    validateRepresentationV2(candidate, observations);
+    if (candidate.disposition.status === "resolved" && candidate.representation.role === "lighting_device") {
+      throw new Error(`mep_region_coverage_v2_lighting_device_native_observation_not_supported:${candidate.candidate_id}`);
+    }
+  }
+  for (const candidate of input.candidates) {
+    if (candidate.primitive !== "circuit_annotation" || candidate.disposition.status !== "resolved") continue;
+    const anchorId = clean(candidate.scope_anchor_candidate_id);
+    const anchor = candidates.get(anchorId);
+    if (!anchor
+      || anchor.representation.kind !== "single_model_symbol"
+      || anchor.disposition.status !== "resolved"
+      || !["electrical_device", "electrical_equipment", "light_fixture"].includes(anchor.representation.role)) {
+      throw new Error(`mep_region_coverage_v2_circuit_anchor_must_be_resolved_individual_device:${candidate.candidate_id}:${anchorId}`);
+    }
+    for (const circuitObservationId of candidate.disposition.observation_ids) {
+      const circuit = observations.get(circuitObservationId);
+      if (!circuit || circuit.kind !== "electrical_circuit") continue;
+      if (!Array.isArray(circuit.member_observation_ids) || circuit.member_observation_ids.length === 0) {
+        throw new Error(`mep_region_coverage_v2_circuit_membership_context_required:${candidate.candidate_id}:${circuitObservationId}`);
+      }
+      if (!anchor.disposition.observation_ids.some((observationId) => circuit.member_observation_ids!.includes(observationId))) {
+        throw new Error(`mep_region_coverage_v2_circuit_anchor_member_mismatch:${candidate.candidate_id}:${circuitObservationId}:${anchorId}`);
+      }
+    }
+  }
+
+  const v1Input: BoundedMepRegionCoverageV1 = {
+    ...input,
+    schema_version: 1,
+    candidates: input.candidates.map(({ representation: _representation, ...candidate }) => candidate)
+  };
+  const v1Receipt = validateBoundedMepRegionCoverageV1(v1Input, context);
+  const representationCounts: BoundedMepRegionCoverageReceiptV2["representation_counts"] = {
+    single_model_symbol: 0,
+    multi_symbol_cluster: 0,
+    annotation_cluster: 0,
+    linear_model_primitive: 0,
+    junction_model_primitive: 0,
+    unknown: 0
+  };
+  for (const candidate of input.candidates) representationCounts[candidate.representation.kind] += 1;
+  return {
+    ...v1Receipt,
+    schema_version: 2,
+    coverage_contract_sha256: digest(input),
+    representation_counts: representationCounts
+  };
+}
+
+export function validateBoundedMepRegionCoverage(
+  input: BoundedMepRegionCoverageV1 | BoundedMepRegionCoverageV2,
+  context: BoundedMepRegionCoverageContext
+): BoundedMepRegionCoverageReceiptV1 | BoundedMepRegionCoverageReceiptV2 {
+  return input?.schema_version === 2
+    ? validateBoundedMepRegionCoverageV2(input, context)
+    : validateBoundedMepRegionCoverageV1(input as BoundedMepRegionCoverageV1, context);
 }

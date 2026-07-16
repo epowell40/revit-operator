@@ -29,9 +29,11 @@ import {
   type ExistingConditionsRegistrationReceipt
 } from "./registration.js";
 import {
-  validateBoundedMepRegionCoverageV1,
+  validateBoundedMepRegionCoverage,
   type BoundedMepRegionCoverageReceiptV1,
-  type BoundedMepRegionCoverageV1
+  type BoundedMepRegionCoverageReceiptV2,
+  type BoundedMepRegionCoverageV1,
+  type BoundedMepRegionCoverageV2
 } from "./mep_region_coverage.js";
 
 type Bounds2d = {
@@ -144,7 +146,7 @@ export type RegisteredMepObservationPackage = Omit<MepDraftPackage, "observation
     model_bounds: Bounds2d;
   };
   maximum_observations: number;
-  source_coverage?: BoundedMepRegionCoverageV1;
+  source_coverage?: BoundedMepRegionCoverageV1 | BoundedMepRegionCoverageV2;
   observations: RegisteredMepPixelObservation[];
 };
 
@@ -155,7 +157,7 @@ export type RegisteredMepObservationCompilation = {
   input_fingerprint_sha256: string;
   registered_render_sha256: string;
   registration: ExistingConditionsRegistrationReceipt;
-  source_coverage_receipt?: BoundedMepRegionCoverageReceiptV1;
+  source_coverage_receipt?: BoundedMepRegionCoverageReceiptV1 | BoundedMepRegionCoverageReceiptV2;
   converted_package: MepDraftPackage;
   compiled_plan: CompiledMepDraftPlan;
   usage_constraints: string[];
@@ -440,8 +442,11 @@ export async function compileRegisteredMepObservations(
   }
   const ids = input.observations.map((entry, index) => requiredText(entry.observation_id, `observation_${index}_id`));
   if (new Set(ids).size !== ids.length) throw new Error("registered_mep_observation_ids_must_be_unique");
+  if (input.schema_version === 1 && input.source_coverage?.schema_version === 2) {
+    throw new Error("registered_mep_schema_v1_cannot_use_mep_region_coverage_v2");
+  }
   const sourceCoverageReceipt = input.source_coverage
-    ? validateBoundedMepRegionCoverageV1(input.source_coverage, {
+    ? validateBoundedMepRegionCoverage(input.source_coverage, {
         scope_id: scopeId,
         source_evidence_sha256: sourceHash,
         registered_render_sha256: renderHash,
@@ -451,7 +456,8 @@ export async function compileRegisteredMepObservations(
         observations: input.observations.map((observation) => ({
           observation_id: observation.observation_id,
           kind: observation.kind,
-          discipline: observation.discipline
+          discipline: observation.discipline,
+          ...(observation.kind === "electrical_circuit" ? { member_observation_ids: observation.member_observation_ids } : {})
         }))
       })
     : undefined;
