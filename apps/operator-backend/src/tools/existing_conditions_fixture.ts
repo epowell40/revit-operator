@@ -1758,7 +1758,7 @@ async function main(): Promise<void> {
     writeJson(requiredArgument("--out"), compilation);
     const packageOut = argument("--package-out");
     if (packageOut) writeJson(packageOut, compilation.converted_package);
-    if (workflowOut && compilation.compiled_plan.status === "ready") {
+    if (workflowOut && ["ready", "partially_ready"].includes(compilation.compiled_plan.status)) {
       if (!process.argv.includes("--allow-unscored-user-workflow")) {
         throw new Error("registered_mep_workflow_requires_pre_apply_score_or_explicit_unscored_user_direction");
       }
@@ -1810,7 +1810,7 @@ async function main(): Promise<void> {
     }
     const plan = compileMepDraftPlan(readJson(requiredArgument("--input")) as MepDraftPackage);
     writeJson(requiredArgument("--out"), plan);
-    if (workflowOut && plan.status === "ready") {
+    if (workflowOut && ["ready", "partially_ready"].includes(plan.status)) {
       const maxCreated = Number(argument("--max-created") || Math.max(1, plan.plan_elements.filter((entry) => entry.action === "create").length * 4));
       writeFreshJson(workflowOut, markExplicitUnscoredUserWorkflow(
         buildAtomicMepDraftWorkflowRequest(plan, { maximum_created_elements: maxCreated })

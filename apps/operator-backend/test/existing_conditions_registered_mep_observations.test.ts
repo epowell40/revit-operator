@@ -10,6 +10,7 @@ import {
   compileRegisteredMepObservations,
   type RegisteredMepObservationPackage
 } from "../src/existing_conditions/registered_mep_observations.js";
+import { buildAtomicMepDraftWorkflowRequest } from "../src/existing_conditions/mep_draft_plan.js";
 import { assertExistingConditionsContract } from "../src/existing_conditions/contract_validation.js";
 import type { BoundedMepRegionCoverageV1, BoundedMepRegionCoverageV2 } from "../src/existing_conditions/mep_region_coverage.js";
 
@@ -1302,6 +1303,35 @@ test("partial bounded-region coverage preserves resolved actions but requires cl
   assert.match(result.compiled_plan.ambiguities.at(-1)?.description ?? "", /unfamiliar-symbol-random-93/);
 });
 
+test("explicit iterative drafting may run resolved observations while bounded-region coverage remains partial", async () => {
+  const input = electricalInput();
+  input.partial_promotion_policy = "defer_ambiguous_observations";
+  const sourceCoverage = electricalCoverage(input);
+  sourceCoverage.candidates.push({
+    candidate_id: "unfamiliar-symbol-random-94",
+    primitive: "unknown",
+    pixel_bounds: { min: { x: 60, y: 60 }, max: { x: 70, y: 70 } },
+    visibility: "partial",
+    disposition: {
+      status: "unresolved",
+      reason: "ambiguous_symbol",
+      note: "Draft the clear receptacle now and retain this source mark for clarification."
+    }
+  });
+  input.source_coverage = sourceCoverage;
+
+  assertExistingConditionsContract("registered_mep_observations", input);
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.source_coverage_receipt?.coverage_status, "partial");
+  assert.equal(result.compiled_plan.status, "partially_ready");
+  assert.deepEqual(result.compiled_plan.promoted_observation_ids, ["device-random-17"]);
+  assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.action_key), ["place:device-random-17"]);
+  const workflow = buildAtomicMepDraftWorkflowRequest(result.compiled_plan);
+  assert.equal(workflow.benchmarkCredit, false);
+  assert.equal(workflow.authorizationBasis, "explicit_unscored_user_direction");
+  assert.match(result.compiled_plan.warnings.join("\n"), /cannot claim complete-scope or benchmark credit/);
+});
+
 test("bounded-region coverage rejects observations that were not tied to a source candidate", async () => {
   const input = electricalInput();
   const sourceCoverage = electricalCoverage(input);
@@ -1416,6 +1446,32 @@ test("partial plotted evidence preserves geometry but produces one clarification
   assert.equal(result.compiled_plan.status, "clarification_required");
   assert.equal(result.compiled_plan.actions.length, 0);
   assert.deepEqual(result.compiled_plan.ambiguities[0]?.material_attributes, ["size", "elevation", "type"]);
+});
+
+test("registered iterative drafting emits the clear device and defers a second uncertain device", async () => {
+  const input = electricalInput();
+  input.partial_promotion_policy = "defer_ambiguous_observations";
+  input.observations.push({
+    kind: "electrical_device",
+    discipline: "electrical",
+    observation_id: "device-random-18",
+    visibility: "partial",
+    confidence: 0.65,
+    supported_attributes: ["location"],
+    attribute_evidence: [],
+    role: "unresolved wall device",
+    pixel_point: { x: 65, y: 65 },
+    elevation_ft: 1.5,
+    placement: { mode: "unhosted_family", family_name: "Receptacle A", type_name: "Duplex B" }
+  });
+
+  assertExistingConditionsContract("registered_mep_observations", input);
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.status, "partially_ready");
+  assert.deepEqual(result.compiled_plan.promoted_observation_ids, ["device-random-17"]);
+  assert.deepEqual(result.compiled_plan.deferred_observation_ids, ["device-random-18"]);
+  assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.action_key), ["place:device-random-17"]);
+  assert.deepEqual(result.compiled_plan.ambiguities[0]?.material_attributes, ["type"]);
 });
 
 test("material attributes cannot be promoted from pixels without an auditable evidence claim", async () => {
@@ -1567,6 +1623,73 @@ test("CLI requires explicit user direction before emitting an unscored registere
   assert.equal(directWorkflow.dryRun, true);
   assert.equal(directWorkflow.benchmarkCredit, false);
   assert.equal(directWorkflow.authorizationBasis, "explicit_unscored_user_direction");
+});
+
+test("CLI emits only promoted actions for an explicitly unscored partial registered-MEP draft", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "registered-mep-partial-cli-"));
+  const input = electricalInput();
+  input.partial_promotion_policy = "defer_ambiguous_observations";
+  input.observations.push({
+    kind: "electrical_device",
+    discipline: "electrical",
+    observation_id: "device-random-19",
+    visibility: "partial",
+    confidence: 0.6,
+    supported_attributes: ["location"],
+    attribute_evidence: [],
+    role: "unresolved wall device",
+    pixel_point: { x: 65, y: 65 },
+    elevation_ft: 1.5,
+    placement: { mode: "unhosted_family", family_name: "Receptacle A", type_name: "Duplex B" }
+  });
+  const inputPath = path.join(directory, "input.json");
+  const compilationPath = path.join(directory, "compilation.json");
+  const packagePath = path.join(directory, "package.json");
+  const workflowPath = path.join(directory, "workflow.json");
+  fs.writeFileSync(inputPath, `${JSON.stringify(input, null, 2)}\n`, "utf8");
+  const cli = path.resolve(process.cwd(), "dist/src/tools/existing_conditions_fixture.js");
+
+  execFileSync(process.execPath, [
+    cli,
+    "compile-registered-mep-observations",
+    "--input", inputPath,
+    "--out", compilationPath,
+    "--package-out", packagePath,
+    "--workflow-out", workflowPath,
+    "--allow-unscored-user-workflow"
+  ], { stdio: "pipe" });
+
+  const compilation = JSON.parse(fs.readFileSync(compilationPath, "utf8")) as {
+    compiled_plan: { status: string; promoted_observation_ids: string[]; deferred_observation_ids: string[] };
+  };
+  const workflow = JSON.parse(fs.readFileSync(workflowPath, "utf8")) as {
+    operations: Array<{ action_key: string }>;
+    benchmarkCredit: boolean;
+    authorizationBasis: string;
+  };
+  assert.equal(compilation.compiled_plan.status, "partially_ready");
+  assert.deepEqual(compilation.compiled_plan.promoted_observation_ids, ["device-random-17"]);
+  assert.deepEqual(compilation.compiled_plan.deferred_observation_ids, ["device-random-19"]);
+  assert.deepEqual(workflow.operations.map((entry) => entry.action_key), ["place:device-random-17"]);
+  assert.equal(workflow.benchmarkCredit, false);
+  assert.equal(workflow.authorizationBasis, "explicit_unscored_user_direction");
+
+  const directPlanPath = path.join(directory, "direct-plan.json");
+  const directWorkflowPath = path.join(directory, "direct-workflow.json");
+  execFileSync(process.execPath, [
+    cli,
+    "compile-mep-draft",
+    "--input", packagePath,
+    "--out", directPlanPath,
+    "--workflow-out", directWorkflowPath,
+    "--allow-unscored-user-workflow"
+  ], { stdio: "pipe" });
+  const directWorkflow = JSON.parse(fs.readFileSync(directWorkflowPath, "utf8")) as {
+    operations: Array<{ action_key: string }>;
+    benchmarkCredit: boolean;
+  };
+  assert.deepEqual(directWorkflow.operations.map((entry) => entry.action_key), ["place:device-random-17"]);
+  assert.equal(directWorkflow.benchmarkCredit, false);
 });
 
 test("CLI recomputes an evaluator score and emits only the exact passing registered-MEP workflow", async () => {

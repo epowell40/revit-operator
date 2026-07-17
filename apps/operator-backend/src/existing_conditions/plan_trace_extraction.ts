@@ -9,8 +9,13 @@ export type PlanTraceExtractionInput = {
   schema_version: 1;
   source_image_path: string;
   source_image_sha256: string;
-  target_rgb: { r: number; g: number; b: number };
-  maximum_color_distance: number;
+  target_rgb?: { r: number; g: number; b: number };
+  target_rgb_sample_points?: PlanTracePoint[];
+  monochrome_ink?: {
+    maximum_luminance: number;
+    maximum_chroma: number;
+  };
+  maximum_color_distance?: number;
   minimum_chroma?: number;
   minimum_alpha?: number;
   scope_polygon?: PlanTracePoint[];
@@ -19,6 +24,20 @@ export type PlanTraceExtractionInput = {
   interpretation_mode?: "ink_centerline" | "outlined_network_centerline";
   maximum_interior_span_px?: number;
   minimum_parallel_support_px?: number;
+  /** Optional non-geometric evidence analysis for repeated collinear dash fragments. */
+  line_style_analysis?: {
+    maximum_angle_difference_degrees: number;
+    maximum_perpendicular_offset_px: number;
+    maximum_gap_px: number;
+    minimum_dash_segments: number;
+  };
+};
+
+export type PlanTracePixelBuffer = { width: number; height: number; data: Uint8ClampedArray };
+
+export type PlanTracePixelExtractionInput = Omit<PlanTraceExtractionInput, "source_image_path"> & {
+  /** SHA-256 of the canonical width, height, and RGBA bytes supplied to the pixel-level API. */
+  source_pixel_sha256: string;
 };
 
 export type PlanTracePolyline = {
@@ -35,14 +54,37 @@ export type PlanTraceComponent = {
   polylines: PlanTracePolyline[];
 };
 
+export type PlanTraceLineStyleHypothesis = {
+  hypothesis_id: string;
+  style: "dashed_candidate";
+  component_ids: string[];
+  segment_count: number;
+  orientation_degrees: number;
+  median_segment_length_px: number;
+  median_gap_px: number;
+  confidence_basis: "repeated_collinear_ink_fragments";
+};
+
 export type PlanTraceExtractionReceipt = {
   schema_version: 1;
   source_image_sha256: string;
+  /** Present on every newly generated receipt; optional only for legacy in-memory fixtures. */
+  source_pixel_sha256?: string;
   width_px: number;
   height_px: number;
   extraction_policy: {
-    target_rgb: { r: number; g: number; b: number };
-    maximum_color_distance: number;
+    target_rgb?: { r: number; g: number; b: number };
+    target_rgb_sample_points?: PlanTracePoint[];
+    target_rgb_sample_values?: Array<{
+      point: PlanTracePoint;
+      rgb: { r: number; g: number; b: number };
+      alpha: number;
+    }>;
+    monochrome_ink?: {
+      maximum_luminance: number;
+      maximum_chroma: number;
+    };
+    maximum_color_distance?: number;
     minimum_chroma: number;
     minimum_alpha: number;
     scope_polygon: PlanTracePoint[] | null;
@@ -51,12 +93,19 @@ export type PlanTraceExtractionReceipt = {
     interpretation_mode?: "outlined_network_centerline";
     maximum_interior_span_px?: number;
     minimum_parallel_support_px?: number;
+    line_style_analysis?: {
+      maximum_angle_difference_degrees: number;
+      maximum_perpendicular_offset_px: number;
+      maximum_gap_px: number;
+      minimum_dash_segments: number;
+    };
   };
   extraction_policy_sha256: string;
   matched_pixel_count: number;
   retained_pixel_count: number;
   derived_fill_pixel_count?: number;
   components: PlanTraceComponent[];
+  line_style_hypotheses?: PlanTraceLineStyleHypothesis[];
   usage_constraints: string[];
 };
 
@@ -66,8 +115,6 @@ export type PlanTracePreviewArtifact = {
   width_px: number;
   height_px: number;
 };
-
-type PixelBuffer = { width: number; height: number; data: Uint8ClampedArray };
 
 const NEIGHBORS_8: ReadonlyArray<readonly [number, number]> = [
   [-1, -1], [0, -1], [1, -1],
@@ -103,6 +150,233 @@ function checkedSha256(value: unknown): string {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(normalized)) throw new Error("source_image_sha256_must_be_sha256");
   return normalized;
+}
+
+function checkedPixelSha256(value: unknown): string {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(normalized)) throw new Error("source_pixel_sha256_must_be_sha256");
+  return normalized;
+}
+
+export function sha256PlanTracePixelBuffer(pixels: PlanTracePixelBuffer): string {
+  const width = positiveInteger(pixels.width, "width_px");
+  const height = positiveInteger(pixels.height, "height_px");
+  if (!(pixels.data instanceof Uint8ClampedArray) || pixels.data.length !== width * height * 4) {
+    throw new Error("rgba_pixel_buffer_length_mismatch");
+  }
+  return crypto.createHash("sha256")
+    .update(`plan-trace-rgba-v1\n${width}\n${height}\n`)
+    .update(Buffer.from(pixels.data))
+    .digest("hex");
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? sorted[middle]!
+    : Math.round((sorted[middle - 1]! + sorted[middle]!) / 2);
+}
+
+function rounded(value: number): number {
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+type StraightTraceSegment = {
+  componentId: string;
+  start: PlanTracePoint;
+  end: PlanTracePoint;
+  center: PlanTracePoint;
+  length: number;
+  angle: number;
+};
+
+function angleDifferenceRadians(a: number, b: number): number {
+  const difference = Math.abs(a - b) % Math.PI;
+  return Math.min(difference, Math.PI - difference);
+}
+
+function lineStyleHypotheses(
+  components: PlanTraceComponent[],
+  policy: NonNullable<PlanTraceExtractionInput["line_style_analysis"]>
+): PlanTraceLineStyleHypothesis[] {
+  const candidates: StraightTraceSegment[] = [];
+  for (const component of components) {
+    if (component.polylines.length !== 1) continue;
+    const polyline = component.polylines[0]!;
+    if (polyline.closed || polyline.points.length < 2) continue;
+    const start = polyline.points[0]!;
+    const end = polyline.points[polyline.points.length - 1]!;
+    const directLength = Math.hypot(end.x - start.x, end.y - start.y);
+    if (directLength <= 0 || polyline.length_px / directLength > 1.1) continue;
+    let angle = Math.atan2(end.y - start.y, end.x - start.x);
+    if (angle < 0) angle += Math.PI;
+    if (angle >= Math.PI) angle -= Math.PI;
+    candidates.push({
+      componentId: component.component_id,
+      start,
+      end,
+      center: { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 },
+      length: polyline.length_px,
+      angle
+    });
+  }
+  const adjacency = candidates.map(() => new Set<number>());
+  const maximumAngle = policy.maximum_angle_difference_degrees * Math.PI / 180;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const a = candidates[i]!;
+    const ux = Math.cos(a.angle);
+    const uy = Math.sin(a.angle);
+    const nx = -uy;
+    const ny = ux;
+    for (let j = i + 1; j < candidates.length; j += 1) {
+      const b = candidates[j]!;
+      if (angleDifferenceRadians(a.angle, b.angle) > maximumAngle) continue;
+      const centerDx = b.center.x - a.center.x;
+      const centerDy = b.center.y - a.center.y;
+      if (Math.abs(centerDx * nx + centerDy * ny) > policy.maximum_perpendicular_offset_px) continue;
+      const b0 = (b.start.x - a.start.x) * ux + (b.start.y - a.start.y) * uy;
+      const b1 = (b.end.x - a.start.x) * ux + (b.end.y - a.start.y) * uy;
+      const a0 = 0;
+      const a1 = (a.end.x - a.start.x) * ux + (a.end.y - a.start.y) * uy;
+      const aMin = Math.min(a0, a1);
+      const aMax = Math.max(a0, a1);
+      const bMin = Math.min(b0, b1);
+      const bMax = Math.max(b0, b1);
+      const gap = Math.max(0, bMin - aMax, aMin - bMax);
+      if (gap > policy.maximum_gap_px) continue;
+      adjacency[i]!.add(j);
+      adjacency[j]!.add(i);
+    }
+  }
+
+  const visited = new Set<number>();
+  const groups: StraightTraceSegment[][] = [];
+  for (let index = 0; index < candidates.length; index += 1) {
+    if (visited.has(index)) continue;
+    const queue = [index];
+    const group: StraightTraceSegment[] = [];
+    visited.add(index);
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      group.push(candidates[current]!);
+      for (const neighbor of adjacency[current]!) {
+        if (visited.has(neighbor)) continue;
+        visited.add(neighbor);
+        queue.push(neighbor);
+      }
+    }
+    if (group.length >= policy.minimum_dash_segments) groups.push(group);
+  }
+
+  return groups
+    .map((group, index) => {
+      const sin2 = group.reduce((sum, entry) => sum + Math.sin(2 * entry.angle), 0);
+      const cos2 = group.reduce((sum, entry) => sum + Math.cos(2 * entry.angle), 0);
+      let angle = Math.atan2(sin2, cos2) / 2;
+      if (angle < 0) angle += Math.PI;
+      const ux = Math.cos(angle);
+      const uy = Math.sin(angle);
+      const intervals = group.map((entry) => {
+        const start = entry.start.x * ux + entry.start.y * uy;
+        const end = entry.end.x * ux + entry.end.y * uy;
+        return { min: Math.min(start, end), max: Math.max(start, end) };
+      }).sort((a, b) => a.min - b.min || a.max - b.max);
+      const gaps = intervals.slice(1).map((entry, gapIndex) =>
+        Math.max(0, entry.min - intervals[gapIndex]!.max));
+      return {
+        hypothesis_id: `line-style-${String(index + 1).padStart(3, "0")}`,
+        style: "dashed_candidate" as const,
+        component_ids: group.map((entry) => entry.componentId).sort(),
+        segment_count: group.length,
+        orientation_degrees: rounded(angle * 180 / Math.PI),
+        median_segment_length_px: rounded(median(group.map((entry) => entry.length))),
+        median_gap_px: rounded(median(gaps)),
+        confidence_basis: "repeated_collinear_ink_fragments" as const
+      };
+    })
+    .sort((a, b) => b.segment_count - a.segment_count || a.hypothesis_id.localeCompare(b.hypothesis_id));
+}
+
+function resolveTargetColor(
+  pixels: PlanTracePixelBuffer,
+  input: Omit<PlanTraceExtractionInput, "source_image_path">,
+  width: number,
+  height: number,
+  minimumChroma: number,
+  minimumAlpha: number
+): {
+  target?: { r: number; g: number; b: number };
+  samplePoints?: PlanTracePoint[];
+  sampleValues?: Array<{
+    point: PlanTracePoint;
+    rgb: { r: number; g: number; b: number };
+    alpha: number;
+  }>;
+  monochromeInk?: {
+    maximum_luminance: number;
+    maximum_chroma: number;
+  };
+} {
+  const hasDeclaredTarget = input.target_rgb != null;
+  const hasSamples = input.target_rgb_sample_points != null;
+  const hasMonochromeInk = input.monochrome_ink != null;
+  if ([hasDeclaredTarget, hasSamples, hasMonochromeInk].filter(Boolean).length !== 1) {
+    throw new Error("exactly_one_plan_trace_pixel_selector_is_required");
+  }
+  if (hasMonochromeInk) {
+    const maximumLuminance = finite(input.monochrome_ink?.maximum_luminance, "monochrome_ink_maximum_luminance");
+    if (maximumLuminance < 0 || maximumLuminance > 255) {
+      throw new Error("monochrome_ink_maximum_luminance_out_of_range");
+    }
+    const maximumChroma = finite(input.monochrome_ink?.maximum_chroma, "monochrome_ink_maximum_chroma");
+    if (maximumChroma < 0 || maximumChroma > 255) {
+      throw new Error("monochrome_ink_maximum_chroma_out_of_range");
+    }
+    return { monochromeInk: { maximum_luminance: maximumLuminance, maximum_chroma: maximumChroma } };
+  }
+  if (hasDeclaredTarget) {
+    return {
+      target: {
+        r: boundedInteger(input.target_rgb?.r, "target_rgb_r", 0, 255),
+        g: boundedInteger(input.target_rgb?.g, "target_rgb_g", 0, 255),
+        b: boundedInteger(input.target_rgb?.b, "target_rgb_b", 0, 255)
+      }
+    };
+  }
+
+  const rawPoints = input.target_rgb_sample_points;
+  if (!Array.isArray(rawPoints) || rawPoints.length < 1 || rawPoints.length > 32) {
+    throw new Error("target_rgb_sample_points_must_have_1_to_32_entries");
+  }
+  const sampleValues = rawPoints.map((entry, sampleIndex) => {
+    const x = boundedInteger(entry?.x, `target_rgb_sample_point_${sampleIndex}_x`, 0, width - 1);
+    const y = boundedInteger(entry?.y, `target_rgb_sample_point_${sampleIndex}_y`, 0, height - 1);
+    const offset = indexOf(x, y, width) * 4;
+    const rgb = {
+      r: pixels.data[offset]!,
+      g: pixels.data[offset + 1]!,
+      b: pixels.data[offset + 2]!
+    };
+    const alpha = pixels.data[offset + 3]!;
+    if (alpha < minimumAlpha) {
+      throw new Error(`target_rgb_sample_point_alpha_below_minimum:${sampleIndex}`);
+    }
+    const chroma = Math.max(rgb.r, rgb.g, rgb.b) - Math.min(rgb.r, rgb.g, rgb.b);
+    if (chroma < minimumChroma) {
+      throw new Error(`target_rgb_sample_point_chroma_below_minimum:${sampleIndex}`);
+    }
+    return { point: { x, y }, rgb, alpha };
+  });
+  return {
+    target: {
+      r: median(sampleValues.map((entry) => entry.rgb.r)),
+      g: median(sampleValues.map((entry) => entry.rgb.g)),
+      b: median(sampleValues.map((entry) => entry.rgb.b))
+    },
+    samplePoints: sampleValues.map((entry) => entry.point),
+    sampleValues
+  };
 }
 
 function sha256File(filePath: string): string {
@@ -569,8 +843,8 @@ function traceSkeleton(mask: Uint8Array, width: number, height: number, toleranc
 }
 
 export function extractPlanTracesFromPixels(
-  pixels: PixelBuffer,
-  input: Omit<PlanTraceExtractionInput, "source_image_path">
+  pixels: PlanTracePixelBuffer,
+  input: PlanTracePixelExtractionInput
 ): PlanTraceExtractionReceipt {
   if (input.schema_version !== 1) throw new Error("plan_trace_extraction_requires_schema_v1");
   const width = positiveInteger(pixels.width, "width_px");
@@ -579,18 +853,20 @@ export function extractPlanTracesFromPixels(
     throw new Error("rgba_pixel_buffer_length_mismatch");
   }
   const sourceHash = checkedSha256(input.source_image_sha256);
-  const target = {
-    r: boundedInteger(input.target_rgb?.r, "target_rgb_r", 0, 255),
-    g: boundedInteger(input.target_rgb?.g, "target_rgb_g", 0, 255),
-    b: boundedInteger(input.target_rgb?.b, "target_rgb_b", 0, 255)
-  };
-  const maximumColorDistance = finite(input.maximum_color_distance, "maximum_color_distance");
-  if (maximumColorDistance < 0 || maximumColorDistance > Math.sqrt(3 * 255 ** 2)) {
+  const expectedPixelHash = checkedPixelSha256(input.source_pixel_sha256);
+  const actualPixelHash = sha256PlanTracePixelBuffer(pixels);
+  if (actualPixelHash !== expectedPixelHash) throw new Error("source_pixel_sha256_mismatch");
+  const maximumColorDistance = input.monochrome_ink == null
+    ? finite(input.maximum_color_distance, "maximum_color_distance")
+    : undefined;
+  if (maximumColorDistance != null && (maximumColorDistance < 0 || maximumColorDistance > Math.sqrt(3 * 255 ** 2))) {
     throw new Error("maximum_color_distance_out_of_range");
   }
   const minimumChroma = input.minimum_chroma == null ? 0 : finite(input.minimum_chroma, "minimum_chroma");
   if (minimumChroma < 0 || minimumChroma > 255) throw new Error("minimum_chroma_out_of_range");
   const minimumAlpha = input.minimum_alpha == null ? 1 : boundedInteger(input.minimum_alpha, "minimum_alpha", 0, 255);
+  const targetResolution = resolveTargetColor(pixels, input, width, height, minimumChroma, minimumAlpha);
+  const target = targetResolution.target;
   const minimumComponentPixels = input.minimum_component_pixels == null
     ? 8
     : positiveInteger(input.minimum_component_pixels, "minimum_component_pixels");
@@ -612,6 +888,38 @@ export function extractPlanTracesFromPixels(
   } else if (input.maximum_interior_span_px != null || input.minimum_parallel_support_px != null) {
     throw new Error("outlined_network_parameters_require_outlined_network_centerline_mode");
   }
+  let lineStyleAnalysis: PlanTraceExtractionInput["line_style_analysis"];
+  if (input.line_style_analysis != null) {
+    const maximumAngleDifferenceDegrees = finite(
+      input.line_style_analysis.maximum_angle_difference_degrees,
+      "line_style_maximum_angle_difference_degrees"
+    );
+    const maximumPerpendicularOffsetPx = finite(
+      input.line_style_analysis.maximum_perpendicular_offset_px,
+      "line_style_maximum_perpendicular_offset_px"
+    );
+    const maximumGapPx = finite(input.line_style_analysis.maximum_gap_px, "line_style_maximum_gap_px");
+    const minimumDashSegments = positiveInteger(
+      input.line_style_analysis.minimum_dash_segments,
+      "line_style_minimum_dash_segments"
+    );
+    if (maximumAngleDifferenceDegrees <= 0 || maximumAngleDifferenceDegrees > 45) {
+      throw new Error("line_style_maximum_angle_difference_degrees_out_of_range");
+    }
+    if (maximumPerpendicularOffsetPx < 0 || maximumPerpendicularOffsetPx > 50) {
+      throw new Error("line_style_maximum_perpendicular_offset_px_out_of_range");
+    }
+    if (maximumGapPx <= 0 || maximumGapPx > 500) throw new Error("line_style_maximum_gap_px_out_of_range");
+    if (minimumDashSegments < 3 || minimumDashSegments > 100) {
+      throw new Error("line_style_minimum_dash_segments_out_of_range");
+    }
+    lineStyleAnalysis = {
+      maximum_angle_difference_degrees: maximumAngleDifferenceDegrees,
+      maximum_perpendicular_offset_px: maximumPerpendicularOffsetPx,
+      maximum_gap_px: maximumGapPx,
+      minimum_dash_segments: minimumDashSegments
+    };
+  }
   const polygon = validatePolygon(input.scope_polygon, width, height);
 
   const mask = new Uint8Array(width * height);
@@ -625,8 +933,12 @@ export function extractPlanTracesFromPixels(
       const b = pixels.data[offset + 2]!;
       const a = pixels.data[offset + 3]!;
       const chroma = Math.max(r, g, b) - Math.min(r, g, b);
-      const colorDistance = Math.hypot(r - target.r, g - target.g, b - target.b);
-      if (a >= minimumAlpha && chroma >= minimumChroma && colorDistance <= maximumColorDistance) {
+      const selected = targetResolution.monochromeInk
+        ? (0.2126 * r + 0.7152 * g + 0.0722 * b) <= targetResolution.monochromeInk.maximum_luminance
+          && chroma <= targetResolution.monochromeInk.maximum_chroma
+        : chroma >= minimumChroma
+          && Math.hypot(r - target!.r, g - target!.g, b - target!.b) <= maximumColorDistance!;
+      if (a >= minimumAlpha && selected) {
         mask[indexOf(x, y, width)] = 1;
         matchedPixelCount += 1;
       }
@@ -666,10 +978,18 @@ export function extractPlanTracesFromPixels(
       polylines: traceSkeleton(skeleton, width, height, simplifyTolerance)
     };
   });
+  const styleHypotheses = lineStyleAnalysis
+    ? lineStyleHypotheses(components, lineStyleAnalysis)
+    : undefined;
 
   const extractionPolicy = {
-    target_rgb: target,
-    maximum_color_distance: maximumColorDistance,
+    ...(target ? { target_rgb: target } : {}),
+    ...(targetResolution.samplePoints ? {
+      target_rgb_sample_points: targetResolution.samplePoints,
+      target_rgb_sample_values: targetResolution.sampleValues
+    } : {}),
+    ...(targetResolution.monochromeInk ? { monochrome_ink: targetResolution.monochromeInk } : {}),
+    ...(maximumColorDistance != null ? { maximum_color_distance: maximumColorDistance } : {}),
     minimum_chroma: minimumChroma,
     minimum_alpha: minimumAlpha,
     scope_polygon: polygon,
@@ -679,11 +999,13 @@ export function extractPlanTracesFromPixels(
       interpretation_mode: interpretationMode,
       maximum_interior_span_px: maximumInteriorSpan,
       minimum_parallel_support_px: minimumParallelSupport
-    } : {})
+    } : {}),
+    ...(lineStyleAnalysis ? { line_style_analysis: lineStyleAnalysis } : {})
   };
   return {
     schema_version: 1,
     source_image_sha256: sourceHash,
+    source_pixel_sha256: actualPixelHash,
     width_px: width,
     height_px: height,
     extraction_policy: extractionPolicy,
@@ -694,11 +1016,16 @@ export function extractPlanTracesFromPixels(
       ? { derived_fill_pixel_count: interpreted.derivedFillPixelCount }
       : {}),
     components,
+    ...(styleHypotheses ? { line_style_hypotheses: styleHypotheses } : {}),
     usage_constraints: [
-      "Extracted polylines represent only raster pixels satisfying the declared color, scope, and component policy.",
+      "Extracted polylines represent only raster pixels satisfying the declared RGB, sampled RGB, or monochrome-ink selector together with the scope and component policy.",
       "Polyline segmentation is an image-processing artifact and must not be treated as native Revit element segmentation.",
       "Color extraction does not establish discipline, system classification, size, elevation, family, type, connectivity, or venting topology.",
-      "Ambiguous, occluded, monochrome, or out-of-scope routes remain unresolved unless supported by separate source-visible evidence."
+      "Ambiguous, occluded, monochrome, or out-of-scope routes remain unresolved unless supported by separate source-visible evidence.",
+      ...(lineStyleAnalysis ? [
+        "Dashed-candidate hypotheses describe repeated collinear raster fragments only; they do not merge gaps into route geometry or assign a system.",
+        "A legend, adjacent label, or explicit user direction is required before a dashed-candidate line style can classify the drafted route."
+      ] : [])
       ,...(interpretationMode === "outlined_network_centerline" ? [
         "Outlined-network centerlines are derived only where paired boundary ink has the declared span and parallel-support evidence.",
         "Derived centerlines may still include connected symbols, terminals, fittings, or compact loops and require explicit source accounting before promotion."
@@ -719,7 +1046,7 @@ export async function extractPlanTraces(input: PlanTraceExtractionInput): Promis
   const imageData = context.getImageData(0, 0, image.width, image.height);
   return extractPlanTracesFromPixels(
     { width: image.width, height: image.height, data: imageData.data },
-    input
+    { ...input, source_pixel_sha256: sha256PlanTracePixelBuffer({ width: image.width, height: image.height, data: imageData.data }) }
   );
 }
 
@@ -740,6 +1067,11 @@ export async function renderPlanTraceExtractionPreview(
   context.fillStyle = "#ffffff";
   context.fillRect(0, 0, image.width, image.height);
   context.drawImage(image, 0, 0);
+  const imageData = context.getImageData(0, 0, image.width, image.height);
+  const sourcePixelHash = sha256PlanTracePixelBuffer({ width: image.width, height: image.height, data: imageData.data });
+  if (sourcePixelHash !== receipt.source_pixel_sha256) {
+    throw new Error("plan_trace_preview_source_pixel_sha256_mismatch");
+  }
   context.fillStyle = "rgba(0, 0, 0, 0.12)";
   context.fillRect(0, 0, image.width, image.height);
   const polygon = receipt.extraction_policy.scope_polygon;

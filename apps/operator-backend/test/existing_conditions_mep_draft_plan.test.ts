@@ -1796,6 +1796,85 @@ test("partial evidence or unsupported material attributes consolidates clarifica
   assert.throws(() => buildAtomicMepDraftWorkflowRequest(plan), /not_ready/);
 });
 
+test("explicit iterative drafting promotes independent geometry and defers ambiguous observations without benchmark credit", () => {
+  const input: MepDraftPackage = {
+    schema_version: 1,
+    fixture_id: "plumbing-partial-promotion-v1",
+    scope_id: "bounded-region",
+    source_evidence_sha256: SOURCE_HASH,
+    visible_evidence: visibleEvidence(),
+    native_element_references: [],
+    registration: registration(),
+    level_name: "L4",
+    level_elevation_ft: 0,
+    partial_promotion_policy: "defer_ambiguous_observations",
+    observations: [
+      {
+        kind: "pipe_route",
+        observation_id: "cold-water-clear",
+        discipline: "plumbing",
+        service: "domestic_cold_water",
+        visibility: "clear",
+        confidence: 0.95,
+        supported_attributes: ["location", "size", "elevation", "system", "type"],
+        points: [{ x: 0, y: 0 }, { x: 4, y: 0 }],
+        pipe_size: "1 inch",
+        pipe_type: "Copper",
+        system_type: "Domestic Cold Water",
+        elevation_ft: 9
+      },
+      {
+        kind: "pipe_route",
+        observation_id: "sanitary-occluded",
+        discipline: "plumbing",
+        service: "sanitary",
+        visibility: "partial",
+        confidence: 0.8,
+        supported_attributes: ["location", "system"],
+        points: [{ x: 0, y: 2 }, { x: 4, y: 2 }],
+        pipe_size: "2 inch",
+        pipe_type: "PVC-DWV",
+        system_type: "Sanitary",
+        elevation_ft: 7
+      }
+    ]
+  };
+
+  const plan = compileMepDraftPlan(input);
+  assert.equal(plan.status, "partially_ready");
+  assert.deepEqual(plan.promoted_observation_ids, ["cold-water-clear"]);
+  assert.deepEqual(plan.deferred_observation_ids, ["sanitary-occluded"]);
+  assert.deepEqual(plan.actions.map((entry) => entry.action_key), ["route:cold-water-clear"]);
+  assert.deepEqual(plan.ambiguities[0]?.material_attributes, ["size", "elevation", "type"]);
+
+  const workflow = buildAtomicMepDraftWorkflowRequest(plan);
+  assert.deepEqual(workflow.operations.map((entry) => entry.action_key), ["route:cold-water-clear"]);
+  assert.equal(workflow.benchmarkCredit, false);
+  assert.equal(workflow.authorizationBasis, "explicit_unscored_user_direction");
+});
+
+test("partial promotion prunes clear actions whose created-host dependency is ambiguous", () => {
+  const input = createdRouteHostedTerminalPackage();
+  input.partial_promotion_policy = "defer_ambiguous_observations";
+  const route = input.observations[0];
+  if (route?.kind !== "duct_route") assert.fail("duct fixture invalid");
+  route.supported_attributes = ["location", "elevation", "system", "type"];
+
+  const plan = compileMepDraftPlan(input);
+  assert.equal(plan.status, "clarification_required");
+  assert.deepEqual(plan.promoted_observation_ids, []);
+  assert.deepEqual(plan.deferred_observation_ids, ["supply-trunk-visible-1", "supply-grille-visible-1"]);
+  assert.deepEqual(plan.actions, []);
+  assert.match(plan.warnings.join("\n"), /depends on unresolved evidence: supply-grille-visible-1/);
+  assert.throws(() => buildAtomicMepDraftWorkflowRequest(plan), /not_ready/);
+});
+
+test("partial promotion policy rejects unknown runtime values", () => {
+  const input = createdRouteHostedTerminalPackage() as unknown as Record<string, unknown>;
+  input.partial_promotion_policy = "best_effort_without_receipts";
+  assert.throws(() => compileMepDraftPlan(input as MepDraftPackage), /partial_promotion_policy_invalid/);
+});
+
 test("plumbing service boundaries block an incomplete fixture cluster without hard-coding fixture roles", () => {
   const input: MepDraftPackage = {
     schema_version: 1,

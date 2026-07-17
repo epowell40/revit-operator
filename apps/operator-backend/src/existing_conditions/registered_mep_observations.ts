@@ -641,11 +641,11 @@ export async function compileRegisteredMepObservations(
     level_elevation_ft: finite(input.level_elevation_ft, "level_elevation_ft"),
     ...(input.room_number == null ? {} : { room_number: requiredText(input.room_number, "room_number") }),
     ...(input.material_confidence_threshold == null ? {} : { material_confidence_threshold: input.material_confidence_threshold }),
+    ...(input.partial_promotion_policy == null ? {} : { partial_promotion_policy: input.partial_promotion_policy }),
     observations: convertedObservations
   };
   const compiledPlan = compileMepDraftPlan(convertedPackage);
   if (sourceCoverageReceipt?.coverage_status === "partial") {
-    compiledPlan.status = "clarification_required";
     compiledPlan.ambiguities.push({
       id: "bounded-mep-region-coverage",
       topic: "bounded MEP region coverage",
@@ -658,7 +658,14 @@ export async function compileRegisteredMepObservations(
       resolution_basis: null,
       resolution_evidence_reference: null
     });
-    compiledPlan.warnings.push("Resolved observations remain compiled for review, but no complete-scope workflow may run while bounded MEP region coverage is partial.");
+    if (compiledPlan.partial_promotion_policy === "defer_ambiguous_observations"
+      && compiledPlan.actions.length > 0) {
+      compiledPlan.status = "partially_ready";
+      compiledPlan.warnings.push("Bounded-region source coverage is partial. Resolved independent observations may run only as an explicitly unscored provisional draft; the workflow cannot claim complete-scope or benchmark credit.");
+    } else {
+      compiledPlan.status = "clarification_required";
+      compiledPlan.warnings.push("Resolved observations remain compiled for review, but no complete-scope workflow may run while bounded MEP region coverage is partial.");
+    }
   }
   return {
     schema_version: 1,
@@ -685,7 +692,8 @@ export async function compileRegisteredMepObservations(
       "The registered render must be agent-visible, hash-bound, dimension-verified, and aligned to the declared model frame.",
       "When a registration came from a repeated-image candidate search, attach registration_ambiguity so compilation can require either multiple non-repeating agent-visible anchors or a decisive independent-evidence margin over a materially distinct alternate transform.",
       "No evaluator, withheld truth, native target identity, or scorer output is used to convert pixel observations.",
-      "A bounded-region completeness claim requires a hash-bound source-coverage receipt in which every MEP-like candidate is resolved to typed observations or remains explicitly unresolved; partial coverage cannot be reported as complete."
+      "A bounded-region completeness claim requires a hash-bound source-coverage receipt in which every MEP-like candidate is resolved to typed observations or remains explicitly unresolved; partial coverage cannot be reported as complete.",
+      "partial_promotion_policy=defer_ambiguous_observations is an iterative drafting mode only: ambiguous observations, dependent actions, and unresolved coverage candidates remain explicit; emitted actions receive no benchmark or complete-scope credit."
     ]
   };
 }

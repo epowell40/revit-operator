@@ -52,6 +52,7 @@
     "level_elevation_ft": { "type": "number" },
     "room_number": { "type": "string", "minLength": 1 },
     "material_confidence_threshold": { "type": "number", "minimum": 0, "maximum": 1 },
+    "partial_promotion_policy": { "enum": ["all_or_nothing", "defer_ambiguous_observations"] },
     "maximum_observations": { "type": "integer", "minimum": 1 },
     "source_coverage": {
       "oneOf": [

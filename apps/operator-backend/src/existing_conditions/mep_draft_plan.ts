@@ -456,6 +456,12 @@ export type MepDraftPackage = {
   level_elevation_ft: number;
   room_number?: string;
   material_confidence_threshold?: number;
+  /**
+   * Keep benchmark/acceptance compilation all-or-nothing by default. Explicit
+   * iterative drafting may instead emit only independent, source-supported
+   * actions while deferring ambiguous observations and their dependents.
+   */
+  partial_promotion_policy?: "all_or_nothing" | "defer_ambiguous_observations";
   observations: MepDraftObservation[];
 };
 
@@ -508,7 +514,10 @@ export type MepDraftAction = {
 
 export type CompiledMepDraftPlan = {
   schema_version: 1;
-  status: "ready" | "clarification_required" | "blocked";
+  status: "ready" | "partially_ready" | "clarification_required" | "blocked";
+  partial_promotion_policy: "all_or_nothing" | "defer_ambiguous_observations";
+  promoted_observation_ids: string[];
+  deferred_observation_ids: string[];
   fixture_id: string;
   scope_id: string;
   input_fingerprint_sha256: string;
@@ -1483,6 +1492,10 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
   const scopeId = requiredText(input.scope_id, "scope_id");
   const levelName = requiredText(input.level_name, "level_name");
   const levelElevationFt = finite(input.level_elevation_ft, "level_elevation_ft");
+  const partialPromotionPolicy = input.partial_promotion_policy ?? "all_or_nothing";
+  if (!["all_or_nothing", "defer_ambiguous_observations"].includes(partialPromotionPolicy)) {
+    throw new Error("partial_promotion_policy_invalid");
+  }
   if (!Array.isArray(input.visible_evidence) || input.visible_evidence.length === 0) throw new Error("visible_evidence_is_required");
   const visibleEvidence = input.visible_evidence.map((entry, index) => ({
     role: requiredText(entry.role, `visible_evidence_${index}_role`),
@@ -2021,12 +2034,18 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
     `registration_error_exceeds_limit:rms=${registration.rms_error_ft.toFixed(6)}/${registration.max_rms_error_ft.toFixed(6)}:max=${registration.maximum_error_ft.toFixed(6)}/${registration.max_point_error_ft.toFixed(6)}`
   ];
   if (!registration.verified) warnings.push("No Revit write plan was emitted because source-to-model registration is not verified.");
-  if (ambiguities.length > 0) warnings.push("Material source ambiguities must be resolved before dry-run or apply.");
+  if (ambiguities.length > 0 && partialPromotionPolicy === "all_or_nothing") {
+    warnings.push("Material source ambiguities must be resolved before dry-run or apply.");
+  }
+  if (ambiguities.length > 0 && partialPromotionPolicy === "defer_ambiguous_observations") {
+    warnings.push("Ambiguous observations and actions that depend on them are deferred; independent source-supported actions may proceed as an explicitly unscored provisional draft.");
+  }
   const actions: MepDraftAction[] = [];
   const pendingVentBranches: MepDraftAction[] = [];
   const pendingVentAudits: MepDraftAction[] = [];
 
-  if (blockers.length === 0 && ambiguities.length === 0) {
+  if (blockers.length === 0
+    && (ambiguities.length === 0 || partialPromotionPolicy === "defer_ambiguous_observations")) {
     for (const observation of input.observations) {
       if (observation.kind === "duct_route") {
         const points = observation.points.map((entry) => ({
@@ -2517,9 +2536,49 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
     actions.push(...pendingVentAudits);
   }
 
+  let emittedActions = actions;
+  let promotedObservationIds: string[] = [];
+  let deferredObservationIds = ids.slice();
+  if (blockers.length === 0 && ambiguities.length === 0) {
+    promotedObservationIds = ids.slice();
+    deferredObservationIds = [];
+  } else if (blockers.length === 0 && partialPromotionPolicy === "defer_ambiguous_observations") {
+    const directlyDeferred = new Set(ambiguities.flatMap((entry) => entry.related_plan_keys));
+    emittedActions = actions.filter((entry) =>
+      entry.observation_ids.every((observationId) => !directlyDeferred.has(observationId)));
+    let changed = true;
+    while (changed) {
+      const availableActionKeys = new Set(emittedActions.map((entry) => entry.action_key));
+      const next = emittedActions.filter((entry) =>
+        entry.depends_on.every((dependency) => availableActionKeys.has(dependency)));
+      changed = next.length !== emittedActions.length;
+      emittedActions = next;
+    }
+    const promoted = new Set(emittedActions.flatMap((entry) => entry.observation_ids));
+    promotedObservationIds = ids.filter((id) => promoted.has(id) && !directlyDeferred.has(id));
+    deferredObservationIds = ids.filter((id) => !promotedObservationIds.includes(id));
+    const dependencyDeferred = deferredObservationIds.filter((id) => !directlyDeferred.has(id));
+    if (dependencyDeferred.length > 0) {
+      warnings.push(`Clear observations deferred because their action graph depends on unresolved evidence: ${dependencyDeferred.join(", ")}.`);
+    }
+  } else {
+    emittedActions = [];
+  }
+
+  const status: CompiledMepDraftPlan["status"] = blockers.length > 0
+    ? "blocked"
+    : ambiguities.length === 0
+      ? "ready"
+      : partialPromotionPolicy === "defer_ambiguous_observations" && emittedActions.length > 0
+        ? "partially_ready"
+        : "clarification_required";
+
   return {
     schema_version: 1,
-    status: blockers.length > 0 ? "blocked" : ambiguities.length > 0 ? "clarification_required" : "ready",
+    status,
+    partial_promotion_policy: partialPromotionPolicy,
+    promoted_observation_ids: promotedObservationIds,
+    deferred_observation_ids: deferredObservationIds,
     fixture_id: fixtureId,
     scope_id: scopeId,
     input_fingerprint_sha256: inputFingerprint(input),
@@ -2527,7 +2586,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
     source_observations: sourceObservations,
     plan_elements: planElements,
     ambiguities,
-    actions,
+    actions: emittedActions,
     blockers,
     warnings
   };
@@ -2537,7 +2596,9 @@ export function buildAtomicMepDraftWorkflowRequest(
   plan: CompiledMepDraftPlan,
   options: { dry_run?: boolean; maximum_created_elements?: number } = {}
 ): AtomicMepDraftWorkflowRequest {
-  if (plan.status !== "ready") throw new Error(`mep_draft_plan_not_ready:${plan.status}`);
+  if (plan.status !== "ready" && plan.status !== "partially_ready") {
+    throw new Error(`mep_draft_plan_not_ready:${plan.status}`);
+  }
   const maximumCreatedElements = options.maximum_created_elements ?? Math.max(
     1,
     plan.actions.reduce((total, action) => total + Math.max(0, action.expected_created_max), 0)
@@ -2558,6 +2619,10 @@ export function buildAtomicMepDraftWorkflowRequest(
     })),
     dryRun: options.dry_run !== false,
     verify: true,
-    maximumCreatedElements
+    maximumCreatedElements,
+    ...(plan.status === "partially_ready" ? {
+      benchmarkCredit: false as const,
+      authorizationBasis: "explicit_unscored_user_direction" as const
+    } : {})
   };
 }

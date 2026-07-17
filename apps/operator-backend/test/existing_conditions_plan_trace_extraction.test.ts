@@ -7,12 +7,25 @@ import test from "node:test";
 import { createCanvas, type Canvas } from "@napi-rs/canvas";
 import {
   extractPlanTraces,
-  extractPlanTracesFromPixels,
+  extractPlanTracesFromPixels as extractPlanTracesFromBoundPixels,
   renderPlanTraceExtractionPreview,
-  type PlanTraceExtractionInput
+  sha256PlanTracePixelBuffer,
+  type PlanTraceExtractionInput,
+  type PlanTracePixelBuffer,
+  type PlanTracePixelExtractionInput
 } from "../src/existing_conditions/plan_trace_extraction.js";
 
 const HASH = "a".repeat(64);
+
+function extractPlanTracesFromPixels(
+  pixels: PlanTracePixelBuffer,
+  input: Omit<PlanTracePixelExtractionInput, "source_pixel_sha256">
+) {
+  return extractPlanTracesFromBoundPixels(pixels, {
+    ...input,
+    source_pixel_sha256: sha256PlanTracePixelBuffer(pixels)
+  });
+}
 
 function rgbaFixture(): { width: number; height: number; data: Uint8ClampedArray } {
   const canvas = createCanvas(120, 90);
@@ -76,6 +89,163 @@ test("extracts a thick branched route as one centerline component and rejects sh
   assert.equal(points.some((point) => Math.hypot(point.x - 15, point.y - 20) <= 4), true);
   assert.equal(points.some((point) => Math.hypot(point.x - 95, point.y - 70) <= 4), true);
   assert.match(receipt.usage_constraints.join(" "), /does not establish.*venting topology/i);
+});
+
+test("pixel-level extraction rejects altered RGBA bytes under a frozen pixel digest", () => {
+  const original = rgbaFixture();
+  const sourcePixelSha256 = sha256PlanTracePixelBuffer(original);
+  const altered = { ...original, data: new Uint8ClampedArray(original.data) };
+  altered.data[0] = altered.data[0] === 255 ? 254 : altered.data[0] + 1;
+
+  assert.throws(
+    () => extractPlanTracesFromBoundPixels(altered, {
+      ...extractionInput(),
+      source_pixel_sha256: sourcePixelSha256
+    }),
+    /source_pixel_sha256_mismatch/
+  );
+});
+
+test("derives the target RGB from explicit hash-bound source pixels", () => {
+  const fixture = rgbaFixture();
+  const { target_rgb: _targetRgb, ...base } = extractionInput();
+  const receipt = extractPlanTracesFromPixels(fixture, {
+    ...base,
+    target_rgb_sample_points: [{ x: 30, y: 20 }, { x: 55, y: 40 }, { x: 95, y: 60 }]
+  });
+  assert.deepEqual(receipt.extraction_policy.target_rgb, { r: 20, g: 180, b: 70 });
+  assert.deepEqual(receipt.extraction_policy.target_rgb_sample_points, [
+    { x: 30, y: 20 },
+    { x: 55, y: 40 },
+    { x: 95, y: 60 }
+  ]);
+  assert.deepEqual(
+    receipt.extraction_policy.target_rgb_sample_values?.map((entry) => entry.rgb),
+    [
+      { r: 20, g: 180, b: 70 },
+      { r: 20, g: 180, b: 70 },
+      { r: 20, g: 180, b: 70 }
+    ]
+  );
+  assert.equal(receipt.components.length, 1);
+  assert.match(receipt.extraction_policy_sha256, /^[a-f0-9]{64}$/);
+});
+
+test("sampled target RGB fails closed for ambiguous, invalid, or non-chromatic samples", () => {
+  const fixture = rgbaFixture();
+  assert.throws(
+    () => extractPlanTracesFromPixels(fixture, {
+      ...extractionInput(),
+      target_rgb_sample_points: [{ x: 30, y: 20 }]
+    }),
+    /exactly_one_plan_trace_pixel_selector_is_required/
+  );
+  const { target_rgb: _targetRgb, ...base } = extractionInput();
+  assert.throws(
+    () => extractPlanTracesFromPixels(fixture, base),
+    /exactly_one_plan_trace_pixel_selector_is_required/
+  );
+  assert.throws(
+    () => extractPlanTracesFromPixels(fixture, {
+      ...base,
+      target_rgb_sample_points: [{ x: 120, y: 20 }]
+    }),
+    /target_rgb_sample_point_0_x_must_be_integer_between_0_and_119/
+  );
+  assert.throws(
+    () => extractPlanTracesFromPixels(fixture, {
+      ...base,
+      target_rgb_sample_points: [{ x: 0, y: 0 }]
+    }),
+    /target_rgb_sample_point_chroma_below_minimum:0/
+  );
+});
+
+test("extracts monochrome ink without depending on drawing color", () => {
+  const canvas = createCanvas(120, 70);
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.lineWidth = 3;
+  context.strokeStyle = "rgb(0, 0, 0)";
+  context.beginPath();
+  context.moveTo(10, 20);
+  context.lineTo(110, 20);
+  context.stroke();
+  context.strokeStyle = "rgb(90, 90, 90)";
+  context.setLineDash([12, 8]);
+  context.beginPath();
+  context.moveTo(10, 42);
+  context.lineTo(110, 42);
+  context.stroke();
+  context.setLineDash([]);
+  context.strokeStyle = "rgb(180, 0, 0)";
+  context.beginPath();
+  context.moveTo(10, 58);
+  context.lineTo(110, 58);
+  context.stroke();
+
+  const receipt = extractPlanTracesFromPixels(pixelsFromCanvas(canvas), {
+    schema_version: 1,
+    source_image_sha256: HASH,
+    monochrome_ink: { maximum_luminance: 120, maximum_chroma: 8 },
+    minimum_component_pixels: 8,
+    simplify_tolerance_px: 0,
+    line_style_analysis: {
+      maximum_angle_difference_degrees: 5,
+      maximum_perpendicular_offset_px: 2,
+      maximum_gap_px: 12,
+      minimum_dash_segments: 3
+    }
+  });
+  assert.deepEqual(receipt.extraction_policy.monochrome_ink, {
+    maximum_luminance: 120,
+    maximum_chroma: 8
+  });
+  assert.equal(receipt.extraction_policy.target_rgb, undefined);
+  const points = receipt.components.flatMap((component) => component.polylines.flatMap((line) => line.points));
+  assert.equal(points.some((point) => Math.abs(point.y - 20) <= 2), true);
+  assert.equal(points.some((point) => Math.abs(point.y - 42) <= 2), true);
+  assert.equal(points.some((point) => Math.abs(point.y - 58) <= 2), false);
+  assert.equal(receipt.line_style_hypotheses?.length, 1);
+  assert.equal(receipt.line_style_hypotheses?.[0]?.style, "dashed_candidate");
+  assert.equal((receipt.line_style_hypotheses?.[0]?.segment_count ?? 0) >= 3, true);
+  assert.equal(Math.abs(receipt.line_style_hypotheses?.[0]?.orientation_degrees ?? 90) <= 1, true);
+  assert.equal((receipt.line_style_hypotheses?.[0]?.median_gap_px ?? 0) > 0, true);
+  assert.match(receipt.usage_constraints.join(" "), /legend.*required.*classify/i);
+  assert.match(receipt.extraction_policy_sha256, /^[a-f0-9]{64}$/);
+});
+
+test("monochrome selector is mutually exclusive with color selectors", () => {
+  assert.throws(
+    () => extractPlanTracesFromPixels(rgbaFixture(), {
+      ...extractionInput(),
+      monochrome_ink: { maximum_luminance: 120, maximum_chroma: 8 }
+    }),
+    /exactly_one_plan_trace_pixel_selector_is_required/
+  );
+  assert.throws(
+    () => extractPlanTracesFromPixels(rgbaFixture(), {
+      schema_version: 1,
+      source_image_sha256: HASH,
+      monochrome_ink: { maximum_luminance: 300, maximum_chroma: 8 }
+    }),
+    /monochrome_ink_maximum_luminance_out_of_range/
+  );
+  assert.throws(
+    () => extractPlanTracesFromPixels(rgbaFixture(), {
+      schema_version: 1,
+      source_image_sha256: HASH,
+      monochrome_ink: { maximum_luminance: 120, maximum_chroma: 8 },
+      line_style_analysis: {
+        maximum_angle_difference_degrees: 5,
+        maximum_perpendicular_offset_px: 2,
+        maximum_gap_px: 12,
+        minimum_dash_segments: 2
+      }
+    }),
+    /line_style_minimum_dash_segments_out_of_range/
+  );
 });
 
 test("collapses thick X-junction pixels into exactly four branches", () => {
@@ -295,6 +465,7 @@ test("file extraction is bound to the exact source image hash", async () => {
     fs.writeFileSync(filePath, replacement.toBuffer("image/png"));
     const receipt = await extractionPromise;
     assert.equal(receipt.source_image_sha256, actualHash);
+    assert.match(receipt.source_pixel_sha256 ?? "", /^[a-f0-9]{64}$/);
     assert.equal(receipt.matched_pixel_count > 0, true);
     assert.match(receipt.extraction_policy_sha256, /^[a-f0-9]{64}$/);
 
