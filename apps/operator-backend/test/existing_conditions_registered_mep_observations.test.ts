@@ -1493,6 +1493,70 @@ test("registered iterative drafting emits the clear device and defers a second u
   assert.deepEqual(result.compiled_plan.ambiguities[0]?.material_attributes, ["type"]);
 });
 
+test("registered source pixels preserve unresolved electrical devices as unscored plan markers", async () => {
+  const input = electricalInput();
+  const modelHash = "d".repeat(64);
+  input.partial_promotion_policy = "defer_ambiguous_observations";
+  input.visible_evidence.push({ role: "native_model_inventory", sha256: modelHash });
+  input.native_element_references = [{
+    reference_key: "power-plan-view",
+    element_id: 3962340,
+    category: "OST_Views",
+    role: "registered power plan",
+    evidence_role: "native_model_inventory",
+    evidence_sha256: modelHash
+  }];
+  input.observations = [{
+    kind: "electrical_device",
+    discipline: "electrical",
+    observation_id: "device-marker-random-73",
+    visibility: "clear",
+    confidence: 0.93,
+    supported_attributes: ["location", "provisional plan representation", "symbol form", "host direction"],
+    attribute_evidence: [
+      {
+        attribute: "provisional plan representation",
+        basis: "legible_source_evidence",
+        evidence_role: "registered_source_render",
+        reference: "Repeated wall-device marker is legible, but family/type and exact host are unresolved"
+      },
+      {
+        attribute: "symbol form",
+        basis: "legible_source_evidence",
+        evidence_role: "registered_source_render",
+        reference: "Source marker has a visible hollow circular form"
+      },
+      {
+        attribute: "host direction",
+        basis: "legible_source_evidence",
+        evidence_role: "registered_source_render",
+        reference: "Source marker has a visible left-facing stem direction"
+      }
+    ],
+    role: "source-visible wall device, exact family/type unresolved",
+    pixel_point: { x: 35, y: 65 },
+    elevation_ft: 0,
+    placement: {
+      mode: "provisional_plan_symbol",
+      view_reference_key: "power-plan-view",
+      view_type: "FloorPlan",
+      symbol_form: "hollow_circle",
+      host_direction: "left"
+    }
+  }];
+
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.status, "partially_ready");
+  assert.deepEqual(result.compiled_plan.provisional_observation_ids, ["device-marker-random-73"]);
+  assert.equal(result.compiled_plan.source_observations[0]?.category, "OST_Lines");
+  assert.equal(result.compiled_plan.actions[0]?.path, "/revit/draw-detail-curves");
+  assert.equal(result.compiled_plan.actions[0]?.provisional_plan_representation?.modeled_device_created, false);
+
+  const workflow = buildAtomicMepDraftWorkflowRequest(result.compiled_plan);
+  assert.equal(workflow.benchmarkCredit, false);
+  assert.equal(workflow.operations[0]?.provisional_plan_representation?.benchmark_credit, false);
+});
+
 test("material attributes cannot be promoted from pixels without an auditable evidence claim", async () => {
   const input = electricalInput();
   const device = input.observations[0];

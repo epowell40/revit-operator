@@ -908,7 +908,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/export-view-region", StringComparison.OrdinalIgnoreCase))
             {
-                // Allow: { viewId?: number, imageMaxSizePx?: number, imageSize?: number, includeMapping?: boolean, fileName?: string, region: {...} }
+                // Allow: { viewId?: number, imageMaxSizePx?: number, imageSize?: number, includeMapping?: boolean, preserveViewSpecificDetailing?: boolean, fileName?: string, region: {...} }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "export-view-region body must be an object.";
@@ -919,6 +919,7 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalInt(obj.Value, "imageMaxSizePx", out error)) return false;
                 if (!ValidateOptionalInt(obj.Value, "imageSize", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeMapping", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "preserveViewSpecificDetailing", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "fileName", maxLen: 180, out error)) return false;
 
                 if (!obj.Value.TryGetProperty("region", out var region) || region.ValueKind == JsonValueKind.Null)
@@ -5081,7 +5082,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/draw-detail-curves", StringComparison.OrdinalIgnoreCase))
             {
-                // { viewId, frameId?, lineStyleName?, lineStyleCreate?, curves, dryRun? }
+                // { viewId, frameId?, expectedViewType?, expectedLevelName?, projectToViewPlane?, lineStyleName?, lineStyleCreate?, curves, dryRun? }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "draw-detail-curves body must be an object.";
@@ -5089,8 +5090,24 @@ namespace RevitBridge.Operator
                 }
                 if (!ValidateRequiredLong(obj.Value, "viewId", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "frameId", maxLen: 80, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "expectedViewType", maxLen: 40, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "expectedLevelName", maxLen: 140, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "projectToViewPlane", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "lineStyleName", maxLen: 140, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
+                if (obj.Value.TryGetProperty("expectedViewType", out var expectedViewType)
+                    && expectedViewType.ValueKind == JsonValueKind.String)
+                {
+                    var requestedViewType = (expectedViewType.GetString() ?? "").Trim();
+                    if (requestedViewType.Length > 0
+                        && !string.Equals(requestedViewType, "FloorPlan", StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(requestedViewType, "EngineeringPlan", StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(requestedViewType, "CeilingPlan", StringComparison.OrdinalIgnoreCase))
+                    {
+                        error = "draw-detail-curves.expectedViewType must be FloorPlan, EngineeringPlan, or CeilingPlan.";
+                        return false;
+                    }
+                }
 
                 if (obj.Value.TryGetProperty("lineStyleCreate", out var lsc) && lsc.ValueKind != JsonValueKind.Null)
                 {

@@ -51,6 +51,22 @@ export type MepDraftPlacement =
       annotation_tags?: MepDraftAnnotationTag[];
     }
   | {
+      /**
+       * Draw an explicitly provisional, view-specific symbol when the source
+       * establishes a device location but not a defensible native family/type
+       * and host. This preserves useful drafting progress without pretending a
+       * DetailCurve is a modeled electrical device.
+       */
+      mode: "provisional_plan_symbol";
+      view_reference_key: string;
+      view_type: "FloorPlan" | "EngineeringPlan" | "CeilingPlan";
+      symbol_form: "hollow_circle" | "filled_circle" | "unclassified_circle";
+      host_direction: "left" | "right" | "up" | "down" | "unresolved";
+      radius_ft?: number;
+      stem_length_ft?: number;
+      line_style_name?: string;
+    }
+  | {
       /** Place an exact loaded family/type on an exact native host face without borrowing a source exemplar. */
       mode: "hosted_family_symbol";
       family_name: string;
@@ -492,6 +508,7 @@ export type MepDraftAction = {
     | "/revit/connect-mep-branch"
     | "/revit/audit-plumbing-fixture-services"
     | "/revit/assign-electrical-circuit"
+    | "/revit/draw-detail-curves"
     | "/revit/tag-elements";
   depends_on: string[];
   dry_run_body?: JsonMap;
@@ -524,6 +541,13 @@ export type MepDraftAction = {
     benchmark_credit: false;
     complete_scope_credit: false;
   };
+  provisional_plan_representation?: {
+    native_category: "OST_Lines";
+    representation_role: "view_specific_device_location_marker";
+    modeled_device_created: false;
+    benchmark_credit: false;
+    complete_scope_credit: false;
+  };
 };
 
 export type CompiledMepDraftPlan = {
@@ -547,7 +571,7 @@ export type CompiledMepDraftPlan = {
 
 export type AtomicMepDraftWorkflowRequest = {
   inputFingerprintSha256: string;
-  operations: Array<Pick<MepDraftAction, "action_key" | "observation_ids" | "path" | "depends_on" | "apply_body" | "deferred_body" | "expected_created_min" | "expected_created_max" | "provisional_system_classification">>;
+  operations: Array<Pick<MepDraftAction, "action_key" | "observation_ids" | "path" | "depends_on" | "apply_body" | "deferred_body" | "expected_created_min" | "expected_created_max" | "provisional_system_classification" | "provisional_plan_representation">>;
   provisionalObservationIds: string[];
   dryRun: boolean;
   verify: boolean;
@@ -732,6 +756,14 @@ function materialAttributes(observation: MepDraftObservation): string[] {
   }
   if (observation.kind === "mechanical_equipment" || observation.kind === "air_terminal"
     || observation.kind === "electrical_device" || observation.kind === "light_fixture" || observation.kind === "electrical_equipment") {
+    if (observation.placement.mode === "provisional_plan_symbol") {
+      return [
+        "location",
+        "provisional plan representation",
+        "symbol form",
+        ...(observation.placement.host_direction === "unresolved" ? [] : ["host direction"])
+      ];
+    }
     const placementAttributes = observation.placement.mode === "hosted_exemplar"
       || observation.placement.mode === "hosted_family_symbol"
       || observation.placement.mode === "created_route_host"
@@ -761,12 +793,16 @@ function category(observation: MepDraftObservation): string {
   if (observation.kind === "air_terminal") return "OST_DuctTerminal";
   if (observation.kind === "pipe_route") return "OST_PipeCurves";
   if (observation.kind === "plumbing_fixture") return "OST_PlumbingFixtures";
+  if ("placement" in observation && observation.placement.mode === "provisional_plan_symbol") return "OST_Lines";
   if (observation.kind === "light_fixture") return "OST_LightingFixtures";
   if (observation.kind === "electrical_equipment") return "OST_ElectricalEquipment";
   return "OST_ElectricalFixtures";
 }
 
 function role(observation: MepDraftObservation): string {
+  if ("placement" in observation && observation.placement.mode === "provisional_plan_symbol") {
+    return "provisional electrical device location marker";
+  }
   if (observation.kind === "duct_route") return observation.service.replaceAll("_", " ");
   if (observation.kind === "conduit_route") return `${observation.service.replaceAll("_", " ")} conduit`;
   if (observation.kind === "pipe_route") return observation.service.replaceAll("_", " ");
@@ -785,6 +821,31 @@ function validatePlacement(placement: MepDraftPlacement, observationId: string):
     requiredText(placement.family_name, `${observationId}_family_name`);
     requiredText(placement.type_name, `${observationId}_type_name`);
     if (placement.rotation_degrees != null) finite(placement.rotation_degrees, `${observationId}_rotation_degrees`);
+    return;
+  }
+  if (placement.mode === "provisional_plan_symbol") {
+    requiredText(placement.view_reference_key, `${observationId}_view_reference_key`);
+    if (!["FloorPlan", "EngineeringPlan", "CeilingPlan"].includes(placement.view_type)) {
+      throw new Error(`${observationId}_provisional_view_type_invalid`);
+    }
+    if (!["hollow_circle", "filled_circle", "unclassified_circle"].includes(placement.symbol_form)) {
+      throw new Error(`${observationId}_provisional_symbol_form_invalid`);
+    }
+    if (!["left", "right", "up", "down", "unresolved"].includes(placement.host_direction)) {
+      throw new Error(`${observationId}_provisional_host_direction_invalid`);
+    }
+    const radius = placement.radius_ft == null ? 0.25 : finite(placement.radius_ft, `${observationId}_radius_ft`);
+    if (radius < 0.05 || radius > 2) throw new Error(`${observationId}_radius_ft_out_of_range`);
+    const stemLength = placement.stem_length_ft == null
+      ? (placement.host_direction === "unresolved" ? 0 : 0.5)
+      : finite(placement.stem_length_ft, `${observationId}_stem_length_ft`);
+    if (stemLength < 0 || stemLength > 5) throw new Error(`${observationId}_stem_length_ft_out_of_range`);
+    if (placement.host_direction === "unresolved" && stemLength > 0) {
+      throw new Error(`${observationId}_unresolved_host_direction_requires_zero_stem`);
+    }
+    if (placement.line_style_name != null) {
+      requiredText(placement.line_style_name, `${observationId}_line_style_name`);
+    }
     return;
   }
   if (placement.mode === "hosted_family_symbol") {
@@ -887,7 +948,11 @@ function validateAnnotationTags(
   });
 }
 
-function validateObservation(observation: MepDraftObservation, index: number): void {
+function validateObservation(
+  observation: MepDraftObservation,
+  index: number,
+  nativeReferences: Map<string, MepDraftPackage["native_element_references"][number]>
+): void {
   const id = requiredText(observation.observation_id, `observation_${index}_id`);
   if (!Number.isFinite(observation.confidence) || observation.confidence < 0 || observation.confidence > 1) {
     throw new Error(`${id}_confidence_must_be_between_zero_and_one`);
@@ -1126,6 +1191,46 @@ function validateObservation(observation: MepDraftObservation, index: number): v
     finite(observation.point.y, `${id}_point_y`);
     finite(observation.elevation_ft, `${id}_elevation_ft`);
     validatePlacement(observation.placement, id);
+    if (observation.placement.mode === "provisional_plan_symbol") {
+      if (observation.kind !== "electrical_device") {
+        throw new Error(`${id}_provisional_plan_symbol_requires_electrical_device`);
+      }
+      if (observation.elevation_ft !== 0) {
+        throw new Error(`${id}_provisional_plan_symbol_elevation_must_be_zero`);
+      }
+      const viewReference = nativeReferences.get(observation.placement.view_reference_key);
+      if (!viewReference) throw new Error(`${id}_provisional_view_reference_unknown`);
+      if (!new Set(["view", "ost views"]).has(normalized(viewReference.category))) {
+        throw new Error(`${id}_provisional_view_reference_category_mismatch`);
+      }
+      const provisionalAttributes = observation.supported_attributes.map(normalized);
+      const allowedProvisionalAttributes = new Set([
+        "location",
+        "provisional plan representation",
+        "symbol form",
+        "host direction"
+      ]);
+      const forbiddenProvisionalAttributes = provisionalAttributes.filter(
+        (attribute) => !allowedProvisionalAttributes.has(attribute)
+      );
+      if (forbiddenProvisionalAttributes.length > 0) {
+        throw new Error(`${id}_provisional_plan_symbol_forbidden_supported_attributes:${forbiddenProvisionalAttributes.join(",")}`);
+      }
+      if (!provisionalAttributes.includes("provisional plan representation")) {
+        throw new Error(`${id}_provisional_plan_representation_support_required`);
+      }
+      if (!provisionalAttributes.includes("symbol form")) {
+        throw new Error(`${id}_provisional_symbol_form_support_required`);
+      }
+      if (observation.placement.host_direction !== "unresolved"
+        && !provisionalAttributes.includes("host direction")) {
+        throw new Error(`${id}_provisional_host_direction_support_required`);
+      }
+      if (observation.placement.host_direction === "unresolved"
+        && provisionalAttributes.includes("host direction")) {
+        throw new Error(`${id}_unresolved_host_direction_cannot_claim_support`);
+      }
+    }
     if (observation.kind === "air_terminal") {
       if (observation.airflow_cfm != null) {
         const airflow = finite(observation.airflow_cfm, `${id}_airflow_cfm`);
@@ -1158,6 +1263,9 @@ function validateObservation(observation: MepDraftObservation, index: number): v
       }
     }
     if (observation.kind === "electrical_device" && observation.instance_parameters != null) {
+      if (observation.placement.mode === "provisional_plan_symbol") {
+        throw new Error(`${id}_provisional_plan_symbol_cannot_set_instance_parameters`);
+      }
       if (typeof observation.instance_parameters !== "object" || Array.isArray(observation.instance_parameters)) {
         throw new Error(`${id}_instance_parameters_must_be_object`);
       }
@@ -1339,6 +1447,7 @@ function validateObservation(observation: MepDraftObservation, index: number): v
 
 function pointAction(
   observation: MechanicalEquipmentObservation | AirTerminalObservation | PlumbingFixtureObservation | ElectricalDeviceObservation | LightFixtureObservation | ElectricalEquipmentObservation,
+  registration: ExistingConditionsRegistrationReceipt,
   transformed: ExistingConditionsPlanPoint,
   levelName: string,
   levelElevationFt: number,
@@ -1353,6 +1462,95 @@ function pointAction(
   const electricalDeviceParameters = observation.kind === "electrical_device"
     ? observation.instance_parameters
     : undefined;
+  if (observation.placement.mode === "provisional_plan_symbol") {
+    const viewReference = nativeReferences.get(observation.placement.view_reference_key)!;
+    const radius = observation.placement.radius_ft ?? 0.25;
+    const stemLength = observation.placement.stem_length_ft
+      ?? (observation.placement.host_direction === "unresolved" ? 0 : 0.5);
+    const xyz = (x: number, y: number): JsonMap => ({ xyz: [x, y, expected.z] });
+    const left = xyz(expected.x - radius, expected.y);
+    const right = xyz(expected.x + radius, expected.y);
+    const top = xyz(expected.x, expected.y + radius);
+    const bottom = xyz(expected.x, expected.y - radius);
+    const curves: JsonMap[] = [
+      { kind: "arc", a: left, b: right, c: top },
+      { kind: "arc", a: right, b: left, c: bottom }
+    ];
+    if (stemLength > 0 && observation.placement.host_direction !== "unresolved") {
+      const sourceDirection = {
+        left: { x: -1, y: 0 },
+        right: { x: 1, y: 0 },
+        up: { x: 0, y: 1 },
+        down: { x: 0, y: -1 }
+      }[observation.placement.host_direction];
+      const transformedDirectionPoint = transformExistingConditionsPlanPoint(registration, {
+        x: observation.point.x + sourceDirection.x,
+        y: observation.point.y + sourceDirection.y
+      });
+      const directionLength = Math.hypot(
+        transformedDirectionPoint.x - transformed.x,
+        transformedDirectionPoint.y - transformed.y
+      );
+      if (directionLength <= 1e-9) {
+        throw new Error(`${observation.observation_id}_provisional_host_direction_transform_degenerate`);
+      }
+      const direction = {
+        x: (transformedDirectionPoint.x - transformed.x) / directionLength,
+        y: (transformedDirectionPoint.y - transformed.y) / directionLength
+      };
+      curves.push({
+        kind: "line",
+        a: xyz(expected.x + direction.x * radius, expected.y + direction.y * radius),
+        b: xyz(expected.x + direction.x * (radius + stemLength), expected.y + direction.y * (radius + stemLength))
+      });
+    }
+    if (observation.placement.symbol_form === "filled_circle") {
+      for (const offsetRatio of [-0.8, -0.6, -0.4, -0.2, 0, 0.2, 0.4, 0.6, 0.8]) {
+        const yOffset = radius * offsetRatio;
+        const halfChord = Math.sqrt(Math.max(0, radius * radius - yOffset * yOffset));
+        curves.push({
+          kind: "line",
+          a: xyz(expected.x - halfChord, expected.y + yOffset),
+          b: xyz(expected.x + halfChord, expected.y + yOffset)
+        });
+      }
+    } else if (observation.placement.symbol_form === "unclassified_circle") {
+      curves.push({
+        kind: "line",
+        a: xyz(expected.x - radius * 0.7, expected.y - radius * 0.7),
+        b: xyz(expected.x + radius * 0.7, expected.y + radius * 0.7)
+      });
+    }
+    const common: JsonMap = {
+      viewId: viewReference.element_id,
+      expectedViewType: observation.placement.view_type,
+      expectedLevelName: levelName,
+      projectToViewPlane: true,
+      curves
+    };
+    if (clean(observation.placement.line_style_name)) {
+      common.lineStyleName = clean(observation.placement.line_style_name);
+    }
+    return {
+      action_key: actionKey,
+      observation_ids: [observation.observation_id],
+      method: "POST",
+      path: "/revit/draw-detail-curves",
+      depends_on: [],
+      dry_run_body: { ...common, dryRun: true },
+      apply_body: { ...common, dryRun: false },
+      expected_model_point: expected,
+      expected_created_min: curves.length,
+      expected_created_max: curves.length,
+      provisional_plan_representation: {
+        native_category: "OST_Lines",
+        representation_role: "view_specific_device_location_marker",
+        modeled_device_created: false,
+        benchmark_credit: false,
+        complete_scope_credit: false
+      }
+    };
+  }
   if (observation.placement.mode === "unhosted_family") {
     const instance: JsonMap = {
       x: transformed.x,
@@ -1600,13 +1798,20 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
   if (registration.source_evidence_sha256 !== sourceEvidenceSha256) {
     throw new Error("registration_source_evidence_hash_mismatch");
   }
-  input.observations.forEach(validateObservation);
+  input.observations.forEach((observation, index) => validateObservation(observation, index, nativeReferences));
   const provisionalObservationIds = input.observations
-    .filter((observation) => (observation.kind === "pipe_route" || observation.kind === "duct_route")
-      && routeSystemClassificationPolicy(observation) === "unresolved_placeholder")
+    .filter((observation) => (
+      ((observation.kind === "pipe_route" || observation.kind === "duct_route")
+        && routeSystemClassificationPolicy(observation) === "unresolved_placeholder")
+      || ("placement" in observation && observation.placement.mode === "provisional_plan_symbol")
+    ))
     .map((observation) => observation.observation_id);
   if (provisionalObservationIds.length > 0 && partialPromotionPolicy !== "defer_ambiguous_observations") {
-    throw new Error(`unresolved_system_requires_partial_promotion_policy:${provisionalObservationIds.join(",")}`);
+    const hasPlanSymbol = input.observations.some((observation) =>
+      "placement" in observation && observation.placement.mode === "provisional_plan_symbol");
+    throw new Error(`${hasPlanSymbol
+      ? "provisional_plan_symbol_requires_partial_promotion_policy"
+      : "unresolved_system_requires_partial_promotion_policy"}:${provisionalObservationIds.join(",")}`);
   }
   const ids = input.observations.map((entry) => entry.observation_id);
   if (new Set(ids).size !== ids.length) throw new Error("observation_ids_must_be_unique");
@@ -1919,6 +2124,9 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         if (!member || (member.kind !== "electrical_device" && member.kind !== "light_fixture" && member.kind !== "electrical_equipment")) {
           throw new Error(`${observation.observation_id}_references_unknown_electrical_device:${memberId}`);
         }
+        if (member.placement.mode === "provisional_plan_symbol") {
+          throw new Error(`${observation.observation_id}_provisional_plan_symbol_cannot_be_circuit_member:${memberId}`);
+        }
         const existingCircuit = assignedElectricalDevices.get(memberId);
         if (existingCircuit) {
           throw new Error(`electrical_device_assigned_to_multiple_circuits:${memberId}:${existingCircuit}:${observation.observation_id}`);
@@ -2057,6 +2265,16 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
     const conduitAssociationAssumptions = observation.kind === "conduit_route"
       ? [`conduit service classification ${observation.service} is source-evidence metadata only; it does not establish panel association, circuit membership, or endpoint connectivity`]
       : [];
+    const provisionalPlanSymbolAssumptions = "placement" in observation
+      && observation.placement.mode === "provisional_plan_symbol"
+      ? [
+          "source evidence supports a plan location but not a defensible native electrical family/type and host",
+          "runtime creates view-specific DetailCurves only; no modeled electrical device, connector, circuit membership, panel association, or complete-scope benchmark credit is claimed",
+          ...(observation.placement.symbol_form === "filled_circle"
+            ? ["filled source graphics use a dense DetailCurve hatch approximation, not a native Revit FilledRegion or modeled family symbol"]
+            : [])
+        ]
+      : [];
     sourceObservations.push({
       observation_id: observation.observation_id,
       evidence_role: clean(observation.evidence_role) || "source_pdf",
@@ -2082,7 +2300,8 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         ...unresolvedConduitSizeAssumptions,
         ...unresolvedSystemAssumptions,
         ...planProximityAssumptions,
-        ...conduitAssociationAssumptions
+        ...conduitAssociationAssumptions,
+        ...provisionalPlanSymbolAssumptions
       ],
       source_observation_ids: [observation.observation_id],
       required_source_attributes: requiredAttributes
@@ -2126,6 +2345,9 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
     }
     if (planProximityAssumptions.length > 0) {
       warnings.push(`${observation.observation_id}: ${planProximityAssumptions.join("; ")}`);
+    }
+    if (provisionalPlanSymbolAssumptions.length > 0) {
+      warnings.push(`${observation.observation_id}: ${provisionalPlanSymbolAssumptions.join("; ")}`);
     }
   }
 
@@ -2279,6 +2501,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         || observation.kind === "plumbing_fixture" || observation.kind === "electrical_device" || observation.kind === "light_fixture" || observation.kind === "electrical_equipment") {
         actions.push(pointAction(
           observation,
+          registration,
           transformExistingConditionsPlanPoint(registration, observation.point),
           levelName,
           levelElevationFt,
@@ -2736,6 +2959,9 @@ export function buildAtomicMepDraftWorkflowRequest(
       ...(entry.deferred_body ? { deferred_body: entry.deferred_body } : {}),
       ...(entry.provisional_system_classification
         ? { provisional_system_classification: entry.provisional_system_classification }
+        : {}),
+      ...(entry.provisional_plan_representation
+        ? { provisional_plan_representation: entry.provisional_plan_representation }
         : {})
     })),
     dryRun: options.dry_run !== false,

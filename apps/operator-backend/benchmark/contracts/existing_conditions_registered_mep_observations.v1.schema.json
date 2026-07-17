@@ -183,6 +183,21 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["mode", "view_reference_key", "view_type", "symbol_form", "host_direction"],
+          "properties": {
+            "mode": { "const": "provisional_plan_symbol" },
+            "view_reference_key": { "type": "string", "minLength": 1 },
+            "view_type": { "enum": ["FloorPlan", "EngineeringPlan", "CeilingPlan"] },
+            "symbol_form": { "enum": ["hollow_circle", "filled_circle", "unclassified_circle"] },
+            "host_direction": { "enum": ["left", "right", "up", "down", "unresolved"] },
+            "radius_ft": { "type": "number", "minimum": 0.05, "maximum": 2 },
+            "stem_length_ft": { "type": "number", "minimum": 0, "maximum": 5 },
+            "line_style_name": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["mode", "source_reference_key", "host_reference_key", "host_category"],
           "properties": {
             "mode": { "const": "hosted_exemplar" },

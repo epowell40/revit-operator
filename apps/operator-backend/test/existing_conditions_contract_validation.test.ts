@@ -234,6 +234,69 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
     }]
   };
   assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", input));
+  const provisionalPlanMarker = structuredClone(input) as Record<string, any>;
+  provisionalPlanMarker.partial_promotion_policy = "defer_ambiguous_observations";
+  provisionalPlanMarker.visible_evidence.push({ role: "native_model_inventory", sha256: "c".repeat(64) });
+  provisionalPlanMarker.native_element_references = [{
+    reference_key: "power-plan-view",
+    element_id: 5302,
+    category: "OST_Views",
+    role: "registered power plan",
+    evidence_role: "native_model_inventory",
+    evidence_sha256: "c".repeat(64)
+  }];
+  delete provisionalPlanMarker.observations[0]!.instance_parameters;
+  provisionalPlanMarker.observations[0]!.supported_attributes = [
+    "location",
+    "provisional plan representation",
+    "symbol form",
+    "host direction"
+  ];
+  provisionalPlanMarker.observations[0]!.attribute_evidence = [
+    {
+      attribute: "provisional plan representation",
+      basis: "legible_source_evidence",
+      evidence_role: "registered_source_render",
+      reference: "source-visible marker location with unresolved native identity"
+    },
+    {
+      attribute: "symbol form",
+      basis: "legible_source_evidence",
+      evidence_role: "registered_source_render",
+      reference: "visible filled circular marker"
+    },
+    {
+      attribute: "host direction",
+      basis: "legible_source_evidence",
+      evidence_role: "registered_source_render",
+      reference: "visible right-facing marker stem"
+    }
+  ];
+  provisionalPlanMarker.observations[0]!.placement = {
+    mode: "provisional_plan_symbol",
+    view_reference_key: "power-plan-view",
+    view_type: "FloorPlan",
+    symbol_form: "filled_circle",
+    host_direction: "right",
+    radius_ft: 0.25,
+    stem_length_ft: 0.5
+  };
+  assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", provisionalPlanMarker));
+  const provisionalPlanMarkerV2 = structuredClone(provisionalPlanMarker);
+  provisionalPlanMarkerV2.schema_version = 2;
+  assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", provisionalPlanMarkerV2));
+  const invalidProvisionalPlanMarker = structuredClone(provisionalPlanMarker);
+  delete invalidProvisionalPlanMarker.observations[0]!.placement.view_type;
+  assert.throws(
+    () => assertExistingConditionsContract("registered_mep_observations", invalidProvisionalPlanMarker),
+    /invalid_existing_conditions_registered_mep_observations_contract/
+  );
+  const overSpecifiedProvisionalPlanMarker = structuredClone(provisionalPlanMarker);
+  overSpecifiedProvisionalPlanMarker.observations[0]!.placement.family_name = "Must not be accepted";
+  assert.throws(
+    () => assertExistingConditionsContract("registered_mep_observations", overSpecifiedProvisionalPlanMarker),
+    /invalid_existing_conditions_registered_mep_observations_contract/
+  );
   const representationAwareInput = structuredClone(input) as Record<string, any>;
   representationAwareInput.schema_version = 2;
   representationAwareInput.source_coverage = {

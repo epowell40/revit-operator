@@ -190,6 +190,214 @@ test("plumbing fixture representation gate prevents architectural graphics from 
   assert.equal(grounded.actions.some((entry) => entry.action_key === "place:fixture-random-29"), true);
 });
 
+function provisionalElectricalMarkerPackage(
+  symbolForm: "hollow_circle" | "filled_circle" | "unclassified_circle" = "hollow_circle",
+  hostDirection: "left" | "right" | "up" | "down" | "unresolved" = "left"
+): MepDraftPackage {
+  return {
+    schema_version: 1,
+    fixture_id: "source-visible-provisional-power-marker-v1",
+    scope_id: "record-drawing-power-scope-alpha",
+    source_evidence_sha256: SOURCE_HASH,
+    visible_evidence: visibleEvidence(),
+    native_element_references: [
+      ...nativeReferences(),
+      {
+        reference_key: "power-plan-view",
+        element_id: 777,
+        category: "OST_Views",
+        role: "registered source power plan",
+        evidence_role: "native_model_inventory",
+        evidence_sha256: MODEL_HASH
+      }
+    ],
+    registration: registration(),
+    level_name: "Benchmark L2",
+    level_elevation_ft: 12,
+    partial_promotion_policy: "defer_ambiguous_observations",
+    observations: [
+      {
+        kind: "electrical_device",
+        observation_id: "power-device-marker-random-71",
+        discipline: "electrical",
+        role: "source-visible electrical device, exact family/type unresolved",
+        visibility: "clear",
+        confidence: 0.94,
+        supported_attributes: [
+          "location",
+          "provisional plan representation",
+          "symbol form",
+          ...(hostDirection === "unresolved" ? [] : ["host direction"])
+        ],
+        point: { x: 4, y: 6 },
+        elevation_ft: 0,
+        placement: {
+          mode: "provisional_plan_symbol",
+          view_reference_key: "power-plan-view",
+          view_type: "FloorPlan",
+          symbol_form: symbolForm,
+          host_direction: hostDirection,
+          ...(hostDirection === "unresolved" ? { stem_length_ft: 0 } : {})
+        }
+      }
+    ]
+  };
+}
+
+test("source-visible electrical locations compile to explicitly provisional view-specific markers", () => {
+  const plan = compileMepDraftPlan(provisionalElectricalMarkerPackage());
+  assert.equal(plan.status, "partially_ready");
+  assert.deepEqual(plan.provisional_observation_ids, ["power-device-marker-random-71"]);
+  assert.deepEqual(plan.promoted_observation_ids, ["power-device-marker-random-71"]);
+  assert.equal(plan.plan_elements[0]?.category, "OST_Lines");
+  assert.match(plan.plan_elements[0]?.assumptions.join(" ") ?? "", /no modeled electrical device/i);
+  assert.match(plan.warnings.join(" "), /view-specific DetailCurves only/i);
+
+  const action = plan.actions[0];
+  assert.equal(action?.action_key, "place:power-device-marker-random-71");
+  assert.equal(action?.path, "/revit/draw-detail-curves");
+  assert.equal(action?.expected_created_min, 3);
+  assert.equal(action?.expected_created_max, 3);
+  assert.equal(action?.provisional_plan_representation?.modeled_device_created, false);
+  assert.equal(action?.provisional_plan_representation?.benchmark_credit, false);
+  assert.equal(action?.apply_body?.expectedViewType, "FloorPlan");
+  assert.equal(action?.apply_body?.expectedLevelName, "Benchmark L2");
+  assert.equal(action?.apply_body?.projectToViewPlane, true);
+  assert.deepEqual(action?.apply_body?.curves, [
+    {
+      kind: "arc",
+      a: { xyz: [87.75, 208, 12] },
+      b: { xyz: [88.25, 208, 12] },
+      c: { xyz: [88, 208.25, 12] }
+    },
+    {
+      kind: "arc",
+      a: { xyz: [88.25, 208, 12] },
+      b: { xyz: [87.75, 208, 12] },
+      c: { xyz: [88, 207.75, 12] }
+    },
+    {
+      kind: "line",
+      a: { xyz: [88, 207.75, 12] },
+      b: { xyz: [88, 207.25, 12] }
+    }
+  ]);
+
+  const workflow = buildAtomicMepDraftWorkflowRequest(plan);
+  assert.equal(workflow.benchmarkCredit, false);
+  assert.equal(workflow.authorizationBasis, "explicit_unscored_user_direction");
+  assert.equal(workflow.maximumCreatedElements, 3);
+  assert.equal(workflow.operations[0]?.provisional_plan_representation?.complete_scope_credit, false);
+});
+
+test("provisional power markers preserve source-visible symbol form without claiming family type", () => {
+  const filled = compileMepDraftPlan(provisionalElectricalMarkerPackage("filled_circle", "right"));
+  assert.equal(filled.actions[0]?.expected_created_max, 12);
+  const filledCurves = filled.actions[0]?.apply_body?.curves as Array<{
+    kind: string;
+    a?: { xyz: number[] };
+    b?: { xyz: number[] };
+  }>;
+  assert.equal(filledCurves.length, 12);
+  assert.equal(filledCurves[3]?.kind, "line");
+  assert.ok(Math.abs((filledCurves[3]?.a?.xyz[1] ?? 0) - 207.8) < 1e-9);
+  assert.ok(Math.abs((filledCurves[3]?.b?.xyz[1] ?? 0) - 207.8) < 1e-9);
+  assert.ok((filledCurves[3]?.a?.xyz[0] ?? 0) < 88);
+  assert.ok((filledCurves[3]?.b?.xyz[0] ?? 0) > 88);
+
+  const unresolved = compileMepDraftPlan(provisionalElectricalMarkerPackage("unclassified_circle", "unresolved"));
+  assert.equal(unresolved.actions[0]?.expected_created_max, 3);
+  assert.equal((unresolved.actions[0]?.apply_body?.curves as unknown[])?.length, 3);
+});
+
+test("provisional host directions follow reflected source registration", () => {
+  const reflected = provisionalElectricalMarkerPackage("hollow_circle", "up");
+  reflected.registration = {
+    source_evidence_sha256: SOURCE_HASH,
+    control_points: [
+      { source: { x: 0, y: 0 }, model: { x: 100, y: 200 } },
+      { source: { x: 10, y: 0 }, model: { x: 110, y: 200 } },
+      { source: { x: 0, y: 10 }, model: { x: 100, y: 190 } }
+    ],
+    max_rms_error_ft: 0.001,
+    max_point_error_ft: 0.001,
+    allow_reflection: true
+  };
+  const action = compileMepDraftPlan(reflected).actions[0];
+  const curves = action?.apply_body?.curves as Array<{
+    kind: string;
+    a?: { xyz: number[] };
+    b?: { xyz: number[] };
+  }>;
+  assert.deepEqual(curves[2], {
+    kind: "line",
+    a: { xyz: [104, 193.75, 12] },
+    b: { xyz: [104, 193.25, 12] }
+  });
+});
+
+test("provisional power markers fail closed on scope, view, parameters, and circuit claims", () => {
+  const noPolicy = provisionalElectricalMarkerPackage();
+  delete noPolicy.partial_promotion_policy;
+  assert.throws(
+    () => compileMepDraftPlan(noPolicy),
+    /provisional_plan_symbol_requires_partial_promotion_policy/
+  );
+
+  const wrongView = provisionalElectricalMarkerPackage();
+  wrongView.native_element_references.at(-1)!.category = "OST_Walls";
+  assert.throws(
+    () => compileMepDraftPlan(wrongView),
+    /provisional_view_reference_category_mismatch/
+  );
+
+  for (const forbiddenAttribute of ["type", "host", "circuit", "panel", "instance parameters"]) {
+    const overclaim = provisionalElectricalMarkerPackage();
+    overclaim.observations[0]!.supported_attributes.push(forbiddenAttribute);
+    assert.throws(
+      () => compileMepDraftPlan(overclaim),
+      /provisional_plan_symbol_forbidden_supported_attributes/
+    );
+  }
+
+  const missingViewType = provisionalElectricalMarkerPackage();
+  const missingViewTypeDevice = missingViewType.observations[0];
+  if (!missingViewTypeDevice || missingViewTypeDevice.kind !== "electrical_device") throw new Error("test_setup_failed");
+  delete (missingViewTypeDevice.placement as { view_type?: string }).view_type;
+  assert.throws(
+    () => compileMepDraftPlan(missingViewType),
+    /provisional_view_type_invalid/
+  );
+
+  const withParameters = provisionalElectricalMarkerPackage();
+  const parameterDevice = withParameters.observations[0];
+  if (!parameterDevice || parameterDevice.kind !== "electrical_device") throw new Error("test_setup_failed");
+  parameterDevice.instance_parameters = { GFI: "Yes" };
+  assert.throws(
+    () => compileMepDraftPlan(withParameters),
+    /provisional_plan_symbol_cannot_set_instance_parameters/
+  );
+
+  const circuitMember = provisionalElectricalMarkerPackage();
+  circuitMember.observations.push({
+    kind: "electrical_circuit",
+    observation_id: "circuit-random-72",
+    discipline: "electrical",
+    visibility: "clear",
+    confidence: 0.95,
+    supported_attributes: ["circuit"],
+    member_observation_ids: ["power-device-marker-random-71"],
+    circuit_mode: "match_source_power_system",
+    source_reference_key: "circuit-source",
+    expected_power_system_id: "system-333",
+    membership_basis: "native_source_power_system"
+  });
+  assert.throws(
+    () => compileMepDraftPlan(circuitMember),
+    /provisional_plan_symbol_cannot_be_circuit_member/
+  );
+});
+
 test("plumbing fixture representation classification must cite visible evidence", () => {
   const input = plumbingTopologyPackage();
   const fixture = input.observations[1];

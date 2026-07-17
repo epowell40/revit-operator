@@ -37,6 +37,9 @@ namespace RevitBridge.Logic.Handlers
             public bool includeMapping { get; set; } = true;
             public bool hideAnnotationCategoriesForMapping { get; set; } = false;
             public bool cropRasterToRequestedRegionForMapping { get; set; } = false;
+            // DuplicateWithDetailing preserves view-specific DetailCurves, text, and annotations.
+            // Keep this opt-in because large production plans can contain substantial detailing.
+            public bool preserveViewSpecificDetailing { get; set; } = false;
             public string? fileName { get; set; }
             public RegionSpec? region { get; set; }
         }
@@ -85,7 +88,10 @@ namespace RevitBridge.Logic.Handlers
                     {
                         tx.Start();
 
-                        tempViewId = view.Duplicate(ViewDuplicateOption.Duplicate);
+                        tempViewId = view.Duplicate(
+                            p.preserveViewSpecificDetailing
+                                ? ViewDuplicateOption.WithDetailing
+                                : ViewDuplicateOption.Duplicate);
                         tempView = doc.GetElement(tempViewId) as View;
                         if (tempView == null) throw new Exception("Failed to duplicate view.");
 

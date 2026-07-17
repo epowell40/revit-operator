@@ -432,6 +432,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 case "/revit/connect-mep-branch": return new ConnectMepBranchHandler();
                 case "/revit/audit-plumbing-fixture-services": return new PlumbingFixtureServicesAuditHandler();
                 case "/revit/assign-electrical-circuit": return new AssignElectricalCircuitHandler();
+                case "/revit/draw-detail-curves": return new RevitBridge.Logic.Handlers.Drafting.DrawDetailCurvesHandler();
                 case "/revit/tag-elements": return new RevitBridge.Logic.Handlers.TagElementsHandler();
                 default: throw new InvalidOperationException($"unsupported_mep_draft_operation_path:{rawPath}");
             }
@@ -499,6 +500,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                 var id = ReadLong(response, "elementId");
                 return new OperationOutput { CreatedElementIds = id > 0 ? new List<long> { id } : new List<long>() };
             }
+            if (path == "/revit/draw-detail-curves")
+                return new OperationOutput { CreatedElementIds = ReadLongArray(response, "detailCurveIds") };
             if (path == "/revit/tag-elements")
                 return new OperationOutput { CreatedElementIds = ReadLongArray(response, "tagIds") };
             if (path == "/revit/create-pipe-between-connectors")
