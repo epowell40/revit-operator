@@ -181,6 +181,7 @@ namespace RevitBridge.Logic.Handlers
             }
             if (ordered.Count > 1 && Math.Abs(ordered[1].DistanceFt - ordered[0].DistanceFt) <= ambiguityToleranceFt &&
                 !string.Equals(ordered[1].Fingerprint, ordered[0].Fingerprint, StringComparison.Ordinal) &&
+                !AreCoplanarFaceHits(ordered[0], ordered[1], ambiguityToleranceFt) &&
                 (!hasFaceSidePreference || Math.Abs(FaceSideDistance(ordered[1]) - FaceSideDistance(ordered[0])) <= ambiguityToleranceFt))
             {
                 if (!string.IsNullOrWhiteSpace(sourceStableReferencePattern))
@@ -219,6 +220,28 @@ namespace RevitBridge.Logic.Handlers
                 DistanceFt = best.DistanceFt
             };
             return true;
+        }
+
+        private static bool AreCoplanarFaceHits(Candidate first, Candidate second, double toleranceFt)
+        {
+            if (first == null || second == null || first.Point == null || second.Point == null ||
+                first.Normal == null || second.Normal == null ||
+                first.Normal.GetLength() <= Epsilon || second.Normal.GetLength() <= Epsilon)
+                return false;
+
+            var firstNormal = first.Normal.Normalize();
+            var secondNormal = second.Normal.Normalize();
+            if (firstNormal.DotProduct(secondNormal) < 1.0 - 1e-6)
+                return false;
+
+            // Compound and joined walls can expose multiple stable references for separate
+            // coplanar, identically oriented face fragments. They are the same safe support
+            // plane even when their fingerprints differ. Keep opposing faces and true corners
+            // ambiguous, and require both hit points to lie on the same plane within the
+            // existing ambiguity tolerance.
+            var delta = second.Point - first.Point;
+            return Math.Abs(delta.DotProduct(firstNormal)) <= toleranceFt + Epsilon &&
+                   Math.Abs(delta.DotProduct(secondNormal)) <= toleranceFt + Epsilon;
         }
 
         private static IReadOnlyList<Candidate> ResolveFromOriginalSymbolGeometry(Document document, RevitLinkInstance linkInstance, Element linkedElement,

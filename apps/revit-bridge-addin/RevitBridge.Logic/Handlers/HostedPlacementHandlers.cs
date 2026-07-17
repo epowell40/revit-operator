@@ -1984,6 +1984,55 @@ namespace RevitBridge.Logic.Handlers
             }
         }
 
+        internal static bool CopySourceWorkset(Element source, Element target, List<string> warnings)
+        {
+            if (source == null || target == null) return false;
+
+            try
+            {
+                var doc = target.Document;
+                if (!doc.IsWorkshared) return true;
+
+                var sourceWorksetId = source.WorksetId;
+                var sourceWorksetValue = sourceWorksetId.IntegerValue;
+                if (sourceWorksetValue < 0)
+                {
+                    warnings.Add("Source exemplar does not have a valid workset.");
+                    return false;
+                }
+
+                if (target.WorksetId.IntegerValue == sourceWorksetValue) return true;
+
+                var parameter = target.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM);
+                if (parameter == null || parameter.IsReadOnly)
+                {
+                    warnings.Add("Created instance workset parameter is unavailable or read-only.");
+                    return false;
+                }
+
+                if (!parameter.Set((int)sourceWorksetValue))
+                {
+                    warnings.Add($"Revit rejected source workset {sourceWorksetValue} for the created instance.");
+                    return false;
+                }
+
+                doc.Regenerate();
+                if (target.WorksetId.IntegerValue != sourceWorksetValue)
+                {
+                    warnings.Add(
+                        $"Created instance workset verification failed: expected {sourceWorksetValue}, got {target.WorksetId.IntegerValue}.");
+                    return false;
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                warnings.Add($"Failed to copy source workset: {ex.Message}");
+                return false;
+            }
+        }
+
         internal static void ApplyParameterValues(Element target, IDictionary<string, string>? values, List<string> warnings)
         {
             if (target == null || values == null) return;
@@ -3343,9 +3392,32 @@ namespace RevitBridge.Logic.Handlers
                 roomWall.faceSidePreferencePoint = basePoint;
                 if (roomWall.boundaryElement is Wall)
                 {
-                    if (!HostedPlacementUtil.TryProjectPointToRoomWall(roomWall, basePoint, out var projectedExplicitWallPoint, out _, out _, out _))
+                    var requestedExplicitWallPoint = basePoint;
+                    if (!HostedPlacementUtil.TryProjectPointToRoomWall(roomWall, requestedExplicitWallPoint, out var projectedExplicitWallPoint, out var explicitWallTangent, out _, out _))
                         throw new InvalidOperationException($"Requested point could not be projected onto explicit linked wall {p.linkedHostElementId.Value}.");
-                    basePoint = new XYZ(projectedExplicitWallPoint.X, projectedExplicitWallPoint.Y, basePoint.Z);
+
+                    // Clamp the request along the wall curve without collapsing it onto the wall
+                    // centerline. Linked-face resolution needs the original room-side lateral offset
+                    // to distinguish the intended finish face on thick or compound walls.
+                    var planarTangent = new XYZ(explicitWallTangent.X, explicitWallTangent.Y, 0.0);
+                    if (planarTangent.GetLength() > 1e-9)
+                    {
+                        planarTangent = planarTangent.Normalize();
+                        var requestedDelta = new XYZ(
+                            requestedExplicitWallPoint.X - projectedExplicitWallPoint.X,
+                            requestedExplicitWallPoint.Y - projectedExplicitWallPoint.Y,
+                            0.0);
+                        var alongWallDelta = planarTangent.Multiply(requestedDelta.DotProduct(planarTangent));
+                        var lateralDelta = requestedDelta - alongWallDelta;
+                        basePoint = new XYZ(
+                            projectedExplicitWallPoint.X + lateralDelta.X,
+                            projectedExplicitWallPoint.Y + lateralDelta.Y,
+                            requestedExplicitWallPoint.Z);
+                    }
+                    else
+                    {
+                        basePoint = requestedExplicitWallPoint;
+                    }
                 }
             }
             else
@@ -3457,6 +3529,11 @@ namespace RevitBridge.Logic.Handlers
                 : ElementIdCompat.GetValue(sourceElement.CreatedPhaseId);
             long? verifiedCreatedPhaseId = null;
             bool? sourceCreatedPhaseMatched = null;
+            long? sourceWorksetId = sourceElement == null || !doc.IsWorkshared
+                ? null
+                : sourceElement.WorksetId.IntegerValue;
+            long? verifiedCreatedWorksetId = null;
+            bool? sourceWorksetMatched = null;
             var dryRunRollbackVerified = false;
             string? previewPath = null;
             int? previewWidth = null;
@@ -3500,10 +3577,17 @@ namespace RevitBridge.Logic.Handlers
                 if (sourceElement != null)
                 {
                     var phaseCopied = HostedPlacementUtil.CopySourceCreatedPhase(sourceElement, created, warnings);
+                    var worksetCopied = !doc.IsWorkshared ||
+                        HostedPlacementUtil.CopySourceWorkset(sourceElement, created, warnings);
                     HostedPlacementUtil.CopyParameters(sourceElement, created, p.parameterNamesToCopy, warnings);
                     doc.Regenerate();
                     verifiedCreatedPhaseId = ElementIdCompat.GetValue(created.CreatedPhaseId);
                     sourceCreatedPhaseMatched = sourceCreatedPhaseId == verifiedCreatedPhaseId;
+                    if (doc.IsWorkshared)
+                    {
+                        verifiedCreatedWorksetId = created.WorksetId.IntegerValue;
+                        sourceWorksetMatched = sourceWorksetId == verifiedCreatedWorksetId;
+                    }
                     if (sourceCreatedPhaseId.HasValue &&
                         sourceCreatedPhaseId.Value > 0 &&
                         created.ArePhasesModifiable() &&
@@ -3513,8 +3597,26 @@ namespace RevitBridge.Logic.Handlers
                             $"Created instance did not retain source created phase {sourceCreatedPhaseId.Value}."
                         );
                     }
+                    if (doc.IsWorkshared && (!worksetCopied || sourceWorksetMatched != true))
+                    {
+                        throw new InvalidOperationException(
+                            $"Created instance did not retain source workset {sourceWorksetId}."
+                        );
+                    }
                 }
                 HostedPlacementUtil.ApplyParameterValuesStrict(created, p.parameterOverrides);
+                if (sourceElement != null && doc.IsWorkshared)
+                {
+                    doc.Regenerate();
+                    verifiedCreatedWorksetId = created.WorksetId.IntegerValue;
+                    sourceWorksetMatched = sourceWorksetId == verifiedCreatedWorksetId;
+                    if (sourceWorksetMatched != true)
+                    {
+                        throw new InvalidOperationException(
+                            $"Created instance workset changed after parameter overrides: expected {sourceWorksetId}, got {verifiedCreatedWorksetId}."
+                        );
+                    }
+                }
                 var requestedDistributionSystemName = !string.IsNullOrWhiteSpace(p.distributionSystemName)
                     ? p.distributionSystemName
                     : p.ensureDistributionSystem?.name;
@@ -3645,6 +3747,12 @@ namespace RevitBridge.Logic.Handlers
                         verifiedCreatedPhaseId,
                         sourceCreatedPhaseMatched
                     },
+                    workset = sourceElement == null || !doc.IsWorkshared ? null : new
+                    {
+                        sourceWorksetId,
+                        verifiedCreatedWorksetId,
+                        sourceWorksetMatched
+                    },
                     hostLocalFrame = HostedPlacementUtil.BuildHostLocalFramePayload(HostedPlacementUtil.BuildHostLocalFrameData(host, roomWall, finalPoint), orientationSource),
                     placementValidation,
                     electricalDistributionSystemPreparation,
@@ -3758,6 +3866,12 @@ namespace RevitBridge.Logic.Handlers
                     verifiedCreatedPhaseId,
                     sourceCreatedPhaseMatched
                 },
+                workset = sourceElement == null || !doc.IsWorkshared ? null : new
+                {
+                    sourceWorksetId,
+                    verifiedCreatedWorksetId,
+                    sourceWorksetMatched
+                },
                 hostLocalFrame = HostedPlacementUtil.BuildHostLocalFramePayload(HostedPlacementUtil.BuildHostLocalFrameData(host, roomWall, finalPoint), orientationSource),
                 placementValidation,
                 transactionStatus,
@@ -3863,6 +3977,9 @@ namespace RevitBridge.Logic.Handlers
             string? transactionStatus = null;
             var exemplarPoint = HostedPlacementUtil.TryGetElementPoint(exemplar);
             var exemplarElectricalCircuit = HostedPlacementUtil.BuildElectricalCircuitAuditPayload(exemplarFi);
+            long? exemplarWorksetId = doc.IsWorkshared
+                ? exemplar.WorksetId.IntegerValue
+                : null;
             var usedCopiedLinkedHostFallback = false;
 
             string BuildCommitFailureText()
@@ -3992,8 +4109,23 @@ namespace RevitBridge.Logic.Handlers
                     {
                         created = doc.Create.NewFamilyInstance(apiPoint, symbol, host, level, StructuralType.NonStructural);
                     }
+                    var worksetCopied = !doc.IsWorkshared ||
+                        HostedPlacementUtil.CopySourceWorkset(exemplar, created, warnings);
                     HostedPlacementUtil.CopyParameters(exemplar, created, p.parameterNamesToCopy, warnings);
                     HostedPlacementUtil.ApplyParameterValues(created, p.parameterOverrides, warnings);
+                    doc.Regenerate();
+                    long? verifiedCreatedWorksetId = doc.IsWorkshared
+                        ? created.WorksetId.IntegerValue
+                        : null;
+                    bool? sourceWorksetMatched = doc.IsWorkshared
+                        ? exemplarWorksetId == verifiedCreatedWorksetId
+                        : null;
+                    if (doc.IsWorkshared && (!worksetCopied || sourceWorksetMatched != true))
+                    {
+                        throw new InvalidOperationException(
+                            $"Created similar instance did not retain exemplar workset {exemplarWorksetId}."
+                        );
+                    }
                     var matchOrientation = p.matchOrientationFromSource ?? true;
                     if (facePlacement == null && !copiedLinkedHostedExemplar)
                     {
@@ -4061,6 +4193,12 @@ namespace RevitBridge.Logic.Handlers
                         alongHostOffsetFt = item.alongHostOffsetFt,
                         targetChainageFt = item.targetChainageFt,
                         targetNormalizedChainage = item.targetNormalizedChainage,
+                        workset = !doc.IsWorkshared ? null : new
+                        {
+                            sourceWorksetId = exemplarWorksetId,
+                            verifiedCreatedWorksetId,
+                            sourceWorksetMatched
+                        },
                         hostLocalFrame = framePayload,
                         electricalCircuit = HostedPlacementUtil.BuildElectricalCircuitAuditPayload(created),
                         label = item.label
