@@ -271,9 +271,7 @@ namespace RevitBridge.Logic.Handlers
                 ? TryGetBoundingBox(element, view)
                 : DatasetExportUtil.TryGetBoundingBoxInHostCoordinates(element, null, linkInstance);
             var bboxCenter = DatasetExportUtil.GetBoundingBoxCenter(bbox);
-            var anchorPoint = linkInstance == null
-                ? ResolveAnchorPoint(element, bboxCenter)
-                : DatasetExportUtil.TryGetElementPointInHostCoordinates(element, linkInstance) ?? bboxCenter;
+            var anchorPoint = ResolveAnchorPointInHostCoordinates(element, linkInstance, bboxCenter);
             var anchor = anchorPoint == null ? null : BuildProjectedPoint(anchorPoint, widthPx, heightPx, topLeft, topRight, bottomLeft);
             object? bboxModel = bbox == null ? null : new
             {
@@ -299,13 +297,16 @@ namespace RevitBridge.Logic.Handlers
             payload["geometry"] = geometry;
             payload["categoryToken"] = SelectionUtil.GetCategoryToken(element);
             payload["orientation"] = BuildOrientationPayload(element, linkInstance);
-            ApplyReadableAnnotationPayload(payload, element);
+            ApplyReadableAnnotationPayload(payload, element, linkInstance);
             ApplyHostProvenance(payload);
 
             return payload;
         }
 
-        private static void ApplyReadableAnnotationPayload(Dictionary<string, object?> payload, Element element)
+        private static void ApplyReadableAnnotationPayload(
+            Dictionary<string, object?> payload,
+            Element element,
+            RevitLinkInstance? linkInstance)
         {
             try
             {
@@ -353,19 +354,19 @@ namespace RevitBridge.Logic.Handlers
             }
             catch { }
 
-            var tagAnnotation = BuildTagAnnotationPayload(element);
+            var tagAnnotation = BuildTagAnnotationPayload(element, linkInstance);
             if (tagAnnotation != null)
                 payload["tagAnnotation"] = tagAnnotation;
         }
 
-        private static object? BuildTagAnnotationPayload(Element element)
+        private static object? BuildTagAnnotationPayload(Element element, RevitLinkInstance? linkInstance)
         {
             if (element is not IndependentTag && element is not RoomTag && element is not SpaceTag)
                 return null;
 
-            var head = TryReadXyzProperty(element, "TagHeadPosition");
-            var leaderElbow = TryReadXyzProperty(element, "LeaderElbow");
-            var leaderEnd = TryReadXyzProperty(element, "LeaderEnd");
+            var head = TransformNullablePointToHost(linkInstance, TryReadXyzProperty(element, "TagHeadPosition"));
+            var leaderElbow = TransformNullablePointToHost(linkInstance, TryReadXyzProperty(element, "LeaderElbow"));
+            var leaderEnd = TransformNullablePointToHost(linkInstance, TryReadXyzProperty(element, "LeaderEnd"));
             var hasLeader = TryReadBoolProperty(element, "HasLeader");
             var leaderEndCondition = TryReadProperty(element, "LeaderEndCondition")?.ToString();
 
@@ -434,7 +435,7 @@ namespace RevitBridge.Logic.Handlers
             XYZ topRight,
             XYZ bottomLeft)
         {
-            var anchorPoint = DatasetExportUtil.TryGetElementPointInHostCoordinates(element, linkInstance);
+            var anchorPoint = ResolveAnchorPointInHostCoordinates(element, linkInstance, null);
             var anchorProjection = anchorPoint == null
                 ? null
                 : TryProjectPointToImage(anchorPoint, widthPx, heightPx, topLeft, topRight, bottomLeft);
@@ -461,7 +462,14 @@ namespace RevitBridge.Logic.Handlers
         private static bool LinkedElementIntersectsModelBounds(Element element, RevitLinkInstance linkInstance, Outline modelBounds)
         {
             var bbox = DatasetExportUtil.TryGetBoundingBoxInHostCoordinates(element, null, linkInstance);
-            if (bbox == null) return false;
+            if (bbox == null)
+            {
+                var anchor = ResolveAnchorPointInHostCoordinates(element, linkInstance, null);
+                return anchor != null
+                    && anchor.X >= modelBounds.MinimumPoint.X && anchor.X <= modelBounds.MaximumPoint.X
+                    && anchor.Y >= modelBounds.MinimumPoint.Y && anchor.Y <= modelBounds.MaximumPoint.Y
+                    && anchor.Z >= modelBounds.MinimumPoint.Z && anchor.Z <= modelBounds.MaximumPoint.Z;
+            }
 
             var corners = GetBoundingBoxWorldCorners(bbox).ToList();
             if (corners.Count == 0) return false;
@@ -532,6 +540,9 @@ namespace RevitBridge.Logic.Handlers
 
         private static XYZ? ResolveAnchorPoint(Element e, XYZ? bboxCenter)
         {
+            var annotationPoint = TryGetAnnotationAnchorPoint(e);
+            if (annotationPoint != null) return annotationPoint;
+
             try
             {
                 if (e.Location is LocationPoint lp && lp.Point != null) return lp.Point;
@@ -550,6 +561,29 @@ namespace RevitBridge.Logic.Handlers
             return bboxCenter;
         }
 
+        private static XYZ? ResolveAnchorPointInHostCoordinates(
+            Element element,
+            RevitLinkInstance? linkInstance,
+            XYZ? hostBoundingBoxCenter)
+        {
+            var sourcePoint = ResolveAnchorPoint(element, null);
+            if (sourcePoint != null) return TransformPointToHost(linkInstance, sourcePoint);
+            return hostBoundingBoxCenter;
+        }
+
+        private static XYZ? TryGetAnnotationAnchorPoint(Element element)
+        {
+            if (element is IndependentTag || element is RoomTag || element is SpaceTag)
+                return TryReadXyzProperty(element, "TagHeadPosition");
+
+            if (element is TextNote textNote)
+            {
+                try { return textNote.Coord; } catch { return null; }
+            }
+
+            return null;
+        }
+
         private static object? BuildGeometryPayload(
             Element e,
             RevitLinkInstance? linkInstance,
@@ -561,6 +595,17 @@ namespace RevitBridge.Logic.Handlers
         {
             try
             {
+                var annotationPoint = TryGetAnnotationAnchorPoint(e);
+                if (annotationPoint != null)
+                {
+                    var point = TransformPointToHost(linkInstance, annotationPoint);
+                    return new
+                    {
+                        kind = "annotation-point",
+                        point = BuildProjectedPoint(point, widthPx, heightPx, topLeft, topRight, bottomLeft)
+                    };
+                }
+
                 if (e.Location is LocationPoint lp && lp.Point != null)
                 {
                     var point = DatasetExportUtil.TransformPointToHost(linkInstance, lp.Point);
@@ -853,6 +898,11 @@ namespace RevitBridge.Logic.Handlers
             var transform = TryGetLinkTransform(linkInstance);
             if (transform == null) return point;
             try { return transform.OfPoint(point); } catch { return point; }
+        }
+
+        private static XYZ? TransformNullablePointToHost(RevitLinkInstance? linkInstance, XYZ? point)
+        {
+            return point == null ? null : TransformPointToHost(linkInstance, point);
         }
 
         private static XYZ TransformVectorToHost(RevitLinkInstance? linkInstance, XYZ vector)
