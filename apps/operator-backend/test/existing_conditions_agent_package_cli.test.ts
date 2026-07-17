@@ -36,10 +36,22 @@ test("package CLI copies and hash-binds optional registration, type-catalog, and
     const outDir = path.join(temp, "agent");
     fs.writeFileSync(modelPath, "model", "utf8");
     fs.writeFileSync(pdfPath, "%PDF-1.7\n", "utf8");
-    fs.writeFileSync(registrationPath, `${JSON.stringify({ schema_version: 1, verified: true })}\n`, "utf8");
     fs.writeFileSync(typeCatalogPath, `${JSON.stringify({ schema_version: 1, mappings: [] })}\n`, "utf8");
     fs.writeFileSync(sourceRenderPath, "source-render-bytes", "utf8");
     fs.writeFileSync(surroundingCapturePath, "surrounding-capture-bytes", "utf8");
+    fs.writeFileSync(registrationPath, `${JSON.stringify({
+      schema_version: 1,
+      source_evidence_sha256: sha256(sourceRenderPath),
+      control_point_count: 3,
+      scale: 1,
+      rotation_degrees: 0,
+      translation_ft: { x: 0, y: 0 },
+      rms_error_ft: 0,
+      maximum_error_ft: 0,
+      max_rms_error_ft: 0.25,
+      max_point_error_ft: 0.25,
+      verified: true
+    })}\n`, "utf8");
     fs.writeFileSync(deltaReceiptPath, `${JSON.stringify({
       schema_version: 1,
       artifact_role: "architectural_source_redacted_delta",
@@ -226,6 +238,54 @@ test("capture CLI rejects evaluator-only linked scopes before native bridge acce
 
     assert.notEqual(result.status, 0);
     assert.match(`${result.stderr}\n${result.stdout}`, /linked scopes are evaluator-only/);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("package CLI rejects exact reconstruction without a verified source-to-model registration", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "existing-conditions-missing-registration-"));
+  try {
+    const modelPath = path.join(temp, "redacted.rvt");
+    const pdfPath = path.join(temp, "source.pdf");
+    const registrationPath = path.join(temp, "registration.json");
+    fs.writeFileSync(modelPath, "model", "utf8");
+    fs.writeFileSync(pdfPath, "%PDF-1.7\n", "utf8");
+    const cli = path.resolve(process.cwd(), "dist/src/tools/existing_conditions_fixture.js");
+    const result = spawnSync(process.execPath, [
+      cli, "package",
+      "--fixture-id", "missing-registration-v1",
+      "--scope-id", "scope",
+      "--redacted-model", modelPath,
+      "--source-pdf", pdfPath,
+      "--out-dir", path.join(temp, "agent"),
+      "--view-id", "1",
+      "--discipline", "plumbing",
+      "--allowed-categories", "OST_PlumbingFixtures",
+      "--model-bounds", "0,0,0,10,10,10",
+      "--image-region", "0,0,1,1"
+    ], { cwd: process.cwd(), encoding: "utf8" });
+
+    assert.notEqual(result.status, 0);
+    assert.match(`${result.stderr}\n${result.stdout}`, /exact_reconstruction_requires_verified_source_to_model_registration/);
+
+    fs.writeFileSync(registrationPath, `${JSON.stringify({ schema_version: 1, verified: true })}\n`, "utf8");
+    const invalidRegistrationResult = spawnSync(process.execPath, [
+      cli, "package",
+      "--fixture-id", "invalid-registration-v1",
+      "--scope-id", "scope",
+      "--redacted-model", modelPath,
+      "--source-pdf", pdfPath,
+      "--out-dir", path.join(temp, "invalid-agent"),
+      "--view-id", "1",
+      "--discipline", "plumbing",
+      "--allowed-categories", "OST_PlumbingFixtures",
+      "--model-bounds", "0,0,0,10,10,10",
+      "--image-region", "0,0,1,1",
+      "--registration-artifact", registrationPath
+    ], { cwd: process.cwd(), encoding: "utf8" });
+    assert.notEqual(invalidRegistrationResult.status, 0);
+    assert.match(`${invalidRegistrationResult.stderr}\n${invalidRegistrationResult.stdout}`, /registration_artifact_must_be_verified_source_to_model_registration/);
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }

@@ -77,7 +77,8 @@ import {
 } from "../existing_conditions/mep_pre_apply_geometry_gate.js";
 import {
   solveExistingConditionsRegistration,
-  type ExistingConditionsRegistrationInput
+  type ExistingConditionsRegistrationInput,
+  type ExistingConditionsRegistrationReceipt
 } from "../existing_conditions/registration.js";
 import {
   assessExistingConditionsRegistrationAmbiguity,
@@ -291,7 +292,7 @@ function usage(): never {
     "  npm run existing-conditions -- promote-architectural-preview --input <source-observations.json> --truth <evaluator-ground-truth.json> (--catalog <approved-precedents.json> --mapping-signals <hash-bound-signals.json> | --resolutions <evidence-backed-resolutions.json>) --out <promotion.json> [--score-out <recomputed-plan-score.json>] [--action-out <atomic-import-request.json>] [--apply]",
     "  npm run existing-conditions -- compile-architectural-shell --input <source-observations.json> --out <compiled-plan.json> [--action-out <atomic-import-request.json>] [--apply]",
     "  npm run existing-conditions -- capture (--expected-model <model.rvt> | --expected-document-title <exact-title> --allow-title-only-development) (--view-id <id> | --view-ids <id,id,...>) (--ids <id,id,...> | --scope <scope.json>) --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
-    "  npm run existing-conditions -- package --fixture-id <id> --scope-id <id> --discipline <mechanical|plumbing|electrical|architectural|mixed> --task-class <exact_reconstruction|standards_compliance_repair|generative_layout> [--standards-profile <json>] [--source-pdf-render <image> --surrounding-model-capture <image> --architectural-delta-receipt <json> [--architectural-measurement-receipt <json> [--architectural-wall-candidate-receipt <json>]]] --redacted-model <agent-redacted.rvt> --source-pdf <source.pdf> --view-id <id> --model-bounds <minX,minY,minZ,maxX,maxY,maxZ> --image-region <minX,minY,maxX,maxY> --allowed-categories <OST_...,OST_...> --out-dir <agent-dir>",
+    "  npm run existing-conditions -- package --fixture-id <id> --scope-id <id> --discipline <mechanical|plumbing|electrical|architectural|mixed> --task-class <exact_reconstruction|standards_compliance_repair|generative_layout> [--standards-profile <json>] [--source-pdf-render <image> --surrounding-model-capture <image> --architectural-delta-receipt <json> [--architectural-measurement-receipt <json> [--architectural-wall-candidate-receipt <json>]]] --redacted-model <agent-redacted.rvt> --source-pdf <source.pdf> --view-id <id> --model-bounds <minX,minY,minZ,maxX,maxY,maxZ> --image-region <minX,minY,maxX,maxY> --allowed-categories <OST_...,OST_...> --out-dir <agent-dir> [--registration-artifact <verified-registration.json> (required for exact reconstruction)]",
     "  npm run existing-conditions -- seal-truth --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --ground-truth-model <source.rvt> --deletion-manifest <json> --delete-dry-run <json> --out <truth.json>",
     "  npm run existing-conditions -- evaluator-review-visual --post-capture <image> --post-pdf <pdf> --status <pass|needs_review|fail> --out <receipt.json>",
     "  npm run existing-conditions -- seal-candidate --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --evaluator-visual-receipt <json> --out <candidate.json>",
@@ -346,6 +347,47 @@ function responseIds(value: unknown): number[] {
 
 function sha256(filePath: string): string {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
+
+function assertVerifiedRegistrationArtifact(
+  value: unknown,
+  expectedSourceEvidenceSha256: string
+): ExistingConditionsRegistrationReceipt {
+  const receipt = asObject(value);
+  const translation = asObject(receipt.translation_ft);
+  const numeric = (entry: unknown): entry is number => typeof entry === "number" && Number.isFinite(entry);
+  const rmsError = receipt.rms_error_ft;
+  const maximumError = receipt.maximum_error_ft;
+  const maxRmsError = receipt.max_rms_error_ft;
+  const maxPointError = receipt.max_point_error_ft;
+  const controlPointCount = receipt.control_point_count;
+  const thresholdedErrorsAreValid = numeric(rmsError)
+    && numeric(maximumError)
+    && numeric(maxRmsError)
+    && numeric(maxPointError)
+    && rmsError >= 0
+    && maximumError >= 0
+    && maxRmsError >= 0
+    && maxPointError >= 0
+    && rmsError <= maxRmsError
+    && maximumError <= maxPointError;
+  if (receipt.schema_version !== 1
+    || receipt.verified !== true
+    || typeof receipt.source_evidence_sha256 !== "string"
+    || receipt.source_evidence_sha256.toLowerCase() !== expectedSourceEvidenceSha256.toLowerCase()
+    || !numeric(controlPointCount)
+    || !Number.isInteger(controlPointCount)
+    || controlPointCount < 3
+    || !numeric(receipt.scale)
+    || receipt.scale <= 0
+    || !numeric(receipt.rotation_degrees)
+    || !numeric(translation.x)
+    || !numeric(translation.y)
+    || !thresholdedErrorsAreValid
+    || (receipt.reflection_applied != null && typeof receipt.reflection_applied !== "boolean")) {
+    throw new Error("registration_artifact_must_be_verified_source_to_model_registration");
+  }
+  return receipt as ExistingConditionsRegistrationReceipt;
 }
 
 const DEFAULT_EXISTING_CONDITIONS_CATEGORIES = [
@@ -673,7 +715,30 @@ function buildAgentPackage(): void {
   if (taskClass !== "exact_reconstruction" && (!standardsProfileSource || !fs.existsSync(path.resolve(standardsProfileSource)))) {
     throw new Error("--standards-profile must identify an existing JSON file for compliance and generative tasks.");
   }
-  for (const [flag, source] of [["--registration-artifact", registrationArtifactSource], ["--type-mapping-artifact", typeMappingArtifactSource]] as const) {
+  for (const [flag, source] of [["--source-pdf-render", sourcePdfRenderSource], ["--surrounding-model-capture", surroundingModelCaptureSource]] as const) {
+    if (source && (!fs.existsSync(path.resolve(source)) || !fs.statSync(path.resolve(source)).isFile())) {
+      throw new Error(`${flag} must identify an existing image file.`);
+    }
+  }
+  if (taskClass === "exact_reconstruction" && !registrationArtifactSource) {
+    throw new Error("exact_reconstruction_requires_verified_source_to_model_registration");
+  }
+  let registrationArtifact: ExistingConditionsRegistrationReceipt | null = null;
+  if (registrationArtifactSource) {
+    const resolved = path.resolve(registrationArtifactSource);
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+      throw new Error("--registration-artifact must identify an existing JSON file.");
+    }
+    let rawRegistration: unknown;
+    try {
+      rawRegistration = readJson(resolved);
+    } catch {
+      throw new Error("--registration-artifact must identify valid JSON.");
+    }
+    const registeredSource = sourcePdfRenderSource ? path.resolve(sourcePdfRenderSource) : sourcePdf;
+    registrationArtifact = assertVerifiedRegistrationArtifact(rawRegistration, sha256(registeredSource));
+  }
+  for (const [flag, source] of [["--type-mapping-artifact", typeMappingArtifactSource]] as const) {
     if (!source) continue;
     const resolved = path.resolve(source);
     if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) throw new Error(`${flag} must identify an existing JSON file.`);
@@ -817,11 +882,6 @@ function buildAgentPackage(): void {
       }
     }
   }
-  for (const [flag, source] of [["--source-pdf-render", sourcePdfRenderSource], ["--surrounding-model-capture", surroundingModelCaptureSource]] as const) {
-    if (source && (!fs.existsSync(path.resolve(source)) || !fs.statSync(path.resolve(source)).isFile())) {
-      throw new Error(`${flag} must identify an existing image file.`);
-    }
-  }
   fs.mkdirSync(outDir, { recursive: true });
   const pdfCopy = path.join(outDir, "source_evidence.pdf");
   const packagePath = path.join(outDir, "agent_package.json");
@@ -962,7 +1022,7 @@ function buildAgentPackage(): void {
       path: redactedModel,
       sha256: sha256(redactedModel)
     },
-    registration_artifact: registrationArtifactSource ? {
+    registration_artifact: registrationArtifact ? {
       role: "source_to_model_registration",
       path: registrationArtifactCopy,
       sha256: sha256(registrationArtifactCopy)
@@ -1067,7 +1127,7 @@ function buildAgentPackage(): void {
       { role: "source_pdf", sha256: sha256(pdfCopy) },
       ...(sourcePdfRenderCopy ? [{ role: "source_pdf_render", sha256: sha256(sourcePdfRenderCopy) }] : []),
       ...(surroundingModelCaptureCopy ? [{ role: "surrounding_model_capture", sha256: sha256(surroundingModelCaptureCopy) }] : []),
-      ...(registrationArtifactSource ? [{ role: "source_to_model_registration", sha256: sha256(registrationArtifactCopy) }] : []),
+      ...(registrationArtifact ? [{ role: "source_to_model_registration", sha256: sha256(registrationArtifactCopy) }] : []),
       ...(typeMappingArtifactSource ? [{ role: "approved_type_catalog", sha256: sha256(typeMappingArtifactCopy) }] : []),
       ...(packagedArchitecturalDelta ? [
         { role: "architectural_source_redacted_delta", sha256: sha256(architecturalDeltaReceiptCopy) },
