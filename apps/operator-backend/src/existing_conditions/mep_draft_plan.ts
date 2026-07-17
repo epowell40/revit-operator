@@ -53,14 +53,24 @@ export type MepDraftPlacement =
   | {
       /**
        * Draw an explicitly provisional, view-specific symbol when the source
-       * establishes a device location but not a defensible native family/type
-       * and host. This preserves useful drafting progress without pretending a
-       * DetailCurve is a modeled electrical device.
+       * establishes a plan location and visible symbol form but not a
+       * defensible native family/type, host, elevation, or service identity.
+       * This preserves useful drafting progress without pretending a
+       * DetailCurve is a modeled MEP element.
        */
       mode: "provisional_plan_symbol";
       view_reference_key: string;
       view_type: "FloorPlan" | "EngineeringPlan" | "CeilingPlan";
-      symbol_form: "hollow_circle" | "filled_circle" | "unclassified_circle";
+      symbol_form:
+        | "hollow_circle"
+        | "filled_circle"
+        | "unclassified_circle"
+        | "square"
+        | "square_with_x"
+        | "x_mark"
+        | "cross"
+        | "triangle"
+        | "diamond";
       host_direction: "left" | "right" | "up" | "down" | "unresolved";
       radius_ft?: number;
       stem_length_ft?: number;
@@ -287,14 +297,14 @@ export type PlumbingFixtureRepresentationClassification = {
     | "mep_connection_symbol"
     | "combined_fixture_and_connection"
     | "unresolved";
-  /** What the compiled native placement will create. */
-  native_target: "architectural_fixture" | "mep_connection";
+  /** What the compiled placement will create. */
+  native_target: "architectural_fixture" | "mep_connection" | "plan_only_marker";
   /** Classification must be grounded in the visible source or explicit direction, never an implicit family-name guess. */
   basis: "source_observation" | "user_direction";
   evidence_role: string;
   reference: string;
-  /** Exact family/type mapping for the declared native target representation. */
-  native_target_evidence: {
+  /** Exact family/type mapping for a declared native target representation. Omitted for a plan-only marker. */
+  native_target_evidence?: {
     basis: "native_model_precedent" | "user_direction";
     evidence_role: string;
     reference: string;
@@ -308,7 +318,7 @@ export type PlumbingFixtureObservation = MepDraftObservationBase & {
   discipline: "plumbing";
   role: string;
   point: ExistingConditionsPlanPoint;
-  elevation_ft: number;
+  elevation_ft?: number;
   placement: MepDraftPlacement;
   representation_classification: PlumbingFixtureRepresentationClassification;
   /**
@@ -321,7 +331,7 @@ export type PlumbingFixtureObservation = MepDraftObservationBase & {
     route_endpoint: "start" | "end" | "native_source" | "nearest_plan_segment";
     maximum_plan_distance_ft?: number;
   }>;
-  service_boundary: {
+  service_boundary?: {
     basis: "source_observation" | "native_model_precedent";
     evidence_role: string;
     required_services: PlumbingPipeRouteObservation["service"][];
@@ -374,7 +384,7 @@ type MechanicalFamilyInstanceObservationBase = MepDraftObservationBase & {
   discipline: "mechanical";
   role: string;
   point: ExistingConditionsPlanPoint;
-  elevation_ft: number;
+  elevation_ft?: number;
   /** Exact project workset name, supported by project-native precedent or explicit direction. */
   workset_name?: string;
   placement: MepDraftPlacement;
@@ -394,7 +404,7 @@ type ElectricalFamilyInstanceObservationBase = MepDraftObservationBase & {
   discipline: "electrical";
   role: string;
   point: ExistingConditionsPlanPoint;
-  elevation_ft: number;
+  elevation_ft?: number;
   placement: MepDraftPlacement;
 };
 
@@ -561,7 +571,15 @@ export type MepDraftAction = {
   };
   provisional_plan_representation?: {
     native_category: "OST_Lines";
-    representation_role: "view_specific_device_location_marker";
+    representation_role: "view_specific_plan_symbol_marker";
+    source_observation_kind:
+      | "mechanical_equipment"
+      | "air_terminal"
+      | "plumbing_fixture"
+      | "electrical_device"
+      | "light_fixture"
+      | "electrical_equipment";
+    modeled_element_created: false;
     modeled_device_created: false;
     benchmark_credit: false;
     complete_scope_credit: false;
@@ -815,6 +833,14 @@ function materialAttributes(observation: MepDraftObservation): string[] {
       ? ["location", ...size, ...(clean(observation.main_reference_key) ? ["main elevation"] : []), "elevation", ...system, ...(routeTypePolicy(observation) === "explicit_required" ? ["type"] : [])]
       : ["location", ...size, "elevation", ...system, ...(routeTypePolicy(observation) === "explicit_required" ? ["type"] : [])];
   }
+  if ("placement" in observation && observation.placement.mode === "provisional_plan_symbol") {
+    return [
+      "location",
+      "provisional plan representation",
+      "symbol form",
+      ...(observation.placement.host_direction === "unresolved" ? [] : ["host direction"])
+    ];
+  }
   if (observation.kind === "plumbing_fixture") {
     return observation.placement.mode === "hosted_exemplar" || observation.placement.mode === "hosted_family_symbol"
       ? ["location", "type", "host", "service topology"]
@@ -822,14 +848,6 @@ function materialAttributes(observation: MepDraftObservation): string[] {
   }
   if (observation.kind === "mechanical_equipment" || observation.kind === "air_terminal"
     || observation.kind === "electrical_device" || observation.kind === "light_fixture" || observation.kind === "electrical_equipment") {
-    if (observation.placement.mode === "provisional_plan_symbol") {
-      return [
-        "location",
-        "provisional plan representation",
-        "symbol form",
-        ...(observation.placement.host_direction === "unresolved" ? [] : ["host direction"])
-      ];
-    }
     const placementAttributes = observation.placement.mode === "hosted_exemplar"
       || observation.placement.mode === "hosted_family_symbol"
       || observation.placement.mode === "created_route_host"
@@ -853,13 +871,13 @@ function materialAttributes(observation: MepDraftObservation): string[] {
 }
 
 function category(observation: MepDraftObservation): string {
+  if ("placement" in observation && observation.placement.mode === "provisional_plan_symbol") return "OST_Lines";
   if (observation.kind === "duct_route") return "OST_DuctCurves";
   if (observation.kind === "conduit_route") return "OST_Conduit";
   if (observation.kind === "mechanical_equipment") return "OST_MechanicalEquipment";
   if (observation.kind === "air_terminal") return "OST_DuctTerminal";
   if (observation.kind === "pipe_route") return "OST_PipeCurves";
   if (observation.kind === "plumbing_fixture") return "OST_PlumbingFixtures";
-  if ("placement" in observation && observation.placement.mode === "provisional_plan_symbol") return "OST_Lines";
   if (observation.kind === "light_fixture") return "OST_LightingFixtures";
   if (observation.kind === "electrical_equipment") return "OST_ElectricalEquipment";
   return "OST_ElectricalFixtures";
@@ -867,7 +885,7 @@ function category(observation: MepDraftObservation): string {
 
 function role(observation: MepDraftObservation): string {
   if ("placement" in observation && observation.placement.mode === "provisional_plan_symbol") {
-    return "provisional electrical device location marker";
+    return `provisional ${observation.role} plan symbol marker`;
   }
   if (observation.kind === "duct_route") return observation.service.replaceAll("_", " ");
   if (observation.kind === "conduit_route") return `${observation.service.replaceAll("_", " ")} conduit`;
@@ -894,7 +912,17 @@ function validatePlacement(placement: MepDraftPlacement, observationId: string):
     if (!["FloorPlan", "EngineeringPlan", "CeilingPlan"].includes(placement.view_type)) {
       throw new Error(`${observationId}_provisional_view_type_invalid`);
     }
-    if (!["hollow_circle", "filled_circle", "unclassified_circle"].includes(placement.symbol_form)) {
+    if (![
+      "hollow_circle",
+      "filled_circle",
+      "unclassified_circle",
+      "square",
+      "square_with_x",
+      "x_mark",
+      "cross",
+      "triangle",
+      "diamond"
+    ].includes(placement.symbol_form)) {
       throw new Error(`${observationId}_provisional_symbol_form_invalid`);
     }
     if (!["left", "right", "up", "down", "unresolved"].includes(placement.host_direction)) {
@@ -1306,15 +1334,9 @@ function validateObservation(
     requiredText(observation.role, `${id}_role`);
     finite(observation.point.x, `${id}_point_x`);
     finite(observation.point.y, `${id}_point_y`);
-    finite(observation.elevation_ft, `${id}_elevation_ft`);
     validatePlacement(observation.placement, id);
     if (observation.placement.mode === "provisional_plan_symbol") {
-      if (observation.kind !== "electrical_device") {
-        throw new Error(`${id}_provisional_plan_symbol_requires_electrical_device`);
-      }
-      if (observation.elevation_ft !== 0) {
-        throw new Error(`${id}_provisional_plan_symbol_elevation_must_be_zero`);
-      }
+      if (observation.elevation_ft != null) finite(observation.elevation_ft, `${id}_elevation_ft`);
       const viewReference = nativeReferences.get(observation.placement.view_reference_key);
       if (!viewReference) throw new Error(`${id}_provisional_view_reference_unknown`);
       if (!new Set(["view", "ost views"]).has(normalized(viewReference.category))) {
@@ -1347,6 +1369,18 @@ function validateObservation(
         && provisionalAttributes.includes("host direction")) {
         throw new Error(`${id}_unresolved_host_direction_cannot_claim_support`);
       }
+      if (observation.kind === "air_terminal" && observation.airflow_cfm != null) {
+        throw new Error(`${id}_provisional_plan_symbol_cannot_set_airflow`);
+      }
+      if ((observation.kind === "air_terminal" || observation.kind === "light_fixture")
+        && routeWorksetName(observation)) {
+        throw new Error(`${id}_provisional_plan_symbol_cannot_set_workset`);
+      }
+      if (observation.kind === "electrical_equipment" && observation.panel_name != null) {
+        throw new Error(`${id}_provisional_plan_symbol_cannot_set_panel_name`);
+      }
+    } else {
+      finite(observation.elevation_ft, `${id}_elevation_ft`);
     }
     if (observation.kind === "air_terminal") {
       if (observation.airflow_cfm != null) {
@@ -1435,7 +1469,7 @@ function validateObservation(
       if (!["architectural_fixture", "mep_connection_symbol", "combined_fixture_and_connection", "unresolved"].includes(classification.source_graphic)) {
         throw new Error(`${id}_source_graphic_classification_invalid`);
       }
-      if (!["architectural_fixture", "mep_connection"].includes(classification.native_target)) {
+      if (!["architectural_fixture", "mep_connection", "plan_only_marker"].includes(classification.native_target)) {
         throw new Error(`${id}_native_target_classification_invalid`);
       }
       if (!["source_observation", "user_direction"].includes(classification.basis)) {
@@ -1443,38 +1477,67 @@ function validateObservation(
       }
       requiredText(classification.evidence_role, `${id}_representation_classification_evidence_role`);
       requiredText(classification.reference, `${id}_representation_classification_reference`);
-      const targetEvidence = classification.native_target_evidence;
-      if (!targetEvidence || typeof targetEvidence !== "object") {
-        throw new Error(`${id}_native_target_evidence_is_required`);
-      }
-      if (!["native_model_precedent", "user_direction"].includes(targetEvidence.basis)) {
-        throw new Error(`${id}_native_target_evidence_basis_invalid`);
-      }
-      requiredText(targetEvidence.evidence_role, `${id}_native_target_evidence_role`);
-      requiredText(targetEvidence.reference, `${id}_native_target_evidence_reference`);
-      const targetFamily = requiredText(targetEvidence.family_name, `${id}_native_target_family_name`);
-      const targetType = requiredText(targetEvidence.type_name, `${id}_native_target_type_name`);
-      if (observation.placement.mode === "hosted_exemplar") {
-        throw new Error(`${id}_plumbing_fixture_hosted_exemplar_cannot_bind_target_family`);
-      }
-      if (observation.placement.mode !== "unhosted_family" && observation.placement.mode !== "hosted_family_symbol") {
-        throw new Error(`${id}_plumbing_fixture_placement_mode_invalid`);
-      }
-      if (targetFamily !== clean(observation.placement.family_name)
-        || targetType !== clean(observation.placement.type_name)) {
-        throw new Error(`${id}_native_target_family_type_mismatch`);
-      }
-      if (classification.source_graphic === "unresolved") {
-        throw new Error(`${id}_source_graphic_unresolved_no_native_placement`);
-      }
-      if (classification.source_graphic === "architectural_fixture" && classification.native_target !== "architectural_fixture") {
-        throw new Error(`${id}_architectural_fixture_cannot_create_mep_connection`);
-      }
-      if (classification.source_graphic === "mep_connection_symbol" && classification.native_target !== "mep_connection") {
-        throw new Error(`${id}_mep_connection_symbol_cannot_create_architectural_fixture`);
-      }
       if (!Array.isArray(observation.service_route_connections)) {
         throw new Error(`${id}_service_route_connections_must_be_array`);
+      }
+      const planOnlyMarker = classification.native_target === "plan_only_marker";
+      if (planOnlyMarker) {
+        if (observation.placement.mode !== "provisional_plan_symbol") {
+          throw new Error(`${id}_plan_only_marker_requires_provisional_plan_symbol`);
+        }
+        if (classification.basis !== "source_observation") {
+          throw new Error(`${id}_plan_only_marker_requires_source_observation_basis`);
+        }
+        const classificationEvidenceRole = normalized(classification.evidence_role);
+        if ([...nativeReferences.values()].some((reference) =>
+          normalized(reference.evidence_role) === classificationEvidenceRole)) {
+          throw new Error(`${id}_plan_only_marker_requires_source_visible_evidence`);
+        }
+        if (classification.source_graphic !== "mep_connection_symbol") {
+          throw new Error(`${id}_plan_only_marker_requires_mep_connection_symbol`);
+        }
+        if (classification.native_target_evidence != null) {
+          throw new Error(`${id}_plan_only_marker_cannot_claim_native_target_evidence`);
+        }
+        if (observation.service_connection_mode != null
+          || observation.service_route_connections.length > 0
+          || observation.service_boundary != null) {
+          throw new Error(`${id}_plan_only_marker_cannot_claim_service_topology`);
+        }
+      } else {
+        if (observation.placement.mode === "provisional_plan_symbol") {
+          throw new Error(`${id}_provisional_plumbing_symbol_requires_plan_only_marker`);
+        }
+        const targetEvidence = classification.native_target_evidence;
+        if (!targetEvidence || typeof targetEvidence !== "object") {
+          throw new Error(`${id}_native_target_evidence_is_required`);
+        }
+        if (!["native_model_precedent", "user_direction"].includes(targetEvidence.basis)) {
+          throw new Error(`${id}_native_target_evidence_basis_invalid`);
+        }
+        requiredText(targetEvidence.evidence_role, `${id}_native_target_evidence_role`);
+        requiredText(targetEvidence.reference, `${id}_native_target_evidence_reference`);
+        const targetFamily = requiredText(targetEvidence.family_name, `${id}_native_target_family_name`);
+        const targetType = requiredText(targetEvidence.type_name, `${id}_native_target_type_name`);
+        if (observation.placement.mode === "hosted_exemplar") {
+          throw new Error(`${id}_plumbing_fixture_hosted_exemplar_cannot_bind_target_family`);
+        }
+        if (observation.placement.mode !== "unhosted_family" && observation.placement.mode !== "hosted_family_symbol") {
+          throw new Error(`${id}_plumbing_fixture_placement_mode_invalid`);
+        }
+        if (targetFamily !== clean(observation.placement.family_name)
+          || targetType !== clean(observation.placement.type_name)) {
+          throw new Error(`${id}_native_target_family_type_mismatch`);
+        }
+        if (classification.source_graphic === "unresolved") {
+          throw new Error(`${id}_source_graphic_unresolved_no_native_placement`);
+        }
+        if (classification.source_graphic === "architectural_fixture" && classification.native_target !== "architectural_fixture") {
+          throw new Error(`${id}_architectural_fixture_cannot_create_mep_connection`);
+        }
+        if (classification.source_graphic === "mep_connection_symbol" && classification.native_target !== "mep_connection") {
+          throw new Error(`${id}_mep_connection_symbol_cannot_create_architectural_fixture`);
+        }
       }
       observation.service_route_connections.forEach((connection, connectionIndex) => {
         requiredText(connection.route_observation_id, `${id}_service_route_connection_${connectionIndex}_route_observation_id`);
@@ -1572,7 +1635,12 @@ function pointAction(
   nativeReferences: Map<string, MepDraftPackage["native_element_references"][number]>
 ): MepDraftAction {
   const actionKey = `place:${observation.observation_id}`;
-  const expected = { ...transformed, z: levelElevationFt + observation.elevation_ft };
+  const expected = {
+    ...transformed,
+    z: observation.placement.mode === "provisional_plan_symbol"
+      ? levelElevationFt
+      : levelElevationFt + observation.elevation_ft!
+  };
   const airTerminalParameters = observation.kind === "air_terminal" && observation.airflow_cfm != null
     ? { Flow: String(observation.airflow_cfm / 60) }
     : undefined;
@@ -1589,10 +1657,53 @@ function pointAction(
     const right = xyz(expected.x + radius, expected.y);
     const top = xyz(expected.x, expected.y + radius);
     const bottom = xyz(expected.x, expected.y - radius);
-    const curves: JsonMap[] = [
-      { kind: "arc", a: left, b: right, c: top },
-      { kind: "arc", a: right, b: left, c: bottom }
-    ];
+    const topLeft = xyz(expected.x - radius, expected.y + radius);
+    const topRight = xyz(expected.x + radius, expected.y + radius);
+    const bottomLeft = xyz(expected.x - radius, expected.y - radius);
+    const bottomRight = xyz(expected.x + radius, expected.y - radius);
+    const symbolForm = observation.placement.symbol_form;
+    const curves: JsonMap[] = symbolForm === "hollow_circle"
+      || symbolForm === "filled_circle"
+      || symbolForm === "unclassified_circle"
+      ? [
+          { kind: "arc", a: left, b: right, c: top },
+          { kind: "arc", a: right, b: left, c: bottom }
+        ]
+      : symbolForm === "square" || symbolForm === "square_with_x"
+        ? [
+            { kind: "line", a: topLeft, b: topRight },
+            { kind: "line", a: topRight, b: bottomRight },
+            { kind: "line", a: bottomRight, b: bottomLeft },
+            { kind: "line", a: bottomLeft, b: topLeft }
+          ]
+        : symbolForm === "x_mark"
+          ? [
+              { kind: "line", a: bottomLeft, b: topRight },
+              { kind: "line", a: topLeft, b: bottomRight }
+            ]
+          : symbolForm === "cross"
+            ? [
+                { kind: "line", a: left, b: right },
+                { kind: "line", a: bottom, b: top }
+              ]
+            : symbolForm === "triangle"
+              ? [
+                  { kind: "line", a: top, b: bottomRight },
+                  { kind: "line", a: bottomRight, b: bottomLeft },
+                  { kind: "line", a: bottomLeft, b: top }
+                ]
+              : [
+                  { kind: "line", a: top, b: right },
+                  { kind: "line", a: right, b: bottom },
+                  { kind: "line", a: bottom, b: left },
+                  { kind: "line", a: left, b: top }
+                ];
+    if (symbolForm === "square_with_x") {
+      curves.push(
+        { kind: "line", a: bottomLeft, b: topRight },
+        { kind: "line", a: topLeft, b: bottomRight }
+      );
+    }
     if (stemLength > 0 && observation.placement.host_direction !== "unresolved") {
       const sourceDirection = {
         left: { x: -1, y: 0 },
@@ -1661,7 +1772,9 @@ function pointAction(
       expected_created_max: curves.length,
       provisional_plan_representation: {
         native_category: "OST_Lines",
-        representation_role: "view_specific_device_location_marker",
+        representation_role: "view_specific_plan_symbol_marker",
+        source_observation_kind: observation.kind,
+        modeled_element_created: false,
         modeled_device_created: false,
         benchmark_credit: false,
         complete_scope_credit: false
@@ -1944,8 +2057,14 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
   const assignedElectricalDevices = new Map<string, string>();
   for (const observation of input.observations) {
     const evidenceRole = clean(observation.evidence_role) || "source_pdf";
-    if (!visibleEvidenceByRole.has(normalized(evidenceRole))) {
+    const normalizedEvidenceRole = normalized(evidenceRole);
+    if (!visibleEvidenceByRole.has(normalizedEvidenceRole)) {
       throw new Error(`${observation.observation_id}_references_unknown_visible_evidence_role:${evidenceRole}`);
+    }
+    if ("placement" in observation
+      && observation.placement.mode === "provisional_plan_symbol"
+      && nativeEvidenceRoles.has(normalizedEvidenceRole)) {
+      throw new Error(`${observation.observation_id}_provisional_plan_symbol_requires_source_visible_evidence`);
     }
     if (observation.kind === "pipe_route" && (observation.geometry_mode === "native_connector_bridge"
       || observation.geometry_mode === "created_route_connector_bridge")) {
@@ -2069,14 +2188,18 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         && nativeEvidenceRoles.has(normalized(classificationRole))) {
         throw new Error(`${observation.observation_id}_source_classification_cannot_use_native_evidence`);
       }
+      if (observation.representation_classification.native_target === "plan_only_marker") {
+        continue;
+      }
+      const targetEvidence = observation.representation_classification.native_target_evidence!;
       const targetEvidenceRole = requiredText(
-        observation.representation_classification.native_target_evidence.evidence_role,
+        targetEvidence.evidence_role,
         `${observation.observation_id}_native_target_evidence_role`
       );
       if (!visibleEvidenceByRole.has(normalized(targetEvidenceRole))) {
         throw new Error(`${observation.observation_id}_native_target_evidence_role_unknown`);
       }
-      if (observation.representation_classification.native_target_evidence.basis === "native_model_precedent"
+      if (targetEvidence.basis === "native_model_precedent"
         && normalized(targetEvidenceRole) === normalized(observationEvidenceRole)) {
         throw new Error(`${observation.observation_id}_native_target_precedent_cannot_use_source_observation`);
       }
@@ -2413,8 +2536,8 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
     const provisionalPlanSymbolAssumptions = "placement" in observation
       && observation.placement.mode === "provisional_plan_symbol"
       ? [
-          "source evidence supports a plan location but not a defensible native electrical family/type and host",
-          "runtime creates view-specific DetailCurves only; no modeled electrical device, connector, circuit membership, panel association, or complete-scope benchmark credit is claimed",
+          `source evidence supports a plan location and ${observation.placement.symbol_form.replaceAll("_", " ")} graphic but not a defensible native ${observation.kind.replaceAll("_", " ")} family/type, host, elevation, or service identity`,
+          "runtime creates view-specific DetailCurves only; no modeled MEP element, connector, service topology, airflow, circuit membership, panel association, or complete-scope benchmark credit is claimed",
           ...(observation.placement.symbol_form === "filled_circle"
             ? ["filled source graphics use a dense DetailCurve hatch approximation, not a native Revit FilledRegion or modeled family symbol"]
             : [])

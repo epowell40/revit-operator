@@ -343,6 +343,13 @@ function allowedDiscipline(
 
 function materialAttributes(observation: Exclude<RegisteredMepPixelObservation, ElectricalCircuitObservation>): string[] {
   const workset = clean((observation as { workset_name?: string }).workset_name) ? ["workset"] : [];
+  if ("placement" in observation && observation.placement.mode === "provisional_plan_symbol") {
+    return [
+      "provisional plan representation",
+      "symbol form",
+      ...(observation.placement.host_direction === "unresolved" ? [] : ["host direction"])
+    ];
+  }
   if (observation.kind === "duct_route") {
     return [
       "size",
@@ -412,6 +419,10 @@ function validateAttributeEvidence(
     throw new Error(`${observation.observation_id}_attribute_evidence_is_required`);
   }
   const supported = new Set(observation.supported_attributes.map(normalized));
+  const provisionalMaterialAttributes = "placement" in observation
+    && observation.placement.mode === "provisional_plan_symbol"
+    ? new Set(materialAttributes(observation).map(normalized))
+    : undefined;
   const claims = new Map<string, RegisteredMepAttributeEvidence>();
   for (const [index, claim] of observation.attribute_evidence.entries()) {
     const attribute = normalized(requiredText(claim.attribute, `${observation.observation_id}_attribute_evidence_${index}_attribute`));
@@ -419,6 +430,9 @@ function validateAttributeEvidence(
     if (claims.has(attribute)) throw new Error(`${observation.observation_id}_attribute_evidence_duplicate:${attribute}`);
     if (!["legible_source_evidence", "native_model_precedent", "user_direction", "declared_heuristic"].includes(claim.basis)) {
       throw new Error(`${observation.observation_id}_attribute_evidence_basis_invalid:${attribute}`);
+    }
+    if (provisionalMaterialAttributes?.has(attribute) && claim.basis !== "legible_source_evidence") {
+      throw new Error(`${observation.observation_id}_provisional_plan_symbol_requires_legible_source_evidence:${attribute}`);
     }
     const evidenceRole = requiredText(claim.evidence_role, `${observation.observation_id}_${attribute}_evidence_role`);
     if (!evidenceByRole.has(normalized(evidenceRole))) {
@@ -755,6 +769,7 @@ export async function compileRegisteredMepObservations(
     usage_constraints: [
       "Registered pixels establish bounded plan geometry only; material, system, size, elevation, family, type, host, and service-topology claims remain subject to the existing MEP compiler evidence gates.",
       "Color is optional corroboration only. Black-and-white labels, line types, legends, geometry, and topology may establish plan geometry; missing color alone never blocks an otherwise supported provisional draft.",
+      "A source-visible MEP plan symbol may be preserved as view-specific DetailCurves when its location and graphic form are defensible but native family, type, host, elevation, service, airflow, panel, circuit, or connector meaning is not. The marker remains editable and explicitly unscored; unresolved modeled attributes become focused follow-up work rather than grounds to discard the plan location.",
       "A pipe or duct elevation may use declared_heuristic provenance when the plan does not show elevation; it remains an explicit inference in the compiled assumptions and is never represented as source-observed truth.",
       "A pipe route may use pipe_size_policy=unresolved_placeholder only when size is unreadable, omitted from supported source attributes, and omitted from the observation value; Revit's one-inch drafting placeholder is then explicit, non-scored, and not accepted as an engineered size.",
       "A duct route may use duct_size_policy=unresolved_placeholder only when size is unreadable, omitted from supported source attributes, and omitted from the observation value; Revit's disclosed 8x8 drafting fallback is then explicit, editable, non-scored, and not accepted as an engineered size.",

@@ -191,7 +191,16 @@ test("plumbing fixture representation gate prevents architectural graphics from 
 });
 
 function provisionalElectricalMarkerPackage(
-  symbolForm: "hollow_circle" | "filled_circle" | "unclassified_circle" = "hollow_circle",
+  symbolForm:
+    | "hollow_circle"
+    | "filled_circle"
+    | "unclassified_circle"
+    | "square"
+    | "square_with_x"
+    | "x_mark"
+    | "cross"
+    | "triangle"
+    | "diamond" = "hollow_circle",
   hostDirection: "left" | "right" | "up" | "down" | "unresolved" = "left"
 ): MepDraftPackage {
   return {
@@ -230,7 +239,6 @@ function provisionalElectricalMarkerPackage(
           ...(hostDirection === "unresolved" ? [] : ["host direction"])
         ],
         point: { x: 4, y: 6 },
-        elevation_ft: 0,
         placement: {
           mode: "provisional_plan_symbol",
           view_reference_key: "power-plan-view",
@@ -250,7 +258,7 @@ test("source-visible electrical locations compile to explicitly provisional view
   assert.deepEqual(plan.provisional_observation_ids, ["power-device-marker-random-71"]);
   assert.deepEqual(plan.promoted_observation_ids, ["power-device-marker-random-71"]);
   assert.equal(plan.plan_elements[0]?.category, "OST_Lines");
-  assert.match(plan.plan_elements[0]?.assumptions.join(" ") ?? "", /no modeled electrical device/i);
+  assert.match(plan.plan_elements[0]?.assumptions.join(" ") ?? "", /no modeled MEP element/i);
   assert.match(plan.warnings.join(" "), /view-specific DetailCurves only/i);
 
   const action = plan.actions[0];
@@ -259,6 +267,8 @@ test("source-visible electrical locations compile to explicitly provisional view
   assert.equal(action?.expected_created_min, 3);
   assert.equal(action?.expected_created_max, 3);
   assert.equal(action?.provisional_plan_representation?.modeled_device_created, false);
+  assert.equal(action?.provisional_plan_representation?.modeled_element_created, false);
+  assert.equal(action?.provisional_plan_representation?.source_observation_kind, "electrical_device");
   assert.equal(action?.provisional_plan_representation?.benchmark_credit, false);
   assert.equal(action?.apply_body?.expectedViewType, "FloorPlan");
   assert.equal(action?.apply_body?.expectedLevelName, "Benchmark L2");
@@ -288,6 +298,163 @@ test("source-visible electrical locations compile to explicitly provisional view
   assert.equal(workflow.authorizationBasis, "explicit_unscored_user_direction");
   assert.equal(workflow.maximumCreatedElements, 3);
   assert.equal(workflow.operations[0]?.provisional_plan_representation?.complete_scope_credit, false);
+});
+
+function generalizedPlanMarkerPackage(): MepDraftPackage {
+  const input = provisionalElectricalMarkerPackage();
+  input.fixture_id = "source-visible-provisional-mep-marker-bank-v1";
+  input.scope_id = "monochrome-record-drawing-marker-bank-alpha";
+  input.observations = [
+    {
+      kind: "light_fixture",
+      observation_id: "light-marker-random-81",
+      discipline: "electrical",
+      role: "source-visible ceiling light",
+      visibility: "clear",
+      confidence: 0.92,
+      supported_attributes: ["location", "provisional plan representation", "symbol form"],
+      point: { x: 2, y: 2 },
+      placement: {
+        mode: "provisional_plan_symbol",
+        view_reference_key: "power-plan-view",
+        view_type: "FloorPlan",
+        symbol_form: "square",
+        host_direction: "unresolved",
+        stem_length_ft: 0
+      }
+    },
+    {
+      kind: "air_terminal",
+      observation_id: "air-marker-random-82",
+      discipline: "mechanical",
+      role: "source-visible air device",
+      visibility: "clear",
+      confidence: 0.9,
+      supported_attributes: ["location", "provisional plan representation", "symbol form"],
+      point: { x: 4, y: 2 },
+      placement: {
+        mode: "provisional_plan_symbol",
+        view_reference_key: "power-plan-view",
+        view_type: "FloorPlan",
+        symbol_form: "square_with_x",
+        host_direction: "unresolved",
+        stem_length_ft: 0
+      }
+    },
+    {
+      kind: "mechanical_equipment",
+      observation_id: "equipment-marker-random-83",
+      discipline: "mechanical",
+      role: "source-visible mechanical equipment symbol",
+      visibility: "clear",
+      confidence: 0.9,
+      supported_attributes: ["location", "provisional plan representation", "symbol form"],
+      point: { x: 6, y: 2 },
+      placement: {
+        mode: "provisional_plan_symbol",
+        view_reference_key: "power-plan-view",
+        view_type: "FloorPlan",
+        symbol_form: "diamond",
+        host_direction: "unresolved",
+        stem_length_ft: 0
+      }
+    },
+    {
+      kind: "plumbing_fixture",
+      observation_id: "plumbing-connection-marker-random-84",
+      discipline: "plumbing",
+      role: "source-visible plumbing connection symbol",
+      visibility: "clear",
+      confidence: 0.91,
+      supported_attributes: ["location", "provisional plan representation", "symbol form"],
+      point: { x: 8, y: 2 },
+      placement: {
+        mode: "provisional_plan_symbol",
+        view_reference_key: "power-plan-view",
+        view_type: "FloorPlan",
+        symbol_form: "cross",
+        host_direction: "unresolved",
+        stem_length_ft: 0
+      },
+      representation_classification: {
+        source_graphic: "mep_connection_symbol",
+        native_target: "plan_only_marker",
+        basis: "source_observation",
+        evidence_role: "source_pdf",
+        reference: "Black-and-white plan symbol is visible; native family, service, and elevation are unresolved"
+      },
+      service_route_connections: []
+    }
+  ];
+  return input;
+}
+
+test("monochrome lighting, HVAC, equipment, and plumbing symbols preserve useful plan geometry without fabricated elevations", () => {
+  const plan = compileMepDraftPlan(generalizedPlanMarkerPackage());
+  assert.equal(plan.status, "partially_ready");
+  assert.deepEqual(plan.provisional_observation_ids, [
+    "light-marker-random-81",
+    "air-marker-random-82",
+    "equipment-marker-random-83",
+    "plumbing-connection-marker-random-84"
+  ]);
+  assert.deepEqual(plan.actions.map((entry) => entry.expected_created_max), [4, 6, 4, 2]);
+  assert.equal(plan.actions.every((entry) => entry.path === "/revit/draw-detail-curves"), true);
+  assert.equal(plan.actions.every((entry) => entry.expected_model_point?.z === 12), true);
+  assert.equal(plan.actions.every((entry) => entry.provisional_plan_representation?.modeled_element_created === false), true);
+  assert.deepEqual(
+    plan.actions.map((entry) => entry.provisional_plan_representation?.source_observation_kind),
+    ["light_fixture", "air_terminal", "mechanical_equipment", "plumbing_fixture"]
+  );
+  assert.equal(plan.plan_elements.every((entry) => entry.category === "OST_Lines"), true);
+  assert.equal(plan.plan_elements.every((entry) => entry.required_source_attributes?.includes("elevation") !== true), true);
+  assert.match(plan.plan_elements.at(-1)?.assumptions.join(" ") ?? "", /no modeled MEP element/i);
+
+  const workflow = buildAtomicMepDraftWorkflowRequest(plan);
+  assert.equal(workflow.maximumCreatedElements, 16);
+  assert.equal(workflow.benchmarkCredit, false);
+});
+
+test("generalized plan markers fail closed on modeled attributes and plumbing representation overclaims", () => {
+  const airflow = generalizedPlanMarkerPackage();
+  const terminal = airflow.observations[1];
+  if (terminal?.kind !== "air_terminal") throw new Error("test_setup_failed");
+  terminal.airflow_cfm = 100;
+  assert.throws(() => compileMepDraftPlan(airflow), /provisional_plan_symbol_cannot_set_airflow/);
+
+  const workset = generalizedPlanMarkerPackage();
+  const light = workset.observations[0];
+  if (light?.kind !== "light_fixture") throw new Error("test_setup_failed");
+  light.workset_name = "Lighting";
+  assert.throws(() => compileMepDraftPlan(workset), /provisional_plan_symbol_cannot_set_workset/);
+
+  const architecturalFixture = generalizedPlanMarkerPackage();
+  const plumbing = architecturalFixture.observations[3];
+  if (plumbing?.kind !== "plumbing_fixture") throw new Error("test_setup_failed");
+  plumbing.representation_classification.source_graphic = "architectural_fixture";
+  assert.throws(() => compileMepDraftPlan(architecturalFixture), /plan_only_marker_requires_mep_connection_symbol/);
+
+  const serviceClaim = generalizedPlanMarkerPackage();
+  const serviceMarker = serviceClaim.observations[3];
+  if (serviceMarker?.kind !== "plumbing_fixture") throw new Error("test_setup_failed");
+  serviceMarker.service_connection_mode = "plan_proximity";
+  assert.throws(() => compileMepDraftPlan(serviceClaim), /plan_only_marker_cannot_claim_service_topology/);
+
+  const nativeOnly = generalizedPlanMarkerPackage();
+  nativeOnly.observations[0]!.evidence_role = "native_model_inventory";
+  assert.throws(
+    () => compileMepDraftPlan(nativeOnly),
+    /provisional_plan_symbol_requires_source_visible_evidence/
+  );
+
+  const directedPlumbing = generalizedPlanMarkerPackage();
+  const directedMarker = directedPlumbing.observations[3];
+  if (directedMarker?.kind !== "plumbing_fixture") throw new Error("test_setup_failed");
+  directedMarker.representation_classification.basis = "user_direction";
+  assert.throws(
+    () => compileMepDraftPlan(directedPlumbing),
+    /plan_only_marker_requires_source_observation_basis/
+  );
 });
 
 test("provisional power markers preserve source-visible symbol form without claiming family type", () => {
@@ -414,7 +581,7 @@ test("plumbing fixture representation classification must cite visible evidence"
   const familyMismatch = plumbingTopologyPackage();
   const mismatchedFixture = familyMismatch.observations[1];
   if (mismatchedFixture?.kind !== "plumbing_fixture") throw new Error("fixture_setup_failed");
-  mismatchedFixture.representation_classification.native_target_evidence.family_name = "Different Family";
+  mismatchedFixture.representation_classification.native_target_evidence!.family_name = "Different Family";
   assert.throws(
     () => compileMepDraftPlan(familyMismatch),
     /native_target_family_type_mismatch/
@@ -423,7 +590,7 @@ test("plumbing fixture representation classification must cite visible evidence"
   const punctuationCollision = plumbingTopologyPackage();
   const punctuationFixture = punctuationCollision.observations[1];
   if (punctuationFixture?.kind !== "plumbing_fixture") throw new Error("fixture_setup_failed");
-  punctuationFixture.representation_classification.native_target_evidence.family_name = "Benchmark-Fixture";
+  punctuationFixture.representation_classification.native_target_evidence!.family_name = "Benchmark-Fixture";
   assert.throws(
     () => compileMepDraftPlan(punctuationCollision),
     /native_target_family_type_mismatch/
@@ -432,7 +599,7 @@ test("plumbing fixture representation classification must cite visible evidence"
   const sourceAsTargetPrecedent = plumbingTopologyPackage();
   const sourceBackedFixture = sourceAsTargetPrecedent.observations[1];
   if (sourceBackedFixture?.kind !== "plumbing_fixture") throw new Error("fixture_setup_failed");
-  sourceBackedFixture.representation_classification.native_target_evidence.evidence_role = "source_pdf";
+  sourceBackedFixture.representation_classification.native_target_evidence!.evidence_role = "source_pdf";
   assert.throws(
     () => compileMepDraftPlan(sourceAsTargetPrecedent),
     /native_target_precedent_cannot_use_source_observation/

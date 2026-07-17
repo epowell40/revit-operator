@@ -1535,7 +1535,6 @@ test("registered source pixels preserve unresolved electrical devices as unscore
     ],
     role: "source-visible wall device, exact family/type unresolved",
     pixel_point: { x: 35, y: 65 },
-    elevation_ft: 0,
     placement: {
       mode: "provisional_plan_symbol",
       view_reference_key: "power-plan-view",
@@ -1551,10 +1550,135 @@ test("registered source pixels preserve unresolved electrical devices as unscore
   assert.equal(result.compiled_plan.source_observations[0]?.category, "OST_Lines");
   assert.equal(result.compiled_plan.actions[0]?.path, "/revit/draw-detail-curves");
   assert.equal(result.compiled_plan.actions[0]?.provisional_plan_representation?.modeled_device_created, false);
+  assert.equal(result.compiled_plan.actions[0]?.provisional_plan_representation?.modeled_element_created, false);
+  assert.equal(result.compiled_plan.actions[0]?.expected_model_point?.z, input.level_elevation_ft);
+  assert.match(result.usage_constraints.join(" "), /missing color alone never blocks/i);
 
   const workflow = buildAtomicMepDraftWorkflowRequest(result.compiled_plan);
   assert.equal(workflow.benchmarkCredit, false);
   assert.equal(workflow.operations[0]?.provisional_plan_representation?.benchmark_credit, false);
+});
+
+test("registered monochrome pixels preserve lighting, HVAC, equipment, and plumbing plan symbols without inventing native meaning", async () => {
+  const input = electricalInput();
+  const modelHash = "d".repeat(64);
+  input.schema_version = 2;
+  input.discipline = "mixed";
+  input.fixture_id = "registered-monochrome-mep-marker-bank-v1";
+  input.scope_id = "unseen-monochrome-plan-marker-bank";
+  input.partial_promotion_policy = "defer_ambiguous_observations";
+  input.visible_evidence.push({ role: "native_model_inventory", sha256: modelHash });
+  input.native_element_references = [{
+    reference_key: "combined-plan-view",
+    element_id: 3962341,
+    category: "OST_Views",
+    role: "registered black-and-white MEP plan",
+    evidence_role: "native_model_inventory",
+    evidence_sha256: modelHash
+  }];
+  const markerEvidence = (form: string) => [
+    {
+      attribute: "provisional plan representation",
+      basis: "legible_source_evidence" as const,
+      evidence_role: "registered_source_render",
+      reference: "Black-and-white source plan visibly establishes a discrete symbol location"
+    },
+    {
+      attribute: "symbol form",
+      basis: "legible_source_evidence" as const,
+      evidence_role: "registered_source_render",
+      reference: `Black-and-white source lines visibly establish the ${form} graphic`
+    }
+  ];
+  const placement = (symbol_form: "square" | "square_with_x" | "diamond" | "cross") => ({
+    mode: "provisional_plan_symbol" as const,
+    view_reference_key: "combined-plan-view",
+    view_type: "FloorPlan" as const,
+    symbol_form,
+    host_direction: "unresolved" as const,
+    stem_length_ft: 0
+  });
+  input.observations = [
+    {
+      kind: "light_fixture",
+      discipline: "electrical",
+      observation_id: "registered-light-marker-random-81",
+      visibility: "clear",
+      confidence: 0.92,
+      supported_attributes: ["location", "provisional plan representation", "symbol form"],
+      attribute_evidence: markerEvidence("square"),
+      role: "source-visible ceiling light",
+      pixel_point: { x: 25, y: 25 },
+      placement: placement("square")
+    },
+    {
+      kind: "air_terminal",
+      discipline: "mechanical",
+      observation_id: "registered-air-marker-random-82",
+      visibility: "clear",
+      confidence: 0.9,
+      supported_attributes: ["location", "provisional plan representation", "symbol form"],
+      attribute_evidence: markerEvidence("square with x"),
+      role: "source-visible air device",
+      pixel_point: { x: 45, y: 25 },
+      placement: placement("square_with_x")
+    },
+    {
+      kind: "mechanical_equipment",
+      discipline: "mechanical",
+      observation_id: "registered-equipment-marker-random-83",
+      visibility: "clear",
+      confidence: 0.9,
+      supported_attributes: ["location", "provisional plan representation", "symbol form"],
+      attribute_evidence: markerEvidence("diamond"),
+      role: "source-visible mechanical equipment symbol",
+      pixel_point: { x: 65, y: 25 },
+      placement: placement("diamond")
+    },
+    {
+      kind: "plumbing_fixture",
+      discipline: "plumbing",
+      observation_id: "registered-plumbing-marker-random-84",
+      visibility: "clear",
+      confidence: 0.91,
+      supported_attributes: ["location", "provisional plan representation", "symbol form"],
+      attribute_evidence: markerEvidence("cross"),
+      role: "source-visible plumbing connection symbol",
+      pixel_point: { x: 75, y: 45 },
+      placement: placement("cross"),
+      representation_classification: {
+        source_graphic: "mep_connection_symbol",
+        native_target: "plan_only_marker",
+        basis: "source_observation",
+        evidence_role: "registered_source_render",
+        reference: "A discrete plumbing connection mark is visible; native service and family remain unresolved"
+      },
+      service_route_connections: []
+    }
+  ];
+
+  assertExistingConditionsContract("registered_mep_observations", input);
+  const result = await compileRegisteredMepObservations(input);
+  assert.equal(result.compiled_plan.status, "partially_ready");
+  assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.expected_created_max), [4, 6, 4, 2]);
+  assert.equal(result.compiled_plan.actions.every((entry) => entry.path === "/revit/draw-detail-curves"), true);
+  assert.equal(result.compiled_plan.actions.every((entry) => entry.expected_model_point?.z === input.level_elevation_ft), true);
+  assert.equal(result.compiled_plan.actions.every((entry) => entry.provisional_plan_representation?.benchmark_credit === false), true);
+  assert.match(result.usage_constraints.join(" "), /focused follow-up work rather than grounds to discard/i);
+
+  const nativeOnlyForm = structuredClone(input);
+  const nativeOnlyLight = nativeOnlyForm.observations[0];
+  if (nativeOnlyLight?.kind !== "light_fixture") throw new Error("test_setup_failed");
+  nativeOnlyLight.attribute_evidence[1] = {
+    attribute: "symbol form",
+    basis: "native_model_precedent",
+    evidence_role: "native_model_inventory",
+    reference: "A native family uses a square symbol, but the source form is not established"
+  };
+  await assert.rejects(
+    () => compileRegisteredMepObservations(nativeOnlyForm),
+    /provisional_plan_symbol_requires_legible_source_evidence:symbol form/
+  );
 });
 
 test("material attributes cannot be promoted from pixels without an auditable evidence claim", async () => {

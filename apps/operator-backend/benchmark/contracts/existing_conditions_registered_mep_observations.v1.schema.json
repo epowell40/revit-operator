@@ -188,7 +188,7 @@
             "mode": { "const": "provisional_plan_symbol" },
             "view_reference_key": { "type": "string", "minLength": 1 },
             "view_type": { "enum": ["FloorPlan", "EngineeringPlan", "CeilingPlan"] },
-            "symbol_form": { "enum": ["hollow_circle", "filled_circle", "unclassified_circle"] },
+            "symbol_form": { "enum": ["hollow_circle", "filled_circle", "unclassified_circle", "square", "square_with_x", "x_mark", "cross", "triangle", "diamond"] },
             "host_direction": { "enum": ["left", "right", "up", "down", "unresolved"] },
             "radius_ft": { "type": "number", "minimum": 0.05, "maximum": 2 },
             "stem_length_ft": { "type": "number", "minimum": 0, "maximum": 5 },
@@ -437,7 +437,13 @@
     "mechanical_equipment": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "role", "pixel_point", "elevation_ft", "placement"],
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "placement": { "type": "object", "properties": { "mode": { "const": "provisional_plan_symbol" } }, "required": ["mode"] } }, "required": ["placement"] },
+          "else": { "type": "object", "properties": { "elevation_ft": {} }, "required": ["elevation_ft"] }
+        }
+      ],
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "role", "pixel_point", "placement"],
       "properties": {
         "kind": { "const": "mechanical_equipment" },
         "discipline": { "const": "mechanical" },
@@ -456,7 +462,13 @@
     "air_terminal": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "role", "pixel_point", "elevation_ft", "placement"],
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "placement": { "type": "object", "properties": { "mode": { "const": "provisional_plan_symbol" } }, "required": ["mode"] } }, "required": ["placement"] },
+          "else": { "type": "object", "properties": { "elevation_ft": {} }, "required": ["elevation_ft"] }
+        }
+      ],
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "role", "pixel_point", "placement"],
       "properties": {
         "kind": { "const": "air_terminal" },
         "discipline": { "const": "mechanical" },
@@ -798,7 +810,13 @@
     "electrical_device": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "role", "pixel_point", "elevation_ft", "placement"],
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "placement": { "type": "object", "properties": { "mode": { "const": "provisional_plan_symbol" } }, "required": ["mode"] } }, "required": ["placement"] },
+          "else": { "type": "object", "properties": { "elevation_ft": {} }, "required": ["elevation_ft"] }
+        }
+      ],
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "role", "pixel_point", "placement"],
       "properties": {
         "kind": { "const": "electrical_device" },
         "discipline": { "const": "electrical" },
@@ -824,7 +842,13 @@
     "light_fixture": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "role", "pixel_point", "elevation_ft", "placement"],
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "placement": { "type": "object", "properties": { "mode": { "const": "provisional_plan_symbol" } }, "required": ["mode"] } }, "required": ["placement"] },
+          "else": { "type": "object", "properties": { "elevation_ft": {} }, "required": ["elevation_ft"] }
+        }
+      ],
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "role", "pixel_point", "placement"],
       "properties": {
         "kind": { "const": "light_fixture" },
         "discipline": { "const": "electrical" },
@@ -844,7 +868,13 @@
     "electrical_equipment": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "role", "pixel_point", "elevation_ft", "placement"],
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "placement": { "type": "object", "properties": { "mode": { "const": "provisional_plan_symbol" } }, "required": ["mode"] } }, "required": ["placement"] },
+          "else": { "type": "object", "properties": { "elevation_ft": {} }, "required": ["elevation_ft"] }
+        }
+      ],
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "role", "pixel_point", "placement"],
       "properties": {
         "kind": { "const": "electrical_equipment" },
         "discipline": { "const": "electrical" },
