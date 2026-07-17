@@ -571,16 +571,22 @@ export type MepDraftAction = {
   };
   provisional_plan_representation?: {
     native_category: "OST_Lines";
-    representation_role: "view_specific_plan_symbol_marker";
+    representation_role: "view_specific_plan_symbol_marker" | "view_specific_plan_route_trace";
     source_observation_kind:
       | "mechanical_equipment"
       | "air_terminal"
       | "plumbing_fixture"
       | "electrical_device"
       | "light_fixture"
-      | "electrical_equipment";
+      | "electrical_equipment"
+      | "plan_trace_route_candidate";
+    source_candidate_id?: string;
+    source_path_count?: number;
+    continuity?: "observed_contiguous" | "disconnected_dashes";
     modeled_element_created: false;
     modeled_device_created: false;
+    modeled_route_created?: false;
+    native_medium_classified?: false;
     benchmark_credit: false;
     complete_scope_credit: false;
   };

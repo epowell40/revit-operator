@@ -264,11 +264,23 @@ test("draft candidates reject malformed or colliding extraction geometry before 
   );
 
   const missingPolylines = receipt();
-  missingPolylines.components[0]!.polylines = [];
+  missingPolylines.components[0]!.polylines = null as never;
   assert.throws(
     () => validatePlanTraceSourceAccountingV1(input(), context(missingPolylines)),
     /component_polylines_invalid/
   );
+
+  const harmlessEmptyComponent = receipt();
+  harmlessEmptyComponent.components.push({
+    component_id: "retained-ink-without-centerline",
+    pixel_count: 4,
+    skeleton_pixel_count: 0,
+    bounds_px: { min: { x: 75, y: 70 }, max: { x: 76, y: 71 } },
+    polylines: []
+  });
+  const harmlessReceipt = validatePlanTraceSourceAccountingV1(input(), context(harmlessEmptyComponent));
+  assert.equal(harmlessReceipt.available_path_count, 2);
+  assert.equal(harmlessReceipt.accounted_path_count, 2);
 
   const infiniteDimensions = receipt();
   infiniteDimensions.width_px = Number.POSITIVE_INFINITY;

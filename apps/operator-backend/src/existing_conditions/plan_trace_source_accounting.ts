@@ -229,7 +229,7 @@ export function validatePlanTraceSourceAccountingV1(
         component.component_id,
         `plan_trace_source_receipt_${evidenceSetId}_component_${componentIndex}_id`
       );
-      if (!Array.isArray(component.polylines) || component.polylines.length === 0) {
+      if (!Array.isArray(component.polylines)) {
         throw new Error(`plan_trace_source_component_polylines_invalid:${evidenceSetId}:${componentId}`);
       }
       for (const [polylineIndex, polyline] of component.polylines.entries()) {

@@ -153,6 +153,11 @@ import {
   detectRepeatedMepSymbols,
   type MepRepeatedSymbolDetectionInputV1
 } from "../existing_conditions/mep_repeated_symbol_detection.js";
+import {
+  compileProvisionalPlanTraceDraftV1,
+  type ProvisionalPlanTraceDraftContext,
+  type ProvisionalPlanTraceDraftInputV1
+} from "../existing_conditions/provisional_plan_trace_draft.js";
 
 function argument(name: string): string {
   const index = process.argv.indexOf(name);
@@ -225,8 +230,17 @@ function writeFreshJson(filePath: string, value: unknown): void {
   process.stdout.write(`${resolved}\n`);
 }
 
-function assertFreshDistinctOutputPaths(entries: Array<{ flag: string; value: string }>): void {
+function assertFreshDistinctOutputPaths(
+  entries: Array<{ flag: string; value: string }>,
+  protectedEntries: Array<{ flag: string; value: string }> = []
+): void {
   const seen = new Map<string, string>();
+  for (const entry of protectedEntries) {
+    const resolved = canonicalPath(entry.value);
+    const prior = seen.get(resolved);
+    if (prior) throw new Error(`${entry.flag} must not reuse the same path as ${prior}.`);
+    seen.set(resolved, entry.flag);
+  }
   for (const entry of entries) {
     const resolved = canonicalPath(entry.value);
     const prior = seen.get(resolved);
@@ -257,6 +271,7 @@ function usage(): never {
     "  npm run existing-conditions -- extract-plan-traces --input <hash-bound-extraction-policy.json> --out <trace-receipt.json> [--preview-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- detect-repeated-mep-symbols --input <hash-bound-template-search.json> --out <candidate-receipt.json>",
     "  npm run existing-conditions -- validate-mep-region-coverage --input <source-coverage.json> --context <coverage-context.json> --out <coverage-receipt.json>",
+    "  npm run existing-conditions -- compile-provisional-plan-traces --input <plan-trace-draft.json> --context <source-accounting-context.json> --out <compiled-plan.json> [--workflow-out <atomic-dry-run-request.json> --allow-unscored-user-workflow] [--max-created <count>]",
     "  npm run existing-conditions -- compile-registered-mep-observations --input <registered-pixel-observations.json> --out <compilation.json> [--package-out <mep-draft-package.json>] [--workflow-out <atomic-dry-run-request.json> --allow-unscored-user-workflow] [--max-created <count>]",
     "  npm run existing-conditions -- promote-registered-mep-observations --input <registered-pixel-observations.json> --truth <evaluator-ground-truth.json> --out <promotion.json> --score-out <pre-apply-score.json> --workflow-out <atomic-request.json> [--max-created <count>] [--apply]",
     "  npm run existing-conditions -- compile-mep-draft --input <source-observations.json> --out <compiled-plan.json> [--workflow-out <atomic-dry-run-request.json> --allow-unscored-user-workflow] [--max-created <count>]",
@@ -1747,6 +1762,49 @@ async function main(): Promise<void> {
       readJson(requiredArgument("--context")) as BoundedMepRegionCoverageContext
     );
     writeJson(requiredArgument("--out"), receipt);
+    return;
+  }
+  if (command === "compile-provisional-plan-traces") {
+    const inputPath = requiredArgument("--input");
+    const contextPath = requiredArgument("--context");
+    const planOut = requiredArgument("--out");
+    const workflowOut = argument("--workflow-out");
+    const outputs = [
+      { flag: "--out", value: planOut },
+      ...(workflowOut ? [{ flag: "--workflow-out", value: workflowOut }] : [])
+    ];
+    assertFreshDistinctOutputPaths(outputs, [
+      { flag: "--input", value: inputPath },
+      { flag: "--context", value: contextPath }
+    ]);
+    if (workflowOut) {
+      if (!process.argv.includes("--allow-unscored-user-workflow")) {
+        throw new Error("provisional_plan_trace_workflow_requires_explicit_unscored_user_direction");
+      }
+    }
+    const plan = compileProvisionalPlanTraceDraftV1(
+      readJson(inputPath) as ProvisionalPlanTraceDraftInputV1,
+      readJson(contextPath) as ProvisionalPlanTraceDraftContext
+    );
+    let workflow: AtomicMepDraftWorkflowRequest | undefined;
+    if (workflowOut && ["ready", "partially_ready"].includes(plan.status)) {
+      const expectedCreated = plan.actions.reduce(
+        (sum, action) => sum + action.expected_created_max,
+        0
+      );
+      const maxCreated = Number(argument("--max-created") || Math.max(
+        1,
+        expectedCreated
+      ));
+      if (!Number.isSafeInteger(maxCreated) || maxCreated < expectedCreated) {
+        throw new Error(`provisional_plan_trace_max_created_below_expected:${maxCreated}/${expectedCreated}`);
+      }
+      workflow = markExplicitUnscoredUserWorkflow(
+        buildAtomicMepDraftWorkflowRequest(plan, { maximum_created_elements: maxCreated })
+      );
+    }
+    writeFreshJson(planOut, plan);
+    if (workflowOut && workflow) writeFreshJson(workflowOut, workflow);
     return;
   }
   if (command === "compile-registered-mep-observations") {
