@@ -985,6 +985,9 @@ test("mixed electrical conduit scoring accepts native splits but rejects an unsu
   attachCompleteElectricalRouteCoverage(wrongService);
   const rejected = scoreExistingConditionsReconstruction(expected, wrongService);
   assert.equal(rejected.passed, false);
+  assert.equal(rejected.metrics.mep_route_geometry_precision, 1);
+  assert.equal(rejected.metrics.mep_route_geometry_recall, 1);
+  assert.equal(rejected.metrics.geometry, 1);
   assert.equal(rejected.metrics.mep_route_trace_precision, 0);
   assert.equal(rejected.metrics.mep_route_trace_recall, 0);
   assert.ok(rejected.failure_classifications.includes("bounded_mep_route_trace_incomplete"));
@@ -1008,6 +1011,8 @@ test("bounded MEP route trace rejects omitted, extra, displaced, and wrong-syste
   };
 
   const omitted = score([plumbingPipe("short-sanitary", 0, 15)]);
+  assert.equal(omitted.metrics.mep_route_geometry_recall, 0.75);
+  assert.equal(omitted.metrics.mep_route_geometry_precision, 1);
   assert.equal(omitted.metrics.mep_route_trace_recall, 0.75);
   assert.equal(omitted.metrics.mep_route_trace_precision, 1);
   assert.ok(omitted.failure_classifications.includes("bounded_mep_route_trace_incomplete"));
@@ -1015,22 +1020,63 @@ test("bounded MEP route trace rejects omitted, extra, displaced, and wrong-syste
   const branch = plumbingPipe("invented-branch", 10, 15);
   branch.endpoints = [{ x: 10, y: 5, z: 10 }, { x: 10, y: 10, z: 10 }];
   const extra = score([plumbingPipe("full-sanitary", 0, 20), branch]);
+  assert.ok((extra.metrics.mep_route_geometry_precision ?? 1) < 1);
   assert.ok((extra.metrics.mep_route_trace_precision ?? 1) < 1);
   assert.ok(extra.failure_classifications.includes("bounded_mep_route_trace_false_positive"));
 
   const displaced = score([plumbingPipe("displaced-sanitary", 0, 20, 6)]);
+  assert.equal(displaced.metrics.mep_route_geometry_precision, 0);
+  assert.equal(displaced.metrics.mep_route_geometry_recall, 0);
   assert.equal(displaced.metrics.mep_route_trace_precision, 0);
   assert.equal(displaced.metrics.mep_route_trace_recall, 0);
 
   const wrongSystem = score([plumbingPipe("domestic-water", 0, 20, 5, "Domestic Cold Water")]);
+  assert.equal(wrongSystem.metrics.mep_route_geometry_precision, 1);
+  assert.equal(wrongSystem.metrics.mep_route_geometry_recall, 1);
+  assert.equal(wrongSystem.metrics.geometry, 1);
+  assert.equal(wrongSystem.metrics.systems, 0);
   assert.equal(wrongSystem.metrics.mep_route_trace_precision, 0);
   assert.equal(wrongSystem.metrics.mep_route_trace_recall, 0);
+  assert.equal(wrongSystem.passed, false);
 
   const wrongType = plumbingPipe("wrong-sanitary-type", 0, 20);
   wrongType.system_type = "Sanitary 99";
   const wrongTypeResult = score([wrongType]);
+  assert.equal(wrongTypeResult.metrics.mep_route_geometry_precision, 1);
+  assert.equal(wrongTypeResult.metrics.mep_route_geometry_recall, 1);
   assert.equal(wrongTypeResult.metrics.mep_route_trace_precision, 0);
   assert.equal(wrongTypeResult.metrics.mep_route_trace_recall, 0);
+
+  const unresolvedSystem = plumbingPipe("unresolved-system", 0, 20);
+  unresolvedSystem.system_classification = null;
+  unresolvedSystem.system_type = null;
+  const unresolvedSystemResult = score([unresolvedSystem]);
+  assert.equal(unresolvedSystemResult.metrics.mep_route_geometry_precision, 1);
+  assert.equal(unresolvedSystemResult.metrics.mep_route_geometry_recall, 1);
+  assert.equal(unresolvedSystemResult.metrics.geometry, 1);
+  assert.equal(unresolvedSystemResult.metrics.systems, 0);
+  assert.equal(unresolvedSystemResult.metrics.mep_route_trace_precision, 0);
+  assert.equal(unresolvedSystemResult.metrics.mep_route_trace_recall, 0);
+  assert.equal(unresolvedSystemResult.passed, false);
+
+  const wrongMedium = plumbingPipe("wrong-medium", 0, 20);
+  wrongMedium.role = "duct";
+  wrongMedium.category = "Ducts";
+  const wrongMediumResult = score([wrongMedium]);
+  assert.equal(wrongMediumResult.metrics.mep_route_geometry_precision, 0);
+  assert.equal(wrongMediumResult.metrics.mep_route_geometry_recall, 0);
+
+  const unresolvedMedium = plumbingPipe("unresolved-medium", 0, 20);
+  unresolvedMedium.role = null;
+  unresolvedMedium.category = "MEP Curves";
+  const unresolvedMediumResult = score([unresolvedMedium]);
+  assert.equal(unresolvedMediumResult.metrics.mep_route_geometry_precision, 1);
+  assert.equal(unresolvedMediumResult.metrics.mep_route_geometry_recall, 1);
+  assert.equal(unresolvedMediumResult.metrics.geometry, 1);
+  assert.equal(unresolvedMediumResult.metrics.systems, 0);
+  assert.equal(unresolvedMediumResult.metrics.mep_route_trace_precision, 0);
+  assert.equal(unresolvedMediumResult.metrics.mep_route_trace_recall, 0);
+  assert.equal(unresolvedMediumResult.passed, false);
 
   const duplicated = score([
     plumbingPipe("duplicate-a", 0, 20),

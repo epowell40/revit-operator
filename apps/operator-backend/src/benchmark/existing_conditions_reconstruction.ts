@@ -210,6 +210,11 @@ export type ExistingConditionsScore = {
     drawing_evidence: number;
     mep_region_precision?: number;
     mep_region_recall?: number;
+    /** Plan-trace recovery without requiring a supported system/type claim. */
+    mep_route_geometry_precision?: number;
+    mep_route_geometry_recall?: number;
+    mep_route_geometry_f1?: number;
+    /** Strict plan-trace recovery with system classification and type agreement. */
     mep_route_trace_precision?: number;
     mep_route_trace_recall?: number;
     mep_route_trace_f1?: number;
@@ -902,8 +907,28 @@ function routeSystemCompatible(source: ExistingConditionsElement, target: Existi
   return !(sourceSystemType || targetSystemType) || sourceSystemType === targetSystemType;
 }
 
+function routeMedium(element: ExistingConditionsElement): string {
+  const routeIdentity = `${normalized(element.role)} ${normalized(element.category)}`;
+  if (routeIdentity.includes("cable tray")) return "cable_tray";
+  if (routeIdentity.includes("conduit")) return "conduit";
+  if (routeIdentity.includes("duct")) return "duct";
+  if (routeIdentity.includes("pipe")) return "pipe";
+  return "";
+}
+
+function routeGeometryCompatible(source: ExistingConditionsElement, target: ExistingConditionsElement): boolean {
+  if (source.kind !== "mep_curve" || target.kind !== "mep_curve") return false;
+  if (normalized(source.discipline) !== normalized(target.discipline)) return false;
+  const sourceMedium = routeMedium(source);
+  const targetMedium = routeMedium(target);
+  return !(sourceMedium && targetMedium) || sourceMedium === targetMedium;
+}
+
 function routeTraceCompatible(source: ExistingConditionsElement, target: ExistingConditionsElement): boolean {
-  return source.kind === "mep_curve" && target.kind === "mep_curve" && routeSystemCompatible(source, target);
+  if (!routeGeometryCompatible(source, target)) return false;
+  const sourceMedium = routeMedium(source);
+  const targetMedium = routeMedium(target);
+  return Boolean(sourceMedium) && sourceMedium === targetMedium && routeSystemCompatible(source, target);
 }
 
 function isRouteSupportingFitting(
@@ -928,7 +953,8 @@ function isRouteSupportingFitting(
 function sampledRouteCoverage(
   source: ExistingConditionsElement[],
   target: ExistingConditionsElement[],
-  toleranceFt: number
+  toleranceFt: number,
+  compatible: (source: ExistingConditionsElement, target: ExistingConditionsElement) => boolean = routeTraceCompatible
 ): { covered_length_ft: number; total_length_ft: number; ratio: number } {
   let coveredLength = 0;
   let totalLength = 0;
@@ -940,7 +966,7 @@ function sampledRouteCoverage(
     const intervalCount = Math.max(1, Math.ceil(length / sampleSpacingFt));
     const intervalLength = length / intervalCount;
     const compatibleTargets = target.filter((targetElement) =>
-      Boolean(targetElement.endpoints) && routeTraceCompatible(sourceElement, targetElement)
+      Boolean(targetElement.endpoints) && compatible(sourceElement, targetElement)
     );
     totalLength += length;
     for (let index = 0; index < intervalCount; index += 1) {
@@ -1611,6 +1637,12 @@ export function scoreExistingConditionsReconstruction(
   const routePrecisionCoverage = truthRouteElements.length > 0
     ? sampledRouteCoverage(candidateRouteElements, truthRouteElements, routeToleranceFt)
     : null;
+  const routeGeometryRecallCoverage = truthRouteElements.length > 0
+    ? sampledRouteCoverage(truthRouteElements, candidateRouteElements, routeToleranceFt, routeGeometryCompatible)
+    : null;
+  const routeGeometryPrecisionCoverage = truthRouteElements.length > 0
+    ? sampledRouteCoverage(candidateRouteElements, truthRouteElements, routeToleranceFt, routeGeometryCompatible)
+    : null;
   // Directed proximity alone can be gamed by overlapping duplicates because
   // every duplicate sample is still near the same truth line. Total traced
   // length provides the missing one-to-one capacity bound while remaining
@@ -1624,12 +1656,29 @@ export function scoreExistingConditionsReconstruction(
   const mepRouteTraceF1 = mepRouteTracePrecision === null || mepRouteTraceRecall === null
     ? null
     : f1(mepRouteTracePrecision, mepRouteTraceRecall);
+  const mepRouteGeometryRecall = routeGeometryRecallCoverage === null || routeGeometryPrecisionCoverage === null
+    ? null
+    : Math.min(
+        routeGeometryRecallCoverage.ratio,
+        clamp01(routeGeometryPrecisionCoverage.total_length_ft / routeGeometryRecallCoverage.total_length_ft)
+      );
+  const mepRouteGeometryPrecision = routeGeometryRecallCoverage === null || routeGeometryPrecisionCoverage === null
+    ? null
+    : Math.min(
+        routeGeometryPrecisionCoverage.ratio,
+        clamp01(routeGeometryRecallCoverage.total_length_ft /
+          Math.max(routeGeometryPrecisionCoverage.total_length_ft, Number.EPSILON))
+      );
+  const mepRouteGeometryF1 = mepRouteGeometryPrecision === null || mepRouteGeometryRecall === null
+    ? null
+    : f1(mepRouteGeometryPrecision, mepRouteGeometryRecall);
   const elementF1 = f1(precision, recall);
-  const routeMetric = mepRouteTraceF1 === null ? [] : [mepRouteTraceF1];
-  const geometry = average([...pairs.map((pair) => pair.geometry_score), ...routeMetric], 0);
+  const routeGeometryMetric = mepRouteGeometryF1 === null ? [] : [mepRouteGeometryF1];
+  const strictRouteMetric = mepRouteTraceF1 === null ? [] : [mepRouteTraceF1];
+  const geometry = average([...pairs.map((pair) => pair.geometry_score), ...routeGeometryMetric], 0);
   const elevation = average(pairs.map((pair) => pair.elevation_score), 1);
-  const attributes = average([...pairs.map((pair) => pair.attribute_score), ...routeMetric], 0);
-  const systems = average([...pairs.map((pair) => pair.system_score), ...routeMetric], 0);
+  const attributes = average([...pairs.map((pair) => pair.attribute_score), ...strictRouteMetric], 0);
+  const systems = average([...pairs.map((pair) => pair.system_score), ...strictRouteMetric], 0);
   const spatial = average(pairs.map((pair) => pair.spatial_score), 0);
   const relationshipTruthSnapshot = truthRouteElements.length > 0 ? {
     ...truth.snapshot,
@@ -1755,6 +1804,9 @@ export function scoreExistingConditionsReconstruction(
       drawing_evidence: drawingEvidence,
       ...(mepRegionPrecision === null ? {} : { mep_region_precision: round(mepRegionPrecision) }),
       ...(mepRegionRecall === null ? {} : { mep_region_recall: round(mepRegionRecall) }),
+      ...(mepRouteGeometryPrecision === null ? {} : { mep_route_geometry_precision: round(mepRouteGeometryPrecision) }),
+      ...(mepRouteGeometryRecall === null ? {} : { mep_route_geometry_recall: round(mepRouteGeometryRecall) }),
+      ...(mepRouteGeometryF1 === null ? {} : { mep_route_geometry_f1: round(mepRouteGeometryF1) }),
       ...(mepRouteTracePrecision === null ? {} : { mep_route_trace_precision: round(mepRouteTracePrecision) }),
       ...(mepRouteTraceRecall === null ? {} : { mep_route_trace_recall: round(mepRouteTraceRecall) }),
       ...(mepRouteTraceF1 === null ? {} : { mep_route_trace_f1: round(mepRouteTraceF1) }),
@@ -1821,6 +1873,8 @@ function markdownScorecard(result: ExistingConditionsScore): string {
     `| Electrical circuits | ${result.metrics.electrical_circuits.toFixed(3)} |`,
     ...(result.metrics.mep_region_precision === undefined ? [] : [`| Bounded MEP discrete precision | ${result.metrics.mep_region_precision.toFixed(3)} |`]),
     ...(result.metrics.mep_region_recall === undefined ? [] : [`| Bounded MEP discrete recall | ${result.metrics.mep_region_recall.toFixed(3)} |`]),
+    ...(result.metrics.mep_route_geometry_precision === undefined ? [] : [`| Bounded MEP plan-geometry precision | ${result.metrics.mep_route_geometry_precision.toFixed(3)} |`]),
+    ...(result.metrics.mep_route_geometry_recall === undefined ? [] : [`| Bounded MEP plan-geometry recall | ${result.metrics.mep_route_geometry_recall.toFixed(3)} |`]),
     ...(result.metrics.mep_route_trace_precision === undefined ? [] : [`| Bounded MEP route precision | ${result.metrics.mep_route_trace_precision.toFixed(3)} |`]),
     ...(result.metrics.mep_route_trace_recall === undefined ? [] : [`| Bounded MEP route recall | ${result.metrics.mep_route_trace_recall.toFixed(3)} |`]),
     `| Drawing evidence | ${result.metrics.drawing_evidence.toFixed(3)} |`,

@@ -23,6 +23,14 @@ Examples include:
 
 The evaluator accepts a class of solutions and scores engineering invariants, system topology, constructability, drawing legibility, and scope safety. The hidden reference design can be a comparison point, but not the sole answer.
 
+## Best-recoverable drafting
+
+Record drawings may be color, grayscale, or black and white. Color is optional supporting evidence, never a prerequisite for reconstruction. In monochrome sources, adjacent labels, line types, legends, repeated symbols, and visible topology can support discipline, service, or type interpretation. When they do not, the agent should still recover clear plan geometry as editable provisional native work whenever that can be done safely.
+
+An unresolved service, family/type, size, or plan-unseen elevation must remain explicit. A provisional route may use a project-local native type or system only as an editable drafting container; that choice is not source evidence and cannot establish factual system classification, connectivity, complete-scope coverage, or strict benchmark acceptance. The workflow should defer only the ambiguous claims or dependent actions, preserve the useful independent geometry, and identify the smallest clarification needed for a later pass.
+
+Evaluation reports geometry recovery separately from strict attribute, system, topology, and completeness acceptance. Correct plan geometry with an unresolved or wrong-but-easily-editable type is useful partial progress and receives geometry credit, but it cannot pass the corresponding strict gate. Unsupported details must not be invented, and uncertainty must not cause the agent to abandon otherwise defensible work.
+
 ## Required standards context
 
 Every compliance or generative case must declare:
