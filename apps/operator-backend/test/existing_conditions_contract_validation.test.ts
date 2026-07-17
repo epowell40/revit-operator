@@ -403,15 +403,15 @@ test("runtime contract validation accepts registered MEP pixels and rejects hidd
     observation_id: "unclassified-conduit-1",
     visibility: "clear",
     confidence: 0.91,
-    supported_attributes: ["location", "elevation", "type"],
+    supported_attributes: ["location", "elevation"],
     attribute_evidence: [
-      { attribute: "elevation", basis: "declared_heuristic", evidence_role: "registered_source_render", reference: "plan does not show conduit elevation" },
-      { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "generic conduit graphics" }
+      { attribute: "elevation", basis: "declared_heuristic", evidence_role: "registered_source_render", reference: "plan does not show conduit elevation" }
     ],
     service: "unclassified",
     pixel_points: [{ x: 20, y: 80 }, { x: 80, y: 80 }],
     conduit_size_policy: "unresolved_placeholder",
     conduit_type: "EMT",
+    type_policy: "unresolved_placeholder",
     elevation_ft: 10
   }];
   assert.doesNotThrow(() => assertExistingConditionsContract("registered_mep_observations", placeholderConduit));

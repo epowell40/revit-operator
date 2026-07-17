@@ -1978,18 +1978,97 @@ test("registered monochrome duct geometry may use an explicitly unscored provisi
   if (route.kind !== "duct_route") throw new Error("route_setup_failed");
   route.service = "unclassified";
   route.system_classification_policy = "unresolved_placeholder";
-  route.supported_attributes = route.supported_attributes.filter((attribute) => attribute !== "system");
-  route.attribute_evidence = route.attribute_evidence.filter((entry) => entry.attribute !== "system");
+  route.duct_size_policy = "unresolved_placeholder";
+  delete route.duct_size;
+  route.type_policy = "unresolved_placeholder";
+  route.supported_attributes = route.supported_attributes.filter(
+    (attribute) => attribute !== "system" && attribute !== "size" && attribute !== "type"
+  );
+  route.attribute_evidence = route.attribute_evidence.filter(
+    (entry) => entry.attribute !== "system" && entry.attribute !== "size" && entry.attribute !== "type"
+  );
   input.observations = [route];
 
-  assertExistingConditionsContract("registered_mep_observations", input);
+  for (const schemaVersion of [1, 2] as const) {
+    const versioned = structuredClone(input);
+    versioned.schema_version = schemaVersion;
+    assertExistingConditionsContract("registered_mep_observations", versioned);
+  }
   const compiled = await compileRegisteredMepObservations(input);
   assert.equal(compiled.compiled_plan.status, "partially_ready");
   assert.deepEqual(compiled.compiled_plan.provisional_observation_ids, [route.observation_id]);
   assert.equal(compiled.compiled_plan.actions.length, 1);
   assert.equal(compiled.compiled_plan.actions[0]?.apply_body?.systemType, "Outside Air");
+  assert.equal(compiled.compiled_plan.actions[0]?.apply_body?.ductType, route.duct_type);
+  assert.equal(compiled.compiled_plan.actions[0]?.apply_body?.ductSize, undefined);
+  assert.equal(compiled.compiled_plan.actions[0]?.apply_body?.sizePolicy, "use_default_with_warning");
   assert.equal(
     compiled.compiled_plan.actions[0]?.provisional_system_classification?.benchmark_credit,
     false
   );
+  assert.match(compiled.usage_constraints.join("\n"), /8x8 drafting fallback/i);
+  assert.match(compiled.usage_constraints.join("\n"), /project-local native drafting container/i);
+
+  for (const mode of ["created_route_host", "created_route_branch"] as const) {
+    const withTerminal = structuredClone(input);
+    const classifiedRoute = withTerminal.observations[0];
+    if (classifiedRoute?.kind !== "duct_route") throw new Error("route_setup_failed");
+    classifiedRoute.service = "supply_air";
+    classifiedRoute.system_classification_policy = "explicit_required";
+    classifiedRoute.supported_attributes.push("system");
+    classifiedRoute.attribute_evidence.push({
+      attribute: "system",
+      basis: "legible_source_evidence",
+      evidence_role: "registered_source_render",
+      reference: "supply-air service is legible in the source drawing"
+    });
+    withTerminal.observations.push({
+      kind: "air_terminal",
+      discipline: "mechanical",
+      observation_id: `provisional-duct-terminal-${mode}`,
+      visibility: "clear",
+      confidence: 0.94,
+      supported_attributes: ["location", "type", "host"],
+      attribute_evidence: [
+        { attribute: "type", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "terminal symbol and keyed type are legible" },
+        { attribute: "host", basis: "legible_source_evidence", evidence_role: "registered_source_render", reference: "terminal visibly lies on or branches from the selected duct centerline" }
+      ],
+      role: "supply grille",
+      pixel_point: { x: 50, y: mode === "created_route_host" ? 80 : 60 },
+      elevation_ft: 10,
+      placement: mode === "created_route_host"
+        ? {
+            mode,
+            family_name: "M_Supply Grille",
+            type_name: "16x4 Connection 8 Diameter",
+            route_observation_id: route.observation_id,
+            route_segment_index: 0
+          }
+        : {
+            mode,
+            family_name: "M_Supply Grille",
+            type_name: "16x4 Connection 8 Diameter",
+            route_observation_id: route.observation_id,
+            route_segment_index: 0,
+            pixel_branch_points: [{ x: 50, y: 80 }, { x: 50, y: 60 }],
+            branch_size: "16x4",
+            tee_family_name: "Rectangular Tee",
+            tee_type_name: "Standard"
+          }
+    });
+    await assert.rejects(
+      () => compileRegisteredMepObservations(withTerminal),
+      new RegExp(`provisional-duct-terminal-${mode}_provisional_duct_cannot_establish_terminal_topology:${route.observation_id}`)
+    );
+  }
+
+  for (const schemaVersion of [1, 2] as const) {
+    const claimsType = structuredClone(input);
+    claimsType.schema_version = schemaVersion;
+    claimsType.observations[0]!.supported_attributes.push("type");
+    assert.throws(
+      () => assertExistingConditionsContract("registered_mep_observations", claimsType),
+      /invalid_existing_conditions_registered_mep_observations_contract/
+    );
+  }
 });

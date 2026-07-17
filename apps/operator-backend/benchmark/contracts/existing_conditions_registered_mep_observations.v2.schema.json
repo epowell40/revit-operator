@@ -330,8 +330,31 @@
     "duct_route": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "service", "pixel_points", "duct_size", "duct_type", "system_type", "elevation_ft"],
+      "required": ["kind", "discipline", "observation_id", "visibility", "confidence", "supported_attributes", "attribute_evidence", "service", "pixel_points", "duct_type", "system_type", "elevation_ft"],
       "allOf": [
+        {
+          "if": { "required": ["duct_size_policy"], "properties": { "duct_size_policy": { "const": "unresolved_placeholder" } } },
+          "then": {
+            "properties": {
+              "duct_size": false,
+              "supported_attributes": { "not": { "type": "array", "contains": { "const": "size" } } },
+              "connect_to_existing": { "const": false },
+              "require_existing_endpoint_connections": { "const": false }
+            }
+          },
+          "else": { "required": ["duct_size"], "properties": { "duct_size": { "type": "string", "minLength": 1 } } }
+        },
+        {
+          "if": { "required": ["type_policy"], "properties": { "type_policy": { "const": "unresolved_placeholder" } } },
+          "then": {
+            "properties": {
+              "supported_attributes": { "not": { "type": "array", "contains": { "const": "type" } } },
+              "connect_to_existing": { "const": false },
+              "require_existing_endpoint_connections": { "const": false }
+            }
+          },
+          "else": { "properties": { "type_policy": { "const": "explicit_required" } } }
+        },
         {
           "if": { "required": ["service"], "properties": { "service": { "const": "unclassified" } } },
           "then": {
@@ -358,7 +381,9 @@
         "service": { "enum": ["supply_air", "return_air", "exhaust_air", "outside_air", "unclassified"] },
         "pixel_points": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/point" } },
         "duct_size": { "type": "string", "minLength": 1 },
+        "duct_size_policy": { "enum": ["explicit_required", "unresolved_placeholder"] },
         "duct_type": { "type": "string", "minLength": 1 },
+        "type_policy": { "enum": ["explicit_required", "unresolved_placeholder"] },
         "duct_type_id": { "type": "integer", "minimum": 1 },
         "system_classification_policy": { "enum": ["explicit_required", "unresolved_placeholder"] },
         "system_type": { "type": "string", "minLength": 1 },
@@ -378,6 +403,17 @@
           "if": { "required": ["conduit_size_policy"], "properties": { "conduit_size_policy": { "const": "unresolved_placeholder" } } },
           "then": { "properties": { "conduit_size": false, "service": { "const": "unclassified" } } },
           "else": { "required": ["conduit_size"], "properties": { "conduit_size": { "type": "string", "minLength": 1 } } }
+        },
+        {
+          "if": { "required": ["type_policy"], "properties": { "type_policy": { "const": "unresolved_placeholder" } } },
+          "then": {
+            "properties": {
+              "supported_attributes": { "not": { "type": "array", "contains": { "const": "type" } } },
+              "connect_to_existing": { "const": false },
+              "require_existing_endpoint_connections": { "const": false }
+            }
+          },
+          "else": { "properties": { "type_policy": { "const": "explicit_required" } } }
         }
       ],
       "properties": {
@@ -394,6 +430,7 @@
         "conduit_size": { "type": "string", "minLength": 1 },
         "conduit_size_policy": { "enum": ["explicit_required", "unresolved_placeholder"] },
         "conduit_type": { "type": "string", "minLength": 1 },
+        "type_policy": { "enum": ["explicit_required", "unresolved_placeholder"] },
         "conduit_type_id": { "type": "integer", "minimum": 1 },
         "elevation_ft": { "type": "number" },
         "workset_name": { "type": "string", "minLength": 1 },
@@ -453,6 +490,17 @@
           "else": { "required": ["pipe_size"], "properties": { "pipe_size": { "type": "string", "minLength": 1 } } }
         },
         {
+          "if": { "required": ["type_policy"], "properties": { "type_policy": { "const": "unresolved_placeholder" } } },
+          "then": {
+            "properties": {
+              "supported_attributes": { "not": { "type": "array", "contains": { "const": "type" } } },
+              "connect_to_existing": { "const": false },
+              "require_existing_endpoint_connections": { "const": false }
+            }
+          },
+          "else": { "properties": { "type_policy": { "const": "explicit_required" } } }
+        },
+        {
           "if": { "required": ["service"], "properties": { "service": { "const": "unclassified" } } },
           "then": {
             "required": ["system_classification_policy"],
@@ -481,6 +529,7 @@
         "pipe_size": { "type": "string", "minLength": 1 },
         "pipe_size_policy": { "enum": ["explicit_required", "unresolved_placeholder"] },
         "pipe_type": { "type": "string", "minLength": 1 },
+        "type_policy": { "enum": ["explicit_required", "unresolved_placeholder"] },
         "system_classification_policy": { "enum": ["explicit_required", "unresolved_placeholder"] },
         "system_type": { "type": "string", "minLength": 1 },
         "elevation_ft": { "type": "number" },
@@ -499,6 +548,17 @@
           "if": { "required": ["pipe_size_policy"], "properties": { "pipe_size_policy": { "const": "unresolved_placeholder" } } },
           "then": { "properties": { "pipe_size": false } },
           "else": { "required": ["pipe_size"], "properties": { "pipe_size": { "type": "string", "minLength": 1 } } }
+        },
+        {
+          "if": { "required": ["type_policy"], "properties": { "type_policy": { "const": "unresolved_placeholder" } } },
+          "then": {
+            "properties": {
+              "supported_attributes": { "not": { "type": "array", "contains": { "const": "type" } } },
+              "connect_to_existing": { "const": false },
+              "require_existing_endpoint_connections": { "const": false }
+            }
+          },
+          "else": { "properties": { "type_policy": { "const": "explicit_required" } } }
         },
         {
           "if": { "required": ["service"], "properties": { "service": { "const": "unclassified" } } },
@@ -528,6 +588,7 @@
         "pipe_size": { "type": "string", "minLength": 1 },
         "pipe_size_policy": { "enum": ["explicit_required", "unresolved_placeholder"] },
         "pipe_type": { "type": "string", "minLength": 1 },
+        "type_policy": { "enum": ["explicit_required", "unresolved_placeholder"] },
         "system_classification_policy": { "enum": ["explicit_required", "unresolved_placeholder"] },
         "system_type": { "type": "string", "minLength": 1 },
         "elevation_ft": { "type": "number" },

@@ -29,6 +29,8 @@ Record drawings may be color, grayscale, or black and white. Color is optional s
 
 An unresolved service, family/type, size, or plan-unseen elevation must remain explicit. A provisional route may use a project-local native type or system only as an editable drafting container; that choice is not source evidence and cannot establish factual system classification, connectivity, complete-scope coverage, or strict benchmark acceptance. The workflow should defer only the ambiguous claims or dependent actions, preserve the useful independent geometry, and identify the smallest clarification needed for a later pass.
 
+This applies consistently to pipe, duct, and conduit. If a route centerline is defensible but its plotted type or size is unreadable, an explicitly named project-local type and disclosed default size may carry the editable native draft. The package must omit source support for the unresolved attribute, block external endpoint claims, mark the route provisional, and retain the selected native container in readback for later correction.
+
 Evaluation reports geometry recovery separately from strict attribute, system, topology, and completeness acceptance. Correct plan geometry with an unresolved or wrong-but-easily-editable type is useful partial progress and receives geometry credit, but it cannot pass the corresponding strict gate. Unsupported details must not be invented, and uncertainty must not cause the agent to abandon otherwise defensible work.
 
 ## Required standards context

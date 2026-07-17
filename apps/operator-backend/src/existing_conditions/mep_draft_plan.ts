@@ -142,6 +142,11 @@ type PlumbingPipeRouteObservationBase = MepDraftObservationBase & {
    */
   pipe_size?: string;
   pipe_size_policy?: "explicit_required" | "unresolved_placeholder";
+  /**
+   * The requested project-local pipe type may serve only as an editable native
+   * drafting container when the record drawing does not establish type.
+   */
+  type_policy?: "explicit_required" | "unresolved_placeholder";
   pipe_type: string;
   /**
    * An unclassified source route may use an existing project system as an
@@ -264,6 +269,7 @@ export type MechanicalHydronicPipeRouteObservation = MepDraftObservationBase & {
   workset_name?: string;
   pipe_size?: string;
   pipe_size_policy?: "explicit_required" | "unresolved_placeholder";
+  type_policy?: "explicit_required" | "unresolved_placeholder";
   pipe_type: string;
   system_classification_policy?: "explicit_required" | "unresolved_placeholder";
   system_type: string;
@@ -331,7 +337,10 @@ export type MechanicalDuctRouteObservation = MepDraftObservationBase & {
   elevation_ft: number;
   /** Exact project workset name, supported by project-native precedent or explicit direction. */
   workset_name?: string;
-  duct_size: string;
+  /** Omit when duct_size_policy records a disclosed, non-scored drafting fallback. */
+  duct_size?: string;
+  duct_size_policy?: "explicit_required" | "unresolved_placeholder";
+  type_policy?: "explicit_required" | "unresolved_placeholder";
   duct_type: string;
   /** Optional stable native type id used to disambiguate duplicate duct type names. */
   duct_type_id?: number;
@@ -353,6 +362,7 @@ export type ElectricalConduitRouteObservation = MepDraftObservationBase & {
   /** Omit only when conduit_size_policy records a non-scored drafting placeholder. */
   conduit_size?: string;
   conduit_size_policy?: "explicit_required" | "unresolved_placeholder";
+  type_policy?: "explicit_required" | "unresolved_placeholder";
   conduit_type: string;
   conduit_type_id?: number;
   connect_to_existing?: boolean;
@@ -541,6 +551,14 @@ export type MepDraftAction = {
     benchmark_credit: false;
     complete_scope_credit: false;
   };
+  provisional_route_attributes?: {
+    unresolved_attributes: Array<"size" | "type">;
+    native_type_role?: "editable_native_drafting_container";
+    native_size_role?: "editable_default_drafting_placeholder";
+    benchmark_credit: false;
+    complete_scope_credit: false;
+    external_topology_credit: false;
+  };
   provisional_plan_representation?: {
     native_category: "OST_Lines";
     representation_role: "view_specific_device_location_marker";
@@ -571,7 +589,7 @@ export type CompiledMepDraftPlan = {
 
 export type AtomicMepDraftWorkflowRequest = {
   inputFingerprintSha256: string;
-  operations: Array<Pick<MepDraftAction, "action_key" | "observation_ids" | "path" | "depends_on" | "apply_body" | "deferred_body" | "expected_created_min" | "expected_created_max" | "provisional_system_classification" | "provisional_plan_representation">>;
+  operations: Array<Pick<MepDraftAction, "action_key" | "observation_ids" | "path" | "depends_on" | "apply_body" | "deferred_body" | "expected_created_min" | "expected_created_max" | "provisional_system_classification" | "provisional_route_attributes" | "provisional_plan_representation">>;
   provisionalObservationIds: string[];
   dryRun: boolean;
   verify: boolean;
@@ -609,6 +627,10 @@ function pipeSizePolicy(observation: MepPipeRouteObservation): "explicit_require
   return observation.pipe_size_policy ?? "explicit_required";
 }
 
+function ductSizePolicy(observation: MechanicalDuctRouteObservation): "explicit_required" | "unresolved_placeholder" {
+  return observation.duct_size_policy ?? "explicit_required";
+}
+
 function routeSystemClassificationPolicy(
   observation: MepPipeRouteObservation | MechanicalDuctRouteObservation
 ): "explicit_required" | "unresolved_placeholder" {
@@ -617,6 +639,50 @@ function routeSystemClassificationPolicy(
 
 function conduitSizePolicy(observation: ElectricalConduitRouteObservation): "explicit_required" | "unresolved_placeholder" {
   return observation.conduit_size_policy ?? "explicit_required";
+}
+
+function routeTypePolicy(
+  observation: MepPipeRouteObservation | MechanicalDuctRouteObservation | ElectricalConduitRouteObservation
+): "explicit_required" | "unresolved_placeholder" {
+  return observation.type_policy ?? "explicit_required";
+}
+
+function requiresProvisionalRouteCredit(observation: MepDraftObservation): boolean {
+  if (observation.kind !== "pipe_route"
+    && observation.kind !== "duct_route"
+    && observation.kind !== "conduit_route") {
+    return false;
+  }
+  if (routeTypePolicy(observation) === "unresolved_placeholder") return true;
+  if (observation.kind === "pipe_route" && pipeSizePolicy(observation) === "unresolved_placeholder") return true;
+  if (observation.kind === "duct_route" && ductSizePolicy(observation) === "unresolved_placeholder") return true;
+  if (observation.kind === "conduit_route"
+    && (conduitSizePolicy(observation) === "unresolved_placeholder" || observation.service === "unclassified")) {
+    return true;
+  }
+  return (observation.kind === "pipe_route" || observation.kind === "duct_route")
+    && routeSystemClassificationPolicy(observation) === "unresolved_placeholder";
+}
+
+function provisionalRouteAttributes(
+  observation: MepPipeRouteObservation | MechanicalDuctRouteObservation | ElectricalConduitRouteObservation
+): MepDraftAction["provisional_route_attributes"] | undefined {
+  const unresolved: Array<"size" | "type"> = [];
+  if ((observation.kind === "pipe_route" && pipeSizePolicy(observation) === "unresolved_placeholder")
+    || (observation.kind === "duct_route" && ductSizePolicy(observation) === "unresolved_placeholder")
+    || (observation.kind === "conduit_route" && conduitSizePolicy(observation) === "unresolved_placeholder")) {
+    unresolved.push("size");
+  }
+  if (routeTypePolicy(observation) === "unresolved_placeholder") unresolved.push("type");
+  if (unresolved.length === 0) return undefined;
+  return {
+    unresolved_attributes: unresolved,
+    ...(unresolved.includes("type") ? { native_type_role: "editable_native_drafting_container" as const } : {}),
+    ...(unresolved.includes("size") ? { native_size_role: "editable_default_drafting_placeholder" as const } : {}),
+    benchmark_credit: false,
+    complete_scope_credit: false,
+    external_topology_credit: false
+  };
 }
 
 function fixtureConnectionMode(observation: PlumbingFixtureObservation): "native_connectivity" | "plan_proximity" {
@@ -727,10 +793,10 @@ function materialAttributes(observation: MepDraftObservation): string[] {
   if (observation.kind === "duct_route") {
     return [
       "location",
-      "size",
+      ...(ductSizePolicy(observation) === "explicit_required" ? ["size"] : []),
       "elevation",
       ...(routeSystemClassificationPolicy(observation) === "explicit_required" ? ["system"] : []),
-      "type"
+      ...(routeTypePolicy(observation) === "explicit_required" ? ["type"] : [])
     ];
   }
   if (observation.kind === "conduit_route") {
@@ -739,15 +805,15 @@ function materialAttributes(observation: MepDraftObservation): string[] {
       ...(conduitSizePolicy(observation) === "explicit_required" ? ["size"] : []),
       "elevation",
       ...(observation.service === "unclassified" ? [] : ["system"]),
-      "type"
+      ...(routeTypePolicy(observation) === "explicit_required" ? ["type"] : [])
     ];
   }
   if (observation.kind === "pipe_route") {
     const size = pipeSizePolicy(observation) === "explicit_required" ? ["size"] : [];
     const system = routeSystemClassificationPolicy(observation) === "explicit_required" ? ["system"] : [];
     return observation.geometry_mode === "downstream_vent_tee"
-      ? ["location", ...size, ...(clean(observation.main_reference_key) ? ["main elevation"] : []), "elevation", ...system, "type"]
-      : ["location", ...size, "elevation", ...system, "type"];
+      ? ["location", ...size, ...(clean(observation.main_reference_key) ? ["main elevation"] : []), "elevation", ...system, ...(routeTypePolicy(observation) === "explicit_required" ? ["type"] : [])]
+      : ["location", ...size, "elevation", ...system, ...(routeTypePolicy(observation) === "explicit_required" ? ["type"] : [])];
   }
   if (observation.kind === "plumbing_fixture") {
     return observation.placement.mode === "hosted_exemplar" || observation.placement.mode === "hosted_family_symbol"
@@ -989,9 +1055,28 @@ function validateObservation(
       finite(entry.y, `${id}_point_${pointIndex}_y`);
     });
     finite(observation.elevation_ft, `${id}_elevation_ft`);
-    requiredText(observation.duct_size, `${id}_duct_size`);
+    const sizePolicy = ductSizePolicy(observation);
+    if (!["explicit_required", "unresolved_placeholder"].includes(sizePolicy)) {
+      throw new Error(`${id}_duct_size_policy_invalid`);
+    }
+    if (sizePolicy === "explicit_required") {
+      requiredText(observation.duct_size, `${id}_duct_size`);
+    } else {
+      if (clean(observation.duct_size)) throw new Error(`${id}_unresolved_placeholder_must_omit_duct_size`);
+      if (observation.supported_attributes.some((attribute) => normalized(attribute) === "size")) {
+        throw new Error(`${id}_unresolved_duct_size_cannot_claim_size_support`);
+      }
+    }
     requiredText(observation.duct_type, `${id}_duct_type`);
     if (observation.duct_type_id != null) positiveInteger(observation.duct_type_id, `${id}_duct_type_id`);
+    const typePolicy = routeTypePolicy(observation);
+    if (!["explicit_required", "unresolved_placeholder"].includes(typePolicy)) {
+      throw new Error(`${id}_type_policy_invalid`);
+    }
+    if (typePolicy === "unresolved_placeholder"
+      && observation.supported_attributes.some((attribute) => normalized(attribute) === "type")) {
+      throw new Error(`${id}_unresolved_type_cannot_claim_type_support`);
+    }
     const systemPolicy = routeSystemClassificationPolicy(observation);
     if (!["explicit_required", "unresolved_placeholder"].includes(systemPolicy)) {
       throw new Error(`${id}_system_classification_policy_invalid`);
@@ -1013,6 +1098,10 @@ function validateObservation(
     if (routeWorksetName(observation)) requiredText(routeWorksetName(observation), `${id}_workset_name`);
     if (observation.require_existing_endpoint_connections && !observation.connect_to_existing) {
       throw new Error(`${id}_required_endpoint_connections_need_connect_to_existing`);
+    }
+    if ((sizePolicy === "unresolved_placeholder" || typePolicy === "unresolved_placeholder")
+      && (observation.connect_to_existing === true || observation.require_existing_endpoint_connections === true)) {
+      throw new Error(`${id}_provisional_duct_attributes_cannot_connect_to_existing`);
     }
     return;
   }
@@ -1040,10 +1129,22 @@ function validateObservation(
       throw new Error(`${id}_unclassified_conduit_cannot_claim_system_support`);
     }
     requiredText(observation.conduit_type, `${id}_conduit_type`);
+    const typePolicy = routeTypePolicy(observation);
+    if (!["explicit_required", "unresolved_placeholder"].includes(typePolicy)) {
+      throw new Error(`${id}_type_policy_invalid`);
+    }
+    if (typePolicy === "unresolved_placeholder"
+      && observation.supported_attributes.some((attribute) => normalized(attribute) === "type")) {
+      throw new Error(`${id}_unresolved_type_cannot_claim_type_support`);
+    }
     if (routeWorksetName(observation)) requiredText(routeWorksetName(observation), `${id}_workset_name`);
     if (observation.conduit_type_id != null) positiveInteger(observation.conduit_type_id, `${id}_conduit_type_id`);
     if (observation.require_existing_endpoint_connections && !observation.connect_to_existing) {
       throw new Error(`${id}_required_endpoint_connections_need_connect_to_existing`);
+    }
+    if ((sizePolicy === "unresolved_placeholder" || typePolicy === "unresolved_placeholder")
+      && (observation.connect_to_existing === true || observation.require_existing_endpoint_connections === true)) {
+      throw new Error(`${id}_provisional_conduit_attributes_cannot_connect_to_existing`);
     }
     return;
   }
@@ -1105,6 +1206,22 @@ function validateObservation(
       }
     }
     requiredText(observation.pipe_type, `${id}_pipe_type`);
+    const typePolicy = routeTypePolicy(observation);
+    if (!["explicit_required", "unresolved_placeholder"].includes(typePolicy)) {
+      throw new Error(`${id}_type_policy_invalid`);
+    }
+    if (typePolicy === "unresolved_placeholder"
+      && observation.supported_attributes.some((attribute) => normalized(attribute) === "type")) {
+      throw new Error(`${id}_unresolved_type_cannot_claim_type_support`);
+    }
+    if (typePolicy === "unresolved_placeholder") {
+      if (observation.geometry_mode != null && observation.geometry_mode !== "source_points") {
+        throw new Error(`${id}_unresolved_type_requires_source_points_geometry`);
+      }
+      if (observation.connect_to_existing === true || observation.require_existing_endpoint_connections === true) {
+        throw new Error(`${id}_provisional_pipe_type_cannot_connect_to_existing`);
+      }
+    }
     requiredText(observation.system_type, `${id}_system_type`);
     if (routeWorksetName(observation)) requiredText(routeWorksetName(observation), `${id}_workset_name`);
     if (observation.geometry_mode === "native_connector_bridge"
@@ -1801,17 +1918,21 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
   input.observations.forEach((observation, index) => validateObservation(observation, index, nativeReferences));
   const provisionalObservationIds = input.observations
     .filter((observation) => (
-      ((observation.kind === "pipe_route" || observation.kind === "duct_route")
-        && routeSystemClassificationPolicy(observation) === "unresolved_placeholder")
+      requiresProvisionalRouteCredit(observation)
       || ("placement" in observation && observation.placement.mode === "provisional_plan_symbol")
     ))
     .map((observation) => observation.observation_id);
   if (provisionalObservationIds.length > 0 && partialPromotionPolicy !== "defer_ambiguous_observations") {
     const hasPlanSymbol = input.observations.some((observation) =>
       "placement" in observation && observation.placement.mode === "provisional_plan_symbol");
+    const hasUnresolvedSystem = input.observations.some((observation) =>
+      (observation.kind === "pipe_route" || observation.kind === "duct_route")
+      && routeSystemClassificationPolicy(observation) === "unresolved_placeholder");
     throw new Error(`${hasPlanSymbol
       ? "provisional_plan_symbol_requires_partial_promotion_policy"
-      : "unresolved_system_requires_partial_promotion_policy"}:${provisionalObservationIds.join(",")}`);
+      : hasUnresolvedSystem
+        ? "unresolved_system_requires_partial_promotion_policy"
+        : "provisional_route_attributes_require_partial_promotion_policy"}:${provisionalObservationIds.join(",")}`);
   }
   const ids = input.observations.map((entry) => entry.observation_id);
   if (new Set(ids).size !== ids.length) throw new Error("observation_ids_must_be_unique");
@@ -2040,6 +2161,11 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
       if (route.service === "unclassified") {
         throw new Error(`${observation.observation_id}_unclassified_duct_cannot_establish_terminal_topology:${routeId}`);
       }
+      if (routeSystemClassificationPolicy(route) !== "explicit_required"
+        || routeTypePolicy(route) !== "explicit_required"
+        || ductSizePolicy(route) !== "explicit_required") {
+        throw new Error(`${observation.observation_id}_provisional_duct_cannot_establish_terminal_topology:${routeId}`);
+      }
       const segmentIndex = observation.placement.route_segment_index;
       if (segmentIndex >= route.points.length - 1) {
         throw new Error(`${observation.observation_id}_host_route_segment_index_out_of_range:${segmentIndex}`);
@@ -2251,6 +2377,25 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
       && conduitSizePolicy(observation) === "unresolved_placeholder"
       ? ["conduit size is unreadable in the source plan; runtime creates a clearly labeled one-inch drafting placeholder and size receives no source-evidence credit"]
       : [];
+    const unresolvedDuctSizeAssumptions = observation.kind === "duct_route"
+      && ductSizePolicy(observation) === "unresolved_placeholder"
+      ? ["duct size is unreadable in the source plan; runtime creates a disclosed 8x8 drafting placeholder and size receives no source-evidence or benchmark credit"]
+      : [];
+    const unresolvedTypeAssumptions = (observation.kind === "pipe_route"
+      || observation.kind === "duct_route"
+      || observation.kind === "conduit_route")
+      && routeTypePolicy(observation) === "unresolved_placeholder"
+      ? [
+          `source plan does not establish route type; runtime uses project-local type ${clean(
+            observation.kind === "pipe_route"
+              ? observation.pipe_type
+              : observation.kind === "duct_route"
+                ? observation.duct_type
+                : observation.conduit_type
+          )} as an editable native drafting container`,
+          "native type selection receives no source-evidence or benchmark credit and cannot establish external endpoint topology"
+        ]
+      : [];
     const unresolvedSystemAssumptions = (observation.kind === "pipe_route" || observation.kind === "duct_route")
       && routeSystemClassificationPolicy(observation) === "unresolved_placeholder"
       ? [
@@ -2298,6 +2443,8 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         ...downstreamVentAssumptions,
         ...unresolvedSizeAssumptions,
         ...unresolvedConduitSizeAssumptions,
+        ...unresolvedDuctSizeAssumptions,
+        ...unresolvedTypeAssumptions,
         ...unresolvedSystemAssumptions,
         ...planProximityAssumptions,
         ...conduitAssociationAssumptions,
@@ -2340,6 +2487,12 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
     if (unresolvedConduitSizeAssumptions.length > 0) {
       warnings.push(`${observation.observation_id}: ${unresolvedConduitSizeAssumptions.join("; ")}`);
     }
+    if (unresolvedDuctSizeAssumptions.length > 0) {
+      warnings.push(`${observation.observation_id}: ${unresolvedDuctSizeAssumptions.join("; ")}`);
+    }
+    if (unresolvedTypeAssumptions.length > 0) {
+      warnings.push(`${observation.observation_id}: ${unresolvedTypeAssumptions.join("; ")}`);
+    }
     if (unresolvedSystemAssumptions.length > 0) {
       warnings.push(`${observation.observation_id}: ${unresolvedSystemAssumptions.join("; ")}`);
     }
@@ -2378,8 +2531,10 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
           levelName,
           systemType: observation.system_type,
           ductType: observation.duct_type,
-          ductSize: observation.duct_size,
-          sizePolicy: "explicit_required",
+          ...(ductSizePolicy(observation) === "explicit_required" ? { ductSize: observation.duct_size! } : {}),
+          sizePolicy: ductSizePolicy(observation) === "explicit_required"
+            ? "explicit_required"
+            : "use_default_with_warning",
           elevationPolicy: "explicit_points",
           points,
           connectSegments: true,
@@ -2874,6 +3029,18 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
     actions.push(...pendingVentAudits);
   }
 
+  for (const routeAction of actions.filter((entry) => entry.action_key.startsWith("route:"))) {
+    const routeObservation = routeAction.observation_ids
+      .map((observationId) => byId.get(observationId))
+      .find((observation): observation is MepPipeRouteObservation | MechanicalDuctRouteObservation | ElectricalConduitRouteObservation =>
+        observation?.kind === "pipe_route"
+        || observation?.kind === "duct_route"
+        || observation?.kind === "conduit_route");
+    if (!routeObservation) continue;
+    const metadata = provisionalRouteAttributes(routeObservation);
+    if (metadata) routeAction.provisional_route_attributes = metadata;
+  }
+
   let emittedActions = actions;
   let promotedObservationIds: string[] = [];
   let deferredObservationIds = ids.slice();
@@ -2959,6 +3126,9 @@ export function buildAtomicMepDraftWorkflowRequest(
       ...(entry.deferred_body ? { deferred_body: entry.deferred_body } : {}),
       ...(entry.provisional_system_classification
         ? { provisional_system_classification: entry.provisional_system_classification }
+        : {}),
+      ...(entry.provisional_route_attributes
+        ? { provisional_route_attributes: entry.provisional_route_attributes }
         : {}),
       ...(entry.provisional_plan_representation
         ? { provisional_plan_representation: entry.provisional_plan_representation }

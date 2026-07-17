@@ -696,6 +696,7 @@ test("connectorless plumbing graphics compile as non-scored placeholder routes a
     level_name: "L4",
     level_elevation_ft: 32,
     room_number: "404",
+    partial_promotion_policy: "defer_ambiguous_observations",
     observations: [
       {
         kind: "pipe_route",
@@ -762,7 +763,11 @@ test("connectorless plumbing graphics compile as non-scored placeholder routes a
       }
     ]
   });
-  assert.equal(plan.status, "ready");
+  assert.equal(plan.status, "partially_ready");
+  assert.deepEqual(plan.provisional_observation_ids, [
+    "sanitary-visible-main",
+    "visible-downstream-vent"
+  ]);
   assert.deepEqual(plan.actions.map((entry) => entry.action_key), [
     "route:sanitary-visible-main",
     "place:connectorless-water-closet-graphic",
@@ -1159,6 +1164,42 @@ test("created route host placement rejects unknown, non-duct, out-of-range, and 
   if (offSegmentTerminal?.kind !== "air_terminal") assert.fail("terminal fixture invalid");
   offSegmentTerminal.point = { x: 7, y: 2 };
   assert.throws(() => compileMepDraftPlan(offSegment), /point_off_host_route_segment/);
+});
+
+test("provisional duct attributes preserve route geometry but cannot establish terminal topology", () => {
+  for (const mode of ["created_route_host", "created_route_branch"] as const) {
+    for (const unresolvedAttribute of ["type", "size"] as const) {
+      const input = mode === "created_route_host"
+        ? createdRouteHostedTerminalPackage()
+        : createdRouteBranchTerminalPackage();
+      input.partial_promotion_policy = "defer_ambiguous_observations";
+      const route = input.observations[0];
+      if (route?.kind !== "duct_route") assert.fail("duct route fixture invalid");
+      if (unresolvedAttribute === "type") {
+        route.type_policy = "unresolved_placeholder";
+        route.supported_attributes = route.supported_attributes.filter((attribute) => attribute !== "type");
+      } else {
+        route.duct_size_policy = "unresolved_placeholder";
+        delete route.duct_size;
+        route.supported_attributes = route.supported_attributes.filter((attribute) => attribute !== "size");
+      }
+      assert.throws(
+        () => compileMepDraftPlan(input),
+        /provisional_duct_cannot_establish_terminal_topology:supply-trunk-visible-1/
+      );
+    }
+  }
+
+  const routeOnly = createdRouteHostedTerminalPackage();
+  routeOnly.partial_promotion_policy = "defer_ambiguous_observations";
+  routeOnly.observations = [routeOnly.observations[0]!];
+  const route = routeOnly.observations[0];
+  if (route?.kind !== "duct_route") assert.fail("duct route fixture invalid");
+  route.type_policy = "unresolved_placeholder";
+  route.supported_attributes = route.supported_attributes.filter((attribute) => attribute !== "type");
+  const plan = compileMepDraftPlan(routeOnly);
+  assert.equal(plan.status, "partially_ready");
+  assert.deepEqual(plan.actions.map((entry) => entry.action_key), ["route:supply-trunk-visible-1"]);
 });
 
 test("created route host placement is restricted to air terminals", () => {
@@ -3029,6 +3070,135 @@ test("explicit iterative drafting emits clear unclassified pipe and duct geometr
   ]);
   assert.ok(workflow.operations.every((operation) =>
     operation.provisional_system_classification?.policy === "unresolved_placeholder"));
+});
+
+test("explicit iterative drafting preserves pipe duct and conduit geometry with provisional native types and duct size", () => {
+  const input: MepDraftPackage = {
+    schema_version: 1,
+    fixture_id: "provisional-route-containers-v1",
+    scope_id: "bounded-monochrome-route-containers",
+    source_evidence_sha256: SOURCE_HASH,
+    visible_evidence: visibleEvidence(),
+    native_element_references: nativeReferences(),
+    registration: registration(),
+    level_name: "Benchmark L3",
+    level_elevation_ft: 30,
+    partial_promotion_policy: "defer_ambiguous_observations",
+    observations: [
+      {
+        kind: "pipe_route",
+        observation_id: "pipe-visible-type-unresolved",
+        discipline: "plumbing",
+        service: "sanitary",
+        visibility: "clear",
+        confidence: 0.96,
+        supported_attributes: ["location", "size", "elevation", "system"],
+        points: [{ x: 1, y: 1 }, { x: 6, y: 1 }],
+        pipe_size: "2 inch",
+        pipe_type: "Generic Pipe",
+        type_policy: "unresolved_placeholder",
+        system_type: "Sanitary",
+        elevation_ft: 10
+      },
+      {
+        kind: "duct_route",
+        observation_id: "duct-visible-size-type-unresolved",
+        discipline: "mechanical",
+        service: "supply_air",
+        visibility: "clear",
+        confidence: 0.95,
+        supported_attributes: ["location", "elevation", "system"],
+        points: [{ x: 2, y: 2 }, { x: 2, y: 8 }],
+        duct_size_policy: "unresolved_placeholder",
+        duct_type: "Rectangular",
+        type_policy: "unresolved_placeholder",
+        system_type: "Supply Air",
+        elevation_ft: 10
+      },
+      {
+        kind: "conduit_route",
+        observation_id: "conduit-visible-type-unresolved",
+        discipline: "electrical",
+        service: "branch_circuit",
+        visibility: "clear",
+        confidence: 0.94,
+        supported_attributes: ["location", "size", "elevation", "system"],
+        points: [{ x: 3, y: 3 }, { x: 8, y: 3 }],
+        conduit_size: "1 inch",
+        conduit_type: "EMT",
+        type_policy: "unresolved_placeholder",
+        elevation_ft: 10
+      }
+    ]
+  };
+
+  const plan = compileMepDraftPlan(input);
+  assert.equal(plan.status, "partially_ready");
+  assert.deepEqual(plan.provisional_observation_ids, [
+    "pipe-visible-type-unresolved",
+    "duct-visible-size-type-unresolved",
+    "conduit-visible-type-unresolved"
+  ]);
+  assert.equal(plan.actions.length, 3);
+  assert.equal(plan.actions[0]?.apply_body?.pipeType, "Generic Pipe");
+  assert.equal(plan.actions[1]?.apply_body?.ductType, "Rectangular");
+  assert.equal(plan.actions[1]?.apply_body?.ductSize, undefined);
+  assert.equal(plan.actions[1]?.apply_body?.sizePolicy, "use_default_with_warning");
+  assert.equal(plan.actions[2]?.apply_body?.conduitType, "EMT");
+  assert.deepEqual(plan.actions[0]?.provisional_route_attributes, {
+    unresolved_attributes: ["type"],
+    native_type_role: "editable_native_drafting_container",
+    benchmark_credit: false,
+    complete_scope_credit: false,
+    external_topology_credit: false
+  });
+  assert.deepEqual(plan.actions[1]?.provisional_route_attributes, {
+    unresolved_attributes: ["size", "type"],
+    native_type_role: "editable_native_drafting_container",
+    native_size_role: "editable_default_drafting_placeholder",
+    benchmark_credit: false,
+    complete_scope_credit: false,
+    external_topology_credit: false
+  });
+  assert.match(plan.warnings.join("\n"), /8x8 drafting placeholder/i);
+  assert.match(plan.warnings.join("\n"), /editable native drafting container/i);
+
+  const workflow = buildAtomicMepDraftWorkflowRequest(plan);
+  assert.equal(workflow.benchmarkCredit, false);
+  assert.equal(workflow.authorizationBasis, "explicit_unscored_user_direction");
+  assert.deepEqual(
+    workflow.operations[1]?.provisional_route_attributes,
+    plan.actions[1]?.provisional_route_attributes
+  );
+
+  const noPartialPolicy = structuredClone(input);
+  delete noPartialPolicy.partial_promotion_policy;
+  assert.throws(
+    () => compileMepDraftPlan(noPartialPolicy),
+    /provisional_route_attributes_require_partial_promotion_policy/
+  );
+
+  const claimsType = structuredClone(input);
+  claimsType.observations[0]!.supported_attributes.push("type");
+  assert.throws(() => compileMepDraftPlan(claimsType), /unresolved_type_cannot_claim_type_support/);
+
+  const suppliesPlaceholderDuctSize = structuredClone(input);
+  const duct = suppliesPlaceholderDuctSize.observations[1]!;
+  if (duct.kind !== "duct_route") throw new Error("duct_setup_failed");
+  duct.duct_size = "12x10";
+  assert.throws(
+    () => compileMepDraftPlan(suppliesPlaceholderDuctSize),
+    /unresolved_placeholder_must_omit_duct_size/
+  );
+
+  const connectsPlaceholderDuct = structuredClone(input);
+  const connectingDuct = connectsPlaceholderDuct.observations[1]!;
+  if (connectingDuct.kind !== "duct_route") throw new Error("duct_setup_failed");
+  connectingDuct.connect_to_existing = true;
+  assert.throws(
+    () => compileMepDraftPlan(connectsPlaceholderDuct),
+    /provisional_duct_attributes_cannot_connect_to_existing/
+  );
 });
 
 test("unclassified routes fail closed without explicit provisional policy and cannot prove fixture service", () => {

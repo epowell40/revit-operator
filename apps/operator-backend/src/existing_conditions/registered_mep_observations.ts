@@ -195,6 +195,18 @@ function registeredConduitSizePolicy(
   return observation.conduit_size_policy ?? "explicit_required";
 }
 
+function registeredDuctSizePolicy(
+  observation: RegisteredMechanicalDuctRouteObservation
+): "explicit_required" | "unresolved_placeholder" {
+  return observation.duct_size_policy ?? "explicit_required";
+}
+
+function registeredRouteTypePolicy(
+  observation: { type_policy?: "explicit_required" | "unresolved_placeholder" }
+): "explicit_required" | "unresolved_placeholder" {
+  return observation.type_policy ?? "explicit_required";
+}
+
 function requiresProvisionalRouteCredit(observation: RegisteredMepPixelObservation): boolean {
   if (observation.kind !== "pipe_route"
     && observation.kind !== "duct_route"
@@ -204,8 +216,15 @@ function requiresProvisionalRouteCredit(observation: RegisteredMepPixelObservati
   if (observation.attribute_evidence.some((claim) => claim.basis === "declared_heuristic")) {
     return true;
   }
+  if (registeredRouteTypePolicy(observation) === "unresolved_placeholder") {
+    return true;
+  }
   if (observation.kind === "pipe_route"
     && registeredPipeSizePolicy(observation) === "unresolved_placeholder") {
+    return true;
+  }
+  if (observation.kind === "duct_route"
+    && registeredDuctSizePolicy(observation) === "unresolved_placeholder") {
     return true;
   }
   if (observation.kind === "conduit_route"
@@ -738,6 +757,8 @@ export async function compileRegisteredMepObservations(
       "Color is optional corroboration only. Black-and-white labels, line types, legends, geometry, and topology may establish plan geometry; missing color alone never blocks an otherwise supported provisional draft.",
       "A pipe or duct elevation may use declared_heuristic provenance when the plan does not show elevation; it remains an explicit inference in the compiled assumptions and is never represented as source-observed truth.",
       "A pipe route may use pipe_size_policy=unresolved_placeholder only when size is unreadable, omitted from supported source attributes, and omitted from the observation value; Revit's one-inch drafting placeholder is then explicit, non-scored, and not accepted as an engineered size.",
+      "A duct route may use duct_size_policy=unresolved_placeholder only when size is unreadable, omitted from supported source attributes, and omitted from the observation value; Revit's disclosed 8x8 drafting fallback is then explicit, editable, non-scored, and not accepted as an engineered size.",
+      "A pipe, duct, or conduit route may use type_policy=unresolved_placeholder only with an explicit project-local native drafting container and no supported source type claim. The selected native type is read back for editing but receives no source-evidence, benchmark, complete-scope, or external-topology credit.",
       "A source-unclassified pipe or duct route may use system_classification_policy=unresolved_placeholder only with partial_promotion_policy=defer_ambiguous_observations, no supported system claim, and an existing project-local system type as an editable native drafting container. The route receives no benchmark, complete-scope, or system-classification credit.",
       "An unclassified conduit route may use conduit_size_policy=unresolved_placeholder only when service and size are not source-supported; its one-inch drafting diameter is explicit, non-scored, and cannot establish feeder, panel, or circuit meaning.",
       "A native_connector_bridge may resolve a short concealed service stub only between an agent-visible fixture observation and an explicit hash-bound native anchor; its endpoints and elevation are runtime native inferences, not registered-pixel observations.",
