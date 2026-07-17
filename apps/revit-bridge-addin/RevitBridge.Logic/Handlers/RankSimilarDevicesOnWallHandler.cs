@@ -484,6 +484,20 @@ namespace RevitBridge.Logic.Handlers
 
     public sealed class AssignElectricalCircuitHandler : IRequestHandler
     {
+        private sealed class NativePowerCircuitReadback
+        {
+            public long SystemElementId { get; set; }
+            public string SystemType { get; set; } = string.Empty;
+            public List<long> MemberElementIds { get; set; } = new List<long>();
+            public long? PanelElementId { get; set; }
+            public string PanelName { get; set; } = string.Empty;
+            public string CircuitNumber { get; set; } = string.Empty;
+            public double? TrueLoadInternal { get; set; }
+            public double? ApparentLoadInternal { get; set; }
+            public double? VoltageInternal { get; set; }
+            public int? Poles { get; set; }
+        }
+
         public sealed class Params
         {
             public long[]? elementIds { get; set; }
@@ -676,34 +690,65 @@ namespace RevitBridge.Logic.Handlers
                 };
             }
 
-            using (var tx = new Transaction(doc, "Create Electrical Circuit"))
+            using (var group = new TransactionGroup(doc, "Create and Verify Electrical Circuit"))
             {
                 var nativeFailures = new List<CapturedFailure>();
-                tx.Start();
-                tx.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(
-                    tx,
-                    nativeFailures,
-                    rollbackOnErrors: true,
-                    deleteWarnings: true));
+                var groupStartStatus = group.Start();
+                if (groupStartStatus != TransactionStatus.Started)
+                    throw new InvalidOperationException($"new_power_circuit_group_not_started:{groupStartStatus}");
                 try
                 {
-                    var memberIds = members.Select(instance => instance.Id).ToList();
-                    var system = ElectricalSystem.Create(doc, memberIds, ElectricalSystemType.PowerCircuit)
-                        ?? throw new InvalidOperationException("revit_did_not_create_electrical_system");
-                    if (panel != null) system.SelectPanel(panel);
-                    doc.Regenerate();
+                    var expectedMemberIds = members
+                        .Select(instance => ElementIdCompat.GetValue(instance.Id))
+                        .OrderBy(id => id)
+                        .ToList();
+                    long systemId;
+                    using (var tx = new Transaction(doc, "Create Electrical Circuit"))
+                    {
+                        var transactionStartStatus = tx.Start();
+                        if (transactionStartStatus != TransactionStatus.Started)
+                            throw new InvalidOperationException($"new_power_circuit_transaction_not_started:{transactionStartStatus}");
+                        tx.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(
+                            tx,
+                            nativeFailures,
+                            rollbackOnErrors: true,
+                            deleteWarnings: true));
+                        var system = ElectricalSystem.Create(
+                            doc,
+                            members.Select(instance => instance.Id).ToList(),
+                            ElectricalSystemType.PowerCircuit)
+                            ?? throw new InvalidOperationException("revit_did_not_create_electrical_system");
+                        if (panel != null) system.SelectPanel(panel);
+                        doc.Regenerate();
 
-                    var systemId = ElementIdCompat.GetValue(system.Id);
+                        systemId = ElementIdCompat.GetValue(system.Id);
+                        VerifyNativePowerCircuitReadback(
+                            ReadNativePowerCircuit(system),
+                            expectedMemberIds,
+                            p.panelElementId);
+
+                        var commitStatus = tx.Commit();
+                        if (commitStatus != TransactionStatus.Committed)
+                            throw new InvalidOperationException($"new_power_circuit_transaction_not_committed:{commitStatus}");
+                        if (FailureHandlingUtil.HasErrors(nativeFailures))
+                            throw new InvalidOperationException("new_power_circuit_native_failure");
+                    }
+
+                    var committedSystem = doc.GetElement(ElementIdCompat.Create(systemId)) as ElectricalSystem
+                        ?? throw new InvalidOperationException($"new_power_circuit_postcommit_system_missing:{systemId}");
+                    var finalReadback = ReadNativePowerCircuit(committedSystem);
+                    VerifyNativePowerCircuitReadback(finalReadback, expectedMemberIds, p.panelElementId);
+
                     var verifiedResults = members.Select(instance =>
                     {
                         var powerSystemIds = HostedPlacementUtil.GetPowerElectricalSystemIds(instance);
-                        var ok = CircuitMatchPolicy.HasExactMembership(systemId, powerSystemIds);
+                        var memberVerified = CircuitMatchPolicy.HasExactMembership(systemId, powerSystemIds);
                         return (object)new
                         {
                             elementId = ElementIdCompat.GetValue(instance.Id),
-                            ok,
+                            ok = memberVerified,
                             action = "create_new_power_circuit",
-                            detail = ok
+                            detail = memberVerified
                                 ? $"Member joined newly created native power system {systemId}."
                                 : $"Expected only new power system {systemId}; actual power systems: {string.Join(",", powerSystemIds)}.",
                             before = (object?)null,
@@ -714,13 +759,7 @@ namespace RevitBridge.Logic.Handlers
                     if (verifiedResults.Any(result => !(bool)(result.GetType().GetProperty("ok")?.GetValue(result) ?? false)))
                         throw new InvalidOperationException($"new_power_circuit_membership_verification_failed:{systemId}");
 
-                    var commitStatus = tx.Commit();
-                    if (commitStatus != TransactionStatus.Committed)
-                        throw new InvalidOperationException($"new_power_circuit_transaction_not_committed:{commitStatus}");
-                    if (FailureHandlingUtil.HasErrors(nativeFailures))
-                        throw new InvalidOperationException("new_power_circuit_native_failure");
-
-                    return new
+                    var response = new
                     {
                         schema = "operator.assign_electrical_circuit.v3",
                         status = "Applied",
@@ -729,7 +768,16 @@ namespace RevitBridge.Logic.Handlers
                         requestedSystemType = "PowerCircuit",
                         createdElectricalSystemId = systemId,
                         panelElementId = p.panelElementId,
-                        verifiedMemberElementIds = members.Select(instance => ElementIdCompat.GetValue(instance.Id)).OrderBy(id => id).ToList(),
+                        verifiedMemberElementIds = expectedMemberIds,
+                        nativeCircuitReadback = NativePowerCircuitReadbackPayload(finalReadback),
+                        verification = new
+                        {
+                            nativePowerCircuit = true,
+                            exactMemberSet = true,
+                            exactPanelIdentity = true,
+                            factualLoadReadback = true,
+                            complianceEvaluated = false
+                        },
                         results = verifiedResults,
                         warnings = nativeFailures
                             .Where(failure => string.Equals(failure.severity, "warning", StringComparison.OrdinalIgnoreCase))
@@ -740,13 +788,100 @@ namespace RevitBridge.Logic.Handlers
                         nativeFailures,
                         limitation = "New-circuit mode creates and verifies native PowerCircuit membership; breaker size, load allocation, panel capacity, and code compliance require separate evidence and checks."
                     };
+                    var groupStatus = group.Assimilate();
+                    if (groupStatus != TransactionStatus.Committed)
+                        throw new InvalidOperationException($"new_power_circuit_group_not_committed:{groupStatus}");
+                    return response;
                 }
                 catch
                 {
-                    if (tx.GetStatus() == TransactionStatus.Started) tx.RollBack();
+                    if (group.GetStatus() == TransactionStatus.Started) group.RollBack();
                     throw;
                 }
             }
+        }
+
+        private static NativePowerCircuitReadback ReadNativePowerCircuit(ElectricalSystem system)
+        {
+            var memberElementIds = new List<long>();
+            foreach (Element member in system.Elements)
+            {
+                if (member?.Id != null) memberElementIds.Add(ElementIdCompat.GetValue(member.Id));
+            }
+
+            return new NativePowerCircuitReadback
+            {
+                SystemElementId = ElementIdCompat.GetValue(system.Id),
+                SystemType = system.SystemType.ToString(),
+                MemberElementIds = memberElementIds.Distinct().OrderBy(id => id).ToList(),
+                PanelElementId = system.BaseEquipment == null ? (long?)null : ElementIdCompat.GetValue(system.BaseEquipment.Id),
+                PanelName = SafeCircuitString(() => system.PanelName),
+                CircuitNumber = SafeCircuitString(() => system.CircuitNumber),
+                TrueLoadInternal = SafeCircuitDouble(() => system.TrueLoad),
+                ApparentLoadInternal = SafeCircuitDouble(() => system.ApparentLoad),
+                VoltageInternal = SafeCircuitDouble(() => system.Voltage),
+                Poles = SafeCircuitInt(() => system.PolesNumber)
+            };
+        }
+
+        private static void VerifyNativePowerCircuitReadback(
+            NativePowerCircuitReadback readback,
+            IReadOnlyList<long> expectedMemberElementIds,
+            long? expectedPanelElementId)
+        {
+            if (readback.SystemElementId <= 0 || !CircuitMatchPolicy.IsExactPowerCircuitType(readback.SystemType))
+                throw new InvalidOperationException($"new_power_circuit_type_verification_failed:{readback.SystemElementId}:{readback.SystemType}");
+            if (!CircuitMatchPolicy.HasExactElementSet(expectedMemberElementIds, readback.MemberElementIds))
+                throw new InvalidOperationException(
+                    $"new_power_circuit_exact_member_set_failed:{readback.SystemElementId}:expected={string.Join(",", expectedMemberElementIds)}:actual={string.Join(",", readback.MemberElementIds)}");
+            if (!CircuitMatchPolicy.HasExactOptionalElementIdentity(expectedPanelElementId, readback.PanelElementId))
+                throw new InvalidOperationException(
+                    $"new_power_circuit_exact_panel_failed:{readback.SystemElementId}:expected={expectedPanelElementId?.ToString(CultureInfo.InvariantCulture) ?? "unassigned"}:actual={readback.PanelElementId?.ToString(CultureInfo.InvariantCulture) ?? "unassigned"}");
+            if (!CircuitMatchPolicy.HasFactualLoadReadback(readback.TrueLoadInternal, readback.ApparentLoadInternal))
+                throw new InvalidOperationException($"new_power_circuit_factual_load_readback_unavailable:{readback.SystemElementId}");
+        }
+
+        private static object NativePowerCircuitReadbackPayload(NativePowerCircuitReadback readback)
+        {
+            return new
+            {
+                systemElementId = readback.SystemElementId,
+                systemType = readback.SystemType,
+                memberElementIds = readback.MemberElementIds,
+                panelElementId = readback.PanelElementId,
+                panelName = string.IsNullOrWhiteSpace(readback.PanelName) ? null : readback.PanelName,
+                circuitNumber = string.IsNullOrWhiteSpace(readback.CircuitNumber) ? null : readback.CircuitNumber,
+                trueLoadInternal = readback.TrueLoadInternal,
+                apparentLoadInternal = readback.ApparentLoadInternal,
+                voltageInternal = readback.VoltageInternal,
+                poles = readback.Poles,
+                limitation = "Native Revit factual readback only. Values do not by themselves prove breaker sizing, conductor ampacity, panel capacity, continuous-load treatment, or code compliance."
+            };
+        }
+
+        private static string SafeCircuitString(Func<string> read)
+        {
+            try { return (read() ?? string.Empty).Trim(); }
+            catch { return string.Empty; }
+        }
+
+        private static double? SafeCircuitDouble(Func<double> read)
+        {
+            try
+            {
+                var value = read();
+                return double.IsNaN(value) || double.IsInfinity(value) ? (double?)null : value;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static int? SafeCircuitInt(Func<int> read)
+        {
+            try { return read(); }
+            catch { return null; }
         }
 
         private static bool TrySetStringParameter(Element element, string name, string? value, bool apply, out string detail)
