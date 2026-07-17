@@ -302,7 +302,15 @@ function allowedDiscipline(
 
 function materialAttributes(observation: Exclude<RegisteredMepPixelObservation, ElectricalCircuitObservation>): string[] {
   const workset = clean((observation as { workset_name?: string }).workset_name) ? ["workset"] : [];
-  if (observation.kind === "duct_route") return ["size", "elevation", "system", "type", ...workset];
+  if (observation.kind === "duct_route") {
+    return [
+      "size",
+      "elevation",
+      ...(observation.service === "unclassified" ? [] : ["system"]),
+      "type",
+      ...workset
+    ];
+  }
   if (observation.kind === "conduit_route") {
     return [
       ...(registeredConduitSizePolicy(observation) === "explicit_required" ? ["size"] : []),
@@ -321,7 +329,13 @@ function materialAttributes(observation: Exclude<RegisteredMepPixelObservation, 
     if (observation.geometry_mode === "downstream_vent_tee") {
       return [...size, ...(clean(observation.main_reference_key) ? ["main elevation"] : []), "elevation", "system", "type", ...workset];
     }
-    return [...size, "elevation", "system", "type", ...workset];
+    return [
+      ...size,
+      "elevation",
+      ...(observation.service === "unclassified" ? [] : ["system"]),
+      "type",
+      ...workset
+    ];
   }
   if (observation.kind === "plumbing_fixture") {
     return observation.placement.mode === "hosted_exemplar" || observation.placement.mode === "hosted_family_symbol"
@@ -682,6 +696,7 @@ export async function compileRegisteredMepObservations(
       "Registered pixels establish bounded plan geometry only; material, system, size, elevation, family, type, host, and service-topology claims remain subject to the existing MEP compiler evidence gates.",
       "A pipe or duct elevation may use declared_heuristic provenance when the plan does not show elevation; it remains an explicit inference in the compiled assumptions and is never represented as source-observed truth.",
       "A pipe route may use pipe_size_policy=unresolved_placeholder only when size is unreadable, omitted from supported source attributes, and omitted from the observation value; Revit's one-inch drafting placeholder is then explicit, non-scored, and not accepted as an engineered size.",
+      "A source-unclassified pipe or duct route may use system_classification_policy=unresolved_placeholder only with partial_promotion_policy=defer_ambiguous_observations, no supported system claim, and an existing project-local system type as an editable native drafting container. The route receives no benchmark, complete-scope, or system-classification credit.",
       "An unclassified conduit route may use conduit_size_policy=unresolved_placeholder only when service and size are not source-supported; its one-inch drafting diameter is explicit, non-scored, and cannot establish feeder, panel, or circuit meaning.",
       "A native_connector_bridge may resolve a short concealed service stub only between an agent-visible fixture observation and an explicit hash-bound native anchor; its endpoints and elevation are runtime native inferences, not registered-pixel observations.",
       "A created_route_connector_bridge may resolve a short concealed service stub only between an agent-visible fixture observation and an explicit endpoint of source-grounded pipe geometry created earlier in the same atomic workflow; its final connector offsets and elevation are runtime native inferences.",

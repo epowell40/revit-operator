@@ -1807,3 +1807,105 @@ test("CLI recomputes an evaluator score and emits only the exact passing registe
   assert.ok(failedScore.failure_classifications.includes("mep_pre_apply_geometry_mismatch"));
   assert.equal(fs.existsSync(blockedWorkflowPath), false);
 });
+
+test("registered monochrome route geometry may use an explicitly unscored provisional pipe system", async () => {
+  const input = plumbingInput();
+  input.fixture_id = "registered-unclassified-pipe-v1";
+  input.scope_id = "bounded-monochrome-pipe";
+  input.partial_promotion_policy = "defer_ambiguous_observations";
+  const route = input.observations[0]!;
+  if (route.kind !== "pipe_route") throw new Error("route_setup_failed");
+  route.service = "unclassified";
+  route.system_classification_policy = "unresolved_placeholder";
+  route.pipe_size_policy = "unresolved_placeholder";
+  delete route.pipe_size;
+  route.supported_attributes = ["location", "elevation", "type"];
+  route.attribute_evidence = route.attribute_evidence.filter((entry) =>
+    entry.attribute !== "size" && entry.attribute !== "system");
+  input.observations = [route];
+
+  for (const schemaVersion of [1, 2] as const) {
+    const versioned = structuredClone(input);
+    versioned.schema_version = schemaVersion;
+    assertExistingConditionsContract("registered_mep_observations", versioned);
+    const versionedCompiled = await compileRegisteredMepObservations(versioned);
+    assert.equal(versionedCompiled.compiled_plan.status, "partially_ready");
+  }
+  const compiled = await compileRegisteredMepObservations(input);
+  assert.equal(compiled.compiled_plan.status, "partially_ready");
+  assert.deepEqual(compiled.compiled_plan.provisional_observation_ids, [route.observation_id]);
+  assert.equal(compiled.compiled_plan.actions.length, 1);
+  assert.equal(compiled.compiled_plan.actions[0]?.apply_body?.systemType, "Domestic Cold Water");
+  assert.match(compiled.usage_constraints.join("\n"), /editable native drafting container/i);
+
+  const workflow = buildAtomicMepDraftWorkflowRequest(compiled.compiled_plan);
+  assert.equal(workflow.benchmarkCredit, false);
+  assert.equal(workflow.authorizationBasis, "explicit_unscored_user_direction");
+  assert.deepEqual(workflow.provisionalObservationIds, [route.observation_id]);
+  assert.equal(workflow.operations[0]?.observation_ids[0], route.observation_id);
+  assert.equal(
+    workflow.operations[0]?.provisional_system_classification?.native_system_type_role,
+    "editable_native_drafting_container"
+  );
+
+  for (const schemaVersion of [1, 2] as const) {
+    const missingPartialPolicy = structuredClone(input);
+    missingPartialPolicy.schema_version = schemaVersion;
+    delete missingPartialPolicy.partial_promotion_policy;
+    assert.throws(
+      () => assertExistingConditionsContract("registered_mep_observations", missingPartialPolicy),
+      /invalid_existing_conditions_registered_mep_observations_contract/
+    );
+
+    const claimsSystem = structuredClone(input);
+    claimsSystem.schema_version = schemaVersion;
+    claimsSystem.observations[0]!.supported_attributes.push("system");
+    assert.throws(
+      () => assertExistingConditionsContract("registered_mep_observations", claimsSystem),
+      /invalid_existing_conditions_registered_mep_observations_contract/
+    );
+
+    const connectsToExisting = structuredClone(input);
+    connectsToExisting.schema_version = schemaVersion;
+    Object.assign(connectsToExisting.observations[0]!, { connect_to_existing: true });
+    assert.throws(
+      () => assertExistingConditionsContract("registered_mep_observations", connectsToExisting),
+      /invalid_existing_conditions_registered_mep_observations_contract/
+    );
+
+    const classifiedPlaceholder = structuredClone(input);
+    classifiedPlaceholder.schema_version = schemaVersion;
+    const invalidRoute = classifiedPlaceholder.observations[0]!;
+    if (invalidRoute.kind !== "pipe_route") throw new Error("route_setup_failed");
+    invalidRoute.service = "sanitary";
+    assert.throws(
+      () => assertExistingConditionsContract("registered_mep_observations", classifiedPlaceholder),
+      /invalid_existing_conditions_registered_mep_observations_contract/
+    );
+  }
+});
+
+test("registered monochrome duct geometry may use an explicitly unscored provisional system", async () => {
+  const input = mechanicalInput();
+  input.fixture_id = "registered-unclassified-duct-v1";
+  input.scope_id = "bounded-monochrome-duct";
+  input.partial_promotion_policy = "defer_ambiguous_observations";
+  const route = input.observations[0]!;
+  if (route.kind !== "duct_route") throw new Error("route_setup_failed");
+  route.service = "unclassified";
+  route.system_classification_policy = "unresolved_placeholder";
+  route.supported_attributes = route.supported_attributes.filter((attribute) => attribute !== "system");
+  route.attribute_evidence = route.attribute_evidence.filter((entry) => entry.attribute !== "system");
+  input.observations = [route];
+
+  assertExistingConditionsContract("registered_mep_observations", input);
+  const compiled = await compileRegisteredMepObservations(input);
+  assert.equal(compiled.compiled_plan.status, "partially_ready");
+  assert.deepEqual(compiled.compiled_plan.provisional_observation_ids, [route.observation_id]);
+  assert.equal(compiled.compiled_plan.actions.length, 1);
+  assert.equal(compiled.compiled_plan.actions[0]?.apply_body?.systemType, "Outside Air");
+  assert.equal(
+    compiled.compiled_plan.actions[0]?.provisional_system_classification?.benchmark_credit,
+    false
+  );
+});

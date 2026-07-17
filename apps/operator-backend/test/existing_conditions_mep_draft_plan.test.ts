@@ -2726,3 +2726,189 @@ test("light fixtures use the lighting category, work-plane placement, plan tags,
   assert.equal(tag?.apply_body?.viewId, 778);
   assert.deepEqual(tag?.deferred_body?.tag_element, { created_by_action: "place:light-random-67", output: "created" });
 });
+
+test("explicit iterative drafting emits clear unclassified pipe and duct geometry as unscored provisional systems", () => {
+  const input: MepDraftPackage = {
+    schema_version: 1,
+    fixture_id: "black-white-provisional-routes-v1",
+    scope_id: "bounded-monochrome-routes",
+    source_evidence_sha256: SOURCE_HASH,
+    visible_evidence: visibleEvidence(),
+    native_element_references: nativeReferences(),
+    registration: registration(),
+    level_name: "Benchmark L3",
+    level_elevation_ft: 30,
+    partial_promotion_policy: "defer_ambiguous_observations",
+    observations: [
+      {
+        kind: "pipe_route",
+        observation_id: "unclassified-pipe-geometry-1",
+        discipline: "plumbing",
+        service: "unclassified",
+        system_classification_policy: "unresolved_placeholder",
+        visibility: "clear",
+        confidence: 0.96,
+        supported_attributes: ["location", "elevation", "type"],
+        attribute_provenance: [
+          { attribute: "location", basis: "source_observation", reference: "clear monochrome route centerline" },
+          { attribute: "elevation", basis: "declared_heuristic", reference: "plan does not expose elevation; route placed at 10 feet above level" },
+          { attribute: "type", basis: "native_model_precedent", reference: "loaded project drafting pipe type" }
+        ],
+        points: [{ x: 1, y: 1 }, { x: 6, y: 1 }, { x: 6, y: 4 }],
+        pipe_size_policy: "unresolved_placeholder",
+        pipe_type: "Generic Pipe",
+        system_type: "Domestic Cold Water",
+        elevation_ft: 10
+      },
+      {
+        kind: "duct_route",
+        observation_id: "unclassified-duct-geometry-1",
+        discipline: "mechanical",
+        service: "unclassified",
+        system_classification_policy: "unresolved_placeholder",
+        visibility: "clear",
+        confidence: 0.95,
+        supported_attributes: ["location", "size", "elevation", "type"],
+        attribute_provenance: [
+          { attribute: "location", basis: "source_observation", reference: "clear monochrome double-line route" },
+          { attribute: "size", basis: "source_observation", reference: "legible 8 inch route label" },
+          { attribute: "elevation", basis: "declared_heuristic", reference: "plan does not expose elevation; route placed at 10 feet above level" },
+          { attribute: "type", basis: "native_model_precedent", reference: "loaded round project duct type" }
+        ],
+        points: [{ x: 2, y: 2 }, { x: 2, y: 8 }],
+        duct_size: "8 inch",
+        duct_type: "Round",
+        system_type: "Supply Air",
+        elevation_ft: 10
+      }
+    ]
+  };
+
+  const plan = compileMepDraftPlan(input);
+  assert.equal(plan.status, "partially_ready");
+  assert.deepEqual(plan.provisional_observation_ids, [
+    "unclassified-pipe-geometry-1",
+    "unclassified-duct-geometry-1"
+  ]);
+  assert.deepEqual(plan.promoted_observation_ids, [
+    "unclassified-pipe-geometry-1",
+    "unclassified-duct-geometry-1"
+  ]);
+  assert.equal(plan.deferred_observation_ids.length, 0);
+  assert.equal(plan.actions.length, 2);
+  assert.equal(plan.actions[0]?.apply_body?.systemType, "Domestic Cold Water");
+  assert.equal(plan.actions[1]?.apply_body?.systemType, "Supply Air");
+  for (const action of plan.actions) {
+    assert.deepEqual(action.provisional_system_classification, {
+      policy: "unresolved_placeholder",
+      native_system_type_role: "editable_native_drafting_container",
+      benchmark_credit: false,
+      complete_scope_credit: false
+    });
+  }
+  assert.match(plan.warnings.join("\n"), /editable provisional drafting container/i);
+
+  const workflow = buildAtomicMepDraftWorkflowRequest(plan);
+  assert.equal(workflow.benchmarkCredit, false);
+  assert.equal(workflow.authorizationBasis, "explicit_unscored_user_direction");
+  assert.deepEqual(workflow.provisionalObservationIds, [
+    "unclassified-pipe-geometry-1",
+    "unclassified-duct-geometry-1"
+  ]);
+  assert.deepEqual(workflow.operations.map((operation) => operation.observation_ids), [
+    ["unclassified-pipe-geometry-1"],
+    ["unclassified-duct-geometry-1"]
+  ]);
+  assert.ok(workflow.operations.every((operation) =>
+    operation.provisional_system_classification?.policy === "unresolved_placeholder"));
+});
+
+test("unclassified routes fail closed without explicit provisional policy and cannot prove fixture service", () => {
+  const base: MepDraftPackage = {
+    schema_version: 1,
+    fixture_id: "black-white-provisional-route-negative-v1",
+    scope_id: "bounded-monochrome-route-negative",
+    source_evidence_sha256: SOURCE_HASH,
+    visible_evidence: visibleEvidence(),
+    native_element_references: nativeReferences(),
+    registration: registration(),
+    level_name: "Benchmark L3",
+    level_elevation_ft: 30,
+    partial_promotion_policy: "defer_ambiguous_observations",
+    observations: [{
+      kind: "pipe_route",
+      observation_id: "unclassified-pipe-negative-1",
+      discipline: "plumbing",
+      service: "unclassified",
+      system_classification_policy: "unresolved_placeholder",
+      visibility: "clear",
+      confidence: 0.96,
+      supported_attributes: ["location", "elevation", "type"],
+      points: [{ x: 1, y: 1 }, { x: 6, y: 1 }],
+      pipe_size_policy: "unresolved_placeholder",
+      pipe_type: "Generic Pipe",
+      system_type: "Domestic Cold Water",
+      elevation_ft: 10
+    }]
+  };
+
+  const noPolicy = structuredClone(base);
+  delete noPolicy.partial_promotion_policy;
+  assert.throws(() => compileMepDraftPlan(noPolicy), /unresolved_system_requires_partial_promotion_policy/);
+
+  const claimsSystem = structuredClone(base);
+  claimsSystem.observations[0]!.supported_attributes.push("system");
+  assert.throws(() => compileMepDraftPlan(claimsSystem), /unclassified_route_cannot_claim_system_support/);
+
+  const connectsToExisting = structuredClone(base);
+  const connectingRoute = connectsToExisting.observations[0]!;
+  if (connectingRoute.kind !== "pipe_route") throw new Error("route_setup_failed");
+  Object.assign(connectingRoute, { connect_to_existing: true });
+  assert.throws(() => compileMepDraftPlan(connectsToExisting), /unclassified_route_cannot_connect_to_existing/);
+
+  const classifiedPlaceholder = structuredClone(base);
+  const route = classifiedPlaceholder.observations[0]!;
+  if (route.kind !== "pipe_route") throw new Error("route_setup_failed");
+  route.service = "sanitary";
+  assert.throws(() => compileMepDraftPlan(classifiedPlaceholder), /classified_route_requires_explicit_system/);
+
+  const invalidDuctService = createdRouteHostedTerminalPackage();
+  const invalidDuct = invalidDuctService.observations[0]!;
+  if (invalidDuct.kind !== "duct_route") throw new Error("route_setup_failed");
+  invalidDuct.service = "mystery_air" as never;
+  assert.throws(() => compileMepDraftPlan(invalidDuctService), /duct_service_invalid/);
+
+  const provisionalTerminalTopology = createdRouteHostedTerminalPackage();
+  provisionalTerminalTopology.partial_promotion_policy = "defer_ambiguous_observations";
+  const provisionalDuct = provisionalTerminalTopology.observations[0]!;
+  if (provisionalDuct.kind !== "duct_route") throw new Error("route_setup_failed");
+  provisionalDuct.service = "unclassified";
+  provisionalDuct.system_classification_policy = "unresolved_placeholder";
+  provisionalDuct.supported_attributes = provisionalDuct.supported_attributes.filter(
+    (attribute) => attribute !== "system"
+  );
+  provisionalDuct.attribute_provenance = provisionalDuct.attribute_provenance?.filter(
+    (entry) => entry.attribute !== "system"
+  );
+  assert.throws(
+    () => compileMepDraftPlan(provisionalTerminalTopology),
+    /unclassified_duct_cannot_establish_terminal_topology/
+  );
+
+  const alternateContainer = structuredClone(base);
+  const alternateRoute = alternateContainer.observations[0]!;
+  if (alternateRoute.kind !== "pipe_route") throw new Error("route_setup_failed");
+  alternateRoute.system_type = "Sanitary";
+  assert.notEqual(
+    compileMepDraftPlan(base).input_fingerprint_sha256,
+    compileMepDraftPlan(alternateContainer).input_fingerprint_sha256
+  );
+});
+
+test("MEP draft fingerprints bind iterative promotion policy", () => {
+  const defaultPlan = compileMepDraftPlan(plumbingTopologyPackage());
+  const iterative = plumbingTopologyPackage();
+  iterative.partial_promotion_policy = "defer_ambiguous_observations";
+  const iterativePlan = compileMepDraftPlan(iterative);
+  assert.notEqual(defaultPlan.input_fingerprint_sha256, iterativePlan.input_fingerprint_sha256);
+});
