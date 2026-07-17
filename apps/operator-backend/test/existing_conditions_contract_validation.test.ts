@@ -17,6 +17,11 @@ function validAgentPackage(): Record<string, unknown> {
       requires_exact_coordinates: true
     },
     working_model: { role: "redacted_model", path: "model.rvt", sha256: "a".repeat(64) },
+    registration_artifact: {
+      role: "source_to_model_registration",
+      path: "source_to_model_registration.json",
+      sha256: "c".repeat(64)
+    },
     evidence: [{ role: "source_pdf", path: "source.pdf", sha256: "b".repeat(64), page: 1 }],
     scope: {
       scope_id: "scope",
@@ -71,6 +76,15 @@ test("runtime contract validation accepts an exact reconstruction package", () =
   assert.doesNotThrow(() => assertExistingConditionsContract("agent_package", validAgentPackage()));
 });
 
+test("runtime contract validation rejects an exact reconstruction package without registration evidence", () => {
+  const packageValue = validAgentPackage();
+  packageValue.registration_artifact = null;
+  assert.throws(
+    () => assertExistingConditionsContract("agent_package", packageValue),
+    /invalid_existing_conditions_agent_package_contract/
+  );
+});
+
 test("ground-truth contracts declare whether elevation is actually observable", () => {
   const groundTruth = {
     schema_version: 1,
@@ -99,11 +113,6 @@ test("ground-truth contracts declare whether elevation is actually observable", 
 
 test("runtime contract validation accepts hash-bound registration, approved type-catalog, and derived evidence artifacts", () => {
   const packageValue = validAgentPackage();
-  packageValue.registration_artifact = {
-    role: "source_to_model_registration",
-    path: "source_to_model_registration.json",
-    sha256: "c".repeat(64)
-  };
   packageValue.type_mapping_artifact = {
     role: "approved_type_catalog",
     path: "approved_type_catalog.json",

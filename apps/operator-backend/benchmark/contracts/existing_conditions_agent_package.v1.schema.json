@@ -182,6 +182,7 @@
       "then": {
         "properties": {
           "standards_profile": { "type": "null" },
+          "registration_artifact": { "type": "object" },
           "write_policy": {
             "type": "object",
             "properties": { "require_source_observation_grounding": { "const": true } }
