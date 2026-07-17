@@ -311,44 +311,59 @@ namespace RevitBridge.Logic.Handlers
                 if (frame == null)
                     throw new InvalidOperationException("Failed to derive a raster-consistent frame mapping.");
 
+                var mappingIsSafe = true;
                 if (frame.AspectCorrectionApplied)
                 {
-                    var relativeAspectMismatch = frame.CropAspect > 1e-9
-                        ? Math.Abs(frame.CropAspect - frame.RasterAspect) / frame.CropAspect
-                        : double.PositiveInfinity;
+                    var relativeAspectMismatch = RasterFrameMappingPolicy.GetRelativeAspectMismatch(
+                        frame.CropAspect,
+                        frame.RasterAspect);
                     if (relativeAspectMismatch > 0.01)
                     {
                         var diagnosticSummary = warnings.Count == 0
                             ? ""
                             : $" Diagnostics: {string.Join(" | ", warnings)}";
-                        throw new InvalidOperationException(
+                        var failure =
                             $"Exported raster aspect does not match the requested region crop " +
                             $"(crop={frame.CropAspect:0.000000}, raster={frame.RasterAspect:0.000000}, " +
-                            $"relativeMismatch={relativeAspectMismatch:0.000000}). Refusing to return a misleading pixel/model mapping." +
-                            diagnosticSummary);
+                            $"relativeMismatch={relativeAspectMismatch:0.000000}).";
+                        if (p.includeMapping)
+                        {
+                            throw new InvalidOperationException(
+                                failure + " Refusing to return a misleading pixel/model mapping." + diagnosticSummary);
+                        }
+
+                        mappingIsSafe = false;
+                        warnings.Add(
+                            failure + " Returning the focused raster without pixel/model mapping or a reusable frame id.");
                     }
-                    warnings.Add(
-                        $"export-view-region adjusted the frame X span to match the exported raster aspect (crop={frame.CropAspect:0.000000}, raster={frame.RasterAspect:0.000000}).");
+                    else
+                    {
+                        warnings.Add(
+                            $"export-view-region adjusted the frame X span to match the exported raster aspect (crop={frame.CropAspect:0.000000}, raster={frame.RasterAspect:0.000000}).");
+                    }
                 }
 
-                var stored = new StoredViewFrame
+                if (mappingIsSafe)
                 {
-                    frameId = frameId,
-                    viewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id), // original view id (temp view is deleted)
-                    viewType = view.ViewType.ToString(),
-                    viewName = view.Name,
-                    path = path,
-                    widthPx = widthPx,
-                    heightPx = heightPx,
-                    topLeft = frame.TopLeft,
-                    topRight = frame.TopRight,
-                    bottomLeft = frame.BottomLeft,
-                    createdUtc = DateTime.UtcNow
-                };
-                FrameStore.Put(stored);
+                    var stored = new StoredViewFrame
+                    {
+                        frameId = frameId,
+                        viewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id), // original view id (temp view is deleted)
+                        viewType = view.ViewType.ToString(),
+                        viewName = view.Name,
+                        path = path,
+                        widthPx = widthPx,
+                        heightPx = heightPx,
+                        topLeft = frame.TopLeft,
+                        topRight = frame.TopRight,
+                        bottomLeft = frame.BottomLeft,
+                        createdUtc = DateTime.UtcNow
+                    };
+                    FrameStore.Put(stored);
+                }
 
                 object? mapping = null;
-                if (p.includeMapping)
+                if (p.includeMapping && mappingIsSafe)
                 {
                     mapping = SelectionUtil.BuildRasterAffineMappingPayload(
                         frame,
@@ -357,7 +372,7 @@ namespace RevitBridge.Logic.Handlers
 
                 return Task.FromResult<object>(new
                 {
-                    frameId,
+                    frameId = mappingIsSafe ? frameId : null,
                     viewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
                     viewType = view.ViewType.ToString(),
                     viewName = view.Name,
