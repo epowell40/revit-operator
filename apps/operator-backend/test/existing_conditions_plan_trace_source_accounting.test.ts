@@ -82,6 +82,25 @@ test("normalizes fully accounted trace paths without inventing dashed continuity
   assert.equal(first.accounted_path_count, 2);
   assert.deepEqual(first.disconnected_dash_candidate_ids, ["dashed-route-alpha"]);
   assert.equal(first.source_contract_sha256, second.source_contract_sha256);
+  assert.equal(first.source_geometry_sha256, second.source_geometry_sha256);
+  assert.equal(first.draft_candidate_fingerprint_sha256, second.draft_candidate_fingerprint_sha256);
+  assert.equal(first.draft_candidates.length, 1);
+  assert.deepEqual(first.draft_candidates[0]?.source_paths.map((path) => path.points), [
+    [{ x: 10, y: 20 }, { x: 60, y: 20 }],
+    [{ x: 80, y: 20 }, { x: 115, y: 20 }]
+  ]);
+  assert.equal(first.draft_candidates[0]?.continuity, "disconnected_dashes");
+  assert.equal(first.draft_candidates[0]?.native_write_allowed, false);
+  assert.equal(first.promotion_follow_up_items[0]?.blocks_provisional_plan_draft, false);
+  assert.deepEqual(first.promotion_follow_up_items[0]?.unresolved_attributes, [
+    "service classification",
+    "size",
+    "type",
+    "elevation",
+    "native connectivity",
+    "continuity across source gaps"
+  ]);
+  assert.match(first.promotion_follow_up_items[0]?.question ?? "", /label, line pattern, legend, or focused clarification/i);
   assert.match(first.usage_constraints.join(" "), /continuity across gaps is not inferred/i);
 });
 
@@ -130,6 +149,17 @@ test("preserves callout-only and unresolved source paths without an ignored buck
   assert.equal(result.status, "clarification_required");
   assert.deepEqual(result.callout_only_candidate_ids, ["callout-alpha"]);
   assert.deepEqual(result.unresolved_candidate_ids, ["mixed-alpha"]);
+  assert.equal(result.draft_candidates.length, 0);
+  assert.equal(result.preserved_unresolved_candidates[0]?.candidate_id, "mixed-alpha");
+  assert.deepEqual(result.preserved_unresolved_candidates[0]?.source_paths[0]?.points, [
+    { x: 80, y: 20 },
+    { x: 115, y: 20 }
+  ]);
+  assert.equal(result.preserved_unresolved_candidates[0]?.native_write_allowed, false);
+  assert.equal(result.preserved_unresolved_candidates[0]?.reason, "mixed_symbol_and_route");
+  assert.equal(result.promotion_follow_up_items[0]?.candidate_id, "mixed-alpha");
+  assert.equal(result.promotion_follow_up_items[0]?.blocks_provisional_plan_draft, true);
+  assert.equal(result.promotion_follow_up_items[0]?.source_geometry_status, "preserved_unresolved");
 });
 
 test("junction candidates remain non-writing and may reference only promoted route candidates", () => {
@@ -175,5 +205,75 @@ test("rejects identical geometry extracted into overlapping evidence sets", () =
       ]
     }),
     /duplicate_geometry/
+  );
+});
+
+test("draft candidate fingerprints bind exact source geometry without relying on color", () => {
+  const monochromeReceipt = structuredClone(receipt());
+  monochromeReceipt.extraction_policy = {
+    monochrome_ink: { maximum_luminance: 110, maximum_chroma: 10 },
+    minimum_chroma: 0,
+    minimum_alpha: 240,
+    scope_polygon: null,
+    minimum_component_pixels: 8,
+    simplify_tolerance_px: 1
+  };
+  monochromeReceipt.extraction_policy_sha256 = "c".repeat(64);
+  const monochromeInput = input();
+  monochromeInput.evidence_sets[0]!.extraction_policy_sha256 = monochromeReceipt.extraction_policy_sha256;
+  const monochrome = validatePlanTraceSourceAccountingV1(monochromeInput, context(monochromeReceipt));
+  assert.deepEqual(monochrome.draft_candidates[0]?.source_paths.map((path) => path.points), [
+    [{ x: 10, y: 20 }, { x: 60, y: 20 }],
+    [{ x: 80, y: 20 }, { x: 115, y: 20 }]
+  ]);
+
+  const shiftedReceipt = structuredClone(monochromeReceipt);
+  shiftedReceipt.components[0]!.polylines[0]!.points[1]!.x = 61;
+  shiftedReceipt.components[0]!.polylines[0]!.length_px = 51;
+  const shifted = validatePlanTraceSourceAccountingV1(monochromeInput, context(shiftedReceipt));
+  assert.notEqual(monochrome.source_geometry_sha256, shifted.source_geometry_sha256);
+  assert.notEqual(monochrome.draft_candidate_fingerprint_sha256, shifted.draft_candidate_fingerprint_sha256);
+
+  const widerReceipt = structuredClone(monochromeReceipt);
+  widerReceipt.width_px += 1;
+  const wider = validatePlanTraceSourceAccountingV1(monochromeInput, context(widerReceipt));
+  assert.notEqual(monochrome.source_geometry_sha256, wider.source_geometry_sha256);
+  assert.notEqual(monochrome.draft_candidate_fingerprint_sha256, wider.draft_candidate_fingerprint_sha256);
+});
+
+test("draft candidates reject malformed or colliding extraction geometry before fingerprinting", () => {
+  const nonfinite = receipt();
+  nonfinite.components[0]!.polylines[0]!.points[1]!.x = Number.NaN;
+  assert.throws(
+    () => validatePlanTraceSourceAccountingV1(input(), context(nonfinite)),
+    /point_1_x_must_be_finite/
+  );
+
+  const outOfBounds = receipt();
+  outOfBounds.components[0]!.polylines[0]!.points[1]!.x = outOfBounds.width_px;
+  assert.throws(
+    () => validatePlanTraceSourceAccountingV1(input(), context(outOfBounds)),
+    /polyline_point_out_of_bounds/
+  );
+
+  const duplicateComponent = receipt();
+  duplicateComponent.components.push(structuredClone(duplicateComponent.components[0]!));
+  assert.throws(
+    () => validatePlanTraceSourceAccountingV1(input(), context(duplicateComponent)),
+    /duplicate_path_key/
+  );
+
+  const missingPolylines = receipt();
+  missingPolylines.components[0]!.polylines = [];
+  assert.throws(
+    () => validatePlanTraceSourceAccountingV1(input(), context(missingPolylines)),
+    /component_polylines_invalid/
+  );
+
+  const infiniteDimensions = receipt();
+  infiniteDimensions.width_px = Number.POSITIVE_INFINITY;
+  assert.throws(
+    () => validatePlanTraceSourceAccountingV1(input(), context(infiniteDimensions)),
+    /receipt_dimensions_invalid/
   );
 });

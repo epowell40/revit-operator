@@ -65,6 +65,8 @@ export type PlanTraceSourceAccountingReceiptV1 = {
   source_image_sha256: string;
   coordinate_space: "registered_render_pixels_top_left";
   source_contract_sha256: string;
+  source_geometry_sha256: string;
+  draft_candidate_fingerprint_sha256: string;
   status: "normalized" | "clarification_required";
   native_write_allowed: false;
   candidate_count: number;
@@ -75,7 +77,46 @@ export type PlanTraceSourceAccountingReceiptV1 = {
   junction_candidate_ids: string[];
   accounted_path_count: number;
   available_path_count: number;
+  draft_candidates: PlanTraceDraftCandidateV1[];
+  preserved_unresolved_candidates: PlanTracePreservedUnresolvedCandidateV1[];
+  promotion_follow_up_items: PlanTracePromotionFollowUpV1[];
   usage_constraints: string[];
+};
+
+export type PlanTraceSourcePathGeometryV1 = PlanTracePathReferenceV1 & {
+  points: PlanTracePoint[];
+  length_px: number;
+  closed: boolean;
+};
+
+export type PlanTraceDraftCandidateV1 = {
+  candidate_id: string;
+  discipline: "mechanical" | "plumbing" | "electrical";
+  continuity: "observed_contiguous" | "disconnected_dashes";
+  source_paths: PlanTraceSourcePathGeometryV1[];
+  source_geometry_status: "draftable_route_trace";
+  native_write_allowed: false;
+  native_attributes_pending: string[];
+};
+
+export type PlanTracePreservedUnresolvedCandidateV1 = {
+  candidate_id: string;
+  discipline: "mechanical" | "plumbing" | "electrical";
+  geometry_role: PlanTraceSourceCandidateV1["geometry_role"];
+  reason: "ambiguous_geometry" | "mixed_symbol_and_route" | "clipped_by_scope" | "unknown_role";
+  note: string;
+  source_paths: PlanTraceSourcePathGeometryV1[];
+  source_geometry_status: "preserved_unresolved";
+  native_write_allowed: false;
+};
+
+export type PlanTracePromotionFollowUpV1 = {
+  candidate_id: string;
+  source_geometry_status: "draftable_route_trace" | "preserved_unresolved";
+  blocks_provisional_plan_draft: boolean;
+  blocks_native_promotion: true;
+  unresolved_attributes: string[];
+  question: string;
 };
 
 function clean(value: unknown): string {
@@ -176,9 +217,40 @@ export function validatePlanTraceSourceAccountingV1(
     if (sha256(receipt.extraction_policy_sha256, `plan_trace_source_receipt_${evidenceSetId}_policy_sha256`) !== expectedPolicyHash) {
       throw new Error(`plan_trace_source_extraction_policy_hash_mismatch:${evidenceSetId}`);
     }
-    for (const component of receipt.components) {
+    if (!Number.isSafeInteger(receipt.width_px) || receipt.width_px <= 0
+      || !Number.isSafeInteger(receipt.height_px) || receipt.height_px <= 0) {
+      throw new Error(`plan_trace_source_receipt_dimensions_invalid:${evidenceSetId}`);
+    }
+    if (!Array.isArray(receipt.components)) {
+      throw new Error(`plan_trace_source_receipt_components_invalid:${evidenceSetId}`);
+    }
+    for (const [componentIndex, component] of receipt.components.entries()) {
+      const componentId = requiredText(
+        component.component_id,
+        `plan_trace_source_receipt_${evidenceSetId}_component_${componentIndex}_id`
+      );
+      if (!Array.isArray(component.polylines) || component.polylines.length === 0) {
+        throw new Error(`plan_trace_source_component_polylines_invalid:${evidenceSetId}:${componentId}`);
+      }
       for (const [polylineIndex, polyline] of component.polylines.entries()) {
-        const key = pathKey({ evidence_set_id: evidenceSetId, component_id: component.component_id, polyline_index: polylineIndex });
+        const key = pathKey({ evidence_set_id: evidenceSetId, component_id: componentId, polyline_index: polylineIndex });
+        if (availablePaths.has(key)) throw new Error(`plan_trace_source_duplicate_path_key:${key}`);
+        if (!Array.isArray(polyline.points) || polyline.points.length < 2) {
+          throw new Error(`plan_trace_source_polyline_requires_two_points:${key}`);
+        }
+        for (const [pointIndex, point] of polyline.points.entries()) {
+          const x = finite(point?.x, `plan_trace_source_polyline_${key}_point_${pointIndex}_x`);
+          const y = finite(point?.y, `plan_trace_source_polyline_${key}_point_${pointIndex}_y`);
+          if (x < 0 || x >= receipt.width_px || y < 0 || y >= receipt.height_px) {
+            throw new Error(`plan_trace_source_polyline_point_out_of_bounds:${key}:${pointIndex}`);
+          }
+        }
+        if (finite(polyline.length_px, `plan_trace_source_polyline_${key}_length_px`) <= 0) {
+          throw new Error(`plan_trace_source_polyline_length_must_be_positive:${key}`);
+        }
+        if (typeof polyline.closed !== "boolean") {
+          throw new Error(`plan_trace_source_polyline_closed_must_be_boolean:${key}`);
+        }
         availablePaths.set(key, polyline);
         const geometryKey = normalizedPolylineKey(polyline);
         const owner = geometryOwners.get(geometryKey);
@@ -191,6 +263,26 @@ export function validatePlanTraceSourceAccountingV1(
   if (undeclaredContextIds.length > 0) {
     throw new Error(`plan_trace_source_undeclared_context_evidence_sets:${undeclaredContextIds.sort().join(",")}`);
   }
+  const sourceGeometrySha256 = digest({
+    frames: input.evidence_sets
+      .map((evidence) => {
+        const receipt = contextById.get(evidence.evidence_set_id)!;
+        return {
+          evidence_set_id: evidence.evidence_set_id,
+          width_px: receipt.width_px,
+          height_px: receipt.height_px
+        };
+      })
+      .sort((a, b) => a.evidence_set_id.localeCompare(b.evidence_set_id)),
+    paths: [...availablePaths.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([pathKeyValue, polyline]) => ({
+        path_key: pathKeyValue,
+        points: polyline.points,
+        length_px: polyline.length_px,
+        closed: polyline.closed
+      }))
+  });
 
   if (!Array.isArray(input.candidates) || input.candidates.length === 0) {
     throw new Error("plan_trace_source_candidates_are_required");
@@ -293,12 +385,107 @@ export function validatePlanTraceSourceAccountingV1(
     }
   }
 
+  const pendingNativeAttributes = (
+    discipline: PlanTraceSourceCandidateV1["discipline"],
+    continuity: PlanTraceSourceCandidateV1["continuity"]
+  ): string[] => [
+    ...(discipline === "mechanical"
+      ? ["route medium", "system classification", "size", "type", "elevation"]
+      : discipline === "plumbing"
+        ? ["service classification", "size", "type", "elevation"]
+        : ["conduit service classification", "size", "type", "elevation"]),
+    "native connectivity",
+    ...(continuity === "disconnected_dashes" ? ["continuity across source gaps"] : [])
+  ];
+  const sourcePathGeometry = (
+    candidate: PlanTraceSourceCandidateV1,
+    label: string
+  ): PlanTraceSourcePathGeometryV1[] => candidate.source_paths.map((rawReference, pathIndex) => {
+    const reference = checkedPathReference(rawReference, `${label}_path_${pathIndex}`);
+    const polyline = availablePaths.get(pathKey(reference))!;
+    return {
+      ...reference,
+      points: polyline.points.map((point) => ({ x: point.x, y: point.y })),
+      length_px: polyline.length_px,
+      closed: polyline.closed
+    };
+  });
+  const draftCandidates: PlanTraceDraftCandidateV1[] = promotedCandidateIds
+    .map((candidateId) => candidateById.get(candidateId)!)
+    .sort((a, b) => a.candidate_id.localeCompare(b.candidate_id))
+    .map((candidate) => ({
+      candidate_id: candidate.candidate_id,
+      discipline: candidate.discipline,
+      continuity: candidate.continuity as "observed_contiguous" | "disconnected_dashes",
+      source_paths: sourcePathGeometry(
+        candidate,
+        `plan_trace_source_draft_candidate_${candidate.candidate_id}`
+      ),
+      source_geometry_status: "draftable_route_trace" as const,
+      native_write_allowed: false as const,
+      native_attributes_pending: pendingNativeAttributes(candidate.discipline, candidate.continuity)
+    }));
+  const preservedUnresolvedCandidates: PlanTracePreservedUnresolvedCandidateV1[] = unresolvedCandidateIds
+    .map((candidateId) => candidateById.get(candidateId)!)
+    .sort((a, b) => a.candidate_id.localeCompare(b.candidate_id))
+    .map((candidate) => {
+      if (candidate.disposition.status !== "unresolved") {
+        throw new Error(`plan_trace_source_unresolved_candidate_disposition_drift:${candidate.candidate_id}`);
+      }
+      return {
+        candidate_id: candidate.candidate_id,
+        discipline: candidate.discipline,
+        geometry_role: candidate.geometry_role,
+        reason: candidate.disposition.reason,
+        note: candidate.disposition.note,
+        source_paths: sourcePathGeometry(
+          candidate,
+          `plan_trace_source_preserved_unresolved_${candidate.candidate_id}`
+        ),
+        source_geometry_status: "preserved_unresolved" as const,
+        native_write_allowed: false as const
+      };
+    });
+  const promotionFollowUpItems: PlanTracePromotionFollowUpV1[] = [
+    ...draftCandidates.map((candidate): PlanTracePromotionFollowUpV1 => ({
+      candidate_id: candidate.candidate_id,
+      source_geometry_status: "draftable_route_trace",
+      blocks_provisional_plan_draft: false,
+      blocks_native_promotion: true,
+      unresolved_attributes: candidate.native_attributes_pending,
+      question: candidate.continuity === "disconnected_dashes"
+        ? "Draft the observed fragments as separate provisional plan geometry now; before native promotion, identify the route medium/service from a source label, line pattern, legend, or focused clarification and confirm whether the visible gaps represent continuity."
+        : "Draft the observed route as provisional plan geometry now; before native promotion, identify its route medium/service from a source label, line pattern, legend, or focused clarification."
+    })),
+    ...unresolvedCandidateIds
+      .map((candidateId) => candidateById.get(candidateId)!)
+      .sort((a, b) => a.candidate_id.localeCompare(b.candidate_id))
+      .map((candidate): PlanTracePromotionFollowUpV1 => ({
+        candidate_id: candidate.candidate_id,
+        source_geometry_status: "preserved_unresolved",
+        blocks_provisional_plan_draft: true,
+        blocks_native_promotion: true,
+        unresolved_attributes: ["route geometry role"],
+        question: `Clarify whether this preserved source mark is route centerline geometry before drafting it: ${candidate.disposition.status === "unresolved" ? candidate.disposition.note : "source role unresolved"}.`
+      }))
+  ];
+  const sourceContractSha256 = digest(input);
+  const draftCandidateFingerprintSha256 = digest({
+    source_contract_sha256: sourceContractSha256,
+    source_geometry_sha256: sourceGeometrySha256,
+    draft_candidates: draftCandidates,
+    preserved_unresolved_candidates: preservedUnresolvedCandidates,
+    promotion_follow_up_items: promotionFollowUpItems
+  });
+
   return {
     schema_version: 1,
     scope_id: scopeId,
     source_image_sha256: sourceImageHash,
     coordinate_space: "registered_render_pixels_top_left",
-    source_contract_sha256: digest(input),
+    source_contract_sha256: sourceContractSha256,
+    source_geometry_sha256: sourceGeometrySha256,
+    draft_candidate_fingerprint_sha256: draftCandidateFingerprintSha256,
     status: unresolvedCandidateIds.length > 0 ? "clarification_required" : "normalized",
     native_write_allowed: false,
     candidate_count: input.candidates.length,
@@ -309,8 +496,13 @@ export function validatePlanTraceSourceAccountingV1(
     junction_candidate_ids: [...junctionIds].sort(),
     accounted_path_count: accountedPaths.size,
     available_path_count: availablePaths.size,
+    draft_candidates: draftCandidates,
+    preserved_unresolved_candidates: preservedUnresolvedCandidates,
+    promotion_follow_up_items: promotionFollowUpItems,
     usage_constraints: [
       "This receipt normalizes plan-visible raster traces only and never authorizes a native Revit write.",
+      "Every promoted centerline is retained as hash-bound provisional draft geometry even while native medium, system, size, type, elevation, and connectivity remain follow-up work.",
+      "Every unresolved source mark retains its exact hash-bound source polylines for visual clarification; unresolved geometry is never converted into a route or silently discarded.",
       "Outlined network boundaries are not route centerlines and cannot be promoted without a separate centerline-derivation receipt.",
       "Disconnected dashed segments remain disconnected; continuity across gaps is not inferred.",
       "Junctions are candidates only and do not authorize snapping or native connectivity.",
