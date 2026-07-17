@@ -1686,6 +1686,7 @@ test("electrical hosted symbol can resolve an exact wall inside an exact linked-
   assert.equal(plan.status, "ready");
   assert.equal(plan.actions[0]?.dry_run_body?.hostElementId, 900);
   assert.equal(plan.actions[0]?.dry_run_body?.linkedHostElementId, 901);
+  assert.equal(plan.actions[0]?.dry_run_body?.linkedHostBuiltInCategory, "OST_Walls");
   assert.equal(plan.actions[0]?.dry_run_body?.sourceElementId, 111);
   assert.equal(plan.actions[0]?.dry_run_body?.orientationSourceElementId, 112);
   assert.equal(plan.actions[0]?.dry_run_body?.matchOrientationFromSource, true);
@@ -1700,9 +1701,14 @@ test("electrical hosted symbol can resolve an exact wall inside an exact linked-
   assert.equal(workflow.operations.filter((entry) => entry.path === "/revit/tag-elements").length, 4);
   assert.equal(workflow.maximumCreatedElements, 5);
 
-  const wrongLinkedCategory = structuredClone(input);
-  wrongLinkedCategory.native_element_references.find((entry) => entry.reference_key === "linked-wall")!.category = "OST_Ceilings";
-  assert.throws(() => compileMepDraftPlan(wrongLinkedCategory), /linked_host_reference_category_mismatch/);
+  const linkedCasework = structuredClone(input);
+  linkedCasework.native_element_references.find((entry) => entry.reference_key === "linked-wall")!.category = "OST_Casework";
+  const linkedCaseworkPlan = compileMepDraftPlan(linkedCasework);
+  assert.equal(linkedCaseworkPlan.actions[0]?.dry_run_body?.linkedHostBuiltInCategory, "OST_Casework");
+
+  const nestedLink = structuredClone(input);
+  nestedLink.native_element_references.find((entry) => entry.reference_key === "linked-wall")!.category = "OST_RvtLinks";
+  assert.throws(() => compileMepDraftPlan(nestedLink), /linked_host_reference_must_resolve_inside_link/);
 
   const wrongMetadataCategory = structuredClone(input);
   wrongMetadataCategory.native_element_references.find((entry) => entry.reference_key === "receptacle-source")!.category = "OST_MechanicalEquipment";
@@ -1721,7 +1727,7 @@ test("electrical hosted symbol can resolve an exact wall inside an exact linked-
   if (!missingExactLinkedWallDevice || missingExactLinkedWallDevice.kind !== "electrical_device"
     || missingExactLinkedWallDevice.placement.mode !== "hosted_family_symbol") throw new Error("test_setup_failed");
   delete missingExactLinkedWallDevice.placement.linked_host_reference_key;
-  assert.throws(() => compileMepDraftPlan(missingExactLinkedWall), /revit_link_host_requires_exact_linked_wall_reference/);
+  assert.throws(() => compileMepDraftPlan(missingExactLinkedWall), /revit_link_host_requires_exact_linked_element_reference/);
 });
 
 test("electrical equipment retains its native category and can participate in a factual circuit", () => {

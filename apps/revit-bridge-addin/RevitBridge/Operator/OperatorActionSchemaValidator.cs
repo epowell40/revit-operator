@@ -6230,10 +6230,20 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalString(obj.Value, "symbolName", maxLen: 128, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "levelName", maxLen: 128, out error)) return false;
                 if (!ValidateRequiredLong(obj.Value, "hostElementId", out error)) return false;
+                if (!ValidateOptionalLong(obj.Value, "linkedHostElementId", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "linkedHostBuiltInCategory", maxLen: 128, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "roomId", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "roomNumber", maxLen: 64, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "roomSide", maxLen: 16, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "referenceElementId", out error)) return false;
+                if (!ValidateOptionalNumberArray(obj.Value, "pointXyz", maxCount: 3, out error)) return false;
+                if (obj.Value.TryGetProperty("pointXyz", out var pointXyz) &&
+                    pointXyz.ValueKind != JsonValueKind.Null &&
+                    pointXyz.GetArrayLength() != 3)
+                {
+                    error = "pointXyz must have exactly 3 numbers.";
+                    return false;
+                }
                 if (!ValidateOptionalNumber(obj.Value, "alongHostOffsetFt", out error)) return false;
                 if (!ValidateOptionalNumber(obj.Value, "targetChainageFt", out error)) return false;
                 if (!ValidateOptionalNumber(obj.Value, "targetNormalizedChainage", out error)) return false;
@@ -8998,9 +9008,12 @@ namespace RevitBridge.Operator
                     error = $"{name} too large.";
                     return false;
                 }
-                if (el.ValueKind != JsonValueKind.Number)
+                if (el.ValueKind != JsonValueKind.Number ||
+                    !el.TryGetDouble(out var value) ||
+                    double.IsNaN(value) ||
+                    double.IsInfinity(value))
                 {
-                    error = $"{name} must be an array of numbers.";
+                    error = $"{name} must be an array of finite numbers.";
                     return false;
                 }
             }

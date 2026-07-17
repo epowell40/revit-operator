@@ -29,12 +29,17 @@ namespace RevitBridge.Logic.Handlers
             var root = doc.RootElement;
             if (root.ValueKind == JsonValueKind.Array)
             {
-                var values = root.EnumerateArray()
-                    .Select(x => x.ValueKind == JsonValueKind.Number && x.TryGetDouble(out var value) ? (double?)value : null)
-                    .Where(x => x.HasValue)
-                    .Select(x => x!.Value)
-                    .ToArray();
-                return values.Length >= 3 ? values : null;
+                var coordinates = root.EnumerateArray().ToArray();
+                if (coordinates.Length != 3 ||
+                    coordinates.Any(x =>
+                        x.ValueKind != JsonValueKind.Number ||
+                        !x.TryGetDouble(out var value) ||
+                        !IsFinite(value)))
+                {
+                    throw new JsonException("XYZ coordinates must contain exactly three finite numbers.");
+                }
+
+                return coordinates.Select(x => x.GetDouble()).ToArray();
             }
 
             if (root.ValueKind == JsonValueKind.Object &&
@@ -45,7 +50,8 @@ namespace RevitBridge.Logic.Handlers
                 return new[] { x, y, z };
             }
 
-            return null;
+            throw new JsonException(
+                "XYZ coordinates must be an array of exactly three finite numbers or an object with finite x, y, and z numbers.");
         }
 
         public override void Write(Utf8JsonWriter writer, double[]? value, JsonSerializerOptions options)
@@ -66,8 +72,11 @@ namespace RevitBridge.Logic.Handlers
             value = 0;
             if (!root.TryGetProperty(name, out var property) || property.ValueKind != JsonValueKind.Number)
                 return false;
-            return property.TryGetDouble(out value);
+            return property.TryGetDouble(out value) && IsFinite(value);
         }
+
+        private static bool IsFinite(double value) =>
+            !double.IsNaN(value) && !double.IsInfinity(value);
     }
 
     internal sealed class RoomWallResolution
@@ -833,6 +842,92 @@ namespace RevitBridge.Logic.Handlers
             return resolution;
         }
 
+        internal static RoomWallResolution? ResolveExplicitLinkedHostElement(
+            RevitLinkInstance link,
+            long linkedElementId,
+            XYZ worldPoint,
+            string? expectedBuiltInCategory,
+            List<string> warnings)
+        {
+            if (link == null || linkedElementId <= 0) return null;
+            var linkDoc = link.GetLinkDocument();
+            if (linkDoc == null)
+            {
+                warnings.Add($"Explicit linked host {linkedElementId} could not be resolved because link {ElementIdCompat.GetValue(link.Id)} is unloaded.");
+                return null;
+            }
+
+            var linkedElement = linkDoc.GetElement(ElementIdCompat.Create(linkedElementId));
+            if (linkedElement == null)
+            {
+                warnings.Add($"Explicit linked host element {linkedElementId} is missing.");
+                return null;
+            }
+
+            var actualBuiltInCategory = linkedElement.Category?.BuiltInCategory.ToString();
+            var actualCategoryName = linkedElement.Category?.Name;
+            if (!string.IsNullOrWhiteSpace(expectedBuiltInCategory) &&
+                !string.Equals(expectedBuiltInCategory.Trim(), actualBuiltInCategory, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(expectedBuiltInCategory.Trim(), actualCategoryName, StringComparison.OrdinalIgnoreCase))
+            {
+                warnings.Add(
+                    $"Explicit linked host element {linkedElementId} category mismatch: " +
+                    $"expected '{expectedBuiltInCategory.Trim()}', actual '{actualBuiltInCategory ?? actualCategoryName ?? "unknown"}'.");
+                return null;
+            }
+
+            if (linkedElement is Wall)
+            {
+                return ResolveExplicitLinkedWallHost(link, linkedElementId, worldPoint, warnings);
+            }
+
+            if (string.IsNullOrWhiteSpace(expectedBuiltInCategory))
+            {
+                warnings.Add($"Explicit linked non-wall host {linkedElementId} requires linkedHostBuiltInCategory.");
+                return null;
+            }
+            if (linkedElement.Category == null || linkedElement.Category.CategoryType != CategoryType.Model)
+            {
+                warnings.Add($"Explicit linked host element {linkedElementId} is not a model-category element.");
+                return null;
+            }
+
+            Transform linkTransform;
+            try { linkTransform = link.GetTotalTransform(); }
+            catch { linkTransform = link.GetTransform(); }
+            var tangent = XYZ.BasisX;
+            try
+            {
+                var elementTransform = TryGetElementTransform(linkedElement);
+                var candidate = elementTransform == null ? null : linkTransform.OfVector(elementTransform.BasisX);
+                var horizontalCandidate = candidate == null ? null : new XYZ(candidate.X, candidate.Y, 0.0);
+                if (horizontalCandidate == null || horizontalCandidate.GetLength() <= 1e-9)
+                {
+                    candidate = elementTransform == null ? null : linkTransform.OfVector(elementTransform.BasisY);
+                    horizontalCandidate = candidate == null ? null : new XYZ(candidate.X, candidate.Y, 0.0);
+                }
+                if (horizontalCandidate != null && horizontalCandidate.GetLength() > 1e-9)
+                    tangent = horizontalCandidate.Normalize();
+            }
+            catch { }
+
+            return new RoomWallResolution
+            {
+                hostElementId = ElementIdCompat.GetValue(link.Id),
+                boundaryElementId = linkedElementId,
+                linkedElementId = linkedElementId,
+                hostElement = link,
+                boundaryElement = linkedElement,
+                wall = null,
+                boundaryLengthFt = 0.0,
+                midpoint = worldPoint,
+                projectedRoomPoint = worldPoint,
+                tangent = tangent,
+                supportsPlacement = true,
+                faceSidePreferencePoint = worldPoint
+            };
+        }
+
         internal static string? BuildPlacementPreviewSecondaryText(HostLocalFrameData? frame, Element? orientationElement = null)
         {
             if (frame == null) return null;
@@ -1414,6 +1509,7 @@ namespace RevitBridge.Logic.Handlers
                 warnings.Add("Linked face placement requires a non-template 3D reference view, but none was available.");
                 return null;
             }
+            var requireVerticalFace = roomWall.boundaryElement is Wall;
 
             if (!LinkedFaceReferenceUtil.TryResolve(
                     host.Document,
@@ -1427,7 +1523,7 @@ namespace RevitBridge.Logic.Handlers
                     searchRadiusFt: 4.0,
                     maximumResolvedDisplacementFt: 1.0,
                     maximumVerticalDisplacementFt: 0.5,
-                    requireVerticalFace: true,
+                    requireVerticalFace: requireVerticalFace,
                     sourceStableReferencePattern: sourceStableReferencePattern,
                     preferredFaceSidePoint: roomWall?.faceSidePreferencePoint) || resolution == null)
             {
@@ -1858,6 +1954,33 @@ namespace RevitBridge.Logic.Handlers
                 {
                     warnings.Add($"Failed to copy parameter '{name}': {ex.Message}");
                 }
+            }
+        }
+
+        internal static bool CopySourceCreatedPhase(Element source, Element target, List<string> warnings)
+        {
+            if (source == null || target == null) return false;
+
+            try
+            {
+                if (!target.ArePhasesModifiable()) return false;
+
+                var sourceCreatedPhaseId = source.CreatedPhaseId;
+                if (sourceCreatedPhaseId == ElementId.InvalidElementId) return false;
+                if (!target.IsPhaseCreatedValid(sourceCreatedPhaseId))
+                {
+                    warnings.Add(
+                        $"Source created phase {ElementIdCompat.GetValue(sourceCreatedPhaseId)} is not valid for the new hosted instance.");
+                    return false;
+                }
+
+                target.CreatedPhaseId = sourceCreatedPhaseId;
+                return target.CreatedPhaseId == sourceCreatedPhaseId;
+            }
+            catch (Exception ex)
+            {
+                warnings.Add($"Failed to copy source created phase: {ex.Message}");
+                return false;
             }
         }
 
@@ -3141,6 +3264,7 @@ namespace RevitBridge.Logic.Handlers
             public string? levelName { get; set; }
             public long hostElementId { get; set; }
             public long? linkedHostElementId { get; set; }
+            public string? linkedHostBuiltInCategory { get; set; }
             public long? roomId { get; set; }
             public string? roomNumber { get; set; }
             public string? roomSide { get; set; }
@@ -3184,14 +3308,16 @@ namespace RevitBridge.Logic.Handlers
                 : sourceElement;
             var symbol = HostedPlacementUtil.ResolveFamilySymbol(doc, p.familySymbolId, p.familyName, p.symbolName, sourceElement)
                 ?? throw new InvalidOperationException("Unable to resolve family symbol. Provide familySymbolId, symbolName, or sourceElementId.");
+            if (p.pointXyz != null && p.pointXyz.Length != 3)
+                throw new InvalidOperationException("pointXyz must contain exactly three numeric coordinates.");
             var previewView = HostedPlacementUtil.ResolveView(doc, uidoc.ActiveView, p.previewViewId) ?? uidoc.ActiveView;
             var warnings = new List<string>();
             var requestedHost = doc.GetElement(ElementIdCompat.Create(p.hostElementId)) ?? throw new InvalidOperationException($"Host element {p.hostElementId} not found.");
             var host = HostedPlacementUtil.ResolveSupportedPlacementHost(doc, previewView, requestedHost, referenceElement ?? sourceElement, p.roomId, p.roomNumber, p.roomSide, warnings, "hosted placement");
             if (host is RevitLinkInstance && (!p.linkedHostElementId.HasValue || p.linkedHostElementId.Value <= 0))
-                throw new InvalidOperationException("A RevitLinkInstance host requires linkedHostElementId for an exact linked wall; arbitrary linked-face fallback is not permitted.");
+                throw new InvalidOperationException("A RevitLinkInstance host requires linkedHostElementId for an exact linked model element; arbitrary linked-face fallback is not permitted.");
             var level = HostedPlacementUtil.ResolveLevel(doc, p.levelName, sourceElement, host) ?? throw new InvalidOperationException("Unable to resolve level.");
-            var basePoint = (p.pointXyz != null && p.pointXyz.Length >= 3)
+            var basePoint = p.pointXyz != null
                 ? new XYZ(p.pointXyz[0], p.pointXyz[1], p.pointXyz[2])
                 : HostedPlacementUtil.TryGetElementPoint(referenceElement) ?? HostedPlacementUtil.TryGetElementPoint(host) ?? XYZ.Zero;
 
@@ -3200,12 +3326,27 @@ namespace RevitBridge.Logic.Handlers
             {
                 if (host is not RevitLinkInstance explicitLink)
                     throw new InvalidOperationException("linkedHostElementId requires hostElementId to identify a RevitLinkInstance.");
-                roomWall = HostedPlacementUtil.ResolveExplicitLinkedWallHost(explicitLink, p.linkedHostElementId.Value, basePoint, warnings)
-                    ?? throw new InvalidOperationException($"Explicit linked wall {p.linkedHostElementId.Value} could not be resolved for hosted placement.");
+                roomWall = HostedPlacementUtil.ResolveExplicitLinkedHostElement(
+                    explicitLink,
+                    p.linkedHostElementId.Value,
+                    basePoint,
+                    p.linkedHostBuiltInCategory,
+                    warnings);
+                if (roomWall == null)
+                {
+                    var resolutionDetail = warnings.LastOrDefault(value =>
+                        value.StartsWith("Explicit linked", StringComparison.OrdinalIgnoreCase));
+                    throw new InvalidOperationException(
+                        $"Explicit linked host element {p.linkedHostElementId.Value} could not be resolved for hosted placement." +
+                        (string.IsNullOrWhiteSpace(resolutionDetail) ? string.Empty : $" Detail: {resolutionDetail}"));
+                }
                 roomWall.faceSidePreferencePoint = basePoint;
-                if (!HostedPlacementUtil.TryProjectPointToRoomWall(roomWall, basePoint, out var projectedExplicitWallPoint, out _, out _, out _))
-                    throw new InvalidOperationException($"Requested point could not be projected onto explicit linked wall {p.linkedHostElementId.Value}.");
-                basePoint = new XYZ(projectedExplicitWallPoint.X, projectedExplicitWallPoint.Y, basePoint.Z);
+                if (roomWall.boundaryElement is Wall)
+                {
+                    if (!HostedPlacementUtil.TryProjectPointToRoomWall(roomWall, basePoint, out var projectedExplicitWallPoint, out _, out _, out _))
+                        throw new InvalidOperationException($"Requested point could not be projected onto explicit linked wall {p.linkedHostElementId.Value}.");
+                    basePoint = new XYZ(projectedExplicitWallPoint.X, projectedExplicitWallPoint.Y, basePoint.Z);
+                }
             }
             else
             {
@@ -3271,9 +3412,20 @@ namespace RevitBridge.Logic.Handlers
             {
                 try
                 {
-                    var orientationBasisX = orientationSourceInstance.GetTransform().BasisX;
-                    if (orientationBasisX != null && orientationBasisX.GetLength() > 1e-9)
-                        preferredFaceReferenceDirection = orientationBasisX;
+                    var orientationTransform = orientationSourceInstance.GetTransform();
+                    var orientationBasis = orientationTransform.BasisX;
+                    var horizontalOrientationBasis = orientationBasis == null
+                        ? null
+                        : new XYZ(orientationBasis.X, orientationBasis.Y, 0.0);
+                    if (horizontalOrientationBasis == null || horizontalOrientationBasis.GetLength() <= 1e-9)
+                    {
+                        orientationBasis = orientationTransform.BasisY;
+                        horizontalOrientationBasis = orientationBasis == null
+                            ? null
+                            : new XYZ(orientationBasis.X, orientationBasis.Y, 0.0);
+                    }
+                    if (horizontalOrientationBasis != null && horizontalOrientationBasis.GetLength() > 1e-9)
+                        preferredFaceReferenceDirection = horizontalOrientationBasis.Normalize();
                 }
                 catch { }
             }
@@ -3300,6 +3452,12 @@ namespace RevitBridge.Logic.Handlers
             var apiPoint = facePlacement?.placementPoint ?? HostedPlacementUtil.ConvertWorldPointForHost(host, finalPoint);
             long createdId = 0;
             long? verifiedCreatedLinkedElementId = null;
+            long? sourceCreatedPhaseId = sourceElement == null
+                ? null
+                : ElementIdCompat.GetValue(sourceElement.CreatedPhaseId);
+            long? verifiedCreatedPhaseId = null;
+            bool? sourceCreatedPhaseMatched = null;
+            var dryRunRollbackVerified = false;
             string? previewPath = null;
             int? previewWidth = null;
             int? previewHeight = null;
@@ -3333,13 +3491,29 @@ namespace RevitBridge.Logic.Handlers
                         ElementIdCompat.GetValue(createdHostFace.LinkedElementId) != p.linkedHostElementId.Value)
                     {
                         throw new InvalidOperationException(
-                            $"Created instance did not retain explicit linked wall host {p.linkedHostElementId.Value}."
+                            $"Created instance did not retain explicit linked host element {p.linkedHostElementId.Value}."
                         );
                     }
                     verifiedCreatedLinkedElementId = ElementIdCompat.GetValue(createdHostFace.LinkedElementId);
                 }
                 if (facePlacement != null) HostedPlacementUtil.ApplyResolvedLevelToFaceHostedInstance(created, level, warnings);
-                if (sourceElement != null) HostedPlacementUtil.CopyParameters(sourceElement, created, p.parameterNamesToCopy, warnings);
+                if (sourceElement != null)
+                {
+                    var phaseCopied = HostedPlacementUtil.CopySourceCreatedPhase(sourceElement, created, warnings);
+                    HostedPlacementUtil.CopyParameters(sourceElement, created, p.parameterNamesToCopy, warnings);
+                    doc.Regenerate();
+                    verifiedCreatedPhaseId = ElementIdCompat.GetValue(created.CreatedPhaseId);
+                    sourceCreatedPhaseMatched = sourceCreatedPhaseId == verifiedCreatedPhaseId;
+                    if (sourceCreatedPhaseId.HasValue &&
+                        sourceCreatedPhaseId.Value > 0 &&
+                        created.ArePhasesModifiable() &&
+                        (!phaseCopied || sourceCreatedPhaseMatched != true))
+                    {
+                        throw new InvalidOperationException(
+                            $"Created instance did not retain source created phase {sourceCreatedPhaseId.Value}."
+                        );
+                    }
+                }
                 HostedPlacementUtil.ApplyParameterValuesStrict(created, p.parameterOverrides);
                 var requestedDistributionSystemName = !string.IsNullOrWhiteSpace(p.distributionSystemName)
                     ? p.distributionSystemName
@@ -3429,12 +3603,22 @@ namespace RevitBridge.Logic.Handlers
                     }
 
                     tg.RollBack();
+                    dryRunRollbackVerified = createdId > 0 && doc.GetElement(ElementIdCompat.Create(createdId)) == null;
+                    if (!dryRunRollbackVerified)
+                    {
+                        throw new InvalidOperationException(
+                            $"Dry-run rollback did not remove transient hosted instance {createdId}."
+                        );
+                    }
                 }
 
                 return Task.FromResult<object>(new
                 {
                     status = placementValidation?.valid == false ? "InvalidPreview" : "Planned",
                     dryRun = true,
+                    temporaryElementId = createdId,
+                    transactionGroupRolledBack = true,
+                    rollbackVerified = dryRunRollbackVerified,
                     source = sourceElement == null ? null : new
                     {
                         id = ElementIdCompat.GetValue(sourceElement.Id),
@@ -3454,6 +3638,12 @@ namespace RevitBridge.Logic.Handlers
                         faceDistanceFt = facePlacement.faceDistanceFt,
                         point = HostedPlacementUtil.BuildVector(facePlacement.placementPoint),
                         referenceDirection = HostedPlacementUtil.BuildVector(facePlacement.referenceDirection)
+                    },
+                    phasing = sourceElement == null ? null : new
+                    {
+                        sourceCreatedPhaseId,
+                        verifiedCreatedPhaseId,
+                        sourceCreatedPhaseMatched
                     },
                     hostLocalFrame = HostedPlacementUtil.BuildHostLocalFramePayload(HostedPlacementUtil.BuildHostLocalFrameData(host, roomWall, finalPoint), orientationSource),
                     placementValidation,
@@ -3561,6 +3751,12 @@ namespace RevitBridge.Logic.Handlers
                     faceDistanceFt = facePlacement.faceDistanceFt,
                     point = HostedPlacementUtil.BuildVector(facePlacement.placementPoint),
                     referenceDirection = HostedPlacementUtil.BuildVector(facePlacement.referenceDirection)
+                },
+                phasing = sourceElement == null ? null : new
+                {
+                    sourceCreatedPhaseId,
+                    verifiedCreatedPhaseId,
+                    sourceCreatedPhaseMatched
                 },
                 hostLocalFrame = HostedPlacementUtil.BuildHostLocalFramePayload(HostedPlacementUtil.BuildHostLocalFrameData(host, roomWall, finalPoint), orientationSource),
                 placementValidation,

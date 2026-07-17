@@ -88,7 +88,7 @@ export type MepDraftPlacement =
       /** Exact view-bound annotation tags required to reproduce source-visible labels. */
       annotation_tags?: MepDraftAnnotationTag[];
       host_reference_key: string;
-      /** Exact wall element inside a linked-model host, resolved from a separate hash-bound native reference. */
+      /** Exact model element inside a linked-model host, resolved from a separate hash-bound native reference. */
       linked_host_reference_key?: string;
       host_category: string;
       room_side?: string;
@@ -1916,7 +1916,10 @@ function pointAction(
       copyFacingHandState: false,
       includePreviewImage: true
     };
-    if (linkedHostReference) common.linkedHostElementId = linkedHostReference.element_id;
+    if (linkedHostReference) {
+      common.linkedHostElementId = linkedHostReference.element_id;
+      common.linkedHostBuiltInCategory = linkedHostReference.category;
+    }
     if (metadataSourceReference) {
       common.sourceElementId = metadataSourceReference.element_id;
       common.parameterNamesToCopy = ["Workset"];
@@ -2329,7 +2332,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         }
         if (normalized(hostReference.category) === normalized("OST_RvtLinks")
           && !observation.placement.linked_host_reference_key) {
-          throw new Error(`${observation.observation_id}_revit_link_host_requires_exact_linked_wall_reference`);
+          throw new Error(`${observation.observation_id}_revit_link_host_requires_exact_linked_element_reference`);
         }
         if (observation.placement.linked_host_reference_key) {
           if (normalized(hostReference.category) !== normalized("OST_RvtLinks")) {
@@ -2337,8 +2340,8 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
           }
           const linkedHostReference = nativeReferences.get(observation.placement.linked_host_reference_key);
           if (!linkedHostReference) throw new Error(`${observation.observation_id}_linked_host_reference_unknown`);
-          if (normalized(linkedHostReference.category) !== normalized("OST_Walls")) {
-            throw new Error(`${observation.observation_id}_linked_host_reference_category_mismatch`);
+          if (normalized(linkedHostReference.category) === normalized("OST_RvtLinks")) {
+            throw new Error(`${observation.observation_id}_linked_host_reference_must_resolve_inside_link`);
           }
         }
         if (observation.placement.metadata_source_reference_key) {
