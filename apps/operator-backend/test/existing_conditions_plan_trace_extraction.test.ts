@@ -212,6 +212,8 @@ test("extracts monochrome ink without depending on drawing color", () => {
   assert.equal((receipt.line_style_hypotheses?.[0]?.segment_count ?? 0) >= 3, true);
   assert.equal(Math.abs(receipt.line_style_hypotheses?.[0]?.orientation_degrees ?? 90) <= 1, true);
   assert.equal((receipt.line_style_hypotheses?.[0]?.median_gap_px ?? 0) > 0, true);
+  assert.match(receipt.usage_constraints.join(" "), /color is optional corroboration/i);
+  assert.match(receipt.usage_constraints.join(" "), /clear monochrome geometry.*editable provisional route/i);
   assert.match(receipt.usage_constraints.join(" "), /legend.*required.*classify/i);
   assert.match(receipt.extraction_policy_sha256, /^[a-f0-9]{64}$/);
 });

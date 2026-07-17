@@ -195,6 +195,28 @@ function registeredConduitSizePolicy(
   return observation.conduit_size_policy ?? "explicit_required";
 }
 
+function requiresProvisionalRouteCredit(observation: RegisteredMepPixelObservation): boolean {
+  if (observation.kind !== "pipe_route"
+    && observation.kind !== "duct_route"
+    && observation.kind !== "conduit_route") {
+    return false;
+  }
+  if (observation.attribute_evidence.some((claim) => claim.basis === "declared_heuristic")) {
+    return true;
+  }
+  if (observation.kind === "pipe_route"
+    && registeredPipeSizePolicy(observation) === "unresolved_placeholder") {
+    return true;
+  }
+  if (observation.kind === "conduit_route"
+    && (registeredConduitSizePolicy(observation) === "unresolved_placeholder"
+      || normalized(observation.service) === "unclassified")) {
+    return true;
+  }
+  return (observation.kind === "pipe_route" || observation.kind === "duct_route")
+    && observation.system_classification_policy === "unresolved_placeholder";
+}
+
 function requiredText(value: unknown, label: string): string {
   const result = clean(value);
   if (!result) throw new Error(`${label}_is_required`);
@@ -658,7 +680,26 @@ export async function compileRegisteredMepObservations(
     ...(input.partial_promotion_policy == null ? {} : { partial_promotion_policy: input.partial_promotion_policy }),
     observations: convertedObservations
   };
+  const registeredProvisionalObservationIds = input.observations
+    .filter(requiresProvisionalRouteCredit)
+    .map((observation) => observation.observation_id);
+  if (registeredProvisionalObservationIds.length > 0
+    && input.partial_promotion_policy !== "defer_ambiguous_observations") {
+    throw new Error(`provisional_registered_route_requires_partial_promotion_policy:${registeredProvisionalObservationIds.join(",")}`);
+  }
   const compiledPlan = compileMepDraftPlan(convertedPackage);
+  if (registeredProvisionalObservationIds.length > 0) {
+    compiledPlan.provisional_observation_ids = [...new Set([
+      ...compiledPlan.provisional_observation_ids,
+      ...registeredProvisionalObservationIds
+    ])];
+    if (compiledPlan.status === "ready") {
+      compiledPlan.status = "partially_ready";
+    }
+    compiledPlan.warnings.push(
+      `Registered route assumptions remain explicitly provisional and receive no strict system, topology, elevation, size, or complete-scope credit: ${registeredProvisionalObservationIds.join(", ")}.`
+    );
+  }
   if (sourceCoverageReceipt?.coverage_status === "partial") {
     compiledPlan.ambiguities.push({
       id: "bounded-mep-region-coverage",
@@ -694,6 +735,7 @@ export async function compileRegisteredMepObservations(
     compiled_plan: compiledPlan,
     usage_constraints: [
       "Registered pixels establish bounded plan geometry only; material, system, size, elevation, family, type, host, and service-topology claims remain subject to the existing MEP compiler evidence gates.",
+      "Color is optional corroboration only. Black-and-white labels, line types, legends, geometry, and topology may establish plan geometry; missing color alone never blocks an otherwise supported provisional draft.",
       "A pipe or duct elevation may use declared_heuristic provenance when the plan does not show elevation; it remains an explicit inference in the compiled assumptions and is never represented as source-observed truth.",
       "A pipe route may use pipe_size_policy=unresolved_placeholder only when size is unreadable, omitted from supported source attributes, and omitted from the observation value; Revit's one-inch drafting placeholder is then explicit, non-scored, and not accepted as an engineered size.",
       "A source-unclassified pipe or duct route may use system_classification_policy=unresolved_placeholder only with partial_promotion_policy=defer_ambiguous_observations, no supported system claim, and an existing project-local system type as an editable native drafting container. The route receives no benchmark, complete-scope, or system-classification credit.",

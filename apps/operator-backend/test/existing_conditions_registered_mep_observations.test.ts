@@ -300,6 +300,7 @@ function electricalConduitInput(): RegisteredMepObservationPackage {
   const input = electricalInput();
   input.fixture_id = "registered-electrical-conduit-independent-v1";
   input.scope_id = "unseen-electrical-corridor-delta";
+  input.partial_promotion_policy = "defer_ambiguous_observations";
   input.visible_evidence.push({ role: "native_model_inventory", sha256: "b".repeat(64) });
   input.observations = [{
     kind: "conduit_route",
@@ -331,6 +332,7 @@ function mechanicalInput(): RegisteredMepObservationPackage {
     fixture_id: "registered-mechanical-independent-v1",
     scope_id: "unseen-mechanical-room-gamma",
     discipline: "mechanical",
+    partial_promotion_policy: "defer_ambiguous_observations",
     native_element_references: [],
     observations: [
       {
@@ -459,6 +461,7 @@ test("registered plumbing pixels preserve unreadable sizes and connectorless fix
   if (fixture?.kind !== "plumbing_fixture") throw new Error("fixture_setup_failed");
   delete route.pipe_size;
   route.pipe_size_policy = "unresolved_placeholder";
+  input.partial_promotion_policy = "defer_ambiguous_observations";
   route.supported_attributes = route.supported_attributes.filter((attribute) => attribute !== "size");
   route.attribute_evidence = route.attribute_evidence.filter((entry) => entry.attribute !== "size");
   fixture.service_connection_mode = "plan_proximity";
@@ -469,7 +472,8 @@ test("registered plumbing pixels preserve unreadable sizes and connectorless fix
   }];
 
   const result = await compileRegisteredMepObservations(input);
-  assert.equal(result.compiled_plan.status, "ready");
+  assert.equal(result.compiled_plan.status, "partially_ready");
+  assert.deepEqual(result.compiled_plan.provisional_observation_ids, [route.observation_id]);
   assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.path), [
     "/revit/mep-route-workflow",
     "/revit/place-families"
@@ -529,7 +533,7 @@ test("registered plumbing branch pixels compile an atomic tee from a shared main
 
 test("registered mechanical pixels compile duct routing and equipment placement without plumbing coercion", async () => {
   const result = await compileRegisteredMepObservations(mechanicalInput());
-  assert.equal(result.compiled_plan.status, "ready");
+  assert.equal(result.compiled_plan.status, "partially_ready");
   assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.path), [
     "/revit/mep-route-workflow",
     "/revit/place-families"
@@ -597,7 +601,11 @@ test("registered mechanical hydronic pixels compile exact heating supply and ret
     }
   ];
   const result = await compileRegisteredMepObservations(input);
-  assert.equal(result.compiled_plan.status, "ready");
+  assert.equal(result.compiled_plan.status, "partially_ready");
+  assert.deepEqual(result.compiled_plan.provisional_observation_ids, [
+    "heating-supply-random-51",
+    "heating-return-random-62"
+  ]);
   assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.apply_body?.kind), ["pipe", "pipe"]);
   assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.apply_body?.systemType), [
     "Heating Hot Water Supply",
@@ -609,7 +617,7 @@ test("registered mechanical hydronic pixels compile exact heating supply and ret
 
 test("registered electrical linework compiles a source-grounded native conduit route", async () => {
   const result = await compileRegisteredMepObservations(electricalConduitInput());
-  assert.equal(result.compiled_plan.status, "ready");
+  assert.equal(result.compiled_plan.status, "partially_ready");
   assert.equal(result.compiled_plan.actions.length, 1);
   const route = result.compiled_plan.actions[0];
   assert.equal(route?.path, "/revit/mep-route-workflow");
@@ -684,13 +692,17 @@ test("unclassified conduit can preserve plan geometry with a non-scored size pla
   route.attribute_evidence = route.attribute_evidence.filter((claim) => !["size", "system"].includes(claim.attribute));
 
   const result = await compileRegisteredMepObservations(input);
-  assert.equal(result.compiled_plan.status, "ready");
+  assert.equal(result.compiled_plan.status, "partially_ready");
+  assert.deepEqual(result.compiled_plan.provisional_observation_ids, [route.observation_id]);
   assert.equal(result.compiled_plan.actions.length, 1);
   assert.equal(result.compiled_plan.actions[0]?.apply_body?.sizePolicy, "placeholder_allowed");
   assert.equal(result.compiled_plan.actions[0]?.apply_body?.diameter, undefined);
   assert.match(result.compiled_plan.plan_elements[0]?.assumptions.join("\n") ?? "", /one-inch drafting placeholder/);
   assert.match(result.compiled_plan.warnings.join("\n"), /size receives no source-evidence credit/);
   assert.match(result.usage_constraints.join("\n"), /cannot establish feeder, panel, or circuit meaning/);
+  const workflow = buildAtomicMepDraftWorkflowRequest(result.compiled_plan);
+  assert.equal(workflow.benchmarkCredit, false);
+  assert.equal(workflow.authorizationBasis, "explicit_unscored_user_direction");
 });
 
 test("registered air terminal pixels can target an explicit segment of a newly drafted duct route", async () => {
@@ -722,7 +734,7 @@ test("registered air terminal pixels can target an explicit segment of a newly d
     }
   });
   const result = await compileRegisteredMepObservations(input);
-  assert.equal(result.compiled_plan.status, "ready");
+  assert.equal(result.compiled_plan.status, "partially_ready");
   const terminalAction = result.compiled_plan.actions[2]!;
   assert.equal(terminalAction.action_key, "place:supply-grille-random-41");
   assert.deepEqual(terminalAction.depends_on, ["route:outside-air-route-random-63"]);
@@ -771,7 +783,7 @@ test("registered air terminal branch pixels compile a tee branch and terminal co
     }
   });
   const result = await compileRegisteredMepObservations(input);
-  assert.equal(result.compiled_plan.status, "ready");
+  assert.equal(result.compiled_plan.status, "partially_ready");
   assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.action_key), [
     "route:outside-air-route-random-63",
     "place:hru-random-28",
@@ -906,6 +918,7 @@ test("registered fixture pixels compose with a concealed bridge to a created rou
 
 test("registered downstream vent pixels compile to tee creation plus exact native fixture audit", async () => {
   const input = plumbingInput();
+  input.partial_promotion_policy = "defer_ambiguous_observations";
   const nativeHash = "c".repeat(64);
   input.visible_evidence.push({ role: "native_model_inventory", sha256: nativeHash });
   input.native_element_references = [
@@ -953,7 +966,7 @@ test("registered downstream vent pixels compile to tee creation plus exact nativ
   }];
 
   const result = await compileRegisteredMepObservations(input);
-  assert.equal(result.compiled_plan.status, "ready");
+  assert.equal(result.compiled_plan.status, "partially_ready");
   assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.path), [
     "/revit/connect-mep-branch",
     "/revit/audit-plumbing-fixture-services"
@@ -968,6 +981,7 @@ test("registered downstream vent pixels compile to tee creation plus exact nativ
 
 test("registered downstream vent pixels can reference a sanitary route drafted in the same workflow", async () => {
   const input = plumbingInput();
+  input.partial_promotion_policy = "defer_ambiguous_observations";
   const nativeHash = "c".repeat(64);
   input.visible_evidence.push({ role: "native_model_inventory", sha256: nativeHash });
   input.observations = [
@@ -1042,7 +1056,7 @@ test("registered downstream vent pixels can reference a sanitary route drafted i
   ];
 
   const result = await compileRegisteredMepObservations(input);
-  assert.equal(result.compiled_plan.status, "ready");
+  assert.equal(result.compiled_plan.status, "partially_ready");
   assert.deepEqual(result.compiled_plan.actions.map((entry) => entry.action_key), [
     "route:sanitary-route-visible-14",
     "place:water-closet-visible-27",
@@ -1076,6 +1090,7 @@ test("registered downstream vent pixels can reference a sanitary route drafted i
 
 test("a plan-absent pipe elevation may proceed only as an explicit declared heuristic", async () => {
   const input = plumbingInput();
+  input.partial_promotion_policy = "defer_ambiguous_observations";
   const route = input.observations[0];
   if (route?.kind !== "pipe_route") throw new Error("fixture_setup_failed");
   const elevationClaim = route.attribute_evidence.find((entry) => entry.attribute === "elevation");
@@ -1083,13 +1098,17 @@ test("a plan-absent pipe elevation may proceed only as an explicit declared heur
   elevationClaim.basis = "declared_heuristic";
   elevationClaim.reference = "No elevation is shown in plan; assume 9 feet above L4 as a typical plenum routing height.";
   const result = await compileRegisteredMepObservations(input);
-  assert.equal(result.compiled_plan.status, "ready");
+  assert.equal(result.compiled_plan.status, "partially_ready");
+  assert.deepEqual(result.compiled_plan.provisional_observation_ids, [route.observation_id]);
   assert.deepEqual(result.compiled_plan.plan_elements[0]?.assumptions, [
     "elevation inferred by declared heuristic: No elevation is shown in plan; assume 9 feet above L4 as a typical plenum routing height."
   ]);
   assert.match(result.compiled_plan.warnings.join("\n"), /declared heuristic/);
   const convertedRoute = result.converted_package.observations[0];
   assert.equal(convertedRoute?.attribute_provenance?.find((entry) => entry.attribute === "elevation")?.basis, "declared_heuristic");
+  const workflow = buildAtomicMepDraftWorkflowRequest(result.compiled_plan);
+  assert.equal(workflow.benchmarkCredit, false);
+  assert.equal(workflow.authorizationBasis, "explicit_unscored_user_direction");
 });
 
 test("declared heuristics cannot invent pipe size, type, or system", async () => {
@@ -1836,6 +1855,7 @@ test("registered monochrome route geometry may use an explicitly unscored provis
   assert.deepEqual(compiled.compiled_plan.provisional_observation_ids, [route.observation_id]);
   assert.equal(compiled.compiled_plan.actions.length, 1);
   assert.equal(compiled.compiled_plan.actions[0]?.apply_body?.systemType, "Domestic Cold Water");
+  assert.match(compiled.usage_constraints.join("\n"), /missing color alone never blocks/i);
   assert.match(compiled.usage_constraints.join("\n"), /editable native drafting container/i);
 
   const workflow = buildAtomicMepDraftWorkflowRequest(compiled.compiled_plan);

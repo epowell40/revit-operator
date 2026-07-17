@@ -38,6 +38,13 @@ Reconstruct a bounded portion of missing existing-condition work from plotted PD
 9. **Repair** only an evidenced defect. Dry-run each repair and repeat native plus visual verification. Stop after the package repair budget.
 10. **Complete or block** with exact element IDs, hashes, assumptions, metrics, and unresolved facts. Never claim engineered electrical/plumbing/HVAC adequacy from geometric reconstruction alone.
 
+## Monochrome and iterative drafting policy
+
+- Treat color as optional corroboration. Black-and-white labels, line types, legends, geometry, and topology are valid evidence; missing color by itself is never a stop condition.
+- When plan geometry is clear but service, size, type, or elevation is unresolved, preserve the clear geometry as an editable provisional route when the compiler permits it. Use an explicit non-scored placeholder, record the assumption, and withhold classification or engineered-design credit.
+- Complete every independent, source-supported item in the bounded scope. Keep ambiguous or occluded candidates visible in the coverage receipt and ask one focused clarification later; do not abandon the supported majority because the remainder is uncertain.
+- Prefer a useful native draft that can be corrected quickly over no draft. Strict benchmark acceptance remains separate and still requires complete source accounting and the applicable system, topology, host, and circuit evidence.
+
 ## Discipline execution routes
 
 - For bounded repeated plan symbols, use `npm run existing-conditions -- detect-repeated-mep-symbols --input <hash-bound-template-search.json> --out <candidate-receipt.json>`. Give each template a tight `pixel_bounds` around complete model-symbol geometry, an explicit `anchor_point`, and an optional larger `context_bounds` used only to disambiguate repeated linework. Tag text or a type-mark polygon such as a repeated `U2` label is annotation, not fixture geometry, even when it consistently matches and names the intended family type. The detector verifies source bytes/dimensions, enforces search/work/match caps, returns individual source-only candidates with `native_write_allowed:false`, and never treats adjacent text as family/type, host, circuit, or connectivity authority. A successful repeated-template result is not arbitrary symbol recognition.
@@ -58,7 +65,7 @@ Reconstruct a bounded portion of missing existing-condition work from plotted PD
 - Visible-evidence hash differs from the package.
 - The active model is not the exact redacted model.
 - Any required architectural or discipline background link is unresolved, unloaded, or absent from the live view or exported test PDF.
-- Required PDF mapping, model bounds, family/type, system, elevation, host, or circuit is materially ambiguous.
+- Required PDF mapping or model bounds is materially ambiguous, or a family/type, system, elevation, host, or circuit ambiguity prevents safe geometry and cannot use an explicitly provisional compiler policy.
 - Dry-run changes categories, elements, or bounds outside the package.
 - Native readback is missing or a requested physical/circuit relationship cannot be proven.
 - The repair budget is exhausted.

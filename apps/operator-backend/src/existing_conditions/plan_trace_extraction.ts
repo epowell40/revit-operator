@@ -1021,7 +1021,8 @@ export function extractPlanTracesFromPixels(
       "Extracted polylines represent only raster pixels satisfying the declared RGB, sampled RGB, or monochrome-ink selector together with the scope and component policy.",
       "Polyline segmentation is an image-processing artifact and must not be treated as native Revit element segmentation.",
       "Color extraction does not establish discipline, system classification, size, elevation, family, type, connectivity, or venting topology.",
-      "Ambiguous, occluded, monochrome, or out-of-scope routes remain unresolved unless supported by separate source-visible evidence.",
+      "Color is optional corroboration only. Monochrome labels, line style, a drawing legend, geometry, and topology may support route drafting without color.",
+      "Ambiguous, occluded, or out-of-scope routes remain unresolved. Clear monochrome geometry may proceed as an editable provisional route when service, size, or type is not source-supported.",
       ...(lineStyleAnalysis ? [
         "Dashed-candidate hypotheses describe repeated collinear raster fragments only; they do not merge gaps into route geometry or assign a system.",
         "A legend, adjacent label, or explicit user direction is required before a dashed-candidate line style can classify the drafted route."
