@@ -268,7 +268,7 @@ test("candidate-visible room scope rejects adjacent geometry and replaces overbr
         } as any]
       }
     }),
-    /candidate_visible_route_outside_spatial_scope:adjacent-room-route/
+    /candidate_visible_route_outside_spatial_scope:adjacent-room-route:zero_intersection:source_uv_bounds=0\.6500,0\.5500,0\.9000,0\.5500:authoritative_scope_uv_bounds=0\.0000,0\.0000,0\.5000,1\.0000:reobserve_source_geometry_do_not_translate_to_fit/
   );
   const boundedResult = await compileCandidateVisibleMepReconstruction({
       source_pdf_path: sourcePdfPath,

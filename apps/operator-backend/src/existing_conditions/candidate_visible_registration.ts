@@ -448,9 +448,20 @@ function clipPolylineToPolygon(
 function clipCandidateVisibleRoutesToScope(
   payload: CandidateVisibleMepPlannerPayload,
   polygon: ExistingConditionsPlanPoint[],
+  renderWidthPx: number,
+  renderHeightPx: number,
   clippingBasis?: CandidateVisibleRouteClippingReceipt["clipping_basis"]
 ): CandidateVisibleRouteClippingReceipt[] {
   const receipts: CandidateVisibleRouteClippingReceipt[] = [];
+  const scopeBounds = pointBounds(polygon);
+  const normalizedBounds = (
+    bounds: ReturnType<typeof pointBounds>
+  ): string => [
+    bounds.min.x / renderWidthPx,
+    bounds.min.y / renderHeightPx,
+    bounds.max.x / renderWidthPx,
+    bounds.max.y / renderHeightPx
+  ].map((value) => value.toFixed(4)).join(",");
   payload.observations = payload.observations.map((observation, index) => {
     const raw = observation as unknown as Record<string, unknown>;
     if (raw.kind === "electrical_circuit") return observation;
@@ -470,7 +481,15 @@ function clipCandidateVisibleRoutesToScope(
         return sourcePoints;
       }
       const parts = clipPolylineToPolygon(sourcePoints, polygon);
-      if (parts.length === 0) throw new Error(`${outsideError}:${observationId}`);
+      if (parts.length === 0) {
+        throw new Error(
+          `${outsideError}:${observationId}` +
+          `:zero_intersection` +
+          `:source_uv_bounds=${normalizedBounds(pointBounds(sourcePoints))}` +
+          `:authoritative_scope_uv_bounds=${normalizedBounds(scopeBounds)}` +
+          ":reobserve_source_geometry_do_not_translate_to_fit"
+        );
+      }
       const rankedParts = parts
         .map((part, partIndex) => ({ part, partIndex, length: polylineLength(part) }))
         .sort((left, right) => right.length - left.length || left.partIndex - right.partIndex);
@@ -1256,6 +1275,8 @@ function validateCandidateVisibleSpatialScope(args: {
       sourceObservedClippingReceipts = clipCandidateVisibleRoutesToScope(
         args.payload,
         sourceObservedPolygon,
+        args.render_width_px,
+        args.render_height_px,
         "source_observed_scope_before_local_room_registration"
       );
       const scales = remapCandidateVisiblePayloadFromRoomBounds({
@@ -1338,6 +1359,8 @@ function validateCandidateVisibleSpatialScope(args: {
     ...clipCandidateVisibleRoutesToScope(
       args.payload,
       polygon,
+      args.render_width_px,
+      args.render_height_px,
       localRoomRegistrationFallback
         ? "authoritative_scope_after_registration"
         : undefined
