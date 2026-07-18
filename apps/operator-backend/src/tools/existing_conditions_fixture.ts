@@ -8,10 +8,12 @@ import {
   selectExistingConditionsImageScope,
   validateExistingConditionsImageScopeAgainstVisibleInventory,
   scoreExistingConditionsReconstruction,
+  DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY,
   type ExistingConditionsCandidate,
   type ExistingConditionsGroundTruth,
   type ExistingConditionsImageScopeReceipt,
-  type ExistingConditionsSnapshot
+  type ExistingConditionsSnapshot,
+  type ExistingConditionsScoringPolicy
 } from "../benchmark/existing_conditions_reconstruction.js";
 import {
   advanceExistingConditionsController,
@@ -212,6 +214,84 @@ function optionalDiscipline(): "mechanical" | "plumbing" | "electrical" | "archi
   return value as "mechanical" | "plumbing" | "electrical" | "architectural" | "mixed";
 }
 
+const EXISTING_CONDITIONS_SCORING_POLICY_KEYS = Object.keys(DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY) as Array<keyof ExistingConditionsScoringPolicy>;
+const NON_NEGATIVE_SCORING_POLICY_KEYS = new Set<keyof ExistingConditionsScoringPolicy>([
+  "location_tolerance_ft",
+  "endpoint_tolerance_ft",
+  "rotation_tolerance_degrees",
+  "size_tolerance_ft",
+  "elevation_tolerance_ft"
+]);
+const UNIT_INTERVAL_SCORING_POLICY_KEYS = new Set<keyof ExistingConditionsScoringPolicy>([
+  "project_context_elevation_geometry_weight",
+  "unobserved_elevation_geometry_weight",
+  "minimum_pair_score",
+  "minimum_precision",
+  "minimum_recall",
+  "minimum_connectivity_score",
+  "minimum_architectural_topology_score",
+  "minimum_system_score",
+  "minimum_spatial_score",
+  "minimum_hosting_score",
+  "minimum_electrical_circuit_score"
+]);
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const object = value as Record<string, unknown>;
+  return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`).join(",")}}`;
+}
+
+function existingConditionsScoringPolicyFingerprint(policy: ExistingConditionsScoringPolicy): string {
+  return crypto.createHash("sha256").update(canonicalJson(policy), "utf8").digest("hex");
+}
+
+function parseExistingConditionsScoringPolicy(): ExistingConditionsScoringPolicy {
+  const policyFlagIndex = process.argv.indexOf("--policy");
+  if (policyFlagIndex < 0) return { ...DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY };
+  const raw = String(process.argv[policyFlagIndex + 1] ?? "").trim();
+  if (!raw) throw new Error("--policy must be a JSON object.");
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("--policy must contain valid JSON.");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("--policy must be a JSON object.");
+  }
+
+  const overrides = parsed as Record<string, unknown>;
+  const allowedKeys = new Set<string>(EXISTING_CONDITIONS_SCORING_POLICY_KEYS);
+  for (const key of Object.keys(overrides)) {
+    if (!allowedKeys.has(key)) throw new Error(`--policy contains unknown key: ${key}`);
+    const value = overrides[key];
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      throw new Error(`--policy.${key} must be a finite number.`);
+    }
+    const typedKey = key as keyof ExistingConditionsScoringPolicy;
+    if (NON_NEGATIVE_SCORING_POLICY_KEYS.has(typedKey) && value < 0) {
+      throw new Error(`--policy.${key} must be greater than or equal to 0.`);
+    }
+    if (key === "rotation_tolerance_degrees" && value > 180) {
+      throw new Error("--policy.rotation_tolerance_degrees must be between 0 and 180.");
+    }
+    if (UNIT_INTERVAL_SCORING_POLICY_KEYS.has(typedKey) && (value < 0 || value > 1)) {
+      throw new Error(`--policy.${key} must be between 0 and 1.`);
+    }
+    if (key === "passing_score" && (value < 0 || value > 100)) {
+      throw new Error("--policy.passing_score must be between 0 and 100.");
+    }
+  }
+
+  return {
+    ...DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY,
+    ...overrides
+  } as ExistingConditionsScoringPolicy;
+}
+
 function writeJson(filePath: string, value: unknown): void {
   const resolved = path.resolve(filePath);
   fs.mkdirSync(path.dirname(resolved), { recursive: true });
@@ -296,7 +376,7 @@ function usage(): never {
     "  npm run existing-conditions -- seal-truth --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --ground-truth-model <source.rvt> --deletion-manifest <json> --delete-dry-run <json> --out <truth.json>",
     "  npm run existing-conditions -- evaluator-review-visual --post-capture <image> --post-pdf <pdf> --status <pass|needs_review|fail> --out <receipt.json>",
     "  npm run existing-conditions -- seal-candidate --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --evaluator-visual-receipt <json> --out <candidate.json>",
-    "  npm run existing-conditions -- score --package <agent_package.json> [--truth <truth.json> --candidate <candidate.json> | --evaluator-checks <json> --evaluator-change-receipt <json> --evaluator-access-provenance <json> --constructability <pass|fail> --drawing-legibility <pass|fail>] --out-dir <score-dir>",
+    "  npm run existing-conditions -- score --package <agent_package.json> [--truth <truth.json> --candidate <candidate.json> --policy <json> | --evaluator-checks <json> --evaluator-change-receipt <json> --evaluator-access-provenance <json> --constructability <pass|fail> --drawing-legibility <pass|fail>] --out-dir <score-dir>",
     "  npm run existing-conditions -- seal-engineering-evidence --case <case-definition.json> --native-evidence <evaluator-native-evidence.json> --evaluator-key-file <secret> --out <provenance.json>",
     "  npm run existing-conditions -- collect-gfci-native-evidence --adapter-config <json> --room-contents <json> --parameter-readbacks <json> --out <evaluator-native-evidence.json>",
     "  npm run existing-conditions -- capture-gfci-native-evidence --adapter-config <json> --expected-model <model.rvt> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
@@ -1339,8 +1419,14 @@ function scoreSealedCandidate(): void {
   assertExistingConditionsContract("candidate", candidateValue);
   const truth = truthValue as ExistingConditionsGroundTruth;
   const candidate = candidateValue as ExistingConditionsCandidate;
-  const result = scoreExistingConditionsReconstruction(truth, candidate);
-  writeJson(path.join(outDir, "existing_conditions_score.json"), result);
+  const scoringPolicy = parseExistingConditionsScoringPolicy();
+  const result = scoreExistingConditionsReconstruction(truth, candidate, scoringPolicy);
+  const scoreReceipt = {
+    ...result,
+    scoring_policy: scoringPolicy,
+    scoring_policy_fingerprint_sha256: existingConditionsScoringPolicyFingerprint(scoringPolicy)
+  };
+  writeJson(path.join(outDir, "existing_conditions_score.json"), scoreReceipt);
   const lines = [
     `# Existing conditions reconstruction - ${result.fixture_id}`,
     "",
@@ -1348,6 +1434,7 @@ function scoreSealedCandidate(): void {
     `- Valid run: ${result.valid_run ? "yes" : "no"}`,
     `- Passed: ${result.passed ? "yes" : "no"}`,
     `- Score: ${result.score.toFixed(3)} / 100`,
+    `- Scoring policy SHA-256: ${scoreReceipt.scoring_policy_fingerprint_sha256}`,
     `- Matched: ${result.counts.matched} / ${result.counts.truth}`,
     `- False positives: ${result.counts.false_positive}`,
     "",

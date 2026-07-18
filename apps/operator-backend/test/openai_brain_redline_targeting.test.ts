@@ -14,6 +14,7 @@ import {
   __testOnlyBuildMepRedlineRouteRecoveryResponse,
   __testOnlyBuildPlacementRunState,
   __testOnlyBuildPlacementWorkItem,
+  __testOnlyBuildRegisteredMepWorkflowHandoffResponse,
   __testOnlyBuildSpatialRedlineRefinementBridge,
   __testOnlyBuildSpatialPlacementPreviewPlan,
   __testOnlyExtractResponsesApiOutputText,
@@ -25,9 +26,14 @@ import {
   __testOnlyInferRedlineTargetingProfile,
   __testOnlyIsFastElectricalPlacementRedline,
   __testOnlyNormalizeNativeRevitActionBodiesForRouting,
+  __testOnlyNoteRegisteredMepWorkflow,
+  __testOnlyRecordCandidateVisibleCompileResults,
   __testOnlyRefineAlignmentMarksWithImageMarkCrop,
+  __testOnlyResolveRedlineAlignmentImagePath,
   __testOnlySeedRedlineFrameAlignedHint,
   __testOnlySeedRedlineRawImageMarkHint,
+  __testOnlySetCandidateVisibleCompileContext,
+  __testOnlySeedRedlineViewAlignment,
   __testOnlyShouldPrioritizeHostedPlacementBridge
 } from "../src/brains/openai_brain.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ActionCall, type ChatRequest, type ToolResult } from "../src/contracts.js";
@@ -36,6 +42,306 @@ import { __testOnlyExtractViewAlignmentResponseText } from "../src/redline/view_
 
 const RED_MARK_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAGQAAAAyCAIAAAAlV+npAAAAjklEQVR4nO3QgQmAQAwEwfRfo71oCf6C+CgzpIDLzsmy2T3gS8QKxArECsQKxArECsQKxArECsQKxArECsQKxArECsQKxArECm5iHTPr99bmbcQKxArECsQKxArECsQKxArECsQKxArECsQKxAr+/+GDxArECsQKxArECsQKxArECsQKxArECsQKxArECi60AYGwUqdYywAAAABJRU5ErkJggg==";
+
+test("existing-conditions native handoff restores the exact persisted compiler workflow", () => {
+  const sessionId = `registered-mep-handoff-${Date.now()}`;
+  const fingerprint = "a".repeat(64);
+  const workflow = {
+    inputFingerprintSha256: fingerprint,
+    provisionalObservationIds: ["route-1"],
+    operations: [
+      {
+        action_key: "route:route-1",
+        observation_ids: ["route-1"],
+        path: "/revit/mep-route-workflow",
+        depends_on: [],
+        expected_created_min: 1,
+        expected_created_max: 2,
+        apply_body: { kind: "pipe", apply: true }
+      }
+    ],
+    dryRun: true,
+    verify: true,
+    maximumCreatedElements: 2,
+    benchmarkCredit: false,
+    authorizationBasis: "explicit_unscored_user_direction"
+  } as any;
+  __testOnlyNoteRegisteredMepWorkflow(sessionId, "frame-1", 3960410, workflow);
+  const req = {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    session_id: sessionId,
+    message_id: `${sessionId}:message`,
+    user_text: "Draft the existing conditions from this record drawing."
+  } as ChatRequest;
+
+  const [dryRun] = __testOnlyNormalizeNativeRevitActionBodiesForRouting(
+    [{
+      action_id: "bad-envelope",
+      method: "POST",
+      path: "/revit/existing-conditions-mep-draft-workflow",
+      body: {
+        schema_version: 1,
+        source_frame_id: "frame-1",
+        compiled_plan: {},
+        dryRun: true
+      }
+    }],
+    [],
+    req
+  );
+  assert.deepEqual(dryRun?.body, workflow);
+
+  const [apply] = __testOnlyNormalizeNativeRevitActionBodiesForRouting(
+    [{
+      action_id: "bad-envelope-apply",
+      method: "POST",
+      path: "/revit/existing-conditions-mep-draft-workflow",
+      body: {
+        compiled_plan: {},
+        dryRun: false
+      }
+    }],
+    [{
+      action_id: "verified-dry-run",
+      method: "POST",
+      path: "/revit/existing-conditions-mep-draft-workflow",
+      status: "done",
+      result_json: {
+        inputFingerprintSha256: fingerprint,
+        status: "DryRunReady",
+        dryRun: true,
+        rollbackVerified: true,
+        residualCreatedElementIds: [],
+        error: null
+      }
+    }],
+    req
+  );
+  assert.equal((apply?.body as any)?.dryRun, false);
+  assert.deepEqual((apply?.body as any)?.operations, workflow.operations);
+});
+
+test("registered existing-conditions compiler hands off exact dry-run then exact apply without another model decision", () => {
+  const sessionId = `registered-mep-direct-handoff-${Date.now()}`;
+  const fingerprint = "b".repeat(64);
+  const workflow = {
+    inputFingerprintSha256: fingerprint,
+    provisionalObservationIds: ["route-1"],
+    operations: [
+      {
+        action_key: "route:route-1",
+        observation_ids: ["route-1"],
+        path: "/revit/mep-route-workflow",
+        depends_on: [],
+        expected_created_min: 1,
+        expected_created_max: 1,
+        apply_body: { kind: "pipe", apply: true }
+      }
+    ],
+    dryRun: true,
+    verify: true,
+    maximumCreatedElements: 1,
+    benchmarkCredit: false,
+    authorizationBasis: "explicit_unscored_user_direction"
+  } as any;
+  __testOnlyNoteRegisteredMepWorkflow(sessionId, "frame-direct", 3960410, workflow);
+
+  const dryRun = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, []);
+  assert.ok(dryRun);
+  assert.equal(dryRun.actions[0]?.path, "/revit/existing-conditions-mep-draft-workflow");
+  assert.deepEqual(dryRun.actions[0]?.body, workflow);
+
+  const apply = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, [
+    {
+      action_id: "verified-dry-run",
+      method: "POST",
+      path: "/revit/existing-conditions-mep-draft-workflow",
+      status: "done",
+      result_json: {
+        inputFingerprintSha256: fingerprint,
+        status: "DryRunReady",
+        dryRun: true,
+        rollbackVerified: true,
+        residualCreatedElementIds: [],
+        error: null
+      }
+    }
+  ]);
+  assert.ok(apply);
+  assert.equal((apply.actions[0]?.body as any)?.dryRun, false);
+  assert.deepEqual((apply.actions[0]?.body as any)?.operations, workflow.operations);
+
+  const complete = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, [
+    {
+      action_id: "verified-apply",
+      method: "POST",
+      path: "/revit/existing-conditions-mep-draft-workflow",
+      status: "done",
+      result_json: {
+        inputFingerprintSha256: fingerprint,
+        status: "Applied",
+        dryRun: false,
+        atomic: true,
+        error: null
+      }
+    }
+  ]);
+  assert.ok(complete);
+  assert.deepEqual(complete.actions, []);
+  assert.match(complete.assistant_message, /will not compile or apply a second geometry set/i);
+});
+
+test("registered existing-conditions apply guard is scoped to one user message", () => {
+  const sessionId = `registered-mep-message-scope-${Date.now()}`;
+  const firstFingerprint = "d".repeat(64);
+  const secondFingerprint = "e".repeat(64);
+  const workflowFor = (fingerprint: string) => ({
+    inputFingerprintSha256: fingerprint,
+    provisionalObservationIds: ["route-1"],
+    operations: [
+      {
+        action_key: "route:route-1",
+        observation_ids: ["route-1"],
+        path: "/revit/mep-route-workflow",
+        depends_on: [],
+        expected_created_min: 1,
+        expected_created_max: 1,
+        apply_body: { kind: "pipe", apply: true }
+      }
+    ],
+    dryRun: true,
+    verify: true,
+    maximumCreatedElements: 1,
+    benchmarkCredit: false,
+    authorizationBasis: "explicit_unscored_user_direction"
+  } as any);
+  __testOnlyNoteRegisteredMepWorkflow(
+    sessionId,
+    "frame-first",
+    3960410,
+    workflowFor(firstFingerprint)
+  );
+  const firstApplyReceipt = {
+    action_id: "verified-first-apply",
+    method: "POST" as const,
+    path: "/revit/existing-conditions-mep-draft-workflow",
+    status: "done" as const,
+    result_json: {
+      inputFingerprintSha256: firstFingerprint,
+      status: "Applied",
+      dryRun: false,
+      atomic: true,
+      error: null
+    }
+  };
+  const firstComplete = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(
+    sessionId,
+    [firstApplyReceipt],
+    "message-first",
+    [firstApplyReceipt]
+  );
+  assert.ok(firstComplete);
+  assert.deepEqual(firstComplete.actions, []);
+
+  __testOnlyNoteRegisteredMepWorkflow(
+    sessionId,
+    "frame-second",
+    3960410,
+    workflowFor(secondFingerprint)
+  );
+  const secondDryRun = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(
+    sessionId,
+    [firstApplyReceipt],
+    "message-second",
+    []
+  );
+  assert.ok(secondDryRun);
+  assert.equal(secondDryRun.actions[0]?.path, "/revit/existing-conditions-mep-draft-workflow");
+  assert.equal((secondDryRun.actions[0]?.body as any)?.inputFingerprintSha256, secondFingerprint);
+  assert.equal((secondDryRun.actions[0]?.body as any)?.dryRun, true);
+});
+
+test("registered existing-conditions compiler does not replay a failed matching dry-run", () => {
+  const sessionId = `registered-mep-failed-handoff-${Date.now()}`;
+  const fingerprint = "c".repeat(64);
+  __testOnlyNoteRegisteredMepWorkflow(sessionId, "frame-failed", 3960410, {
+    inputFingerprintSha256: fingerprint,
+    provisionalObservationIds: ["route-1"],
+    operations: [
+      {
+        action_key: "route:route-1",
+        observation_ids: ["route-1"],
+        path: "/revit/mep-route-workflow",
+        depends_on: [],
+        expected_created_min: 1,
+        expected_created_max: 1,
+        apply_body: { kind: "pipe", apply: true }
+      }
+    ],
+    dryRun: true,
+    verify: true,
+    maximumCreatedElements: 1,
+    benchmarkCredit: false,
+    authorizationBasis: "explicit_unscored_user_direction"
+  } as any);
+
+  const response = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, [
+    {
+      action_id: "blocked-dry-run",
+      method: "POST",
+      path: "/revit/existing-conditions-mep-draft-workflow",
+      status: "done",
+      result_json: {
+        inputFingerprintSha256: fingerprint,
+        status: "Blocked",
+        dryRun: true,
+        rollbackVerified: true,
+        residualCreatedElementIds: [],
+        error: "route_failed"
+      }
+    }
+  ]);
+  assert.equal(response, null);
+});
+
+test("registered existing-conditions compiler never hands off a stale workflow after a newer compile guard failure", () => {
+  const sessionId = `registered-mep-stale-after-guard-${Date.now()}`;
+  __testOnlySetCandidateVisibleCompileContext(sessionId, "source.pdf", "registration-context-a");
+  __testOnlyNoteRegisteredMepWorkflow(
+    sessionId,
+    "frame-stale",
+    3960410,
+    {
+      inputFingerprintSha256: "f".repeat(64),
+      provisionalObservationIds: ["stale-route"],
+      operations: [{
+        action_key: "route:stale-route",
+        observation_ids: ["stale-route"],
+        path: "/revit/mep-route-workflow",
+        depends_on: [],
+        expected_created_min: 1,
+        expected_created_max: 1,
+        apply_body: { kind: "pipe", apply: true }
+      }],
+      dryRun: true,
+      verify: true,
+      maximumCreatedElements: 1,
+      benchmarkCredit: false,
+      authorizationBasis: "explicit_unscored_user_direction"
+    } as any,
+    "registration-context-a"
+  );
+  assert.ok(__testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, []));
+
+  __testOnlyRecordCandidateVisibleCompileResults(sessionId, [{
+    index: 1,
+    type: "compile_registered_mep_reconstruction",
+    ok: false,
+    summary: "candidate_visible_route_outside_spatial_scope:new-route"
+  }]);
+
+  assert.equal(__testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, []), null);
+});
 
 test("redline view alignment extracts structured Responses API output", () => {
   const text = __testOnlyExtractViewAlignmentResponseText({
@@ -80,6 +386,72 @@ test("redline alignment crop projection corrects drifting view mark", () => {
   assert.equal(marks[0]?.normalized_x, 0.461995);
   assert.ok(Math.abs((marks[0]?.normalized_y ?? 0) - 0.77312) < 0.00001);
   assert.match(marks[0]?.label ?? "", /projected through matched view crop/);
+});
+
+test("redline auto-align uses the analyzed page preview for a PDF seed", () => {
+  const resolved = __testOnlyResolveRedlineAlignmentImagePath({
+    seedFilePath: "uploads/existing-conditions/P1.01.pdf",
+    workbenchResults: [
+      {
+        index: 0,
+        type: "analyze_redline",
+        ok: true,
+        summary: "analyzed",
+        details: {
+          file_path: "uploads/existing-conditions/P1.01.pdf",
+          vision_artifacts: {
+            annotated_image_path: "artifacts/redline/P1.01_annotated.png",
+            preview_image_path: "artifacts/redline/page_0001.png",
+            crop_image_paths: ["artifacts/redline/P1.01_crop_01.png"]
+          }
+        }
+      }
+    ] as any
+  });
+
+  assert.equal(resolved, "artifacts/redline/page_0001.png");
+});
+
+test("redline auto-align retains the analyzed PDF preview across continuation turns", () => {
+  const sessionId = "persisted-pdf-preview";
+  __testOnlyResolveRedlineAlignmentImagePath({
+    sessionId,
+    seedFilePath: "uploads/existing-conditions/P1.01.pdf",
+    persistedImagePaths: [
+      "artifacts/redline/P1.01_annotated.png",
+      "artifacts/redline/page_0001.png"
+    ]
+  });
+
+  const resolved = __testOnlyResolveRedlineAlignmentImagePath({
+    sessionId,
+    seedFilePath: "uploads/existing-conditions/P1.01.pdf",
+    workbenchResults: []
+  });
+
+  assert.equal(resolved, "artifacts/redline/page_0001.png");
+});
+
+test("redline auto-align keeps a directly attached image instead of an analyzed derivative", () => {
+  const resolved = __testOnlyResolveRedlineAlignmentImagePath({
+    seedFilePath: "uploads/redline.png",
+    workbenchResults: [
+      {
+        index: 0,
+        type: "analyze_redline",
+        ok: true,
+        summary: "analyzed",
+        details: {
+          file_path: "uploads/redline.png",
+          vision_artifacts: {
+            preview_image_path: "artifacts/redline/page_0001.png"
+          }
+        }
+      }
+    ] as any
+  });
+
+  assert.equal(resolved, "uploads/redline.png");
 });
 
 test("redline auto-align can read export-view-frame result path without attachment wrapper", () => {
@@ -718,6 +1090,180 @@ test("native Revit routing repairs common discovery action body aliases", () => 
   assert.deepEqual(normalized[1]?.body, { tool: "/revit/place-family-instance-on-host", path: "/revit/place-family-instance-on-host", method: "POST" });
   assert.equal((normalized[2]?.body as any)?.max, 10);
   assert.equal((normalized[3]?.body as any)?.max, 20);
+});
+
+test("existing-conditions reconstruction stays on the explicit sheet placed view", () => {
+  const actions = __testOnlyNormalizeNativeRevitActionBodiesForRouting(
+    [
+      {
+        action_id: "room-view",
+        method: "POST",
+        path: "/revit/resolve-room-plan-view",
+        body: {
+          roomNumber: "100",
+          preferViewNameContains: "lighting"
+        }
+      },
+      {
+        action_id: "wrong-frame",
+        method: "POST",
+        path: "/revit/export-view-frame",
+        body: {
+          viewId: 6472944,
+          includeMapping: true
+        }
+      },
+      {
+        action_id: "view-list",
+        method: "GET",
+        path: "/revit/views"
+      },
+      {
+        action_id: "sheet-examples",
+        method: "POST",
+        path: "/revit/tool-examples",
+        body: {
+          path: "/revit/sheets",
+          method: "POST"
+        }
+      }
+    ],
+    [
+      {
+        action_id: "sheet-detail",
+        method: "POST",
+        path: "/revit/sheets",
+        status: "done",
+        result_json: {
+          sheetNumber: "P1.01",
+          placedViews: [
+            {
+              viewId: 3960410,
+              name: "LEVEL 01 - BUILDING 200 - NEW WORK - PLUMBING",
+              viewType: "FloorPlan"
+            }
+          ]
+        }
+      }
+    ],
+    {
+      session_id: "existing-conditions-sheet-anchor",
+      user_text:
+        "Using only P1.01_existing_conditions.pdf, recreate the visible plumbing existing conditions in room 100."
+    }
+  );
+
+  assert.deepEqual(
+    actions.map((action) => [action.path, action.body]),
+    [
+      ["/revit/export-view-frame", { viewId: 3960410, imageSize: 2200, includeMapping: true }],
+      ["/revit/export-view-frame", { viewId: 3960410, imageSize: 2200, includeMapping: true }],
+      ["/revit/export-view-frame", { viewId: 3960410, imageSize: 2200, includeMapping: true }],
+      ["/revit/export-view-frame", { viewId: 3960410, imageSize: 2200, includeMapping: true }]
+    ]
+  );
+});
+
+test("verified existing-conditions room scope is not replaced by another identical room-boundary read", () => {
+  const roomResult = {
+    action_id: "room-scope",
+    method: "POST",
+    path: "/revit/linked-room-boundaries",
+    status: "done",
+    result_json: {
+      ok: true,
+      rooms: [{
+        number: "100",
+        sourceScopedId: "ARCH-LINK:100",
+        area: 100,
+        boundaryLoops: [[
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+          { x: 10, y: 10 },
+          { x: 0, y: 10 }
+        ]]
+      }]
+    }
+  } as ToolResult;
+  const [action] = __testOnlyNormalizeNativeRevitActionBodiesForRouting(
+    [{
+      action_id: "generic-fallback",
+      method: "POST",
+      path: "/revit/rank-similar-devices-on-wall",
+      body: { roomNumber: "100" }
+    }],
+    [roomResult],
+    {
+      session_id: "existing-conditions-room-scope-loop-guard",
+      user_text: "Draft existing conditions in room 100 from the attached P1.01 source PDF."
+    }
+  );
+
+  assert.equal(action?.path, "/revit/rank-similar-devices-on-wall");
+});
+
+test("verified existing-conditions alignment advances placed-view discovery to visible inventory", () => {
+  const sessionId = "existing-conditions-aligned-inventory";
+  __testOnlySeedRedlineViewAlignment({
+    sessionId,
+    frameId: "frame-p210",
+    viewId: 3960410,
+    confidence: 0.82,
+    crop: { min_u: 0.2, min_v: 0.15, max_u: 0.8, max_v: 0.85 }
+  });
+
+  const actions = __testOnlyNormalizeNativeRevitActionBodiesForRouting(
+    [
+      {
+        action_id: "generic-view-list",
+        method: "GET",
+        path: "/revit/views"
+      }
+    ],
+    [
+      {
+        action_id: "sheet-detail",
+        method: "POST",
+        path: "/revit/sheets",
+        status: "done",
+        result_json: {
+          sheetNumber: "P1.01",
+          placedViews: [
+            {
+              viewId: 3960410,
+              name: "LEVEL 01 - BUILDING 200 - NEW WORK - PLUMBING",
+              viewType: "FloorPlan"
+            }
+          ]
+        }
+      }
+    ],
+    {
+      session_id: sessionId,
+      user_text:
+        "Using only P1.01_existing_conditions.pdf, recreate the visible plumbing existing conditions in room 100."
+    }
+  );
+
+  assert.equal(actions[0]?.path, "/revit/export-visible-elements");
+  assert.equal(actions[0]?.method, "POST");
+  assert.deepEqual(actions[0]?.body, {
+    viewId: 3960410,
+    imageSize: 2200,
+    includeMapping: true,
+    includeLinked: true,
+    categories: [
+      "OST_Walls",
+      "OST_Doors",
+      "OST_Windows",
+      "OST_Rooms",
+      "OST_MEPSpaces",
+      "OST_RoomTags",
+      "OST_Casework",
+      "OST_PlumbingFixtures"
+    ],
+    limit: 500
+  });
 });
 
 test("redline targeting infers electrical mutation requests as resolve-only model targeting", () => {

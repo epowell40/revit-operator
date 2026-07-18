@@ -54,6 +54,7 @@ namespace RevitBridge.Operator
                 { "/revit/purge-unused", new PurgeUnusedHandler() },
                 { "/revit/transfer-view-templates", new TransferViewTemplatesHandler() },
                 { "/revit/rooms", new RoomHandler() },
+                { "/revit/linked-room-boundaries", new LinkedRoomBoundariesHandler() },
                 { "/revit/renumber-rooms", new RenumberRoomsHandler() },
                 { "/revit/room-contents", new RoomContentsHandler() },
                 { "/revit/spatial-context", new SpatialContextHandler() },

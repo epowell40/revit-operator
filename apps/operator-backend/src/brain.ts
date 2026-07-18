@@ -43,7 +43,8 @@ function textDeclaresExistingConditionsReconstruction(userText: string): boolean
   if (!text) return false;
   return [
     /\bexisting[-\s]+conditions?\s+reconstruction\b/,
-    /\b(?:reconstruct|restore|redraft|re-draft|model)\b.{0,60}\bexisting[-\s]+conditions?\b/,
+    /\b(?:reconstruct|recreate|restore|redraft|re-draft|redraw|re-draw|draft|draw|model)\b.{0,100}\bexisting[-\s]+conditions?\b/,
+    /\bexisting[-\s]+conditions?\b.{0,100}\b(?:from|using|based\s+on)\b.{0,60}\b(?:pdf|drawing|sheet|scan|image)\b/,
     /\bunmarked\s+(?:source\s+)?(?:pdf|drawing|sheet)\b/,
     /\bnot\s+(?:a\s+)?redline\b/
   ].some(pattern => pattern.test(text));

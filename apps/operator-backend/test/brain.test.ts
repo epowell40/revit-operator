@@ -158,6 +158,38 @@ test("explicit existing-conditions reconstruction bypasses the deterministic red
   assert.equal(calls, 0);
 });
 
+test("natural recreate and draft existing-conditions phrasing bypasses the deterministic redline resolver", async () => {
+  const prompts = [
+    "Using only the attached PDF, recreate the source-visible plumbing existing conditions around fixture FIXTURE-A.",
+    "Draft the existing conditions from this record drawing PDF.",
+    "Model the existing conditions based on the attached scanned sheet."
+  ];
+
+  for (const [index, prompt] of prompts.entries()) {
+    let calls = 0;
+    const req = {
+      ...mkReq(prompt),
+      session_id: `existing-conditions-natural-${index}`,
+      user_attachments: [
+        {
+          id: `pdf-${index}`,
+          relative_path: `artifacts/uploads/source-${index}.pdf`,
+          filename: `source-${index}.pdf`,
+          mime: "application/pdf"
+        }
+      ]
+    } satisfies ChatRequest;
+
+    const result = await __testOnlyMaybeRunTopLevelMepRouteRedline(req, async () => {
+      calls += 1;
+      return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: "redline", actions: [] };
+    });
+
+    assert.equal(result, null);
+    assert.equal(calls, 0);
+  }
+});
+
 test("existing-conditions intent persists across empty tool-result continuation turns", async () => {
   const initial = { ...mkReq("Existing conditions reconstruction, not a redline."), session_id: "existing-conditions-continuation" };
   assert.equal(__testOnlyIsExistingConditionsReconstructionRequest(initial), true);
@@ -314,6 +346,37 @@ test("finalizeDecision blocks false done messages for modeled duct redlines with
 
   assert.equal(res.actions.length, 0);
   assert.match(res.assistant_message, /not valid completion/i);
+});
+
+test("finalizeDecision preserves read-only discovery actions for modeled PDF reconstruction", () => {
+  const req = {
+    ...mkReq("Using the attached P1.01.pdf, recreate the visible pipe and fixture existing conditions."),
+    user_attachments: [
+      {
+        id: "pdf-1",
+        relative_path: "artifacts/uploads/P1.01.pdf",
+        filename: "P1.01.pdf",
+        mime: "application/pdf"
+      }
+    ]
+  };
+
+  const res = __testOnlyFinalizeDecision(req, {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    assistant_message: "I created a bounded plan and will inspect sheet P1.01.",
+    actions: [
+      {
+        action_id: "sheet-detail",
+        method: "POST",
+        path: "/revit/sheets",
+        body: { action: "detail", sheetNumber: "P1.01", includeViewportGeometry: true }
+      }
+    ]
+  });
+
+  assert.equal(res.actions.length, 1);
+  assert.equal(res.actions[0]?.path, "/revit/sheets");
+  assert.match(res.assistant_message, /continuing with read-only/i);
 });
 
 test("finalizeDecision allows explicit annotation-only duct notes but labels them as not modeled pickup", () => {

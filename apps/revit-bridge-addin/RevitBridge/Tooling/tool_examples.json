@@ -6743,6 +6743,9 @@
                 }
               }
             ],
+            "targetViewId": 12345,
+            "applyTargetViewPhase": true,
+            "requireAllCreatedElementsVisibleInTargetView": true,
             "dryRun": true,
             "verify": true,
             "maximumCreatedElements": 8

@@ -75,6 +75,9 @@ namespace RevitBridge.Logic.Handlers.MEP
             public bool dryRun { get; set; } = true;
             public bool verify { get; set; } = true;
             public int maximumCreatedElements { get; set; } = 100;
+            public long? targetViewId { get; set; }
+            public bool applyTargetViewPhase { get; set; } = false;
+            public bool requireAllCreatedElementsVisibleInTargetView { get; set; } = false;
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -104,10 +107,30 @@ namespace RevitBridge.Logic.Handlers.MEP
             }
 
             var doc = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active Revit document.");
+            View? targetView = null;
+            Phase? targetViewPhase = null;
+            if (p.targetViewId.HasValue && p.targetViewId.Value > 0)
+            {
+                targetView = doc.GetElement(ElementIdCompat.Create(p.targetViewId.Value)) as View
+                    ?? throw new InvalidOperationException($"target_view_not_found:{p.targetViewId.Value}");
+                var phaseId = targetView.get_Parameter(BuiltInParameter.VIEW_PHASE)?.AsElementId()
+                    ?? ElementId.InvalidElementId;
+                if (phaseId != ElementId.InvalidElementId)
+                    targetViewPhase = doc.GetElement(phaseId) as Phase;
+            }
+            if ((p.applyTargetViewPhase || p.requireAllCreatedElementsVisibleInTargetView) && targetView == null)
+                throw new InvalidOperationException("targetViewId_is_required_for_target_view_acceptance");
+            if (p.applyTargetViewPhase && targetViewPhase == null)
+                throw new InvalidOperationException($"target_view_phase_not_resolved:{p.targetViewId}");
+
             var outputs = new Dictionary<string, OperationOutput>(StringComparer.OrdinalIgnoreCase);
             var receipts = new List<OperationReceipt>();
             OperationReceipt? failedReceipt = null;
             var allCreatedIds = new HashSet<long>();
+            var phaseAdjustedElementIds = new List<long>();
+            var phaseSkippedElementIds = new List<long>();
+            var visibleCreatedElementIds = new List<long>();
+            var invisibleCreatedElementIds = new List<long>();
             string? workflowFailure = null;
             var transactionGroupRolledBack = false;
             using (var group = new TransactionGroup(doc, p.dryRun
@@ -166,6 +189,51 @@ namespace RevitBridge.Logic.Handlers.MEP
                         });
                     }
 
+                    if (p.applyTargetViewPhase && targetViewPhase != null)
+                    {
+                        using (var phaseTransaction = new Transaction(doc, "Apply Target View Phase"))
+                        {
+                            phaseTransaction.Start();
+                            foreach (var id in allCreatedIds.OrderBy(value => value))
+                            {
+                                var element = doc.GetElement(ElementIdCompat.Create(id));
+                                if (element == null) throw new InvalidOperationException($"created_element_missing_before_phase_assignment:{id}");
+                                var phaseParameter = element.get_Parameter(BuiltInParameter.PHASE_CREATED);
+                                if (phaseParameter == null)
+                                {
+                                    phaseSkippedElementIds.Add(id);
+                                    continue;
+                                }
+                                if (phaseParameter.IsReadOnly)
+                                    throw new InvalidOperationException($"created_element_phase_is_read_only:{id}");
+                                var targetPhaseId = targetViewPhase.Id;
+                                if (ElementIdCompat.GetValue(phaseParameter.AsElementId()) != ElementIdCompat.GetValue(targetPhaseId))
+                                    phaseParameter.Set(targetPhaseId);
+                                if (ElementIdCompat.GetValue(phaseParameter.AsElementId()) != ElementIdCompat.GetValue(targetPhaseId))
+                                    throw new InvalidOperationException($"created_element_phase_readback_mismatch:{id}");
+                                phaseAdjustedElementIds.Add(id);
+                            }
+                            doc.Regenerate();
+                            phaseTransaction.Commit();
+                        }
+                    }
+
+                    if (targetView != null)
+                    {
+                        var visibleIds = new HashSet<long>(
+                            new FilteredElementCollector(doc, targetView.Id)
+                                .WhereElementIsNotElementType()
+                                .ToElementIds()
+                                .Select(ElementIdCompat.GetValue)
+                        );
+                        visibleCreatedElementIds = allCreatedIds.Where(visibleIds.Contains).OrderBy(id => id).ToList();
+                        invisibleCreatedElementIds = allCreatedIds.Where(id => !visibleIds.Contains(id)).OrderBy(id => id).ToList();
+                        if (p.requireAllCreatedElementsVisibleInTargetView && invisibleCreatedElementIds.Count > 0)
+                            throw new InvalidOperationException(
+                                $"created_elements_not_visible_in_target_view:{string.Join(",", invisibleCreatedElementIds)}"
+                            );
+                    }
+
                     if (p.dryRun)
                     {
                         group.RollBack();
@@ -202,6 +270,23 @@ namespace RevitBridge.Logic.Handlers.MEP
                 residualCreatedElementIds = residualCreatedIds,
                 atomic = rollbackVerified,
                 error = workflowFailure,
+                targetView = targetView == null ? null : new
+                {
+                    id = ElementIdCompat.GetValue(targetView.Id),
+                    name = targetView.Name,
+                    phaseId = targetViewPhase == null ? (long?)null : ElementIdCompat.GetValue(targetViewPhase.Id),
+                    phaseName = targetViewPhase?.Name
+                },
+                targetViewAcceptance = targetView == null ? null : new
+                {
+                    applyTargetViewPhase = p.applyTargetViewPhase,
+                    requireAllCreatedElementsVisible = p.requireAllCreatedElementsVisibleInTargetView,
+                    phaseAdjustedElementIds,
+                    phaseSkippedElementIds,
+                    visibleCreatedElementIds,
+                    invisibleCreatedElementIds,
+                    passed = invisibleCreatedElementIds.Count == 0
+                },
                 operationCount = receipts.Count,
                 createdElementIds = transactionGroupRolledBack
                     ? new List<long>()

@@ -708,6 +708,9 @@ export async function compileRegisteredMepObservations(
     registration: input.registration,
     level_name: requiredText(input.level_name, "level_name"),
     level_elevation_ft: finite(input.level_elevation_ft, "level_elevation_ft"),
+    ...(input.target_view_reference_key == null
+      ? {}
+      : { target_view_reference_key: requiredText(input.target_view_reference_key, "target_view_reference_key") }),
     ...(input.room_number == null ? {} : { room_number: requiredText(input.room_number, "room_number") }),
     ...(input.material_confidence_threshold == null ? {} : { material_confidence_threshold: input.material_confidence_threshold }),
     ...(input.partial_promotion_policy == null ? {} : { partial_promotion_policy: input.partial_promotion_policy }),

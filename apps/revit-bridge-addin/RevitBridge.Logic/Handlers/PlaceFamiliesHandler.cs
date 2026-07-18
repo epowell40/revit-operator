@@ -16,6 +16,7 @@ namespace RevitBridge.Logic.Handlers
         public class PlacementRequest
         {
             public string? levelName { get; set; }
+            public long? viewId { get; set; }
             public string? familyName { get; set; }
             public string symbolName { get; set; } = "";
             public long? worksetId { get; set; }
@@ -109,8 +110,20 @@ namespace RevitBridge.Logic.Handlers
                         result.selectedWorksetName = requestedWorkset.Name;
                     }
 
-                    var defaultLevel = levels
-                        .FirstOrDefault(l => l.Name.Equals(p.levelName ?? "", StringComparison.OrdinalIgnoreCase));
+                    Level? defaultLevel = null;
+                    if (p.viewId.HasValue && p.viewId.Value > 0)
+                    {
+                        var targetView = doc.GetElement(ElementIdCompat.Create(p.viewId.Value)) as View
+                            ?? throw new Exception($"View {p.viewId.Value} not found.");
+                        defaultLevel = targetView.GenLevel;
+                        if (defaultLevel == null)
+                            throw new Exception($"View {p.viewId.Value} has no associated level.");
+                    }
+                    if (defaultLevel == null)
+                    {
+                        defaultLevel = levels
+                            .FirstOrDefault(l => l.Name.Equals(p.levelName ?? "", StringComparison.OrdinalIgnoreCase));
+                    }
                     if (defaultLevel == null) throw new Exception($"Level {p.levelName} not found.");
 
                     var levelByName = levels

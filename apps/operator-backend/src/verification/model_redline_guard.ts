@@ -25,6 +25,23 @@ const TEXT_ONLY_PATHS = new Set([
   "/revit/create-revision-cloud"
 ]);
 
+const READ_ONLY_DISCOVERY_PATHS = new Set([
+  "/revit/sheets",
+  "/revit/views",
+  "/revit/rooms",
+  "/revit/find-elements",
+  "/revit/get-element-summary",
+  "/revit/export-view-frame",
+  "/revit/export-view-region",
+  "/revit/export-visible-elements",
+  "/revit/pick-at-pixel",
+  "/revit/resolve-room-plan-view",
+  "/revit/locate-elements",
+  "/revit/tool-search",
+  "/revit/tool-doc",
+  "/revit/tool-examples"
+]);
+
 const MODEL_WRITE_PATHS = new Set([
   "/revit/create-duct",
   "/revit/create-pipe",
@@ -263,6 +280,16 @@ export function enforceModeledRedlineGuard(req: ChatRequest, decision: ChatRespo
 
   const message = (decision.assistant_message ?? "").toString();
   const hasWriteEvidence = hasModelWriteEvidence(req);
+  const hasReadOnlyDiscoveryAction = actions.some(action =>
+    READ_ONLY_DISCOVERY_PATHS.has(normalizePath(action.path))
+  );
+  if (!hasModelWriteAction && hasReadOnlyDiscoveryAction && messageClaimsCompletion(message)) {
+    return {
+      ...decision,
+      assistant_message:
+        "I am continuing with read-only model and view discovery before any modeled redline completion is claimed."
+    };
+  }
   if (!hasModelWriteAction && !hasWriteEvidence && messageClaimsCompletion(message)) {
     return annotationOnly || messageDisclosesAnnotationOnly(message)
       ? appendAnnotationOnlyDisclosure(decision)

@@ -3073,10 +3073,14 @@ namespace RevitBridge.Operator
                     turn.RepeatedActionPlanCount = 1;
                 }
 
-                // Stop deterministic no-progress loops: same plan repeated after all-failed prior step.
-                if (turn.RepeatedActionPlanCount >= 3 && ToolResultsAllFailed(toolResults))
+                // Stop deterministic no-progress loops: an identical plan repeated after either
+                // all-failed or all-successful prior results cannot advance without new evidence.
+                if (turn.RepeatedActionPlanCount >= 3 &&
+                    (ToolResultsAllFailed(toolResults) || ToolResultsAllSucceeded(toolResults)))
                 {
-                    var loopMsg = "Stopped repeated failing action loop (same plan returned multiple times after failed results).";
+                    var loopMsg = ToolResultsAllFailed(toolResults)
+                        ? "Stopped repeated failing action loop (same plan returned multiple times after failed results)."
+                        : "Stopped repeated successful action loop (same plan returned multiple times without advancing).";
                     Ui(() => AppendChat("system", loopMsg, null));
                     await _logger!.LogAsync("loop.guard.repeat_plan", new
                     {
@@ -3644,12 +3648,15 @@ namespace RevitBridge.Operator
                         repeatedPlanCount = 1;
                     }
 
-                    if (repeatedPlanCount >= 3 && ToolResultsAllFailed(toolResults))
+                    if (repeatedPlanCount >= 3 &&
+                        (ToolResultsAllFailed(toolResults) || ToolResultsAllSucceeded(toolResults)))
                     {
                         return new
                         {
                             ok = false,
-                            error = "Stopped repeated failing batch action loop.",
+                            error = ToolResultsAllFailed(toolResults)
+                                ? "Stopped repeated failing batch action loop."
+                                : "Stopped repeated successful batch action loop without advancing.",
                             assistant_message = lastAssistantMessage,
                             rounds
                         };
@@ -4620,6 +4627,20 @@ namespace RevitBridge.Operator
             {
                 if (tr == null) continue;
                 if (!string.Equals((tr.Status ?? "").Trim(), "failed", StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool ToolResultsAllSucceeded(System.Collections.Generic.List<OperatorToolResult>? toolResults)
+        {
+            if (toolResults == null || toolResults.Count == 0) return false;
+            foreach (var tr in toolResults)
+            {
+                if (tr == null) continue;
+                if (!string.Equals((tr.Status ?? "").Trim(), "done", StringComparison.OrdinalIgnoreCase))
                 {
                     return false;
                 }

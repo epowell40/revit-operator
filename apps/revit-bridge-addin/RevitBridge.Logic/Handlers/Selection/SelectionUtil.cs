@@ -262,6 +262,20 @@ namespace RevitBridge.Logic.Handlers
             };
         }
 
+        public static object? BuildTargetLevelPayload(View view)
+        {
+            if (!(view is ViewPlan viewPlan)) return null;
+            Level? level = null;
+            try { level = viewPlan.GenLevel; } catch { }
+            if (level == null) return null;
+            return new
+            {
+                id = ElementIdCompat.GetValue(level.Id),
+                name = level.Name,
+                elevationFt = level.Elevation
+            };
+        }
+
         public static (int widthPx, int heightPx) ReadImageSize(string path)
         {
             using (var img = Image.FromFile(path))

@@ -232,6 +232,7 @@ namespace RevitBridge.Logic.Handlers
                     path,
                     widthPx,
                     heightPx,
+                    targetLevel = SelectionUtil.BuildTargetLevelPayload(view),
                     mapping,
                     count = items.Count,
                     scanned,

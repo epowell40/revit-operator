@@ -190,6 +190,69 @@ test("plumbing fixture representation gate prevents architectural graphics from 
   assert.equal(grounded.actions.some((entry) => entry.action_key === "place:fixture-random-29"), true);
 });
 
+test("retraced planner pipe geometry becomes independent visible strokes without claiming tee topology", () => {
+  const input = plumbingTopologyPackage();
+  const route = input.observations[0];
+  if (route?.kind !== "pipe_route" || route.geometry_mode === "source_branch_tee"
+    || route.geometry_mode === "native_connector_bridge"
+    || route.geometry_mode === "created_route_connector_bridge"
+    || route.geometry_mode === "downstream_vent_tee") {
+    throw new Error("route_setup_failed");
+  }
+  route.points = [
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 5, y: 0 },
+    { x: 5, y: 4 }
+  ];
+  input.observations = [route];
+
+  const plan = compileMepDraftPlan(input);
+  assert.equal(plan.status, "ready");
+  assert.deepEqual(
+    plan.actions.map((entry) => entry.action_key),
+    [
+      "route:route-cw-random-81",
+      "route:route-cw-random-81:stroke:2"
+    ]
+  );
+  assert.deepEqual(plan.actions[1]?.depends_on, ["route:route-cw-random-81"]);
+  assert.equal((plan.actions[0]?.dry_run_body?.points as unknown[]).length, 2);
+  assert.equal((plan.actions[1]?.dry_run_body?.points as unknown[]).length, 2);
+  assert.equal(plan.actions[1]?.dry_run_body?.connectToExisting, false);
+  assert.equal(plan.actions[1]?.dry_run_body?.requireExistingEndpointConnections, false);
+  assert.match(
+    plan.warnings.join("\n"),
+    /split into 2 independent source-visible pipe strokes.*no native-topology credit/
+  );
+});
+
+test("ordinary non-retraced pipe geometry remains one connected route action", () => {
+  const input = plumbingTopologyPackage();
+  const route = input.observations[0];
+  if (route?.kind !== "pipe_route" || route.geometry_mode === "source_branch_tee"
+    || route.geometry_mode === "native_connector_bridge"
+    || route.geometry_mode === "created_route_connector_bridge"
+    || route.geometry_mode === "downstream_vent_tee") {
+    throw new Error("route_setup_failed");
+  }
+  route.points = [
+    { x: 0, y: 0 },
+    { x: 5, y: 0 },
+    { x: 5, y: 4 }
+  ];
+  input.observations = [route];
+
+  const plan = compileMepDraftPlan(input);
+  assert.equal(plan.actions.length, 1);
+  assert.equal(plan.actions[0]?.action_key, "route:route-cw-random-81");
+  assert.equal((plan.actions[0]?.dry_run_body?.points as unknown[]).length, 3);
+  assert.equal(
+    plan.warnings.some((warning) => warning.includes("retraced planner connector moves")),
+    false
+  );
+});
+
 function provisionalElectricalMarkerPackage(
   symbolForm:
     | "hollow_circle"

@@ -549,11 +549,31 @@ export function compactVisibleElementsResult(
     path: obj.path ?? null,
     widthPx: obj.widthPx ?? null,
     heightPx: obj.heightPx ?? null,
+    targetLevel: obj.targetLevel ?? obj.target_level ?? null,
     count: typeof obj.count === "number" ? obj.count : items.length,
     scanned: obj.scanned ?? null,
     truncated: obj.truncated ?? null,
-    itemsSampled: sampledItems,
-    itemsOmitted: Math.max(0, items.length - sampledItems.length),
+    ...(mapping
+      ? {
+          mapping: {
+            mode: mapping.mode ?? null,
+            topLeftXyz: mapping.topLeftXyz ?? null,
+            topRightXyz: mapping.topRightXyz ?? null,
+            bottomLeftXyz: mapping.bottomLeftXyz ?? null,
+            modelUnits: mapping.modelUnits ?? null,
+            frameBasis: mapping.frameBasis ?? null,
+            rasterWidthPx: mapping.rasterWidthPx ?? null,
+            rasterHeightPx: mapping.rasterHeightPx ?? null,
+            rasterAspect: mapping.rasterAspect ?? null,
+            frameAspect: mapping.frameAspect ?? null,
+            cropBoxAspect: mapping.cropBoxAspect ?? null,
+            aspectMismatch: mapping.aspectMismatch ?? null,
+            aspectCorrectionApplied: mapping.aspectCorrectionApplied ?? null,
+            aspectCorrectionAxis: mapping.aspectCorrectionAxis ?? null,
+            notes: mapping.notes ?? null
+          }
+        }
+      : {}),
     summary: {
       categoryCounts: pickCountEntries(categories, maxCountEntries),
       roomCounts: pickCountEntries(roomKeys, maxCountEntries),
@@ -561,28 +581,10 @@ export function compactVisibleElementsResult(
       hostCategoryCounts: pickCountEntries(hostCategories, maxCountEntries),
       familyTypeCounts: pickCountEntries(familyTypes, maxCountEntries)
     },
-    warnings: Array.isArray(obj.warnings) ? obj.warnings.slice(0, 12) : null
+    warnings: Array.isArray(obj.warnings) ? obj.warnings.slice(0, 12) : null,
+    itemsSampled: sampledItems,
+    itemsOmitted: Math.max(0, items.length - sampledItems.length)
   };
-
-  if (mapping) {
-    compacted.mapping = {
-      mode: mapping.mode ?? null,
-      topLeftXyz: mapping.topLeftXyz ?? null,
-      topRightXyz: mapping.topRightXyz ?? null,
-      bottomLeftXyz: mapping.bottomLeftXyz ?? null,
-      modelUnits: mapping.modelUnits ?? null,
-      frameBasis: mapping.frameBasis ?? null,
-      rasterWidthPx: mapping.rasterWidthPx ?? null,
-      rasterHeightPx: mapping.rasterHeightPx ?? null,
-      rasterAspect: mapping.rasterAspect ?? null,
-      frameAspect: mapping.frameAspect ?? null,
-      cropBoxAspect: mapping.cropBoxAspect ?? null,
-      aspectMismatch: mapping.aspectMismatch ?? null,
-      aspectCorrectionApplied: mapping.aspectCorrectionApplied ?? null,
-      aspectCorrectionAxis: mapping.aspectCorrectionAxis ?? null,
-      notes: mapping.notes ?? null
-    };
-  }
 
   return compacted;
 }

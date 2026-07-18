@@ -498,6 +498,8 @@ export type MepDraftPackage = {
   level_name: string;
   /** Absolute model elevation of level_name. Observation elevation_ft values are offsets above this level. */
   level_elevation_ft: number;
+  /** Native reference key for the source-aligned target drafting view. */
+  target_view_reference_key?: string;
   room_number?: string;
   material_confidence_threshold?: number;
   /**
@@ -603,6 +605,7 @@ export type CompiledMepDraftPlan = {
   scope_id: string;
   input_fingerprint_sha256: string;
   registration: ExistingConditionsRegistrationReceipt;
+  target_view_id?: number;
   source_observations: ExistingConditionsSourceObservation[];
   plan_elements: ExistingConditionsPlanElement[];
   ambiguities: ExistingConditionsAmbiguity[];
@@ -618,6 +621,9 @@ export type AtomicMepDraftWorkflowRequest = {
   dryRun: boolean;
   verify: boolean;
   maximumCreatedElements: number;
+  targetViewId?: number;
+  applyTargetViewPhase?: boolean;
+  requireAllCreatedElementsVisibleInTargetView?: boolean;
   benchmarkCredit?: false;
   authorizationBasis?: "explicit_unscored_user_direction";
 };
@@ -774,6 +780,66 @@ function planDistanceToSegment(
   return Math.hypot(point.x - (start.x + parameter * dx), point.y - (start.y + parameter * dy));
 }
 
+type ExistingConditionsRouteStroke = {
+  points: ExistingConditionsPlanPoint[];
+  starts_after_retrace: boolean;
+};
+
+/**
+ * Vision planners commonly encode a visible tee as one pen trace:
+ * main-start -> main-end -> tee-point -> branch-end. The move from main-end
+ * back to the tee point retraces already-visible geometry and must not be sent
+ * to Revit as another connected segment; doing so reverses the just-created
+ * MEP curve and can leave Revit in a modal connection-failure loop.
+ *
+ * Treat only a segment wholly contained by an earlier accepted segment as a
+ * conservative "pen up" move. The following source-visible segment starts a
+ * new independent stroke. This preserves plan geometry without claiming that
+ * the coincident endpoint is natively connected; topology remains a separate
+ * verified operation.
+ */
+function splitRetracedRouteStrokes(
+  points: ExistingConditionsPlanPoint[],
+  tolerance = 1e-6
+): ExistingConditionsRouteStroke[] {
+  if (points.length < 2) return [];
+  const acceptedSegments: Array<{
+    start: ExistingConditionsPlanPoint;
+    end: ExistingConditionsPlanPoint;
+  }> = [];
+  const strokes: ExistingConditionsRouteStroke[] = [];
+  let current: ExistingConditionsRouteStroke = {
+    points: [points[0]!],
+    starts_after_retrace: false
+  };
+
+  const flush = () => {
+    if (current.points.length >= 2) strokes.push(current);
+  };
+
+  for (let index = 1; index < points.length; index += 1) {
+    const start = points[index - 1]!;
+    const end = points[index]!;
+    if (Math.hypot(end.x - start.x, end.y - start.y) <= tolerance) continue;
+    const retracesAcceptedGeometry = acceptedSegments.some((segment) =>
+      planDistanceToSegment(start, segment.start, segment.end) <= tolerance
+      && planDistanceToSegment(end, segment.start, segment.end) <= tolerance);
+    if (retracesAcceptedGeometry) {
+      flush();
+      current = {
+        points: [end],
+        starts_after_retrace: true
+      };
+      continue;
+    }
+    if (current.points.length === 0) current.points.push(start);
+    current.points.push(end);
+    acceptedSegments.push({ start, end });
+  }
+  flush();
+  return strokes;
+}
+
 function resolveUniqueRouteSegmentIndex(
   routePoints: ExistingConditionsPlanPoint[],
   teePoint: ExistingConditionsPlanPoint,
@@ -806,6 +872,7 @@ function inputFingerprint(input: MepDraftPackage): string {
     registration: input.registration,
     level_name: input.level_name,
     level_elevation_ft: input.level_elevation_ft,
+    target_view_reference_key: input.target_view_reference_key ?? null,
     room_number: input.room_number ?? null,
     material_confidence_threshold: input.material_confidence_threshold ?? null,
     partial_promotion_policy: input.partial_promotion_policy ?? "all_or_nothing",
@@ -1638,7 +1705,8 @@ function pointAction(
   levelName: string,
   levelElevationFt: number,
   roomNumber: string | undefined,
-  nativeReferences: Map<string, MepDraftPackage["native_element_references"][number]>
+  nativeReferences: Map<string, MepDraftPackage["native_element_references"][number]>,
+  targetViewId?: number
 ): MepDraftAction {
   const actionKey = `place:${observation.observation_id}`;
   const expected = {
@@ -1801,7 +1869,7 @@ function pointAction(
       instance.parameters = { "Panel Name": observation.panel_name };
     }
     const common: JsonMap = {
-      levelName,
+      ...(targetViewId == null ? { levelName } : { viewId: targetViewId }),
       familyName: observation.placement.family_name,
       symbolName: observation.placement.type_name,
       instances: [instance],
@@ -1833,7 +1901,7 @@ function pointAction(
     if (observation.placement.rotation_degrees != null) instance.rotationDegrees = observation.placement.rotation_degrees;
     if (airTerminalParameters) instance.parameters = airTerminalParameters;
     const common: JsonMap = {
-      levelName,
+      ...(targetViewId == null ? { levelName } : { viewId: targetViewId }),
       familyName: observation.placement.family_name,
       symbolName: observation.placement.type_name,
       instances: [instance],
@@ -1872,7 +1940,7 @@ function pointAction(
     if (observation.placement.rotation_degrees != null) instance.rotationDegrees = observation.placement.rotation_degrees;
     if (airTerminalParameters) instance.parameters = airTerminalParameters;
     const common: JsonMap = {
-      levelName,
+      ...(targetViewId == null ? { levelName } : { viewId: targetViewId }),
       familyName: observation.placement.family_name,
       symbolName: observation.placement.type_name,
       instances: [instance],
@@ -2032,6 +2100,17 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
     if (visibleEvidenceByRole.get(normalized(evidenceRole)) !== evidenceSha256) throw new Error(`${key}_native_evidence_hash_mismatch`);
     nativeReferences.set(key, { ...reference, reference_key: key, evidence_role: evidenceRole, evidence_sha256: evidenceSha256 });
   }
+  const targetViewReferenceKey = clean(input.target_view_reference_key);
+  const targetViewReference = targetViewReferenceKey
+    ? nativeReferences.get(targetViewReferenceKey)
+    : undefined;
+  if (targetViewReferenceKey && !targetViewReference) {
+    throw new Error(`target_view_reference_not_found:${targetViewReferenceKey}`);
+  }
+  if (targetViewReference && normalized(targetViewReference.category) !== "view") {
+    throw new Error(`target_view_reference_must_be_view:${targetViewReferenceKey}`);
+  }
+  const targetViewId = targetViewReference?.element_id;
   if (!Array.isArray(input.observations) || input.observations.length === 0) throw new Error("observations_are_required");
   const registration = solveExistingConditionsRegistration(input.registration);
   if (registration.source_evidence_sha256 !== sourceEvidenceSha256) {
@@ -2660,7 +2739,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         }));
         const common: JsonMap = {
           kind: "duct",
-          levelName,
+          ...(targetViewId == null ? { levelName } : { viewId: targetViewId }),
           systemType: observation.system_type,
           ductType: observation.duct_type,
           ...(ductSizePolicy(observation) === "explicit_required" ? { ductSize: observation.duct_size! } : {}),
@@ -2707,7 +2786,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         }));
         const common: JsonMap = {
           kind: "conduit",
-          levelName,
+          ...(targetViewId == null ? { levelName } : { viewId: targetViewId }),
           conduitType: observation.conduit_type,
           ...(conduitSizePolicy(observation) === "explicit_required" ? { diameter: observation.conduit_size! } : {}),
           sizePolicy: conduitSizePolicy(observation) === "explicit_required" ? "explicit_required" : "placeholder_allowed",
@@ -2741,46 +2820,60 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
           || observation.geometry_mode === "created_route_connector_bridge"
           || observation.geometry_mode === "downstream_vent_tee"
           || observation.geometry_mode === "source_branch_tee") continue;
-        const points = observation.points.map((entry) => ({
-          ...transformExistingConditionsPlanPoint(registration, entry),
-          z: levelElevationFt + observation.elevation_ft
-        }));
-        const common: JsonMap = {
-          kind: "pipe",
-          levelName,
-          systemType: observation.system_type,
-          pipeType: observation.pipe_type,
-          ...(pipeSizePolicy(observation) === "explicit_required" ? { pipeSize: observation.pipe_size! } : {}),
-          sizePolicy: pipeSizePolicy(observation) === "explicit_required" ? "explicit_required" : "placeholder_allowed",
-          elevationPolicy: "explicit_points",
-          points,
-          connectSegments: true,
-          connectToExisting: observation.connect_to_existing === true,
-          requireExistingEndpointConnections: observation.require_existing_endpoint_connections === true,
-          externalConnectionToleranceFt: observation.external_connection_tolerance_ft ?? 0.1,
-          verify: true,
-          visualVerify: true
-        };
-        if (routeWorksetName(observation)) common.worksetName = routeWorksetName(observation);
-        if (input.room_number) common.roomNumber = input.room_number;
-        actions.push({
-          action_key: `route:${observation.observation_id}`,
-          observation_ids: [observation.observation_id],
-          method: "POST",
-          path: "/revit/mep-route-workflow",
-          depends_on: [],
-          dry_run_body: { ...common, apply: false },
-          apply_body: { ...common, apply: true },
-          expected_created_min: observation.points.length - 1,
-          expected_created_max: (observation.points.length - 1) + Math.max(0, observation.points.length - 2),
-          ...(routeSystemClassificationPolicy(observation) === "unresolved_placeholder" ? {
-            provisional_system_classification: {
-              policy: "unresolved_placeholder" as const,
-              native_system_type_role: "editable_native_drafting_container" as const,
-              benchmark_credit: false as const,
-              complete_scope_credit: false as const
-            }
-          } : {})
+        const strokes = splitRetracedRouteStrokes(observation.points);
+        if (strokes.length > 1) {
+          warnings.push(
+            `${observation.observation_id}: retraced planner connector moves were split into ${strokes.length} independent source-visible pipe strokes; coincident branch endpoints receive no native-topology credit until a verified tee operation connects them.`
+          );
+        }
+        strokes.forEach((stroke, strokeIndex) => {
+          const points = stroke.points.map((entry) => ({
+            ...transformExistingConditionsPlanPoint(registration, entry),
+            z: levelElevationFt + observation.elevation_ft
+          }));
+          const common: JsonMap = {
+            kind: "pipe",
+            ...(targetViewId == null ? { levelName } : { viewId: targetViewId }),
+            systemType: observation.system_type,
+            pipeType: observation.pipe_type,
+            ...(pipeSizePolicy(observation) === "explicit_required" ? { pipeSize: observation.pipe_size! } : {}),
+            sizePolicy: pipeSizePolicy(observation) === "explicit_required" ? "explicit_required" : "placeholder_allowed",
+            elevationPolicy: "explicit_points",
+            points,
+            connectSegments: true,
+            connectToExisting: stroke.starts_after_retrace
+              ? false
+              : observation.connect_to_existing === true,
+            requireExistingEndpointConnections: stroke.starts_after_retrace
+              ? false
+              : observation.require_existing_endpoint_connections === true,
+            externalConnectionToleranceFt: observation.external_connection_tolerance_ft ?? 0.1,
+            verify: true,
+            visualVerify: true
+          };
+          if (routeWorksetName(observation)) common.worksetName = routeWorksetName(observation);
+          if (input.room_number) common.roomNumber = input.room_number;
+          actions.push({
+            action_key: strokeIndex === 0
+              ? `route:${observation.observation_id}`
+              : `route:${observation.observation_id}:stroke:${strokeIndex + 1}`,
+            observation_ids: [observation.observation_id],
+            method: "POST",
+            path: "/revit/mep-route-workflow",
+            depends_on: strokeIndex === 0 ? [] : [`route:${observation.observation_id}`],
+            dry_run_body: { ...common, apply: false },
+            apply_body: { ...common, apply: true },
+            expected_created_min: stroke.points.length - 1,
+            expected_created_max: (stroke.points.length - 1) + Math.max(0, stroke.points.length - 2),
+            ...(routeSystemClassificationPolicy(observation) === "unresolved_placeholder" ? {
+              provisional_system_classification: {
+                policy: "unresolved_placeholder" as const,
+                native_system_type_role: "editable_native_drafting_container" as const,
+                benchmark_credit: false as const,
+                complete_scope_credit: false as const
+              }
+            } : {})
+          });
         });
         continue;
       }
@@ -2793,7 +2886,8 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
           levelName,
           levelElevationFt,
           input.room_number,
-          nativeReferences
+          nativeReferences,
+          targetViewId
         ));
         continue;
       }
@@ -3221,6 +3315,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
     scope_id: scopeId,
     input_fingerprint_sha256: inputFingerprint(input),
     registration,
+    ...(targetViewId == null ? {} : { target_view_id: targetViewId }),
     source_observations: sourceObservations,
     plan_elements: planElements,
     ambiguities,
@@ -3269,6 +3364,11 @@ export function buildAtomicMepDraftWorkflowRequest(
     dryRun: options.dry_run !== false,
     verify: true,
     maximumCreatedElements,
+    ...(plan.target_view_id == null ? {} : {
+      targetViewId: plan.target_view_id,
+      applyTargetViewPhase: true,
+      requireAllCreatedElementsVisibleInTargetView: true
+    }),
     ...(plan.status === "partially_ready" ? {
       benchmarkCredit: false as const,
       authorizationBasis: "explicit_unscored_user_direction" as const

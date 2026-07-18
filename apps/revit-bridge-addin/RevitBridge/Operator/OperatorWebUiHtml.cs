@@ -139,7 +139,7 @@ namespace RevitBridge.Operator
         .feedbackBar input[type=""text""] { min-width: 0; width: 100%; }
       }
 
-      @media (max-width: 980px) {
+      @media (max-width: 780px) {
         .main { grid-template-columns: 1fr; grid-template-rows: minmax(0,1fr) auto; }
         .right { border-left: none; border-top: 1px solid rgba(127,127,127,0.25); max-height: 42vh; }
         #actionsScroll { max-height: 38vh; }
@@ -391,7 +391,7 @@ namespace RevitBridge.Operator
         #chatScroll .paneIntro { margin-bottom: 8px; }
         #actionsScroll { max-height: none; }
       }
-      @media (max-width: 860px) {
+      @media (max-width: 780px) {
         .bar { align-items: flex-start; }
         .controls { justify-items: stretch; }
         .controlRowPrimary { justify-content: flex-start; }
@@ -621,7 +621,7 @@ namespace RevitBridge.Operator
         .main { grid-template-columns: minmax(0,1fr) minmax(170px,26%); }
         .right { padding: 8px; }
       }
-      @media (max-width: 860px) {
+      @media (max-width: 780px) {
         .main { grid-template-columns: 1fr; grid-template-rows: minmax(0,1fr) clamp(180px, 28vh, 260px); }
       }
     </style>

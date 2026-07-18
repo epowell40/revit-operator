@@ -90,6 +90,11 @@ export type WorkbenchAction =
       min_confidence?: number;
       include_code_execution?: boolean;
       timeout_ms?: number;
+    }
+  | {
+      type: "compile_registered_mep_reconstruction";
+      package_json: string;
+      maximum_created_elements?: number;
     };
 
 export type WorkbenchActionResult = {
@@ -402,14 +407,20 @@ function isSafeRedlineWorkbenchAction(action: WorkbenchAction): boolean {
   return action.type === "analyze_redline" ||
     action.type === "map_sheet_regions" ||
     action.type === "redline_orient" ||
-    action.type === "gemini_redline_analyze";
+    action.type === "gemini_redline_analyze" ||
+    action.type === "compile_registered_mep_reconstruction";
 }
 
 export function maxWorkbenchActions(): number {
   return toInt(process.env.OPERATOR_WORKBENCH_MAX_ACTIONS, 6, 1, 20);
 }
 
-export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: { createRedlineAnalyzeEvidence?: typeof tryCreateRedlineAnalyzeEvidence } = {}): Promise<WorkbenchActionResult[]> {
+export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: {
+  createRedlineAnalyzeEvidence?: typeof tryCreateRedlineAnalyzeEvidence;
+  compileRegisteredMepReconstruction?: (
+    action: Extract<WorkbenchAction, { type: "compile_registered_mep_reconstruction" }>
+  ) => Promise<Record<string, unknown>>;
+} = {}): Promise<WorkbenchActionResult[]> {
   const results: WorkbenchActionResult[] = [];
   const fullWorkbenchEnabled = workbenchEnabled();
   const redlineOnlyEnabled = !fullWorkbenchEnabled && safeRedlineWorkbenchEnabled();
@@ -617,6 +628,46 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
         continue;
       }
 
+      if (action.type === "compile_registered_mep_reconstruction") {
+        if (!deps.compileRegisteredMepReconstruction) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "Registered MEP reconstruction compiler is unavailable in this runtime."
+          });
+          break;
+        }
+        const raw = (action.package_json ?? "").trim();
+        if (!raw) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "compile_registered_mep_reconstruction requires package_json."
+          });
+          break;
+        }
+        const compiled = await deps.compileRegisteredMepReconstruction(action);
+        const plan = compiled.compiled_plan && typeof compiled.compiled_plan === "object"
+          ? compiled.compiled_plan as Record<string, unknown>
+          : {};
+        const status = typeof plan.status === "string" ? plan.status : "unknown";
+        const promoted = Array.isArray(plan.promoted_observation_ids) ? plan.promoted_observation_ids.length : 0;
+        const deferred = Array.isArray(plan.deferred_observation_ids) ? plan.deferred_observation_ids.length : 0;
+        results.push({
+          index: i + 1,
+          type: action.type,
+          ok: status === "ready" || status === "partially_ready",
+          summary: `Registered MEP reconstruction compiled; status=${status}, promoted=${promoted}, deferred=${deferred}.`,
+          details: compiled
+        });
+        // Compilation is terminal within a workbench batch. This prevents a
+        // model-authored batch from executing multiple compiler attempts, or
+        // reopening vision/orientation work after a deterministic failure.
+        break;
+      }
+
       if (action.type === "python") {
         const code = (action.code ?? "").trim();
         if (!code) {
@@ -661,13 +712,27 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
         });
       }
     } catch (e) {
+      const summary = e instanceof Error ? e.message : String(e);
+      const candidateVisibleGuardFailure =
+        action.type === "compile_registered_mep_reconstruction" &&
+        /^(candidate_visible_|registered_mep_reconstruction_)/i.test(summary);
       results.push({
         index: i + 1,
         type: action.type,
         ok: false,
-        summary: e instanceof Error ? e.message : String(e),
-        details: { host: os.hostname() }
+        summary,
+        details: {
+          host: os.hostname(),
+          ...(candidateVisibleGuardFailure
+            ? {
+                error_code: summary,
+                recovery_instruction:
+                  "Revise package_json against this exact deterministic compiler error. Do not rerun source vision, room discovery, frame export, or generic tool discovery unless the source attachment or verified native scope changes."
+              }
+            : {})
+        }
       });
+      if (action.type === "compile_registered_mep_reconstruction") break;
     }
   }
 
