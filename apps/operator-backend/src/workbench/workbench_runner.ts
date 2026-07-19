@@ -95,6 +95,13 @@ export type WorkbenchAction =
       type: "compile_registered_mep_reconstruction";
       package_json: string;
       maximum_created_elements?: number;
+    }
+  | {
+      type: "register_existing_conditions_mep_repair";
+      supersedes_stage_key: string;
+      repair_stage_key: string;
+      operation_json: string;
+      reason: string;
     };
 
 export type WorkbenchActionResult = {
@@ -408,7 +415,8 @@ function isSafeRedlineWorkbenchAction(action: WorkbenchAction): boolean {
     action.type === "map_sheet_regions" ||
     action.type === "redline_orient" ||
     action.type === "gemini_redline_analyze" ||
-    action.type === "compile_registered_mep_reconstruction";
+    action.type === "compile_registered_mep_reconstruction" ||
+    action.type === "register_existing_conditions_mep_repair";
 }
 
 export function maxWorkbenchActions(): number {
@@ -419,6 +427,9 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
   createRedlineAnalyzeEvidence?: typeof tryCreateRedlineAnalyzeEvidence;
   compileRegisteredMepReconstruction?: (
     action: Extract<WorkbenchAction, { type: "compile_registered_mep_reconstruction" }>
+  ) => Promise<Record<string, unknown>>;
+  registerExistingConditionsMepRepair?: (
+    action: Extract<WorkbenchAction, { type: "register_existing_conditions_mep_repair" }>
   ) => Promise<Record<string, unknown>>;
 } = {}): Promise<WorkbenchActionResult[]> {
   const results: WorkbenchActionResult[] = [];
@@ -668,6 +679,41 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
         break;
       }
 
+      if (action.type === "register_existing_conditions_mep_repair") {
+        if (!deps.registerExistingConditionsMepRepair) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "Existing-conditions staged repair registration is unavailable in this runtime."
+          });
+          break;
+        }
+        if (
+          !(action.supersedes_stage_key ?? "").trim() ||
+          !(action.repair_stage_key ?? "").trim() ||
+          !(action.operation_json ?? "").trim() ||
+          !(action.reason ?? "").trim()
+        ) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "register_existing_conditions_mep_repair requires supersedes_stage_key, repair_stage_key, operation_json, and reason."
+          });
+          break;
+        }
+        const registered = await deps.registerExistingConditionsMepRepair(action);
+        results.push({
+          index: i + 1,
+          type: action.type,
+          ok: true,
+          summary: `Registered staged existing-conditions repair ${action.repair_stage_key}.`,
+          details: registered
+        });
+        break;
+      }
+
       if (action.type === "python") {
         const code = (action.code ?? "").trim();
         if (!code) {
@@ -732,7 +778,10 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
             : {})
         }
       });
-      if (action.type === "compile_registered_mep_reconstruction") break;
+      if (
+        action.type === "compile_registered_mep_reconstruction" ||
+        action.type === "register_existing_conditions_mep_repair"
+      ) break;
     }
   }
 

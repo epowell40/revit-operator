@@ -617,6 +617,16 @@ export type CompiledMepDraftPlan = {
 export type AtomicMepDraftWorkflowRequest = {
   inputFingerprintSha256: string;
   operations: Array<Pick<MepDraftAction, "action_key" | "observation_ids" | "path" | "depends_on" | "apply_body" | "deferred_body" | "expected_created_min" | "expected_created_max" | "provisional_system_classification" | "provisional_route_attributes" | "provisional_plan_representation">>;
+  stageKey?: string;
+  priorActionOutputs?: Array<{
+    action_key: string;
+    created_element_ids: number[];
+    route_segment_element_ids?: number[];
+    route_start_element_ids?: number[];
+    route_end_element_ids?: number[];
+    split_main_start_element_ids?: number[];
+    split_main_end_element_ids?: number[];
+  }>;
   provisionalObservationIds: string[];
   dryRun: boolean;
   verify: boolean;

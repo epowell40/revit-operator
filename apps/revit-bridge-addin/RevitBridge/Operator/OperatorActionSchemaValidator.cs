@@ -3263,7 +3263,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/move-elements", StringComparison.OrdinalIgnoreCase))
             {
-                // { ids: number[], mode: "vector"|"fromTo", ... , dryRun?: bool, behavior?: string, options?: { failOnPinned?: bool, unpinIfAllowed?: bool } }
+                // { ids: number[], mode: "vector"|"fromTo", ... , dryRun?: bool, behavior?: string, moveTogether?: bool, options?: { failOnPinned?: bool, unpinIfAllowed?: bool } }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "move-elements body must be an object.";
@@ -3273,6 +3273,7 @@ namespace RevitBridge.Operator
                 if (!ValidateRequiredString(obj.Value, "mode", maxLen: 32, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "behavior", maxLen: 32, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "moveTogether", out error)) return false;
 
                 var mode = (obj.Value.GetProperty("mode").GetString() ?? "").Trim();
                 if (mode.Equals("vector", StringComparison.OrdinalIgnoreCase))

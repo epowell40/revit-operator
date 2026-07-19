@@ -756,6 +756,7 @@ namespace RevitBridge.Operator
                     enumMap["mode"] = new[] { "vector", "fromTo" };
                     enumMap["behavior"] = new[] { "allOrNothing", "bestEffort" };
                     unitNotes.Add(new { unit = "feet", fields = new[] { "vectorX", "vectorY", "vectorZ", "fromX", "fromY", "fromZ", "toX", "toY", "toZ" } });
+                    notes.Add("Set moveTogether=true with behavior=allOrNothing to translate a connected set in one ElementTransformUtils.MoveElements call. moveTogether is incompatible with bestEffort.");
                 }
 
                 if (p == "/revit/rotate-elements")

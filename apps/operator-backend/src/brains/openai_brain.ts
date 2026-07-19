@@ -65,6 +65,13 @@ import {
   type CandidateVisibleMepPlannerPayload
 } from "../existing_conditions/candidate_visible_registration.js";
 import type { AtomicMepDraftWorkflowRequest } from "../existing_conditions/mep_draft_plan.js";
+import {
+  buildNextExistingConditionsStagePlan,
+  latestExistingConditionsStagedWorkflow,
+  recordExistingConditionsStageResult,
+  registerExistingConditionsRepairAction,
+  registerExistingConditionsStagedWorkflow
+} from "../existing_conditions/staged_repair_ledger.js";
 import type { ExistingConditionsPlanPoint } from "../existing_conditions/registration.js";
 
 type OpenAiDecision = {
@@ -100,7 +107,8 @@ type OpenAiDecision = {
       | "map_sheet_regions"
       | "redline_orient"
       | "gemini_redline_analyze"
-      | "compile_registered_mep_reconstruction";
+      | "compile_registered_mep_reconstruction"
+      | "register_existing_conditions_mep_repair";
     command: string | null;
     code: string | null;
     workdir: string | null;
@@ -131,6 +139,10 @@ type OpenAiDecision = {
     include_code_execution: boolean | null;
     package_json: string | null;
     maximum_created_elements: number | null;
+    supersedes_stage_key: string | null;
+    repair_stage_key: string | null;
+    operation_json: string | null;
+    reason: string | null;
   }>;
 };
 
@@ -2360,6 +2372,13 @@ async function compileRegisteredMepReconstructionForSession(args: {
     workflow: JSON.parse(JSON.stringify(reconstruction.workflow)) as AtomicMepDraftWorkflowRequest,
     updated_at_ms: Date.now()
   };
+  registerExistingConditionsStagedWorkflow({
+    sessionId: args.req.session_id,
+    sourceFrameId: frame.frame_id,
+    sourceViewId: frame.view_id,
+    registrationContextId: reconstruction.registration_context_id,
+    workflow: reconstruction.workflow
+  });
   visionState.updated_at_ms = Date.now();
   return {
     schema_version: 1,
@@ -2376,89 +2395,107 @@ async function compileRegisteredMepReconstructionForSession(args: {
   };
 }
 
+async function registerExistingConditionsMepRepairForSession(args: {
+  req: ChatRequest;
+  action: Extract<WorkbenchAction, {
+    type: "register_existing_conditions_mep_repair";
+  }>;
+}): Promise<Record<string, unknown>> {
+  const persisted = persistedRegisteredMepWorkflow(args.req.session_id);
+  if (!persisted) {
+    throw new Error("existing_conditions_repair_requires_registered_workflow");
+  }
+  const plan = buildNextExistingConditionsStagePlan({
+    sessionId: args.req.session_id,
+    workflow: persisted.workflow
+  });
+  if (plan.state !== "blocked" || !plan.stage_key || !plan.action_key) {
+    throw new Error("existing_conditions_repair_requires_blocked_stage");
+  }
+  if (args.action.supersedes_stage_key.trim() !== plan.stage_key) {
+    throw new Error(
+      `existing_conditions_repair_supersedes_mismatch:expected=${plan.stage_key}`
+    );
+  }
+  let operationValue: unknown;
+  try {
+    operationValue = JSON.parse(args.action.operation_json);
+  } catch {
+    throw new Error("existing_conditions_repair_operation_json_invalid");
+  }
+  if (!operationValue || typeof operationValue !== "object" || Array.isArray(operationValue)) {
+    throw new Error("existing_conditions_repair_operation_json_must_be_object");
+  }
+  const operation = operationValue as AtomicMepDraftWorkflowRequest["operations"][number];
+  if (
+    String(operation.action_key ?? "").trim() !== plan.action_key ||
+    !String(operation.path ?? "").trim()
+  ) {
+    throw new Error(
+      `existing_conditions_repair_action_mismatch:expected=${plan.action_key}`
+    );
+  }
+  const entry = registerExistingConditionsRepairAction({
+    sessionId: args.req.session_id,
+    workflow: persisted.workflow,
+    supersedesStageKey: plan.stage_key,
+    repairStageKey: args.action.repair_stage_key,
+    operation,
+    reason: args.action.reason
+  });
+  return {
+    status: "repair_registered",
+    sequence: entry.sequence,
+    supersedes_stage_key: plan.stage_key,
+    repair_stage_key: entry.stage_key,
+    action_key: plan.action_key,
+    accepted_prior_action_count: plan.accepted_action_outputs.length,
+    next_repair: entry.next_repair
+  };
+}
+
 function persistedRegisteredMepWorkflow(
   sessionId: string
 ): RedlineVisionProgressState["last_registered_mep_workflow"] {
   if (!sessionId) return null;
-  return getRedlineVisionState(sessionId).last_registered_mep_workflow;
+  const inMemory = getRedlineVisionState(sessionId).last_registered_mep_workflow;
+  if (inMemory) return inMemory;
+  const persisted = latestExistingConditionsStagedWorkflow(sessionId);
+  if (!persisted) return null;
+  return {
+    source_frame_id: persisted.source_frame_id,
+    source_view_id: persisted.source_view_id,
+    registration_context_id: persisted.registration_context_id,
+    workflow: persisted.workflow,
+    updated_at_ms: persisted.updated_at_ms
+  };
 }
 
-function hasSuccessfulRegisteredMepDryRun(
-  toolResults: ToolResult[],
-  inputFingerprintSha256: string
-): boolean {
-  const expected = inputFingerprintSha256.trim().toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(expected)) return false;
-  return toolResults.some((result) => {
+function recordMatchingRegisteredMepStageReceipts(
+  sessionId: string,
+  workflow: AtomicMepDraftWorkflowRequest,
+  toolResults: ToolResult[]
+): void {
+  const fingerprint = workflow.inputFingerprintSha256.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(fingerprint)) return;
+  for (const result of toolResults) {
     if (
       result.status !== "done" ||
       (result.path ?? "").trim().toLowerCase() !== "/revit/existing-conditions-mep-draft-workflow" ||
       !result.result_json ||
-      typeof result.result_json !== "object"
+      typeof result.result_json !== "object" ||
+      String((result.result_json as Record<string, unknown>).inputFingerprintSha256 ?? "")
+        .trim()
+        .toLowerCase() !== fingerprint
     ) {
-      return false;
+      continue;
     }
-    const receipt = result.result_json as Record<string, unknown>;
-    const fingerprint = String(receipt.inputFingerprintSha256 ?? "").trim().toLowerCase();
-    const residual = Array.isArray(receipt.residualCreatedElementIds)
-      ? receipt.residualCreatedElementIds
-      : [];
-    return (
-      fingerprint === expected &&
-      receipt.dryRun === true &&
-      String(receipt.status ?? "").trim().toLowerCase() === "dryrunready" &&
-      receipt.rollbackVerified === true &&
-      residual.length === 0 &&
-      !String(receipt.error ?? "").trim()
-    );
-  });
-}
-
-function hasSuccessfulRegisteredMepApply(
-  toolResults: ToolResult[],
-  inputFingerprintSha256: string
-): boolean {
-  const expected = inputFingerprintSha256.trim().toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(expected)) return false;
-  return toolResults.some((result) => {
-    if (
-      result.status !== "done" ||
-      (result.path ?? "").trim().toLowerCase() !== "/revit/existing-conditions-mep-draft-workflow" ||
-      !result.result_json ||
-      typeof result.result_json !== "object"
-    ) {
-      return false;
-    }
-    const receipt = result.result_json as Record<string, unknown>;
-    const fingerprint = String(receipt.inputFingerprintSha256 ?? "").trim().toLowerCase();
-    return (
-      fingerprint === expected &&
-      receipt.dryRun === false &&
-      String(receipt.status ?? "").trim().toLowerCase() === "applied" &&
-      receipt.atomic === true &&
-      !String(receipt.error ?? "").trim()
-    );
-  });
-}
-
-function hasAnySuccessfulRegisteredMepApply(toolResults: ToolResult[]): boolean {
-  return toolResults.some((result) => {
-    if (
-      result.status !== "done" ||
-      (result.path ?? "").trim().toLowerCase() !== "/revit/existing-conditions-mep-draft-workflow" ||
-      !result.result_json ||
-      typeof result.result_json !== "object"
-    ) {
-      return false;
-    }
-    const receipt = result.result_json as Record<string, unknown>;
-    return (
-      receipt.dryRun === false &&
-      String(receipt.status ?? "").trim().toLowerCase() === "applied" &&
-      receipt.atomic === true &&
-      !String(receipt.error ?? "").trim()
-    );
-  });
+    recordExistingConditionsStageResult({
+      sessionId,
+      workflow,
+      result: result.result_json as Record<string, unknown>
+    });
+  }
 }
 
 function buildRegisteredMepWorkflowHandoffResponse(
@@ -2467,69 +2504,53 @@ function buildRegisteredMepWorkflowHandoffResponse(
   messageId = "",
   latestToolResults: ToolResult[] = toolResults
 ): ChatResponse | null {
-  const normalizedMessageId = messageId.trim();
-  const state = getRedlineVisionState(sessionId);
+  void messageId;
+  void latestToolResults;
   if (activeCandidateVisibleGuardFailure(sessionId)) return null;
-  if (
-    normalizedMessageId &&
-    state.registered_mep_applied_message_id === normalizedMessageId
-  ) {
-    return {
-      version: OPERATOR_BACKEND_CONTRACT_VERSION,
-      assistant_message:
-        "The bounded existing-conditions workflow has already been applied for this request. Native workflow verification is recorded; I will not compile or apply a second geometry set during post-write QA.",
-      actions: []
-    };
-  }
-  if (
-    normalizedMessageId &&
-    hasAnySuccessfulRegisteredMepApply(latestToolResults)
-  ) {
-    state.registered_mep_applied_message_id = normalizedMessageId;
-    state.updated_at_ms = Date.now();
-    return {
-      version: OPERATOR_BACKEND_CONTRACT_VERSION,
-      assistant_message:
-        "The bounded existing-conditions workflow was applied atomically. Native workflow verification is recorded; I will not compile or apply a second geometry set during post-write QA.",
-      actions: []
-    };
-  }
-
   const persisted = persistedRegisteredMepWorkflow(sessionId);
   if (!persisted) return null;
-  const exactWorkflow = cloneJsonObject(persisted.workflow);
-  if (!exactWorkflow) return null;
-  const fingerprint = String(exactWorkflow.inputFingerprintSha256 ?? "").trim().toLowerCase();
+  const fingerprint = String(
+    persisted.workflow.inputFingerprintSha256 ?? ""
+  ).trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(fingerprint)) return null;
-  if (hasSuccessfulRegisteredMepApply(toolResults, fingerprint)) return null;
-
-  const matchingReceipts = toolResults.filter((result) => {
-    if (
-      (result.path ?? "").trim().toLowerCase() !== "/revit/existing-conditions-mep-draft-workflow" ||
-      !result.result_json ||
-      typeof result.result_json !== "object"
-    ) {
-      return false;
-    }
-    return String((result.result_json as Record<string, unknown>).inputFingerprintSha256 ?? "")
-      .trim()
-      .toLowerCase() === fingerprint;
+  recordMatchingRegisteredMepStageReceipts(
+    sessionId,
+    persisted.workflow,
+    toolResults
+  );
+  const plan = buildNextExistingConditionsStagePlan({
+    sessionId,
+    workflow: persisted.workflow
   });
-  const dryRunVerified = hasSuccessfulRegisteredMepDryRun(toolResults, fingerprint);
-  if (matchingReceipts.length > 0 && !dryRunVerified) return null;
-
-  exactWorkflow.dryRun = dryRunVerified ? false : true;
+  if (plan.state === "blocked") {
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message:
+        `The current stage is preserved as rejected without discarding ${plan.accepted_action_outputs.length} accepted prior stage(s). ` +
+        `Next repair: register the smallest source-grounded correction for ${plan.stage_key ?? "the blocked dependency"} (${plan.reason}).`,
+      actions: []
+    };
+  }
+  if (plan.state === "awaiting_readback") {
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message:
+        `All ${plan.accepted_action_outputs.length} staged existing-conditions action(s) are accepted and persisted. ` +
+        "I’ll continue with native element/property/connectivity readback and focused visual evidence before any benchmark claim.",
+      actions: []
+    };
+  }
   return {
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
-    assistant_message: dryRunVerified
-      ? "The exact registered existing-conditions workflow passed rollback-verified dry-run. I’ll now apply that same bounded workflow."
-      : "The registered source observations compiled into a bounded native workflow. I’ll run the exact workflow as a rollback-verified dry-run before applying it.",
+    assistant_message: plan.state === "apply"
+      ? `Stage ${plan.action_key} passed rollback-verified dry-run. I’ll apply only that accepted stage and preserve all earlier progress.`
+      : `I’ll dry-run only the next dependency-ready stage, ${plan.action_key}, while preserving ${plan.accepted_action_outputs.length} accepted prior stage(s).`,
     actions: [
       {
         action_id: randomUUID(),
         method: "POST",
         path: "/revit/existing-conditions-mep-draft-workflow",
-        body: exactWorkflow
+        body: plan.request
       }
     ]
   };
@@ -2550,6 +2571,13 @@ export function __testOnlyNoteRegisteredMepWorkflow(
     workflow: JSON.parse(JSON.stringify(workflow)) as AtomicMepDraftWorkflowRequest,
     updated_at_ms: Date.now()
   };
+  registerExistingConditionsStagedWorkflow({
+    sessionId,
+    sourceFrameId,
+    sourceViewId,
+    registrationContextId,
+    workflow
+  });
   state.updated_at_ms = Date.now();
 }
 
@@ -16622,7 +16650,8 @@ function defaultSystemPrompt(): string {
     "- For useful but unresolved pipe/duct/conduit drafting, set partial_promotion_policy:'defer_ambiguous_observations' and use the applicable unresolved_placeholder policies. Keep the route service unclassified when the source does not establish it. The selected pipe_type/duct_type/conduit_type and system_type must still be an existing project-local editable drafting container; discover native types if dry-run reports a missing container. Provisional geometry receives no benchmark credit but should be drafted instead of abandoned.",
     "- A registered source-point plumbing route observation minimally uses {kind:'pipe_route',discipline:'plumbing',observation_id,visibility,confidence,supported_attributes,attribute_evidence,service,pixel_points,elevation_ft,pipe_type,system_type}; include explicit size/type/system values only when source or native evidence supports them, otherwise include pipe_size_policy/type_policy/system_classification_policy:'unresolved_placeholder' as applicable.",
     "- A registered plumbing fixture observation uses schema_version:2, kind:'plumbing_fixture', pixel_point, role, placement, representation_classification, service_route_connections, and attribute_evidence. If family/type/host meaning is not defensible, use placement.mode:'provisional_plan_symbol' and representation_classification.native_target:'plan_only_marker'; do not turn an architectural sink graphic into a claimed MEP connector.",
-    "- After compile_registered_mep_reconstruction returns status ready or partially_ready, POST its exact workflow object to /revit/existing-conditions-mep-draft-workflow. Keep dryRun:true first. If dry-run succeeds, submit the same bounded workflow with dryRun:false, then perform native readback and focused visual capture before completion.",
+    "- After compile_registered_mep_reconstruction returns status ready or partially_ready, use the persisted staged handoff for /revit/existing-conditions-mep-draft-workflow. Dry-run only the next dependency-ready operation, apply only that accepted stage, persist its output IDs, and continue from those IDs. Never submit the entire operation graph as one all-or-nothing request. After the final stage, perform native readback and focused visual capture before completion.",
+    "- If a staged dry-run is rejected, preserve every accepted prior stage. Use workbench action register_existing_conditions_mep_repair with the exact blocked supersedes_stage_key, a new repair_stage_key, and operation_json containing one smaller replacement operation with the same action_key. Then let the staged handoff dry-run and apply that repair; do not recompile or replay accepted stages.",
     "- After one successful /revit/export-visible-elements call, do not repeat broad inventory exports in a loop. Use the sampled inventory plus /revit/pick-candidate-cluster or /revit/get-placement-context to continue.",
     "- If titleblock/sheet regions dominate, prefer full-sheet targeting (sheet viewId) before selecting any nested viewport.",
     "- /revit/export-view-frame does not support DrawingSheet or ThreeD views. For sheet/titleblock targets, pivot to /revit/find-elements on sheetNumber (+ includeSheetElements; add sheetRegions when available) and then /revit/get-element-summary.",
@@ -18202,6 +18231,20 @@ function normalizeWorkbenchActions(raw: unknown): WorkbenchAction[] {
           typeof a.maximum_created_elements === "number" && Number.isFinite(a.maximum_created_elements)
             ? Math.floor(a.maximum_created_elements)
             : undefined
+      });
+      continue;
+    }
+
+    if (type === "register_existing_conditions_mep_repair") {
+      out.push({
+        type: "register_existing_conditions_mep_repair",
+        supersedes_stage_key:
+          typeof a.supersedes_stage_key === "string" ? a.supersedes_stage_key : "",
+        repair_stage_key:
+          typeof a.repair_stage_key === "string" ? a.repair_stage_key : "",
+        operation_json:
+          typeof a.operation_json === "string" ? a.operation_json : "",
+        reason: typeof a.reason === "string" ? a.reason : ""
       });
     }
   }
@@ -20035,13 +20078,17 @@ function normalizeNativeRevitActionBodiesForRouting(actions: ActionCall[], toolR
     ) {
       const persisted = persistedRegisteredMepWorkflow(req.session_id);
       if (persisted) {
-        const exactWorkflow = cloneJsonObject(persisted.workflow);
-        if (exactWorkflow) {
-          const requestedApply = body.dryRun === false;
-          const fingerprint = String(exactWorkflow.inputFingerprintSha256 ?? "");
-          const dryRunVerified = hasSuccessfulRegisteredMepDryRun(toolResults, fingerprint);
-          exactWorkflow.dryRun = requestedApply && dryRunVerified ? false : true;
-          return { ...action, body: exactWorkflow };
+        recordMatchingRegisteredMepStageReceipts(
+          req.session_id,
+          persisted.workflow,
+          toolResults
+        );
+        const plan = buildNextExistingConditionsStagePlan({
+          sessionId: req.session_id,
+          workflow: persisted.workflow
+        });
+        if (plan.state === "dry_run" || plan.state === "apply") {
+          return { ...action, body: plan.request };
         }
       }
     }
@@ -20427,12 +20474,16 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
             "min_confidence",
             "include_code_execution",
             "package_json",
-            "maximum_created_elements"
+            "maximum_created_elements",
+            "supersedes_stage_key",
+            "repair_stage_key",
+            "operation_json",
+            "reason"
           ],
           properties: {
             type: {
               type: "string",
-              enum: ["shell", "python", "write_file", "read_file", "list_files", "analyze_redline", "map_sheet_regions", "redline_orient", "gemini_redline_analyze", "compile_registered_mep_reconstruction"]
+              enum: ["shell", "python", "write_file", "read_file", "list_files", "analyze_redline", "map_sheet_regions", "redline_orient", "gemini_redline_analyze", "compile_registered_mep_reconstruction", "register_existing_conditions_mep_repair"]
             },
             command: { type: ["string", "null"] },
             code: { type: ["string", "null"] },
@@ -20463,7 +20514,11 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
             min_confidence: { type: ["number", "null"] },
             include_code_execution: { type: ["boolean", "null"] },
             package_json: { type: ["string", "null"] },
-            maximum_created_elements: { type: ["number", "null"] }
+            maximum_created_elements: { type: ["number", "null"] },
+            supersedes_stage_key: { type: ["string", "null"] },
+            repair_stage_key: { type: ["string", "null"] },
+            operation_json: { type: ["string", "null"] },
+            reason: { type: ["string", "null"] }
           }
         }
       }
@@ -20740,7 +20795,9 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     noteRedlineWorkbenchEvidenceAttempts(req.session_id, wbActions);
     let wb = attachArtifactSharesToWorkbenchResults(await executeWorkbenchActions(wbActions, {
       compileRegisteredMepReconstruction: (action) =>
-        compileRegisteredMepReconstructionForSession({ req, action })
+        compileRegisteredMepReconstructionForSession({ req, action }),
+      registerExistingConditionsMepRepair: (action) =>
+        registerExistingConditionsMepRepairForSession({ req, action })
     }));
     if (opts.initialPreflight) wb = await groundInitialRedlineWorkbenchResults(req.session_id, wb);
     noteCandidateVisibleCompileResults(req.session_id, wb);

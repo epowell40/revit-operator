@@ -33,7 +33,19 @@ namespace RevitBridge.Logic.Handlers.MEP
             public string ActionKey { get; set; } = "";
             public string Path { get; set; } = "";
             public List<long> ElementIds { get; set; } = new List<long>();
+            public OperationOutput Output { get; set; } = new OperationOutput();
             public object Response { get; set; } = new object();
+        }
+
+        public sealed class PriorActionOutput
+        {
+            public string action_key { get; set; } = "";
+            public List<long>? created_element_ids { get; set; }
+            public List<long>? route_segment_element_ids { get; set; }
+            public List<long>? route_start_element_ids { get; set; }
+            public List<long>? route_end_element_ids { get; set; }
+            public List<long>? split_main_start_element_ids { get; set; }
+            public List<long>? split_main_end_element_ids { get; set; }
         }
 
         public sealed class DeferredBody
@@ -71,6 +83,8 @@ namespace RevitBridge.Logic.Handlers.MEP
         public sealed class Params
         {
             public string inputFingerprintSha256 { get; set; } = "";
+            public string stageKey { get; set; } = "";
+            public List<PriorActionOutput>? priorActionOutputs { get; set; }
             public List<Operation> operations { get; set; } = new List<Operation>();
             public bool dryRun { get; set; } = true;
             public bool verify { get; set; } = true;
@@ -93,10 +107,30 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (p.maximumCreatedElements < 1 || p.maximumCreatedElements > 500)
                 throw new InvalidOperationException("maximumCreatedElements_must_be_between_1_and_500");
 
+            var priorOutputs = new Dictionary<string, OperationOutput>(StringComparer.OrdinalIgnoreCase);
+            foreach (var prior in p.priorActionOutputs ?? new List<PriorActionOutput>())
+            {
+                var priorKey = Clean(prior.action_key);
+                if (string.IsNullOrWhiteSpace(priorKey) || priorOutputs.ContainsKey(priorKey))
+                    throw new InvalidOperationException("prior_action_output_keys_must_be_unique_and_nonempty");
+                priorOutputs[priorKey] = new OperationOutput
+                {
+                    CreatedElementIds = NormalizeElementIds(prior.created_element_ids),
+                    RouteSegmentElementIds = NormalizeElementIds(prior.route_segment_element_ids),
+                    RouteStartElementIds = NormalizeElementIds(prior.route_start_element_ids),
+                    RouteEndElementIds = NormalizeElementIds(prior.route_end_element_ids),
+                    SplitMainStartElementIds = NormalizeElementIds(prior.split_main_start_element_ids),
+                    SplitMainEndElementIds = NormalizeElementIds(prior.split_main_end_element_ids)
+                };
+            }
+
             var keys = p.operations.Select(operation => Clean(operation.action_key)).ToList();
             if (keys.Any(string.IsNullOrWhiteSpace) || keys.Distinct(StringComparer.OrdinalIgnoreCase).Count() != keys.Count)
                 throw new InvalidOperationException("operation_action_keys_must_be_unique_and_nonempty");
-            var knownKeys = new HashSet<string>(keys, StringComparer.OrdinalIgnoreCase);
+            if (keys.Any(priorOutputs.ContainsKey))
+                throw new InvalidOperationException("operation_action_keys_must_not_duplicate_prior_outputs");
+            var knownKeys = new HashSet<string>(priorOutputs.Keys, StringComparer.OrdinalIgnoreCase);
+            knownKeys.UnionWith(keys);
             foreach (var operation in p.operations)
             {
                 foreach (var dependency in operation.depends_on ?? new List<string>())
@@ -107,6 +141,27 @@ namespace RevitBridge.Logic.Handlers.MEP
             }
 
             var doc = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active Revit document.");
+            foreach (var prior in priorOutputs)
+            {
+                var createdIds = new HashSet<long>(prior.Value.CreatedElementIds);
+                var specializedIds = prior.Value.RouteSegmentElementIds
+                    .Concat(prior.Value.RouteStartElementIds)
+                    .Concat(prior.Value.RouteEndElementIds)
+                    .Concat(prior.Value.SplitMainStartElementIds)
+                    .Concat(prior.Value.SplitMainEndElementIds)
+                    .Distinct()
+                    .ToList();
+                if (specializedIds.Any(id => !createdIds.Contains(id)))
+                    throw new InvalidOperationException($"prior_action_output_not_subset_of_created:{prior.Key}");
+                var missingIds = createdIds
+                    .Where(id => doc.GetElement(ElementIdCompat.Create(id)) == null)
+                    .OrderBy(id => id)
+                    .ToList();
+                if (missingIds.Count > 0)
+                    throw new InvalidOperationException(
+                        $"prior_action_output_elements_missing:{prior.Key}:{string.Join(",", missingIds)}"
+                    );
+            }
             View? targetView = null;
             Phase? targetViewPhase = null;
             if (p.targetViewId.HasValue && p.targetViewId.Value > 0)
@@ -123,7 +178,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (p.applyTargetViewPhase && targetViewPhase == null)
                 throw new InvalidOperationException($"target_view_phase_not_resolved:{p.targetViewId}");
 
-            var outputs = new Dictionary<string, OperationOutput>(StringComparer.OrdinalIgnoreCase);
+            var outputs = new Dictionary<string, OperationOutput>(priorOutputs, StringComparer.OrdinalIgnoreCase);
             var receipts = new List<OperationReceipt>();
             OperationReceipt? failedReceipt = null;
             var allCreatedIds = new HashSet<long>();
@@ -163,6 +218,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                                 ActionKey = operation.action_key,
                                 Path = operation.path,
                                 ElementIds = createdIds,
+                                Output = output,
                                 Response = response
                             };
                             throw new InvalidOperationException($"operation_failed:{operation.action_key}:{failure}");
@@ -185,6 +241,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                             ActionKey = operation.action_key,
                             Path = operation.path,
                             ElementIds = createdIds,
+                            Output = output,
                             Response = response
                         });
                     }
@@ -274,6 +331,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 schema = "operator.existing_conditions_mep_draft_workflow.v1",
                 inputFingerprintSha256 = inputFingerprint,
+                stageKey = Clean(p.stageKey),
+                priorActionOutputCount = priorOutputs.Count,
                 status = string.IsNullOrWhiteSpace(workflowFailure) ? (p.dryRun ? "DryRunReady" : "Applied") : "Blocked",
                 dryRun = p.dryRun,
                 transactionGroupRolledBack,
@@ -320,8 +379,27 @@ namespace RevitBridge.Logic.Handlers.MEP
                     createdElementIds = transactionGroupRolledBack ? new List<long>() : receipt.ElementIds,
                     transientCreatedElementIds = transactionGroupRolledBack ? receipt.ElementIds : new List<long>(),
                     response = receipt.Response
+                }).ToList(),
+                operationOutputs = receipts.Select(receipt => new
+                {
+                    action_key = receipt.ActionKey,
+                    created_element_ids = receipt.Output.CreatedElementIds,
+                    route_segment_element_ids = receipt.Output.RouteSegmentElementIds,
+                    route_start_element_ids = receipt.Output.RouteStartElementIds,
+                    route_end_element_ids = receipt.Output.RouteEndElementIds,
+                    split_main_start_element_ids = receipt.Output.SplitMainStartElementIds,
+                    split_main_end_element_ids = receipt.Output.SplitMainEndElementIds
                 }).ToList()
             });
+        }
+
+        private static List<long> NormalizeElementIds(IEnumerable<long>? values)
+        {
+            return (values ?? Enumerable.Empty<long>())
+                .Where(value => value > 0)
+                .Distinct()
+                .OrderBy(value => value)
+                .ToList();
         }
 
         private static string BuildRequest(

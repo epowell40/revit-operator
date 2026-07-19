@@ -95,7 +95,9 @@ test("existing-conditions native handoff restores the exact persisted compiler w
     [],
     req
   );
-  assert.deepEqual(dryRun?.body, workflow);
+  assert.equal((dryRun?.body as any)?.stageKey, "operation:route:route-1");
+  assert.equal((dryRun?.body as any)?.operations.length, 1);
+  assert.deepEqual((dryRun?.body as any)?.priorActionOutputs, []);
 
   const [apply] = __testOnlyNormalizeNativeRevitActionBodiesForRouting(
     [{
@@ -114,11 +116,16 @@ test("existing-conditions native handoff restores the exact persisted compiler w
       status: "done",
       result_json: {
         inputFingerprintSha256: fingerprint,
+        stageKey: "operation:route:route-1",
         status: "DryRunReady",
         dryRun: true,
         rollbackVerified: true,
         residualCreatedElementIds: [],
-        error: null
+        error: null,
+        operationOutputs: [{
+          action_key: "route:route-1",
+          created_element_ids: [101]
+        }]
       }
     }],
     req
@@ -155,7 +162,9 @@ test("registered existing-conditions compiler hands off exact dry-run then exact
   const dryRun = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, []);
   assert.ok(dryRun);
   assert.equal(dryRun.actions[0]?.path, "/revit/existing-conditions-mep-draft-workflow");
-  assert.deepEqual(dryRun.actions[0]?.body, workflow);
+  assert.equal((dryRun.actions[0]?.body as any)?.stageKey, "operation:route:route-1");
+  assert.equal((dryRun.actions[0]?.body as any)?.operations.length, 1);
+  assert.deepEqual((dryRun.actions[0]?.body as any)?.priorActionOutputs, []);
 
   const apply = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, [
     {
@@ -165,11 +174,16 @@ test("registered existing-conditions compiler hands off exact dry-run then exact
       status: "done",
       result_json: {
         inputFingerprintSha256: fingerprint,
+        stageKey: "operation:route:route-1",
         status: "DryRunReady",
         dryRun: true,
         rollbackVerified: true,
         residualCreatedElementIds: [],
-        error: null
+        error: null,
+        operationOutputs: [{
+          action_key: "route:route-1",
+          created_element_ids: [101]
+        }]
       }
     }
   ]);
@@ -185,16 +199,23 @@ test("registered existing-conditions compiler hands off exact dry-run then exact
       status: "done",
       result_json: {
         inputFingerprintSha256: fingerprint,
+        stageKey: "operation:route:route-1",
         status: "Applied",
         dryRun: false,
         atomic: true,
-        error: null
+        error: null,
+        createdElementIds: [201],
+        operationOutputs: [{
+          action_key: "route:route-1",
+          created_element_ids: [201]
+        }]
       }
     }
   ]);
   assert.ok(complete);
   assert.deepEqual(complete.actions, []);
-  assert.match(complete.assistant_message, /will not compile or apply a second geometry set/i);
+  assert.match(complete.assistant_message, /native element\/property\/connectivity readback/i);
+  assert.doesNotMatch(complete.assistant_message, /will not compile or apply a second geometry set/i);
 });
 
 test("registered existing-conditions apply guard is scoped to one user message", () => {
@@ -234,10 +255,16 @@ test("registered existing-conditions apply guard is scoped to one user message",
     status: "done" as const,
     result_json: {
       inputFingerprintSha256: firstFingerprint,
+      stageKey: "operation:route:route-1",
       status: "Applied",
       dryRun: false,
       atomic: true,
-      error: null
+      error: null,
+      createdElementIds: [301],
+      operationOutputs: [{
+        action_key: "route:route-1",
+        created_element_ids: [301]
+      }]
     }
   };
   const firstComplete = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(
@@ -299,6 +326,7 @@ test("registered existing-conditions compiler does not replay a failed matching 
       status: "done",
       result_json: {
         inputFingerprintSha256: fingerprint,
+        stageKey: "operation:route:route-1",
         status: "Blocked",
         dryRun: true,
         rollbackVerified: true,
@@ -307,7 +335,10 @@ test("registered existing-conditions compiler does not replay a failed matching 
       }
     }
   ]);
-  assert.equal(response, null);
+  assert.ok(response);
+  assert.deepEqual(response.actions, []);
+  assert.match(response.assistant_message, /preserved as rejected/i);
+  assert.match(response.assistant_message, /route_failed/i);
 });
 
 test("registered existing-conditions compiler never hands off a stale workflow after a newer compile guard failure", () => {
