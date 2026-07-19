@@ -101,7 +101,7 @@ function codexTurnTimeoutMs(): number {
   return Math.max(60_000, Math.min(30 * 60_000, raw));
 }
 
-function baseInstructions(): string {
+export function getOperatorAgentBaseInstructions(): string {
   let environmentSummary = "";
   try {
     environmentSummary = formatEnvironmentSummaryForPrompt();
@@ -231,7 +231,7 @@ function formatToolResultsForCodex(toolResults: ToolResult[] | undefined): strin
 }
 
 export function getCodexBaseInstructionsForTest(): string {
-  return baseInstructions();
+  return getOperatorAgentBaseInstructions();
 }
 
 export function formatToolResultsForCodexForTest(toolResults: ToolResult[] | undefined): string {
@@ -356,7 +356,7 @@ async function getOrCreateThreadId(sessionId: string): Promise<string> {
     sandbox: "workspace-write",
     approvalPolicy: "never",
     model: getDefaultModel(),
-    baseInstructions: baseInstructions(),
+    baseInstructions: getOperatorAgentBaseInstructions(),
     developerInstructions: developerInstructions(),
     experimentalRawEvents: false
   })) as any;

@@ -3,6 +3,12 @@ import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ChatResponse 
 import { decideRule } from "./brains/rule_brain.js";
 import { decideOpenAi, decideOpenAiStreaming, isExplicitReadOnlyRedlineAnalysisRequest } from "./brains/openai_brain.js";
 import { decideCodex, decideCodexStreaming, type StreamCallbacks } from "./brains/codex_brain.js";
+import {
+  decideAnthropic,
+  decideAnthropicStreaming,
+  decideGemini,
+  decideGeminiStreaming
+} from "./brains/external_provider_brain.js";
 import { maybeBuildZippyBimToolDecision } from "./brains/zippybim_intent.js";
 import { enforceVerificationDisclaimer } from "./verification/titleblock_verify_guard.js";
 import { enforceModeledRedlineGuard } from "./verification/model_redline_guard.js";
@@ -221,6 +227,10 @@ export type BrainDecisionDependencies = {
   semanticAecWorkflow?: typeof maybeRunSemanticAecWorkflow;
   openAiBrain?: typeof decideOpenAi;
   openAiStreamingBrain?: typeof decideOpenAiStreaming;
+  geminiBrain?: typeof decideGemini;
+  geminiStreamingBrain?: typeof decideGeminiStreaming;
+  anthropicBrain?: typeof decideAnthropic;
+  anthropicStreamingBrain?: typeof decideAnthropicStreaming;
 };
 
 export async function decide(req: ChatRequest, dependencies: BrainDecisionDependencies = {}): Promise<ChatResponse> {
@@ -271,6 +281,10 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
   if (forced === "rule") decision = await decideRule(req);
   else if (forced === "openai") decision = await (dependencies.openAiBrain ?? decideOpenAi)(req);
   else if (forced === "codex") decision = await decideCodex(req);
+  else if (forced === "gemini") decision = await (dependencies.geminiBrain ?? decideGemini)(req);
+  else if (forced === "anthropic" || forced === "claude") {
+    decision = await (dependencies.anthropicBrain ?? decideAnthropic)(req);
+  }
   else if (hasOpenAiKey) decision = await decideOpenAi(req);
   else decision = await decideRule(req);
 
@@ -365,6 +379,18 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dep
   const forced = (process.env.OPERATOR_BRAIN || "").toLowerCase().trim();
   const hasOpenAiKey = !!resolveOpenAiApiKey();
   if (forced === "codex") return decideCodexStreaming(req, cb);
+  if (forced === "gemini") {
+    return finalizeDecision(
+      req,
+      await (dependencies.geminiStreamingBrain ?? decideGeminiStreaming)(req, cb)
+    );
+  }
+  if (forced === "anthropic" || forced === "claude") {
+    return finalizeDecision(
+      req,
+      await (dependencies.anthropicStreamingBrain ?? decideAnthropicStreaming)(req, cb)
+    );
+  }
   if (forced === "openai" || (forced !== "rule" && hasOpenAiKey)) {
     return finalizeDecision(req, await (dependencies.openAiStreamingBrain ?? decideOpenAiStreaming)(req, cb));
   }

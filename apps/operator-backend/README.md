@@ -26,6 +26,39 @@ OPERATOR_TOKEN=
 
 If `OPERATOR_TOKEN` is not set, local scripts can generate a per-session token and share it with the add-in through the local workspace.
 
+## Primary Agent Providers
+
+The local/self-host backend can use these primary planning brains:
+
+- `OPERATOR_BRAIN=codex`
+- `OPERATOR_BRAIN=openai`
+- `OPERATOR_BRAIN=gemini`
+- `OPERATOR_BRAIN=anthropic` (or the `claude` alias)
+- `OPERATOR_BRAIN=rule`
+
+Gemini example:
+
+```dotenv
+OPERATOR_BRAIN=gemini
+OPERATOR_GEMINI_API_KEY=...
+OPERATOR_GEMINI_AGENT_MODEL=gemini-3.5-flash
+```
+
+Claude Opus 4.8 example:
+
+```dotenv
+OPERATOR_BRAIN=anthropic
+OPERATOR_ANTHROPIC_API_KEY=...
+OPERATOR_ANTHROPIC_MODEL=claude-opus-4-8
+OPERATOR_ANTHROPIC_EFFORT=xhigh
+```
+
+The Gemini and Anthropic brains use provider-native structured JSON output.
+They receive the shared Operator instructions, bounded recent history, current
+Revit context, compacted tool results, and bounded image attachments. They
+return the next smallest Bridge action or tightly coupled action group; the
+host executes it and supplies the result on the next turn.
+
 ## Redline And Spatial Tools
 
 The public backend includes the generic redline/native placement improvements:
