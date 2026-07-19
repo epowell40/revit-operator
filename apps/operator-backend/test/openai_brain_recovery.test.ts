@@ -1154,6 +1154,181 @@ test("candidate-visible recovery fingerprint permits only the failed geometry fi
   );
 });
 
+test("missing-observations recovery permits only populating observations", () => {
+  const failure = "candidate_visible_observations_are_required";
+  const base = {
+    schema_version: 2,
+    discipline: "plumbing",
+    room_number: "120",
+    partial_promotion_policy: "defer_ambiguous_observations",
+    maximum_observations: 8,
+    spatial_scope: {
+      boundary_pixel_points: [
+        { x: 0.47, y: 0.14 },
+        { x: 0.61, y: 0.14 },
+        { x: 0.61, y: 0.21 },
+        { x: 0.47, y: 0.21 }
+      ],
+      anchor_pixel_point: { x: 0.555, y: 0.16 },
+      anchor_label: "TRAINING ROOM 120"
+    },
+    observations: [] as Array<Record<string, unknown>>
+  };
+  const fingerprint = (value: unknown) =>
+    __testOnlyCandidateVisibleRecoveryImmutableClaimsSha256(
+      JSON.stringify(value),
+      failure
+    );
+
+  const populated = structuredClone(base);
+  populated.observations = [{
+    kind: "plumbing_fixture",
+    observation_id: "training-room-120-fixture-01",
+    pixel_point: { x: 0.496, y: 0.205 },
+    placement: { mode: "provisional_plan_symbol" }
+  }];
+  assert.equal(fingerprint(populated), fingerprint(base));
+
+  const movedScope = structuredClone(populated);
+  movedScope.spatial_scope.anchor_pixel_point.x = 0.56;
+  assert.notEqual(fingerprint(movedScope), fingerprint(base));
+
+  const changedRoom = structuredClone(populated);
+  changedRoom.room_number = "1901";
+  assert.notEqual(fingerprint(changedRoom), fingerprint(base));
+
+  const sessionId = "session-missing-observations-recovery";
+  __testOnlySetCandidateVisibleCompileContext(
+    sessionId,
+    "artifacts/uploads/source.png",
+    "missing-observations-context",
+    JSON.stringify(base)
+  );
+  __testOnlyRecordCandidateVisibleCompileResults(sessionId, [{
+    index: 1,
+    type: "compile_registered_mep_reconstruction",
+    ok: false,
+    summary: failure
+  }]);
+  const prompt = __testOnlyBuildCandidateVisibleRecoveryPrompt(mkReq({
+    session_id: sessionId,
+    user_text: ""
+  }));
+  assert.match(prompt ?? "", /Populate only observations/);
+  assert.match(prompt ?? "", /Do not move or redraw spatial_scope/);
+  assert.match(prompt ?? "", /SCHEMA BOOTSTRAP RETRY/);
+
+  const missingClassificationFailure =
+    "candidate_visible_provisional_plan_symbol_source_graphic_required:" +
+    "training-room-120-fixture-01:" +
+    "set_representation_classification_source_graphic_to_mep_connection_symbol_only_if_source_visible";
+  __testOnlySetCandidateVisibleCompileContext(
+    sessionId,
+    "artifacts/uploads/source.png",
+    "missing-observations-context-2",
+    JSON.stringify(populated)
+  );
+  __testOnlyRecordCandidateVisibleCompileResults(sessionId, [{
+    index: 2,
+    type: "compile_registered_mep_reconstruction",
+    ok: false,
+    summary: missingClassificationFailure
+  }]);
+  const semanticRetryPrompt = __testOnlyBuildCandidateVisibleRecoveryPrompt(mkReq({
+    session_id: sessionId,
+    user_text: ""
+  }));
+  assert.match(semanticRetryPrompt ?? "", /ONE ATTEMPT REMAINS/);
+  assert.match(
+    semanticRetryPrompt ?? "",
+    /set representation_classification\.source_graphic exactly to "mep_connection_symbol"/
+  );
+  assert.equal(
+    __testOnlyBuildCandidateVisibleTerminalGuardResponse(mkReq({
+      session_id: sessionId,
+      user_text: ""
+    })),
+    null
+  );
+});
+
+test("provisional plumbing symbol recovery permits only the missing source-graphic classification", () => {
+  const failure =
+    "candidate_visible_provisional_plan_symbol_source_graphic_required:" +
+    "fixture-symbol-01:" +
+    "set_representation_classification_source_graphic_to_mep_connection_symbol_only_if_source_visible";
+  const base = {
+    schema_version: 2,
+    room_number: "120",
+    spatial_scope: {
+      boundary_pixel_points: [
+        { x: 0.47, y: 0.14 },
+        { x: 0.60, y: 0.14 },
+        { x: 0.60, y: 0.22 },
+        { x: 0.47, y: 0.22 }
+      ]
+    },
+    observations: [{
+      kind: "plumbing_fixture",
+      observation_id: "fixture-symbol-01",
+      pixel_point: { x: 0.516, y: 0.207 },
+      placement: { mode: "provisional_plan_symbol" },
+      representation_classification: {
+        native_target: "plan_only_marker",
+        source_graphic: undefined as string | undefined
+      },
+      attribute_evidence: [{
+        attribute: "source_symbol_present",
+        basis: "legible_source_evidence",
+        reference: "Visible source symbol."
+      }]
+    }]
+  };
+  const fingerprint = (value: unknown) =>
+    __testOnlyCandidateVisibleRecoveryImmutableClaimsSha256(
+      JSON.stringify(value),
+      failure
+    );
+  const classified = structuredClone(base);
+  classified.observations[0]!.representation_classification.source_graphic =
+    "mep_connection_symbol";
+  assert.equal(fingerprint(classified), fingerprint(base));
+
+  const moved = structuredClone(classified);
+  moved.observations[0]!.pixel_point.y = 0.2;
+  assert.notEqual(fingerprint(moved), fingerprint(base));
+
+  const changedEvidence = structuredClone(classified);
+  changedEvidence.observations[0]!.attribute_evidence[0]!.reference =
+    "Different evidence.";
+  assert.notEqual(fingerprint(changedEvidence), fingerprint(base));
+
+  const sessionId = "session-provisional-symbol-classification-recovery";
+  __testOnlySetCandidateVisibleCompileContext(
+    sessionId,
+    "artifacts/uploads/source.png",
+    "provisional-symbol-context",
+    JSON.stringify(base)
+  );
+  __testOnlyRecordCandidateVisibleCompileResults(sessionId, [{
+    index: 1,
+    type: "compile_registered_mep_reconstruction",
+    ok: false,
+    summary: failure
+  }]);
+  const prompt = __testOnlyBuildCandidateVisibleRecoveryPrompt(mkReq({
+    session_id: sessionId,
+    user_text: ""
+  }));
+  assert.match(
+    prompt ?? "",
+    /set representation_classification\.source_graphic exactly to "mep_connection_symbol"/
+  );
+  assert.match(prompt ?? "", /Preserve the observation identity, pixel_point, spatial_scope/);
+  assert.match(prompt ?? "", /Do not move the symbol/);
+  assert.match(prompt ?? "", /issue no second compile and report the exact ambiguity/);
+});
+
 test("candidate-visible terminal guard survives compile-context and seed drift while first recovery stays source-bound", () => {
   const sessionId = "session-candidate-visible-terminal-seed-drift";
   const sourcePath = "artifacts/uploads/source.pdf";
@@ -1370,6 +1545,11 @@ test("candidate-visible evidence gate suppresses discovery after the source is r
   assert.match(prompt ?? "", /strict verified native-room clipping still applies/);
   assert.match(prompt ?? "", /room tags.*optional evidence/i);
   assert.match(prompt ?? "", /exterior envelope\/corners, stairs and elevator cores, shafts, grids and columns/i);
+  assert.match(
+    prompt ?? "",
+    /representation_classification\.source_graphic="mep_connection_symbol"/
+  );
+  assert.match(prompt ?? "", /never submit a generic source_symbol_present claim/i);
 
   const suppression = __testOnlySuppressCandidateVisibleCompileReadyWorkbenchActions(
     req,

@@ -407,6 +407,8 @@ test("view alignment treats room data and markup as optional and prioritizes dur
   assert.match(prompt, /interior partitions that changed/i);
   assert.match(prompt, /registration_controls/i);
   assert.match(prompt, /at least two spatially separated controls/i);
+  assert.match(prompt, /source_room_labels/i);
+  assert.match(prompt, /semantic source evidence, not a registration control/i);
 });
 
 test("view alignment tries Gemini structured image output before OpenAI fallback", { concurrency: false }, async () => {
@@ -434,7 +436,7 @@ test("view alignment tries Gemini structured image output before OpenAI fallback
               confidence: 0.91,
               analysis: "Matched exterior corner and stair.",
               crop: { min_u: 0.1, min_v: 0.2, max_u: 0.9, max_v: 0.8 },
-              registration_controls: [
+               registration_controls: [
                 {
                   kind: "exterior_corner",
                   source_normalized_x: 0.1,
@@ -452,9 +454,19 @@ test("view alignment tries Gemini structured image output before OpenAI fallback
                   view_normalized_y: 0.68,
                   score: 0.9,
                   label: "stair core"
-                }
-              ],
-              marks: []
+                 }
+               ],
+               source_room_labels: [{
+                 text: "TRAINING ROOM 120",
+                 normalized_x: 0.52,
+                 normalized_y: 0.17,
+                 min_u: 0.50,
+                 min_v: 0.15,
+                 max_u: 0.54,
+                 max_v: 0.19,
+                 score: 0.96
+               }],
+               marks: []
               })
             }]
           }
@@ -486,6 +498,16 @@ test("view alignment tries Gemini structured image output before OpenAI fallback
     assert.equal(result.model, "gemini-3-image-test");
     assert.deepEqual(result.attempted_models, ["gemini-3-image-test"]);
     assert.equal(result.registration_controls.length, 2);
+    assert.deepEqual(result.source_room_labels, [{
+      text: "TRAINING ROOM 120",
+      normalized_x: 0.52,
+      normalized_y: 0.17,
+      min_u: 0.5,
+      min_v: 0.15,
+      max_u: 0.54,
+      max_v: 0.19,
+      score: 0.96
+    }]);
     const receivedBody = receivedBodies[0];
     assert.ok(receivedBody);
     assert.equal(
@@ -494,11 +516,15 @@ test("view alignment tries Gemini structured image output before OpenAI fallback
     );
     assert.deepEqual(
       receivedBody?.generationConfig?.responseJsonSchema?.required,
-      ["matched", "confidence", "analysis", "crop", "registration_controls", "marks"]
+      ["matched", "confidence", "analysis", "crop", "registration_controls", "source_room_labels", "marks"]
     );
     assert.ok(
       receivedBody?.generationConfig?.responseJsonSchema?.properties?.registration_controls,
       "Gemini must receive the strict registration-control response schema"
+    );
+    assert.ok(
+      receivedBody?.generationConfig?.responseJsonSchema?.properties?.source_room_labels,
+      "Gemini must receive the strict source-room-label response schema"
     );
   } finally {
     for (const [key, value] of Object.entries({

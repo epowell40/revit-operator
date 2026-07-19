@@ -644,6 +644,42 @@ test("candidate-visible room-label translation shifts only registration geometry
     assert.ok(point.y >= 120 && point.y <= 180);
   }
 
+  const structuredImageLabelAlignment = {
+    ...ALIGNMENT,
+    provider: "gemini" as const,
+    source_room_labels: [{
+      text: "100",
+      normalized_x: 0.27,
+      normalized_y: 0.52,
+      min_u: 0.2,
+      min_v: 0.47,
+      max_u: 0.34,
+      max_v: 0.57,
+      score: 0.97
+    }]
+  };
+  const structuredImageLabel = await compileCandidateVisibleMepReconstruction({
+    source_pdf_path: renderPath,
+    registered_render_path: renderPath,
+    alignment: structuredImageLabelAlignment,
+    frame: FRAME,
+    verified_room_scope: nativeRoom,
+    planner_payload: structuredClone(plannerPayload)
+  });
+  assert.equal(
+    structuredImageLabel.spatial_scope_receipt?.local_room_registration_fallback?.reason,
+    "server_verified_room_label_translation"
+  );
+  assert.equal(
+    structuredImageLabel.spatial_scope_receipt?.local_room_registration_fallback
+      ?.source_room_label_evidence_basis,
+    "gemini_structured_source_label"
+  );
+  assert.deepEqual(
+    (structuredImageLabel.package.observations[0] as any).pixel_points,
+    originalRoute
+  );
+
   const derivedExactTagScopePayload = structuredClone(plannerPayload);
   derivedExactTagScopePayload.spatial_scope.boundary_pixel_points = [
     { x: 0, y: 0 },
@@ -1676,6 +1712,68 @@ test("candidate-visible room scope rejects adjacent geometry and replaces overbr
       }
     }),
     /candidate_visible_verified_room_scope_not_visible_in_registered_render/
+  );
+});
+
+test("candidate-visible provisional plumbing symbol requires an explicit source-graphic classification", async () => {
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "candidate-visible-provisional-symbol-")
+  );
+  const sourcePdfPath = path.join(directory, "source.pdf");
+  const renderPath = path.join(directory, "source.png");
+  fs.writeFileSync(
+    sourcePdfPath,
+    Buffer.from("%PDF-1.4\ncandidate-visible-provisional-symbol\n")
+  );
+  const canvas = createCanvas(100, 100);
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, 100, 100);
+  fs.writeFileSync(renderPath, canvas.toBuffer("image/png"));
+
+  await assert.rejects(
+    compileCandidateVisibleMepReconstruction({
+      source_pdf_path: sourcePdfPath,
+      registered_render_path: renderPath,
+      alignment: ALIGNMENT,
+      frame: FRAME,
+      verified_room_scope: verifiedRoomScope(),
+      planner_payload: {
+        schema_version: 2,
+        fixture_id: "provisional-symbol-contract",
+        scope_id: "room-100",
+        discipline: "plumbing",
+        coordinate_space: "normalized_uv_top_left",
+        level_name: "Level 1",
+        room_number: "100",
+        partial_promotion_policy: "defer_ambiguous_observations",
+        maximum_observations: 1,
+        observations: [{
+          kind: "plumbing_fixture",
+          discipline: "plumbing",
+          observation_id: "fixture-symbol-01",
+          visibility: "visible",
+          confidence: 0.8,
+          pixel_point: { x: 0.5, y: 0.5 },
+          role: "fixture symbol",
+          placement: { mode: "provisional_plan_symbol" },
+          representation_classification: {
+            native_target: "plan_only_marker"
+          },
+          service_route_connections: [],
+          supported_attributes: {
+            source_symbol_present: true
+          },
+          attribute_evidence: [{
+            attribute: "source_symbol_present",
+            evidence_role: "registered_source_render",
+            basis: "legible_source_evidence",
+            reference: "A source symbol is visible, but its graphic class was omitted."
+          }]
+        } as any]
+      }
+    }),
+    /candidate_visible_provisional_plan_symbol_source_graphic_required:fixture-symbol-01:set_representation_classification_source_graphic_to_mep_connection_symbol_only_if_source_visible/
   );
 });
 

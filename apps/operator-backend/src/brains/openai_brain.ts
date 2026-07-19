@@ -948,6 +948,7 @@ type RedlineVisionProgressState = {
     confidence: number;
     crop: ViewAlignmentResult["crop"];
     registration_controls: ViewAlignmentRegistrationControl[];
+    source_room_labels?: ViewAlignmentResult["source_room_labels"];
     analysis: string;
     provider: ViewAlignmentResult["provider"] | null;
     model: string | null;
@@ -1308,6 +1309,7 @@ function noteRedlineViewAlignmentResult(
     confidence: clamp01(alignment.confidence),
     crop: alignment.crop,
     registration_controls: alignment.registration_controls ?? [],
+    source_room_labels: alignment.source_room_labels ?? [],
     analysis: alignment.analysis ?? "",
     provider: alignment.provider ?? null,
     model: alignment.model ?? null,
@@ -2043,7 +2045,36 @@ function candidateVisibleRecoveryImmutableClaimsSha256(
     throw new Error("candidate_visible_recovery_package_must_be_an_object");
   }
   const clone = JSON.parse(JSON.stringify(parsed)) as Record<string, unknown>;
-  if (
+  const provisionalSymbolClassificationFailure = failureSummary.match(
+    /candidate_visible_provisional_plan_symbol_source_graphic_required:([^:]+)/
+  );
+  if (failureSummary === "candidate_visible_observations_are_required") {
+    clone.observations = "__allowed_recovery_observations__";
+  } else if (provisionalSymbolClassificationFailure) {
+    const observationId = provisionalSymbolClassificationFailure[1]!;
+    const observations = Array.isArray(clone.observations)
+      ? clone.observations
+      : [];
+    const observation = observations.find(
+      (entry): entry is Record<string, unknown> =>
+        !!entry &&
+        typeof entry === "object" &&
+        !Array.isArray(entry) &&
+        String((entry as Record<string, unknown>).observation_id ?? "")
+          .replace(/:/g, "_") === observationId
+    );
+    if (observation) {
+      const representation =
+        observation.representation_classification &&
+        typeof observation.representation_classification === "object" &&
+        !Array.isArray(observation.representation_classification)
+          ? observation.representation_classification as Record<string, unknown>
+          : {};
+      representation.source_graphic =
+        "__allowed_recovery_source_graphic_classification__";
+      observation.representation_classification = representation;
+    }
+  } else if (
     failureSummary.includes(
       "candidate_visible_source_room_enclosure_raster_verification_required:"
     )
@@ -2309,7 +2340,8 @@ async function compileRegisteredMepReconstructionForSession(args: {
       model: alignment.model,
       attempted_models: alignment.attempted_models,
       fallback_reason: alignment.fallback_reason,
-      crop: alignment.crop
+      crop: alignment.crop,
+      source_room_labels: alignment.source_room_labels
     },
     frame,
     planner_payload: plannerPayload,
@@ -3948,12 +3980,16 @@ function noteCandidateVisibleCompileResults(
       state.last_candidate_visible_guard_failure = null;
       continue;
     }
+    const currentSummary = result.summary.trim();
+    const isInitialSchemaBootstrapFailure =
+      !priorFailure &&
+      currentSummary === "candidate_visible_observations_are_required";
     const signature = candidateVisibleGuardFailureSignature(result.summary);
     const previous = state.last_candidate_visible_guard_failure;
     state.last_registered_mep_workflow = null;
     state.last_candidate_visible_guard_failure = {
       signature,
-      summary: result.summary.trim(),
+      summary: currentSummary,
       context_key: context.context_key,
       source_path: context.source_path,
       source_pdf_sha256: context.source_pdf_sha256,
@@ -3961,14 +3997,22 @@ function noteCandidateVisibleCompileResults(
       immutable_claims_sha256:
         candidateVisibleRecoveryImmutableClaimsSha256ForReceipt(
           state.last_candidate_visible_package_json ?? "{}",
-          result.summary.trim()
+          currentSummary
         ),
       // This is the bounded compile-attempt count for the current analyzed
       // source epoch, not merely a count of byte-identical errors. A revised
       // package can legitimately fail on the next observation, and live frame
       // registration can re-key the compile context between attempts. Fresh
       // source analysis resets this state in noteRedlineAnalyzeSuccess.
-      repeat_count: previous ? previous.repeat_count + 1 : 1,
+      // A first empty-observations package is a schema bootstrap miss, not a
+      // source-interpretation attempt. Give it one observations-only repair,
+      // but repeated empty packages still consume and exhaust the normal
+      // bounded allowance.
+      repeat_count: previous
+        ? previous.repeat_count + 1
+        : isInitialSchemaBootstrapFailure
+          ? 0
+          : 1,
       updated_at_ms: Date.now()
     };
   }
@@ -4073,13 +4117,24 @@ function buildCandidateVisibleRecoveryPrompt(req: ChatRequest): string | null {
   const sourceRouteRasterVerificationRequired = failure.summary.includes(
     "candidate_visible_route_raster_verification_required:"
   );
+  const provisionalSymbolSourceGraphicRequired = failure.summary.includes(
+    "candidate_visible_provisional_plan_symbol_source_graphic_required:"
+  );
+  const observationsRequired =
+    failure.summary === "candidate_visible_observations_are_required";
   return [
-    "REGISTERED EXISTING-CONDITIONS COMPILER RECOVERY (ONE ATTEMPT REMAINS):",
+    observationsRequired && failure.repeat_count === 0
+      ? "REGISTERED EXISTING-CONDITIONS COMPILER SCHEMA BOOTSTRAP RETRY:"
+      : "REGISTERED EXISTING-CONDITIONS COMPILER RECOVERY (ONE ATTEMPT REMAINS):",
     `- Exact deterministic failure: ${failure.summary}`,
     "- The source attachment, registered frame, verified native room, and visible inventory are unchanged and already sufficient. Do not call source vision, redline orientation, frame export, room lookup, inventory, tool discovery, or any direct /revit write.",
     "- Your next response must contain exactly one workbench action: compile_registered_mep_reconstruction.",
-    "- The server will verify the unchanged source-PDF hash, registered-render hash, and an immutable-claims fingerprint. It permits only the failure-specific geometry change described below; changing system/type claims, unrelated observations, or other evidence will reject the retry.",
-    sourceRoomEnclosureRequired
+    "- The server will verify the unchanged source-PDF hash, registered-render hash, and an immutable-claims fingerprint. It permits only the failure-specific change described below; changing unrelated geometry, system/type claims, observations, or evidence will reject the retry.",
+    observationsRequired
+      ? "- Preserve schema_version, discipline, room_number, spatial_scope, registration evidence, limits, and every other package field exactly. Populate only observations with the smallest source-visible supported observation set. Do not move or redraw spatial_scope, change the requested room, or introduce unsupported system/type claims."
+      : provisionalSymbolSourceGraphicRequired
+      ? "- Preserve the observation identity, pixel_point, spatial_scope, native target, every other claim, and all evidence exactly. If and only if the source visibly supports an MEP connection symbol at that unchanged point, set representation_classification.source_graphic exactly to \"mep_connection_symbol\". Do not move the symbol. If the source does not support that classification, issue no second compile and report the exact ambiguity."
+      : sourceRoomEnclosureRequired
       ? "- Preserve every source-supported observation and its exact source geometry. Add spatial_scope by tracing only the visible room enclosure that contains the route and the source-detected room label; use the exact source_room_label_uv from the error for anchor_pixel_point and include the room number in anchor_label. Do not translate, shorten, or delete a supported route merely because the full-view projection disagrees. If the enclosure is not visibly established, defer the affected observation."
       : sourceRoomEnclosureRasterVerificationRequired
         ? "- Preserve every source-supported observation and its exact source geometry. Set spatial_scope.anchor_pixel_point to the exact source_room_label_uv from the error, then revise only spatial_scope.boundary_pixel_points by moving each unsupported enclosure edge onto the nearest clearly visible source-room wall. Use edge_support_ratios in polygon order to identify weak edges, keep well-supported edges fixed, and satisfy the reported area, mean-edge, and every-edge thresholds. Do not omit spatial_scope, change the route, or redraw the authoritative native room."
@@ -4170,7 +4225,8 @@ function buildCandidateVisibleReadyToCompilePrompt(req: ChatRequest): string | n
     "- Room/space records, room tags, and matching names are optional evidence, not registration prerequisites. Prefer spatially separated common landmarks in this order: exterior envelope/corners, stairs and elevator cores, shafts, grids and columns, then persistent interior geometry. Do not use a changed partition or name match as the sole control.",
     "- A room number or name visible only in the source is an orientation clue, not an authoritative native-room requirement. Include room_number only when the user explicitly requested that room and the server verified its native boundary; otherwise omit room_number and keep any source label only as source-local evidence.",
     "- When the uploaded source is a local/cropped room extract and a room label is visible, include spatial_scope in the same source coordinate space as its observations: trace only the clearly source-observed room-local enclosure that contains those observations, put anchor_pixel_point on the visible room label, and make anchor_label include the verified room number. When no label is visible, use a source-supported interior anchor and explicitly identify the stable landmark basis. Never invent a 0.5/centroid trace or assume the whole image is one room.",
-    "- That source-observed trace is evidence only, never permission to widen the verified native room. A compile may use a fully source-contained, disjoint crop trace as a local room-coordinate basis, after which strict verified native-room clipping still applies. If the crop does not visibly establish a room-local enclosure, defer the affected observations instead of guessing."
+    "- That source-observed trace is evidence only, never permission to widen the verified native room. A compile may use a fully source-contained, disjoint crop trace as a local room-coordinate basis, after which strict verified native-room clipping still applies. If the crop does not visibly establish a room-local enclosure, defer the affected observations instead of guessing.",
+    "- For a plumbing_fixture with placement.mode=\"provisional_plan_symbol\", include representation_classification.source_graphic=\"mep_connection_symbol\" and native_target=\"plan_only_marker\" only when the source visibly supports that classification. Otherwise defer the observation; never submit a generic source_symbol_present claim as a substitute."
   ].join("\n");
 }
 
@@ -7265,6 +7321,7 @@ export function __testOnlySeedRedlineViewAlignment(args: {
   confidence?: number;
   crop?: ViewAlignmentResult["crop"];
   registrationControls?: ViewAlignmentRegistrationControl[];
+  sourceRoomLabels?: ViewAlignmentResult["source_room_labels"];
   analysis?: string;
 }): void {
   noteRedlineViewAlignmentResult(
@@ -7278,6 +7335,7 @@ export function __testOnlySeedRedlineViewAlignment(args: {
       confidence: args.confidence ?? 0.8,
       crop: args.crop ?? { min_u: 0.1, min_v: 0.1, max_u: 0.9, max_v: 0.9 },
       registration_controls: args.registrationControls ?? [],
+      source_room_labels: args.sourceRoomLabels ?? [],
       marks: [],
       analysis: args.analysis ?? "test alignment"
     }

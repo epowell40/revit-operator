@@ -28,6 +28,17 @@ export type ViewAlignmentRegistrationControl = {
   label: string | null;
 };
 
+export type ViewAlignmentSourceRoomLabel = {
+  text: string;
+  normalized_x: number;
+  normalized_y: number;
+  min_u: number;
+  min_v: number;
+  max_u: number;
+  max_v: number;
+  score: number;
+};
+
 export type ViewAlignmentResult = {
   ok: boolean;
   matched: boolean;
@@ -42,6 +53,7 @@ export type ViewAlignmentResult = {
       }
     | null;
   registration_controls: ViewAlignmentRegistrationControl[];
+  source_room_labels: ViewAlignmentSourceRoomLabel[];
   marks: ViewAlignmentMark[];
   provider?: "gemini" | "openai";
   model?: string;
@@ -150,6 +162,59 @@ function parseResult(raw: string): ViewAlignmentResult {
           })
           .filter((row): row is ViewAlignmentRegistrationControl => !!row)
       : [];
+    const sourceRoomLabels = Array.isArray(parsed.source_room_labels)
+      ? parsed.source_room_labels
+          .map((row) => (row && typeof row === "object" ? (row as Record<string, unknown>) : null))
+          .filter((row): row is Record<string, unknown> => !!row)
+          .map((row) => {
+            const text = typeof row.text === "string" ? row.text.trim() : "";
+            const x = coerceNumber(row.normalized_x);
+            const y = coerceNumber(row.normalized_y);
+            const minU = coerceNumber(row.min_u);
+            const minV = coerceNumber(row.min_v);
+            const maxU = coerceNumber(row.max_u);
+            const maxV = coerceNumber(row.max_v);
+            const score = coerceNumber(row.score);
+            if (
+              !text ||
+              x === null ||
+              y === null ||
+              minU === null ||
+              minV === null ||
+              maxU === null ||
+              maxV === null
+            ) {
+              return null;
+            }
+            const bounds = {
+              min_u: clamp01(minU),
+              min_v: clamp01(minV),
+              max_u: clamp01(maxU),
+              max_v: clamp01(maxV)
+            };
+            const center = {
+              normalized_x: clamp01(x),
+              normalized_y: clamp01(y)
+            };
+            if (
+              bounds.max_u <= bounds.min_u ||
+              bounds.max_v <= bounds.min_v ||
+              center.normalized_x < bounds.min_u ||
+              center.normalized_x > bounds.max_u ||
+              center.normalized_y < bounds.min_v ||
+              center.normalized_y > bounds.max_v
+            ) {
+              return null;
+            }
+            return {
+              text,
+              ...center,
+              ...bounds,
+              score: clamp01(score === null ? confidence : score > 1 ? score / 100 : score)
+            } satisfies ViewAlignmentSourceRoomLabel;
+          })
+          .filter((row): row is ViewAlignmentSourceRoomLabel => !!row)
+      : [];
     const marks = Array.isArray(parsed.marks)
       ? parsed.marks
           .map((row) => (row && typeof row === "object" ? (row as Record<string, unknown>) : null))
@@ -179,6 +244,7 @@ function parseResult(raw: string): ViewAlignmentResult {
           ? crop
           : null,
       registration_controls: registrationControls,
+      source_room_labels: sourceRoomLabels,
       marks
     };
   } catch (err) {
@@ -189,6 +255,7 @@ function parseResult(raw: string): ViewAlignmentResult {
       analysis: "",
       crop: null,
       registration_controls: [],
+      source_room_labels: [],
       marks: [],
       warning: err instanceof Error ? err.message : "Failed to parse view alignment result."
     };
@@ -293,6 +360,7 @@ function buildViewAlignmentPrompt(objective?: string | null): string {
     "Use multiple spatially separated durable landmarks when available, in this order: exterior envelope and corners; stairs and elevator cores; shafts; grids and columns; then persistent interior geometry. Do not use one changed interior partition or one matching label as the sole registration control.",
     "Return the rectangle in image 2 that corresponds to image 1 using normalized coordinates from 0 to 1.",
     "Also return registration_controls for every durable common landmark actually used. Each control must identify its kind, point in image 1, corresponding point in image 2, confidence score, and a concise visual label. Prefer at least two spatially separated controls, and do not claim controls that are not visibly recognizable in both images.",
+    "Also return source_room_labels for clearly readable room labels in Image 1 only. Each entry must preserve the exact visible text, center point, tight text bounds, and confidence in normalized Image-1 coordinates. This is semantic source evidence, not a registration control. When the task names a room, prioritize that exact label and only its nearby context; otherwise return at most the 12 strongest labels. Return [] for unreadable or ambiguous labels and never infer a label from Image 2.",
     "A clean record drawing can be a valid match with marks=[]. Do not set matched=false merely because Image 1 has no red markup or because room/space data is absent.",
     "Then return the intended insertion point of each explicit red markup target from image 1 mapped into image 2, also normalized 0 to 1. If there is no explicit markup, return marks=[].",
     "For MEP route redlines, nearby text such as '12x10 supply duct' or '6-inch water pipe' is only a label. The target is the separate red route line/polyline near that text.",
@@ -318,7 +386,7 @@ function buildViewAlignmentSchema(): Record<string, unknown> {
   return {
     type: "object",
     additionalProperties: false,
-    required: ["matched", "confidence", "analysis", "crop", "registration_controls", "marks"],
+    required: ["matched", "confidence", "analysis", "crop", "registration_controls", "source_room_labels", "marks"],
     properties: {
       matched: { type: "boolean" },
       confidence: { type: "number" },
@@ -368,6 +436,34 @@ function buildViewAlignmentSchema(): Record<string, unknown> {
             view_normalized_y: { type: "number" },
             score: { type: "number" },
             label: { type: ["string", "null"] }
+          }
+        }
+      },
+      source_room_labels: {
+        type: "array",
+        maxItems: 20,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: [
+            "text",
+            "normalized_x",
+            "normalized_y",
+            "min_u",
+            "min_v",
+            "max_u",
+            "max_v",
+            "score"
+          ],
+          properties: {
+            text: { type: "string" },
+            normalized_x: { type: "number" },
+            normalized_y: { type: "number" },
+            min_u: { type: "number" },
+            min_v: { type: "number" },
+            max_u: { type: "number" },
+            max_v: { type: "number" },
+            score: { type: "number" }
           }
         }
       },
@@ -466,7 +562,7 @@ async function alignRedlineToViewWithGemini(args: {
                 {
                   text:
                     `${args.prompt}\n` +
-                    "Return JSON only with matched, confidence, analysis, crop, registration_controls, and marks. " +
+                    "Return JSON only with matched, confidence, analysis, crop, registration_controls, source_room_labels, and marks. " +
                     "Image 1 follows this instruction; Image 2 follows Image 1."
                 },
                 redlinePart,
@@ -577,6 +673,7 @@ export async function alignRedlineToView(args: {
       analysis: "",
       crop: null,
       registration_controls: [],
+      source_room_labels: [],
       marks: [],
       attempted_models: [],
       fallback_reason: fallbackReason,
@@ -620,6 +717,7 @@ export async function alignRedlineToView(args: {
       analysis: "",
       crop: null,
       registration_controls: [],
+      source_room_labels: [],
       marks: [],
       attempted_models: attemptedModels,
       ...(fallbackReason ? { fallback_reason: fallbackReason } : {}),
@@ -704,6 +802,7 @@ export async function alignRedlineToView(args: {
       analysis: "",
       crop: null,
       registration_controls: [],
+      source_room_labels: [],
       marks: [],
       provider: "openai",
       model,

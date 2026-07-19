@@ -39,6 +39,16 @@ export type CandidateVisibleAlignment = {
   model?: string | null;
   attempted_models?: string[];
   fallback_reason?: string | null;
+  source_room_labels?: Array<{
+    text: string;
+    normalized_x: number;
+    normalized_y: number;
+    min_u: number;
+    min_v: number;
+    max_u: number;
+    max_v: number;
+    score: number;
+  }>;
   crop: {
     min_u: number;
     min_v: number;
@@ -230,6 +240,9 @@ export type CandidateVisibleMepReconstruction = {
         | "server_verified_source_room_shape_match"
         | "server_verified_room_label_translation"
         | "server_verified_room_tag_and_stable_boundary_similarity";
+      source_room_label_evidence_basis?:
+        | "vector_pdf_text"
+        | "gemini_structured_source_label";
       source_scope_bounds: {
         min: ExistingConditionsPlanPoint;
         max: ExistingConditionsPlanPoint;
@@ -329,6 +342,7 @@ function rounded(value: number, digits = 6): number {
 }
 
 type CandidateVisibleSourceRoomLabelAnchor = {
+  evidence_basis: "vector_pdf_text" | "gemini_structured_source_label";
   text: string;
   page: number;
   pixel_point: ExistingConditionsPlanPoint;
@@ -541,6 +555,7 @@ async function locateUniqueSourceRoomLabelAnchor(args: {
         const min = { x: Number(matrix[4]), y: Number(matrix[5]) - height };
         const max = { x: Number(matrix[4]) + width, y: Number(matrix[5]) };
         return {
+          evidence_basis: "vector_pdf_text",
           text: String(item.str ?? "").trim(),
           page: 1,
           pixel_point: {
@@ -617,6 +632,110 @@ async function locateUniqueSourceRoomLabelAnchor(args: {
       // Best-effort cleanup for malformed or partially loaded source PDFs.
     }
   }
+}
+
+async function locateUniqueStructuredSourceRoomLabelAnchor(args: {
+  source_path: string;
+  registered_render_path: string;
+  room_number: string;
+  render_width_px: number;
+  render_height_px: number;
+  alignment: CandidateVisibleAlignment;
+}): Promise<CandidateVisibleSourceRoomLabelAnchor | null> {
+  if (
+    args.alignment.provider !== "gemini" ||
+    sha256File(args.source_path) !== sha256File(args.registered_render_path)
+  ) {
+    return null;
+  }
+  const expected = normalizedRoomLabelToken(args.room_number);
+  if (!expected) return null;
+  const matches = (args.alignment.source_room_labels ?? []).filter((entry) =>
+    entry &&
+    entry.score >= 0.85 &&
+    roomLabelTokenContainsExactRoom(
+      normalizedRoomLabelToken(entry.text),
+      expected
+    )
+  );
+  if (matches.length !== 1) return null;
+  const match = matches[0]!;
+  const normalizedValues = [
+    match.normalized_x,
+    match.normalized_y,
+    match.min_u,
+    match.min_v,
+    match.max_u,
+    match.max_v
+  ];
+  if (
+    normalizedValues.some((value) => !Number.isFinite(value) || value < 0 || value > 1) ||
+    match.max_u <= match.min_u ||
+    match.max_v <= match.min_v ||
+    match.normalized_x < match.min_u ||
+    match.normalized_x > match.max_u ||
+    match.normalized_y < match.min_v ||
+    match.normalized_y > match.max_v
+  ) {
+    return null;
+  }
+  const areaRatio = (match.max_u - match.min_u) * (match.max_v - match.min_v);
+  if (areaRatio <= 1e-7 || areaRatio > 0.02) return null;
+
+  const image = await loadImage(args.registered_render_path);
+  if (
+    image.width !== args.render_width_px ||
+    image.height !== args.render_height_px
+  ) {
+    return null;
+  }
+  const canvas = createCanvas(image.width, image.height);
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, image.width, image.height);
+  context.drawImage(image, 0, 0);
+  const minX = Math.max(0, Math.floor(match.min_u * image.width));
+  const minY = Math.max(0, Math.floor(match.min_v * image.height));
+  const maxX = Math.min(image.width, Math.ceil(match.max_u * image.width));
+  const maxY = Math.min(image.height, Math.ceil(match.max_v * image.height));
+  const width = maxX - minX;
+  const height = maxY - minY;
+  if (width < 2 || height < 2) return null;
+  const pixels = context.getImageData(minX, minY, width, height).data;
+  let foregroundPixels = 0;
+  for (let index = 0; index < pixels.length; index += 4) {
+    const luminance =
+      0.2126 * pixels[index]! +
+      0.7152 * pixels[index + 1]! +
+      0.0722 * pixels[index + 2]!;
+    if (luminance < 245) foregroundPixels += 1;
+  }
+  const foregroundRatio = foregroundPixels / Math.max(1, width * height);
+  if (foregroundRatio < 0.005 || foregroundRatio > 0.8) return null;
+
+  return {
+    evidence_basis: "gemini_structured_source_label",
+    text: match.text.trim(),
+    page: 1,
+    pixel_point: {
+      x: match.normalized_x * args.render_width_px,
+      y: match.normalized_y * args.render_height_px
+    },
+    pixel_bounds: {
+      min: {
+        x: match.min_u * args.render_width_px,
+        y: match.min_v * args.render_height_px
+      },
+      max: {
+        x: match.max_u * args.render_width_px,
+        y: match.max_v * args.render_height_px
+      }
+    },
+    source_render_mean_absolute_luminance_difference: 0,
+    source_render_max_tile_mean_absolute_luminance_difference: 0,
+    source_render_changed_pixel_ratio: 0,
+    source_render_foreground_centroid_delta_px: 0
+  };
 }
 
 async function verifySourceEnclosureRaster(args: {
@@ -3267,6 +3386,8 @@ function validateCandidateVisibleSpatialScope(args: {
       reason: exactTagStableLandmarkApplied
         ? "server_verified_room_tag_and_stable_boundary_similarity"
         : "server_verified_room_label_translation",
+      source_room_label_evidence_basis:
+        args.source_room_label_anchor.evidence_basis,
       source_scope_bounds: sourceEvidenceBounds,
       target_native_room_bounds: pointBounds(nativeRoomPixelPolygon),
       scale_x: exactTagStableLandmarkApplied
@@ -3454,6 +3575,12 @@ function validateCandidateVisibleSpatialScope(args: {
       );
       localRoomRegistrationFallback = {
         reason: registrationReason,
+        ...(args.source_room_label_anchor
+          ? {
+              source_room_label_evidence_basis:
+                args.source_room_label_anchor.evidence_basis
+            }
+          : {}),
         source_scope_bounds: sourceBounds,
         target_native_room_bounds: targetBounds,
         scale_x: 1,
@@ -3998,6 +4125,32 @@ export async function compileCandidateVisibleMepReconstruction(
   const payload = normalizedPlanner.payload;
   const observationLimit = positiveInteger(payload.maximum_observations, "maximum_observations");
   if (!Array.isArray(payload.observations) || payload.observations.length === 0) {
+    const deferredProvisionalSymbol = (
+      Array.isArray(input.planner_payload.observations)
+        ? input.planner_payload.observations as unknown as Array<Record<string, unknown>>
+        : []
+    ).find((observation) =>
+      String(observation.kind ?? "").trim() === "plumbing_fixture" &&
+      normalizedText(
+        (observation.placement as Record<string, unknown> | undefined)?.mode
+      ) === "provisional_plan_symbol" &&
+      normalizedText(
+        (
+          observation.representation_classification as
+            Record<string, unknown> | undefined
+        )?.source_graphic
+      ) !== "mep_connection_symbol"
+    );
+    if (deferredProvisionalSymbol) {
+      const observationId = String(
+        deferredProvisionalSymbol.observation_id ?? "unidentified_observation"
+      ).trim().replace(/:/g, "_");
+      throw new Error(
+        "candidate_visible_provisional_plan_symbol_source_graphic_required:" +
+        `${observationId}:` +
+        "set_representation_classification_source_graphic_to_mep_connection_symbol_only_if_source_visible"
+      );
+    }
     throw new Error("candidate_visible_observations_are_required");
   }
   if (payload.observations.length > observationLimit) {
@@ -4011,6 +4164,13 @@ export async function compileCandidateVisibleMepReconstruction(
         room_number: roomNumber,
         render_width_px: width,
         render_height_px: height
+      }) ?? await locateUniqueStructuredSourceRoomLabelAnchor({
+        source_path: sourcePdfPath,
+        registered_render_path: renderPath,
+        room_number: roomNumber,
+        render_width_px: width,
+        render_height_px: height,
+        alignment: input.alignment
       })
     : null;
   const sourceEnclosureRasterVerification =

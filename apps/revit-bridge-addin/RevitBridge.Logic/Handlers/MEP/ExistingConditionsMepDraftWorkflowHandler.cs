@@ -198,6 +198,17 @@ namespace RevitBridge.Logic.Handlers.MEP
                             {
                                 var element = doc.GetElement(ElementIdCompat.Create(id));
                                 if (element == null) throw new InvalidOperationException($"created_element_missing_before_phase_assignment:{id}");
+                                // View-specific elements (for example DetailCurves used as
+                                // explicitly provisional plan markers) inherit visibility
+                                // from their owner view rather than a model Created Phase.
+                                // Revit can expose PHASE_CREATED on these elements while
+                                // refusing to retain a write, so phase acceptance must defer
+                                // to the separate target-view visibility gate.
+                                if (element.ViewSpecific)
+                                {
+                                    phaseSkippedElementIds.Add(id);
+                                    continue;
+                                }
                                 var phaseParameter = element.get_Parameter(BuiltInParameter.PHASE_CREATED);
                                 if (phaseParameter == null)
                                 {
