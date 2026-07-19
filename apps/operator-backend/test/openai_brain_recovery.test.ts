@@ -6,10 +6,19 @@ import path from "node:path";
 import {
   __testOnlyBuildCapabilityRecoveryResponse,
   __testOnlyBuildCandidateVisibleDeterministicPreparationResponse,
+  __testOnlyCandidateVisibleDurableLandmarkRegistrationAssessment,
+  __testOnlyCandidateVisibleRegistrationCategories,
+  __testOnlyCandidateVisibleRoomLabelFromToolResults,
   __testOnlyBuildCandidateVisibleRecoveryPrompt,
   __testOnlyBuildCandidateVisibleRoomScopeResponse,
   __testOnlyBuildCandidateVisibleReadyToCompilePrompt,
+  __testOnlyBuildCandidateVisibleTerminalGuardAfterWorkbench,
   __testOnlyBuildCandidateVisibleTerminalGuardResponse,
+  __testOnlyCompileRegisteredMepReconstructionForSession,
+  __testOnlyCandidateVisibleRecoveryImmutableClaimsSha256,
+  __testOnlyCandidateVisibleVerifiedRoomScopeFromToolResults,
+  __testOnlyBuildInitialRedlinePreflightAction,
+  __testOnlyIsExistingConditionsReconstructionRequest,
   __testOnlyExtractFirstJsonObject,
   __testOnlyExtractResponsesApiOutputText,
   __testOnlyNormalizeNativeRevitActionBodiesForRouting,
@@ -21,6 +30,7 @@ import {
   __testOnlySeedRedlineViewAlignment,
   __testOnlySetCandidateVisibleCompileContext,
   __testOnlyShouldBypassCandidateVisiblePreModelDiscovery,
+  __testOnlyShouldUseOpenAiGeometryFallbackAfterGemini,
   __testOnlyStartFreshCandidateVisibleSourceForRecoveryTest,
   __testOnlySuppressCandidateVisibleCompileReadyWorkbenchActions,
   __testOnlySuppressCandidateVisibleGuardedWorkbenchActions,
@@ -29,6 +39,7 @@ import {
 } from "../src/brains/openai_brain.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest } from "../src/contracts.js";
 import { getCodexBaseInstructionsForTest } from "../src/brains/codex_brain.js";
+import { ensureWorkspaceLayout } from "../src/workspace.js";
 
 function mkReq(args?: Partial<ChatRequest>): ChatRequest {
   return {
@@ -39,6 +50,365 @@ function mkReq(args?: Partial<ChatRequest>): ChatRequest {
     ...args
   };
 }
+
+test("candidate-visible native inventory follows Gemini registration-control categories", () => {
+  assert.deepEqual(
+    __testOnlyCandidateVisibleRegistrationCategories([
+      {
+        kind: "grid",
+        source_normalized_x: 0.1,
+        source_normalized_y: 0.1,
+        view_normalized_x: 0.2,
+        view_normalized_y: 0.2,
+        score: 0.9,
+        label: "grid 1/F"
+      },
+      {
+        kind: "grid",
+        source_normalized_x: 0.8,
+        source_normalized_y: 0.8,
+        view_normalized_x: 0.7,
+        view_normalized_y: 0.7,
+        score: 0.9,
+        label: "grid 7/A"
+      }
+    ]),
+    ["OST_Grids"]
+  );
+  assert.deepEqual(
+    __testOnlyCandidateVisibleRegistrationCategories([
+      {
+        kind: "stair" as const,
+        source_normalized_x: 0.2,
+        source_normalized_y: 0.2,
+        view_normalized_x: 0.2,
+        view_normalized_y: 0.2,
+        score: 0.8,
+        label: "north stair"
+      },
+      {
+        kind: "exterior_corner",
+        source_normalized_x: 0.8,
+        source_normalized_y: 0.8,
+        view_normalized_x: 0.8,
+        view_normalized_y: 0.8,
+        score: 0.8,
+        label: "southeast corner"
+      }
+    ]),
+    ["OST_Stairs", "OST_StairsRuns", "OST_StairsLandings", "OST_Walls"]
+  );
+  assert.deepEqual(
+    __testOnlyCandidateVisibleRegistrationCategories([
+      {
+        kind: "exterior_corner",
+        source_normalized_x: 0.1,
+        source_normalized_y: 0.1,
+        view_normalized_x: 0.1,
+        view_normalized_y: 0.1,
+        score: 0.98,
+        label: "northwest exterior corner"
+      },
+      {
+        kind: "stair" as const,
+        source_normalized_x: 0.8,
+        source_normalized_y: 0.15,
+        view_normalized_x: 0.72,
+        view_normalized_y: 0.2,
+        score: 0.99,
+        label: "Stair 2 core"
+      },
+      {
+        kind: "elevator_core",
+        source_normalized_x: 0.2,
+        source_normalized_y: 0.85,
+        view_normalized_x: 0.25,
+        view_normalized_y: 0.78,
+        score: 0.98,
+        label: "Stair 1 and public elevator core"
+      }
+    ]),
+    [
+      "OST_Stairs",
+      "OST_StairsRuns",
+      "OST_StairsLandings",
+      "OST_ShaftOpening"
+    ],
+    "two separated stair/core controls are sufficient without a whole-crop wall inventory"
+  );
+});
+
+test("candidate-visible durable landmark assessment reports exact native matching failures", () => {
+  const frame = {
+    frame_id: "frame-diagnostic",
+    view_id: 3960410,
+    width_px: 1000,
+    height_px: 1000,
+    top_left_xyz: [0, 100, 10] as [number, number, number],
+    top_right_xyz: [100, 100, 10] as [number, number, number],
+    bottom_left_xyz: [0, 0, 10] as [number, number, number],
+    target_level_elevation_ft: 10
+  };
+  const alignment = {
+    source_image_path: "registered.png",
+    frame_id: frame.frame_id,
+    view_id: frame.view_id,
+    matched: true,
+    confidence: 0.98,
+    crop: { min_u: 0, min_v: 0, max_u: 1, max_v: 1 },
+    registration_controls: [
+      {
+        kind: "stair" as const,
+        source_normalized_x: 0.1,
+        source_normalized_y: 0.1,
+        view_normalized_x: 0.1,
+        view_normalized_y: 0.1,
+        score: 0.99,
+        label: "north stair"
+      },
+      {
+        kind: "stair" as const,
+        source_normalized_x: 0.8,
+        source_normalized_y: 0.8,
+        view_normalized_x: 0.8,
+        view_normalized_y: 0.8,
+        score: 0.99,
+        label: "south stair"
+      }
+    ],
+    analysis: "structured control test",
+    provider: "openai" as const,
+    model: "gpt-5.6-sol",
+    attempted_models: ["gemini-3-flash-preview", "gpt-5.6-sol"],
+    fallback_reason: "native rejection",
+    updated_at_ms: Date.now()
+  };
+  const expectedModelBounds = [0, 0, -100, 100, 100, 100];
+  const frameResult = {
+    action_id: "frame",
+    path: "/revit/export-view-frame",
+    status: "done",
+    result_json: {
+      ok: true,
+      frameId: frame.frame_id,
+      viewId: frame.view_id,
+      widthPx: frame.width_px,
+      heightPx: frame.height_px,
+      mapping: {
+        topLeftXyz: frame.top_left_xyz,
+        topRightXyz: frame.top_right_xyz,
+        bottomLeftXyz: frame.bottom_left_xyz
+      },
+      targetLevel: { elevationFt: frame.target_level_elevation_ft }
+    }
+  };
+  const inventoryResult = (itemsSampled: unknown[]) => ({
+    action_id:
+      "candidate-visible-broad-inventory:frame-diagnostic:" +
+      "scope-ost-stairs+ost-stairsruns+ost-stairslandings:500",
+    path: "/revit/export-visible-elements",
+    status: "done",
+    result_json: {
+      ok: true,
+      frameId: frame.frame_id,
+      viewId: frame.view_id,
+      widthPx: frame.width_px,
+      heightPx: frame.height_px,
+      mapping: {
+        topLeftXyz: frame.top_left_xyz,
+        topRightXyz: frame.top_right_xyz,
+        bottomLeftXyz: frame.bottom_left_xyz
+      },
+      targetLevel: { elevationFt: frame.target_level_elevation_ft },
+      modelBoundsApplied: true,
+      modelBoundsFt: {
+        min: { x: 0, y: 0, z: -100 },
+        max: { x: 100, y: 100, z: 100 }
+      },
+      truncated: false,
+      itemsSampled
+    }
+  });
+  const nativeEntry = (
+    sourceScopedId: string,
+    normalizedX: number,
+    normalizedY: number,
+    modelX: number,
+    modelY: number
+  ) => ({
+    sourceScopedId,
+    builtInCategory: "OST_Stairs",
+    bbox: {
+      model: { center: { x: modelX, y: modelY } },
+      image: {
+        minNormalizedX: normalizedX,
+        minNormalizedY: normalizedY,
+        maxNormalizedX: normalizedX,
+        maxNormalizedY: normalizedY
+      }
+    }
+  });
+  const assess = (itemsSampled: unknown[]) =>
+    __testOnlyCandidateVisibleDurableLandmarkRegistrationAssessment({
+      toolResults: [frameResult, inventoryResult(itemsSampled)] as any,
+      frame,
+      alignment,
+      expectedModelBounds,
+      sourcePdfSha256: "source-hash",
+      registeredRenderSha256: "render-hash"
+    });
+
+  const noCandidate = assess([
+    nativeEntry("host:stair-a", 0.4, 0.4, 40, 40),
+    nativeEntry("host:stair-b", 0.5, 0.5, 50, 50)
+  ]);
+  assert.equal(noCandidate.receipt, null);
+  assert.equal(noCandidate.failure_reason, "no_candidate_for_control");
+  assert.equal(noCandidate.details.control_index, 0);
+  assert.equal(
+    (noCandidate.details.closest_candidate as any)
+      ?.native_source_scoped_id,
+    "host:stair-a"
+  );
+
+  const ambiguous = assess([
+    nativeEntry("host:stair-a", 0.1, 0.1, 10, 10),
+    nativeEntry("host:stair-b", 0.105, 0.1, 11, 10),
+    nativeEntry("host:stair-c", 0.8, 0.8, 80, 80)
+  ]);
+  assert.equal(ambiguous.receipt, null);
+  assert.equal(
+    ambiguous.failure_reason,
+    "ambiguous_candidate_for_control"
+  );
+  assert.equal(
+    (ambiguous.details.best_candidate as any)?.native_source_scoped_id,
+    "host:stair-a"
+  );
+  assert.equal(
+    (ambiguous.details.second_candidate as any)?.native_source_scoped_id,
+    "host:stair-b"
+  );
+});
+
+test("native landmark rejection promotes Gemini semantics to an OpenAI geometry fallback", () => {
+  const alignment = {
+    source_image_path: "artifacts/source.png",
+    frame_id: "frame-1",
+    view_id: 101,
+    matched: true,
+    confidence: 0.95,
+    crop: { min_u: 0, min_v: 0, max_u: 1, max_v: 1 },
+    registration_controls: [],
+    analysis: "Gemini matched labeled grids.",
+    provider: "gemini" as const,
+    model: "gemini-3-flash-preview",
+    attempted_models: ["gemini-3-flash-preview"],
+    fallback_reason: null,
+    updated_at_ms: Date.now()
+  };
+  assert.equal(
+    __testOnlyShouldUseOpenAiGeometryFallbackAfterGemini({
+      alignment,
+      exact_frame_available: true,
+      native_landmark_validation_complete: true,
+      durable_landmark_receipt_verified: false,
+      requested_room_number: null
+    }),
+    true
+  );
+  assert.equal(
+    __testOnlyShouldUseOpenAiGeometryFallbackAfterGemini({
+      alignment,
+      exact_frame_available: true,
+      native_landmark_validation_complete: false,
+      durable_landmark_receipt_verified: false,
+      requested_room_number: null
+    }),
+    false,
+    "the provider switch waits for a native result or the bounded retry budget"
+  );
+  assert.equal(
+    __testOnlyShouldUseOpenAiGeometryFallbackAfterGemini({
+      alignment,
+      exact_frame_available: true,
+      native_landmark_validation_complete: true,
+      durable_landmark_receipt_verified: true,
+      requested_room_number: null
+    }),
+    false
+  );
+  assert.equal(
+    __testOnlyShouldUseOpenAiGeometryFallbackAfterGemini({
+      alignment,
+      exact_frame_available: true,
+      native_landmark_validation_complete: true,
+      durable_landmark_receipt_verified: false,
+      requested_room_number: "403"
+    }),
+    false,
+    "verified room scope does not need a second whole-floor landmark registration"
+  );
+});
+
+test("candidate-visible trial wording remains an existing-conditions request when the PDF was attached first", () => {
+  const action = __testOnlyBuildInitialRedlinePreflightAction({
+    userText:
+      "Using the attached sample plumbing crop, reconstruct only the clearly visible continuous blue route A as existing conditions. Use the exact room tag pair for translation, current linked-room containment, source-raster support, dry-run, apply, readback, and visual verification.",
+    rememberedRedlinePath: "artifacts/uploads/sample_plumbing_room_crop.pdf"
+  });
+
+  assert.ok(action);
+  assert.equal(action?.type, "analyze_redline");
+  assert.equal(action?.file_path, "artifacts/uploads/sample_plumbing_room_crop.pdf");
+});
+
+test("clean source-PDF drafting wording enters existing-conditions reconstruction without the exact phrase", () => {
+  const req = mkReq({
+    session_id: "session-clean-existing-plumbing-intent",
+    user_text:
+      "Draft the visible existing plumbing in the source PDF into this empty test model.",
+    user_attachments: [{
+      id: "source-pdf",
+      relative_path: "artifacts/uploads/P1.01_sample_plumbing_crop.pdf",
+      filename: "P1.01_sample_plumbing_crop.pdf",
+      mime: "application/pdf"
+    }]
+  });
+
+  assert.equal(__testOnlyIsExistingConditionsReconstructionRequest(req), true);
+  assert.equal(
+    __testOnlyIsExistingConditionsReconstructionRequest(
+      mkReq({
+        user_text:
+          "Change the existing receptacle indicated by the attached redline."
+      })
+    ),
+    false
+  );
+  assert.equal(
+    __testOnlyIsExistingConditionsReconstructionRequest(
+      mkReq({
+        user_text:
+          "Draw a new pipe from the existing plumbing fixture shown in the source PDF."
+      })
+    ),
+    false
+  );
+  for (const userText of [
+    "Draw a new pipe from existing plumbing fixture shown in the source PDF.",
+    "Draw a new pipe off the existing plumbing fixture shown in the source PDF.",
+    "Model one new branch into the existing plumbing shown in the attached plan."
+  ]) {
+    assert.equal(
+      __testOnlyIsExistingConditionsReconstructionRequest(
+        mkReq({ user_text: userText })
+      ),
+      false,
+      userText
+    );
+  }
+});
 
 test("capability recovery falls back to tool discovery and native api search", () => {
   const res = __testOnlyBuildCapabilityRecoveryResponse({
@@ -427,7 +797,7 @@ test("candidate-visible compiler guards suppress repeated vision and generic dis
   assert.equal(afterSuccess.actions.length, 1);
 });
 
-test("first candidate-visible compiler failure exposes the exact prior package for one bounded revision", () => {
+test("first candidate-visible compiler failure exposes the exact prior package for one bounded revision", async () => {
   const sessionId = "session-candidate-visible-recovery-prompt";
   const packageJson = JSON.stringify({
     schema_version: 2,
@@ -459,6 +829,7 @@ test("first candidate-visible compiler failure exposes the exact prior package f
   assert.match(prompt ?? "", /ONE ATTEMPT REMAINS/);
   assert.match(prompt ?? "", /candidate_visible_route_outside_spatial_scope:cw_main/);
   assert.match(prompt ?? "", /exactly one workbench action: compile_registered_mep_reconstruction/);
+  assert.match(prompt ?? "", /immutable-claims fingerprint/);
   assert.match(prompt ?? "", /never widen or redraw spatial_scope/);
   assert.match(prompt ?? "", /\"observation_id\":\"cw_main\"/);
   assert.equal(__testOnlyShouldBypassCandidateVisiblePreModelDiscovery(mkReq({
@@ -495,6 +866,292 @@ test("first candidate-visible compiler failure exposes the exact prior package f
   assert.equal(terminalResponse?.actions.length, 0);
   assert.match(terminalResponse?.assistant_message ?? "", /stopped before any additional source vision/i);
   assert.match(terminalResponse?.assistant_message ?? "", /candidate_visible_route_outside_spatial_scope:cw_main/);
+  const terminalAfterWorkbench = __testOnlyBuildCandidateVisibleTerminalGuardAfterWorkbench(
+    mkReq({
+      session_id: sessionId,
+      user_text: ""
+    }),
+    [{
+      index: 2,
+      type: "compile_registered_mep_reconstruction",
+      ok: false,
+      summary: "candidate_visible_route_outside_spatial_scope:cw_main"
+    }]
+  );
+  assert.equal(terminalAfterWorkbench?.actions.length, 0);
+  assert.match(
+    terminalAfterWorkbench?.assistant_message ?? "",
+    /candidate_visible_route_outside_spatial_scope:cw_main/
+  );
+  assert.equal(
+    __testOnlyBuildCandidateVisibleTerminalGuardAfterWorkbench(
+      mkReq({
+        session_id: sessionId,
+        user_text: ""
+      }),
+      [{
+        index: 3,
+        type: "analyze_redline",
+        ok: false,
+        summary: "not a compiler result"
+      }]
+    ),
+    null
+  );
+  const mutatedThirdPackage = JSON.stringify({
+    schema_version: 2,
+    room_number: "100",
+    observations: [{
+      kind: "pipe_route",
+      observation_id: "cw_main",
+      system: "domestic_hot_water",
+      pixel_points: [{ x: 0.2, y: 0.3 }, { x: 0.8, y: 0.3 }]
+    }]
+  });
+  await assert.rejects(
+    __testOnlyCompileRegisteredMepReconstructionForSession(
+      mkReq({
+        session_id: sessionId,
+        user_text: "fix it"
+      }),
+      mutatedThirdPackage
+    ),
+    /candidate_visible_compiler_terminal_guard:.*two_bounded_compile_attempts_exhausted/
+  );
+});
+
+test("source-room enclosure recovery preserves the route and requests the exact visible room trace", () => {
+  const sessionId = "session-candidate-visible-source-room-enclosure";
+  const packageJson = JSON.stringify({
+    schema_version: 2,
+    room_number: "100",
+    observations: [{
+      kind: "pipe_route",
+      observation_id: "room100-orange-plumbing-route",
+      pixel_points: [{ x: 0.393, y: 0.353 }, { x: 0.601, y: 0.506 }]
+    }]
+  });
+  __testOnlySetCandidateVisibleCompileContext(
+    sessionId,
+    "artifacts/uploads/source.pdf",
+    "source-room-enclosure-context",
+    packageJson
+  );
+  __testOnlyRecordCandidateVisibleCompileResults(sessionId, [{
+    index: 1,
+    type: "compile_registered_mep_reconstruction",
+    ok: false,
+    summary:
+      "candidate_visible_source_room_enclosure_required:100:room100-orange-plumbing-route" +
+      ":source_uv_bounds=0.3930,0.3530,0.6010,0.5060" +
+      ":projected_native_scope_uv_bounds=0.3677,0.0000,0.8763,0.1503" +
+      ":source_room_label_uv=0.7511,0.2568" +
+      ":preserve_source_geometry_add_spatial_scope_or_defer"
+  }]);
+
+  const prompt = __testOnlyBuildCandidateVisibleRecoveryPrompt(mkReq({
+    session_id: sessionId,
+    user_text: ""
+  }));
+  assert.match(prompt ?? "", /Preserve every source-supported observation and its exact source geometry/);
+  assert.match(prompt ?? "", /use the exact source_room_label_uv from the error for anchor_pixel_point/);
+  assert.match(prompt ?? "", /Do not translate, shorten, or delete a supported route/);
+  assert.match(prompt ?? "", /\"observation_id\":\"room100-orange-plumbing-route\"/);
+  assert.doesNotMatch(prompt ?? "", /never widen or redraw spatial_scope/);
+});
+
+test("source-room enclosure raster recovery preserves route and anchor while revising only weak edges", () => {
+  const sessionId = "session-candidate-visible-source-room-raster";
+  const packageJson = JSON.stringify({
+    schema_version: 2,
+    room_number: "100",
+    spatial_scope: {
+      boundary_pixel_points: [
+        { x: 0.535, y: 0.188 },
+        { x: 0.655, y: 0.188 },
+        { x: 0.655, y: 0.202 }
+      ],
+      anchor_pixel_point: { x: 0.615, y: 0.235 }
+    },
+    observations: [{
+      kind: "pipe_route",
+      observation_id: "room100-orange-plumbing-route",
+      pixel_points: [{ x: 0.393, y: 0.353 }, { x: 0.601, y: 0.506 }]
+    }]
+  });
+  __testOnlySetCandidateVisibleCompileContext(
+    sessionId,
+    "artifacts/uploads/source.pdf",
+    "source-room-raster-context",
+    packageJson
+  );
+  __testOnlyRecordCandidateVisibleCompileResults(sessionId, [{
+    index: 1,
+    type: "compile_registered_mep_reconstruction",
+    ok: false,
+    summary:
+      "candidate_visible_source_room_enclosure_raster_verification_required:100" +
+      ":polygon_area_ratio=0.0123:mean_edge_support_ratio=0.2875" +
+      ":minimum_edge_support_ratio=0.0000" +
+      ":edge_support_ratios=0.9000,0.0000,0.2500" +
+      ":required_maximum_polygon_area_ratio=0.7500" +
+      ":required_minimum_mean_edge_support_ratio=0.3000" +
+      ":required_minimum_each_edge_support_ratio=0.1000" +
+      ":source_room_label_uv=0.7511,0.2568" +
+      ":preserve_source_geometry_retrace_only_unsupported_enclosure_edges"
+  }]);
+
+  const prompt = __testOnlyBuildCandidateVisibleRecoveryPrompt(mkReq({
+    session_id: sessionId,
+    user_text: ""
+  }));
+  assert.match(prompt ?? "", /Preserve every source-supported observation and its exact source geometry/);
+  assert.match(prompt ?? "", /Set spatial_scope\.anchor_pixel_point to the exact source_room_label_uv/);
+  assert.match(prompt ?? "", /revise only spatial_scope\.boundary_pixel_points/);
+  assert.match(prompt ?? "", /Use edge_support_ratios in polygon order to identify weak edges/);
+  assert.match(prompt ?? "", /Do not omit spatial_scope, change the route/);
+  assert.match(prompt ?? "", /\"anchor_pixel_point\":\{\"x\":0\.615,\"y\":0\.235\}/);
+  assert.match(prompt ?? "", /\"observation_id\":\"room100-orange-plumbing-route\"/);
+});
+
+test("source-route raster recovery preserves registration and revises only weak route segments", () => {
+  const sessionId = "session-candidate-visible-source-route-raster";
+  const packageJson = JSON.stringify({
+    schema_version: 2,
+    room_number: "100",
+    spatial_scope: {
+      anchor_pixel_point: { x: 0.7511, y: 0.2568 }
+    },
+    observations: [{
+      kind: "pipe_route",
+      observation_id: "room100-blue-plumbing-route",
+      pixel_points: [
+        { x: 0.477, y: 0.249 },
+        { x: 0.501, y: 0.249 },
+        { x: 0.501, y: 0.225 }
+      ]
+    }]
+  });
+  __testOnlySetCandidateVisibleCompileContext(
+    sessionId,
+    "artifacts/uploads/source.pdf",
+    "source-route-raster-context",
+    packageJson
+  );
+  __testOnlyRecordCandidateVisibleCompileResults(sessionId, [{
+    index: 1,
+    type: "compile_registered_mep_reconstruction",
+    ok: false,
+    summary:
+      "candidate_visible_route_raster_verification_required:" +
+      "room100-blue-plumbing-route:route" +
+      ":support_modality=chromatic_line" +
+      ":mean_support_ratio=0.2100" +
+      ":minimum_segment_support_ratio=0.0000" +
+      ":segment_support_ratios=0.6300,0.0000" +
+      ":required_minimum_mean_support_ratio=0.4500" +
+      ":required_minimum_each_segment_support_ratio=0.2000" +
+      ":candidate_retrace_uv=0.393000,0.340000;0.474000,0.340000;0.474000,0.615000;0.573000,0.615000" +
+      ":candidate_retrace_color=blue" +
+      ":candidate_retrace_policy_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" +
+      ":preserve_source_geometry_retrace_to_visible_centerline"
+  }]);
+
+  const prompt = __testOnlyBuildCandidateVisibleRecoveryPrompt(mkReq({
+    session_id: sessionId,
+    user_text: ""
+  }));
+  assert.match(prompt ?? "", /Preserve the exact room registration, native room boundary, spatial scope/);
+  assert.match(prompt ?? "", /Retrace only the failed route or branch geometry/);
+  assert.match(prompt ?? "", /Use segment_support_ratios in polyline order/);
+  assert.match(prompt ?? "", /color is useful when support_modality is chromatic_line/);
+  assert.match(prompt ?? "", /candidate_retrace_uv is present/);
+  assert.match(prompt ?? "", /hash-bound visible-raster proposal/);
+  assert.match(prompt ?? "", /let the compiler independently reverify it/);
+  assert.match(prompt ?? "", /You may add intermediate vertices/);
+  assert.match(prompt ?? "", /do not change scale, rotation, system\/type claims/);
+  assert.match(prompt ?? "", /\"observation_id\":\"room100-blue-plumbing-route\"/);
+});
+
+test("candidate-visible recovery fingerprint permits only the failed geometry field", () => {
+  const failure =
+    "candidate_visible_route_raster_verification_required:route-a:route" +
+    ":support_modality=chromatic_line";
+  const base = {
+    schema_version: 2,
+    discipline: "plumbing",
+    room_number: "100",
+    spatial_scope: {
+      boundary_pixel_points: [
+        { x: 0.1, y: 0.1 },
+        { x: 0.9, y: 0.1 },
+        { x: 0.9, y: 0.9 },
+        { x: 0.1, y: 0.9 }
+      ]
+    },
+    observations: [
+      {
+        kind: "pipe_route",
+        observation_id: "route-a",
+        system: "domestic_cold_water",
+        pixel_points: [{ x: 0.2, y: 0.3 }, { x: 0.5, y: 0.3 }],
+        attribute_evidence: [{
+          attribute: "system",
+          basis: "visible_label",
+          reference: "CW"
+        }]
+      },
+      {
+        kind: "pipe_route",
+        observation_id: "route-b",
+        system: "sanitary",
+        pixel_points: [{ x: 0.4, y: 0.6 }, { x: 0.7, y: 0.6 }]
+      }
+    ]
+  };
+  const fingerprint = (value: unknown) =>
+    __testOnlyCandidateVisibleRecoveryImmutableClaimsSha256(
+      JSON.stringify(value),
+      failure
+    );
+  const allowed = structuredClone(base);
+  allowed.observations[0]!.pixel_points = [
+    { x: 0.2, y: 0.31 },
+    { x: 0.5, y: 0.31 }
+  ];
+  assert.equal(fingerprint(allowed), fingerprint(base));
+
+  const changedSystem = structuredClone(base);
+  changedSystem.observations[0]!.system = "domestic_hot_water";
+  assert.notEqual(fingerprint(changedSystem), fingerprint(base));
+
+  const changedEvidence = structuredClone(base);
+  (changedEvidence.observations[0] as any).attribute_evidence[0].reference = "HW";
+  assert.notEqual(fingerprint(changedEvidence), fingerprint(base));
+
+  const changedOtherRoute = structuredClone(base);
+  changedOtherRoute.observations[1]!.pixel_points[0]!.x = 0.45;
+  assert.notEqual(fingerprint(changedOtherRoute), fingerprint(base));
+
+  const deletedObservation = structuredClone(base);
+  deletedObservation.observations.pop();
+  assert.notEqual(fingerprint(deletedObservation), fingerprint(base));
+
+  const containmentFailure =
+    "candidate_visible_route_outside_spatial_scope:route-a";
+  const containmentFingerprint = (value: unknown) =>
+    __testOnlyCandidateVisibleRecoveryImmutableClaimsSha256(
+      JSON.stringify(value),
+      containmentFailure
+    );
+  assert.equal(
+    containmentFingerprint(allowed),
+    containmentFingerprint(base)
+  );
+  assert.notEqual(
+    containmentFingerprint(changedSystem),
+    containmentFingerprint(base)
+  );
 });
 
 test("candidate-visible terminal guard survives compile-context and seed drift while first recovery stays source-bound", () => {
@@ -510,7 +1167,7 @@ test("candidate-visible terminal guard survives compile-context and seed drift w
     index: 1,
     type: "compile_registered_mep_reconstruction",
     ok: false,
-    summary: "candidate_visible_route_outside_spatial_scope:P18_BLUE_MAIN"
+    summary: "candidate_visible_route_outside_spatial_scope:ROUTE_A_MAIN"
   }]);
 
   __testOnlyNoteRedlineSeedForRecoveryTest(sessionId, "artifacts/redline/frame-after-first-compile.png");
@@ -530,7 +1187,7 @@ test("candidate-visible terminal guard survives compile-context and seed drift w
     index: 2,
     type: "compile_registered_mep_reconstruction",
     ok: false,
-    summary: "candidate_visible_route_outside_spatial_scope:P18_BLUE_DROP"
+    summary: "candidate_visible_route_outside_spatial_scope:ROUTE_A_DROP"
   }]);
   __testOnlyNoteRedlineSeedForRecoveryTest(sessionId, "artifacts/redline/frame-after-second-compile.png");
 
@@ -539,7 +1196,7 @@ test("candidate-visible terminal guard survives compile-context and seed drift w
     user_text: ""
   }));
   assert.match(terminalAfterSeedDrift ?? "", /TERMINAL GUARD/);
-  assert.match(terminalAfterSeedDrift ?? "", /candidate_visible_route_outside_spatial_scope:P18_BLUE_DROP/);
+  assert.match(terminalAfterSeedDrift ?? "", /candidate_visible_route_outside_spatial_scope:ROUTE_A_DROP/);
 
   __testOnlyStartFreshCandidateVisibleSourceForRecoveryTest(
     sessionId,
@@ -569,7 +1226,7 @@ test("automatic same-source analysis cannot clear the candidate-visible compiler
     index: 1,
     type: "compile_registered_mep_reconstruction",
     ok: false,
-    summary: "candidate_visible_route_outside_spatial_scope:P18_CW_MAIN_DROP"
+    summary: "candidate_visible_route_outside_spatial_scope:ROUTE_CW_MAIN_DROP"
   }]);
 
   __testOnlyNoteAutomaticRedlineAnalyzeSuccessForRecoveryTest(sessionId, sourcePath);
@@ -596,7 +1253,7 @@ test("automatic same-source analysis cannot clear the candidate-visible compiler
     index: 2,
     type: "compile_registered_mep_reconstruction",
     ok: false,
-    summary: "candidate_visible_route_outside_spatial_scope:P18_HW_MAIN_DROP"
+    summary: "candidate_visible_route_outside_spatial_scope:ROUTE_HW_MAIN_DROP"
   }]);
   __testOnlyNoteAutomaticRedlineAnalyzeSuccessForRecoveryTest(sessionId, sourcePath);
 
@@ -604,7 +1261,7 @@ test("automatic same-source analysis cannot clear the candidate-visible compiler
   assert.match(terminalAfterAutomaticAnalysis ?? "", /TERMINAL GUARD/);
   assert.match(
     terminalAfterAutomaticAnalysis ?? "",
-    /candidate_visible_route_outside_spatial_scope:P18_HW_MAIN_DROP/
+    /candidate_visible_route_outside_spatial_scope:ROUTE_HW_MAIN_DROP/
   );
   const stopped = __testOnlySuppressCandidateVisibleGuardedWorkbenchActions(
     req,
@@ -646,7 +1303,7 @@ test("candidate-visible evidence gate suppresses discovery after the source is r
   });
   const req = mkReq({
     session_id: sessionId,
-    user_text: "Draft existing conditions in room 100 from this source PDF.",
+    user_text: "Draft the visible existing plumbing in room 100 from this source PDF.",
     tool_results: [
       {
         action_id: "room",
@@ -679,14 +1336,26 @@ test("candidate-visible evidence gate suppresses discovery after the source is r
         }
       },
       {
-        action_id: "visible",
+        action_id: "candidate-visible-broad-inventory:frame-ready",
         path: "/revit/export-visible-elements",
         status: "done",
         result_json: {
           ok: true,
           frameId: "frame-inventory-capture",
           viewId: 3960410,
-          ...frameMapping
+          ...frameMapping,
+          modelBoundsApplied: true,
+          modelBoundsFt: {
+            min: { x: -1, y: -1, z: -1000 },
+            max: { x: 11, y: 11, z: 1000 }
+          },
+          truncated: false,
+          itemsSampled: [{
+            sourceScopedId: "loaded-architecture:exterior-wall-west",
+            builtInCategory: "OST_Walls",
+            category: "Walls",
+            bbox: { center: { x: 0, y: 5 } }
+          }]
         }
       }
     ] as any
@@ -699,6 +1368,8 @@ test("candidate-visible evidence gate suppresses discovery after the source is r
   assert.match(prompt ?? "", /include spatial_scope in the same source coordinate space as its observations/);
   assert.match(prompt ?? "", /Never invent a 0\.5\/centroid trace/);
   assert.match(prompt ?? "", /strict verified native-room clipping still applies/);
+  assert.match(prompt ?? "", /room tags.*optional evidence/i);
+  assert.match(prompt ?? "", /exterior envelope\/corners, stairs and elevator cores, shafts, grids and columns/i);
 
   const suppression = __testOnlySuppressCandidateVisibleCompileReadyWorkbenchActions(
     req,
@@ -724,9 +1395,232 @@ test("candidate-visible evidence gate suppresses discovery after the source is r
   );
 });
 
+test("candidate-visible evidence gate compiles a clean whole-crop source without room data or markup picks", () => {
+  const sessionId = "session-candidate-visible-tagless-whole-crop";
+  const workspace = ensureWorkspaceLayout();
+  const sourcePath = path.join(
+    workspace.artifacts,
+    "test-candidate-visible-tagless-source.pdf"
+  );
+  const registeredRenderPath = path.join(
+    workspace.artifacts,
+    "test-candidate-visible-tagless-render.png"
+  );
+  fs.writeFileSync(sourcePath, "%PDF-1.4\ncandidate-visible-tagless-source\n");
+  fs.writeFileSync(
+    registeredRenderPath,
+    Buffer.from("candidate-visible-tagless-render")
+  );
+  const frameMapping = {
+    widthPx: 2200,
+    heightPx: 1984,
+    mapping: {
+      topLeftXyz: [10, 20, 100],
+      topRightXyz: [30, 20, 100],
+      bottomLeftXyz: [10, 0, 100]
+    },
+    targetLevel: { elevationFt: 100 }
+  };
+  __testOnlyNoteAutomaticRedlineAnalyzeSuccessForRecoveryTest(sessionId, sourcePath);
+  __testOnlySeedRedlineViewAlignment({
+    sessionId,
+    sourceImagePath: registeredRenderPath,
+    frameId: "frame-tagless",
+    viewId: 3960410,
+    crop: { min_u: 0.1, min_v: 0.1, max_u: 0.9, max_v: 0.9 },
+    registrationControls: [
+      {
+        kind: "exterior_corner",
+        source_normalized_x: 0.1,
+        source_normalized_y: 0.2,
+        view_normalized_x: 0.18,
+        view_normalized_y: 0.26,
+        score: 0.91,
+        label: "northwest exterior corner"
+      },
+      {
+        kind: "stair",
+        source_normalized_x: 0.8,
+        source_normalized_y: 0.8,
+        view_normalized_x: 0.74,
+        view_normalized_y: 0.74,
+        score: 0.88,
+        label: "stair core"
+      }
+    ]
+  });
+  const req = mkReq({
+    session_id: sessionId,
+    user_text:
+      "Draft the visible existing plumbing in the source PDF into this empty test model.",
+    tool_results: [
+      {
+        action_id: "frame",
+        path: "/revit/export-view-frame",
+        status: "done",
+        result_json: {
+          ok: true,
+          frameId: "frame-tagless",
+          viewId: 3960410,
+          ...frameMapping
+        }
+      },
+      {
+        action_id:
+          "candidate-visible-broad-inventory:frame-tagless:scope-ost-walls+ost-stairs+ost-stairsruns+ost-stairslandings",
+        path: "/revit/export-visible-elements",
+        status: "done",
+        result_json: {
+          ok: true,
+          frameId: "frame-tagless-inventory",
+          viewId: 3960410,
+          ...frameMapping,
+          modelBoundsApplied: true,
+          modelBoundsFt: {
+            min: { x: 10, y: 0, z: 95 },
+            max: { x: 30, y: 20, z: 125 }
+          },
+          truncated: false,
+          itemsSampled: [
+            {
+              sourceScopedId: "loaded-architecture:stair-core-a",
+              builtInCategory: "OST_Stairs",
+              category: "Stairs",
+              bbox: {
+                model: { center: { x: 24.8, y: 5.2 } },
+                image: {
+                  minNormalizedX: 0.72,
+                  minNormalizedY: 0.72,
+                  maxNormalizedX: 0.76,
+                  maxNormalizedY: 0.76
+                }
+              }
+            },
+            {
+              sourceScopedId: "loaded-architecture:exterior-wall-west",
+              builtInCategory: "OST_Walls",
+              category: "Walls",
+              bbox: {
+                model: { center: { x: 13.6, y: 14.8 } },
+                image: {
+                  minNormalizedX: 0.17,
+                  minNormalizedY: 0.24,
+                  maxNormalizedX: 0.19,
+                  maxNormalizedY: 0.28
+                }
+              }
+            },
+            {
+              sourceScopedId: "loaded-architecture:unrelated-wall-decoy",
+              builtInCategory: "OST_Walls",
+              category: "Walls",
+              bbox: {
+                model: { center: { x: 28, y: 2 } },
+                image: {
+                  minNormalizedX: 0.88,
+                  minNormalizedY: 0.88,
+                  maxNormalizedX: 0.92,
+                  maxNormalizedY: 0.92
+                }
+              }
+            }
+          ]
+        }
+      }
+    ] as any
+  });
+
+  const prompt = __testOnlyBuildCandidateVisibleReadyToCompilePrompt(req);
+  assert.match(prompt ?? "", /READY TO COMPILE/);
+  assert.match(prompt ?? "", /Room\/space records, room tags, and matching names are optional evidence/i);
+  assert.match(prompt ?? "", /exterior envelope\/corners, stairs and elevator cores/i);
+  assert.match(prompt ?? "", /visible only in the source is an orientation clue/i);
+  assert.match(prompt ?? "", /Include room_number only when the user explicitly requested that room/i);
+
+  const noControlSessionId = "session-candidate-visible-tagless-no-controls";
+  __testOnlyNoteAutomaticRedlineAnalyzeSuccessForRecoveryTest(
+    noControlSessionId,
+    sourcePath
+  );
+  __testOnlySeedRedlineViewAlignment({
+    sessionId: noControlSessionId,
+    sourceImagePath: registeredRenderPath,
+    frameId: "frame-tagless",
+    viewId: 3960410,
+    crop: { min_u: 0.1, min_v: 0.1, max_u: 0.9, max_v: 0.9 },
+    registrationControls: []
+  });
+  const noControlReq = mkReq({
+    session_id: noControlSessionId,
+    user_text:
+      "Draft the visible existing plumbing in the source PDF into this empty test model.",
+    tool_results: req.tool_results
+  });
+  assert.equal(
+    __testOnlyBuildCandidateVisibleReadyToCompilePrompt(noControlReq),
+    null
+  );
+
+  const emptyInventorySessionId =
+    "session-candidate-visible-tagless-empty-inventory";
+  __testOnlyNoteAutomaticRedlineAnalyzeSuccessForRecoveryTest(
+    emptyInventorySessionId,
+    sourcePath
+  );
+  __testOnlySeedRedlineViewAlignment({
+    sessionId: emptyInventorySessionId,
+    sourceImagePath: registeredRenderPath,
+    frameId: "frame-tagless",
+    viewId: 3960410,
+    crop: { min_u: 0.1, min_v: 0.1, max_u: 0.9, max_v: 0.9 },
+    registrationControls: [
+      {
+        kind: "exterior_corner",
+        source_normalized_x: 0.1,
+        source_normalized_y: 0.2,
+        view_normalized_x: 0.18,
+        view_normalized_y: 0.26,
+        score: 0.91,
+        label: "northwest exterior corner"
+      },
+      {
+        kind: "stair",
+        source_normalized_x: 0.8,
+        source_normalized_y: 0.8,
+        view_normalized_x: 0.74,
+        view_normalized_y: 0.74,
+        score: 0.88,
+        label: "stair core"
+      }
+    ]
+  });
+  const emptyInventoryResults = (req.tool_results ?? []).map((result) =>
+    result.path === "/revit/export-visible-elements"
+      ? {
+          ...result,
+          result_json: {
+            ...(result.result_json as Record<string, unknown>),
+            itemsSampled: []
+          }
+        }
+      : result
+  );
+  assert.equal(
+    __testOnlyBuildCandidateVisibleReadyToCompilePrompt(
+      mkReq({
+        session_id: emptyInventorySessionId,
+        user_text:
+          "Draft the visible existing plumbing in the source PDF into this empty test model.",
+        tool_results: emptyInventoryResults as any
+      })
+    ),
+    null
+  );
+});
+
 test("candidate-visible deterministic preparation owns room, exact sheet, frame, and inventory before the planner", () => {
   const sessionId = "session-candidate-visible-deterministic-preparation";
-  const sourcePath = "artifacts/uploads/P1.01_ems_lounge_sink_crop.pdf";
+  const sourcePath = "artifacts/uploads/P1.01_sample_plumbing_room_crop.pdf";
   const frameMapping = {
     widthPx: 2200,
     heightPx: 1984,
@@ -743,7 +1637,7 @@ test("candidate-visible deterministic preparation owns room, exact sheet, frame,
     user_attachments: [{
       id: "p210-source",
       relative_path: sourcePath,
-      filename: "P1.01_ems_lounge_sink_crop.pdf",
+      filename: "P1.01_sample_plumbing_room_crop.pdf",
       mime: "application/pdf"
     }]
   });
@@ -822,6 +1716,7 @@ test("candidate-visible deterministic preparation owns room, exact sheet, frame,
   const frame = __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(req, [roomResult, sheetResult]);
   assert.equal(frame?.actions[0]?.path, "/revit/export-view-frame");
   assert.equal((frame?.actions[0]?.body as any)?.viewId, 3960410);
+  __testOnlyStartFreshCandidateVisibleSourceForRecoveryTest(sessionId, sourcePath);
 
   const frameResult: any = {
     action_id: "frame",
@@ -829,24 +1724,500 @@ test("candidate-visible deterministic preparation owns room, exact sheet, frame,
     status: "done",
     result_json: { ok: true, frameId: "frame-register", viewId: 3960410, ...frameMapping }
   };
+  __testOnlySeedRedlineViewAlignment({
+    sessionId,
+    frameId: "frame-register",
+    viewId: 3960410,
+    crop: { min_u: 0.1, min_v: 0.1, max_u: 0.9, max_v: 0.9 }
+  });
+  const inventoryFromSplitContinuation =
+    __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(
+      req,
+      [roomResult, frameResult]
+    );
+  assert.equal(
+    inventoryFromSplitContinuation?.actions[0]?.path,
+    "/revit/export-visible-elements"
+  );
+  assert.equal(
+    (inventoryFromSplitContinuation?.actions[0]?.body as any)?.viewId,
+    3960410
+  );
+
   const inventory = __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(
     req,
     [roomResult, sheetResult, frameResult]
   );
   assert.equal(inventory?.actions[0]?.path, "/revit/export-visible-elements");
   assert.equal((inventory?.actions[0]?.body as any)?.viewId, 3960410);
+  assert.equal(
+    inventory?.actions[0]?.action_id,
+    "candidate-visible-broad-inventory:frame-register:500"
+  );
+  assert.deepEqual(
+    (inventory?.actions[0]?.body as any)?.modelBounds,
+    [-1, -1, -1000, 11, 11, 1000]
+  );
+  const inventoryCategories = (inventory?.actions[0]?.body as any)?.categories;
+  for (const stableCategory of [
+    "OST_Walls",
+    "OST_Stairs",
+    "OST_ShaftOpening",
+    "OST_Grids",
+    "OST_StructuralColumns"
+  ]) {
+    assert.ok(
+      inventoryCategories.includes(stableCategory),
+      `expected stable registration category ${stableCategory}`
+    );
+  }
+  for (const noisyOptionalCategory of [
+    "OST_GenericModel",
+    "OST_RoomTags",
+    "OST_TextNotes",
+    "OST_GenericAnnotation",
+    "OST_SpecialityEquipment",
+    "OST_Rooms",
+    "OST_MEPSpaces",
+    "OST_Doors",
+    "OST_Windows",
+    "OST_PipeCurves",
+    "OST_DuctCurves",
+    "OST_ElectricalFixtures",
+    "OST_LightingFixtures"
+  ]) {
+    assert.ok(
+      !inventoryCategories.includes(noisyOptionalCategory),
+      `expected broad registration inventory to defer noisy optional category ${noisyOptionalCategory}`
+    );
+  }
+  const unrelatedInventoryAttempts: any[] = [
+    {
+      action_id: "stale-visible-1",
+      path: "/revit/export-visible-elements",
+      status: "failed",
+      result_json: { ok: false }
+    },
+    {
+      action_id: "stale-visible-2",
+      path: "/revit/export-visible-elements",
+      status: "done",
+      result_json: {
+        ok: true,
+        frameId: "stale-frame",
+        viewId: 3960410,
+        ...frameMapping
+      }
+    }
+  ];
+  const inventoryAfterUnrelatedAttempts =
+    __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(
+      req,
+      [roomResult, sheetResult, frameResult, ...unrelatedInventoryAttempts]
+    );
+  assert.equal(
+    inventoryAfterUnrelatedAttempts?.actions[0]?.action_id,
+    "candidate-visible-broad-inventory:frame-register:500"
+  );
 
   const inventoryResult: any = {
-    action_id: "inventory",
+    action_id: "candidate-visible-broad-inventory:frame-register",
     path: "/revit/export-visible-elements",
     status: "done",
-    result_json: { ok: true, frameId: "frame-inventory", viewId: 3960410, ...frameMapping }
+    result_json: {
+      frameId: "frame-inventory",
+      viewId: 3960410,
+      ...frameMapping,
+      modelBoundsApplied: true,
+      truncated: false
+    }
+  };
+  const mismatchedBoundsInventoryResult: any = {
+    ...inventoryResult,
+    result_json: {
+      ...inventoryResult.result_json,
+      modelBoundsFt: {
+        min: { x: -2, y: -1, z: -1000 },
+        max: { x: 11, y: 11, z: 1000 }
+      }
+    }
+  };
+  const inventoryAfterMismatchedBounds =
+    __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(
+      req,
+      [roomResult, sheetResult, frameResult, mismatchedBoundsInventoryResult]
+    );
+  assert.equal(
+    inventoryAfterMismatchedBounds?.actions[0]?.action_id,
+    "candidate-visible-broad-inventory:frame-register:750"
+  );
+  assert.equal(
+    (inventoryAfterMismatchedBounds?.actions[0]?.body as any)?.limit,
+    750
+  );
+  const truncatedSecondInventoryResult: any = {
+    ...inventoryResult,
+    action_id: "candidate-visible-broad-inventory:frame-register:750",
+    result_json: {
+      ...inventoryResult.result_json,
+      truncated: true
+    }
+  };
+  const inventoryAfterTwoBoundedAttempts =
+    __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(
+      req,
+      [
+        roomResult,
+        sheetResult,
+        frameResult,
+        mismatchedBoundsInventoryResult,
+        truncatedSecondInventoryResult
+      ]
+    );
+  assert.equal(
+    inventoryAfterTwoBoundedAttempts?.actions[0]?.action_id,
+    "candidate-visible-broad-inventory:frame-register:1500"
+  );
+  assert.equal(
+    (inventoryAfterTwoBoundedAttempts?.actions[0]?.body as any)?.limit,
+    1500
+  );
+  const focusedRoomTagInventory =
+    __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(
+      req,
+      [roomResult, sheetResult, frameResult, inventoryResult]
+    );
+  assert.equal(
+    focusedRoomTagInventory?.actions[0]?.path,
+    "/revit/export-visible-elements"
+  );
+  assert.deepEqual(
+    (focusedRoomTagInventory?.actions[0]?.body as any)?.categories,
+    ["OST_RoomTags"]
+  );
+  assert.equal(
+    (focusedRoomTagInventory?.actions[0]?.body as any)?.includeLinked,
+    false
+  );
+  assert.deepEqual(
+    (focusedRoomTagInventory?.actions[0]?.body as any)?.modelBounds,
+    [-1, -1, -1000, 11, 11, 1000]
+  );
+  assert.equal(
+    focusedRoomTagInventory?.actions[0]?.action_id,
+    "candidate-visible-focused-room-tags:frame-register:100"
+  );
+  const unrelatedFocusedAttempts: any[] = [
+    {
+      action_id: "unrelated-focused-1",
+      path: "/revit/export-visible-elements",
+      status: "done",
+      result_json: {
+        ok: true,
+        frameId: "frame-room-tags-old-1",
+        viewId: 3960410,
+        ...frameMapping,
+        modelBoundsApplied: true
+      }
+    },
+    {
+      action_id: "unrelated-focused-2",
+      path: "/revit/export-visible-elements",
+      status: "failed",
+      result_json: { ok: false }
+    }
+  ];
+  const focusedAfterUnrelatedAttempts =
+    __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(
+      req,
+      [
+        roomResult,
+        sheetResult,
+        frameResult,
+        inventoryResult,
+        ...unrelatedFocusedAttempts
+      ]
+    );
+  assert.equal(
+    focusedAfterUnrelatedAttempts?.actions[0]?.action_id,
+    "candidate-visible-focused-room-tags:frame-register:100"
+  );
+  const failedFocusedAttempt = {
+    action_id: "candidate-visible-focused-room-tags:frame-register:100",
+    path: "/revit/export-visible-elements",
+    status: "failed",
+    result_json: { ok: false }
+  };
+  const exhaustedFocusedAttempts =
+    __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(
+      req,
+      [
+        roomResult,
+        sheetResult,
+        frameResult,
+        inventoryResult,
+        failedFocusedAttempt,
+        { ...failedFocusedAttempt }
+      ] as any
+    );
+  assert.equal(exhaustedFocusedAttempts, null);
+
+  const roomTagResult: any = {
+    action_id: "candidate-visible-focused-room-tags:frame-register:100",
+    path: "/revit/export-visible-elements",
+    status: "done",
+    result_json: {
+      ok: true,
+      frameId: "frame-room-tags",
+      viewId: 3960410,
+      ...frameMapping,
+      modelBoundsApplied: true,
+      modelBoundsFt: {
+        min: { x: -1, y: -1, z: -1000 },
+        max: { x: 11, y: 11, z: 1000 }
+      },
+      truncated: false,
+      itemsSampled: [{
+        visibleText: "100",
+        sourceScopedId: "host:room-tag-100",
+        builtInCategory: "OST_RoomTags",
+        bbox: { center: { x: 5, y: 5 } }
+      }]
+    }
   };
   assert.equal(
     __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(
       req,
-      [roomResult, sheetResult, frameResult, inventoryResult]
+      [roomResult, sheetResult, frameResult, inventoryResult, roomTagResult]
     ),
+    null
+  );
+});
+
+test("candidate-visible stable native controls require a real exterior wall identity", () => {
+  const roomResult: any = {
+    action_id: "room",
+    path: "/revit/linked-room-boundaries",
+    status: "done",
+    result_json: {
+      ok: true,
+      rooms: [{
+        number: "100",
+        name: "TEST ROOM",
+        sourceScopedId: "ARCH-LINK:100",
+        area: 100,
+        boundaryLoops: [[
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+          { x: 10, y: 10 },
+          { x: 0, y: 10 }
+        ]],
+        boundarySegments: [
+          {
+            linkedBoundaryElementId: 123,
+            linkedBoundaryElementUniqueId: "wall-unique-123",
+            linkedBoundaryElementName: "Exterior Wall - Brick",
+            linkedBoundaryElementCategory: "Walls",
+            hostStart: { x: 0, y: 0 },
+            hostEnd: { x: 10, y: 0 }
+          },
+          {
+            linkedBoundaryElementId: 124,
+            linkedBoundaryElementUniqueId: "grid-unique-124",
+            linkedBoundaryElementName: "Exterior Grid Decoy",
+            linkedBoundaryElementCategory: "Grids",
+            hostStart: { x: 0, y: 1 },
+            hostEnd: { x: 10, y: 1 }
+          },
+          {
+            linkedBoundaryElementId: 125,
+            linkedBoundaryElementUniqueId: "",
+            linkedBoundaryElementName: "Exterior Wall - Missing Identity",
+            linkedBoundaryElementCategory: "Walls",
+            hostStart: { x: 0, y: 2 },
+            hostEnd: { x: 10, y: 2 }
+          },
+          {
+            linkedBoundaryElementId: 126,
+            linkedBoundaryElementUniqueId: "wall-unique-126",
+            linkedBoundaryElementName: "Interior Wall",
+            linkedBoundaryElementCategory: "Walls",
+            hostStart: { x: 0, y: 3 },
+            hostEnd: { x: 10, y: 3 }
+          }
+        ]
+      }]
+    }
+  };
+  const scope = __testOnlyCandidateVisibleVerifiedRoomScopeFromToolResults(
+    [roomResult],
+    "100"
+  );
+  assert.deepEqual(scope?.stable_boundary_segments, [{
+    stable_kind: "exterior_wall",
+    source_scoped_id: "linked-wall:123:wall-unique-123",
+    category: "Walls",
+    name: "Exterior Wall - Brick",
+    start_model_point: { x: 0, y: 0 },
+    end_model_point: { x: 10, y: 0 }
+  }]);
+});
+
+test("candidate-visible room-label evidence requires a unique exact room tag in the registered view", () => {
+  const frame = {
+    frame_id: "frame-room-label",
+    view_id: 3960410,
+    width_px: 2200,
+    height_px: 1984,
+    top_left_xyz: [10, 20, 100] as [number, number, number],
+    top_right_xyz: [30, 20, 100] as [number, number, number],
+    bottom_left_xyz: [10, 0, 100] as [number, number, number],
+    target_level_elevation_ft: 100
+  };
+  const roomScope = {
+    room_number: "100",
+    room_name: "TEST ROOM 100",
+    source_scoped_id: "ARCH-LINK:100",
+    boundary_model_points: [
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 10 },
+      { x: 0, y: 10 }
+    ]
+  };
+  const resultRoot = {
+    frameId: frame.frame_id,
+    viewId: frame.view_id,
+    widthPx: frame.width_px,
+    heightPx: frame.height_px,
+    mapping: {
+      topLeftXyz: frame.top_left_xyz,
+      topRightXyz: frame.top_right_xyz,
+      bottomLeftXyz: frame.bottom_left_xyz
+    },
+    targetLevel: { elevationFt: 100 },
+    modelBoundsApplied: true,
+    modelBoundsFt: {
+      min: { x: -1, y: -1, z: -1000 },
+      max: { x: 11, y: 11, z: 1000 }
+    },
+    truncated: false
+  };
+  const frameResult = {
+    action_id: "frame",
+    path: "/revit/export-view-frame",
+    status: "done",
+    result_json: {
+      ok: true,
+      frameId: frame.frame_id,
+      viewId: frame.view_id,
+      widthPx: frame.width_px,
+      heightPx: frame.height_px,
+      mapping: {
+        topLeftXyz: frame.top_left_xyz,
+        topRightXyz: frame.top_right_xyz,
+        bottomLeftXyz: frame.bottom_left_xyz
+      },
+      targetLevel: { elevationFt: 100 }
+    }
+  };
+  const toolResult = (itemsSampled: unknown[]) => [
+    frameResult,
+    {
+      action_id: "candidate-visible-focused-room-tags:frame-room-label:100",
+      path: "/revit/export-visible-elements",
+      status: "done",
+      result_json: { ...resultRoot, itemsSampled }
+    }
+  ] as any;
+  const exactTag = {
+    visibleText: "100TEST ROOM",
+    sourceScopedId: "host:room-tag-100",
+    builtInCategory: "OST_RoomTags",
+    bbox: { center: { x: 5, y: 5 } }
+  };
+
+  const exact = __testOnlyCandidateVisibleRoomLabelFromToolResults({
+    toolResults: toolResult([exactTag]),
+    room_scope: roomScope,
+    frame
+  });
+  assert.equal(exact?.source_scoped_id, "host:room-tag-100");
+  assert.equal(exact?.built_in_category, "OST_RoomTags");
+  assert.equal(exact?.frame_id, frame.frame_id);
+  assert.equal(exact?.registration_frame_id, frame.frame_id);
+  const exactFocusedResult = toolResult([exactTag])[1];
+  assert.equal(
+    __testOnlyCandidateVisibleRoomLabelFromToolResults({
+      toolResults: [exactFocusedResult, frameResult] as any,
+      room_scope: roomScope,
+      frame
+    }),
+    null
+  );
+  assert.equal(
+    __testOnlyCandidateVisibleRoomLabelFromToolResults({
+      toolResults: [
+        frameResult,
+        {
+          ...exactFocusedResult,
+          result_json: {
+            ...(exactFocusedResult as any).result_json,
+            ok: false
+          }
+        }
+      ] as any,
+      room_scope: roomScope,
+      frame
+    }),
+    null
+  );
+  assert.equal(
+    __testOnlyCandidateVisibleRoomLabelFromToolResults({
+      toolResults: [
+        frameResult,
+        {
+          ...exactFocusedResult,
+          action_id: "unrelated-focused-action"
+        }
+      ] as any,
+      room_scope: roomScope,
+      frame
+    }),
+    null
+  );
+
+  assert.equal(
+    __testOnlyCandidateVisibleRoomLabelFromToolResults({
+      toolResults: toolResult([{
+        ...exactTag,
+        builtInCategory: "OST_TextNotes"
+      }]),
+      room_scope: roomScope,
+      frame
+    }),
+    null
+  );
+  assert.equal(
+    __testOnlyCandidateVisibleRoomLabelFromToolResults({
+      toolResults: toolResult([
+        exactTag,
+        { ...exactTag, sourceScopedId: "host:duplicate-room-tag-100" }
+      ]),
+      room_scope: roomScope,
+      frame
+    }),
+    null
+  );
+  assert.equal(
+    __testOnlyCandidateVisibleRoomLabelFromToolResults({
+      toolResults: toolResult([{
+        ...exactTag,
+        visibleText: "100A"
+      }]),
+      room_scope: { ...roomScope, room_name: undefined },
+      frame
+    }),
     null
   );
 });
@@ -1124,6 +2495,8 @@ test("codex instructions explicitly tell the sidecar not to stop at missing comm
   const instructions = getCodexBaseInstructionsForTest();
   assert.match(instructions, /Execution ladder:/);
   assert.match(instructions, /Do not stop with a vague statement like 'I can't find the command'/);
+  assert.match(instructions, /registration must not require rooms, spaces, room tags, or matching room names/i);
+  assert.match(instructions, /exterior envelope\/corners, stairs and elevators, shafts, grids and columns/i);
 });
 
 test("responses api text extraction still exports a compact helper", () => {

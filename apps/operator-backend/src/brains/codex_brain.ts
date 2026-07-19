@@ -32,6 +32,36 @@ export type StreamCallbacks = {
 
 let client: CodexAppServer | null = null;
 const lastPermissionSignatureBySession = new Map<string, string>();
+const activeCodexTurnAborts = new Map<string, AbortController>();
+
+function codexTurnAbortKey(sessionId: string, messageId: string): string {
+  return `${sessionId.trim()}:${messageId.trim()}`;
+}
+
+export function cancelCodexBrainTurn(sessionId: string, messageId: string): boolean {
+  const key = codexTurnAbortKey(sessionId, messageId);
+  const controller = activeCodexTurnAborts.get(key);
+  if (!controller) return false;
+  controller.abort();
+  return true;
+}
+
+export function __testOnlyTrackCodexBrainTurnAbort(
+  sessionId: string,
+  messageId: string
+): { signal: AbortSignal; cleanup: () => void } {
+  const key = codexTurnAbortKey(sessionId, messageId);
+  const controller = new AbortController();
+  activeCodexTurnAborts.set(key, controller);
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      if (activeCodexTurnAborts.get(key) === controller) {
+        activeCodexTurnAborts.delete(key);
+      }
+    }
+  };
+}
 
 function getWorkspaceRoot(): string {
   return ensureWorkspaceLayout().root;
@@ -98,6 +128,7 @@ function baseInstructions(): string {
     "When performing spatial Revit tasks, think like a drafter using feedback. Place a reasonable first attempt using available context, then verify and correct. Do not require perfect spatial certainty before acting unless the action is destructive. Use nearby elements, room boundaries, wall vectors, view coordinates, and screenshots/captures to converge.",
     "Capability-aware routing: inspect `/revit/native-capabilities` or `/revit/capabilities` before planning if availability is unclear. Prefer native Revit API operations and captures; use sidecar/desktop automation only for capabilities reported as available or when native APIs cannot reach the target.",
     "Treat `/revit/export-visible-elements` as the default bridge from raster evidence to model context: it returns image-space anchor/bbox coordinates, host/room/space associations, orientation vectors, and a raster-consistent affine frame for supported 2D views.",
+    "Existing-conditions registration must not require rooms, spaces, room tags, or matching room names. Treat them as useful but potentially absent or stale. When the record plan and current model differ, prefer common stable geometry in this order: exterior envelope/corners, stairs and elevators, shafts, grids and columns, then persistent interior geometry. Record accepted and rejected controls plus transform residuals. Do not use changed interior partitions or a name match as the only registration basis; preserve supported relative geometry as provisional and iterate when exact registration remains unresolved.",
     "After one successful broad inventory export, avoid repeating it in a loop. Reuse the returned `frameId`, sampled inventory, and mapping to continue with targeted cluster/pick/context tools.",
     "For wall-hosted or same-room placements, prefer host-aware/exemplar-driven workflows over generic XYZ placement. Resolve the room wall, inspect nearby same-room exemplars, project to host-local chainage when needed, then place/adjust on the resolved host.",
     "For raw Revit API exploration, use `revit_native_api_search` / `revit_native_api_catalog` first, then call via `revit_native_api_call` only when no normal /revit/* primitive exists.",
@@ -622,18 +653,41 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     }
   });
 
+  const activeTurnAbort = new AbortController();
+  const activeTurnKey = codexTurnAbortKey(req.session_id, req.message_id);
+  const priorActiveTurn = activeCodexTurnAborts.get(activeTurnKey);
+  if (priorActiveTurn) priorActiveTurn.abort();
+  activeCodexTurnAborts.set(activeTurnKey, activeTurnAbort);
+  const forwardExternalAbort = () => activeTurnAbort.abort();
+  cb.abortSignal?.addEventListener("abort", forwardExternalAbort, { once: true });
+  let turnCancelled = false;
   try {
     await withTransportRetry(() =>
       c.waitForTurnCompleted({
         threadId,
         turnId,
         timeoutMs: codexTurnTimeoutMs(),
-        abortSignal: cb.abortSignal
+        abortSignal: activeTurnAbort.signal
       })
     );
+  } catch (error) {
+    if (!activeTurnAbort.signal.aborted) throw error;
+    turnCancelled = true;
   } finally {
     unsubscribe();
+    cb.abortSignal?.removeEventListener("abort", forwardExternalAbort);
+    if (activeCodexTurnAborts.get(activeTurnKey) === activeTurnAbort) {
+      activeCodexTurnAborts.delete(activeTurnKey);
+    }
     endRequirementsPlanningLease(requirementsLease);
+  }
+
+  if (turnCancelled) {
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message: "",
+      actions: []
+    };
   }
 
   cb.onDone?.(assistantText);

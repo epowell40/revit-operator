@@ -13,6 +13,7 @@ import { maybeRunDeterministicMepRouteRedline } from "./deterministic/mep_route_
 import { maybeRunDeterministicRoomReceptacleAnalog } from "./deterministic/room_receptacle_analog.js";
 import { maybeRunSemanticAecWorkflow } from "./deterministic/aec_workflow_registry.js";
 import type { AecTaskIntentInterpreter } from "./aec_task_intent_interpreter.js";
+import { getRecentMessages } from "./memory/sqlite_store.js";
 
 const EXISTING_CONDITIONS_SESSION_LIMIT = 256;
 const existingConditionsReconstructionSessions = new Map<string, true>();
@@ -65,7 +66,19 @@ export function __testOnlyIsExistingConditionsReconstructionRequest(req: ChatReq
   const declared = textDeclaresExistingConditionsReconstruction(req.user_text ?? "")
     || contextDeclaresExistingConditionsReconstruction(req.context);
   if (declared) rememberExistingConditionsReconstructionSession(req.session_id);
-  return declared || existingConditionsReconstructionSessions.has(req.session_id);
+  if (declared || existingConditionsReconstructionSessions.has(req.session_id)) {
+    return true;
+  }
+
+  const declaredInPersistedHistory = getRecentMessages(req.session_id, 80).some(
+    message =>
+      message.role === "user" &&
+      textDeclaresExistingConditionsReconstruction(message.text)
+  );
+  if (declaredInPersistedHistory) {
+    rememberExistingConditionsReconstructionSession(req.session_id);
+  }
+  return declaredInPersistedHistory;
 }
 
 function maybeBuildZippyBimToolOpenedAck(req: ChatRequest): ChatResponse | null {
@@ -116,6 +129,52 @@ function maybeBuildBridgeStatusDecision(req: ChatRequest): ChatResponse | null {
       }
     ]
   };
+}
+
+function maybeBuildPersistedExistingConditionsTerminal(
+  req: ChatRequest
+): ChatResponse | null {
+  if (!__testOnlyIsExistingConditionsReconstructionRequest(req)) return null;
+  if (Array.isArray(req.user_attachments) && req.user_attachments.length > 0) {
+    return null;
+  }
+  const retryText = req.user_text ?? "";
+  const explicitlyRequestsRetry =
+    /\b(?:retry|rerun|run\s+again|try\s+again|recapture|new\s+frame|fresh\s+frame)\b/i.test(
+      retryText
+    ) &&
+    !/\b(?:do\s+not|don't|without)\s+(?:retry|rerun|running\s+again|trying\s+again|recapturing|a\s+new\s+frame|a\s+fresh\s+frame)\b/i.test(
+      retryText
+    );
+  if (explicitlyRequestsRetry) {
+    return null;
+  }
+
+  const terminal = getRecentMessages(req.session_id, 500)
+    .slice()
+    .reverse()
+    .find(
+      message =>
+        message.role === "assistant" &&
+        message.text.startsWith(
+          "The exact-frame native landmark inventory completed, but the current structured alignment failed "
+        ) &&
+        message.text.includes(
+          "I stopped before source-local compilation instead of restarting generic discovery."
+        )
+    );
+  if (!terminal) return null;
+  return {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    assistant_message: terminal.text,
+    actions: []
+  };
+}
+
+export function __testOnlyMaybeBuildPersistedExistingConditionsTerminal(
+  req: ChatRequest
+): ChatResponse | null {
+  return maybeBuildPersistedExistingConditionsTerminal(req);
 }
 
 function finalizeDecision(req: ChatRequest, decision: ChatResponse): ChatResponse {
@@ -197,6 +256,12 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
   const semanticAecDecision = await maybeRunTopLevelSemanticAecWorkflow(req, dependencies.semanticAecWorkflow);
   if (semanticAecDecision) {
     return finalizeDecision(req, semanticAecDecision);
+  }
+
+  const persistedExistingConditionsTerminal =
+    maybeBuildPersistedExistingConditionsTerminal(req);
+  if (persistedExistingConditionsTerminal) {
+    return finalizeDecision(req, persistedExistingConditionsTerminal);
   }
 
   const forced = (process.env.OPERATOR_BRAIN || "").toLowerCase().trim();
@@ -286,6 +351,15 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dep
     cb.onDelta?.(text);
     cb.onDone?.(text);
     return finalizeDecision(req, semanticAecDecision);
+  }
+
+  const persistedExistingConditionsTerminal =
+    maybeBuildPersistedExistingConditionsTerminal(req);
+  if (persistedExistingConditionsTerminal) {
+    const text = persistedExistingConditionsTerminal.assistant_message || "";
+    cb.onDelta?.(text);
+    cb.onDone?.(text);
+    return finalizeDecision(req, persistedExistingConditionsTerminal);
   }
 
   const forced = (process.env.OPERATOR_BRAIN || "").toLowerCase().trim();

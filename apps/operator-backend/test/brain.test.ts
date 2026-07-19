@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { __testOnlyFinalizeDecision, __testOnlyIsBridgeStatusQuestion, __testOnlyIsExistingConditionsReconstructionRequest, __testOnlyMaybeRunSemanticAecWorkflow, __testOnlyMaybeRunTopLevelMepRouteRedline, __testOnlyMaybeRunTopLevelSemanticAecWorkflow, decide } from "../src/brain.js";
+import { __testOnlyFinalizeDecision, __testOnlyIsBridgeStatusQuestion, __testOnlyIsExistingConditionsReconstructionRequest, __testOnlyMaybeBuildPersistedExistingConditionsTerminal, __testOnlyMaybeRunSemanticAecWorkflow, __testOnlyMaybeRunTopLevelMepRouteRedline, __testOnlyMaybeRunTopLevelSemanticAecWorkflow, decide } from "../src/brain.js";
 import { AEC_TASK_INTENT_V1_SCHEMA } from "../src/aec_task_intent.js";
 import { decideRule } from "../src/brains/rule_brain.js";
 import { shouldOpenZippyBimTool } from "../src/brains/zippybim_intent.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ChatResponse } from "../src/contracts.js";
+import { appendEvent } from "../src/memory/sqlite_store.js";
 
 function mkReq(text: string): ChatRequest {
   return {
@@ -208,6 +209,76 @@ test("existing-conditions intent persists across empty tool-result continuation 
 
   assert.equal(result, null);
   assert.equal(calls, 0);
+});
+
+test("persisted existing-conditions history survives an empty in-memory session cache", async () => {
+  const sessionId = `existing-conditions-persisted-${Date.now()}`;
+  appendEvent(sessionId, "user", "chat.message", {
+    text: "Draft the existing conditions from this record drawing PDF."
+  });
+
+  const continuation = {
+    ...mkReq("Continue from exact view 3960410 and report the alignment diagnostic."),
+    session_id: sessionId,
+    message_id: "m-persisted-continuation"
+  } satisfies ChatRequest;
+
+  let calls = 0;
+  const result = await __testOnlyMaybeRunTopLevelSemanticAecWorkflow(
+    continuation,
+    async () => {
+      calls += 1;
+      return {
+        version: OPERATOR_BACKEND_CONTRACT_VERSION,
+        assistant_message: "semantic",
+        actions: []
+      };
+    }
+  );
+
+  assert.equal(result, null);
+  assert.equal(calls, 0);
+});
+
+test("persisted alignment terminal is replayed instead of allowing generic planner recovery", () => {
+  const sessionId = `existing-conditions-terminal-${Date.now()}`;
+  const terminal =
+    "The exact-frame native landmark inventory completed, but the current structured alignment failed crop_residual_exceeded. " +
+    "Diagnostic: {\"maximum_allowed_crop_residual\":0.08} " +
+    "I stopped before source-local compilation instead of restarting generic discovery.";
+  appendEvent(sessionId, "user", "chat.message", {
+    text: "Draft the existing conditions from this record drawing PDF."
+  });
+  appendEvent(sessionId, "assistant", "chat.message", { text: terminal });
+
+  const result = __testOnlyMaybeBuildPersistedExistingConditionsTerminal({
+    ...mkReq("Continue from the exact view and report the diagnostic. Do not retry or rerun discovery."),
+    session_id: sessionId,
+    message_id: "m-terminal-continuation"
+  });
+
+  assert.equal(result?.assistant_message, terminal);
+  assert.deepEqual(result?.actions, []);
+});
+
+test("explicit non-negated retry can leave the persisted alignment terminal", () => {
+  const sessionId = `existing-conditions-terminal-retry-${Date.now()}`;
+  appendEvent(sessionId, "user", "chat.message", {
+    text: "Draft the existing conditions from this record drawing PDF."
+  });
+  appendEvent(sessionId, "assistant", "chat.message", {
+    text:
+      "The exact-frame native landmark inventory completed, but the current structured alignment failed crop_residual_exceeded. " +
+      "I stopped before source-local compilation instead of restarting generic discovery."
+  });
+
+  const result = __testOnlyMaybeBuildPersistedExistingConditionsTerminal({
+    ...mkReq("Retry with a fresh frame."),
+    session_id: sessionId,
+    message_id: "m-terminal-retry"
+  });
+
+  assert.equal(result, null);
 });
 
 test("workflow intent context bypasses the deterministic redline resolver", async () => {

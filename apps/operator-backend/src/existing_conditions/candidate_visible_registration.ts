@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { loadImage } from "@napi-rs/canvas";
+import { createCanvas, loadImage } from "@napi-rs/canvas";
 import {
   buildAtomicMepDraftWorkflowRequest,
   type AtomicMepDraftWorkflowRequest
@@ -12,7 +12,14 @@ import {
   type RegisteredMepObservationPackage,
   type RegisteredMepPixelObservation
 } from "./registered_mep_observations.js";
+import { buildPdfJsDocumentOptions, loadPdfJsForNode } from "../pdf/pdfjs_node.js";
 import type { ExistingConditionsPlanPoint } from "./registration.js";
+import {
+  extractPlanTracesFromPixels,
+  sha256PlanTracePixelBuffer,
+  type PlanTraceExtractionReceipt,
+  type PlanTracePixelBuffer
+} from "./plan_trace_extraction.js";
 
 export type CandidateVisibleFrameMapping = {
   frame_id: string;
@@ -28,6 +35,10 @@ export type CandidateVisibleFrameMapping = {
 export type CandidateVisibleAlignment = {
   matched: boolean;
   confidence: number;
+  provider?: "gemini" | "openai" | null;
+  model?: string | null;
+  attempted_models?: string[];
+  fallback_reason?: string | null;
   crop: {
     min_u: number;
     min_v: number;
@@ -66,9 +77,55 @@ export type CandidateVisibleMepReconstructionInput = {
   planner_payload: CandidateVisibleMepPlannerPayload;
   verified_room_scope?: {
     room_number: string;
+    room_name?: string;
     source_scoped_id: string;
     boundary_model_points: ExistingConditionsPlanPoint[];
     location_model_point?: ExistingConditionsPlanPoint;
+    stable_boundary_segments?: Array<{
+      stable_kind: "exterior_wall";
+      source_scoped_id: string;
+      category: string;
+      name: string;
+      start_model_point: ExistingConditionsPlanPoint;
+      end_model_point: ExistingConditionsPlanPoint;
+    }>;
+    visible_room_label?: {
+      text: string;
+      source_scoped_id: string;
+      built_in_category: "OST_RoomTags";
+      frame_id: string;
+      registration_frame_id: string;
+      view_id: number;
+      model_point: ExistingConditionsPlanPoint;
+    };
+  };
+  verified_landmark_scope?: {
+    source_scoped_id: string;
+    basis: "durable_landmarks_in_aligned_crop";
+    maximum_crop_residual: number;
+    source_control_span: number;
+    view_control_span: number;
+    source_pdf_sha256: string;
+    registered_render_sha256: string;
+    alignment_receipt_sha256: string;
+    inventory_receipt_sha256: string;
+    registration_controls: Array<{
+      kind: string;
+      source_normalized_point: ExistingConditionsPlanPoint;
+      view_normalized_point: ExistingConditionsPlanPoint;
+      score: number;
+      crop_residual: number;
+      label?: string | null;
+    }>;
+    landmark_matches: Array<{
+      control_index: number;
+      native_source_scoped_id: string;
+      native_built_in_category: string;
+      native_model_point: ExistingConditionsPlanPoint;
+      native_projected_view_normalized_point: ExistingConditionsPlanPoint;
+      projected_distance_normalized: number;
+      geometry_basis: "projected_geometry" | "projected_bbox";
+    }>;
   };
   maximum_created_elements?: number;
 };
@@ -92,6 +149,57 @@ export type CandidateVisibleRouteClippingReceipt = {
   retained_end_pixel_point: ExistingConditionsPlanPoint;
 };
 
+export type CandidateVisibleRouteRasterVerification = {
+  observation_id: string;
+  geometry_role: "route" | "placement_branch";
+  accepted: boolean;
+  support_modality: "chromatic_line" | "monochrome_line";
+  sample_count: number;
+  segment_support_ratios: number[];
+  mean_support_ratio: number;
+  minimum_segment_support_ratio: number;
+  chromatic_segment_support_ratios: number[];
+  chromatic_mean_support_ratio: number;
+  monochrome_segment_support_ratios: number[];
+  monochrome_mean_support_ratio: number;
+  maximum_search_radius_px: number;
+  minimum_mean_support_ratio: number;
+  minimum_each_segment_support_ratio: number;
+  coherent_hue_degrees?: number;
+  retrace_proposal?: {
+    basis: "hash_bound_chromatic_plan_trace";
+    target_color: string;
+    source_pixel_sha256: string;
+    extraction_policy_sha256: string;
+    reference_geometry_sha256: string;
+    component_ids: string[];
+    corridor_radius_px: number;
+    maximum_reference_distance_px: number;
+    runner_up_score_margin: number | null;
+    pixel_points: ExistingConditionsPlanPoint[];
+    normalized_uv_points: ExistingConditionsPlanPoint[];
+  };
+};
+
+export type CandidateVisibleSourceRoomShapeVerification = {
+  accepted: boolean;
+  source_room_label_text: string;
+  source_room_label_pixel_point: ExistingConditionsPlanPoint;
+  source_room_label_pixel_bounds: {
+    min: ExistingConditionsPlanPoint;
+    max: ExistingConditionsPlanPoint;
+  };
+  source_render_mean_absolute_luminance_difference: number;
+  maximum_source_render_mean_absolute_luminance_difference: number;
+  submitted_anchor_distance_px: number;
+  maximum_anchor_distance_px: number;
+  normalized_symmetric_hausdorff: number;
+  maximum_normalized_symmetric_hausdorff: number;
+  normalized_area_difference: number;
+  maximum_normalized_area_difference: number;
+  matched_transform: "identity" | "flip_x" | "flip_y" | "flip_xy";
+};
+
 export type CandidateVisibleMepReconstruction = {
   registration_context_id: string;
   package: RegisteredMepObservationPackage;
@@ -108,10 +216,20 @@ export type CandidateVisibleMepReconstruction = {
     model_boundary_points: ExistingConditionsPlanPoint[];
     native_room_source_scoped_id?: string;
     native_room_boundary_model_points?: ExistingConditionsPlanPoint[];
+    native_area_source_scoped_id?: string;
+    native_area_boundary_model_points?: ExistingConditionsPlanPoint[];
+    durable_landmark_registration?: NonNullable<
+      CandidateVisibleMepReconstructionInput["verified_landmark_scope"]
+    >;
     checked_observation_ids: string[];
     route_clipping_receipts?: CandidateVisibleRouteClippingReceipt[];
+    source_route_raster_verifications?: CandidateVisibleRouteRasterVerification[];
     local_room_registration_fallback?: {
-      reason: "source_scope_disjoint_from_projected_native_room";
+      reason:
+        | "source_scope_disjoint_from_projected_native_room"
+        | "server_verified_source_room_shape_match"
+        | "server_verified_room_label_translation"
+        | "server_verified_room_tag_and_stable_boundary_similarity";
       source_scope_bounds: {
         min: ExistingConditionsPlanPoint;
         max: ExistingConditionsPlanPoint;
@@ -122,10 +240,55 @@ export type CandidateVisibleMepReconstruction = {
       };
       scale_x: number;
       scale_y: number;
+      translation_x_px?: number;
+      translation_y_px?: number;
+      native_room_label_text?: string;
+      native_room_label_source_scoped_id?: string;
+      native_room_label_built_in_category?: "OST_RoomTags";
+      native_room_label_frame_id?: string;
+      native_room_label_registration_frame_id?: string;
+      native_room_label_view_id?: number;
+      native_room_label_model_point?: ExistingConditionsPlanPoint;
+      native_room_label_projected_pixel_point?: ExistingConditionsPlanPoint;
+      source_render_mean_absolute_luminance_difference?: number;
+      source_render_max_tile_mean_absolute_luminance_difference?: number;
+      source_render_changed_pixel_ratio?: number;
+      source_render_foreground_centroid_delta_px?: number;
+      source_enclosure_raster_verification?: CandidateVisibleSourceEnclosureRasterVerification;
+      source_room_shape_verification?: CandidateVisibleSourceRoomShapeVerification;
+      stable_landmark_similarity?: CandidateVisibleStableLandmarkSimilarity;
     };
-    boundary_basis?: "source_observed" | "verified_native_room_projected_to_registered_render";
+    source_observations_sha256: string;
+    source_observations: RegisteredMepPixelObservation[];
+    boundary_basis?:
+      | "source_observed"
+      | "verified_native_room_projected_to_registered_render"
+      | "verified_durable_landmark_area_projected_to_registered_render";
     normalization_warnings?: string[];
   };
+};
+
+export type CandidateVisibleStableLandmarkSimilarity = {
+  basis: "exact_room_tag_plus_stable_native_boundary";
+  stable_kind: "exterior_wall";
+  axis: "horizontal" | "vertical";
+  source_pixel_sha256: string;
+  source_boundary_edge_index: number;
+  source_boundary_start_pixel_point: ExistingConditionsPlanPoint;
+  source_boundary_end_pixel_point: ExistingConditionsPlanPoint;
+  native_segment_source_scoped_id: string;
+  native_segment_name: string;
+  source_landmark_coordinate_px: number;
+  source_landmark_support_ratio: number;
+  native_landmark_projected_coordinate_before_px: number;
+  source_room_tag_coordinate_px: number;
+  native_room_tag_projected_coordinate_px: number;
+  similarity_scale: number;
+  residual_px: number;
+  post_transform_endpoint_rms_residual_px: number;
+  source_native_span_ratio: number;
+  candidate_score: number;
+  runner_up_score_margin: number | null;
 };
 
 function finite(value: unknown, label: string): number {
@@ -158,6 +321,1025 @@ function sha256File(filePath: string): string {
 
 function sha256Json(value: unknown): string {
   return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function rounded(value: number, digits = 6): number {
+  const scale = 10 ** digits;
+  return Math.round(value * scale) / scale;
+}
+
+type CandidateVisibleSourceRoomLabelAnchor = {
+  text: string;
+  page: number;
+  pixel_point: ExistingConditionsPlanPoint;
+  pixel_bounds: {
+    min: ExistingConditionsPlanPoint;
+    max: ExistingConditionsPlanPoint;
+  };
+  source_render_mean_absolute_luminance_difference: number;
+  source_render_max_tile_mean_absolute_luminance_difference: number;
+  source_render_changed_pixel_ratio: number;
+  source_render_foreground_centroid_delta_px: number;
+};
+
+type CandidateVisibleSourceEnclosureRasterVerification = {
+  accepted: boolean;
+  polygon_area_ratio: number;
+  edge_support_ratios: number[];
+  mean_edge_support_ratio: number;
+  minimum_edge_support_ratio: number;
+  maximum_polygon_area_ratio: number;
+  minimum_mean_edge_support_ratio: number;
+  minimum_each_edge_support_ratio: number;
+};
+
+function normalizedRoomLabelToken(value: unknown): string {
+  return String(value ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function roomLabelMatchesExactIdentity(
+  labelToken: string,
+  roomToken: string,
+  roomNameToken: string
+): boolean {
+  if (!labelToken || !roomToken) return false;
+  if (!roomNameToken) return labelToken === roomToken;
+  return (
+    labelToken === `${roomToken}${roomNameToken}` ||
+    labelToken === `${roomNameToken}${roomToken}`
+  );
+}
+
+function roomLabelTokenContainsExactRoom(labelToken: string, roomToken: string): boolean {
+  if (!labelToken || !roomToken) return false;
+  if (labelToken === roomToken) return true;
+  if (/^\d+$/.test(roomToken)) {
+    const startsWithRoom =
+      labelToken.startsWith(roomToken) &&
+      !/^\d$/.test(labelToken.charAt(roomToken.length));
+    const roomStart = labelToken.length - roomToken.length;
+    const endsWithRoom =
+      roomStart > 0 &&
+      labelToken.endsWith(roomToken) &&
+      !/^\d$/.test(labelToken.charAt(roomStart - 1));
+    return startsWithRoom || endsWithRoom;
+  }
+  return labelToken.startsWith(roomToken) || labelToken.endsWith(roomToken);
+}
+
+async function locateUniqueSourceRoomLabelAnchor(args: {
+  source_pdf_path: string;
+  registered_render_path: string;
+  room_number: string;
+  render_width_px: number;
+  render_height_px: number;
+}): Promise<CandidateVisibleSourceRoomLabelAnchor | null> {
+  const expected = normalizedRoomLabelToken(args.room_number);
+  if (!expected) return null;
+  let document: any = null;
+  try {
+    const pdfjs: any = await loadPdfJsForNode();
+    document = await pdfjs.getDocument(
+      buildPdfJsDocumentOptions(new Uint8Array(fs.readFileSync(args.source_pdf_path)))
+    ).promise;
+    if (Number(document?.numPages) !== 1) return null;
+    const page = await document.getPage(1);
+    const baseViewport = page.getViewport({ scale: 1 });
+    const scale = args.render_width_px / Number(baseViewport.width);
+    const viewport = page.getViewport({ scale });
+    const renderedAspect = args.render_width_px / args.render_height_px;
+    const pageAspect = Number(viewport.width) / Number(viewport.height);
+    if (
+      !Number.isFinite(scale) ||
+      scale <= 0 ||
+      !Number.isFinite(pageAspect) ||
+      Math.abs(pageAspect - renderedAspect) / Math.max(pageAspect, renderedAspect) > 0.02
+    ) {
+      return null;
+    }
+    const pdfCanvas = createCanvas(args.render_width_px, args.render_height_px);
+    const pdfContext = pdfCanvas.getContext("2d");
+    pdfContext.fillStyle = "#fff";
+    pdfContext.fillRect(0, 0, args.render_width_px, args.render_height_px);
+    await page.render({ canvasContext: pdfContext as any, viewport }).promise;
+    const registeredImage = await loadImage(args.registered_render_path);
+    if (
+      registeredImage.width !== args.render_width_px ||
+      registeredImage.height !== args.render_height_px
+    ) {
+      return null;
+    }
+    const registeredCanvas = createCanvas(
+      args.render_width_px,
+      args.render_height_px
+    );
+    const registeredContext = registeredCanvas.getContext("2d");
+    registeredContext.fillStyle = "#fff";
+    registeredContext.fillRect(
+      0,
+      0,
+      args.render_width_px,
+      args.render_height_px
+    );
+    registeredContext.drawImage(registeredImage, 0, 0);
+    const pdfPixels = pdfContext.getImageData(
+      0,
+      0,
+      args.render_width_px,
+      args.render_height_px
+    ).data;
+    const registeredPixels = registeredContext.getImageData(
+      0,
+      0,
+      args.render_width_px,
+      args.render_height_px
+    ).data;
+    let luminanceDifference = 0;
+    let changedPixelCount = 0;
+    let pdfDarkness = 0;
+    let registeredDarkness = 0;
+    let pdfDarknessX = 0;
+    let pdfDarknessY = 0;
+    let registeredDarknessX = 0;
+    let registeredDarknessY = 0;
+    const tileGridSize = 8;
+    const tileDifferences = new Array<number>(tileGridSize * tileGridSize).fill(0);
+    const tilePixelCounts = new Array<number>(tileGridSize * tileGridSize).fill(0);
+    for (let index = 0; index < pdfPixels.length; index += 4) {
+      const pdfLuminance =
+        0.2126 * pdfPixels[index]! +
+        0.7152 * pdfPixels[index + 1]! +
+        0.0722 * pdfPixels[index + 2]!;
+      const registeredLuminance =
+        0.2126 * registeredPixels[index]! +
+        0.7152 * registeredPixels[index + 1]! +
+        0.0722 * registeredPixels[index + 2]!;
+      const difference = Math.abs(pdfLuminance - registeredLuminance) / 255;
+      luminanceDifference += difference;
+      if (difference > 0.1) changedPixelCount += 1;
+      const pixelIndex = index / 4;
+      const x = pixelIndex % args.render_width_px;
+      const y = Math.floor(pixelIndex / args.render_width_px);
+      const pdfPixelDarkness = 1 - pdfLuminance / 255;
+      const registeredPixelDarkness = 1 - registeredLuminance / 255;
+      pdfDarkness += pdfPixelDarkness;
+      registeredDarkness += registeredPixelDarkness;
+      pdfDarknessX += x * pdfPixelDarkness;
+      pdfDarknessY += y * pdfPixelDarkness;
+      registeredDarknessX += x * registeredPixelDarkness;
+      registeredDarknessY += y * registeredPixelDarkness;
+      const tileX = Math.min(
+        tileGridSize - 1,
+        Math.floor(x * tileGridSize / args.render_width_px)
+      );
+      const tileY = Math.min(
+        tileGridSize - 1,
+        Math.floor(y * tileGridSize / args.render_height_px)
+      );
+      const tileIndex = tileY * tileGridSize + tileX;
+      tileDifferences[tileIndex] += difference;
+      tilePixelCounts[tileIndex] += 1;
+    }
+    const pixelCount = args.render_width_px * args.render_height_px;
+    const meanAbsoluteLuminanceDifference =
+      luminanceDifference / pixelCount;
+    const maxTileMeanAbsoluteLuminanceDifference = Math.max(
+      ...tileDifferences.map((value, index) =>
+        value / Math.max(1, tilePixelCounts[index]!)
+      )
+    );
+    const changedPixelRatio = changedPixelCount / pixelCount;
+    if (pdfDarkness < 1 || registeredDarkness < 1) {
+      return null;
+    }
+    const foregroundCentroidDeltaPx = Math.hypot(
+      registeredDarknessX / registeredDarkness - pdfDarknessX / pdfDarkness,
+      registeredDarknessY / registeredDarkness - pdfDarknessY / pdfDarkness
+    );
+    if (
+      meanAbsoluteLuminanceDifference > 0.025 ||
+      maxTileMeanAbsoluteLuminanceDifference > 0.08 ||
+      changedPixelRatio > 0.08 ||
+      foregroundCentroidDeltaPx > 2.5
+    ) {
+      return null;
+    }
+    const textContent = await page.getTextContent();
+    const textEntries: CandidateVisibleSourceRoomLabelAnchor[] = (
+      Array.isArray(textContent?.items) ? textContent.items : []
+    )
+      .map((item: any) => {
+        const matrix = pdfjs.Util.transform(viewport.transform, item.transform);
+        if (
+          Math.abs(Number(matrix[1])) > 1e-4 ||
+          Math.abs(Number(matrix[2])) > 1e-4
+        ) {
+          return null;
+        }
+        const width = Number(item.width) * scale;
+        const height = Math.max(Number(item.height) * scale, Math.hypot(matrix[2], matrix[3]));
+        const min = { x: Number(matrix[4]), y: Number(matrix[5]) - height };
+        const max = { x: Number(matrix[4]) + width, y: Number(matrix[5]) };
+        return {
+          text: String(item.str ?? "").trim(),
+          page: 1,
+          pixel_point: {
+            x: (min.x + max.x) / 2,
+            y: (min.y + max.y) / 2
+          },
+          pixel_bounds: { min, max },
+          source_render_mean_absolute_luminance_difference:
+            meanAbsoluteLuminanceDifference,
+          source_render_max_tile_mean_absolute_luminance_difference:
+            maxTileMeanAbsoluteLuminanceDifference,
+          source_render_changed_pixel_ratio: changedPixelRatio,
+          source_render_foreground_centroid_delta_px:
+            foregroundCentroidDeltaPx
+        } satisfies CandidateVisibleSourceRoomLabelAnchor;
+      })
+      .filter((entry: CandidateVisibleSourceRoomLabelAnchor | null): entry is CandidateVisibleSourceRoomLabelAnchor =>
+        entry !== null &&
+        Number.isFinite(entry.pixel_point.x) &&
+        Number.isFinite(entry.pixel_point.y) &&
+        entry.pixel_point.x >= 0 &&
+        entry.pixel_point.y >= 0 &&
+        entry.pixel_point.x <= args.render_width_px &&
+        entry.pixel_point.y <= args.render_height_px
+      );
+    const matches = textEntries.filter((entry) =>
+      normalizedRoomLabelToken(entry.text) === expected
+    );
+    if (matches.length !== 1) return null;
+    const roomNumberEntry = matches[0]!;
+    const numberHeight =
+      roomNumberEntry.pixel_bounds.max.y - roomNumberEntry.pixel_bounds.min.y;
+    const numberWidth =
+      roomNumberEntry.pixel_bounds.max.x - roomNumberEntry.pixel_bounds.min.x;
+    const cluster = textEntries.filter((entry) => {
+      const horizontalGap = Math.max(
+        0,
+        roomNumberEntry.pixel_bounds.min.x - entry.pixel_bounds.max.x,
+        entry.pixel_bounds.min.x - roomNumberEntry.pixel_bounds.max.x
+      );
+      return (
+        horizontalGap <= Math.max(8, numberWidth) &&
+        entry.pixel_bounds.max.y >=
+          roomNumberEntry.pixel_bounds.min.y - Math.max(24, numberHeight * 4) &&
+        entry.pixel_bounds.min.y <=
+          roomNumberEntry.pixel_bounds.max.y + Math.max(4, numberHeight * 0.5)
+      );
+    });
+    const clusterBounds = {
+      min: {
+        x: Math.min(...cluster.map((entry) => entry.pixel_bounds.min.x)),
+        y: Math.min(...cluster.map((entry) => entry.pixel_bounds.min.y))
+      },
+      max: {
+        x: Math.max(...cluster.map((entry) => entry.pixel_bounds.max.x)),
+        y: Math.max(...cluster.map((entry) => entry.pixel_bounds.max.y))
+      }
+    };
+    return {
+      ...roomNumberEntry,
+      text: cluster.map((entry) => entry.text).filter(Boolean).join(" "),
+      pixel_bounds: clusterBounds,
+      pixel_point: {
+        x: (clusterBounds.min.x + clusterBounds.max.x) / 2,
+        y: (clusterBounds.min.y + clusterBounds.max.y) / 2
+      }
+    };
+  } catch {
+    return null;
+  } finally {
+    try {
+      await document?.destroy?.();
+    } catch {
+      // Best-effort cleanup for malformed or partially loaded source PDFs.
+    }
+  }
+}
+
+async function verifySourceEnclosureRaster(args: {
+  registered_render_path: string;
+  boundary_pixel_points: ExistingConditionsPlanPoint[];
+  render_width_px: number;
+  render_height_px: number;
+}): Promise<CandidateVisibleSourceEnclosureRasterVerification> {
+  const maximumPolygonAreaRatio = 0.75;
+  const minimumMeanEdgeSupportRatio = 0.3;
+  const minimumEachEdgeSupportRatio = 0.1;
+  const polygon = args.boundary_pixel_points
+    .map(normalizePoint)
+    .filter((point): point is ExistingConditionsPlanPoint => point !== null);
+  const rejected = (
+    polygonAreaRatio = 0,
+    edgeSupportRatios: number[] = []
+  ): CandidateVisibleSourceEnclosureRasterVerification => ({
+    accepted: false,
+    polygon_area_ratio: rounded(polygonAreaRatio),
+    edge_support_ratios: edgeSupportRatios.map((value) => rounded(value)),
+    mean_edge_support_ratio: rounded(
+      edgeSupportRatios.length > 0
+        ? edgeSupportRatios.reduce((sum, value) => sum + value, 0) /
+            edgeSupportRatios.length
+        : 0
+    ),
+    minimum_edge_support_ratio: rounded(
+      edgeSupportRatios.length > 0 ? Math.min(...edgeSupportRatios) : 0
+    ),
+    maximum_polygon_area_ratio: maximumPolygonAreaRatio,
+    minimum_mean_edge_support_ratio: minimumMeanEdgeSupportRatio,
+    minimum_each_edge_support_ratio: minimumEachEdgeSupportRatio
+  });
+  if (polygon.length < 3) return rejected();
+  const image = await loadImage(args.registered_render_path);
+  if (
+    image.width !== args.render_width_px ||
+    image.height !== args.render_height_px
+  ) {
+    return rejected();
+  }
+  const polygonAreaRatio =
+    Math.abs(polygonTwiceArea(polygon)) /
+    2 /
+    (args.render_width_px * args.render_height_px);
+  if (!Number.isFinite(polygonAreaRatio) || polygonAreaRatio <= 0) {
+    return rejected();
+  }
+  const canvas = createCanvas(args.render_width_px, args.render_height_px);
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, args.render_width_px, args.render_height_px);
+  context.drawImage(image, 0, 0);
+  const pixels = context.getImageData(
+    0,
+    0,
+    args.render_width_px,
+    args.render_height_px
+  ).data;
+  const hasDarkPixelNear = (x: number, y: number): boolean => {
+    const radius = 2;
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dy = -radius; dy <= radius; dy++) {
+        const px = Math.max(
+          0,
+          Math.min(args.render_width_px - 1, Math.round(x + dx))
+        );
+        const py = Math.max(
+          0,
+          Math.min(args.render_height_px - 1, Math.round(y + dy))
+        );
+        const index = (py * args.render_width_px + px) * 4;
+        const luminance =
+          (0.2126 * pixels[index]! +
+            0.7152 * pixels[index + 1]! +
+            0.0722 * pixels[index + 2]!) /
+          255;
+        if (luminance < 0.75) return true;
+      }
+    }
+    return false;
+  };
+  const edgeSupportRatios = polygon.map((start, index) => {
+    const end = polygon[(index + 1) % polygon.length]!;
+    const length = Math.hypot(end.x - start.x, end.y - start.y);
+    const steps = Math.max(2, Math.ceil(length / 2));
+    let supported = 0;
+    for (let step = 0; step <= steps; step++) {
+      const ratio = step / steps;
+      if (
+        hasDarkPixelNear(
+          start.x + ratio * (end.x - start.x),
+          start.y + ratio * (end.y - start.y)
+        )
+      ) {
+        supported++;
+      }
+    }
+    return supported / (steps + 1);
+  });
+  const meanEdgeSupportRatio =
+    edgeSupportRatios.reduce((sum, value) => sum + value, 0) /
+    edgeSupportRatios.length;
+  const minimumEdgeSupportRatio = Math.min(...edgeSupportRatios);
+  return {
+    accepted:
+      polygonAreaRatio <= maximumPolygonAreaRatio &&
+      meanEdgeSupportRatio >= minimumMeanEdgeSupportRatio &&
+      minimumEdgeSupportRatio >= minimumEachEdgeSupportRatio,
+    polygon_area_ratio: rounded(polygonAreaRatio),
+    edge_support_ratios: edgeSupportRatios.map((value) => rounded(value)),
+    mean_edge_support_ratio: rounded(meanEdgeSupportRatio),
+    minimum_edge_support_ratio: rounded(minimumEdgeSupportRatio),
+    maximum_polygon_area_ratio: maximumPolygonAreaRatio,
+    minimum_mean_edge_support_ratio: minimumMeanEdgeSupportRatio,
+    minimum_each_edge_support_ratio: minimumEachEdgeSupportRatio
+  };
+}
+
+type CandidateVisibleChromaticRouteHint = {
+  name: string;
+  rgb: { r: number; g: number; b: number };
+};
+
+type CandidateVisibleAxisTrace = {
+  component_id: string;
+  axis: "horizontal" | "vertical";
+  start: ExistingConditionsPlanPoint;
+  end: ExistingConditionsPlanPoint;
+  length_px: number;
+};
+
+function candidateVisibleChromaticRouteHint(
+  observation: RegisteredMepPixelObservation
+): CandidateVisibleChromaticRouteHint | null {
+  const semanticText = JSON.stringify(observation).toLowerCase();
+  const colors: CandidateVisibleChromaticRouteHint[] = [
+    { name: "blue", rgb: { r: 0, g: 0, b: 128 } },
+    { name: "orange", rgb: { r: 255, g: 128, b: 0 } },
+    { name: "green", rgb: { r: 0, g: 160, b: 0 } },
+    { name: "red", rgb: { r: 200, g: 0, b: 0 } },
+    { name: "cyan", rgb: { r: 0, g: 170, b: 200 } },
+    { name: "purple", rgb: { r: 128, g: 0, b: 160 } },
+    { name: "magenta", rgb: { r: 200, g: 0, b: 160 } },
+    { name: "yellow", rgb: { r: 220, g: 200, b: 0 } }
+  ];
+  return colors.find((entry) =>
+    new RegExp(`\\b${entry.name}\\b`, "i").test(semanticText)
+  ) ?? null;
+}
+
+function candidateVisibleHueDegrees(rgb: { r: number; g: number; b: number }): number {
+  const maximum = Math.max(rgb.r, rgb.g, rgb.b);
+  const minimum = Math.min(rgb.r, rgb.g, rgb.b);
+  const chroma = maximum - minimum;
+  if (chroma <= 0) return 0;
+  let hue = 0;
+  if (maximum === rgb.r) {
+    hue = 60 * (((rgb.g - rgb.b) / chroma) % 6);
+  } else if (maximum === rgb.g) {
+    hue = 60 * ((rgb.b - rgb.r) / chroma + 2);
+  } else {
+    hue = 60 * ((rgb.r - rgb.g) / chroma + 4);
+  }
+  return hue < 0 ? hue + 360 : hue;
+}
+
+function candidateVisibleAxisTraces(
+  receipt: PlanTraceExtractionReceipt
+): CandidateVisibleAxisTrace[] {
+  return receipt.components.flatMap((component) =>
+    component.polylines.flatMap((polyline) => {
+      if (polyline.closed || polyline.points.length < 2 || polyline.length_px < 4) {
+        return [];
+      }
+      const start = polyline.points[0]!;
+      const end = polyline.points[polyline.points.length - 1]!;
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
+      const directLength = Math.hypot(dx, dy);
+      if (directLength <= 0 || polyline.length_px / directLength > 1.2) return [];
+      const horizontal = Math.abs(dx) >= Math.abs(dy) * 4;
+      const vertical = Math.abs(dy) >= Math.abs(dx) * 4;
+      if (!horizontal && !vertical) return [];
+      return [{
+        component_id: component.component_id,
+        axis: horizontal ? "horizontal" as const : "vertical" as const,
+        start,
+        end,
+        length_px: polyline.length_px
+      }];
+    })
+  );
+}
+
+function candidateVisibleChromaticRetraceProposal(args: {
+  receipt: PlanTraceExtractionReceipt;
+  target_color: string;
+  width: number;
+  height: number;
+  reference_points: ExistingConditionsPlanPoint[];
+}): CandidateVisibleRouteRasterVerification["retrace_proposal"] | undefined {
+  if (args.reference_points.length < 2) return undefined;
+  const corridorRadiusPx = Math.max(
+    12,
+    Math.min(50, Math.hypot(args.width, args.height) * 0.06)
+  );
+  const traceReferenceMetrics = (
+    trace: CandidateVisibleAxisTrace
+  ): {
+    maximum_distance_px: number;
+    longitudinal_overlap_ratio: number;
+  } => {
+    const distanceToReference = (
+      point: ExistingConditionsPlanPoint
+    ): number => {
+      let distance = Number.POSITIVE_INFINITY;
+      for (let index = 0; index < args.reference_points.length - 1; index++) {
+        distance = Math.min(
+          distance,
+          pointDistanceToSegment(
+            point,
+            args.reference_points[index]!,
+            args.reference_points[index + 1]!
+          )
+        );
+      }
+      return distance;
+    };
+    const traceSamples = Array.from({ length: 9 }, (_, index) => {
+      const ratio = index / 8;
+      return {
+        x: trace.start.x + ratio * (trace.end.x - trace.start.x),
+        y: trace.start.y + ratio * (trace.end.y - trace.start.y)
+      };
+    });
+    const maximumDistancePx = Math.max(
+      ...traceSamples.map(distanceToReference)
+    );
+    const axisCoordinate = (point: ExistingConditionsPlanPoint): number =>
+      trace.axis === "horizontal" ? point.x : point.y;
+    const traceCoordinates = [
+      axisCoordinate(trace.start),
+      axisCoordinate(trace.end)
+    ];
+    const referenceCoordinates =
+      args.reference_points.map(axisCoordinate);
+    const traceMin = Math.min(...traceCoordinates);
+    const traceMax = Math.max(...traceCoordinates);
+    const referenceMin = Math.min(...referenceCoordinates);
+    const referenceMax = Math.max(...referenceCoordinates);
+    const overlap = Math.max(
+      0,
+      Math.min(traceMax, referenceMax) - Math.max(traceMin, referenceMin)
+    );
+    const denominator = Math.max(
+      1,
+      Math.min(traceMax - traceMin, referenceMax - referenceMin)
+    );
+    return {
+      maximum_distance_px: maximumDistancePx,
+      longitudinal_overlap_ratio: overlap / denominator
+    };
+  };
+  const localTraces = candidateVisibleAxisTraces(args.receipt)
+    .map((trace) => ({ ...trace, ...traceReferenceMetrics(trace) }))
+    .filter((trace) =>
+      trace.maximum_distance_px <= corridorRadiusPx &&
+      trace.longitudinal_overlap_ratio >= 0.35
+    );
+  if (localTraces.length === 0) return undefined;
+  const referenceGeometrySha256 = sha256Json(
+    args.reference_points.map((point) => ({
+      x: rounded(point.x),
+      y: rounded(point.y)
+    }))
+  );
+  const traces = localTraces;
+  const horizontals = traces.filter((entry) => entry.axis === "horizontal");
+  const verticals = traces.filter((entry) =>
+    entry.axis === "vertical" && entry.length_px >= 20
+  );
+  const maximumJoinGapPx = Math.max(
+    12,
+    Math.min(36, Math.hypot(args.width, args.height) * 0.035)
+  );
+  const patternCandidates: Array<{
+    vertical: (typeof verticals)[number];
+    upper: Array<(typeof horizontals)[number]>;
+    lower: Array<(typeof horizontals)[number]>;
+    score: number;
+    maximum_distance_px: number;
+  }> = [];
+  for (const vertical of verticals) {
+    const verticalX = (vertical.start.x + vertical.end.x) / 2;
+    const topY = Math.min(vertical.start.y, vertical.end.y);
+    const bottomY = Math.max(vertical.start.y, vertical.end.y);
+    const joins = (targetY: number) => horizontals.filter((horizontal) => {
+      if (horizontal.component_id !== vertical.component_id) return false;
+      const horizontalY = (horizontal.start.y + horizontal.end.y) / 2;
+      const minX = Math.min(horizontal.start.x, horizontal.end.x);
+      const maxX = Math.max(horizontal.start.x, horizontal.end.x);
+      return (
+        Math.abs(horizontalY - targetY) <= maximumJoinGapPx &&
+        verticalX >= minX - maximumJoinGapPx &&
+        verticalX <= maxX + maximumJoinGapPx
+      );
+    });
+    const upper = joins(topY);
+    const lower = joins(bottomY);
+    if (upper.length === 0 || lower.length === 0) continue;
+    const maximumDistance = Math.max(
+      vertical.maximum_distance_px,
+      ...upper.map((entry) => entry.maximum_distance_px),
+      ...lower.map((entry) => entry.maximum_distance_px)
+    );
+    const score =
+      vertical.length_px +
+      Math.max(...upper.map((entry) => entry.length_px)) +
+      Math.max(...lower.map((entry) => entry.length_px)) -
+      maximumDistance * 2;
+    patternCandidates.push({
+      vertical,
+      upper,
+      lower,
+      score,
+      maximum_distance_px: maximumDistance
+    });
+  }
+  patternCandidates.sort((left, right) =>
+    right.score - left.score ||
+    left.maximum_distance_px - right.maximum_distance_px ||
+    left.vertical.component_id.localeCompare(right.vertical.component_id)
+  );
+  const best = patternCandidates[0];
+  const patternRunnerUp = patternCandidates.find(
+    (entry) =>
+      entry.vertical.component_id !== best?.vertical.component_id
+  );
+  if (
+    best &&
+    patternRunnerUp &&
+    best.score - patternRunnerUp.score <
+      Math.max(10, Math.abs(best.score) * 0.12)
+  ) {
+    return undefined;
+  }
+
+  let pixelPoints: ExistingConditionsPlanPoint[] | null = null;
+  let componentIds: string[] = [];
+  let maximumReferenceDistancePx = Number.POSITIVE_INFINITY;
+  let runnerUpScoreMargin: number | null = null;
+  if (best) {
+    const verticalX = rounded((best.vertical.start.x + best.vertical.end.x) / 2);
+    const upperY = rounded(
+      best.upper.reduce(
+        (sum, entry) => sum + (entry.start.y + entry.end.y) / 2,
+        0
+      ) / best.upper.length
+    );
+    const lowerY = rounded(
+      best.lower.reduce(
+        (sum, entry) => sum + (entry.start.y + entry.end.y) / 2,
+        0
+      ) / best.lower.length
+    );
+    const upperMinX = Math.min(
+      ...best.upper.flatMap((entry) => [entry.start.x, entry.end.x])
+    );
+    const lowerMaxX = Math.max(
+      ...best.lower.flatMap((entry) => [entry.start.x, entry.end.x])
+    );
+    const localBranchSpanPx = Math.max(
+      30,
+      Math.min(120, Math.hypot(args.width, args.height) * 0.06)
+    );
+    const upperStartX = rounded(Math.max(upperMinX, verticalX - localBranchSpanPx));
+    const lowerEndX = rounded(Math.min(lowerMaxX, verticalX + localBranchSpanPx));
+    if (upperStartX < verticalX - 2 && lowerEndX > verticalX + 2) {
+      pixelPoints = [
+        { x: upperStartX, y: upperY },
+        { x: verticalX, y: upperY },
+        { x: verticalX, y: lowerY },
+        { x: lowerEndX, y: lowerY }
+      ];
+      componentIds = [
+        ...new Set([
+          best.vertical.component_id,
+          ...best.upper.map((entry) => entry.component_id),
+          ...best.lower.map((entry) => entry.component_id)
+        ])
+      ];
+      maximumReferenceDistancePx = Math.max(
+        best.vertical.maximum_distance_px,
+        ...best.upper.map((entry) => entry.maximum_distance_px),
+        ...best.lower.map((entry) => entry.maximum_distance_px)
+      );
+      runnerUpScoreMargin = patternRunnerUp
+        ? rounded(best.score - patternRunnerUp.score)
+        : null;
+    }
+  }
+
+  if (!pixelPoints) {
+    const components = new Map<
+      string,
+      { traces: typeof traces; score: number; maximum_distance_px: number }
+    >();
+    for (const trace of traces) {
+      const current = components.get(trace.component_id) ?? {
+        traces: [],
+        score: 0,
+        maximum_distance_px: 0
+      };
+      current.traces.push(trace);
+      current.score += trace.length_px - trace.maximum_distance_px;
+      current.maximum_distance_px = Math.max(
+        current.maximum_distance_px,
+        trace.maximum_distance_px
+      );
+      components.set(trace.component_id, current);
+    }
+    const rankedComponents = [...components.entries()]
+      .map(([component_id, value]) => ({ component_id, ...value }))
+      .sort((left, right) =>
+        right.score - left.score ||
+        left.maximum_distance_px - right.maximum_distance_px ||
+        left.component_id.localeCompare(right.component_id)
+      );
+    const winningComponent = rankedComponents[0];
+    const runnerUp = rankedComponents[1];
+    if (
+      !winningComponent ||
+      (
+        runnerUp &&
+        winningComponent.score - runnerUp.score <
+          Math.max(8, Math.abs(winningComponent.score) * 0.15)
+      )
+    ) {
+      return undefined;
+    }
+    const longest = winningComponent.traces
+      .slice()
+      .sort((left, right) =>
+        right.length_px - left.length_px ||
+        left.maximum_distance_px - right.maximum_distance_px
+      )[0];
+    if (!longest || longest.length_px < 8) return undefined;
+    pixelPoints = [longest.start, longest.end];
+    componentIds = [longest.component_id];
+    maximumReferenceDistancePx = longest.maximum_distance_px;
+    runnerUpScoreMargin = runnerUp
+      ? rounded(winningComponent.score - runnerUp.score)
+      : null;
+  }
+  return {
+    basis: "hash_bound_chromatic_plan_trace",
+    target_color: args.target_color,
+    source_pixel_sha256: String(args.receipt.source_pixel_sha256 ?? ""),
+    extraction_policy_sha256: args.receipt.extraction_policy_sha256,
+    reference_geometry_sha256: referenceGeometrySha256,
+    component_ids: componentIds,
+    corridor_radius_px: rounded(corridorRadiusPx),
+    maximum_reference_distance_px: rounded(maximumReferenceDistancePx),
+    runner_up_score_margin: runnerUpScoreMargin,
+    pixel_points: pixelPoints,
+    normalized_uv_points: pixelPoints.map((point) => ({
+      x: rounded(point.x / args.width),
+      y: rounded(point.y / args.height)
+    }))
+  };
+}
+
+async function verifySourceRouteRaster(args: {
+  registered_render_path: string;
+  observations: RegisteredMepPixelObservation[];
+  render_width_px: number;
+  render_height_px: number;
+}): Promise<CandidateVisibleRouteRasterVerification[]> {
+  const image = await loadImage(args.registered_render_path);
+  if (
+    image.width !== args.render_width_px ||
+    image.height !== args.render_height_px
+  ) {
+    return [];
+  }
+  const canvas = createCanvas(args.render_width_px, args.render_height_px);
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, args.render_width_px, args.render_height_px);
+  context.drawImage(image, 0, 0);
+  const pixels = context.getImageData(
+    0,
+    0,
+    args.render_width_px,
+    args.render_height_px
+  ).data;
+  const pixelBuffer: PlanTracePixelBuffer = {
+    width: args.render_width_px,
+    height: args.render_height_px,
+    data: pixels
+  };
+  const sourcePixelSha256 = sha256PlanTracePixelBuffer(pixelBuffer);
+  const sourceImageSha256 = sha256File(args.registered_render_path);
+  const proposalByColor = new Map<
+    string,
+    CandidateVisibleRouteRasterVerification["retrace_proposal"]
+  >();
+  const proposalForObservation = (
+    observation: RegisteredMepPixelObservation,
+    referencePoints: ExistingConditionsPlanPoint[]
+  ): CandidateVisibleRouteRasterVerification["retrace_proposal"] | undefined => {
+    const hint = candidateVisibleChromaticRouteHint(observation);
+    if (!hint) return undefined;
+    const proposalKey = `${hint.name}:${sha256Json(referencePoints)}`;
+    if (proposalByColor.has(proposalKey)) return proposalByColor.get(proposalKey);
+    const receipt = extractPlanTracesFromPixels(pixelBuffer, {
+      schema_version: 1,
+      source_image_sha256: sourceImageSha256,
+      source_pixel_sha256: sourcePixelSha256,
+      target_rgb: hint.rgb,
+      maximum_color_distance: 180,
+      minimum_chroma: 40,
+      minimum_alpha: 1,
+      minimum_component_pixels: 5,
+      simplify_tolerance_px: 2,
+      interpretation_mode: "ink_centerline"
+    });
+    const proposal = candidateVisibleChromaticRetraceProposal({
+      receipt,
+      target_color: hint.name,
+      width: args.render_width_px,
+      height: args.render_height_px,
+      reference_points: referencePoints
+    });
+    proposalByColor.set(proposalKey, proposal);
+    return proposal;
+  };
+  const maximumSearchRadiusPx = 4;
+  const hueBinCount = 24;
+  const hueBinWidth = 360 / hueBinCount;
+  const circularHueDistance = (left: number, right: number): number => {
+    const distance = Math.abs(left - right);
+    return Math.min(distance, hueBinCount - distance);
+  };
+  const nearbyEvidence = (x: number, y: number): {
+    monochrome: boolean;
+    hue_bins: Set<number>;
+  } => {
+    let monochrome = false;
+    const hueBins = new Set<number>();
+    for (let dx = -maximumSearchRadiusPx; dx <= maximumSearchRadiusPx; dx++) {
+      for (let dy = -maximumSearchRadiusPx; dy <= maximumSearchRadiusPx; dy++) {
+        if (dx * dx + dy * dy > maximumSearchRadiusPx * maximumSearchRadiusPx) {
+          continue;
+        }
+        const px = Math.max(
+          0,
+          Math.min(args.render_width_px - 1, Math.round(x + dx))
+        );
+        const py = Math.max(
+          0,
+          Math.min(args.render_height_px - 1, Math.round(y + dy))
+        );
+        const index = (py * args.render_width_px + px) * 4;
+        const red = pixels[index]!;
+        const green = pixels[index + 1]!;
+        const blue = pixels[index + 2]!;
+        const maximum = Math.max(red, green, blue);
+        const minimum = Math.min(red, green, blue);
+        const chroma = maximum - minimum;
+        const luminance =
+          0.2126 * red +
+          0.7152 * green +
+          0.0722 * blue;
+        if (luminance <= 0.82 * 255) monochrome = true;
+        if (chroma < 40 || maximum < 45 || luminance > 0.97 * 255) continue;
+        let hue = 0;
+        if (maximum === red) {
+          hue = 60 * (((green - blue) / chroma) % 6);
+        } else if (maximum === green) {
+          hue = 60 * ((blue - red) / chroma + 2);
+        } else {
+          hue = 60 * ((red - green) / chroma + 4);
+        }
+        if (hue < 0) hue += 360;
+        hueBins.add(Math.floor(hue / hueBinWidth) % hueBinCount);
+      }
+    }
+    return { monochrome, hue_bins: hueBins };
+  };
+  const geometryEntries = args.observations.flatMap((observation, index) => {
+    const raw = observation as unknown as Record<string, unknown>;
+    const observationId = String(
+      raw.observation_id ?? `candidate_visible_${index + 1}`
+    ).trim();
+    const placement = raw.placement && typeof raw.placement === "object"
+      ? raw.placement as Record<string, unknown>
+      : null;
+    const routePoints = (Array.isArray(raw.pixel_points) ? raw.pixel_points : [])
+      .map(normalizePoint)
+      .filter((point): point is ExistingConditionsPlanPoint => point !== null);
+    const branchPoints = (
+      Array.isArray(placement?.pixel_branch_points)
+        ? placement.pixel_branch_points
+        : []
+    )
+      .map(normalizePoint)
+      .filter((point): point is ExistingConditionsPlanPoint => point !== null);
+    return [
+      ...(routePoints.length >= 2
+        ? [{
+            observation_id: observationId,
+            geometry_role: "route" as const,
+            points: routePoints,
+            observation
+          }]
+        : []),
+      ...(branchPoints.length >= 2
+        ? [{
+            observation_id: observationId,
+            geometry_role: "placement_branch" as const,
+            points: branchPoints,
+            observation
+          }]
+        : [])
+    ];
+  });
+  return geometryEntries.map((entry) => {
+    const explicitColorHint = candidateVisibleChromaticRouteHint(entry.observation);
+    const segmentSamples = entry.points.slice(0, -1).map((start, index) => {
+      const end = entry.points[index + 1]!;
+      const length = Math.hypot(end.x - start.x, end.y - start.y);
+      const steps = Math.max(2, Math.ceil(length / 2));
+      return Array.from({ length: steps + 1 }, (_, step) => {
+        const ratio = step / steps;
+        return nearbyEvidence(
+          start.x + ratio * (end.x - start.x),
+          start.y + ratio * (end.y - start.y)
+        );
+      });
+    });
+    const allSamples = segmentSamples.flat();
+    const hueSupportCounts = Array.from({ length: hueBinCount }, (_, hueBin) =>
+      allSamples.filter((sample) =>
+        [...sample.hue_bins].some((sampleBin) =>
+          circularHueDistance(sampleBin, hueBin) <= 1
+        )
+      ).length
+    );
+    const coherentHueBin = explicitColorHint
+      ? Math.floor(candidateVisibleHueDegrees(explicitColorHint.rgb) / hueBinWidth) %
+        hueBinCount
+      : hueSupportCounts.reduce(
+          (best, count, hueBin) =>
+            count > hueSupportCounts[best]! ? hueBin : best,
+          0
+        );
+    const chromaticSegmentSupportRatios = segmentSamples.map((samples) =>
+      samples.filter((sample) =>
+        [...sample.hue_bins].some((sampleBin) =>
+          circularHueDistance(sampleBin, coherentHueBin) <= 1
+        )
+      ).length / Math.max(1, samples.length)
+    );
+    const monochromeSegmentSupportRatios = segmentSamples.map((samples) =>
+      samples.filter((sample) => sample.monochrome).length /
+        Math.max(1, samples.length)
+    );
+    const mean = (values: number[]): number =>
+      values.reduce((sum, value) => sum + value, 0) /
+      Math.max(1, values.length);
+    const chromaticMeanSupportRatio = mean(chromaticSegmentSupportRatios);
+    const monochromeMeanSupportRatio = mean(monochromeSegmentSupportRatios);
+    const supportModality =
+      explicitColorHint || chromaticMeanSupportRatio >= 0.45
+        ? "chromatic_line" as const
+        : "monochrome_line" as const;
+    const segmentSupportRatios =
+      supportModality === "chromatic_line"
+        ? chromaticSegmentSupportRatios
+        : monochromeSegmentSupportRatios;
+    const minimumMeanSupportRatio =
+      supportModality === "chromatic_line" ? 0.8 : 0.55;
+    const minimumEachSegmentSupportRatio =
+      supportModality === "chromatic_line" ? 0.6 : 0.25;
+    const meanSupportRatio = mean(segmentSupportRatios);
+    const minimumSegmentSupportRatio = Math.min(...segmentSupportRatios);
+    const accepted =
+      meanSupportRatio >= minimumMeanSupportRatio &&
+      minimumSegmentSupportRatio >= minimumEachSegmentSupportRatio;
+    return {
+      observation_id: entry.observation_id,
+      geometry_role: entry.geometry_role,
+      accepted,
+      support_modality: supportModality,
+      sample_count: allSamples.length,
+      segment_support_ratios: segmentSupportRatios.map((value) => rounded(value)),
+      mean_support_ratio: rounded(meanSupportRatio),
+      minimum_segment_support_ratio: rounded(minimumSegmentSupportRatio),
+      chromatic_segment_support_ratios:
+        chromaticSegmentSupportRatios.map((value) => rounded(value)),
+      chromatic_mean_support_ratio: rounded(chromaticMeanSupportRatio),
+      monochrome_segment_support_ratios:
+        monochromeSegmentSupportRatios.map((value) => rounded(value)),
+      monochrome_mean_support_ratio: rounded(monochromeMeanSupportRatio),
+      maximum_search_radius_px: maximumSearchRadiusPx,
+      minimum_mean_support_ratio: minimumMeanSupportRatio,
+      minimum_each_segment_support_ratio: minimumEachSegmentSupportRatio,
+      ...(supportModality === "chromatic_line"
+        ? { coherent_hue_degrees: rounded(coherentHueBin * hueBinWidth) }
+        : {}),
+      ...(!accepted
+        ? {
+            retrace_proposal: proposalForObservation(
+              entry.observation,
+              entry.points
+            )
+          }
+        : {})
+    };
+  });
 }
 
 function requireFile(filePath: string, label: string): string {
@@ -780,6 +1962,173 @@ function pointBounds(points: ExistingConditionsPlanPoint[]): {
   };
 }
 
+function normalizedPolygon(
+  polygon: ExistingConditionsPlanPoint[],
+  flipX: boolean,
+  flipY: boolean
+): ExistingConditionsPlanPoint[] {
+  const bounds = pointBounds(polygon);
+  const width = bounds.max.x - bounds.min.x;
+  const height = bounds.max.y - bounds.min.y;
+  if (width <= 1e-7 || height <= 1e-7) throw new Error("candidate_visible_room_shape_bounds_degenerate");
+  return polygon.map((point) => {
+    let x = (point.x - bounds.min.x) / width;
+    let y = (point.y - bounds.min.y) / height;
+    if (flipX) x = 1 - x;
+    if (flipY) y = 1 - y;
+    return { x, y };
+  });
+}
+
+function polygonArea(points: ExistingConditionsPlanPoint[]): number {
+  return Math.abs(polygonTwiceArea(points)) / 2;
+}
+
+function pointToPolygonBoundaryDistance(
+  point: ExistingConditionsPlanPoint,
+  polygon: ExistingConditionsPlanPoint[]
+): number {
+  return Math.min(...polygon.map((start, index) =>
+    pointDistanceToSegment(point, start, polygon[(index + 1) % polygon.length]!)
+  ));
+}
+
+function sampledPolygonBoundary(
+  polygon: ExistingConditionsPlanPoint[],
+  maximumStep = 0.04
+): ExistingConditionsPlanPoint[] {
+  const samples: ExistingConditionsPlanPoint[] = [];
+  for (let index = 0; index < polygon.length; index++) {
+    const start = polygon[index]!;
+    const end = polygon[(index + 1) % polygon.length]!;
+    const length = Math.hypot(end.x - start.x, end.y - start.y);
+    const steps = Math.max(1, Math.ceil(length / maximumStep));
+    for (let step = 0; step < steps; step++) {
+      const ratio = step / steps;
+      samples.push({
+        x: start.x + ratio * (end.x - start.x),
+        y: start.y + ratio * (end.y - start.y)
+      });
+    }
+  }
+  return samples;
+}
+
+function symmetricPolygonBoundaryHausdorff(
+  left: ExistingConditionsPlanPoint[],
+  right: ExistingConditionsPlanPoint[]
+): number {
+  const directed = (
+    source: ExistingConditionsPlanPoint[],
+    target: ExistingConditionsPlanPoint[]
+  ): number => Math.max(...sampledPolygonBoundary(source).map((point) =>
+    pointToPolygonBoundaryDistance(point, target)
+  ));
+  return Math.max(directed(left, right), directed(right, left));
+}
+
+function verifySourceRoomShape(args: {
+  source_polygon: ExistingConditionsPlanPoint[];
+  native_room_polygon: ExistingConditionsPlanPoint[];
+  submitted_anchor: ExistingConditionsPlanPoint;
+  source_room_label_anchor: CandidateVisibleSourceRoomLabelAnchor;
+  render_width_px: number;
+  render_height_px: number;
+}): CandidateVisibleSourceRoomShapeVerification {
+  const maximumAnchorDistance = Math.max(
+    6,
+    Math.min(12, Math.hypot(args.render_width_px, args.render_height_px) * 0.01)
+  );
+  const anchorDistance = Math.hypot(
+    args.submitted_anchor.x - args.source_room_label_anchor.pixel_point.x,
+    args.submitted_anchor.y - args.source_room_label_anchor.pixel_point.y
+  );
+  const source = normalizedPolygon(args.source_polygon, false, false);
+  const sourceArea = polygonArea(source);
+  const candidates = [
+    { transform: "identity" as const, polygon: normalizedPolygon(args.native_room_polygon, false, false) },
+    { transform: "flip_x" as const, polygon: normalizedPolygon(args.native_room_polygon, true, false) },
+    { transform: "flip_y" as const, polygon: normalizedPolygon(args.native_room_polygon, false, true) },
+    { transform: "flip_xy" as const, polygon: normalizedPolygon(args.native_room_polygon, true, true) }
+  ].map((entry) => ({
+    ...entry,
+    hausdorff: symmetricPolygonBoundaryHausdorff(source, entry.polygon),
+    areaDifference: Math.abs(sourceArea - polygonArea(entry.polygon))
+  })).sort((left, right) =>
+    left.hausdorff - right.hausdorff ||
+    left.areaDifference - right.areaDifference ||
+    left.transform.localeCompare(right.transform)
+  );
+  const best = candidates[0]!;
+  const maximumHausdorff = 0.15;
+  const maximumAreaDifference = 0.12;
+  const labelBoundsPadding = 6;
+  const anchorInsidePaddedLabelBounds =
+    args.submitted_anchor.x >=
+      args.source_room_label_anchor.pixel_bounds.min.x - labelBoundsPadding &&
+    args.submitted_anchor.x <=
+      args.source_room_label_anchor.pixel_bounds.max.x + labelBoundsPadding &&
+    args.submitted_anchor.y >=
+      args.source_room_label_anchor.pixel_bounds.min.y - labelBoundsPadding &&
+    args.submitted_anchor.y <=
+      args.source_room_label_anchor.pixel_bounds.max.y + labelBoundsPadding;
+  return {
+    accepted:
+      anchorInsidePaddedLabelBounds &&
+      pointInsidePolygonOrBoundary(args.source_room_label_anchor.pixel_point, args.source_polygon) &&
+      best.transform === "identity" &&
+      best.hausdorff <= maximumHausdorff &&
+      best.areaDifference <= maximumAreaDifference,
+    source_room_label_text: args.source_room_label_anchor.text,
+    source_room_label_pixel_point: args.source_room_label_anchor.pixel_point,
+    source_room_label_pixel_bounds: args.source_room_label_anchor.pixel_bounds,
+    source_render_mean_absolute_luminance_difference: rounded(
+      args.source_room_label_anchor.source_render_mean_absolute_luminance_difference
+    ),
+    maximum_source_render_mean_absolute_luminance_difference: 0.08,
+    submitted_anchor_distance_px: rounded(anchorDistance),
+    maximum_anchor_distance_px: rounded(maximumAnchorDistance),
+    normalized_symmetric_hausdorff: rounded(best.hausdorff),
+    maximum_normalized_symmetric_hausdorff: maximumHausdorff,
+    normalized_area_difference: rounded(best.areaDifference),
+    maximum_normalized_area_difference: maximumAreaDifference,
+    matched_transform: best.transform
+  };
+}
+
+function sourceRoomAnchorMatchesLocatedLabel(args: {
+  source_polygon: ExistingConditionsPlanPoint[];
+  submitted_anchor: ExistingConditionsPlanPoint;
+  source_room_label_anchor: CandidateVisibleSourceRoomLabelAnchor;
+  render_width_px: number;
+  render_height_px: number;
+}): boolean {
+  const maximumAnchorDistance = Math.max(
+    6,
+    Math.min(12, Math.hypot(args.render_width_px, args.render_height_px) * 0.01)
+  );
+  const labelBoundsPadding = 6;
+  const anchorDistance = Math.hypot(
+    args.submitted_anchor.x - args.source_room_label_anchor.pixel_point.x,
+    args.submitted_anchor.y - args.source_room_label_anchor.pixel_point.y
+  );
+  return (
+    anchorDistance <= maximumAnchorDistance &&
+    args.submitted_anchor.x >=
+      args.source_room_label_anchor.pixel_bounds.min.x - labelBoundsPadding &&
+    args.submitted_anchor.x <=
+      args.source_room_label_anchor.pixel_bounds.max.x + labelBoundsPadding &&
+    args.submitted_anchor.y >=
+      args.source_room_label_anchor.pixel_bounds.min.y - labelBoundsPadding &&
+    args.submitted_anchor.y <=
+      args.source_room_label_anchor.pixel_bounds.max.y + labelBoundsPadding &&
+    pointInsidePolygonOrBoundary(
+      args.source_room_label_anchor.pixel_point,
+      args.source_polygon
+    )
+  );
+}
+
 function boundsIntersectionRatio(
   left: ReturnType<typeof pointBounds>,
   right: ReturnType<typeof pointBounds>
@@ -865,6 +2214,418 @@ function remapCandidateVisiblePayloadFromRoomBounds(args: {
     } as unknown as RegisteredMepPixelObservation;
   });
   return { scale_x: scaleX, scale_y: scaleY };
+}
+
+function translateCandidateVisiblePayload(args: {
+  payload: CandidateVisibleMepPlannerPayload;
+  delta_x_px: number;
+  delta_y_px: number;
+}): void {
+  const translatePoint = (value: unknown): ExistingConditionsPlanPoint | null => {
+    const point = normalizePoint(value);
+    return point
+      ? {
+          x: point.x + args.delta_x_px,
+          y: point.y + args.delta_y_px
+        }
+      : null;
+  };
+  if (args.payload.spatial_scope) {
+    args.payload.spatial_scope = {
+      ...args.payload.spatial_scope,
+      boundary_pixel_points: args.payload.spatial_scope.boundary_pixel_points
+        .map(translatePoint)
+        .filter((entry): entry is ExistingConditionsPlanPoint => entry !== null),
+      anchor_pixel_point:
+        translatePoint(args.payload.spatial_scope.anchor_pixel_point) ??
+        args.payload.spatial_scope.anchor_pixel_point
+    };
+  }
+  args.payload.observations = args.payload.observations.map((observation) => {
+    const raw = observation as unknown as Record<string, unknown>;
+    const placement = raw.placement && typeof raw.placement === "object" && !Array.isArray(raw.placement)
+      ? raw.placement as Record<string, unknown>
+      : null;
+    return {
+      ...raw,
+      ...(raw.pixel_point == null
+        ? {}
+        : { pixel_point: translatePoint(raw.pixel_point) ?? raw.pixel_point }),
+      ...(Array.isArray(raw.pixel_points)
+        ? {
+            pixel_points: raw.pixel_points
+              .map(translatePoint)
+              .filter((entry): entry is ExistingConditionsPlanPoint => entry !== null)
+          }
+        : {}),
+      ...(placement
+        ? {
+            placement: {
+              ...placement,
+              ...(Array.isArray(placement.pixel_branch_points)
+                ? {
+                    pixel_branch_points: placement.pixel_branch_points
+                      .map(translatePoint)
+                      .filter((entry): entry is ExistingConditionsPlanPoint => entry !== null)
+                  }
+                : {})
+            }
+          }
+        : {})
+    } as unknown as RegisteredMepPixelObservation;
+  });
+}
+
+function shiftCandidateVisibleRegistrationGeometrySourcePixels(args: {
+  registration_geometry: ReturnType<typeof deriveCandidateVisibleRegistrationGeometry>;
+  delta_x_px: number;
+  delta_y_px: number;
+}): void {
+  const [origin, xControl, yControl] = args.registration_geometry.control_points;
+  if (!origin || !xControl || !yControl) {
+    throw new Error("candidate_visible_registration_control_points_required");
+  }
+  const sourceDx = xControl.source.x - origin.source.x;
+  const sourceDy = yControl.source.y - origin.source.y;
+  if (Math.abs(sourceDx) <= 1e-7 || Math.abs(sourceDy) <= 1e-7) {
+    throw new Error("candidate_visible_registration_control_points_degenerate");
+  }
+  const modelDelta = {
+    x:
+      (xControl.model.x - origin.model.x) / sourceDx * args.delta_x_px +
+      (yControl.model.x - origin.model.x) / sourceDy * args.delta_y_px,
+    y:
+      (xControl.model.y - origin.model.y) / sourceDx * args.delta_x_px +
+      (yControl.model.y - origin.model.y) / sourceDy * args.delta_y_px
+  };
+  args.registration_geometry.control_points = args.registration_geometry.control_points.map(
+    (entry) => ({
+      source: entry.source,
+      model: {
+        x: entry.model.x + modelDelta.x,
+        y: entry.model.y + modelDelta.y
+      }
+    })
+  );
+  args.registration_geometry.model_bounds = {
+    min: {
+      x: args.registration_geometry.model_bounds.min.x + modelDelta.x,
+      y: args.registration_geometry.model_bounds.min.y + modelDelta.y
+    },
+    max: {
+      x: args.registration_geometry.model_bounds.max.x + modelDelta.x,
+      y: args.registration_geometry.model_bounds.max.y + modelDelta.y
+    }
+  };
+}
+
+function scaleCandidateVisibleRegistrationGeometryAroundSourcePoint(args: {
+  registration_geometry: ReturnType<typeof deriveCandidateVisibleRegistrationGeometry>;
+  source_anchor: ExistingConditionsPlanPoint;
+  render_width_px: number;
+  render_height_px: number;
+  projected_distance_scale: number;
+}): void {
+  const scale = finite(
+    args.projected_distance_scale,
+    "candidate_visible_projected_distance_scale"
+  );
+  if (scale < 0.75 || scale > 1.6) {
+    throw new Error("candidate_visible_projected_distance_scale_out_of_range");
+  }
+  const anchorModel = mapRegisteredRenderPointToModel(
+    args.source_anchor,
+    args.render_width_px,
+    args.render_height_px,
+    args.registration_geometry
+  );
+  args.registration_geometry.control_points =
+    args.registration_geometry.control_points.map((entry) => ({
+      source: entry.source,
+      model: {
+        x: anchorModel.x + (entry.model.x - anchorModel.x) / scale,
+        y: anchorModel.y + (entry.model.y - anchorModel.y) / scale
+      }
+    }));
+  const [origin, xControl, yControl] = args.registration_geometry.control_points;
+  if (!origin || !xControl || !yControl) {
+    throw new Error("candidate_visible_registration_control_points_required");
+  }
+  const fourth = {
+    x: xControl.model.x + yControl.model.x - origin.model.x,
+    y: xControl.model.y + yControl.model.y - origin.model.y
+  };
+  const corners = [origin.model, xControl.model, yControl.model, fourth];
+  args.registration_geometry.model_bounds = {
+    min: {
+      x: Math.min(...corners.map((point) => point.x)),
+      y: Math.min(...corners.map((point) => point.y))
+    },
+    max: {
+      x: Math.max(...corners.map((point) => point.x)),
+      y: Math.max(...corners.map((point) => point.y))
+    }
+  };
+}
+
+async function deriveCandidateVisibleStableLandmarkSimilarity(args: {
+  registered_render_path: string;
+  render_width_px: number;
+  render_height_px: number;
+  registration_geometry: ReturnType<typeof deriveCandidateVisibleRegistrationGeometry>;
+  source_room_label_anchor: CandidateVisibleSourceRoomLabelAnchor;
+  source_boundary_pixel_points: ExistingConditionsPlanPoint[];
+  source_boundary_edge_support_ratios: number[];
+  native_room_label_model_point: ExistingConditionsPlanPoint;
+  stable_boundary_segments: NonNullable<
+    CandidateVisibleMepReconstructionInput["verified_room_scope"]
+  >["stable_boundary_segments"];
+}): Promise<CandidateVisibleStableLandmarkSimilarity | null> {
+  if (
+    !args.stable_boundary_segments?.length ||
+    args.source_boundary_pixel_points.length < 3 ||
+    args.source_boundary_edge_support_ratios.length !==
+      args.source_boundary_pixel_points.length
+  ) {
+    return null;
+  }
+  const translatedGeometry = JSON.parse(
+    JSON.stringify(args.registration_geometry)
+  ) as ReturnType<typeof deriveCandidateVisibleRegistrationGeometry>;
+  const nativeLabelBefore = mapModelPointToRegisteredRender(
+    args.native_room_label_model_point,
+    args.render_width_px,
+    args.render_height_px,
+    translatedGeometry
+  );
+  shiftCandidateVisibleRegistrationGeometrySourcePixels({
+    registration_geometry: translatedGeometry,
+    delta_x_px:
+      nativeLabelBefore.x - args.source_room_label_anchor.pixel_point.x,
+    delta_y_px:
+      nativeLabelBefore.y - args.source_room_label_anchor.pixel_point.y
+  });
+  const nativeLabelProjected = mapModelPointToRegisteredRender(
+    args.native_room_label_model_point,
+    args.render_width_px,
+    args.render_height_px,
+    translatedGeometry
+  );
+  const image = await loadImage(args.registered_render_path);
+  const canvas = createCanvas(args.render_width_px, args.render_height_px);
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, args.render_width_px, args.render_height_px);
+  context.drawImage(image, 0, 0);
+  const pixels: PlanTracePixelBuffer = {
+    width: args.render_width_px,
+    height: args.render_height_px,
+    data: context.getImageData(
+      0,
+      0,
+      args.render_width_px,
+      args.render_height_px
+    ).data
+  };
+  const sourcePixelSha256 = sha256PlanTracePixelBuffer(pixels);
+  const sourceEdges = args.source_boundary_pixel_points.flatMap(
+    (start, edgeIndex) => {
+      const end =
+        args.source_boundary_pixel_points[
+          (edgeIndex + 1) % args.source_boundary_pixel_points.length
+        ]!;
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
+      const axis =
+        Math.abs(dx) >= Math.abs(dy) * 4
+          ? ("horizontal" as const)
+          : Math.abs(dy) >= Math.abs(dx) * 4
+            ? ("vertical" as const)
+            : null;
+      const length = Math.hypot(dx, dy);
+      const supportRatio =
+        args.source_boundary_edge_support_ratios[edgeIndex] ?? 0;
+      if (!axis || length < 12 || supportRatio < 0.65) return [];
+      return [{
+        edge_index: edgeIndex,
+        axis,
+        start,
+        end,
+        length_px: length,
+        support_ratio: supportRatio
+      }];
+    }
+  );
+  type StableProposal = CandidateVisibleStableLandmarkSimilarity & {
+    ambiguity_key: string;
+  };
+  const proposals = args.stable_boundary_segments.flatMap((segment) => {
+    const start = mapModelPointToRegisteredRender(
+      segment.start_model_point,
+      args.render_width_px,
+      args.render_height_px,
+      translatedGeometry
+    );
+    const end = mapModelPointToRegisteredRender(
+      segment.end_model_point,
+      args.render_width_px,
+      args.render_height_px,
+      translatedGeometry
+    );
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const axis = Math.abs(dx) >= Math.abs(dy) * 4
+      ? "horizontal" as const
+      : Math.abs(dy) >= Math.abs(dx) * 4
+        ? "vertical" as const
+        : null;
+    if (!axis) return [];
+    const nativeCoordinate = axis === "horizontal"
+      ? (start.y + end.y) / 2
+      : (start.x + end.x) / 2;
+    const sourceTagCoordinate = axis === "horizontal"
+      ? args.source_room_label_anchor.pixel_point.y
+      : args.source_room_label_anchor.pixel_point.x;
+    const nativeTagCoordinate = axis === "horizontal"
+      ? nativeLabelProjected.y
+      : nativeLabelProjected.x;
+    const nativeDistance = nativeCoordinate - nativeTagCoordinate;
+    const minimumControlDistance = Math.max(
+      10,
+      (axis === "horizontal" ? args.render_height_px : args.render_width_px) *
+        0.05
+    );
+    if (Math.abs(nativeDistance) < minimumControlDistance) return [];
+    return sourceEdges.flatMap((sourceEdge) => {
+      if (sourceEdge.axis !== axis) return [];
+      const sourceCoordinate = axis === "horizontal"
+        ? (sourceEdge.start.y + sourceEdge.end.y) / 2
+        : (sourceEdge.start.x + sourceEdge.end.x) / 2;
+      const sourceDistance = sourceCoordinate - sourceTagCoordinate;
+      if (
+        Math.sign(sourceDistance) !== Math.sign(nativeDistance) ||
+        Math.abs(sourceDistance) < minimumControlDistance
+      ) {
+        return [];
+      }
+      const similarityScale = Math.abs(sourceDistance / nativeDistance);
+      if (similarityScale < 0.75 || similarityScale > 1.6) return [];
+      const projectAfterScale = (
+        point: ExistingConditionsPlanPoint
+      ): ExistingConditionsPlanPoint => ({
+        x:
+          args.source_room_label_anchor.pixel_point.x +
+          (point.x - nativeLabelProjected.x) * similarityScale,
+        y:
+          args.source_room_label_anchor.pixel_point.y +
+          (point.y - nativeLabelProjected.y) * similarityScale
+      });
+      const projectedStart = projectAfterScale(start);
+      const projectedEnd = projectAfterScale(end);
+      const directResidual = Math.sqrt(
+        (
+          Math.hypot(
+            projectedStart.x - sourceEdge.start.x,
+            projectedStart.y - sourceEdge.start.y
+          ) ** 2 +
+          Math.hypot(
+            projectedEnd.x - sourceEdge.end.x,
+            projectedEnd.y - sourceEdge.end.y
+          ) ** 2
+        ) / 2
+      );
+      const reversedResidual = Math.sqrt(
+        (
+          Math.hypot(
+            projectedStart.x - sourceEdge.end.x,
+            projectedStart.y - sourceEdge.end.y
+          ) ** 2 +
+          Math.hypot(
+            projectedEnd.x - sourceEdge.start.x,
+            projectedEnd.y - sourceEdge.start.y
+          ) ** 2
+        ) / 2
+      );
+      const endpointResidual = Math.min(directResidual, reversedResidual);
+      const projectedLength = Math.hypot(
+        projectedEnd.x - projectedStart.x,
+        projectedEnd.y - projectedStart.y
+      );
+      const spanRatio =
+        Math.min(projectedLength, sourceEdge.length_px) /
+        Math.max(projectedLength, sourceEdge.length_px);
+      const maximumEndpointResidual = Math.max(
+        4,
+        Math.min(12, sourceEdge.length_px * 0.12)
+      );
+      if (
+        spanRatio < 0.55 ||
+        endpointResidual > maximumEndpointResidual
+      ) {
+        return [];
+      }
+      const postTransformPerpendicularResidual =
+        axis === "horizontal"
+          ? Math.abs(
+              (projectedStart.y + projectedEnd.y) / 2 - sourceCoordinate
+            )
+          : Math.abs(
+              (projectedStart.x + projectedEnd.x) / 2 - sourceCoordinate
+            );
+      const candidateScore =
+        sourceEdge.support_ratio * 0.45 +
+        spanRatio * 0.25 +
+        Math.max(0, 1 - endpointResidual / maximumEndpointResidual) * 0.2 +
+        Math.max(0, 1 - Math.abs(similarityScale - 1) / 0.6) * 0.1;
+      return [{
+        basis: "exact_room_tag_plus_stable_native_boundary" as const,
+        stable_kind: segment.stable_kind,
+        axis,
+        source_pixel_sha256: sourcePixelSha256,
+        source_boundary_edge_index: sourceEdge.edge_index,
+        source_boundary_start_pixel_point: sourceEdge.start,
+        source_boundary_end_pixel_point: sourceEdge.end,
+        native_segment_source_scoped_id: segment.source_scoped_id,
+        native_segment_name: segment.name,
+        source_landmark_coordinate_px: rounded(sourceCoordinate),
+        source_landmark_support_ratio: rounded(sourceEdge.support_ratio),
+        native_landmark_projected_coordinate_before_px: rounded(nativeCoordinate),
+        source_room_tag_coordinate_px: rounded(sourceTagCoordinate),
+        native_room_tag_projected_coordinate_px: rounded(nativeTagCoordinate),
+        similarity_scale: rounded(similarityScale),
+        residual_px: rounded(postTransformPerpendicularResidual),
+        post_transform_endpoint_rms_residual_px: rounded(endpointResidual),
+        source_native_span_ratio: rounded(spanRatio),
+        candidate_score: rounded(candidateScore),
+        runner_up_score_margin: null,
+        ambiguity_key: [
+          segment.source_scoped_id,
+          sourceEdge.edge_index
+        ].join(":")
+      } satisfies StableProposal];
+    });
+  });
+  const ranked = proposals.sort((left, right) =>
+    right.candidate_score - left.candidate_score ||
+    left.post_transform_endpoint_rms_residual_px -
+      right.post_transform_endpoint_rms_residual_px ||
+    left.ambiguity_key.localeCompare(right.ambiguity_key)
+  );
+  const winner = ranked[0];
+  if (!winner) return null;
+  const runnerUp = ranked.find(
+    (candidate) => candidate.ambiguity_key !== winner.ambiguity_key
+  );
+  const scoreMargin = runnerUp
+    ? winner.candidate_score - runnerUp.candidate_score
+    : null;
+  if (scoreMargin !== null && scoreMargin < 0.08) return null;
+  const { ambiguity_key: _ambiguityKey, ...receipt } = winner;
+  return {
+    ...receipt,
+    runner_up_score_margin:
+      scoreMargin === null ? null : rounded(scoreMargin)
+  };
 }
 
 function normalizeVisibility(value: unknown): "clear" | "partial" | "occluded" {
@@ -1200,10 +2961,29 @@ function validateCandidateVisibleSpatialScope(args: {
   render_height_px: number;
   registration_geometry: ReturnType<typeof deriveCandidateVisibleRegistrationGeometry>;
   verified_room_scope?: CandidateVisibleMepReconstructionInput["verified_room_scope"];
+  verified_landmark_scope?: NonNullable<
+    CandidateVisibleMepReconstructionInput["verified_landmark_scope"]
+  > & {
+    boundary_model_points: ExistingConditionsPlanPoint[];
+  };
+  source_room_label_anchor?: CandidateVisibleSourceRoomLabelAnchor | null;
+  source_enclosure_raster_verification?: CandidateVisibleSourceEnclosureRasterVerification | null;
+  source_route_raster_verifications?: CandidateVisibleRouteRasterVerification[];
+  stable_landmark_similarity?: CandidateVisibleStableLandmarkSimilarity | null;
+  registered_frame_id: string;
+  registered_view_id: number;
 }): CandidateVisibleMepReconstruction["spatial_scope_receipt"] {
+  const originalSourceObservations = JSON.parse(
+    JSON.stringify(args.payload.observations)
+  ) as RegisteredMepPixelObservation[];
+  const originalSourceObservationsSha256 = sha256Json(originalSourceObservations);
   let scope = args.payload.spatial_scope;
   const roomNumber = String(args.payload.room_number ?? "").trim();
   const nativeRoomScope = args.verified_room_scope;
+  const nativeLandmarkScope = args.verified_landmark_scope;
+  if (nativeRoomScope && nativeLandmarkScope) {
+    throw new Error("candidate_visible_authoritative_scope_is_ambiguous");
+  }
   if (roomNumber && !nativeRoomScope) {
     throw new Error(`candidate_visible_room_scope_requires_native_room_boundary:${roomNumber}`);
   }
@@ -1214,8 +2994,13 @@ function validateCandidateVisibleSpatialScope(args: {
   ) {
     throw new Error(`candidate_visible_native_room_number_mismatch:${roomNumber}`);
   }
-  const nativeRoomPolygon = nativeRoomScope
-    ? normalizeModelPolygon(nativeRoomScope.boundary_model_points, "candidate_visible_native_room_boundary")
+  const nativeRoomPolygon = nativeRoomScope || nativeLandmarkScope
+    ? normalizeModelPolygon(
+        nativeRoomScope?.boundary_model_points ?? nativeLandmarkScope!.boundary_model_points,
+        nativeRoomScope
+          ? "candidate_visible_native_room_boundary"
+          : "candidate_visible_native_landmark_area_boundary"
+      )
     : null;
   if (!scope && !nativeRoomPolygon) return undefined;
   const normalizationWarnings: string[] = [];
@@ -1234,7 +3019,7 @@ function validateCandidateVisibleSpatialScope(args: {
       );
     }
   }
-  const nativeRoomPixelPolygon = nativeRoomPolygon
+  let nativeRoomPixelPolygon = nativeRoomPolygon
     ? projectedNativeRoomPixelPolygon({
         native_room_polygon: nativeRoomPolygon,
         render_width_px: args.render_width_px,
@@ -1242,6 +3027,171 @@ function validateCandidateVisibleSpatialScope(args: {
         registration_geometry: args.registration_geometry
       })
     : null;
+  const exactTagNativeVisibleRoomLabel = nativeRoomScope?.visible_room_label;
+  const exactTagNativeLabelProjectedPoint = exactTagNativeVisibleRoomLabel
+    ? mapModelPointToRegisteredRender(
+        exactTagNativeVisibleRoomLabel.model_point,
+        args.render_width_px,
+        args.render_height_px,
+        args.registration_geometry
+      )
+    : null;
+  const exactTagRoomToken = normalizedRoomLabelToken(roomNumber);
+  const exactTagRoomNameToken = normalizedRoomLabelToken(
+    String(nativeRoomScope?.room_name ?? "").replace(roomNumber, "")
+  );
+  const exactTagIdentityVerified =
+    !!roomNumber &&
+    !!args.source_room_label_anchor &&
+    !!exactTagNativeVisibleRoomLabel &&
+    exactTagNativeVisibleRoomLabel.registration_frame_id === args.registered_frame_id &&
+    exactTagNativeVisibleRoomLabel.view_id === args.registered_view_id &&
+    !!exactTagNativeLabelProjectedPoint &&
+    roomLabelMatchesExactIdentity(
+      normalizedRoomLabelToken(args.source_room_label_anchor.text),
+      exactTagRoomToken,
+      exactTagRoomNameToken
+    ) &&
+    roomLabelMatchesExactIdentity(
+      normalizedRoomLabelToken(exactTagNativeVisibleRoomLabel.text),
+      exactTagRoomToken,
+      exactTagRoomNameToken
+    );
+  let exactTagTranslationApplied = false;
+  let exactTagStableLandmarkApplied = false;
+  let exactTagTranslationX = 0;
+  let exactTagTranslationY = 0;
+  if (
+    exactTagIdentityVerified &&
+    exactTagNativeLabelProjectedPoint &&
+    args.source_room_label_anchor &&
+    nativeRoomPolygon
+  ) {
+    exactTagTranslationX =
+      exactTagNativeLabelProjectedPoint.x -
+      args.source_room_label_anchor.pixel_point.x;
+    exactTagTranslationY =
+      exactTagNativeLabelProjectedPoint.y -
+      args.source_room_label_anchor.pixel_point.y;
+    shiftCandidateVisibleRegistrationGeometrySourcePixels({
+      registration_geometry: args.registration_geometry,
+      delta_x_px: exactTagTranslationX,
+      delta_y_px: exactTagTranslationY
+    });
+    nativeRoomPixelPolygon = projectedNativeRoomPixelPolygon({
+      native_room_polygon: nativeRoomPolygon,
+      render_width_px: args.render_width_px,
+      render_height_px: args.render_height_px,
+      registration_geometry: args.registration_geometry
+    });
+    const tagOnlyGeometryIsDisjoint = args.payload.observations.some((observation) => {
+      const raw = observation as unknown as Record<string, unknown>;
+      const routePoints = (Array.isArray(raw.pixel_points) ? raw.pixel_points : [])
+        .map(normalizePoint)
+        .filter((entry): entry is ExistingConditionsPlanPoint => entry !== null);
+      const point = normalizePoint(raw.pixel_point);
+      const placement = raw.placement && typeof raw.placement === "object"
+        ? raw.placement as Record<string, unknown>
+        : null;
+      const branchPoints = (
+        Array.isArray(placement?.pixel_branch_points)
+          ? placement.pixel_branch_points
+          : []
+      )
+        .map(normalizePoint)
+        .filter((entry): entry is ExistingConditionsPlanPoint => entry !== null);
+      return (
+        (routePoints.length >= 2 &&
+          clipPolylineToPolygon(routePoints, nativeRoomPixelPolygon!).length === 0) ||
+        (branchPoints.length >= 2 &&
+          clipPolylineToPolygon(branchPoints, nativeRoomPixelPolygon!).length === 0) ||
+        (!!point && !pointInsidePolygonOrBoundary(point, nativeRoomPixelPolygon!))
+      );
+    });
+    if (tagOnlyGeometryIsDisjoint && args.stable_landmark_similarity) {
+      scaleCandidateVisibleRegistrationGeometryAroundSourcePoint({
+        registration_geometry: args.registration_geometry,
+        source_anchor: args.source_room_label_anchor.pixel_point,
+        render_width_px: args.render_width_px,
+        render_height_px: args.render_height_px,
+        projected_distance_scale:
+          args.stable_landmark_similarity.similarity_scale
+      });
+      nativeRoomPixelPolygon = projectedNativeRoomPixelPolygon({
+        native_room_polygon: nativeRoomPolygon,
+        render_width_px: args.render_width_px,
+        render_height_px: args.render_height_px,
+        registration_geometry: args.registration_geometry
+      });
+      exactTagStableLandmarkApplied = true;
+    }
+    exactTagTranslationApplied = true;
+    if (scope || sourceObservedPolygon) {
+      normalizationWarnings.push(
+        "Ignored the planner-authored source room trace because the source PDF and focused Revit inventory independently established the same unique room tag."
+      );
+    }
+    scope = undefined;
+    sourceObservedPolygon = null;
+  }
+  if (!scope && roomNumber && nativeRoomPixelPolygon) {
+    const normalizedBounds = (points: ExistingConditionsPlanPoint[]): string => {
+      const bounds = pointBounds(points);
+      return [
+        bounds.min.x / args.render_width_px,
+        bounds.min.y / args.render_height_px,
+        bounds.max.x / args.render_width_px,
+        bounds.max.y / args.render_height_px
+      ].map((value) => value.toFixed(4)).join(",");
+    };
+    for (const [index, observation] of args.payload.observations.entries()) {
+      const raw = observation as unknown as Record<string, unknown>;
+      if (raw.kind === "electrical_circuit") continue;
+      const routePoints = (Array.isArray(raw.pixel_points) ? raw.pixel_points : [])
+        .map(normalizePoint)
+        .filter((entry): entry is ExistingConditionsPlanPoint => entry !== null);
+      const point = normalizePoint(raw.pixel_point);
+      const placement = raw.placement && typeof raw.placement === "object"
+        ? raw.placement as Record<string, unknown>
+        : null;
+      const branchPoints = (
+        Array.isArray(placement?.pixel_branch_points)
+          ? placement.pixel_branch_points
+          : []
+      )
+        .map(normalizePoint)
+        .filter((entry): entry is ExistingConditionsPlanPoint => entry !== null);
+      const disjointGeometry =
+        routePoints.length >= 2 &&
+        !routeContainedInScope(routePoints, nativeRoomPixelPolygon, 1e-7) &&
+        clipPolylineToPolygon(routePoints, nativeRoomPixelPolygon).length === 0
+          ? routePoints
+          : branchPoints.length >= 2 &&
+              !routeContainedInScope(branchPoints, nativeRoomPixelPolygon, 1e-7) &&
+              clipPolylineToPolygon(branchPoints, nativeRoomPixelPolygon).length === 0
+            ? branchPoints
+            : point && !pointInsidePolygonOrBoundary(point, nativeRoomPixelPolygon)
+              ? [point]
+              : null;
+      if (!disjointGeometry) continue;
+      const observationId = String(
+        raw.observation_id ?? `candidate_visible_${index + 1}`
+      ).trim();
+      const sourceLabelUv = args.source_room_label_anchor
+        ? [
+            args.source_room_label_anchor.pixel_point.x / args.render_width_px,
+            args.source_room_label_anchor.pixel_point.y / args.render_height_px
+          ].map((value) => value.toFixed(4)).join(",")
+        : "unavailable";
+      throw new Error(
+        `candidate_visible_source_room_enclosure_required:${roomNumber}:${observationId}` +
+        `:source_uv_bounds=${normalizedBounds(disjointGeometry)}` +
+        `:projected_native_scope_uv_bounds=${normalizedBounds(nativeRoomPixelPolygon)}` +
+        `:source_room_label_uv=${sourceLabelUv}` +
+        ":preserve_source_geometry_add_spatial_scope_or_defer"
+      );
+    }
+  }
   const originalSourceObservedPolygon = sourceObservedPolygon
     ? sourceObservedPolygon.map((point) => ({ ...point }))
     : null;
@@ -1252,6 +3202,148 @@ function validateCandidateVisibleSpatialScope(args: {
     NonNullable<CandidateVisibleMepReconstruction["spatial_scope_receipt"]>["local_room_registration_fallback"] |
     undefined;
   if (
+    exactTagTranslationApplied &&
+    nativeRoomPixelPolygon &&
+    exactTagNativeVisibleRoomLabel &&
+    exactTagNativeLabelProjectedPoint &&
+    args.source_room_label_anchor
+  ) {
+    const unsupportedSourceRoute =
+      args.source_route_raster_verifications?.find((entry) => !entry.accepted);
+    if (unsupportedSourceRoute) {
+      throw new Error(
+        `candidate_visible_route_raster_verification_required:` +
+        `${unsupportedSourceRoute.observation_id}:` +
+        `${unsupportedSourceRoute.geometry_role}` +
+        `:support_modality=${unsupportedSourceRoute.support_modality}` +
+        `:mean_support_ratio=${unsupportedSourceRoute.mean_support_ratio.toFixed(4)}` +
+        `:minimum_segment_support_ratio=${unsupportedSourceRoute.minimum_segment_support_ratio.toFixed(4)}` +
+        `:segment_support_ratios=${unsupportedSourceRoute.segment_support_ratios
+          .map((value) => value.toFixed(4))
+          .join(",")}` +
+        `:required_minimum_mean_support_ratio=${unsupportedSourceRoute.minimum_mean_support_ratio.toFixed(4)}` +
+        `:required_minimum_each_segment_support_ratio=${unsupportedSourceRoute.minimum_each_segment_support_ratio.toFixed(4)}` +
+        (unsupportedSourceRoute.retrace_proposal
+          ? `:candidate_retrace_uv=${unsupportedSourceRoute.retrace_proposal.normalized_uv_points
+              .map((point) => `${point.x.toFixed(6)},${point.y.toFixed(6)}`)
+              .join(";")}` +
+            `:candidate_retrace_color=${unsupportedSourceRoute.retrace_proposal.target_color}` +
+            `:candidate_retrace_policy_sha256=${unsupportedSourceRoute.retrace_proposal.extraction_policy_sha256}` +
+            `:candidate_retrace_source_pixel_sha256=${unsupportedSourceRoute.retrace_proposal.source_pixel_sha256}` +
+            `:candidate_retrace_reference_geometry_sha256=${unsupportedSourceRoute.retrace_proposal.reference_geometry_sha256}` +
+            `:candidate_retrace_components=${unsupportedSourceRoute.retrace_proposal.component_ids.join(",")}` +
+            `:candidate_retrace_corridor_radius_px=${unsupportedSourceRoute.retrace_proposal.corridor_radius_px.toFixed(4)}` +
+            `:candidate_retrace_maximum_reference_distance_px=${unsupportedSourceRoute.retrace_proposal.maximum_reference_distance_px.toFixed(4)}` +
+            `:candidate_retrace_runner_up_score_margin=${
+              unsupportedSourceRoute.retrace_proposal.runner_up_score_margin == null
+                ? "none"
+                : unsupportedSourceRoute.retrace_proposal.runner_up_score_margin.toFixed(4)
+            }`
+          : "") +
+        ":preserve_source_geometry_retrace_to_visible_centerline"
+      );
+    }
+    const observationPoints = args.payload.observations.flatMap((observation) => {
+      const raw = observation as unknown as Record<string, unknown>;
+      const placement = raw.placement && typeof raw.placement === "object"
+        ? raw.placement as Record<string, unknown>
+        : null;
+      return [
+        ...(Array.isArray(raw.pixel_points) ? raw.pixel_points : []),
+        ...(Array.isArray(placement?.pixel_branch_points)
+          ? placement.pixel_branch_points
+          : []),
+        ...(raw.pixel_point ? [raw.pixel_point] : [])
+      ]
+        .map(normalizePoint)
+        .filter((point): point is ExistingConditionsPlanPoint => point !== null);
+    });
+    const sourceEvidenceBounds = pointBounds(
+      observationPoints.length > 0
+        ? observationPoints
+        : [args.source_room_label_anchor.pixel_point]
+    );
+    localRoomRegistrationFallback = {
+      reason: exactTagStableLandmarkApplied
+        ? "server_verified_room_tag_and_stable_boundary_similarity"
+        : "server_verified_room_label_translation",
+      source_scope_bounds: sourceEvidenceBounds,
+      target_native_room_bounds: pointBounds(nativeRoomPixelPolygon),
+      scale_x: exactTagStableLandmarkApplied
+        ? args.stable_landmark_similarity!.similarity_scale
+        : 1,
+      scale_y: exactTagStableLandmarkApplied
+        ? args.stable_landmark_similarity!.similarity_scale
+        : 1,
+      translation_x_px: rounded(exactTagTranslationX),
+      translation_y_px: rounded(exactTagTranslationY),
+      native_room_label_text: exactTagNativeVisibleRoomLabel.text,
+      native_room_label_source_scoped_id:
+        exactTagNativeVisibleRoomLabel.source_scoped_id,
+      native_room_label_built_in_category:
+        exactTagNativeVisibleRoomLabel.built_in_category,
+      native_room_label_frame_id: exactTagNativeVisibleRoomLabel.frame_id,
+      native_room_label_registration_frame_id:
+        exactTagNativeVisibleRoomLabel.registration_frame_id,
+      native_room_label_view_id: exactTagNativeVisibleRoomLabel.view_id,
+      native_room_label_model_point: exactTagNativeVisibleRoomLabel.model_point,
+      native_room_label_projected_pixel_point:
+        exactTagNativeLabelProjectedPoint,
+      source_render_mean_absolute_luminance_difference: rounded(
+        args.source_room_label_anchor.source_render_mean_absolute_luminance_difference
+      ),
+      source_render_max_tile_mean_absolute_luminance_difference: rounded(
+        args.source_room_label_anchor.source_render_max_tile_mean_absolute_luminance_difference
+      ),
+      source_render_changed_pixel_ratio: rounded(
+        args.source_room_label_anchor.source_render_changed_pixel_ratio
+      ),
+      source_render_foreground_centroid_delta_px: rounded(
+        args.source_room_label_anchor.source_render_foreground_centroid_delta_px
+      ),
+      ...(exactTagStableLandmarkApplied && args.stable_landmark_similarity
+        ? { stable_landmark_similarity: args.stable_landmark_similarity }
+        : {})
+    };
+    normalizationWarnings.push(
+      exactTagStableLandmarkApplied
+        ? "The exact room tag alone conflicted with the current room geometry, so registration used the tag plus a hash-bound stable exterior-wall control to fit one similarity scale before strict native-room clipping."
+        : "The source PDF and focused Revit room-tag inventory uniquely identified the same room label, so registration was translated without planner-authored room geometry and without changing scale, rotation, or source observations before strict native-room clipping."
+    );
+  }
+  if (
+    !exactTagTranslationApplied &&
+    roomNumber &&
+    scope &&
+    sourceObservedPolygon &&
+    nativeRoomPixelPolygon &&
+    args.source_enclosure_raster_verification &&
+    args.source_enclosure_raster_verification.accepted !== true
+  ) {
+    const verification = args.source_enclosure_raster_verification;
+    const sourceRoomLabelUv = args.source_room_label_anchor
+      ? [
+          args.source_room_label_anchor.pixel_point.x / args.render_width_px,
+          args.source_room_label_anchor.pixel_point.y / args.render_height_px
+        ].map((value) => value.toFixed(4)).join(",")
+      : "unavailable";
+    throw new Error(
+      `candidate_visible_source_room_enclosure_raster_verification_required:${roomNumber}` +
+      `:polygon_area_ratio=${verification.polygon_area_ratio.toFixed(4)}` +
+      `:mean_edge_support_ratio=${verification.mean_edge_support_ratio.toFixed(4)}` +
+      `:minimum_edge_support_ratio=${verification.minimum_edge_support_ratio.toFixed(4)}` +
+      `:edge_support_ratios=${verification.edge_support_ratios
+        .map((value) => value.toFixed(4))
+        .join(",")}` +
+      `:required_maximum_polygon_area_ratio=${verification.maximum_polygon_area_ratio.toFixed(4)}` +
+      `:required_minimum_mean_edge_support_ratio=${verification.minimum_mean_edge_support_ratio.toFixed(4)}` +
+      `:required_minimum_each_edge_support_ratio=${verification.minimum_each_edge_support_ratio.toFixed(4)}` +
+      `:source_room_label_uv=${sourceRoomLabelUv}` +
+      ":preserve_source_geometry_retrace_only_unsupported_enclosure_edges"
+    );
+  }
+  if (
+    !exactTagTranslationApplied &&
     roomNumber &&
     scope &&
     sourceObservedPolygon &&
@@ -1259,14 +3351,95 @@ function validateCandidateVisibleSpatialScope(args: {
     pointInsidePolygonOrBoundary(sourceObservedAnchor, sourceObservedPolygon) &&
     nativeRoomPixelPolygon
   ) {
+    const nativeVisibleRoomLabel = nativeRoomScope?.visible_room_label;
+    const originalNativeRoomLabelProjectedPoint = nativeVisibleRoomLabel
+      ? mapModelPointToRegisteredRender(
+          nativeVisibleRoomLabel.model_point,
+          args.render_width_px,
+          args.render_height_px,
+          args.registration_geometry
+        )
+      : null;
+    const sourceRoomLabelToken = normalizedRoomLabelToken(
+      args.source_room_label_anchor?.text
+    );
+    const nativeRoomLabelToken = normalizedRoomLabelToken(
+      nativeVisibleRoomLabel?.text
+    );
+    const roomToken = normalizedRoomLabelToken(roomNumber);
+    const roomNameToken = normalizedRoomLabelToken(
+      String(nativeRoomScope?.room_name ?? "").replace(roomNumber, "")
+    );
+    const roomLabelIdentityVerified =
+      !!args.source_room_label_anchor &&
+      args.source_enclosure_raster_verification?.accepted === true &&
+      !!nativeVisibleRoomLabel &&
+      nativeVisibleRoomLabel.registration_frame_id === args.registered_frame_id &&
+      nativeVisibleRoomLabel.view_id === args.registered_view_id &&
+      !!originalNativeRoomLabelProjectedPoint &&
+      roomLabelMatchesExactIdentity(sourceRoomLabelToken, roomToken, roomNameToken) &&
+      roomLabelMatchesExactIdentity(nativeRoomLabelToken, roomToken, roomNameToken) &&
+      sourceRoomAnchorMatchesLocatedLabel({
+        source_polygon: sourceObservedPolygon,
+        submitted_anchor: sourceObservedAnchor,
+        source_room_label_anchor: args.source_room_label_anchor,
+        render_width_px: args.render_width_px,
+        render_height_px: args.render_height_px
+      });
+    let translationX = 0;
+    let translationY = 0;
+    if (
+      roomLabelIdentityVerified &&
+      originalNativeRoomLabelProjectedPoint &&
+      args.source_room_label_anchor
+    ) {
+      translationX =
+        originalNativeRoomLabelProjectedPoint.x -
+        args.source_room_label_anchor.pixel_point.x;
+      translationY =
+        originalNativeRoomLabelProjectedPoint.y -
+        args.source_room_label_anchor.pixel_point.y;
+      shiftCandidateVisibleRegistrationGeometrySourcePixels({
+        registration_geometry: args.registration_geometry,
+        delta_x_px: translationX,
+        delta_y_px: translationY
+      });
+      nativeRoomPixelPolygon = nativeRoomPolygon
+        ? projectedNativeRoomPixelPolygon({
+            native_room_polygon: nativeRoomPolygon,
+            render_width_px: args.render_width_px,
+            render_height_px: args.render_height_px,
+            registration_geometry: args.registration_geometry
+          })
+        : null;
+      if (!nativeRoomPixelPolygon) {
+        throw new Error("candidate_visible_native_room_projection_required_after_label_registration");
+      }
+    }
     const sourceBounds = pointBounds(sourceObservedPolygon);
     const targetBounds = pointBounds(nativeRoomPixelPolygon);
     const minimumAreaOverlapRatio = boundsIntersectionRatio(sourceBounds, targetBounds);
-    // A containment-only/low-IoU remap is unsafe: an overbroad source polygon can
-    // include adjacent-room geometry and then squeeze it into the verified room.
-    // Until the source enclosure has independent server-owned verification, local
-    // room registration is allowed only when the two bounds do not overlap.
-    if (minimumAreaOverlapRatio <= 1e-7) {
+    if (!roomLabelIdentityVerified && minimumAreaOverlapRatio < 0.75) {
+      const sourceRoomLabelUv = args.source_room_label_anchor
+        ? [
+            args.source_room_label_anchor.pixel_point.x / args.render_width_px,
+            args.source_room_label_anchor.pixel_point.y / args.render_height_px
+          ].map((value) => value.toFixed(4)).join(",")
+        : "unavailable";
+      throw new Error(
+        `candidate_visible_source_room_label_registration_required:${roomNumber}` +
+        `:source_native_bounds_overlap=${minimumAreaOverlapRatio.toFixed(6)}` +
+        `:source_room_label_uv=${sourceRoomLabelUv}` +
+        ":preserve_source_geometry_do_not_scale_or_translate_without_exact_room_tag"
+      );
+    }
+    // Local room crops may recover translation only from the exact room label
+    // pair. Scale and orientation remain those of the server-owned sheet
+    // registration; no source room bounds are stretched onto native bounds.
+    const registrationReason = roomLabelIdentityVerified
+      ? "server_verified_room_label_translation" as const
+      : null;
+    if (registrationReason) {
       validateCandidateVisiblePointsToScope(
         args.payload,
         sourceObservedPolygon,
@@ -1279,29 +3452,52 @@ function validateCandidateVisibleSpatialScope(args: {
         args.render_height_px,
         "source_observed_scope_before_local_room_registration"
       );
-      const scales = remapCandidateVisiblePayloadFromRoomBounds({
-        payload: args.payload,
-        source_bounds: sourceBounds,
-        target_bounds: targetBounds
-      });
-      scope = args.payload.spatial_scope;
-      sourceObservedPolygon = scope
-        ? validateScopePolygon(
-            scope.boundary_pixel_points,
-            args.render_width_px,
-            args.render_height_px
-          )
-        : null;
-      sourceObservedAnchor = scope ? normalizePoint(scope.anchor_pixel_point) : null;
       localRoomRegistrationFallback = {
-        reason: "source_scope_disjoint_from_projected_native_room",
+        reason: registrationReason,
         source_scope_bounds: sourceBounds,
         target_native_room_bounds: targetBounds,
-        scale_x: scales.scale_x,
-        scale_y: scales.scale_y
+        scale_x: 1,
+        scale_y: 1,
+        ...(nativeVisibleRoomLabel &&
+        originalNativeRoomLabelProjectedPoint
+          ? {
+              translation_x_px: rounded(translationX),
+              translation_y_px: rounded(translationY),
+              native_room_label_text: nativeVisibleRoomLabel.text,
+              native_room_label_source_scoped_id:
+                nativeVisibleRoomLabel.source_scoped_id,
+              native_room_label_built_in_category:
+                nativeVisibleRoomLabel.built_in_category,
+              native_room_label_frame_id: nativeVisibleRoomLabel.frame_id,
+              native_room_label_registration_frame_id:
+                nativeVisibleRoomLabel.registration_frame_id,
+              native_room_label_view_id: nativeVisibleRoomLabel.view_id,
+              native_room_label_model_point: nativeVisibleRoomLabel.model_point,
+              native_room_label_projected_pixel_point:
+                originalNativeRoomLabelProjectedPoint,
+              source_render_mean_absolute_luminance_difference: rounded(
+                args.source_room_label_anchor?.source_render_mean_absolute_luminance_difference ?? 0
+              ),
+              source_render_max_tile_mean_absolute_luminance_difference: rounded(
+                args.source_room_label_anchor?.source_render_max_tile_mean_absolute_luminance_difference ?? 0
+              ),
+              source_render_changed_pixel_ratio: rounded(
+                args.source_room_label_anchor?.source_render_changed_pixel_ratio ?? 0
+              ),
+              source_render_foreground_centroid_delta_px: rounded(
+                args.source_room_label_anchor?.source_render_foreground_centroid_delta_px ?? 0
+              ),
+              ...(args.source_enclosure_raster_verification
+                ? {
+                    source_enclosure_raster_verification:
+                      args.source_enclosure_raster_verification
+                  }
+                : {})
+            }
+          : {})
       };
       normalizationWarnings.push(
-        "The source-observed room trace was disjoint from the verified native room under the full-view alignment, so it was used only as a local room-coordinate basis and mapped onto the native-room bounds before strict native clipping."
+        "The source PDF and focused Revit room-tag inventory uniquely identified the same room label, so the source-local registration geometry was translated without changing scale, rotation, or source observations before strict native-room clipping."
       );
     }
   }
@@ -1309,7 +3505,9 @@ function validateCandidateVisibleSpatialScope(args: {
   if (!polygon) throw new Error("candidate_visible_scope_polygon_required");
   if (nativeRoomPixelPolygon) {
     normalizationWarnings.push(
-      "Used the verified native linked-room boundary projected into registered source pixels as the authoritative spatial scope."
+      nativeRoomScope
+        ? "Used the verified native linked-room boundary projected into registered source pixels as the authoritative spatial scope."
+        : "Used the server-derived aligned-crop boundary, backed by durable source/native landmark receipts, as the authoritative spatial scope."
     );
   }
   if (
@@ -1393,7 +3591,11 @@ function validateCandidateVisibleSpatialScope(args: {
         if (
           !routeContainedInScope(modelRoute, nativeRoomPolygon, 0.75)
         ) {
-          throw new Error(`candidate_visible_route_outside_native_room_scope:${observationId}`);
+          throw new Error(
+            `${nativeRoomScope
+              ? "candidate_visible_route_outside_native_room_scope"
+              : "candidate_visible_route_outside_native_landmark_scope"}:${observationId}`
+          );
         }
       }
       checkedObservationIds.push(observationId);
@@ -1412,7 +3614,11 @@ function validateCandidateVisibleSpatialScope(args: {
           args.registration_geometry
         );
         if (!pointInsidePolygonOrNearBoundary(modelPoint, nativeRoomPolygon, 0.75)) {
-          throw new Error(`candidate_visible_point_outside_native_room_scope:${observationId}`);
+          throw new Error(
+            `${nativeRoomScope
+              ? "candidate_visible_point_outside_native_room_scope"
+              : "candidate_visible_point_outside_native_landmark_scope"}:${observationId}`
+          );
         }
       }
       checkedObservationIds.push(observationId);
@@ -1436,7 +3642,11 @@ function validateCandidateVisibleSpatialScope(args: {
       if (
         !routeContainedInScope(modelBranch, nativeRoomPolygon, 0.75)
       ) {
-        throw new Error(`candidate_visible_branch_outside_native_room_scope:${observationId}`);
+        throw new Error(
+          `${nativeRoomScope
+            ? "candidate_visible_branch_outside_native_room_scope"
+            : "candidate_visible_branch_outside_native_landmark_scope"}:${observationId}`
+        );
       }
     }
   }
@@ -1449,7 +3659,11 @@ function validateCandidateVisibleSpatialScope(args: {
   if (nativeRoomPolygon) {
     for (const [index, point] of modelBoundaryPoints.entries()) {
       if (!pointInsidePolygonOrNearBoundary(point, nativeRoomPolygon, 0.75)) {
-        throw new Error(`candidate_visible_projected_room_boundary_outside_native_room_scope:${index}`);
+        throw new Error(
+          `${nativeRoomScope
+            ? "candidate_visible_projected_room_boundary_outside_native_room_scope"
+            : "candidate_visible_projected_area_boundary_outside_native_landmark_scope"}:${index}`
+        );
       }
     }
     const modelAnchor = mapRegisteredRenderPointToModel(
@@ -1459,7 +3673,11 @@ function validateCandidateVisibleSpatialScope(args: {
       args.registration_geometry
     );
     if (!pointInsidePolygonOrNearBoundary(modelAnchor, nativeRoomPolygon, 0.75)) {
-      throw new Error("candidate_visible_source_room_anchor_outside_native_room_scope");
+      throw new Error(
+        nativeRoomScope
+          ? "candidate_visible_source_room_anchor_outside_native_room_scope"
+          : "candidate_visible_source_anchor_outside_native_landmark_scope"
+      );
     }
   }
   return {
@@ -1480,15 +3698,33 @@ function validateCandidateVisibleSpatialScope(args: {
           native_room_boundary_model_points: nativeRoomPolygon ?? []
         }
       : {}),
+    ...(nativeLandmarkScope
+      ? {
+          native_area_source_scoped_id: nativeLandmarkScope.source_scoped_id,
+          native_area_boundary_model_points: nativeRoomPolygon ?? [],
+          durable_landmark_registration: nativeLandmarkScope
+        }
+      : {}),
     checked_observation_ids: checkedObservationIds,
+    source_observations_sha256: originalSourceObservationsSha256,
+    source_observations: originalSourceObservations,
     ...(routeClippingReceipts.length > 0
       ? { route_clipping_receipts: routeClippingReceipts }
+      : {}),
+    ...(args.source_route_raster_verifications &&
+    args.source_route_raster_verifications.length > 0
+      ? {
+          source_route_raster_verifications:
+            args.source_route_raster_verifications
+        }
       : {}),
     ...(localRoomRegistrationFallback
       ? { local_room_registration_fallback: localRoomRegistrationFallback }
       : {}),
     boundary_basis: nativeRoomPixelPolygon
-      ? "verified_native_room_projected_to_registered_render"
+      ? nativeRoomScope
+        ? "verified_native_room_projected_to_registered_render"
+        : "verified_durable_landmark_area_projected_to_registered_render"
       : "source_observed",
     ...(normalizationWarnings.length > 0
       ? { normalization_warnings: normalizationWarnings }
@@ -1593,13 +3829,128 @@ export function deriveCandidateVisibleRegistrationGeometry(args: {
   };
 }
 
+function validateCandidateVisibleLandmarkScopeReceipt(
+  scope: NonNullable<CandidateVisibleMepReconstructionInput["verified_landmark_scope"]>,
+  frame: CandidateVisibleFrameMapping,
+  alignment: CandidateVisibleAlignment,
+  sourceHash: string,
+  renderHash: string
+): void {
+  if (
+    scope.basis !== "durable_landmarks_in_aligned_crop" ||
+    !Array.isArray(scope.registration_controls) ||
+    scope.registration_controls.length < 2 ||
+    !Array.isArray(scope.landmark_matches) ||
+    scope.landmark_matches.length !== scope.registration_controls.length ||
+    scope.source_pdf_sha256 !== sourceHash ||
+    scope.registered_render_sha256 !== renderHash ||
+    !/^[a-f0-9]{64}$/i.test(scope.alignment_receipt_sha256) ||
+    !/^[a-f0-9]{64}$/i.test(scope.inventory_receipt_sha256) ||
+    !Number.isFinite(scope.maximum_crop_residual) ||
+    scope.maximum_crop_residual < 0 ||
+    scope.maximum_crop_residual > 0.08 ||
+    !Number.isFinite(scope.source_control_span) ||
+    scope.source_control_span < 0.2 ||
+    !Number.isFinite(scope.view_control_span) ||
+    scope.view_control_span < 0.1
+  ) {
+    throw new Error("candidate_visible_durable_landmark_receipt_invalid");
+  }
+  const controlsValid = scope.registration_controls.every((control) =>
+    !!String(control.kind ?? "").trim() &&
+    control.score >= 0.55 &&
+    Number.isFinite(control.score) &&
+    Number.isFinite(control.crop_residual) &&
+    control.crop_residual >= 0 &&
+    control.crop_residual <= 0.08 &&
+    Number.isFinite(control.source_normalized_point?.x) &&
+    Number.isFinite(control.source_normalized_point?.y) &&
+    Number.isFinite(control.view_normalized_point?.x) &&
+    Number.isFinite(control.view_normalized_point?.y)
+  );
+  const nativeLandmarksValid = scope.landmark_matches.every((landmark, index) =>
+    landmark.control_index === index &&
+    !!String(landmark.native_source_scoped_id ?? "").trim() &&
+    !!String(landmark.native_built_in_category ?? "").trim() &&
+    Number.isFinite(landmark.native_model_point?.x) &&
+    Number.isFinite(landmark.native_model_point?.y) &&
+    Number.isFinite(landmark.native_projected_view_normalized_point?.x) &&
+    Number.isFinite(landmark.native_projected_view_normalized_point?.y) &&
+    Number.isFinite(landmark.projected_distance_normalized) &&
+    landmark.projected_distance_normalized >= 0 &&
+    landmark.projected_distance_normalized <= 0.06 &&
+    (
+      landmark.geometry_basis === "projected_geometry" ||
+      landmark.geometry_basis === "projected_bbox"
+    )
+  );
+  const uniqueNativeIds = new Set(
+    scope.landmark_matches.map((landmark) =>
+      String(landmark.native_source_scoped_id ?? "").trim()
+    )
+  );
+  const expectedAlignmentReceiptSha256 = sha256Json({
+    frame_id: frame.frame_id,
+    view_id: frame.view_id,
+    matched: alignment.matched,
+    confidence: alignment.confidence,
+    crop: alignment.crop,
+    provider: alignment.provider,
+    model: alignment.model,
+    attempted_models: alignment.attempted_models,
+    fallback_reason: alignment.fallback_reason,
+    registration_controls: scope.registration_controls
+  });
+  if (
+    !controlsValid ||
+    scope.registration_controls.every((control) =>
+      String(control.kind ?? "").trim().toLowerCase() === "persistent_interior"
+    ) ||
+    !nativeLandmarksValid ||
+    uniqueNativeIds.size !== scope.landmark_matches.length ||
+    scope.alignment_receipt_sha256 !== expectedAlignmentReceiptSha256
+  ) {
+    throw new Error("candidate_visible_durable_landmark_receipt_invalid");
+  }
+  const receiptContent = {
+    frame_id: frame.frame_id,
+    view_id: frame.view_id,
+    source_pdf_sha256: scope.source_pdf_sha256,
+    registered_render_sha256: scope.registered_render_sha256,
+    alignment_receipt_sha256: scope.alignment_receipt_sha256,
+    inventory_receipt_sha256: scope.inventory_receipt_sha256,
+    controls: scope.registration_controls,
+    landmark_matches: scope.landmark_matches
+  };
+  const expectedSourceScopedId =
+    `aligned-crop-landmarks:${sha256Json(receiptContent)}`;
+  if (scope.source_scoped_id !== expectedSourceScopedId) {
+    throw new Error("candidate_visible_durable_landmark_receipt_hash_mismatch");
+  }
+}
+
 export async function compileCandidateVisibleMepReconstruction(
   input: CandidateVisibleMepReconstructionInput
 ): Promise<CandidateVisibleMepReconstruction> {
+  if (!input.verified_room_scope && !input.verified_landmark_scope) {
+    throw new Error("candidate_visible_authoritative_native_scope_required");
+  }
+  if (input.verified_room_scope && input.verified_landmark_scope) {
+    throw new Error("candidate_visible_authoritative_scope_is_ambiguous");
+  }
   const sourcePdfPath = requireFile(input.source_pdf_path, "candidate_visible_source_pdf");
   const renderPath = requireFile(input.registered_render_path, "candidate_visible_registered_render");
   const sourceHash = sha256File(sourcePdfPath);
   const renderHash = sha256File(renderPath);
+  if (input.verified_landmark_scope) {
+    validateCandidateVisibleLandmarkScopeReceipt(
+      input.verified_landmark_scope,
+      input.frame,
+      input.alignment,
+      sourceHash,
+      renderHash
+    );
+  }
   const render = await loadImage(renderPath);
   const width = positiveInteger(render.width, "registered_render_width_px");
   const height = positiveInteger(render.height, "registered_render_height_px");
@@ -1609,13 +3960,34 @@ export async function compileCandidateVisibleMepReconstruction(
     render_width_px: width,
     render_height_px: height
   });
+  const verifiedLandmarkScope = input.verified_landmark_scope
+    ? {
+        ...input.verified_landmark_scope,
+        boundary_model_points: [
+          geometry.control_points[0]!.model,
+          geometry.control_points[1]!.model,
+          {
+            x:
+              geometry.control_points[1]!.model.x +
+              geometry.control_points[2]!.model.x -
+              geometry.control_points[0]!.model.x,
+            y:
+              geometry.control_points[1]!.model.y +
+              geometry.control_points[2]!.model.y -
+              geometry.control_points[0]!.model.y
+          },
+          geometry.control_points[2]!.model
+        ]
+      }
+    : null;
   const registrationContextId = sha256Json({
     schema_version: 1,
     source_evidence_sha256: sourceHash,
     registered_render_sha256: renderHash,
     frame: input.frame,
     alignment: input.alignment,
-    verified_room_scope: input.verified_room_scope ?? null
+    verified_room_scope: input.verified_room_scope ?? null,
+    verified_landmark_scope: verifiedLandmarkScope ?? null
   });
   const normalizedPlanner = normalizeCandidateVisiblePlannerPayload(
     input.planner_payload,
@@ -1631,12 +4003,111 @@ export async function compileCandidateVisibleMepReconstruction(
   if (payload.observations.length > observationLimit) {
     throw new Error("candidate_visible_observation_limit_exceeded");
   }
+  const roomNumber = String(payload.room_number ?? "").trim();
+  const sourceRoomLabelAnchor = roomNumber
+      ? await locateUniqueSourceRoomLabelAnchor({
+        source_pdf_path: sourcePdfPath,
+        registered_render_path: renderPath,
+        room_number: roomNumber,
+        render_width_px: width,
+        render_height_px: height
+      })
+    : null;
+  const sourceEnclosureRasterVerification =
+    sourceRoomLabelAnchor && payload.spatial_scope
+      ? await verifySourceEnclosureRaster({
+          registered_render_path: renderPath,
+          boundary_pixel_points:
+            payload.spatial_scope.boundary_pixel_points,
+          render_width_px: width,
+          render_height_px: height
+        })
+      : null;
+  const stableLandmarkSimilarity =
+    sourceRoomLabelAnchor &&
+    payload.spatial_scope &&
+    sourceEnclosureRasterVerification &&
+    input.verified_room_scope?.visible_room_label &&
+    input.verified_room_scope.stable_boundary_segments?.length
+      ? await deriveCandidateVisibleStableLandmarkSimilarity({
+          registered_render_path: renderPath,
+          render_width_px: width,
+          render_height_px: height,
+          registration_geometry: geometry,
+          source_room_label_anchor: sourceRoomLabelAnchor,
+          source_boundary_pixel_points:
+            payload.spatial_scope.boundary_pixel_points,
+          source_boundary_edge_support_ratios:
+            sourceEnclosureRasterVerification.edge_support_ratios,
+          native_room_label_model_point:
+            input.verified_room_scope.visible_room_label.model_point,
+          stable_boundary_segments:
+            input.verified_room_scope.stable_boundary_segments
+        })
+      : null;
+  const sourceRouteRasterVerifications = await verifySourceRouteRaster({
+    registered_render_path: renderPath,
+    observations: payload.observations,
+    render_width_px: width,
+    render_height_px: height
+  });
+  if (verifiedLandmarkScope) {
+    const routeGeometryCount = payload.observations.reduce((count, observation) => {
+      const raw = observation as unknown as Record<string, unknown>;
+      const placement =
+        raw.placement && typeof raw.placement === "object" && !Array.isArray(raw.placement)
+          ? raw.placement as Record<string, unknown>
+          : null;
+      return count +
+        (Array.isArray(raw.pixel_points) && raw.pixel_points.length >= 2 ? 1 : 0) +
+        (Array.isArray(placement?.pixel_branch_points) &&
+        placement.pixel_branch_points.length >= 2
+          ? 1
+          : 0);
+    }, 0);
+    if (
+      routeGeometryCount <= 0 ||
+      sourceRouteRasterVerifications.length !== routeGeometryCount
+    ) {
+      throw new Error(
+        "candidate_visible_landmark_scope_requires_complete_source_route_raster_receipts"
+      );
+    }
+    const unsupportedSourceRoute =
+      sourceRouteRasterVerifications.find((entry) => !entry.accepted);
+    if (unsupportedSourceRoute) {
+      throw new Error(
+        `candidate_visible_route_raster_verification_required:` +
+        `${unsupportedSourceRoute.observation_id}:` +
+        `${unsupportedSourceRoute.geometry_role}` +
+        `:support_modality=${unsupportedSourceRoute.support_modality}` +
+        `:mean_support_ratio=${unsupportedSourceRoute.mean_support_ratio.toFixed(4)}` +
+        `:minimum_segment_support_ratio=${unsupportedSourceRoute.minimum_segment_support_ratio.toFixed(4)}` +
+        ":preserve_landmark_registration_retrace_only_unsupported_route"
+      );
+    }
+  }
   const spatialScopeReceipt = validateCandidateVisibleSpatialScope({
     payload,
     render_width_px: width,
     render_height_px: height,
     registration_geometry: geometry,
-    ...(input.verified_room_scope ? { verified_room_scope: input.verified_room_scope } : {})
+    registered_frame_id: input.frame.frame_id,
+    registered_view_id: input.frame.view_id,
+    ...(input.verified_room_scope ? { verified_room_scope: input.verified_room_scope } : {}),
+    ...(verifiedLandmarkScope
+      ? { verified_landmark_scope: verifiedLandmarkScope }
+      : {}),
+    ...(sourceRoomLabelAnchor ? { source_room_label_anchor: sourceRoomLabelAnchor } : {}),
+    ...(sourceEnclosureRasterVerification
+      ? { source_enclosure_raster_verification: sourceEnclosureRasterVerification }
+      : {}),
+    ...(sourceRouteRasterVerifications.length > 0
+      ? { source_route_raster_verifications: sourceRouteRasterVerifications }
+      : {}),
+    ...(stableLandmarkSimilarity
+      ? { stable_landmark_similarity: stableLandmarkSimilarity }
+      : {})
   });
 
   const registeredPackage: RegisteredMepObservationPackage = {

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { buildAllowlistFromPairs, filterAllowlistedActions } from "../allowlist.js";
@@ -26,7 +26,12 @@ import { createOpenAiClient, resolveOpenAiApiKey } from "../openai_client.js";
 import { executeWorkbenchActions, maxWorkbenchActions, type WorkbenchAction, type WorkbenchActionResult } from "../workbench/workbench_runner.js";
 import { createArtifactShare } from "../artifacts/artifact_bus.js";
 import { compactIncomingToolResult, compactVisibleElementsResult, describeVisibleElementsInventory } from "../tool_result_compaction.js";
-import { alignRedlineToView, type ViewAlignmentMark, type ViewAlignmentResult } from "../redline/view_alignment.js";
+import {
+  alignRedlineToView,
+  type ViewAlignmentMark,
+  type ViewAlignmentRegistrationControl,
+  type ViewAlignmentResult
+} from "../redline/view_alignment.js";
 import { orientRedlineFile } from "../redline/redline_orienter.js";
 import { analyzeRedlineFile } from "../redline/redline_analyzer.js";
 import { pdfDefaultPageBudget } from "../redline/pdf_intake_policy.js";
@@ -942,7 +947,12 @@ type RedlineVisionProgressState = {
     matched: boolean;
     confidence: number;
     crop: ViewAlignmentResult["crop"];
+    registration_controls: ViewAlignmentRegistrationControl[];
     analysis: string;
+    provider: ViewAlignmentResult["provider"] | null;
+    model: string | null;
+    attempted_models: string[];
+    fallback_reason: string | null;
     updated_at_ms: number;
   } | null;
   last_registered_mep_workflow: {
@@ -955,6 +965,8 @@ type RedlineVisionProgressState = {
   last_candidate_visible_compile_context: {
     context_key: string;
     source_path: string;
+    source_pdf_sha256: string;
+    registered_render_sha256: string;
     source_frame_id: string;
     source_view_id: number;
     native_room_source_scoped_id: string | null;
@@ -965,10 +977,19 @@ type RedlineVisionProgressState = {
     summary: string;
     context_key: string;
     source_path: string;
+    source_pdf_sha256: string;
+    registered_render_sha256: string;
+    immutable_claims_sha256: string;
     repeat_count: number;
     updated_at_ms: number;
   } | null;
   last_candidate_visible_package_json: string | null;
+  last_existing_conditions_placed_view: {
+    sheet_number: string;
+    view_id: number;
+    view_name: string | null;
+  } | null;
+  last_existing_conditions_frame: CandidateVisibleFrameMapping | null;
   registered_mep_applied_message_id: string | null;
   last_viewport_hints: ViewportPickHint[];
   last_sheet_hints: SheetPickHint[];
@@ -1054,6 +1075,8 @@ function getRedlineVisionState(sessionId: string): RedlineVisionProgressState {
     last_candidate_visible_compile_context: null,
     last_candidate_visible_guard_failure: null,
     last_candidate_visible_package_json: null,
+    last_existing_conditions_placed_view: null,
+    last_existing_conditions_frame: null,
     registered_mep_applied_message_id: null,
     last_viewport_hints: [],
     last_sheet_hints: [],
@@ -1117,6 +1140,8 @@ function noteRedlineAnalyzeSuccess(
   const key = normalizeWorkspacePathKey(filePath);
   if (!sessionId || !key) return;
   const st = getRedlineVisionState(sessionId);
+  const previousSourceKey = normalizeWorkspacePathKey(st.last_file_path ?? "");
+  const sourceChanged = !!previousSourceKey && previousSourceKey !== key;
   st.analyzed_files.add(key);
   // New redline analysis should allow a fresh orient/remap pass for the file.
   st.oriented_files.delete(key);
@@ -1129,6 +1154,10 @@ function noteRedlineAnalyzeSuccess(
     st.last_candidate_visible_compile_context = null;
     st.last_candidate_visible_guard_failure = null;
     st.last_candidate_visible_package_json = null;
+    if (sourceChanged) {
+      st.last_existing_conditions_placed_view = null;
+      st.last_existing_conditions_frame = null;
+    }
     // Registration is source-specific. An explicit fresh analysis must not
     // compile the new source through a frame aligned for an earlier attachment.
     st.last_view_alignment = null;
@@ -1278,7 +1307,12 @@ function noteRedlineViewAlignmentResult(
     matched: alignment.ok && alignment.matched,
     confidence: clamp01(alignment.confidence),
     crop: alignment.crop,
+    registration_controls: alignment.registration_controls ?? [],
     analysis: alignment.analysis ?? "",
+    provider: alignment.provider ?? null,
+    model: alignment.model ?? null,
+    attempted_models: alignment.attempted_models ?? [],
+    fallback_reason: alignment.fallback_reason ?? null,
     updated_at_ms: Date.now()
   };
   st.updated_at_ms = Date.now();
@@ -1287,6 +1321,31 @@ function noteRedlineViewAlignmentResult(
 function getPersistedRedlineViewAlignment(sessionId: string): RedlineVisionProgressState["last_view_alignment"] {
   if (!sessionId) return null;
   return getRedlineVisionState(sessionId).last_view_alignment;
+}
+
+function shouldUseOpenAiGeometryFallbackAfterGemini(args: {
+  alignment: RedlineVisionProgressState["last_view_alignment"];
+  exact_frame_available: boolean;
+  native_landmark_validation_complete: boolean;
+  durable_landmark_receipt_verified: boolean;
+  requested_room_number: string | null;
+}): boolean {
+  return (
+    args.alignment?.provider === "gemini" &&
+    args.alignment.matched &&
+    args.alignment.confidence >= 0.35 &&
+    !!args.alignment.crop &&
+    args.exact_frame_available &&
+    args.native_landmark_validation_complete &&
+    !args.durable_landmark_receipt_verified &&
+    !args.requested_room_number
+  );
+}
+
+export function __testOnlyShouldUseOpenAiGeometryFallbackAfterGemini(
+  args: Parameters<typeof shouldUseOpenAiGeometryFallbackAfterGemini>[0]
+): boolean {
+  return shouldUseOpenAiGeometryFallbackAfterGemini(args);
 }
 
 function candidateVisibleFrameMappingFromResultRoot(
@@ -1425,11 +1484,51 @@ function candidateVisibleVerifiedRoomScopeFromToolResults(
         const location = Number.isFinite(locationX) && Number.isFinite(locationY)
           ? { x: locationX, y: locationY }
           : null;
+        const stableBoundarySegments = (
+          Array.isArray(entry.boundarySegments) ? entry.boundarySegments : []
+        ).flatMap((segment) => {
+          if (!segment || typeof segment !== "object" || Array.isArray(segment)) return [];
+          const row = segment as Record<string, unknown>;
+          const name = String(
+            row.linkedBoundaryElementName ?? row.name ?? ""
+          ).trim();
+          if (!/\bexterior\b/i.test(name)) return [];
+          const category = String(
+            row.linkedBoundaryElementCategory ?? row.category ?? ""
+          ).trim();
+          if (!/\bwalls?\b/i.test(category)) return [];
+          const uniqueId = String(
+            row.linkedBoundaryElementUniqueId ?? ""
+          ).trim();
+          const elementId = toFiniteInt(row.linkedBoundaryElementId);
+          if (!uniqueId || elementId === null || elementId <= 0) return [];
+          const start = row.hostStart && typeof row.hostStart === "object" && !Array.isArray(row.hostStart)
+            ? row.hostStart as Record<string, unknown>
+            : null;
+          const end = row.hostEnd && typeof row.hostEnd === "object" && !Array.isArray(row.hostEnd)
+            ? row.hostEnd as Record<string, unknown>
+            : null;
+          const startX = Number(start?.x);
+          const startY = Number(start?.y);
+          const endX = Number(end?.x);
+          const endY = Number(end?.y);
+          if (![startX, startY, endX, endY].every(Number.isFinite)) return [];
+          return [{
+            stable_kind: "exterior_wall" as const,
+            source_scoped_id: `linked-wall:${elementId}:${uniqueId}`,
+            category,
+            name,
+            start_model_point: { x: startX, y: startY },
+            end_model_point: { x: endX, y: endY }
+          }];
+        });
         return {
           source_scoped_id: String(entry.sourceScopedId ?? entry.source_scoped_id ?? "").trim(),
+          room_name: String(entry.name ?? "").trim(),
           area: toFiniteNumber(entry.area) ?? 0,
           boundary,
-          location
+          location,
+          stableBoundarySegments
         };
       })
       .filter((entry) => entry.source_scoped_id && entry.boundary.length >= 3)
@@ -1441,12 +1540,604 @@ function candidateVisibleVerifiedRoomScopeFromToolResults(
     const selected = candidates[0]!;
     return {
       room_number: roomNumber.trim(),
+      ...(selected.room_name ? { room_name: selected.room_name } : {}),
       source_scoped_id: selected.source_scoped_id,
       boundary_model_points: selected.boundary,
-      ...(selected.location ? { location_model_point: selected.location } : {})
+      ...(selected.location ? { location_model_point: selected.location } : {}),
+      ...(selected.stableBoundarySegments.length > 0
+        ? { stable_boundary_segments: selected.stableBoundarySegments }
+        : {})
     };
   }
   return null;
+}
+
+function candidateVisibleExpectedRoomModelBounds(
+  roomScope: NonNullable<CandidateVisibleMepReconstructionInput["verified_room_scope"]>
+): number[] {
+  const xs = roomScope.boundary_model_points.map((point) => point.x);
+  const ys = roomScope.boundary_model_points.map((point) => point.y);
+  return [
+    Math.min(...xs) - 1,
+    Math.min(...ys) - 1,
+    -1000,
+    Math.max(...xs) + 1,
+    Math.max(...ys) + 1,
+    1000
+  ];
+}
+
+function candidateVisibleExpectedAlignedCropModelBounds(
+  frame: CandidateVisibleFrameMapping,
+  alignment: NonNullable<RedlineVisionProgressState["last_view_alignment"]>
+): number[] {
+  if (
+    alignment.frame_id !== frame.frame_id ||
+    alignment.view_id !== frame.view_id ||
+    !alignment.matched ||
+    alignment.confidence < 0.35 ||
+    !alignment.crop
+  ) {
+    throw new Error("candidate_visible_aligned_crop_model_bounds_requires_exact_alignment");
+  }
+  const modelPoint = (u: number, v: number): { x: number; y: number } => ({
+    x:
+      frame.top_left_xyz[0] +
+      u * (frame.top_right_xyz[0] - frame.top_left_xyz[0]) +
+      v * (frame.bottom_left_xyz[0] - frame.top_left_xyz[0]),
+    y:
+      frame.top_left_xyz[1] +
+      u * (frame.top_right_xyz[1] - frame.top_left_xyz[1]) +
+      v * (frame.bottom_left_xyz[1] - frame.top_left_xyz[1])
+  });
+  const crop = alignment.crop;
+  const corners = [
+    modelPoint(crop.min_u, crop.min_v),
+    modelPoint(crop.max_u, crop.min_v),
+    modelPoint(crop.min_u, crop.max_v),
+    modelPoint(crop.max_u, crop.max_v)
+  ];
+  const paddingFt = 2;
+  return [
+    Math.min(...corners.map((point) => point.x)) - paddingFt,
+    Math.min(...corners.map((point) => point.y)) - paddingFt,
+    frame.target_level_elevation_ft - 5,
+    Math.max(...corners.map((point) => point.x)) + paddingFt,
+    Math.max(...corners.map((point) => point.y)) + paddingFt,
+    frame.target_level_elevation_ft + 25
+  ];
+}
+
+function candidateVisibleInventoryMatchesExpectedModelBounds(
+  root: Record<string, unknown>,
+  expectedBounds?: number[]
+): boolean {
+  if (!expectedBounds) return root.modelBoundsApplied !== true;
+  if (root.modelBoundsApplied !== true) return false;
+  if (root.modelBoundsFt === undefined || root.modelBoundsFt === null) {
+    // Compact loop receipts may omit the numeric bounds. The deterministic,
+    // frame-scoped action id still binds the successful bounded request. When
+    // the native receipt retains the values, verify them exactly below.
+    return true;
+  }
+  const boundsRoot =
+    root.modelBoundsFt && typeof root.modelBoundsFt === "object" && !Array.isArray(root.modelBoundsFt)
+      ? root.modelBoundsFt as Record<string, unknown>
+      : null;
+  if (!boundsRoot) return false;
+  const min =
+    boundsRoot?.min && typeof boundsRoot.min === "object" && !Array.isArray(boundsRoot.min)
+      ? boundsRoot.min as Record<string, unknown>
+      : null;
+  const max =
+    boundsRoot?.max && typeof boundsRoot.max === "object" && !Array.isArray(boundsRoot.max)
+      ? boundsRoot.max as Record<string, unknown>
+      : null;
+  const actualBounds = [
+    Number(min?.x),
+    Number(min?.y),
+    Number(min?.z),
+    Number(max?.x),
+    Number(max?.y),
+    Number(max?.z)
+  ];
+  return actualBounds.every((value, boundIndex) =>
+    Number.isFinite(value) &&
+    Number.isFinite(expectedBounds[boundIndex]) &&
+    Math.abs(value - expectedBounds[boundIndex]!) <= 1e-4
+  );
+}
+
+function candidateVisibleBroadInventoryActionId(
+  frame: CandidateVisibleFrameMapping,
+  alignment?: NonNullable<RedlineVisionProgressState["last_view_alignment"]>
+): string {
+  const base = `candidate-visible-broad-inventory:${frame.frame_id}`;
+  if (!alignment || alignment.registration_controls.length === 0) return base;
+  const scope = candidateVisibleRegistrationCategories(alignment)
+    .map((category) => category.toLowerCase().replace(/[^a-z0-9]+/g, "-"))
+    .join("+");
+  return `${base}:scope-${scope}`;
+}
+
+function candidateVisibleRegistrationCategories(
+  alignment: NonNullable<RedlineVisionProgressState["last_view_alignment"]>
+): string[] {
+  const controls = candidateVisibleRegistrationControls(alignment);
+  const categories = new Set<string>();
+  for (const control of controls) {
+    switch (control.kind) {
+      case "stair":
+        categories.add("OST_Stairs");
+        categories.add("OST_StairsRuns");
+        categories.add("OST_StairsLandings");
+        break;
+      case "shaft":
+        categories.add("OST_ShaftOpening");
+        break;
+      case "elevator_core":
+        categories.add("OST_ShaftOpening");
+        if (/\bstair\b/i.test(control.label ?? "")) {
+          categories.add("OST_Stairs");
+          categories.add("OST_StairsRuns");
+          categories.add("OST_StairsLandings");
+        }
+        break;
+      case "grid":
+        categories.add("OST_Grids");
+        break;
+      case "column":
+        categories.add("OST_Columns");
+        categories.add("OST_StructuralColumns");
+        break;
+      default:
+        categories.add("OST_Walls");
+        break;
+    }
+  }
+  return categories.size > 0
+    ? [...categories]
+    : [
+        "OST_Walls",
+        "OST_Stairs",
+        "OST_StairsRuns",
+        "OST_StairsLandings",
+        "OST_ShaftOpening",
+        "OST_Columns",
+        "OST_StructuralColumns",
+        "OST_Grids"
+      ];
+}
+
+function candidateVisibleRegistrationControls(
+  alignment: Pick<
+    NonNullable<RedlineVisionProgressState["last_view_alignment"]>,
+    "registration_controls"
+  >
+): ViewAlignmentRegistrationControl[] {
+  const strong = alignment.registration_controls.filter(
+    (control) => control.score >= 0.55
+  );
+  const boundedCategoryControls = strong.filter(
+    (control) =>
+      control.kind !== "exterior_corner" &&
+      control.kind !== "exterior_wall" &&
+      control.kind !== "persistent_interior"
+  );
+  if (boundedCategoryControls.length < 2) return strong;
+  let sourceSpan = 0;
+  let viewSpan = 0;
+  for (let left = 0; left < boundedCategoryControls.length; left += 1) {
+    for (let right = left + 1; right < boundedCategoryControls.length; right += 1) {
+      sourceSpan = Math.max(
+        sourceSpan,
+        Math.hypot(
+          boundedCategoryControls[left]!.source_normalized_x -
+            boundedCategoryControls[right]!.source_normalized_x,
+          boundedCategoryControls[left]!.source_normalized_y -
+            boundedCategoryControls[right]!.source_normalized_y
+        )
+      );
+      viewSpan = Math.max(
+        viewSpan,
+        Math.hypot(
+          boundedCategoryControls[left]!.view_normalized_x -
+            boundedCategoryControls[right]!.view_normalized_x,
+          boundedCategoryControls[left]!.view_normalized_y -
+            boundedCategoryControls[right]!.view_normalized_y
+        )
+      );
+    }
+  }
+  return sourceSpan >= 0.2 && viewSpan >= 0.1
+    ? boundedCategoryControls
+    : strong;
+}
+
+export function __testOnlyCandidateVisibleRegistrationCategories(
+  controls: ViewAlignmentRegistrationControl[]
+): string[] {
+  return candidateVisibleRegistrationCategories({
+    source_image_path: "test.png",
+    frame_id: "test-frame",
+    view_id: 1,
+    matched: true,
+    confidence: 0.9,
+    crop: { min_u: 0, min_v: 0, max_u: 1, max_v: 1 },
+    registration_controls: controls,
+    analysis: "",
+    provider: null,
+    model: null,
+    attempted_models: [],
+    fallback_reason: null,
+    updated_at_ms: 0
+  });
+}
+
+function candidateVisibleBroadInventoryActionMatches(
+  actionId: unknown,
+  frame: CandidateVisibleFrameMapping,
+  alignment?: NonNullable<RedlineVisionProgressState["last_view_alignment"]>
+): boolean {
+  const expected = candidateVisibleBroadInventoryActionId(frame, alignment);
+  const actual = typeof actionId === "string" ? actionId.trim() : "";
+  return actual === expected || actual.startsWith(`${expected}:`);
+}
+
+function candidateVisibleFocusedRoomTagActionId(args: {
+  room_scope: NonNullable<CandidateVisibleMepReconstructionInput["verified_room_scope"]>;
+  frame: CandidateVisibleFrameMapping;
+}): string {
+  return [
+    "candidate-visible-focused-room-tags",
+    args.frame.frame_id,
+    normalizeForMatch(args.room_scope.room_number).replace(/\s+/g, "")
+  ].join(":");
+}
+
+function candidateVisibleExactFrameResultIndex(
+  toolResults: ToolResult[],
+  frame: CandidateVisibleFrameMapping
+): number {
+  for (let index = toolResults.length - 1; index >= 0; index--) {
+    const result = toolResults[index];
+    if (
+      !result ||
+      result.status !== "done" ||
+      (result.path ?? "").trim().toLowerCase() !== "/revit/export-view-frame" ||
+      !result.result_json ||
+      typeof result.result_json !== "object"
+    ) {
+      continue;
+    }
+    const candidate = candidateVisibleFrameMappingFromResultRoot(
+      result.result_json as Record<string, unknown>
+    );
+    if (
+      candidate?.frame_id === frame.frame_id &&
+      candidate.view_id === frame.view_id
+    ) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function candidateVisibleFocusedRoomTagInventory(args: {
+  toolResults: ToolResult[];
+  room_scope: NonNullable<CandidateVisibleMepReconstructionInput["verified_room_scope"]>;
+  frame: CandidateVisibleFrameMapping;
+}): {
+  root: Record<string, unknown>;
+  inventory_frame: CandidateVisibleFrameMapping;
+} | null {
+  const expectedBounds = candidateVisibleExpectedRoomModelBounds(args.room_scope);
+  const expectedActionId = candidateVisibleFocusedRoomTagActionId(args);
+  const frameResultIndex = candidateVisibleExactFrameResultIndex(
+    args.toolResults,
+    args.frame
+  );
+  if (frameResultIndex < 0) return null;
+  for (let index = args.toolResults.length - 1; index >= 0; index--) {
+    if (index <= frameResultIndex) break;
+    const result = args.toolResults[index];
+    if (
+      !result ||
+      result.action_id !== expectedActionId ||
+      result.status !== "done" ||
+      (result.path ?? "").trim().toLowerCase() !== "/revit/export-visible-elements" ||
+      !result.result_json ||
+      typeof result.result_json !== "object"
+    ) {
+      continue;
+    }
+    const root = result.result_json as Record<string, unknown>;
+    const inventoryFrame = candidateVisibleFrameMappingFromResultRoot(root);
+    if (
+      !inventoryFrame ||
+      !candidateVisibleFrameMappingsEquivalent(args.frame, inventoryFrame) ||
+      root.ok === false ||
+      !candidateVisibleInventoryMatchesExpectedModelBounds(root, expectedBounds) ||
+      root.truncated === true
+    ) {
+      continue;
+    }
+    const items = [
+      ...(Array.isArray(root.items) ? root.items : []),
+      ...(Array.isArray(root.itemsSampled) ? root.itemsSampled : []),
+      ...(Array.isArray(root.elements) ? root.elements : []),
+      ...(Array.isArray(root.visibleElements) ? root.visibleElements : [])
+    ].filter((entry): entry is Record<string, unknown> =>
+      !!entry && typeof entry === "object" && !Array.isArray(entry)
+    );
+    if (
+      items.length === 0 ||
+      items.some((item) =>
+        String(
+          item.builtInCategory ?? item.categoryToken ?? item.built_in_category ?? ""
+        ).trim().toLowerCase() !== "ost_roomtags"
+      )
+    ) {
+      continue;
+    }
+    return { root, inventory_frame: inventoryFrame };
+  }
+  return null;
+}
+
+function candidateVisibleFocusedRoomTagInventoryAttemptCount(args: {
+  toolResults: ToolResult[];
+  room_scope: NonNullable<CandidateVisibleMepReconstructionInput["verified_room_scope"]>;
+  frame: CandidateVisibleFrameMapping;
+}): number {
+  const expectedActionId = candidateVisibleFocusedRoomTagActionId(args);
+  const frameResultIndex = candidateVisibleExactFrameResultIndex(
+    args.toolResults,
+    args.frame
+  );
+  if (frameResultIndex < 0) return 0;
+  return args.toolResults
+    .slice(frameResultIndex + 1)
+    .filter((result) =>
+      result?.action_id === expectedActionId &&
+      (result.path ?? "").trim().toLowerCase() === "/revit/export-visible-elements"
+    ).length;
+}
+
+function candidateVisibleRoomLabelFromToolResults(args: {
+  toolResults: ToolResult[];
+  room_scope: NonNullable<CandidateVisibleMepReconstructionInput["verified_room_scope"]>;
+  frame: CandidateVisibleFrameMapping;
+}): NonNullable<
+  NonNullable<CandidateVisibleMepReconstructionInput["verified_room_scope"]>["visible_room_label"]
+> | null {
+  const compactToken = (value: string): string =>
+    normalizeForMatch(value).replace(/\s+/g, "");
+  const roomToken = compactToken(args.room_scope.room_number);
+  const roomNameToken = compactToken(
+    String(args.room_scope.room_name ?? "").replace(args.room_scope.room_number, "")
+  );
+  if (!roomToken) return null;
+  const focusedInventory = candidateVisibleFocusedRoomTagInventory(args);
+  if (!focusedInventory) return null;
+  const candidates: Array<{
+    text: string;
+    source_scoped_id: string;
+    built_in_category: "OST_RoomTags";
+    frame_id: string;
+    registration_frame_id: string;
+    view_id: number;
+    model_point: ExistingConditionsPlanPoint;
+  }> = [];
+  {
+    const root = focusedInventory.root;
+    const inventoryFrame = focusedInventory.inventory_frame;
+    const items = [
+      ...(Array.isArray(root.items) ? root.items : []),
+      ...(Array.isArray(root.itemsSampled) ? root.itemsSampled : []),
+      ...(Array.isArray(root.elements) ? root.elements : []),
+      ...(Array.isArray(root.visibleElements) ? root.visibleElements : [])
+    ].filter((entry): entry is Record<string, unknown> =>
+      !!entry && typeof entry === "object" && !Array.isArray(entry)
+    );
+    for (const item of items) {
+      const builtInCategory = String(
+        item.builtInCategory ?? item.categoryToken ?? item.built_in_category ?? ""
+      ).trim();
+      if (builtInCategory.toLowerCase() !== "ost_roomtags") continue;
+      const text = String(item.visibleText ?? item.visible_text ?? "").trim();
+      const textToken = compactToken(text);
+      if (
+        (roomNameToken
+          ? textToken !== `${roomToken}${roomNameToken}` &&
+            textToken !== `${roomNameToken}${roomToken}`
+          : textToken !== roomToken)
+      ) {
+        continue;
+      }
+      const bbox = item.bbox && typeof item.bbox === "object" && !Array.isArray(item.bbox)
+        ? item.bbox as Record<string, unknown>
+        : null;
+      const model = bbox?.model && typeof bbox.model === "object" && !Array.isArray(bbox.model)
+        ? bbox.model as Record<string, unknown>
+        : null;
+      const bboxCenter =
+        model?.center && typeof model.center === "object" && !Array.isArray(model.center)
+          ? model.center as Record<string, unknown>
+          : bbox?.center && typeof bbox.center === "object" && !Array.isArray(bbox.center)
+            ? bbox.center as Record<string, unknown>
+            : null;
+      const anchor = item.anchor && typeof item.anchor === "object" && !Array.isArray(item.anchor)
+        ? item.anchor as Record<string, unknown>
+        : null;
+      const anchorModel = anchor?.model && typeof anchor.model === "object" && !Array.isArray(anchor.model)
+        ? anchor.model as Record<string, unknown>
+        : null;
+      const pointRoot = bboxCenter ?? anchorModel;
+      const x = Number(pointRoot?.x);
+      const y = Number(pointRoot?.y);
+      const sourceScopedId = String(
+        item.sourceScopedId ?? item.source_scoped_id ?? ""
+      ).trim();
+      if (
+        !sourceScopedId.toLowerCase().startsWith("host:") ||
+        !Number.isFinite(x) ||
+        !Number.isFinite(y)
+      ) {
+        continue;
+      }
+      candidates.push({
+        text,
+        source_scoped_id: sourceScopedId,
+        built_in_category: "OST_RoomTags",
+        frame_id: inventoryFrame.frame_id,
+        registration_frame_id: args.frame.frame_id,
+        view_id: inventoryFrame.view_id,
+        model_point: { x, y }
+      });
+    }
+  }
+  const unique = new Map<string, (typeof candidates)[number]>();
+  for (const candidate of candidates) {
+    const key = [
+      compactToken(candidate.text),
+      candidate.source_scoped_id,
+      candidate.model_point.x.toFixed(3),
+      candidate.model_point.y.toFixed(3)
+    ].join(":");
+    unique.set(key, candidate);
+  }
+  return unique.size === 1 ? [...unique.values()][0]! : null;
+}
+
+function sha256LocalFile(filePath: string): string {
+  return createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
+
+function canonicalJsonString(value: unknown): string {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    typeof value === "number"
+  ) {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJsonString).join(",")}]`;
+  }
+  if (!value || typeof value !== "object") return "null";
+  const row = value as Record<string, unknown>;
+  return `{${Object.keys(row)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJsonString(row[key])}`)
+    .join(",")}}`;
+}
+
+function candidateVisibleRecoveryImmutableClaimsSha256(
+  packageJson: string,
+  failureSummary: string
+): string {
+  const parsed = JSON.parse(packageJson) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("candidate_visible_recovery_package_must_be_an_object");
+  }
+  const clone = JSON.parse(JSON.stringify(parsed)) as Record<string, unknown>;
+  if (
+    failureSummary.includes(
+      "candidate_visible_source_room_enclosure_raster_verification_required:"
+    )
+  ) {
+    const scope =
+      clone.spatial_scope &&
+      typeof clone.spatial_scope === "object" &&
+      !Array.isArray(clone.spatial_scope)
+        ? (clone.spatial_scope as Record<string, unknown>)
+        : null;
+    if (scope) {
+      scope.boundary_pixel_points = "__allowed_recovery_boundary_geometry__";
+      scope.anchor_pixel_point = "__allowed_recovery_anchor_geometry__";
+    }
+  } else if (
+    failureSummary.includes("candidate_visible_source_room_enclosure_required:")
+  ) {
+    clone.spatial_scope = "__allowed_recovery_spatial_scope__";
+  } else {
+    const rasterFailure = failureSummary.match(
+      /candidate_visible_route_raster_verification_required:([^:]+):(route|placement_branch)/
+    );
+    const containmentFailure = failureSummary.match(
+      /candidate_visible_(route|branch|point)_outside_(?:spatial_scope|native_room_scope|source_observed_scope):([^:]+)/
+    );
+    const observationId =
+      rasterFailure?.[1] ??
+      containmentFailure?.[2] ??
+      null;
+    const geometryRole =
+      rasterFailure?.[2] ??
+      (
+        containmentFailure?.[1] === "route"
+          ? "route"
+          : containmentFailure?.[1] === "branch"
+            ? "placement_branch"
+            : containmentFailure?.[1] === "point"
+              ? "point"
+              : null
+      );
+    if (observationId && geometryRole) {
+      const observations = Array.isArray(clone.observations)
+        ? clone.observations
+        : [];
+      const observation = observations.find(
+        (entry): entry is Record<string, unknown> =>
+          !!entry &&
+          typeof entry === "object" &&
+          !Array.isArray(entry) &&
+          String((entry as Record<string, unknown>).observation_id ?? "") ===
+            observationId
+      );
+      if (observation) {
+        if (geometryRole === "route") {
+          observation.pixel_points = "__allowed_recovery_route_geometry__";
+        } else if (geometryRole === "placement_branch") {
+          const placement =
+            observation.placement &&
+            typeof observation.placement === "object" &&
+            !Array.isArray(observation.placement)
+              ? (observation.placement as Record<string, unknown>)
+              : null;
+          if (placement) {
+            placement.pixel_branch_points =
+              "__allowed_recovery_branch_geometry__";
+          }
+        } else {
+          observation.pixel_point = "__allowed_recovery_point_geometry__";
+        }
+      }
+    }
+  }
+  return createHash("sha256")
+    .update(canonicalJsonString(clone))
+    .digest("hex");
+}
+
+function candidateVisibleRecoveryImmutableClaimsSha256ForReceipt(
+  packageJson: string,
+  failureSummary: string
+): string {
+  try {
+    return candidateVisibleRecoveryImmutableClaimsSha256(
+      packageJson,
+      failureSummary
+    );
+  } catch {
+    return createHash("sha256")
+      .update(canonicalJsonString({
+        malformed_package_json: packageJson,
+        failure_summary: failureSummary
+      }))
+      .digest("hex");
+  }
 }
 
 async function compileRegisteredMepReconstructionForSession(args: {
@@ -1454,8 +2145,16 @@ async function compileRegisteredMepReconstructionForSession(args: {
   action: Extract<WorkbenchAction, { type: "compile_registered_mep_reconstruction" }>;
 }): Promise<Record<string, unknown>> {
   const visionState = getRedlineVisionState(args.req.session_id);
-  visionState.last_candidate_visible_package_json = args.action.package_json;
-  visionState.updated_at_ms = Date.now();
+  const activeRecoveryFailure = activeCandidateVisibleGuardFailure(
+    args.req.session_id
+  );
+  if (activeRecoveryFailure && activeRecoveryFailure.repeat_count >= 2) {
+    throw new Error(
+      "candidate_visible_compiler_terminal_guard:" +
+      `${activeRecoveryFailure.summary}:` +
+      "two_bounded_compile_attempts_exhausted"
+    );
+  }
   if (!isExistingConditionsReconstructionRequest(args.req)) {
     throw new Error("registered_mep_reconstruction_requires_existing_conditions_intent");
   }
@@ -1489,24 +2188,105 @@ async function compileRegisteredMepReconstructionForSession(args: {
       `registered_mep_reconstruction_package_json_invalid:${error instanceof Error ? error.message : String(error)}`
     );
   }
-  const roomNumber = String(plannerPayload.room_number ?? "").trim();
-  const verifiedRoomScope = roomNumber
+  const requestedRoomNumber = candidateVisibleRequestedRoomNumber(args.req);
+  const plannerRoomNumber = String(plannerPayload.room_number ?? "").trim();
+  if (
+    requestedRoomNumber &&
+    plannerRoomNumber &&
+    normalizeForMatch(plannerRoomNumber) !== normalizeForMatch(requestedRoomNumber)
+  ) {
+    throw new Error(
+      `registered_mep_reconstruction_room_scope_mismatch:${requestedRoomNumber}:${plannerRoomNumber}`
+    );
+  }
+  const roomNumber = requestedRoomNumber ?? "";
+  if (roomNumber) {
+    plannerPayload.room_number = roomNumber;
+  } else if (plannerRoomNumber) {
+    delete plannerPayload.room_number;
+  }
+  const baseVerifiedRoomScope = roomNumber
     ? candidateVisibleVerifiedRoomScopeFromToolResults(toolResults, roomNumber)
     : null;
-  if (roomNumber && !verifiedRoomScope) {
+  if (roomNumber && !baseVerifiedRoomScope) {
     throw new Error(`registered_mep_reconstruction_requires_verified_linked_room_boundary:${roomNumber}`);
   }
+  const visibleRoomLabel = baseVerifiedRoomScope
+    ? candidateVisibleRoomLabelFromToolResults({
+        toolResults,
+        room_scope: baseVerifiedRoomScope,
+        frame
+      })
+    : null;
+  const verifiedRoomScope = baseVerifiedRoomScope
+    ? {
+        ...baseVerifiedRoomScope,
+        ...(visibleRoomLabel ? { visible_room_label: visibleRoomLabel } : {})
+      }
+    : null;
   const sourcePdfPath = resolveExistingFileUnderWorkspace(seed.file_path);
-  const registeredRenderPath = resolveExistingFileUnderWorkspace(alignment.source_image_path);
+  const registeredRenderPath = resolveExistingFileUnderWorkspace(
+    alignment.source_image_path
+  );
+  const sourcePdfSha256 = sha256LocalFile(sourcePdfPath);
+  const registeredRenderSha256 = sha256LocalFile(registeredRenderPath);
+  const verifiedLandmarkScope = !verifiedRoomScope
+    ? candidateVisibleDurableLandmarkRegistrationReceipt({
+        toolResults,
+        frame,
+        alignment,
+        expectedModelBounds: candidateVisibleExpectedAlignedCropModelBounds(
+          frame,
+          alignment
+        ),
+        sourcePdfSha256,
+        registeredRenderSha256
+      })
+    : null;
+  if (!verifiedRoomScope && !verifiedLandmarkScope) {
+    throw new Error(
+      "registered_mep_reconstruction_requires_verified_durable_landmark_scope"
+    );
+  }
+  if (activeRecoveryFailure && activeRecoveryFailure.repeat_count < 2) {
+    const nextImmutableClaimsSha256 =
+      candidateVisibleRecoveryImmutableClaimsSha256(
+        args.action.package_json,
+        activeRecoveryFailure.summary
+      );
+    if (
+      activeRecoveryFailure.source_pdf_sha256 !== sourcePdfSha256 ||
+      activeRecoveryFailure.registered_render_sha256 !==
+        registeredRenderSha256
+    ) {
+      throw new Error(
+        "candidate_visible_recovery_source_hash_changed:reanalyze_source_before_retry"
+      );
+    }
+    if (
+      activeRecoveryFailure.immutable_claims_sha256 !==
+        nextImmutableClaimsSha256
+    ) {
+      throw new Error(
+        "candidate_visible_recovery_mutation_out_of_scope:only_failure_specific_geometry_may_change"
+      );
+    }
+  }
+  visionState.last_candidate_visible_package_json = args.action.package_json;
+  visionState.updated_at_ms = Date.now();
   const compileContext = {
     context_key: JSON.stringify({
       source_path: normalizeWorkspacePathKey(sourcePdfPath),
       registered_render_path: normalizeWorkspacePathKey(registeredRenderPath),
+      source_pdf_sha256: sourcePdfSha256,
+      registered_render_sha256: registeredRenderSha256,
       source_frame_id: frame.frame_id,
       source_view_id: frame.view_id,
       native_room_source_scoped_id: verifiedRoomScope?.source_scoped_id ?? null
     }),
     source_path: normalizeWorkspacePath(sourcePdfPath),
+    source_pdf_sha256: sourcePdfSha256,
+    registered_render_sha256: registeredRenderSha256,
     source_frame_id: frame.frame_id,
     source_view_id: frame.view_id,
     native_room_source_scoped_id: verifiedRoomScope?.source_scoped_id ?? null,
@@ -1525,11 +2305,18 @@ async function compileRegisteredMepReconstructionForSession(args: {
     alignment: {
       matched: alignment.matched,
       confidence: alignment.confidence,
+      provider: alignment.provider,
+      model: alignment.model,
+      attempted_models: alignment.attempted_models,
+      fallback_reason: alignment.fallback_reason,
       crop: alignment.crop
     },
     frame,
     planner_payload: plannerPayload,
     ...(verifiedRoomScope ? { verified_room_scope: verifiedRoomScope } : {}),
+    ...(verifiedLandmarkScope
+      ? { verified_landmark_scope: verifiedLandmarkScope }
+      : {}),
     ...(args.action.maximum_created_elements == null
       ? {}
       : { maximum_created_elements: args.action.maximum_created_elements })
@@ -2707,6 +3494,7 @@ function pickRedlineSeed(req: ChatRequest, opts?: { allowSessionFallback?: boole
 
   if (!opts?.allowSessionFallback) return null;
   const hasContinuationContext =
+    isExistingConditionsReconstructionRequest(req) ||
     userTextLooksRedline(req) ||
     userTextLooksRedlineContinuation(req) ||
     (((req.user_text ?? "").trim() === "" || userTextLooksRedline(req)) && Array.isArray(req.tool_results) && req.tool_results.length > 0);
@@ -3145,11 +3933,15 @@ function noteCandidateVisibleCompileResults(
     (priorFailure
       ? {
           context_key: priorFailure.context_key,
-          source_path: priorFailure.source_path
+          source_path: priorFailure.source_path,
+          source_pdf_sha256: priorFailure.source_pdf_sha256,
+          registered_render_sha256: priorFailure.registered_render_sha256
         }
       : {
           context_key: "__test_unscoped_candidate_visible_context__",
-          source_path: "__test_unscoped_candidate_visible_source__"
+          source_path: "__test_unscoped_candidate_visible_source__",
+          source_pdf_sha256: "0".repeat(64),
+          registered_render_sha256: "0".repeat(64)
         });
   for (const result of compileResults) {
     if (result.ok) {
@@ -3164,6 +3956,13 @@ function noteCandidateVisibleCompileResults(
       summary: result.summary.trim(),
       context_key: context.context_key,
       source_path: context.source_path,
+      source_pdf_sha256: context.source_pdf_sha256,
+      registered_render_sha256: context.registered_render_sha256,
+      immutable_claims_sha256:
+        candidateVisibleRecoveryImmutableClaimsSha256ForReceipt(
+          state.last_candidate_visible_package_json ?? "{}",
+          result.summary.trim()
+        ),
       // This is the bounded compile-attempt count for the current analyzed
       // source epoch, not merely a count of byte-identical errors. A revised
       // package can legitimately fail on the next observation, and live frame
@@ -3239,6 +4038,16 @@ function buildCandidateVisibleTerminalGuardResponse(req: ChatRequest): ChatRespo
   };
 }
 
+function buildCandidateVisibleTerminalGuardAfterWorkbench(
+  req: ChatRequest,
+  results: WorkbenchActionResult[]
+): ChatResponse | null {
+  if (!results.some((result) => result.type === "compile_registered_mep_reconstruction")) {
+    return null;
+  }
+  return buildCandidateVisibleTerminalGuardResponse(req);
+}
+
 function buildCandidateVisibleRecoveryPrompt(req: ChatRequest): string | null {
   const failure = activeCandidateVisibleGuardFailure(req.session_id);
   if (!failure || !requestMatchesCandidateVisibleGuard(req, failure)) return null;
@@ -3255,12 +4064,28 @@ function buildCandidateVisibleRecoveryPrompt(req: ChatRequest): string | null {
   const boundedPackage = packageJson.length > 60000
     ? `${packageJson.slice(0, 60000)}\n...TRUNCATED_BY_SERVER`
     : packageJson;
+  const sourceRoomEnclosureRequired = failure.summary.includes(
+    "candidate_visible_source_room_enclosure_required:"
+  );
+  const sourceRoomEnclosureRasterVerificationRequired = failure.summary.includes(
+    "candidate_visible_source_room_enclosure_raster_verification_required:"
+  );
+  const sourceRouteRasterVerificationRequired = failure.summary.includes(
+    "candidate_visible_route_raster_verification_required:"
+  );
   return [
     "REGISTERED EXISTING-CONDITIONS COMPILER RECOVERY (ONE ATTEMPT REMAINS):",
     `- Exact deterministic failure: ${failure.summary}`,
     "- The source attachment, registered frame, verified native room, and visible inventory are unchanged and already sufficient. Do not call source vision, redline orientation, frame export, room lookup, inventory, tool discovery, or any direct /revit write.",
     "- Your next response must contain exactly one workbench action: compile_registered_mep_reconstruction.",
-    "- Revise package_json against the exact failure. Keep the authoritative native room fixed; never widen or redraw spatial_scope to make geometry pass. Clip, shorten, defer, or remove only unsupported/out-of-scope observations while preserving other source-supported work.",
+    "- The server will verify the unchanged source-PDF hash, registered-render hash, and an immutable-claims fingerprint. It permits only the failure-specific geometry change described below; changing system/type claims, unrelated observations, or other evidence will reject the retry.",
+    sourceRoomEnclosureRequired
+      ? "- Preserve every source-supported observation and its exact source geometry. Add spatial_scope by tracing only the visible room enclosure that contains the route and the source-detected room label; use the exact source_room_label_uv from the error for anchor_pixel_point and include the room number in anchor_label. Do not translate, shorten, or delete a supported route merely because the full-view projection disagrees. If the enclosure is not visibly established, defer the affected observation."
+      : sourceRoomEnclosureRasterVerificationRequired
+        ? "- Preserve every source-supported observation and its exact source geometry. Set spatial_scope.anchor_pixel_point to the exact source_room_label_uv from the error, then revise only spatial_scope.boundary_pixel_points by moving each unsupported enclosure edge onto the nearest clearly visible source-room wall. Use edge_support_ratios in polygon order to identify weak edges, keep well-supported edges fixed, and satisfy the reported area, mean-edge, and every-edge thresholds. Do not omit spatial_scope, change the route, or redraw the authoritative native room."
+        : sourceRouteRasterVerificationRequired
+          ? "- Preserve the exact room registration, native room boundary, spatial scope, and all other source-supported observations. Retrace only the failed route or branch geometry onto the nearest clearly visible source centerline. Use segment_support_ratios in polyline order to keep supported segments fixed and revise weak segments; color is useful when support_modality is chromatic_line, while monochrome_line relies on visible ink. When candidate_retrace_uv is present in the error, replace the failed geometry with that hash-bound visible-raster proposal and let the compiler independently reverify it; do not treat the proposal as hidden truth or bypass the gate. You may add intermediate vertices to follow elbows or offsets, but do not change scale, rotation, system/type claims, or unrelated geometry."
+      : "- Revise package_json against the exact failure. Keep the authoritative native room fixed; never widen or redraw spatial_scope to make geometry pass. Move, clip, or shorten only the failed observation geometry while preserving its identity, claims, evidence, every unrelated observation, and other source-supported work.",
     "- If the revised compile also fails, the server will stop automatically.",
     boundedPackage
       ? `Previous package_json to revise:\n${boundedPackage}`
@@ -3284,59 +4109,75 @@ function candidateVisibleReadyToCompile(req: ChatRequest): boolean {
     return false;
   }
   const toolResults = getAugmentedToolResults(req, 120);
-  const requestedRoomNumber =
-    extractSpatialRoomNumber(getRecentUserTextForRedline(req)) ??
-    getPersistedRedlineSpatialTargeting(req.session_id).room_number;
-  if (!requestedRoomNumber) return false;
-  let hasVerifiedRoomScope = false;
-  try {
-    hasVerifiedRoomScope =
-      candidateVisibleVerifiedRoomScopeFromToolResults(toolResults, requestedRoomNumber) !== null;
-  } catch {
-    return false;
+  const requestedRoomNumber = candidateVisibleRequestedRoomNumber(req);
+  let verifiedRoomScope: CandidateVisibleMepReconstructionInput["verified_room_scope"] | null = null;
+  if (requestedRoomNumber) {
+    try {
+      verifiedRoomScope =
+        candidateVisibleVerifiedRoomScopeFromToolResults(toolResults, requestedRoomNumber);
+    } catch {
+      return false;
+    }
+    if (!verifiedRoomScope) return false;
   }
-  if (!hasVerifiedRoomScope) return false;
   const alignedFrame = candidateVisibleFrameMappingFromToolResults(
     toolResults,
     alignment.frame_id,
     alignment.view_id
   );
   if (!alignedFrame) return false;
-  for (let index = toolResults.length - 1; index >= 0; index--) {
-    const result = toolResults[index];
-    if (
-      !result ||
-      result.status !== "done" ||
-      (result.path ?? "").trim().toLowerCase() !== "/revit/export-visible-elements" ||
-      !result.result_json ||
-      typeof result.result_json !== "object"
-    ) {
-      continue;
-    }
-    const root = result.result_json as Record<string, unknown>;
-    if (root.ok === false) continue;
-    const inventoryFrame = candidateVisibleFrameMappingFromResultRoot(root);
-    if (
-      inventoryFrame &&
-      candidateVisibleFrameMappingsEquivalent(alignedFrame, inventoryFrame)
-    ) {
-      return true;
-    }
+  const expectedModelBounds = verifiedRoomScope
+    ? candidateVisibleExpectedRoomModelBounds(verifiedRoomScope)
+    : candidateVisibleExpectedAlignedCropModelBounds(alignedFrame, alignment);
+  const hasInventory = candidateVisibleInventoryForFrame(
+    toolResults,
+    alignedFrame,
+    expectedModelBounds,
+    alignment
+  );
+  if (!hasInventory) return false;
+  if (verifiedRoomScope) return true;
+  let sourcePdfSha256: string;
+  let registeredRenderSha256: string;
+  try {
+    sourcePdfSha256 = sha256LocalFile(
+      resolveExistingFileUnderWorkspace(seed.file_path)
+    );
+    registeredRenderSha256 = sha256LocalFile(
+      resolveExistingFileUnderWorkspace(alignment.source_image_path)
+    );
+  } catch {
+    return false;
   }
-  return false;
+  return candidateVisibleDurableLandmarkRegistrationReceipt({
+    toolResults,
+    frame: alignedFrame,
+    alignment,
+    expectedModelBounds,
+    sourcePdfSha256,
+    registeredRenderSha256
+  }) !== null;
 }
 
 function buildCandidateVisibleReadyToCompilePrompt(req: ChatRequest): string | null {
   if (!candidateVisibleReadyToCompile(req)) return null;
   return [
     "REGISTERED EXISTING-CONDITIONS EVIDENCE GATE: READY TO COMPILE",
-    "- Source analysis, authoritative linked-room scope, verified source-to-view alignment, and visible-element inventory are complete.",
+    "- Source analysis, verified source-to-view alignment, its exact current frame, and a matching visible-element inventory are complete. When a room was explicitly requested, its authoritative linked-room scope is also present. Otherwise the server has verified a hash-bound, spatially separated durable-landmark receipt and will enforce the aligned crop as the native containment boundary.",
     "- Do not call source vision, redline orientation, frame export, visible inventory, room lookup, shell/python, context, tool search, tool docs, examples, or native API discovery again.",
     "- Your next response must contain exactly one workbench action: compile_registered_mep_reconstruction.",
     "- Build package_json from the persisted source observations. Use defer_ambiguous_observations and unresolved placeholders where evidence is incomplete; do not abandon the supported observations.",
-    "- If source analysis establishes that the uploaded source is a local/cropped room extract rather than a globally registered sheet, include spatial_scope in the same source coordinate space as its observations: trace only the clearly source-observed room-local enclosure that contains those observations, put anchor_pixel_point inside that trace, and make anchor_label include the verified room number. Never invent a 0.5/centroid trace or assume the whole image is one room.",
+    "- Room/space records, room tags, and matching names are optional evidence, not registration prerequisites. Prefer spatially separated common landmarks in this order: exterior envelope/corners, stairs and elevator cores, shafts, grids and columns, then persistent interior geometry. Do not use a changed partition or name match as the sole control.",
+    "- A room number or name visible only in the source is an orientation clue, not an authoritative native-room requirement. Include room_number only when the user explicitly requested that room and the server verified its native boundary; otherwise omit room_number and keep any source label only as source-local evidence.",
+    "- When the uploaded source is a local/cropped room extract and a room label is visible, include spatial_scope in the same source coordinate space as its observations: trace only the clearly source-observed room-local enclosure that contains those observations, put anchor_pixel_point on the visible room label, and make anchor_label include the verified room number. When no label is visible, use a source-supported interior anchor and explicitly identify the stable landmark basis. Never invent a 0.5/centroid trace or assume the whole image is one room.",
     "- That source-observed trace is evidence only, never permission to widen the verified native room. A compile may use a fully source-contained, disjoint crop trace as a local room-coordinate basis, after which strict verified native-room clipping still applies. If the crop does not visibly establish a room-local enclosure, defer the affected observations instead of guessing."
   ].join("\n");
+}
+
+export function __testOnlyIsExistingConditionsReconstructionRequest(
+  req: ChatRequest
+): boolean {
+  return isExistingConditionsReconstructionRequest(req);
 }
 
 export function __testOnlyBuildCandidateVisibleRecoveryPrompt(req: ChatRequest): string | null {
@@ -3345,6 +4186,13 @@ export function __testOnlyBuildCandidateVisibleRecoveryPrompt(req: ChatRequest):
 
 export function __testOnlyBuildCandidateVisibleTerminalGuardResponse(req: ChatRequest): ChatResponse | null {
   return buildCandidateVisibleTerminalGuardResponse(req);
+}
+
+export function __testOnlyBuildCandidateVisibleTerminalGuardAfterWorkbench(
+  req: ChatRequest,
+  results: WorkbenchActionResult[]
+): ChatResponse | null {
+  return buildCandidateVisibleTerminalGuardAfterWorkbench(req, results);
 }
 
 export function __testOnlyShouldBypassCandidateVisiblePreModelDiscovery(req: ChatRequest): boolean {
@@ -3396,6 +4244,39 @@ export function __testOnlyRecordCandidateVisibleCompileResults(
   noteCandidateVisibleCompileResults(sessionId, results);
 }
 
+export function __testOnlyCandidateVisibleRecoveryImmutableClaimsSha256(
+  packageJson: string,
+  failureSummary: string
+): string {
+  return candidateVisibleRecoveryImmutableClaimsSha256(
+    packageJson,
+    failureSummary
+  );
+}
+
+export function __testOnlyCompileRegisteredMepReconstructionForSession(
+  req: ChatRequest,
+  packageJson: string
+): Promise<Record<string, unknown>> {
+  return compileRegisteredMepReconstructionForSession({
+    req,
+    action: {
+      type: "compile_registered_mep_reconstruction",
+      package_json: packageJson
+    }
+  });
+}
+
+export function __testOnlyCandidateVisibleVerifiedRoomScopeFromToolResults(
+  toolResults: ToolResult[],
+  roomNumber: string
+): CandidateVisibleMepReconstructionInput["verified_room_scope"] | null {
+  return candidateVisibleVerifiedRoomScopeFromToolResults(
+    toolResults,
+    roomNumber
+  );
+}
+
 export function __testOnlyRehydrateRedlineVisionProgressFromRunBundle(
   sessionId: string
 ): void {
@@ -3412,6 +4293,8 @@ export function __testOnlySetCandidateVisibleCompileContext(
   state.last_candidate_visible_compile_context = {
     context_key: contextKey,
     source_path: normalizeWorkspacePath(sourcePath),
+    source_pdf_sha256: "1".repeat(64),
+    registered_render_sha256: "2".repeat(64),
     source_frame_id: "test-frame",
     source_view_id: 1,
     native_room_source_scoped_id: null,
@@ -6381,6 +7264,7 @@ export function __testOnlySeedRedlineViewAlignment(args: {
   matched?: boolean;
   confidence?: number;
   crop?: ViewAlignmentResult["crop"];
+  registrationControls?: ViewAlignmentRegistrationControl[];
   analysis?: string;
 }): void {
   noteRedlineViewAlignmentResult(
@@ -6393,6 +7277,7 @@ export function __testOnlySeedRedlineViewAlignment(args: {
       matched: args.matched ?? true,
       confidence: args.confidence ?? 0.8,
       crop: args.crop ?? { min_u: 0.1, min_v: 0.1, max_u: 0.9, max_v: 0.9 },
+      registration_controls: args.registrationControls ?? [],
       marks: [],
       analysis: args.analysis ?? "test alignment"
     }
@@ -14973,17 +15858,125 @@ async function maybeAutoAlignRedlineViewHints(args: {
     existingViewportHints.some((hint) => hint.view_id === latestFrameImage.view_id && isFrameAlignedViewportHint(hint))
   ) return 0;
 
-  if (hasRedlineViewAlignmentAttempt(args.req.session_id, alignmentImagePath, latestFrameImage.frame.frame_id)) return 0;
+  const previousAlignment = getPersistedRedlineViewAlignment(args.req.session_id);
+  const alignedFrame = previousAlignment
+    ? candidateVisibleFrameMappingFromToolResults(
+        toolResults,
+        previousAlignment.frame_id,
+        previousAlignment.view_id
+      )
+    : null;
+  let relevantNativeInventoryComplete = false;
+  let nativeLandmarkValidationComplete = false;
+  let durableLandmarkReceiptVerified = false;
+  let nativeLandmarkAssessment:
+    CandidateVisibleDurableLandmarkRegistrationAssessment | null = null;
+  if (
+    previousAlignment &&
+    alignedFrame &&
+    previousAlignment.frame_id === latestFrameImage.frame.frame_id &&
+    previousAlignment.view_id === latestFrameImage.view_id &&
+    previousAlignment.matched &&
+    previousAlignment.crop
+  ) {
+    try {
+      const expectedModelBounds = candidateVisibleExpectedAlignedCropModelBounds(
+        alignedFrame,
+        previousAlignment
+      );
+      relevantNativeInventoryComplete = candidateVisibleInventoryForFrame(
+        toolResults,
+        alignedFrame,
+        expectedModelBounds,
+        previousAlignment
+      );
+      nativeLandmarkValidationComplete =
+        relevantNativeInventoryComplete ||
+        candidateVisibleBroadInventoryAttemptCount(
+          toolResults,
+          alignedFrame,
+          previousAlignment
+        ) >= 3;
+      if (relevantNativeInventoryComplete) {
+        nativeLandmarkAssessment =
+          candidateVisibleDurableLandmarkRegistrationAssessment({
+            toolResults,
+            frame: alignedFrame,
+            alignment: previousAlignment,
+            expectedModelBounds,
+            sourcePdfSha256: "native-verification-probe",
+            registeredRenderSha256: "native-verification-probe"
+          });
+        durableLandmarkReceiptVerified =
+          nativeLandmarkAssessment.receipt !== null;
+      }
+    } catch {
+      relevantNativeInventoryComplete = false;
+      nativeLandmarkValidationComplete = false;
+      durableLandmarkReceiptVerified = false;
+    }
+  }
+  const alignmentAttempted = hasRedlineViewAlignmentAttempt(
+    args.req.session_id,
+    alignmentImagePath,
+    latestFrameImage.frame.frame_id
+  );
+  const useOpenAiGeometryFallback =
+    alignmentAttempted &&
+    shouldUseOpenAiGeometryFallbackAfterGemini({
+      alignment: previousAlignment,
+      exact_frame_available: alignedFrame !== null,
+      native_landmark_validation_complete: nativeLandmarkValidationComplete,
+      durable_landmark_receipt_verified: durableLandmarkReceiptVerified,
+      requested_room_number: candidateVisibleRequestedRoomNumber(args.req)
+    });
+  const rejectedControlKinds = Array.from(new Set(
+    (previousAlignment?.registration_controls ?? [])
+      .filter((control) => control.score >= 0.55)
+      .map((control) => control.kind)
+  ));
+  const nativeGeometryFeedback = useOpenAiGeometryFallback
+    ? [
+        "NATIVE REVIT GEOMETRY VERIFICATION FEEDBACK:",
+        rejectedControlKinds.length > 0
+          ? `The prior Gemini control set used ${rejectedControlKinds.join(", ")}.`
+          : "The prior Gemini control set did not yield verifiable durable controls.",
+        relevantNativeInventoryComplete
+          ? [
+              "A bounded native inventory completed, but one or more proposed controls could not be uniquely matched to visible native geometry.",
+              nativeLandmarkAssessment?.failure_reason
+                ? `Exact native rejection: ${nativeLandmarkAssessment.failure_reason}.`
+                : "",
+              nativeLandmarkAssessment?.failure_reason
+                ? `Diagnostic: ${canonicalJsonString(nativeLandmarkAssessment.details)}`
+                : ""
+            ].filter(Boolean).join(" ")
+          : "The scoped native inventory exhausted its bounded 500/750/1500 attempts without a usable non-truncated landmark receipt.",
+        "Do not repeat the rejected control combination. Prefer a smaller, spatially separated set of exact exterior corners, stair cores, shafts/elevator cores, or columns that visibly exists in both images; use grids only when the Revit image visibly contains the same grid geometry."
+      ].join(" ")
+    : "";
+  if (alignmentAttempted && !useOpenAiGeometryFallback) return 0;
 
-  noteRedlineViewAlignmentAttempt(args.req.session_id, alignmentImagePath, latestFrameImage.frame.frame_id);
+  if (!alignmentAttempted) {
+    noteRedlineViewAlignmentAttempt(
+      args.req.session_id,
+      alignmentImagePath,
+      latestFrameImage.frame.frame_id
+    );
+  }
 
   try {
     appendNotification(
       args.req.session_id,
       "workbench.progress",
-      `Auto visual alignment: matching ${path.basename(alignmentImagePath)} to the latest Revit view export before continuing.`,
+      useOpenAiGeometryFallback
+        ? "Native Revit landmark verification rejected the Gemini control set; retrying the exact frame with OpenAI geometry alignment."
+        : `Auto visual alignment: matching ${path.basename(alignmentImagePath)} to the latest Revit view export before continuing.`,
       {
         type: "align_redline_view",
+        phase: useOpenAiGeometryFallback
+          ? "openai_geometry_fallback_after_native_rejection"
+          : "initial_structured_alignment",
         frame_id: latestFrameImage.frame.frame_id,
         view_id: latestFrameImage.view_id
       }
@@ -14995,11 +15988,32 @@ async function maybeAutoAlignRedlineViewHints(args: {
   const alignment = await alignRedlineToView({
     redline_file_path: alignmentImagePath,
     view_image_data_url: latestFrameImage.image_data_url,
-    objective: getRecentUserTextForRedline(args.req),
+    objective: [
+      getRecentUserTextForRedline(args.req),
+      nativeGeometryFeedback
+    ].filter(Boolean).join("\n\n"),
+    provider_preference: useOpenAiGeometryFallback
+      ? "openai_only"
+      : "gemini_first",
+    prior_attempted_models: useOpenAiGeometryFallback
+      ? previousAlignment?.attempted_models ?? []
+      : [],
+    openai_fallback_reason: useOpenAiGeometryFallback
+      ? "Gemini structured alignment was rejected by native Revit landmark verification for this exact frame."
+      : null,
     model: process.env.OPERATOR_OPENAI_MODEL ?? "gpt-5.6-sol",
     reasoning_effort: process.env.OPERATOR_REDLINE_ALIGNMENT_REASONING_EFFORT ?? "none",
-    max_output_tokens: 5000
+    max_output_tokens: 5000,
+    max_image_bytes: Math.max(
+      1_500_000,
+      Number.parseInt(
+        process.env.OPERATOR_REDLINE_ALIGNMENT_MAX_IMAGE_BYTES ?? "8388608",
+        10
+      ) || 8_388_608
+    )
   });
+  const alignmentProvider = alignment.provider ?? "unknown";
+  const alignmentModel = alignment.model ?? "unknown";
   noteRedlineViewAlignmentResult(
     args.req.session_id,
     alignmentImagePath,
@@ -15051,11 +16065,27 @@ async function maybeAutoAlignRedlineViewHints(args: {
       appendNotification(
         args.req.session_id,
         "workbench.saved",
-        `Auto visual alignment resolved ${viewportHints.length} redline target${viewportHints.length === 1 ? "" : "s"} in view ${latestFrameImage.view_id}.`,
+        `Auto visual alignment (${alignmentProvider}/${alignmentModel}) resolved ${viewportHints.length} redline target${viewportHints.length === 1 ? "" : "s"} in view ${latestFrameImage.view_id}.`,
         {
           type: "align_redline_view",
           count: viewportHints.length,
           confidence: alignment.confidence,
+          provider: alignmentProvider,
+          model: alignmentModel,
+          attempted_models: alignment.attempted_models ?? [],
+          fallback_reason: alignment.fallback_reason ?? null,
+          registration_controls: (alignment.registration_controls ?? []).map(
+            (control) => ({
+              kind: control.kind,
+              score: control.score,
+              label: control.label,
+              source_normalized_x: control.source_normalized_x,
+              source_normalized_y: control.source_normalized_y,
+              view_normalized_x: control.view_normalized_x,
+              view_normalized_y: control.view_normalized_y
+            })
+          ),
+          crop: alignment.crop ?? null,
           frame_id: latestFrameImage.frame.frame_id,
           view_id: latestFrameImage.view_id
         }
@@ -15070,11 +16100,27 @@ async function maybeAutoAlignRedlineViewHints(args: {
     appendNotification(
       args.req.session_id,
       "workbench.saved",
-      `Auto visual alignment did not find a confident match for ${path.basename(alignmentImagePath)} in the latest Revit view export.`,
+      `Auto visual alignment (${alignmentProvider}/${alignmentModel}) did not find a confident match for ${path.basename(alignmentImagePath)} in the latest Revit view export.`,
       {
         type: "align_redline_view",
         matched: alignment.matched,
         confidence: alignment.confidence,
+        provider: alignmentProvider,
+        model: alignmentModel,
+        attempted_models: alignment.attempted_models ?? [],
+        fallback_reason: alignment.fallback_reason ?? null,
+        registration_controls: (alignment.registration_controls ?? []).map(
+          (control) => ({
+            kind: control.kind,
+            score: control.score,
+            label: control.label,
+            source_normalized_x: control.source_normalized_x,
+            source_normalized_y: control.source_normalized_y,
+            view_normalized_x: control.view_normalized_x,
+            view_normalized_y: control.view_normalized_y
+          })
+        ),
+        crop: alignment.crop ?? null,
         warning: alignment.warning ?? null
       }
     );
@@ -15508,6 +16554,7 @@ function defaultSystemPrompt(): string {
     "- If you have region boxes from diff/markup extraction, use workbench action map_sheet_regions with sheetOutline + viewportGeometry/titleBlocks to map each region to viewport/titleblock.",
     "- For view-space element targeting after orientation, use /revit/export-visible-elements when you need a full visible inventory with image-space mapping; otherwise use /revit/export-view-frame then /revit/pick-at-pixel.",
     "- For existing-conditions reconstruction from an attached PDF or crop with an explicit sheet number, stay anchored to the model view placed on that sheet and compare its exported frame to the rasterized source. Do not substitute a different room/space-named view merely because a room number matches.",
+    "- Existing-conditions registration must not require rooms, spaces, room tags, or matching room names. Treat those as useful but potentially absent or stale controls. When the record plan and current model differ, prefer common stable geometry in this order: exterior envelope/corners, stairs and elevators, shafts, grids and columns, then persistent interior geometry. Record every accepted/rejected control and transform residual. Do not use changed interior partitions or a name match as the only registration basis; if exact registration remains unresolved, preserve supported relative geometry as provisional and iterate rather than abandoning the draft.",
     "- Once existing-conditions source-to-view alignment is verified and the aligned view has one visible-element inventory, use workbench action compile_registered_mep_reconstruction to turn source-pixel observations into an atomic native draft workflow. Do not fall back to generic redline edit targeting.",
     "- compile_registered_mep_reconstruction takes package_json as a JSON string containing only planner-owned fields: schema_version (use 2 when plumbing fixtures are present), fixture_id, scope_id, discipline, coordinate_space, level_name, optional level_elevation_ft (schema compatibility only; omit it when unknown because the server injects verified target-level metadata from the aligned Revit view), optional room_number, optional spatial_scope, partial_promotion_policy, maximum_observations, optional native_element_references, and observations. Set coordinate_space to normalized_uv_top_left and express every source point as x/y fractions from 0 to 1 relative to the attached source crop, with origin at its top-left. Never submit raster width/height: the server owns the exact registered-render dimensions, source-to-model transform, target drafting view, verified target-level elevation, native-room scope, and a hash-bound registration context. A planner room trace is evidence only and cannot override or widen the native projected room. Never invent hashes or treat crop-box/frame Z as level elevation.",
     "- For a room-targeted reconstruction, include room_number and first POST /revit/linked-room-boundaries. The compiler projects that verified native linked-room boundary into registered source pixels and uses it as the authoritative spatial scope; do not repeatedly redraw or widen a room polygon to bypass a scope rejection. You may also include spatial_scope with a source-observed boundary_pixel_points trace, anchor_pixel_point on the visible room label, anchor_label including the requested room number, and evidence_reference. The compiler preserves that trace as evidence but does not let an approximate planner polygon override the native projected room boundary.",
@@ -16042,6 +17089,31 @@ async function maybeBuildRedlineExecutionBridge(req: ChatRequest, workbenchResul
     Array.isArray(req.tool_results) ? req.tool_results : []
   );
   if (registeredMepHandoff) return registeredMepHandoff;
+  if (isExistingConditionsReconstructionRequest(req)) {
+    const beforeAlignment = buildCandidateVisibleDeterministicPreparationResponse(
+      req,
+      getAugmentedToolResults(req, 120)
+    );
+    if (beforeAlignment) return beforeAlignment;
+
+    await maybeAutoAlignRedlineViewHints({
+      req,
+      workbenchResults,
+      allowSyntheticFallback: false
+    });
+
+    const afterAlignment = buildCandidateVisibleDeterministicPreparationResponse(
+      req,
+      getAugmentedToolResults(req, 120)
+    );
+    if (afterAlignment) return afterAlignment;
+
+    // Clean record drawings have no markup pick targets. Once deterministic
+    // preparation and source-to-view alignment have had their opportunity,
+    // leave planning to the registered reconstruction compiler instead of
+    // entering the generic redline no-pick blocker.
+    return null;
+  }
   await maybeInferRedlineImageMarkHint(req);
   let bridge = maybeBuildRedlineExecutionBridgeCore({
     req,
@@ -17644,10 +18716,25 @@ function replaceAuditTargetWithWallLocalRedlineChainage(
 
 function isExistingConditionsReconstructionRequest(req: ChatRequest | null | undefined): boolean {
   const text = req ? getRecentUserTextForRedline(req).toLowerCase() : "";
-  const matched = (
-    /\b(existing[\s-]*conditions?|as[\s-]*built|record drawing)\b/.test(text) &&
-    /\b(recreate|reconstruct|redraw|draft|draw|model|trace)\b/.test(text)
-  );
+  const reconstructionVerb =
+    /\b(recreate|reconstruct|redraw|draft|draw|model|trace)\b/.test(text);
+  const explicitExistingConditions =
+    /\b(existing[\s-]*conditions?|as[\s-]*built|record drawing)\b/.test(text);
+  const sourceArtifact =
+    /\b(pdf|drawing|plan|sheet|source|attachment|attached|scan)\b/.test(text);
+  const existingDisciplineContent =
+    /\bexisting\b(?=[\s\S]{0,96}\b(?:plumbing|piping|pipes?|ductwork|ducts?|hvac|mechanical|electrical|lighting|power|devices?|receptacles?|systems?|equipment|fixtures?|work)\b)/.test(text);
+  const directExistingSystemObject =
+    /\b(?:recreate|reconstruct|redraw|draft|draw|model|trace)\b(?=[^.!?\n]{0,80}\bexisting[\s-]*(?:conditions?|systems?|work|plumbing|piping|ductwork|hvac|mechanical|electrical|lighting|power)\b)/.test(text);
+  const wholeSourceOrSystemObject =
+    /\b(?:visible|all|entire|whole|complete)\b(?=[\s\S]{0,96}\bexisting\b)/.test(text) ||
+    directExistingSystemObject;
+  const ordinaryNewElementEdit =
+    /\b(?:add|create|draw|place|model)\b(?=[^.!?\n]{0,64}\b(?:a|an|one|new)\b[^.!?\n]{0,48}\b(?:pipe|duct|branch|receptacle|device|fixture|equipment|family|element|outlet|diffuser|grille|valve)\b)/.test(text);
+  const matched =
+    reconstructionVerb &&
+    !ordinaryNewElementEdit &&
+    (explicitExistingConditions || (sourceArtifact && existingDisciplineContent && wholeSourceOrSystemObject));
   if (!req?.session_id) return matched;
   const state = getRedlineVisionState(req.session_id);
   if (matched) state.existing_conditions_reconstruction = true;
@@ -17662,6 +18749,7 @@ function existingConditionsPlacedViewAnchor(
   const seedSheet = (getRedlineSessionSeed(req.session_id)?.expected_sheet ?? "").trim().toUpperCase();
   const filenameSheet = extractAttachmentFilenameSheetHints(req)[0]?.sheet?.trim().toUpperCase() ?? "";
   const requestedSheet = seedSheet || filenameSheet;
+  const state = getRedlineVisionState(req.session_id);
   let latestPlacedView: { sheet_number: string; view_id: number; view_name: string | null } | null = null;
 
   for (let index = toolResults.length - 1; index >= 0; index--) {
@@ -17688,7 +18776,21 @@ function existingConditionsPlacedViewAnchor(
     if (requestedSheet && sheetNumber === requestedSheet) {
       // A multi-viewport sheet needs an explicit source-to-viewport receipt;
       // selecting the first placed view would make registration non-deterministic.
-      return candidates.length === 1 ? candidates[0]! : null;
+      if (candidates.length !== 1) {
+        state.last_existing_conditions_placed_view = null;
+        state.last_existing_conditions_frame = null;
+        return null;
+      }
+      const exact = candidates[0]!;
+      if (
+        state.last_existing_conditions_placed_view?.view_id !== exact.view_id ||
+        state.last_existing_conditions_placed_view?.sheet_number !== exact.sheet_number
+      ) {
+        state.last_existing_conditions_frame = null;
+      }
+      state.last_existing_conditions_placed_view = exact;
+      state.updated_at_ms = Date.now();
+      return exact;
     }
     latestPlacedView ??= candidates[0]!;
     if (!requestedSheet) return candidates[0]!;
@@ -17696,7 +18798,11 @@ function existingConditionsPlacedViewAnchor(
   // A candidate-visible sheet hint is an exact safety anchor. Falling back to
   // another recently inspected sheet can silently register source pixels to
   // the wrong plan view and is worse than waiting for the expected detail.
-  return requestedSheet ? null : latestPlacedView;
+  if (requestedSheet) {
+    const cached = state.last_existing_conditions_placed_view;
+    return cached?.sheet_number === requestedSheet ? cached : null;
+  }
+  return latestPlacedView;
 }
 
 function existingConditionsExpectedSheet(req: ChatRequest): string | null {
@@ -17731,10 +18837,9 @@ function existingConditionsExpectedSheetHasAmbiguousPlacedViews(
 }
 
 function candidateVisibleRequestedRoomNumber(req: ChatRequest): string | null {
-  return (
-    extractSpatialRoomNumber(getRecentUserTextForRedline(req)) ??
-    getPersistedRedlineSpatialTargeting(req.session_id).room_number
-  );
+  // Source OCR, labels, and vision hints may identify a room, but they do not
+  // authorize a hard native-room scope. Only explicit user wording does.
+  return extractSpatialRoomNumber(getRecentUserTextForRedline(req));
 }
 
 function buildCandidateVisibleRoomScopeResponse(
@@ -17780,8 +18885,10 @@ function buildCandidateVisibleRoomScopeResponse(
 
 function candidateVisibleFrameForView(
   toolResults: ToolResult[],
-  viewId: number
+  viewId: number,
+  sessionId: string
 ): CandidateVisibleFrameMapping | null {
+  const state = getRedlineVisionState(sessionId);
   for (let index = toolResults.length - 1; index >= 0; index--) {
     const result = toolResults[index];
     if (
@@ -17796,19 +18903,31 @@ function candidateVisibleFrameForView(
     const mapping = candidateVisibleFrameMappingFromResultRoot(
       result.result_json as Record<string, unknown>
     );
-    if (mapping?.view_id === viewId) return mapping;
+    if (mapping?.view_id === viewId) {
+      state.last_existing_conditions_frame = mapping;
+      state.updated_at_ms = Date.now();
+      return mapping;
+    }
   }
-  return null;
+  return state.last_existing_conditions_frame?.view_id === viewId
+    ? state.last_existing_conditions_frame
+    : null;
 }
 
 function candidateVisibleInventoryForFrame(
   toolResults: ToolResult[],
-  frame: CandidateVisibleFrameMapping
+  frame: CandidateVisibleFrameMapping,
+  expectedModelBounds?: number[],
+  alignment?: NonNullable<RedlineVisionProgressState["last_view_alignment"]>
 ): boolean {
+  const frameResultIndex = candidateVisibleExactFrameResultIndex(toolResults, frame);
+  if (frameResultIndex < 0) return false;
   for (let index = toolResults.length - 1; index >= 0; index--) {
+    if (index <= frameResultIndex) break;
     const result = toolResults[index];
     if (
       !result ||
+      !candidateVisibleBroadInventoryActionMatches(result.action_id, frame, alignment) ||
       result.status !== "done" ||
       (result.path ?? "").trim().toLowerCase() !== "/revit/export-visible-elements" ||
       !result.result_json ||
@@ -17819,9 +18938,634 @@ function candidateVisibleInventoryForFrame(
     const inventoryFrame = candidateVisibleFrameMappingFromResultRoot(
       result.result_json as Record<string, unknown>
     );
-    if (inventoryFrame && candidateVisibleFrameMappingsEquivalent(frame, inventoryFrame)) return true;
+    const root = result.result_json as Record<string, unknown>;
+    if (
+      root.ok !== false &&
+      root.truncated !== true &&
+      candidateVisibleInventoryMatchesExpectedModelBounds(root, expectedModelBounds) &&
+      inventoryFrame &&
+      candidateVisibleFrameMappingsEquivalent(frame, inventoryFrame)
+    ) {
+      return true;
+    }
   }
   return false;
+}
+
+type CandidateVisibleDurableLandmarkFailureReason =
+  | "exact_alignment_required"
+  | "insufficient_controls"
+  | "crop_residual_exceeded"
+  | "insufficient_control_span"
+  | "native_inventory_missing"
+  | "insufficient_native_entries"
+  | "no_candidate_for_control"
+  | "ambiguous_candidate_for_control"
+  | "duplicate_native_candidate"
+  | "landmark_match_count_mismatch"
+  | "insufficient_native_separation";
+
+type CandidateVisibleDurableLandmarkRegistrationAssessment = {
+  receipt: NonNullable<
+    CandidateVisibleMepReconstructionInput["verified_landmark_scope"]
+  > | null;
+  failure_reason: CandidateVisibleDurableLandmarkFailureReason | null;
+  details: Record<string, unknown>;
+};
+
+function candidateVisibleDurableLandmarkRegistrationAssessment(args: {
+  toolResults: ToolResult[];
+  frame: CandidateVisibleFrameMapping;
+  alignment: NonNullable<RedlineVisionProgressState["last_view_alignment"]>;
+  expectedModelBounds: number[];
+  sourcePdfSha256: string;
+  registeredRenderSha256: string;
+}): CandidateVisibleDurableLandmarkRegistrationAssessment {
+  const failed = (
+    failure_reason: CandidateVisibleDurableLandmarkFailureReason,
+    details: Record<string, unknown> = {}
+  ): CandidateVisibleDurableLandmarkRegistrationAssessment => ({
+    receipt: null,
+    failure_reason,
+    details
+  });
+  if (
+    args.alignment.frame_id !== args.frame.frame_id ||
+    args.alignment.view_id !== args.frame.view_id ||
+    !args.alignment.matched ||
+    args.alignment.confidence < 0.35 ||
+    !args.alignment.crop
+  ) {
+    return failed("exact_alignment_required", {
+      alignment_frame_id: args.alignment.frame_id,
+      expected_frame_id: args.frame.frame_id,
+      alignment_view_id: args.alignment.view_id,
+      expected_view_id: args.frame.view_id,
+      matched: args.alignment.matched,
+      confidence: args.alignment.confidence,
+      has_crop: args.alignment.crop !== null
+    });
+  }
+  const evaluateControl = (control: ViewAlignmentRegistrationControl) => {
+      const predictedViewX =
+        args.alignment.crop!.min_u +
+        control.source_normalized_x *
+          (args.alignment.crop!.max_u - args.alignment.crop!.min_u);
+      const predictedViewY =
+        args.alignment.crop!.min_v +
+        control.source_normalized_y *
+          (args.alignment.crop!.max_v - args.alignment.crop!.min_v);
+      return {
+        kind: control.kind,
+        source_normalized_point: {
+          x: control.source_normalized_x,
+          y: control.source_normalized_y
+        },
+        view_normalized_point: {
+          x: control.view_normalized_x,
+          y: control.view_normalized_y
+        },
+        score: control.score,
+        crop_residual: Math.hypot(
+          control.view_normalized_x - predictedViewX,
+          control.view_normalized_y - predictedViewY
+        ),
+        label: control.label
+      };
+    };
+  const controls = candidateVisibleRegistrationControls(args.alignment)
+    .map(evaluateControl);
+  const allStrongControls = args.alignment.registration_controls
+    .filter((control) => control.score >= 0.55)
+    .map(evaluateControl);
+  if (
+    controls.length < 2 ||
+    controls.every((control) => control.kind === "persistent_interior")
+  ) {
+    return failed("insufficient_controls", {
+      control_count: controls.length,
+      control_kinds: controls.map((control) => control.kind),
+      minimum_control_count: 2,
+      all_controls_persistent_interior:
+        controls.length > 0 &&
+        controls.every((control) => control.kind === "persistent_interior")
+    });
+  }
+  const controlsOverResidualLimit = controls
+    .map((control, control_index) => ({
+      control_index,
+      kind: control.kind,
+      label: control.label ?? null,
+      crop_residual: control.crop_residual
+    }))
+    .filter((control) => control.crop_residual > 0.08);
+  if (controlsOverResidualLimit.length > 0) {
+    return failed("crop_residual_exceeded", {
+      maximum_allowed_crop_residual: 0.08,
+      rejected_controls: controlsOverResidualLimit,
+      evaluated_controls: allStrongControls.map((control) => ({
+        kind: control.kind,
+        label: control.label ?? null,
+        score: control.score,
+        source_normalized_point: control.source_normalized_point,
+        view_normalized_point: control.view_normalized_point,
+        crop_residual: control.crop_residual
+      })),
+      proposed_crop: args.alignment.crop
+    });
+  }
+  let sourceControlSpan = 0;
+  let viewControlSpan = 0;
+  for (let left = 0; left < controls.length; left += 1) {
+    for (let right = left + 1; right < controls.length; right += 1) {
+      sourceControlSpan = Math.max(
+        sourceControlSpan,
+        Math.hypot(
+          controls[left]!.source_normalized_point.x -
+            controls[right]!.source_normalized_point.x,
+          controls[left]!.source_normalized_point.y -
+            controls[right]!.source_normalized_point.y
+        )
+      );
+      viewControlSpan = Math.max(
+        viewControlSpan,
+        Math.hypot(
+          controls[left]!.view_normalized_point.x -
+            controls[right]!.view_normalized_point.x,
+          controls[left]!.view_normalized_point.y -
+            controls[right]!.view_normalized_point.y
+        )
+      );
+    }
+  }
+  if (sourceControlSpan < 0.2 || viewControlSpan < 0.1) {
+    return failed("insufficient_control_span", {
+      source_control_span: sourceControlSpan,
+      minimum_source_control_span: 0.2,
+      view_control_span: viewControlSpan,
+      minimum_view_control_span: 0.1
+    });
+  }
+
+  const stableCategories = new Set([
+    "ost_walls",
+    "ost_stairs",
+    "ost_stairsruns",
+    "ost_stairslandings",
+    "ost_shaftopening",
+    "ost_columns",
+    "ost_structuralcolumns",
+    "ost_grids"
+  ]);
+  let inventoryRoot: Record<string, unknown> | null = null;
+  const frameResultIndex = candidateVisibleExactFrameResultIndex(
+    args.toolResults,
+    args.frame
+  );
+  for (let index = args.toolResults.length - 1; index > frameResultIndex; index -= 1) {
+    const result = args.toolResults[index];
+    if (
+      !result ||
+      !candidateVisibleBroadInventoryActionMatches(result.action_id, args.frame, args.alignment) ||
+      result.status !== "done" ||
+      (result.path ?? "").trim().toLowerCase() !== "/revit/export-visible-elements" ||
+      !result.result_json ||
+      typeof result.result_json !== "object"
+    ) {
+      continue;
+    }
+    const root = result.result_json as Record<string, unknown>;
+    const inventoryFrame = candidateVisibleFrameMappingFromResultRoot(root);
+    if (
+      root.ok === false ||
+      root.truncated === true ||
+      !candidateVisibleInventoryMatchesExpectedModelBounds(
+        root,
+        args.expectedModelBounds
+      ) ||
+      !inventoryFrame ||
+      !candidateVisibleFrameMappingsEquivalent(args.frame, inventoryFrame)
+    ) {
+      continue;
+    }
+    inventoryRoot = root;
+    break;
+  }
+  if (!inventoryRoot) {
+    return failed("native_inventory_missing", {
+      expected_action_scope: candidateVisibleBroadInventoryActionId(
+        args.frame,
+        args.alignment
+      ),
+      current_frame_attempt_count: candidateVisibleBroadInventoryAttemptCount(
+        args.toolResults,
+        args.frame,
+        args.alignment
+      ),
+      expected_model_bounds: args.expectedModelBounds
+    });
+  }
+  const inventoryEntries = [
+    ...(Array.isArray(inventoryRoot.items) ? inventoryRoot.items : []),
+    ...(Array.isArray(inventoryRoot.itemsSampled) ? inventoryRoot.itemsSampled : []),
+    ...(Array.isArray(inventoryRoot.elements) ? inventoryRoot.elements : []),
+    ...(Array.isArray(inventoryRoot.visibleElements)
+      ? inventoryRoot.visibleElements
+      : [])
+  ]
+    .filter((entry): entry is Record<string, unknown> =>
+      !!entry && typeof entry === "object" && !Array.isArray(entry)
+    )
+    .map((entry) => {
+      const category = String(
+        entry.builtInCategory ??
+          entry.categoryToken ??
+          entry.built_in_category ??
+          ""
+      ).trim();
+      const scopedId = String(
+        entry.sourceScopedId ??
+          entry.source_scoped_id ??
+          entry.uniqueId ??
+          entry.elementId ??
+          ""
+      ).trim();
+      const bbox =
+        entry.bbox && typeof entry.bbox === "object" && !Array.isArray(entry.bbox)
+          ? entry.bbox as Record<string, unknown>
+          : null;
+      const bboxModel =
+        bbox?.model && typeof bbox.model === "object" && !Array.isArray(bbox.model)
+          ? bbox.model as Record<string, unknown>
+          : null;
+      const center =
+        bboxModel?.center && typeof bboxModel.center === "object" && !Array.isArray(bboxModel.center)
+          ? bboxModel.center as Record<string, unknown>
+          : bbox?.center && typeof bbox.center === "object" && !Array.isArray(bbox.center)
+            ? bbox.center as Record<string, unknown>
+          : null;
+      const x = Number(center?.x);
+      const y = Number(center?.y);
+      const bboxImage =
+        bbox?.image && typeof bbox.image === "object" && !Array.isArray(bbox.image)
+          ? bbox.image as Record<string, unknown>
+          : null;
+      const geometry =
+        entry.geometry && typeof entry.geometry === "object" && !Array.isArray(entry.geometry)
+          ? entry.geometry as Record<string, unknown>
+          : null;
+      const projectedPoints = [
+        geometry?.point,
+        geometry?.start,
+        geometry?.end,
+        geometry?.midpoint,
+        entry.anchor
+      ].flatMap((value) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+        const point = value as Record<string, unknown>;
+        const normalizedX = Number(
+          point.normalizedX ??
+            point.normalized_x ??
+            (point.image && typeof point.image === "object" && !Array.isArray(point.image)
+              ? (point.image as Record<string, unknown>).normalizedX
+              : undefined)
+        );
+        const normalizedY = Number(
+          point.normalizedY ??
+            point.normalized_y ??
+            (point.image && typeof point.image === "object" && !Array.isArray(point.image)
+              ? (point.image as Record<string, unknown>).normalizedY
+              : undefined)
+        );
+        return Number.isFinite(normalizedX) && Number.isFinite(normalizedY)
+          ? [{ x: normalizedX, y: normalizedY }]
+          : [];
+      });
+      const bboxRect = bboxImage
+        ? {
+            min_x: Number(bboxImage.minNormalizedX ?? bboxImage.min_normalized_x),
+            min_y: Number(bboxImage.minNormalizedY ?? bboxImage.min_normalized_y),
+            max_x: Number(bboxImage.maxNormalizedX ?? bboxImage.max_normalized_x),
+            max_y: Number(bboxImage.maxNormalizedY ?? bboxImage.max_normalized_y)
+          }
+        : null;
+      return {
+        source_scoped_id: scopedId,
+        built_in_category: category,
+        model_point: { x, y },
+        projected_points: projectedPoints,
+        bbox_rect:
+          bboxRect &&
+          [
+            bboxRect.min_x,
+            bboxRect.min_y,
+            bboxRect.max_x,
+            bboxRect.max_y
+          ].every(Number.isFinite)
+            ? bboxRect
+            : null
+      };
+    })
+    .filter((entry) =>
+      !!entry.source_scoped_id &&
+      stableCategories.has(entry.built_in_category.toLowerCase()) &&
+      Number.isFinite(entry.model_point.x) &&
+      Number.isFinite(entry.model_point.y) &&
+      (entry.projected_points.length > 0 || entry.bbox_rect !== null)
+    )
+    .filter((entry, index, all) =>
+      all.findIndex((candidate) =>
+        candidate.source_scoped_id === entry.source_scoped_id
+      ) === index
+    );
+  if (inventoryEntries.length < 2) {
+    return failed("insufficient_native_entries", {
+      usable_native_entry_count: inventoryEntries.length,
+      minimum_native_entry_count: 2,
+      requested_control_kinds: controls.map((control) => control.kind)
+    });
+  }
+  const categorySupportForControl = (
+    control: (typeof controls)[number]
+  ): Set<string> => {
+    switch (control.kind) {
+      case "stair":
+        return new Set(["ost_stairs", "ost_stairsruns", "ost_stairslandings"]);
+      case "shaft":
+        return new Set(["ost_shaftopening", "ost_walls"]);
+      case "grid":
+        return new Set(["ost_grids"]);
+      case "column":
+        return new Set(["ost_columns", "ost_structuralcolumns"]);
+      case "elevator_core":
+        return /\bstair\b/i.test(control.label ?? "")
+          ? new Set([
+              "ost_shaftopening",
+              "ost_stairs",
+              "ost_stairsruns",
+              "ost_stairslandings"
+            ])
+          : new Set(["ost_shaftopening"]);
+      default:
+        return new Set(["ost_walls"]);
+    }
+  };
+  const closestPointOnSegment = (
+    point: ExistingConditionsPlanPoint,
+    start: ExistingConditionsPlanPoint,
+    end: ExistingConditionsPlanPoint
+  ): ExistingConditionsPlanPoint => {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const denominator = dx * dx + dy * dy;
+    if (denominator <= 1e-12) return start;
+    const t = Math.max(
+      0,
+      Math.min(
+        1,
+        ((point.x - start.x) * dx + (point.y - start.y) * dy) /
+          denominator
+      )
+    );
+    return { x: start.x + t * dx, y: start.y + t * dy };
+  };
+  const projectedCandidate = (
+    control: (typeof controls)[number],
+    entry: (typeof inventoryEntries)[number]
+  ): {
+    point: ExistingConditionsPlanPoint;
+    distance: number;
+    basis: "projected_geometry" | "projected_bbox";
+  } | null => {
+    const target = control.view_normalized_point;
+    const candidates: Array<{
+      point: ExistingConditionsPlanPoint;
+      distance: number;
+      basis: "projected_geometry" | "projected_bbox";
+    }> = [];
+    for (const point of entry.projected_points) {
+      candidates.push({
+        point,
+        distance: Math.hypot(target.x - point.x, target.y - point.y),
+        basis: "projected_geometry"
+      });
+    }
+    const geometry = entry.projected_points;
+    if (geometry.length >= 2) {
+      const point = closestPointOnSegment(target, geometry[0]!, geometry[1]!);
+      candidates.push({
+        point,
+        distance: Math.hypot(target.x - point.x, target.y - point.y),
+        basis: "projected_geometry"
+      });
+    }
+    if (entry.bbox_rect) {
+      const point = {
+        x: Math.max(entry.bbox_rect.min_x, Math.min(entry.bbox_rect.max_x, target.x)),
+        y: Math.max(entry.bbox_rect.min_y, Math.min(entry.bbox_rect.max_y, target.y))
+      };
+      candidates.push({
+        point,
+        distance: Math.hypot(target.x - point.x, target.y - point.y),
+        basis: "projected_bbox"
+      });
+    }
+    candidates.sort((left, right) => left.distance - right.distance);
+    return candidates[0] ?? null;
+  };
+  const landmarkMatches: NonNullable<
+    CandidateVisibleMepReconstructionInput["verified_landmark_scope"]
+  >["landmark_matches"] = [];
+  const usedNativeIds = new Set<string>();
+  for (let controlIndex = 0; controlIndex < controls.length; controlIndex += 1) {
+    const control = controls[controlIndex]!;
+    const supported = categorySupportForControl(control);
+    const allCandidates = inventoryEntries
+      .filter((entry) =>
+        supported.has(entry.built_in_category.toLowerCase())
+      )
+      .flatMap((entry) => {
+        const projected = projectedCandidate(control, entry);
+        return projected ? [{ entry, projected }] : [];
+      })
+      .sort((left, right) =>
+        left.projected.distance - right.projected.distance
+      );
+    const candidates = allCandidates.filter(
+      ({ projected }) => projected.distance <= 0.06
+    );
+    if (candidates.length === 0) {
+      const closest = allCandidates[0];
+      return failed("no_candidate_for_control", {
+        control_index: controlIndex,
+        control_kind: control.kind,
+        control_label: control.label ?? null,
+        control_view_normalized_point: control.view_normalized_point,
+        supported_categories: [...supported],
+        maximum_projected_distance_normalized: 0.06,
+        closest_candidate: closest
+          ? {
+              native_source_scoped_id: closest.entry.source_scoped_id,
+              native_built_in_category: closest.entry.built_in_category,
+              projected_distance_normalized: closest.projected.distance,
+              geometry_basis: closest.projected.basis
+            }
+          : null
+      });
+    }
+    const best = candidates[0]!;
+    const second = candidates[1];
+    if (
+      second &&
+      second.entry.source_scoped_id !== best.entry.source_scoped_id &&
+      second.projected.distance <= best.projected.distance + 0.008
+    ) {
+      return failed("ambiguous_candidate_for_control", {
+        control_index: controlIndex,
+        control_kind: control.kind,
+        control_label: control.label ?? null,
+        ambiguity_margin_normalized: 0.008,
+        best_candidate: {
+          native_source_scoped_id: best.entry.source_scoped_id,
+          native_built_in_category: best.entry.built_in_category,
+          projected_distance_normalized: best.projected.distance
+        },
+        second_candidate: {
+          native_source_scoped_id: second.entry.source_scoped_id,
+          native_built_in_category: second.entry.built_in_category,
+          projected_distance_normalized: second.projected.distance
+        }
+      });
+    }
+    if (usedNativeIds.has(best.entry.source_scoped_id)) {
+      return failed("duplicate_native_candidate", {
+        control_index: controlIndex,
+        control_kind: control.kind,
+        control_label: control.label ?? null,
+        duplicate_native_source_scoped_id: best.entry.source_scoped_id,
+        projected_distance_normalized: best.projected.distance
+      });
+    }
+    usedNativeIds.add(best.entry.source_scoped_id);
+    landmarkMatches.push({
+      control_index: controlIndex,
+      native_source_scoped_id: best.entry.source_scoped_id,
+      native_built_in_category: best.entry.built_in_category,
+      native_model_point: best.entry.model_point,
+      native_projected_view_normalized_point: best.projected.point,
+      projected_distance_normalized: best.projected.distance,
+      geometry_basis: best.projected.basis
+    });
+  }
+  if (landmarkMatches.length !== controls.length) {
+    return failed("landmark_match_count_mismatch", {
+      control_count: controls.length,
+      landmark_match_count: landmarkMatches.length
+    });
+  }
+  const boundsDiagonal = Math.hypot(
+    args.expectedModelBounds[3]! - args.expectedModelBounds[0]!,
+    args.expectedModelBounds[4]! - args.expectedModelBounds[1]!
+  );
+  let nativeSeparation = 0;
+  for (let left = 0; left < landmarkMatches.length; left += 1) {
+    for (let right = left + 1; right < landmarkMatches.length; right += 1) {
+      nativeSeparation = Math.max(
+        nativeSeparation,
+        Math.hypot(
+          landmarkMatches[left]!.native_model_point.x -
+            landmarkMatches[right]!.native_model_point.x,
+          landmarkMatches[left]!.native_model_point.y -
+            landmarkMatches[right]!.native_model_point.y
+        )
+      );
+    }
+  }
+  if (!Number.isFinite(boundsDiagonal) || nativeSeparation < boundsDiagonal * 0.05) {
+    return failed("insufficient_native_separation", {
+      native_separation: nativeSeparation,
+      bounds_diagonal: boundsDiagonal,
+      minimum_native_separation:
+        Number.isFinite(boundsDiagonal) ? boundsDiagonal * 0.05 : null
+    });
+  }
+  const maximumCropResidual = Math.max(
+    ...controls.map((control) => control.crop_residual)
+  );
+  const receiptContent = {
+    frame_id: args.frame.frame_id,
+    view_id: args.frame.view_id,
+    source_pdf_sha256: args.sourcePdfSha256,
+    registered_render_sha256: args.registeredRenderSha256,
+    alignment_receipt_sha256: createHash("sha256")
+      .update(JSON.stringify({
+        frame_id: args.frame.frame_id,
+        view_id: args.frame.view_id,
+        matched: args.alignment.matched,
+        confidence: args.alignment.confidence,
+        crop: args.alignment.crop,
+        provider: args.alignment.provider,
+        model: args.alignment.model,
+        attempted_models: args.alignment.attempted_models,
+        fallback_reason: args.alignment.fallback_reason,
+        registration_controls: controls
+      }))
+      .digest("hex"),
+    inventory_receipt_sha256: createHash("sha256")
+      .update(canonicalJsonString(inventoryRoot))
+      .digest("hex"),
+    controls,
+    landmark_matches: landmarkMatches
+  };
+  return {
+    receipt: {
+      source_scoped_id:
+        `aligned-crop-landmarks:${createHash("sha256")
+          .update(JSON.stringify(receiptContent))
+          .digest("hex")}`,
+      basis: "durable_landmarks_in_aligned_crop",
+      maximum_crop_residual: maximumCropResidual,
+      source_control_span: sourceControlSpan,
+      view_control_span: viewControlSpan,
+      source_pdf_sha256: receiptContent.source_pdf_sha256,
+      registered_render_sha256: receiptContent.registered_render_sha256,
+      alignment_receipt_sha256: receiptContent.alignment_receipt_sha256,
+      inventory_receipt_sha256: receiptContent.inventory_receipt_sha256,
+      registration_controls: controls,
+      landmark_matches: landmarkMatches
+    },
+    failure_reason: null,
+    details: {}
+  };
+}
+
+function candidateVisibleDurableLandmarkRegistrationReceipt(args: Parameters<
+  typeof candidateVisibleDurableLandmarkRegistrationAssessment
+>[0]): NonNullable<
+  CandidateVisibleMepReconstructionInput["verified_landmark_scope"]
+> | null {
+  return candidateVisibleDurableLandmarkRegistrationAssessment(args).receipt;
+}
+
+export function __testOnlyCandidateVisibleDurableLandmarkRegistrationAssessment(
+  args: Parameters<typeof candidateVisibleDurableLandmarkRegistrationAssessment>[0]
+): CandidateVisibleDurableLandmarkRegistrationAssessment {
+  return candidateVisibleDurableLandmarkRegistrationAssessment(args);
+}
+
+function candidateVisibleBroadInventoryAttemptCount(
+  toolResults: ToolResult[],
+  frame: CandidateVisibleFrameMapping,
+  alignment?: NonNullable<RedlineVisionProgressState["last_view_alignment"]>
+): number {
+  const frameResultIndex = candidateVisibleExactFrameResultIndex(toolResults, frame);
+  if (frameResultIndex < 0) return 0;
+  return toolResults
+    .slice(frameResultIndex + 1)
+    .filter((result) =>
+      candidateVisibleBroadInventoryActionMatches(result?.action_id, frame, alignment) &&
+      (result.path ?? "").trim().toLowerCase() === "/revit/export-visible-elements"
+    ).length;
 }
 
 function buildCandidateVisibleDeterministicPreparationResponse(
@@ -17869,7 +19613,11 @@ function buildCandidateVisibleDeterministicPreparationResponse(
   }
   if (!placedView) return null;
 
-  const frame = candidateVisibleFrameForView(toolResults, placedView.view_id);
+  const frame = candidateVisibleFrameForView(
+    toolResults,
+    placedView.view_id,
+    req.session_id
+  );
   if (!frame && countToolPath(toolResults, "/revit/export-view-frame") < 2) {
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
@@ -17890,47 +19638,199 @@ function buildCandidateVisibleDeterministicPreparationResponse(
   }
   if (!frame) return null;
 
-  if (!candidateVisibleInventoryForFrame(toolResults, frame) && countToolPath(toolResults, "/revit/export-visible-elements") < 2) {
+  const alignment = getPersistedRedlineViewAlignment(req.session_id);
+  if (
+    !alignment ||
+    !alignment.matched ||
+    alignment.confidence < 0.35 ||
+    !alignment.crop ||
+    alignment.frame_id !== frame.frame_id ||
+    alignment.view_id !== frame.view_id
+  ) {
+    if (
+      alignment &&
+      (
+        alignment.provider === "openai" ||
+        alignment.attempted_models.length > 0 ||
+        alignment.fallback_reason !== null
+      )
+    ) {
+      return {
+        version: OPERATOR_BACKEND_CONTRACT_VERSION,
+        assistant_message:
+          "The bounded structured image-alignment lane finished without an " +
+          "exact matched crop for the selected Revit frame. " +
+          `Attempted models: ${
+            alignment.attempted_models.length > 0
+              ? alignment.attempted_models.join(", ")
+              : "none"
+          }. ` +
+          `Reason: ${
+            alignment.fallback_reason ??
+            "the provider did not return a usable exact-frame alignment"
+          }. I stopped before native inventory or generic rediscovery.`,
+        actions: []
+      };
+    }
+    // The visual registration owns the source crop. Inventorying the entire
+    // floor before that crop is known creates oversized payloads and overweights
+    // changed interiors, room data, and unrelated MEP systems.
+    return null;
+  }
+
+  const requestedRoomNumber = candidateVisibleRequestedRoomNumber(req);
+  let verifiedRoomScope: CandidateVisibleMepReconstructionInput["verified_room_scope"] | null = null;
+  try {
+    verifiedRoomScope = requestedRoomNumber
+      ? candidateVisibleVerifiedRoomScopeFromToolResults(toolResults, requestedRoomNumber)
+      : null;
+  } catch {
+    verifiedRoomScope = null;
+  }
+  const modelBounds = verifiedRoomScope
+    ? candidateVisibleExpectedRoomModelBounds(verifiedRoomScope)
+    : candidateVisibleExpectedAlignedCropModelBounds(frame, alignment);
+  const hasInventory = candidateVisibleInventoryForFrame(
+    toolResults,
+    frame,
+    modelBounds,
+    alignment
+  );
+  if (!hasInventory) {
+    const broadInventoryAttempts =
+      candidateVisibleBroadInventoryAttemptCount(toolResults, frame, alignment);
+    const inventoryLimits = [500, 750, 1500];
+    if (broadInventoryAttempts < inventoryLimits.length) {
+      const inventoryLimit = inventoryLimits[broadInventoryAttempts]!;
+      return {
+        version: OPERATOR_BACKEND_CONTRACT_VERSION,
+        assistant_message:
+          `The source sheet is anchored to model view ${placedView.view_id}. ` +
+          "I’ll inventory durable architectural registration landmarks inside the aligned source extent before invoking the drafting model.",
+        actions: [{
+          action_id: `${candidateVisibleBroadInventoryActionId(frame, alignment)}:${inventoryLimit}`,
+          method: "POST",
+          path: "/revit/export-visible-elements",
+          body: {
+            viewId: placedView.view_id,
+            imageSize: 2200,
+            includeMapping: true,
+            includeLinked: true,
+            categories: candidateVisibleRegistrationCategories(alignment),
+            limit: inventoryLimit,
+            modelBounds
+          }
+        }]
+      };
+    }
+    if (alignment.provider === "gemini" && !requestedRoomNumber) {
+      // A structured semantic match is provisional until native Revit
+      // landmarks support it. Exhausted/truncated Gemini-scoped inventories
+      // are allowed to reach the geometry verifier, which can replace the
+      // alignment once. The OpenAI result remains subject to this hard stop.
+      return null;
+    }
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
       assistant_message:
-        `The source sheet is anchored to model view ${placedView.view_id}. ` +
-        "I’ll inventory its visible architectural and MEP context before invoking the drafting model.",
+        `${inventoryLimits.length} current-frame visible-inventory attempts failed for model view ${placedView.view_id}. ` +
+        "I stopped before source-local compilation instead of reusing stale or unrelated inventory.",
+      actions: []
+    };
+  }
+  const visibleRoomLabel = verifiedRoomScope
+    ? candidateVisibleRoomLabelFromToolResults({
+        toolResults,
+        room_scope: verifiedRoomScope,
+        frame
+      })
+    : null;
+  const focusedRoomTagInventoryAttemptCount =
+    verifiedRoomScope
+      ? candidateVisibleFocusedRoomTagInventoryAttemptCount({
+          toolResults,
+          room_scope: verifiedRoomScope,
+          frame
+        })
+      : 0;
+  if (
+    hasInventory &&
+    verifiedRoomScope &&
+    !visibleRoomLabel &&
+    focusedRoomTagInventoryAttemptCount < 1
+  ) {
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message:
+        `The broad inventory is complete, but its bounded sample did not prove the exact room ${verifiedRoomScope.room_number} label anchor. ` +
+        "I’ll run one focused room-tag inventory before source-local compilation.",
       actions: [{
-        action_id: randomUUID(),
+        action_id: candidateVisibleFocusedRoomTagActionId({
+          room_scope: verifiedRoomScope,
+          frame
+        }),
         method: "POST",
         path: "/revit/export-visible-elements",
         body: {
           viewId: placedView.view_id,
           imageSize: 2200,
           includeMapping: true,
-          includeLinked: true,
-          categories: [
-            "OST_Walls",
-            "OST_Doors",
-            "OST_Windows",
-            "OST_Rooms",
-            "OST_MEPSpaces",
-            "OST_RoomTags",
-            "OST_PipeCurves",
-            "OST_PipeFitting",
-            "OST_PipeAccessory",
-            "OST_PlumbingFixtures",
-            "OST_PlumbingEquipment",
-            "OST_DuctCurves",
-            "OST_DuctFitting",
-            "OST_DuctTerminal",
-            "OST_ElectricalFixtures",
-            "OST_ElectricalEquipment",
-            "OST_LightingFixtures",
-            "OST_LightingDevices",
-            "OST_TextNotes",
-            "OST_GenericAnnotation"
-          ],
+          includeLinked: false,
+          categories: ["OST_RoomTags"],
+          modelBounds,
           limit: 750
         }
       }]
     };
+  }
+  if (
+    hasInventory &&
+    verifiedRoomScope &&
+    focusedRoomTagInventoryAttemptCount >= 1 &&
+    !visibleRoomLabel
+  ) {
+    // Room tags are optional evidence. Continue through the verified frame and
+    // visible stable geometry; the compiler still enforces alignment, native
+    // room containment, source-raster support, and bounded clipping.
+    return null;
+  }
+  if (hasInventory && !verifiedRoomScope && alignment.provider !== "gemini") {
+    try {
+      const assessment =
+        candidateVisibleDurableLandmarkRegistrationAssessment({
+          toolResults,
+          frame,
+          alignment,
+          expectedModelBounds: modelBounds,
+          sourcePdfSha256: sha256LocalFile(
+            resolveExistingFileUnderWorkspace(seed.file_path)
+          ),
+          registeredRenderSha256: sha256LocalFile(
+            resolveExistingFileUnderWorkspace(alignment.source_image_path)
+          )
+        });
+      if (!assessment.receipt && assessment.failure_reason) {
+        return {
+          version: OPERATOR_BACKEND_CONTRACT_VERSION,
+          assistant_message:
+            "The exact-frame native landmark inventory completed, but the " +
+            `current structured alignment failed ${assessment.failure_reason}. ` +
+            `Diagnostic: ${canonicalJsonString(assessment.details)} ` +
+            "I stopped before source-local compilation instead of restarting generic discovery.",
+          actions: []
+        };
+      }
+    } catch (error) {
+      return {
+        version: OPERATOR_BACKEND_CONTRACT_VERSION,
+        assistant_message:
+          "The exact-frame native landmark inventory completed, but its " +
+          `hash-bound validation receipt could not be evaluated: ${
+            error instanceof Error ? error.message : String(error)
+          }. I stopped before source-local compilation.`,
+        actions: []
+      };
+    }
   }
   return null;
 }
@@ -17940,6 +19840,12 @@ export function __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(
   toolResults: ToolResult[]
 ): ChatResponse | null {
   return buildCandidateVisibleDeterministicPreparationResponse(req, toolResults);
+}
+
+export function __testOnlyCandidateVisibleRoomLabelFromToolResults(
+  args: Parameters<typeof candidateVisibleRoomLabelFromToolResults>[0]
+) {
+  return candidateVisibleRoomLabelFromToolResults(args);
 }
 
 export function __testOnlyBuildCandidateVisibleRoomScopeResponse(
@@ -18983,6 +20889,11 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
         suppressedOrient: suppressedOrientCount,
         suppressedList: listSuppression.suppressed_count
       });
+      const terminalGuardAfterWorkbench =
+        buildCandidateVisibleTerminalGuardAfterWorkbench(currentReq, workbenchResults);
+      if (terminalGuardAfterWorkbench) {
+        return finishResponse(terminalGuardAfterWorkbench);
+      }
       const registeredMepHandoff = buildRegisteredMepWorkflowHandoffResponse(
         req.session_id,
         getAugmentedToolResults(currentReq, 120),

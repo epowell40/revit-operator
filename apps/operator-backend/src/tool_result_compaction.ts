@@ -264,6 +264,67 @@ function scoreVisibleElementForCompactionSample(value: unknown): number {
   );
 }
 
+const DURABLE_REGISTRATION_CATEGORIES = new Set([
+  "ost_walls",
+  "ost_stairs",
+  "ost_stairsruns",
+  "ost_stairslandings",
+  "ost_shaftopening",
+  "ost_columns",
+  "ost_structuralcolumns",
+  "ost_grids"
+]);
+
+function visibleElementCategoryToken(value: unknown): string {
+  const obj = asObject(value);
+  return obj
+    ? (pickString(obj.builtInCategory, obj.categoryToken, obj.category) ?? "").toLowerCase()
+    : "";
+}
+
+function visibleElementNormalizedPoint(value: unknown): { x: number; y: number } | null {
+  const obj = asObject(value);
+  if (!obj) return null;
+  const projected = [
+    asObject(asObject(obj.anchor)?.image),
+    asObject(asObject(asObject(obj.geometry)?.point)?.image),
+    asObject(asObject(asObject(obj.geometry)?.midpoint)?.image)
+  ];
+  for (const image of projected) {
+    const x = pickFirstNumber(image?.normalizedX, image?.normalized_x);
+    const y = pickFirstNumber(image?.normalizedY, image?.normalized_y);
+    if (x !== null && y !== null) return { x, y };
+  }
+  const bboxImage = asObject(asObject(obj.bbox)?.image);
+  const minX = pickFirstNumber(
+    bboxImage?.normalizedMinX,
+    bboxImage?.normalized_min_x,
+    bboxImage?.minNormalizedX,
+    bboxImage?.min_normalized_x
+  );
+  const minY = pickFirstNumber(
+    bboxImage?.normalizedMinY,
+    bboxImage?.normalized_min_y,
+    bboxImage?.minNormalizedY,
+    bboxImage?.min_normalized_y
+  );
+  const maxX = pickFirstNumber(
+    bboxImage?.normalizedMaxX,
+    bboxImage?.normalized_max_x,
+    bboxImage?.maxNormalizedX,
+    bboxImage?.max_normalized_x
+  );
+  const maxY = pickFirstNumber(
+    bboxImage?.normalizedMaxY,
+    bboxImage?.normalized_max_y,
+    bboxImage?.maxNormalizedY,
+    bboxImage?.max_normalized_y
+  );
+  return minX !== null && minY !== null && maxX !== null && maxY !== null
+    ? { x: (minX + maxX) / 2, y: (minY + maxY) / 2 }
+    : null;
+}
+
 function isProtectedVisibleElementTextAnchor(value: unknown): boolean {
   const obj = asObject(value);
   if (!obj) return false;
@@ -497,6 +558,33 @@ export function compactVisibleElementsResult(
     if (selected.size >= maxItems) break;
     selected.set(entry.index, entry);
   }
+  const actionableCount = rankedItems.filter((entry) => entry.score >= 40).length;
+  if (actionableCount < Math.ceil(maxItems / 2)) {
+    const durable = rankedItems.filter((entry) =>
+      DURABLE_REGISTRATION_CATEGORIES.has(visibleElementCategoryToken(entry.item))
+    );
+    const representedCategories = new Set<string>();
+    for (const entry of durable) {
+      if (selected.size >= maxItems) break;
+      const category = visibleElementCategoryToken(entry.item);
+      if (representedCategories.has(category)) continue;
+      representedCategories.add(category);
+      selected.set(entry.index, entry);
+    }
+    const representedTiles = new Set<string>();
+    for (const entry of durable) {
+      if (selected.size >= maxItems) break;
+      const point = visibleElementNormalizedPoint(entry.item);
+      if (!point) continue;
+      const category = visibleElementCategoryToken(entry.item);
+      const tileX = Math.max(0, Math.min(3, Math.floor(point.x * 4)));
+      const tileY = Math.max(0, Math.min(3, Math.floor(point.y * 4)));
+      const key = `${category}:${tileX}:${tileY}`;
+      if (representedTiles.has(key)) continue;
+      representedTiles.add(key);
+      selected.set(entry.index, entry);
+    }
+  }
   for (const entry of rankedItems) {
     if (selected.size >= maxItems) break;
     selected.set(entry.index, entry);
@@ -538,10 +626,14 @@ export function compactVisibleElementsResult(
   }
 
   const mapping = asObject(obj.mapping);
+  const modelBounds = asObject(obj.modelBoundsFt ?? obj.model_bounds_ft);
+  const modelBoundsMin = pickVector(modelBounds?.min);
+  const modelBoundsMax = pickVector(modelBounds?.max);
   const compacted: Record<string, unknown> = {
     _compacted: true,
     compaction: "visible-elements-inventory-summary",
     approx_json_chars: approxJsonChars(value),
+    ...(typeof obj.ok === "boolean" ? { ok: obj.ok } : {}),
     frameId: obj.frameId ?? null,
     viewId: obj.viewId ?? null,
     viewType: obj.viewType ?? null,
@@ -553,6 +645,12 @@ export function compactVisibleElementsResult(
     count: typeof obj.count === "number" ? obj.count : items.length,
     scanned: obj.scanned ?? null,
     truncated: obj.truncated ?? null,
+    ...(typeof obj.modelBoundsApplied === "boolean"
+      ? { modelBoundsApplied: obj.modelBoundsApplied }
+      : {}),
+    ...(modelBoundsMin && modelBoundsMax
+      ? { modelBoundsFt: { min: modelBoundsMin, max: modelBoundsMax } }
+      : {}),
     ...(mapping
       ? {
           mapping: {

@@ -141,7 +141,7 @@ namespace RevitBridge.Logic.Handlers
                 if (modelBounds != null)
                 {
                     collector = collector.WherePasses(new BoundingBoxIntersectsFilter(modelBounds));
-                    warnings.Add("Visible-element inventory restricted to the requested host-model bounding box.");
+                    warnings.Add("Visible-element inventory restricted to the requested host-model bounding box, with a bounded annotation-anchor recovery pass.");
                 }
 
                 var items = new List<object>();
@@ -163,6 +163,41 @@ namespace RevitBridge.Logic.Handlers
                     items.Add(BuildVisibleElementPayload(doc, view, e, null, p.includeGeometry, widthPx, heightPx, frame.TopLeft, frame.TopRight, frame.BottomLeft));
 
                     if (items.Count >= limit) break;
+                }
+
+                if (modelBounds != null && items.Count < limit)
+                {
+                    FilteredElementCollector anchorCollector;
+                    try
+                    {
+                        anchorCollector = new FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType();
+                    }
+                    catch
+                    {
+                        anchorCollector = new FilteredElementCollector(doc).WhereElementIsNotElementType().WherePasses(new ElementOwnerViewFilter(view.Id));
+                    }
+                    if (includeBics.Count > 0)
+                    {
+                        var bicIds = includeBics.Select(x => ElementIdCompat.Create((long)x)).ToList();
+                        anchorCollector = anchorCollector.WherePasses(new ElementMulticategoryFilter(bicIds));
+                    }
+
+                    foreach (var e in anchorCollector)
+                    {
+                        if (e == null || e is RevitLinkInstance) continue;
+                        var scopedId = DatasetExportUtil.CreateSourceScopedId(e, null);
+                        if (seenScopedIds.Contains(scopedId)) continue;
+                        if (excludeBics.Count > 0 && IsInCategories(e, excludeBics)) continue;
+                        if (includeRaw.Count > 0 && !MatchesCategoryFilter(e, includeRaw)) continue;
+                        if (excludeRaw.Count > 0 && MatchesCategoryFilter(e, excludeRaw)) continue;
+
+                        var anchor = ResolveAnchorPointInHostCoordinates(e, null, null);
+                        if (!PointInsideModelBounds(anchor, modelBounds)) continue;
+                        scanned++;
+                        if (!seenScopedIds.Add(scopedId)) continue;
+                        items.Add(BuildVisibleElementPayload(doc, view, e, null, p.includeGeometry, widthPx, heightPx, frame.TopLeft, frame.TopRight, frame.BottomLeft));
+                        if (items.Count >= limit) break;
+                    }
                 }
 
                 if (p.includeLinked && items.Count < limit)
@@ -460,17 +495,24 @@ namespace RevitBridge.Logic.Handlers
             return new Outline(min, max);
         }
 
-        private static bool LinkedElementIntersectsModelBounds(Element element, RevitLinkInstance linkInstance, Outline modelBounds)
+        private static bool PointInsideModelBounds(XYZ? point, Outline modelBounds)
+        {
+            return point != null
+                && point.X >= modelBounds.MinimumPoint.X && point.X <= modelBounds.MaximumPoint.X
+                && point.Y >= modelBounds.MinimumPoint.Y && point.Y <= modelBounds.MaximumPoint.Y
+                && point.Z >= modelBounds.MinimumPoint.Z && point.Z <= modelBounds.MaximumPoint.Z;
+        }
+
+        private static bool LinkedElementIntersectsModelBounds(
+            Element element,
+            RevitLinkInstance linkInstance,
+            Outline modelBounds)
         {
             var bbox = DatasetExportUtil.TryGetBoundingBoxInHostCoordinates(element, null, linkInstance);
             if (bbox == null)
-            {
-                var anchor = ResolveAnchorPointInHostCoordinates(element, linkInstance, null);
-                return anchor != null
-                    && anchor.X >= modelBounds.MinimumPoint.X && anchor.X <= modelBounds.MaximumPoint.X
-                    && anchor.Y >= modelBounds.MinimumPoint.Y && anchor.Y <= modelBounds.MaximumPoint.Y
-                    && anchor.Z >= modelBounds.MinimumPoint.Z && anchor.Z <= modelBounds.MaximumPoint.Z;
-            }
+                return PointInsideModelBounds(
+                    ResolveAnchorPointInHostCoordinates(element, linkInstance, null),
+                    modelBounds);
 
             var corners = GetBoundingBoxWorldCorners(bbox).ToList();
             if (corners.Count == 0) return false;

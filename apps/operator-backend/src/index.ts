@@ -20,7 +20,7 @@ import {
 import { maybeHandleMacroSkill } from "./skills/macro_skill_commands.js";
 import { ensureDefaultMacroSkills } from "./skills/default_macro_skills.js";
 import { writeIssueBundle } from "./telemetry/issue_bundles.js";
-import { warmCodexAppServer } from "./brains/codex_brain.js";
+import { cancelCodexBrainTurn, warmCodexAppServer } from "./brains/codex_brain.js";
 import { persistence } from "./persistence/persistence_manager.js";
 import { appendFeedbackAndMaybePromote } from "./feedback/feedback_store.js";
 import { startFeedbackDevAutofix } from "./feedback/dev_autofix.js";
@@ -2291,6 +2291,9 @@ const server = http.createServer(async (req, res) => {
         return writeJson(res, 400, { error: "Invalid stop_reason" });
       }
       try {
+        if (stop_reason === "USER_CANCELLED") {
+          cancelCodexBrainTurn(session_id, message_id);
+        }
         setStepStopReason(session_id, message_id, stop_reason as any);
         appendEvent(session_id, "assistant", "loop.stop", { message_id, stop_reason });
       } catch {

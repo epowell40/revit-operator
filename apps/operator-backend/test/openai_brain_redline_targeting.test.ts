@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -38,7 +39,12 @@ import {
 } from "../src/brains/openai_brain.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ActionCall, type ChatRequest, type ToolResult } from "../src/contracts.js";
 import { compactIncomingToolResult } from "../src/tool_result_compaction.js";
-import { __testOnlyExtractViewAlignmentResponseText } from "../src/redline/view_alignment.js";
+import {
+  alignRedlineToView,
+  __testOnlyBuildViewAlignmentPrompt,
+  __testOnlyExtractViewAlignmentResponseText
+} from "../src/redline/view_alignment.js";
+import { ensureWorkspaceLayout } from "../src/workspace.js";
 
 const RED_MARK_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAGQAAAAyCAIAAAAlV+npAAAAjklEQVR4nO3QgQmAQAwEwfRfo71oCf6C+CgzpIDLzsmy2T3gS8QKxArECsQKxArECsQKxArECsQKxArECsQKxArECsQKxArECm5iHTPr99bmbcQKxArECsQKxArECsQKxArECsQKxArECsQKxAr+/+GDxArECsQKxArECsQKxArECsQKxArECsQKxArECi60AYGwUqdYywAAAABJRU5ErkJggg==";
@@ -386,6 +392,482 @@ test("redline alignment crop projection corrects drifting view mark", () => {
   assert.equal(marks[0]?.normalized_x, 0.461995);
   assert.ok(Math.abs((marks[0]?.normalized_y ?? 0) - 0.77312) < 0.00001);
   assert.match(marks[0]?.label ?? "", /projected through matched view crop/);
+});
+
+test("view alignment treats room data and markup as optional and prioritizes durable common landmarks", () => {
+  const prompt = __testOnlyBuildViewAlignmentPrompt(
+    "Draft the visible existing plumbing from this old black-and-white record plan."
+  );
+
+  assert.match(prompt, /black-and-white/i);
+  assert.match(prompt, /room tags, room names, or space names/i);
+  assert.match(prompt, /exterior envelope and corners; stairs and elevator cores; shafts; grids and columns/i);
+  assert.match(prompt, /clean record drawing can be a valid match with marks=\[\]/i);
+  assert.match(prompt, /do not classify colored lines, symbols, or fixtures as markups/i);
+  assert.match(prompt, /interior partitions that changed/i);
+  assert.match(prompt, /registration_controls/i);
+  assert.match(prompt, /at least two spatially separated controls/i);
+});
+
+test("view alignment tries Gemini structured image output before OpenAI fallback", { concurrency: false }, async () => {
+  const workspace = ensureWorkspaceLayout();
+  const sourcePath = path.join(workspace.artifacts, "test-gemini-alignment-source.png");
+  const viewPath = path.join(workspace.artifacts, "test-gemini-alignment-view.png");
+  const png = Buffer.from(RED_MARK_PNG_BASE64, "base64");
+  fs.writeFileSync(sourcePath, png);
+  fs.writeFileSync(viewPath, png);
+  const receivedBodies: Array<Record<string, any>> = [];
+  const server = http.createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    request.on("end", () => {
+      receivedBodies.push(
+        JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, any>
+      );
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        candidates: [{
+          content: {
+            parts: [{
+              text: JSON.stringify({
+              matched: true,
+              confidence: 0.91,
+              analysis: "Matched exterior corner and stair.",
+              crop: { min_u: 0.1, min_v: 0.2, max_u: 0.9, max_v: 0.8 },
+              registration_controls: [
+                {
+                  kind: "exterior_corner",
+                  source_normalized_x: 0.1,
+                  source_normalized_y: 0.1,
+                  view_normalized_x: 0.18,
+                  view_normalized_y: 0.26,
+                  score: 0.93,
+                  label: "northwest exterior corner"
+                },
+                {
+                  kind: "stair",
+                  source_normalized_x: 0.8,
+                  source_normalized_y: 0.8,
+                  view_normalized_x: 0.74,
+                  view_normalized_y: 0.68,
+                  score: 0.9,
+                  label: "stair core"
+                }
+              ],
+              marks: []
+              })
+            }]
+          }
+        }]
+      }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const prior = {
+    key: process.env.OPERATOR_GEMINI_API_KEY,
+    baseUrl: process.env.OPERATOR_GEMINI_BASE_URL,
+    model: process.env.OPERATOR_GEMINI_ALIGNMENT_MODEL,
+    enabled: process.env.OPERATOR_GEMINI_ALIGNMENT_ENABLED
+  };
+  try {
+    process.env.OPERATOR_GEMINI_API_KEY = "test-key";
+    process.env.OPERATOR_GEMINI_BASE_URL = `http://127.0.0.1:${address.port}`;
+    process.env.OPERATOR_GEMINI_ALIGNMENT_MODEL = "gemini-3-image-test";
+    process.env.OPERATOR_GEMINI_ALIGNMENT_ENABLED = "1";
+    const result = await alignRedlineToView({
+      redline_file_path: sourcePath,
+      view_image_relative_path: viewPath,
+      objective: "Register old existing-conditions plan to current Revit view."
+    });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.provider, "gemini");
+    assert.equal(result.model, "gemini-3-image-test");
+    assert.deepEqual(result.attempted_models, ["gemini-3-image-test"]);
+    assert.equal(result.registration_controls.length, 2);
+    const receivedBody = receivedBodies[0];
+    assert.ok(receivedBody);
+    assert.equal(
+      receivedBody?.generationConfig?.responseMimeType,
+      "application/json"
+    );
+    assert.deepEqual(
+      receivedBody?.generationConfig?.responseJsonSchema?.required,
+      ["matched", "confidence", "analysis", "crop", "registration_controls", "marks"]
+    );
+    assert.ok(
+      receivedBody?.generationConfig?.responseJsonSchema?.properties?.registration_controls,
+      "Gemini must receive the strict registration-control response schema"
+    );
+  } finally {
+    for (const [key, value] of Object.entries({
+      OPERATOR_GEMINI_API_KEY: prior.key,
+      OPERATOR_GEMINI_BASE_URL: prior.baseUrl,
+      OPERATOR_GEMINI_ALIGNMENT_MODEL: prior.model,
+      OPERATOR_GEMINI_ALIGNMENT_ENABLED: prior.enabled
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => error ? reject(error) : resolve())
+    );
+  }
+});
+
+test("view alignment preserves failed Gemini provenance through OpenAI fallback and no-key failure", { concurrency: false }, async () => {
+  const workspace = ensureWorkspaceLayout();
+  const sourcePath = path.join(
+    workspace.artifacts,
+    "test-gemini-failure-provenance-source.png"
+  );
+  const viewPath = path.join(
+    workspace.artifacts,
+    "test-gemini-failure-provenance-view.png"
+  );
+  const png = Buffer.from(RED_MARK_PNG_BASE64, "base64");
+  fs.writeFileSync(sourcePath, png);
+  fs.writeFileSync(viewPath, png);
+  const requestPaths: string[] = [];
+  const server = http.createServer((request, response) => {
+    requestPaths.push(request.url ?? "");
+    if ((request.url ?? "").startsWith("/models/")) {
+      response.writeHead(500, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "provider unavailable" } }));
+      return;
+    }
+    if (request.url === "/responses") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        id: "resp_after_gemini_failure",
+        object: "response",
+        status: "completed",
+        model: "gpt-5.6-sol",
+        output: [{
+          id: "msg_after_gemini_failure",
+          type: "message",
+          status: "completed",
+          role: "assistant",
+          content: [{
+            type: "output_text",
+            text: JSON.stringify({
+              matched: true,
+              confidence: 0.97,
+              analysis: "Matched by durable geometry.",
+              crop: {
+                min_u: 0.1,
+                min_v: 0.1,
+                max_u: 0.9,
+                max_v: 0.9
+              },
+              registration_controls: [
+                {
+                  kind: "stair",
+                  source_normalized_x: 0.1,
+                  source_normalized_y: 0.1,
+                  view_normalized_x: 0.18,
+                  view_normalized_y: 0.18,
+                  score: 0.95,
+                  label: "north stair"
+                },
+                {
+                  kind: "stair",
+                  source_normalized_x: 0.8,
+                  source_normalized_y: 0.8,
+                  view_normalized_x: 0.74,
+                  view_normalized_y: 0.74,
+                  score: 0.95,
+                  label: "south stair"
+                }
+              ],
+              marks: []
+            }),
+            annotations: []
+          }]
+        }]
+      }));
+      return;
+    }
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: { message: "unexpected request" } }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const prior = {
+    operatorOpenAiKey: process.env.OPERATOR_OPENAI_API_KEY,
+    openAiKey: process.env.OPENAI_API_KEY,
+    openAiBaseUrl: process.env.OPERATOR_OPENAI_BASE_URL,
+    geminiKey: process.env.OPERATOR_GEMINI_API_KEY,
+    geminiBaseUrl: process.env.OPERATOR_GEMINI_BASE_URL,
+    geminiModel: process.env.OPERATOR_GEMINI_ALIGNMENT_MODEL,
+    geminiEnabled: process.env.OPERATOR_GEMINI_ALIGNMENT_ENABLED
+  };
+  try {
+    process.env.OPERATOR_OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENAI_API_KEY = "";
+    process.env.OPERATOR_OPENAI_BASE_URL =
+      `http://127.0.0.1:${address.port}`;
+    process.env.OPERATOR_GEMINI_API_KEY = "test-gemini-key";
+    process.env.OPERATOR_GEMINI_BASE_URL =
+      `http://127.0.0.1:${address.port}`;
+    process.env.OPERATOR_GEMINI_ALIGNMENT_MODEL =
+      "gemini-3-image-provenance-test";
+    process.env.OPERATOR_GEMINI_ALIGNMENT_ENABLED = "1";
+
+    const fallback = await alignRedlineToView({
+      redline_file_path: sourcePath,
+      view_image_relative_path: viewPath,
+      model: "gpt-5.6-sol"
+    });
+    assert.equal(fallback.ok, true, JSON.stringify(fallback));
+    assert.equal(fallback.provider, "openai");
+    assert.deepEqual(fallback.attempted_models, [
+      "gemini-3-image-provenance-test",
+      "gpt-5.6-sol"
+    ]);
+    assert.match(
+      fallback.fallback_reason ?? "",
+      /Gemini gemini-3-image-provenance-test returned HTTP 500/
+    );
+
+    process.env.OPERATOR_OPENAI_API_KEY = "";
+    const noOpenAiKey = await alignRedlineToView({
+      redline_file_path: sourcePath,
+      view_image_relative_path: viewPath
+    });
+    assert.equal(noOpenAiKey.ok, false);
+    assert.deepEqual(noOpenAiKey.attempted_models, [
+      "gemini-3-image-provenance-test"
+    ]);
+    assert.match(
+      noOpenAiKey.fallback_reason ?? "",
+      /Gemini gemini-3-image-provenance-test returned HTTP 500/
+    );
+    assert.equal(
+      requestPaths.filter((requestPath) =>
+        requestPath.startsWith("/models/")
+      ).length,
+      2
+    );
+    assert.equal(
+      requestPaths.filter((requestPath) => requestPath === "/responses").length,
+      1
+    );
+  } finally {
+    for (const [key, value] of Object.entries({
+      OPERATOR_OPENAI_API_KEY: prior.operatorOpenAiKey,
+      OPENAI_API_KEY: prior.openAiKey,
+      OPERATOR_OPENAI_BASE_URL: prior.openAiBaseUrl,
+      OPERATOR_GEMINI_API_KEY: prior.geminiKey,
+      OPERATOR_GEMINI_BASE_URL: prior.geminiBaseUrl,
+      OPERATOR_GEMINI_ALIGNMENT_MODEL: prior.geminiModel,
+      OPERATOR_GEMINI_ALIGNMENT_ENABLED: prior.geminiEnabled
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => error ? reject(error) : resolve())
+    );
+  }
+});
+
+test("view alignment gives pre-provider image failures terminal provenance", async () => {
+  const result = await alignRedlineToView({
+    redline_file_path: "artifacts/missing-existing-conditions-source.png",
+    view_image_relative_path: "artifacts/missing-revit-frame.png"
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.matched, false);
+  assert.deepEqual(result.attempted_models, []);
+  assert.equal(
+    result.fallback_reason,
+    "Alignment input unavailable before provider invocation: source image and Revit view preview."
+  );
+});
+
+test("view alignment can skip Gemini for a native-rejected OpenAI geometry retry", { concurrency: false }, async () => {
+  const workspace = ensureWorkspaceLayout();
+  const sourcePath = path.join(workspace.artifacts, "test-openai-only-alignment-source.png");
+  const viewPath = path.join(workspace.artifacts, "test-openai-only-alignment-view.png");
+  const png = Buffer.from(RED_MARK_PNG_BASE64, "base64");
+  fs.writeFileSync(sourcePath, png);
+  fs.writeFileSync(viewPath, png);
+  const requestPaths: string[] = [];
+  const server = http.createServer((request, response) => {
+    requestPaths.push(request.url ?? "");
+    if (request.method !== "POST" || request.url !== "/responses") {
+      response.writeHead(500, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "unexpected provider request" } }));
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/json" });
+    const alignmentJson = JSON.stringify({
+      matched: true,
+      confidence: 0.98,
+      analysis: "Matched exterior envelope and stair geometry.",
+      crop: { min_u: 0.05, min_v: 0.06, max_u: 0.84, max_v: 0.88 },
+      registration_controls: [
+        {
+          kind: "exterior_corner",
+          source_normalized_x: 0.1,
+          source_normalized_y: 0.1,
+          view_normalized_x: 0.13,
+          view_normalized_y: 0.14,
+          score: 0.96,
+          label: "northwest exterior corner"
+        },
+        {
+          kind: "stair",
+          source_normalized_x: 0.8,
+          source_normalized_y: 0.8,
+          view_normalized_x: 0.68,
+          view_normalized_y: 0.72,
+          score: 0.94,
+          label: "south stair"
+        }
+      ],
+      marks: []
+    });
+    response.end(JSON.stringify({
+      id: "resp_geometry_retry",
+      object: "response",
+      status: "completed",
+      model: "gpt-5.6-sol",
+      output: [{
+        id: "msg_geometry_retry",
+        type: "message",
+        status: "completed",
+        role: "assistant",
+        content: [{
+          type: "output_text",
+          text: alignmentJson,
+          annotations: []
+        }]
+      }]
+    }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const prior = {
+    openAiKey: process.env.OPERATOR_OPENAI_API_KEY,
+    openAiBaseUrl: process.env.OPERATOR_OPENAI_BASE_URL,
+    geminiKey: process.env.OPERATOR_GEMINI_API_KEY,
+    geminiBaseUrl: process.env.OPERATOR_GEMINI_BASE_URL,
+    geminiEnabled: process.env.OPERATOR_GEMINI_ALIGNMENT_ENABLED
+  };
+  try {
+    process.env.OPERATOR_OPENAI_API_KEY = "test-openai-key";
+    process.env.OPERATOR_OPENAI_BASE_URL = `http://127.0.0.1:${address.port}`;
+    process.env.OPERATOR_GEMINI_API_KEY = "test-gemini-key";
+    process.env.OPERATOR_GEMINI_BASE_URL = `http://127.0.0.1:${address.port}`;
+    process.env.OPERATOR_GEMINI_ALIGNMENT_ENABLED = "1";
+    const result = await alignRedlineToView({
+      redline_file_path: sourcePath,
+      view_image_relative_path: viewPath,
+      objective: "Retry geometry after native rejection.",
+      provider_preference: "openai_only",
+      prior_attempted_models: ["gemini-3-flash-preview"],
+      openai_fallback_reason:
+        "Gemini structured alignment was rejected by native Revit landmark verification for this exact frame.",
+      model: "gpt-5.6-sol"
+    });
+    assert.deepEqual(requestPaths, ["/responses"]);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.provider, "openai");
+    assert.equal(result.model, "gpt-5.6-sol");
+    assert.deepEqual(result.attempted_models, [
+      "gemini-3-flash-preview",
+      "gpt-5.6-sol"
+    ]);
+    assert.match(result.fallback_reason ?? "", /native Revit landmark verification/i);
+  } finally {
+    for (const [key, value] of Object.entries({
+      OPERATOR_OPENAI_API_KEY: prior.openAiKey,
+      OPERATOR_OPENAI_BASE_URL: prior.openAiBaseUrl,
+      OPERATOR_GEMINI_API_KEY: prior.geminiKey,
+      OPERATOR_GEMINI_BASE_URL: prior.geminiBaseUrl,
+      OPERATOR_GEMINI_ALIGNMENT_ENABLED: prior.geminiEnabled
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => error ? reject(error) : resolve())
+    );
+  }
+});
+
+test("view alignment accepts a full-sheet source above the legacy 1.5 MB image cap when budgeted", { concurrency: false }, async () => {
+  const workspace = ensureWorkspaceLayout();
+  const sourcePath = path.join(workspace.artifacts, "test-gemini-full-sheet-source.png");
+  const viewPath = path.join(workspace.artifacts, "test-gemini-full-sheet-view.png");
+  fs.writeFileSync(sourcePath, Buffer.alloc(1_600_000, 7));
+  fs.writeFileSync(viewPath, Buffer.from(RED_MARK_PNG_BASE64, "base64"));
+  let requestCount = 0;
+  const server = http.createServer((_request, response) => {
+    requestCount += 1;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      candidates: [{
+        content: {
+          parts: [{
+            text: JSON.stringify({
+              matched: false,
+              confidence: 0.2,
+              analysis: "Full sheet reached Gemini but controls were insufficient.",
+              crop: null,
+              registration_controls: [],
+              marks: []
+            })
+          }]
+        }
+      }]
+    }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const prior = {
+    key: process.env.OPERATOR_GEMINI_API_KEY,
+    baseUrl: process.env.OPERATOR_GEMINI_BASE_URL,
+    model: process.env.OPERATOR_GEMINI_ALIGNMENT_MODEL,
+    enabled: process.env.OPERATOR_GEMINI_ALIGNMENT_ENABLED
+  };
+  try {
+    process.env.OPERATOR_GEMINI_API_KEY = "test-key";
+    process.env.OPERATOR_GEMINI_BASE_URL = `http://127.0.0.1:${address.port}`;
+    process.env.OPERATOR_GEMINI_ALIGNMENT_MODEL = "gemini-3-image-test";
+    process.env.OPERATOR_GEMINI_ALIGNMENT_ENABLED = "1";
+    const result = await alignRedlineToView({
+      redline_file_path: sourcePath,
+      view_image_relative_path: viewPath,
+      objective: "Register a full existing-conditions sheet.",
+      max_image_bytes: 8_388_608
+    });
+    assert.equal(requestCount, 1);
+    assert.equal(result.ok, true);
+    assert.equal(result.provider, "gemini");
+    assert.equal(result.model, "gemini-3-image-test");
+    assert.equal(result.matched, false);
+  } finally {
+    for (const [key, value] of Object.entries({
+      OPERATOR_GEMINI_API_KEY: prior.key,
+      OPERATOR_GEMINI_BASE_URL: prior.baseUrl,
+      OPERATOR_GEMINI_ALIGNMENT_MODEL: prior.model,
+      OPERATOR_GEMINI_ALIGNMENT_ENABLED: prior.enabled
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => error ? reject(error) : resolve())
+    );
+  }
 });
 
 test("redline auto-align uses the analyzed page preview for a PDF seed", () => {

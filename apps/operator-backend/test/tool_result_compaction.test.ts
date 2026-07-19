@@ -146,6 +146,66 @@ test("compact visible-elements result prioritizes actionable electrical samples 
   assert.equal(compacted.itemsOmitted, 24);
 });
 
+test("compact visible-elements result preserves category and spatial diversity for durable registration landmarks", () => {
+  const walls = Array.from({ length: 40 }, (_, index) => ({
+    elementId: 6000 + index,
+    sourceScopedId: `link:1:${6000 + index}`,
+    category: "Walls",
+    builtInCategory: "OST_Walls",
+    anchor: {
+      model: { x: index, y: index, z: 0 },
+      image: {
+        normalizedX: (index % 4) / 3,
+        normalizedY: (Math.floor(index / 4) % 4) / 3,
+        insideFrame: true
+      }
+    }
+  }));
+  const compacted = compactVisibleElementsResult({
+    frameId: "registration-frame",
+    count: walls.length + 3,
+    items: [
+      ...walls,
+      {
+        elementId: 7001,
+        sourceScopedId: "link:1:7001",
+        category: "Stairs",
+        builtInCategory: "OST_Stairs",
+        anchor: { model: { x: 20, y: 20, z: 0 }, image: { normalizedX: 0.8, normalizedY: 0.2, insideFrame: true } }
+      },
+      {
+        elementId: 7002,
+        sourceScopedId: "link:1:7002",
+        category: "Shaft Openings",
+        builtInCategory: "OST_ShaftOpening",
+        anchor: { model: { x: 25, y: 25, z: 0 }, image: { normalizedX: 0.2, normalizedY: 0.8, insideFrame: true } }
+      },
+      {
+        elementId: 7003,
+        sourceScopedId: "link:1:7003",
+        category: "Grids",
+        builtInCategory: "OST_Grids",
+        anchor: { model: { x: 30, y: 30, z: 0 }, image: { normalizedX: 0.5, normalizedY: 0.5, insideFrame: true } }
+      }
+    ]
+  }, { maxItems: 8, maxCountEntries: 8 }) as any;
+
+  const sampledCategories = new Set(
+    compacted.itemsSampled.map((item: any) => item.builtInCategory)
+  );
+  assert.ok(sampledCategories.has("OST_Walls"));
+  assert.ok(sampledCategories.has("OST_Stairs"));
+  assert.ok(sampledCategories.has("OST_ShaftOpening"));
+  assert.ok(sampledCategories.has("OST_Grids"));
+  const sampledWalls = compacted.itemsSampled.filter(
+    (item: any) => item.builtInCategory === "OST_Walls"
+  );
+  assert.ok(sampledWalls.length >= 4);
+  assert.ok(new Set(sampledWalls.map((item: any) =>
+    `${Math.floor(item.anchor.image.normalizedX * 4)}:${Math.floor(item.anchor.image.normalizedY * 4)}`
+  )).size >= 4);
+});
+
 test("compact visible-elements result preserves room tag text and tagged spatial evidence", () => {
   const compacted = compactVisibleElementsResult({
     frameId: "frame-405",
@@ -410,7 +470,13 @@ test("compact incoming tool result preserves bounded image base64 payloads and s
     path: "/revit/export-visible-elements",
     status: "done",
     result_json: {
+      ok: true,
       count: 1,
+      modelBoundsApplied: true,
+      modelBoundsFt: {
+        min: { x: 1, y: 2, z: 3 },
+        max: { x: 4, y: 5, z: 6 }
+      },
       items: [
         {
           elementId: 42,
@@ -442,6 +508,12 @@ test("compact incoming tool result preserves bounded image base64 payloads and s
 
   assert.equal((result.attachments?.[0] as any)?.data_base64, "abc123");
   assert.equal((result.result_json as any)?._compacted, true);
+  assert.equal((result.result_json as any)?.ok, true);
+  assert.equal((result.result_json as any)?.modelBoundsApplied, true);
+  assert.deepEqual((result.result_json as any)?.modelBoundsFt, {
+    min: { x: 1, y: 2, z: 3 },
+    max: { x: 4, y: 5, z: 6 }
+  });
   assert.equal((result.result_json as any)?.itemsSampled.length, 1);
   assert.equal((result.result_json as any)?.itemsSampled?.[0]?.hostId, 777);
   assert.equal((result.result_json as any)?.itemsSampled?.[0]?.hostScopedId, "link:555:777");
