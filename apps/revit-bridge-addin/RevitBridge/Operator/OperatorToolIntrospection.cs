@@ -826,7 +826,9 @@ namespace RevitBridge.Operator
                     unitNotes.Add(new { unit = "feet", fields = new[] { "repair.vectorX", "repair.vectorY", "repair.vectorZ", "repair.startXyz[*]", "repair.endXyz[*]", "repair.flexPoints[*][*]", "originToleranceFt", "maxConnectorDistanceFt", "connectionMaxDistanceFt" } });
                     notes.Add("Choose exactly one mode: disconnectOnlyPairs, connectOpenPair, disconnectPairs plus repair, or standalone repair.");
                     notes.Add("Use native connector IDs when available. Enumeration-index connector IDs must include exact expectedOriginXyz guards.");
-                    notes.Add("Dry-runs preserve exact before/final connector-topology fingerprints and report rollback proof.");
+                    notes.Add("connectOpenPair dry-runs execute the native connection or fitting operation, roll it back, and return the transient fitting identity plus rollback proof.");
+                    notes.Add("Positive-gap elbows are allowed within connectionMaxDistanceFt because Revit trims connected curves back from the theoretical fitting centerline.");
+                    notes.Add("All dry-runs preserve exact before/final connector-topology fingerprints and report rollback proof.");
                 }
 
                 if (p == "/revit/resize-ducts-in-room")

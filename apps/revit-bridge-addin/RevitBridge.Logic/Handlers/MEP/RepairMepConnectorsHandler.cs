@@ -768,23 +768,14 @@ namespace RevitBridge.Logic.Handlers.MEP
                 }
             };
 
-            if (!shouldApply)
-            {
-                return new
-                {
-                    status = "DryRunReady",
-                    dryRun = true,
-                    mutationAttempted = false,
-                    before,
-                    plan,
-                    nextAction = "Apply this exact open-connector connection only if both connector identities, origins, sizes, directions, and the planned fitting kind are accepted."
-                };
-            }
-
             var nativeFailures = new List<CapturedFailure>();
             long? fittingId = null;
             object? fittingWorkset = null;
-            using (var tx = new Transaction(doc, $"Connect Open MEP Pair ({connectionKind})"))
+            using (var tx = new Transaction(
+                doc,
+                shouldApply
+                    ? $"Connect Open MEP Pair ({connectionKind})"
+                    : $"Connect Open MEP Pair Dry Run ({connectionKind})"))
             {
                 tx.Start();
                 tx.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(
@@ -825,9 +816,16 @@ namespace RevitBridge.Logic.Handlers.MEP
                             throw new InvalidOperationException("open_connector_connection_native_audit_failed");
                     }
 
-                    var txStatus = tx.Commit();
-                    if (txStatus != TransactionStatus.Committed)
-                        throw new InvalidOperationException($"open_connector_connection_transaction_not_committed:{txStatus}");
+                    if (shouldApply)
+                    {
+                        var txStatus = tx.Commit();
+                        if (txStatus != TransactionStatus.Committed)
+                            throw new InvalidOperationException($"open_connector_connection_transaction_not_committed:{txStatus}");
+                    }
+                    else
+                    {
+                        tx.RollBack();
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -839,15 +837,37 @@ namespace RevitBridge.Logic.Handlers.MEP
                     return new
                     {
                         status = "Blocked",
-                        dryRun = false,
+                        dryRun = !shouldApply,
                         blockCode = "open_connector_connection_failed",
                         reason = ex.Message,
                         plan,
                         fittingId,
                         nativeFailures,
+                        rolledBack = !shouldApply,
                         rollbackVerified = SafeOpenPairUnconnected(doc, p.connectOpenPair, p.originToleranceFt)
                     };
                 }
+            }
+
+            if (!shouldApply)
+            {
+                var rollbackVerified = SafeOpenPairUnconnected(doc, p.connectOpenPair, p.originToleranceFt);
+                return new
+                {
+                    status = rollbackVerified ? "DryRunPassed" : "Blocked",
+                    dryRun = true,
+                    mutationAttempted = true,
+                    before,
+                    plan,
+                    transientFittingId = fittingId,
+                    fittingWorkset,
+                    nativeFailures,
+                    rolledBack = true,
+                    rollbackVerified,
+                    nextAction = rollbackVerified
+                        ? "Apply this exact open-connector connection only if the native dry run, connector identities, fitting kind, workset, and rollback proof are accepted."
+                        : "Preserve the pre-action checkpoint and repair only this failed connection dry-run stage."
+                };
             }
 
             var finalFirst = ResolveConnectorAfterFitting(doc, p.connectOpenPair.first, p.originToleranceFt);
@@ -952,7 +972,11 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (!sameSize) return $"{connectionKind}_requires_matching_sizes";
             if (connectionKind == "elbow")
             {
-                if (distanceFt > 0.02) return "elbow_connectors_must_share_origin";
+                // Native elbow connectors are commonly trimmed back from the
+                // theoretical centerline intersection. Permit a tightly bounded
+                // positive gap so Revit can recreate the real source fitting
+                // instead of requiring coincident connector origins.
+                if (distanceFt > 1.0) return "elbow_connector_gap_exceeds_native_safety_limit";
                 if (Math.Abs(axisDot) > 0.25) return "elbow_requires_orthogonal_connector_directions";
                 return null;
             }

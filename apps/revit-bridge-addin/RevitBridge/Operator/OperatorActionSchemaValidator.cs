@@ -2693,9 +2693,9 @@ namespace RevitBridge.Operator
 
                 if (obj.Value.TryGetProperty("connectionMaxDistanceFt", out var connectionDistance) &&
                     connectionDistance.ValueKind != JsonValueKind.Null &&
-                    (connectionDistance.GetDouble() <= 0 || connectionDistance.GetDouble() > 50))
+                    (connectionDistance.GetDouble() <= 0 || connectionDistance.GetDouble() > 10))
                 {
-                    error = "repair-mep-connectors.connectionMaxDistanceFt must be greater than zero and no more than 50.";
+                    error = "repair-mep-connectors.connectionMaxDistanceFt must be greater than zero and no more than 10.";
                     return false;
                 }
                 if (obj.Value.TryGetProperty("maxConnectorDistanceFt", out var connectorDistance) &&
