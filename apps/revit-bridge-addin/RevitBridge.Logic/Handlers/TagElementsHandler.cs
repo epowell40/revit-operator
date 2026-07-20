@@ -74,6 +74,7 @@ namespace RevitBridge.Logic.Handlers
             public bool HasLeader { get; set; }
             public string LeaderEndCondition { get; set; } = "";
             public int TaggedReferenceCount { get; set; }
+            public List<long> TaggedElementIds { get; set; } = new();
             public XYZ? LeaderEnd { get; set; }
             public XYZ? LeaderElbow { get; set; }
             public XYZ? BoundingBoxMin { get; set; }
@@ -589,6 +590,12 @@ namespace RevitBridge.Logic.Handlers
         private static ExistingTagSnapshot ReadExistingTagSnapshot(IndependentTag tag, View view)
         {
             var references = tag.GetTaggedReferences();
+            var taggedElementIds = references
+                .Select(reference => ElementIdCompat.GetValue(reference.ElementId))
+                .Where(id => id > 0)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToList();
             XYZ? leaderEnd = null;
             XYZ? leaderElbow = null;
             if (tag.HasLeader && references.Count == 1 && tag.IsLeaderVisible(references[0]))
@@ -613,6 +620,7 @@ namespace RevitBridge.Logic.Handlers
                 HasLeader = tag.HasLeader,
                 LeaderEndCondition = tag.LeaderEndCondition.ToString(),
                 TaggedReferenceCount = references.Count,
+                TaggedElementIds = taggedElementIds,
                 LeaderEnd = leaderEnd,
                 LeaderElbow = leaderElbow,
                 BoundingBoxMin = bbox?.Min,
@@ -630,6 +638,7 @@ namespace RevitBridge.Logic.Handlers
             hasLeader = snapshot.HasLeader,
             leaderEndCondition = snapshot.LeaderEndCondition,
             taggedReferenceCount = snapshot.TaggedReferenceCount,
+            taggedElementIds = snapshot.TaggedElementIds,
             leaderEnd = snapshot.LeaderEnd == null ? null : XyzPayload(snapshot.LeaderEnd),
             leaderElbow = snapshot.LeaderElbow == null ? null : XyzPayload(snapshot.LeaderElbow),
             boundingBox = snapshot.BoundingBoxMin == null || snapshot.BoundingBoxMax == null
@@ -671,6 +680,7 @@ namespace RevitBridge.Logic.Handlers
                    left.HasLeader == right.HasLeader &&
                    string.Equals(left.LeaderEndCondition, right.LeaderEndCondition, StringComparison.Ordinal) &&
                    left.TaggedReferenceCount == right.TaggedReferenceCount &&
+                   left.TaggedElementIds.SequenceEqual(right.TaggedElementIds) &&
                    PointsMatch(left.Head, right.Head, tolerance) &&
                    NullablePointsMatch(left.LeaderEnd, right.LeaderEnd, tolerance) &&
                    NullablePointsMatch(left.LeaderElbow, right.LeaderElbow, tolerance) &&
