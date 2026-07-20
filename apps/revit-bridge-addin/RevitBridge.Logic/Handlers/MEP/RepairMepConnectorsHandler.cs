@@ -979,7 +979,12 @@ namespace RevitBridge.Logic.Handlers.MEP
                 // theoretical centerline intersection. Permit a tightly bounded
                 // positive gap so Revit can recreate the real source fitting
                 // instead of requiring coincident connector origins.
-                if (distanceFt > 1.0) return "elbow_connector_gap_exceeds_native_safety_limit";
+                // A 90-degree rectangular elbow can legitimately trim each
+                // connected duct back by 0.75 ft, producing a diagonal
+                // connector gap of sqrt(0.75^2 + 0.75^2) ~= 1.061 ft. Keep a
+                // narrow absolute guard while allowing that native case; the
+                // caller-provided connectionMaxDistanceFt is checked first.
+                if (distanceFt > 1.5) return "elbow_connector_gap_exceeds_native_safety_limit";
                 // Revit evaluates the turn between one connector's inward
                 // direction and the other connector's outward direction. The
                 // native API documents a typical valid elbow range of 2 to 95
