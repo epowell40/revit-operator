@@ -16,6 +16,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             public List<long> elementIds { get; set; } = new List<long>();
             public bool includeAllRefs { get; set; } = true;
             public bool includeCoordinateSystem { get; set; } = true;
+            public bool includeFlexGeometry { get; set; } = true;
             public int maxConnectorsPerElement { get; set; } = 64;
         }
 
@@ -46,6 +47,7 @@ namespace RevitBridge.Logic.Handlers.MEP
 
                 var catToken = SelectionUtil.GetCategoryToken(e) ?? (e.Category?.Name ?? "None");
                 var sys = MepSystemUtil.TryGetSystemName(e);
+                var flexGeometry = p.includeFlexGeometry ? TryGetFlexGeometry(e) : null;
 
                 var connectorsOut = new List<object>();
                 try
@@ -55,6 +57,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     {
                         if (idx >= maxConn) break;
                         if (c == null) continue;
+                        var hasNativeConnectorId = MepSystemUtil.TryGetNativeConnectorId(c, out var nativeConnectorId);
 
                         var origin = c.Origin;
                         var shape = c.Shape.ToString();
@@ -69,9 +72,15 @@ namespace RevitBridge.Logic.Handlers.MEP
                                 var d = 2.0 * c.Radius;
                                 size = new { kind = "round", radiusFt = c.Radius, diameterFt = d };
                             }
-                            else if (c.Shape == ConnectorProfileType.Rectangular)
+                            else if (c.Shape == ConnectorProfileType.Rectangular ||
+                                     c.Shape == ConnectorProfileType.Oval)
                             {
-                                size = new { kind = "rect", widthFt = c.Width, heightFt = c.Height };
+                                size = new
+                                {
+                                    kind = c.Shape == ConnectorProfileType.Oval ? "oval" : "rect",
+                                    widthFt = c.Width,
+                                    heightFt = c.Height
+                                };
                             }
                         }
                         catch { size = null; }
@@ -144,6 +153,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                         connectorsOut.Add(new
                         {
                             index = idx,
+                            connectorId = hasNativeConnectorId ? nativeConnectorId : idx,
+                            connectorIdBasis = hasNativeConnectorId ? "revit_native_connector_id" : "enumeration_index_with_origin_guard_required",
                             origin = new[] { origin.X, origin.Y, origin.Z },
                             domain,
                             shape,
@@ -171,7 +182,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                     name = e.Name,
                     systemName = sys,
                     connectorCount = connectorsOut.Count,
-                    connectors = connectorsOut
+                    connectors = connectorsOut,
+                    flexGeometry
                 });
             }
 
@@ -182,6 +194,44 @@ namespace RevitBridge.Logic.Handlers.MEP
                 results,
                 warnings
             });
+        }
+
+        private static object? TryGetFlexGeometry(Element element)
+        {
+            if (element is Autodesk.Revit.DB.Mechanical.FlexDuct flexDuct)
+            {
+                return BuildFlexGeometry(
+                    "duct",
+                    flexDuct.Points,
+                    flexDuct.StartTangent,
+                    flexDuct.EndTangent);
+            }
+            if (element is Autodesk.Revit.DB.Plumbing.FlexPipe flexPipe)
+            {
+                return BuildFlexGeometry(
+                    "pipe",
+                    flexPipe.Points,
+                    flexPipe.StartTangent,
+                    flexPipe.EndTangent);
+            }
+            return null;
+        }
+
+        private static object BuildFlexGeometry(
+            string kind,
+            IList<XYZ> points,
+            XYZ startTangent,
+            XYZ endTangent)
+        {
+            return new
+            {
+                kind,
+                points = (points ?? new List<XYZ>())
+                    .Select(point => new[] { point.X, point.Y, point.Z })
+                    .ToList(),
+                startTangent = new[] { startTangent.X, startTangent.Y, startTangent.Z },
+                endTangent = new[] { endTangent.X, endTangent.Y, endTangent.Z }
+            };
         }
     }
 }

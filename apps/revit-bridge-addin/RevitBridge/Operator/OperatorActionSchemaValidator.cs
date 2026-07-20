@@ -2573,6 +2573,150 @@ namespace RevitBridge.Operator
                 return true;
             }
 
+            if (string.Equals(path, "/revit/connect-existing-mep-branch", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
+                {
+                    error = "connect-existing-mep-branch body must be an object.";
+                    return false;
+                }
+
+                if (!ValidateOptionalString(obj.Value, "expectedModelPath", maxLen: 1024, out error)) return false;
+                if (!ValidateRequiredString(obj.Value, "kind", maxLen: 16, out error)) return false;
+                if (!ValidateRequiredLong(obj.Value, "mainElementId", out error)) return false;
+                if (!ValidateRequiredLong(obj.Value, "branchElementId", out error)) return false;
+                if (!ValidateOptionalLong(obj.Value, "branchConnectorId", out error)) return false;
+                if (!ValidateOptionalXyzArray(obj.Value, "expectedBranchOriginXyz", out error)) return false;
+                if (!ValidateOptionalNumber(obj.Value, "originToleranceFt", out error)) return false;
+                if (!ValidateOptionalLong(obj.Value, "expectedTakeoffTypeId", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "expectedTakeoffFamilyName", maxLen: 256, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "expectedTakeoffTypeName", maxLen: 256, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "verify", out error)) return false;
+
+                var kind = (obj.Value.GetProperty("kind").GetString() ?? "").Trim();
+                if (!kind.Equals("duct", StringComparison.OrdinalIgnoreCase) &&
+                    !kind.Equals("pipe", StringComparison.OrdinalIgnoreCase))
+                {
+                    error = "connect-existing-mep-branch.kind must be 'duct' or 'pipe'.";
+                    return false;
+                }
+
+                var mainId = obj.Value.GetProperty("mainElementId").GetInt64();
+                var branchId = obj.Value.GetProperty("branchElementId").GetInt64();
+                if (mainId <= 0 || branchId <= 0 || mainId == branchId)
+                {
+                    error = "connect-existing-mep-branch requires different positive mainElementId and branchElementId values.";
+                    return false;
+                }
+
+                if (obj.Value.TryGetProperty("branchConnectorId", out var connectorId) &&
+                    connectorId.ValueKind != JsonValueKind.Null &&
+                    connectorId.GetInt64() < 0)
+                {
+                    error = "connect-existing-mep-branch.branchConnectorId must be zero or greater.";
+                    return false;
+                }
+
+                if (obj.Value.TryGetProperty("originToleranceFt", out var tolerance) &&
+                    tolerance.ValueKind != JsonValueKind.Null &&
+                    (tolerance.GetDouble() <= 0 || tolerance.GetDouble() > 0.25))
+                {
+                    error = "connect-existing-mep-branch.originToleranceFt must be greater than zero and no more than 0.25.";
+                    return false;
+                }
+
+                return true;
+            }
+
+            if (string.Equals(path, "/revit/repair-mep-connectors", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
+                {
+                    error = "repair-mep-connectors body must be an object.";
+                    return false;
+                }
+
+                if (!ValidateOptionalString(obj.Value, "expectedModelPath", maxLen: 1024, out error)) return false;
+                if (!ValidateConnectorPairArray(obj.Value, "disconnectOnlyPairs", maxCount: 32, allowAfterOrigin: false, out error)) return false;
+                if (!ValidateConnectorPairArray(obj.Value, "disconnectPairs", maxCount: 32, allowAfterOrigin: true, out error)) return false;
+                if (!ValidateOptionalConnectorPair(obj.Value, "connectOpenPair", allowAfterOrigin: false, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "connectionKind", maxLen: 32, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "fittingWorksetName", maxLen: 256, out error)) return false;
+                if (!ValidateOptionalLong(obj.Value, "fittingWorksetId", out error)) return false;
+                if (!ValidateOptionalNumber(obj.Value, "connectionMaxDistanceFt", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "allowConnectedRepair", out error)) return false;
+                if (!ValidateOptionalNumber(obj.Value, "maxConnectorDistanceFt", out error)) return false;
+                if (!ValidateOptionalNumber(obj.Value, "originToleranceFt", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "verify", out error)) return false;
+
+                var disconnectOnlyCount = obj.Value.TryGetProperty("disconnectOnlyPairs", out var disconnectOnly) &&
+                    disconnectOnly.ValueKind == JsonValueKind.Array ? disconnectOnly.GetArrayLength() : 0;
+                var disconnectCount = obj.Value.TryGetProperty("disconnectPairs", out var disconnectPairs) &&
+                    disconnectPairs.ValueKind == JsonValueKind.Array ? disconnectPairs.GetArrayLength() : 0;
+                var hasConnectOpen = obj.Value.TryGetProperty("connectOpenPair", out var connectOpen) &&
+                    connectOpen.ValueKind == JsonValueKind.Object;
+                var hasRepair = obj.Value.TryGetProperty("repair", out var repair) &&
+                    repair.ValueKind == JsonValueKind.Object &&
+                    repair.TryGetProperty("kind", out var repairKindElement) &&
+                    repairKindElement.ValueKind == JsonValueKind.String &&
+                    !string.IsNullOrWhiteSpace(repairKindElement.GetString());
+                var selectedModes = (disconnectOnlyCount > 0 ? 1 : 0) +
+                    (hasConnectOpen ? 1 : 0) +
+                    (disconnectCount > 0 ? 1 : 0) +
+                    (hasRepair && disconnectCount == 0 ? 1 : 0);
+                if (selectedModes != 1)
+                {
+                    error = "repair-mep-connectors requires exactly one mode: disconnectOnlyPairs, connectOpenPair, disconnectPairs plus repair, or standalone repair.";
+                    return false;
+                }
+                if (disconnectCount > 0 && !hasRepair)
+                {
+                    error = "repair-mep-connectors.disconnectPairs requires repair.kind.";
+                    return false;
+                }
+
+                if (obj.Value.TryGetProperty("connectionKind", out var connectionKind) &&
+                    connectionKind.ValueKind == JsonValueKind.String)
+                {
+                    var value = (connectionKind.GetString() ?? "").Trim();
+                    if (!value.Equals("auto", StringComparison.OrdinalIgnoreCase) &&
+                        !value.Equals("direct", StringComparison.OrdinalIgnoreCase) &&
+                        !value.Equals("elbow", StringComparison.OrdinalIgnoreCase) &&
+                        !value.Equals("transition", StringComparison.OrdinalIgnoreCase))
+                    {
+                        error = "repair-mep-connectors.connectionKind must be 'auto', 'direct', 'elbow', or 'transition'.";
+                        return false;
+                    }
+                }
+
+                if (obj.Value.TryGetProperty("connectionMaxDistanceFt", out var connectionDistance) &&
+                    connectionDistance.ValueKind != JsonValueKind.Null &&
+                    (connectionDistance.GetDouble() <= 0 || connectionDistance.GetDouble() > 50))
+                {
+                    error = "repair-mep-connectors.connectionMaxDistanceFt must be greater than zero and no more than 50.";
+                    return false;
+                }
+                if (obj.Value.TryGetProperty("maxConnectorDistanceFt", out var connectorDistance) &&
+                    connectorDistance.ValueKind != JsonValueKind.Null &&
+                    (connectorDistance.GetDouble() <= 0 || connectorDistance.GetDouble() > 0.25))
+                {
+                    error = "repair-mep-connectors.maxConnectorDistanceFt must be greater than zero and no more than 0.25.";
+                    return false;
+                }
+                if (obj.Value.TryGetProperty("originToleranceFt", out var originTolerance) &&
+                    originTolerance.ValueKind != JsonValueKind.Null &&
+                    (originTolerance.GetDouble() <= 0 || originTolerance.GetDouble() > 0.05))
+                {
+                    error = "repair-mep-connectors.originToleranceFt must be greater than zero and no more than 0.05.";
+                    return false;
+                }
+
+                if (hasRepair && !ValidateMepRepairOperation(repair, out error)) return false;
+                return true;
+            }
+
             if (string.Equals(path, "/revit/ducts-by-spatial-scope", StringComparison.OrdinalIgnoreCase))
             {
                 // { roomNumber, systemClassification?, sizeFrom?, verticalScope?, includeCategories?, roomMode?, includeConnectedOutsideRoom?, limit? }
@@ -3049,47 +3193,57 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/repair-duct-continuity-by-scope", StringComparison.OrdinalIgnoreCase))
             {
-                // { scope:{roomNumber,verticalScope?,roomMode?},systemClassification?,includeTerminals?,verify?,dryRun?,maxGapFt?,maxRepairs?,maxElements? }
+                // { scope?:{roomNumber,verticalScope?,roomMode?},elementIds?:number[],expectedModelPath?,systemClassification?,includeTerminals?,verify?,dryRun?,maxGapFt?,maxRepairs?,maxElements? }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "repair-duct-continuity-by-scope body must be an object.";
                     return false;
                 }
 
-                if (!obj.Value.TryGetProperty("scope", out var scope) || scope.ValueKind != JsonValueKind.Object)
+                var hasScope = obj.Value.TryGetProperty("scope", out var scope) &&
+                    scope.ValueKind == JsonValueKind.Object;
+                var hasElementIds = obj.Value.TryGetProperty("elementIds", out var elementIds) &&
+                    elementIds.ValueKind == JsonValueKind.Array &&
+                    elementIds.GetArrayLength() > 0;
+                if (!hasScope && !hasElementIds)
                 {
-                    error = "repair-duct-continuity-by-scope.scope is required and must be an object.";
+                    error = "repair-duct-continuity-by-scope requires scope or a non-empty elementIds array.";
                     return false;
                 }
 
-                if (!ValidateRequiredString(scope, "roomNumber", maxLen: 128, out error)) return false;
-                if (!ValidateOptionalString(scope, "verticalScope", maxLen: 32, out error)) return false;
-                if (!ValidateOptionalString(scope, "roomMode", maxLen: 32, out error)) return false;
-
-                if (scope.TryGetProperty("verticalScope", out var vs) && vs.ValueKind == JsonValueKind.String)
+                if (hasScope)
                 {
-                    var v = (vs.GetString() ?? "").Trim();
-                    if (!v.Equals("room", StringComparison.OrdinalIgnoreCase) &&
-                        !v.Equals("plenum", StringComparison.OrdinalIgnoreCase) &&
-                        !v.Equals("room+plenum", StringComparison.OrdinalIgnoreCase))
+                    if (!ValidateRequiredString(scope, "roomNumber", maxLen: 128, out error)) return false;
+                    if (!ValidateOptionalString(scope, "verticalScope", maxLen: 32, out error)) return false;
+                    if (!ValidateOptionalString(scope, "roomMode", maxLen: 32, out error)) return false;
+
+                    if (scope.TryGetProperty("verticalScope", out var vs) && vs.ValueKind == JsonValueKind.String)
                     {
-                        error = "repair-duct-continuity-by-scope.scope.verticalScope must be 'room', 'plenum', or 'room+plenum'.";
-                        return false;
+                        var v = (vs.GetString() ?? "").Trim();
+                        if (!v.Equals("room", StringComparison.OrdinalIgnoreCase) &&
+                            !v.Equals("plenum", StringComparison.OrdinalIgnoreCase) &&
+                            !v.Equals("room+plenum", StringComparison.OrdinalIgnoreCase))
+                        {
+                            error = "repair-duct-continuity-by-scope.scope.verticalScope must be 'room', 'plenum', or 'room+plenum'.";
+                            return false;
+                        }
+                    }
+
+                    if (scope.TryGetProperty("roomMode", out var rm) && rm.ValueKind == JsonValueKind.String)
+                    {
+                        var r = (rm.GetString() ?? "").Trim();
+                        if (!r.Equals("auto", StringComparison.OrdinalIgnoreCase) &&
+                            !r.Equals("roomAware", StringComparison.OrdinalIgnoreCase) &&
+                            !r.Equals("geometry", StringComparison.OrdinalIgnoreCase))
+                        {
+                            error = "repair-duct-continuity-by-scope.scope.roomMode must be 'auto', 'roomAware', or 'geometry'.";
+                            return false;
+                        }
                     }
                 }
 
-                if (scope.TryGetProperty("roomMode", out var rm) && rm.ValueKind == JsonValueKind.String)
-                {
-                    var r = (rm.GetString() ?? "").Trim();
-                    if (!r.Equals("auto", StringComparison.OrdinalIgnoreCase) &&
-                        !r.Equals("roomAware", StringComparison.OrdinalIgnoreCase) &&
-                        !r.Equals("geometry", StringComparison.OrdinalIgnoreCase))
-                    {
-                        error = "repair-duct-continuity-by-scope.scope.roomMode must be 'auto', 'roomAware', or 'geometry'.";
-                        return false;
-                    }
-                }
-
+                if (!ValidateOptionalLongArray(obj.Value, "elementIds", maxCount: 50000, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "expectedModelPath", maxLen: 1024, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "systemClassification", maxLen: 128, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeTerminals", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "verify", out error)) return false;
@@ -3097,6 +3251,18 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalNumber(obj.Value, "maxGapFt", out error)) return false;
                 if (!ValidateOptionalInt(obj.Value, "maxRepairs", out error)) return false;
                 if (!ValidateOptionalInt(obj.Value, "maxElements", out error)) return false;
+
+                if (hasElementIds)
+                {
+                    var expectedPathPresent = obj.Value.TryGetProperty("expectedModelPath", out var expectedPath) &&
+                        expectedPath.ValueKind == JsonValueKind.String &&
+                        !string.IsNullOrWhiteSpace(expectedPath.GetString());
+                    if (!expectedPathPresent)
+                    {
+                        error = "repair-duct-continuity-by-scope.expectedModelPath is required when elementIds are supplied.";
+                        return false;
+                    }
+                }
 
                 if (obj.Value.TryGetProperty("maxGapFt", out var mg) && mg.ValueKind != JsonValueKind.Null)
                 {
@@ -9137,6 +9303,208 @@ namespace RevitBridge.Operator
             {
                 return "<unavailable>";
             }
+        }
+
+        private static bool ValidateOptionalXyzArray(JsonElement obj, string name, out string? error)
+        {
+            error = null;
+            if (!obj.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null) return true;
+            return ValidateXyzArray(value, name, out error);
+        }
+
+        private static bool ValidateXyzArray(JsonElement value, string label, out string? error)
+        {
+            error = null;
+            if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() != 3)
+            {
+                error = $"{label} must be an array of exactly three numbers.";
+                return false;
+            }
+
+            foreach (var coordinate in value.EnumerateArray())
+            {
+                if (coordinate.ValueKind != JsonValueKind.Number || !coordinate.TryGetDouble(out _))
+                {
+                    error = $"{label} must be an array of exactly three numbers.";
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool ValidateConnectorPairArray(
+            JsonElement obj,
+            string name,
+            int maxCount,
+            bool allowAfterOrigin,
+            out string? error)
+        {
+            error = null;
+            if (!obj.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null) return true;
+            if (value.ValueKind != JsonValueKind.Array)
+            {
+                error = $"repair-mep-connectors.{name} must be an array.";
+                return false;
+            }
+            if (value.GetArrayLength() > maxCount)
+            {
+                error = $"repair-mep-connectors.{name} exceeds the maximum of {maxCount}.";
+                return false;
+            }
+
+            var index = 0;
+            foreach (var pair in value.EnumerateArray())
+            {
+                if (!ValidateConnectorPair(pair, $"repair-mep-connectors.{name}[{index}]", allowAfterOrigin, out error))
+                    return false;
+                index++;
+            }
+            return true;
+        }
+
+        private static bool ValidateOptionalConnectorPair(
+            JsonElement obj,
+            string name,
+            bool allowAfterOrigin,
+            out string? error)
+        {
+            error = null;
+            if (!obj.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null) return true;
+            return ValidateConnectorPair(value, $"repair-mep-connectors.{name}", allowAfterOrigin, out error);
+        }
+
+        private static bool ValidateConnectorPair(
+            JsonElement pair,
+            string label,
+            bool allowAfterOrigin,
+            out string? error)
+        {
+            error = null;
+            if (pair.ValueKind != JsonValueKind.Object)
+            {
+                error = $"{label} must be an object.";
+                return false;
+            }
+            if (!pair.TryGetProperty("first", out var first))
+            {
+                error = $"{label}.first is required.";
+                return false;
+            }
+            if (!ValidateConnectorReference(first, $"{label}.first", allowAfterOrigin, out error)) return false;
+            if (!pair.TryGetProperty("second", out var second))
+            {
+                error = $"{label}.second is required.";
+                return false;
+            }
+            if (!ValidateConnectorReference(second, $"{label}.second", allowAfterOrigin, out error)) return false;
+            return true;
+        }
+
+        private static bool ValidateConnectorReference(
+            JsonElement reference,
+            string label,
+            bool allowAfterOrigin,
+            out string? error)
+        {
+            error = null;
+            if (reference.ValueKind != JsonValueKind.Object)
+            {
+                error = $"{label} must be an object.";
+                return false;
+            }
+            if (!ValidateRequiredLong(reference, "elementId", out error)) return false;
+            if (!ValidateRequiredLong(reference, "connectorId", out error)) return false;
+            if (reference.GetProperty("elementId").GetInt64() <= 0)
+            {
+                error = $"{label}.elementId must be positive.";
+                return false;
+            }
+            if (reference.GetProperty("connectorId").GetInt64() < 0)
+            {
+                error = $"{label}.connectorId must be zero or greater.";
+                return false;
+            }
+            if (!ValidateOptionalXyzArray(reference, "expectedOriginXyz", out error)) return false;
+            if (reference.TryGetProperty("afterOriginXyz", out var afterOrigin) &&
+                afterOrigin.ValueKind != JsonValueKind.Null)
+            {
+                if (!allowAfterOrigin)
+                {
+                    error = $"{label}.afterOriginXyz is not valid for this repair mode.";
+                    return false;
+                }
+                if (!ValidateXyzArray(afterOrigin, $"{label}.afterOriginXyz", out error)) return false;
+            }
+            return true;
+        }
+
+        private static bool ValidateMepRepairOperation(JsonElement repair, out string? error)
+        {
+            error = null;
+            if (repair.ValueKind != JsonValueKind.Object)
+            {
+                error = "repair-mep-connectors.repair must be an object.";
+                return false;
+            }
+            if (!ValidateRequiredString(repair, "kind", maxLen: 32, out error)) return false;
+            var kind = (repair.GetProperty("kind").GetString() ?? "").Trim().ToLowerInvariant();
+            if (kind == "move_elements_vector")
+            {
+                if (!ValidateRequiredLongArray(repair, "elementIds", maxCount: 100, out error)) return false;
+                if (repair.GetProperty("elementIds").GetArrayLength() == 0)
+                {
+                    error = "repair-mep-connectors.repair.elementIds must not be empty.";
+                    return false;
+                }
+                if (!ValidateRequiredNumber(repair, "vectorX", out error)) return false;
+                if (!ValidateRequiredNumber(repair, "vectorY", out error)) return false;
+                if (!ValidateRequiredNumber(repair, "vectorZ", out error)) return false;
+                return true;
+            }
+            if (kind == "set_curve_line")
+            {
+                if (!ValidateRequiredLong(repair, "elementId", out error)) return false;
+                if (repair.GetProperty("elementId").GetInt64() <= 0)
+                {
+                    error = "repair-mep-connectors.repair.elementId must be positive.";
+                    return false;
+                }
+                if (!repair.TryGetProperty("startXyz", out var start) ||
+                    !ValidateXyzArray(start, "repair-mep-connectors.repair.startXyz", out error)) return false;
+                if (!repair.TryGetProperty("endXyz", out var end) ||
+                    !ValidateXyzArray(end, "repair-mep-connectors.repair.endXyz", out error)) return false;
+                return true;
+            }
+            if (kind == "set_flex_curve")
+            {
+                if (!ValidateRequiredLong(repair, "elementId", out error)) return false;
+                if (repair.GetProperty("elementId").GetInt64() <= 0)
+                {
+                    error = "repair-mep-connectors.repair.elementId must be positive.";
+                    return false;
+                }
+                if (!repair.TryGetProperty("flexPoints", out var points) ||
+                    points.ValueKind != JsonValueKind.Array ||
+                    points.GetArrayLength() < 2 ||
+                    points.GetArrayLength() > 256)
+                {
+                    error = "repair-mep-connectors.repair.flexPoints must contain 2 to 256 XYZ arrays.";
+                    return false;
+                }
+                var index = 0;
+                foreach (var point in points.EnumerateArray())
+                {
+                    if (!ValidateXyzArray(point, $"repair-mep-connectors.repair.flexPoints[{index}]", out error))
+                        return false;
+                    index++;
+                }
+                if (!ValidateOptionalXyzArray(repair, "startTangent", out error)) return false;
+                if (!ValidateOptionalXyzArray(repair, "endTangent", out error)) return false;
+                return true;
+            }
+
+            error = "repair-mep-connectors.repair.kind must be 'move_elements_vector', 'set_curve_line', or 'set_flex_curve'.";
+            return false;
         }
 
         private static bool IsNullOrObject(JsonElement? body, out JsonElement? obj)

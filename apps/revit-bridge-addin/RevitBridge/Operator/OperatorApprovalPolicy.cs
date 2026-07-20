@@ -72,6 +72,7 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/resolve-mep-routing-context", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/create-mep-route", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/connect-mep-branch", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/connect-existing-mep-branch", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/connect-mep-elements", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/create-pipe-between-connectors", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/existing-conditions-mep-draft-workflow", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
@@ -91,6 +92,7 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/resize-ducts-in-room", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/resize-ductwork-by-scope", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/repair-duct-continuity-by-scope", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/repair-mep-connectors", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/get-connectors", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/pick-at-pixel", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/activate-view", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;

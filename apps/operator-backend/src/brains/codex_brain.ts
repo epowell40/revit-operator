@@ -34,6 +34,38 @@ let client: CodexAppServer | null = null;
 const lastPermissionSignatureBySession = new Map<string, string>();
 const activeCodexTurnAborts = new Map<string, AbortController>();
 
+function clipPromptBlock(value: string, maxChars: number): string {
+  return value.length <= maxChars ? value : `${value.slice(0, maxChars)}\n…(truncated)`;
+}
+
+export function formatCodexRequestEnvelope(req: ChatRequest): string {
+  const blocks: string[] = [];
+  if (req.context !== undefined) {
+    try {
+      blocks.push(
+        `CURRENT REVIT/SERVER CONTEXT:\n${clipPromptBlock(JSON.stringify(req.context, null, 2), 20_000)}`
+      );
+    } catch {
+      blocks.push("CURRENT REVIT/SERVER CONTEXT:\n(not serializable)");
+    }
+  }
+
+  if (Array.isArray(req.user_attachments) && req.user_attachments.length > 0) {
+    const attachments = req.user_attachments.map(attachment => ({
+      id: attachment.id,
+      relative_path: attachment.relative_path,
+      filename: attachment.filename,
+      mime: attachment.mime,
+      bytes: attachment.bytes,
+      sha256: attachment.sha256
+    }));
+    blocks.push(
+      `USER ATTACHMENTS (paths are relative to the Operator Workspace; inspect these exact files when visual evidence is required):\n${clipPromptBlock(JSON.stringify(attachments, null, 2), 8_000)}`
+    );
+  }
+  return blocks.join("\n\n");
+}
+
 function codexTurnAbortKey(sessionId: string, messageId: string): string {
   return `${sessionId.trim()}:${messageId.trim()}`;
 }
@@ -148,6 +180,7 @@ export function getOperatorAgentBaseInstructions(): string {
     "For room/space ductwork workflows, prefer `revit_ducts_by_spatial_scope` for discovery and `revit_resize_ductwork_by_scope` for one-shot scoped resize requests (room+plenum, roomMode=auto).",
     "MEP redline intent rule: a PDF annotation such as `12x10 supply duct` labels the requested duct to create/route unless the redline or model evidence clearly identifies an editable existing duct to resize. If no editable HVAC duct exists at the mark and the visible target is linked plumbing, do not ask to edit the plumbing link; draft a bounded HVAC duct route in the active HVAC model using `/revit/mep-route-workflow` or `/revit/create-duct` dryRun first.",
     "For vague semantic MEP requests such as extending piping from a main to a sink or routing ductwork to diffusers, call `/tools/mep/semantic-route-plan` first and follow its read-only discovery actions or guarded dry-run action before any model write. For MEP redline routing, prefer `revit_call_tool` for `/revit/mep-route-workflow`, which enforces resolve context -> dry-run -> optional apply -> focused post-change visual capture. A single line is two ordered points; bends are one ordered point list. Use apply=false first when uncertain, then apply=true with visualVerify=true once bounded. If size/elevation is missing, use conservative defaults with explicit warnings (8x8 duct, 1 inch pipe, resolved routing elevation) and ask follow-up questions after producing the bounded dry-run, not before. Internal route bends attempt Revit elbow fittings and return fitting ids; differing segmentSizes or branchSegmentSizes plan transition fittings for reducers. For editing existing explicit duct/pipe curve ids, use `/revit/edit-mep-route-elements` dryRun first for whole-element size or simple level-straight elevation edits; it blocks connected elevation moves unless allowConnectedElevationMove:true and returns before/after size, curve, connector, network-audit, and optional focused capture evidence. If the requested edit changes size part way down one straight curve, use `/revit/reroute-mep-route-segment` size-transition mode with transitionNormalized or transitionChainageFt plus explicit upstream/downstream sizes, and require a transition fitting in connectionAttempts before completion. If the requested edit offsets a middle section of one straight curve, use `/revit/reroute-mep-route-segment` offset mode; set offsetMode:\"dogleg45\" when diagonal 45-degree legs are required. Connected endpoints on `/revit/reroute-mep-route-segment` are blocked by default; only set preserveConnectedEndpoints:true after dry-run reports a concrete endpointReconnectionPlan, then require endpoint reconnection attempts plus connector/network audit before completion. For branch/tee/tap requests, dry-run `/revit/connect-mep-branch` for one branch or `/revit/mep-branch-network-workflow` for a main route plus multiple branches. Apply is supported for existing open connector branches, straight duct tap/takeoff at a projected non-connector point, pipe tap/takeoff only when dry-run tapApplyPrecheck confirms an explicit takeoff/tap routing preference, straight duct/pipe split tee cases, branch-level reducer transitions via branchSegmentSizes, explicit duct/pipe accessory insertion on created main or branch segments when a compatible familyPath/family/type and chainage/point preconditions pass, and explicit target-id duct/pipe accessory delete/type_change with compatible loaded types. When the user names a tap/takeoff family or type, pass takeoffFamilyName/takeoffTypeName, inspect selected.takeoffRoutingPreference and tapApplyPrecheck on dry-run, and require connectionAttempts[*].fitting to match on apply. Do not claim completion unless connector/fitting/accessory verification passes and post-change capture is reviewed.",
+    "For exact connector-identity disconnect/reconnect/reshape work, use `revit_dry_run_repair_mep_connectors` for rollback-only trials and reserve the apply-capable `revit_repair_mep_connectors` for an explicitly authorized staged commit. Connector-pair entries use exact keys `a` and `b`, each containing `elementId`, `connectorId`, and optional `expectedOriginXyz`. Do not invent generic `mode`, `pairs`, or `origin` keys: the typed tools expose `disconnectOnlyPairs`, `connectOpenPair`, `disconnectPairs`, and `repair` directly and enforce exactly one operation mode.",
     "Do not use `/revit/create-similar-from-instance` or wall-hosted family placement for duct/pipe redlines. Those tools are for hosted family instances such as receptacles/devices, not MEP curve geometry.",
     "Redline visual gate rule: after any redline-driven model or annotation write, completion requires a passing visual verification gate. If the write workflow did not return `verification.visual_gate.status=pass`, call `/tools/redline/verify-visual` with the original redline path, before capture, post-change highlighted capture, visible-element inventory/readback, intended action JSON, and observed location/points. If the gate returns `fail` or `uncertain`, correct the work or report the blocker; do not claim completion.",
     "Do not try to verify in parallel with a write. Apply first, then verify with a follow-up capture after a regenerate/refresh.",
@@ -470,6 +503,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
                 else blocks.push(perms.summary);
               }
             } catch {}
+            const requestEnvelope = formatCodexRequestEnvelope(req);
+            if (requestEnvelope) blocks.push(requestEnvelope);
             if (text.trim()) blocks.push(`USER:\n${text}`);
             const tr = formatToolResultsForCodex(req.tool_results as any);
             if (tr) blocks.push(tr);

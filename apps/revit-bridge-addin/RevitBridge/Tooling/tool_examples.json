@@ -2419,6 +2419,59 @@
     },
     {
       "method": "POST",
+      "path": "/revit/repair-mep-connectors",
+      "examples": [
+        {
+          "name": "Dry-run: move a bounded pipe subgraph and reconnect the same guarded endpoints",
+          "request": {
+            "expectedModelPath": "C:\\authorized-disposable-models\\working-copy.rvt",
+            "disconnectPairs": [
+              {
+                "first": {
+                  "elementId": 1001,
+                  "connectorId": 0,
+                  "expectedOriginXyz": [10.0, 20.0, 9.5],
+                  "afterOriginXyz": [12.0, 20.0, 9.5]
+                },
+                "second": {
+                  "elementId": 2001,
+                  "connectorId": 1,
+                  "expectedOriginXyz": [10.0, 20.0, 9.5],
+                  "afterOriginXyz": [12.0, 20.0, 9.5]
+                }
+              }
+            ],
+            "repair": {
+              "kind": "move_elements_vector",
+              "elementIds": [1001, 2001],
+              "vectorX": 2.0,
+              "vectorY": 0.0,
+              "vectorZ": 0.0
+            },
+            "originToleranceFt": 0.001,
+            "maxConnectorDistanceFt": 0.02,
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "status": "DryRunReady",
+            "dryRun": true,
+            "operationKind": "move_elements_vector",
+            "transactionGroupRolledBack": true,
+            "rollbackVerified": true,
+            "afterPairs": [
+              {
+                "connected": true,
+                "distanceFt": 0.0
+              }
+            ],
+            "topologyExactMatch": true
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/duplicate-element-type",
       "examples": [
         {
@@ -7206,6 +7259,35 @@
               "applySupported": true,
               "expectedFitting": "tee"
             }
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/connect-existing-mep-branch",
+      "examples": [
+        {
+          "name": "Dry-run: attach one retained rectangular branch to an existing main",
+          "request": {
+            "expectedModelPath": "C:\\authorized-disposable-models\\working-copy.rvt",
+            "kind": "duct",
+            "mainElementId": 12345,
+            "branchElementId": 12346,
+            "branchConnectorId": 1,
+            "expectedBranchOriginXyz": [10.0, 12.0, 10.0],
+            "originToleranceFt": 0.001,
+            "expectedTakeoffTypeName": "Tap - Rectangular",
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "status": "DryRunReady",
+            "dryRun": true,
+            "connectedDuringTransaction": true,
+            "rolledBack": true,
+            "rollbackVerified": true,
+            "nativeFailures": []
           }
         }
       ]

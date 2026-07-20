@@ -22,8 +22,6 @@ using AuditHostedInstancePlacementActionHandler = RevitBridge.Logic.Handlers.Aud
 using ResolveRoomWallActionHandler = RevitBridge.Logic.Handlers.ResolveRoomWallHandler;
 using RankSimilarDevicesOnWallActionHandler = RevitBridge.Logic.Handlers.RankSimilarDevicesOnWallHandler;
 using AssignElectricalCircuitActionHandler = RevitBridge.Logic.Handlers.AssignElectricalCircuitHandler;
-using ElectricalCircuitLoadingAuditActionHandler = RevitBridge.Logic.Handlers.ElectricalCircuitLoadingAuditHandler;
-using PlumbingFixtureServicesAuditActionHandler = RevitBridge.Logic.Handlers.PlumbingFixtureServicesAuditHandler;
 
 namespace RevitBridge.Server
 {
@@ -136,6 +134,7 @@ namespace RevitBridge.Server
                 { "/revit/resolve-mep-routing-context", new ResolveMepRoutingContextHandler() },
                 { "/revit/create-mep-route", new CreateMepRouteHandler() },
                 { "/revit/connect-mep-branch", new ConnectMepBranchHandler() },
+                { "/revit/connect-existing-mep-branch", new ConnectExistingMepBranchHandler() },
                 { "/revit/connect-mep-elements", new RevitBridge.Logic.Handlers.MEP.ConnectMepElementsHandler() },
                 { "/revit/create-pipe-between-connectors", new RevitBridge.Logic.Handlers.MEP.CreatePipeBetweenConnectorsHandler() },
                 { "/revit/existing-conditions-mep-draft-workflow", new RevitBridge.Logic.Handlers.MEP.ExistingConditionsMepDraftWorkflowHandler() },
@@ -155,9 +154,10 @@ namespace RevitBridge.Server
                 { "/revit/resize-ducts-in-room", new ResizeDuctsInRoomHandler() },
                 { "/revit/resize-ductwork-by-scope", new ResizeDuctworkByScopeHandler() },
                 { "/revit/repair-duct-continuity-by-scope", new RepairDuctContinuityByScopeHandler() },
+                { "/revit/repair-mep-connectors", new RepairMepConnectorsHandler() },
                 { "/revit/get-connectors", new GetConnectorsHandler() },
-                { "/revit/audit-electrical-circuit-loading", new ElectricalCircuitLoadingAuditActionHandler() },
-                { "/revit/audit-plumbing-fixture-services", new PlumbingFixtureServicesAuditActionHandler() },
+                { "/revit/audit-electrical-circuit-loading", new RevitBridge.Logic.Handlers.ElectricalCircuitLoadingAuditHandler() },
+                { "/revit/audit-plumbing-fixture-services", new RevitBridge.Logic.Handlers.PlumbingFixtureServicesAuditHandler() },
                 { "/revit/align-room-tops-to-ceilings", new AlignRoomTopsToCeilingsHandler() },
                 { "/revit/analyze-dimensions", new AnalyzeDimensionsHandler() },
                 { "/revit/export-dimensioning-v2", new ExportDimensioningV2Handler() },
@@ -580,9 +580,13 @@ namespace RevitBridge.Server
                  string.Equals(path, "/revit/reroute-mep-route-segment", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/create-mep-route", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/connect-mep-branch", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/connect-existing-mep-branch", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/connect-mep-elements", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/create-pipe-between-connectors", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/existing-conditions-mep-draft-workflow", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/resize-ductwork-by-scope", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/repair-duct-continuity-by-scope", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/repair-mep-connectors", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/copy-mep-pattern", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/create-duct", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/create-pipe", StringComparison.OrdinalIgnoreCase)) &&

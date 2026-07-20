@@ -370,6 +370,7 @@ namespace RevitBridge.Operator
                 { "/revit/resolve-mep-routing-context", typeof(RevitBridge.Logic.Handlers.MEP.ResolveMepRoutingContextHandler.Params) },
                 { "/revit/create-mep-route", typeof(RevitBridge.Logic.Handlers.MEP.CreateMepRouteHandler.Params) },
                 { "/revit/connect-mep-branch", typeof(RevitBridge.Logic.Handlers.MEP.ConnectMepBranchHandler.Params) },
+                { "/revit/connect-existing-mep-branch", typeof(RevitBridge.Logic.Handlers.MEP.ConnectExistingMepBranchHandler.Params) },
                 { "/revit/connect-mep-elements", typeof(RevitBridge.Logic.Handlers.MEP.ConnectMepElementsHandler.Params) },
                 { "/revit/create-pipe-between-connectors", typeof(RevitBridge.Logic.Handlers.MEP.CreatePipeBetweenConnectorsHandler.Params) },
                 { "/revit/existing-conditions-mep-draft-workflow", typeof(RevitBridge.Logic.Handlers.MEP.ExistingConditionsMepDraftWorkflowHandler.Params) },
@@ -389,6 +390,7 @@ namespace RevitBridge.Operator
                 { "/revit/resize-ducts-in-room", typeof(RevitBridge.Logic.Handlers.MEP.ResizeDuctsInRoomHandler.Params) },
                 { "/revit/resize-ductwork-by-scope", typeof(RevitBridge.Logic.Handlers.MEP.ResizeDuctworkByScopeHandler.Params) },
                 { "/revit/repair-duct-continuity-by-scope", typeof(RevitBridge.Logic.Handlers.MEP.RepairDuctContinuityByScopeHandler.Params) },
+                { "/revit/repair-mep-connectors", typeof(RevitBridge.Logic.Handlers.MEP.RepairMepConnectorsHandler.Params) },
                 { "/revit/get-connectors", typeof(RevitBridge.Logic.Handlers.MEP.GetConnectorsHandler.Params) },
                 { "/revit/align-room-tops-to-ceilings", typeof(RevitBridge.Logic.Handlers.AlignRoomTopsToCeilingsHandler.Params) },
                 { "/revit/analyze-dimensions", typeof(RevitBridge.Logic.Handlers.AnalyzeDimensionsHandler.Params) },
@@ -811,10 +813,20 @@ namespace RevitBridge.Operator
                 {
                     enumMap["scope.roomMode"] = new[] { "auto", "roomAware", "geometry" };
                     enumMap["scope.verticalScope"] = new[] { "room", "plenum", "room+plenum" };
-                    unitNotes.Add(new { unit = "feet", fields = new[] { "maxGapFt", "inferredTargetDiameterFt", "preAudit.likelyMissingSegments[*].distanceFt" } });
-                    notes.Add("Repairs continuity in scoped duct networks without resizing target diameter.");
-                    notes.Add("When dryRun=false, the tool attempts direct connector reconnects first, then short bridge duct insertion for compatible nearby open connectors.");
-                    notes.Add("Post-apply status checks created repair segments for isolation and system-name mismatch (createdSegmentAudit).");
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "maxGapFt", "preAudit.likelyMissingSegments[*].distanceFt", "attempts[*].gapFt", "attempts[*].profile.widthFt", "attempts[*].profile.heightFt", "attempts[*].profile.diameterFt" } });
+                    notes.Add("Provide either scope or exact elementIds. Exact elementIds require expectedModelPath and are preferred for staged benchmark repairs.");
+                    notes.Add("Supports Round, Rectangular, and Oval profiles. Facing collinear endpoints use one direct bridge; orthogonal endpoints use two matching-profile segments and a native elbow.");
+                    notes.Add("Dry-run executes the native repair in one transaction, rolls it back, and returns exact connector-topology and transient-created-ID proof.");
+                }
+
+                if (p == "/revit/repair-mep-connectors")
+                {
+                    enumMap["connectionKind"] = new[] { "auto", "direct", "elbow", "transition" };
+                    enumMap["repair.kind"] = new[] { "move_elements_vector", "set_curve_line", "set_flex_curve" };
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "repair.vectorX", "repair.vectorY", "repair.vectorZ", "repair.startXyz[*]", "repair.endXyz[*]", "repair.flexPoints[*][*]", "originToleranceFt", "maxConnectorDistanceFt", "connectionMaxDistanceFt" } });
+                    notes.Add("Choose exactly one mode: disconnectOnlyPairs, connectOpenPair, disconnectPairs plus repair, or standalone repair.");
+                    notes.Add("Use native connector IDs when available. Enumeration-index connector IDs must include exact expectedOriginXyz guards.");
+                    notes.Add("Dry-runs preserve exact before/final connector-topology fingerprints and report rollback proof.");
                 }
 
                 if (p == "/revit/resize-ducts-in-room")
@@ -835,12 +847,11 @@ namespace RevitBridge.Operator
                 if (p == "/revit/export-visible-elements")
                 {
                     unitNotes.Add(new { unit = "pixels", fields = new[] { "imageSize", "items[*].anchor.image.x", "items[*].anchor.image.y", "items[*].bbox.image.minX", "items[*].bbox.image.minY", "items[*].bbox.image.maxX", "items[*].bbox.image.maxY" } });
-                    unitNotes.Add(new { unit = "feet", fields = new[] { "modelBounds[*]", "modelBoundsFt.min.x", "modelBoundsFt.min.y", "modelBoundsFt.min.z", "modelBoundsFt.max.x", "modelBoundsFt.max.y", "modelBoundsFt.max.z", "items[*].anchor.model.x", "items[*].anchor.model.y", "items[*].anchor.model.z", "items[*].bbox.model.min.x", "items[*].bbox.model.min.y", "items[*].bbox.model.min.z", "items[*].bbox.model.max.x", "items[*].bbox.model.max.y", "items[*].bbox.model.max.z", "items[*].geometry.lengthFt" } });
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "items[*].anchor.model.x", "items[*].anchor.model.y", "items[*].anchor.model.z", "items[*].bbox.model.min.x", "items[*].bbox.model.min.y", "items[*].bbox.model.min.z", "items[*].bbox.model.max.x", "items[*].bbox.model.max.y", "items[*].bbox.model.max.z", "items[*].geometry.lengthFt" } });
                     notes.Add("Use this when you need a full visible-element manifest tied to the same exported image and affine mapping basis.");
                     notes.Add("Supported for crop-box-backed 2D views only; use sheet-aware tools for DrawingSheet workflows.");
                     notes.Add("categories/excludeCategories accept BuiltInCategory tokens and exact category names when tokens are unavailable.");
                     notes.Add("includeLinked=true keeps link-scoped ids and transformed source/host/hostingSurface payloads so linked rows can be consumed without re-deriving host coordinates.");
-                    notes.Add("modelBounds=[minX,minY,minZ,maxX,maxY,maxZ] applies a host-coordinate bounding-box intersection filter before the result limit, including transformed linked-element bounds.");
                     notes.Add("Orientation payloads include facing/hand vectors plus plan-azimuth and basis vectors when available; linked rows are transformed into host coordinates.");
                     notes.Add("Mapping corners are emitted from the saved raster frame; crop-box corners are included only as reference metadata when the raster aspect differs.");
                 }
@@ -940,7 +951,6 @@ namespace RevitBridge.Operator
                     unitNotes.Add(new { unit = "feet", fields = new[] { "branchPoints[*].x", "branchPoints[*].y", "branchPoints[*].z", "mainIntersection.distanceToMainFt" } });
                     notes.Add("Apply is implemented when branch start is within tolerance of an existing open main connector; the branch snaps to that connector and creates branch segments/fittings.");
                     notes.Add("A duct/pipe non-connector tee path is available when dry-run reports splitPlan.applySupported=true and connectionMode is tee/auto: the tool splits a straight main, creates the branch, requires a tee fitting, audits continuity, and exports a focused capture.");
-                    notes.Add("For a downstream plumbing vent, use kind:\"pipe\", connectionMode:\"tee\", branchSystemType:\"Vent\", and an explicit branchPipeType. The fixture remains connected only to Sanitary; native graph traversal must prove the later Vent continuation.");
                     notes.Add("A duct/pipe non-connector tap path is available with connectionMode:'tap': the tool leaves the straight main intact, creates branch segments, requires Revit NewTakeoffFitting, audits continuity, and exports a focused capture.");
                     notes.Add("For named tap/takeoff requests, pass takeoffFamilyName and/or takeoffTypeName. Dry-run returns selected.takeoffRoutingPreference candidates and tapApplyPrecheck; pipe tap apply requires an explicit takeoff/tap routing preference, while ordinary pipe junction preferences belong on split tee. Apply reports connectionAttempts[*].fitting/requestedTakeoff/routingPreference and rolls back on takeoff_type_mismatch.");
                     notes.Add("Use branchSegmentSizes with one size per branch segment to draft reducer/transition branches; dry-run returns branchPlan.jointPlan and apply prefers transition fittings where adjacent branch sizes differ.");

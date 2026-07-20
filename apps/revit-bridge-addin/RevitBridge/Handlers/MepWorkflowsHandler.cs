@@ -27,6 +27,13 @@ namespace RevitBridge.Handlers
             public string? value { get; set; }
         }
 
+        public sealed class FlexRoutePoint
+        {
+            public double x { get; set; }
+            public double y { get; set; }
+            public double z { get; set; }
+        }
+
         public sealed class Params
         {
             public string? action { get; set; }
@@ -79,6 +86,12 @@ namespace RevitBridge.Handlers
             public List<long>? equipmentElementIds { get; set; }
             public string? ductTypeName { get; set; }
             public string? ductSize { get; set; }
+            public long? flexDuctTypeId { get; set; }
+            public string? flexDuctTypeName { get; set; }
+            public List<FlexRoutePoint>? flexPoints { get; set; }
+            public long? worksetId { get; set; }
+            public string? worksetName { get; set; }
+            public bool? verify { get; set; }
             public int? maxBranches { get; set; }
             public int? maxElbowsPerBranch { get; set; }
             public double? maxLengthFeet { get; set; }

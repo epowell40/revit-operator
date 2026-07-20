@@ -1,7 +1,7 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import { decide, decideStreaming } from "./brain.js";
+import { decide, decideStreaming, isDirectBrainRouteRequest } from "./brain.js";
 import { readJson, writeJson } from "./http.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ToolResult } from "./contracts.js";
 import { appendMessage, appendToolSummary, assertSessionOwnership, ensureSession } from "./session_store.js";
@@ -1714,13 +1714,16 @@ const server = http.createServer(async (req, res) => {
           // ignore
         }
       }
-      const macroResp = maybeHandleMacroSkill({
+      const brainRequest: ChatRequest = {
         ...(parsed as ChatRequest),
         user_text: userTextWithAttachments,
         tool_results: toolResults,
         user_attachments: userAttachments,
         context: withServerContext(parsed.context, { dev_agent_unlocked: devAgentUnlocked(req) })
-      });
+      };
+      const macroResp = isDirectBrainRouteRequest(brainRequest)
+        ? null
+        : maybeHandleMacroSkill(brainRequest);
 
       let streamClosed = false;
       const send = (event: string, data: unknown) => {
@@ -1835,7 +1838,9 @@ const server = http.createServer(async (req, res) => {
         send("chat.start", { session_id: parsed.session_id, message_id: parsed.message_id });
 
       ensureSession(parsed.session_id);
-      if (userText.trim()) appendMessage(parsed.session_id, { role: "user", text: userText });
+      if (userTextWithAttachments.trim()) {
+        appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments });
+      }
       for (const tr of toolResults) {
         appendToolSummary(parsed.session_id, summarizeToolResult(tr));
         try {
@@ -1875,8 +1880,9 @@ const server = http.createServer(async (req, res) => {
           {
             ...(parsed as ChatRequest),
             context: withServerContext(parsed.context, { dev_agent_unlocked: devUnlocked }),
-            user_text: userText,
-            tool_results: toolResults
+            user_text: userTextWithAttachments,
+            tool_results: toolResults,
+            user_attachments: userAttachments
           },
           {
             abortSignal: streamAbort.signal,
@@ -2070,13 +2076,16 @@ const server = http.createServer(async (req, res) => {
       }
 
       const devUnlocked = devAgentUnlocked(req);
-      const macroResp = maybeHandleMacroSkill({
+      const brainRequest: ChatRequest = {
         ...(parsed as ChatRequest),
         user_text: userTextWithAttachments,
         tool_results: toolResults,
         user_attachments: userAttachments,
         context: withServerContext(parsed.context, { dev_agent_unlocked: devUnlocked })
-      });
+      };
+      const macroResp = isDirectBrainRouteRequest(brainRequest)
+        ? null
+        : maybeHandleMacroSkill(brainRequest);
       if (macroResp) {
         macroResp.actions = applyEnvironmentPolicyToActions(macroResp.actions);
         ensureSession(parsed.session_id);

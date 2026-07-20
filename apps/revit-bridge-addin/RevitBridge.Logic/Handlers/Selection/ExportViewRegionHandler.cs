@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
@@ -35,13 +34,9 @@ namespace RevitBridge.Logic.Handlers
             public int? imageSize { get; set; } // backward/compat alias
             public string folder { get; set; } = "";
             public bool includeMapping { get; set; } = true;
-            public bool hideAnnotationCategoriesForMapping { get; set; } = false;
-            public bool cropRasterToRequestedRegionForMapping { get; set; } = false;
-            // DuplicateWithDetailing preserves view-specific DetailCurves, text, and annotations.
-            // Keep this opt-in because large production plans can contain substantial detailing.
-            public bool preserveViewSpecificDetailing { get; set; } = false;
             public string? fileName { get; set; }
             public RegionSpec? region { get; set; }
+            public List<string>? hideCategories { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -88,15 +83,9 @@ namespace RevitBridge.Logic.Handlers
                     {
                         tx.Start();
 
-                        tempViewId = view.Duplicate(
-                            p.preserveViewSpecificDetailing
-                                ? ViewDuplicateOption.WithDetailing
-                                : ViewDuplicateOption.Duplicate);
+                        tempViewId = view.Duplicate(ViewDuplicateOption.Duplicate);
                         tempView = doc.GetElement(tempViewId) as View;
                         if (tempView == null) throw new Exception("Failed to duplicate view.");
-
-                        if (TryClearScopeBox(tempView))
-                            warnings.Add("Temp view scope box cleared to enable the requested region crop.");
 
                         var templateCleared = false;
                         void TryClearTemplateForCrop()
@@ -116,13 +105,6 @@ namespace RevitBridge.Logic.Handlers
                                 warnings.Add("Could not clear view template on temp view; export may be restricted.");
                             }
                         }
-
-                        // A duplicated view retains its template. Revit can accept crop writes while
-                        // continuing to render the template-controlled annotation crop, which makes the
-                        // exported raster larger than the model crop and invalidates pixel/model mapping.
-                        // This is a disposable view, so detach the template before any crop edits.
-                        TryClearTemplateForCrop();
-                        ResetTemporaryCropShape(tempView, warnings);
 
                         try { tempView.CropBoxActive = true; }
                         catch
@@ -158,11 +140,9 @@ namespace RevitBridge.Logic.Handlers
                             TryClearTemplateForCrop();
                             tempView.CropBox = newCrop;
                         }
-                        ConfigureTightAnnotationCrop(tempView, warnings);
                         try { tempView.CropBoxVisible = false; } catch { }
 
                         doc.Regenerate();
-                        VerifyCropReadback(tempView, newCrop);
                         tx.Commit();
                     }
                 }
@@ -211,6 +191,7 @@ namespace RevitBridge.Logic.Handlers
                         {
                             try { exportView.CropBoxActive = true; } catch { }
                             try { exportView.CropBoxVisible = false; } catch { }
+                            ApplyHiddenCategories(doc, exportView, p.hideCategories, warnings);
                         }
                         finally
                         {
@@ -220,10 +201,7 @@ namespace RevitBridge.Logic.Handlers
                     }
 
                     // Apply region crop to temp view.
-                    ApplyRegionCrop(doc, exportView, p.region, warnings, clearScopeBox: true);
-
-                    if (p.hideAnnotationCategoriesForMapping)
-                        HideAnnotationCategoriesForMapping(doc, exportView, warnings);
+                    ApplyRegionCrop(doc, exportView, p.region, warnings);
 
                     // Ensure annotation/tag text reflects the latest model state before export.
                     try { doc.Regenerate(); } catch { }
@@ -231,72 +209,39 @@ namespace RevitBridge.Logic.Handlers
 
                     path = SelectionUtil.ExportViewImage(doc, exportView, imageSize, folder, stem);
                     (widthPx, heightPx) = SelectionUtil.ReadImageSize(path);
-                    if (p.cropRasterToRequestedRegionForMapping)
-                    {
-                        var outlineFrame = SelectionUtil.BuildRasterAffineFrameFromViewOutline(exportView, widthPx, heightPx);
-                        var cropCorners = SelectionUtil.GetCropCorners(exportView);
-                        var cropped = SelectionUtil.CropRasterToModelFrame(
-                            path,
-                            outlineFrame,
-                            cropCorners.topLeft,
-                            cropCorners.topRight,
-                            cropCorners.bottomLeft);
-                        path = cropped.path;
-                        widthPx = cropped.widthPx;
-                        heightPx = cropped.heightPx;
-                        warnings.Add($"Exported raster cropped back to the requested model frame ({cropped.diagnostic}).");
-                    }
                     frame = SelectionUtil.BuildRasterAffineFrame(exportView, widthPx, heightPx);
                 }
                 else
                 {
-                    if (p.hideAnnotationCategoriesForMapping)
+                    if (p.hideCategories != null && p.hideCategories.Count > 0)
                     {
                         throw new InvalidOperationException(
-                            "Geometry-mapping export requires a disposable temporary view; refusing to hide annotation categories on the user's original view.");
+                            "export-view-region hideCategories requires a disposable temporary view; refusing to alter category visibility in the user's view.");
                     }
-
                     // Fallback: temporarily set the original view crop, export, then restore.
-                    ElementId originalTemplateId;
                     try
                     {
-                        originalTemplateId = view.ViewTemplateId;
+                        if (view.ViewTemplateId != ElementId.InvalidElementId)
+                        {
+                            throw new InvalidOperationException(
+                                "View cannot be duplicated and has a view template applied; refusing to temporarily edit the user's view crop. " +
+                                "Activate a non-templated plan view (or remove the template) and retry.");
+                        }
                     }
                     catch
                     {
-                        originalTemplateId = ElementId.InvalidElementId;
-                    }
-                    if (originalTemplateId != ElementId.InvalidElementId)
-                    {
-                        throw new InvalidOperationException(
-                            "View cannot be duplicated and has a view template applied; refusing to temporarily edit the user's view crop. " +
-                            "Activate a non-templated plan view (or remove the template) and retry.");
+                        // If we can't read ViewTemplateId, proceed best-effort.
                     }
 
                     var state = CaptureViewCropState(view);
                     var restored = false;
                     try
                     {
-                        ApplyRegionCrop(doc, view, p.region, warnings, clearScopeBox: false);
+                        ApplyRegionCrop(doc, view, p.region, warnings);
                         try { doc.Regenerate(); } catch { }
                         try { uidoc.RefreshActiveView(); } catch { }
                         path = SelectionUtil.ExportViewImage(doc, view, imageSize, folder, stem);
                         (widthPx, heightPx) = SelectionUtil.ReadImageSize(path);
-                        if (p.cropRasterToRequestedRegionForMapping)
-                        {
-                            var outlineFrame = SelectionUtil.BuildRasterAffineFrameFromViewOutline(view, widthPx, heightPx);
-                            var cropCorners = SelectionUtil.GetCropCorners(view);
-                            var cropped = SelectionUtil.CropRasterToModelFrame(
-                                path,
-                                outlineFrame,
-                                cropCorners.topLeft,
-                                cropCorners.topRight,
-                                cropCorners.bottomLeft);
-                            path = cropped.path;
-                            widthPx = cropped.widthPx;
-                            heightPx = cropped.heightPx;
-                            warnings.Add($"Exported raster cropped back to the requested model frame ({cropped.diagnostic}).");
-                        }
                         frame = SelectionUtil.BuildRasterAffineFrame(view, widthPx, heightPx);
                     }
                     finally
@@ -311,59 +256,30 @@ namespace RevitBridge.Logic.Handlers
                 if (frame == null)
                     throw new InvalidOperationException("Failed to derive a raster-consistent frame mapping.");
 
-                var mappingIsSafe = true;
                 if (frame.AspectCorrectionApplied)
                 {
-                    var relativeAspectMismatch = RasterFrameMappingPolicy.GetRelativeAspectMismatch(
-                        frame.CropAspect,
-                        frame.RasterAspect);
-                    if (relativeAspectMismatch > 0.01)
-                    {
-                        var diagnosticSummary = warnings.Count == 0
-                            ? ""
-                            : $" Diagnostics: {string.Join(" | ", warnings)}";
-                        var failure =
-                            $"Exported raster aspect does not match the requested region crop " +
-                            $"(crop={frame.CropAspect:0.000000}, raster={frame.RasterAspect:0.000000}, " +
-                            $"relativeMismatch={relativeAspectMismatch:0.000000}).";
-                        if (p.includeMapping)
-                        {
-                            throw new InvalidOperationException(
-                                failure + " Refusing to return a misleading pixel/model mapping." + diagnosticSummary);
-                        }
-
-                        mappingIsSafe = false;
-                        warnings.Add(
-                            failure + " Returning the focused raster without pixel/model mapping or a reusable frame id.");
-                    }
-                    else
-                    {
-                        warnings.Add(
-                            $"export-view-region adjusted the frame X span to match the exported raster aspect (crop={frame.CropAspect:0.000000}, raster={frame.RasterAspect:0.000000}).");
-                    }
+                    warnings.Add(
+                        $"export-view-region adjusted the frame X span to match the exported raster aspect (crop={frame.CropAspect:0.000000}, raster={frame.RasterAspect:0.000000}).");
                 }
 
-                if (mappingIsSafe)
+                var stored = new StoredViewFrame
                 {
-                    var stored = new StoredViewFrame
-                    {
-                        frameId = frameId,
-                        viewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id), // original view id (temp view is deleted)
-                        viewType = view.ViewType.ToString(),
-                        viewName = view.Name,
-                        path = path,
-                        widthPx = widthPx,
-                        heightPx = heightPx,
-                        topLeft = frame.TopLeft,
-                        topRight = frame.TopRight,
-                        bottomLeft = frame.BottomLeft,
-                        createdUtc = DateTime.UtcNow
-                    };
-                    FrameStore.Put(stored);
-                }
+                    frameId = frameId,
+                    viewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id), // original view id (temp view is deleted)
+                    viewType = view.ViewType.ToString(),
+                    viewName = view.Name,
+                    path = path,
+                    widthPx = widthPx,
+                    heightPx = heightPx,
+                    topLeft = frame.TopLeft,
+                    topRight = frame.TopRight,
+                    bottomLeft = frame.BottomLeft,
+                    createdUtc = DateTime.UtcNow
+                };
+                FrameStore.Put(stored);
 
                 object? mapping = null;
-                if (p.includeMapping && mappingIsSafe)
+                if (p.includeMapping)
                 {
                     mapping = SelectionUtil.BuildRasterAffineMappingPayload(
                         frame,
@@ -372,7 +288,7 @@ namespace RevitBridge.Logic.Handlers
 
                 return Task.FromResult<object>(new
                 {
-                    frameId = mappingIsSafe ? frameId : null,
+                    frameId,
                     viewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
                     viewType = view.ViewType.ToString(),
                     viewName = view.Name,
@@ -400,6 +316,68 @@ namespace RevitBridge.Logic.Handlers
                     {
                         // best effort; avoid throwing after successful export
                     }
+                }
+            }
+        }
+
+        private static void ApplyHiddenCategories(
+            Document doc,
+            View view,
+            List<string>? requestedCategories,
+            List<string> warnings)
+        {
+            if (requestedCategories == null || requestedCategories.Count == 0) return;
+
+            foreach (var raw in requestedCategories)
+            {
+                var token = (raw ?? string.Empty).Trim();
+                if (token.Length == 0) continue;
+                if (!Enum.TryParse(token, true, out BuiltInCategory builtInCategory))
+                {
+                    warnings.Add($"Unrecognized hideCategories token '{token}'. Use an exact BuiltInCategory value such as OST_Grids.");
+                    continue;
+                }
+
+                var category = Category.GetCategory(doc, builtInCategory);
+                if (category == null)
+                {
+                    warnings.Add($"hideCategories token '{token}' did not resolve to a document category.");
+                    continue;
+                }
+
+                try
+                {
+                    if (view.CanCategoryBeHidden(category.Id))
+                    {
+                        view.SetCategoryHidden(category.Id, true);
+                        continue;
+                    }
+
+                    // Datum categories such as grids may reject category-level
+                    // visibility overrides even though their instances can be
+                    // hidden safely on this disposable export view.
+                    var hideableIds = new FilteredElementCollector(doc, view.Id)
+                        .OfCategory(builtInCategory)
+                        .WhereElementIsNotElementType()
+                        .ToElementIds()
+                        .Where(id =>
+                        {
+                            try { return doc.GetElement(id)?.CanBeHidden(view) == true; }
+                            catch { return false; }
+                        })
+                        .ToList();
+
+                    if (hideableIds.Count == 0)
+                    {
+                        warnings.Add($"Category '{token}' cannot be hidden in the temporary export view and has no hideable visible instances.");
+                        continue;
+                    }
+
+                    view.HideElements(hideableIds);
+                }
+                catch (Exception ex)
+                {
+                    warnings.Add($"Failed to hide category '{token}' in the temporary export view: {ex.Message}");
                 }
             }
         }
@@ -454,29 +432,11 @@ namespace RevitBridge.Logic.Handlers
             }
         }
 
-        private static void ApplyRegionCrop(
-            Document doc,
-            View view,
-            RegionSpec region,
-            List<string> warnings,
-            bool clearScopeBox)
+        private static void ApplyRegionCrop(Document doc, View view, RegionSpec region, List<string> warnings)
         {
             using (var tx = new Transaction(doc, "Operator Export View Region (Temp Crop)"))
             {
                 tx.Start();
-
-                if (clearScopeBox)
-                {
-                    if (TryClearScopeBox(view))
-                        warnings.Add("Temp view scope box cleared before applying the requested region crop.");
-                    ResetTemporaryCropShape(view, warnings);
-                }
-                else if (HasAssignedScopeBox(view))
-                {
-                    throw new InvalidOperationException(
-                        "The original view has an assigned scope box and no temporary view was available. " +
-                        "Refusing to clear the user's scope box; duplicate or activate a view without one and retry.");
-                }
 
                 try { view.CropBoxActive = true; }
                 catch { throw new ArgumentException("View does not support crop regions; export-view-region is not supported for this view type."); }
@@ -497,222 +457,9 @@ namespace RevitBridge.Logic.Handlers
                 };
 
                 view.CropBox = newCrop;
-                if (clearScopeBox)
-                    ConfigureTightAnnotationCrop(view, warnings);
                 try { view.CropBoxVisible = false; } catch { }
                 doc.Regenerate();
-                VerifyCropReadback(view, newCrop);
                 tx.Commit();
-            }
-        }
-
-        private static void VerifyCropReadback(View view, BoundingBoxXYZ expected)
-        {
-            BoundingBoxXYZ actual;
-            try { actual = view.CropBox; }
-            catch { throw new InvalidOperationException("Could not read back the requested region crop."); }
-
-            const double toleranceFt = 1e-5;
-            if (!PointsClose(actual.Min, expected.Min, toleranceFt) ||
-                !PointsClose(actual.Max, expected.Max, toleranceFt))
-            {
-                throw new InvalidOperationException(
-                    $"Revit did not retain the requested region crop " +
-                    $"(expectedMin={FormatPoint(expected.Min)}, expectedMax={FormatPoint(expected.Max)}, " +
-                    $"actualMin={FormatPoint(actual.Min)}, actualMax={FormatPoint(actual.Max)}); " +
-                    "refusing to return a misleading pixel/model mapping.");
-            }
-        }
-
-        private static string FormatPoint(XYZ point)
-        {
-            return $"({point.X:0.######},{point.Y:0.######},{point.Z:0.######})";
-        }
-
-        private static bool PointsClose(XYZ first, XYZ second, double tolerance)
-        {
-            return Math.Abs(first.X - second.X) <= tolerance &&
-                   Math.Abs(first.Y - second.Y) <= tolerance;
-        }
-
-        private static void ResetTemporaryCropShape(View view, List<string> warnings)
-        {
-            object? manager;
-            try
-            {
-                manager = view.GetType().GetMethod("GetCropRegionShapeManager", Type.EmptyTypes)?.Invoke(view, null);
-            }
-            catch (Exception ex)
-            {
-                throw new InvalidOperationException($"Could not inspect the temporary view crop shape: {ex.Message}");
-            }
-            if (manager == null) return;
-
-            var resetSplit = false;
-            var resetShape = false;
-            try
-            {
-                var managerType = manager.GetType();
-                var isSplit = managerType.GetProperty("IsSplit", BindingFlags.Instance | BindingFlags.Public)?.GetValue(manager) as bool?;
-                if (isSplit == true)
-                {
-                    managerType.GetMethod("RemoveSplit", Type.EmptyTypes)?.Invoke(manager, null);
-                    resetSplit = true;
-                }
-
-                var shapeSet = managerType.GetProperty("ShapeSet", BindingFlags.Instance | BindingFlags.Public)?.GetValue(manager) as bool?;
-                if (shapeSet == true)
-                {
-                    managerType.GetMethod("RemoveCropRegionShape", Type.EmptyTypes)?.Invoke(manager, null);
-                    resetShape = true;
-                }
-            }
-            catch (TargetInvocationException ex)
-            {
-                throw new InvalidOperationException($"Could not reset the temporary view crop shape: {(ex.InnerException ?? ex).Message}");
-            }
-            catch (Exception ex)
-            {
-                throw new InvalidOperationException($"Could not reset the temporary view crop shape: {ex.Message}");
-            }
-
-            if (resetSplit || resetShape)
-            {
-                warnings.Add(
-                    $"Temp view crop reset to a single rectangle " +
-                    $"(removedSplit={resetSplit.ToString().ToLowerInvariant()}, removedCustomShape={resetShape.ToString().ToLowerInvariant()}).");
-            }
-        }
-
-        private static void ConfigureTightAnnotationCrop(View view, List<string> warnings)
-        {
-            var activeSet = TrySetBuiltInIntegerParameter(view, "VIEWER_ANNOTATION_CROP_ACTIVE", 1);
-            object? manager = null;
-            try
-            {
-                manager = view.GetType().GetMethod("GetCropRegionShapeManager", Type.EmptyTypes)?.Invoke(view, null);
-            }
-            catch
-            {
-                manager = null;
-            }
-
-            var offsetsSet = 0;
-            if (manager != null)
-            {
-                foreach (var propertyName in new[]
-                {
-                    "LeftAnnotationCropOffset",
-                    "RightAnnotationCropOffset",
-                    "TopAnnotationCropOffset",
-                    "BottomAnnotationCropOffset"
-                })
-                {
-                    try
-                    {
-                        var property = manager.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
-                        if (property != null && property.CanWrite)
-                        {
-                            property.SetValue(manager, 0.0);
-                            offsetsSet += 1;
-                        }
-                    }
-                    catch
-                    {
-                        // Unsupported on some view kinds/API versions; the post-export aspect check remains available.
-                    }
-                }
-            }
-
-            if (!activeSet || offsetsSet != 4)
-            {
-                throw new InvalidOperationException(
-                    "Could not fully tighten the temporary view annotation crop; refusing to return a potentially shifted pixel/model mapping.");
-            }
-
-            warnings.Add("Temp view annotation crop tightened to the requested model crop for deterministic raster mapping.");
-        }
-
-        private static void HideAnnotationCategoriesForMapping(Document doc, View view, List<string> warnings)
-        {
-            var hidden = 0;
-            var failed = 0;
-
-            using (var tx = new Transaction(doc, "Operator Export View Region (Geometry Mapping)"))
-            {
-                tx.Start();
-                foreach (Category category in doc.Settings.Categories)
-                {
-                    if (category == null || category.CategoryType != CategoryType.Annotation)
-                        continue;
-
-                    try
-                    {
-                        if (!view.CanCategoryBeHidden(category.Id) || view.GetCategoryHidden(category.Id))
-                            continue;
-
-                        view.SetCategoryHidden(category.Id, true);
-                        hidden++;
-                    }
-                    catch
-                    {
-                        failed++;
-                    }
-                }
-
-                doc.Regenerate();
-                tx.Commit();
-            }
-
-            warnings.Add(
-                $"Geometry-mapping export hid {hidden} annotation categories on the disposable temporary view" +
-                (failed > 0 ? $" ({failed} categories could not be changed)." : "."));
-        }
-
-        private static bool TrySetBuiltInIntegerParameter(View view, string builtInParameterName, int value)
-        {
-            try
-            {
-                var bip = (BuiltInParameter)Enum.Parse(typeof(BuiltInParameter), builtInParameterName, ignoreCase: true);
-                var parameter = view.get_Parameter(bip);
-                if (parameter == null || parameter.IsReadOnly || parameter.StorageType != StorageType.Integer) return false;
-                return parameter.Set(value);
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private static bool HasAssignedScopeBox(View view)
-        {
-            try
-            {
-                var parameter = view.get_Parameter(BuiltInParameter.VIEWER_VOLUME_OF_INTEREST_CROP);
-                if (parameter == null) return false;
-                var current = parameter.AsElementId();
-                return current != null && current != ElementId.InvalidElementId;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private static bool TryClearScopeBox(View view)
-        {
-            try
-            {
-                var parameter = view.get_Parameter(BuiltInParameter.VIEWER_VOLUME_OF_INTEREST_CROP);
-                if (parameter == null || parameter.IsReadOnly) return false;
-                var current = parameter.AsElementId();
-                if (current == null || current == ElementId.InvalidElementId) return false;
-                parameter.Set(ElementId.InvalidElementId);
-                return true;
-            }
-            catch
-            {
-                return false;
             }
         }
 

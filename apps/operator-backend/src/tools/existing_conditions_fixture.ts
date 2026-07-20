@@ -108,6 +108,10 @@ import {
   type ArchitecturalSourceDeltaInput,
   type ArchitecturalSourceDeltaReceipt
 } from "../existing_conditions/architectural_source_delta.js";
+import {
+  compareCalibratedExistingConditionsCrops,
+  type CalibratedCropComparisonInput
+} from "../existing_conditions/calibrated_crop_comparator.js";
 import { auditArchitecturalRedactionVisibility } from "../existing_conditions/architectural_redaction_visibility_gate.js";
 import {
   buildExistingConditionsDeleteRequest,
@@ -349,6 +353,7 @@ function usage(): never {
     "  npm run existing-conditions -- scope-image-region --visible <export-visible-elements.json> --image-region <minX,minY,maxX,maxY> --out <scope.json> [--padding-px <pixels>] [--include-linked-scope] [--level-names <name,name>]",
     "  npm run existing-conditions -- solve-registration --input <registration-input-or-wrapper.json> --out <registration-receipt.json>",
     "  npm run existing-conditions -- assess-registration-ambiguity --input <candidate-search.json> --out <ambiguity-receipt.json>",
+    "  npm run existing-conditions -- compare-calibrated-crops --input <hash-bound-source-candidate-controls-and-features.json> --out-dir <evidence-dir> --out <comparison-receipt.json>",
     "  npm run existing-conditions -- extract-plan-traces --input <hash-bound-extraction-policy.json> --out <trace-receipt.json> [--preview-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- detect-repeated-mep-symbols --input <hash-bound-template-search.json> --out <candidate-receipt.json>",
     "  npm run existing-conditions -- validate-mep-region-coverage --input <source-coverage.json> --context <coverage-context.json> --out <coverage-receipt.json>",
@@ -2053,6 +2058,14 @@ async function main(): Promise<void> {
   if (command === "build-architectural-delta") {
     const receipt = await buildArchitecturalSourceDelta(
       readJson(requiredArgument("--input")) as ArchitecturalSourceDeltaInput,
+      requiredArgument("--out-dir")
+    );
+    writeJson(requiredArgument("--out"), receipt);
+    return;
+  }
+  if (command === "compare-calibrated-crops") {
+    const receipt = await compareCalibratedExistingConditionsCrops(
+      readJson(requiredArgument("--input")) as CalibratedCropComparisonInput,
       requiredArgument("--out-dir")
     );
     writeJson(requiredArgument("--out"), receipt);

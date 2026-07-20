@@ -225,15 +225,78 @@ export function __testOnlyFinalizeDecision(req: ChatRequest, decision: ChatRespo
 export type BrainDecisionDependencies = {
   mepRouteRedline?: typeof maybeRunDeterministicMepRouteRedline;
   semanticAecWorkflow?: typeof maybeRunSemanticAecWorkflow;
+  ruleBrain?: typeof decideRule;
   openAiBrain?: typeof decideOpenAi;
   openAiStreamingBrain?: typeof decideOpenAiStreaming;
+  codexBrain?: typeof decideCodex;
+  codexStreamingBrain?: typeof decideCodexStreaming;
   geminiBrain?: typeof decideGemini;
   geminiStreamingBrain?: typeof decideGeminiStreaming;
   anthropicBrain?: typeof decideAnthropic;
   anthropicStreamingBrain?: typeof decideAnthropicStreaming;
 };
 
+export type OperatorBrainRoute = "rule" | "openai" | "codex" | "gemini" | "anthropic";
+
+export function isDirectBrainRouteRequest(req: Pick<ChatRequest, "context">): boolean {
+  const context = req.context;
+  return Boolean(
+    context &&
+    typeof context === "object" &&
+    !Array.isArray(context) &&
+    (context as Record<string, unknown>).operator_brain_route === "direct"
+  );
+}
+
+export function resolveOperatorBrainRoute(): OperatorBrainRoute {
+  const forced = (process.env.OPERATOR_BRAIN || "").toLowerCase().trim();
+  if (forced === "rule") return "rule";
+  if (forced === "openai") return "openai";
+  if (forced === "codex") return "codex";
+  if (forced === "gemini") return "gemini";
+  if (forced === "anthropic" || forced === "claude") return "anthropic";
+  return resolveOpenAiApiKey() ? "openai" : "rule";
+}
+
+async function decideWithSelectedBrain(
+  route: OperatorBrainRoute,
+  req: ChatRequest,
+  dependencies: BrainDecisionDependencies
+): Promise<ChatResponse> {
+  if (route === "rule") return (dependencies.ruleBrain ?? decideRule)(req);
+  if (route === "openai") return (dependencies.openAiBrain ?? decideOpenAi)(req);
+  if (route === "codex") return (dependencies.codexBrain ?? decideCodex)(req);
+  if (route === "gemini") return (dependencies.geminiBrain ?? decideGemini)(req);
+  return (dependencies.anthropicBrain ?? decideAnthropic)(req);
+}
+
+async function decideWithSelectedBrainStreaming(
+  route: OperatorBrainRoute,
+  req: ChatRequest,
+  cb: StreamCallbacks,
+  dependencies: BrainDecisionDependencies
+): Promise<ChatResponse> {
+  if (route === "openai") {
+    return (dependencies.openAiStreamingBrain ?? decideOpenAiStreaming)(req, cb);
+  }
+  if (route === "codex") {
+    return (dependencies.codexStreamingBrain ?? decideCodexStreaming)(req, cb);
+  }
+  if (route === "gemini") {
+    return (dependencies.geminiStreamingBrain ?? decideGeminiStreaming)(req, cb);
+  }
+  if (route === "anthropic") {
+    return (dependencies.anthropicStreamingBrain ?? decideAnthropicStreaming)(req, cb);
+  }
+  return (dependencies.ruleBrain ?? decideRule)(req);
+}
+
 export async function decide(req: ChatRequest, dependencies: BrainDecisionDependencies = {}): Promise<ChatResponse> {
+  if (isDirectBrainRouteRequest(req)) {
+    const route = resolveOperatorBrainRoute();
+    return finalizeDecision(req, await decideWithSelectedBrain(route, req, dependencies));
+  }
+
   const roomReceptacleDecision = maybeRunDeterministicRoomReceptacleAnalog(req);
   if (roomReceptacleDecision) {
     return finalizeDecision(req, roomReceptacleDecision);
@@ -274,24 +337,25 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
     return finalizeDecision(req, persistedExistingConditionsTerminal);
   }
 
-  const forced = (process.env.OPERATOR_BRAIN || "").toLowerCase().trim();
-  const hasOpenAiKey = !!resolveOpenAiApiKey();
-
-  let decision: ChatResponse;
-  if (forced === "rule") decision = await decideRule(req);
-  else if (forced === "openai") decision = await (dependencies.openAiBrain ?? decideOpenAi)(req);
-  else if (forced === "codex") decision = await decideCodex(req);
-  else if (forced === "gemini") decision = await (dependencies.geminiBrain ?? decideGemini)(req);
-  else if (forced === "anthropic" || forced === "claude") {
-    decision = await (dependencies.anthropicBrain ?? decideAnthropic)(req);
-  }
-  else if (hasOpenAiKey) decision = await decideOpenAi(req);
-  else decision = await decideRule(req);
-
-  return finalizeDecision(req, decision);
+  const route = resolveOperatorBrainRoute();
+  return finalizeDecision(req, await decideWithSelectedBrain(route, req, dependencies));
 }
 
 export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dependencies: BrainDecisionDependencies = {}): Promise<ChatResponse> {
+  if (isDirectBrainRouteRequest(req)) {
+    const route = resolveOperatorBrainRoute();
+    const decision = finalizeDecision(
+      req,
+      await decideWithSelectedBrainStreaming(route, req, cb, dependencies)
+    );
+    if (route === "rule") {
+      const text = decision.assistant_message || "";
+      cb.onDelta?.(text);
+      cb.onDone?.(text);
+    }
+    return decision;
+  }
+
   const roomReceptacleDecision = maybeRunDeterministicRoomReceptacleAnalog(req);
   if (roomReceptacleDecision) {
     const text = roomReceptacleDecision.assistant_message || "";
@@ -376,34 +440,20 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dep
     return finalizeDecision(req, persistedExistingConditionsTerminal);
   }
 
-  const forced = (process.env.OPERATOR_BRAIN || "").toLowerCase().trim();
-  const hasOpenAiKey = !!resolveOpenAiApiKey();
-  if (forced === "codex") return decideCodexStreaming(req, cb);
-  if (forced === "gemini") {
-    return finalizeDecision(
-      req,
-      await (dependencies.geminiStreamingBrain ?? decideGeminiStreaming)(req, cb)
-    );
+  const route = resolveOperatorBrainRoute();
+  const decision = finalizeDecision(
+    req,
+    await decideWithSelectedBrainStreaming(route, req, cb, dependencies)
+  );
+  if (route === "rule") {
+    const text = decision.assistant_message || "";
+    const chunkSize = 60;
+    const delayMs = Math.max(0, Number.parseInt(process.env.OPERATOR_STREAM_DELAY_MS ?? "0", 10) || 0);
+    for (let i = 0; i < text.length; i += chunkSize) {
+      cb.onDelta?.(text.slice(i, i + chunkSize));
+      if (delayMs > 0) await new Promise<void>(resolve => setTimeout(resolve, delayMs));
+    }
+    cb.onDone?.(text);
   }
-  if (forced === "anthropic" || forced === "claude") {
-    return finalizeDecision(
-      req,
-      await (dependencies.anthropicStreamingBrain ?? decideAnthropicStreaming)(req, cb)
-    );
-  }
-  if (forced === "openai" || (forced !== "rule" && hasOpenAiKey)) {
-    return finalizeDecision(req, await (dependencies.openAiStreamingBrain ?? decideOpenAiStreaming)(req, cb));
-  }
-
-  const decision = await decide(req, dependencies);
-
-  const text = decision.assistant_message || "";
-  const chunkSize = 60;
-  const delayMs = Math.max(0, Number.parseInt(process.env.OPERATOR_STREAM_DELAY_MS ?? "0", 10) || 0);
-  for (let i = 0; i < text.length; i += chunkSize) {
-    cb.onDelta?.(text.slice(i, i + chunkSize));
-    if (delayMs > 0) await new Promise<void>(resolve => setTimeout(resolve, delayMs));
-  }
-  cb.onDone?.(text);
   return decision;
 }

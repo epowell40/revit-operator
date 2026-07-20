@@ -2021,6 +2021,167 @@ server.tool("revit_repair_duct_continuity_by_scope", "Repair continuity breaks i
   }
 );
 
+const mepXyzSchema = () => z.array(z.number()).length(3);
+
+const mepConnectorRefSchema = () => z.object({
+  elementId: z.number(),
+  connectorId: z.number(),
+  expectedOriginXyz: mepXyzSchema().optional(),
+  afterOriginXyz: mepXyzSchema().optional(),
+});
+
+const mepConnectorPairSchema = () => z.object({
+  a: mepConnectorRefSchema(),
+  b: mepConnectorRefSchema(),
+});
+
+const mepConnectorRepairSchema = z.object({
+  kind: z.enum(["move_elements_vector", "set_curve_line", "set_flex_curve"]),
+  elementIds: z.array(z.number()).min(1).optional(),
+  vectorX: z.number().optional(),
+  vectorY: z.number().optional(),
+  vectorZ: z.number().optional(),
+  elementId: z.number().optional(),
+  startXyz: mepXyzSchema().optional(),
+  endXyz: mepXyzSchema().optional(),
+  flexPoints: z.array(mepXyzSchema()).min(2).optional(),
+  startTangent: mepXyzSchema().optional(),
+  endTangent: mepXyzSchema().optional(),
+});
+
+const mepConnectorRepairParams = (dryRunOnly: boolean) => ({
+    expectedModelPath: z.string().min(1),
+    disconnectOnlyPairs: z.array(mepConnectorPairSchema()).min(1).max(64).optional(),
+    connectOpenPair: mepConnectorPairSchema().optional(),
+    connectionKind: z.enum(["auto", "direct", "elbow", "transition"]).optional(),
+    fittingWorksetName: z.string().optional(),
+    fittingWorksetId: z.number().optional(),
+    connectionMaxDistanceFt: z.number().positive().optional(),
+    disconnectPairs: z.array(mepConnectorPairSchema()).min(1).max(64).optional(),
+    repair: mepConnectorRepairSchema.optional(),
+    allowConnectedRepair: z.boolean().optional().default(false),
+    maxConnectorDistanceFt: z.number().positive().optional(),
+    originToleranceFt: z.number().positive().optional().default(0.01),
+    dryRun: dryRunOnly
+      ? z.literal(true).optional().default(true)
+      : z.boolean().optional().default(true),
+    verify: z.boolean().optional().default(true),
+});
+
+function compactMepConnectorRepairReceipt(data: any): any {
+  const compactSide = (side: any) => side && typeof side === "object" ? {
+    elementId: side.elementId,
+    connectorId: side.connectorId,
+    connectorIdBasis: side.connectorIdBasis,
+    origin: side.origin,
+    domain: side.domain,
+    shape: side.shape,
+    systemClassification: side.systemClassification,
+    systemName: side.systemName,
+    physicalConnectedOwnerIds: side.physicalConnectedOwnerIds,
+  } : side;
+  const compactPairs = (pairs: any) => Array.isArray(pairs) ? pairs.map(pair => ({
+    pairIndex: pair?.pairIndex,
+    connected: pair?.connected,
+    distanceFt: pair?.distanceFt,
+    a: compactSide(pair?.a),
+    b: compactSide(pair?.b),
+  })) : pairs;
+  return {
+    status: data?.status,
+    dryRun: data?.dryRun,
+    transactionGroupRolledBack: data?.transactionGroupRolledBack,
+    rollbackVerified: data?.rollbackVerified,
+    beforePairs: compactPairs(data?.beforePairs),
+    afterPairs: compactPairs(data?.afterPairs),
+    finalPairs: compactPairs(data?.finalPairs),
+    topologyExactMatch: data?.topologyExactMatch,
+    connectorTopologyExactMatch: data?.connectorTopologyExactMatch,
+    nativeFailures: data?.nativeFailures,
+    auditedElementIds: data?.auditedElementIds,
+    nextAction: data?.nextAction,
+  };
+}
+
+async function runMepConnectorRepair(req: any, forceDryRun: boolean, compactResponse: boolean) {
+  try {
+    const modeCount =
+      (req.disconnectOnlyPairs?.length ? 1 : 0) +
+      (req.connectOpenPair ? 1 : 0) +
+      (req.repair ? 1 : 0);
+    if (modeCount !== 1) {
+      throw new Error(
+        "Connector repair requires exactly one mode: disconnectOnlyPairs, connectOpenPair, or repair (repair may include disconnectPairs)."
+      );
+    }
+    if (req.disconnectPairs?.length && !req.repair) {
+      throw new Error("disconnectPairs is valid only with repair.");
+    }
+    if (req.repair?.kind === "move_elements_vector") {
+      if (
+        !req.repair.elementIds?.length ||
+        typeof req.repair.vectorX !== "number" ||
+        typeof req.repair.vectorY !== "number" ||
+        typeof req.repair.vectorZ !== "number"
+      ) {
+        throw new Error("move_elements_vector requires elementIds and vectorX/vectorY/vectorZ.");
+      }
+    } else if (req.repair?.kind === "set_curve_line") {
+      if (
+        typeof req.repair.elementId !== "number" ||
+        !req.repair.startXyz ||
+        !req.repair.endXyz
+      ) {
+        throw new Error("set_curve_line requires elementId, startXyz, and endXyz.");
+      }
+    } else if (req.repair?.kind === "set_flex_curve") {
+      if (typeof req.repair.elementId !== "number" || !req.repair.flexPoints?.length) {
+        throw new Error("set_flex_curve requires elementId and flexPoints.");
+      }
+    }
+    const toNativePair = (pair: any) => ({ first: pair.a, second: pair.b });
+    const nativeRequest = {
+      ...req,
+      dryRun: forceDryRun ? true : req.dryRun,
+      verify: forceDryRun ? true : req.verify,
+      ...(req.disconnectOnlyPairs
+        ? { disconnectOnlyPairs: req.disconnectOnlyPairs.map(toNativePair) }
+        : {}),
+      ...(req.connectOpenPair
+        ? { connectOpenPair: toNativePair(req.connectOpenPair) }
+        : {}),
+      ...(req.disconnectPairs
+        ? { disconnectPairs: req.disconnectPairs.map(toNativePair) }
+        : {}),
+    };
+    const data = await callRevit("/revit/repair-mep-connectors", "POST", nativeRequest);
+    const response = compactResponse ? compactMepConnectorRepairReceipt(data) : data;
+    return { content: [{ type: "text" as const, text: JSON.stringify(response, null, 2) }] };
+  } catch (e) {
+    return { isError: true, content: [{ type: "text" as const, text: String(e) }] };
+  }
+}
+
+server.registerTool(
+  "revit_repair_mep_connectors",
+  {
+    description: "Apply-capable exact native MEP connector disconnect/reconnect/reshape with rollback verification. Connector pairs use {a:{elementId,connectorId,expectedOriginXyz}, b:{...}}. Use exactly one mode: disconnectOnlyPairs, connectOpenPair, or repair (optionally with disconnectPairs). Use revit_dry_run_repair_mep_connectors for rollback-only trials.",
+    inputSchema: mepConnectorRepairParams(false),
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  },
+  async req => runMepConnectorRepair(req, false, false)
+);
+
+server.registerTool(
+  "revit_dry_run_repair_mep_connectors",
+  {
+    description: "Read-only rollback trial for exact native MEP connector disconnect/reconnect/reshape. Always forces dryRun=true and verify=true, returns compact before/after/final connector identity evidence, and never persists a model change. Connector pairs use exact keys a and b.",
+    inputSchema: mepConnectorRepairParams(true),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async req => runMepConnectorRepair(req, true, true)
+);
+
 server.tool("revit_get_connectors", "Get connector origins/sizes/directions for elements (ducts, fittings, terminals, equipment).",
   {
     elementIds: z.array(z.number()).min(1).max(5000),

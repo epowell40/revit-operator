@@ -3314,6 +3314,9 @@ namespace RevitBridge.Logic.Handlers
             public long hostElementId { get; set; }
             public long? linkedHostElementId { get; set; }
             public string? linkedHostBuiltInCategory { get; set; }
+            public string? sourceHostFaceStableReference { get; set; }
+            [JsonConverter(typeof(FlexibleXyzArrayConverter))]
+            public double[]? referenceDirectionXyz { get; set; }
             public long? roomId { get; set; }
             public string? roomNumber { get; set; }
             public string? roomSide { get; set; }
@@ -3359,6 +3362,8 @@ namespace RevitBridge.Logic.Handlers
                 ?? throw new InvalidOperationException("Unable to resolve family symbol. Provide familySymbolId, symbolName, or sourceElementId.");
             if (p.pointXyz != null && p.pointXyz.Length != 3)
                 throw new InvalidOperationException("pointXyz must contain exactly three numeric coordinates.");
+            if (p.referenceDirectionXyz != null && p.referenceDirectionXyz.Length != 3)
+                throw new InvalidOperationException("referenceDirectionXyz must contain exactly three numeric coordinates.");
             var previewView = HostedPlacementUtil.ResolveView(doc, uidoc.ActiveView, p.previewViewId) ?? uidoc.ActiveView;
             var warnings = new List<string>();
             var requestedHost = doc.GetElement(ElementIdCompat.Create(p.hostElementId)) ?? throw new InvalidOperationException($"Host element {p.hostElementId} not found.");
@@ -3473,14 +3478,24 @@ namespace RevitBridge.Logic.Handlers
 
             var z = p.elevationFt ?? (basePoint.Z + (p.elevationDeltaFt ?? 0.0));
             var finalPoint = new XYZ(basePoint.X, basePoint.Y, z);
-            string? sourceHostFaceStableReference = null;
+            string? sourceHostFaceStableReference = p.sourceHostFaceStableReference;
             if (sourceElement is FamilyInstance sourceHostFamilyInstance)
             {
-                try { sourceHostFaceStableReference = sourceHostFamilyInstance.HostFace?.ConvertToStableRepresentation(doc); }
+                try
+                {
+                    var resolvedSourceReference = sourceHostFamilyInstance.HostFace?.ConvertToStableRepresentation(doc);
+                    if (!string.IsNullOrWhiteSpace(resolvedSourceReference))
+                        sourceHostFaceStableReference = resolvedSourceReference;
+                }
                 catch { }
             }
-            var preferredFaceReferenceDirection = roomWall?.tangent;
-            if (orientationSource is FamilyInstance orientationSourceInstance)
+            var preferredFaceReferenceDirection = p.referenceDirectionXyz == null
+                ? roomWall?.tangent
+                : new XYZ(
+                    p.referenceDirectionXyz[0],
+                    p.referenceDirectionXyz[1],
+                    p.referenceDirectionXyz[2]);
+            if (p.referenceDirectionXyz == null && orientationSource is FamilyInstance orientationSourceInstance)
             {
                 try
                 {

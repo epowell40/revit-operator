@@ -4,12 +4,18 @@ import {
   decideAnthropic,
   decideGemini
 } from "../src/brains/external_provider_brain.js";
-import { decide } from "../src/brain.js";
+import {
+  decide,
+  decideStreaming,
+  isDirectBrainRouteRequest,
+  resolveOperatorBrainRoute
+} from "../src/brain.js";
 import {
   OPERATOR_BACKEND_CONTRACT_VERSION,
   type ChatRequest,
   type ChatResponse
 } from "../src/contracts.js";
+import { formatCodexRequestEnvelope } from "../src/brains/codex_brain.js";
 
 function request(text = "Inspect the active view and take the next smallest safe action."): ChatRequest {
   return {
@@ -26,6 +32,33 @@ function restoreEnvironment(snapshot: Record<string, string | undefined>): void 
     else process.env[name] = value;
   }
 }
+
+test("Codex request envelope carries current context and exact attachment metadata", () => {
+  const envelope = formatCodexRequestEnvelope({
+    ...request(),
+    context: {
+      expectedModelPath: "C:\\benchmarks\\synthetic_fixture_frozen.rvt",
+      nextAction: "isolate exact connector pair"
+    },
+    user_attachments: [
+      {
+        id: "source-image",
+        relative_path: "artifacts/provider_trials/source_fixture_plan.png",
+        filename: "source_fixture_plan.png",
+        mime: "image/png",
+        bytes: 1234,
+        sha256: "abc123"
+      }
+    ]
+  });
+
+  assert.match(envelope, /CURRENT REVIT\/SERVER CONTEXT/);
+  assert.match(envelope, /synthetic_fixture_frozen\.rvt/);
+  assert.match(envelope, /isolate exact connector pair/);
+  assert.match(envelope, /USER ATTACHMENTS/);
+  assert.match(envelope, /artifacts\/provider_trials\/source_fixture_plan\.png/);
+  assert.match(envelope, /abc123/);
+});
 
 test("Gemini brain uses structured output and normalizes action body_json", async () => {
   const previous = {
@@ -212,6 +245,144 @@ test("OPERATOR_BRAIN=claude is an alias for the Anthropic brain", async () => {
     });
     assert.equal(calls, 1);
     assert.equal(response.assistant_message, "Anthropic selected.");
+  } finally {
+    restoreEnvironment(previous);
+  }
+});
+
+test("streaming and non-streaming dispatch resolve the same configured brain", async () => {
+  const previous = { OPERATOR_BRAIN: process.env.OPERATOR_BRAIN };
+  const routes = [
+    { configured: "rule", resolved: "rule" },
+    { configured: "openai", resolved: "openai" },
+    { configured: "codex", resolved: "codex" },
+    { configured: "gemini", resolved: "gemini" },
+    { configured: "claude", resolved: "anthropic" }
+  ] as const;
+
+  try {
+    for (const route of routes) {
+      process.env.OPERATOR_BRAIN = route.configured;
+      assert.equal(resolveOperatorBrainRoute(), route.resolved);
+      const calls: string[] = [];
+      const responseFor = (lane: string): ChatResponse => ({
+        version: OPERATOR_BACKEND_CONTRACT_VERSION,
+        assistant_message: `${route.resolved}:${lane}`,
+        actions: []
+      });
+      const dependencies = {
+        ruleBrain: async () => {
+          calls.push("rule:nonstream");
+          return responseFor("nonstream");
+        },
+        openAiBrain: async () => {
+          calls.push("openai:nonstream");
+          return responseFor("nonstream");
+        },
+        openAiStreamingBrain: async () => {
+          calls.push("openai:stream");
+          return responseFor("stream");
+        },
+        codexBrain: async () => {
+          calls.push("codex:nonstream");
+          return responseFor("nonstream");
+        },
+        codexStreamingBrain: async () => {
+          calls.push("codex:stream");
+          return responseFor("stream");
+        },
+        geminiBrain: async () => {
+          calls.push("gemini:nonstream");
+          return responseFor("nonstream");
+        },
+        geminiStreamingBrain: async () => {
+          calls.push("gemini:stream");
+          return responseFor("stream");
+        },
+        anthropicBrain: async () => {
+          calls.push("anthropic:nonstream");
+          return responseFor("nonstream");
+        },
+        anthropicStreamingBrain: async () => {
+          calls.push("anthropic:stream");
+          return responseFor("stream");
+        }
+      };
+
+      const nonStreaming = await decide(
+        request(`Continue existing conditions reconstruction via ${route.configured} non-streaming.`),
+        dependencies
+      );
+      const streaming = await decideStreaming(
+        request(`Continue existing conditions reconstruction via ${route.configured} streaming.`),
+        {},
+        dependencies
+      );
+
+      assert.equal(nonStreaming.assistant_message, `${route.resolved}:nonstream`);
+      assert.equal(
+        streaming.assistant_message,
+        route.resolved === "rule" ? `${route.resolved}:nonstream` : `${route.resolved}:stream`
+      );
+      assert.deepEqual(
+        calls,
+        route.resolved === "rule"
+          ? ["rule:nonstream", "rule:nonstream"]
+          : [`${route.resolved}:nonstream`, `${route.resolved}:stream`]
+      );
+    }
+  } finally {
+    restoreEnvironment(previous);
+  }
+});
+
+test("explicit direct route bypasses deterministic prehandlers in both chat modes and retains shared finalization", async () => {
+  const previous = { OPERATOR_BRAIN: process.env.OPERATOR_BRAIN };
+  process.env.OPERATOR_BRAIN = "gemini";
+  const directRequest: ChatRequest = {
+    ...request("Repair this MEP route."),
+    context: { operator_brain_route: "direct" }
+  };
+  let prehandlerCalls = 0;
+  let selectedBrainCalls = 0;
+  const emptyResponse: ChatResponse = {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    assistant_message: "",
+    actions: []
+  };
+
+  try {
+    assert.equal(isDirectBrainRouteRequest(directRequest), true);
+    assert.equal(isDirectBrainRouteRequest({ context: { operator_brain_route: "DIRECT" } }), false);
+
+    const dependencies = {
+      mepRouteRedline: async () => {
+        prehandlerCalls += 1;
+        return {
+          version: OPERATOR_BACKEND_CONTRACT_VERSION,
+          assistant_message: "Deterministic route intercepted.",
+          actions: []
+        } satisfies ChatResponse;
+      },
+      geminiBrain: async () => {
+        selectedBrainCalls += 1;
+        return emptyResponse;
+      },
+      geminiStreamingBrain: async () => {
+        selectedBrainCalls += 1;
+        return emptyResponse;
+      }
+    };
+
+    const nonStreaming = await decide(directRequest, dependencies);
+    const streaming = await decideStreaming(directRequest, {}, dependencies);
+
+    assert.equal(prehandlerCalls, 0);
+    assert.equal(selectedBrainCalls, 2);
+    assert.match(nonStreaming.assistant_message, /internal fallback response/);
+    assert.match(streaming.assistant_message, /internal fallback response/);
+    assert.deepEqual(nonStreaming.actions, []);
+    assert.deepEqual(streaming.actions, []);
   } finally {
     restoreEnvironment(previous);
   }
