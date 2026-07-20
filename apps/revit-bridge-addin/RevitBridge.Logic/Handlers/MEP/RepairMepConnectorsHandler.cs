@@ -761,6 +761,9 @@ namespace RevitBridge.Logic.Handlers.MEP
                 distanceFt,
                 sameSize,
                 axisDot,
+                elbowTurnAngleDegrees = connectionKind == "elbow"
+                    ? (double?)ComputeElbowTurnAngleDegrees(axisDot)
+                    : null,
                 fittingWorkset = requestedWorkset == null ? null : new
                 {
                     id = requestedWorkset.Id.IntegerValue,
@@ -977,7 +980,14 @@ namespace RevitBridge.Logic.Handlers.MEP
                 // positive gap so Revit can recreate the real source fitting
                 // instead of requiring coincident connector origins.
                 if (distanceFt > 1.0) return "elbow_connector_gap_exceeds_native_safety_limit";
-                if (Math.Abs(axisDot) > 0.25) return "elbow_requires_orthogonal_connector_directions";
+                // Revit evaluates the turn between one connector's inward
+                // direction and the other connector's outward direction. The
+                // native API documents a typical valid elbow range of 2 to 95
+                // degrees, so permit 45-degree and other native-valid elbows
+                // while still rejecting near-straight and over-bent pairs.
+                var turnAngleDegrees = ComputeElbowTurnAngleDegrees(axisDot);
+                if (turnAngleDegrees < 2.0) return "elbow_angle_below_native_safety_limit";
+                if (turnAngleDegrees > 95.0) return "elbow_angle_above_native_safety_limit";
                 return null;
             }
             if (distanceFt > 0.02) return "direct_connection_gap_exceeds_limit";
@@ -996,6 +1006,12 @@ namespace RevitBridge.Logic.Handlers.MEP
             var firstAxis = SafeConnectorAxis(first);
             var secondAxis = SafeConnectorAxis(second);
             return firstAxis.DotProduct(secondAxis);
+        }
+
+        private static double ComputeElbowTurnAngleDegrees(double axisDot)
+        {
+            var inwardToOutwardDot = Math.Max(-1.0, Math.Min(1.0, -axisDot));
+            return Math.Acos(inwardToOutwardDot) * 180.0 / Math.PI;
         }
 
         private static bool ConnectorSizesMatch(Connector first, Connector second)
