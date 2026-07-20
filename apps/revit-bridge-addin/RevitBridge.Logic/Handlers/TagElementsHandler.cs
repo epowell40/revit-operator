@@ -54,8 +54,30 @@ namespace RevitBridge.Logic.Handlers
             public string? generatedTagContentProfile { get; set; } // none|airflow_only
             public bool? ensureTagCategoryVisible { get; set; }
             public bool? inspectTagFamilyElements { get; set; }
+            public long? repairExistingTagId { get; set; }
+            public List<double>? tagHeadPositionXyz { get; set; }
+            public List<double>? leaderEndXyz { get; set; }
+            public List<double>? leaderElbowXyz { get; set; }
+            public bool? hasLeader { get; set; }
+            public string? leaderEndCondition { get; set; } // attached|free
             public int? max { get; set; }
             public bool? dryRun { get; set; }
+        }
+
+        private sealed class ExistingTagSnapshot
+        {
+            public long TagId { get; set; }
+            public long OwnerViewId { get; set; }
+            public long TypeId { get; set; }
+            public string? VisibleText { get; set; }
+            public XYZ Head { get; set; } = XYZ.Zero;
+            public bool HasLeader { get; set; }
+            public string LeaderEndCondition { get; set; } = "";
+            public int TaggedReferenceCount { get; set; }
+            public XYZ? LeaderEnd { get; set; }
+            public XYZ? LeaderElbow { get; set; }
+            public XYZ? BoundingBoxMin { get; set; }
+            public XYZ? BoundingBoxMax { get; set; }
         }
 
         private sealed class GeometryPlacementPlan
@@ -190,6 +212,9 @@ namespace RevitBridge.Logic.Handlers
 
             var view = ResolveView(doc, p.viewId, p.viewName, app.ActiveUIDocument?.ActiveView);
             if (view == null) throw new InvalidOperationException("tag-elements requires viewId or viewName (or an active view).");
+
+            if (p.repairExistingTagId.HasValue)
+                return Task.FromResult(HandleExistingTagRepair(doc, view, p));
 
             var max = p.max.GetValueOrDefault(5000);
             if (max < 1) max = 1;
@@ -456,6 +481,211 @@ namespace RevitBridge.Logic.Handlers
                 errors = errors.Take(200).ToList()
             });
         }
+
+        private static object HandleExistingTagRepair(Document doc, View view, TagRequest request)
+        {
+            var tagId = ElementIdCompat.Create(request.repairExistingTagId!.Value);
+            if (doc.GetElement(tagId) is not IndependentTag tag)
+                throw new ArgumentException($"Independent tag {request.repairExistingTagId.Value} was not found.");
+            if (tag.OwnerViewId != view.Id)
+                throw new ArgumentException(
+                    $"Independent tag {request.repairExistingTagId.Value} belongs to view {ElementIdCompat.GetValue(tag.OwnerViewId)}, not requested view {ElementIdCompat.GetValue(view.Id)}.");
+
+            var requestedHead = ParseOptionalXyz(request.tagHeadPositionXyz, "tagHeadPositionXyz");
+            var requestedLeaderEnd = ParseOptionalXyz(request.leaderEndXyz, "leaderEndXyz");
+            var requestedLeaderElbow = ParseOptionalXyz(request.leaderElbowXyz, "leaderElbowXyz");
+            var requestedCondition = ParseOptionalLeaderEndCondition(request.leaderEndCondition);
+            var hasRequestedWrite =
+                requestedHead != null ||
+                requestedLeaderEnd != null ||
+                requestedLeaderElbow != null ||
+                request.hasLeader.HasValue ||
+                requestedCondition.HasValue;
+
+            if (request.hasLeader == false &&
+                (requestedLeaderEnd != null || requestedLeaderElbow != null || requestedCondition == LeaderEndCondition.Free))
+                throw new ArgumentException("hasLeader=false cannot be combined with free-leader geometry.");
+
+            var before = ReadExistingTagSnapshot(tag, view);
+            if (!hasRequestedWrite)
+            {
+                return new
+                {
+                    status = "Read",
+                    dryRun = request.dryRun ?? false,
+                    tag = ExistingTagSnapshotPayload(before),
+                    changed = false
+                };
+            }
+
+            var dryRun = request.dryRun ?? false;
+            ExistingTagSnapshot after;
+            ExistingTagSnapshot? rollback = null;
+            using (var transaction = new Transaction(doc, "Repair Existing Tag Geometry"))
+            {
+                transaction.Start();
+
+                if (requestedHead != null) tag.TagHeadPosition = requestedHead;
+                if (request.hasLeader.HasValue) tag.HasLeader = request.hasLeader.Value;
+                if (requestedCondition.HasValue)
+                {
+                    if (tag.LeaderEndCondition != requestedCondition.Value &&
+                        !tag.CanLeaderEndConditionBeAssigned(requestedCondition.Value))
+                        throw new InvalidOperationException(
+                            $"Tag {request.repairExistingTagId.Value} cannot use leader end condition {requestedCondition.Value}.");
+                    tag.LeaderEndCondition = requestedCondition.Value;
+                }
+
+                if (requestedLeaderEnd != null || requestedLeaderElbow != null)
+                {
+                    tag.HasLeader = true;
+                    if (tag.LeaderEndCondition != LeaderEndCondition.Free)
+                    {
+                        if (!tag.CanLeaderEndConditionBeAssigned(LeaderEndCondition.Free))
+                            throw new InvalidOperationException(
+                                $"Tag {request.repairExistingTagId.Value} cannot use a free leader endpoint.");
+                        tag.LeaderEndCondition = LeaderEndCondition.Free;
+                    }
+
+                    var references = tag.GetTaggedReferences();
+                    if (references.Count != 1)
+                        throw new InvalidOperationException(
+                            $"Tag {request.repairExistingTagId.Value} has {references.Count} tagged references; exact leader repair requires one.");
+                    var reference = references[0];
+                    if (!tag.IsLeaderVisible(reference))
+                        throw new InvalidOperationException(
+                            $"Tag {request.repairExistingTagId.Value} does not expose a visible leader for its tagged reference.");
+                    if (requestedLeaderEnd != null) tag.SetLeaderEnd(reference, requestedLeaderEnd);
+                    if (requestedLeaderElbow != null) tag.SetLeaderElbow(reference, requestedLeaderElbow);
+                }
+
+                doc.Regenerate();
+                after = ReadExistingTagSnapshot(tag, view);
+                if (dryRun) transaction.RollBack();
+                else transaction.Commit();
+            }
+
+            if (dryRun)
+            {
+                if (doc.GetElement(tagId) is not IndependentTag rolledBackTag)
+                    throw new InvalidOperationException(
+                        $"Tag {request.repairExistingTagId.Value} disappeared after dry-run rollback.");
+                rollback = ReadExistingTagSnapshot(rolledBackTag, view);
+            }
+
+            return new
+            {
+                status = dryRun ? "Dry Run" : "Repaired",
+                dryRun,
+                changed = true,
+                before = ExistingTagSnapshotPayload(before),
+                after = ExistingTagSnapshotPayload(after),
+                rolledBack = dryRun,
+                rollbackVerified = dryRun ? ExistingTagSnapshotsMatch(before, rollback!) : (bool?)null,
+                rollback = rollback == null ? null : ExistingTagSnapshotPayload(rollback)
+            };
+        }
+
+        private static ExistingTagSnapshot ReadExistingTagSnapshot(IndependentTag tag, View view)
+        {
+            var references = tag.GetTaggedReferences();
+            XYZ? leaderEnd = null;
+            XYZ? leaderElbow = null;
+            if (tag.HasLeader && references.Count == 1 && tag.IsLeaderVisible(references[0]))
+            {
+                if (tag.LeaderEndCondition == LeaderEndCondition.Free)
+                    leaderEnd = tag.GetLeaderEnd(references[0]);
+                if (tag.HasLeaderElbow(references[0]))
+                    leaderElbow = tag.GetLeaderElbow(references[0]);
+            }
+
+            var bbox = tag.get_BoundingBox(view);
+            string? visibleText;
+            try { visibleText = tag.TagText; }
+            catch { visibleText = null; }
+            return new ExistingTagSnapshot
+            {
+                TagId = ElementIdCompat.GetValue(tag.Id),
+                OwnerViewId = ElementIdCompat.GetValue(tag.OwnerViewId),
+                TypeId = ElementIdCompat.GetValue(tag.GetTypeId()),
+                VisibleText = visibleText,
+                Head = tag.TagHeadPosition,
+                HasLeader = tag.HasLeader,
+                LeaderEndCondition = tag.LeaderEndCondition.ToString(),
+                TaggedReferenceCount = references.Count,
+                LeaderEnd = leaderEnd,
+                LeaderElbow = leaderElbow,
+                BoundingBoxMin = bbox?.Min,
+                BoundingBoxMax = bbox?.Max
+            };
+        }
+
+        private static object ExistingTagSnapshotPayload(ExistingTagSnapshot snapshot) => new
+        {
+            tagId = snapshot.TagId,
+            ownerViewId = snapshot.OwnerViewId,
+            typeId = snapshot.TypeId,
+            visibleText = snapshot.VisibleText,
+            tagHeadPosition = XyzPayload(snapshot.Head),
+            hasLeader = snapshot.HasLeader,
+            leaderEndCondition = snapshot.LeaderEndCondition,
+            taggedReferenceCount = snapshot.TaggedReferenceCount,
+            leaderEnd = snapshot.LeaderEnd == null ? null : XyzPayload(snapshot.LeaderEnd),
+            leaderElbow = snapshot.LeaderElbow == null ? null : XyzPayload(snapshot.LeaderElbow),
+            boundingBox = snapshot.BoundingBoxMin == null || snapshot.BoundingBoxMax == null
+                ? null
+                : new
+                {
+                    min = XyzPayload(snapshot.BoundingBoxMin),
+                    max = XyzPayload(snapshot.BoundingBoxMax)
+                }
+        };
+
+        private static object XyzPayload(XYZ point) => new { x = point.X, y = point.Y, z = point.Z };
+
+        private static XYZ? ParseOptionalXyz(IReadOnlyList<double>? values, string fieldName)
+        {
+            if (values == null) return null;
+            if (values.Count != 3 || values.Any(value => double.IsNaN(value) || double.IsInfinity(value)))
+                throw new ArgumentException($"{fieldName} must contain exactly three finite coordinates.");
+            return new XYZ(values[0], values[1], values[2]);
+        }
+
+        private static LeaderEndCondition? ParseOptionalLeaderEndCondition(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            if (string.Equals(value.Trim(), "free", StringComparison.OrdinalIgnoreCase))
+                return LeaderEndCondition.Free;
+            if (string.Equals(value.Trim(), "attached", StringComparison.OrdinalIgnoreCase))
+                return LeaderEndCondition.Attached;
+            throw new ArgumentException("leaderEndCondition must be attached|free.");
+        }
+
+        private static bool ExistingTagSnapshotsMatch(ExistingTagSnapshot left, ExistingTagSnapshot right)
+        {
+            const double tolerance = 1e-9;
+            return left.TagId == right.TagId &&
+                   left.OwnerViewId == right.OwnerViewId &&
+                   left.TypeId == right.TypeId &&
+                   string.Equals(left.VisibleText, right.VisibleText, StringComparison.Ordinal) &&
+                   left.HasLeader == right.HasLeader &&
+                   string.Equals(left.LeaderEndCondition, right.LeaderEndCondition, StringComparison.Ordinal) &&
+                   left.TaggedReferenceCount == right.TaggedReferenceCount &&
+                   PointsMatch(left.Head, right.Head, tolerance) &&
+                   NullablePointsMatch(left.LeaderEnd, right.LeaderEnd, tolerance) &&
+                   NullablePointsMatch(left.LeaderElbow, right.LeaderElbow, tolerance) &&
+                   NullablePointsMatch(left.BoundingBoxMin, right.BoundingBoxMin, tolerance) &&
+                   NullablePointsMatch(left.BoundingBoxMax, right.BoundingBoxMax, tolerance);
+        }
+
+        private static bool NullablePointsMatch(XYZ? left, XYZ? right, double tolerance)
+        {
+            if (left == null || right == null) return left == null && right == null;
+            return PointsMatch(left, right, tolerance);
+        }
+
+        private static bool PointsMatch(XYZ left, XYZ right, double tolerance) =>
+            left.DistanceTo(right) <= tolerance;
 
         private static TagVisibilityOutcome EvaluateTagVisibility(
             Document doc,

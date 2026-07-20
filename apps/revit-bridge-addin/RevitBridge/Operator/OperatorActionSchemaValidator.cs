@@ -5566,7 +5566,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/tag-elements", StringComparison.OrdinalIgnoreCase))
             {
-                // { viewId?|viewName?, elementIds?|categoryNames?, categoryTagTypeMap?, tagTypeId?|tagTypeName?|tagFamilyName?, onlyUntagged?, addLeader?, orientation?, offsetX?, offsetY?, placementMode?, placementProfile?, tagWidthPaperInches?, tagHeightPaperInches?, clearancePaperInches?, maxRepairAttempts?, autoLoadTagFamily?, tagFamilySourceProjectPath?, tagFamilySourceCategory?, tagFamilySourceFamilyName?, tagFamilySourceTypeName?, generatedTagFamilyName?, generatedTagContentProfile?, inspectTagFamilyElements?, max?, dryRun? }
+                // Create mode: { viewId?|viewName?, elementIds?|categoryNames?, ... }. Existing-tag repair/read mode: { viewId?|viewName?, repairExistingTagId, tagHeadPositionXyz?, leaderEndXyz?, leaderElbowXyz?, hasLeader?, leaderEndCondition?:attached|free, dryRun? }.
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "tag-elements body must be an object.";
@@ -5598,7 +5598,24 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalString(obj.Value, "generatedTagFamilyName", maxLen: 120, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "generatedTagContentProfile", maxLen: 32, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "inspectTagFamilyElements", out error)) return false;
+                if (!ValidateOptionalLong(obj.Value, "repairExistingTagId", out error)) return false;
+                if (!ValidateOptionalXyzArray(obj.Value, "tagHeadPositionXyz", out error)) return false;
+                if (!ValidateOptionalXyzArray(obj.Value, "leaderEndXyz", out error)) return false;
+                if (!ValidateOptionalXyzArray(obj.Value, "leaderElbowXyz", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "hasLeader", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "leaderEndCondition", maxLen: 16, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
+
+                if (obj.Value.TryGetProperty("leaderEndCondition", out var leaderEndCondition) &&
+                    leaderEndCondition.ValueKind == JsonValueKind.String)
+                {
+                    var value = (leaderEndCondition.GetString() ?? "").Trim().ToLowerInvariant();
+                    if (value.Length > 0 && value != "attached" && value != "free")
+                    {
+                        error = "tag-elements.leaderEndCondition must be attached|free.";
+                        return false;
+                    }
+                }
 
                 if (obj.Value.TryGetProperty("placementMode", out var placementMode) && placementMode.ValueKind == JsonValueKind.String)
                 {
@@ -5651,9 +5668,11 @@ namespace RevitBridge.Operator
 
                 var hasElementIds = obj.Value.TryGetProperty("elementIds", out var eids) && eids.ValueKind == JsonValueKind.Array && eids.GetArrayLength() > 0;
                 var hasCategoryNames = obj.Value.TryGetProperty("categoryNames", out var cns) && cns.ValueKind == JsonValueKind.Array && cns.GetArrayLength() > 0;
-                if (!hasElementIds && !hasCategoryNames)
+                var hasRepairTagId = obj.Value.TryGetProperty("repairExistingTagId", out var repairTagId) &&
+                                     repairTagId.ValueKind == JsonValueKind.Number;
+                if (!hasElementIds && !hasCategoryNames && !hasRepairTagId)
                 {
-                    error = "tag-elements requires elementIds and/or categoryNames.";
+                    error = "tag-elements requires elementIds/categoryNames or repairExistingTagId.";
                     return false;
                 }
 
