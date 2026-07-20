@@ -203,7 +203,8 @@ namespace RevitBridge.Logic.Handlers
             long? roomId,
             string? roomNumber,
             string? roomSide,
-            List<string> warnings)
+            List<string> warnings,
+            IReadOnlyList<long>? allowedHostElementIds = null)
         {
             var ids = elementIds.Where(id => id > 0).Distinct().ToList();
             if (ids.Count == 0)
@@ -224,6 +225,7 @@ namespace RevitBridge.Logic.Handlers
                     roomNumber = roomNumber,
                     roomSide = roomSide,
                     hostCategories = new List<string> { "OST_Walls" },
+                    allowedHostElementIds = allowedHostElementIds?.Where(id => id > 0).Distinct().ToList(),
                     hostSearchRadiusFt = 12.0,
                     maxNearbyHosts = 5
                 })).Result;
@@ -380,10 +382,18 @@ namespace RevitBridge.Logic.Handlers
             string? roomNumber,
             string? roomSide,
             List<string> warnings,
-            string operationLabel)
+            string operationLabel,
+            bool allowNativeFaceHost = false)
         {
             if (requestedHost != null && IsSupportedPlacementHost(requestedHost))
                 return requestedHost;
+            if (allowNativeFaceHost && requestedHost != null && requestedHost is not ElementType)
+            {
+                warnings.Add(
+                    $"Using exact requested {requestedHost.Category?.Name ?? requestedHost.GetType().Name} " +
+                    $"{ElementIdCompat.GetValue(requestedHost.Id)} as a native face host for {operationLabel}.");
+                return requestedHost;
+            }
 
             var requestedHostLabel = requestedHost?.Category?.Name ?? requestedHost?.GetType().Name ?? "unknown";
             var spatial = FindSpatialElement(doc, roomId, roomNumber);
@@ -1485,7 +1495,8 @@ namespace RevitBridge.Logic.Handlers
             XYZ worldPoint,
             XYZ? preferredReferenceDirection,
             List<string> warnings,
-            string? sourceStableReferencePattern = null)
+            string? sourceStableReferencePattern = null,
+            XYZ? preferredFaceNormal = null)
         {
             if (host is not RevitLinkInstance link)
             {
@@ -1493,7 +1504,9 @@ namespace RevitBridge.Logic.Handlers
                     host,
                     worldPoint,
                     preferredReferenceDirection,
-                    warnings
+                    warnings,
+                    sourceStableReferencePattern,
+                    preferredFaceNormal
                 );
             }
             if (roomWall?.linkedElementId == null || roomWall.linkedElementId.Value <= 0) return null;
@@ -1546,13 +1559,156 @@ namespace RevitBridge.Logic.Handlers
             Element host,
             XYZ worldPoint,
             XYZ? preferredReferenceDirection,
-            List<string> warnings)
+            List<string> warnings,
+            string? sourceStableReferencePattern,
+            XYZ? preferredFaceNormal)
         {
             var referenceView = LinkedFaceReferenceUtil.FindReferenceView(host.Document);
             if (referenceView == null)
             {
                 warnings.Add("Native face placement requires a non-template 3D reference view, but none was available.");
                 return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(sourceStableReferencePattern))
+            {
+                var sourcePattern = sourceStableReferencePattern.Trim();
+                var separator = sourcePattern.IndexOf(':');
+                var reboundPattern = separator > 0
+                    ? host.UniqueId + sourcePattern.Substring(separator)
+                    : sourcePattern;
+                try
+                {
+                    var exactReference = Reference.ParseFromStableRepresentation(host.Document, reboundPattern);
+                    if (exactReference != null && exactReference.ElementId == host.Id &&
+                        host.GetGeometryObjectFromReference(exactReference) is Face exactFace)
+                    {
+                        var projection = exactFace.Project(worldPoint);
+                        if (projection != null)
+                        {
+                            var exactDistance = projection.XYZPoint.DistanceTo(worldPoint);
+                            if (exactDistance <= 4.0)
+                            {
+                                var exactNormal = exactFace.ComputeNormal(projection.UVPoint).Normalize();
+                                if (preferredFaceNormal != null && preferredFaceNormal.GetLength() > 1e-9 &&
+                                    exactNormal.DotProduct(preferredFaceNormal.Normalize()) < 0.995)
+                                {
+                                    warnings.Add(
+                                        $"Exact native face reference normal did not match the requested face normal on element " +
+                                        $"{ElementIdCompat.GetValue(host.Id)}.");
+                                }
+                                else
+                                {
+                                    var exactPreferred = preferredReferenceDirection != null && preferredReferenceDirection.GetLength() > 1e-9
+                                        ? preferredReferenceDirection.Normalize()
+                                        : XYZ.BasisX;
+                                    var exactDirection = exactPreferred - exactNormal.Multiply(exactPreferred.DotProduct(exactNormal));
+                                    if (exactDirection.GetLength() <= 1e-9)
+                                    {
+                                        exactDirection = XYZ.BasisZ.CrossProduct(exactNormal);
+                                        if (exactDirection.GetLength() <= 1e-9)
+                                            exactDirection = XYZ.BasisX.CrossProduct(exactNormal);
+                                    }
+
+                                    return new FaceHostedPlacementReference
+                                    {
+                                        faceReference = exactReference,
+                                        placementPoint = projection.XYZPoint,
+                                        referenceDirection = exactDirection.Normalize(),
+                                        basis = "native_face_reference_exact",
+                                        linkedElementId = null,
+                                        faceDistanceFt = exactDistance
+                                    };
+                                }
+                            }
+
+                            warnings.Add(
+                                $"Exact native face reference on element {ElementIdCompat.GetValue(host.Id)} " +
+                                $"was {exactDistance:0.###} ft from the requested point; maximum is 4 ft.");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    warnings.Add(
+                        $"Exact native face reference could not be rebound to element " +
+                        $"{ElementIdCompat.GetValue(host.Id)}: {ex.Message}");
+                }
+            }
+
+            if (preferredFaceNormal != null && preferredFaceNormal.GetLength() > 1e-9)
+            {
+                var geometryOptions = new Options
+                {
+                    ComputeReferences = true,
+                    IncludeNonVisibleObjects = true,
+                    DetailLevel = ViewDetailLevel.Fine
+                };
+                var geometryCandidates = new List<(Reference reference, XYZ point, double distance, XYZ normal)>();
+                CollectNativeFaceCandidates(
+                    host.get_Geometry(geometryOptions),
+                    Transform.Identity,
+                    worldPoint,
+                    geometryCandidates
+                );
+                var requestedNormal = preferredFaceNormal.Normalize();
+                var geometryMatch = geometryCandidates
+                    .Where(candidate =>
+                        candidate.reference != null &&
+                        candidate.distance <= 1.25 &&
+                        candidate.normal.DotProduct(requestedNormal) >= 0.995)
+                    .OrderBy(candidate => candidate.distance)
+                    .FirstOrDefault();
+                if (geometryMatch.reference != null)
+                {
+                    var geometryPreferred = preferredReferenceDirection != null && preferredReferenceDirection.GetLength() > 1e-9
+                        ? preferredReferenceDirection.Normalize()
+                        : XYZ.BasisX;
+                    var geometryDirection = geometryPreferred -
+                                            geometryMatch.normal.Multiply(geometryPreferred.DotProduct(geometryMatch.normal));
+                    if (geometryDirection.GetLength() <= 1e-9)
+                    {
+                        geometryDirection = XYZ.BasisZ.CrossProduct(geometryMatch.normal);
+                        if (geometryDirection.GetLength() <= 1e-9)
+                            geometryDirection = XYZ.BasisX.CrossProduct(geometryMatch.normal);
+                    }
+
+                    return new FaceHostedPlacementReference
+                    {
+                        faceReference = geometryMatch.reference,
+                        placementPoint = geometryMatch.point,
+                        referenceDirection = geometryDirection.Normalize(),
+                        basis = "native_face_geometry_reference",
+                        linkedElementId = null,
+                        faceDistanceFt = geometryMatch.distance
+                    };
+                }
+
+                var candidateDescriptions = geometryCandidates
+                    .OrderBy(candidate => candidate.distance)
+                    .Take(16)
+                    .Select(candidate =>
+                    {
+                        var stable = "<unavailable>";
+                        try { stable = candidate.reference.ConvertToStableRepresentation(host.Document); } catch { }
+                        return string.Format(
+                            CultureInfo.InvariantCulture,
+                            "{0}|p=({1:0.######},{2:0.######},{3:0.######})|n=({4:0.######},{5:0.######},{6:0.######})|d={7:0.######}|dot={8:0.######}",
+                            stable,
+                            candidate.point.X,
+                            candidate.point.Y,
+                            candidate.point.Z,
+                            candidate.normal.X,
+                            candidate.normal.Y,
+                            candidate.normal.Z,
+                            candidate.distance,
+                            candidate.normal.DotProduct(requestedNormal)
+                        );
+                    });
+                warnings.Add(
+                    $"Native face symbol-geometry scan on element {ElementIdCompat.GetValue(host.Id)} " +
+                    $"found {geometryCandidates.Count} referenced faces but none within 1.25 ft matched the requested normal. " +
+                    $"Nearest candidates: {string.Join("; ", candidateDescriptions)}");
             }
 
             var directions = new[]
@@ -1593,6 +1749,10 @@ namespace RevitBridge.Logic.Handlers
                 catch { }
                 if (host is Wall && normal != null && Math.Abs(normal.Normalize().DotProduct(XYZ.BasisZ)) > 0.25)
                     continue;
+                if (preferredFaceNormal != null && preferredFaceNormal.GetLength() > 1e-9 &&
+                    (normal == null || normal.GetLength() <= 1e-9 ||
+                     normal.Normalize().DotProduct(preferredFaceNormal.Normalize()) < 0.995))
+                    continue;
 
                 bestReference = reference;
                 bestPoint = point;
@@ -1630,6 +1790,47 @@ namespace RevitBridge.Logic.Handlers
                 linkedElementId = null,
                 faceDistanceFt = bestDistance
             };
+        }
+
+        private static void CollectNativeFaceCandidates(
+            GeometryElement? geometry,
+            Transform accumulatedTransform,
+            XYZ requestedPoint,
+            List<(Reference reference, XYZ point, double distance, XYZ normal)> candidates)
+        {
+            if (geometry == null) return;
+            foreach (var geometryObject in geometry)
+            {
+                if (geometryObject is Solid solid && solid.Faces != null && solid.Faces.Size > 0)
+                {
+                    foreach (Face face in solid.Faces)
+                    {
+                        if (face.Reference == null) continue;
+                        var localRequestedPoint = accumulatedTransform.Inverse.OfPoint(requestedPoint);
+                        var projection = face.Project(localRequestedPoint);
+                        if (projection == null) continue;
+                        var worldPoint = accumulatedTransform.OfPoint(projection.XYZPoint);
+                        var normal = accumulatedTransform.OfVector(face.ComputeNormal(projection.UVPoint));
+                        if (normal.GetLength() <= 1e-9) continue;
+                        normal = normal.Normalize();
+                        candidates.Add((face.Reference, worldPoint, worldPoint.DistanceTo(requestedPoint), normal));
+                    }
+                }
+                else if (geometryObject is GeometryInstance instance)
+                {
+                    GeometryElement? symbolGeometry = null;
+                    try { symbolGeometry = instance.GetSymbolGeometry(); } catch { }
+                    if (symbolGeometry != null)
+                    {
+                        CollectNativeFaceCandidates(
+                            symbolGeometry,
+                            accumulatedTransform.Multiply(instance.Transform),
+                            requestedPoint,
+                            candidates
+                        );
+                    }
+                }
+            }
         }
 
         internal static bool RequiresLinkedFaceHostedPlacement(Element host, RoomWallResolution? roomWall)
@@ -3317,6 +3518,10 @@ namespace RevitBridge.Logic.Handlers
             public string? sourceHostFaceStableReference { get; set; }
             [JsonConverter(typeof(FlexibleXyzArrayConverter))]
             public double[]? referenceDirectionXyz { get; set; }
+            [JsonConverter(typeof(FlexibleXyzArrayConverter))]
+            public double[]? hostFacePointXyz { get; set; }
+            [JsonConverter(typeof(FlexibleXyzArrayConverter))]
+            public double[]? hostFaceNormalXyz { get; set; }
             public long? roomId { get; set; }
             public string? roomNumber { get; set; }
             public string? roomSide { get; set; }
@@ -3364,10 +3569,24 @@ namespace RevitBridge.Logic.Handlers
                 throw new InvalidOperationException("pointXyz must contain exactly three numeric coordinates.");
             if (p.referenceDirectionXyz != null && p.referenceDirectionXyz.Length != 3)
                 throw new InvalidOperationException("referenceDirectionXyz must contain exactly three numeric coordinates.");
+            if (p.hostFacePointXyz != null && p.hostFacePointXyz.Length != 3)
+                throw new InvalidOperationException("hostFacePointXyz must contain exactly three numeric coordinates.");
+            if (p.hostFaceNormalXyz != null && p.hostFaceNormalXyz.Length != 3)
+                throw new InvalidOperationException("hostFaceNormalXyz must contain exactly three numeric coordinates.");
             var previewView = HostedPlacementUtil.ResolveView(doc, uidoc.ActiveView, p.previewViewId) ?? uidoc.ActiveView;
             var warnings = new List<string>();
             var requestedHost = doc.GetElement(ElementIdCompat.Create(p.hostElementId)) ?? throw new InvalidOperationException($"Host element {p.hostElementId} not found.");
-            var host = HostedPlacementUtil.ResolveSupportedPlacementHost(doc, previewView, requestedHost, referenceElement ?? sourceElement, p.roomId, p.roomNumber, p.roomSide, warnings, "hosted placement");
+            var host = HostedPlacementUtil.ResolveSupportedPlacementHost(
+                doc,
+                previewView,
+                requestedHost,
+                referenceElement ?? sourceElement,
+                p.roomId,
+                p.roomNumber,
+                p.roomSide,
+                warnings,
+                "hosted placement",
+                allowNativeFaceHost: symbol.Family.FamilyPlacementType == FamilyPlacementType.WorkPlaneBased);
             if (host is RevitLinkInstance && (!p.linkedHostElementId.HasValue || p.linkedHostElementId.Value <= 0))
                 throw new InvalidOperationException("A RevitLinkInstance host requires linkedHostElementId for an exact linked model element; arbitrary linked-face fallback is not permitted.");
             var level = HostedPlacementUtil.ResolveLevel(doc, p.levelName, sourceElement, host) ?? throw new InvalidOperationException("Unable to resolve level.");
@@ -3516,19 +3735,28 @@ namespace RevitBridge.Logic.Handlers
                 }
                 catch { }
             }
+            var faceResolutionPoint = p.hostFacePointXyz == null
+                ? finalPoint
+                : new XYZ(p.hostFacePointXyz[0], p.hostFacePointXyz[1], p.hostFacePointXyz[2]);
+            var preferredFaceNormal = p.hostFaceNormalXyz == null
+                ? null
+                : new XYZ(p.hostFaceNormalXyz[0], p.hostFaceNormalXyz[1], p.hostFaceNormalXyz[2]);
             var facePlacement = HostedPlacementUtil.TryResolveFaceHostedPlacementReference(
                 host,
                 roomWall,
-                finalPoint,
+                faceResolutionPoint,
                 preferredFaceReferenceDirection,
                 warnings,
-                sourceHostFaceStableReference
+                sourceHostFaceStableReference,
+                preferredFaceNormal
             );
             var requiresFaceHostedPlacement = HostedPlacementUtil.RequiresLinkedFaceHostedPlacement(host, roomWall)
                 || symbol.Family.FamilyPlacementType == FamilyPlacementType.WorkPlaneBased;
             if (requiresFaceHostedPlacement && facePlacement == null)
             {
-                var resolutionDetail = warnings.LastOrDefault(value => value.StartsWith("Linked face placement", StringComparison.OrdinalIgnoreCase));
+                var resolutionDetail = warnings.LastOrDefault(value =>
+                    value.StartsWith("Linked face placement", StringComparison.OrdinalIgnoreCase) ||
+                    value.StartsWith("Native face symbol-geometry scan", StringComparison.OrdinalIgnoreCase));
                 throw new InvalidOperationException(
                     $"Face-hosted placement requires a resolved face reference for host {ElementIdCompat.GetValue(host.Id)}. " +
                     "Refusing to fall back to generic host placement because Revit can create an unhosted/off-room device." +
@@ -3689,7 +3917,8 @@ namespace RevitBridge.Logic.Handlers
                             p.roomId,
                             p.roomNumber,
                             p.roomSide,
-                            warnings
+                            warnings,
+                            new List<long> { p.hostElementId }
                         );
                         tx.Commit();
                     }
@@ -3791,7 +4020,8 @@ namespace RevitBridge.Logic.Handlers
                         p.roomId,
                         p.roomNumber,
                         p.roomSide,
-                        warnings
+                        warnings,
+                        new List<long> { p.hostElementId }
                     );
                     if (placementValidation.valid == false)
                     {
@@ -3964,7 +4194,17 @@ namespace RevitBridge.Logic.Handlers
             var previewView = HostedPlacementUtil.ResolveView(doc, uidoc.ActiveView, p.previewViewId) ?? uidoc.ActiveView;
             var warnings = new List<string>();
             if (requestedHost == null) throw new InvalidOperationException("No host element was available for create-similar.");
-            var host = HostedPlacementUtil.ResolveSupportedPlacementHost(doc, previewView, requestedHost, referenceElement ?? exemplar, p.roomId, p.roomNumber, p.roomSide, warnings, "create-similar");
+            var host = HostedPlacementUtil.ResolveSupportedPlacementHost(
+                doc,
+                previewView,
+                requestedHost,
+                referenceElement ?? exemplar,
+                p.roomId,
+                p.roomNumber,
+                p.roomSide,
+                warnings,
+                "create-similar",
+                allowNativeFaceHost: symbol.Family.FamilyPlacementType == FamilyPlacementType.WorkPlaneBased);
             var level = HostedPlacementUtil.ResolveLevel(doc, p.levelName, exemplar, host) ?? throw new InvalidOperationException("Unable to resolve level.");
             var roomWall = HostedPlacementUtil.ResolveRoomWallForHost(doc, previewView, host, p.roomId, p.roomNumber, p.roomSide)
                 ?? HostedPlacementUtil.ResolveLinkedFaceHostFallback(doc, host, exemplarFi);
@@ -4508,6 +4748,7 @@ namespace RevitBridge.Logic.Handlers
             public string? roomNumber { get; set; }
             public string? roomSide { get; set; }
             public List<string>? hostCategories { get; set; }
+            public List<long>? allowedHostElementIds { get; set; }
             public double? hostSearchRadiusFt { get; set; } = 12.0;
             public int? maxNearbyHosts { get; set; } = 5;
             public double? targetChainageFt { get; set; }
@@ -4574,6 +4815,8 @@ namespace RevitBridge.Logic.Handlers
                     actualHostId = hostLocalFrameHostValue;
                 else if (root.TryGetProperty("placementHost", out var placementHost) && placementHost.ValueKind == JsonValueKind.Object && placementHost.TryGetProperty("id", out var placementHostId) && placementHostId.TryGetInt64(out var placementHostValue))
                     actualHostId = placementHostValue;
+                else if (root.TryGetProperty("host", out var directHost) && directHost.ValueKind == JsonValueKind.Object && directHost.TryGetProperty("id", out var directHostId) && directHostId.TryGetInt64(out var directHostValue))
+                    actualHostId = directHostValue;
 
                 var actualRoomNumber = "";
                 if (root.TryGetProperty("room", out var room) && room.ValueKind == JsonValueKind.Object && room.TryGetProperty("number", out var roomNumberElement))
@@ -4603,6 +4846,11 @@ namespace RevitBridge.Logic.Handlers
                     hostPlacementSupport.TryGetProperty("supported", out var supportedElement))
                 {
                     supportsPlacement = supportedElement.ValueKind == JsonValueKind.True;
+                }
+                if (!supportsPlacement && actualHostId.HasValue &&
+                    (p.allowedHostElementIds ?? new List<long>()).Contains(actualHostId.Value))
+                {
+                    supportsPlacement = true;
                 }
                 if (root.TryGetProperty("hostLocalFrame", out var targetFrameElement) && targetFrameElement.ValueKind == JsonValueKind.Object)
                 {

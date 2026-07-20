@@ -6399,6 +6399,18 @@ namespace RevitBridge.Operator
                 if (!ValidateRequiredLong(obj.Value, "hostElementId", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "linkedHostElementId", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "linkedHostBuiltInCategory", maxLen: 128, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "sourceHostFaceStableReference", maxLen: 512, out error)) return false;
+                foreach (var xyzProperty in new[] { "referenceDirectionXyz", "hostFacePointXyz", "hostFaceNormalXyz" })
+                {
+                    if (!ValidateOptionalNumberArray(obj.Value, xyzProperty, maxCount: 3, out error)) return false;
+                    if (obj.Value.TryGetProperty(xyzProperty, out var xyzValue) &&
+                        xyzValue.ValueKind != JsonValueKind.Null &&
+                        xyzValue.GetArrayLength() != 3)
+                    {
+                        error = $"{xyzProperty} must have exactly 3 numbers.";
+                        return false;
+                    }
+                }
                 if (!ValidateOptionalLong(obj.Value, "roomId", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "roomNumber", maxLen: 64, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "roomSide", maxLen: 16, out error)) return false;
