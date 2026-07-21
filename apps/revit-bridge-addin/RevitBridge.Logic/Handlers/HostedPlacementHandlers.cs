@@ -1563,6 +1563,14 @@ namespace RevitBridge.Logic.Handlers
             string? sourceStableReferencePattern,
             XYZ? preferredFaceNormal)
         {
+            var referencePlanePlacement = TryResolveReferencePlanePlacement(
+                host,
+                worldPoint,
+                preferredReferenceDirection,
+                preferredFaceNormal,
+                warnings);
+            if (referencePlanePlacement != null) return referencePlanePlacement;
+
             var referenceView = LinkedFaceReferenceUtil.FindReferenceView(host.Document);
             if (referenceView == null)
             {
@@ -1798,6 +1806,76 @@ namespace RevitBridge.Logic.Handlers
                 basis = "native_face_reference",
                 linkedElementId = null,
                 faceDistanceFt = bestDistance
+            };
+        }
+
+        private static FaceHostedPlacementReference? TryResolveReferencePlanePlacement(
+            Element host,
+            XYZ worldPoint,
+            XYZ? preferredReferenceDirection,
+            XYZ? preferredFaceNormal,
+            List<string> warnings)
+        {
+            if (host is not ReferencePlane referencePlane) return null;
+
+            var plane = referencePlane.GetPlane();
+            var normal = plane.Normal;
+            if (normal == null || normal.GetLength() <= 1e-9)
+            {
+                warnings.Add(
+                    $"Reference plane {ElementIdCompat.GetValue(host.Id)} has no usable normal.");
+                return null;
+            }
+
+            normal = normal.Normalize();
+            if (preferredFaceNormal != null && preferredFaceNormal.GetLength() > 1e-9 &&
+                Math.Abs(normal.DotProduct(preferredFaceNormal.Normalize())) < 0.995)
+            {
+                warnings.Add(
+                    $"Reference plane {ElementIdCompat.GetValue(host.Id)} normal did not match the requested support plane.");
+                return null;
+            }
+
+            var signedDistance = (worldPoint - plane.Origin).DotProduct(normal);
+            var placementPoint = worldPoint - normal.Multiply(signedDistance);
+            var distance = Math.Abs(signedDistance);
+            if (distance > 4.0)
+            {
+                warnings.Add(
+                    $"Reference plane {ElementIdCompat.GetValue(host.Id)} was {distance:0.###} ft from the requested point; maximum is 4 ft.");
+                return null;
+            }
+
+            var preferred = preferredReferenceDirection != null && preferredReferenceDirection.GetLength() > 1e-9
+                ? preferredReferenceDirection.Normalize()
+                : plane.XVec;
+            var referenceDirection = preferred - normal.Multiply(preferred.DotProduct(normal));
+            if (referenceDirection.GetLength() <= 1e-9) referenceDirection = plane.XVec;
+            if (referenceDirection == null || referenceDirection.GetLength() <= 1e-9)
+            {
+                warnings.Add(
+                    $"Reference plane {ElementIdCompat.GetValue(host.Id)} has no usable in-plane direction.");
+                return null;
+            }
+
+            var reference = referencePlane.GetReference();
+            if (reference == null)
+            {
+                warnings.Add(
+                    $"Reference plane {ElementIdCompat.GetValue(host.Id)} did not expose a native placement reference.");
+                return null;
+            }
+
+            warnings.Add(
+                $"Resolved native reference plane {ElementIdCompat.GetValue(host.Id)} for work-plane placement.");
+            return new FaceHostedPlacementReference
+            {
+                faceReference = reference,
+                placementPoint = placementPoint,
+                referenceDirection = referenceDirection.Normalize(),
+                basis = "native_reference_plane",
+                linkedElementId = null,
+                faceDistanceFt = distance
             };
         }
 
