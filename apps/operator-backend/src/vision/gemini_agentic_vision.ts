@@ -29,6 +29,7 @@ export type GeminiRedlineAnalyzeRequest = {
   file_path: string;
   image_paths?: string[];
   expected_sheet?: string;
+  analysis_mode?: "redline" | "existing_conditions";
   objective?: string;
   baseline_file_path?: string;
   max_pages?: number;
@@ -510,6 +511,7 @@ function buildExpandedGroupContextBoxes(boxes: RegionBox[], groups: RelatedRegio
 }
 
 function buildPrompt(args: {
+  analysisMode: "redline" | "existing_conditions";
   objective: string;
   expectedSheet: string;
   regionBoxes: RegionBox[];
@@ -521,7 +523,14 @@ function buildPrompt(args: {
   pageCount: number;
 }): string {
   const lines: string[] = [];
-  lines.push("You are analyzing engineering redlines on drawings for downstream CAD/Revit execution.");
+  if (args.analysisMode === "existing_conditions") {
+    lines.push("You are analyzing an unmarked engineering record drawing for existing-conditions reconstruction in CAD/Revit.");
+    lines.push("Treat visible colored, dashed, solid, and black lines, symbols, tags, dimensions, and text as source drawing content—not as redlines, revisions, or requested style changes.");
+    lines.push("Inventory only source-supported mechanical, electrical, plumbing, fixture/device, fitting, connector, and annotation observations. Preserve visible sizes, endpoints, branches, relative locations, and ambiguity.");
+    lines.push("Use intent to describe the observed existing condition and proposed_action to describe the smallest faithful modeling or verification action; never invent demolition, additions, or line-style changes.");
+  } else {
+    lines.push("You are analyzing engineering redlines on drawings for downstream CAD/Revit execution.");
+  }
   lines.push("Use code execution when helpful to inspect/crop/compare marked regions.");
   lines.push("After analysis, end your response with a single ```json fenced block that matches the schema.");
   lines.push("Do not include additional prose after the final JSON block.");
@@ -553,7 +562,11 @@ function buildPrompt(args: {
     lines.push("");
     lines.push("PDF annotation metadata hints (high-priority markup evidence):");
     lines.push(JSON.stringify(args.annotationHints.slice(0, 16)));
-    lines.push("Treat these hints as intentional engineer markups, even when markup color is not red.");
+    lines.push(
+      args.analysisMode === "existing_conditions"
+        ? "Treat these hints as source-document annotation metadata, not as edit instructions unless the document explicitly proves otherwise."
+        : "Treat these hints as intentional engineer markups, even when markup color is not red."
+    );
   }
   lines.push("");
   lines.push("Return schema:");
@@ -1461,10 +1474,16 @@ export async function analyzeRedlineWithGemini(req: GeminiRedlineAnalyzeRequest)
   }
 
   const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
-  const objective = (req.objective ?? "").trim() || "Identify redline intent and convert it into actionable model-edit instructions.";
+  const analysisMode = req.analysis_mode === "existing_conditions" ? "existing_conditions" : "redline";
+  const objective = (req.objective ?? "").trim() || (
+    analysisMode === "existing_conditions"
+      ? "Inventory source-supported existing conditions and convert them into provisional, verifiable modeling observations."
+      : "Identify redline intent and convert it into actionable model-edit instructions."
+  );
   const expectedSheet = (req.expected_sheet ?? "").trim();
   parts.push({
     text: buildPrompt({
+      analysisMode,
       objective,
       expectedSheet,
       regionBoxes: sourceRegionBoxes,

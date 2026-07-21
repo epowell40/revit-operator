@@ -253,6 +253,68 @@ test("OPERATOR_BRAIN=claude is an alias for the Anthropic brain", async () => {
   }
 });
 
+test("Claude existing-conditions route completes provider-neutral source preflight before native discovery", { concurrency: false }, async () => {
+  const previous = { OPERATOR_BRAIN: process.env.OPERATOR_BRAIN };
+  process.env.OPERATOR_BRAIN = "claude";
+  let preflightCalls = 0;
+  let providerCalls = 0;
+  const req: ChatRequest = {
+    ...request(
+      "Start a staged Room 210 existing-conditions reconstruction from the attached M2.00 source. For this turn do source observation and registration only. Do not write to Revit yet."
+    ),
+    user_attachments: [{
+      id: "p210",
+      relative_path: "artifacts/uploads/M2.00_room_210.pdf",
+      filename: "M2.00_room_210.pdf",
+      mime: "application/pdf",
+      bytes: 1234,
+      sha256: "a".repeat(64)
+    }]
+  };
+
+  try {
+    const response = await decide(req, {
+      existingConditionsSourcePreflight: async incoming => {
+        preflightCalls += 1;
+        return {
+          ...incoming,
+          context: {
+            ...(incoming.context as Record<string, unknown> | undefined),
+            __server: {
+              workbench_source_preflight_complete: true,
+              workbench_structured_image_analysis_complete: true,
+              workbench_results: "analyze_redline and gemini_redline_analyze succeeded"
+            }
+          }
+        };
+      },
+      anthropicBrain: async incoming => {
+        providerCalls += 1;
+        const server = (incoming.context as any)?.__server;
+        assert.equal(server?.workbench_source_preflight_complete, true);
+        assert.equal(server?.workbench_structured_image_analysis_complete, true);
+        return {
+          version: OPERATOR_BACKEND_CONTRACT_VERSION,
+          assistant_message: "Source evidence is registered; verifying the requested native room next.",
+          actions: [{
+            action_id: "verify-room-210",
+            method: "POST",
+            path: "/revit/linked-room-boundaries",
+            body: { roomNumbers: ["210"] }
+          }]
+        };
+      }
+    });
+
+    assert.equal(preflightCalls, 1);
+    assert.equal(providerCalls, 1);
+    assert.equal(response.actions.length, 1);
+    assert.equal(response.actions[0]?.path, "/revit/linked-room-boundaries");
+  } finally {
+    restoreEnvironment(previous);
+  }
+});
+
 test("streaming and non-streaming dispatch resolve the same configured brain", async () => {
   const previous = { OPERATOR_BRAIN: process.env.OPERATOR_BRAIN };
   const routes = [

@@ -2407,6 +2407,24 @@ test("initial redline preflight schedules analyze_redline before the first model
   assert.equal(action?.expected_sheet, "E2.1");
 });
 
+test("existing-conditions reconstruction noun phrase schedules source analysis before Revit discovery", () => {
+  const action = __testOnlyBuildInitialRedlinePreflightAction({
+    userText:
+      "Start a staged Room 210 existing-conditions reconstruction from the attached M2.00 source in this disposable clean model. For this turn do source observation and registration only. Do not write to Revit yet.",
+    userAttachments: [
+      {
+        id: "att-1",
+        filename: "room210_M2.00_source.pdf",
+        relative_path: "artifacts/uploads/room210_M2.00_source.pdf"
+      }
+    ] as any
+  });
+
+  assert.ok(action);
+  assert.equal(action?.type, "analyze_redline");
+  assert.equal(action?.file_path, "artifacts/uploads/room210_M2.00_source.pdf");
+});
+
 test("fast electrical image-only redlines still run image preflight so room/sheet text is available", () => {
   const action = __testOnlyBuildInitialRedlinePreflightAction({
     userText: "please add two receptacles from this redline in the current view",

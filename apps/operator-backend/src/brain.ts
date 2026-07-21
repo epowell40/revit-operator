@@ -1,7 +1,12 @@
 import "./env.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ChatResponse } from "./contracts.js";
 import { decideRule } from "./brains/rule_brain.js";
-import { decideOpenAi, decideOpenAiStreaming, isExplicitReadOnlyRedlineAnalysisRequest } from "./brains/openai_brain.js";
+import {
+  decideOpenAi,
+  decideOpenAiStreaming,
+  isExplicitReadOnlyRedlineAnalysisRequest,
+  prepareExistingConditionsSourcePreflight
+} from "./brains/openai_brain.js";
 import { decideCodex, decideCodexStreaming, type StreamCallbacks } from "./brains/codex_brain.js";
 import {
   decideAnthropic,
@@ -247,6 +252,7 @@ export type BrainDecisionDependencies = {
   geminiStreamingBrain?: typeof decideGeminiStreaming;
   anthropicBrain?: typeof decideAnthropic;
   anthropicStreamingBrain?: typeof decideAnthropicStreaming;
+  existingConditionsSourcePreflight?: typeof prepareExistingConditionsSourcePreflight;
 };
 
 export type OperatorBrainRoute = "rule" | "openai" | "codex" | "gemini" | "anthropic";
@@ -356,7 +362,10 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
   }
 
   const route = resolveOperatorBrainRoute();
-  return finalizeDecision(req, await decideWithSelectedBrain(route, req, dependencies));
+  const routedReq = route !== "openai" && route !== "rule"
+    ? await (dependencies.existingConditionsSourcePreflight ?? prepareExistingConditionsSourcePreflight)(req)
+    : req;
+  return finalizeDecision(routedReq, await decideWithSelectedBrain(route, routedReq, dependencies));
 }
 
 export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dependencies: BrainDecisionDependencies = {}): Promise<ChatResponse> {
@@ -470,9 +479,12 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dep
   }
 
   const route = resolveOperatorBrainRoute();
+  const routedReq = route !== "openai" && route !== "rule"
+    ? await (dependencies.existingConditionsSourcePreflight ?? prepareExistingConditionsSourcePreflight)(req)
+    : req;
   const decision = finalizeDecision(
-    req,
-    await decideWithSelectedBrainStreaming(route, req, cb, dependencies)
+    routedReq,
+    await decideWithSelectedBrainStreaming(route, routedReq, cb, dependencies)
   );
   if (route === "rule") {
     const text = decision.assistant_message || "";

@@ -160,6 +160,8 @@ function buildPrompt(req: ChatRequest, provider: ExternalProvider): string {
     "For pipe and duct creation, prefer explicit endpoints, size, system/type, level/elevation, verify, and dry-run fields.",
     "For movement, use an exact model-space XYZ vector. For orthogonal joins, prefer route/branch workflows that create and verify fittings.",
     "If calibrated source-to-model registration is absent, do not convert image pixels into model writes. Request the smallest alignment/inventory action needed to establish it.",
+    "When Current Revit/server context contains workbench_source_preflight_complete=true, the attached source has already been analyzed by the backend. Never call /revit/tool-search, /revit/search-tools, tool docs, examples, or any Revit endpoint to look for a source-analysis tool. Read workbench_results and the supplied source images, then take only the next smallest native verification action needed for registration.",
+    "When workbench_structured_image_analysis_complete=true, structured Gemini source-image analysis is also complete. Preserve those source observations as provisional evidence and verify them against bounded native room/view/element reads before any write.",
     "Return JSON matching the supplied schema. body_json must itself be valid JSON text when present.",
     ""
   ];
@@ -181,6 +183,29 @@ function buildPrompt(req: ChatRequest, provider: ExternalProvider): string {
 
   if ((req.user_text ?? "").trim()) {
     lines.push("Current user request:", (req.user_text ?? "").trim(), "");
+  }
+
+  const serverContext =
+    req.context && typeof req.context === "object" && !Array.isArray(req.context)
+      ? ((req.context as Record<string, unknown>).__server as Record<string, unknown> | undefined)
+      : undefined;
+  if (serverContext?.workbench_source_preflight_complete === true) {
+    const sourcePreflightSummary = serverContext.workbench_source_preflight_summary;
+    lines.push(
+      "Backend source-preflight status:",
+      "- workbench_source_preflight_complete=true",
+      `- workbench_structured_image_analysis_complete=${serverContext.workbench_structured_image_analysis_complete === true}`,
+      "- Do not search for source-analysis tooling. Continue with one bounded native registration-verification action.",
+      ""
+    );
+    if (sourcePreflightSummary && typeof sourcePreflightSummary === "object") {
+      lines.push(
+        "Verified source/native preflight summary:",
+        safeJson(sourcePreflightSummary, 16_000),
+        "If native_sheet.placed_view_id is present, do not list or rediscover sheets/views. Use that exact view id for the next bounded room, frame, or visible-inventory verification.",
+        ""
+      );
+    }
   }
 
   if (req.context !== undefined) {

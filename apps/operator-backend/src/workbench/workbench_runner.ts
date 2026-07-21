@@ -81,6 +81,7 @@ export type WorkbenchAction =
       file_path: string;
       image_paths?: string[];
       expected_sheet?: string;
+      analysis_mode?: "redline" | "existing_conditions";
       max_pages?: number;
       page_start?: number;
       baseline_file_path?: string;
@@ -616,6 +617,7 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
           file_path: fp,
           image_paths: imagePaths,
           expected_sheet: typeof action.expected_sheet === "string" ? action.expected_sheet : undefined,
+          analysis_mode: action.analysis_mode === "existing_conditions" ? "existing_conditions" : "redline",
           max_pages: typeof action.max_pages === "number" && Number.isFinite(action.max_pages) ? Math.floor(action.max_pages) : undefined,
           page_start: typeof action.page_start === "number" && Number.isFinite(action.page_start) ? Math.floor(action.page_start) : undefined,
           baseline_file_path: typeof action.baseline_file_path === "string" ? action.baseline_file_path : undefined,

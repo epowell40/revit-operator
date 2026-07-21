@@ -13,14 +13,16 @@ namespace RevitBridge.Operator
     {
         public sealed class ChatSendEventArgs : EventArgs
         {
-            public ChatSendEventArgs(string messageId, string text)
+            public ChatSendEventArgs(string messageId, string text, List<OperatorUserAttachment> attachments)
             {
                 MessageId = messageId;
                 Text = text;
+                Attachments = attachments;
             }
 
             public string MessageId { get; }
             public string Text { get; }
+            public List<OperatorUserAttachment> Attachments { get; }
         }
 
         private sealed class ActionRow : INotifyPropertyChanged
@@ -73,13 +75,16 @@ namespace RevitBridge.Operator
         private readonly Dictionary<string, ActionRow> _actionIndex = new Dictionary<string, ActionRow>(StringComparer.OrdinalIgnoreCase);
 
         public event EventHandler<ChatSendEventArgs>? ChatSend;
+        public event EventHandler? AttachmentRequested;
         public event EventHandler? NewChatRequested;
         public event EventHandler? CancelRequested;
 
         private readonly TextBox _input;
         private readonly Button _cancel;
+        private readonly Button _attach;
         private readonly Button _send;
         private readonly Button _newChat;
+        private readonly List<OperatorUserAttachment> _pendingAttachments = new List<OperatorUserAttachment>();
 
         public OperatorFallbackControl()
         {
@@ -112,6 +117,7 @@ namespace RevitBridge.Operator
             inputRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             inputRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             inputRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            inputRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
             _input = new TextBox
             {
@@ -137,6 +143,9 @@ namespace RevitBridge.Operator
             _cancel = new Button { Content = "Cancel", MinHeight = 28, MinWidth = 64, Margin = new Thickness(0, 0, 6, 0) };
             _cancel.Click += (_, __) => CancelRequested?.Invoke(this, EventArgs.Empty);
 
+            _attach = new Button { Content = "Attach…", MinHeight = 28, MinWidth = 72, Margin = new Thickness(0, 0, 6, 0) };
+            _attach.Click += (_, __) => AttachmentRequested?.Invoke(this, EventArgs.Empty);
+
             _send = new Button { Content = "Send", MinHeight = 28, MinWidth = 64 };
             _send.Click += (_, __) => Send();
 
@@ -145,10 +154,12 @@ namespace RevitBridge.Operator
 
             Grid.SetColumn(_input, 0);
             Grid.SetColumn(_cancel, 1);
-            Grid.SetColumn(_send, 2);
-            Grid.SetColumn(_newChat, 3);
+            Grid.SetColumn(_attach, 2);
+            Grid.SetColumn(_send, 3);
+            Grid.SetColumn(_newChat, 4);
             inputRow.Children.Add(_input);
             inputRow.Children.Add(_cancel);
+            inputRow.Children.Add(_attach);
             inputRow.Children.Add(_send);
             inputRow.Children.Add(_newChat);
 
@@ -163,9 +174,29 @@ namespace RevitBridge.Operator
         private void Send()
         {
             var text = (_input.Text ?? "").Trim();
-            if (string.IsNullOrWhiteSpace(text)) return;
+            if (string.IsNullOrWhiteSpace(text) && _pendingAttachments.Count == 0) return;
+            var attachments = new List<OperatorUserAttachment>(_pendingAttachments);
             _input.Text = "";
-            ChatSend?.Invoke(this, new ChatSendEventArgs(Guid.NewGuid().ToString("N"), text));
+            _pendingAttachments.Clear();
+            RefreshAttachmentLabel();
+            ChatSend?.Invoke(this, new ChatSendEventArgs(Guid.NewGuid().ToString("N"), text, attachments));
+        }
+
+        public void AddAttachments(IEnumerable<OperatorUserAttachment> attachments)
+        {
+            if (attachments == null) return;
+            foreach (var attachment in attachments)
+            {
+                if (attachment == null) continue;
+                if (_pendingAttachments.Exists(existing => string.Equals(existing.Id, attachment.Id, StringComparison.OrdinalIgnoreCase))) continue;
+                _pendingAttachments.Add(attachment);
+            }
+            RefreshAttachmentLabel();
+        }
+
+        private void RefreshAttachmentLabel()
+        {
+            _attach.Content = _pendingAttachments.Count == 0 ? "Attach…" : $"Attach ({_pendingAttachments.Count})";
         }
 
         public void AppendChat(string role, string text)
@@ -211,6 +242,8 @@ namespace RevitBridge.Operator
             _transcript.Clear();
             _actions.Clear();
             _actionIndex.Clear();
+            _pendingAttachments.Clear();
+            RefreshAttachmentLabel();
             _input.Focus();
         }
     }

@@ -397,7 +397,8 @@ namespace RevitBridge.Operator
                     // Fall back below, but surface the reason.
                     _webViewReady = false;
                     _fallback = new OperatorFallbackControl();
-                    _fallback.ChatSend += (_, e) => OnChatSend(e.MessageId, e.Text, attachments: null, shareWithAgent: true, autoOpenLatestAttachment: false, _reasoningEffort);
+                    _fallback.ChatSend += (_, e) => OnChatSend(e.MessageId, e.Text, e.Attachments, shareWithAgent: true, autoOpenLatestAttachment: false, _reasoningEffort);
+                    _fallback.AttachmentRequested += (_, __) => _ = HandleFilePickAsync();
                     _fallback.NewChatRequested += (_, __) => _ = ResetChatAsync();
                     _fallback.CancelRequested += (_, __) => _ = CancelActiveTurnAsync("USER_CANCELLED");
                     SetMainSurface(_fallback);
@@ -409,7 +410,8 @@ namespace RevitBridge.Operator
             }
 
             _fallback = new OperatorFallbackControl();
-            _fallback.ChatSend += (_, e) => OnChatSend(e.MessageId, e.Text, attachments: null, shareWithAgent: true, autoOpenLatestAttachment: false, _reasoningEffort);
+            _fallback.ChatSend += (_, e) => OnChatSend(e.MessageId, e.Text, e.Attachments, shareWithAgent: true, autoOpenLatestAttachment: false, _reasoningEffort);
+            _fallback.AttachmentRequested += (_, __) => _ = HandleFilePickAsync();
             _fallback.NewChatRequested += (_, __) => _ = ResetChatAsync();
             _fallback.CancelRequested += (_, __) => _ = CancelActiveTurnAsync("USER_CANCELLED");
             SetMainSurface(_fallback);
@@ -1867,6 +1869,7 @@ namespace RevitBridge.Operator
             sb.AppendLine("[Open uploads folder](op://open-folder?path=artifacts/uploads)");
 
             Ui(() => AppendChat("system", sb.ToString().Trim(), null));
+            Ui(() => _fallback?.AddAttachments(ToUserAttachments(saved)));
 
             // Populate the attachments strip (first-class inputs). These remain "pending" until the user hits Send.
             try

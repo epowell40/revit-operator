@@ -3721,6 +3721,223 @@ function maybeBuildInitialRedlinePreflightAction(req: ChatRequest): WorkbenchAct
   return buildAutoAnalyzeRedlineAction(seed);
 }
 
+function loadPersistedExistingConditionsSourcePreflightResults(
+  sessionId: string
+): WorkbenchActionResult[] {
+  if (!sessionId) return [];
+  try {
+    const outputPath = path.join(
+      ensureWorkspaceLayout().runs,
+      "sessions",
+      sessionId,
+      "tool_outputs.jsonl"
+    );
+    if (!fs.existsSync(outputPath)) return [];
+    const results: WorkbenchActionResult[] = [];
+    for (const line of fs.readFileSync(outputPath, "utf8").split(/\r?\n/)) {
+      if (!line.includes("workbench.analyze_redline") && !line.includes("workbench.gemini_redline_analyze")) continue;
+      try {
+        const row = JSON.parse(line) as Record<string, unknown>;
+        const result = workbenchResultFromPersistedToolOutput(row);
+        if (result && (result.type === "analyze_redline" || result.type === "gemini_redline_analyze")) {
+          results.push(result);
+        }
+      } catch {
+        // Ignore individual malformed lines and retain other accepted evidence.
+      }
+    }
+    return results.slice(-2);
+  } catch {
+    return [];
+  }
+}
+
+function withExistingConditionsSourcePreflightContext(
+  req: ChatRequest,
+  results: WorkbenchActionResult[]
+): ChatRequest {
+  const inlineImagePaths = collectWorkbenchInlineImagePaths(results);
+  const analyzeResult = results.find(result => result.type === "analyze_redline" && result.ok);
+  const analyzeDetails = analyzeResult?.details as any;
+  const evidenceTarget = analyzeDetails?.aec_intent_evidence?.target;
+  const geminiResult = results.find(result => result.type === "gemini_redline_analyze" && result.ok);
+  const geminiDetails = geminiResult?.details as any;
+  const sourcePreflightSummary = {
+    schema: "operator.existing_conditions.source_preflight_summary.v1",
+    source: {
+      file_path: analyzeDetails?.file_path ?? null,
+      sha256: evidenceTarget?.document?.fingerprint ?? null,
+      page_count: analyzeDetails?.page_count ?? null,
+      primary_sheet_number: analyzeDetails?.primary_sheet_number ?? null,
+      preview_image_path: analyzeDetails?.vision_artifacts?.preview_image_path ?? null
+    },
+    native_sheet: {
+      sheet_number: evidenceTarget?.sheet?.number ?? analyzeDetails?.primary_sheet_number ?? null,
+      sheet_id: evidenceTarget?.sheet?.id ?? null,
+      placed_view_id: evidenceTarget?.view?.id ?? null,
+      placed_view_name: evidenceTarget?.view?.name ?? null
+    },
+    structured_image_analysis: {
+      model: geminiDetails?.model ?? null,
+      global_confidence: geminiDetails?.global_confidence ?? null,
+      observations: Array.isArray(geminiDetails?.regions)
+        ? geminiDetails.regions.slice(0, 40).map((region: any) => ({
+            finding_id: region?.finding_id ?? null,
+            page_number: region?.page_number ?? null,
+            target_type: region?.target_type ?? null,
+            observation: region?.intent ?? null,
+            source_basis: region?.rationale ?? null,
+            provisional_next_action: region?.proposed_action ?? null,
+            size_or_value: region?.size_or_value ?? null,
+            confidence: region?.confidence ?? null
+          }))
+        : [],
+      open_questions: Array.isArray(geminiDetails?.open_questions)
+        ? geminiDetails.open_questions.slice(0, 30)
+        : []
+    }
+  };
+  return {
+    ...req,
+    context: withServerContext(req.context, {
+      workbench_source_preflight_complete: Boolean(analyzeResult),
+      workbench_structured_image_analysis_complete: Boolean(geminiResult),
+      workbench_source_preflight_summary: sourcePreflightSummary,
+      workbench_results: formatWorkbenchResultsForPrompt(results),
+      ...(inlineImagePaths.length > 0
+        ? { workbench_inline_image_paths: inlineImagePaths }
+        : {})
+    })
+  };
+}
+
+export async function prepareExistingConditionsSourcePreflight(
+  req: ChatRequest
+): Promise<ChatRequest> {
+  if (!isExistingConditionsReconstructionRequest(req)) return req;
+  const initialAction = maybeBuildInitialRedlinePreflightAction(req);
+  if (!initialAction) {
+    const persistedResults = loadPersistedExistingConditionsSourcePreflightResults(req.session_id);
+    return persistedResults.length > 0
+      ? withExistingConditionsSourcePreflightContext(req, persistedResults)
+      : req;
+  }
+
+  const actions = hydrateRedlineWorkbenchActions(
+    req,
+    [initialAction],
+    getAugmentedToolResults(req, 80)
+  );
+  try {
+    appendNotification(
+      req.session_id,
+      "workbench.progress",
+      "Initial existing-conditions source preflight: analyzing the attachment before provider planning.",
+      { type: "analyze_redline", provider_neutral: true }
+    );
+  } catch {
+    // Notification persistence is best-effort.
+  }
+  for (const action of actions) {
+    try {
+      persistence.appendToolCall(req.session_id, {
+        ts: new Date().toISOString(),
+        kind: "mcp.tool_call",
+        session_id: req.session_id,
+        tool: `workbench.${action.type}`,
+        server: "operator-backend",
+        arguments: action,
+        status: "requested"
+      });
+    } catch {
+      // Run-bundle persistence is best-effort.
+    }
+  }
+
+  noteRedlineWorkbenchEvidenceAttempts(req.session_id, actions);
+  let results = await executeWorkbenchActions(actions);
+  results = await groundInitialRedlineWorkbenchResults(req.session_id, results);
+
+  const geminiSeed = extractAutoGeminiSeed(results);
+  const autoGemini = geminiSeed && !hasRedlineGeminiAttempt(req.session_id, geminiSeed.file_path)
+    ? {
+        type: "gemini_redline_analyze" as const,
+        file_path: geminiSeed.file_path,
+        analysis_mode: "existing_conditions" as const,
+        objective: "Inventory this unmarked record-drawing crop as existing conditions. Treat every colored, dashed, solid, and black line, fixture/device symbol, fitting, size label, equipment tag, and annotation as source content rather than a redline. Report source-supported MEP systems, endpoints, branches, sizes, fixture/device locations, and annotations; preserve ambiguity and do not invent changes.",
+        ...(geminiSeed.image_paths ? { image_paths: geminiSeed.image_paths } : {}),
+        ...(geminiSeed.expected_sheet ? { expected_sheet: geminiSeed.expected_sheet } : {}),
+        ...(geminiSeed.region_boxes ? { region_boxes: geminiSeed.region_boxes } : {}),
+        max_pages: pdfDefaultPageBudget(),
+        max_regions: 80,
+        min_confidence: 0.3,
+        timeout_ms: 90_000
+      }
+    : null;
+  if (autoGemini) {
+    try {
+      appendNotification(
+        req.session_id,
+        "workbench.progress",
+        "Provider-neutral source preflight: running structured Gemini image analysis.",
+        { type: "gemini_redline_analyze", provider_neutral: true }
+      );
+      persistence.appendToolCall(req.session_id, {
+        ts: new Date().toISOString(),
+        kind: "mcp.tool_call",
+        session_id: req.session_id,
+        tool: "workbench.gemini_redline_analyze",
+        server: "operator-backend",
+        arguments: autoGemini,
+        status: "requested"
+      });
+    } catch {
+      // Notification and run-bundle persistence are best-effort.
+    }
+    noteRedlineWorkbenchEvidenceAttempts(req.session_id, [autoGemini]);
+    const geminiResults = (await executeWorkbenchActions([autoGemini])).map((result, index) => ({
+      ...result,
+      index: results.length + index + 1
+    }));
+    results = results.concat(geminiResults);
+  }
+
+  updateRedlineVisionProgressFromWorkbench(req.session_id, results);
+  for (const result of results) {
+    try {
+      persistence.appendToolOutput(req.session_id, {
+        ts: new Date().toISOString(),
+        kind: "mcp.tool_result",
+        session_id: req.session_id,
+        tool: `workbench.${result.type}`,
+        server: "operator-backend",
+        status: result.ok ? "success" : "failed",
+        result: {
+          index: result.index,
+          summary: result.summary,
+          details: result.details ?? null
+        },
+        error: result.ok ? null : result.summary
+      });
+    } catch {
+      // Run-bundle persistence is best-effort.
+    }
+  }
+  try {
+    const okCount = results.filter(result => result.ok).length;
+    appendNotification(
+      req.session_id,
+      "workbench.saved",
+      `Source preflight completed ${okCount}/${results.length} step(s) before provider planning.`,
+      { ok: okCount, total: results.length, provider_neutral: true }
+    );
+  } catch {
+    // Notification persistence is best-effort.
+  }
+
+  return withExistingConditionsSourcePreflightContext(req, results);
+}
+
 export function isExplicitReadOnlyRedlineAnalysisRequest(req: ChatRequest): boolean { if (!hasRedlineAttachment(req)) return false; const text = `${req.user_text ?? ""}`.toLowerCase(); const verb = "(?:add|provide|install|place|create|implement|duplicate|copy|clone|insert|put|drop|apply|assign|set|connect|route|run|extend|tap|branch|take\\s*(?:off|out)|reroute|offset|draw|delete|remove|demo|demolish|erase|omit|strike|x\\s*out|edit|modify|update|change|revise|replace|correct|resize|size|adjust|move|shift|relocate|slide|rotate|reorient|turn|flip|swap|tag|label|hide|show|display|override|write)"; const noAction = /\b(?:do\s+not|don't|dont)\b(?=[^.!?;]*\bexecute\b)(?=[^.!?;]*\/revit\/)(?![^.!?;]*\b(?:merely|but|then|instead|rather|except)\b)[^.!?;]*\b(?:actions?|model\s+elements?)\b(?:\s*,?\s*including\s+(?=[^.!?;]*\b(?:dry[\s-]?run|apply|create|edit|delete|write)\b)(?![^.!?;]*\b(?:but|then|instead|rather|except|or\s+later)\b)(?:(?:dry[\s-]?run|apply|create|edit|delete|write|any\s+other\s+endpoint)(?:\s*,\s*(?:(?:or|and)\s+)?|\s+(?:or|and)\s+)?)+(?=\s*(?:[.!?;]|\n|$))|(?!\s*,?\s*including\b))/; const slashList = new RegExp(`\\b(?:do\\s+not|don't|dont)\\s+${verb}(?:\\s*\\/\\s*${verb})+`); const directModel = /\b(?:do\s+not|don't|dont)\s+(?:modify|change|edit|write(?:\s+to)?)\s+(?:the\s+)?(?:revit\s+)?model(?:\s+or\s+files?)?(?=\s*(?:[.!?;]|\n|$))/; const withoutModel = /\bwithout\s+(?:changing|modifying|editing|writing(?:\s+to)?)\s+(?:the\s+)?(?:revit\s+)?model(?:\s+or\s+files?)?(?=\s*(?:[.!?;]|\n|$))/; const positive = /\b(?:analysis|evidence|interpretation)(?:\s+record)?\s+only\b|\bonly\s+(?:analy[sz]e|interpret|review)\b|\bread[- ]only\s+(?:analysis|review|interpretation)\b/.test(text) || [noAction, slashList, directModel, withoutModel].some((pattern) => pattern.test(text)); const isolated = text.replace(noAction, "").replace(slashList, "").replace(directModel, "").replace(withoutModel, "").replace(/(?:^|[.!?;]\s*)provide\s+(?:concise\s+)?(?:structured\s+)?(?:evidence|analysis|interpretation)(?:\s+with\s+source\s+references)?(?=\s*(?:[.!?;]|\n|$))/g, ""); const inflected = "(?:add(?:ed|ing)|provide(?:d|ing)|install(?:ed|ing)|place(?:d|ing)|create(?:d|ing)|implement(?:ed|ing)|duplicate(?:d|ing)|cop(?:ied|ying)|clone(?:d|ing)|insert(?:ed|ing)|put(?:ting)?|drop(?:ped|ping)|appl(?:ied|ying)|assign(?:ed|ing)|set(?:ting)?|connect(?:ed|ing)|rout(?:ed|ing)|run(?:ning)?|extend(?:ed|ing)|tap(?:ped|ping)|branch(?:ed|ing)|tak(?:en|ing)\\s*(?:off|out)|rerout(?:ed|ing)|offset(?:ting)?|drawn|drawing\\s+(?:(?:the|a|an)\\s+)?(?:marked|new|existing|selected)|delet(?:ed|ing)|remov(?:ed|ing)|demo(?:ed|ing)|demolish(?:ed|ing)|eras(?:ed|ing)|omit(?:ted|ting)|str(?:uck|iking)|x(?:ed|ing)?\\s*out|edit(?:ed|ing)|modif(?:ied|ying)|updat(?:ed|ing)|chang(?:ed|ing)|revis(?:ed|ing)|replac(?:ed|ing)|correct(?:ed|ing)|resiz(?:ed|ing)|siz(?:ed|ing)|adjust(?:ed|ing)|mov(?:ed|ing)|shift(?:ed|ing)|relocat(?:ed|ing)|slid(?:ing)?|rotat(?:ed|ing)|reorient(?:ed|ing)|turn(?:ed|ing)|flipp(?:ed|ing)|swapp(?:ed|ing)|tagg(?:ed|ing)|label(?:ed|ing)|hid(?:den|ing)|show(?:n|ing)|display(?:ed|ing)|overrid(?:den|ing)|writ(?:ten|ing))"; const mutation = new RegExp(`\\b${verb}\\b|\\b${inflected}\\b|\\bmake\\b[^.!?;]{0,48}\\b(?:change|changes|edit|edits)\\b`); const unknownAffirmative = /\b(?:and|then|also)\s+[a-z][a-z-]{2,24}\s+(?:the\s+)?(?:marked|existing|new|selected)\b/.test(isolated); return positive && /\b(redline|red line|markup)\b/.test(text) && /\b(analy[sz]e|analysis|interpret|evidence)\b/.test(text) && !mutation.test(isolated) && !unknownAffirmative; }
 async function runInitialRedlineDecisionLane(args: { req: ChatRequest; initialAction: WorkbenchAction | null; runInitialPreflight: (action: WorkbenchAction) => Promise<void>; runFastPreflight: () => Promise<RedlineFastPathPreflight | null>; summarize: () => Promise<OpenAiDecision | { error: string }> }): Promise<{ response: ChatResponse | null; fastPreflight: RedlineFastPathPreflight | null; initialPreflightCompleted: boolean }> {
   if (args.initialAction && isExistingConditionsReconstructionRequest(args.req)) {
@@ -18242,6 +18459,7 @@ function normalizeWorkbenchActions(raw: unknown): WorkbenchAction[] {
           ? (a.image_paths as unknown[]).filter((x): x is string => typeof x === "string")
           : undefined,
         expected_sheet: typeof a.expected_sheet === "string" ? a.expected_sheet : undefined,
+        analysis_mode: a.analysis_mode === "existing_conditions" ? "existing_conditions" : "redline",
         max_pages: typeof a.max_pages === "number" && Number.isFinite(a.max_pages) ? Math.floor(a.max_pages) : undefined,
         page_start: typeof a.page_start === "number" && Number.isFinite(a.page_start) ? Math.floor(a.page_start) : undefined,
         baseline_file_path: typeof a.baseline_file_path === "string" ? a.baseline_file_path : undefined,
@@ -18850,7 +19068,7 @@ function replaceAuditTargetWithWallLocalRedlineChainage(
 function isExistingConditionsReconstructionRequest(req: ChatRequest | null | undefined): boolean {
   const text = req ? getRecentUserTextForRedline(req).toLowerCase() : "";
   const reconstructionVerb =
-    /\b(recreate|reconstruct|redraw|draft|draw|model|trace)\b/.test(text);
+    /\b(recreate|reconstruct|reconstruction|redraw|draft|drawing|model|trace)\b/.test(text);
   const explicitExistingConditions =
     /\b(existing[\s-]*conditions?|as[\s-]*built|record drawing)\b/.test(text);
   const sourceArtifact =
