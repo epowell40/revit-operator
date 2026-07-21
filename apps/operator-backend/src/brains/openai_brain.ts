@@ -16762,6 +16762,8 @@ function defaultSystemPrompt(): string {
     "  {\"elementId\":201,\"roomNumber\":\"303\",\"roomSide\":\"bottom\",\"targetChainageFt\":8.0,\"orientationSourceElementId\":12345,\"electricalCircuitSourceElementId\":12345,\"matchOrientationFromSource\":true,\"matchElectricalCircuitFromSource\":true,\"requireElectricalCircuitMatch\":true,\"dryRun\":false,\"includePreviewImage\":false}",
     "- POST /revit/assign-electrical-circuit:",
     "  {\"elementIds\":[22222],\"sourceElementId\":12345,\"dryRun\":true,\"parameterOnlyFallback\":true}",
+    "  or create a native circuit in an exact source-supported panel schedule slot (dry-run performs and rolls back the real operation):",
+    "  {\"elementIds\":[22222],\"createSystemType\":\"PowerCircuit\",\"panelElementId\":33333,\"targetPanelSlotNumber\":5,\"expectedCircuitNumber\":\"5\",\"dryRun\":true}",
     "  or when explicitly asked for a panel/circuit and source-system matching is unavailable:",
     "  {\"elementIds\":[22222],\"panelName\":\"P401\",\"circuitNumber\":\"1\",\"dryRun\":false,\"confirm\":true,\"parameterOnlyFallback\":true}",
     "- POST /revit/move-elements:",

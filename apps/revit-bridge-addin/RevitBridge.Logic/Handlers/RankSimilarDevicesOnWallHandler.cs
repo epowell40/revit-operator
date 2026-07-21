@@ -498,6 +498,19 @@ namespace RevitBridge.Logic.Handlers
             public int? Poles { get; set; }
         }
 
+        private sealed class PanelScheduleSlotReadback
+        {
+            public long ScheduleElementId { get; set; }
+            public bool ScheduleCreated { get; set; }
+            public int TargetSlotNumber { get; set; }
+            public int SourceRow { get; set; }
+            public int SourceColumn { get; set; }
+            public int TargetRow { get; set; }
+            public int TargetColumn { get; set; }
+            public bool TargetContainsExactSystem { get; set; }
+            public string ActualCircuitNumber { get; set; } = string.Empty;
+        }
+
         public sealed class Params
         {
             public long[]? elementIds { get; set; }
@@ -506,6 +519,8 @@ namespace RevitBridge.Logic.Handlers
             public long? sourceElementId { get; set; }
             public string? createSystemType { get; set; }
             public long? panelElementId { get; set; }
+            public int? targetPanelSlotNumber { get; set; }
+            public string? expectedCircuitNumber { get; set; }
             public bool dryRun { get; set; } = true;
             public bool confirm { get; set; } = false;
             public bool parameterOnlyFallback { get; set; } = false;
@@ -627,6 +642,7 @@ namespace RevitBridge.Logic.Handlers
         private static object CreateNewPowerCircuit(Document doc, Params p, List<long> ids)
         {
             var apply = !p.dryRun && p.confirm;
+            var transactionalDryRun = p.dryRun && p.targetPanelSlotNumber.HasValue;
             var members = new List<FamilyInstance>();
             var preflightResults = new List<object>();
             foreach (var id in ids)
@@ -673,7 +689,19 @@ namespace RevitBridge.Logic.Handlers
                 if (panel == null) throw new InvalidOperationException($"panel_element_not_family_instance:{p.panelElementId.Value}");
             }
 
-            if (!apply)
+            if (p.targetPanelSlotNumber.HasValue)
+            {
+                if (p.targetPanelSlotNumber.Value <= 0)
+                    throw new InvalidOperationException("target_panel_slot_number_must_be_positive");
+                if (panel == null)
+                    throw new InvalidOperationException("target_panel_slot_number_requires_panel_element_id");
+            }
+            else if (!string.IsNullOrWhiteSpace(p.expectedCircuitNumber))
+            {
+                throw new InvalidOperationException("expected_circuit_number_requires_target_panel_slot_number");
+            }
+
+            if (!apply && !transactionalDryRun)
             {
                 return new
                 {
@@ -686,7 +714,7 @@ namespace RevitBridge.Logic.Handlers
                     panelElementId = p.panelElementId,
                     results = preflightResults,
                     warnings = new List<string>(),
-                    limitation = "New-circuit mode creates a real native PowerCircuit only from uncircuitized family instances; it does not infer membership, breaker size, load allocation, or panel capacity."
+                    limitation = "New-circuit mode creates a real native PowerCircuit only from uncircuitized family instances. Supply targetPanelSlotNumber to exercise real create/select-panel/schedule-slot behavior inside a rollback-verified dry-run; it does not infer breaker size, load allocation, or panel capacity."
                 };
             }
 
@@ -703,6 +731,7 @@ namespace RevitBridge.Logic.Handlers
                         .OrderBy(id => id)
                         .ToList();
                     long systemId;
+                    PanelScheduleSlotReadback? panelScheduleSlot = null;
                     using (var tx = new Transaction(doc, "Create Electrical Circuit"))
                     {
                         var transactionStartStatus = tx.Start();
@@ -721,6 +750,17 @@ namespace RevitBridge.Logic.Handlers
                         if (panel != null) system.SelectPanel(panel);
                         doc.Regenerate();
 
+                        if (p.targetPanelSlotNumber.HasValue)
+                        {
+                            panelScheduleSlot = MoveCircuitToPanelScheduleSlot(
+                                doc,
+                                panel!,
+                                system,
+                                p.targetPanelSlotNumber.Value,
+                                p.expectedCircuitNumber);
+                            doc.Regenerate();
+                        }
+
                         systemId = ElementIdCompat.GetValue(system.Id);
                         VerifyNativePowerCircuitReadback(
                             ReadNativePowerCircuit(system),
@@ -738,6 +778,7 @@ namespace RevitBridge.Logic.Handlers
                         ?? throw new InvalidOperationException($"new_power_circuit_postcommit_system_missing:{systemId}");
                     var finalReadback = ReadNativePowerCircuit(committedSystem);
                     VerifyNativePowerCircuitReadback(finalReadback, expectedMemberIds, p.panelElementId);
+                    VerifyPanelScheduleSlotReadback(panelScheduleSlot, finalReadback, p.targetPanelSlotNumber, p.expectedCircuitNumber);
 
                     var verifiedResults = members.Select(instance =>
                     {
@@ -753,45 +794,71 @@ namespace RevitBridge.Logic.Handlers
                                 : $"Expected only new power system {systemId}; actual power systems: {string.Join(",", powerSystemIds)}.",
                             before = (object?)null,
                             after = HostedPlacementUtil.BuildElectricalCircuitAuditPayload(instance),
-                            dryRun = false
+                            dryRun = transactionalDryRun
                         };
                     }).ToList();
                     if (verifiedResults.Any(result => !(bool)(result.GetType().GetProperty("ok")?.GetValue(result) ?? false)))
                         throw new InvalidOperationException($"new_power_circuit_membership_verification_failed:{systemId}");
 
-                    var response = new
+                    var warningMessages = nativeFailures
+                        .Where(failure => string.Equals(failure.severity, "warning", StringComparison.OrdinalIgnoreCase))
+                        .Select(failure => failure.message)
+                        .Where(message => !string.IsNullOrWhiteSpace(message))
+                        .Distinct()
+                        .ToList();
+
+                    var rolledBack = false;
+                    var rollbackVerified = false;
+                    if (transactionalDryRun)
                     {
-                        schema = "operator.assign_electrical_circuit.v3",
-                        status = "Applied",
-                        applied = true,
+                        var rollbackStatus = group.RollBack();
+                        if (rollbackStatus != TransactionStatus.RolledBack)
+                            throw new InvalidOperationException($"new_power_circuit_group_not_rolled_back:{rollbackStatus}");
+                        rolledBack = true;
+                        rollbackVerified = doc.GetElement(ElementIdCompat.Create(systemId)) == null;
+                        if (!rollbackVerified)
+                            throw new InvalidOperationException($"new_power_circuit_rollback_verification_failed:{systemId}");
+                    }
+                    else
+                    {
+                        var groupStatus = group.Assimilate();
+                        if (groupStatus != TransactionStatus.Committed)
+                            throw new InvalidOperationException($"new_power_circuit_group_not_committed:{groupStatus}");
+                    }
+
+                    return new
+                    {
+                        schema = "operator.assign_electrical_circuit.v4",
+                        status = transactionalDryRun ? "Planned" : "Applied",
+                        applied = apply,
+                        dryRun = transactionalDryRun,
+                        transactionGroupRolledBack = rolledBack,
+                        rollbackVerified,
                         mode = "create_new_power_circuit",
                         requestedSystemType = "PowerCircuit",
                         createdElectricalSystemId = systemId,
                         panelElementId = p.panelElementId,
+                        targetPanelSlotNumber = p.targetPanelSlotNumber,
+                        expectedCircuitNumber = string.IsNullOrWhiteSpace(p.expectedCircuitNumber) ? null : p.expectedCircuitNumber!.Trim(),
                         verifiedMemberElementIds = expectedMemberIds,
                         nativeCircuitReadback = NativePowerCircuitReadbackPayload(finalReadback),
+                        panelScheduleSlot = PanelScheduleSlotReadbackPayload(panelScheduleSlot),
                         verification = new
                         {
                             nativePowerCircuit = true,
                             exactMemberSet = true,
                             exactPanelIdentity = true,
+                            exactPanelScheduleSlot = !p.targetPanelSlotNumber.HasValue || panelScheduleSlot?.TargetContainsExactSystem == true,
+                            expectedCircuitNumberMatched = string.IsNullOrWhiteSpace(p.expectedCircuitNumber) || string.Equals(finalReadback.CircuitNumber, p.expectedCircuitNumber!.Trim(), StringComparison.OrdinalIgnoreCase),
                             factualLoadReadback = true,
+                            rollbackVerified = transactionalDryRun ? rollbackVerified : (bool?)null,
                             complianceEvaluated = false
                         },
                         results = verifiedResults,
-                        warnings = nativeFailures
-                            .Where(failure => string.Equals(failure.severity, "warning", StringComparison.OrdinalIgnoreCase))
-                            .Select(failure => failure.message)
-                            .Where(message => !string.IsNullOrWhiteSpace(message))
-                            .Distinct()
-                            .ToList(),
+                        warnings = warningMessages,
                         nativeFailures,
-                        limitation = "New-circuit mode creates and verifies native PowerCircuit membership; breaker size, load allocation, panel capacity, and code compliance require separate evidence and checks."
+                        limitation = "New-circuit mode creates and verifies native PowerCircuit membership and an explicitly requested panel schedule slot. Breaker size, load allocation, panel capacity, and code compliance require separate evidence and checks."
                     };
-                    var groupStatus = group.Assimilate();
-                    if (groupStatus != TransactionStatus.Committed)
-                        throw new InvalidOperationException($"new_power_circuit_group_not_committed:{groupStatus}");
-                    return response;
                 }
                 catch
                 {
@@ -799,6 +866,170 @@ namespace RevitBridge.Logic.Handlers
                     throw;
                 }
             }
+        }
+
+        private static PanelScheduleSlotReadback MoveCircuitToPanelScheduleSlot(
+            Document doc,
+            FamilyInstance panel,
+            ElectricalSystem system,
+            int targetSlotNumber,
+            string? expectedCircuitNumber)
+        {
+            var panelId = ElementIdCompat.GetValue(panel.Id);
+            var schedule = new FilteredElementCollector(doc)
+                .OfClass(typeof(PanelScheduleView))
+                .Cast<PanelScheduleView>()
+                .FirstOrDefault(view =>
+                {
+                    try
+                    {
+                        return !view.IsPanelScheduleTemplate() && ElementIdCompat.GetValue(view.GetPanel()) == panelId;
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                });
+            var scheduleCreated = false;
+            if (schedule == null)
+            {
+                schedule = PanelScheduleView.CreateInstanceView(doc, panel.Id)
+                    ?? throw new InvalidOperationException($"panel_schedule_create_failed:{panelId}");
+                scheduleCreated = true;
+                doc.Regenerate();
+            }
+
+            var sourceCell = FindCircuitCell(schedule, system.Id)
+                ?? throw new InvalidOperationException($"panel_schedule_source_cell_not_found:{ElementIdCompat.GetValue(system.Id)}");
+            IList<int> targetRows;
+            IList<int> targetColumns;
+            schedule.GetCellsBySlotNumber(targetSlotNumber, out targetRows, out targetColumns);
+            if (targetRows == null || targetColumns == null || targetRows.Count == 0 || targetRows.Count != targetColumns.Count)
+                throw new InvalidOperationException($"panel_schedule_target_slot_not_found:{targetSlotNumber}");
+
+            var targetCell = (row: -1, column: -1);
+            for (var i = 0; i < targetRows.Count; i++)
+            {
+                var row = targetRows[i];
+                var column = targetColumns[i];
+                if (row == sourceCell.row && column == sourceCell.column)
+                {
+                    targetCell = (row, column);
+                    break;
+                }
+                try
+                {
+                    if (schedule.CanMoveSlotTo(sourceCell.row, sourceCell.column, row, column))
+                    {
+                        targetCell = (row, column);
+                        break;
+                    }
+                }
+                catch
+                {
+                    // Continue through every cell representing the requested slot.
+                }
+            }
+            if (targetCell.row < 0)
+                throw new InvalidOperationException($"panel_schedule_target_slot_unavailable:{targetSlotNumber}");
+
+            if (targetCell.row != sourceCell.row || targetCell.column != sourceCell.column)
+            {
+                schedule.MoveSlotTo(sourceCell.row, sourceCell.column, targetCell.row, targetCell.column);
+                doc.Regenerate();
+            }
+
+            var exactSystemId = ElementIdCompat.GetValue(system.Id);
+            var targetContainsExactSystem = false;
+            for (var i = 0; i < targetRows.Count; i++)
+            {
+                try
+                {
+                    var circuitId = schedule.GetCircuitIdByCell(targetRows[i], targetColumns[i]);
+                    if (circuitId != null && ElementIdCompat.GetValue(circuitId) == exactSystemId)
+                    {
+                        targetContainsExactSystem = true;
+                        targetCell = (targetRows[i], targetColumns[i]);
+                        break;
+                    }
+                }
+                catch
+                {
+                    // Verification below fails closed when the exact system is absent.
+                }
+            }
+
+            var actualCircuitNumber = SafeCircuitString(() => system.CircuitNumber);
+            if (!targetContainsExactSystem)
+                throw new InvalidOperationException($"panel_schedule_exact_system_not_in_target_slot:{exactSystemId}:{targetSlotNumber}");
+            if (!string.IsNullOrWhiteSpace(expectedCircuitNumber) &&
+                !string.Equals(actualCircuitNumber, expectedCircuitNumber.Trim(), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"panel_schedule_circuit_number_mismatch:expected={expectedCircuitNumber.Trim()}:actual={actualCircuitNumber}");
+
+            return new PanelScheduleSlotReadback
+            {
+                ScheduleElementId = ElementIdCompat.GetValue(schedule.Id),
+                ScheduleCreated = scheduleCreated,
+                TargetSlotNumber = targetSlotNumber,
+                SourceRow = sourceCell.row,
+                SourceColumn = sourceCell.column,
+                TargetRow = targetCell.row,
+                TargetColumn = targetCell.column,
+                TargetContainsExactSystem = targetContainsExactSystem,
+                ActualCircuitNumber = actualCircuitNumber
+            };
+        }
+
+        private static (int row, int column)? FindCircuitCell(PanelScheduleView schedule, ElementId systemId)
+        {
+            var expectedId = ElementIdCompat.GetValue(systemId);
+            var body = schedule.GetTableData().GetSectionData(SectionType.Body);
+            for (var row = body.FirstRowNumber; row <= body.LastRowNumber; row++)
+            {
+                for (var column = body.FirstColumnNumber; column <= body.LastColumnNumber; column++)
+                {
+                    try
+                    {
+                        var circuitId = schedule.GetCircuitIdByCell(row, column);
+                        if (circuitId != null && ElementIdCompat.GetValue(circuitId) == expectedId)
+                            return (row, column);
+                    }
+                    catch
+                    {
+                        // Header/load-summary cells are not circuit cells.
+                    }
+                }
+            }
+            return null;
+        }
+
+        private static void VerifyPanelScheduleSlotReadback(
+            PanelScheduleSlotReadback? slot,
+            NativePowerCircuitReadback circuit,
+            int? expectedSlot,
+            string? expectedCircuitNumber)
+        {
+            if (!expectedSlot.HasValue) return;
+            if (slot == null || slot.TargetSlotNumber != expectedSlot.Value || !slot.TargetContainsExactSystem)
+                throw new InvalidOperationException($"panel_schedule_slot_verification_failed:{expectedSlot.Value}");
+            if (!string.IsNullOrWhiteSpace(expectedCircuitNumber) &&
+                !string.Equals(circuit.CircuitNumber, expectedCircuitNumber.Trim(), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"panel_schedule_circuit_number_verification_failed:expected={expectedCircuitNumber.Trim()}:actual={circuit.CircuitNumber}");
+        }
+
+        private static object? PanelScheduleSlotReadbackPayload(PanelScheduleSlotReadback? slot)
+        {
+            if (slot == null) return null;
+            return new
+            {
+                scheduleElementId = slot.ScheduleElementId,
+                scheduleCreated = slot.ScheduleCreated,
+                targetSlotNumber = slot.TargetSlotNumber,
+                sourceCell = new { row = slot.SourceRow, column = slot.SourceColumn },
+                targetCell = new { row = slot.TargetRow, column = slot.TargetColumn },
+                targetContainsExactSystem = slot.TargetContainsExactSystem,
+                actualCircuitNumber = string.IsNullOrWhiteSpace(slot.ActualCircuitNumber) ? null : slot.ActualCircuitNumber
+            };
         }
 
         private static NativePowerCircuitReadback ReadNativePowerCircuit(ElectricalSystem system)
