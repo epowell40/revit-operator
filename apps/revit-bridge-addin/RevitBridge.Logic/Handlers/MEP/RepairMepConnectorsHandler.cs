@@ -51,6 +51,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             public string? finalTargetSystemName { get; set; }
             public List<long> expectedSourceElementIds { get; set; } = new List<long>();
             public List<long> expectedSourceNativeMemberElementIds { get; set; } = new List<long>();
+            public List<long> expectedCascadeDeleteElementIds { get; set; } = new List<long>();
             public ConnectorReference anchorConnector { get; set; } = new ConnectorReference();
         }
 
@@ -358,6 +359,21 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (expectedSourceNativeMemberElementIds.Except(expectedSourceElementIds).Any())
                 throw new ArgumentException(
                     "mergeMepSystem expectedSourceNativeMemberElementIds must be a subset of expectedSourceElementIds.");
+            var expectedCascadeDeleteElementIds =
+                (request.expectedCascadeDeleteElementIds ?? new List<long>())
+                .Where(id => id > 0)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToList();
+            if (expectedCascadeDeleteElementIds.Count > 32)
+                throw new ArgumentException(
+                    "mergeMepSystem expectedCascadeDeleteElementIds must contain no more than 32 unique positive ids.");
+            if (expectedCascadeDeleteElementIds.Contains(request.sourceSystemId) ||
+                expectedCascadeDeleteElementIds.Intersect(expectedSourceElementIds).Any())
+                throw new ArgumentException(
+                    "mergeMepSystem expectedCascadeDeleteElementIds must not include the source system or source graph elements.");
+            foreach (var expectedCascadeDeleteElementId in expectedCascadeDeleteElementIds)
+                AssertSafeCascadeDeleteElement(doc, expectedCascadeDeleteElementId);
             if (request.anchorConnector == null || request.anchorConnector.elementId <= 0)
                 throw new ArgumentException("mergeMepSystem.anchorConnector is required.");
             if (!expectedSourceElementIds.Contains(request.anchorConnector.elementId))
@@ -452,13 +468,15 @@ namespace RevitBridge.Logic.Handlers.MEP
                             .Select(ElementIdCompat.GetValue)
                             .OrderBy(id => id)
                             .ToList();
-                        var unexpectedDeletedIds = deletedIds
+                        var actualCascadeDeletedIds = deletedIds
                             .Where(id => id != request.sourceSystemId)
                             .ToList();
-                        if (unexpectedDeletedIds.Count > 0)
+                        if (!actualCascadeDeletedIds.SequenceEqual(
+                            expectedCascadeDeleteElementIds))
                             throw new InvalidOperationException(
-                                "source_system_delete_would_remove_model_elements:" +
-                                string.Join(",", unexpectedDeletedIds));
+                                "source_system_cascade_delete_changed:" +
+                                $"expected={string.Join(",", expectedCascadeDeleteElementIds)}:" +
+                                $"actual={string.Join(",", actualCascadeDeletedIds)}");
                         doc.Regenerate();
 
                         var missingSourceElementIds = expectedSourceElementIds
@@ -656,6 +674,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 anchorAfterAdd,
                 expectedSourceElementIds,
                 expectedSourceNativeMemberElementIds,
+                expectedCascadeDeleteElementIds,
                 expectedTargetAfterIds,
                 expectedTargetSystemNameAfter,
                 nativeFailures,
@@ -672,6 +691,36 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (system == null)
                 throw new ArgumentException($"{label}_mep_system_not_found:{id}");
             return system;
+        }
+
+        private static void AssertSafeCascadeDeleteElement(Document doc, long id)
+        {
+            var element = doc.GetElement(ElementIdCompat.Create(id));
+            if (element == null)
+                throw new ArgumentException($"cascade_delete_element_not_found:{id}");
+
+            BoundingBoxXYZ? boundingBox;
+            try
+            {
+                boundingBox = element.get_BoundingBox(null);
+            }
+            catch
+            {
+                throw new InvalidOperationException(
+                    $"cascade_delete_element_bounding_box_unreadable:{id}");
+            }
+
+            if (element.GetType() != typeof(Element) ||
+                element.Category != null ||
+                !string.IsNullOrWhiteSpace(element.Name) ||
+                element.Location != null ||
+                boundingBox != null ||
+                element.GetTypeId() != ElementId.InvalidElementId)
+                throw new InvalidOperationException(
+                    $"cascade_delete_element_is_not_verified_internal_bookkeeping:{id}:" +
+                    $"class={element.GetType().FullName}:" +
+                    $"category={element.Category?.Name ?? ""}:" +
+                    $"name={element.Name ?? ""}");
         }
 
         private static void AssertExpectedSystemName(

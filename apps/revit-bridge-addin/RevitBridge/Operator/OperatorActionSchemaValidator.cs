@@ -2652,6 +2652,7 @@ namespace RevitBridge.Operator
                     if (!ValidateOptionalString(mergeMepSystem, "finalTargetSystemName", maxLen: 256, out error)) return false;
                     if (!ValidateRequiredLongArray(mergeMepSystem, "expectedSourceElementIds", maxCount: 500, out error)) return false;
                     if (!ValidateRequiredLongArray(mergeMepSystem, "expectedSourceNativeMemberElementIds", maxCount: 500, out error)) return false;
+                    if (!ValidateOptionalLongArray(mergeMepSystem, "expectedCascadeDeleteElementIds", maxCount: 32, out error)) return false;
                     if (!mergeMepSystem.TryGetProperty("anchorConnector", out var anchorConnector) ||
                         anchorConnector.ValueKind != JsonValueKind.Object)
                     {
