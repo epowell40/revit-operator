@@ -513,7 +513,7 @@ export type MepDraftPackage = {
 
 export type MepDraftElementReference = {
   created_by_action: string;
-  output?: "created" | "route_start" | "route_end" | "route_segment" | "split_main_start" | "split_main_end";
+  output?: "created" | "affected" | "route_start" | "route_end" | "route_segment" | "split_main_start" | "split_main_end";
   index?: number;
 };
 
@@ -531,7 +531,11 @@ export type MepDraftAction = {
     | "/revit/audit-plumbing-fixture-services"
     | "/revit/assign-electrical-circuit"
     | "/revit/draw-detail-curves"
-    | "/revit/tag-elements";
+    | "/revit/tag-elements"
+    | "/revit/move-elements"
+    | "/revit/rotate-elements"
+    | "/revit/edit-mep-route-elements"
+    | "/revit/repair-mep-connectors";
   depends_on: string[];
   dry_run_body?: JsonMap;
   apply_body?: JsonMap;
@@ -621,6 +625,8 @@ export type AtomicMepDraftWorkflowRequest = {
   priorActionOutputs?: Array<{
     action_key: string;
     created_element_ids: number[];
+    /** Existing native elements successfully modified by a repair action. */
+    affected_element_ids?: number[];
     route_segment_element_ids?: number[];
     route_start_element_ids?: number[];
     route_end_element_ids?: number[];

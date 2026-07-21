@@ -230,7 +230,7 @@ test("registered existing-conditions compiler hands off exact dry-run then exact
   assert.equal(visual.actions[0]?.path, "/revit/highlight-and-export");
   assert.deepEqual((visual.actions[0]?.body as any)?.elementIds, [201]);
 
-  const complete = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, [{
+  const checkpoint = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, [{
     action_id: "verified-visual",
     method: "POST",
     path: "/revit/highlight-and-export",
@@ -238,6 +238,20 @@ test("registered existing-conditions compiler hands off exact dry-run then exact
     result_json: {
       status: "ok",
       path: "C:\\evidence\\route.png"
+    }
+  }]);
+  assert.ok(checkpoint);
+  assert.equal(checkpoint.actions[0]?.path, "/revit/save-as");
+  assert.match(String((checkpoint.actions[0]?.body as any)?.filePath), /existing_conditions_checkpoints/);
+
+  const complete = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, [{
+    action_id: "verified-checkpoint",
+    method: "POST",
+    path: "/revit/save-as",
+    status: "done",
+    result_json: {
+      status: "Success",
+      path: (checkpoint.actions[0]?.body as any)?.filePath
     }
   }]);
   assert.ok(complete);

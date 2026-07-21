@@ -1,10 +1,19 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "../contracts.js";
 import { appendNotification } from "../memory/sqlite_store.js";
 import { atomicAppendJsonlLine } from "../persistence/jsonl.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
+import type { AtomicMepDraftWorkflowRequest } from "./mep_draft_plan.js";
+import {
+  buildNextExistingConditionsStagePlan,
+  latestExistingConditionsStagedWorkflow,
+  recordExistingConditionsStageResult,
+  recordExistingConditionsVerificationResult,
+  registerExistingConditionsRepairAction,
+  registerExistingConditionsStagedWorkflow
+} from "./staged_repair_ledger.js";
 
 type ExecutionEvent = "action_planned" | "action_completed" | "action_failed";
 type ExecutionPhase =
@@ -43,6 +52,8 @@ const READBACK_PATHS = new Set([
   "/revit/query",
   "/revit/rooms",
   "/revit/room-contents",
+  "/revit/linked-room-boundaries",
+  "/revit/audit-plumbing-fixture-services",
   "/revit/export-view-frame",
   "/revit/export-view-region",
   "/revit/highlight-and-export",
@@ -407,6 +418,148 @@ function recoveryDecision(toolResults: ToolResult[]): ChatResponse | null {
   return null;
 }
 
+function workflowFromAction(action: ActionCall | undefined): AtomicMepDraftWorkflowRequest | null {
+  if (!action || clean(action.path).toLowerCase() !== "/revit/existing-conditions-mep-draft-workflow") {
+    return null;
+  }
+  const row = objectValue(action.body);
+  const fingerprint = clean(row.inputFingerprintSha256).toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(fingerprint) || !Array.isArray(row.operations) || row.operations.length === 0) {
+    return null;
+  }
+  return {
+    inputFingerprintSha256: fingerprint,
+    operations: JSON.parse(JSON.stringify(row.operations)) as AtomicMepDraftWorkflowRequest["operations"],
+    provisionalObservationIds: Array.isArray(row.provisionalObservationIds)
+      ? row.provisionalObservationIds.map(clean).filter(Boolean)
+      : [],
+    dryRun: row.dryRun !== false,
+    verify: row.verify !== false,
+    maximumCreatedElements: Number.isSafeInteger(row.maximumCreatedElements)
+      ? Number(row.maximumCreatedElements)
+      : 100,
+    ...(Number.isSafeInteger(row.targetViewId) ? { targetViewId: Number(row.targetViewId) } : {}),
+    ...(typeof row.applyTargetViewPhase === "boolean"
+      ? { applyTargetViewPhase: row.applyTargetViewPhase }
+      : {}),
+    ...(typeof row.requireAllCreatedElementsVisibleInTargetView === "boolean"
+      ? { requireAllCreatedElementsVisibleInTargetView: row.requireAllCreatedElementsVisibleInTargetView }
+      : {}),
+    benchmarkCredit: false,
+    authorizationBasis: "explicit_unscored_user_direction"
+  };
+}
+
+function recordProviderIndependentStageResults(
+  sessionId: string,
+  workflow: AtomicMepDraftWorkflowRequest,
+  toolResults: ToolResult[]
+): void {
+  const fingerprint = workflow.inputFingerprintSha256.toLowerCase();
+  for (const result of toolResults) {
+    if (
+      result.status === "done" &&
+      clean(result.path).toLowerCase() === "/revit/existing-conditions-mep-draft-workflow" &&
+      result.result_json &&
+      typeof result.result_json === "object" &&
+      !Array.isArray(result.result_json) &&
+      clean((result.result_json as Record<string, unknown>).inputFingerprintSha256).toLowerCase() === fingerprint
+    ) {
+      recordExistingConditionsStageResult({
+        sessionId,
+        workflow,
+        result: result.result_json as Record<string, unknown>
+      });
+    }
+  }
+  for (const result of toolResults) {
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow,
+      result: result as unknown as Record<string, unknown>
+    });
+  }
+}
+
+function stagedHandoffDecision(args: {
+  sessionId: string;
+  workflow: AtomicMepDraftWorkflowRequest;
+  providerDecision: ChatResponse;
+}): ChatResponse | null {
+  let plan = buildNextExistingConditionsStagePlan({
+    sessionId: args.sessionId,
+    workflow: args.workflow
+  });
+  if (plan.state === "blocked" && plan.stage_key && plan.action_key) {
+    const proposed = args.providerDecision.actions.find(action =>
+      clean(action.path).toLowerCase() === "/revit/existing-conditions-mep-draft-workflow"
+    );
+    const body = objectValue(proposed?.body);
+    const candidate = workflowFromAction(proposed);
+    const operation = candidate?.operations.length === 1 ? candidate.operations[0] : null;
+    const repairStageKey = clean(body.stageKey);
+    if (
+      candidate &&
+      candidate.inputFingerprintSha256 === args.workflow.inputFingerprintSha256 &&
+      operation &&
+      clean(operation.action_key) === plan.action_key &&
+      repairStageKey &&
+      repairStageKey !== plan.stage_key
+    ) {
+      registerExistingConditionsRepairAction({
+        sessionId: args.sessionId,
+        workflow: args.workflow,
+        supersedesStageKey: plan.stage_key,
+        repairStageKey,
+        operation,
+        reason: clean(body.repairReason) || clean(args.providerDecision.assistant_message) || "Provider proposed a smaller source-grounded repair."
+      });
+      plan = buildNextExistingConditionsStagePlan({
+        sessionId: args.sessionId,
+        workflow: args.workflow
+      });
+    }
+  }
+  if (plan.state === "blocked") {
+    return {
+      version: "operator.backend.v1",
+      assistant_message:
+        `The failed stage remains isolated and prior accepted work is preserved. Propose one smaller replacement operation for ${plan.stage_key ?? "the blocked stage"} (${plan.reason}).`,
+      actions: []
+    };
+  }
+  if (plan.state === "awaiting_readback") return null;
+  if (plan.state === "verify_readback" || plan.state === "verify_visual" || plan.state === "checkpoint") {
+    return {
+      version: "operator.backend.v1",
+      assistant_message: plan.state === "verify_readback"
+        ? `Stage ${plan.action_key} is provisional; reading back every created or affected native ID before another write.`
+        : plan.state === "verify_visual"
+          ? `Stage ${plan.action_key} passed native readback; capturing focused visual evidence.`
+          : `Stage ${plan.action_key} passed native and visual checks; saving its reversible checkpoint.`,
+      actions: [{
+        action_id: randomUUID(),
+        method: plan.method,
+        path: plan.path,
+        ...(plan.body ? { body: plan.body } : {})
+      }]
+    };
+  }
+  if (plan.state !== "dry_run" && plan.state !== "apply") return null;
+  return {
+    version: "operator.backend.v1",
+    assistant_message: plan.state === "dry_run"
+      ? `Dry-running only ${plan.action_key}; ${plan.accepted_action_outputs.length} accepted prior stage(s) remain untouched.`
+      : `Applying only rollback-verified stage ${plan.action_key}; earlier accepted progress remains untouched.`,
+    actions: [{
+      action_id: randomUUID(),
+      method: "POST",
+      path: "/revit/existing-conditions-mep-draft-workflow",
+      body: plan.request
+    }]
+  };
+}
+
 export function enforceExistingConditionsOneActionLoop(args: {
   req: ChatRequest;
   decision: ChatResponse;
@@ -415,7 +568,49 @@ export function enforceExistingConditionsOneActionLoop(args: {
   recordToolResults(args.req.session_id, toolResults);
 
   const recovery = recoveryDecision(toolResults);
-  const decision = recovery ?? args.decision;
+  let decision = recovery ?? args.decision;
+  if (!recovery) {
+    let persisted = latestExistingConditionsStagedWorkflow(args.req.session_id);
+    const proposed = decision.actions.find(action =>
+      clean(action.path).toLowerCase() === "/revit/existing-conditions-mep-draft-workflow"
+    );
+    const proposedWorkflow = workflowFromAction(proposed);
+    const canReplaceCompletedWorkflow = persisted && proposedWorkflow &&
+      proposedWorkflow.inputFingerprintSha256 !== persisted.workflow.inputFingerprintSha256 &&
+      buildNextExistingConditionsStagePlan({
+        sessionId: args.req.session_id,
+        workflow: persisted.workflow
+      }).state === "awaiting_readback";
+    if (!persisted || canReplaceCompletedWorkflow) {
+      const workflow = proposedWorkflow;
+      if (workflow) {
+        const body = objectValue(proposed?.body);
+        const sourceViewId = Number.isSafeInteger(workflow.targetViewId)
+          ? Number(workflow.targetViewId)
+          : 0;
+        registerExistingConditionsStagedWorkflow({
+          sessionId: args.req.session_id,
+          sourceFrameId: clean(body.sourceFrameId ?? body.source_frame_id) || `external:${workflow.inputFingerprintSha256.slice(0, 16)}`,
+          sourceViewId,
+          registrationContextId: clean(body.registrationContextId ?? body.registration_context_id) || `external:${workflow.inputFingerprintSha256}`,
+          workflow
+        });
+        persisted = latestExistingConditionsStagedWorkflow(args.req.session_id);
+      }
+    }
+    if (persisted) {
+      recordProviderIndependentStageResults(
+        args.req.session_id,
+        persisted.workflow,
+        toolResults
+      );
+      decision = stagedHandoffDecision({
+        sessionId: args.req.session_id,
+        workflow: persisted.workflow,
+        providerDecision: decision
+      }) ?? decision;
+    }
+  }
   const actions = Array.isArray(decision.actions) ? decision.actions : [];
   const selected = actions.length > 0 ? [actions[0]!] : [];
   if (selected[0]) {

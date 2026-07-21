@@ -138,14 +138,26 @@ test("staged repair ledger preserves accepted progress and resumes through a sma
       sessionId,
       workflow: registered,
       result: {
+        action_id: "route-readback-incomplete",
+        method: "POST",
+        path: routeReadback.path,
+        status: "done",
+        result_json: [{ id: 201, found: true }]
+      }
+    });
+    assert.equal(
+      buildNextExistingConditionsStagePlan({ sessionId, workflow: registered }).state,
+      "verify_readback"
+    );
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
         action_id: "route-readback",
         method: "POST",
         path: routeReadback.path,
         status: "done",
-        result_json: {
-          status: "ok",
-          items: [{ id: 201 }, { id: 202 }]
-        }
+        result_json: [{ id: 201, found: true }, { id: 202, found: true }]
       }
     });
     const routeVisual = buildNextExistingConditionsStagePlan({
@@ -168,6 +180,27 @@ test("staged repair ledger preserves accepted progress and resumes through a sma
         }
       }
     });
+    const routeCheckpoint = buildNextExistingConditionsStagePlan({
+      sessionId,
+      workflow: registered
+    });
+    assert.equal(routeCheckpoint.state, "checkpoint");
+    if (routeCheckpoint.state !== "checkpoint") return;
+    assert.match(String(routeCheckpoint.body.filePath), /existing_conditions_checkpoints/);
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "route-checkpoint",
+        method: "POST",
+        path: routeCheckpoint.path,
+        status: "done",
+        result_json: {
+          status: "Success",
+          path: routeCheckpoint.body.filePath
+        }
+      }
+    });
 
     const connectDryRun = buildNextExistingConditionsStagePlan({
       sessionId,
@@ -179,6 +212,7 @@ test("staged repair ledger preserves accepted progress and resumes through a sma
     assert.deepEqual(connectDryRun.request.priorActionOutputs, [{
       action_key: "route:route-1",
       created_element_ids: [201, 202],
+      affected_element_ids: [],
       route_segment_element_ids: [],
       route_start_element_ids: [201],
       route_end_element_ids: [202],
@@ -321,6 +355,26 @@ test("staged repair ledger preserves accepted progress and resumes through a sma
         }
       }
     });
+    const repairCheckpoint = buildNextExistingConditionsStagePlan({
+      sessionId,
+      workflow: registered
+    });
+    assert.equal(repairCheckpoint.state, "checkpoint");
+    if (repairCheckpoint.state !== "checkpoint") return;
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "repair-checkpoint",
+        method: "POST",
+        path: repairCheckpoint.path,
+        status: "done",
+        result_json: {
+          status: "Success",
+          path: repairCheckpoint.body.filePath
+        }
+      }
+    });
 
     const done = buildNextExistingConditionsStagePlan({
       sessionId,
@@ -348,6 +402,129 @@ test("staged repair ledger preserves accepted progress and resumes through a sma
       () => readExistingConditionsRepairLedger(sessionId),
       /invalid_chain_line/
     );
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+  }
+});
+
+test("staged repair ledger persists affected existing ids through verification and checkpoint", { concurrency: false }, () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-staged-existing-repair-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const sessionId = "staged-existing-repair-session";
+    const registered: AtomicMepDraftWorkflowRequest = {
+      ...workflow(),
+      operations: [{
+        action_key: "repair:move-retained-run",
+        observation_ids: ["route-1"],
+        path: "/revit/move-elements",
+        depends_on: [],
+        expected_created_min: 0,
+        expected_created_max: 0,
+        apply_body: {
+          ids: [901, 902],
+          mode: "vector",
+          vectorX: 2,
+          vectorY: -1,
+          vectorZ: 0,
+          moveTogether: true
+        }
+      }]
+    };
+    registerExistingConditionsStagedWorkflow({
+      sessionId,
+      sourceFrameId: "frame-existing-repair",
+      sourceViewId: 3960410,
+      registrationContextId: "registration-existing-repair",
+      workflow: registered
+    });
+    const dryRun = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(dryRun.state, "dry_run");
+    if (dryRun.state !== "dry_run") return;
+    recordExistingConditionsStageResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        inputFingerprintSha256: registered.inputFingerprintSha256,
+        stageKey: dryRun.stage_key,
+        status: "DryRunReady",
+        dryRun: true,
+        rollbackVerified: true,
+        residualCreatedElementIds: [],
+        operationOutputs: [{
+          action_key: "repair:move-retained-run",
+          created_element_ids: [],
+          affected_element_ids: [901, 902]
+        }]
+      }
+    });
+    const apply = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(apply.state, "apply");
+    if (apply.state !== "apply") return;
+    recordExistingConditionsStageResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        inputFingerprintSha256: registered.inputFingerprintSha256,
+        stageKey: apply.stage_key,
+        status: "Applied",
+        dryRun: false,
+        atomic: true,
+        operationOutputs: [{
+          action_key: "repair:move-retained-run",
+          created_element_ids: [],
+          affected_element_ids: [901, 902]
+        }]
+      }
+    });
+    const readback = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(readback.state, "verify_readback");
+    if (readback.state !== "verify_readback") return;
+    assert.deepEqual(readback.body?.elementIds, [901, 902]);
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "existing-repair-readback",
+        method: "POST",
+        path: readback.path,
+        status: "done",
+        result_json: [{ id: 901, found: true }, { id: 902, found: true }]
+      }
+    });
+    const visual = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(visual.state, "verify_visual");
+    if (visual.state !== "verify_visual") return;
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "existing-repair-visual",
+        method: "POST",
+        path: visual.path,
+        status: "done",
+        result_json: { status: "ok", path: "C:\\evidence\\existing-repair.png" }
+      }
+    });
+    const checkpoint = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(checkpoint.state, "checkpoint");
+    if (checkpoint.state !== "checkpoint") return;
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "existing-repair-checkpoint",
+        method: "POST",
+        path: checkpoint.path,
+        status: "done",
+        result_json: { status: "Success", path: checkpoint.body.filePath }
+      }
+    });
+    const done = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(done.state, "awaiting_readback");
+    assert.deepEqual(done.accepted_action_outputs[0]?.affected_element_ids, [901, 902]);
   } finally {
     if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;

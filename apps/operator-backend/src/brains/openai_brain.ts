@@ -2548,12 +2548,18 @@ function buildRegisteredMepWorkflowHandoffResponse(
       actions: []
     };
   }
-  if (plan.state === "verify_readback" || plan.state === "verify_visual") {
+  if (
+    plan.state === "verify_readback" ||
+    plan.state === "verify_visual" ||
+    plan.state === "checkpoint"
+  ) {
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
       assistant_message: plan.state === "verify_readback"
         ? `Stage ${plan.action_key} applied provisionally. I will read back only that stage before another write.`
-        : `Stage ${plan.action_key} passed native readback. I will capture focused visual evidence before accepting it or advancing.`,
+        : plan.state === "verify_visual"
+          ? `Stage ${plan.action_key} passed native readback. I will capture focused visual evidence before accepting it or advancing.`
+          : `Stage ${plan.action_key} passed native and visual checks. I will save a reversible checkpoint before advancing.`,
       actions: [{
         action_id: randomUUID(),
         method: plan.method,
@@ -16673,7 +16679,8 @@ function defaultSystemPrompt(): string {
     "- For useful but unresolved pipe/duct/conduit drafting, set partial_promotion_policy:'defer_ambiguous_observations' and use the applicable unresolved_placeholder policies. Keep the route service unclassified when the source does not establish it. The selected pipe_type/duct_type/conduit_type and system_type must still be an existing project-local editable drafting container; discover native types if dry-run reports a missing container. Provisional geometry receives no benchmark credit but should be drafted instead of abandoned.",
     "- A registered source-point plumbing route observation minimally uses {kind:'pipe_route',discipline:'plumbing',observation_id,visibility,confidence,supported_attributes,attribute_evidence,service,pixel_points,elevation_ft,pipe_type,system_type}; include explicit size/type/system values only when source or native evidence supports them, otherwise include pipe_size_policy/type_policy/system_classification_policy:'unresolved_placeholder' as applicable.",
     "- A registered plumbing fixture observation uses schema_version:2, kind:'plumbing_fixture', pixel_point, role, placement, representation_classification, service_route_connections, and attribute_evidence. If family/type/host meaning is not defensible, use placement.mode:'provisional_plan_symbol' and representation_classification.native_target:'plan_only_marker'; do not turn an architectural sink graphic into a claimed MEP connector.",
-    "- After compile_registered_mep_reconstruction returns status ready or partially_ready, use the persisted staged handoff for /revit/existing-conditions-mep-draft-workflow. Dry-run only the next dependency-ready operation, apply only that accepted stage, persist its output IDs, and continue from those IDs. Never submit the entire operation graph as one all-or-nothing request. After the final stage, perform native readback and focused visual capture before completion.",
+    "- Before creating replacement geometry, inventory the bounded target region and retain useful source-grounded elements. Prefer one staged /revit/move-elements, /revit/rotate-elements, /revit/edit-mep-route-elements, or /revit/repair-mep-connectors operation when the existing graph is safely editable. Persist affected_element_ids and verify them; do not create a duplicate merely because the first location, size, or connection is wrong.",
+    "- After compile_registered_mep_reconstruction returns status ready or partially_ready, use the persisted staged handoff for /revit/existing-conditions-mep-draft-workflow. Dry-run only the next dependency-ready operation, apply only that accepted stage, persist its created or affected output IDs, and continue from those IDs. Never submit the entire operation graph as one all-or-nothing request. A write remains provisional until complete native ID readback, focused visual evidence, and a reversible save-as checkpoint all succeed.",
     "- If a staged dry-run is rejected, preserve every accepted prior stage. Use workbench action register_existing_conditions_mep_repair with the exact blocked supersedes_stage_key, a new repair_stage_key, and operation_json containing one smaller replacement operation with the same action_key. Then let the staged handoff dry-run and apply that repair; do not recompile or replay accepted stages.",
     "- After one successful /revit/export-visible-elements call, do not repeat broad inventory exports in a loop. Use the sampled inventory plus /revit/pick-candidate-cluster or /revit/get-placement-context to continue.",
     "- If titleblock/sheet regions dominate, prefer full-sheet targeting (sheet viewId) before selecting any nested viewport.",

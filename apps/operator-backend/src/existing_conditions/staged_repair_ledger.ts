@@ -25,6 +25,7 @@ export type ExistingConditionsStageEvent =
 export type ExistingConditionsPriorActionOutput = {
   action_key: string;
   created_element_ids: number[];
+  affected_element_ids?: number[];
   route_segment_element_ids?: number[];
   route_start_element_ids?: number[];
   route_end_element_ids?: number[];
@@ -79,6 +80,15 @@ export type ExistingConditionsStagePlan =
       method: "GET" | "POST";
       path: string;
       body?: Record<string, unknown>;
+      accepted_action_outputs: ExistingConditionsPriorActionOutput[];
+    }
+  | {
+      state: "checkpoint";
+      stage_key: string;
+      action_key: string;
+      method: "POST";
+      path: "/revit/save-as";
+      body: Record<string, unknown>;
       accepted_action_outputs: ExistingConditionsPriorActionOutput[];
     };
 
@@ -139,6 +149,7 @@ function normalizeActionOutput(value: unknown): ExistingConditionsPriorActionOut
   return {
     action_key: actionKey,
     created_element_ids: normalizeIds(row.created_element_ids ?? row.createdElementIds),
+    affected_element_ids: normalizeIds(row.affected_element_ids ?? row.affectedElementIds),
     route_segment_element_ids: normalizeIds(row.route_segment_element_ids ?? row.routeSegmentElementIds),
     route_start_element_ids: normalizeIds(row.route_start_element_ids ?? row.routeStartElementIds),
     route_end_element_ids: normalizeIds(row.route_end_element_ids ?? row.routeEndElementIds),
@@ -452,13 +463,25 @@ function stageVisualAccepted(
   );
 }
 
+function stageCheckpointSaved(
+  entries: ExistingConditionsRepairLedgerEntry[],
+  stageKey: string
+): boolean {
+  return entries.some(entry =>
+    entry.event === "checkpoint_saved" &&
+    entry.status === "accepted" &&
+    entry.stage_key === stageKey
+  );
+}
+
 function stageAccepted(
   entries: ExistingConditionsRepairLedgerEntry[],
   stageKey: string
 ): boolean {
   return stageApplied(entries, stageKey) &&
     stageReadbackAccepted(entries, stageKey) &&
-    stageVisualAccepted(entries, stageKey);
+    stageVisualAccepted(entries, stageKey) &&
+    stageCheckpointSaved(entries, stageKey);
 }
 
 function appliedStageEntry(
@@ -483,8 +506,9 @@ function actionOutputIds(entry: ExistingConditionsRepairLedgerEntry): number[] {
     ...outputs.flatMap(value => {
       const normalized = normalizeActionOutput(value);
       return normalized
-        ? [
+          ? [
             ...normalized.created_element_ids,
+            ...(normalized.affected_element_ids ?? []),
             ...(normalized.route_segment_element_ids ?? []),
             ...(normalized.route_start_element_ids ?? []),
             ...(normalized.route_end_element_ids ?? []),
@@ -571,6 +595,7 @@ export function buildNextExistingConditionsStagePlan(args: {
     const ids = actionOutputIds(pendingApplied);
     const priorIds = outputs.flatMap(output => [
       ...output.created_element_ids,
+      ...(output.affected_element_ids ?? []),
       ...(output.route_segment_element_ids ?? []),
       ...(output.route_start_element_ids ?? []),
       ...(output.route_end_element_ids ?? []),
@@ -589,18 +614,40 @@ export function buildNextExistingConditionsStagePlan(args: {
         accepted_action_outputs: outputs
       };
     }
+    if (!stageVisualAccepted(entries, stageKey)) {
+      return {
+        state: "verify_visual",
+        stage_key: stageKey,
+        action_key: actionKey,
+        method: "POST",
+        path: "/revit/highlight-and-export",
+        body: {
+          ...(Number.isSafeInteger(sourceViewId) && sourceViewId > 0
+            ? { viewId: sourceViewId }
+            : {}),
+          elementIds: verificationIds,
+          fileName: `existing_conditions_${stageKey.replace(/[^a-zA-Z0-9._-]/g, "_")}.png`
+        },
+        accepted_action_outputs: outputs
+      };
+    }
+    const safeStageKey = stageKey.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 100);
     return {
-      state: "verify_visual",
+      state: "checkpoint",
       stage_key: stageKey,
       action_key: actionKey,
       method: "POST",
-      path: "/revit/highlight-and-export",
+      path: "/revit/save-as",
       body: {
-        ...(Number.isSafeInteger(sourceViewId) && sourceViewId > 0
-          ? { viewId: sourceViewId }
-          : {}),
-        elementIds: verificationIds,
-        fileName: `existing_conditions_${stageKey.replace(/[^a-zA-Z0-9._-]/g, "_")}.png`
+        filePath: path.join(
+          ledgerPaths(args.sessionId).sessionDir,
+          "existing_conditions_checkpoints",
+          `${safeStageKey}.rvt`
+        ),
+        overwrite: true,
+        compact: false,
+        maximumBackups: 1,
+        dryRun: false
       },
       accepted_action_outputs: outputs
     };
@@ -788,8 +835,9 @@ export function recordExistingConditionsStageResult(args: {
   ) {
     const fallbackOutput = normalizedOutputs.length === 0 && actionKeys.length === 1
       ? [{
-          action_key: actionKeys[0]!,
-          created_element_ids: normalizeIds(args.result.createdElementIds)
+        action_key: actionKeys[0]!,
+          created_element_ids: normalizeIds(args.result.createdElementIds),
+          affected_element_ids: normalizeIds(args.result.affectedElementIds)
         }]
       : [];
     return appendEntry({
@@ -858,6 +906,46 @@ function resultContainsVisualArtifact(result: Record<string, unknown>): boolean 
   });
 }
 
+function collectNativeElementIds(value: unknown): number[] {
+  const ids = new Set<number>();
+  const visit = (node: unknown, key = ""): void => {
+    const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (Number.isSafeInteger(node) && Number(node) > 0) {
+      if (normalizedKey === "id" || normalizedKey.endsWith("elementid")) {
+        ids.add(Number(node));
+      }
+      return;
+    }
+    if (Array.isArray(node)) {
+      if (normalizedKey === "elementids" || normalizedKey === "ids") {
+        for (const item of node) {
+          if (Number.isSafeInteger(item) && Number(item) > 0) ids.add(Number(item));
+          else visit(item);
+        }
+      } else {
+        for (const item of node) visit(item);
+      }
+      return;
+    }
+    if (!node || typeof node !== "object") return;
+    for (const [childKey, child] of Object.entries(node as Record<string, unknown>)) {
+      visit(child, childKey);
+    }
+  };
+  visit(value);
+  return Array.from(ids).sort((left, right) => left - right);
+}
+
+function containsMissingNativeElement(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsMissingNativeElement);
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  if ((Number.isSafeInteger(row.id) || Number.isSafeInteger(row.elementId)) && row.found === false) {
+    return true;
+  }
+  return Object.values(row).some(containsMissingNativeElement);
+}
+
 export function recordExistingConditionsVerificationResult(args: {
   sessionId: string;
   workflow: AtomicMepDraftWorkflowRequest;
@@ -870,17 +958,21 @@ export function recordExistingConditionsVerificationResult(args: {
     sessionId: args.sessionId,
     workflow: args.workflow
   });
-  if (plan.state !== "verify_readback" && plan.state !== "verify_visual") {
+  if (
+    plan.state !== "verify_readback" &&
+    plan.state !== "verify_visual" &&
+    plan.state !== "checkpoint"
+  ) {
     return null;
   }
   if (clean(args.result.path).toLowerCase() !== plan.path.toLowerCase()) {
     return null;
   }
   const resultJson = args.result.result_json;
-  if (!resultJson || typeof resultJson !== "object" || Array.isArray(resultJson)) {
+  if (!resultJson || typeof resultJson !== "object") {
     return null;
   }
-  const row = resultJson as Record<string, unknown>;
+  const row = Array.isArray(resultJson) ? {} : resultJson as Record<string, unknown>;
   const nativeStatus = clean(row.status).toLowerCase();
   if (
     nativeStatus === "failed" ||
@@ -892,10 +984,25 @@ export function recordExistingConditionsVerificationResult(args: {
   if (plan.state === "verify_visual" && !resultContainsVisualArtifact(args.result)) {
     return null;
   }
+  if (plan.state === "checkpoint" && !resultContainsVisualArtifact(args.result)) {
+    return null;
+  }
+  if (plan.state === "verify_readback") {
+    const expectedIds = normalizeIds(plan.body?.elementIds);
+    const returnedIds = new Set(collectNativeElementIds(resultJson));
+    if (
+      containsMissingNativeElement(resultJson) ||
+      expectedIds.some(id => !returnedIds.has(id))
+    ) {
+      return null;
+    }
+  }
 
   const event = plan.state === "verify_readback"
     ? "readback_accepted"
-    : "visual_accepted";
+    : plan.state === "verify_visual"
+      ? "visual_accepted"
+      : "checkpoint_saved";
   return appendExistingConditionsAcceptanceEvent({
     sessionId: args.sessionId,
     workflow: args.workflow,
@@ -909,11 +1016,15 @@ export function recordExistingConditionsVerificationResult(args: {
       verification_element_ids: normalizeIds(plan.body?.elementIds),
       ...(plan.state === "verify_visual"
         ? { visual_artifact_present: true }
-        : { native_readback_present: true })
+        : plan.state === "verify_readback"
+          ? { native_readback_present: true }
+          : { checkpoint_path: clean(row.path ?? row.filePath ?? row.file_path) })
     },
     nextRepair: plan.state === "verify_readback"
       ? "Capture focused visual evidence for this stage."
-      : "Stage accepted; dry-run the next dependency-ready action."
+      : plan.state === "verify_visual"
+        ? "Save a reversible model checkpoint before advancing."
+        : "Stage accepted and checkpointed; dry-run the next dependency-ready action."
   });
 }
 

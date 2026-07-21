@@ -21,6 +21,7 @@ namespace RevitBridge.Logic.Handlers.MEP
         private sealed class OperationOutput
         {
             public List<long> CreatedElementIds { get; set; } = new List<long>();
+            public List<long> AffectedElementIds { get; set; } = new List<long>();
             public List<long> RouteSegmentElementIds { get; set; } = new List<long>();
             public List<long> RouteStartElementIds { get; set; } = new List<long>();
             public List<long> RouteEndElementIds { get; set; } = new List<long>();
@@ -41,6 +42,7 @@ namespace RevitBridge.Logic.Handlers.MEP
         {
             public string action_key { get; set; } = "";
             public List<long>? created_element_ids { get; set; }
+            public List<long>? affected_element_ids { get; set; }
             public List<long>? route_segment_element_ids { get; set; }
             public List<long>? route_start_element_ids { get; set; }
             public List<long>? route_end_element_ids { get; set; }
@@ -116,6 +118,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 priorOutputs[priorKey] = new OperationOutput
                 {
                     CreatedElementIds = NormalizeElementIds(prior.created_element_ids),
+                    AffectedElementIds = NormalizeElementIds(prior.affected_element_ids),
                     RouteSegmentElementIds = NormalizeElementIds(prior.route_segment_element_ids),
                     RouteStartElementIds = NormalizeElementIds(prior.route_start_element_ids),
                     RouteEndElementIds = NormalizeElementIds(prior.route_end_element_ids),
@@ -153,7 +156,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                     .ToList();
                 if (specializedIds.Any(id => !createdIds.Contains(id)))
                     throw new InvalidOperationException($"prior_action_output_not_subset_of_created:{prior.Key}");
-                var missingIds = createdIds
+                var missingIds = createdIds.Concat(prior.Value.AffectedElementIds)
+                    .Distinct()
                     .Where(id => doc.GetElement(ElementIdCompat.Create(id)) == null)
                     .OrderBy(id => id)
                     .ToList();
@@ -203,12 +207,14 @@ namespace RevitBridge.Logic.Handlers.MEP
                                 throw new InvalidOperationException($"operation_dependency_not_completed:{operation.action_key}:{dependency}");
                         }
 
-                        var requestJson = BuildRequest(operation, outputs, p.verify, doc);
+                        var requestJson = BuildRequest(operation, outputs, p.verify, p.dryRun, doc);
                         var handler = ResolveHandler(operation.path);
                         var response = handler.Handle(app, requestJson).GetAwaiter().GetResult();
                         using var responseDocument = JsonDocument.Parse(JsonSerializer.Serialize(response));
                         var responseJson = responseDocument.RootElement.Clone();
                         var output = ExtractOperationOutput(operation.path, responseJson);
+                        if (IsExistingElementRepairPath(operation.path))
+                            output.AffectedElementIds = ExtractAffectedElementIds(requestJson);
                         var createdIds = output.CreatedElementIds;
                         if (ResponseFailed(operation.path, responseJson, operation.apply_body, operation.deferred_body, out var failure))
                         {
@@ -384,6 +390,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 {
                     action_key = receipt.ActionKey,
                     created_element_ids = receipt.Output.CreatedElementIds,
+                    affected_element_ids = receipt.Output.AffectedElementIds,
                     route_segment_element_ids = receipt.Output.RouteSegmentElementIds,
                     route_start_element_ids = receipt.Output.RouteStartElementIds,
                     route_end_element_ids = receipt.Output.RouteEndElementIds,
@@ -406,6 +413,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             Operation operation,
             IReadOnlyDictionary<string, OperationOutput> outputs,
             bool verify,
+            bool stageDryRun,
             Document doc)
         {
             var path = NormalizePath(operation.path);
@@ -586,6 +594,23 @@ namespace RevitBridge.Logic.Handlers.MEP
                 body["verify"] = verify;
                 body["visualVerify"] = false;
             }
+            else if (path == "/revit/edit-mep-route-elements")
+            {
+                body["dryRun"] = stageDryRun;
+                body["apply"] = !stageDryRun;
+                body["verify"] = verify;
+                body["visualVerify"] = false;
+            }
+            else if (path == "/revit/repair-mep-connectors")
+            {
+                body["dryRun"] = stageDryRun;
+                body["verify"] = verify;
+            }
+            else if (path == "/revit/move-elements" || path == "/revit/rotate-elements")
+            {
+                body["dryRun"] = stageDryRun;
+                body["behavior"] = "allOrNothing";
+            }
             else
             {
                 body["dryRun"] = false;
@@ -608,6 +633,10 @@ namespace RevitBridge.Logic.Handlers.MEP
                 case "/revit/assign-electrical-circuit": return new AssignElectricalCircuitHandler();
                 case "/revit/draw-detail-curves": return new RevitBridge.Logic.Handlers.Drafting.DrawDetailCurvesHandler();
                 case "/revit/tag-elements": return new RevitBridge.Logic.Handlers.TagElementsHandler();
+                case "/revit/move-elements": return new RevitBridge.Logic.Handlers.MoveElementsHandler();
+                case "/revit/rotate-elements": return new RevitBridge.Logic.Handlers.RotateElementsHandler();
+                case "/revit/edit-mep-route-elements": return new EditMepRouteElementsHandler();
+                case "/revit/repair-mep-connectors": return new RepairMepConnectorsHandler();
                 default: throw new InvalidOperationException($"unsupported_mep_draft_operation_path:{rawPath}");
             }
         }
@@ -626,6 +655,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 case "":
                 case "created": return output.CreatedElementIds.Distinct().ToList();
+                case "affected": return output.AffectedElementIds.Distinct().ToList();
                 case "route_segment":
                     if (!reference.index.HasValue || reference.index.Value < 0 || reference.index.Value >= output.RouteSegmentElementIds.Count)
                         throw new InvalidOperationException($"{label}_reference_route_segment_index_invalid:{actionKey}:{reference.index}");
@@ -699,12 +729,65 @@ namespace RevitBridge.Logic.Handlers.MEP
                         : new List<long>()
                 };
             }
+            if (path == "/revit/repair-mep-connectors")
+            {
+                var fittingId = ReadLong(response, "fittingId");
+                var rebuiltSystemId = ReadLong(response, "transientSystemId");
+                return new OperationOutput
+                {
+                    CreatedElementIds = new[] { fittingId, rebuiltSystemId }
+                        .Where(id => id > 0)
+                        .Distinct()
+                        .ToList()
+                };
+            }
             if (path == "/revit/assign-electrical-circuit")
             {
                 var systemId = ReadLong(response, "createdElectricalSystemId");
                 return new OperationOutput { CreatedElementIds = systemId > 0 ? new List<long> { systemId } : new List<long>() };
             }
             return new OperationOutput();
+        }
+
+        private static bool IsExistingElementRepairPath(string rawPath)
+        {
+            var path = NormalizePath(rawPath);
+            return path == "/revit/move-elements"
+                || path == "/revit/rotate-elements"
+                || path == "/revit/edit-mep-route-elements"
+                || path == "/revit/repair-mep-connectors";
+        }
+
+        private static List<long> ExtractAffectedElementIds(string requestJson)
+        {
+            using var document = JsonDocument.Parse(requestJson);
+            var ids = new HashSet<long>();
+            CollectAffectedElementIds(document.RootElement, "", ids);
+            return ids.Where(id => id > 0).OrderBy(id => id).ToList();
+        }
+
+        private static void CollectAffectedElementIds(JsonElement node, string propertyName, ISet<long> ids)
+        {
+            var normalized = new string((propertyName ?? "")
+                .Where(char.IsLetterOrDigit)
+                .Select(char.ToLowerInvariant)
+                .ToArray());
+            if (normalized.Contains("delete") || normalized.Contains("replace")) return;
+            if (node.ValueKind == JsonValueKind.Number && node.TryGetInt64(out var scalar))
+            {
+                if (normalized == "id" || normalized == "ids" || normalized.EndsWith("elementid"))
+                    ids.Add(scalar);
+                return;
+            }
+            if (node.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in node.EnumerateArray())
+                    CollectAffectedElementIds(item, normalized == "elementids" || normalized == "ids" ? "id" : "", ids);
+                return;
+            }
+            if (node.ValueKind != JsonValueKind.Object) return;
+            foreach (var property in node.EnumerateObject())
+                CollectAffectedElementIds(property.Value, property.Name, ids);
         }
 
         private static bool ResponseFailed(string rawPath, JsonElement response, JsonElement? applyBody, DeferredBody? deferred, out string reason)
@@ -736,6 +819,12 @@ namespace RevitBridge.Logic.Handlers.MEP
                 && failures > 0)
             {
                 reason = $"failedCount={failures}";
+                return true;
+            }
+            if (response.TryGetProperty("rollbackVerified", out var rollbackVerified)
+                && rollbackVerified.ValueKind == JsonValueKind.False)
+            {
+                reason = "operation_rollback_not_verified";
                 return true;
             }
             if (NormalizePath(rawPath) == "/revit/tag-elements")
