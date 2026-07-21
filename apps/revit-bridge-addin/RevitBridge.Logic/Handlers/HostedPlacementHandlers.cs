@@ -1634,6 +1634,15 @@ namespace RevitBridge.Logic.Handlers
                         $"Exact native face reference could not be rebound to element " +
                         $"{ElementIdCompat.GetValue(host.Id)}: {ex.Message}");
                 }
+
+                var nestedReference = TryResolveNestedFamilyInstanceReference(
+                    host,
+                    worldPoint,
+                    preferredReferenceDirection,
+                    preferredFaceNormal,
+                    sourcePattern,
+                    warnings);
+                if (nestedReference != null) return nestedReference;
             }
 
             if (preferredFaceNormal != null && preferredFaceNormal.GetLength() > 1e-9)
@@ -1789,6 +1798,131 @@ namespace RevitBridge.Logic.Handlers
                 basis = "native_face_reference",
                 linkedElementId = null,
                 faceDistanceFt = bestDistance
+            };
+        }
+
+        private static FaceHostedPlacementReference? TryResolveNestedFamilyInstanceReference(
+            Element host,
+            XYZ worldPoint,
+            XYZ? preferredReferenceDirection,
+            XYZ? preferredFaceNormal,
+            string sourceStableReferencePattern,
+            List<string> warnings)
+        {
+            if (host is not FamilyInstance || preferredFaceNormal == null || preferredFaceNormal.GetLength() <= 1e-9)
+                return null;
+
+            var sourceTokens = sourceStableReferencePattern.Split(':');
+            var sourceInstanceTokenIndexes = Enumerable.Range(1, sourceTokens.Length - 1)
+                .Where(index => string.Equals(sourceTokens[index - 1], "INSTANCE", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (sourceInstanceTokenIndexes.Count == 0) return null;
+
+            var options = new Options
+            {
+                ComputeReferences = true,
+                IncludeNonVisibleObjects = true,
+                DetailLevel = ViewDetailLevel.Fine
+            };
+            var geometryCandidates = new List<(Reference reference, XYZ point, double distance, XYZ normal)>();
+            CollectNativeFaceCandidates(host.get_Geometry(options), Transform.Identity, worldPoint, geometryCandidates);
+
+            var resolved = new Dictionary<string, Reference>(StringComparer.Ordinal);
+            foreach (var candidate in geometryCandidates)
+            {
+                string candidateStable;
+                try { candidateStable = candidate.reference.ConvertToStableRepresentation(host.Document); }
+                catch { continue; }
+
+                var candidateTokens = candidateStable.Split(':');
+                var candidateInstanceTokens = Enumerable.Range(1, candidateTokens.Length - 1)
+                    .Where(index => string.Equals(candidateTokens[index - 1], "INSTANCE", StringComparison.OrdinalIgnoreCase))
+                    .Select(index => candidateTokens[index])
+                    .ToList();
+                if (candidateInstanceTokens.Count != sourceInstanceTokenIndexes.Count) continue;
+
+                var reboundTokens = (string[])sourceTokens.Clone();
+                reboundTokens[0] = host.UniqueId;
+                for (var i = 0; i < sourceInstanceTokenIndexes.Count; i++)
+                    reboundTokens[sourceInstanceTokenIndexes[i]] = candidateInstanceTokens[i];
+                var reboundStable = string.Join(":", reboundTokens);
+
+                try
+                {
+                    var reference = Reference.ParseFromStableRepresentation(host.Document, reboundStable);
+                    if (reference == null || reference.ElementId != host.Id) continue;
+                    var canonical = reference.ConvertToStableRepresentation(host.Document);
+                    if (!resolved.ContainsKey(canonical)) resolved[canonical] = reference;
+                }
+                catch
+                {
+                    // Candidate geometry chains are diagnostic inputs. Only a
+                    // successfully parsed, host-owned reference is eligible.
+                }
+            }
+
+            if (resolved.Count != 1)
+            {
+                if (resolved.Count > 1)
+                {
+                    warnings.Add(
+                        $"Nested native family reference rebound on element {ElementIdCompat.GetValue(host.Id)} " +
+                        $"was ambiguous ({resolved.Count} valid references); refusing to guess.");
+                }
+                return null;
+            }
+
+            var faceReference = resolved.Values.Single();
+            var requestedNormal = preferredFaceNormal.Normalize();
+            var placementPoint = worldPoint;
+            var faceDistance = 0.0;
+            try
+            {
+                if (host.GetGeometryObjectFromReference(faceReference) is Face face)
+                {
+                    var projection = face.Project(worldPoint);
+                    if (projection == null) return null;
+                    var normal = face.ComputeNormal(projection.UVPoint);
+                    if (normal.GetLength() <= 1e-9 ||
+                        Math.Abs(normal.Normalize().DotProduct(requestedNormal)) < 0.995)
+                    {
+                        warnings.Add(
+                            $"Nested native family reference rebound on element {ElementIdCompat.GetValue(host.Id)} " +
+                            "resolved a geometric face whose normal did not match the requested support plane.");
+                        return null;
+                    }
+                    placementPoint = projection.XYZPoint;
+                    faceDistance = placementPoint.DistanceTo(worldPoint);
+                }
+            }
+            catch
+            {
+                // Family reference planes can be valid placement references
+                // without exposing a Face geometry object.
+            }
+
+            var preferred = preferredReferenceDirection != null && preferredReferenceDirection.GetLength() > 1e-9
+                ? preferredReferenceDirection.Normalize()
+                : XYZ.BasisX;
+            var referenceDirection = preferred - requestedNormal.Multiply(preferred.DotProduct(requestedNormal));
+            if (referenceDirection.GetLength() <= 1e-9)
+            {
+                referenceDirection = XYZ.BasisZ.CrossProduct(requestedNormal);
+                if (referenceDirection.GetLength() <= 1e-9)
+                    referenceDirection = XYZ.BasisX.CrossProduct(requestedNormal);
+            }
+
+            warnings.Add(
+                $"Rebound one unambiguous nested native family reference on element " +
+                $"{ElementIdCompat.GetValue(host.Id)}.");
+            return new FaceHostedPlacementReference
+            {
+                faceReference = faceReference,
+                placementPoint = placementPoint,
+                referenceDirection = referenceDirection.Normalize(),
+                basis = "native_nested_family_reference_rebound",
+                linkedElementId = null,
+                faceDistanceFt = faceDistance
             };
         }
 
