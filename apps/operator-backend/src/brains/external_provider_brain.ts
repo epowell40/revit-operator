@@ -11,7 +11,7 @@ import {
 import { collectInlineImagesFromToolResults } from "../attachments/inline_images.js";
 import { compactIncomingToolResult } from "../tool_result_compaction.js";
 import { getHistory, getPinnedGoal } from "../session_store.js";
-import { resolveExistingFileUnderWorkspace } from "../workspace.js";
+import { ensureWorkspaceLayout, resolveExistingFileUnderWorkspace } from "../workspace.js";
 import type { StreamCallbacks } from "./codex_brain.js";
 import { getOperatorAgentBaseInstructions } from "./codex_brain.js";
 
@@ -53,8 +53,9 @@ const RESPONSE_SCHEMA = {
           method: { type: "string", enum: ["GET", "POST"] },
           path: { type: "string" },
           body_json: {
-            type: ["string", "null"],
-            description: "JSON-encoded request body, or null when the request has no body."
+            type: ["object", "string", "null"],
+            additionalProperties: true,
+            description: "Prefer a native JSON object request body. A JSON-encoded string remains accepted for compatibility; use null when the request has no body."
           }
         }
       }
@@ -144,6 +145,163 @@ function compactToolResults(toolResults: ToolResult[] | undefined): ToolResult[]
   return toolResults.slice(-20).map(result => compactIncomingToolResult(result));
 }
 
+function safeSessionSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120);
+}
+
+function compactPersistedProviderResult(result: ToolResult): ToolResult {
+  const requestPath = String(result.path ?? "").trim().toLowerCase();
+  const root = result.result_json && typeof result.result_json === "object" && !Array.isArray(result.result_json)
+    ? result.result_json as Record<string, unknown>
+    : null;
+  if (!root) return result;
+
+  if (requestPath === "/revit/tool-search") {
+    const matches = Array.isArray(root.matches)
+      ? root.matches.slice(0, 12).map(value => {
+          const match = value && typeof value === "object" && !Array.isArray(value)
+            ? value as Record<string, unknown>
+            : {};
+          return {
+            method: match.method ?? null,
+            path: match.path ?? null,
+            title: match.title ?? null,
+            risk: match.risk ?? null,
+            description: typeof match.description === "string"
+              ? clip(match.description, 500)
+              : null
+          };
+        })
+      : [];
+    return {
+      ...result,
+      result_json: {
+        version: root.version ?? null,
+        query: root.query ?? null,
+        returned: root.returned ?? matches.length,
+        matches
+      }
+    };
+  }
+
+  if (requestPath === "/revit/tool-doc") {
+    return {
+      ...result,
+      result_json: {
+        version: root.version ?? null,
+        method: root.method ?? null,
+        path: root.path ?? null,
+        risk: root.risk ?? null,
+        title: root.title ?? null,
+        description: typeof root.description === "string" ? clip(root.description, 1_200) : null,
+        required_fields: root.required_fields ?? null,
+        optional_fields: root.optional_fields ?? null,
+        enums: root.enums ?? null,
+        units: root.units ?? null,
+        request_schema: root.request_schema ?? null,
+        examples: Array.isArray(root.examples) ? root.examples.slice(0, 3) : null
+      }
+    };
+  }
+
+  if (requestPath === "/revit/list-element-types" && Array.isArray(root.types)) {
+    return {
+      ...result,
+      result_json: {
+        status: root.status ?? null,
+        action: root.action ?? null,
+        count: root.count ?? root.types.length,
+        unresolvedCategories: root.unresolvedCategories ?? null,
+        types: root.types.slice(0, 160).map(value => {
+          const type = value && typeof value === "object" && !Array.isArray(value)
+            ? value as Record<string, unknown>
+            : {};
+          return {
+            id: type.id ?? null,
+            name: type.name ?? null,
+            familyName: type.familyName ?? null,
+            category: type.category ?? null
+          };
+        })
+      }
+    };
+  }
+
+  return result;
+}
+
+/**
+ * External providers are stateless between bridge turns. The normal request
+ * contains only the newest tool result, so a provider can otherwise forget a
+ * type lookup or tool contract that succeeded two turns earlier and replay the
+ * same discovery loop. Rehydrate a small, compacted capsule from the durable
+ * session receipts. This remains evidence-only: the host ledger still decides
+ * which write may execute.
+ */
+function loadPersistedToolResultCapsule(sessionId: string): ToolResult[] {
+  const safeSessionId = safeSessionSegment(sessionId.trim());
+  if (!safeSessionId) return [];
+  const filePath = path.join(
+    ensureWorkspaceLayout().runsSessions,
+    safeSessionId,
+    "tool_outputs.jsonl"
+  );
+  if (!fs.existsSync(filePath)) return [];
+
+  try {
+    const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/).filter(Boolean).slice(-80);
+    const results: ToolResult[] = [];
+    for (const line of lines) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const row = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : {};
+      const raw = row.tool_result && typeof row.tool_result === "object" && !Array.isArray(row.tool_result)
+        ? row.tool_result as Record<string, unknown>
+        : {};
+      const method = String(raw.method ?? "").toUpperCase();
+      const requestPath = String(raw.path ?? "").trim();
+      const status = String(raw.status ?? "").trim();
+      if ((method !== "GET" && method !== "POST") || !requestPath.startsWith("/")) continue;
+      if (status !== "done" && status !== "failed") continue;
+      results.push(compactPersistedProviderResult(compactIncomingToolResult({
+        action_id: String(raw.action_id ?? "persisted-result"),
+        method,
+        path: requestPath,
+        status,
+        ...(raw.result_json !== undefined ? { result_json: raw.result_json } : {}),
+        ...(typeof raw.error === "string" ? { error: raw.error } : {}),
+        ...(typeof raw.result_summary === "string" ? { result_summary: raw.result_summary } : {}),
+        ...(typeof raw.failure_kind === "string" ? { failure_kind: raw.failure_kind } : {}),
+        ...(typeof raw.failure_code === "string" ? { failure_code: raw.failure_code } : {})
+      } as ToolResult)));
+    }
+
+    const latestByAction = new Map<string, ToolResult>();
+    for (const result of results) {
+      const key = `${result.method}:${result.path}:${result.action_id}`;
+      latestByAction.set(key, result);
+    }
+    const values = [...latestByAction.values()];
+    const toolDocs = values
+      .filter(result => String(result.path ?? "").toLowerCase() === "/revit/tool-doc")
+      .slice(-4)
+      .reverse();
+    const otherResults = values
+      .filter(result => String(result.path ?? "").toLowerCase() !== "/revit/tool-doc")
+      .slice(-12)
+      .reverse();
+    return [...toolDocs, ...otherResults].slice(0, 16);
+  } catch {
+    return [];
+  }
+}
+
 function buildPrompt(req: ChatRequest, provider: ExternalProvider): string {
   const lines: string[] = [
     getOperatorAgentBaseInstructions(),
@@ -162,7 +320,7 @@ function buildPrompt(req: ChatRequest, provider: ExternalProvider): string {
     "If calibrated source-to-model registration is absent, do not convert image pixels into model writes. Request the smallest alignment/inventory action needed to establish it.",
     "When Current Revit/server context contains workbench_source_preflight_complete=true, the attached source has already been analyzed by the backend. Never call /revit/tool-search, /revit/search-tools, tool docs, examples, or any Revit endpoint to look for a source-analysis tool. Read workbench_results and the supplied source images, then take only the next smallest native verification action needed for registration.",
     "When workbench_structured_image_analysis_complete=true, structured Gemini source-image analysis is also complete. Preserve those source observations as provisional evidence and verify them against bounded native room/view/element reads before any write.",
-    "Return JSON matching the supplied schema. body_json must itself be valid JSON text when present.",
+    "Return JSON matching the supplied schema. Prefer body_json as a native JSON object; do not double-encode or escape it as a string unless compatibility requires that form.",
     ""
   ];
 
@@ -213,6 +371,16 @@ function buildPrompt(req: ChatRequest, provider: ExternalProvider): string {
   }
 
   const toolResults = compactToolResults(req.tool_results);
+  const persistedToolResults = loadPersistedToolResultCapsule(req.session_id);
+  if (persistedToolResults.length > 0) {
+    lines.push(
+      "Persisted accepted observations and repair failures from earlier turns:",
+      safeJson(persistedToolResults, 24_000),
+      "Reuse these receipts. Do not repeat a successful type lookup, room/view discovery, tool search, or tool-doc call unless a later accepted model write invalidated that exact evidence. A failed contract call is not model failure: use its persisted error plus the later successful contract/result to repair only the payload.",
+      "The provider proposes; the host ledger owns stage completion and will reject exact completed-action replays.",
+      ""
+    );
+  }
   if (toolResults.length > 0) {
     lines.push("Latest tool results:", safeJson(toolResults, 32_000), "");
   }
@@ -358,6 +526,8 @@ function normalizeProviderDecision(raw: ProviderDecision): ChatResponse {
     let body: unknown;
     if (typeof bodyJson === "string" && bodyJson.trim()) {
       body = JSON.parse(bodyJson);
+    } else if (bodyJson && typeof bodyJson === "object" && !Array.isArray(bodyJson)) {
+      body = bodyJson;
     }
     actions.push({
       action_id: actionId,

@@ -1,4 +1,6 @@
 import "./env.js";
+import fs from "node:fs";
+import path from "node:path";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ChatResponse } from "./contracts.js";
 import { decideRule } from "./brains/rule_brain.js";
 import {
@@ -29,6 +31,7 @@ import {
   enforceExistingConditionsOneActionLoop,
   maybeContinueExistingConditionsOneActionLoop
 } from "./existing_conditions/one_action_execution_ledger.js";
+import { ensureWorkspaceLayout } from "./workspace.js";
 
 const EXISTING_CONDITIONS_SESSION_LIMIT = 256;
 const existingConditionsReconstructionSessions = new Map<string, true>();
@@ -77,11 +80,56 @@ function rememberExistingConditionsReconstructionSession(sessionId: string): voi
   }
 }
 
+function persistedRequestLogDeclaresExistingConditionsReconstruction(sessionId: string): boolean {
+  const safeSessionId = (sessionId ?? "")
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .slice(0, 120);
+  if (!safeSessionId) return false;
+  const filePath = path.join(
+    ensureWorkspaceLayout().runsSessions,
+    safeSessionId,
+    "request_log.jsonl"
+  );
+  if (!fs.existsSync(filePath)) return false;
+  try {
+    const size = fs.statSync(filePath).size;
+    const maximumBytes = 512 * 1024;
+    const start = Math.max(0, size - maximumBytes);
+    const handle = fs.openSync(filePath, "r");
+    try {
+      const buffer = Buffer.alloc(size - start);
+      fs.readSync(handle, buffer, 0, buffer.length, start);
+      const lines = buffer.toString("utf8").split(/\r?\n/);
+      if (start > 0) lines.shift();
+      return lines.slice(-300).some(line => {
+        if (!line.trim()) return false;
+        try {
+          const row = JSON.parse(line) as Record<string, unknown>;
+          return typeof row.user_text === "string"
+            && textDeclaresExistingConditionsReconstruction(row.user_text);
+        } catch {
+          return false;
+        }
+      });
+    } finally {
+      fs.closeSync(handle);
+    }
+  } catch {
+    return false;
+  }
+}
+
 export function __testOnlyIsExistingConditionsReconstructionRequest(req: ChatRequest): boolean {
   const declared = textDeclaresExistingConditionsReconstruction(req.user_text ?? "")
     || contextDeclaresExistingConditionsReconstruction(req.context);
   if (declared) rememberExistingConditionsReconstructionSession(req.session_id);
   if (declared || existingConditionsReconstructionSessions.has(req.session_id)) {
+    return true;
+  }
+
+  if (persistedRequestLogDeclaresExistingConditionsReconstruction(req.session_id)) {
+    rememberExistingConditionsReconstructionSession(req.session_id);
     return true;
   }
 

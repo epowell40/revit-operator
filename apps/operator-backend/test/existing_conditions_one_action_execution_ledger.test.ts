@@ -206,6 +206,171 @@ test("one-action execution loop records discovery tools as observe actions", { c
   }
 });
 
+test("one-action execution loop suppresses an exact completed-action replay", { concurrency: false }, () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-replay-guard-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const sessionId = "replay-guard-session";
+    const body = { action: "list", category: "OST_PlumbingFixtures", limit: 150 };
+    const first = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId),
+      decision: response([{
+        action_id: "list-types-original",
+        method: "POST",
+        path: "/revit/list-element-types",
+        body
+      }])
+    });
+    assert.equal(first.actions.length, 1);
+
+    enforceExistingConditionsOneActionLoop({
+      req: request(sessionId, [{
+        action_id: "list-types-original",
+        method: "POST",
+        path: "/revit/list-element-types",
+        status: "done",
+        result_json: { count: 1, types: [{ id: 42, name: "P-18" }] }
+      }]),
+      decision: response([])
+    });
+
+    const replay = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId),
+      decision: response([{
+        action_id: "list-types-repeated",
+        method: "POST",
+        path: "/revit/list-element-types",
+        body
+      }])
+    });
+    assert.equal(replay.actions.length, 0);
+    assert.match(replay.assistant_message, /skipped 1 exact completed-action replay/i);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+  }
+});
+
+test("one-action execution loop permits the same readback after a later completed write", { concurrency: false }, () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-readback-invalidation-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const sessionId = "readback-invalidation-session";
+    const readbackBody = { elementIds: [101] };
+    const before = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId),
+      decision: response([{
+        action_id: "read-before",
+        method: "POST",
+        path: "/revit/get-element-summary",
+        body: readbackBody
+      }])
+    });
+    assert.equal(before.actions.length, 1);
+
+    enforceExistingConditionsOneActionLoop({
+      req: request(sessionId, [{
+        action_id: "read-before",
+        method: "POST",
+        path: "/revit/get-element-summary",
+        status: "done",
+        result_json: [{ id: 101, found: true }]
+      }]),
+      decision: response([])
+    });
+
+    const write = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId),
+      decision: response([{
+        action_id: "mutate",
+        method: "POST",
+        path: "/revit/set-parameter",
+        body: { elementIds: [101], parameterName: "Offset", value: 0 }
+      }])
+    });
+    assert.equal(write.actions.length, 1);
+
+    enforceExistingConditionsOneActionLoop({
+      req: request(sessionId, [{
+        action_id: "mutate",
+        method: "POST",
+        path: "/revit/set-parameter",
+        status: "done",
+        result_json: { status: "Success", changed: true }
+      }]),
+      decision: response([])
+    });
+
+    const after = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId),
+      decision: response([{
+        action_id: "read-after",
+        method: "POST",
+        path: "/revit/get-element-summary",
+        body: readbackBody
+      }])
+    });
+    assert.equal(after.actions.length, 1);
+    assert.equal(after.actions[0]?.action_id, "read-after");
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+  }
+});
+
+test("one-action execution loop rejects spatial actions outside a persisted registered model rectangle", { concurrency: false }, () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-spatial-guard-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const sessionId = "spatial-guard-session";
+    const sessionDir = path.dirname(existingConditionsExecutionLedgerPath(sessionId));
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionDir, "request_log.jsonl"),
+      `${JSON.stringify({
+        kind: "user.turn",
+        session_id: sessionId,
+        user_text: "Use registered model rectangle X 10..20 ft and Y -40..-30 ft for this staged reconstruction."
+      })}\n`,
+      "utf8"
+    );
+
+    const rejected = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId),
+      decision: response([{
+        action_id: "fixture-outside-registration",
+        method: "POST",
+        path: "/revit/create-family-instance",
+        body: { familyName: "Fixture", typeName: "Type A", x: 100, y: 100, z: 0, dryRun: true }
+      }])
+    });
+    assert.equal(rejected.actions.length, 0);
+    assert.match(rejected.assistant_message, /outside the persisted registered model rectangle/i);
+    assert.match(rejected.assistant_message, /No model write was issued/i);
+    const rejectedEntry = readExistingConditionsExecutionLedger(sessionId).at(-1);
+    assert.equal(rejectedEntry?.event, "action_failed");
+    assert.equal(rejectedEntry?.phase, "dry_run");
+    assert.equal(rejectedEntry?.error, "outside_persisted_registered_model_rectangle");
+
+    const accepted = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId),
+      decision: response([{
+        action_id: "fixture-inside-registration",
+        method: "POST",
+        path: "/revit/create-family-instance",
+        body: { familyName: "Fixture", typeName: "Type A", x: 15, y: -35, z: 0, dryRun: true }
+      }])
+    });
+    assert.equal(accepted.actions[0]?.action_id, "fixture-inside-registration");
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+  }
+});
+
 test("provider-independent loop enforces staged repair readback visual and checkpoint", { concurrency: false }, () => {
   const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-provider-staged-"));

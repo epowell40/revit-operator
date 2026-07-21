@@ -3752,6 +3752,64 @@ function loadPersistedExistingConditionsSourcePreflightResults(
   }
 }
 
+function textLooksLikeExistingConditionsReconstruction(text: string): boolean {
+  const normalized = text.toLowerCase();
+  const reconstructionVerb =
+    /\b(recreate|reconstruct|reconstruction|redraw|draft|drawing|model|trace)\b/.test(normalized);
+  const explicitExistingConditions =
+    /\b(existing[\s-]*conditions?|as[\s-]*built|record drawing)\b/.test(normalized);
+  const sourceArtifact =
+    /\b(pdf|drawing|plan|sheet|source|attachment|attached|scan)\b/.test(normalized);
+  const existingDisciplineContent =
+    /\bexisting\b(?=[\s\S]{0,96}\b(?:plumbing|piping|pipes?|ductwork|ducts?|hvac|mechanical|electrical|lighting|power|devices?|receptacles?|systems?|equipment|fixtures?|work)\b)/.test(normalized);
+  const directExistingSystemObject =
+    /\b(?:recreate|reconstruct|redraw|draft|draw|model|trace)\b(?=[^.!?\n]{0,80}\bexisting[\s-]*(?:conditions?|systems?|work|plumbing|piping|ductwork|hvac|mechanical|electrical|lighting|power)\b)/.test(normalized);
+  const wholeSourceOrSystemObject =
+    /\b(?:visible|all|entire|whole|complete)\b(?=[\s\S]{0,96}\bexisting\b)/.test(normalized) ||
+    directExistingSystemObject;
+  const ordinaryNewElementEdit =
+    /\b(?:add|create|draw|place|model)\b(?=[^.!?\n]{0,64}\b(?:a|an|one|new)\b[^.!?\n]{0,48}\b(?:pipe|duct|branch|receptacle|device|fixture|equipment|family|element|outlet|diffuser|grille|valve)\b)/.test(normalized);
+  return reconstructionVerb &&
+    !ordinaryNewElementEdit &&
+    (explicitExistingConditions || (sourceArtifact && existingDisciplineContent && wholeSourceOrSystemObject));
+}
+
+function persistedRequestLogDeclaresExistingConditionsReconstruction(sessionId: string): boolean {
+  if (!sessionId) return false;
+  try {
+    const requestLogPath = path.join(
+      ensureWorkspaceLayout().runsSessions,
+      safeRunBundleSessionDirName(sessionId),
+      "request_log.jsonl"
+    );
+    if (!fs.existsSync(requestLogPath)) return false;
+    const size = fs.statSync(requestLogPath).size;
+    const maximumBytes = 512 * 1024;
+    const start = Math.max(0, size - maximumBytes);
+    const handle = fs.openSync(requestLogPath, "r");
+    try {
+      const buffer = Buffer.alloc(size - start);
+      fs.readSync(handle, buffer, 0, buffer.length, start);
+      const lines = buffer.toString("utf8").split(/\r?\n/);
+      if (start > 0) lines.shift();
+      return lines.slice(-300).some(line => {
+        if (!line.trim()) return false;
+        try {
+          const row = JSON.parse(line) as Record<string, unknown>;
+          return typeof row.user_text === "string" &&
+            textLooksLikeExistingConditionsReconstruction(row.user_text);
+        } catch {
+          return false;
+        }
+      });
+    } finally {
+      fs.closeSync(handle);
+    }
+  } catch {
+    return false;
+  }
+}
+
 function withExistingConditionsSourcePreflightContext(
   req: ChatRequest,
   results: WorkbenchActionResult[]
@@ -19067,29 +19125,14 @@ function replaceAuditTargetWithWallLocalRedlineChainage(
 
 function isExistingConditionsReconstructionRequest(req: ChatRequest | null | undefined): boolean {
   const text = req ? getRecentUserTextForRedline(req).toLowerCase() : "";
-  const reconstructionVerb =
-    /\b(recreate|reconstruct|reconstruction|redraw|draft|drawing|model|trace)\b/.test(text);
-  const explicitExistingConditions =
-    /\b(existing[\s-]*conditions?|as[\s-]*built|record drawing)\b/.test(text);
-  const sourceArtifact =
-    /\b(pdf|drawing|plan|sheet|source|attachment|attached|scan)\b/.test(text);
-  const existingDisciplineContent =
-    /\bexisting\b(?=[\s\S]{0,96}\b(?:plumbing|piping|pipes?|ductwork|ducts?|hvac|mechanical|electrical|lighting|power|devices?|receptacles?|systems?|equipment|fixtures?|work)\b)/.test(text);
-  const directExistingSystemObject =
-    /\b(?:recreate|reconstruct|redraw|draft|draw|model|trace)\b(?=[^.!?\n]{0,80}\bexisting[\s-]*(?:conditions?|systems?|work|plumbing|piping|ductwork|hvac|mechanical|electrical|lighting|power)\b)/.test(text);
-  const wholeSourceOrSystemObject =
-    /\b(?:visible|all|entire|whole|complete)\b(?=[\s\S]{0,96}\bexisting\b)/.test(text) ||
-    directExistingSystemObject;
-  const ordinaryNewElementEdit =
-    /\b(?:add|create|draw|place|model)\b(?=[^.!?\n]{0,64}\b(?:a|an|one|new)\b[^.!?\n]{0,48}\b(?:pipe|duct|branch|receptacle|device|fixture|equipment|family|element|outlet|diffuser|grille|valve)\b)/.test(text);
-  const matched =
-    reconstructionVerb &&
-    !ordinaryNewElementEdit &&
-    (explicitExistingConditions || (sourceArtifact && existingDisciplineContent && wholeSourceOrSystemObject));
+  const matched = textLooksLikeExistingConditionsReconstruction(text);
   if (!req?.session_id) return matched;
   const state = getRedlineVisionState(req.session_id);
-  if (matched) state.existing_conditions_reconstruction = true;
-  return matched || state.existing_conditions_reconstruction;
+  const persistedSourcePreflight =
+    persistedRequestLogDeclaresExistingConditionsReconstruction(req.session_id) &&
+    loadPersistedExistingConditionsSourcePreflightResults(req.session_id).length > 0;
+  if (matched || persistedSourcePreflight) state.existing_conditions_reconstruction = true;
+  return matched || persistedSourcePreflight || state.existing_conditions_reconstruction;
 }
 
 function existingConditionsPlacedViewAnchor(

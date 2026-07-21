@@ -19,6 +19,10 @@ import {
   type ChatResponse
 } from "../src/contracts.js";
 import { formatCodexRequestEnvelope } from "../src/brains/codex_brain.js";
+import {
+  __testOnlyIsExistingConditionsReconstructionRequest,
+  prepareExistingConditionsSourcePreflight
+} from "../src/brains/openai_brain.js";
 
 function request(text = "Inspect the active view and take the next smallest safe action."): ChatRequest {
   return {
@@ -94,7 +98,7 @@ test("Gemini brain uses structured output and normalizes action body_json", asyn
                         action_id: "pipe-1",
                         method: "POST",
                         path: "/revit/create-pipe",
-                        body_json: JSON.stringify({
+                        body_json: {
                           startX: 1,
                           startY: 2,
                           startZ: 3,
@@ -104,7 +108,7 @@ test("Gemini brain uses structured output and normalizes action body_json", asyn
                           pipeSize: "2 in",
                           systemType: "Sanitary",
                           dryRun: true
-                        })
+                        }
                       }
                     ]
                   })
@@ -124,6 +128,9 @@ test("Gemini brain uses structured output and normalizes action body_json", asyn
     assert.equal(requestedHeaders["x-goog-api-key"], "test-gemini-key");
     assert.equal(requestedBody.generationConfig.responseMimeType, "application/json");
     assert.equal(requestedBody.generationConfig.responseJsonSchema.properties.actions.type, "array");
+    assert.ok(
+      requestedBody.generationConfig.responseJsonSchema.properties.actions.items.properties.body_json.type.includes("object")
+    );
     assert.equal(response.actions.length, 1);
     assert.equal(response.actions[0]?.path, "/revit/create-pipe");
     assert.deepEqual(response.actions[0]?.body, {
@@ -139,6 +146,181 @@ test("Gemini brain uses structured output and normalizes action body_json", asyn
     });
   } finally {
     restoreEnvironment(previous);
+  }
+});
+
+test("external provider prompt rehydrates compacted persisted tool receipts", { concurrency: false }, async () => {
+  const previous = {
+    OPERATOR_WORKSPACE_ROOT: process.env.OPERATOR_WORKSPACE_ROOT,
+    OPERATOR_GEMINI_API_KEY: process.env.OPERATOR_GEMINI_API_KEY,
+    OPERATOR_GEMINI_AGENT_MODEL: process.env.OPERATOR_GEMINI_AGENT_MODEL,
+    OPERATOR_GEMINI_AGENT_BASE_URL: process.env.OPERATOR_GEMINI_AGENT_BASE_URL
+  };
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-provider-capsule-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.OPERATOR_GEMINI_API_KEY = "test-gemini-key";
+  process.env.OPERATOR_GEMINI_AGENT_MODEL = "gemini-test";
+  process.env.OPERATOR_GEMINI_AGENT_BASE_URL = "https://gemini.test/v1beta";
+  const req = request("Continue the accepted staged reconstruction without repeating discovery.");
+  const sessionDir = path.join(root, "runs", "sessions", req.session_id);
+  fs.mkdirSync(sessionDir, { recursive: true });
+  const persistedRows = [
+    {
+      ts: new Date().toISOString(),
+      kind: "revit.result",
+      session_id: req.session_id,
+      tool_result: {
+        action_id: "list-fixture-types",
+        method: "POST",
+        path: "/revit/list-element-types",
+        status: "done",
+        result_json: {
+          count: 1,
+          types: [{ id: 4242, name: "Fixture Type A", familyName: "Single Fixture" }]
+        }
+      }
+    },
+    {
+      ts: new Date().toISOString(),
+      kind: "revit.result",
+      session_id: req.session_id,
+      tool_result: {
+        action_id: "search-placement-tool",
+        method: "POST",
+        path: "/revit/tool-search",
+        status: "done",
+        result_json: {
+          query: "create a family instance",
+          returned: 1,
+          matches: [{
+            method: "POST",
+            path: "/revit/create-family-instance",
+            title: "Create Family Instance",
+            risk: "high",
+            description: "x".repeat(20_000)
+          }]
+        }
+      }
+    },
+    {
+      ts: new Date().toISOString(),
+      kind: "revit.result",
+      session_id: req.session_id,
+      tool_result: {
+        action_id: "describe-placement-tool",
+        method: "POST",
+        path: "/revit/tool-doc",
+        status: "done",
+        result_json: {
+          method: "POST",
+          path: "/revit/create-family-instance",
+          required_fields: ["familyName", "typeName", "x", "y", "z"],
+          optional_fields: ["levelName", "count", "dryRun"],
+          request_schema: { type: "object" }
+        }
+      }
+    }
+  ];
+  fs.writeFileSync(
+    path.join(sessionDir, "tool_outputs.jsonl"),
+    `${persistedRows.map(row => JSON.stringify(row)).join("\n")}\n`,
+    "utf8"
+  );
+
+  let prompt = "";
+  const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}"));
+    prompt = String(body.contents?.[0]?.parts?.[0]?.text ?? "");
+    return new Response(JSON.stringify({
+      candidates: [{
+        content: {
+          parts: [{ text: JSON.stringify({ assistant_message: "Continue.", actions: [] }) }]
+        }
+      }]
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+
+  try {
+    await decideGemini(req, { fetchImpl });
+    assert.match(prompt, /Persisted accepted observations and repair failures/);
+    assert.match(prompt, /4242/);
+    assert.match(prompt, /Fixture Type A/);
+    assert.match(prompt, /"optional_fields"/);
+    assert.match(prompt, /\/revit\/create-family-instance/);
+    assert.ok(prompt.length < 45_000);
+    assert.match(prompt, /Do not repeat a successful type lookup/);
+  } finally {
+    restoreEnvironment(previous);
+  }
+});
+
+test("persisted source preflight restores existing-conditions intent and source render paths after restart", { concurrency: false }, async () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-source-rehydrate-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const req = request("Resume the next accepted stage without repeating discovery.");
+  const sessionDir = path.join(root, "runs", "sessions", req.session_id);
+  fs.mkdirSync(sessionDir, { recursive: true });
+  const previewPath = "artifacts/redline/source-room/page_0001.png";
+  const rows = [
+    {
+      kind: "mcp.tool_result",
+      tool: "workbench.analyze_redline",
+      status: "success",
+      result: {
+        index: 1,
+        summary: "Source analyzed.",
+        details: {
+          file_path: "artifacts/uploads/source-room.pdf",
+          page_count: 1,
+          primary_sheet_number: "M2.00",
+          vision_artifacts: { preview_image_path: previewPath },
+          aec_intent_evidence: {
+            target: {
+              document: { fingerprint: "a".repeat(64) },
+              sheet: { number: "M2.00", id: 10 },
+              view: { id: 20, name: "LEVEL 1 - MECHANICAL" }
+            }
+          }
+        }
+      }
+    },
+    {
+      kind: "mcp.tool_result",
+      tool: "workbench.gemini_redline_analyze",
+      status: "success",
+      result: {
+        index: 2,
+        summary: "Structured source analysis completed.",
+        details: { model: "gemini-test", global_confidence: 0.9, regions: [] }
+      }
+    }
+  ];
+  fs.writeFileSync(
+    path.join(sessionDir, "request_log.jsonl"),
+    `${JSON.stringify({
+      kind: "user.turn",
+      session_id: req.session_id,
+      user_text: "Reconstruct the existing conditions from the attached source drawing."
+    })}\n`,
+    "utf8"
+  );
+  fs.writeFileSync(
+    path.join(sessionDir, "tool_outputs.jsonl"),
+    `${rows.map(row => JSON.stringify(row)).join("\n")}\n`,
+    "utf8"
+  );
+
+  try {
+    assert.equal(__testOnlyIsExistingConditionsReconstructionRequest(req), true);
+    const hydrated = await prepareExistingConditionsSourcePreflight(req);
+    const server = (hydrated.context as any)?.__server;
+    assert.equal(server?.workbench_source_preflight_complete, true);
+    assert.equal(server?.workbench_structured_image_analysis_complete, true);
+    assert.deepEqual(server?.workbench_inline_image_paths, [previewPath]);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
   }
 });
 

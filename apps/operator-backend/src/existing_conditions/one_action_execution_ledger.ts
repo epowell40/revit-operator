@@ -110,6 +110,108 @@ function ledgerPath(sessionId: string): string {
   );
 }
 
+type RegisteredModelRect = {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+};
+
+function parseRegisteredModelRect(text: string): RegisteredModelRect | null {
+  const number = "([+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+))";
+  const separator = "(?:\\.\\.|\\bto\\b|[–—])";
+  const match = new RegExp(
+    `registered\\s+model\\s+(?:rectangle|rect)\\b[^\\r\\n]{0,160}?x\\s*${number}\\s*${separator}\\s*${number}(?:\\s*ft)?[^\\r\\n]{0,80}?y\\s*${number}\\s*${separator}\\s*${number}`,
+    "i"
+  ).exec(text);
+  if (!match) return null;
+  const values = match.slice(1, 5).map(value => Number(value));
+  if (!values.every(Number.isFinite)) return null;
+  const [x1, x2, y1, y2] = values as [number, number, number, number];
+  return {
+    minX: Math.min(x1, x2),
+    maxX: Math.max(x1, x2),
+    minY: Math.min(y1, y2),
+    maxY: Math.max(y1, y2)
+  };
+}
+
+function loadRegisteredModelRect(req: ChatRequest): RegisteredModelRect | null {
+  const texts = [clean(req.user_text)];
+  const requestLogPath = path.join(
+    ensureWorkspaceLayout().runsSessions,
+    safeSessionId(req.session_id),
+    "request_log.jsonl"
+  );
+  if (fs.existsSync(requestLogPath)) {
+    try {
+      const lines = fs.readFileSync(requestLogPath, "utf8").split(/\r?\n/).filter(Boolean).slice(-120);
+      for (const line of lines) {
+        try {
+          const row = JSON.parse(line) as Record<string, unknown>;
+          if (typeof row.user_text === "string" && row.user_text.trim()) texts.push(row.user_text);
+        } catch {
+          // Ignore a partial request-log tail; the execution ledger remains authoritative.
+        }
+      }
+    } catch {
+      // A missing registration guard is safer than treating unreadable text as coordinates.
+    }
+  }
+  for (const text of texts.reverse()) {
+    const parsed = parseRegisteredModelRect(text);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
+function actionModelPoints(body: unknown): Array<{ x: number; y: number }> {
+  const root = objectValue(body);
+  const points: Array<{ x: number; y: number }> = [];
+  const addPair = (x: unknown, y: unknown) => {
+    if (typeof x === "number" && Number.isFinite(x) && typeof y === "number" && Number.isFinite(y)) {
+      points.push({ x, y });
+    }
+  };
+  for (const [xKey, yKey] of [
+    ["x", "y"],
+    ["startX", "startY"],
+    ["endX", "endY"],
+    ["pointX", "pointY"]
+  ] as const) {
+    addPair(root[xKey], root[yKey]);
+  }
+  for (const key of ["pointXyz", "startPoint", "endPoint"] as const) {
+    const value = root[key];
+    if (Array.isArray(value)) addPair(value[0], value[1]);
+  }
+  for (const key of ["points", "pathPoints", "routePoints"] as const) {
+    const values = root[key];
+    if (!Array.isArray(values)) continue;
+    for (const value of values) {
+      if (Array.isArray(value)) addPair(value[0], value[1]);
+      else {
+        const point = objectValue(value);
+        addPair(point.x, point.y);
+      }
+    }
+  }
+  return points;
+}
+
+function pointsOutsideRegisteredRect(
+  body: unknown,
+  rect: RegisteredModelRect,
+  toleranceFt = 0.5
+): Array<{ x: number; y: number }> {
+  return actionModelPoints(body).filter(point =>
+    point.x < rect.minX - toleranceFt ||
+    point.x > rect.maxX + toleranceFt ||
+    point.y < rect.minY - toleranceFt ||
+    point.y > rect.maxY + toleranceFt
+  );
+}
+
 function acquireLedgerLock(lockPath: string, timeoutMs = 5000): number {
   const deadline = Date.now() + timeoutMs;
   const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
@@ -135,6 +237,7 @@ function classifyPhase(pathValue: string, body: unknown): ExecutionPhase {
   if (normalizedPath.includes("save")) return "checkpoint";
   if (normalizedPath.includes("export") || normalizedPath.includes("highlight")) return "visual";
   if (OBSERVE_PATHS.has(normalizedPath)) return "observe";
+  if (normalizedPath === "/revit/list-element-types") return "observe";
   if (READBACK_PATHS.has(normalizedPath)) return "readback";
   if (row.dryRun === true || row.dry_run === true) return "dry_run";
   return "apply";
@@ -681,8 +784,57 @@ export function enforceExistingConditionsOneActionLoop(args: {
       }) ?? decision;
     }
   }
-  const actions = Array.isArray(decision.actions) ? decision.actions : [];
-  const selected = actions.length > 0 ? [actions[0]!] : [];
+  const proposedActions = Array.isArray(decision.actions) ? decision.actions : [];
+  const registeredRect = loadRegisteredModelRect(args.req);
+  let spatiallyRejectedCount = 0;
+  const actions = proposedActions.filter(action => {
+    if (!registeredRect) return true;
+    const phase = classifyPhase(action.path, action.body);
+    if (phase !== "dry_run" && phase !== "apply") return true;
+    const outsidePoints = pointsOutsideRegisteredRect(action.body, registeredRect);
+    if (outsidePoints.length === 0) return true;
+    spatiallyRejectedCount += 1;
+    appendExecutionEntry({
+      sessionId: args.req.session_id,
+      event: "action_failed",
+      action,
+      status: "failed",
+      phase,
+      payload: { registered_model_rectangle: registeredRect, outside_points: outsidePoints },
+      error: "outside_persisted_registered_model_rectangle"
+    });
+    return false;
+  });
+  const ledger = readExistingConditionsExecutionLedger(args.req.session_id);
+  const completedPlans = ledger.filter(entry => {
+    if (entry.event !== "action_planned") return false;
+    const completion = ledger.find(candidate =>
+      candidate.sequence > entry.sequence &&
+      candidate.event === "action_completed" &&
+      candidate.action_id === entry.action_id &&
+      candidate.path === entry.path
+    );
+    if (!completion) return false;
+    if (entry.phase === "readback" || entry.phase === "visual") {
+      const invalidatedByLaterWrite = ledger.some(candidate =>
+        candidate.sequence > completion.sequence &&
+        candidate.event === "action_completed" &&
+        candidate.phase === "apply"
+      );
+      if (invalidatedByLaterWrite) return false;
+    }
+    return true;
+  });
+  const remainingActions = actions.filter(action => {
+    const actionHash = sha256({
+      method: action.method,
+      path: action.path,
+      body: action.body ?? null
+    });
+    return !completedPlans.some(entry => entry.action_sha256 === actionHash);
+  });
+  const replayedCount = actions.length - remainingActions.length;
+  const selected = remainingActions.length > 0 ? [remainingActions[0]!] : [];
   if (selected[0]) {
     appendExecutionEntry({
       sessionId: args.req.session_id,
@@ -696,9 +848,23 @@ export function enforceExistingConditionsOneActionLoop(args: {
     });
   }
 
-  const suffix = actions.length > 1
-    ? ` I queued only the first of ${actions.length} proposed actions so progress remains visible and repairable.`
-    : "";
+  const suffixParts: string[] = [];
+  if (replayedCount > 0) {
+    suffixParts.push(
+      `I skipped ${replayedCount} exact completed-action replay${replayedCount === 1 ? "" : "s"} and kept the persisted result.`
+    );
+  }
+  if (remainingActions.length > 1) {
+    suffixParts.push(
+      `I queued only the first of ${remainingActions.length} proposed actions so progress remains visible and repairable.`
+    );
+  }
+  if (spatiallyRejectedCount > 0 && registeredRect) {
+    suffixParts.push(
+      `I rejected ${spatiallyRejectedCount} proposed spatial action${spatiallyRejectedCount === 1 ? "" : "s"} outside the persisted registered model rectangle X ${registeredRect.minX}..${registeredRect.maxX}, Y ${registeredRect.minY}..${registeredRect.maxY}. No model write was issued; the next repair is to remap the source-normalized point and retry only the bounded dry-run.`
+    );
+  }
+  const suffix = suffixParts.length > 0 ? ` ${suffixParts.join(" ")}` : "";
   return {
     ...decision,
     assistant_message: `${decision.assistant_message}${suffix}`.trim(),

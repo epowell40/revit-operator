@@ -1,16 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { __testOnlyFinalizeDecision, __testOnlyIsBridgeStatusQuestion, __testOnlyIsExistingConditionsReconstructionRequest, __testOnlyMaybeBuildPersistedExistingConditionsTerminal, __testOnlyMaybeRunSemanticAecWorkflow, __testOnlyMaybeRunTopLevelMepRouteRedline, __testOnlyMaybeRunTopLevelSemanticAecWorkflow, decide } from "../src/brain.js";
 import { AEC_TASK_INTENT_V1_SCHEMA } from "../src/aec_task_intent.js";
 import { decideRule } from "../src/brains/rule_brain.js";
 import { shouldOpenZippyBimTool } from "../src/brains/zippybim_intent.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ChatResponse } from "../src/contracts.js";
 import { appendEvent } from "../src/memory/sqlite_store.js";
+import { existingConditionsExecutionLedgerPath } from "../src/existing_conditions/one_action_execution_ledger.js";
+
+const testRunId = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+let testRequestSequence = 0;
 
 function mkReq(text: string): ChatRequest {
   return {
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
-    session_id: "s",
+    session_id: `brain-test-${testRunId}-${++testRequestSequence}`,
     message_id: "m",
     user_text: text
   };
@@ -289,6 +296,29 @@ test("workflow intent context bypasses the deterministic redline resolver", asyn
   } satisfies ChatRequest;
 
   assert.equal(__testOnlyIsExistingConditionsReconstructionRequest(req), true);
+});
+
+test("persisted request log restores existing-conditions session routing after restart", { concurrency: false }, () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  process.env.OPERATOR_WORKSPACE_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "operator-existing-routing-"));
+  try {
+    const sessionId = `persisted-existing-routing-${Date.now()}-${Math.random()}`;
+    const sessionDir = path.dirname(existingConditionsExecutionLedgerPath(sessionId));
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, "request_log.jsonl"), `${JSON.stringify({
+      kind: "user.turn",
+      session_id: sessionId,
+      user_text: "Start a staged existing-conditions reconstruction from the attached source drawing."
+    })}\n`, "utf8");
+
+    assert.equal(__testOnlyIsExistingConditionsReconstructionRequest({
+      ...mkReq("Perform exactly one native readback action for element 101."),
+      session_id: sessionId
+    }), true);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+  }
 });
 
 test("existing-conditions reconstruction bypasses the semantic AEC query registry", async () => {
