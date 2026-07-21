@@ -293,19 +293,71 @@ namespace RevitBridge.Operator
                 return await handler.Handle(null!, jsonBody).ConfigureAwait(false);
             }
 
-            return await _eventService.Run(app =>
+            var dialogComputerUse = App.Instance?.DialogComputerUse;
+            var dialogEventCursor = dialogComputerUse?.CaptureEventCursor() ?? 0;
+            var autoGuardArmed = ShouldAutoArmRetryableDialogGuard(method, path, jsonBody) && dialogComputerUse != null;
+            var autoGuardId = autoGuardArmed ? dialogComputerUse!.ArmRetryableWarningCancelGuard() : null;
+
+            object result;
+            try
             {
-                var result = handler.Handle(app, jsonBody).GetAwaiter().GetResult();
-
-                // Best-effort UI refresh after actions that likely modified the model. This reduces "it worked but I can't see it"
-                // confusion due to view redraw / regeneration lag.
-                if (method == "POST" && risk >= OperatorActionRisk.Medium)
+                result = await _eventService.Run(app =>
                 {
-                    TryRefreshGraphics(app);
-                }
+                    var handlerResult = handler.Handle(app, jsonBody).GetAwaiter().GetResult();
 
-                return result;
-            }).ConfigureAwait(false);
+                    // Best-effort UI refresh after actions that likely modified the model. This reduces "it worked but I can't see it"
+                    // confusion due to view redraw / regeneration lag.
+                    if (method == "POST" && risk >= OperatorActionRisk.Medium)
+                    {
+                        TryRefreshGraphics(app);
+                    }
+
+                    return handlerResult;
+                }).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (autoGuardId != null) dialogComputerUse?.DisarmGuard(autoGuardId);
+            }
+
+            var recoveredDialog = dialogComputerUse?.GetResolvedRetryableRecoveryAfter(dialogEventCursor);
+            // Dialog resolution is finalized asynchronously after the handler can return. Poll whenever
+            // any new dialog event occurred during this action, including when the guard was armed
+            // explicitly by the sidecar rather than by this runner.
+            if (recoveredDialog == null && dialogComputerUse != null && dialogComputerUse.CaptureEventCursor() > dialogEventCursor)
+            {
+                for (var attempt = 0; attempt < 10 && recoveredDialog == null; attempt++)
+                {
+                    await Task.Delay(100, cancellationToken).ConfigureAwait(false);
+                    recoveredDialog = dialogComputerUse?.GetResolvedRetryableRecoveryAfter(dialogEventCursor);
+                }
+            }
+
+            if (recoveredDialog != null)
+            {
+                throw new OperatorRecoveredDialogException(recoveredDialog, result);
+            }
+
+            return result;
+        }
+
+        private static bool ShouldAutoArmRetryableDialogGuard(string method, string path, string jsonBody)
+        {
+            if (!string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)) return false;
+            if (!string.Equals(path, "/revit/existing-conditions-mep-draft-workflow", StringComparison.OrdinalIgnoreCase)) return false;
+            if (string.IsNullOrWhiteSpace(jsonBody)) return false;
+
+            try
+            {
+                using var document = JsonDocument.Parse(jsonBody);
+                if (document.RootElement.ValueKind != JsonValueKind.Object) return false;
+                return document.RootElement.TryGetProperty("dryRun", out var dryRun) &&
+                    dryRun.ValueKind == JsonValueKind.False;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static bool IsDirectDialogComputerUsePath(string path)
@@ -329,5 +381,41 @@ namespace RevitBridge.Operator
                 // Never fail the action on refresh issues.
             }
         }
+    }
+
+    internal sealed class OperatorRecoveredDialogException : InvalidOperationException
+    {
+        public OperatorRecoveredDialogException(
+            OperatorDialogComputerUse.ResolvedDialogRecovery recovery,
+            object provisionalHandlerResult)
+            : base($"Revit retryable dialog {recovery.DialogId} was cancelled by sidecar guard {recovery.MatchedGuardId}; the handler result is provisional and native readback is required before any retry.")
+        {
+            var receipt = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                using var document = JsonDocument.Parse(JsonSerializer.Serialize(provisionalHandlerResult, OperatorUiProtocol.JsonOptions));
+                if (document.RootElement.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var property in document.RootElement.EnumerateObject())
+                    {
+                        receipt[property.Name] = property.Value.Clone();
+                    }
+                }
+            }
+            catch
+            {
+                // The typed recovery receipt below remains sufficient even when the provisional result is not serializable.
+            }
+
+            receipt["status"] = "Blocked";
+            receipt["error"] = "retryable_revit_dialog_recovered";
+            receipt["rollbackVerified"] = false;
+            receipt["requiresReadback"] = true;
+            receipt["provisionalHandlerResult"] = provisionalHandlerResult;
+            receipt["dialogRecovery"] = recovery.ToReceipt();
+            Receipt = receipt;
+        }
+
+        public object Receipt { get; }
     }
 }

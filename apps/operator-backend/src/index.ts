@@ -3568,6 +3568,9 @@ function normalizeToolResults(input: unknown): ToolResult[] {
       status: r.status,
       ...(r.result_json !== undefined ? { result_json: r.result_json } : {}),
       ...(typeof r.error === "string" ? { error: r.error } : {}),
+      ...(typeof r.failure_kind === "string" ? { failure_kind: r.failure_kind } : {}),
+      ...(typeof r.failure_code === "string" ? { failure_code: r.failure_code } : {}),
+      ...(typeof r.failure_hint === "string" ? { failure_hint: r.failure_hint } : {}),
       ...(typeof r.duration_ms === "number" ? { duration_ms: r.duration_ms } : {}),
       ...(Array.isArray(r.attachments) ? { attachments: r.attachments } : {})
     }));

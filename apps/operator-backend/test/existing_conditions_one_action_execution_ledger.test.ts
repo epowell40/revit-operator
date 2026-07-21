@@ -9,6 +9,7 @@ import {
   existingConditionsExecutionLedgerPath,
   readExistingConditionsExecutionLedger
 } from "../src/existing_conditions/one_action_execution_ledger.js";
+import { readExistingConditionsRepairLedger } from "../src/existing_conditions/staged_repair_ledger.js";
 
 function request(
   sessionId: string,
@@ -348,6 +349,108 @@ test("provider-independent loop enforces staged repair readback visual and check
       decision: response([])
     });
     assert.deepEqual(complete.actions, []);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+  }
+});
+
+test("recovered apply warning rejects only the active stage before sidecar observation", { concurrency: false }, () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-recovered-stage-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const sessionId = "recovered-stage-session";
+    const fingerprint = "d".repeat(64);
+    const operation = {
+      action_key: "repair:move-retained",
+      observation_ids: ["retained-1"],
+      path: "/revit/move-elements",
+      depends_on: [],
+      expected_created_min: 0,
+      expected_created_max: 0,
+      apply_body: {
+        ids: [901],
+        mode: "vector",
+        vectorX: 1,
+        vectorY: 0,
+        vectorZ: 0,
+        moveTogether: true
+      }
+    };
+    const dryRun = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId),
+      decision: response([{
+        action_id: "provider-workflow",
+        method: "POST",
+        path: "/revit/existing-conditions-mep-draft-workflow",
+        body: {
+          inputFingerprintSha256: fingerprint,
+          operations: [operation],
+          provisionalObservationIds: [],
+          dryRun: true,
+          verify: true,
+          maximumCreatedElements: 1
+        }
+      }])
+    });
+    const apply = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId, [{
+        action_id: dryRun.actions[0]!.action_id,
+        method: "POST",
+        path: "/revit/existing-conditions-mep-draft-workflow",
+        status: "done",
+        result_json: {
+          inputFingerprintSha256: fingerprint,
+          stageKey: "operation:repair:move-retained",
+          status: "DryRunReady",
+          dryRun: true,
+          rollbackVerified: true,
+          residualCreatedElementIds: [],
+          operationOutputs: [{
+            action_key: "repair:move-retained",
+            created_element_ids: [],
+            affected_element_ids: [901]
+          }]
+        }
+      }]),
+      decision: response([])
+    });
+
+    const recovered = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId, [{
+        action_id: apply.actions[0]!.action_id,
+        method: "POST",
+        path: "/revit/existing-conditions-mep-draft-workflow",
+        status: "failed",
+        failure_kind: "runtime_recovery",
+        failure_code: "retryable_revit_dialog_recovered",
+        error: "Revit warning was cancelled by the sidecar guard.",
+        result_json: {
+          inputFingerprintSha256: fingerprint,
+          stageKey: "operation:repair:move-retained",
+          status: "Blocked",
+          dryRun: false,
+          error: "retryable_revit_dialog_recovered",
+          rollbackVerified: false,
+          requiresReadback: true,
+          failedOperation: { actionKey: "repair:move-retained" }
+        }
+      }]),
+      decision: response([{
+        action_id: "unsafe-blind-retry",
+        method: "POST",
+        path: "/revit/existing-conditions-mep-draft-workflow",
+        body: { inputFingerprintSha256: fingerprint, operations: [operation], dryRun: false }
+      }])
+    });
+
+    assert.equal(recovered.actions[0]?.path, "/revit/computer-use-observe");
+    const repairEntries = readExistingConditionsRepairLedger(sessionId);
+    const rejected = repairEntries.find(entry => entry.event === "stage_rejected");
+    assert.equal(rejected?.stage_key, "operation:repair:move-retained");
+    assert.equal(rejected?.payload.error, "retryable_revit_dialog_recovered");
+    assert.equal(rejected?.accepted_progress, false);
   } finally {
     if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;

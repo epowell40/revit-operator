@@ -460,7 +460,6 @@ function recordProviderIndependentStageResults(
   const fingerprint = workflow.inputFingerprintSha256.toLowerCase();
   for (const result of toolResults) {
     if (
-      result.status === "done" &&
       clean(result.path).toLowerCase() === "/revit/existing-conditions-mep-draft-workflow" &&
       result.result_json &&
       typeof result.result_json === "object" &&
@@ -579,17 +578,28 @@ export function maybeContinueExistingConditionsOneActionLoop(
   const toolResults = Array.isArray(req.tool_results) ? req.tool_results : [];
   recordToolResults(req.session_id, toolResults);
 
+  const persistedBeforeRecovery = latestExistingConditionsStagedWorkflow(req.session_id);
+  if (persistedBeforeRecovery) {
+    recordProviderIndependentStageResults(
+      req.session_id,
+      persistedBeforeRecovery.workflow,
+      toolResults
+    );
+  }
+
   const recovery = recoveryDecision(toolResults);
   if (recovery) return recovery;
 
-  const persisted = latestExistingConditionsStagedWorkflow(req.session_id);
+  const persisted = persistedBeforeRecovery ?? latestExistingConditionsStagedWorkflow(req.session_id);
   if (!persisted) return null;
 
-  recordProviderIndependentStageResults(
-    req.session_id,
-    persisted.workflow,
-    toolResults
-  );
+  if (!persistedBeforeRecovery) {
+    recordProviderIndependentStageResults(
+      req.session_id,
+      persisted.workflow,
+      toolResults
+    );
+  }
   const plan = buildNextExistingConditionsStagePlan({
     sessionId: req.session_id,
     workflow: persisted.workflow
@@ -616,10 +626,19 @@ export function enforceExistingConditionsOneActionLoop(args: {
   const toolResults = Array.isArray(args.req.tool_results) ? args.req.tool_results : [];
   recordToolResults(args.req.session_id, toolResults);
 
+  const persistedBeforeRecovery = latestExistingConditionsStagedWorkflow(args.req.session_id);
+  if (persistedBeforeRecovery) {
+    recordProviderIndependentStageResults(
+      args.req.session_id,
+      persistedBeforeRecovery.workflow,
+      toolResults
+    );
+  }
+
   const recovery = recoveryDecision(toolResults);
   let decision = recovery ?? args.decision;
   if (!recovery) {
-    let persisted = latestExistingConditionsStagedWorkflow(args.req.session_id);
+    let persisted = persistedBeforeRecovery ?? latestExistingConditionsStagedWorkflow(args.req.session_id);
     const proposed = decision.actions.find(action =>
       clean(action.path).toLowerCase() === "/revit/existing-conditions-mep-draft-workflow"
     );
@@ -648,11 +667,13 @@ export function enforceExistingConditionsOneActionLoop(args: {
       }
     }
     if (persisted) {
-      recordProviderIndependentStageResults(
-        args.req.session_id,
-        persisted.workflow,
-        toolResults
-      );
+      if (!persistedBeforeRecovery) {
+        recordProviderIndependentStageResults(
+          args.req.session_id,
+          persisted.workflow,
+          toolResults
+        );
+      }
       decision = stagedHandoffDecision({
         sessionId: args.req.session_id,
         workflow: persisted.workflow,

@@ -4923,8 +4923,10 @@ namespace RevitBridge.Operator
                 Method = (action.Method ?? "").Trim().ToUpperInvariant(),
                 Path = (action.Path ?? "").Trim(),
                 Status = error == null ? "done" : "failed",
-                ResultJson = error == null ? result : null,
+                ResultJson = error is OperatorRecoveredDialogException recovered ? recovered.Receipt : (error == null ? result : null),
                 Error = error == null ? null : FormatException(error),
+                FailureKind = error is OperatorRecoveredDialogException ? "runtime_recovery" : null,
+                FailureCode = error is OperatorRecoveredDialogException ? "retryable_revit_dialog_recovered" : null,
                 DurationMs = durationMs
             };
 
