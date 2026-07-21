@@ -85,6 +85,7 @@ namespace RevitBridge.Operator
                 { "/revit/mep-branch-network-workflow", new RevitBridge.Logic.Handlers.MEP.MepBranchNetworkWorkflowHandler() },
                 { "/revit/edit-mep-route-elements", new RevitBridge.Logic.Handlers.MEP.EditMepRouteElementsHandler() },
                 { "/revit/reroute-mep-route-segment", new RevitBridge.Logic.Handlers.MEP.RerouteMepRouteSegmentHandler() },
+                { "/revit/arch-workflows", new ArchWorkflowsHandler() },
 
                 // MEP / connectivity helpers (read-only)
                 { "/revit/trace-connected-network", new TraceConnectedNetworkHandler() },

@@ -622,7 +622,19 @@ namespace RevitBridge.Operator
         .right { padding: 8px; }
       }
       @media (max-width: 780px) {
-        .main { grid-template-columns: 1fr; grid-template-rows: minmax(0,1fr) clamp(180px, 28vh, 260px); }
+        .main { grid-template-columns: 1fr; grid-template-rows: minmax(72px,1fr) clamp(140px, 24vh, 200px); }
+        .chatPane { min-height: 0; }
+        .composer {
+          grid-template-columns: minmax(0,1fr) auto;
+          align-items: center;
+          padding: 8px;
+        }
+        .composerBtns {
+          flex-wrap: nowrap;
+          justify-content: flex-end;
+          gap: 4px;
+        }
+        textarea { min-height: 44px; max-height: 72px; }
       }
     </style>
   </head>
