@@ -660,6 +660,13 @@ namespace RevitBridge.Operator
                   <option value=""unrestricted"">Unrestricted</option>
                 </select>
               </div>
+              <div class=""policy"">
+                <span>Brain:</span>
+                <select id=""brainRoute"" title=""Auto keeps deterministic routing; Configured direct sends the turn to OPERATOR_BRAIN (Codex, Claude, Gemini, OpenAI, or rule)."">
+                  <option value=""auto"" selected>Auto pipeline</option>
+                  <option value=""direct"">Configured direct</option>
+                </select>
+              </div>
             </div>
             <div class=""policy"">
               <span>Reasoning:</span>
@@ -867,6 +874,7 @@ namespace RevitBridge.Operator
       const cancelBtn = document.getElementById('cancel');
       const policySel = document.getElementById('policy');
       const nativeApiPolicySel = document.getElementById('nativeApiPolicy');
+      const brainRouteSel = document.getElementById('brainRoute');
       const reasoningSel = document.getElementById('reasoning');
       const speedModeEl = document.getElementById('speedMode');
       const speedDietEl = document.getElementById('speedDiet');
@@ -2431,7 +2439,7 @@ namespace RevitBridge.Operator
         const reasoningEffort = normalizeReasoningValue(reasoningSel ? reasoningSel.value : readStringPref('op.reasoningEffort', 'medium'));
         pendingAttachments = [];
         renderAttachStrip();
-        post('chat.send', { messageId, text, attachments, attachment_policy: policy, reasoning_effort: reasoningEffort, speed_settings: getSpeedSettings() });
+        post('chat.send', { messageId, text, attachments, attachment_policy: policy, reasoning_effort: reasoningEffort, speed_settings: getSpeedSettings(), brain_route: brainRouteSel && brainRouteSel.value === 'direct' ? 'direct' : 'auto' });
       }
 
       attachBtn.addEventListener('click', () => {
@@ -2949,6 +2957,13 @@ namespace RevitBridge.Operator
         nativeApiPolicySel.addEventListener('change', () => {
           const profile = nativeApiPolicySel.value;
           post('native_api_policy.set', { profile });
+        });
+      }
+      if (brainRouteSel) {
+        try { brainRouteSel.value = readStringPref('op.brainRoute', 'auto') === 'direct' ? 'direct' : 'auto'; } catch {}
+        brainRouteSel.addEventListener('change', () => {
+          brainRouteSel.value = brainRouteSel.value === 'direct' ? 'direct' : 'auto';
+          writeStringPref('op.brainRoute', brainRouteSel.value);
         });
       }
 

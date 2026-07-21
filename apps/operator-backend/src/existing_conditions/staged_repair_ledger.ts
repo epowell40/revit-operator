@@ -626,6 +626,15 @@ export function buildNextExistingConditionsStagePlan(args: {
             ? { viewId: sourceViewId }
             : {}),
           elementIds: verificationIds,
+          focusElementIds: verificationIds,
+          focusPaddingFt: 18,
+          imageSize: 2200,
+          overrideStyle: {
+            lineWeight: 12,
+            r: 255,
+            g: 0,
+            b: 255
+          },
           fileName: `existing_conditions_${stageKey.replace(/[^a-zA-Z0-9._-]/g, "_")}.png`
         },
         accepted_action_outputs: outputs

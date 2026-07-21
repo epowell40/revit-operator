@@ -696,12 +696,56 @@ export function compactIncomingToolResult(result: ToolResult): ToolResult {
   let resultJson = result.result_json;
   if (pathName === "/revit/export-visible-elements") {
     resultJson = compactVisibleElementsResult(result.result_json, { maxItems: 24, maxCountEntries: 8 });
+  } else if (pathName === "/revit/views") {
+    resultJson = compactViewsResult(result.result_json);
   }
 
   return {
     ...result,
     ...(attachments ? { attachments } : {}),
     ...(resultJson !== undefined ? { result_json: resultJson } : {})
+  };
+}
+
+export function compactViewsResult(
+  value: unknown,
+  options: { maxItems?: number; maxJsonChars?: number } = {}
+): unknown {
+  const root = asObject(value);
+  const views = Array.isArray(value)
+    ? value
+    : Array.isArray(root?.views)
+      ? root.views
+      : null;
+  if (!views) return value;
+
+  const maxItems = Math.max(1, Math.min(100, options.maxItems ?? 24));
+  const maxJsonChars = Math.max(4_000, Math.min(200_000, options.maxJsonChars ?? 24_000));
+  const approxChars = approxJsonChars(value);
+  if (views.length <= maxItems && approxChars <= maxJsonChars) return value;
+
+  const typeNames = views
+    .map(item => asObject(item))
+    .map(item => pickString(item?.type, item?.viewType))
+    .filter((item): item is string => !!item);
+  const sampled = views.slice(0, maxItems);
+  const sourceCount = root && typeof root.count === "number" ? root.count : views.length;
+
+  return {
+    _compacted: true,
+    compaction: "views-index-summary",
+    approx_json_chars: approxChars,
+    status: root?.status ?? "ok",
+    count: sourceCount,
+    returned: root?.returned ?? views.length,
+    source_truncated: root?.truncated === true,
+    result_clipped: true,
+    appliedFilters: Array.isArray(root?.appliedFilters) ? root.appliedFilters : [],
+    typeCounts: pickCountEntries(typeNames, 12),
+    viewsSampled: sampled,
+    viewsOmitted: Math.max(0, views.length - sampled.length),
+    guidance:
+      "This is an incomplete index receipt. Never infer that a view is absent from viewsSampled. Query POST /revit/views with exact viewNames/viewIds or bounded nameContainsAny predicates before reporting absence or selecting an id."
   };
 }
 

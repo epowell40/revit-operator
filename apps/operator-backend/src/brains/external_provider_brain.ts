@@ -90,8 +90,9 @@ function maxOutputTokens(provider: ExternalProvider): number {
     provider === "gemini"
       ? "OPERATOR_GEMINI_AGENT_MAX_OUTPUT_TOKENS"
       : "OPERATOR_ANTHROPIC_MAX_OUTPUT_TOKENS";
-  const raw = Number.parseInt(process.env[name] ?? "4096", 10);
-  return Number.isFinite(raw) ? Math.max(512, Math.min(32_000, raw)) : 4096;
+  const fallback = provider === "anthropic" ? 8192 : 4096;
+  const raw = Number.parseInt(process.env[name] ?? `${fallback}`, 10);
+  return Number.isFinite(raw) ? Math.max(512, Math.min(32_000, raw)) : fallback;
 }
 
 function timeoutMs(provider: ExternalProvider): number {
@@ -150,6 +151,7 @@ function buildPrompt(req: ChatRequest, provider: ExternalProvider): string {
     `You are running as the Operator ${provider} brain. You do not call MCP directly in this process.`,
     "Instead, return the next bridge calls in the actions array. The host executes them and returns tool_results on the next turn.",
     "Use /revit/search-tools, /revit/tool-doc, and /revit/tool-examples when an exact contract is unknown.",
+    "Prefer bounded predicate queries over unfiltered collection reads. A tool result marked _compacted, result_clipped, truncated, or containing a truncation marker is incomplete: never infer absence from it; immediately take the next smallest bounded read-only query that can resolve the target.",
     "For Revit writes: observe first, emit only the next smallest reversible action or tightly coupled action group, dry-run it, then apply and verify on later turns.",
     "Never demand one perfect all-or-nothing MEP graph. Preserve accepted prior work and repair location, size, type, connectivity, or annotation mismatches incrementally.",
     "Before creating replacement geometry, inventory the bounded target region and retain useful source-grounded elements. Prefer one staged move, rotate, MEP size/elevation edit, or exact connector repair; persist affected_element_ids and verify them before creating duplicates.",

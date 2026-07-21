@@ -180,6 +180,7 @@ function appendExecutionEntry(args: {
   action: Pick<ActionCall, "action_id" | "method" | "path"> & { body?: unknown };
   status: "planned" | "done" | "failed";
   payload: unknown;
+  phase?: ExecutionPhase;
   error?: string | null;
 }): ExistingConditionsExecutionLedgerEntry {
   const sessionId = clean(args.sessionId);
@@ -212,7 +213,7 @@ function appendExecutionEntry(args: {
       ts: new Date().toISOString(),
       session_id: sessionId,
       event: args.event,
-      phase: classifyPhase(args.action.path, args.action.body),
+      phase: args.phase ?? classifyPhase(args.action.path, args.action.body),
       action_id: clean(args.action.action_id),
       method: args.action.method,
       path: clean(args.action.path),
@@ -269,6 +270,7 @@ function recordToolResults(sessionId: string, toolResults: ToolResult[]): void {
         path: result.path
       },
       status: result.status,
+      phase: classifyPhase(result.path, result.result_json),
       payload: {
         result_json: result.result_json ?? null,
         result_summary: result.result_summary ?? null,
@@ -558,6 +560,53 @@ function stagedHandoffDecision(args: {
       body: plan.request
     }]
   };
+}
+
+/**
+ * Advances a persisted, non-blocked existing-conditions stage without asking a
+ * provider to rediscover the next deterministic ledger transition. The caller
+ * still runs the returned decision through the normal finalization path so
+ * environment policy, verification guards, one-action selection, and planned
+ * action receipts remain identical to provider-originated decisions.
+ *
+ * Returns null when provider judgment is actually useful: there is no staged
+ * workflow yet, the workflow is blocked and needs a smaller repair proposal,
+ * or every registered operation has reached its checkpoint.
+ */
+export function maybeContinueExistingConditionsOneActionLoop(
+  req: ChatRequest
+): ChatResponse | null {
+  const toolResults = Array.isArray(req.tool_results) ? req.tool_results : [];
+  recordToolResults(req.session_id, toolResults);
+
+  const recovery = recoveryDecision(toolResults);
+  if (recovery) return recovery;
+
+  const persisted = latestExistingConditionsStagedWorkflow(req.session_id);
+  if (!persisted) return null;
+
+  recordProviderIndependentStageResults(
+    req.session_id,
+    persisted.workflow,
+    toolResults
+  );
+  const plan = buildNextExistingConditionsStagePlan({
+    sessionId: req.session_id,
+    workflow: persisted.workflow
+  });
+  if (plan.state === "blocked" || plan.state === "awaiting_readback") {
+    return null;
+  }
+
+  return stagedHandoffDecision({
+    sessionId: req.session_id,
+    workflow: persisted.workflow,
+    providerDecision: {
+      version: "operator.backend.v1",
+      assistant_message: "",
+      actions: []
+    }
+  });
 }
 
 export function enforceExistingConditionsOneActionLoop(args: {

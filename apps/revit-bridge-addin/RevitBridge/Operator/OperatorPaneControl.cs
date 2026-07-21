@@ -50,6 +50,7 @@ namespace RevitBridge.Operator
         private bool _proactivityStarted;
         private OperatorApprovalMode _approvalMode = OperatorApprovalMode.Yolo;
         private string _reasoningEffort = "medium";
+        private string _brainRoute = "auto";
         private JsonNode? _speedSettings = DefaultSpeedSettingsNode();
         private readonly System.Collections.Generic.Dictionary<string, OperatorActionCall> _pendingApprovals =
             new System.Collections.Generic.Dictionary<string, OperatorActionCall>(StringComparer.OrdinalIgnoreCase);
@@ -547,6 +548,17 @@ namespace RevitBridge.Operator
                         }
                     }
                     catch { }
+
+                    try
+                    {
+                        if (env.Payload.TryGetProperty("brain_route", out var br) && br.ValueKind == JsonValueKind.String)
+                        {
+                            _brainRoute = string.Equals(br.GetString(), "direct", StringComparison.OrdinalIgnoreCase)
+                                ? "direct"
+                                : "auto";
+                        }
+                    }
+                    catch { _brainRoute = "auto"; }
 
                     if (!string.IsNullOrWhiteSpace(messageId) && (attachments != null && attachments.Count > 0 || !string.IsNullOrWhiteSpace(text)))
                     {
@@ -2483,6 +2495,7 @@ namespace RevitBridge.Operator
 
                 var context = new
                 {
+                    operator_brain_route = string.Equals(_brainRoute, "direct", StringComparison.Ordinal) ? "direct" : null,
                     revit = baseContext,
                     ui = new
                     {
@@ -4522,6 +4535,11 @@ namespace RevitBridge.Operator
 
                 var json = existing is JsonElement je ? je.GetRawText() : JsonSerializer.Serialize(existing, OperatorUiProtocol.JsonOptions);
                 var root = (JsonNode.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json) as JsonObject) ?? new JsonObject();
+
+                if (string.Equals(_brainRoute, "direct", StringComparison.Ordinal))
+                    root["operator_brain_route"] = "direct";
+                else
+                    root.Remove("operator_brain_route");
 
                 var ui = root["ui"] as JsonObject ?? new JsonObject();
                 ui["approval_mode"] = UiModeString(_approvalMode);

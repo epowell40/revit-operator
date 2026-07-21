@@ -270,6 +270,13 @@ test("provider-independent loop enforces staged repair readback visual and check
       decision: response([])
     });
     assert.equal((apply.actions[0]?.body as Record<string, unknown>)?.dryRun, false);
+    assert.equal(
+      readExistingConditionsExecutionLedger(sessionId).find(entry =>
+        entry.event === "action_completed" &&
+        entry.action_id === proposed.actions[0]!.action_id
+      )?.phase,
+      "dry_run"
+    );
 
     const readback = enforceExistingConditionsOneActionLoop({
       req: request(sessionId, [{
@@ -306,6 +313,14 @@ test("provider-independent loop enforces staged repair readback visual and check
       decision: response([])
     });
     assert.equal(visual.actions[0]?.path, "/revit/highlight-and-export");
+    assert.deepEqual(
+      (visual.actions[0]?.body as Record<string, unknown>)?.focusElementIds,
+      [901, 902]
+    );
+    assert.equal(
+      (visual.actions[0]?.body as Record<string, unknown>)?.focusPaddingFt,
+      18
+    );
 
     const checkpoint = enforceExistingConditionsOneActionLoop({
       req: request(sessionId, [{

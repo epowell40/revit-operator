@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   decideAnthropic,
   decideGemini
@@ -383,6 +386,165 @@ test("explicit direct route bypasses deterministic prehandlers in both chat mode
     assert.match(streaming.assistant_message, /internal fallback response/);
     assert.deepEqual(nonStreaming.actions, []);
     assert.deepEqual(streaming.actions, []);
+  } finally {
+    restoreEnvironment(previous);
+  }
+});
+
+test("persisted existing-conditions stages advance without another provider call", { concurrency: false }, async () => {
+  const previous = {
+    OPERATOR_BRAIN: process.env.OPERATOR_BRAIN,
+    OPERATOR_WORKSPACE_ROOT: process.env.OPERATOR_WORKSPACE_ROOT
+  };
+  process.env.OPERATOR_BRAIN = "claude";
+  process.env.OPERATOR_WORKSPACE_ROOT = fs.mkdtempSync(
+    path.join(os.tmpdir(), "operator-direct-stage-continuation-")
+  );
+  const sessionId = `direct-stage-${Date.now()}-${Math.random()}`;
+  const fingerprint = "9".repeat(64);
+  const directRequest = (
+    toolResults: ChatRequest["tool_results"] = []
+  ): ChatRequest => ({
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    session_id: sessionId,
+    message_id: `message-${Date.now()}-${Math.random()}`,
+    user_text: "Continue the existing conditions reconstruction one stage at a time.",
+    context: { operator_brain_route: "direct" },
+    tool_results: toolResults
+  });
+  let providerCalls = 0;
+  const dependencies = {
+    anthropicBrain: async (): Promise<ChatResponse> => {
+      providerCalls += 1;
+      if (providerCalls > 1) {
+        throw new Error("provider_must_not_run_for_deterministic_stage_continuation");
+      }
+      return {
+        version: OPERATOR_BACKEND_CONTRACT_VERSION,
+        assistant_message: "Move the retained tag by one reversible increment.",
+        actions: [{
+          action_id: "provider-proposal",
+          method: "POST",
+          path: "/revit/existing-conditions-mep-draft-workflow",
+          body: {
+            inputFingerprintSha256: fingerprint,
+            targetViewId: 123,
+            operations: [{
+              action_key: "repair:move-retained-tag",
+              observation_ids: ["retained-tag"],
+              path: "/revit/move-elements",
+              depends_on: [],
+              expected_created_min: 0,
+              expected_created_max: 0,
+              apply_body: {
+                ids: [901],
+                mode: "vector",
+                vectorX: 0.25,
+                vectorY: 0,
+                vectorZ: 0,
+                moveTogether: true
+              }
+            }],
+            provisionalObservationIds: [],
+            dryRun: true,
+            verify: true,
+            maximumCreatedElements: 1
+          }
+        }]
+      };
+    },
+    anthropicStreamingBrain: async (): Promise<ChatResponse> => {
+      providerCalls += 1;
+      throw new Error("provider_must_not_run_for_deterministic_stage_continuation");
+    }
+  };
+
+  try {
+    const dryRun = await decide(directRequest(), dependencies);
+    assert.equal(providerCalls, 1);
+    assert.equal(dryRun.actions[0]?.path, "/revit/existing-conditions-mep-draft-workflow");
+    assert.equal((dryRun.actions[0]?.body as Record<string, unknown>)?.dryRun, true);
+
+    const apply = await decide(directRequest([{
+      action_id: dryRun.actions[0]!.action_id,
+      method: "POST",
+      path: "/revit/existing-conditions-mep-draft-workflow",
+      status: "done",
+      result_json: {
+        inputFingerprintSha256: fingerprint,
+        stageKey: "operation:repair:move-retained-tag",
+        status: "DryRunReady",
+        dryRun: true,
+        rollbackVerified: true,
+        residualCreatedElementIds: [],
+        operationOutputs: [{
+          action_key: "repair:move-retained-tag",
+          created_element_ids: [],
+          affected_element_ids: [901]
+        }]
+      }
+    }]), dependencies);
+    assert.equal(providerCalls, 1);
+    assert.equal((apply.actions[0]?.body as Record<string, unknown>)?.dryRun, false);
+
+    const streamed: string[] = [];
+    const readback = await decideStreaming(directRequest([{
+      action_id: apply.actions[0]!.action_id,
+      method: "POST",
+      path: "/revit/existing-conditions-mep-draft-workflow",
+      status: "done",
+      result_json: {
+        inputFingerprintSha256: fingerprint,
+        stageKey: "operation:repair:move-retained-tag",
+        status: "Applied",
+        dryRun: false,
+        atomic: true,
+        operationOutputs: [{
+          action_key: "repair:move-retained-tag",
+          created_element_ids: [],
+          affected_element_ids: [901]
+        }]
+      }
+    }]), {
+      onDelta: value => streamed.push(value),
+      onDone: value => streamed.push(value)
+    }, dependencies);
+    assert.equal(providerCalls, 1);
+    assert.equal(readback.actions[0]?.path, "/revit/get-element-summary");
+    assert.deepEqual(
+      (readback.actions[0]?.body as Record<string, unknown>)?.elementIds,
+      [901]
+    );
+    assert.ok(streamed.some(value => /reading back every created or affected native ID/i.test(value)));
+
+    const visual = await decide(directRequest([{
+      action_id: readback.actions[0]!.action_id,
+      method: "POST",
+      path: "/revit/get-element-summary",
+      status: "done",
+      result_json: [{ id: 901, found: true }]
+    }]), dependencies);
+    assert.equal(providerCalls, 1);
+    assert.equal(visual.actions[0]?.path, "/revit/highlight-and-export");
+
+    const checkpoint = await decide(directRequest([{
+      action_id: visual.actions[0]!.action_id,
+      method: "POST",
+      path: "/revit/highlight-and-export",
+      status: "done",
+      result_json: {
+        path: "C:\\evidence\\focused-stage.jpg",
+        focusCrop: { requested: true, applied: true },
+        elementVisibility: {
+          requestedElementIds: [901],
+          visibleElementIds: [901],
+          notVisibleElementIds: [],
+          allRequestedElementsVisible: true
+        }
+      }
+    }]), dependencies);
+    assert.equal(providerCalls, 1);
+    assert.equal(checkpoint.actions[0]?.path, "/revit/save-as");
   } finally {
     restoreEnvironment(previous);
   }

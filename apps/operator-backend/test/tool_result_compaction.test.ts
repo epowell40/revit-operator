@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { compactIncomingToolResult, compactVisibleElementsResult, describeVisibleElementsInventory, getChatRequestLimitBytes } from "../src/tool_result_compaction.js";
+import { compactIncomingToolResult, compactViewsResult, compactVisibleElementsResult, describeVisibleElementsInventory, getChatRequestLimitBytes } from "../src/tool_result_compaction.js";
 
 test("compact visible-elements result preserves mapped inventory summary and samples items", () => {
   const items = Array.from({ length: 30 }, (_, i) => ({
@@ -521,6 +521,45 @@ test("compact incoming tool result preserves bounded image base64 payloads and s
   assert.equal((result.result_json as any)?.itemsSampled?.[0]?.parameters?.panel, "P403");
   assert.equal((result.result_json as any)?.itemsSampled?.[0]?.parameterGroups?.electrical?.circuitNumber, "1");
   assert.equal((result.result_json as any)?.itemsSampled?.[0]?.orientation?.planAzimuthRadians, 1.57);
+});
+
+test("large view inventories become explicit incomplete receipts instead of silently clipped JSON", () => {
+  const views = Array.from({ length: 40 }, (_, index) => ({
+    id: 1000 + index,
+    name: index === 35 ? "LEVEL 01 - BUILDING 200 - NEW WORK - PLUMBING" : `View ${index}`,
+    type: index % 2 === 0 ? "FloorPlan" : "DrawingSheet"
+  }));
+
+  const compacted = compactViewsResult(views, { maxItems: 8, maxJsonChars: 1000 }) as any;
+  assert.equal(compacted._compacted, true);
+  assert.equal(compacted.compaction, "views-index-summary");
+  assert.equal(compacted.count, 40);
+  assert.equal(compacted.result_clipped, true);
+  assert.equal(compacted.viewsSampled.length, 8);
+  assert.equal(compacted.viewsOmitted, 32);
+  assert.doesNotMatch(JSON.stringify(compacted.viewsSampled), /BUILDING 200/);
+  assert.match(compacted.guidance, /Never infer that a view is absent/);
+  assert.match(compacted.guidance, /POST \/revit\/views/);
+});
+
+test("bounded POST view query results remain complete", () => {
+  const bounded = {
+    status: "ok",
+    count: 1,
+    returned: 1,
+    truncated: false,
+    appliedFilters: ["view_names_exact"],
+    views: [{ id: 3960410, name: "LEVEL 01 - BUILDING 200 - NEW WORK - PLUMBING", type: "FloorPlan" }]
+  };
+
+  const compacted = compactIncomingToolResult({
+    action_id: "bounded-views",
+    method: "POST",
+    path: "/revit/views",
+    status: "done",
+    result_json: bounded
+  });
+  assert.deepEqual(compacted.result_json, bounded);
 });
 
 test("compact visible-elements result preserves raster-consistent frame metadata", () => {

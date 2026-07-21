@@ -20,7 +20,10 @@ import { maybeRunDeterministicRoomReceptacleAnalog } from "./deterministic/room_
 import { maybeRunSemanticAecWorkflow } from "./deterministic/aec_workflow_registry.js";
 import type { AecTaskIntentInterpreter } from "./aec_task_intent_interpreter.js";
 import { getRecentMessages } from "./memory/sqlite_store.js";
-import { enforceExistingConditionsOneActionLoop } from "./existing_conditions/one_action_execution_ledger.js";
+import {
+  enforceExistingConditionsOneActionLoop,
+  maybeContinueExistingConditionsOneActionLoop
+} from "./existing_conditions/one_action_execution_ledger.js";
 
 const EXISTING_CONDITIONS_SESSION_LIMIT = 256;
 const existingConditionsReconstructionSessions = new Map<string, true>();
@@ -302,6 +305,11 @@ async function decideWithSelectedBrainStreaming(
 }
 
 export async function decide(req: ChatRequest, dependencies: BrainDecisionDependencies = {}): Promise<ChatResponse> {
+  if (__testOnlyIsExistingConditionsReconstructionRequest(req)) {
+    const continuation = maybeContinueExistingConditionsOneActionLoop(req);
+    if (continuation) return finalizeDecision(req, continuation);
+  }
+
   if (isDirectBrainRouteRequest(req)) {
     const route = resolveOperatorBrainRoute();
     return finalizeDecision(req, await decideWithSelectedBrain(route, req, dependencies));
@@ -352,6 +360,17 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
 }
 
 export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dependencies: BrainDecisionDependencies = {}): Promise<ChatResponse> {
+  if (__testOnlyIsExistingConditionsReconstructionRequest(req)) {
+    const continuation = maybeContinueExistingConditionsOneActionLoop(req);
+    if (continuation) {
+      const decision = finalizeDecision(req, continuation);
+      const text = decision.assistant_message || "";
+      cb.onDelta?.(text);
+      cb.onDone?.(text);
+      return decision;
+    }
+  }
+
   if (isDirectBrainRouteRequest(req)) {
     const route = resolveOperatorBrainRoute();
     const decision = finalizeDecision(
