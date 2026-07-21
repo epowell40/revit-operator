@@ -307,6 +307,30 @@ namespace RevitBridge.Logic.Handlers
             {
                 try { host = doc.GetElement(familyInstance.HostFace.ElementId); } catch { host = null; }
             }
+            object? sourceHostFace = null;
+            if (familyInstance?.HostFace != null)
+            {
+                try
+                {
+                    var hostFace = familyInstance.HostFace;
+                    var elementId = ElementIdCompat.GetValue(hostFace.ElementId);
+                    var linkedElementId = ElementIdCompat.GetValue(hostFace.LinkedElementId);
+                    sourceHostFace = new
+                    {
+                        stableReference = hostFace.ConvertToStableRepresentation(doc),
+                        elementId,
+                        linkedElementId = linkedElementId > 0 ? linkedElementId : (long?)null,
+                        isLinked = linkedElementId > 0
+                    };
+                }
+                catch
+                {
+                    // Host-face references are read-only evidence. If Revit cannot
+                    // serialize one, preserve the rest of the placement context and
+                    // leave the exact-face fields unavailable instead of guessing.
+                    sourceHostFace = null;
+                }
+            }
             var bestView = ResolveBestView(doc, app.ActiveUIDocument?.ActiveView, e, levelName);
             var searchPoint =
                 p.pointXyz != null && p.pointXyz.Length >= 3
@@ -434,6 +458,7 @@ namespace RevitBridge.Logic.Handlers
                     kind = SpatialIntentUtils.GetSpatialKind(room)
                 },
                 host = HostedPlacementUtil.BuildPlacementHostPayload(host),
+                sourceHostFace,
                 placementHost = HostedPlacementUtil.BuildPlacementHostPayload(placementHost),
                 placementHostContext,
                 electricalCircuit,
