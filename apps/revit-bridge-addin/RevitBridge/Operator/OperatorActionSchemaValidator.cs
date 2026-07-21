@@ -2641,6 +2641,27 @@ namespace RevitBridge.Operator
                 if (!ValidateConnectorPairArray(obj.Value, "disconnectOnlyPairs", maxCount: 32, allowAfterOrigin: false, out error)) return false;
                 if (!ValidateConnectorPairArray(obj.Value, "disconnectPairs", maxCount: 32, allowAfterOrigin: true, out error)) return false;
                 if (!ValidateOptionalConnectorPair(obj.Value, "connectOpenPair", allowAfterOrigin: false, out error)) return false;
+                var hasConnectOpenTee = obj.Value.TryGetProperty("connectOpenTee", out var connectOpenTee) &&
+                    connectOpenTee.ValueKind == JsonValueKind.Object;
+                if (hasConnectOpenTee)
+                {
+                    foreach (var name in new[] { "run1", "run2", "branch" })
+                    {
+                        if (!connectOpenTee.TryGetProperty(name, out var connector) ||
+                            connector.ValueKind != JsonValueKind.Object)
+                        {
+                            error = $"repair-mep-connectors.connectOpenTee.{name} is required.";
+                            return false;
+                        }
+                        if (!ValidateConnectorReference(
+                            connector,
+                            $"repair-mep-connectors.connectOpenTee.{name}",
+                            allowAfterOrigin: false,
+                            out error)) return false;
+                    }
+                    if (!ValidateOptionalLong(connectOpenTee, "replaceDisconnectedFittingElementId", out error)) return false;
+                    if (!ValidateOptionalLong(connectOpenTee, "expectedReplacementTypeId", out error)) return false;
+                }
                 var hasMergeMepSystem = obj.Value.TryGetProperty("mergeMepSystem", out var mergeMepSystem) &&
                     mergeMepSystem.ValueKind == JsonValueKind.Object;
                 if (hasMergeMepSystem)
@@ -2665,6 +2686,92 @@ namespace RevitBridge.Operator
                         allowAfterOrigin: false,
                         out error)) return false;
                 }
+                var hasRebuildPipingSystem = obj.Value.TryGetProperty(
+                        "rebuildPipingSystem",
+                        out var rebuildPipingSystem) &&
+                    rebuildPipingSystem.ValueKind == JsonValueKind.Object;
+                if (hasRebuildPipingSystem)
+                {
+                    if (!ValidateRequiredLong(
+                        rebuildPipingSystem,
+                        "expectedSystemTypeId",
+                        out error)) return false;
+                    if (!ValidateRequiredString(
+                        rebuildPipingSystem,
+                        "finalSystemName",
+                        maxLen: 256,
+                        out error)) return false;
+                    if (!rebuildPipingSystem.TryGetProperty("systems", out var systems) ||
+                        systems.ValueKind != JsonValueKind.Array ||
+                        systems.GetArrayLength() == 0 ||
+                        systems.GetArrayLength() > 8)
+                    {
+                        error = "repair-mep-connectors.rebuildPipingSystem.systems must contain 1 to 8 objects.";
+                        return false;
+                    }
+                    foreach (var system in systems.EnumerateArray())
+                    {
+                        if (system.ValueKind != JsonValueKind.Object)
+                        {
+                            error = "repair-mep-connectors.rebuildPipingSystem.systems entries must be objects.";
+                            return false;
+                        }
+                        if (!ValidateRequiredLong(system, "systemId", out error)) return false;
+                        if (!ValidateRequiredString(system, "expectedSystemName", maxLen: 256, out error)) return false;
+                        if (!ValidateOptionalLongArray(
+                            system,
+                            "expectedCascadeDeleteElementIds",
+                            maxCount: 32,
+                            out error)) return false;
+                    }
+                    if (!rebuildPipingSystem.TryGetProperty(
+                            "expectedElementSystemAssignments",
+                            out var assignments) ||
+                        assignments.ValueKind != JsonValueKind.Array ||
+                        assignments.GetArrayLength() == 0 ||
+                        assignments.GetArrayLength() > 500)
+                    {
+                        error = "repair-mep-connectors.rebuildPipingSystem.expectedElementSystemAssignments must contain 1 to 500 objects.";
+                        return false;
+                    }
+                    foreach (var assignment in assignments.EnumerateArray())
+                    {
+                        if (assignment.ValueKind != JsonValueKind.Object)
+                        {
+                            error = "repair-mep-connectors.rebuildPipingSystem.expectedElementSystemAssignments entries must be objects.";
+                            return false;
+                        }
+                        if (!ValidateRequiredLong(assignment, "elementId", out error)) return false;
+                        if (!ValidateRequiredLongArray(
+                            assignment,
+                            "systemIds",
+                            maxCount: 8,
+                            out error)) return false;
+                    }
+                    if (!rebuildPipingSystem.TryGetProperty(
+                            "seedConnectors",
+                            out var seedConnectors) ||
+                        seedConnectors.ValueKind != JsonValueKind.Array ||
+                        seedConnectors.GetArrayLength() == 0 ||
+                        seedConnectors.GetArrayLength() > 32)
+                    {
+                        error = "repair-mep-connectors.rebuildPipingSystem.seedConnectors must contain 1 to 32 connector objects.";
+                        return false;
+                    }
+                    foreach (var connector in seedConnectors.EnumerateArray())
+                    {
+                        if (connector.ValueKind != JsonValueKind.Object)
+                        {
+                            error = "repair-mep-connectors.rebuildPipingSystem.seedConnectors entries must be objects.";
+                            return false;
+                        }
+                        if (!ValidateConnectorReference(
+                            connector,
+                            "repair-mep-connectors.rebuildPipingSystem.seedConnectors",
+                            allowAfterOrigin: false,
+                            out error)) return false;
+                    }
+                }
                 if (!ValidateOptionalString(obj.Value, "connectionKind", maxLen: 32, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "fittingWorksetName", maxLen: 256, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "fittingWorksetId", out error)) return false;
@@ -2688,12 +2795,14 @@ namespace RevitBridge.Operator
                     !string.IsNullOrWhiteSpace(repairKindElement.GetString());
                 var selectedModes = (disconnectOnlyCount > 0 ? 1 : 0) +
                     (hasConnectOpen ? 1 : 0) +
+                    (hasConnectOpenTee ? 1 : 0) +
                     (hasMergeMepSystem ? 1 : 0) +
+                    (hasRebuildPipingSystem ? 1 : 0) +
                     (disconnectCount > 0 ? 1 : 0) +
                     (hasRepair && disconnectCount == 0 ? 1 : 0);
                 if (selectedModes != 1)
                 {
-                    error = "repair-mep-connectors requires exactly one mode: disconnectOnlyPairs, connectOpenPair, mergeMepSystem, disconnectPairs plus repair, or standalone repair.";
+                    error = "repair-mep-connectors requires exactly one mode: disconnectOnlyPairs, connectOpenPair, connectOpenTee, mergeMepSystem, rebuildPipingSystem, disconnectPairs plus repair, or standalone repair.";
                     return false;
                 }
                 if (disconnectCount > 0 && !hasRepair)
@@ -3504,7 +3613,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/rotate-elements", StringComparison.OrdinalIgnoreCase))
             {
-                // { ids: number[], angleDegrees:number, axis:{mode:"zThroughPoint",pointX,pointY,pointZ}, dryRun?:bool, behavior?:string, options?:{...} }
+                // { ids: number[], angleDegrees:number, axis:{mode:"zThroughPoint"|"throughPoints",pointX,pointY,pointZ,endPointX?,endPointY?,endPointZ?}, dryRun?:bool, behavior?:string, options?:{...} }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "rotate-elements body must be an object.";
@@ -3530,9 +3639,18 @@ namespace RevitBridge.Operator
                     if (!ValidateRequiredNumber(axis, "pointY", out error)) return false;
                     if (!ValidateRequiredNumber(axis, "pointZ", out error)) return false;
                 }
+                else if (mode.Equals("throughPoints", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!ValidateRequiredNumber(axis, "pointX", out error)) return false;
+                    if (!ValidateRequiredNumber(axis, "pointY", out error)) return false;
+                    if (!ValidateRequiredNumber(axis, "pointZ", out error)) return false;
+                    if (!ValidateRequiredNumber(axis, "endPointX", out error)) return false;
+                    if (!ValidateRequiredNumber(axis, "endPointY", out error)) return false;
+                    if (!ValidateRequiredNumber(axis, "endPointZ", out error)) return false;
+                }
                 else
                 {
-                    error = "rotate-elements.axis.mode must be 'zThroughPoint'.";
+                    error = "rotate-elements.axis.mode must be 'zThroughPoint' or 'throughPoints'.";
                     return false;
                 }
 
@@ -5329,6 +5447,95 @@ namespace RevitBridge.Operator
                     if (el.ValueKind != JsonValueKind.Object) { error = "draw-detail-curves.curves items must be objects."; return false; }
                     if (!ValidateRequiredString(el, "kind", maxLen: 32, out error)) return false;
                 }
+                return true;
+            }
+
+            if (string.Equals(path, "/revit/annotation-symbol-leaders", StringComparison.OrdinalIgnoreCase))
+            {
+                // { action:"read"|"replace", elementId, leaders?:[{endXyz:[x,y,z],elbowXyz?:[x,y,z]}], dryRun? }
+                if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
+                {
+                    error = "annotation-symbol-leaders body must be an object.";
+                    return false;
+                }
+                if (!ValidateRequiredLong(obj.Value, "elementId", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "action", maxLen: 20, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
+
+                var leaderAction = "read";
+                if (obj.Value.TryGetProperty("action", out var actionValue)
+                    && actionValue.ValueKind == JsonValueKind.String)
+                {
+                    leaderAction = (actionValue.GetString() ?? "").Trim().ToLowerInvariant();
+                }
+                if (leaderAction != "read" && leaderAction != "replace")
+                {
+                    error = "annotation-symbol-leaders.action must be read or replace.";
+                    return false;
+                }
+
+                if (obj.Value.TryGetProperty("leaders", out var leaders)
+                    && leaders.ValueKind != JsonValueKind.Null)
+                {
+                    if (leaders.ValueKind != JsonValueKind.Array)
+                    {
+                        error = "annotation-symbol-leaders.leaders must be an array.";
+                        return false;
+                    }
+                    var count = 0;
+                    foreach (var leader in leaders.EnumerateArray())
+                    {
+                        count++;
+                        if (count > 16)
+                        {
+                            error = "annotation-symbol-leaders.leaders too large (max 16).";
+                            return false;
+                        }
+                        if (leader.ValueKind != JsonValueKind.Object)
+                        {
+                            error = "annotation-symbol-leaders.leaders items must be objects.";
+                            return false;
+                        }
+                        if (!leader.TryGetProperty("endXyz", out var endXyz)
+                            || endXyz.ValueKind != JsonValueKind.Array
+                            || endXyz.GetArrayLength() != 3)
+                        {
+                            error = "annotation-symbol-leaders.leaders[].endXyz must contain exactly 3 numbers.";
+                            return false;
+                        }
+                        foreach (var coordinate in endXyz.EnumerateArray())
+                        {
+                            if (coordinate.ValueKind != JsonValueKind.Number)
+                            {
+                                error = "annotation-symbol-leaders.leaders[].endXyz must contain exactly 3 numbers.";
+                                return false;
+                            }
+                        }
+                        if (leader.TryGetProperty("elbowXyz", out var elbowXyz)
+                            && elbowXyz.ValueKind != JsonValueKind.Null)
+                        {
+                            if (elbowXyz.ValueKind != JsonValueKind.Array || elbowXyz.GetArrayLength() != 3)
+                            {
+                                error = "annotation-symbol-leaders.leaders[].elbowXyz must contain exactly 3 numbers.";
+                                return false;
+                            }
+                            foreach (var coordinate in elbowXyz.EnumerateArray())
+                            {
+                                if (coordinate.ValueKind != JsonValueKind.Number)
+                                {
+                                    error = "annotation-symbol-leaders.leaders[].elbowXyz must contain exactly 3 numbers.";
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                }
+                else if (leaderAction == "replace")
+                {
+                    error = "annotation-symbol-leaders replace requires leaders (use [] to clear).";
+                    return false;
+                }
+
                 return true;
             }
 
@@ -9559,8 +9766,57 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalXyzArray(repair, "endTangent", out error)) return false;
                 return true;
             }
+            if (kind == "resize_round_connectors")
+            {
+                if (!ValidateRequiredLong(repair, "elementId", out error)) return false;
+                if (repair.GetProperty("elementId").GetInt64() <= 0)
+                {
+                    error = "repair-mep-connectors.repair.elementId must be positive.";
+                    return false;
+                }
+                if (!repair.TryGetProperty("connectorChanges", out var changes) ||
+                    changes.ValueKind != JsonValueKind.Array ||
+                    changes.GetArrayLength() < 1 ||
+                    changes.GetArrayLength() > 16)
+                {
+                    error = "repair-mep-connectors.repair.connectorChanges must contain 1 to 16 connector resize objects.";
+                    return false;
+                }
+                var connectorIds = new HashSet<long>();
+                var index = 0;
+                foreach (var change in changes.EnumerateArray())
+                {
+                    if (change.ValueKind != JsonValueKind.Object)
+                    {
+                        error = $"repair-mep-connectors.repair.connectorChanges[{index}] must be an object.";
+                        return false;
+                    }
+                    if (!ValidateRequiredLong(change, "connectorId", out error)) return false;
+                    var connectorId = change.GetProperty("connectorId").GetInt64();
+                    if (connectorId < 0 || !connectorIds.Add(connectorId))
+                    {
+                        error = $"repair-mep-connectors.repair.connectorChanges[{index}].connectorId must be unique and non-negative.";
+                        return false;
+                    }
+                    if (!change.TryGetProperty("expectedOriginXyz", out var origin) ||
+                        !ValidateXyzArray(
+                            origin,
+                            $"repair-mep-connectors.repair.connectorChanges[{index}].expectedOriginXyz",
+                            out error))
+                        return false;
+                    if (!ValidateRequiredNumber(change, "diameterFt", out error)) return false;
+                    var diameterFt = change.GetProperty("diameterFt").GetDouble();
+                    if (diameterFt <= 0 || diameterFt > 10)
+                    {
+                        error = $"repair-mep-connectors.repair.connectorChanges[{index}].diameterFt must be greater than zero and no more than 10.";
+                        return false;
+                    }
+                    index++;
+                }
+                return true;
+            }
 
-            error = "repair-mep-connectors.repair.kind must be 'move_elements_vector', 'set_curve_line', or 'set_flex_curve'.";
+            error = "repair-mep-connectors.repair.kind must be 'move_elements_vector', 'set_curve_line', 'set_flex_curve', or 'resize_round_connectors'.";
             return false;
         }
 

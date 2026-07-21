@@ -1,0 +1,446 @@
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "../contracts.js";
+import { appendNotification } from "../memory/sqlite_store.js";
+import { atomicAppendJsonlLine } from "../persistence/jsonl.js";
+import { ensureWorkspaceLayout } from "../workspace.js";
+
+type ExecutionEvent = "action_planned" | "action_completed" | "action_failed";
+type ExecutionPhase =
+  | "observe"
+  | "dry_run"
+  | "apply"
+  | "readback"
+  | "visual"
+  | "checkpoint"
+  | "recovery";
+
+export type ExistingConditionsExecutionLedgerEntry = {
+  schema_version: 1;
+  sequence: number;
+  ts: string;
+  session_id: string;
+  event: ExecutionEvent;
+  phase: ExecutionPhase;
+  action_id: string;
+  method: "GET" | "POST";
+  path: string;
+  action_sha256: string;
+  payload_sha256: string;
+  status: "planned" | "done" | "failed";
+  error: string | null;
+  previous_entry_sha256: string | null;
+  entry_sha256: string;
+};
+
+const READBACK_PATHS = new Set([
+  "/revit/context",
+  "/revit/state-snapshot",
+  "/revit/get-element-summary",
+  "/revit/get-parameters",
+  "/revit/get-connectors",
+  "/revit/query",
+  "/revit/rooms",
+  "/revit/room-contents",
+  "/revit/export-view-frame",
+  "/revit/export-view-region",
+  "/revit/highlight-and-export",
+  "/revit/computer-use-observe"
+]);
+
+const OBSERVE_PATHS = new Set([
+  "/revit/context",
+  "/revit/tool-search",
+  "/revit/tool-examples",
+  "/revit/tool-doc",
+  "/revit/tool-registry",
+  "/revit/native-api-search",
+  "/revit/native-api-catalog"
+]);
+
+function clean(value: unknown): string {
+  return String(value ?? "").trim();
+}
+
+function canonicalJson(value: unknown): string {
+  if (value == null) return "null";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return "null";
+    return JSON.stringify(value);
+  }
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (typeof value !== "object") return "null";
+  const row = value as Record<string, unknown>;
+  return `{${Object.keys(row)
+    .filter(key => row[key] !== undefined)
+    .sort()
+    .map(key => `${JSON.stringify(key)}:${canonicalJson(row[key])}`)
+    .join(",")}}`;
+}
+
+function sha256(value: unknown): string {
+  return createHash("sha256").update(canonicalJson(value)).digest("hex");
+}
+
+function safeSessionId(sessionId: string): string {
+  const value = clean(sessionId);
+  if (!value) throw new Error("existing_conditions_execution_session_id_required");
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120);
+}
+
+function ledgerPath(sessionId: string): string {
+  return path.join(
+    ensureWorkspaceLayout().runsSessions,
+    safeSessionId(sessionId),
+    "existing_conditions_execution_ledger.jsonl"
+  );
+}
+
+function acquireLedgerLock(lockPath: string, timeoutMs = 5000): number {
+  const deadline = Date.now() + timeoutMs;
+  const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
+  while (true) {
+    try {
+      return fs.openSync(lockPath, "wx");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
+      if (Date.now() >= deadline) {
+        throw new Error("existing_conditions_execution_ledger_is_locked");
+      }
+      Atomics.wait(waitBuffer, 0, 0, 10);
+    }
+  }
+}
+
+function classifyPhase(pathValue: string, body: unknown): ExecutionPhase {
+  const normalizedPath = clean(pathValue).toLowerCase();
+  const row = body && typeof body === "object" && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : {};
+  if (normalizedPath.includes("computer-use")) return "recovery";
+  if (normalizedPath.includes("save")) return "checkpoint";
+  if (normalizedPath.includes("export") || normalizedPath.includes("highlight")) return "visual";
+  if (OBSERVE_PATHS.has(normalizedPath)) return "observe";
+  if (READBACK_PATHS.has(normalizedPath)) return "readback";
+  if (row.dryRun === true || row.dry_run === true) return "dry_run";
+  return "apply";
+}
+
+export function readExistingConditionsExecutionLedger(
+  sessionId: string
+): ExistingConditionsExecutionLedgerEntry[] {
+  const filePath = ledgerPath(sessionId);
+  if (!fs.existsSync(filePath)) return [];
+  const text = fs.readFileSync(filePath, "utf8");
+  if (!text.trim()) return [];
+  const entries: ExistingConditionsExecutionLedgerEntry[] = [];
+  let previousHash: string | null = null;
+  for (const [index, rawLine] of text.split(/\r?\n/).entries()) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    let entry: ExistingConditionsExecutionLedgerEntry;
+    try {
+      entry = JSON.parse(line) as ExistingConditionsExecutionLedgerEntry;
+    } catch {
+      throw new Error(`existing_conditions_execution_ledger_malformed_line:${index + 1}`);
+    }
+    const { entry_sha256: claimedHash, ...withoutHash } = entry;
+    if (
+      entry.schema_version !== 1 ||
+      entry.sequence !== entries.length + 1 ||
+      entry.session_id !== clean(sessionId) ||
+      entry.previous_entry_sha256 !== previousHash ||
+      sha256(withoutHash) !== claimedHash
+    ) {
+      throw new Error(`existing_conditions_execution_ledger_invalid_chain_line:${index + 1}`);
+    }
+    entries.push(entry);
+    previousHash = claimedHash;
+  }
+  return entries;
+}
+
+function appendExecutionEntry(args: {
+  sessionId: string;
+  event: ExecutionEvent;
+  action: Pick<ActionCall, "action_id" | "method" | "path"> & { body?: unknown };
+  status: "planned" | "done" | "failed";
+  payload: unknown;
+  error?: string | null;
+}): ExistingConditionsExecutionLedgerEntry {
+  const sessionId = clean(args.sessionId);
+  const filePath = ledgerPath(sessionId);
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const lockPath = `${filePath}.lock`;
+  let lockHandle: number | null = null;
+  lockHandle = acquireLedgerLock(lockPath);
+  let entry: ExistingConditionsExecutionLedgerEntry;
+  try {
+    const existing = readExistingConditionsExecutionLedger(sessionId);
+    const actionHash = sha256({
+      method: args.action.method,
+      path: args.action.path,
+      body: args.action.body ?? null
+    });
+    const payloadHash = sha256(args.payload);
+    const duplicate = existing.find(value =>
+      value.event === args.event &&
+      value.action_id === args.action.action_id &&
+      value.action_sha256 === actionHash &&
+      value.payload_sha256 === payloadHash &&
+      value.status === args.status
+    );
+    if (duplicate) return duplicate;
+
+    const withoutHash: Omit<ExistingConditionsExecutionLedgerEntry, "entry_sha256"> = {
+      schema_version: 1,
+      sequence: existing.length + 1,
+      ts: new Date().toISOString(),
+      session_id: sessionId,
+      event: args.event,
+      phase: classifyPhase(args.action.path, args.action.body),
+      action_id: clean(args.action.action_id),
+      method: args.action.method,
+      path: clean(args.action.path),
+      action_sha256: actionHash,
+      payload_sha256: payloadHash,
+      status: args.status,
+      error: clean(args.error) || null,
+      previous_entry_sha256: existing.at(-1)?.entry_sha256 ?? null
+    };
+    entry = {
+      ...withoutHash,
+      entry_sha256: sha256(withoutHash)
+    };
+    atomicAppendJsonlLine(filePath, entry);
+  } finally {
+    if (lockHandle != null) {
+      try {
+        fs.closeSync(lockHandle);
+      } catch {
+        // best effort
+      }
+    }
+    try {
+      fs.unlinkSync(lockPath);
+    } catch {
+      // best effort
+    }
+  }
+  appendNotification(
+    sessionId,
+    `existing_conditions_${entry.phase}`,
+    entry.event === "action_planned"
+      ? `Next ${entry.phase} action: ${entry.method} ${entry.path}`
+      : `${entry.phase} action ${entry.status}: ${entry.method} ${entry.path}`,
+    {
+      sequence: entry.sequence,
+      action_id: entry.action_id,
+      phase: entry.phase,
+      status: entry.status,
+      ledger_path: filePath
+    }
+  );
+  return entry;
+}
+
+function recordToolResults(sessionId: string, toolResults: ToolResult[]): void {
+  for (const result of toolResults) {
+    appendExecutionEntry({
+      sessionId,
+      event: result.status === "done" ? "action_completed" : "action_failed",
+      action: {
+        action_id: result.action_id,
+        method: result.method,
+        path: result.path
+      },
+      status: result.status,
+      payload: {
+        result_json: result.result_json ?? null,
+        result_summary: result.result_summary ?? null,
+        failure_kind: result.failure_kind ?? null,
+        failure_code: result.failure_code ?? null,
+        attachments: result.attachments ?? []
+      },
+      error: result.error ?? result.failure_hint ?? null
+    });
+  }
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function latestResult(toolResults: ToolResult[]): ToolResult | null {
+  return toolResults.length > 0 ? toolResults[toolResults.length - 1]! : null;
+}
+
+function isLocalContractFailure(result: ToolResult): boolean {
+  const failureKind = clean(result.failure_kind).toLowerCase();
+  const failureCode = clean(result.failure_code).toLowerCase();
+  if ([
+    "validation",
+    "validation_error",
+    "invalid_request",
+    "invalid_request_body",
+    "contract_error",
+    "schema_error",
+    "not_allowlisted"
+  ].includes(failureKind) || [
+    "validation_error",
+    "invalid_request",
+    "invalid_request_body",
+    "schema_error",
+    "not_allowlisted",
+    "unknown_path"
+  ].includes(failureCode)) {
+    return true;
+  }
+
+  const resultRow = objectValue(result.result_json);
+  const message = [
+    result.error,
+    result.failure_hint,
+    result.result_summary,
+    resultRow.error,
+    resultRow.message
+  ].map(clean).filter(Boolean).join(" ").toLowerCase();
+
+  return [
+    /\bmust be an array of integers\b/,
+    /\brequest body\b.*\b(invalid|required|must)\b/,
+    /\b(invalid|malformed)\s+(json|payload|request)\b/,
+    /\b(schema|validation)\s+(error|failed|failure)\b/,
+    /\bmissing required\b/,
+    /\bis required\b/,
+    /\bunknown (path|field|property|parameter)\b/,
+    /\bunsupported (path|method|field|property|parameter)\b/,
+    /\bnot allowlisted\b/
+  ].some(pattern => pattern.test(message));
+}
+
+function recoveryDecision(toolResults: ToolResult[]): ChatResponse | null {
+  const latest = latestResult(toolResults);
+  if (!latest) return null;
+  const normalizedPath = clean(latest.path).toLowerCase();
+
+  if (
+    latest.status === "failed" &&
+    !normalizedPath.startsWith("/revit/computer-use-") &&
+    !isLocalContractFailure(latest)
+  ) {
+    return {
+      version: "operator.backend.v1",
+      assistant_message:
+        "The last Revit action failed. I preserved earlier accepted work and will inspect the live dialog state before clearing or retrying anything.",
+      actions: [{
+        action_id: `existing-conditions-observe-${Date.now()}`,
+        method: "POST",
+        path: "/revit/computer-use-observe",
+        body: {
+          includeScreenshot: true,
+          maxDialogs: 8,
+          onlyModal: false
+        }
+      }]
+    };
+  }
+
+  if (latest.status === "done" && normalizedPath === "/revit/computer-use-observe") {
+    const result = objectValue(latest.result_json);
+    if (result.blocked_by_modal !== true) return null;
+    const event = objectValue(result.last_dialog_event);
+    const policy = clean(event.policy_category).toLowerCase();
+    if (policy === "requires_user_approval" || policy === "blocker") {
+      return {
+        version: "operator.backend.v1",
+        assistant_message:
+          `Revit is blocked by a ${policy.replaceAll("_", " ")} dialog. Progress is preserved; I will not dismiss a destructive or unknown prompt automatically.`,
+        actions: []
+      };
+    }
+    if (policy === "safe_ok" || policy === "safe_cancel" || policy === "retryable_error") {
+      const dialogId = clean(event.dialog_id);
+      return {
+        version: "operator.backend.v1",
+        assistant_message:
+          `Revit reported a ${policy.replaceAll("_", " ")} dialog. I will clear only that dialog, then re-observe before any write retry.`,
+        actions: [{
+          action_id: `existing-conditions-act-${Date.now()}`,
+          method: "POST",
+          path: "/revit/computer-use-act",
+          body: {
+            button: policy === "safe_ok" ? "default" : "cancel",
+            ...(dialogId ? { dialogIdContains: dialogId } : {}),
+            interactionMode: "message_then_mouse",
+            cursorRestoreMode: "keep",
+            waitForDialogMs: 1500,
+            includeScreenshotAfter: true
+          }
+        }]
+      };
+    }
+  }
+
+  if (latest.status === "done" && normalizedPath === "/revit/computer-use-act") {
+    return {
+      version: "operator.backend.v1",
+      assistant_message:
+        "The dialog action completed. I will re-observe the Revit window before deciding whether the interrupted write committed, rolled back, or needs a smaller repair.",
+      actions: [{
+        action_id: `existing-conditions-reobserve-${Date.now()}`,
+        method: "POST",
+        path: "/revit/computer-use-observe",
+        body: {
+          includeScreenshot: true,
+          maxDialogs: 8,
+          onlyModal: false
+        }
+      }]
+    };
+  }
+  return null;
+}
+
+export function enforceExistingConditionsOneActionLoop(args: {
+  req: ChatRequest;
+  decision: ChatResponse;
+}): ChatResponse {
+  const toolResults = Array.isArray(args.req.tool_results) ? args.req.tool_results : [];
+  recordToolResults(args.req.session_id, toolResults);
+
+  const recovery = recoveryDecision(toolResults);
+  const decision = recovery ?? args.decision;
+  const actions = Array.isArray(decision.actions) ? decision.actions : [];
+  const selected = actions.length > 0 ? [actions[0]!] : [];
+  if (selected[0]) {
+    appendExecutionEntry({
+      sessionId: args.req.session_id,
+      event: "action_planned",
+      action: selected[0],
+      status: "planned",
+      payload: {
+        assistant_message_sha256: sha256(decision.assistant_message),
+        proposed_action_count: actions.length
+      }
+    });
+  }
+
+  const suffix = actions.length > 1
+    ? ` I queued only the first of ${actions.length} proposed actions so progress remains visible and repairable.`
+    : "";
+  return {
+    ...decision,
+    assistant_message: `${decision.assistant_message}${suffix}`.trim(),
+    actions: selected
+  };
+}
+
+export function existingConditionsExecutionLedgerPath(sessionId: string): string {
+  return ledgerPath(sessionId);
+}

@@ -20,6 +20,7 @@ import { maybeRunDeterministicRoomReceptacleAnalog } from "./deterministic/room_
 import { maybeRunSemanticAecWorkflow } from "./deterministic/aec_workflow_registry.js";
 import type { AecTaskIntentInterpreter } from "./aec_task_intent_interpreter.js";
 import { getRecentMessages } from "./memory/sqlite_store.js";
+import { enforceExistingConditionsOneActionLoop } from "./existing_conditions/one_action_execution_ledger.js";
 
 const EXISTING_CONDITIONS_SESSION_LIMIT = 256;
 const existingConditionsReconstructionSessions = new Map<string, true>();
@@ -187,7 +188,13 @@ function finalizeDecision(req: ChatRequest, decision: ChatResponse): ChatRespons
   const assistantMessage = (decision.assistant_message ?? "").toString();
   const actions = applyEnvironmentPolicyToActions(Array.isArray(decision.actions) ? decision.actions : []);
   if (assistantMessage.trim().length > 0 || actions.length > 0) {
-    return enforceVerificationDisclaimer(req, enforceModeledRedlineGuard(req, { ...decision, actions }));
+    const guarded = enforceVerificationDisclaimer(
+      req,
+      enforceModeledRedlineGuard(req, { ...decision, actions })
+    );
+    return __testOnlyIsExistingConditionsReconstructionRequest(req)
+      ? enforceExistingConditionsOneActionLoop({ req, decision: guarded })
+      : guarded;
   }
 
   const hasAttachment = Array.isArray(req.user_attachments) && req.user_attachments.length > 0;
@@ -195,11 +202,14 @@ function finalizeDecision(req: ChatRequest, decision: ChatResponse): ChatRespons
     ? "Answer: I paused because the backend produced no actions and no explanation for this attachment turn. This is an internal fallback response rather than a silent no-op."
     : "Answer: I paused because the backend produced no actions and no explanation for this turn. This is an internal fallback response rather than a silent no-op.";
 
-  return enforceVerificationDisclaimer(req, enforceModeledRedlineGuard(req, {
+  const guarded = enforceVerificationDisclaimer(req, enforceModeledRedlineGuard(req, {
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
     assistant_message: fallbackMessage,
     actions
   }));
+  return __testOnlyIsExistingConditionsReconstructionRequest(req)
+    ? enforceExistingConditionsOneActionLoop({ req, decision: guarded })
+    : guarded;
 }
 
 async function maybeRunTopLevelMepRouteRedline(req: ChatRequest, resolver = maybeRunDeterministicMepRouteRedline): Promise<ChatResponse | null> {

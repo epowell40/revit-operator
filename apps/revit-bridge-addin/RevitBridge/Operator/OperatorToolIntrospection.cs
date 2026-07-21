@@ -345,6 +345,7 @@ namespace RevitBridge.Operator
                 { "/revit/export-elements-xlsx", typeof(RevitBridge.Handlers.ExportElementsXlsxHandler.Params) },
                 { "/revit/import-elements-xlsx-updates", typeof(RevitBridge.Handlers.ImportElementsXlsxUpdatesHandler.Params) },
                 { "/revit/create-view", typeof(RevitBridge.Handlers.CreateViewHandler.Params) },
+                { "/revit/annotation-symbol-leaders", typeof(RevitBridge.Logic.Handlers.Drafting.AnnotationSymbolLeadersHandler.Params) },
                 { "/revit/keynotes", typeof(RevitBridge.Handlers.KeynotesHandler.Params) },
 
                 // Logic handlers (proxies)
@@ -764,10 +765,10 @@ namespace RevitBridge.Operator
                 if (p == "/revit/rotate-elements")
                 {
                     enumMap["behavior"] = new[] { "allOrNothing", "bestEffort" };
-                    enumMap["axis.mode"] = new[] { "zThroughPoint" };
+                    enumMap["axis.mode"] = new[] { "zThroughPoint", "throughPoints" };
                     unitNotes.Add(new { unit = "degrees", fields = new[] { "angleDegrees" } });
                     unitNotes.Add(new { unit = "feet", fields = new[] { "axis.pointX", "axis.pointY", "axis.pointZ" } });
-                    notes.Add("Rotation axis v1: axis.mode=zThroughPoint creates a vertical axis line through (pointX,pointY,pointZ).");
+                    notes.Add("axis.mode=zThroughPoint creates a vertical axis through (pointX,pointY,pointZ); throughPoints creates an arbitrary 3D axis from that point to (endPointX,endPointY,endPointZ).");
                 }
 
                 if (p == "/revit/room-contents")
@@ -822,10 +823,11 @@ namespace RevitBridge.Operator
                 if (p == "/revit/repair-mep-connectors")
                 {
                     enumMap["connectionKind"] = new[] { "auto", "direct", "elbow", "transition" };
-                    enumMap["repair.kind"] = new[] { "move_elements_vector", "set_curve_line", "set_flex_curve" };
-                    unitNotes.Add(new { unit = "feet", fields = new[] { "repair.vectorX", "repair.vectorY", "repair.vectorZ", "repair.startXyz[*]", "repair.endXyz[*]", "repair.flexPoints[*][*]", "originToleranceFt", "maxConnectorDistanceFt", "connectionMaxDistanceFt" } });
+                    enumMap["repair.kind"] = new[] { "move_elements_vector", "set_curve_line", "set_flex_curve", "resize_round_connectors" };
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "repair.vectorX", "repair.vectorY", "repair.vectorZ", "repair.startXyz[*]", "repair.endXyz[*]", "repair.flexPoints[*][*]", "repair.connectorChanges[*].expectedOriginXyz[*]", "repair.connectorChanges[*].diameterFt", "originToleranceFt", "maxConnectorDistanceFt", "connectionMaxDistanceFt" } });
                     notes.Add("Choose exactly one mode: disconnectOnlyPairs, connectOpenPair, disconnectPairs plus repair, or standalone repair.");
                     notes.Add("Use native connector IDs when available. Enumeration-index connector IDs must include exact expectedOriginXyz guards.");
+                    notes.Add("resize_round_connectors changes only explicitly identified native round connector diameters and includes connector sizes in rollback fingerprints.");
                     notes.Add("connectOpenPair dry-runs execute the native connection or fitting operation, roll it back, and return the transient fitting identity plus rollback proof.");
                     notes.Add("Positive-gap elbows are allowed within connectionMaxDistanceFt because Revit trims connected curves back from the theoretical fitting centerline.");
                     notes.Add("All dry-runs preserve exact before/final connector-topology fingerprints and report rollback proof.");

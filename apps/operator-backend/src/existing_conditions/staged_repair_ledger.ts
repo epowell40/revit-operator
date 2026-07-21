@@ -71,6 +71,15 @@ export type ExistingConditionsStagePlan =
   | {
       state: "awaiting_readback";
       accepted_action_outputs: ExistingConditionsPriorActionOutput[];
+    }
+  | {
+      state: "verify_readback" | "verify_visual";
+      stage_key: string;
+      action_key: string;
+      method: "GET" | "POST";
+      path: string;
+      body?: Record<string, unknown>;
+      accepted_action_outputs: ExistingConditionsPriorActionOutput[];
     };
 
 function clean(value: unknown): string {
@@ -393,7 +402,12 @@ function acceptedOutputs(
 ): ExistingConditionsPriorActionOutput[] {
   const byAction = new Map<string, ExistingConditionsPriorActionOutput>();
   for (const entry of entries) {
-    if (entry.event !== "stage_applied" || entry.status !== "accepted") continue;
+    if (
+      entry.event !== "stage_applied" ||
+      entry.status !== "provisional" ||
+      !stageReadbackAccepted(entries, entry.stage_key ?? "") ||
+      !stageVisualAccepted(entries, entry.stage_key ?? "")
+    ) continue;
     const values = Array.isArray(entry.payload.action_outputs)
       ? entry.payload.action_outputs
       : [];
@@ -411,9 +425,75 @@ function stageApplied(
 ): boolean {
   return entries.some(entry =>
     entry.event === "stage_applied" &&
+    entry.status === "provisional" &&
+    entry.stage_key === stageKey
+  );
+}
+
+function stageReadbackAccepted(
+  entries: ExistingConditionsRepairLedgerEntry[],
+  stageKey: string
+): boolean {
+  return entries.some(entry =>
+    entry.event === "readback_accepted" &&
     entry.status === "accepted" &&
     entry.stage_key === stageKey
   );
+}
+
+function stageVisualAccepted(
+  entries: ExistingConditionsRepairLedgerEntry[],
+  stageKey: string
+): boolean {
+  return entries.some(entry =>
+    entry.event === "visual_accepted" &&
+    entry.status === "accepted" &&
+    entry.stage_key === stageKey
+  );
+}
+
+function stageAccepted(
+  entries: ExistingConditionsRepairLedgerEntry[],
+  stageKey: string
+): boolean {
+  return stageApplied(entries, stageKey) &&
+    stageReadbackAccepted(entries, stageKey) &&
+    stageVisualAccepted(entries, stageKey);
+}
+
+function appliedStageEntry(
+  entries: ExistingConditionsRepairLedgerEntry[],
+  stageKey: string
+): ExistingConditionsRepairLedgerEntry | null {
+  return entries
+    .filter(entry =>
+      entry.event === "stage_applied" &&
+      entry.status === "provisional" &&
+      entry.stage_key === stageKey
+    )
+    .at(-1) ?? null;
+}
+
+function actionOutputIds(entry: ExistingConditionsRepairLedgerEntry): number[] {
+  const outputs = Array.isArray(entry.payload.action_outputs)
+    ? entry.payload.action_outputs
+    : [];
+  return normalizeIds([
+    ...normalizeIds(entry.payload.created_element_ids),
+    ...outputs.flatMap(value => {
+      const normalized = normalizeActionOutput(value);
+      return normalized
+        ? [
+            ...normalized.created_element_ids,
+            ...(normalized.route_segment_element_ids ?? []),
+            ...(normalized.route_start_element_ids ?? []),
+            ...(normalized.route_end_element_ids ?? []),
+            ...(normalized.split_main_start_element_ids ?? []),
+            ...(normalized.split_main_end_element_ids ?? [])
+          ]
+        : [];
+    })
+  ]);
 }
 
 function stageResolvedByAppliedRepair(
@@ -424,7 +504,7 @@ function stageResolvedByAppliedRepair(
     entry.event === "repair_registered" &&
     clean(entry.payload.supersedes_stage_key) === stageKey &&
     entry.stage_key != null &&
-    stageApplied(entries, entry.stage_key)
+    stageAccepted(entries, entry.stage_key)
   );
 }
 
@@ -477,6 +557,54 @@ export function buildNextExistingConditionsStagePlan(args: {
   const appliedActionKeys = new Set(
     outputs.map(output => output.action_key.toLowerCase())
   );
+  const registration = entries.find(entry => entry.event === "workflow_registered");
+  const sourceViewId = Number(registration?.payload.source_view_id);
+  const pendingApplied = entries.find(entry =>
+    entry.event === "stage_applied" &&
+    entry.status === "provisional" &&
+    entry.stage_key != null &&
+    !stageAccepted(entries, entry.stage_key)
+  );
+  if (pendingApplied?.stage_key) {
+    const stageKey = pendingApplied.stage_key;
+    const actionKey = clean(pendingApplied.action_keys[0]);
+    const ids = actionOutputIds(pendingApplied);
+    const priorIds = outputs.flatMap(output => [
+      ...output.created_element_ids,
+      ...(output.route_segment_element_ids ?? []),
+      ...(output.route_start_element_ids ?? []),
+      ...(output.route_end_element_ids ?? []),
+      ...(output.split_main_start_element_ids ?? []),
+      ...(output.split_main_end_element_ids ?? [])
+    ]);
+    const verificationIds = normalizeIds([...ids, ...priorIds]);
+    if (!stageReadbackAccepted(entries, stageKey)) {
+      return {
+        state: "verify_readback",
+        stage_key: stageKey,
+        action_key: actionKey,
+        method: "POST",
+        path: ids.length > 0 ? "/revit/get-element-summary" : "/revit/get-connectors",
+        body: { elementIds: ids.length > 0 ? ids : verificationIds },
+        accepted_action_outputs: outputs
+      };
+    }
+    return {
+      state: "verify_visual",
+      stage_key: stageKey,
+      action_key: actionKey,
+      method: "POST",
+      path: "/revit/highlight-and-export",
+      body: {
+        ...(Number.isSafeInteger(sourceViewId) && sourceViewId > 0
+          ? { viewId: sourceViewId }
+          : {}),
+        elementIds: verificationIds,
+        fileName: `existing_conditions_${stageKey.replace(/[^a-zA-Z0-9._-]/g, "_")}.png`
+      },
+      accepted_action_outputs: outputs
+    };
+  }
   const repairs = entries
     .filter(entry => entry.event === "repair_registered")
     .map(entry => ({ entry, operation: repairOperationFromEntry(entry) }))
@@ -484,7 +612,7 @@ export function buildNextExistingConditionsStagePlan(args: {
       entry: ExistingConditionsRepairLedgerEntry;
       operation: StagedOperation;
     } => value.operation != null)
-    .filter(value => !stageApplied(entries, value.entry.stage_key ?? ""));
+    .filter(value => !stageAccepted(entries, value.entry.stage_key ?? ""));
 
   let operation: StagedOperation | null = null;
   let stageKey = "";
@@ -496,7 +624,7 @@ export function buildNextExistingConditionsStagePlan(args: {
     for (const candidate of args.workflow.operations) {
       const candidateStageKey = `operation:${candidate.action_key}`;
       if (
-        stageApplied(entries, candidateStageKey) ||
+        stageAccepted(entries, candidateStageKey) ||
         stageResolvedByAppliedRepair(entries, candidateStageKey)
       ) continue;
       const rejected = unresolvedRejectedStage(entries, candidateStageKey);
@@ -523,7 +651,7 @@ export function buildNextExistingConditionsStagePlan(args: {
 
   if (!operation) {
     const remaining = args.workflow.operations.filter(candidate =>
-      !stageApplied(entries, `operation:${candidate.action_key}`) &&
+      !stageAccepted(entries, `operation:${candidate.action_key}`) &&
       !stageResolvedByAppliedRepair(entries, `operation:${candidate.action_key}`)
     );
     if (remaining.length > 0) {
@@ -669,7 +797,7 @@ export function recordExistingConditionsStageResult(args: {
       workflowFingerprintSha256: fingerprint,
       workflowSha256,
       event: "stage_applied",
-      status: "accepted",
+      status: "provisional",
       acceptedProgress: true,
       stageKey,
       actionKeys,
@@ -679,7 +807,7 @@ export function recordExistingConditionsStageResult(args: {
           ? normalizedOutputs
           : fallbackOutput
       },
-      nextRepair: "Read back this accepted stage, then dry-run the next dependency-ready stage."
+      nextRepair: "Read back this provisional stage and capture focused visual evidence before advancing."
     });
   }
 
@@ -705,6 +833,88 @@ export function recordExistingConditionsStageResult(args: {
     });
   }
   return null;
+}
+
+function resultContainsVisualArtifact(result: Record<string, unknown>): boolean {
+  const resultJson = result.result_json;
+  const row = resultJson && typeof resultJson === "object" && !Array.isArray(resultJson)
+    ? resultJson as Record<string, unknown>
+    : {};
+  const candidates = [
+    row.path,
+    row.filePath,
+    row.file_path,
+    row.imagePath,
+    row.image_path,
+    row.screenshot_path
+  ];
+  if (candidates.some(value => clean(value).length > 0)) return true;
+  const attachments = Array.isArray(result.attachments) ? result.attachments : [];
+  return attachments.some(value => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const attachment = value as Record<string, unknown>;
+    return clean(attachment.local_path).length > 0 ||
+      clean(attachment.data_base64).length > 0;
+  });
+}
+
+export function recordExistingConditionsVerificationResult(args: {
+  sessionId: string;
+  workflow: AtomicMepDraftWorkflowRequest;
+  result: Record<string, unknown>;
+}): ExistingConditionsRepairLedgerEntry | null {
+  if (clean(args.result.status).toLowerCase() !== "done" || clean(args.result.error)) {
+    return null;
+  }
+  const plan = buildNextExistingConditionsStagePlan({
+    sessionId: args.sessionId,
+    workflow: args.workflow
+  });
+  if (plan.state !== "verify_readback" && plan.state !== "verify_visual") {
+    return null;
+  }
+  if (clean(args.result.path).toLowerCase() !== plan.path.toLowerCase()) {
+    return null;
+  }
+  const resultJson = args.result.result_json;
+  if (!resultJson || typeof resultJson !== "object" || Array.isArray(resultJson)) {
+    return null;
+  }
+  const row = resultJson as Record<string, unknown>;
+  const nativeStatus = clean(row.status).toLowerCase();
+  if (
+    nativeStatus === "failed" ||
+    nativeStatus === "blocked" ||
+    clean(row.error)
+  ) {
+    return null;
+  }
+  if (plan.state === "verify_visual" && !resultContainsVisualArtifact(args.result)) {
+    return null;
+  }
+
+  const event = plan.state === "verify_readback"
+    ? "readback_accepted"
+    : "visual_accepted";
+  return appendExistingConditionsAcceptanceEvent({
+    sessionId: args.sessionId,
+    workflow: args.workflow,
+    event,
+    stageKey: plan.stage_key,
+    actionKeys: [plan.action_key],
+    payload: {
+      tool_action_id: clean(args.result.action_id),
+      tool_path: plan.path,
+      result_sha256: sha256(resultJson),
+      verification_element_ids: normalizeIds(plan.body?.elementIds),
+      ...(plan.state === "verify_visual"
+        ? { visual_artifact_present: true }
+        : { native_readback_present: true })
+    },
+    nextRepair: plan.state === "verify_readback"
+      ? "Capture focused visual evidence for this stage."
+      : "Stage accepted; dry-run the next dependency-ready action."
+  });
 }
 
 export function registerExistingConditionsRepairAction(args: {

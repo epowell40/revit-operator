@@ -191,7 +191,7 @@ test("registered existing-conditions compiler hands off exact dry-run then exact
   assert.equal((apply.actions[0]?.body as any)?.dryRun, false);
   assert.deepEqual((apply.actions[0]?.body as any)?.operations, workflow.operations);
 
-  const complete = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, [
+  const readback = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, [
     {
       action_id: "verified-apply",
       method: "POST",
@@ -212,9 +212,37 @@ test("registered existing-conditions compiler hands off exact dry-run then exact
       }
     }
   ]);
+  assert.ok(readback);
+  assert.equal(readback.actions[0]?.path, "/revit/get-element-summary");
+  assert.deepEqual((readback.actions[0]?.body as any)?.elementIds, [201]);
+
+  const visual = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, [{
+    action_id: "verified-readback",
+    method: "POST",
+    path: "/revit/get-element-summary",
+    status: "done",
+    result_json: {
+      status: "ok",
+      items: [{ id: 201, category: "Pipes" }]
+    }
+  }]);
+  assert.ok(visual);
+  assert.equal(visual.actions[0]?.path, "/revit/highlight-and-export");
+  assert.deepEqual((visual.actions[0]?.body as any)?.elementIds, [201]);
+
+  const complete = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, [{
+    action_id: "verified-visual",
+    method: "POST",
+    path: "/revit/highlight-and-export",
+    status: "done",
+    result_json: {
+      status: "ok",
+      path: "C:\\evidence\\route.png"
+    }
+  }]);
   assert.ok(complete);
   assert.deepEqual(complete.actions, []);
-  assert.match(complete.assistant_message, /native element\/property\/connectivity readback/i);
+  assert.match(complete.assistant_message, /accepted and persisted/i);
   assert.doesNotMatch(complete.assistant_message, /will not compile or apply a second geometry set/i);
 });
 
@@ -267,14 +295,14 @@ test("registered existing-conditions apply guard is scoped to one user message",
       }]
     }
   };
-  const firstComplete = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(
+  const firstReadback = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(
     sessionId,
     [firstApplyReceipt],
     "message-first",
     [firstApplyReceipt]
   );
-  assert.ok(firstComplete);
-  assert.deepEqual(firstComplete.actions, []);
+  assert.ok(firstReadback);
+  assert.equal(firstReadback.actions[0]?.path, "/revit/get-element-summary");
 
   __testOnlyNoteRegisteredMepWorkflow(
     sessionId,

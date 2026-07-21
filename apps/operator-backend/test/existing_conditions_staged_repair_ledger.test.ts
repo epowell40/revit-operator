@@ -9,6 +9,7 @@ import {
   existingConditionsRepairLedgerPath,
   readExistingConditionsRepairLedger,
   recordExistingConditionsStageResult,
+  recordExistingConditionsVerificationResult,
   registerExistingConditionsRepairAction,
   registerExistingConditionsStagedWorkflow
 } from "../src/existing_conditions/staged_repair_ledger.js";
@@ -127,6 +128,47 @@ test("staged repair ledger preserves accepted progress and resumes through a sma
       }
     });
 
+    const routeReadback = buildNextExistingConditionsStagePlan({
+      sessionId,
+      workflow: registered
+    });
+    assert.equal(routeReadback.state, "verify_readback");
+    if (routeReadback.state !== "verify_readback") return;
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "route-readback",
+        method: "POST",
+        path: routeReadback.path,
+        status: "done",
+        result_json: {
+          status: "ok",
+          items: [{ id: 201 }, { id: 202 }]
+        }
+      }
+    });
+    const routeVisual = buildNextExistingConditionsStagePlan({
+      sessionId,
+      workflow: registered
+    });
+    assert.equal(routeVisual.state, "verify_visual");
+    if (routeVisual.state !== "verify_visual") return;
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "route-visual",
+        method: "POST",
+        path: routeVisual.path,
+        status: "done",
+        result_json: {
+          status: "ok",
+          path: "C:\\evidence\\route.png"
+        }
+      }
+    });
+
     const connectDryRun = buildNextExistingConditionsStagePlan({
       sessionId,
       workflow: registered
@@ -235,6 +277,48 @@ test("staged repair ledger preserves accepted progress and resumes through a sma
           action_key: "connect:route-fixture",
           created_element_ids: []
         }]
+      }
+    });
+
+    const repairReadback = buildNextExistingConditionsStagePlan({
+      sessionId,
+      workflow: registered
+    });
+    assert.equal(repairReadback.state, "verify_readback");
+    if (repairReadback.state !== "verify_readback") return;
+    assert.equal(repairReadback.path, "/revit/get-connectors");
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "repair-readback",
+        method: "POST",
+        path: repairReadback.path,
+        status: "done",
+        result_json: {
+          status: "ok",
+          elements: [{ elementId: 201 }, { elementId: 202 }]
+        }
+      }
+    });
+    const repairVisual = buildNextExistingConditionsStagePlan({
+      sessionId,
+      workflow: registered
+    });
+    assert.equal(repairVisual.state, "verify_visual");
+    if (repairVisual.state !== "verify_visual") return;
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "repair-visual",
+        method: "POST",
+        path: repairVisual.path,
+        status: "done",
+        result_json: {
+          status: "ok",
+          path: "C:\\evidence\\repair.png"
+        }
       }
     });
 

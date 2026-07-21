@@ -2422,6 +2422,55 @@
       "path": "/revit/repair-mep-connectors",
       "examples": [
         {
+          "name": "Dry-run replace one disconnected fitting with a native tee",
+          "request": {
+            "expectedModelPath": "C:\\RevitOperator\\Workspace\\reconstruction_checkpoint.rvt",
+            "connectOpenTee": {
+              "run1": {
+                "elementId": 101,
+                "connectorId": 1,
+                "expectedOriginXyz": [
+                  10.0,
+                  20.0,
+                  8.0
+                ]
+              },
+              "run2": {
+                "elementId": 102,
+                "connectorId": 0,
+                "expectedOriginXyz": [
+                  9.5,
+                  20.0,
+                  8.0
+                ]
+              },
+              "branch": {
+                "elementId": 103,
+                "connectorId": 0,
+                "expectedOriginXyz": [
+                  9.75,
+                  20.0,
+                  8.25
+                ]
+              },
+              "replaceDisconnectedFittingElementId": 104,
+              "expectedReplacementTypeId": 700983
+            },
+            "connectionMaxDistanceFt": 3.0,
+            "originToleranceFt": 0.001,
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "status": "DryRunPassed",
+            "dryRun": true,
+            "transientFittingId": 105,
+            "transientFittingTypeId": 209706,
+            "rolledBack": true,
+            "rollbackVerified": true
+          }
+        },
+        {
           "name": "Dry-run: move a bounded pipe subgraph and reconnect the same guarded endpoints",
           "request": {
             "expectedModelPath": "C:\\authorized-disposable-models\\working-copy.rvt",
@@ -2466,6 +2515,96 @@
               }
             ],
             "topologyExactMatch": true
+          }
+        },
+        {
+          "name": "Dry-run: resize explicit round fitting connectors with origin guards",
+          "request": {
+            "expectedModelPath": "C:\\authorized-disposable-models\\working-copy.rvt",
+            "repair": {
+              "kind": "resize_round_connectors",
+              "elementId": 2001,
+              "connectorChanges": [
+                {
+                  "connectorId": 1,
+                  "expectedOriginXyz": [10.0, 20.0, 9.5],
+                  "diameterFt": 0.0625
+                },
+                {
+                  "connectorId": 2,
+                  "expectedOriginXyz": [9.875, 20.0, 9.5],
+                  "diameterFt": 0.0625
+                }
+              ]
+            },
+            "originToleranceFt": 0.001,
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "status": "DryRunReady",
+            "dryRun": true,
+            "operationKind": "resize_round_connectors",
+            "transactionGroupRolledBack": true,
+            "rollbackVerified": true
+          }
+        },
+        {
+          "name": "Dry-run: rebuild two exact split sanitary systems without changing the connected graph",
+          "request": {
+            "expectedModelPath": "C:\\authorized-disposable-models\\working-copy.rvt",
+            "rebuildPipingSystem": {
+              "expectedSystemTypeId": 575466,
+              "finalSystemName": "SAN 84",
+              "systems": [
+                {
+                  "systemId": 3001,
+                  "expectedSystemName": "SAN 84",
+                  "expectedCascadeDeleteElementIds": [3101]
+                },
+                {
+                  "systemId": 3002,
+                  "expectedSystemName": "SAN 87",
+                  "expectedCascadeDeleteElementIds": [3102]
+                }
+              ],
+              "expectedElementSystemAssignments": [
+                {
+                  "elementId": 4001,
+                  "systemIds": [3001]
+                },
+                {
+                  "elementId": 4002,
+                  "systemIds": [3002]
+                },
+                {
+                  "elementId": 4003,
+                  "systemIds": [3001, 3002]
+                }
+              ],
+              "seedConnectors": [
+                {
+                  "elementId": 4001,
+                  "connectorId": 0,
+                  "expectedOriginXyz": [10.0, 20.0, 8.0]
+                },
+                {
+                  "elementId": 4002,
+                  "connectorId": 1,
+                  "expectedOriginXyz": [15.0, 20.0, 8.0]
+                }
+              ]
+            },
+            "originToleranceFt": 0.001,
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "status": "DryRunReady",
+            "dryRun": true,
+            "transactionGroupRolledBack": true,
+            "rollbackVerified": true,
+            "transientSystemId": 3003
           }
         }
       ]
@@ -5377,6 +5516,78 @@
               "createRequested": true,
               "willCreate": true
             }
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/annotation-symbol-leaders",
+      "examples": [
+        {
+          "name": "Read native generic-annotation leaders",
+          "request": {
+            "action": "read",
+            "elementId": 123
+          },
+          "expected_response_shape": {
+            "status": "Read",
+            "elementId": 123,
+            "leaders": [
+              {
+                "index": 0,
+                "shape": "Kinked",
+                "anchorXyz": [
+                  10.0,
+                  20.0,
+                  0.0
+                ],
+                "elbowXyz": [
+                  9.0,
+                  20.0,
+                  0.0
+                ],
+                "endXyz": [
+                  8.0,
+                  22.0,
+                  0.0
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "Dry-run one replacement leader and verify rollback",
+          "request": {
+            "action": "replace",
+            "elementId": 123,
+            "leaders": [
+              {
+                "endXyz": [
+                  8.0,
+                  22.0,
+                  0.0
+                ],
+                "elbowXyz": [
+                  9.0,
+                  20.0,
+                  0.0
+                ]
+              }
+            ],
+            "dryRun": true
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "dryRun": true,
+            "rollbackVerified": true,
+            "before": [],
+            "after": [
+              {
+                "shape": "Kinked"
+              }
+            ],
+            "persisted": []
           }
         }
       ]
@@ -8328,6 +8539,36 @@
               "pointX": 0,
               "pointY": 0,
               "pointZ": 0
+            },
+            "dryRun": true,
+            "behavior": "allOrNothing",
+            "options": {
+              "failOnPinned": true
+            }
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "rotatedIds": [
+              111
+            ],
+            "rolledBack": true
+          }
+        },
+        {
+          "name": "Dry-run rotate about an arbitrary 3D axis",
+          "request": {
+            "ids": [
+              111
+            ],
+            "angleDegrees": 90,
+            "axis": {
+              "mode": "throughPoints",
+              "pointX": 10,
+              "pointY": 20,
+              "pointZ": 30,
+              "endPointX": 11,
+              "endPointY": 20,
+              "endPointZ": 30
             },
             "dryRun": true,
             "behavior": "allOrNothing",

@@ -133,6 +133,7 @@ const defaultAllowed: Allowlist = {
     "/revit/create-drafting-view",
     "/revit/create-view",
     "/revit/draw-detail-curves",
+    "/revit/annotation-symbol-leaders",
     "/revit/create-filled-region",
     "/revit/create-revision-cloud",
     "/revit/keynotes",

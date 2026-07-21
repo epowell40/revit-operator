@@ -76,6 +76,7 @@ namespace RevitBridge.Server
                 { "/revit/create-drafting-view", new CreateDraftingViewHandler() },
                 { "/revit/create-view", new CreateViewHandler() },
                 { "/revit/draw-detail-curves", new DrawDetailCurvesHandler() },
+                { "/revit/annotation-symbol-leaders", new AnnotationSymbolLeadersHandler() },
                 { "/revit/create-filled-region", new CreateFilledRegionHandler() },
                 { "/revit/create-revision-cloud", new CreateRevisionCloudHandler() },
                 { "/revit/keynotes", new KeynotesHandler() },

@@ -69,6 +69,7 @@ import {
   buildNextExistingConditionsStagePlan,
   latestExistingConditionsStagedWorkflow,
   recordExistingConditionsStageResult,
+  recordExistingConditionsVerificationResult,
   registerExistingConditionsRepairAction,
   registerExistingConditionsStagedWorkflow
 } from "../existing_conditions/staged_repair_ledger.js";
@@ -2496,6 +2497,13 @@ function recordMatchingRegisteredMepStageReceipts(
       result: result.result_json as Record<string, unknown>
     });
   }
+  for (const result of toolResults) {
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow,
+      result: result as unknown as Record<string, unknown>
+    });
+  }
 }
 
 function buildRegisteredMepWorkflowHandoffResponse(
@@ -2540,6 +2548,21 @@ function buildRegisteredMepWorkflowHandoffResponse(
       actions: []
     };
   }
+  if (plan.state === "verify_readback" || plan.state === "verify_visual") {
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message: plan.state === "verify_readback"
+        ? `Stage ${plan.action_key} applied provisionally. I will read back only that stage before another write.`
+        : `Stage ${plan.action_key} passed native readback. I will capture focused visual evidence before accepting it or advancing.`,
+      actions: [{
+        action_id: randomUUID(),
+        method: plan.method,
+        path: plan.path,
+        ...(plan.body ? { body: plan.body } : {})
+      }]
+    };
+  }
+  if (plan.state !== "dry_run" && plan.state !== "apply") return null;
   return {
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
     assistant_message: plan.state === "apply"

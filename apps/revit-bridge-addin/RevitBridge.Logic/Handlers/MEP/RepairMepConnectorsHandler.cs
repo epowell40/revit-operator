@@ -27,6 +27,15 @@ namespace RevitBridge.Logic.Handlers.MEP
             public ConnectorReference second { get; set; } = new ConnectorReference();
         }
 
+        public sealed class OpenTeeConnection
+        {
+            public ConnectorReference run1 { get; set; } = new ConnectorReference();
+            public ConnectorReference run2 { get; set; } = new ConnectorReference();
+            public ConnectorReference branch { get; set; } = new ConnectorReference();
+            public long? replaceDisconnectedFittingElementId { get; set; }
+            public long? expectedReplacementTypeId { get; set; }
+        }
+
         public sealed class RepairOperation
         {
             public string kind { get; set; } = "";
@@ -40,6 +49,14 @@ namespace RevitBridge.Logic.Handlers.MEP
             public List<double[]> flexPoints { get; set; } = new List<double[]>();
             public double[]? startTangent { get; set; }
             public double[]? endTangent { get; set; }
+            public List<RoundConnectorResize> connectorChanges { get; set; } = new List<RoundConnectorResize>();
+        }
+
+        public sealed class RoundConnectorResize
+        {
+            public long connectorId { get; set; }
+            public double[]? expectedOriginXyz { get; set; }
+            public double diameterFt { get; set; }
         }
 
         public sealed class MepSystemMergeOperation
@@ -55,13 +72,38 @@ namespace RevitBridge.Logic.Handlers.MEP
             public ConnectorReference anchorConnector { get; set; } = new ConnectorReference();
         }
 
+        public sealed class ExpectedSystemDelete
+        {
+            public long systemId { get; set; }
+            public string expectedSystemName { get; set; } = "";
+            public List<long> expectedCascadeDeleteElementIds { get; set; } = new List<long>();
+        }
+
+        public sealed class ExpectedElementSystemAssignment
+        {
+            public long elementId { get; set; }
+            public List<long> systemIds { get; set; } = new List<long>();
+        }
+
+        public sealed class PipingSystemRebuildOperation
+        {
+            public long expectedSystemTypeId { get; set; }
+            public string finalSystemName { get; set; } = "";
+            public List<ExpectedSystemDelete> systems { get; set; } = new List<ExpectedSystemDelete>();
+            public List<ExpectedElementSystemAssignment> expectedElementSystemAssignments { get; set; } =
+                new List<ExpectedElementSystemAssignment>();
+            public List<ConnectorReference> seedConnectors { get; set; } = new List<ConnectorReference>();
+        }
+
         public sealed class Params
         {
             public string? expectedModelPath { get; set; }
             public List<ConnectorPair> disconnectOnlyPairs { get; set; } = new List<ConnectorPair>();
             public List<ConnectorPair> disconnectPairs { get; set; } = new List<ConnectorPair>();
             public ConnectorPair? connectOpenPair { get; set; }
+            public OpenTeeConnection? connectOpenTee { get; set; }
             public MepSystemMergeOperation? mergeMepSystem { get; set; }
+            public PipingSystemRebuildOperation? rebuildPipingSystem { get; set; }
             public string? connectionKind { get; set; }
             public string? fittingWorksetName { get; set; }
             public long? fittingWorksetId { get; set; }
@@ -92,10 +134,14 @@ namespace RevitBridge.Logic.Handlers.MEP
             var uidoc = app.ActiveUIDocument ?? throw new InvalidOperationException("No active UI document.");
             var doc = uidoc.Document;
             AssertExpectedModel(doc, p.expectedModelPath);
+            if (p.rebuildPipingSystem != null)
+                return Task.FromResult(HandlePipingSystemRebuild(doc, p, shouldApply));
             if (p.mergeMepSystem != null)
                 return Task.FromResult(HandleMepSystemMerge(doc, p, shouldApply));
             if (p.disconnectOnlyPairs != null && p.disconnectOnlyPairs.Count > 0)
                 return Task.FromResult(HandleDisconnectOnly(doc, p, shouldApply));
+            if (p.connectOpenTee != null)
+                return Task.FromResult(HandleOpenTeeConnection(doc, p, shouldApply));
             if (p.connectOpenPair != null)
                 return Task.FromResult(HandleOpenConnectorConnection(doc, p, shouldApply));
             if ((p.disconnectPairs == null || p.disconnectPairs.Count == 0) &&
@@ -182,7 +228,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         }
 
                         doc.Regenerate();
-                        ApplyRepair(doc, p.repair, operationKind, repairElementIds);
+                        ApplyRepair(doc, p.repair, operationKind, repairElementIds, p.originToleranceFt);
                         repairApplied = true;
                         doc.Regenerate();
 
@@ -318,11 +364,415 @@ namespace RevitBridge.Logic.Handlers.MEP
             public List<long> memberIds { get; set; } = new List<long>();
         }
 
+        private static object HandlePipingSystemRebuild(Document doc, Params p, bool shouldApply)
+        {
+            if ((p.disconnectOnlyPairs != null && p.disconnectOnlyPairs.Count > 0) ||
+                (p.disconnectPairs != null && p.disconnectPairs.Count > 0) ||
+                p.connectOpenPair != null ||
+                p.connectOpenTee != null ||
+                p.mergeMepSystem != null ||
+                !string.IsNullOrWhiteSpace(p.repair?.kind))
+                throw new ArgumentException(
+                    "rebuildPipingSystem cannot be combined with connector, merge, or geometry-repair modes.");
+
+            var request = p.rebuildPipingSystem ??
+                throw new ArgumentException("rebuildPipingSystem is required.");
+            if (request.expectedSystemTypeId <= 0)
+                throw new ArgumentException("rebuildPipingSystem.expectedSystemTypeId must be positive.");
+            if (string.IsNullOrWhiteSpace(request.finalSystemName))
+                throw new ArgumentException("rebuildPipingSystem.finalSystemName is required.");
+            if (request.systems == null || request.systems.Count == 0 || request.systems.Count > 8)
+                throw new ArgumentException("rebuildPipingSystem.systems must contain 1 to 8 systems.");
+            if (request.expectedElementSystemAssignments == null ||
+                request.expectedElementSystemAssignments.Count == 0 ||
+                request.expectedElementSystemAssignments.Count > 500)
+                throw new ArgumentException(
+                    "rebuildPipingSystem.expectedElementSystemAssignments must contain 1 to 500 elements.");
+            if (request.seedConnectors == null ||
+                request.seedConnectors.Count == 0 ||
+                request.seedConnectors.Count > 32)
+                throw new ArgumentException(
+                    "rebuildPipingSystem.seedConnectors must contain 1 to 32 connectors.");
+            if (p.originToleranceFt <= 0 || p.originToleranceFt > 0.05)
+                throw new ArgumentException("originToleranceFt must be greater than zero and no more than 0.05.");
+
+            var orderedSystemDeletes = request.systems
+                .OrderBy(system => system.systemId)
+                .ToList();
+            var systemIds = orderedSystemDeletes
+                .Select(system => system.systemId)
+                .ToList();
+            if (systemIds.Any(id => id <= 0) || systemIds.Distinct().Count() != systemIds.Count)
+                throw new ArgumentException(
+                    "rebuildPipingSystem.systems must contain unique positive systemId values.");
+
+            var orderedAssignments = request.expectedElementSystemAssignments
+                .OrderBy(assignment => assignment.elementId)
+                .ToList();
+            var auditedElementIds = orderedAssignments
+                .Select(assignment => assignment.elementId)
+                .ToList();
+            if (auditedElementIds.Any(id => id <= 0) ||
+                auditedElementIds.Distinct().Count() != auditedElementIds.Count)
+                throw new ArgumentException(
+                    "rebuildPipingSystem.expectedElementSystemAssignments must contain unique positive elementId values.");
+            foreach (var assignment in orderedAssignments)
+            {
+                var expectedIds = (assignment.systemIds ?? new List<long>())
+                    .Distinct()
+                    .OrderBy(id => id)
+                    .ToList();
+                if (expectedIds.Count == 0 ||
+                    expectedIds.Any(id => !systemIds.Contains(id)))
+                    throw new ArgumentException(
+                        $"rebuildPipingSystem element {assignment.elementId} must reference one or more declared systems only.");
+            }
+
+            var expectedBeforeAssignments = orderedAssignments
+                .Select(assignment =>
+                    $"{assignment.elementId}:{string.Join(",", (assignment.systemIds ?? new List<long>())
+                        .Distinct()
+                        .OrderBy(id => id))}")
+                .ToList();
+            var beforeAssignments = SnapshotElementMepSystemAssignments(doc, auditedElementIds);
+            if (!beforeAssignments.SequenceEqual(expectedBeforeAssignments))
+                throw new InvalidOperationException(
+                    "piping_system_rebuild_assignments_changed:" +
+                    $"expected={string.Join(";", expectedBeforeAssignments)}:" +
+                    $"actual={string.Join(";", beforeAssignments)}");
+
+            var beforeSystems = new List<MepSystemState>();
+            foreach (var expectedDelete in orderedSystemDeletes)
+            {
+                if (string.IsNullOrWhiteSpace(expectedDelete.expectedSystemName))
+                    throw new ArgumentException(
+                        $"rebuildPipingSystem expectedSystemName is required for system {expectedDelete.systemId}.");
+                var system = ResolveMepSystem(doc, expectedDelete.systemId, "rebuild");
+                if (!(system is Autodesk.Revit.DB.Plumbing.PipingSystem))
+                    throw new ArgumentException(
+                        $"rebuildPipingSystem system is not a piping system:{expectedDelete.systemId}");
+                AssertExpectedSystemName(system, expectedDelete.expectedSystemName, "rebuild");
+                if (ElementIdCompat.GetValue(system.GetTypeId()) != request.expectedSystemTypeId)
+                    throw new InvalidOperationException(
+                        $"piping_system_rebuild_type_mismatch:{expectedDelete.systemId}:" +
+                        $"expected={request.expectedSystemTypeId}:" +
+                        $"actual={ElementIdCompat.GetValue(system.GetTypeId())}");
+                var expectedCascadeIds = (expectedDelete.expectedCascadeDeleteElementIds ??
+                    new List<long>())
+                    .Distinct()
+                    .OrderBy(id => id)
+                    .ToList();
+                if (expectedCascadeIds.Count > 32 ||
+                    expectedCascadeIds.Any(id => id <= 0) ||
+                    expectedCascadeIds.Intersect(systemIds).Any() ||
+                    expectedCascadeIds.Intersect(auditedElementIds).Any())
+                    throw new ArgumentException(
+                        $"rebuildPipingSystem invalid expected cascade ids for system {expectedDelete.systemId}.");
+                foreach (var cascadeId in expectedCascadeIds)
+                    AssertSafeCascadeDeleteElement(doc, cascadeId);
+                beforeSystems.Add(SnapshotMepSystem(doc, expectedDelete.systemId));
+            }
+
+            var resolvedSeedsBefore = request.seedConnectors
+                .Select(reference => ResolveConnector(doc, reference, p.originToleranceFt, false))
+                .ToList();
+            var duplicateSeedKeys = resolvedSeedsBefore
+                .GroupBy(seed =>
+                    $"{ElementIdCompat.GetValue(seed.Owner.Id)}:{seed.ConnectorId}")
+                .Where(group => group.Count() > 1)
+                .Select(group => group.Key)
+                .ToList();
+            if (duplicateSeedKeys.Count > 0)
+                throw new ArgumentException(
+                    $"rebuildPipingSystem contains duplicate seed connectors:{string.Join(",", duplicateSeedKeys)}");
+            foreach (var seed in resolvedSeedsBefore)
+            {
+                var ownerId = ElementIdCompat.GetValue(seed.Owner.Id);
+                if (!auditedElementIds.Contains(ownerId))
+                    throw new ArgumentException(
+                        $"rebuildPipingSystem seed owner is outside audited elements:{ownerId}");
+                if (seed.Connector.Domain != Domain.DomainPiping)
+                    throw new ArgumentException(
+                        $"rebuildPipingSystem seed connector is not piping:{ownerId}:{seed.ConnectorId}");
+                var assignedSystemId = seed.Connector.MEPSystem == null
+                    ? 0
+                    : ElementIdCompat.GetValue(seed.Connector.MEPSystem.Id);
+                if (!systemIds.Contains(assignedSystemId))
+                    throw new InvalidOperationException(
+                        $"piping_system_rebuild_seed_has_unexpected_system:{ownerId}:{seed.ConnectorId}:" +
+                        $"{assignedSystemId}");
+            }
+
+            var beforeTopology = SnapshotTopology(doc, auditedElementIds);
+            var beforeConnectorTopology = SnapshotConnectorTopology(doc, auditedElementIds);
+            var beforeFingerprint = SnapshotRepairFingerprint(doc, auditedElementIds);
+            var nativeFailures = new List<CapturedFailure>();
+            var transactionGroupRolledBack = false;
+            var actualCascadeDeletes = new List<string>();
+            List<string>? afterAssignments = null;
+            List<string>? afterTopology = null;
+            List<string>? afterConnectorTopology = null;
+            List<string>? afterFingerprint = null;
+            MepSystemState? transientSystem = null;
+            var transientSystemId = 0L;
+            Autodesk.Revit.DB.Plumbing.PipingSystem? newSystem = null;
+
+            using (var group = new TransactionGroup(
+                doc,
+                shouldApply ? "Rebuild Exact Piping System" : "Dry Run Exact Piping System Rebuild"))
+            {
+                group.Start();
+                try
+                {
+                    using (var tx = new Transaction(doc, "Replace Exact Connector-Only Piping Systems"))
+                    {
+                        tx.Start();
+                        tx.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(
+                            tx,
+                            nativeFailures,
+                            rollbackOnErrors: true,
+                            deleteWarnings: false));
+
+                        foreach (var expectedDelete in orderedSystemDeletes)
+                        {
+                            var deletedIds = doc.Delete(ElementIdCompat.Create(expectedDelete.systemId))
+                                .Select(ElementIdCompat.GetValue)
+                                .OrderBy(id => id)
+                                .ToList();
+                            var actualCascadeIds = deletedIds
+                                .Where(id => id != expectedDelete.systemId)
+                                .ToList();
+                            var expectedCascadeIds = (expectedDelete.expectedCascadeDeleteElementIds ??
+                                new List<long>())
+                                .Distinct()
+                                .OrderBy(id => id)
+                                .ToList();
+                            actualCascadeDeletes.Add(
+                                $"{expectedDelete.systemId}:{string.Join(",", actualCascadeIds)}");
+                            if (!actualCascadeIds.SequenceEqual(expectedCascadeIds))
+                                throw new InvalidOperationException(
+                                    "piping_system_rebuild_cascade_delete_changed:" +
+                                    $"system={expectedDelete.systemId}:" +
+                                    $"expected={string.Join(",", expectedCascadeIds)}:" +
+                                    $"actual={string.Join(",", actualCascadeIds)}");
+                            doc.Regenerate();
+                        }
+
+                        var missingElementIds = auditedElementIds
+                            .Where(id => doc.GetElement(ElementIdCompat.Create(id)) == null)
+                            .ToList();
+                        if (missingElementIds.Count > 0)
+                            throw new InvalidOperationException(
+                                "piping_system_rebuild_delete_removed_elements:" +
+                                string.Join(",", missingElementIds));
+                        var unassignedRows = SnapshotElementMepSystemAssignments(doc, auditedElementIds);
+                        var expectedUnassignedRows = auditedElementIds
+                            .Select(id => $"{id}:")
+                            .ToList();
+                        if (!unassignedRows.SequenceEqual(expectedUnassignedRows))
+                            throw new InvalidOperationException(
+                                "piping_system_rebuild_elements_not_unassigned:" +
+                                string.Join(";", unassignedRows));
+
+                        newSystem = Autodesk.Revit.DB.Plumbing.PipingSystem.Create(
+                            doc,
+                            ElementIdCompat.Create(request.expectedSystemTypeId),
+                            request.finalSystemName.Trim());
+                        transientSystemId = ElementIdCompat.GetValue(newSystem.Id);
+                        doc.Regenerate();
+
+                        var status = tx.Commit();
+                        if (status != TransactionStatus.Committed)
+                            throw new InvalidOperationException(
+                                $"piping_system_rebuild_creation_transaction_not_committed:{status}");
+                    }
+
+                    using (var tx = new Transaction(doc, "Assign Exact Piping System Connector Seeds"))
+                    {
+                        tx.Start();
+                        tx.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(
+                            tx,
+                            nativeFailures,
+                            rollbackOnErrors: true,
+                            deleteWarnings: false));
+                        if (newSystem == null || !newSystem.IsValidObject)
+                            throw new InvalidOperationException(
+                                "piping_system_rebuild_created_system_not_valid_before_assignment");
+
+                        var unassignedRows = SnapshotElementMepSystemAssignments(
+                            doc,
+                            auditedElementIds);
+                        var expectedUnassignedRows = auditedElementIds
+                            .Select(id => $"{id}:")
+                            .ToList();
+                        if (!unassignedRows.SequenceEqual(expectedUnassignedRows))
+                            throw new InvalidOperationException(
+                                "piping_system_rebuild_elements_reassigned_between_transactions:" +
+                                string.Join(";", unassignedRows));
+
+                        var connectorSet = new ConnectorSet();
+                        foreach (var connectorReference in request.seedConnectors)
+                        {
+                            var resolvedSeed = ResolveConnector(
+                                doc,
+                                connectorReference,
+                                p.originToleranceFt,
+                                false);
+                            if (resolvedSeed.Connector.MEPSystem != null)
+                                throw new InvalidOperationException(
+                                    $"piping_system_rebuild_seed_not_unassigned_after_delete:" +
+                                    $"{ElementIdCompat.GetValue(resolvedSeed.Owner.Id)}:{resolvedSeed.ConnectorId}");
+                            connectorSet.Insert(resolvedSeed.Connector);
+                        }
+                        newSystem.Add(connectorSet);
+                        doc.Regenerate();
+
+                        afterAssignments = SnapshotElementMepSystemAssignments(doc, auditedElementIds);
+                        var expectedAfterAssignments = auditedElementIds
+                            .Select(id => $"{id}:{transientSystemId}")
+                            .ToList();
+                        if (!afterAssignments.SequenceEqual(expectedAfterAssignments))
+                            throw new InvalidOperationException(
+                                "piping_system_rebuild_assignment_failed:" +
+                                $"expected={string.Join(";", expectedAfterAssignments)}:" +
+                                $"actual={string.Join(";", afterAssignments)}");
+
+                        afterTopology = SnapshotTopology(doc, auditedElementIds);
+                        afterConnectorTopology = SnapshotConnectorTopology(doc, auditedElementIds);
+                        afterFingerprint = SnapshotRepairFingerprint(doc, auditedElementIds);
+                        if (!beforeTopology.SequenceEqual(afterTopology) ||
+                            !beforeConnectorTopology.SequenceEqual(afterConnectorTopology) ||
+                            !beforeFingerprint.SequenceEqual(afterFingerprint))
+                            throw new InvalidOperationException(
+                                "piping_system_rebuild_changed_geometry_or_connectivity");
+                        transientSystem = SnapshotMepSystem(doc, transientSystemId);
+                        if (!string.Equals(
+                            transientSystem.name,
+                            request.finalSystemName.Trim(),
+                            StringComparison.Ordinal) ||
+                            transientSystem.typeId != request.expectedSystemTypeId)
+                            throw new InvalidOperationException(
+                                "piping_system_rebuild_created_system_identity_mismatch");
+
+                        var status = tx.Commit();
+                        if (status != TransactionStatus.Committed)
+                            throw new InvalidOperationException(
+                                $"piping_system_rebuild_assignment_transaction_not_committed:{status}");
+                    }
+
+                    if (shouldApply)
+                    {
+                        var groupStatus = group.Assimilate();
+                        if (groupStatus != TransactionStatus.Committed)
+                            throw new InvalidOperationException(
+                                $"piping_system_rebuild_transaction_group_not_committed:{groupStatus}");
+                    }
+                    else
+                    {
+                        group.RollBack();
+                        transactionGroupRolledBack = true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    try
+                    {
+                        if (group.GetStatus() == TransactionStatus.Started)
+                        {
+                            group.RollBack();
+                            transactionGroupRolledBack = true;
+                        }
+                    }
+                    catch { }
+                    var rollbackSystems = orderedSystemDeletes
+                        .Select(system => SnapshotMepSystem(doc, system.systemId))
+                        .ToList();
+                    var rollbackAssignments =
+                        SnapshotElementMepSystemAssignments(doc, auditedElementIds);
+                    var rollbackTopology = SnapshotTopology(doc, auditedElementIds);
+                    var rollbackConnectorTopology =
+                        SnapshotConnectorTopology(doc, auditedElementIds);
+                    var rollbackFingerprint = SnapshotRepairFingerprint(doc, auditedElementIds);
+                    return new
+                    {
+                        status = "Blocked",
+                        dryRun = !shouldApply,
+                        blockCode = "piping_system_rebuild_failed",
+                        reason = ex.Message,
+                        transactionGroupRolledBack,
+                        rollbackVerified =
+                            beforeSystems.Zip(rollbackSystems, MepSystemStatesEqual).All(equal => equal) &&
+                            beforeAssignments.SequenceEqual(rollbackAssignments) &&
+                            beforeTopology.SequenceEqual(rollbackTopology) &&
+                            beforeConnectorTopology.SequenceEqual(rollbackConnectorTopology) &&
+                            beforeFingerprint.SequenceEqual(rollbackFingerprint),
+                        beforeSystems,
+                        rollbackSystems,
+                        beforeAssignments,
+                        afterAssignments,
+                        rollbackAssignments,
+                        beforeTopology,
+                        afterTopology,
+                        rollbackTopology,
+                        beforeConnectorTopology,
+                        afterConnectorTopology,
+                        rollbackConnectorTopology,
+                        transientSystem,
+                        transientSystemId,
+                        actualCascadeDeletes,
+                        nativeFailures,
+                        auditedElementIds
+                    };
+                }
+            }
+
+            var finalSystems = orderedSystemDeletes
+                .Select(system => SnapshotMepSystem(doc, system.systemId))
+                .ToList();
+            var finalAssignments = SnapshotElementMepSystemAssignments(doc, auditedElementIds);
+            var finalTopology = SnapshotTopology(doc, auditedElementIds);
+            var finalConnectorTopology = SnapshotConnectorTopology(doc, auditedElementIds);
+            var finalFingerprint = SnapshotRepairFingerprint(doc, auditedElementIds);
+            var rollbackVerified = shouldApply || (
+                beforeSystems.Zip(finalSystems, MepSystemStatesEqual).All(equal => equal) &&
+                beforeAssignments.SequenceEqual(finalAssignments) &&
+                beforeTopology.SequenceEqual(finalTopology) &&
+                beforeConnectorTopology.SequenceEqual(finalConnectorTopology) &&
+                beforeFingerprint.SequenceEqual(finalFingerprint));
+            return new
+            {
+                status = shouldApply ? "Rebuilt" : "DryRunReady",
+                dryRun = !shouldApply,
+                transactionGroupRolledBack,
+                rollbackVerified,
+                beforeSystems,
+                finalSystems,
+                beforeAssignments,
+                afterAssignments,
+                finalAssignments,
+                beforeTopology,
+                afterTopology,
+                finalTopology,
+                beforeConnectorTopology,
+                afterConnectorTopology,
+                finalConnectorTopology,
+                transientSystem,
+                transientSystemId,
+                actualCascadeDeletes,
+                nativeFailures,
+                auditedElementIds,
+                nextAction = shouldApply
+                    ? "Save the accepted checkpoint and read back every rebuilt element connector and piping-system assignment."
+                    : "Apply this exact piping-system rebuild only if the dry-run topology, assignment, and rollback audits are accepted."
+            };
+        }
+
         private static object HandleMepSystemMerge(Document doc, Params p, bool shouldApply)
         {
             if ((p.disconnectOnlyPairs != null && p.disconnectOnlyPairs.Count > 0) ||
                 (p.disconnectPairs != null && p.disconnectPairs.Count > 0) ||
                 p.connectOpenPair != null ||
+                p.connectOpenTee != null ||
                 !string.IsNullOrWhiteSpace(p.repair?.kind))
                 throw new ArgumentException(
                     "mergeMepSystem cannot be combined with connector-pair or geometry-repair modes.");
@@ -352,10 +802,9 @@ namespace RevitBridge.Logic.Handlers.MEP
                 .Distinct()
                 .OrderBy(id => id)
                 .ToList();
-            if (expectedSourceNativeMemberElementIds.Count == 0 ||
-                expectedSourceNativeMemberElementIds.Count > 500)
+            if (expectedSourceNativeMemberElementIds.Count > 500)
                 throw new ArgumentException(
-                    "mergeMepSystem expectedSourceNativeMemberElementIds must contain 1 to 500 unique positive ids.");
+                    "mergeMepSystem expectedSourceNativeMemberElementIds must contain no more than 500 unique positive ids.");
             if (expectedSourceNativeMemberElementIds.Except(expectedSourceElementIds).Any())
                 throw new ArgumentException(
                     "mergeMepSystem expectedSourceNativeMemberElementIds must be a subset of expectedSourceElementIds.");
@@ -379,9 +828,6 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (!expectedSourceElementIds.Contains(request.anchorConnector.elementId))
                 throw new ArgumentException(
                     "mergeMepSystem.anchorConnector element must belong to expectedSourceElementIds.");
-            if (!expectedSourceNativeMemberElementIds.Contains(request.anchorConnector.elementId))
-                throw new ArgumentException(
-                    "mergeMepSystem.anchorConnector element must belong to expectedSourceNativeMemberElementIds.");
             if (p.originToleranceFt <= 0 || p.originToleranceFt > 0.05)
                 throw new ArgumentException("originToleranceFt must be greater than zero and no more than 0.05.");
 
@@ -1108,7 +1554,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                             nativeFailures,
                             rollbackOnErrors: true,
                             deleteWarnings: false));
-                        ApplyRepair(doc, p.repair, operationKind, repairElementIds);
+                        ApplyRepair(doc, p.repair, operationKind, repairElementIds, p.originToleranceFt);
                         doc.Regenerate();
                         after = SnapshotRepairElements(doc, repairElementIds);
                         afterTopology = SnapshotTopology(doc, repairElementIds);
@@ -1446,6 +1892,294 @@ namespace RevitBridge.Logic.Handlers.MEP
             };
         }
 
+        private static object HandleOpenTeeConnection(Document doc, Params p, bool shouldApply)
+        {
+            if (p.connectOpenTee == null)
+                throw new ArgumentException("connectOpenTee is required.");
+            if (p.originToleranceFt <= 0 || p.originToleranceFt > 0.05)
+                throw new ArgumentException("originToleranceFt must be greater than zero and no more than 0.05.");
+            if (p.connectionMaxDistanceFt <= 0 || p.connectionMaxDistanceFt > 10.0)
+                throw new ArgumentException("connectionMaxDistanceFt must be greater than zero and no more than 10.");
+
+            var teeRequest = p.connectOpenTee;
+            var run1 = ResolveConnector(doc, teeRequest.run1, p.originToleranceFt, false);
+            var run2 = ResolveConnector(doc, teeRequest.run2, p.originToleranceFt, false);
+            var branch = ResolveConnector(doc, teeRequest.branch, p.originToleranceFt, false);
+            var ownerIds = new[]
+            {
+                ElementIdCompat.GetValue(run1.Owner.Id),
+                ElementIdCompat.GetValue(run2.Owner.Id),
+                ElementIdCompat.GetValue(branch.Owner.Id)
+            };
+            if (ownerIds.Distinct().Count() != 3)
+                throw new ArgumentException("connectOpenTee requires three connectors owned by three distinct MEP curves.");
+            if (!(run1.Owner is MEPCurve) || !(run2.Owner is MEPCurve) || !(branch.Owner is MEPCurve))
+                throw new ArgumentException("connectOpenTee connector owners must be duct or pipe curves.");
+
+            AssertCompatible(run1.Connector, run2.Connector, "tee run");
+            AssertCompatible(run1.Connector, branch.Connector, "tee branch", allowDifferentShapes: false);
+            var before = new
+            {
+                run1 = ConnectorSnapshotWithGeometry(run1),
+                run2 = ConnectorSnapshotWithGeometry(run2),
+                branch = ConnectorSnapshotWithGeometry(branch)
+            };
+            var nonOpen = new[]
+            {
+                new { role = "run1", owners = PhysicalConnectedOwnerIds(run1.Connector) },
+                new { role = "run2", owners = PhysicalConnectedOwnerIds(run2.Connector) },
+                new { role = "branch", owners = PhysicalConnectedOwnerIds(branch.Connector) }
+            }.Where(item => item.owners.Count > 0).ToList();
+            if (nonOpen.Count > 0)
+            {
+                return new
+                {
+                    status = "Blocked",
+                    dryRun = !shouldApply,
+                    blockCode = "tee_connector_not_physically_open",
+                    before,
+                    nonOpen
+                };
+            }
+
+            var runAxisDot = ConnectorAxisDot(run1.Connector, run2.Connector);
+            if (!ConnectorSizesMatch(run1.Connector, run2.Connector))
+            {
+                return new
+                {
+                    status = "Blocked",
+                    dryRun = !shouldApply,
+                    blockCode = "tee_run_requires_matching_sizes",
+                    before,
+                    runAxisDot
+                };
+            }
+            if (runAxisDot > -0.5)
+            {
+                return new
+                {
+                    status = "Blocked",
+                    dryRun = !shouldApply,
+                    blockCode = "tee_run_requires_opposing_connector_directions",
+                    before,
+                    runAxisDot
+                };
+            }
+
+            var maximumGapFt = new[]
+            {
+                run1.Connector.Origin.DistanceTo(run2.Connector.Origin),
+                run1.Connector.Origin.DistanceTo(branch.Connector.Origin),
+                run2.Connector.Origin.DistanceTo(branch.Connector.Origin)
+            }.Max();
+            if (maximumGapFt > p.connectionMaxDistanceFt)
+            {
+                return new
+                {
+                    status = "Blocked",
+                    dryRun = !shouldApply,
+                    blockCode = "tee_connector_distance_exceeds_limit",
+                    before,
+                    maximumGapFt,
+                    connectionMaxDistanceFt = p.connectionMaxDistanceFt
+                };
+            }
+
+            Element? replacement = null;
+            object? replacementBefore = null;
+            if (teeRequest.replaceDisconnectedFittingElementId.HasValue)
+            {
+                replacement = doc.GetElement(ElementIdCompat.Create(teeRequest.replaceDisconnectedFittingElementId.Value));
+                if (replacement == null)
+                    throw new InvalidOperationException(
+                        $"replacement_fitting_not_found:{teeRequest.replaceDisconnectedFittingElementId.Value}");
+                if (replacement.Category == null ||
+                    (replacement.Category.Id.IntegerValue != (int)BuiltInCategory.OST_PipeFitting &&
+                     replacement.Category.Id.IntegerValue != (int)BuiltInCategory.OST_DuctFitting))
+                    throw new InvalidOperationException("replacement_element_is_not_a_pipe_or_duct_fitting");
+                if (teeRequest.expectedReplacementTypeId.HasValue &&
+                    ElementIdCompat.GetValue(replacement.GetTypeId()) != teeRequest.expectedReplacementTypeId.Value)
+                    throw new InvalidOperationException("replacement_fitting_type_changed_before_tee_repair");
+                var replacementConnections = MepSystemUtil.GetConnectors(replacement)
+                    .SelectMany(PhysicalConnectedOwnerIds)
+                    .Distinct()
+                    .OrderBy(id => id)
+                    .ToList();
+                if (replacementConnections.Count > 0)
+                    throw new InvalidOperationException("replacement_fitting_must_be_physically_disconnected");
+                replacementBefore = SnapshotRepairElements(
+                    doc,
+                    new List<long> { teeRequest.replaceDisconnectedFittingElementId.Value }).FirstOrDefault();
+            }
+
+            Workset? requestedWorkset;
+            try
+            {
+                requestedWorkset = ResolveFittingWorkset(doc, p.fittingWorksetId, p.fittingWorksetName);
+            }
+            catch (Exception ex)
+            {
+                return new
+                {
+                    status = "Blocked",
+                    dryRun = !shouldApply,
+                    blockCode = "fitting_workset_resolution_failed",
+                    reason = ex.Message,
+                    before
+                };
+            }
+
+            var plan = new
+            {
+                operation = "native_open_tee",
+                run1ElementId = ownerIds[0],
+                run1ConnectorId = run1.ConnectorId,
+                run2ElementId = ownerIds[1],
+                run2ConnectorId = run2.ConnectorId,
+                branchElementId = ownerIds[2],
+                branchConnectorId = branch.ConnectorId,
+                runAxisDot,
+                maximumGapFt,
+                replaceDisconnectedFittingElementId = teeRequest.replaceDisconnectedFittingElementId,
+                expectedReplacementTypeId = teeRequest.expectedReplacementTypeId,
+                fittingWorkset = requestedWorkset == null ? null : new
+                {
+                    id = requestedWorkset.Id.IntegerValue,
+                    name = requestedWorkset.Name
+                }
+            };
+
+            var nativeFailures = new List<CapturedFailure>();
+            long? fittingId = null;
+            long? fittingTypeId = null;
+            string? fittingTypeName = null;
+            object? fittingWorkset = null;
+            object? transientOrFinalFitting = null;
+            using (var tx = new Transaction(
+                doc,
+                shouldApply ? "Connect Open MEP Tee" : "Connect Open MEP Tee Dry Run"))
+            {
+                tx.Start();
+                tx.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(
+                    tx,
+                    nativeFailures,
+                    rollbackOnErrors: true,
+                    deleteWarnings: false));
+                try
+                {
+                    if (replacement != null)
+                        doc.Delete(replacement.Id);
+                    doc.Regenerate();
+
+                    var fitting = doc.Create.NewTeeFitting(run1.Connector, run2.Connector, branch.Connector);
+                    if (fitting == null)
+                        throw new InvalidOperationException("Revit did not create the required tee fitting.");
+                    fittingId = ElementIdCompat.GetValue(fitting.Id);
+                    fittingTypeId = ElementIdCompat.GetValue(fitting.GetTypeId());
+                    fittingTypeName = doc.GetElement(fitting.GetTypeId())?.Name ?? "";
+                    if (requestedWorkset != null)
+                        fittingWorkset = ApplyAndVerifyFittingWorkset(fitting, requestedWorkset, p.verify);
+                    doc.Regenerate();
+
+                    if (p.verify && !FittingConnectsOwners(fitting, ownerIds))
+                        throw new InvalidOperationException("open_tee_connection_native_audit_failed");
+                    transientOrFinalFitting = SnapshotRepairElements(
+                        doc,
+                        new List<long> { fittingId.Value }).FirstOrDefault();
+
+                    if (shouldApply)
+                    {
+                        var txStatus = tx.Commit();
+                        if (txStatus != TransactionStatus.Committed)
+                            throw new InvalidOperationException($"open_tee_connection_transaction_not_committed:{txStatus}");
+                    }
+                    else
+                    {
+                        tx.RollBack();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    try
+                    {
+                        if (tx.GetStatus() == TransactionStatus.Started) tx.RollBack();
+                    }
+                    catch { }
+                    return new
+                    {
+                        status = "Blocked",
+                        dryRun = !shouldApply,
+                        blockCode = "open_tee_connection_failed",
+                        reason = ex.Message,
+                        before,
+                        plan,
+                        fittingId,
+                        fittingTypeId,
+                        fittingTypeName,
+                        nativeFailures,
+                        rolledBack = !shouldApply,
+                        rollbackVerified = SafeOpenTeeUnconnected(
+                            doc,
+                            teeRequest,
+                            p.originToleranceFt,
+                            requireReplacementPresent: teeRequest.replaceDisconnectedFittingElementId.HasValue)
+                    };
+                }
+            }
+
+            if (!shouldApply)
+            {
+                var rollbackVerified = SafeOpenTeeUnconnected(
+                    doc,
+                    teeRequest,
+                    p.originToleranceFt,
+                    requireReplacementPresent: teeRequest.replaceDisconnectedFittingElementId.HasValue);
+                return new
+                {
+                    status = rollbackVerified ? "DryRunPassed" : "Blocked",
+                    dryRun = true,
+                    mutationAttempted = true,
+                    before,
+                    plan,
+                    replacementBefore,
+                    transientFittingId = fittingId,
+                    transientFittingTypeId = fittingTypeId,
+                    transientFittingTypeName = fittingTypeName,
+                    transientFitting = transientOrFinalFitting,
+                    fittingWorkset,
+                    nativeFailures,
+                    rolledBack = true,
+                    rollbackVerified,
+                    nextAction = rollbackVerified
+                        ? "Apply this exact native tee replacement only if the three connector identities, source sizes, transient fitting, and rollback proof are accepted."
+                        : "Preserve the pre-action checkpoint and repair only this failed native tee stage."
+                };
+            }
+
+            var finalFitting = fittingId.HasValue
+                ? doc.GetElement(ElementIdCompat.Create(fittingId.Value))
+                : null;
+            var verified = finalFitting != null && FittingConnectsOwners(finalFitting, ownerIds);
+            return new
+            {
+                status = verified ? "Connected" : "Blocked",
+                dryRun = false,
+                before,
+                plan,
+                replacementBefore,
+                fittingId,
+                fittingTypeId,
+                fittingTypeName,
+                fitting = transientOrFinalFitting,
+                fittingWorkset,
+                nativeFailures,
+                verified,
+                nextAction = verified
+                    ? "Read back the native tee sizes and system membership, then change only the fitting type if a source-family match is required."
+                    : "Preserve the pre-action checkpoint and repair only this failed native tee stage."
+            };
+        }
+
         private static object BuildOpenConnectionSnapshot(ResolvedConnector first, ResolvedConnector second)
         {
             return new
@@ -1650,7 +2384,38 @@ namespace RevitBridge.Logic.Handlers.MEP
             }
         }
 
+        private static bool SafeOpenTeeUnconnected(
+            Document doc,
+            OpenTeeConnection tee,
+            double originToleranceFt,
+            bool requireReplacementPresent)
+        {
+            try
+            {
+                var connectors = new[]
+                {
+                    ResolveConnector(doc, tee.run1, originToleranceFt, false),
+                    ResolveConnector(doc, tee.run2, originToleranceFt, false),
+                    ResolveConnector(doc, tee.branch, originToleranceFt, false)
+                };
+                if (connectors.Any(item => PhysicalConnectedOwnerIds(item.Connector).Count > 0))
+                    return false;
+                if (!requireReplacementPresent || !tee.replaceDisconnectedFittingElementId.HasValue)
+                    return true;
+                return doc.GetElement(ElementIdCompat.Create(tee.replaceDisconnectedFittingElementId.Value)) != null;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private static bool FittingConnectsOwners(Element fitting, long firstOwnerId, long secondOwnerId)
+        {
+            return FittingConnectsOwners(fitting, new[] { firstOwnerId, secondOwnerId });
+        }
+
+        private static bool FittingConnectsOwners(Element fitting, IEnumerable<long> requiredOwnerIds)
         {
             var connectedOwnerIds = new HashSet<long>();
             foreach (var connector in MepSystemUtil.GetConnectors(fitting))
@@ -1658,7 +2423,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 foreach (var ownerId in PhysicalConnectedOwnerIds(connector))
                     connectedOwnerIds.Add(ownerId);
             }
-            return connectedOwnerIds.Contains(firstOwnerId) && connectedOwnerIds.Contains(secondOwnerId);
+            return requiredOwnerIds.All(connectedOwnerIds.Contains);
         }
 
         private static ResolvedConnector ResolveConnectorAfterFitting(
@@ -1696,9 +2461,10 @@ namespace RevitBridge.Logic.Handlers.MEP
             var normalized = (value ?? string.Empty).Trim().ToLowerInvariant().Replace("-", "_");
             if (normalized == "move_elements_vector" ||
                 normalized == "set_curve_line" ||
-                normalized == "set_flex_curve")
+                normalized == "set_flex_curve" ||
+                normalized == "resize_round_connectors")
                 return normalized;
-            throw new ArgumentException("repair.kind must be move_elements_vector, set_curve_line, or set_flex_curve.");
+            throw new ArgumentException("repair.kind must be move_elements_vector, set_curve_line, set_flex_curve, or resize_round_connectors.");
         }
 
         private static List<long> ResolveRepairElementIds(Document doc, RepairOperation repair, string operationKind)
@@ -1732,6 +2498,28 @@ namespace RevitBridge.Logic.Handlers.MEP
                 if (repair.startTangent != null) ParseNonZeroVector(repair.startTangent, "repair_start_tangent");
                 if (repair.endTangent != null) ParseNonZeroVector(repair.endTangent, "repair_end_tangent");
             }
+            if (operationKind == "resize_round_connectors")
+            {
+                if (repair.connectorChanges == null || repair.connectorChanges.Count == 0)
+                    throw new ArgumentException("repair.connectorChanges must contain at least one connector resize.");
+                if (repair.connectorChanges.Count > 16)
+                    throw new ArgumentException("repair.connectorChanges exceeds the maximum of 16.");
+                var duplicateConnectorIds = repair.connectorChanges
+                    .GroupBy(change => change.connectorId)
+                    .Where(group => group.Count() > 1)
+                    .Select(group => group.Key)
+                    .ToList();
+                if (duplicateConnectorIds.Count > 0)
+                    throw new ArgumentException($"repair.connectorChanges contains duplicate connector ids: {string.Join(",", duplicateConnectorIds)}");
+                foreach (var change in repair.connectorChanges)
+                {
+                    if (change.connectorId < 0)
+                        throw new ArgumentException("repair.connectorChanges connectorId must be non-negative.");
+                    ParseXyz(change.expectedOriginXyz, $"repair_connector_{change.connectorId}_expected_origin");
+                    if (!IsFinite(change.diameterFt) || change.diameterFt <= 0 || change.diameterFt > 10)
+                        throw new ArgumentException("repair.connectorChanges diameterFt must be greater than zero and no more than 10 feet.");
+                }
+            }
             return ids;
         }
 
@@ -1739,7 +2527,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             Document doc,
             RepairOperation repair,
             string operationKind,
-            List<long> repairElementIds)
+            List<long> repairElementIds,
+            double originToleranceFt)
         {
             if (operationKind == "move_elements_vector")
             {
@@ -1773,6 +2562,33 @@ namespace RevitBridge.Logic.Handlers.MEP
                     return;
                 }
                 throw new InvalidOperationException($"repair_element_is_not_flex_mep:{repair.elementId}");
+            }
+            if (operationKind == "resize_round_connectors")
+            {
+                var connectors = MepSystemUtil.GetConnectors(element)
+                    .Where(connector => connector != null)
+                    .ToList();
+                foreach (var change in repair.connectorChanges)
+                {
+                    var connector = connectors.FirstOrDefault(candidate =>
+                        MepSystemUtil.TryGetNativeConnectorId(candidate, out var nativeId) &&
+                        nativeId == change.connectorId);
+                    if (connector == null)
+                        throw new InvalidOperationException(
+                            $"repair_round_connector_not_found:{repair.elementId}:{change.connectorId}");
+                    if (connector.Shape != ConnectorProfileType.Round)
+                        throw new InvalidOperationException(
+                            $"repair_connector_is_not_round:{repair.elementId}:{change.connectorId}:{connector.Shape}");
+                    var expectedOrigin = ParseXyz(
+                        change.expectedOriginXyz,
+                        $"repair_connector_{change.connectorId}_expected_origin");
+                    var originDistance = connector.Origin.DistanceTo(expectedOrigin);
+                    if (originDistance > originToleranceFt)
+                        throw new InvalidOperationException(
+                            $"repair_connector_origin_guard_failed:{repair.elementId}:{change.connectorId}:{originDistance:0.########}:{originToleranceFt:0.########}");
+                    connector.Radius = change.diameterFt / 2.0;
+                }
+                return;
             }
             if (!(element.Location is LocationCurve locationCurve))
                 throw new InvalidOperationException($"repair_element_has_no_location_curve:{repair.elementId}");
@@ -2038,6 +2854,18 @@ namespace RevitBridge.Logic.Handlers.MEP
                             ? nativeId
                             : index,
                         origin = new[] { connector.Origin.X, connector.Origin.Y, connector.Origin.Z },
+                        shape = connector.Shape.ToString(),
+                        diameterFt = connector.Shape == ConnectorProfileType.Round
+                            ? (double?)(connector.Radius * 2.0)
+                            : null,
+                        widthFt = connector.Shape == ConnectorProfileType.Rectangular ||
+                            connector.Shape == ConnectorProfileType.Oval
+                                ? (double?)connector.Width
+                                : null,
+                        heightFt = connector.Shape == ConnectorProfileType.Rectangular ||
+                            connector.Shape == ConnectorProfileType.Oval
+                                ? (double?)connector.Height
+                                : null,
                         systemClassification = ConnectorSystemClassification(connector),
                         systemName = SafeText(() => connector.MEPSystem?.Name ?? string.Empty),
                         physicalConnectedOwnerIds = PhysicalConnectedOwnerIds(connector)
@@ -2085,6 +2913,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                             ? nativeId.ToString()
                             : "origin_guard";
                         return $"{connectorId}@{PointFingerprint(connector.Origin)}=>" +
+                            $"{ConnectorSizeFingerprint(connector)}=>" +
                             $"{ConnectorSystemClassification(connector)}=>" +
                             string.Join(",", PhysicalConnectedOwnerIds(connector));
                     })
@@ -2093,6 +2922,16 @@ namespace RevitBridge.Logic.Handlers.MEP
                 result.Add($"{elementId}|{curve}|{flexCurve}|{string.Join(";", connectors)}");
             }
             return result;
+        }
+
+        private static string ConnectorSizeFingerprint(Connector connector)
+        {
+            if (connector.Shape == ConnectorProfileType.Round)
+                return $"round:{(connector.Radius * 2.0):R}";
+            if (connector.Shape == ConnectorProfileType.Rectangular ||
+                connector.Shape == ConnectorProfileType.Oval)
+                return $"{connector.Shape}:{connector.Width:R}x{connector.Height:R}";
+            return connector.Shape.ToString();
         }
 
         private static object? SnapshotFlexGeometry(Element element)
@@ -2230,9 +3069,73 @@ namespace RevitBridge.Logic.Handlers.MEP
             var secondSystem = ConnectorSystemClassification(b);
             if (!string.IsNullOrWhiteSpace(firstSystem) &&
                 !string.IsNullOrWhiteSpace(secondSystem) &&
-                !string.Equals(firstSystem, secondSystem, StringComparison.OrdinalIgnoreCase))
+                !string.Equals(firstSystem, secondSystem, StringComparison.OrdinalIgnoreCase) &&
+                !ConnectorSystemClassificationsEquivalent(a, b, firstSystem, secondSystem))
                 throw new InvalidOperationException(
                     $"connector_system_classification_mismatch_{stage}:{firstSystem}:{secondSystem}");
+        }
+
+        private static bool ConnectorSystemClassificationsEquivalent(
+            Connector first,
+            Connector second,
+            string firstClassification,
+            string secondClassification)
+        {
+            // A disconnected fitting connector can report only its assigned
+            // MEPSystemType id while an adjacent pipe/duct reports the native
+            // enum classification (for example, "mep_type:575474" versus
+            // "pipe:Vent"). Resolve only that asymmetric fallback through the
+            // owning element's native system text. Do not broadly equate two
+            // different explicit classifications or two different type ids.
+            if (TryGetExplicitConnectorClassification(firstClassification, out var firstExplicit) &&
+                IsMepTypeFallback(secondClassification))
+            {
+                return OwnerMatchesSystemClassification(second, firstExplicit);
+            }
+            if (TryGetExplicitConnectorClassification(secondClassification, out var secondExplicit) &&
+                IsMepTypeFallback(firstClassification))
+            {
+                return OwnerMatchesSystemClassification(first, secondExplicit);
+            }
+            return false;
+        }
+
+        private static bool OwnerMatchesSystemClassification(Connector connector, string required)
+        {
+            try
+            {
+                return connector.Owner != null &&
+                    MepSystemUtil.MatchesSystemClassificationCandidates(
+                        MepSystemUtil.GetSystemTextCandidates(connector.Owner),
+                        required);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryGetExplicitConnectorClassification(string value, out string classification)
+        {
+            classification = string.Empty;
+            var raw = (value ?? string.Empty).Trim();
+            var separator = raw.IndexOf(':');
+            if (separator <= 0 || separator >= raw.Length - 1) return false;
+            var domain = raw.Substring(0, separator);
+            if (!domain.Equals("pipe", StringComparison.OrdinalIgnoreCase) &&
+                !domain.Equals("duct", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+            classification = raw.Substring(separator + 1);
+            return IsDefinedSystemClassification(classification);
+        }
+
+        private static bool IsMepTypeFallback(string value)
+        {
+            return (value ?? string.Empty)
+                .Trim()
+                .StartsWith("mep_type:", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string ConnectorSystemClassification(Connector connector)
