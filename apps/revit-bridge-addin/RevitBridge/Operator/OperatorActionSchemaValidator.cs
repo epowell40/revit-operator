@@ -2641,6 +2641,29 @@ namespace RevitBridge.Operator
                 if (!ValidateConnectorPairArray(obj.Value, "disconnectOnlyPairs", maxCount: 32, allowAfterOrigin: false, out error)) return false;
                 if (!ValidateConnectorPairArray(obj.Value, "disconnectPairs", maxCount: 32, allowAfterOrigin: true, out error)) return false;
                 if (!ValidateOptionalConnectorPair(obj.Value, "connectOpenPair", allowAfterOrigin: false, out error)) return false;
+                var hasMergeMepSystem = obj.Value.TryGetProperty("mergeMepSystem", out var mergeMepSystem) &&
+                    mergeMepSystem.ValueKind == JsonValueKind.Object;
+                if (hasMergeMepSystem)
+                {
+                    if (!ValidateRequiredLong(mergeMepSystem, "sourceSystemId", out error)) return false;
+                    if (!ValidateRequiredLong(mergeMepSystem, "targetSystemId", out error)) return false;
+                    if (!ValidateRequiredString(mergeMepSystem, "expectedSourceSystemName", maxLen: 256, out error)) return false;
+                    if (!ValidateRequiredString(mergeMepSystem, "expectedTargetSystemName", maxLen: 256, out error)) return false;
+                    if (!ValidateOptionalString(mergeMepSystem, "finalTargetSystemName", maxLen: 256, out error)) return false;
+                    if (!ValidateRequiredLongArray(mergeMepSystem, "expectedSourceElementIds", maxCount: 500, out error)) return false;
+                    if (!ValidateRequiredLongArray(mergeMepSystem, "expectedSourceNativeMemberElementIds", maxCount: 500, out error)) return false;
+                    if (!mergeMepSystem.TryGetProperty("anchorConnector", out var anchorConnector) ||
+                        anchorConnector.ValueKind != JsonValueKind.Object)
+                    {
+                        error = "repair-mep-connectors.mergeMepSystem.anchorConnector is required.";
+                        return false;
+                    }
+                    if (!ValidateConnectorReference(
+                        anchorConnector,
+                        "repair-mep-connectors.mergeMepSystem.anchorConnector",
+                        allowAfterOrigin: false,
+                        out error)) return false;
+                }
                 if (!ValidateOptionalString(obj.Value, "connectionKind", maxLen: 32, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "fittingWorksetName", maxLen: 256, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "fittingWorksetId", out error)) return false;
@@ -2664,11 +2687,12 @@ namespace RevitBridge.Operator
                     !string.IsNullOrWhiteSpace(repairKindElement.GetString());
                 var selectedModes = (disconnectOnlyCount > 0 ? 1 : 0) +
                     (hasConnectOpen ? 1 : 0) +
+                    (hasMergeMepSystem ? 1 : 0) +
                     (disconnectCount > 0 ? 1 : 0) +
                     (hasRepair && disconnectCount == 0 ? 1 : 0);
                 if (selectedModes != 1)
                 {
-                    error = "repair-mep-connectors requires exactly one mode: disconnectOnlyPairs, connectOpenPair, disconnectPairs plus repair, or standalone repair.";
+                    error = "repair-mep-connectors requires exactly one mode: disconnectOnlyPairs, connectOpenPair, mergeMepSystem, disconnectPairs plus repair, or standalone repair.";
                     return false;
                 }
                 if (disconnectCount > 0 && !hasRepair)

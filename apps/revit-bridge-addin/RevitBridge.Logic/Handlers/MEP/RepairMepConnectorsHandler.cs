@@ -42,12 +42,25 @@ namespace RevitBridge.Logic.Handlers.MEP
             public double[]? endTangent { get; set; }
         }
 
+        public sealed class MepSystemMergeOperation
+        {
+            public long sourceSystemId { get; set; }
+            public long targetSystemId { get; set; }
+            public string expectedSourceSystemName { get; set; } = "";
+            public string expectedTargetSystemName { get; set; } = "";
+            public string? finalTargetSystemName { get; set; }
+            public List<long> expectedSourceElementIds { get; set; } = new List<long>();
+            public List<long> expectedSourceNativeMemberElementIds { get; set; } = new List<long>();
+            public ConnectorReference anchorConnector { get; set; } = new ConnectorReference();
+        }
+
         public sealed class Params
         {
             public string? expectedModelPath { get; set; }
             public List<ConnectorPair> disconnectOnlyPairs { get; set; } = new List<ConnectorPair>();
             public List<ConnectorPair> disconnectPairs { get; set; } = new List<ConnectorPair>();
             public ConnectorPair? connectOpenPair { get; set; }
+            public MepSystemMergeOperation? mergeMepSystem { get; set; }
             public string? connectionKind { get; set; }
             public string? fittingWorksetName { get; set; }
             public long? fittingWorksetId { get; set; }
@@ -78,6 +91,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             var uidoc = app.ActiveUIDocument ?? throw new InvalidOperationException("No active UI document.");
             var doc = uidoc.Document;
             AssertExpectedModel(doc, p.expectedModelPath);
+            if (p.mergeMepSystem != null)
+                return Task.FromResult(HandleMepSystemMerge(doc, p, shouldApply));
             if (p.disconnectOnlyPairs != null && p.disconnectOnlyPairs.Count > 0)
                 return Task.FromResult(HandleDisconnectOnly(doc, p, shouldApply));
             if (p.connectOpenPair != null)
@@ -290,6 +305,490 @@ namespace RevitBridge.Logic.Handlers.MEP
                     ? "Save the accepted repair checkpoint, read back sizes/systems, and capture focused visual evidence."
                     : "Apply this exact connector identity repair only if the dry-run pair, topology, and rollback audits are accepted."
             });
+        }
+
+        private sealed class MepSystemState
+        {
+            public bool exists { get; set; }
+            public long systemId { get; set; }
+            public string name { get; set; } = "";
+            public long typeId { get; set; }
+            public bool isEmpty { get; set; }
+            public List<long> memberIds { get; set; } = new List<long>();
+        }
+
+        private static object HandleMepSystemMerge(Document doc, Params p, bool shouldApply)
+        {
+            if ((p.disconnectOnlyPairs != null && p.disconnectOnlyPairs.Count > 0) ||
+                (p.disconnectPairs != null && p.disconnectPairs.Count > 0) ||
+                p.connectOpenPair != null ||
+                !string.IsNullOrWhiteSpace(p.repair?.kind))
+                throw new ArgumentException(
+                    "mergeMepSystem cannot be combined with connector-pair or geometry-repair modes.");
+
+            var request = p.mergeMepSystem ??
+                throw new ArgumentException("mergeMepSystem is required.");
+            if (request.sourceSystemId <= 0 || request.targetSystemId <= 0)
+                throw new ArgumentException("mergeMepSystem sourceSystemId and targetSystemId must be positive.");
+            if (request.sourceSystemId == request.targetSystemId)
+                throw new ArgumentException("mergeMepSystem source and target systems must be different.");
+            if (string.IsNullOrWhiteSpace(request.expectedSourceSystemName) ||
+                string.IsNullOrWhiteSpace(request.expectedTargetSystemName))
+                throw new ArgumentException(
+                    "mergeMepSystem requires expectedSourceSystemName and expectedTargetSystemName.");
+
+            var expectedSourceElementIds = (request.expectedSourceElementIds ?? new List<long>())
+                .Where(id => id > 0)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToList();
+            if (expectedSourceElementIds.Count == 0 || expectedSourceElementIds.Count > 500)
+                throw new ArgumentException(
+                    "mergeMepSystem expectedSourceElementIds must contain 1 to 500 unique positive ids.");
+            var expectedSourceNativeMemberElementIds =
+                (request.expectedSourceNativeMemberElementIds ?? new List<long>())
+                .Where(id => id > 0)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToList();
+            if (expectedSourceNativeMemberElementIds.Count == 0 ||
+                expectedSourceNativeMemberElementIds.Count > 500)
+                throw new ArgumentException(
+                    "mergeMepSystem expectedSourceNativeMemberElementIds must contain 1 to 500 unique positive ids.");
+            if (expectedSourceNativeMemberElementIds.Except(expectedSourceElementIds).Any())
+                throw new ArgumentException(
+                    "mergeMepSystem expectedSourceNativeMemberElementIds must be a subset of expectedSourceElementIds.");
+            if (request.anchorConnector == null || request.anchorConnector.elementId <= 0)
+                throw new ArgumentException("mergeMepSystem.anchorConnector is required.");
+            if (!expectedSourceElementIds.Contains(request.anchorConnector.elementId))
+                throw new ArgumentException(
+                    "mergeMepSystem.anchorConnector element must belong to expectedSourceElementIds.");
+            if (!expectedSourceNativeMemberElementIds.Contains(request.anchorConnector.elementId))
+                throw new ArgumentException(
+                    "mergeMepSystem.anchorConnector element must belong to expectedSourceNativeMemberElementIds.");
+            if (p.originToleranceFt <= 0 || p.originToleranceFt > 0.05)
+                throw new ArgumentException("originToleranceFt must be greater than zero and no more than 0.05.");
+
+            var sourceSystem = ResolveMepSystem(doc, request.sourceSystemId, "source");
+            var targetSystem = ResolveMepSystem(doc, request.targetSystemId, "target");
+            AssertExpectedSystemName(sourceSystem, request.expectedSourceSystemName, "source");
+            AssertExpectedSystemName(targetSystem, request.expectedTargetSystemName, "target");
+            if (sourceSystem.GetTypeId() != targetSystem.GetTypeId())
+                throw new InvalidOperationException(
+                    $"mep_system_type_mismatch:{ElementIdCompat.GetValue(sourceSystem.GetTypeId())}:" +
+                    $"{ElementIdCompat.GetValue(targetSystem.GetTypeId())}");
+            if (sourceSystem.Category?.Id != targetSystem.Category?.Id)
+                throw new InvalidOperationException("mep_system_category_mismatch");
+
+            var beforeSource = SnapshotMepSystem(doc, request.sourceSystemId);
+            var beforeTarget = SnapshotMepSystem(doc, request.targetSystemId);
+            if (!beforeSource.memberIds.SequenceEqual(expectedSourceNativeMemberElementIds))
+                throw new InvalidOperationException(
+                    "source_system_native_membership_changed:" +
+                    $"expected={string.Join(",", expectedSourceNativeMemberElementIds)}:" +
+                    $"actual={string.Join(",", beforeSource.memberIds)}");
+            if (beforeTarget.memberIds.Intersect(expectedSourceElementIds).Any())
+                throw new InvalidOperationException(
+                    "source_and_target_system_memberships_are_not_disjoint");
+            AssertElementsAssignedToSystem(
+                doc,
+                expectedSourceElementIds,
+                request.sourceSystemId,
+                request.targetSystemId);
+
+            var resolvedAnchorBefore = ResolveConnector(
+                doc,
+                request.anchorConnector,
+                p.originToleranceFt,
+                false);
+            var anchorBefore = SnapshotResolvedConnector(resolvedAnchorBefore);
+            var anchorSystemIdBefore = resolvedAnchorBefore.Connector.MEPSystem == null
+                ? 0
+                : ElementIdCompat.GetValue(resolvedAnchorBefore.Connector.MEPSystem.Id);
+            if (anchorSystemIdBefore != request.sourceSystemId)
+                throw new InvalidOperationException(
+                    $"anchor_connector_not_owned_by_source_system:{anchorSystemIdBefore}");
+
+            var auditedElementIds = beforeTarget.memberIds
+                .Concat(expectedSourceElementIds)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToList();
+            var beforeAssignments = SnapshotElementMepSystemAssignments(doc, auditedElementIds);
+            var expectedTargetAfterIds = beforeTarget.memberIds
+                .Concat(expectedSourceNativeMemberElementIds)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToList();
+            var expectedTargetSystemNameAfter =
+                string.IsNullOrWhiteSpace(request.finalTargetSystemName)
+                    ? beforeTarget.name
+                    : request.finalTargetSystemName!.Trim();
+
+            var nativeFailures = new List<CapturedFailure>();
+            var transactionGroupRolledBack = false;
+            MepSystemState? afterSource = null;
+            MepSystemState? afterTarget = null;
+            List<string>? afterAssignments = null;
+            object? anchorAfterAdd = null;
+
+            using (var group = new TransactionGroup(
+                doc,
+                shouldApply ? "Merge Exact MEP Systems" : "Dry Run Exact MEP System Merge"))
+            {
+                group.Start();
+                try
+                {
+                    using (var tx = new Transaction(doc, "Move Exact Network To Retained MEP System"))
+                    {
+                        tx.Start();
+                        tx.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(
+                            tx,
+                            nativeFailures,
+                            rollbackOnErrors: true,
+                            deleteWarnings: false));
+
+                        var deletedIds = doc.Delete(sourceSystem.Id)
+                            .Select(ElementIdCompat.GetValue)
+                            .OrderBy(id => id)
+                            .ToList();
+                        var unexpectedDeletedIds = deletedIds
+                            .Where(id => id != request.sourceSystemId)
+                            .ToList();
+                        if (unexpectedDeletedIds.Count > 0)
+                            throw new InvalidOperationException(
+                                "source_system_delete_would_remove_model_elements:" +
+                                string.Join(",", unexpectedDeletedIds));
+                        doc.Regenerate();
+
+                        var missingSourceElementIds = expectedSourceElementIds
+                            .Where(id => doc.GetElement(ElementIdCompat.Create(id)) == null)
+                            .ToList();
+                        if (missingSourceElementIds.Count > 0)
+                            throw new InvalidOperationException(
+                                "source_system_delete_removed_expected_elements:" +
+                                string.Join(",", missingSourceElementIds));
+
+                        var resolvedAnchor = ResolveConnector(
+                            doc,
+                            request.anchorConnector,
+                            p.originToleranceFt,
+                            false);
+                        var anchorSystemAfterRemove = resolvedAnchor.Connector.MEPSystem == null
+                            ? 0
+                            : ElementIdCompat.GetValue(resolvedAnchor.Connector.MEPSystem.Id);
+                        if (anchorSystemAfterRemove != 0)
+                            throw new InvalidOperationException(
+                                $"anchor_connector_still_has_system_after_source_delete:{anchorSystemAfterRemove}");
+                        var anchorConnectorSet = new ConnectorSet();
+                        anchorConnectorSet.Insert(resolvedAnchor.Connector);
+                        targetSystem.Add(anchorConnectorSet);
+                        doc.Regenerate();
+
+                        foreach (var nativeMemberElementId in expectedSourceNativeMemberElementIds
+                            .Where(id => id != request.anchorConnector.elementId))
+                        {
+                            var nativeMember = doc.GetElement(
+                                ElementIdCompat.Create(nativeMemberElementId)) ??
+                                throw new InvalidOperationException(
+                                    $"source_native_member_missing_after_system_delete:{nativeMemberElementId}");
+                            var connectors = MepSystemUtil.GetConnectors(nativeMember)
+                                .ToList();
+                            if (connectors.Any(connector =>
+                                connector.MEPSystem != null &&
+                                ElementIdCompat.GetValue(connector.MEPSystem.Id) ==
+                                    request.targetSystemId))
+                                continue;
+                            var nextUnassignedConnector = connectors
+                                .Where(connector => connector.MEPSystem == null)
+                                .OrderBy(connector => connector.Id)
+                                .FirstOrDefault();
+                            if (nextUnassignedConnector == null)
+                                throw new InvalidOperationException(
+                                    $"source_native_member_has_no_unassigned_connector_after_anchor_add:" +
+                                    $"{nativeMemberElementId}");
+                            var nativeMemberConnectorSet = new ConnectorSet();
+                            nativeMemberConnectorSet.Insert(nextUnassignedConnector);
+                            targetSystem.Add(nativeMemberConnectorSet);
+                            doc.Regenerate();
+                        }
+
+                        if (!string.Equals(
+                            targetSystem.Name,
+                            expectedTargetSystemNameAfter,
+                            StringComparison.Ordinal))
+                        {
+                            targetSystem.Name = expectedTargetSystemNameAfter;
+                            doc.Regenerate();
+                        }
+
+                        var anchorSystemAfterAdd = resolvedAnchor.Connector.MEPSystem == null
+                            ? 0
+                            : ElementIdCompat.GetValue(resolvedAnchor.Connector.MEPSystem.Id);
+                        if (anchorSystemAfterAdd != request.targetSystemId)
+                            throw new InvalidOperationException(
+                                $"anchor_connector_target_system_after_add_mismatch:" +
+                                $"expected={request.targetSystemId}:actual={anchorSystemAfterAdd}");
+                        anchorAfterAdd = new
+                        {
+                            elementId = ElementIdCompat.GetValue(resolvedAnchor.Owner.Id),
+                            connectorId = resolvedAnchor.ConnectorId,
+                            connectorIdBasis = resolvedAnchor.ConnectorIdBasis,
+                            origin = new[]
+                            {
+                                resolvedAnchor.Connector.Origin.X,
+                                resolvedAnchor.Connector.Origin.Y,
+                                resolvedAnchor.Connector.Origin.Z
+                            },
+                            systemId = anchorSystemAfterAdd
+                        };
+
+                        var status = tx.Commit();
+                        if (status != TransactionStatus.Committed)
+                            throw new InvalidOperationException(
+                                $"mep_system_merge_transaction_not_committed:{status}");
+                    }
+
+                    afterSource = SnapshotMepSystem(doc, request.sourceSystemId);
+                    afterTarget = SnapshotMepSystem(doc, request.targetSystemId);
+                    afterAssignments = SnapshotElementMepSystemAssignments(doc, auditedElementIds);
+                    if (!string.Equals(
+                        afterTarget.name,
+                        expectedTargetSystemNameAfter,
+                        StringComparison.Ordinal))
+                        throw new InvalidOperationException(
+                            "target_system_name_after_merge_mismatch:" +
+                            $"expected={expectedTargetSystemNameAfter}:actual={afterTarget.name}");
+                    if (!afterTarget.memberIds.SequenceEqual(expectedTargetAfterIds))
+                        throw new InvalidOperationException(
+                            "target_system_membership_after_merge_mismatch:" +
+                            $"expected={string.Join(",", expectedTargetAfterIds)}:" +
+                            $"actual={string.Join(",", afterTarget.memberIds)}");
+                    if (afterSource.exists &&
+                        afterSource.memberIds.Intersect(expectedSourceNativeMemberElementIds).Any())
+                        throw new InvalidOperationException(
+                            "source_system_still_contains_moved_elements");
+                    AssertElementsAssignedToSystem(
+                        doc,
+                        expectedSourceElementIds,
+                        request.targetSystemId,
+                        request.sourceSystemId);
+
+                    if (shouldApply)
+                    {
+                        var groupStatus = group.Assimilate();
+                        if (groupStatus != TransactionStatus.Committed)
+                            throw new InvalidOperationException(
+                                $"mep_system_merge_transaction_group_not_committed:{groupStatus}");
+                    }
+                    else
+                    {
+                        group.RollBack();
+                        transactionGroupRolledBack = true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    try
+                    {
+                        if (group.GetStatus() == TransactionStatus.Started)
+                        {
+                            group.RollBack();
+                            transactionGroupRolledBack = true;
+                        }
+                    }
+                    catch { }
+                    var rollbackSource = SnapshotMepSystem(doc, request.sourceSystemId);
+                    var rollbackTarget = SnapshotMepSystem(doc, request.targetSystemId);
+                    var rollbackAssignments = SnapshotElementMepSystemAssignments(doc, auditedElementIds);
+                    return new
+                    {
+                        status = "Blocked",
+                        dryRun = !shouldApply,
+                        blockCode = "mep_system_merge_failed",
+                        reason = ex.Message,
+                        transactionGroupRolledBack,
+                        rollbackVerified =
+                            MepSystemStatesEqual(beforeSource, rollbackSource) &&
+                            MepSystemStatesEqual(beforeTarget, rollbackTarget) &&
+                            beforeAssignments.SequenceEqual(rollbackAssignments),
+                        beforeSource,
+                        beforeTarget,
+                        rollbackSource,
+                        rollbackTarget,
+                        beforeAssignments,
+                        afterSource,
+                        afterTarget,
+                        afterAssignments,
+                        rollbackAssignments,
+                        anchorBefore,
+                        anchorAfterAdd,
+                        expectedTargetSystemNameAfter,
+                        nativeFailures,
+                        auditedElementIds
+                    };
+                }
+            }
+
+            var finalSource = SnapshotMepSystem(doc, request.sourceSystemId);
+            var finalTarget = SnapshotMepSystem(doc, request.targetSystemId);
+            var finalAssignments = SnapshotElementMepSystemAssignments(doc, auditedElementIds);
+            var rollbackVerified = shouldApply || (
+                MepSystemStatesEqual(beforeSource, finalSource) &&
+                MepSystemStatesEqual(beforeTarget, finalTarget) &&
+                beforeAssignments.SequenceEqual(finalAssignments));
+            return new
+            {
+                status = shouldApply ? "Merged" : "DryRunReady",
+                dryRun = !shouldApply,
+                transactionGroupRolledBack,
+                rollbackVerified,
+                beforeSource,
+                beforeTarget,
+                afterSource,
+                afterTarget,
+                finalSource,
+                finalTarget,
+                beforeAssignments,
+                afterAssignments,
+                finalAssignments,
+                anchorBefore,
+                anchorAfterAdd,
+                expectedSourceElementIds,
+                expectedSourceNativeMemberElementIds,
+                expectedTargetAfterIds,
+                expectedTargetSystemNameAfter,
+                nativeFailures,
+                auditedElementIds,
+                nextAction = shouldApply
+                    ? "Save the accepted checkpoint and read back every moved element's MEP system id and name."
+                    : "Apply this exact system merge only if the dry-run membership and rollback audits are accepted."
+            };
+        }
+
+        private static MEPSystem ResolveMepSystem(Document doc, long id, string label)
+        {
+            var system = doc.GetElement(ElementIdCompat.Create(id)) as MEPSystem;
+            if (system == null)
+                throw new ArgumentException($"{label}_mep_system_not_found:{id}");
+            return system;
+        }
+
+        private static void AssertExpectedSystemName(
+            MEPSystem system,
+            string expected,
+            string label)
+        {
+            var actual = system.Name ?? "";
+            if (!string.Equals(actual, expected, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"{label}_mep_system_name_mismatch:expected={expected}:actual={actual}");
+        }
+
+        private static MepSystemState SnapshotMepSystem(Document doc, long id)
+        {
+            var system = doc.GetElement(ElementIdCompat.Create(id)) as MEPSystem;
+            if (system == null)
+            {
+                return new MepSystemState
+                {
+                    exists = false,
+                    systemId = id,
+                    memberIds = new List<long>()
+                };
+            }
+            return new MepSystemState
+            {
+                exists = true,
+                systemId = id,
+                name = system.Name ?? "",
+                typeId = ElementIdCompat.GetValue(system.GetTypeId()),
+                isEmpty = system.IsEmpty,
+                memberIds = system.Elements
+                    .Cast<Element>()
+                    .Where(element => element != null)
+                    .Select(element => ElementIdCompat.GetValue(element.Id))
+                    .Distinct()
+                    .OrderBy(elementId => elementId)
+                    .ToList()
+            };
+        }
+
+        private static List<string> SnapshotElementMepSystemAssignments(
+            Document doc,
+            IEnumerable<long> elementIds)
+        {
+            var rows = new List<string>();
+            foreach (var elementId in elementIds.Distinct().OrderBy(id => id))
+            {
+                var element = doc.GetElement(ElementIdCompat.Create(elementId));
+                var systemIds = element == null
+                    ? new List<long>()
+                    : MepSystemUtil.GetConnectors(element)
+                        .Select(connector => connector.MEPSystem)
+                        .Where(system => system != null)
+                        .Select(system => ElementIdCompat.GetValue(system!.Id))
+                        .Distinct()
+                        .OrderBy(id => id)
+                        .ToList();
+                rows.Add($"{elementId}:{string.Join(",", systemIds)}");
+            }
+            return rows;
+        }
+
+        private static void AssertElementsAssignedToSystem(
+            Document doc,
+            IEnumerable<long> elementIds,
+            long expectedSystemId,
+            long forbiddenSystemId)
+        {
+            foreach (var elementId in elementIds)
+            {
+                var element = doc.GetElement(ElementIdCompat.Create(elementId)) ??
+                    throw new InvalidOperationException(
+                        $"mep_system_merge_element_missing:{elementId}");
+                var systemIds = MepSystemUtil.GetConnectors(element)
+                    .Select(connector => connector.MEPSystem)
+                    .Where(system => system != null)
+                    .Select(system => ElementIdCompat.GetValue(system!.Id))
+                    .Distinct()
+                    .ToList();
+                if (!systemIds.Contains(expectedSystemId) ||
+                    systemIds.Contains(forbiddenSystemId))
+                    throw new InvalidOperationException(
+                        $"mep_system_merge_assignment_failed:{elementId}:" +
+                        $"systems={string.Join(",", systemIds)}");
+            }
+        }
+
+        private static bool MepSystemStatesEqual(MepSystemState a, MepSystemState b)
+        {
+            return a.exists == b.exists &&
+                a.systemId == b.systemId &&
+                string.Equals(a.name, b.name, StringComparison.Ordinal) &&
+                a.typeId == b.typeId &&
+                a.isEmpty == b.isEmpty &&
+                a.memberIds.SequenceEqual(b.memberIds);
+        }
+
+        private static object SnapshotResolvedConnector(ResolvedConnector connector)
+        {
+            return new
+            {
+                elementId = ElementIdCompat.GetValue(connector.Owner.Id),
+                connectorId = connector.ConnectorId,
+                connectorIdBasis = connector.ConnectorIdBasis,
+                origin = new[]
+                {
+                    connector.Connector.Origin.X,
+                    connector.Connector.Origin.Y,
+                    connector.Connector.Origin.Z
+                },
+                systemId = connector.Connector.MEPSystem == null
+                    ? 0
+                    : ElementIdCompat.GetValue(connector.Connector.MEPSystem.Id),
+                systemName = connector.Connector.MEPSystem?.Name ?? ""
+            };
         }
 
         private static object HandleDisconnectOnly(Document doc, Params p, bool shouldApply)
