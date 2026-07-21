@@ -3749,6 +3749,7 @@ namespace RevitBridge.Logic.Handlers
             public long? orientationSourceElementId { get; set; }
             public bool copyRotation { get; set; } = true;
             public bool copyFacingHandState { get; set; } = true;
+            public bool? workPlaneFlipped { get; set; }
             public bool? matchElectricalCircuitFromSource { get; set; }
             public bool requireElectricalCircuitMatch { get; set; } = false;
             public List<string>? parameterNamesToCopy { get; set; }
@@ -3984,6 +3985,9 @@ namespace RevitBridge.Logic.Handlers
                 : ElementIdCompat.GetValue(sourceElement.CreatedPhaseId);
             long? verifiedCreatedPhaseId = null;
             bool? sourceCreatedPhaseMatched = null;
+            bool? requestedWorkPlaneFlipped = p.workPlaneFlipped;
+            bool? verifiedWorkPlaneFlipped = null;
+            bool? workPlaneFlipMatched = null;
             long? sourceWorksetId = sourceElement == null || !doc.IsWorkshared
                 ? null
                 : sourceElement.WorksetId.IntegerValue;
@@ -4092,6 +4096,45 @@ namespace RevitBridge.Logic.Handlers
                     p.copyFacingHandState && matchOrientation,
                     warnings
                 );
+                if (!requestedWorkPlaneFlipped.HasValue &&
+                    p.copyFacingHandState &&
+                    matchOrientation &&
+                    orientationSource is FamilyInstance orientationSourceFamilyInstance)
+                {
+                    requestedWorkPlaneFlipped = orientationSourceFamilyInstance.IsWorkPlaneFlipped;
+                }
+                if (requestedWorkPlaneFlipped.HasValue)
+                {
+                    try
+                    {
+                        if (created.IsWorkPlaneFlipped != requestedWorkPlaneFlipped.Value)
+                        {
+                            if (!created.CanFlipWorkPlane)
+                            {
+                                throw new InvalidOperationException(
+                                    $"Created family instance {ElementIdCompat.GetValue(created.Id)} cannot flip its work plane."
+                                );
+                            }
+                            created.IsWorkPlaneFlipped = requestedWorkPlaneFlipped.Value;
+                            doc.Regenerate();
+                        }
+                        verifiedWorkPlaneFlipped = created.IsWorkPlaneFlipped;
+                        workPlaneFlipMatched = verifiedWorkPlaneFlipped == requestedWorkPlaneFlipped;
+                        if (workPlaneFlipMatched != true)
+                        {
+                            throw new InvalidOperationException(
+                                $"Created family instance did not retain requested workPlaneFlipped={requestedWorkPlaneFlipped.Value}."
+                            );
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        throw new InvalidOperationException(
+                            $"Unable to apply requested workPlaneFlipped={requestedWorkPlaneFlipped.Value}: {ex.Message}",
+                            ex
+                        );
+                    }
+                }
                 if (p.matchElectricalCircuitFromSource ?? false)
                 {
                     var circuitMatched = HostedPlacementUtil.TryMatchElectricalCircuitFromSource(
@@ -4209,6 +4252,12 @@ namespace RevitBridge.Logic.Handlers
                         verifiedCreatedWorksetId,
                         sourceWorksetMatched
                     },
+                    workPlaneFlip = requestedWorkPlaneFlipped.HasValue ? new
+                    {
+                        requestedWorkPlaneFlipped,
+                        verifiedWorkPlaneFlipped,
+                        workPlaneFlipMatched
+                    } : null,
                     hostLocalFrame = HostedPlacementUtil.BuildHostLocalFramePayload(HostedPlacementUtil.BuildHostLocalFrameData(host, roomWall, finalPoint), orientationSource),
                     placementValidation,
                     electricalDistributionSystemPreparation,
@@ -4329,6 +4378,12 @@ namespace RevitBridge.Logic.Handlers
                     verifiedCreatedWorksetId,
                     sourceWorksetMatched
                 },
+                workPlaneFlip = requestedWorkPlaneFlipped.HasValue ? new
+                {
+                    requestedWorkPlaneFlipped,
+                    verifiedWorkPlaneFlipped,
+                    workPlaneFlipMatched
+                } : null,
                 hostLocalFrame = HostedPlacementUtil.BuildHostLocalFramePayload(HostedPlacementUtil.BuildHostLocalFrameData(host, roomWall, finalPoint), orientationSource),
                 placementValidation,
                 transactionStatus,

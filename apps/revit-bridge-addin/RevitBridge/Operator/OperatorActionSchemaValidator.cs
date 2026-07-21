@@ -6476,6 +6476,7 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalLong(obj.Value, "orientationSourceElementId", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "copyRotation", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "copyFacingHandState", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "workPlaneFlipped", out error)) return false;
                 if (!ValidateOptionalStringArray(obj.Value, "parameterNamesToCopy", maxCount: 100, maxLen: 128, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "distributionSystemName", maxLen: 128, out error)) return false;
                 if (obj.Value.TryGetProperty("ensureDistributionSystem", out var ensureDistributionSystem) && ensureDistributionSystem.ValueKind != JsonValueKind.Null)
