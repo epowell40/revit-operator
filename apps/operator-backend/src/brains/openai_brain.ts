@@ -4128,6 +4128,9 @@ function textLooksLikeExistingConditionsReconstruction(text: string): boolean {
     /\b(register|registration|align|alignment)\b/.test(normalized);
   const explicitExistingConditions =
     /\b(existing[\s-]*conditions?|as[\s-]*built|record drawing)\b/.test(normalized);
+  const explicitExecutionHarness =
+    explicitExistingConditions &&
+    /\b(staged[\s-]*repair\s+harness|provisional\s+backbone\s+batch|one[\s-]*action\s+(?:repair\s+)?ledger)\b/.test(normalized);
   const sourceArtifact =
     /\b(pdf|drawing|plan|sheet|source|attachment|attached|scan)\b/.test(normalized);
   const existingDisciplineContent =
@@ -4141,9 +4144,9 @@ function textLooksLikeExistingConditionsReconstruction(text: string): boolean {
     /\b(?:add|create|draw|place|model)\b(?=[^.!?\n]{0,64}\b(?:a|an|one|new)\b[^.!?\n]{0,48}\b(?:pipe|duct|branch|receptacle|device|fixture|equipment|family|element|outlet|diffuser|grille|valve)\b)/.test(normalized);
   const existingConditionsRegistration =
     registrationVerb && explicitExistingConditions && sourceArtifact;
-  return (reconstructionVerb || existingConditionsRegistration) &&
+  return explicitExecutionHarness || ((reconstructionVerb || existingConditionsRegistration) &&
     !ordinaryNewElementEdit &&
-    (explicitExistingConditions || (sourceArtifact && existingDisciplineContent && wholeSourceOrSystemObject));
+    (explicitExistingConditions || (sourceArtifact && existingDisciplineContent && wholeSourceOrSystemObject)));
 }
 
 function isExplicitExistingConditionsRegistrationOnlyRequest(req: ChatRequest): boolean {

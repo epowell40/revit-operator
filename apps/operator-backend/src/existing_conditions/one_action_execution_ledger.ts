@@ -8,7 +8,9 @@ import { ensureWorkspaceLayout } from "../workspace.js";
 import type { AtomicMepDraftWorkflowRequest } from "./mep_draft_plan.js";
 import {
   buildNextExistingConditionsStagePlan,
+  existingConditionsRepairLedgerPath,
   latestExistingConditionsStagedWorkflow,
+  readExistingConditionsRepairLedger,
   recordExistingConditionsStageResult,
   recordExistingConditionsVerificationResult,
   registerExistingConditionsRepairAction,
@@ -139,6 +141,67 @@ function ledgerPath(sessionId: string): string {
     safeSessionId(sessionId),
     "existing_conditions_execution_ledger.jsonl"
   );
+}
+
+function executionControlPath(sessionId: string): string {
+  return path.join(
+    ensureWorkspaceLayout().runsSessions,
+    safeSessionId(sessionId),
+    "existing_conditions_execution_control.jsonl"
+  );
+}
+
+function textRequestsPauseBeforeAutomaticSplit(value: string): boolean {
+  return /\bstop\b[^.!?\n]{0,120}\bbefore\b[^.!?\n]{0,120}\b(?:apply|applying|execute|executing|run|running|dry[-\s]?run|dry[-\s]?running)\b[^.!?\n]{0,100}\b(?:either\s+|any\s+|the\s+)?split\s+stages?\b/i.test(value);
+}
+
+function textRequestsDryRunOnly(value: string): boolean {
+  return /\bdry[-\s]?run\s+only\b/i.test(value) ||
+    /\bstop\b[^.!?\n]{0,80}\bafter\b[^.!?\n]{0,40}\bdry[-\s]?run\b/i.test(value) ||
+    /\b(?:do\s+not|don't|never)\s+apply\b/i.test(value);
+}
+
+function persistedExecutionControl(sessionId: string): {
+  dry_run_only: boolean;
+  pause_before_automatic_split: boolean;
+} {
+  const control = { dry_run_only: false, pause_before_automatic_split: false };
+  const filePath = executionControlPath(sessionId);
+  if (!fs.existsSync(filePath)) return control;
+  try {
+    for (const line of fs.readFileSync(filePath, "utf8").split(/\r?\n/).filter(Boolean).slice(-120)) {
+      try {
+        const row = JSON.parse(line) as Record<string, unknown>;
+        if (row.dry_run_only === true) control.dry_run_only = true;
+        if (row.pause_before_automatic_split === true) control.pause_before_automatic_split = true;
+      } catch {
+        // Ignore an incomplete append tail; prior durable directives remain valid.
+      }
+    }
+  } catch {
+    // An unreadable control file never creates new write authority.
+  }
+  return control;
+}
+
+function persistExecutionControlDirectives(req: ChatRequest): void {
+  const text = clean(req.user_text);
+  if (!text) return;
+  const dryRunOnly = textRequestsDryRunOnly(text);
+  const pauseBeforeAutomaticSplit = textRequestsPauseBeforeAutomaticSplit(text);
+  if (!dryRunOnly && !pauseBeforeAutomaticSplit) return;
+  const previous = persistedExecutionControl(req.session_id);
+  if (
+    (!dryRunOnly || previous.dry_run_only) &&
+    (!pauseBeforeAutomaticSplit || previous.pause_before_automatic_split)
+  ) {
+    return;
+  }
+  atomicAppendJsonlLine(executionControlPath(req.session_id), {
+    ts: new Date().toISOString(),
+    dry_run_only: dryRunOnly || previous.dry_run_only,
+    pause_before_automatic_split: pauseBeforeAutomaticSplit || previous.pause_before_automatic_split
+  });
 }
 
 type RegisteredModelRect = {
@@ -683,6 +746,7 @@ function workflowFromAction(action: ActionCall | undefined): AtomicMepDraftWorkf
   if (!action || clean(action.path).toLowerCase() !== "/revit/existing-conditions-mep-draft-workflow") {
     return null;
   }
+  if (providerWorkflowContractIssue(action)) return null;
   const row = objectValue(action.body);
   const fingerprint = clean(row.inputFingerprintSha256).toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(fingerprint) || !Array.isArray(row.operations) || row.operations.length === 0) {
@@ -708,6 +772,82 @@ function workflowFromAction(action: ActionCall | undefined): AtomicMepDraftWorkf
       : {}),
     benchmarkCredit: false,
     authorizationBasis: "explicit_unscored_user_direction"
+  };
+}
+
+function providerWorkflowContractIssue(action: ActionCall | undefined): string | null {
+  if (!action || clean(action.path).toLowerCase() !== "/revit/existing-conditions-mep-draft-workflow") {
+    return null;
+  }
+  const row = objectValue(action.body);
+  const fingerprint = clean(row.inputFingerprintSha256).toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(fingerprint)) {
+    return "inputFingerprintSha256_must_be_64_lowercase_hex_characters";
+  }
+  if (!Array.isArray(row.operations) || row.operations.length === 0) {
+    return "operations_must_be_a_nonempty_array";
+  }
+  for (const [index, value] of row.operations.entries()) {
+    const operation = objectValue(value);
+    const actionKey = clean(operation.action_key) || `index_${index}`;
+    if (!clean(operation.action_key)) return `operation_action_key_required:${actionKey}`;
+    if (!clean(operation.path)) return `operation_path_required:${actionKey}`;
+    if (!Array.isArray(operation.depends_on)) {
+      return `operation_depends_on_array_required:${actionKey}`;
+    }
+    const applyBody = objectValue(operation.apply_body);
+    const deferredBody = objectValue(operation.deferred_body);
+    if (Object.keys(applyBody).length === 0 && Object.keys(deferredBody).length === 0) {
+      return `operation_apply_body_or_deferred_body_required:${actionKey}`;
+    }
+    const executionMode = clean(operation.execution_mode);
+    const batchKey = clean(operation.provisional_batch_key);
+    if (executionMode && executionMode !== "single_action" && executionMode !== "provisional_backbone_batch") {
+      return `operation_execution_mode_invalid:${actionKey}`;
+    }
+    if (executionMode === "provisional_backbone_batch") {
+      if (!batchKey) return `operation_provisional_batch_key_required:${actionKey}`;
+      if (clean(operation.path).toLowerCase() !== "/revit/mep-route-workflow") {
+        return `operation_provisional_batch_route_only:${actionKey}`;
+      }
+      if (operation.depends_on.length > 0) {
+        return `operation_provisional_batch_must_be_dependency_free:${actionKey}`;
+      }
+    } else if (batchKey) {
+      return `operation_provisional_batch_execution_mode_required:${actionKey}`;
+    }
+  }
+  return null;
+}
+
+function rejectedProviderWorkflowDecision(args: {
+  req: ChatRequest;
+  action: ActionCall;
+  issue: string;
+  documentScopeSha256: string | null;
+}): ChatResponse {
+  appendExecutionEntry({
+    sessionId: args.req.session_id,
+    event: "action_failed",
+    action: args.action,
+    status: "failed",
+    phase: "dry_run",
+    payload: {
+      contract_issue: args.issue,
+      model_write_issued: false,
+      provider_tool_search_required: false
+    },
+    error: args.issue,
+    documentScopeSha256: args.documentScopeSha256
+  });
+  return {
+    version: "operator.backend.v1",
+    assistant_message:
+      `The host rejected an incomplete staged-workflow envelope before Revit; no model write was issued. Contract issue: ${args.issue}. ` +
+      "Do not search the Revit tool catalog for the host ledger. Compile and register the source workflow first, or resubmit a complete workflow in which every operation has an apply_body or deferred_body. " +
+      "A provisional backbone batch must explicitly mark each independent /revit/mep-route-workflow operation with execution_mode=provisional_backbone_batch and one shared provisional_batch_key. " +
+      `Execution ledger: ${ledgerPath(args.req.session_id)}. Repair ledger: ${existingConditionsRepairLedgerPath(args.req.session_id)}.`,
+    actions: []
   };
 }
 
@@ -739,6 +879,113 @@ function recordProviderIndependentStageResults(
       result: result as unknown as Record<string, unknown>
     });
   }
+}
+
+function userRequestedPauseBeforeAutomaticSplit(req: ChatRequest): boolean {
+  if (persistedExecutionControl(req.session_id).pause_before_automatic_split) return true;
+  const texts = [clean(req.user_text)];
+  const requestLogPath = path.join(
+    ensureWorkspaceLayout().runsSessions,
+    safeSessionId(req.session_id),
+    "request_log.jsonl"
+  );
+  if (fs.existsSync(requestLogPath)) {
+    try {
+      for (const line of fs.readFileSync(requestLogPath, "utf8").split(/\r?\n/).filter(Boolean).slice(-120)) {
+        try {
+          const row = JSON.parse(line) as Record<string, unknown>;
+          if (typeof row.user_text === "string") texts.push(row.user_text);
+        } catch {
+          // Ignore an incomplete request-log tail and retain the explicit turn text.
+        }
+      }
+    } catch {
+      // A missing pause receipt is non-destructive; the staged ledger remains authoritative.
+    }
+  }
+  return texts.some(textRequestsPauseBeforeAutomaticSplit);
+}
+
+function userRequestedDryRunOnly(req: ChatRequest): boolean {
+  if (persistedExecutionControl(req.session_id).dry_run_only) return true;
+  const texts = [clean(req.user_text)];
+  const requestLogPath = path.join(
+    ensureWorkspaceLayout().runsSessions,
+    safeSessionId(req.session_id),
+    "request_log.jsonl"
+  );
+  if (fs.existsSync(requestLogPath)) {
+    try {
+      for (const line of fs.readFileSync(requestLogPath, "utf8").split(/\r?\n/).filter(Boolean).slice(-120)) {
+        try {
+          const row = JSON.parse(line) as Record<string, unknown>;
+          if (typeof row.user_text === "string") texts.push(row.user_text);
+        } catch {
+          // Ignore an incomplete request-log tail and retain the explicit turn text.
+        }
+      }
+    } catch {
+      // Failure to read an older request cannot authorize an apply.
+    }
+  }
+  return texts.some(textRequestsDryRunOnly);
+}
+
+function dryRunOnlyPauseDecision(
+  req: ChatRequest,
+  plan: ReturnType<typeof buildNextExistingConditionsStagePlan>
+): ChatResponse | null {
+  if (plan.state !== "apply" || !userRequestedDryRunOnly(req)) return null;
+  const stageLabel = plan.action_keys.join(", ");
+  return {
+    version: "operator.backend.v1",
+    assistant_message:
+      `Dry-run accepted for ${stageLabel}, and I paused before apply as explicitly requested. No apply action was issued. ` +
+      `Session: ${req.session_id}. Execution ledger: ${ledgerPath(req.session_id)}. ` +
+      `Repair ledger: ${existingConditionsRepairLedgerPath(req.session_id)}.`,
+    actions: []
+  };
+}
+
+function automaticSplitPauseDecision(
+  req: ChatRequest,
+  plan: ReturnType<typeof buildNextExistingConditionsStagePlan>
+): ChatResponse | null {
+  if (
+    plan.state !== "dry_run" ||
+    !plan.stage_key.startsWith("repair:") ||
+    !userRequestedPauseBeforeAutomaticSplit(req)
+  ) {
+    return null;
+  }
+  const entries = readExistingConditionsRepairLedger(req.session_id);
+  const activeRepair = entries.find(entry =>
+    entry.event === "repair_registered" &&
+    entry.stage_key === plan.stage_key &&
+    clean(entry.payload.reason) === "automatic_batch_scope_reduction_after_verified_clean_rollback"
+  );
+  const supersedesStageKey = clean(activeRepair?.payload.supersedes_stage_key);
+  if (!activeRepair || !supersedesStageKey) return null;
+  const splitStages = entries
+    .filter(entry =>
+      entry.event === "repair_registered" &&
+      clean(entry.payload.supersedes_stage_key) === supersedesStageKey &&
+      clean(entry.payload.reason) === "automatic_batch_scope_reduction_after_verified_clean_rollback"
+    )
+    .map(entry => clean(entry.stage_key))
+    .filter(Boolean);
+  const rejected = entries
+    .filter(entry => entry.event === "stage_rejected" && entry.stage_key === supersedesStageKey)
+    .at(-1);
+  return {
+    version: "operator.backend.v1",
+    assistant_message:
+      `The provisional backbone batch ${supersedesStageKey} failed with a clean rollback and was automatically reduced to ${splitStages.length} single-action repair stage(s). ` +
+      `Rollback receipt: rollback_verified=${rejected?.payload.rollback_verified === true}, residual_created_element_ids=${JSON.stringify(rejected?.payload.residual_created_element_ids ?? [])}, error=${clean(rejected?.payload.error) || "stage_blocked"}. ` +
+      `I paused before executing any split stage as requested. Session: ${req.session_id}. Split stages: ${splitStages.join(", ")}. ` +
+      `Execution ledger: ${ledgerPath(req.session_id)}. Repair ledger: ${existingConditionsRepairLedgerPath(req.session_id)}.`,
+    actions: []
+  };
 }
 
 function stagedHandoffDecision(args: {
@@ -838,6 +1085,7 @@ function stagedHandoffDecision(args: {
 export function maybeContinueExistingConditionsOneActionLoop(
   req: ChatRequest
 ): ChatResponse | null {
+  persistExecutionControlDirectives(req);
   const toolResults = Array.isArray(req.tool_results) ? req.tool_results : [];
   recordToolResults(req.session_id, toolResults, documentScopeSha256(req.context));
 
@@ -871,6 +1119,10 @@ export function maybeContinueExistingConditionsOneActionLoop(
     sessionId: req.session_id,
     workflow: persisted.workflow
   });
+  const dryRunOnlyPause = dryRunOnlyPauseDecision(req, plan);
+  if (dryRunOnlyPause) return dryRunOnlyPause;
+  const splitPause = automaticSplitPauseDecision(req, plan);
+  if (splitPause) return splitPause;
   if (plan.state === "blocked" || plan.state === "awaiting_readback") {
     return null;
   }
@@ -890,6 +1142,7 @@ export function enforceExistingConditionsOneActionLoop(args: {
   req: ChatRequest;
   decision: ChatResponse;
 }): ChatResponse {
+  persistExecutionControlDirectives(args.req);
   const toolResults = Array.isArray(args.req.tool_results) ? args.req.tool_results : [];
   const currentDocumentScope = documentScopeSha256(args.req.context);
   recordToolResults(args.req.session_id, toolResults, currentDocumentScope);
@@ -913,6 +1166,15 @@ export function enforceExistingConditionsOneActionLoop(args: {
     const proposed = decision.actions.find(action =>
       clean(action.path).toLowerCase() === "/revit/existing-conditions-mep-draft-workflow"
     );
+    const proposedContractIssue = providerWorkflowContractIssue(proposed);
+    if (!persisted && proposed && proposedContractIssue) {
+      return rejectedProviderWorkflowDecision({
+        req: args.req,
+        action: proposed,
+        issue: proposedContractIssue,
+        documentScopeSha256: currentDocumentScope
+      });
+    }
     const proposedWorkflow = workflowFromAction(proposed);
     const canReplaceCompletedWorkflow = persisted && proposedWorkflow &&
       proposedWorkflow.inputFingerprintSha256 !== persisted.workflow.inputFingerprintSha256 &&
@@ -945,7 +1207,13 @@ export function enforceExistingConditionsOneActionLoop(args: {
           toolResults
         );
       }
-      decision = stagedHandoffDecision({
+      const plan = buildNextExistingConditionsStagePlan({
+        sessionId: args.req.session_id,
+        workflow: persisted.workflow
+      });
+      const explicitPause = dryRunOnlyPauseDecision(args.req, plan) ??
+        automaticSplitPauseDecision(args.req, plan);
+      decision = explicitPause ?? stagedHandoffDecision({
         sessionId: args.req.session_id,
         workflow: persisted.workflow,
         providerDecision: decision

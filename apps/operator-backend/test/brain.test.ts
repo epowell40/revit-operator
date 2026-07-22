@@ -208,6 +208,64 @@ test("strict existing-conditions bridge action bypasses the configured provider"
   }
 });
 
+test("strict staged-workflow bridge action activates the host guard and preserves operation bodies", { concurrency: false }, async () => {
+  const previousBrain = process.env.OPERATOR_BRAIN;
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  process.env.OPERATOR_BRAIN = "gemini";
+  process.env.OPERATOR_WORKSPACE_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "operator-explicit-staged-workflow-"));
+  let providerCalls = 0;
+  try {
+    const body = {
+      inputFingerprintSha256: "e".repeat(64),
+      operations: [{
+        action_key: "route:explicit-backbone",
+        observation_ids: ["explicit-backbone"],
+        path: "/revit/mep-route-workflow",
+        depends_on: [],
+        expected_created_min: 1,
+        expected_created_max: 1,
+        apply_body: {
+          kind: "pipe",
+          points: [{ x: 30, y: -315, z: 110 }, { x: 32, y: -315, z: 110 }],
+          apply: true
+        }
+      }],
+      provisionalObservationIds: ["explicit-backbone"],
+      dryRun: true,
+      verify: true,
+      maximumCreatedElements: 1,
+      benchmarkCredit: false,
+      authorizationBasis: "explicit_unscored_user_direction"
+    };
+    const req = mkReq(
+      `Existing-conditions disposable verification. Perform exactly one POST /revit/existing-conditions-mep-draft-workflow with body ${JSON.stringify(body)}. Do not replay another action.`
+    );
+    const result = await decide(req, {
+      geminiBrain: async () => {
+        providerCalls += 1;
+        return {
+          version: OPERATOR_BACKEND_CONTRACT_VERSION,
+          assistant_message: "provider should not run",
+          actions: []
+        };
+      }
+    });
+    assert.equal(providerCalls, 0);
+    assert.equal(result.actions.length, 1);
+    assert.equal(result.actions[0]?.path, "/revit/existing-conditions-mep-draft-workflow");
+    const resultBody = result.actions[0]?.body as Record<string, unknown>;
+    const operations = resultBody.operations as Array<Record<string, unknown>>;
+    assert.deepEqual(operations[0]?.apply_body, body.operations[0]?.apply_body);
+    assert.equal(resultBody.dryRun, true);
+    assert.match(String(resultBody.stageKey), /^operation:/);
+  } finally {
+    if (previousBrain === undefined) delete process.env.OPERATOR_BRAIN;
+    else process.env.OPERATOR_BRAIN = previousBrain;
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+  }
+});
+
 test("natural recreate and draft existing-conditions phrasing bypasses the deterministic redline resolver", async () => {
   const prompts = [
     "Using only the attached PDF, recreate the source-visible plumbing existing conditions around fixture FIXTURE-A.",
@@ -258,6 +316,46 @@ test("existing-conditions intent persists across empty tool-result continuation 
 
   assert.equal(result, null);
   assert.equal(calls, 0);
+});
+
+test("staged existing-conditions harness wording enters the host one-action guard", { concurrency: false }, () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  process.env.OPERATOR_WORKSPACE_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "operator-staged-harness-routing-"));
+  try {
+    const req = {
+      ...mkReq(
+        "Use the persisted existing-conditions staged repair harness. Register a bounded two-action provisional backbone batch, verify rollback, and do not search for ledger tools."
+      ),
+      session_id: `staged-harness-routing-${Date.now()}-${Math.random()}`
+    } satisfies ChatRequest;
+    assert.equal(__testOnlyIsExistingConditionsReconstructionRequest(req), true);
+
+    const guarded = __testOnlyFinalizeDecision(req, {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message: "I will register the provisional two-action batch.",
+      actions: [{
+        action_id: "incomplete-live-shaped-workflow",
+        method: "POST",
+        path: "/revit/existing-conditions-mep-draft-workflow",
+        body: {
+          inputFingerprintSha256: "not-a-sha256",
+          operations: [{
+            action_key: "route:backbone-1",
+            path: "/revit/mep-route-workflow",
+            depends_on: [],
+            apply_body: null
+          }],
+          dryRun: true
+        }
+      }]
+    });
+    assert.equal(guarded.actions.length, 0);
+    assert.match(guarded.assistant_message, /rejected an incomplete staged-workflow envelope before Revit/i);
+    assert.match(guarded.assistant_message, /inputFingerprintSha256_must_be_64_lowercase_hex_characters/);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+  }
 });
 
 test("persisted existing-conditions history survives an empty in-memory session cache", async () => {

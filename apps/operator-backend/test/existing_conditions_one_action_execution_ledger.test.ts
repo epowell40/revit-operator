@@ -319,6 +319,64 @@ test("one-action execution loop leaves local contract failures to provider paylo
   }
 });
 
+test("one-action loop rejects an incomplete unregistered staged workflow before Revit", { concurrency: false }, () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-incomplete-provider-workflow-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const sessionId = "incomplete-provider-workflow-session";
+    const result = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId),
+      decision: response([{
+        action_id: "provider-incomplete-backbone-batch",
+        method: "POST",
+        path: "/revit/existing-conditions-mep-draft-workflow",
+        body: {
+          inputFingerprintSha256: "9".repeat(64),
+          operations: [
+            {
+              action_key: "route:valid-backbone-1",
+              path: "/revit/mep-route-workflow",
+              depends_on: [],
+              expected_created_min: 1,
+              expected_created_max: 5,
+              apply_body: null,
+              deferred_body: null
+            },
+            {
+              action_key: "route:invalid-backbone-2",
+              path: "/revit/mep-route-workflow",
+              depends_on: ["route:valid-backbone-1"],
+              expected_created_min: 1,
+              expected_created_max: 5,
+              apply_body: null,
+              deferred_body: null
+            }
+          ],
+          dryRun: true,
+          verify: true,
+          maximumCreatedElements: 10
+        }
+      }])
+    });
+
+    assert.equal(result.actions.length, 0);
+    assert.match(result.assistant_message, /rejected an incomplete staged-workflow envelope before Revit/i);
+    assert.match(result.assistant_message, /operation_apply_body_or_deferred_body_required:route:valid-backbone-1/);
+    assert.match(result.assistant_message, /Do not search the Revit tool catalog for the host ledger/i);
+    assert.match(result.assistant_message, /existing_conditions_execution_ledger\.jsonl/);
+    assert.match(result.assistant_message, /existing_conditions_repair_ledger\.jsonl/);
+    assert.deepEqual(readExistingConditionsRepairLedger(sessionId), []);
+    const entries = readExistingConditionsExecutionLedger(sessionId);
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0]?.event, "action_failed");
+    assert.equal(entries[0]?.error, "operation_apply_body_or_deferred_body_required:route:valid-backbone-1");
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+  }
+});
+
 test("one-action execution loop records discovery tools as observe actions", { concurrency: false }, () => {
   const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-observe-phase-"));
@@ -925,6 +983,180 @@ test("provider-independent loop registers one smaller repair after a blocked dry
     assert.equal(repaired.actions[0]?.path, "/revit/existing-conditions-mep-draft-workflow");
     assert.equal((repaired.actions[0]?.body as Record<string, unknown>)?.stageKey, "repair:connect-retained:v1");
     assert.equal((repaired.actions[0]?.body as Record<string, unknown>)?.dryRun, true);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+  }
+});
+
+test("explicit dry-run-only request pauses before apply after an accepted dry-run", { concurrency: false }, () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  process.env.OPERATOR_WORKSPACE_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "operator-dry-run-only-pause-"));
+  try {
+    const sessionId = "dry-run-only-pause-session";
+    const fingerprint = "d".repeat(64);
+    const workflow = {
+      inputFingerprintSha256: fingerprint,
+      provisionalObservationIds: ["backbone-observation"],
+      operations: [{
+        action_key: "route:backbone",
+        observation_ids: ["backbone-observation"],
+        path: "/revit/mep-route-workflow",
+        depends_on: [],
+        expected_created_min: 1,
+        expected_created_max: 1,
+        apply_body: { kind: "pipe", apply: true, points: [{ x: 0, y: 0, z: 9 }, { x: 5, y: 0, z: 9 }] }
+      }],
+      dryRun: true,
+      verify: true,
+      maximumCreatedElements: 1,
+      benchmarkCredit: false,
+      authorizationBasis: "explicit_unscored_user_direction"
+    } as any;
+    registerExistingConditionsStagedWorkflow({
+      sessionId,
+      sourceFrameId: "frame-dry-run-only",
+      sourceViewId: 3960410,
+      registrationContextId: "registration-dry-run-only",
+      workflow
+    });
+
+    const initial = maybeContinueExistingConditionsOneActionLoop({
+      ...request(sessionId),
+      user_text: "Dry-run only. Never apply this stage."
+    });
+    assert.ok(initial);
+    const stageKey = String((initial.actions[0]?.body as Record<string, unknown>).stageKey);
+    const continuationRequest = {
+      ...request(sessionId, [{
+        action_id: initial.actions[0]!.action_id,
+        method: "POST",
+        path: "/revit/existing-conditions-mep-draft-workflow",
+        status: "done",
+        result_json: {
+          inputFingerprintSha256: fingerprint,
+          stageKey,
+          status: "DryRunReady",
+          dryRun: true,
+          rollbackVerified: true,
+          residualCreatedElementIds: [],
+          operationResults: [{ actionKey: "route:backbone", status: "DryRunReady" }]
+        }
+      }]),
+      user_text: ""
+    };
+    const paused = maybeContinueExistingConditionsOneActionLoop(continuationRequest);
+
+    assert.ok(paused);
+    assert.equal(paused.actions.length, 0);
+    assert.match(paused.assistant_message, /paused before apply as explicitly requested/i);
+    assert.match(paused.assistant_message, /No apply action was issued/i);
+    const repairLedger = readExistingConditionsRepairLedger(sessionId);
+    assert.ok(repairLedger.some(entry => entry.event === "dry_run_accepted"));
+    assert.ok(!repairLedger.some(entry => entry.event === "stage_applied"));
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+  }
+});
+
+test("clean failed backbone batch can pause after automatic split registration", { concurrency: false }, () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  process.env.OPERATOR_WORKSPACE_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "operator-batch-split-pause-"));
+  try {
+    const sessionId = "batch-split-pause-session";
+    const fingerprint = "a".repeat(64);
+    const batchKey = "batch:disposable-verification";
+    const workflow = {
+      inputFingerprintSha256: fingerprint,
+      provisionalObservationIds: ["backbone-valid", "backbone-invalid"],
+      operations: [
+        {
+          action_key: "route:backbone-valid",
+          observation_ids: ["backbone-valid"],
+          path: "/revit/mep-route-workflow",
+          depends_on: [],
+          expected_created_min: 1,
+          expected_created_max: 1,
+          execution_mode: "provisional_backbone_batch",
+          provisional_batch_key: batchKey,
+          apply_body: { kind: "pipe", apply: true, points: [{ x: 0, y: 0, z: 9 }, { x: 5, y: 0, z: 9 }] }
+        },
+        {
+          action_key: "route:backbone-invalid",
+          observation_ids: ["backbone-invalid"],
+          path: "/revit/mep-route-workflow",
+          depends_on: [],
+          expected_created_min: 1,
+          expected_created_max: 1,
+          execution_mode: "provisional_backbone_batch",
+          provisional_batch_key: batchKey,
+          apply_body: { kind: "pipe", apply: true, points: [] }
+        }
+      ],
+      dryRun: true,
+      verify: true,
+      maximumCreatedElements: 2,
+      benchmarkCredit: false,
+      authorizationBasis: "explicit_unscored_user_direction"
+    } as any;
+    registerExistingConditionsStagedWorkflow({
+      sessionId,
+      sourceFrameId: "frame-batch-pause",
+      sourceViewId: 3960410,
+      registrationContextId: "registration-batch-pause",
+      workflow
+    });
+
+    const initial = maybeContinueExistingConditionsOneActionLoop({
+      ...request(sessionId),
+      user_text: "If blocked, stop before executing either split stage."
+    });
+    assert.ok(initial);
+    assert.equal(initial.actions[0]?.path, "/revit/existing-conditions-mep-draft-workflow");
+    const initialBody = initial.actions[0]?.body as Record<string, unknown>;
+    const stageKey = String(initialBody.stageKey);
+
+    const continuationRequest = {
+      ...request(sessionId, [{
+        action_id: initial.actions[0]!.action_id,
+        method: "POST",
+        path: "/revit/existing-conditions-mep-draft-workflow",
+        status: "done",
+        result_json: {
+          inputFingerprintSha256: fingerprint,
+          stageKey,
+          status: "Blocked",
+          dryRun: true,
+          transactionGroupRolledBack: true,
+          rollbackVerified: true,
+          residualCreatedElementIds: [],
+          error: "deliberately_invalid_second_action",
+          failedOperation: { actionKey: "route:backbone-invalid" }
+        }
+      }]),
+      user_text: ""
+    };
+    const paused = maybeContinueExistingConditionsOneActionLoop(continuationRequest);
+
+    assert.ok(paused);
+    assert.equal(paused.actions.length, 0);
+    assert.match(paused.assistant_message, /automatically reduced to 2 single-action repair stage/i);
+    assert.match(paused.assistant_message, /rollback_verified=true/);
+    assert.match(paused.assistant_message, /residual_created_element_ids=\[\]/);
+    assert.match(paused.assistant_message, /paused before executing any split stage/i);
+    const finalized = enforceExistingConditionsOneActionLoop({
+      req: continuationRequest,
+      decision: paused
+    });
+    assert.equal(finalized.actions.length, 0);
+    assert.match(finalized.assistant_message, /paused before executing any split stage/i);
+    const repairs = readExistingConditionsRepairLedger(sessionId).filter(entry =>
+      entry.event === "repair_registered" &&
+      entry.payload.reason === "automatic_batch_scope_reduction_after_verified_clean_rollback"
+    );
+    assert.equal(repairs.length, 2);
+    assert.ok(repairs.every(entry => entry.stage_key?.startsWith("repair:")));
   } finally {
     if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;

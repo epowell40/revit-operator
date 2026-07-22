@@ -1058,7 +1058,7 @@ export function recordExistingConditionsStageResult(args: {
   workflow: AtomicMepDraftWorkflowRequest;
   result: Record<string, unknown>;
 }): ExistingConditionsRepairLedgerEntry | null {
-  const { workflowSha256 } = entriesForWorkflow(args.sessionId, args.workflow);
+  const { entries, workflowSha256 } = entriesForWorkflow(args.sessionId, args.workflow);
   const fingerprint = normalizedSha256(
     args.workflow.inputFingerprintSha256,
     "workflow_fingerprint"
@@ -1088,13 +1088,22 @@ export function recordExistingConditionsStageResult(args: {
       .map(value => clean(value.actionKey))
       .filter(Boolean)
     : [];
-  const actionKeys = normalizedOutputs.length > 0
+  const reportedActionKeys = normalizedOutputs.length > 0
     ? normalizedOutputs.map(output => output.action_key)
     : reportedOperationActionKeys.length > 0
       ? reportedOperationActionKeys
     : failedOperation && clean(failedOperation.actionKey)
       ? [clean(failedOperation.actionKey)]
       : [];
+  const registeredStage = entries
+    .filter(entry => entry.event === "stage_registered" && entry.stage_key === stageKey)
+    .at(-1);
+  const actionKeys = (
+    (status === "blocked" || clean(args.result.error)) &&
+    clean(registeredStage?.payload.execution_mode) === "provisional_backbone_batch"
+  )
+    ? registeredStage!.action_keys.map(clean).filter(Boolean)
+    : reportedActionKeys;
 
   if (
     dryRun &&

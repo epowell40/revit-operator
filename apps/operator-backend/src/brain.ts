@@ -64,6 +64,8 @@ function textDeclaresExistingConditionsReconstruction(userText: string): boolean
   if (!text) return false;
   return [
     /\bexisting[-\s]+conditions?\s+reconstruction\b/,
+    /\/revit\/existing-conditions-mep-draft-workflow\b/,
+    /\bexisting[-\s]+conditions?\b.{0,180}\b(?:staged[-\s]+repair\s+harness|provisional\s+backbone\s+batch|one[-\s]+action\s+(?:repair\s+)?ledger)\b/,
     /\b(?:reconstruct|recreate|restore|redraft|re-draft|redraw|re-draw|draft|draw|model)\b.{0,100}\bexisting[-\s]+conditions?\b/,
     /^(?=[\s\S]*\b(?:register|registration|align|alignment)\b)(?=[\s\S]*\bexisting[-\s]+conditions?\b)(?=[\s\S]*\b(?:attached|attachment|pdf|drawing|plan|sheet|source|scan|image)\b)/,
     /\bexisting[-\s]+conditions?\b.{0,100}\b(?:from|using|based\s+on)\b.{0,60}\b(?:pdf|drawing|sheet|scan|image)\b/,
