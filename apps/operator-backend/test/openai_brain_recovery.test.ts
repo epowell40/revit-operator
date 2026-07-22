@@ -271,6 +271,13 @@ test("candidate-visible durable landmark assessment reports exact native matchin
     "host:stair-a"
   );
 
+  const precisionBoundary = assess([
+    nativeEntry("host:stair-a", 0.16010226595429535, 0.1, 16, 10),
+    nativeEntry("host:stair-b", 0.8, 0.8, 80, 80)
+  ]);
+  assert.ok(precisionBoundary.receipt);
+  assert.equal(precisionBoundary.failure_reason, null);
+
   const ambiguous = assess([
     nativeEntry("host:stair-a", 0.1, 0.1, 10, 10),
     nativeEntry("host:stair-b", 0.105, 0.1, 11, 10),
@@ -2174,7 +2181,7 @@ test("candidate-visible deterministic preparation owns room, exact sheet, frame,
   );
 });
 
-test("candidate-visible preparation accepts only a natively verified explicit target view for crop workflows", () => {
+test("candidate-visible preparation verifies an explicit target view before filename-derived sheet hints", () => {
   const sessionId = "session-candidate-visible-explicit-view";
   const sourcePath = "artifacts/uploads/room_crop.png";
   const req = mkReq({
@@ -2183,7 +2190,7 @@ test("candidate-visible preparation accepts only a natively verified explicit ta
     user_attachments: [{
       id: "crop-source",
       relative_path: sourcePath,
-      filename: "room_crop.png",
+      filename: "codex-clipboard-a069-room_crop.png",
       mime: "image/png"
     }],
     context: {
@@ -2204,6 +2211,7 @@ test("candidate-visible preparation accepts only a natively verified explicit ta
   assert.equal(frame?.actions[0]?.path, "/revit/export-view-frame");
   assert.equal((frame?.actions[0]?.body as any)?.viewId, 12345678);
 
+  __testOnlyNoteAutomaticRedlineAnalyzeSuccessForRecoveryTest(`${sessionId}-unverified`, sourcePath);
   const unverified = __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(
     {
       ...req,
@@ -2218,7 +2226,9 @@ test("candidate-visible preparation accepts only a natively verified explicit ta
     },
     []
   );
-  assert.equal(unverified, null);
+  assert.equal(unverified?.actions[0]?.path, "/revit/export-view-frame");
+  assert.equal((unverified?.actions[0]?.body as any)?.viewId, 12345678);
+  assert.doesNotMatch(unverified?.assistant_message ?? "", /source sheet a069/i);
 });
 
 test("candidate-visible stable native controls require a real exterior wall identity", () => {

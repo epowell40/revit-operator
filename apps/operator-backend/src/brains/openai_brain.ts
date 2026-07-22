@@ -59,6 +59,8 @@ import {
 import { formatWorkbenchResultsForPrompt } from "./workbench_prompt_formatter.js";
 import { groundInitialRedlineWorkbenchResults } from "./redline_target_grounding_runtime.js";
 import {
+  CANDIDATE_VISIBLE_LANDMARK_DISTANCE_THRESHOLD,
+  candidateVisibleLandmarkDistanceWithinThreshold,
   compileCandidateVisibleMepReconstruction,
   type CandidateVisibleFrameMapping,
   type CandidateVisibleMepReconstructionInput,
@@ -19169,6 +19171,15 @@ function isExistingConditionsReconstructionRequest(req: ChatRequest | null | und
   return matched || persistedSourcePreflight || state.existing_conditions_reconstruction;
 }
 
+function explicitExistingConditionsViewId(req: ChatRequest | null | undefined): number | null {
+  if (!req) return null;
+  const match = getRecentUserTextForRedline(req).match(
+    /\b(?:target|candidate|registered|active|current|exact)?\s*(?:model\s+)?view(?:\s+(?:id|element\s+id))?\s*(?:is|=|:)?\s*#?(\d+)\b/i
+  );
+  const viewId = match ? toFiniteInt(match[1]) : null;
+  return viewId && viewId > 0 ? viewId : null;
+}
+
 function existingConditionsPlacedViewAnchor(
   req: ChatRequest | null | undefined,
   toolResults: ToolResult[]
@@ -19178,10 +19189,7 @@ function existingConditionsPlacedViewAnchor(
   const filenameSheet = extractAttachmentFilenameSheetHints(req)[0]?.sheet?.trim().toUpperCase() ?? "";
   const requestedSheet = seedSheet || filenameSheet;
   const state = getRedlineVisionState(req.session_id);
-  const explicitViewMatch = getRecentUserTextForRedline(req).match(
-    /\b(?:target|candidate|registered|active|current)?\s*(?:model\s+)?view(?:\s+(?:id|element\s+id))?\s*(?:is|=|:)?\s*#?(\d{5,})\b/i
-  );
-  const explicitViewId = explicitViewMatch ? toFiniteInt(explicitViewMatch[1]) : null;
+  const explicitViewId = explicitExistingConditionsViewId(req);
   if (explicitViewId && explicitViewId > 0) {
     const activeView = extractActiveViewSummaryFromContext(req.context);
     let verified = activeView.id === explicitViewId;
@@ -19216,19 +19224,20 @@ function existingConditionsPlacedViewAnchor(
           ? root.view_name.trim()
           : null);
     }
-    if (verified) {
-      const exact = {
-        sheet_number: "EXPLICIT_VIEW",
-        view_id: explicitViewId,
-        view_name: viewName ?? `View ${explicitViewId}`
-      };
-      if (state.last_existing_conditions_placed_view?.view_id !== exact.view_id) {
-        state.last_existing_conditions_frame = null;
-      }
-      state.last_existing_conditions_placed_view = exact;
-      state.updated_at_ms = Date.now();
-      return exact;
+    // The user-provided exact view is authoritative for the next read-only
+    // export. A successful export-view-frame result becomes the native
+    // verification receipt; a typo fails closed before any model write.
+    const exact = {
+      sheet_number: "EXPLICIT_VIEW",
+      view_id: explicitViewId,
+      view_name: viewName ?? `View ${explicitViewId}`
+    };
+    if (state.last_existing_conditions_placed_view?.view_id !== exact.view_id) {
+      state.last_existing_conditions_frame = null;
     }
+    state.last_existing_conditions_placed_view = exact;
+    state.updated_at_ms = Date.now();
+    return exact;
   }
   let latestPlacedView: { sheet_number: string; view_id: number; view_name: string | null } | null = null;
 
@@ -19286,6 +19295,7 @@ function existingConditionsPlacedViewAnchor(
 }
 
 function existingConditionsExpectedSheet(req: ChatRequest): string | null {
+  if (explicitExistingConditionsViewId(req)) return null;
   const seedSheet = (getRedlineSessionSeed(req.session_id)?.expected_sheet ?? "").trim();
   const filenameSheet = extractAttachmentFilenameSheetHints(req)[0]?.sheet?.trim() ?? "";
   return normalizeExpectedSheet(seedSheet || filenameSheet || null);
@@ -19871,8 +19881,8 @@ function candidateVisibleDurableLandmarkRegistrationAssessment(args: {
       .sort((left, right) =>
         left.projected.distance - right.projected.distance
       );
-    const candidates = allCandidates.filter(
-      ({ projected }) => projected.distance <= 0.06
+    const candidates = allCandidates.filter(({ projected }) =>
+      candidateVisibleLandmarkDistanceWithinThreshold(projected.distance)
     );
     if (candidates.length === 0) {
       const closest = allCandidates[0];
@@ -19882,7 +19892,8 @@ function candidateVisibleDurableLandmarkRegistrationAssessment(args: {
         control_label: control.label ?? null,
         control_view_normalized_point: control.view_normalized_point,
         supported_categories: [...supported],
-        maximum_projected_distance_normalized: 0.06,
+        maximum_projected_distance_normalized:
+          CANDIDATE_VISIBLE_LANDMARK_DISTANCE_THRESHOLD,
         closest_candidate: closest
           ? {
               native_source_scoped_id: closest.entry.source_scoped_id,

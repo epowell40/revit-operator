@@ -21,6 +21,22 @@ import {
   type PlanTracePixelBuffer
 } from "./plan_trace_extraction.js";
 
+export const CANDIDATE_VISIBLE_LANDMARK_DISTANCE_THRESHOLD = 0.06;
+const CANDIDATE_VISIBLE_LANDMARK_DISTANCE_PRECISION = 1_000;
+
+export function candidateVisibleLandmarkDistanceWithinThreshold(
+  distance: number
+): boolean {
+  if (!Number.isFinite(distance) || distance < 0) return false;
+  // Structured visual controls are reported to three decimal places. Compare
+  // native projections at that same precision so binary floating-point noise
+  // cannot reject a control that is exactly on the documented boundary.
+  const quantized = Math.round(
+    (distance + Number.EPSILON) * CANDIDATE_VISIBLE_LANDMARK_DISTANCE_PRECISION
+  ) / CANDIDATE_VISIBLE_LANDMARK_DISTANCE_PRECISION;
+  return quantized <= CANDIDATE_VISIBLE_LANDMARK_DISTANCE_THRESHOLD;
+}
+
 export type CandidateVisibleFrameMapping = {
   frame_id: string;
   view_id: number;
@@ -4005,7 +4021,9 @@ function validateCandidateVisibleLandmarkScopeReceipt(
     Number.isFinite(landmark.native_projected_view_normalized_point?.y) &&
     Number.isFinite(landmark.projected_distance_normalized) &&
     landmark.projected_distance_normalized >= 0 &&
-    landmark.projected_distance_normalized <= 0.06 &&
+    candidateVisibleLandmarkDistanceWithinThreshold(
+      landmark.projected_distance_normalized
+    ) &&
     (
       landmark.geometry_basis === "projected_geometry" ||
       landmark.geometry_basis === "projected_bbox"
