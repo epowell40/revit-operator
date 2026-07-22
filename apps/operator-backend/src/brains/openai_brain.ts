@@ -875,6 +875,13 @@ type LoopPressureInfo = {
 
 const loopPressureBySession = new Map<string, LoopPressureState>();
 
+type ReadReplayGuardState = {
+  issued_by_action_id: Map<string, string>;
+  completed_signatures: Set<string>;
+};
+
+const readReplayGuardBySession = new Map<string, ReadReplayGuardState>();
+
 type ViewportPickHint = {
   view_id: number;
   normalized_x: number;
@@ -19148,6 +19155,58 @@ function existingConditionsPlacedViewAnchor(
   const filenameSheet = extractAttachmentFilenameSheetHints(req)[0]?.sheet?.trim().toUpperCase() ?? "";
   const requestedSheet = seedSheet || filenameSheet;
   const state = getRedlineVisionState(req.session_id);
+  const explicitViewMatch = getRecentUserTextForRedline(req).match(
+    /\b(?:target|candidate|registered|active|current)?\s*(?:model\s+)?view(?:\s+(?:id|element\s+id))?\s*(?:is|=|:)?\s*#?(\d{5,})\b/i
+  );
+  const explicitViewId = explicitViewMatch ? toFiniteInt(explicitViewMatch[1]) : null;
+  if (explicitViewId && explicitViewId > 0) {
+    const activeView = extractActiveViewSummaryFromContext(req.context);
+    let verified = activeView.id === explicitViewId;
+    let viewName = verified ? activeView.name : null;
+    for (let index = toolResults.length - 1; index >= 0 && !verified; index--) {
+      const result = toolResults[index];
+      if (!result || result.status !== "done") continue;
+      const resultPath = (result.path ?? "").trim().toLowerCase();
+      if (
+        resultPath !== "/revit/activate-view" &&
+        resultPath !== "/revit/export-view-frame" &&
+        resultPath !== "/revit/export-visible-elements"
+      ) {
+        continue;
+      }
+      const root = result.result_json && typeof result.result_json === "object"
+        ? result.result_json as Record<string, unknown>
+        : null;
+      const resultViewId = toFiniteInt(root?.activeViewId) ??
+        toFiniteInt(root?.viewId) ??
+        toFiniteInt(root?.view_id);
+      if (resultViewId !== explicitViewId) continue;
+      verified = true;
+      viewName =
+        (typeof root?.activeViewName === "string" && root.activeViewName.trim()
+          ? root.activeViewName.trim()
+          : null) ??
+        (typeof root?.viewName === "string" && root.viewName.trim()
+          ? root.viewName.trim()
+          : null) ??
+        (typeof root?.view_name === "string" && root.view_name.trim()
+          ? root.view_name.trim()
+          : null);
+    }
+    if (verified) {
+      const exact = {
+        sheet_number: "EXPLICIT_VIEW",
+        view_id: explicitViewId,
+        view_name: viewName ?? `View ${explicitViewId}`
+      };
+      if (state.last_existing_conditions_placed_view?.view_id !== exact.view_id) {
+        state.last_existing_conditions_frame = null;
+      }
+      state.last_existing_conditions_placed_view = exact;
+      state.updated_at_ms = Date.now();
+      return exact;
+    }
+  }
   let latestPlacedView: { sheet_number: string; view_id: number; view_name: string | null } | null = null;
 
   for (let index = toolResults.length - 1; index >= 0; index--) {
@@ -20555,6 +20614,53 @@ function shouldSuppressRoutineRedlineProgressMessage(req: ChatRequest, response:
   return true;
 }
 
+function readReplaySignature(action: { method: "GET" | "POST"; path: string; body?: unknown }): string | null {
+  if (action.method === "POST" && pathLooksWrite(action.path)) return null;
+  return canonicalJsonString({
+    method: action.method,
+    path: (action.path ?? "").trim().toLowerCase(),
+    body: action.body ?? null
+  });
+}
+
+function suppressCompletedReadReplays(req: ChatRequest, response: ChatResponse): ChatResponse {
+  const sessionId = (req.session_id ?? "").trim();
+  if (!sessionId || !Array.isArray(response.actions) || response.actions.length === 0) return response;
+  const toolResults = Array.isArray(req.tool_results) ? req.tool_results : [];
+  const freshUserTurn = Boolean((req.user_text ?? "").trim()) && toolResults.length === 0;
+  let state = readReplayGuardBySession.get(sessionId);
+  if (!state || freshUserTurn) {
+    state = {
+      issued_by_action_id: new Map<string, string>(),
+      completed_signatures: new Set<string>()
+    };
+    readReplayGuardBySession.set(sessionId, state);
+  }
+
+  for (const result of toolResults) {
+    if (result?.status !== "done") continue;
+    const signature = state.issued_by_action_id.get((result.action_id ?? "").trim());
+    if (signature) state.completed_signatures.add(signature);
+  }
+
+  const retained = response.actions.filter((action) => {
+    const signature = readReplaySignature(action);
+    if (!signature) return true;
+    if (state!.completed_signatures.has(signature)) return false;
+    const actionId = (action.action_id ?? "").trim();
+    if (actionId) state!.issued_by_action_id.set(actionId, signature);
+    return true;
+  });
+  if (retained.length === response.actions.length) return response;
+  if (retained.length > 0) return { ...response, actions: retained };
+  return {
+    ...response,
+    assistant_message:
+      "I stopped an identical read-only action from replaying. The prior result remains registered; the next turn must consume that evidence and take one materially new action.",
+    actions: []
+  };
+}
+
 export function __testOnlyFinalizeOpenAiResponseForRequest(req: ChatRequest, response: ChatResponse): ChatResponse {
   if (Array.isArray(response.actions) && response.actions.length > 0) {
     response = {
@@ -20562,6 +20668,7 @@ export function __testOnlyFinalizeOpenAiResponseForRequest(req: ChatRequest, res
       actions: normalizeNativeRevitActionBodiesForRouting(response.actions, getAugmentedToolResults(req, 80), req)
     };
   }
+  response = suppressCompletedReadReplays(req, response);
   response = naturalizeActionMessage(response);
   if (shouldSuppressRoutineRedlineProgressMessage(req, response)) {
     return { ...response, assistant_message: "" };

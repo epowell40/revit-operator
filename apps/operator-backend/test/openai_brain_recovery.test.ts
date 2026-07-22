@@ -2174,6 +2174,53 @@ test("candidate-visible deterministic preparation owns room, exact sheet, frame,
   );
 });
 
+test("candidate-visible preparation accepts only a natively verified explicit target view for crop workflows", () => {
+  const sessionId = "session-candidate-visible-explicit-view";
+  const sourcePath = "artifacts/uploads/room_crop.png";
+  const req = mkReq({
+    session_id: sessionId,
+    user_text: "Draft the visible existing conditions from this crop in target view 12345678.",
+    user_attachments: [{
+      id: "crop-source",
+      relative_path: sourcePath,
+      filename: "room_crop.png",
+      mime: "image/png"
+    }],
+    context: {
+      revit: {
+        document: {
+          activeView: {
+            id: 12345678,
+            name: "LEVEL 01 - NEW WORK - PLUMBING Copy 2",
+            type: "FloorPlan"
+          }
+        }
+      }
+    } as any
+  });
+  __testOnlyNoteAutomaticRedlineAnalyzeSuccessForRecoveryTest(sessionId, sourcePath);
+
+  const frame = __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(req, []);
+  assert.equal(frame?.actions[0]?.path, "/revit/export-view-frame");
+  assert.equal((frame?.actions[0]?.body as any)?.viewId, 12345678);
+
+  const unverified = __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(
+    {
+      ...req,
+      session_id: `${sessionId}-unverified`,
+      context: {
+        revit: {
+          document: {
+            activeView: { id: 42, name: "Different view", type: "FloorPlan" }
+          }
+        }
+      } as any
+    },
+    []
+  );
+  assert.equal(unverified, null);
+});
+
 test("candidate-visible stable native controls require a real exterior wall identity", () => {
   const roomResult: any = {
     action_id: "room",
