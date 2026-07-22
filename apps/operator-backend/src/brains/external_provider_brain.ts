@@ -127,6 +127,11 @@ function maxOutputTokens(provider: ExternalProvider): number {
   return Number.isFinite(raw) ? Math.max(512, Math.min(32_000, raw)) : fallback;
 }
 
+function geminiDecisionAttempts(): number {
+  const raw = Number.parseInt(process.env.OPERATOR_GEMINI_AGENT_DECISION_ATTEMPTS ?? "2", 10);
+  return Number.isFinite(raw) ? Math.max(1, Math.min(3, raw)) : 2;
+}
+
 function timeoutMs(provider: ExternalProvider): number {
   const name =
     provider === "gemini"
@@ -644,63 +649,75 @@ async function callGemini(
 
   for (const model of models) {
     const endpoint = `${baseUrl}/models/${encodeURIComponent(model)}:generateContent`;
-    const parts: Array<Record<string, unknown>> = [{ text: prompt }];
-    for (const image of images) {
-      parts.push({
-        inlineData: {
-          mimeType: image.mime,
-          data: image.dataBase64
-        }
-      });
-    }
+    for (let attempt = 0; attempt < geminiDecisionAttempts(); attempt += 1) {
+      const repairInstruction = attempt > 0
+        ? [
+            "REPAIR THE PREVIOUS PROVIDER DECISION FORMAT.",
+            `The previous structured response could not be parsed: ${clip(lastError, 500)}`,
+            "Return a complete, concise JSON object that exactly matches the response schema.",
+            "Keep assistant_message under 240 characters and return at most one next action. Do not repeat reads already present in the supplied receipts."
+          ].join("\n")
+        : "";
+      const parts: Array<Record<string, unknown>> = [{
+        text: repairInstruction ? `${prompt}\n\n${repairInstruction}` : prompt
+      }];
+      for (const image of images) {
+        parts.push({
+          inlineData: {
+            mimeType: image.mime,
+            data: image.dataBase64
+          }
+        });
+      }
 
-    let response: Response;
-    try {
-      response = await fetchWithTimeout(
-        fetchImpl,
-        endpoint,
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-goog-api-key": key
+      let response: Response;
+      try {
+        response = await fetchWithTimeout(
+          fetchImpl,
+          endpoint,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-goog-api-key": key
+            },
+            body: JSON.stringify({
+              contents: [{ role: "user", parts }],
+              generationConfig: {
+                temperature: attempt > 0 ? 0 : 0.1,
+                maxOutputTokens: maxOutputTokens("gemini"),
+                responseMimeType: "application/json",
+                responseJsonSchema: RESPONSE_SCHEMA
+              }
+            })
           },
-          body: JSON.stringify({
-            contents: [{ role: "user", parts }],
-            generationConfig: {
-              temperature: 0.1,
-              maxOutputTokens: maxOutputTokens("gemini"),
-              responseMimeType: "application/json",
-              responseJsonSchema: RESPONSE_SCHEMA
-            }
-          })
-        },
-        timeoutMs("gemini")
-      );
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error);
-      continue;
-    }
+          timeoutMs("gemini")
+        );
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+        break;
+      }
 
-    const responseText = await response.text();
-    if (!response.ok) {
-      lastError = `HTTP ${response.status}: ${clip(responseText.replace(/\s+/g, " ").trim(), 1000)}`;
-      continue;
-    }
+      const responseText = await response.text();
+      if (!response.ok) {
+        lastError = `HTTP ${response.status}: ${clip(responseText.replace(/\s+/g, " ").trim(), 1000)}`;
+        break;
+      }
 
-    try {
-      const payload = JSON.parse(responseText) as {
-        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-      };
-      const text = (payload.candidates ?? [])
-        .flatMap(candidate => candidate.content?.parts ?? [])
-        .map(part => (typeof part.text === "string" ? part.text : ""))
-        .filter(Boolean)
-        .join("\n");
-      if (!text) throw new Error("Gemini returned no text decision.");
-      return normalizeProviderDecision(parseProviderDecision(text));
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error);
+      try {
+        const payload = JSON.parse(responseText) as {
+          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+        };
+        const text = (payload.candidates ?? [])
+          .flatMap(candidate => candidate.content?.parts ?? [])
+          .map(part => (typeof part.text === "string" ? part.text : ""))
+          .filter(Boolean)
+          .join("\n");
+        if (!text) throw new Error("Gemini returned no text decision.");
+        return normalizeProviderDecision(parseProviderDecision(text));
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
     }
   }
 

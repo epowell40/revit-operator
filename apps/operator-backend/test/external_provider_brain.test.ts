@@ -149,6 +149,54 @@ test("Gemini brain uses structured output and normalizes action body_json", asyn
   }
 });
 
+test("Gemini brain retries a malformed structured decision with a bounded repair prompt", async () => {
+  const previous = {
+    OPERATOR_GEMINI_API_KEY: process.env.OPERATOR_GEMINI_API_KEY,
+    OPERATOR_GEMINI_AGENT_MODEL: process.env.OPERATOR_GEMINI_AGENT_MODEL,
+    OPERATOR_GEMINI_AGENT_BASE_URL: process.env.OPERATOR_GEMINI_AGENT_BASE_URL,
+    OPERATOR_GEMINI_AGENT_DECISION_ATTEMPTS: process.env.OPERATOR_GEMINI_AGENT_DECISION_ATTEMPTS
+  };
+  process.env.OPERATOR_GEMINI_API_KEY = "test-gemini-key";
+  process.env.OPERATOR_GEMINI_AGENT_MODEL = "gemini-test";
+  process.env.OPERATOR_GEMINI_AGENT_BASE_URL = "https://gemini.test/v1beta";
+  process.env.OPERATOR_GEMINI_AGENT_DECISION_ATTEMPTS = "2";
+
+  const requestedBodies: any[] = [];
+  let callCount = 0;
+  const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
+    requestedBodies.push(JSON.parse(String(init?.body ?? "{}")));
+    callCount += 1;
+    const decisionText = callCount === 1
+      ? '{"assistant_message":"truncated'
+      : JSON.stringify({
+          assistant_message: "Registration is preserved; take the next new read once.",
+          actions: [{
+            action_id: "inventory-next",
+            method: "POST",
+            path: "/revit/export-visible-elements",
+            body_json: { viewId: 123, frameId: "frame-1" }
+          }]
+        });
+    return new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text: decisionText }] } }]
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+
+  try {
+    const response = await decideGemini(request(), { fetchImpl });
+    assert.equal(callCount, 2);
+    assert.equal(response.actions.length, 1);
+    assert.equal(response.actions[0]?.action_id, "inventory-next");
+    assert.match(
+      requestedBodies[1].contents[0].parts[0].text,
+      /REPAIR THE PREVIOUS PROVIDER DECISION FORMAT/
+    );
+    assert.equal(requestedBodies[1].generationConfig.temperature, 0);
+  } finally {
+    restoreEnvironment(previous);
+  }
+});
+
 test("external provider prompt rehydrates compacted persisted tool receipts", { concurrency: false }, async () => {
   const previous = {
     OPERATOR_WORKSPACE_ROOT: process.env.OPERATOR_WORKSPACE_ROOT,
