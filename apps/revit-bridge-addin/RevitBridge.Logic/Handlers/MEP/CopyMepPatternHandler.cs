@@ -59,7 +59,9 @@ namespace RevitBridge.Logic.Handlers.MEP
         private static readonly HashSet<BuiltInCategory> AllowedCategories = new HashSet<BuiltInCategory>
         {
             BuiltInCategory.OST_DuctCurves,
+            BuiltInCategory.OST_FlexDuctCurves,
             BuiltInCategory.OST_PipeCurves,
+            BuiltInCategory.OST_FlexPipeCurves,
             BuiltInCategory.OST_DuctTerminal,
             BuiltInCategory.OST_MechanicalEquipment,
             BuiltInCategory.OST_PlumbingFixtures,

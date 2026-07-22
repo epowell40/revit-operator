@@ -57,8 +57,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                 throw new ArgumentException($"mainElementId {p.mainElementId} is not an MEP curve.");
             if (branch == null)
                 throw new ArgumentException($"branchElementId {p.branchElementId} was not found.");
-            GuardCurveKind(main, kind, "mainElementId");
-            GuardCurveKind(branch, kind, "branchElementId");
+            GuardCurveKind(main, kind, "mainElementId", allowFlex: false);
+            GuardCurveKind(branch, kind, "branchElementId", allowFlex: true);
 
             var branchConnector = ResolveOpenBranchConnector(branch, p);
             var branchOrigin = branchConnector.Origin;
@@ -255,15 +255,22 @@ namespace RevitBridge.Logic.Handlers.MEP
             return nearest;
         }
 
-        private static void GuardCurveKind(Element element, string kind, string parameterName)
+        private static void GuardCurveKind(
+            Element element,
+            string kind,
+            string parameterName,
+            bool allowFlex)
         {
             var categoryId = element.Category == null
                 ? long.MinValue
                 : ElementIdCompat.GetValue(element.Category.Id);
-            var expected = kind == "pipe"
+            var rigidCategoryId = kind == "pipe"
                 ? (long)BuiltInCategory.OST_PipeCurves
                 : (long)BuiltInCategory.OST_DuctCurves;
-            if (categoryId != expected)
+            var flexCategoryId = kind == "pipe"
+                ? (long)BuiltInCategory.OST_FlexPipeCurves
+                : (long)BuiltInCategory.OST_FlexDuctCurves;
+            if (categoryId != rigidCategoryId && (!allowFlex || categoryId != flexCategoryId))
                 throw new ArgumentException($"{parameterName} category '{element.Category?.Name}' is not compatible with kind '{kind}'.");
         }
 
