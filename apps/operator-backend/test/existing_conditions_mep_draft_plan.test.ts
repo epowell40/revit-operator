@@ -190,7 +190,7 @@ test("plumbing fixture representation gate prevents architectural graphics from 
   assert.equal(grounded.actions.some((entry) => entry.action_key === "place:fixture-random-29"), true);
 });
 
-test("compiler marks only clear long exact orthogonal routes as provisional backbone batches with continuation endpoints", () => {
+test("compiler batches clear long orthogonal routes with safe editable containers and preserves continuation endpoints", () => {
   const input = plumbingTopologyPackage();
   const first = input.observations[0];
   if (first?.kind !== "pipe_route" || first.geometry_mode === "source_branch_tee"
@@ -201,19 +201,27 @@ test("compiler marks only clear long exact orthogonal routes as provisional back
   }
   const second = structuredClone(first);
   second.observation_id = "route-hw-backbone-2";
-  second.service = "domestic_hot_water";
-  second.system_type = "Domestic Hot Water";
+  second.service = "unclassified";
+  second.supported_attributes = ["location", "elevation"];
+  second.pipe_size = undefined;
+  second.pipe_size_policy = "unresolved_placeholder";
+  second.type_policy = "unresolved_placeholder";
+  second.system_classification_policy = "unresolved_placeholder";
+  second.pipe_type = "Standard";
+  second.system_type = "Domestic Cold Water";
   second.points = [{ x: 0, y: 2 }, { x: 5, y: 2 }];
+  input.partial_promotion_policy = "defer_ambiguous_observations";
   input.observations = [first, second];
 
   const plan = compileMepDraftPlan(input);
-  assert.equal(plan.status, "ready");
+  assert.equal(plan.status, "partially_ready");
   assert.equal(plan.actions.length, 2);
   assert.deepEqual(
     plan.actions.map(action => action.execution_mode),
     ["provisional_backbone_batch", "provisional_backbone_batch"]
   );
   assert.equal(plan.actions[0]?.provisional_batch_key, plan.actions[1]?.provisional_batch_key);
+  assert.deepEqual(plan.actions[1]?.provisional_route_attributes?.unresolved_attributes, ["size", "type"]);
   assert.deepEqual(
     plan.actions.map(action => action.continuation_endpoints?.map(endpoint => endpoint.output)),
     [["route_start", "route_end"], ["route_start", "route_end"]]

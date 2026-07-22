@@ -163,6 +163,10 @@ test("candidate-visible MEP compilation emits a dry-run atomic workflow without 
   context.moveTo(10, 50);
   context.lineTo(90, 50);
   context.stroke();
+  context.beginPath();
+  context.moveTo(10, 55);
+  context.lineTo(90, 55);
+  context.stroke();
   fs.writeFileSync(renderPath, canvas.toBuffer("image/png"));
 
   const result = await compileCandidateVisibleMepReconstruction({
@@ -210,7 +214,14 @@ test("candidate-visible MEP compilation emits a dry-run atomic workflow without 
           pipe_size: "1/2 inch",
           pipe_type: "Copper",
           system_type: "Domestic Cold Water",
-          elevation_ft: 9
+          elevation_ft: 109
+        },
+        {
+          ...placeholderPipeObservation(
+            "missing-elevation-route",
+            [{ x: 10, y: 55 }, { x: 90, y: 55 }]
+          ),
+          elevation_ft: null as any
         }
       ]
     }
@@ -220,7 +231,7 @@ test("candidate-visible MEP compilation emits a dry-run atomic workflow without 
   assert.equal(result.compilation.compiled_plan.status, "partially_ready");
   assert.equal(result.workflow.dryRun, true);
   assert.equal(result.workflow.verify, true);
-  assert.equal(result.workflow.operations.length, 1);
+  assert.equal(result.workflow.operations.length, 2);
   assert.equal(result.workflow.operations[0]?.path, "/revit/mep-route-workflow");
   assert.equal(result.package.level_elevation_ft, 100);
   assert.equal(result.package.target_view_reference_key, "candidate_visible_aligned_view");
@@ -230,19 +241,34 @@ test("candidate-visible MEP compilation emits a dry-run atomic workflow without 
   assert.equal(result.workflow.requireAllCreatedElementsVisibleInTargetView, true);
   assert.equal(result.spatial_scope_receipt?.anchor_label, "TEST ROOM 100");
   assert.equal(result.spatial_scope_receipt?.native_room_source_scoped_id, "loaded-arch-link:100");
-  assert.deepEqual(result.spatial_scope_receipt?.checked_observation_ids, ["cold-water-route-1"]);
+  assert.deepEqual(result.spatial_scope_receipt?.checked_observation_ids, [
+    "cold-water-route-1",
+    "missing-elevation-route"
+  ]);
   assert.equal(result.workflow.operations[0]?.apply_body?.viewId, 42);
   assert.equal("levelName" in (result.workflow.operations[0]?.apply_body ?? {}), false);
   assert.deepEqual(result.workflow.operations[0]?.apply_body?.points, [
     { x: 130, y: 150, z: 109 },
     { x: 170, y: 150, z: 109 }
   ]);
+  assert.equal(result.package.observations[1]?.kind, "pipe_route");
+  assert.equal((result.package.observations[1] as any).elevation_ft, 10);
+  assert.deepEqual(
+    (result.workflow.operations[1]?.apply_body?.points as any[] | undefined)?.map((point: any) => point.z),
+    [110, 110]
+  );
   assert.equal(result.package.native_element_references.some((entry) =>
     entry.reference_key === "candidate_visible_aligned_view" &&
     entry.element_id === 42
   ), true);
   assert.equal(result.planner_normalization_warnings.some((entry) =>
     entry.includes("Injected verified target-level elevation 100 ft")
+  ), true);
+  assert.equal(result.planner_normalization_warnings.some((entry) =>
+    entry.includes("normalized planner absolute elevation 109 ft to 9 ft above verified level elevation 100 ft")
+  ), true);
+  assert.equal(result.planner_normalization_warnings.some((entry) =>
+    entry.includes("missing-elevation-route: normalized missing plan-unseen elevation to a disclosed 10 ft level offset")
   ), true);
   assert.match(result.package.source_evidence_sha256, /^[a-f0-9]{64}$/);
   assert.match(result.package.registered_render.sha256, /^[a-f0-9]{64}$/);
@@ -792,6 +818,48 @@ test("candidate-visible room-label translation shifts only registration geometry
   assert.ok((enclosureFallback?.scale_x ?? 1) < 1);
   assert.deepEqual(
     (enclosureRepaired.package.observations[0] as any).pixel_points,
+    originalRoute
+  );
+
+  const driftedAnchorPayload = structuredClone(enclosurePayload);
+  driftedAnchorPayload.spatial_scope.anchor_pixel_point = { x: 27, y: 70 };
+  const independentlyLocatedAnchor =
+    await compileCandidateVisibleMepReconstruction({
+      source_pdf_path: renderPath,
+      registered_render_path: renderPath,
+      alignment: {
+        ...structuredImageLabelAlignment,
+        crop: { min_u: 0.8, min_v: 0.8, max_u: 0.96, max_v: 0.96 }
+      },
+      frame: FRAME,
+      verified_room_scope: {
+        ...verifiedRoomScope(),
+        boundary_model_points: [
+          { x: 120, y: 120 },
+          { x: 180, y: 120 },
+          { x: 180, y: 153.75 },
+          { x: 153.75, y: 153.75 },
+          { x: 153.75, y: 180 },
+          { x: 120, y: 180 }
+        ],
+        location_model_point: { x: 140, y: 140 }
+      },
+      planner_payload: driftedAnchorPayload
+    });
+  assert.deepEqual(
+    independentlyLocatedAnchor.spatial_scope_receipt
+      ?.source_observed_anchor_pixel_point,
+    { x: 27, y: 52 }
+  );
+  assert.ok(
+    independentlyLocatedAnchor.planner_normalization_warnings.some((warning) =>
+      warning.includes(
+        "Replaced the planner room anchor with the independently located, raster-verified exact source-room label point"
+      )
+    )
+  );
+  assert.deepEqual(
+    (independentlyLocatedAnchor.package.observations[0] as any).pixel_points,
     originalRoute
   );
 
@@ -2119,26 +2187,23 @@ test("candidate-visible adapter maps service evidence to system from normalized 
           visibility: "partial",
           confidence: 0.9,
           supported_attributes: ["service", "pixel_points", "elevation"],
-          attribute_evidence: [
-            {
-              attribute: "service",
+          attribute_evidence: {
+            service: {
               evidence_role: "registered_source_render",
               basis: "legible_source_evidence",
               reference: "Printed CW label and matching line pattern."
             },
-            {
-              attribute: "pixel_points",
+            pixel_points: {
               evidence_role: "registered_source_render",
               basis: "legible_source_evidence",
               reference: "Visible route from both crop boundaries."
             },
-            {
-              attribute: "elevation",
+            elevation: {
               evidence_role: "registered_source_render",
               basis: "declared_heuristic",
               reference: "Plan does not show elevation; use disclosed plenum assumption."
             }
-          ],
+          },
           service: "cold_water",
           pixel_points: [[1 / 650, 149 / 650], [649 / 650, 149 / 650]],
           elevation_ft: 10,

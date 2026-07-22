@@ -3047,7 +3047,16 @@ function normalizeEvidenceClaims(
 ): Array<{ attribute: string; basis: "legible_source_evidence" | "native_model_precedent" | "user_direction" | "declared_heuristic"; evidence_role: string; reference: string }> {
   const supported = new Set(supportedAttributes.map((entry) => normalizedText(entry).replaceAll("_", " ")));
   const claims: Array<{ attribute: string; basis: "legible_source_evidence" | "native_model_precedent" | "user_direction" | "declared_heuristic"; evidence_role: string; reference: string }> = [];
-  for (const rawValue of Array.isArray(value) ? value : []) {
+  const rawClaims = Array.isArray(value)
+    ? value
+    : value && typeof value === "object"
+      ? Object.entries(value as Record<string, unknown>).map(([attribute, claim]) =>
+          claim && typeof claim === "object"
+            ? { attribute, ...(claim as Record<string, unknown>) }
+            : { attribute, reference: claim }
+        )
+      : [];
+  for (const rawValue of rawClaims) {
     if (!rawValue || typeof rawValue !== "object") continue;
     const raw = rawValue as Record<string, unknown>;
     const attribute = normalizeAttributeName(raw.attribute);
@@ -3093,6 +3102,10 @@ function normalizeCandidateVisiblePlannerPayload(
   renderHeightPx: number
 ): { payload: CandidateVisibleMepPlannerPayload; warnings: string[]; frameEvidenceHash: string } {
   const warnings: string[] = [];
+  const targetLevelElevationFt = finite(
+    frame.target_level_elevation_ft,
+    "frame_target_level_elevation_ft"
+  );
   const rawObservations = Array.isArray(payload.observations)
     ? payload.observations as unknown as Array<Record<string, unknown>>
     : [];
@@ -3144,8 +3157,30 @@ function normalizeCandidateVisiblePlannerPayload(
       const elevationObject = raw.elevation_ft && typeof raw.elevation_ft === "object"
         ? raw.elevation_ft as Record<string, unknown>
         : null;
-      const explicitElevation = Number(elevationObject?.value ?? raw.elevation_ft);
-      const elevationFt = Number.isFinite(explicitElevation) ? explicitElevation : 10;
+      const rawElevationValue = elevationObject?.value ?? raw.elevation_ft;
+      const hasExplicitElevation =
+        rawElevationValue !== null &&
+        rawElevationValue !== undefined &&
+        String(rawElevationValue).trim() !== "";
+      const explicitElevation = hasExplicitElevation
+        ? Number(rawElevationValue)
+        : Number.NaN;
+      const absoluteElevationOffset = explicitElevation - targetLevelElevationFt;
+      const absoluteElevationStronglyImplied =
+        Number.isFinite(explicitElevation) &&
+        absoluteElevationOffset >= -20 &&
+        absoluteElevationOffset <= 50 &&
+        Math.abs(explicitElevation) >= Math.abs(absoluteElevationOffset) + 25;
+      const elevationFt = Number.isFinite(explicitElevation)
+        ? absoluteElevationStronglyImplied
+          ? absoluteElevationOffset
+          : explicitElevation
+        : 10;
+      if (absoluteElevationStronglyImplied) {
+        warnings.push(
+          `${observationId}: normalized planner absolute elevation ${explicitElevation} ft to ${elevationFt} ft above verified level elevation ${targetLevelElevationFt} ft.`
+        );
+      }
       if (!Number.isFinite(explicitElevation)) {
         warnings.push(`${observationId}: normalized missing plan-unseen elevation to a disclosed 10 ft level offset.`);
       }
@@ -3295,10 +3330,6 @@ function normalizeCandidateVisiblePlannerPayload(
       evidence_sha256: frameEvidenceHash
     });
   }
-  const targetLevelElevationFt = finite(
-    frame.target_level_elevation_ft,
-    "frame_target_level_elevation_ft"
-  );
   return {
     payload: {
       ...payload,
@@ -4623,6 +4654,67 @@ export async function compileCandidateVisibleMepReconstruction(
         alignment: input.alignment
       })
     : null;
+  if (
+    sourceRoomLabelAnchor &&
+    payload.spatial_scope &&
+    input.verified_room_scope
+  ) {
+    const submittedAnchor = normalizePoint(
+      payload.spatial_scope.anchor_pixel_point
+    );
+    let sourcePolygon: ExistingConditionsPlanPoint[] | null = null;
+    try {
+      sourcePolygon = validateScopePolygon(
+        payload.spatial_scope.boundary_pixel_points,
+        width,
+        height
+      );
+    } catch {
+      // Preserve the existing fail-closed/authoritative-scope recovery path for
+      // malformed planner polygons; an independently located label does not
+      // make a malformed enclosure safe to rewrite here.
+    }
+    const roomToken = normalizedRoomLabelToken(roomNumber);
+    const roomNameToken = normalizedRoomLabelToken(
+      String(input.verified_room_scope.room_name ?? "").replace(roomNumber, "")
+    );
+    const sourceLabelIdentityMatches = roomLabelMatchesExactIdentity(
+      normalizedRoomLabelToken(sourceRoomLabelAnchor.text),
+      roomToken,
+      roomNameToken
+    );
+    const plannerLabelIdentityMatches = roomLabelMatchesExactIdentity(
+      normalizedRoomLabelToken(payload.spatial_scope.anchor_label),
+      roomToken,
+      roomNameToken
+    );
+    if (
+      submittedAnchor &&
+      sourcePolygon &&
+      sourceLabelIdentityMatches &&
+      plannerLabelIdentityMatches &&
+      pointInsidePolygonOrBoundary(submittedAnchor, sourcePolygon) &&
+      pointInsidePolygonOrBoundary(sourceRoomLabelAnchor.pixel_point, sourcePolygon) &&
+      !sourceRoomAnchorMatchesLocatedLabel({
+        source_polygon: sourcePolygon,
+        submitted_anchor: submittedAnchor,
+        source_room_label_anchor: sourceRoomLabelAnchor,
+        render_width_px: width,
+        render_height_px: height
+      })
+    ) {
+      const anchorDistance = Math.hypot(
+        submittedAnchor.x - sourceRoomLabelAnchor.pixel_point.x,
+        submittedAnchor.y - sourceRoomLabelAnchor.pixel_point.y
+      );
+      payload.spatial_scope.anchor_pixel_point = {
+        ...sourceRoomLabelAnchor.pixel_point
+      };
+      normalizedPlanner.warnings.push(
+        `Replaced the planner room anchor with the independently located, raster-verified exact source-room label point (${rounded(anchorDistance)} px correction); the source enclosure and all observations were unchanged.`
+      );
+    }
+  }
   const sourceEnclosureRasterVerification =
     sourceRoomLabelAnchor && payload.spatial_scope
       ? await verifySourceEnclosureRaster({

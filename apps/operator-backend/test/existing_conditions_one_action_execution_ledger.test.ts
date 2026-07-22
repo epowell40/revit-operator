@@ -8,9 +8,13 @@ import {
   enforceExistingConditionsOneActionLoop,
   existingConditionsExecutionLedgerPath,
   maybeBuildExplicitExistingConditionsAction,
+  maybeContinueExistingConditionsOneActionLoop,
   readExistingConditionsExecutionLedger
 } from "../src/existing_conditions/one_action_execution_ledger.js";
-import { readExistingConditionsRepairLedger } from "../src/existing_conditions/staged_repair_ledger.js";
+import {
+  readExistingConditionsRepairLedger,
+  registerExistingConditionsStagedWorkflow
+} from "../src/existing_conditions/staged_repair_ledger.js";
 
 function request(
   sessionId: string,
@@ -105,6 +109,65 @@ function response(actions: ChatResponse["actions"]): ChatResponse {
     actions
   };
 }
+
+test("compile-only workflow cannot be advanced by the outer one-action loop", { concurrency: false }, () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-compile-only-boundary-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const sessionId = "compile-only-outer-loop";
+    const workflow = {
+      inputFingerprintSha256: "c".repeat(64),
+      provisionalObservationIds: ["backbone-1"],
+      operations: [{
+        action_key: "route:backbone-1",
+        observation_ids: ["backbone-1"],
+        path: "/revit/mep-route-workflow",
+        depends_on: [],
+        expected_created_min: 1,
+        expected_created_max: 1,
+        apply_body: { kind: "pipe", apply: true }
+      }],
+      dryRun: true,
+      verify: true,
+      maximumCreatedElements: 1,
+      benchmarkCredit: false,
+      authorizationBasis: "explicit_unscored_user_direction"
+    } as any;
+    registerExistingConditionsStagedWorkflow({
+      sessionId,
+      sourceFrameId: "frame-compile-only",
+      sourceViewId: 42,
+      registrationContextId: "registration-compile-only",
+      executionBoundary: "compile_only",
+      workflow
+    });
+
+    assert.equal(
+      maybeContinueExistingConditionsOneActionLoop(request(sessionId)),
+      null
+    );
+    const compileReceipt: ChatResponse = {
+      version: "operator.backend.v1",
+      assistant_message: "Compiled read-only; no dry-run or write was dispatched.",
+      actions: []
+    };
+    assert.deepEqual(
+      enforceExistingConditionsOneActionLoop({
+        req: request(sessionId),
+        decision: compileReceipt
+      }),
+      compileReceipt
+    );
+    assert.deepEqual(
+      readExistingConditionsRepairLedger(sessionId).map(entry => entry.event),
+      ["workflow_registered"]
+    );
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+  }
+});
 
 test("one-action execution loop serializes writes and records a hash-chained ledger", { concurrency: false }, () => {
   const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;

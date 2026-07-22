@@ -1443,6 +1443,87 @@ test("candidate-visible recovery fingerprint permits only the failed geometry fi
   );
 });
 
+test("candidate-visible recovery permits only the missing evidence claim named by the failure", () => {
+  const failure = "DCW_SINK_BRANCH_supported_attribute_lacks_evidence:system";
+  const base: any = {
+    schema_version: 2,
+    discipline: "plumbing",
+    room_number: "1900",
+    spatial_scope: {
+      boundary_pixel_points: [[0.2, 0.1], [0.8, 0.1], [0.8, 0.8], [0.2, 0.8]],
+      anchor_pixel_point: [0.68, 0.24]
+    },
+    observations: [{
+      kind: "pipe_route",
+      observation_id: "DCW_SINK_BRANCH",
+      supported_attributes: ["orthogonal_route", "service_color_blue"],
+      pixel_points: [[0.45, 0.38], [0.45, 0.64]],
+      service: "domestic_cold_water",
+      system_type: "DOMESTIC COLD WATER",
+      attribute_evidence: [{
+        attribute: "route_geometry",
+        evidence_role: "registered_source_render",
+        reference: "Visible blue branch."
+      }]
+    }, {
+      kind: "pipe_route",
+      observation_id: "DHW_BACKBONE",
+      pixel_points: [[0.2, 0.4], [0.8, 0.4]],
+      attribute_evidence: []
+    }]
+  };
+  const fingerprint = (value: unknown) =>
+    __testOnlyCandidateVisibleRecoveryImmutableClaimsSha256(
+      JSON.stringify(value),
+      failure
+    );
+
+  const repaired = structuredClone(base);
+  repaired.observations[0]!.attribute_evidence.push({
+    attribute: "system",
+    evidence_role: "registered_source_render",
+    reference: "Blue service line supports the DCW system."
+  });
+  assert.equal(fingerprint(repaired), fingerprint(base));
+
+  const movedRoute = structuredClone(repaired);
+  movedRoute.observations[0]!.pixel_points[1]![1] = 0.65;
+  assert.notEqual(fingerprint(movedRoute), fingerprint(base));
+
+  const changedOtherEvidence = structuredClone(repaired);
+  changedOtherEvidence.observations[0]!.attribute_evidence[0]!.reference =
+    "Changed route evidence.";
+  assert.notEqual(fingerprint(changedOtherEvidence), fingerprint(base));
+
+  const changedSystem = structuredClone(repaired);
+  changedSystem.observations[0]!.system_type = "DOMESTIC HOT WATER";
+  assert.notEqual(fingerprint(changedSystem), fingerprint(base));
+
+  const changedOtherObservation = structuredClone(repaired);
+  changedOtherObservation.observations[1]!.pixel_points[0]![0] = 0.25;
+  assert.notEqual(fingerprint(changedOtherObservation), fingerprint(base));
+
+  const sessionId = "session-missing-supported-attribute-evidence-recovery";
+  __testOnlySetCandidateVisibleCompileContext(
+    sessionId,
+    "artifacts/uploads/source.png",
+    "missing-supported-attribute-evidence-context",
+    JSON.stringify(base)
+  );
+  __testOnlyRecordCandidateVisibleCompileResults(sessionId, [{
+    index: 1,
+    type: "compile_registered_mep_reconstruction",
+    ok: false,
+    summary: failure
+  }]);
+  const prompt = __testOnlyBuildCandidateVisibleRecoveryPrompt(mkReq({
+    session_id: sessionId,
+    user_text: ""
+  }));
+  assert.match(prompt ?? "", /Add or correct only the attribute_evidence entry named by the failure/);
+  assert.match(prompt ?? "", /all route and placement geometry/);
+});
+
 test("missing-observations recovery permits only populating observations", () => {
   const failure = "candidate_visible_observations_are_required";
   const base = {

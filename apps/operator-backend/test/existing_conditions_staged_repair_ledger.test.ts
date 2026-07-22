@@ -205,10 +205,20 @@ test("staged ledger batches explicit backbones, audits continuation connectors, 
         status: "done",
         result_json: {
           status: "Ok",
-          results: [201, 202, 203, 204].map(id => ({
+          results: [
+            { id: 201, x: 0, directionX: -1 },
+            { id: 202, x: 20, directionX: 1 },
+            { id: 203, x: 0, directionX: -1 },
+            { id: 204, x: 20, directionX: 1 }
+          ].map(({ id, x, directionX }) => ({
             id,
             ok: true,
-            connectors: [{ connectorId: 1, origin: [id, 10, 8], physicalConnectedTo: [] }]
+            connectors: [{
+              connectorId: 1,
+              origin: [x, 10, 8],
+              coordinateSystem: { basisZ: [directionX, 0, 0] },
+              physicalConnectedTo: []
+            }]
           }))
         }
       }
@@ -254,6 +264,177 @@ test("staged ledger batches explicit backbones, audits continuation connectors, 
     );
     const ledger = readExistingConditionsRepairLedger(sessionId);
     assert.ok(ledger.some(entry => entry.event === "continuation_accepted"));
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+  }
+});
+
+test("failed backbone batch automatically shrinks to single-action stages after a clean rollback", { concurrency: false }, () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-backbone-split-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const sessionId = "backbone-split-session";
+    const registered = backboneWorkflow();
+    registerExistingConditionsStagedWorkflow({
+      sessionId,
+      sourceFrameId: "frame-backbone-split",
+      sourceViewId: 101,
+      registrationContextId: "registration-backbone-split",
+      workflow: registered
+    });
+    const batch = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(batch.state, "dry_run");
+    if (batch.state !== "dry_run") return;
+    assert.equal(batch.request.operations.length, 2);
+    recordExistingConditionsStageResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        inputFingerprintSha256: registered.inputFingerprintSha256,
+        stageKey: batch.stage_key,
+        status: "Blocked",
+        dryRun: true,
+        rollbackVerified: true,
+        residualCreatedElementIds: [],
+        error: "second_backbone_native_route_failure",
+        failedOperation: { actionKey: "route:backbone-2" },
+        operations: batch.request.operations.map(operation => ({ actionKey: operation.action_key }))
+      }
+    });
+
+    const firstSplit = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(firstSplit.state, "dry_run");
+    if (firstSplit.state !== "dry_run") return;
+    assert.equal(firstSplit.request.operations.length, 1);
+    assert.equal(firstSplit.action_key, "route:backbone-1");
+    assert.equal(firstSplit.request.operations[0]?.execution_mode, "single_action");
+    assert.equal(firstSplit.request.operations[0]?.provisional_batch_key, undefined);
+    assert.equal(
+      readExistingConditionsRepairLedger(sessionId).filter(entry =>
+        entry.event === "repair_registered" &&
+        entry.payload.reason === "automatic_batch_scope_reduction_after_verified_clean_rollback"
+      ).length,
+      2
+    );
+
+    recordExistingConditionsStageResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        inputFingerprintSha256: registered.inputFingerprintSha256,
+        stageKey: firstSplit.stage_key,
+        status: "DryRunReady",
+        dryRun: true,
+        rollbackVerified: true,
+        residualCreatedElementIds: [],
+        transientCreatedElementIds: [301],
+        operationOutputs: [{
+          action_key: "route:backbone-1",
+          created_element_ids: [301],
+          route_start_element_ids: [301],
+          route_end_element_ids: [301]
+        }]
+      }
+    });
+    const firstApply = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(firstApply.state, "apply");
+    if (firstApply.state !== "apply") return;
+    recordExistingConditionsStageResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        inputFingerprintSha256: registered.inputFingerprintSha256,
+        stageKey: firstApply.stage_key,
+        status: "Applied",
+        dryRun: false,
+        atomic: true,
+        createdElementIds: [401],
+        operationOutputs: [{
+          action_key: "route:backbone-1",
+          created_element_ids: [401],
+          route_start_element_ids: [401],
+          route_end_element_ids: [401]
+        }]
+      }
+    });
+    const readback = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(readback.state, "verify_readback");
+    if (readback.state !== "verify_readback") return;
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "split-readback",
+        method: "POST",
+        path: readback.path,
+        status: "done",
+        result_json: [{ id: 401, found: true }]
+      }
+    });
+    const continuation = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(continuation.state, "verify_continuation");
+    if (continuation.state !== "verify_continuation") return;
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "split-connectors",
+        method: "POST",
+        path: continuation.path,
+        status: "done",
+        result_json: {
+          status: "Ok",
+          results: [{
+            id: 401,
+            ok: true,
+            connectors: [
+              { connectorId: 1, origin: [0, 10, 8], coordinateSystem: { basisZ: [-1, 0, 0] } },
+              { connectorId: 2, origin: [20, 10, 8], coordinateSystem: { basisZ: [1, 0, 0] } }
+            ]
+          }]
+        }
+      }
+    });
+    const visual = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(visual.state, "verify_visual");
+    if (visual.state !== "verify_visual") return;
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "split-visual",
+        method: "POST",
+        path: visual.path,
+        status: "done",
+        result_json: { status: "ok", path: "C:\\evidence\\split-1.png" }
+      }
+    });
+    const checkpoint = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(checkpoint.state, "checkpoint");
+    if (checkpoint.state !== "checkpoint") return;
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "split-checkpoint",
+        method: "POST",
+        path: checkpoint.path,
+        status: "done",
+        result_json: { status: "Success", path: checkpoint.body.filePath }
+      }
+    });
+
+    const secondSplit = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(secondSplit.state, "dry_run");
+    if (secondSplit.state !== "dry_run") return;
+    assert.equal(secondSplit.action_key, "route:backbone-2");
+    assert.equal(secondSplit.request.operations.length, 1);
+    assert.deepEqual(
+      secondSplit.request.priorActionOutputs?.map(output => output.action_key),
+      ["route:backbone-1"]
+    );
   } finally {
     if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;

@@ -842,6 +842,9 @@ export function maybeContinueExistingConditionsOneActionLoop(
   recordToolResults(req.session_id, toolResults, documentScopeSha256(req.context));
 
   const persistedBeforeRecovery = latestExistingConditionsStagedWorkflow(req.session_id);
+  if (persistedBeforeRecovery?.execution_boundary === "compile_only") {
+    return null;
+  }
   if (persistedBeforeRecovery) {
     recordProviderIndependentStageResults(
       req.session_id,
@@ -855,6 +858,7 @@ export function maybeContinueExistingConditionsOneActionLoop(
 
   const persisted = persistedBeforeRecovery ?? latestExistingConditionsStagedWorkflow(req.session_id);
   if (!persisted) return null;
+  if (persisted.execution_boundary === "compile_only") return null;
 
   if (!persistedBeforeRecovery) {
     recordProviderIndependentStageResults(
@@ -891,6 +895,9 @@ export function enforceExistingConditionsOneActionLoop(args: {
   recordToolResults(args.req.session_id, toolResults, currentDocumentScope);
 
   const persistedBeforeRecovery = latestExistingConditionsStagedWorkflow(args.req.session_id);
+  if (persistedBeforeRecovery?.execution_boundary === "compile_only") {
+    return args.decision;
+  }
   if (persistedBeforeRecovery) {
     recordProviderIndependentStageResults(
       args.req.session_id,

@@ -2347,6 +2347,9 @@ function candidateVisibleRecoveryImmutableClaimsSha256(
   ) {
     clone.spatial_scope = "__allowed_recovery_spatial_scope__";
   } else {
+    const supportedAttributeEvidenceFailure = failureSummary.match(
+      /^(.+)_supported_attribute_lacks_evidence:([^:]+)$/
+    );
     const rasterFailure = failureSummary.match(
       /candidate_visible_route_raster_verification_required:([^:]+):(route|placement_branch)/
     );
@@ -2354,6 +2357,7 @@ function candidateVisibleRecoveryImmutableClaimsSha256(
       /candidate_visible_(route|branch|point)_outside_(?:spatial_scope|native_room_scope|source_observed_scope):([^:]+)/
     );
     const observationId =
+      supportedAttributeEvidenceFailure?.[1] ??
       rasterFailure?.[1] ??
       containmentFailure?.[2] ??
       null;
@@ -2368,7 +2372,35 @@ function candidateVisibleRecoveryImmutableClaimsSha256(
               ? "point"
               : null
       );
-    if (observationId && geometryRole) {
+    if (observationId && supportedAttributeEvidenceFailure) {
+      const attribute = normalizeForMatch(
+        supportedAttributeEvidenceFailure[2]!
+      );
+      const observations = Array.isArray(clone.observations)
+        ? clone.observations
+        : [];
+      const observation = observations.find(
+        (entry): entry is Record<string, unknown> =>
+          !!entry &&
+          typeof entry === "object" &&
+          !Array.isArray(entry) &&
+          String((entry as Record<string, unknown>).observation_id ?? "") ===
+            observationId
+      );
+      if (observation) {
+        const evidence = Array.isArray(observation.attribute_evidence)
+          ? observation.attribute_evidence
+          : [];
+        observation.attribute_evidence = evidence.filter((entry) =>
+          !entry ||
+          typeof entry !== "object" ||
+          Array.isArray(entry) ||
+          normalizeForMatch(
+            String((entry as Record<string, unknown>).attribute ?? "")
+          ) !== attribute
+        );
+      }
+    } else if (observationId && geometryRole) {
       const observations = Array.isArray(clone.observations)
         ? clone.observations
         : [];
@@ -2769,6 +2801,13 @@ function buildRegisteredMepWorkflowHandoffResponse(
     persisted.workflow.inputFingerprintSha256 ?? ""
   ).trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(fingerprint)) return null;
+  if (
+    persisted.execution_boundary === "compile_only" ||
+    (req && isExplicitExistingConditionsCompileOnlyRequest(req)) ||
+    persistedRequestLogDeclaresExistingConditionsCompileOnly(sessionId)
+  ) {
+    return buildRegisteredMepCompileOnlyReceipt(persisted);
+  }
   recordMatchingRegisteredMepStageReceipts(
     sessionId,
     persisted.workflow,
@@ -2778,13 +2817,6 @@ function buildRegisteredMepWorkflowHandoffResponse(
     sessionId,
     workflow: persisted.workflow
   });
-  if (
-    persisted.execution_boundary === "compile_only" ||
-    (req && isExplicitExistingConditionsCompileOnlyRequest(req)) ||
-    persistedRequestLogDeclaresExistingConditionsCompileOnly(sessionId)
-  ) {
-    return buildRegisteredMepCompileOnlyReceipt(persisted, plan);
-  }
   if (plan.state === "blocked") {
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
@@ -2846,7 +2878,7 @@ function buildRegisteredMepWorkflowHandoffResponse(
 
 function buildRegisteredMepCompileOnlyReceipt(
   persisted: NonNullable<RedlineVisionProgressState["last_registered_mep_workflow"]>,
-  plan: ReturnType<typeof buildNextExistingConditionsStagePlan>
+  plan?: ReturnType<typeof buildNextExistingConditionsStagePlan>
 ): ChatResponse {
   const provisionalBatchKeys = Array.from(new Set(
     persisted.workflow.operations
@@ -2866,8 +2898,8 @@ function buildRegisteredMepCompileOnlyReceipt(
     single_action_count: persisted.workflow.operations.filter(
       (operation) => operation.execution_mode !== "provisional_backbone_batch"
     ).length,
-    next_stage: plan.state,
-    accepted_prior_stage_count: plan.accepted_action_outputs.length,
+    next_stage: plan?.state ?? "dry_run",
+    accepted_prior_stage_count: plan?.accepted_action_outputs.length ?? 0,
     dry_runs_performed: 0,
     writes_performed: 0,
     action_queue: persisted.workflow.operations.map((operation) => ({
@@ -2894,11 +2926,7 @@ function enforcePersistedExistingConditionsCompileOnlyBoundary(
   if (!Array.isArray(response.actions) || response.actions.length === 0) return response;
   const persisted = persistedRegisteredMepWorkflow(req.session_id);
   if (!persisted || persisted.execution_boundary !== "compile_only") return response;
-  const plan = buildNextExistingConditionsStagePlan({
-    sessionId: req.session_id,
-    workflow: persisted.workflow
-  });
-  return buildRegisteredMepCompileOnlyReceipt(persisted, plan);
+  return buildRegisteredMepCompileOnlyReceipt(persisted);
 }
 
 export function __testOnlyNoteRegisteredMepWorkflow(
@@ -4941,6 +4969,8 @@ function buildCandidateVisibleRecoveryPrompt(req: ChatRequest): string | null {
   const provisionalSymbolSourceGraphicRequired = failure.summary.includes(
     "candidate_visible_provisional_plan_symbol_source_graphic_required:"
   );
+  const supportedAttributeLacksEvidence =
+    /^(.+)_supported_attribute_lacks_evidence:([^:]+)$/.test(failure.summary);
   const observationsRequired =
     failure.summary === "candidate_visible_observations_are_required";
   return [
@@ -4955,6 +4985,8 @@ function buildCandidateVisibleRecoveryPrompt(req: ChatRequest): string | null {
       ? "- Preserve schema_version, discipline, room_number, spatial_scope, registration evidence, limits, and every other package field exactly. Populate only observations with the smallest source-visible supported observation set. Do not move or redraw spatial_scope, change the requested room, or introduce unsupported system/type claims."
       : provisionalSymbolSourceGraphicRequired
       ? "- Preserve the observation identity, pixel_point, spatial_scope, native target, every other claim, and all evidence exactly. If and only if the source visibly supports an MEP connection symbol at that unchanged point, set representation_classification.source_graphic exactly to \"mep_connection_symbol\". Do not move the symbol. If the source does not support that classification, issue no second compile and report the exact ambiguity."
+      : supportedAttributeLacksEvidence
+      ? "- Preserve registration, spatial_scope, every observation, all route and placement geometry, supported_attributes, material claims, and every unrelated evidence entry exactly. Add or correct only the attribute_evidence entry named by the failure on the named observation. Its basis, evidence_role, and reference must point to real source or native evidence. If that evidence does not exist, issue no second compile and report the exact ambiguity."
       : verifiedRoomScopeNotVisible
       ? "- Preserve every observation, its exact source geometry, system/type/size claims, placement, and evidence byte-for-byte. Revise only spatial_scope so its boundary_pixel_points trace the visible source-room enclosure containing the route and its anchor_pixel_point lands on the visible room label or other source-supported room-local anchor named by the failure. Do not move, clip, shorten, add, delete, or otherwise alter any observation. The authoritative native room remains fixed; this correction only repairs the source-local enclosure used for registered comparison."
       : sourceRoomEnclosureRequired

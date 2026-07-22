@@ -664,12 +664,27 @@ function stageResolvedByAppliedRepair(
   entries: ExistingConditionsRepairLedgerEntry[],
   stageKey: string
 ): boolean {
-  return entries.some(entry =>
-    entry.event === "repair_registered" &&
-    clean(entry.payload.supersedes_stage_key) === stageKey &&
-    entry.stage_key != null &&
-    stageAccepted(entries, entry.stage_key)
+  const rejected = entries
+    .filter(entry => entry.event === "stage_rejected" && entry.stage_key === stageKey)
+    .at(-1);
+  if (!rejected) return false;
+  const requiredActionKeys = Array.from(new Set(
+    rejected.action_keys.map(clean).filter(Boolean).map(value => value.toLowerCase())
+  ));
+  if (requiredActionKeys.length === 0) return false;
+  const acceptedRepairActionKeys = new Set(
+    entries
+      .filter(entry =>
+        entry.event === "repair_registered" &&
+        clean(entry.payload.supersedes_stage_key) === stageKey &&
+        entry.stage_key != null &&
+        stageAccepted(entries, entry.stage_key)
+      )
+      .flatMap(entry => entry.action_keys.map(clean))
+      .filter(Boolean)
+      .map(value => value.toLowerCase())
   );
+  return requiredActionKeys.every(actionKey => acceptedRepairActionKeys.has(actionKey));
 }
 
 function stageDryRunAccepted(
@@ -707,6 +722,75 @@ function repairOperationFromEntry(
   const operation = JSON.parse(JSON.stringify(value)) as StagedOperation;
   if (!clean(operation.action_key) || !clean(operation.path)) return null;
   return operation;
+}
+
+function rejectedBatchOperations(
+  entries: ExistingConditionsRepairLedgerEntry[],
+  stageKey: string
+): StagedOperation[] {
+  const registered = entries
+    .filter(entry =>
+      entry.event === "stage_registered" &&
+      entry.stage_key === stageKey &&
+      clean(entry.payload.execution_mode) === "provisional_backbone_batch"
+    )
+    .at(-1);
+  if (!registered || !Array.isArray(registered.payload.operations)) return [];
+  return registered.payload.operations
+    .map(value => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+      const operation = JSON.parse(JSON.stringify(value)) as StagedOperation;
+      if (!clean(operation.action_key) || !clean(operation.path)) return null;
+      delete operation.provisional_batch_key;
+      operation.execution_mode = "single_action";
+      return operation;
+    })
+    .filter((value): value is StagedOperation => value != null);
+}
+
+function registerAutomaticBatchScopeReduction(args: {
+  sessionId: string;
+  workflow: AtomicMepDraftWorkflowRequest;
+  entries: ExistingConditionsRepairLedgerEntry[];
+  rejected: ExistingConditionsRepairLedgerEntry;
+}): boolean {
+  if (
+    args.rejected.payload.rollback_verified !== true ||
+    normalizeIds(args.rejected.payload.residual_created_element_ids).length > 0
+  ) {
+    return false;
+  }
+  const stageKey = clean(args.rejected.stage_key);
+  if (!stageKey) return false;
+  const operations = rejectedBatchOperations(args.entries, stageKey);
+  if (operations.length < 2) return false;
+  let registeredAny = false;
+  for (const operation of operations) {
+    const alreadyRegistered = args.entries.some(entry =>
+      entry.event === "repair_registered" &&
+      clean(entry.payload.supersedes_stage_key) === stageKey &&
+      entry.action_keys.some(actionKey =>
+        clean(actionKey).toLowerCase() === clean(operation.action_key).toLowerCase()
+      )
+    );
+    if (alreadyRegistered) continue;
+    const repairStageKey = `repair:${sha256({
+      supersedes_stage_key: stageKey,
+      action_key: clean(operation.action_key).toLowerCase(),
+      operation
+    }).slice(0, 24)}`;
+    registerExistingConditionsRepairAction({
+      sessionId: args.sessionId,
+      workflow: args.workflow,
+      supersedesStageKey: stageKey,
+      repairStageKey,
+      operation,
+      reason: "automatic_batch_scope_reduction_after_verified_clean_rollback",
+      nextRepair: "Dry-run this single backbone action; preserve accepted siblings and continue through the remaining split stages."
+    });
+    registeredAny = true;
+  }
+  return registeredAny;
 }
 
 export function buildNextExistingConditionsStagePlan(args: {
@@ -861,10 +945,18 @@ export function buildNextExistingConditionsStagePlan(args: {
         : `operation:${candidate.action_key}`;
       if (
         stageAccepted(entries, candidateStageKey) ||
-        (!isBackboneBatch && stageResolvedByAppliedRepair(entries, candidateStageKey))
+        stageResolvedByAppliedRepair(entries, candidateStageKey)
       ) continue;
       const rejected = unresolvedRejectedStage(entries, candidateStageKey);
       if (rejected) {
+        if (registerAutomaticBatchScopeReduction({
+          sessionId: args.sessionId,
+          workflow: args.workflow,
+          entries,
+          rejected
+        })) {
+          return buildNextExistingConditionsStagePlan(args);
+        }
         return {
           state: "blocked",
           stage_key: candidateStageKey,
@@ -991,15 +1083,18 @@ export function recordExistingConditionsStageResult(args: {
     !Array.isArray(args.result.failedOperation)
     ? args.result.failedOperation as Record<string, unknown>
     : null;
+  const reportedOperationActionKeys = Array.isArray(args.result.operations)
+    ? (args.result.operations as Array<Record<string, unknown>>)
+      .map(value => clean(value.actionKey))
+      .filter(Boolean)
+    : [];
   const actionKeys = normalizedOutputs.length > 0
     ? normalizedOutputs.map(output => output.action_key)
+    : reportedOperationActionKeys.length > 0
+      ? reportedOperationActionKeys
     : failedOperation && clean(failedOperation.actionKey)
       ? [clean(failedOperation.actionKey)]
-      : Array.isArray(args.result.operations)
-        ? (args.result.operations as Array<Record<string, unknown>>)
-          .map(value => clean(value.actionKey))
-          .filter(Boolean)
-        : [];
+      : [];
 
   if (
     dryRun &&
@@ -1148,6 +1243,55 @@ function containsMissingNativeElement(value: unknown): boolean {
   return Object.values(row).some(containsMissingNativeElement);
 }
 
+function continuationConnectorMatches(
+  endpoint: NonNullable<ExistingConditionsPriorActionOutput["continuation_endpoints"]>[number],
+  result: Record<string, unknown>,
+  originToleranceFt = 1 / 8,
+  directionDotTolerance = 0.9
+): boolean {
+  if (Number(result.id) !== endpoint.element_id || result.ok === false) return false;
+  const connectors = Array.isArray(result.connectors)
+    ? result.connectors as Array<Record<string, unknown>>
+    : [];
+  return connectors.some(connector => {
+    const origin = Array.isArray(connector.origin) ? connector.origin.map(Number) : [];
+    if (
+      origin.length < 3 ||
+      !origin.slice(0, 3).every(Number.isFinite) ||
+      Math.hypot(
+        origin[0]! - endpoint.model_point.x,
+        origin[1]! - endpoint.model_point.y,
+        origin[2]! - endpoint.model_point.z
+      ) > originToleranceFt
+    ) {
+      return false;
+    }
+    const coordinateSystem = connector.coordinateSystem &&
+      typeof connector.coordinateSystem === "object" &&
+      !Array.isArray(connector.coordinateSystem)
+      ? connector.coordinateSystem as Record<string, unknown>
+      : null;
+    const basisZ = Array.isArray(coordinateSystem?.basisZ)
+      ? coordinateSystem.basisZ.map(Number)
+      : [];
+    if (basisZ.length < 3 || !basisZ.slice(0, 3).every(Number.isFinite)) {
+      // Older Bridge readbacks did not expose a coordinate system. Exact
+      // registered origin remains mandatory; direction is checked whenever
+      // the native API supplies it.
+      return true;
+    }
+    const basisLength = Math.hypot(basisZ[0]!, basisZ[1]!, basisZ[2]!);
+    const expectedLength = Math.hypot(...endpoint.direction_xyz);
+    if (basisLength <= 1e-9 || expectedLength <= 1e-9) return false;
+    const dot = (
+      basisZ[0]! * endpoint.direction_xyz[0] +
+      basisZ[1]! * endpoint.direction_xyz[1] +
+      basisZ[2]! * endpoint.direction_xyz[2]
+    ) / (basisLength * expectedLength);
+    return dot >= directionDotTolerance;
+  });
+}
+
 export function recordExistingConditionsVerificationResult(args: {
   sessionId: string;
   workflow: AtomicMepDraftWorkflowRequest;
@@ -1209,7 +1353,13 @@ export function recordExistingConditionsVerificationResult(args: {
     if (
       expectedIds.some(id => !returnedIds.has(id)) ||
       connectorResults.length < expectedIds.length ||
-      connectorResults.some(item => item.ok === false || !Array.isArray(item.connectors) || item.connectors.length === 0)
+      connectorResults.some(item => item.ok === false || !Array.isArray(item.connectors) || item.connectors.length === 0) ||
+      stageContinuationEndpoints(
+        readExistingConditionsRepairLedger(args.sessionId),
+        plan.stage_key
+      ).some(endpoint =>
+        !connectorResults.some(result => continuationConnectorMatches(endpoint, result))
+      )
     ) {
       return null;
     }
@@ -1290,13 +1440,15 @@ export function registerExistingConditionsRepairAction(args: {
   if (!rejected) {
     throw new Error("existing_conditions_repair_rejected_stage_not_found");
   }
-  const rejectedActionKey = clean(rejected.action_keys[0]);
+  const rejectedActionKeys = new Set(
+    rejected.action_keys.map(clean).filter(Boolean).map(value => value.toLowerCase())
+  );
   if (
-    rejectedActionKey &&
-    rejectedActionKey.toLowerCase() !== clean(args.operation.action_key).toLowerCase()
+    rejectedActionKeys.size > 0 &&
+    !rejectedActionKeys.has(clean(args.operation.action_key).toLowerCase())
   ) {
     throw new Error(
-      `existing_conditions_repair_action_key_mismatch:${rejectedActionKey}`
+      `existing_conditions_repair_action_key_mismatch:${Array.from(rejectedActionKeys).join(",")}`
     );
   }
   const reusedStageKey = entries

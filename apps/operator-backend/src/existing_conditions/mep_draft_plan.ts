@@ -803,16 +803,17 @@ function routeContinuationMetadata(
   const length = Math.hypot(dx, dy, dz);
   const axisAligned = Math.min(Math.abs(dx), Math.abs(dy)) <= (1 / 48)
     && Math.abs(dz) <= (1 / 48);
-  const exactAttributes = !provisionalRouteAttributes(observation)
-    && observation.service !== "unclassified"
-    && (observation.kind === "conduit_route"
-      || routeSystemClassificationPolicy(observation) === "explicit_required");
+  const editableNativeContainer = observation.kind === "pipe_route"
+    ? Boolean(clean(observation.pipe_type) && clean(observation.system_type))
+    : observation.kind === "duct_route"
+      ? Boolean(clean(observation.duct_type) && clean(observation.system_type))
+      : Boolean(clean(observation.conduit_type));
   const highConfidenceBackbone = observation.visibility === "clear"
     && observation.confidence >= 0.92
     && points.length === 2
     && length >= 4
     && axisAligned
-    && exactAttributes;
+    && editableNativeContainer;
   return {
     ...(highConfidenceBackbone ? {
       execution_mode: "provisional_backbone_batch" as const,
