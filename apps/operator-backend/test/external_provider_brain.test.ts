@@ -249,6 +249,13 @@ test("external provider prompt rehydrates compacted persisted tool receipts", { 
     assert.match(prompt, /\/revit\/create-family-instance/);
     assert.ok(prompt.length < 45_000);
     assert.match(prompt, /Do not repeat a successful type lookup/);
+    assert.ok(prompt.startsWith("AUTHORITATIVE CURRENT USER REQUEST"));
+    assert.ok(
+      prompt.indexOf(req.user_text ?? "") <
+      prompt.indexOf("Persisted accepted observations and repair failures")
+    );
+    assert.match(prompt, /Final authority check/);
+    assert.match(prompt, /Do not replay, resume, or narrate a completed earlier action/);
   } finally {
     restoreEnvironment(previous);
   }

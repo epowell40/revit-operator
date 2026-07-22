@@ -854,6 +854,7 @@ export function enforceExistingConditionsOneActionLoop(args: {
       `I skipped ${replayedCount} exact completed-action replay${replayedCount === 1 ? "" : "s"} and kept the persisted result.`
     );
   }
+  const onlyCompletedReplays = replayedCount > 0 && selected.length === 0;
   if (remainingActions.length > 1) {
     suffixParts.push(
       `I queued only the first of ${remainingActions.length} proposed actions so progress remains visible and repairable.`
@@ -867,7 +868,9 @@ export function enforceExistingConditionsOneActionLoop(args: {
   const suffix = suffixParts.length > 0 ? ` ${suffixParts.join(" ")}` : "";
   return {
     ...decision,
-    assistant_message: `${decision.assistant_message}${suffix}`.trim(),
+    assistant_message: onlyCompletedReplays
+      ? `No action was executed because the provider proposed only ${replayedCount} exact completed-action replay${replayedCount === 1 ? "" : "s"}. The persisted result remains accepted; the authoritative current request still needs a new plan.${suffix}`
+      : `${decision.assistant_message}${suffix}`.trim(),
     actions: selected
   };
 }

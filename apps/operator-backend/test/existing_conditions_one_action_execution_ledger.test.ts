@@ -246,6 +246,8 @@ test("one-action execution loop suppresses an exact completed-action replay", { 
     });
     assert.equal(replay.actions.length, 0);
     assert.match(replay.assistant_message, /skipped 1 exact completed-action replay/i);
+    assert.match(replay.assistant_message, /No action was executed/i);
+    assert.match(replay.assistant_message, /current request still needs a new plan/i);
   } finally {
     if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;

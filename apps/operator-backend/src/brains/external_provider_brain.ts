@@ -303,7 +303,16 @@ function loadPersistedToolResultCapsule(sessionId: string): ToolResult[] {
 }
 
 function buildPrompt(req: ChatRequest, provider: ExternalProvider): string {
+  const currentUserRequest = (req.user_text ?? "").trim();
   const lines: string[] = [
+    ...(currentUserRequest
+      ? [
+          "AUTHORITATIVE CURRENT USER REQUEST (highest priority for this turn):",
+          currentUserRequest,
+          "Persisted receipts below are evidence only. Never let an older action or narration replace this current request.",
+          ""
+        ]
+      : []),
     getOperatorAgentBaseInstructions(),
     "",
     `You are running as the Operator ${provider} brain. You do not call MCP directly in this process.`,
@@ -339,8 +348,8 @@ function buildPrompt(req: ChatRequest, provider: ExternalProvider): string {
     lines.push("");
   }
 
-  if ((req.user_text ?? "").trim()) {
-    lines.push("Current user request:", (req.user_text ?? "").trim(), "");
+  if (currentUserRequest) {
+    lines.push("Current user request:", currentUserRequest, "");
   }
 
   const serverContext =
@@ -376,7 +385,7 @@ function buildPrompt(req: ChatRequest, provider: ExternalProvider): string {
     lines.push(
       "Persisted accepted observations and repair failures from earlier turns:",
       safeJson(persistedToolResults, 24_000),
-      "Reuse these receipts. Do not repeat a successful type lookup, room/view discovery, tool search, or tool-doc call unless a later accepted model write invalidated that exact evidence. A failed contract call is not model failure: use its persisted error plus the later successful contract/result to repair only the payload.",
+      "Reuse these receipts only as evidence for the authoritative current request. Do not resume or narrate an older action merely because its receipt appears here. Do not repeat a successful type lookup, room/view discovery, tool search, or tool-doc call unless a later accepted model write invalidated that exact evidence. A failed contract call is not model failure: use its persisted error plus the later successful contract/result to repair only the payload.",
       "The provider proposes; the host ledger owns stage completion and will reject exact completed-action replays.",
       ""
     );
@@ -399,6 +408,15 @@ function buildPrompt(req: ChatRequest, provider: ExternalProvider): string {
         })),
         8000
       ),
+      ""
+    );
+  }
+
+  if (currentUserRequest) {
+    lines.push(
+      "Final authority check:",
+      `Return only the next action needed for this current request: ${currentUserRequest}`,
+      "Do not replay, resume, or narrate a completed earlier action unless this request explicitly asks for it.",
       ""
     );
   }
