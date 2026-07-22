@@ -63,6 +63,37 @@ const RESPONSE_SCHEMA = {
   }
 } as const;
 
+// Anthropic structured outputs require closed object schemas and reject an
+// arbitrary-property object such as a Revit request body. Claude therefore
+// returns body_json as a JSON-encoded string, which normalizeProviderDecision
+// already parses into the native action body. Gemini keeps native object bodies.
+const ANTHROPIC_RESPONSE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["assistant_message", "actions"],
+  properties: {
+    assistant_message: RESPONSE_SCHEMA.properties.assistant_message,
+    actions: {
+      type: "array",
+      description: RESPONSE_SCHEMA.properties.actions.description,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["action_id", "method", "path", "body_json"],
+        properties: {
+          action_id: { type: "string" },
+          method: { type: "string", enum: ["GET", "POST"] },
+          path: { type: "string" },
+          body_json: {
+            type: ["string", "null"],
+            description: "A JSON-encoded request body, or null when the request has no body."
+          }
+        }
+      }
+    }
+  }
+} as const;
+
 function clip(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   return `${value.slice(0, maxChars)}\n…(truncated)`;
@@ -725,7 +756,7 @@ async function callAnthropic(
             effort: (process.env.OPERATOR_ANTHROPIC_EFFORT || "xhigh").trim(),
             format: {
               type: "json_schema",
-              schema: RESPONSE_SCHEMA
+              schema: ANTHROPIC_RESPONSE_SCHEMA
             }
           },
           messages: [{ role: "user", content }]

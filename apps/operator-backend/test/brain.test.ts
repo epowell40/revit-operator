@@ -166,6 +166,48 @@ test("explicit existing-conditions reconstruction bypasses the deterministic red
   assert.equal(calls, 0);
 });
 
+test("strict existing-conditions bridge action bypasses the configured provider", { concurrency: false }, async () => {
+  const previousBrain = process.env.OPERATOR_BRAIN;
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-explicit-action-route-"));
+  process.env.OPERATOR_BRAIN = "gemini";
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  let providerCalls = 0;
+  try {
+    const req = {
+      ...mkReq(
+        'Continue the existing-conditions reconstruction. Perform exactly one POST /revit/get-element-summary with body {"elementIds":[101,102]}. Do not run another action.'
+      ),
+      context: {
+        workflow_intent: "existing_conditions_reconstruction",
+        revit: {
+          document_title: "candidate",
+          document_path: "C:\\workspace\\candidate.rvt"
+        }
+      }
+    } satisfies ChatRequest;
+    const result = await decide(req, {
+      geminiBrain: async () => {
+        providerCalls += 1;
+        return {
+          version: OPERATOR_BACKEND_CONTRACT_VERSION,
+          assistant_message: "provider should not run",
+          actions: []
+        };
+      }
+    });
+    assert.equal(providerCalls, 0);
+    assert.equal(result.actions.length, 1);
+    assert.equal(result.actions[0]?.path, "/revit/get-element-summary");
+    assert.deepEqual(result.actions[0]?.body, { elementIds: [101, 102] });
+  } finally {
+    if (previousBrain === undefined) delete process.env.OPERATOR_BRAIN;
+    else process.env.OPERATOR_BRAIN = previousBrain;
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+  }
+});
+
 test("natural recreate and draft existing-conditions phrasing bypasses the deterministic redline resolver", async () => {
   const prompts = [
     "Using only the attached PDF, recreate the source-visible plumbing existing conditions around fixture FIXTURE-A.",

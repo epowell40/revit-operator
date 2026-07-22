@@ -29,6 +29,7 @@ import type { AecTaskIntentInterpreter } from "./aec_task_intent_interpreter.js"
 import { getRecentMessages } from "./memory/sqlite_store.js";
 import {
   enforceExistingConditionsOneActionLoop,
+  maybeBuildExplicitExistingConditionsAction,
   maybeContinueExistingConditionsOneActionLoop
 } from "./existing_conditions/one_action_execution_ledger.js";
 import { ensureWorkspaceLayout } from "./workspace.js";
@@ -360,6 +361,8 @@ async function decideWithSelectedBrainStreaming(
 
 export async function decide(req: ChatRequest, dependencies: BrainDecisionDependencies = {}): Promise<ChatResponse> {
   if (__testOnlyIsExistingConditionsReconstructionRequest(req)) {
+    const explicitAction = maybeBuildExplicitExistingConditionsAction(req);
+    if (explicitAction) return finalizeDecision(req, explicitAction);
     const continuation = maybeContinueExistingConditionsOneActionLoop(req);
     if (continuation) return finalizeDecision(req, continuation);
   }
@@ -418,6 +421,14 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
 
 export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dependencies: BrainDecisionDependencies = {}): Promise<ChatResponse> {
   if (__testOnlyIsExistingConditionsReconstructionRequest(req)) {
+    const explicitAction = maybeBuildExplicitExistingConditionsAction(req);
+    if (explicitAction) {
+      const decision = finalizeDecision(req, explicitAction);
+      const text = decision.assistant_message || "";
+      cb.onDelta?.(text);
+      cb.onDone?.(text);
+      return decision;
+    }
     const continuation = maybeContinueExistingConditionsOneActionLoop(req);
     if (continuation) {
       const decision = finalizeDecision(req, continuation);

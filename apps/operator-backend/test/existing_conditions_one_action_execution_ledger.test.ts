@@ -7,22 +7,96 @@ import type { ChatRequest, ChatResponse } from "../src/contracts.js";
 import {
   enforceExistingConditionsOneActionLoop,
   existingConditionsExecutionLedgerPath,
+  maybeBuildExplicitExistingConditionsAction,
   readExistingConditionsExecutionLedger
 } from "../src/existing_conditions/one_action_execution_ledger.js";
 import { readExistingConditionsRepairLedger } from "../src/existing_conditions/staged_repair_ledger.js";
 
 function request(
   sessionId: string,
-  toolResults: ChatRequest["tool_results"] = []
+  toolResults: ChatRequest["tool_results"] = [],
+  context?: unknown
 ): ChatRequest {
   return {
     version: "operator.backend.v1",
     session_id: sessionId,
     message_id: `message-${Date.now()}`,
     user_text: "Continue the existing conditions reconstruction.",
-    tool_results: toolResults
+    tool_results: toolResults,
+    ...(context === undefined ? {} : { context })
   };
 }
+
+function documentContext(name: string): unknown {
+  return {
+    workflow_intent: "existing_conditions_reconstruction",
+    revit: {
+      document_title: name,
+      document_path: `C:\\workspace\\${name}.rvt`
+    }
+  };
+}
+
+test("strict exact-action request becomes one deterministic bridge action", () => {
+  const decision = maybeBuildExplicitExistingConditionsAction({
+    version: "operator.backend.v1",
+    session_id: "explicit-action-session",
+    message_id: "explicit-action-message",
+    user_text:
+      'Reference grading only. Perform exactly one POST /revit/get-element-summary with body {"elementIds":[16236085,16236086,15965039],"note":"brace } stays quoted"}. Do not replay another action.'
+  });
+
+  assert.ok(decision);
+  assert.equal(decision.actions.length, 1);
+  assert.equal(decision.actions[0]?.method, "POST");
+  assert.equal(decision.actions[0]?.path, "/revit/get-element-summary");
+  assert.deepEqual(decision.actions[0]?.body, {
+    elementIds: [16236085, 16236086, 15965039],
+    note: "brace } stays quoted"
+  });
+  assert.match(decision.assistant_message, /provider planning is bypassed/i);
+});
+
+test("strict exact-action parser rejects malformed or continuation requests", () => {
+  assert.equal(maybeBuildExplicitExistingConditionsAction({
+    version: "operator.backend.v1",
+    session_id: "malformed-explicit-action-session",
+    message_id: "malformed-explicit-action-message",
+    user_text: 'Perform exactly one POST /revit/get-element-summary with body {"elementIds":[1,2]'
+  }), null);
+  assert.equal(maybeBuildExplicitExistingConditionsAction({
+    version: "operator.backend.v1",
+    session_id: "continuation-explicit-action-session",
+    message_id: "continuation-explicit-action-message",
+    user_text: "Perform exactly one GET /revit/context.",
+    tool_results: [{
+      action_id: "prior",
+      method: "GET",
+      path: "/revit/context",
+      status: "done"
+    }]
+  }), null);
+});
+
+test("completed strict exact action terminates without provider continuation", () => {
+  const decision = maybeBuildExplicitExistingConditionsAction({
+    version: "operator.backend.v1",
+    session_id: "completed-explicit-action-session",
+    message_id: "completed-explicit-action-message",
+    user_text: "",
+    tool_results: [{
+      action_id: "explicit-0123456789abcdef01234567",
+      method: "POST",
+      path: "/revit/get-element-summary",
+      status: "done",
+      result_json: [{ id: 101, found: true }]
+    }]
+  });
+  assert.ok(decision);
+  assert.equal(decision.actions.length, 0);
+  assert.match(decision.assistant_message, /completed/i);
+  assert.match(decision.assistant_message, /No further action was dispatched/i);
+});
 
 function response(actions: ChatResponse["actions"]): ChatResponse {
   return {
@@ -104,7 +178,7 @@ test("one-action execution loop observes, clears, and re-observes recoverable Re
 
     const afterObserve = enforceExistingConditionsOneActionLoop({
       req: request(sessionId, [{
-        action_id: "observe",
+        action_id: afterFailure.actions[0]!.action_id,
         method: "POST",
         path: "/revit/computer-use-observe",
         status: "done",
@@ -127,7 +201,7 @@ test("one-action execution loop observes, clears, and re-observes recoverable Re
 
     const afterAct = enforceExistingConditionsOneActionLoop({
       req: request(sessionId, [{
-        action_id: "act",
+        action_id: afterObserve.actions[0]!.action_id,
         method: "POST",
         path: "/revit/computer-use-act",
         status: "done",
@@ -248,6 +322,97 @@ test("one-action execution loop suppresses an exact completed-action replay", { 
     assert.match(replay.assistant_message, /skipped 1 exact completed-action replay/i);
     assert.match(replay.assistant_message, /No action was executed/i);
     assert.match(replay.assistant_message, /current request still needs a new plan/i);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+  }
+});
+
+test("one-action execution loop reserves an in-flight action", { concurrency: false }, () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-in-flight-guard-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const sessionId = "in-flight-guard-session";
+    const context = documentContext("candidate");
+    const body = { elementIds: [101] };
+    const first = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId, [], context),
+      decision: response([{
+        action_id: "read-first",
+        method: "POST",
+        path: "/revit/get-element-summary",
+        body
+      }])
+    });
+    assert.equal(first.actions.length, 1);
+
+    const overlapping = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId, [], context),
+      decision: response([{
+        action_id: "read-overlap",
+        method: "POST",
+        path: "/revit/get-element-summary",
+        body
+      }])
+    });
+    assert.equal(overlapping.actions.length, 0);
+    assert.match(overlapping.assistant_message, /already in flight/i);
+    assert.equal(
+      readExistingConditionsExecutionLedger(sessionId).filter(entry => entry.event === "action_planned").length,
+      1
+    );
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+  }
+});
+
+test("completed readback can run again in a different Revit document", { concurrency: false }, () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-document-scoped-readback-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const sessionId = "document-scoped-readback-session";
+    const body = { elementIds: [101, 102] };
+    const candidateContext = documentContext("candidate");
+    const referenceContext = documentContext("reference");
+    const first = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId, [], candidateContext),
+      decision: response([{
+        action_id: "candidate-read",
+        method: "POST",
+        path: "/revit/get-element-summary",
+        body
+      }])
+    });
+    assert.equal(first.actions.length, 1);
+    enforceExistingConditionsOneActionLoop({
+      req: request(sessionId, [{
+        action_id: "candidate-read",
+        method: "POST",
+        path: "/revit/get-element-summary",
+        status: "done",
+        result_json: [{ id: 101, found: true }]
+      }], candidateContext),
+      decision: response([])
+    });
+
+    const referenceRead = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId, [], referenceContext),
+      decision: response([{
+        action_id: "reference-read",
+        method: "POST",
+        path: "/revit/get-element-summary",
+        body
+      }])
+    });
+    assert.equal(referenceRead.actions.length, 1);
+    assert.equal(referenceRead.actions[0]?.action_id, "reference-read");
+    const scopes = readExistingConditionsExecutionLedger(sessionId)
+      .filter(entry => entry.event === "action_planned")
+      .map(entry => entry.document_scope_sha256);
+    assert.equal(new Set(scopes).size, 2);
   } finally {
     if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;

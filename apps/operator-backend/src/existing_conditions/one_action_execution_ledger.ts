@@ -39,6 +39,7 @@ export type ExistingConditionsExecutionLedgerEntry = {
   payload_sha256: string;
   status: "planned" | "done" | "failed";
   error: string | null;
+  document_scope_sha256?: string | null;
   previous_entry_sha256: string | null;
   entry_sha256: string;
 };
@@ -94,6 +95,36 @@ function canonicalJson(value: unknown): string {
 
 function sha256(value: unknown): string {
   return createHash("sha256").update(canonicalJson(value)).digest("hex");
+}
+
+function documentScopeSha256(context: unknown): string | null {
+  const root = objectValue(context);
+  const revit = objectValue(root.revit);
+  const document = objectValue(revit.document);
+  const documentPath = clean(
+    revit.document_path ??
+    revit.active_document_path ??
+    document.path ??
+    document.file_path
+  );
+  const documentTitle = clean(
+    revit.document_title ??
+    revit.active_document_name ??
+    document.title ??
+    document.name
+  );
+  const documentId = clean(
+    revit.document_id ??
+    revit.active_document_id ??
+    document.id ??
+    document.unique_id
+  );
+  if (!documentPath && !documentTitle && !documentId) return null;
+  return sha256({
+    path: documentPath.replaceAll("\\", "/").toLowerCase(),
+    title: documentTitle.toLowerCase(),
+    id: documentId
+  });
 }
 
 function safeSessionId(sessionId: string): string {
@@ -285,6 +316,7 @@ function appendExecutionEntry(args: {
   payload: unknown;
   phase?: ExecutionPhase;
   error?: string | null;
+  documentScopeSha256?: string | null;
 }): ExistingConditionsExecutionLedgerEntry {
   const sessionId = clean(args.sessionId);
   const filePath = ledgerPath(sessionId);
@@ -306,6 +338,7 @@ function appendExecutionEntry(args: {
       value.action_id === args.action.action_id &&
       value.action_sha256 === actionHash &&
       value.payload_sha256 === payloadHash &&
+      (value.document_scope_sha256 ?? null) === (args.documentScopeSha256 ?? null) &&
       value.status === args.status
     );
     if (duplicate) return duplicate;
@@ -324,6 +357,7 @@ function appendExecutionEntry(args: {
       payload_sha256: payloadHash,
       status: args.status,
       error: clean(args.error) || null,
+      document_scope_sha256: args.documentScopeSha256 ?? null,
       previous_entry_sha256: existing.at(-1)?.entry_sha256 ?? null
     };
     entry = {
@@ -362,7 +396,11 @@ function appendExecutionEntry(args: {
   return entry;
 }
 
-function recordToolResults(sessionId: string, toolResults: ToolResult[]): void {
+function recordToolResults(
+  sessionId: string,
+  toolResults: ToolResult[],
+  documentScope: string | null
+): void {
   for (const result of toolResults) {
     appendExecutionEntry({
       sessionId,
@@ -381,9 +419,127 @@ function recordToolResults(sessionId: string, toolResults: ToolResult[]): void {
         failure_code: result.failure_code ?? null,
         attachments: result.attachments ?? []
       },
-      error: result.error ?? result.failure_hint ?? null
+      error: result.error ?? result.failure_hint ?? null,
+      documentScopeSha256: documentScope
     });
   }
+}
+
+function scopesMatch(
+  entry: ExistingConditionsExecutionLedgerEntry,
+  currentScope: string | null
+): boolean {
+  const entryScope = entry.document_scope_sha256 ?? null;
+  if (entryScope && currentScope) return entryScope === currentScope;
+  if (entryScope || currentScope) {
+    // Legacy write entries predate document scoping. Continue treating them as
+    // global so an upgrade cannot accidentally replay a completed model write.
+    // Legacy read/visual entries are intentionally not reusable across a known
+    // document boundary because native ElementIds collide between documents.
+    return entryScope == null && entry.phase !== "readback" && entry.phase !== "visual";
+  }
+  return true;
+}
+
+function entriesShareScope(
+  left: ExistingConditionsExecutionLedgerEntry,
+  right: ExistingConditionsExecutionLedgerEntry
+): boolean {
+  const leftScope = left.document_scope_sha256 ?? null;
+  const rightScope = right.document_scope_sha256 ?? null;
+  if (leftScope && rightScope) return leftScope === rightScope;
+  if (leftScope || rightScope) {
+    return leftScope == null && left.phase !== "readback" && left.phase !== "visual";
+  }
+  return true;
+}
+
+function extractBalancedJson(text: string, start: number): unknown {
+  const opening = text[start];
+  if (opening !== "{" && opening !== "[") throw new Error("explicit_action_json_missing");
+  const closing = opening === "{" ? "}" : "]";
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index]!;
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') quoted = false;
+      continue;
+    }
+    if (char === '"') {
+      quoted = true;
+      continue;
+    }
+    if (char === opening) depth += 1;
+    else if (char === closing) {
+      depth -= 1;
+      if (depth === 0) return JSON.parse(text.slice(start, index + 1));
+    }
+  }
+  throw new Error("explicit_action_json_unterminated");
+}
+
+/**
+ * Executes a user's strict single-action bridge instruction without asking a
+ * provider to restate it. Normal environment policy and the one-action ledger
+ * still run afterward, so this lane does not bypass allowlists or safety gates.
+ */
+export function maybeBuildExplicitExistingConditionsAction(
+  req: ChatRequest
+): ChatResponse | null {
+  const explicitResult = (req.tool_results ?? []).find(result =>
+    clean(result.action_id).startsWith("explicit-")
+  );
+  if (explicitResult?.status === "done") {
+    return {
+      version: "operator.backend.v1",
+      assistant_message:
+        `The exact ${explicitResult.method} ${explicitResult.path} action completed. No further action was dispatched.`,
+      actions: []
+    };
+  }
+  if ((req.tool_results?.length ?? 0) > 0) return null;
+  const userText = clean(req.user_text);
+  const match = /\b(?:perform|execute|run)\s+exactly\s+one\s+(GET|POST)\s+(\/revit\/[a-z0-9_\/-]+)\b/i.exec(userText);
+  if (!match) return null;
+  const method = match[1]!.toUpperCase() as "GET" | "POST";
+  const actionPath = match[2]!;
+  const remainder = userText.slice((match.index ?? 0) + match[0].length);
+  const bodyMarker = /\bwith\s+body\b/i.exec(remainder);
+  let body: unknown = undefined;
+  if (bodyMarker) {
+    const afterMarker = remainder.slice((bodyMarker.index ?? 0) + bodyMarker[0].length);
+    const objectIndex = afterMarker.search(/[\[{]/);
+    if (objectIndex < 0) return null;
+    try {
+      body = extractBalancedJson(afterMarker, objectIndex);
+    } catch {
+      return null;
+    }
+  } else if (method === "POST" && !/\b(?:with\s+)?no\s+body\b/i.test(remainder)) {
+    return null;
+  }
+  const actionId = `explicit-${sha256({
+    session_id: req.session_id,
+    message_id: req.message_id,
+    method,
+    path: actionPath,
+    body: body ?? null
+  }).slice(0, 24)}`;
+  return {
+    version: "operator.backend.v1",
+    assistant_message:
+      "Executing the exact single Revit action supplied in the current request; provider planning is bypassed for this action.",
+    actions: [{
+      action_id: actionId,
+      method,
+      path: actionPath,
+      ...(body === undefined ? {} : { body })
+    }]
+  };
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -679,7 +835,7 @@ export function maybeContinueExistingConditionsOneActionLoop(
   req: ChatRequest
 ): ChatResponse | null {
   const toolResults = Array.isArray(req.tool_results) ? req.tool_results : [];
-  recordToolResults(req.session_id, toolResults);
+  recordToolResults(req.session_id, toolResults, documentScopeSha256(req.context));
 
   const persistedBeforeRecovery = latestExistingConditionsStagedWorkflow(req.session_id);
   if (persistedBeforeRecovery) {
@@ -727,7 +883,8 @@ export function enforceExistingConditionsOneActionLoop(args: {
   decision: ChatResponse;
 }): ChatResponse {
   const toolResults = Array.isArray(args.req.tool_results) ? args.req.tool_results : [];
-  recordToolResults(args.req.session_id, toolResults);
+  const currentDocumentScope = documentScopeSha256(args.req.context);
+  recordToolResults(args.req.session_id, toolResults, currentDocumentScope);
 
   const persistedBeforeRecovery = latestExistingConditionsStagedWorkflow(args.req.session_id);
   if (persistedBeforeRecovery) {
@@ -801,7 +958,8 @@ export function enforceExistingConditionsOneActionLoop(args: {
       status: "failed",
       phase,
       payload: { registered_model_rectangle: registeredRect, outside_points: outsidePoints },
-      error: "outside_persisted_registered_model_rectangle"
+      error: "outside_persisted_registered_model_rectangle",
+      documentScopeSha256: currentDocumentScope
     });
     return false;
   });
@@ -812,28 +970,61 @@ export function enforceExistingConditionsOneActionLoop(args: {
       candidate.sequence > entry.sequence &&
       candidate.event === "action_completed" &&
       candidate.action_id === entry.action_id &&
-      candidate.path === entry.path
+      candidate.path === entry.path &&
+      entriesShareScope(entry, candidate)
     );
     if (!completion) return false;
     if (entry.phase === "readback" || entry.phase === "visual") {
       const invalidatedByLaterWrite = ledger.some(candidate =>
         candidate.sequence > completion.sequence &&
         candidate.event === "action_completed" &&
-        candidate.phase === "apply"
+        candidate.phase === "apply" &&
+        entriesShareScope(entry, candidate)
       );
       if (invalidatedByLaterWrite) return false;
     }
+    if (
+      entry.phase === "recovery" &&
+      clean(entry.path).toLowerCase() === "/revit/computer-use-observe"
+    ) {
+      const invalidatedByDialogAction = ledger.some(candidate =>
+        candidate.sequence > completion.sequence &&
+        candidate.event === "action_completed" &&
+        clean(candidate.path).toLowerCase() === "/revit/computer-use-act" &&
+        entriesShareScope(entry, candidate)
+      );
+      if (invalidatedByDialogAction) return false;
+    }
     return true;
   });
+  const inFlightPlans = ledger.filter(entry => {
+    if (entry.event !== "action_planned") return false;
+    return !ledger.some(candidate =>
+      candidate.sequence > entry.sequence &&
+      (candidate.event === "action_completed" || candidate.event === "action_failed") &&
+      candidate.action_id === entry.action_id &&
+      candidate.path === entry.path &&
+      entriesShareScope(entry, candidate)
+    );
+  });
+  let replayedCount = 0;
+  let inFlightCount = 0;
   const remainingActions = actions.filter(action => {
     const actionHash = sha256({
       method: action.method,
       path: action.path,
       body: action.body ?? null
     });
-    return !completedPlans.some(entry => entry.action_sha256 === actionHash);
+    if (completedPlans.some(entry => entry.action_sha256 === actionHash && scopesMatch(entry, currentDocumentScope))) {
+      replayedCount += 1;
+      return false;
+    }
+    if (inFlightPlans.some(entry => entry.action_sha256 === actionHash && scopesMatch(entry, currentDocumentScope))) {
+      inFlightCount += 1;
+      return false;
+    }
+    return true;
   });
-  const replayedCount = actions.length - remainingActions.length;
   const selected = remainingActions.length > 0 ? [remainingActions[0]!] : [];
   if (selected[0]) {
     appendExecutionEntry({
@@ -843,8 +1034,10 @@ export function enforceExistingConditionsOneActionLoop(args: {
       status: "planned",
       payload: {
         assistant_message_sha256: sha256(decision.assistant_message),
-        proposed_action_count: actions.length
-      }
+        proposed_action_count: actions.length,
+        document_scope_sha256: currentDocumentScope
+      },
+      documentScopeSha256: currentDocumentScope
     });
   }
 
@@ -854,7 +1047,12 @@ export function enforceExistingConditionsOneActionLoop(args: {
       `I skipped ${replayedCount} exact completed-action replay${replayedCount === 1 ? "" : "s"} and kept the persisted result.`
     );
   }
-  const onlyCompletedReplays = replayedCount > 0 && selected.length === 0;
+  if (inFlightCount > 0) {
+    suffixParts.push(
+      `I kept ${inFlightCount} exact action${inFlightCount === 1 ? "" : "s"} already in flight instead of dispatching a duplicate.`
+    );
+  }
+  const onlySuppressedActions = replayedCount + inFlightCount > 0 && selected.length === 0;
   if (remainingActions.length > 1) {
     suffixParts.push(
       `I queued only the first of ${remainingActions.length} proposed actions so progress remains visible and repairable.`
@@ -868,8 +1066,10 @@ export function enforceExistingConditionsOneActionLoop(args: {
   const suffix = suffixParts.length > 0 ? ` ${suffixParts.join(" ")}` : "";
   return {
     ...decision,
-    assistant_message: onlyCompletedReplays
-      ? `No action was executed because the provider proposed only ${replayedCount} exact completed-action replay${replayedCount === 1 ? "" : "s"}. The persisted result remains accepted; the authoritative current request still needs a new plan.${suffix}`
+    assistant_message: onlySuppressedActions
+      ? replayedCount > 0
+        ? `No action was executed because the provider proposed only already completed or in-flight actions. The persisted result remains accepted; the authoritative current request still needs a new plan.${suffix}`
+        : `No duplicate action was dispatched because the exact requested action is already in flight.${suffix}`
       : `${decision.assistant_message}${suffix}`.trim(),
     actions: selected
   };

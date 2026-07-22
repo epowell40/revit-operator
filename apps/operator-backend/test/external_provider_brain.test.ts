@@ -383,6 +383,11 @@ test("Anthropic brain calls Messages API with Claude Opus 4.8 structured output"
     assert.deepEqual(requestedBody.thinking, { type: "adaptive" });
     assert.equal(requestedBody.output_config.effort, "xhigh");
     assert.equal(requestedBody.output_config.format.type, "json_schema");
+    const anthropicBodySchema = requestedBody.output_config.format.schema
+      .properties.actions.items.properties.body_json;
+    assert.deepEqual(anthropicBodySchema.type, ["string", "null"]);
+    assert.equal(anthropicBodySchema.additionalProperties, undefined);
+    assert.doesNotMatch(JSON.stringify(requestedBody.output_config.format.schema), /"additionalProperties":true/);
     assert.equal(response.actions[0]?.path, "/revit/get-mep-connectors");
     assert.deepEqual(response.actions[0]?.body, { elementIds: [101, 102] });
   } finally {
