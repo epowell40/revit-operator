@@ -371,6 +371,25 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
 
   if (isDirectBrainRouteRequest(req)) {
     const route = resolveOperatorBrainRoute();
+    if (
+      __testOnlyIsExistingConditionsReconstructionRequest(req) &&
+      route !== "openai" &&
+      route !== "rule"
+    ) {
+      const routedReq = await (
+        dependencies.existingConditionsSourcePreflight ??
+        prepareExistingConditionsSourcePreflight
+      )(req);
+      const providerDecision = await (
+        dependencies.existingConditionsProviderDecision ??
+        prepareExistingConditionsProviderDecision
+      )(routedReq);
+      if (providerDecision) return finalizeDecision(routedReq, providerDecision);
+      return finalizeDecision(
+        routedReq,
+        await decideWithSelectedBrain(route, routedReq, dependencies)
+      );
+    }
     return finalizeDecision(req, await decideWithSelectedBrain(route, req, dependencies));
   }
 
@@ -450,6 +469,30 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dep
 
   if (isDirectBrainRouteRequest(req)) {
     const route = resolveOperatorBrainRoute();
+    if (
+      __testOnlyIsExistingConditionsReconstructionRequest(req) &&
+      route !== "openai" &&
+      route !== "rule"
+    ) {
+      const routedReq = await (
+        dependencies.existingConditionsSourcePreflight ??
+        prepareExistingConditionsSourcePreflight
+      )(req);
+      const providerDecision = await (
+        dependencies.existingConditionsProviderDecision ??
+        prepareExistingConditionsProviderDecision
+      )(routedReq);
+      if (providerDecision) {
+        const text = providerDecision.assistant_message || "";
+        cb.onDelta?.(text);
+        cb.onDone?.(text);
+        return finalizeDecision(routedReq, providerDecision);
+      }
+      return finalizeDecision(
+        routedReq,
+        await decideWithSelectedBrainStreaming(route, routedReq, cb, dependencies)
+      );
+    }
     const decision = finalizeDecision(
       req,
       await decideWithSelectedBrainStreaming(route, req, cb, dependencies)

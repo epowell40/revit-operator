@@ -750,6 +750,57 @@ test("explicit direct route bypasses deterministic prehandlers in both chat mode
   }
 });
 
+test("explicit direct existing-conditions routes retain the provider-neutral registration gate", { concurrency: false }, async () => {
+  const previous = { OPERATOR_BRAIN: process.env.OPERATOR_BRAIN };
+  process.env.OPERATOR_BRAIN = "gemini";
+  const req: ChatRequest = {
+    ...request("Draft the existing conditions from this source in exact target view 123."),
+    context: { operator_brain_route: "direct" }
+  };
+  let gateCalls = 0;
+  let providerCalls = 0;
+  const gateResponse: ChatResponse = {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    assistant_message: "Registering the exact frame before provider planning.",
+    actions: [{
+      action_id: "direct-frame-123",
+      method: "POST",
+      path: "/revit/export-view-frame",
+      body: { viewId: 123 }
+    }]
+  };
+  const dependencies = {
+    existingConditionsSourcePreflight: async (incoming: ChatRequest) => incoming,
+    existingConditionsProviderDecision: async () => {
+      gateCalls += 1;
+      return gateResponse;
+    },
+    geminiBrain: async () => {
+      providerCalls += 1;
+      return gateResponse;
+    },
+    geminiStreamingBrain: async () => {
+      providerCalls += 1;
+      return gateResponse;
+    }
+  };
+
+  try {
+    const nonStreaming = await decide(req, dependencies);
+    const streaming = await decideStreaming(
+      { ...req, session_id: `${req.session_id}-stream` },
+      {},
+      dependencies
+    );
+    assert.equal(gateCalls, 2);
+    assert.equal(providerCalls, 0);
+    assert.equal(nonStreaming.actions[0]?.action_id, "direct-frame-123");
+    assert.equal(streaming.actions[0]?.action_id, "direct-frame-123");
+  } finally {
+    restoreEnvironment(previous);
+  }
+});
+
 test("persisted existing-conditions stages advance without another provider call", { concurrency: false }, async () => {
   const previous = {
     OPERATOR_BRAIN: process.env.OPERATOR_BRAIN,
