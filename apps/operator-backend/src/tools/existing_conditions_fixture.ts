@@ -165,6 +165,25 @@ import {
   type ProvisionalPlanTraceDraftContext,
   type ProvisionalPlanTraceDraftInputV1
 } from "../existing_conditions/provisional_plan_trace_draft.js";
+import {
+  compileSheetTopologyV1,
+  type SheetTopologyCompilationContextV1,
+  type SheetTopologyCompilationInputV1
+} from "../existing_conditions/sheet_topology_compiler.js";
+import {
+  buildSheetTopologyCalibrationProfileV1,
+  type SheetTopologyCalibrationBuildInputV1
+} from "../existing_conditions/sheet_topology_calibration.js";
+import {
+  compileSheetPixelInterpretationV1,
+  type SheetPixelInterpretationContextV1,
+  type SheetPixelInterpretationInputV1
+} from "../existing_conditions/sheet_pixel_interpretation.js";
+import { validateSheetPixelEvidenceV1 } from "../existing_conditions/sheet_pixel_evidence.js";
+import {
+  analyzeExistingConditionsSheetWithGeminiV1,
+  type GeminiExistingConditionsSheetRequestV1
+} from "../vision/gemini_existing_conditions_sheet.js";
 
 function argument(name: string): string {
   const index = process.argv.indexOf(name);
@@ -179,6 +198,12 @@ function requiredArgument(name: string): string {
 
 function readJson(filePath: string): unknown {
   return JSON.parse(fs.readFileSync(path.resolve(filePath), "utf8"));
+}
+
+function sheetPixelInterpretation(value: unknown): SheetPixelInterpretationInputV1 {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("sheet_pixel_interpretation_input_must_be_object");
+  const wrapper = value as { interpretation?: unknown };
+  return (wrapper.interpretation ?? value) as SheetPixelInterpretationInputV1;
 }
 
 function readJsonWithSha256(filePath: string): { value: unknown; sha256: string } {
@@ -357,6 +382,11 @@ function usage(): never {
     "  npm run existing-conditions -- extract-plan-traces --input <hash-bound-extraction-policy.json> --out <trace-receipt.json> [--preview-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- detect-repeated-mep-symbols --input <hash-bound-template-search.json> --out <candidate-receipt.json>",
     "  npm run existing-conditions -- validate-mep-region-coverage --input <source-coverage.json> --context <coverage-context.json> --out <coverage-receipt.json>",
+    "  npm run existing-conditions -- compile-sheet-topology --input <whole-sheet-primitives.json> --context <trusted-views-and-calibration.json> --out <compiled-topology.json>",
+    "  npm run existing-conditions -- build-sheet-topology-calibration --input <sealed-blind-outcomes.json> --out <calibration-profile.json>",
+    "  npm run existing-conditions -- compile-sheet-pixel-interpretation --input <normalized-sheet-observations.json> --context <trusted-frames-and-calibration.json> --out <compiled-topology.json>",
+    "  npm run existing-conditions -- interpret-sheet-gemini --input <source-only-sheet-request.json> --out <normalized-sheet-observations.json>",
+    "  npm run existing-conditions -- validate-sheet-pixel-evidence --input <observations-or-provider-receipt.json> --image <source-image.png> --out <evidence-receipt.json> [--overlay-out <overlay.png>]",
     "  npm run existing-conditions -- compile-provisional-plan-traces --input <plan-trace-draft.json> --context <source-accounting-context.json> --out <compiled-plan.json> [--workflow-out <atomic-dry-run-request.json> --allow-unscored-user-workflow] [--max-created <count>]",
     "  npm run existing-conditions -- compile-registered-mep-observations --input <registered-pixel-observations.json> --out <compilation.json> [--package-out <mep-draft-package.json>] [--workflow-out <atomic-dry-run-request.json> --allow-unscored-user-workflow] [--max-created <count>]",
     "  npm run existing-conditions -- promote-registered-mep-observations --input <registered-pixel-observations.json> --truth <evaluator-ground-truth.json> --out <promotion.json> --score-out <pre-apply-score.json> --workflow-out <atomic-request.json> [--max-created <count>] [--apply]",
@@ -1914,6 +1944,86 @@ async function main(): Promise<void> {
       readJson(requiredArgument("--context")) as BoundedMepRegionCoverageContext
     );
     writeJson(requiredArgument("--out"), receipt);
+    return;
+  }
+  if (command === "compile-sheet-topology") {
+    const inputPath = requiredArgument("--input");
+    const contextPath = requiredArgument("--context");
+    const outputPath = requiredArgument("--out");
+    assertFreshDistinctOutputPaths(
+      [{ flag: "--out", value: outputPath }],
+      [{ flag: "--input", value: inputPath }, { flag: "--context", value: contextPath }]
+    );
+    writeJson(
+      outputPath,
+      compileSheetTopologyV1(
+        readJson(inputPath) as SheetTopologyCompilationInputV1,
+        readJson(contextPath) as SheetTopologyCompilationContextV1
+      )
+    );
+    return;
+  }
+  if (command === "build-sheet-topology-calibration") {
+    const inputPath = requiredArgument("--input");
+    const outputPath = requiredArgument("--out");
+    assertFreshDistinctOutputPaths(
+      [{ flag: "--out", value: outputPath }],
+      [{ flag: "--input", value: inputPath }]
+    );
+    writeJson(
+      outputPath,
+      buildSheetTopologyCalibrationProfileV1(
+        readJson(inputPath) as SheetTopologyCalibrationBuildInputV1
+      )
+    );
+    return;
+  }
+  if (command === "compile-sheet-pixel-interpretation") {
+    const inputPath = requiredArgument("--input");
+    const contextPath = requiredArgument("--context");
+    const outputPath = requiredArgument("--out");
+    assertFreshDistinctOutputPaths(
+      [{ flag: "--out", value: outputPath }],
+      [{ flag: "--input", value: inputPath }, { flag: "--context", value: contextPath }]
+    );
+    writeJson(
+      outputPath,
+      compileSheetPixelInterpretationV1(
+        sheetPixelInterpretation(readJson(inputPath)),
+        readJson(contextPath) as SheetPixelInterpretationContextV1
+      )
+    );
+    return;
+  }
+  if (command === "validate-sheet-pixel-evidence") {
+    const inputPath = requiredArgument("--input");
+    const imagePath = requiredArgument("--image");
+    const outputPath = requiredArgument("--out");
+    const overlayPath = argument("--overlay-out");
+    assertFreshDistinctOutputPaths(
+      [{ flag: "--out", value: outputPath }, ...(overlayPath ? [{ flag: "--overlay-out", value: overlayPath }] : [])],
+      [{ flag: "--input", value: inputPath }, { flag: "--image", value: imagePath }]
+    );
+    writeJson(outputPath, await validateSheetPixelEvidenceV1({
+      image_path: imagePath,
+      interpretation: sheetPixelInterpretation(readJson(inputPath)),
+      ...(overlayPath ? { overlay_path: overlayPath } : {})
+    }));
+    return;
+  }
+  if (command === "interpret-sheet-gemini") {
+    const inputPath = requiredArgument("--input");
+    const outputPath = requiredArgument("--out");
+    assertFreshDistinctOutputPaths(
+      [{ flag: "--out", value: outputPath }],
+      [{ flag: "--input", value: inputPath }]
+    );
+    writeJson(
+      outputPath,
+      await analyzeExistingConditionsSheetWithGeminiV1(
+        readJson(inputPath) as GeminiExistingConditionsSheetRequestV1
+      )
+    );
     return;
   }
   if (command === "compile-provisional-plan-traces") {
