@@ -12,6 +12,7 @@ import {
   __testOnlyBuildCandidateVisibleRecoveryPrompt,
   __testOnlyBuildCandidateVisibleRoomScopeResponse,
   __testOnlyBuildCandidateVisibleCompileGateCorrection,
+  __testOnlyCandidateVisibleReadyDiagnostics,
   __testOnlyBuildCandidateVisibleReadyToCompilePrompt,
   __testOnlyBuildCandidateVisibleTerminalGuardAfterWorkbench,
   __testOnlyBuildCandidateVisibleTerminalGuardResponse,
@@ -20,6 +21,10 @@ import {
   __testOnlyCandidateVisibleVerifiedRoomScopeFromToolResults,
   __testOnlyBuildInitialRedlinePreflightAction,
   __testOnlyIsExistingConditionsReconstructionRequest,
+  __testOnlyIsExplicitExistingConditionsCompileOnlyRequest,
+  __testOnlyNoteExplicitExistingConditionsCompileOnlyIntent,
+  __testOnlyPersistedExistingConditionsActionCompleted,
+  __testOnlyForgetRedlineVisionSession,
   __testOnlyExtractFirstJsonObject,
   __testOnlyExtractResponsesApiOutputText,
   __testOnlyExplicitExistingConditionsViewId,
@@ -140,6 +145,166 @@ test("candidate-visible native inventory follows Gemini registration-control cat
     ],
     "two separated stair/core controls are sufficient without a whole-crop wall inventory"
   );
+});
+
+test("compile-only gate accepts the exact durable focused-room receipt without an in-memory pending marker", () => {
+  const sessionId = "session-durable-focused-room-compile-gate";
+  const sourcePath = "artifacts/uploads/durable-focused-room-source.png";
+  __testOnlyStartFreshCandidateVisibleSourceForRecoveryTest(sessionId, sourcePath);
+  __testOnlySeedRedlineViewAlignment({
+    sessionId,
+    sourceImagePath: sourcePath,
+    frameId: "frame-durable-focused-room",
+    viewId: 424242,
+    crop: { min_u: 0.1, min_v: 0.1, max_u: 0.9, max_v: 0.9 }
+  });
+  const req = mkReq({
+    session_id: sessionId,
+    user_text:
+      "Compile only the Room 100 existing-conditions source-supported plumbing into a provisional backbone and repair queue. Do not dry-run, apply, or write any model change. Stop after the compilation receipt.",
+    tool_results: [{
+      action_id: "candidate-visible-focused-room-tags:frame-durable-focused-room:100",
+      method: "POST",
+      path: "/revit/export-visible-elements",
+      status: "done",
+      result_json: { ok: true, frameId: "frame-durable-focused-room", viewId: 424242 }
+    }]
+  });
+
+  assert.match(
+    __testOnlyBuildCandidateVisibleReadyToCompilePrompt(req) ?? "",
+    /READY TO COMPILE/
+  );
+  assert.match(
+    __testOnlyBuildCandidateVisibleCompileGateCorrection(
+      req,
+      [{ type: "native_revit_action", path: "/revit/rooms", body: {} }] as any
+    ) ?? "",
+    /Return exactly one compile_registered_mep_reconstruction workbench action now/
+  );
+  assert.equal(__testOnlyShouldBypassCandidateVisiblePreModelBridge(req), true);
+});
+
+test("compile-only intent stays bound to its message root on an empty tool continuation", () => {
+  const sessionId = "session-compile-only-request-log-rehydrate";
+  const sourcePath = "artifacts/uploads/compile-only-request-log-source.png";
+  const initial = mkReq({
+    session_id: sessionId,
+    message_id: "compile-only-request:assistant:1",
+    user_text:
+      "Register the attached source crop as Room 1900 existing-conditions plumbing. Compile only the source-supported plumbing into a provisional backbone and repair queue. Do not dry-run, apply, or write any model change. Stop after the compilation receipt."
+  });
+  assert.equal(__testOnlyIsExistingConditionsReconstructionRequest(initial), true);
+  __testOnlyNoteExplicitExistingConditionsCompileOnlyIntent(initial);
+  __testOnlyStartFreshCandidateVisibleSourceForRecoveryTest(sessionId, sourcePath);
+  __testOnlySeedRedlineViewAlignment({
+    sessionId,
+    sourceImagePath: sourcePath,
+    frameId: "frame-request-log-rehydrate",
+    viewId: 18942351,
+    crop: { min_u: 0.1, min_v: 0.1, max_u: 0.9, max_v: 0.9 }
+  });
+  __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(initial, []);
+  const continuation = mkReq({
+    session_id: sessionId,
+    message_id: "compile-only-request:assistant:5",
+    user_text: "",
+    tool_results: [{
+      action_id: "candidate-visible-focused-room-tags:frame-request-log-rehydrate:1900",
+      method: "POST",
+      path: "/revit/export-visible-elements",
+      status: "done",
+      result_json: { ok: true }
+    }]
+  });
+
+  assert.equal(__testOnlyIsExistingConditionsReconstructionRequest(continuation), true);
+  assert.equal(__testOnlyIsExplicitExistingConditionsCompileOnlyRequest(continuation), true);
+  assert.match(
+    __testOnlyBuildCandidateVisibleCompileGateCorrection(
+      continuation,
+      [{ type: "native_revit_action", path: "/revit/rooms", body: {} }] as any
+    ) ?? "",
+    /Return exactly one compile_registered_mep_reconstruction workbench action now/
+  );
+  assert.equal(__testOnlyShouldBypassCandidateVisiblePreModelBridge(continuation), true);
+});
+
+test("focused-room completion rehydrates from the monotonic execution ledger", () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "candidate-visible-focused-ledger-"));
+  const sessionId = "session-focused-room-ledger-rehydrate";
+  const actionId = "candidate-visible-focused-room-tags:frame-ledger:1900";
+  try {
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    const sessionDir = path.join(ensureWorkspaceLayout().runsSessions, sessionId);
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionDir, "existing_conditions_execution_ledger.jsonl"),
+      JSON.stringify({
+        event: "action_completed",
+        action_id: actionId,
+        path: "/revit/export-visible-elements",
+        status: "done"
+      }) + "\n",
+      "utf8"
+    );
+    assert.equal(
+      __testOnlyPersistedExistingConditionsActionCompleted(
+        sessionId,
+        actionId,
+        "/revit/export-visible-elements"
+      ),
+      true
+    );
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup; Windows may transiently retain a test file handle.
+    }
+  }
+});
+
+test("accepted candidate-visible alignment rehydrates after backend state loss", () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "candidate-visible-alignment-rehydrate-"));
+  const sessionId = "session-candidate-visible-alignment-rehydrate";
+  try {
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    __testOnlySeedRedlineViewAlignment({
+      sessionId,
+      sourceImagePath: "artifacts/captures/registered-room.png",
+      frameId: "frame-persisted-alignment",
+      viewId: 18942351,
+      confidence: 0.91,
+      crop: { min_u: 0.1, min_v: 0.2, max_u: 0.8, max_v: 0.9 },
+      persistForRecovery: true
+    });
+    __testOnlyForgetRedlineVisionSession(sessionId);
+    const diagnostics = __testOnlyCandidateVisibleReadyDiagnostics(mkReq({
+      session_id: sessionId,
+      message_id: "alignment-rehydrate:assistant:2",
+      user_text: "Continue the registered Room 1900 existing-conditions reconstruction."
+    }));
+    assert.deepEqual(diagnostics.alignment, {
+      frame_id: "frame-persisted-alignment",
+      view_id: 18942351,
+      matched: true,
+      confidence: 0.91,
+      has_crop: true
+    });
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup; Windows may transiently retain a test file handle.
+    }
+  }
 });
 
 test("candidate-visible durable landmark assessment reports exact native matching failures", () => {
@@ -388,6 +553,25 @@ test("clean source-PDF drafting wording enters existing-conditions reconstructio
   });
 
   assert.equal(__testOnlyIsExistingConditionsReconstructionRequest(req), true);
+  const liveCompileOnlyWording = mkReq({
+    session_id: "session-live-compile-only-wording",
+    user_text:
+      "Analyze and compile the attached P2.10 Room 1900 existing-conditions plumbing source into a staged plan only. Use current active Revit view 18942351 as the exact target anchor. Do not apply Revit writes.",
+    user_attachments: [{
+      id: "source-image",
+      relative_path: "artifacts/uploads/room1900.png",
+      filename: "room1900.png",
+      mime: "image/png"
+    }]
+  });
+  assert.equal(
+    __testOnlyIsExistingConditionsReconstructionRequest(liveCompileOnlyWording),
+    true
+  );
+  assert.equal(
+    __testOnlyIsExplicitExistingConditionsCompileOnlyRequest(liveCompileOnlyWording),
+    true
+  );
   assert.equal(
     __testOnlyIsExistingConditionsReconstructionRequest(
       mkReq({
@@ -985,6 +1169,84 @@ test("source-room enclosure recovery preserves the route and requests the exact 
   assert.match(prompt ?? "", /Do not translate, shorten, or delete a supported route/);
   assert.match(prompt ?? "", /\"observation_id\":\"room100-orange-plumbing-route\"/);
   assert.doesNotMatch(prompt ?? "", /never widen or redraw spatial_scope/);
+});
+
+test("verified-room scope visibility recovery revises only the source-local spatial scope", () => {
+  const failure =
+    "candidate_visible_verified_room_scope_not_visible_in_registered_render:" +
+    "room=1900:revise_source_local_enclosure_only";
+  const base = {
+    schema_version: 2,
+    discipline: "plumbing",
+    room_number: "1900",
+    spatial_scope: {
+      boundary_pixel_points: [
+        { x: 0.62, y: 0.17 },
+        { x: 0.84, y: 0.17 },
+        { x: 0.84, y: 0.56 },
+        { x: 0.62, y: 0.56 }
+      ],
+      anchor_pixel_point: { x: 0.72, y: 0.26 },
+      anchor_label: "EMS LOUNGE 1900"
+    },
+    observations: [{
+      kind: "pipe_route",
+      observation_id: "dcw-backbone",
+      system: "domestic_cold_water",
+      nominal_diameter_inches: 1,
+      pixel_points: [{ x: 0.10, y: 0.29 }, { x: 0.84, y: 0.29 }],
+      attribute_evidence: [{
+        attribute: "system",
+        basis: "legible_source_evidence",
+        reference: "Blue source route"
+      }]
+    }]
+  };
+  const sessionId = "session-candidate-visible-verified-room-scope";
+  __testOnlySetCandidateVisibleCompileContext(
+    sessionId,
+    "artifacts/uploads/source.png",
+    "verified-room-scope-context",
+    JSON.stringify(base)
+  );
+  __testOnlyRecordCandidateVisibleCompileResults(sessionId, [{
+    index: 1,
+    type: "compile_registered_mep_reconstruction",
+    ok: false,
+    summary: failure
+  }]);
+
+  const prompt = __testOnlyBuildCandidateVisibleRecoveryPrompt(mkReq({
+    session_id: sessionId,
+    user_text: ""
+  }));
+  assert.match(prompt ?? "", /Preserve every observation.*byte-for-byte/);
+  assert.match(prompt ?? "", /Revise only spatial_scope/);
+  assert.match(prompt ?? "", /Do not move, clip, shorten, add, delete/);
+  assert.match(prompt ?? "", /authoritative native room remains fixed/);
+
+  const fingerprint = (value: unknown) =>
+    __testOnlyCandidateVisibleRecoveryImmutableClaimsSha256(
+      JSON.stringify(value),
+      failure
+    );
+  const correctedScope = structuredClone(base);
+  correctedScope.spatial_scope.boundary_pixel_points = [
+    { x: 0.19, y: 0.12 },
+    { x: 0.83, y: 0.12 },
+    { x: 0.83, y: 0.61 },
+    { x: 0.19, y: 0.61 }
+  ];
+  correctedScope.spatial_scope.anchor_pixel_point = { x: 0.68, y: 0.24 };
+  assert.equal(fingerprint(correctedScope), fingerprint(base));
+
+  const movedRoute = structuredClone(correctedScope);
+  movedRoute.observations[0]!.pixel_points[1]!.x = 0.805;
+  assert.notEqual(fingerprint(movedRoute), fingerprint(base));
+
+  const changedSystem = structuredClone(correctedScope);
+  changedSystem.observations[0]!.system = "domestic_hot_water";
+  assert.notEqual(fingerprint(changedSystem), fingerprint(base));
 });
 
 test("source-room enclosure raster recovery preserves route and anchor while revising only weak edges", () => {
@@ -2510,6 +2772,93 @@ test("candidate-visible preparation preserves an explicit active-view anchor acr
   assert.equal(promptedContinuation?.actions[0]?.path, "/revit/export-view-frame");
   assert.equal((promptedContinuation?.actions[0]?.body as any)?.viewId, 424242);
   assert.doesNotMatch(promptedContinuation?.assistant_message ?? "", /source sheet p2\.10/i);
+});
+
+test("candidate-visible preparation rehydrates the exact active-view anchor after backend restart", () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "candidate-visible-view-anchor-rehydrate-"));
+  const sessionId = "session-candidate-visible-view-anchor-rehydrate";
+  const sourcePath = "artifacts/uploads/active-view-source.png";
+  const sessionDir = path.join(root, "runs", "sessions", sessionId);
+  fs.mkdirSync(sessionDir, { recursive: true });
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const messageRoot = "active-view-message";
+  fs.writeFileSync(path.join(sessionDir, "request_log.jsonl"), [
+    {
+      message_id: `${messageRoot}:assistant:1`,
+      user_text:
+        "Register the attached existing-conditions plumbing crop to the exact active plumbing view and do not write.",
+      user_attachments: [{
+        relative_path: sourcePath,
+        filename: "active-view-source.png",
+        mime: "image/png"
+      }]
+    },
+    {
+      message_id: "compile-only-continuation:assistant:1",
+      user_text:
+        "Continue the registered existing-conditions compilation and stop before dry-run or apply."
+    }
+  ].map((row) => JSON.stringify(row)).join("\n") + "\n", "utf8");
+  fs.writeFileSync(path.join(sessionDir, "tool_outputs.jsonl"), [
+    {
+      kind: "mcp.tool_result",
+      session_id: sessionId,
+      tool: "workbench.analyze_redline",
+      status: "success",
+      result: {
+        index: 1,
+        summary: "Source analyzed.",
+        details: {
+          ok: true,
+          file_path: sourcePath,
+          kind: "image"
+        }
+      }
+    },
+    {
+      kind: "revit.result",
+      session_id: sessionId,
+      message_id: `${messageRoot}:assistant:2`,
+      tool_result: {
+        action_id: "context-action",
+        method: "GET",
+        path: "/revit/context",
+        status: "done",
+        result_json: {
+          document: {
+            activeView: {
+              id: 424242,
+              name: "LEVEL 01 - PLUMBING CANDIDATE",
+              type: "FloorPlan"
+            }
+          }
+        }
+      }
+    }
+  ].map((row) => JSON.stringify(row)).join("\n") + "\n", "utf8");
+
+  try {
+    __testOnlyRehydrateRedlineVisionProgressFromRunBundle(sessionId);
+    const response = __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(
+      mkReq({
+        session_id: sessionId,
+        user_text:
+          "Continue the registered existing-conditions compilation and stop before dry-run or apply."
+      }),
+      []
+    );
+    assert.equal(response?.actions[0]?.path, "/revit/export-view-frame");
+    assert.equal((response?.actions[0]?.body as any)?.viewId, 424242);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch {
+      // Windows can briefly retain a handle to the workspace journal.
+    }
+  }
 });
 
 test("candidate-visible stable native controls require a real exterior wall identity", () => {

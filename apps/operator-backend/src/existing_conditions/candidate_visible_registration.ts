@@ -254,6 +254,7 @@ export type CandidateVisibleMepReconstruction = {
       reason:
         | "source_scope_disjoint_from_projected_native_room"
         | "server_verified_source_room_shape_match"
+        | "server_verified_room_enclosure_similarity"
         | "server_verified_room_label_translation"
         | "server_verified_room_tag_and_stable_boundary_similarity";
       source_room_label_evidence_basis?:
@@ -285,6 +286,9 @@ export type CandidateVisibleMepReconstruction = {
       source_render_foreground_centroid_delta_px?: number;
       source_enclosure_raster_verification?: CandidateVisibleSourceEnclosureRasterVerification;
       source_room_shape_verification?: CandidateVisibleSourceRoomShapeVerification;
+      native_enclosure_basis?:
+        | "full_native_room"
+        | "primary_orthogonal_enclosure_containing_room_location";
       stable_landmark_similarity?: CandidateVisibleStableLandmarkSimilarity;
     };
     source_observations_sha256: string;
@@ -666,37 +670,62 @@ async function locateUniqueStructuredSourceRoomLabelAnchor(args: {
   }
   const expected = normalizedRoomLabelToken(args.room_number);
   if (!expected) return null;
-  const matches = (args.alignment.source_room_labels ?? []).filter((entry) =>
-    entry &&
-    entry.score >= 0.85 &&
+  const labels = (args.alignment.source_room_labels ?? []).filter((entry) => {
+    if (!entry || entry.score < 0.85) return false;
+    const values = [
+      entry.normalized_x,
+      entry.normalized_y,
+      entry.min_u,
+      entry.min_v,
+      entry.max_u,
+      entry.max_v
+    ];
+    return values.every((value) => Number.isFinite(value) && value >= 0 && value <= 1) &&
+      entry.max_u > entry.min_u &&
+      entry.max_v > entry.min_v &&
+      entry.normalized_x >= entry.min_u &&
+      entry.normalized_x <= entry.max_u &&
+      entry.normalized_y >= entry.min_v &&
+      entry.normalized_y <= entry.max_v;
+  });
+  const matches = labels.filter((entry) =>
     roomLabelTokenContainsExactRoom(
       normalizedRoomLabelToken(entry.text),
       expected
     )
   );
   if (matches.length !== 1) return null;
-  const match = matches[0]!;
-  const normalizedValues = [
-    match.normalized_x,
-    match.normalized_y,
-    match.min_u,
-    match.min_v,
-    match.max_u,
-    match.max_v
-  ];
-  if (
-    normalizedValues.some((value) => !Number.isFinite(value) || value < 0 || value > 1) ||
-    match.max_u <= match.min_u ||
-    match.max_v <= match.min_v ||
-    match.normalized_x < match.min_u ||
-    match.normalized_x > match.max_u ||
-    match.normalized_y < match.min_v ||
-    match.normalized_y > match.max_v
-  ) {
-    return null;
-  }
+  const roomNumberMatch = matches[0]!;
+  const numberWidth = roomNumberMatch.max_u - roomNumberMatch.min_u;
+  const numberHeight = roomNumberMatch.max_v - roomNumberMatch.min_v;
+  const cluster = normalizedRoomLabelToken(roomNumberMatch.text) === expected
+    ? labels.filter((entry) => {
+    const horizontalGap = Math.max(
+      0,
+      roomNumberMatch.min_u - entry.max_u,
+      entry.min_u - roomNumberMatch.max_u
+    );
+    return horizontalGap <= Math.max(0.01, numberWidth) &&
+      entry.max_v >= roomNumberMatch.min_v - Math.max(0.04, numberHeight * 4) &&
+      entry.min_v <= roomNumberMatch.max_v + Math.max(0.01, numberHeight * 0.5);
+    })
+    : [roomNumberMatch];
+  const match = {
+    ...roomNumberMatch,
+    text: cluster.map((entry) => entry.text.trim()).filter(Boolean).join(" "),
+    min_u: Math.min(...cluster.map((entry) => entry.min_u)),
+    min_v: Math.min(...cluster.map((entry) => entry.min_v)),
+    max_u: Math.max(...cluster.map((entry) => entry.max_u)),
+    max_v: Math.max(...cluster.map((entry) => entry.max_v))
+  };
+  match.normalized_x = (match.min_u + match.max_u) / 2;
+  match.normalized_y = (match.min_v + match.max_v) / 2;
+  // Multi-line room labels commonly include the room name, number, and a
+  // surrounding title box. Keep this bounded, but do not reject a unique,
+  // high-confidence, raster-occupied label merely because its box is larger
+  // than a single OCR token.
   const areaRatio = (match.max_u - match.min_u) * (match.max_v - match.min_v);
-  if (areaRatio <= 1e-7 || areaRatio > 0.02) return null;
+  if (areaRatio <= 1e-7 || areaRatio > 0.04) return null;
 
   const image = await loadImage(args.registered_render_path);
   if (
@@ -762,10 +791,22 @@ async function verifySourceEnclosureRaster(args: {
 }): Promise<CandidateVisibleSourceEnclosureRasterVerification> {
   const maximumPolygonAreaRatio = 0.75;
   const minimumMeanEdgeSupportRatio = 0.3;
-  const minimumEachEdgeSupportRatio = 0.1;
-  const polygon = args.boundary_pixel_points
+  // A room edge may contain a door opening or mask, so permit a narrowly
+  // bounded partial edge when the unique room label and mean enclosure support
+  // independently remain strong.
+  const minimumEachEdgeSupportRatio = 0.075;
+  let polygon = args.boundary_pixel_points
     .map(normalizePoint)
     .filter((point): point is ExistingConditionsPlanPoint => point !== null);
+  if (
+    polygon.length > 3 &&
+    Math.hypot(
+      polygon[0]!.x - polygon[polygon.length - 1]!.x,
+      polygon[0]!.y - polygon[polygon.length - 1]!.y
+    ) <= 1e-7
+  ) {
+    polygon = polygon.slice(0, -1);
+  }
   const rejected = (
     polygonAreaRatio = 0,
     edgeSupportRatios: number[] = []
@@ -813,7 +854,14 @@ async function verifySourceEnclosureRaster(args: {
     args.render_height_px
   ).data;
   const hasDarkPixelNear = (x: number, y: number): boolean => {
-    const radius = 2;
+    // Structured vision returns normalized vertices rounded to a few decimal
+    // places. Use a small resolution-relative corridor so sub-percent rounding,
+    // antialiasing, and wall lineweight do not turn a supported edge into a
+    // false negative.
+    const radius = Math.max(
+      2,
+      Math.min(6, Math.round(Math.min(args.render_width_px, args.render_height_px) * 0.006))
+    );
     for (let dx = -radius; dx <= radius; dx++) {
       for (let dy = -radius; dy <= radius; dy++) {
         const px = Math.max(
@@ -1599,7 +1647,7 @@ function validateScopePolygon(
   if (!Array.isArray(value) || value.length < 3 || value.length > 128) {
     throw new Error("candidate_visible_scope_polygon_must_have_3_to_128_vertices");
   }
-  const polygon = value.map((entry, index) => {
+  let polygon = value.map((entry, index) => {
     const point = normalizePoint(entry);
     if (!point) throw new Error(`candidate_visible_scope_polygon_point_${index}_invalid`);
     if (point.x < 0 || point.y < 0 || point.x > width || point.y > height) {
@@ -1607,6 +1655,17 @@ function validateScopePolygon(
     }
     return point;
   });
+  // Accept the conventional explicitly closed polygon representation while
+  // retaining the strict duplicate-vertex check for every interior edge.
+  if (
+    polygon.length > 3 &&
+    Math.hypot(
+      polygon[0]!.x - polygon[polygon.length - 1]!.x,
+      polygon[0]!.y - polygon[polygon.length - 1]!.y
+    ) <= 1e-7
+  ) {
+    polygon = polygon.slice(0, -1);
+  }
   let twiceArea = 0;
   for (let index = 0; index < polygon.length; index += 1) {
     const current = polygon[index]!;
@@ -2119,6 +2178,78 @@ function polygonArea(points: ExistingConditionsPlanPoint[]): number {
   return Math.abs(polygonTwiceArea(points)) / 2;
 }
 
+function primaryOrthogonalEnclosureContainingPoint(
+  polygon: ExistingConditionsPlanPoint[],
+  anchor: ExistingConditionsPlanPoint,
+  targetAspectRatio: number
+): ExistingConditionsPlanPoint[] | null {
+  if (!Number.isFinite(targetAspectRatio) || targetAspectRatio <= 0) return null;
+  const uniqueCoordinates = (values: number[]): number[] => {
+    const sorted = [...values].sort((left, right) => left - right);
+    return sorted.filter(
+      (value, index) => index === 0 || Math.abs(value - sorted[index - 1]!) > 1e-5
+    );
+  };
+  const xs = uniqueCoordinates(polygon.map((point) => point.x));
+  const ys = uniqueCoordinates(polygon.map((point) => point.y));
+  let best: {
+    polygon: ExistingConditionsPlanPoint[];
+    area: number;
+    anchor_center_distance: number;
+  } | null = null;
+  for (let xIndex = 0; xIndex < xs.length - 1; xIndex++) {
+    const minX = xs[xIndex]!;
+    for (let xEndIndex = xIndex + 1; xEndIndex < xs.length; xEndIndex++) {
+      const maxX = xs[xEndIndex]!;
+      if (anchor.x < minX - 1e-5 || anchor.x > maxX + 1e-5) continue;
+      for (let yIndex = 0; yIndex < ys.length - 1; yIndex++) {
+        const minY = ys[yIndex]!;
+        for (let yEndIndex = yIndex + 1; yEndIndex < ys.length; yEndIndex++) {
+          const maxY = ys[yEndIndex]!;
+          if (anchor.y < minY - 1e-5 || anchor.y > maxY + 1e-5) continue;
+          const area = (maxX - minX) * (maxY - minY);
+          if (area <= 1e-7 || (best && area < best.area - 1e-7)) continue;
+          const aspectRatio = (maxX - minX) / (maxY - minY);
+          if (Math.abs(Math.log(aspectRatio / targetAspectRatio)) > 0.18) continue;
+          const samples: ExistingConditionsPlanPoint[] = [];
+          for (let xStep = 0; xStep <= 4; xStep++) {
+            for (let yStep = 0; yStep <= 4; yStep++) {
+              samples.push({
+                x: minX + (maxX - minX) * xStep / 4,
+                y: minY + (maxY - minY) * yStep / 4
+              });
+            }
+          }
+          if (!samples.every((point) =>
+            pointInsidePolygonOrNearBoundary(point, polygon, 1e-4)
+          )) continue;
+          const center = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+          const anchorCenterDistance = Math.hypot(
+            anchor.x - center.x,
+            anchor.y - center.y
+          );
+          if (
+            best &&
+            Math.abs(area - best.area) <= 1e-7 &&
+            anchorCenterDistance >= best.anchor_center_distance - 1e-7
+          ) continue;
+          best = {
+            polygon: [
+              { x: minX, y: minY },
+              { x: maxX, y: minY },
+              { x: maxX, y: maxY },
+              { x: minX, y: maxY }
+            ],
+            area,
+            anchor_center_distance: anchorCenterDistance
+          };
+        }
+      }
+    }
+  }
+  return best?.polygon ?? null;
+}
+
 function pointToPolygonBoundaryDistance(
   point: ExistingConditionsPlanPoint,
   polygon: ExistingConditionsPlanPoint[]
@@ -2195,8 +2326,13 @@ function verifySourceRoomShape(args: {
     left.transform.localeCompare(right.transform)
   );
   const best = candidates[0]!;
+  const identity = candidates.find((entry) => entry.transform === "identity")!;
   const maximumHausdorff = 0.15;
   const maximumAreaDifference = 0.12;
+  const identityIsNotWorseThanReflection =
+    identity.hausdorff <= best.hausdorff + 1e-6 &&
+    identity.areaDifference <= best.areaDifference + 1e-6;
+  const reported = identityIsNotWorseThanReflection ? identity : best;
   const labelBoundsPadding = 6;
   const anchorInsidePaddedLabelBounds =
     args.submitted_anchor.x >=
@@ -2211,9 +2347,9 @@ function verifySourceRoomShape(args: {
     accepted:
       anchorInsidePaddedLabelBounds &&
       pointInsidePolygonOrBoundary(args.source_room_label_anchor.pixel_point, args.source_polygon) &&
-      best.transform === "identity" &&
-      best.hausdorff <= maximumHausdorff &&
-      best.areaDifference <= maximumAreaDifference,
+      identityIsNotWorseThanReflection &&
+      identity.hausdorff <= maximumHausdorff &&
+      identity.areaDifference <= maximumAreaDifference,
     source_room_label_text: args.source_room_label_anchor.text,
     source_room_label_pixel_point: args.source_room_label_anchor.pixel_point,
     source_room_label_pixel_bounds: args.source_room_label_anchor.pixel_bounds,
@@ -2223,11 +2359,11 @@ function verifySourceRoomShape(args: {
     maximum_source_render_mean_absolute_luminance_difference: 0.08,
     submitted_anchor_distance_px: rounded(anchorDistance),
     maximum_anchor_distance_px: rounded(maximumAnchorDistance),
-    normalized_symmetric_hausdorff: rounded(best.hausdorff),
+    normalized_symmetric_hausdorff: rounded(reported.hausdorff),
     maximum_normalized_symmetric_hausdorff: maximumHausdorff,
-    normalized_area_difference: rounded(best.areaDifference),
+    normalized_area_difference: rounded(reported.areaDifference),
     maximum_normalized_area_difference: maximumAreaDifference,
-    matched_transform: best.transform
+    matched_transform: reported.transform
   };
 }
 
@@ -2500,6 +2636,106 @@ function scaleCandidateVisibleRegistrationGeometryAroundSourcePoint(args: {
       x: Math.max(...corners.map((point) => point.x)),
       y: Math.max(...corners.map((point) => point.y))
     }
+  };
+}
+
+function fitCandidateVisibleRegistrationGeometryToVerifiedRoomEnclosure(args: {
+  registration_geometry: ReturnType<typeof deriveCandidateVisibleRegistrationGeometry>;
+  source_polygon: ExistingConditionsPlanPoint[];
+  native_room_polygon: ExistingConditionsPlanPoint[];
+  render_width_px: number;
+  render_height_px: number;
+}): {
+  similarity_scale: number;
+  translation_x_px: number;
+  translation_y_px: number;
+} {
+  const sourceArea = polygonArea(args.source_polygon);
+  const nativeArea = polygonArea(args.native_room_polygon);
+  if (sourceArea <= 1e-7 || nativeArea <= 1e-7) {
+    throw new Error("candidate_visible_room_enclosure_similarity_area_degenerate");
+  }
+  const [origin, xControl, yControl] = args.registration_geometry.control_points;
+  if (!origin || !xControl || !yControl) {
+    throw new Error("candidate_visible_registration_control_points_required");
+  }
+  const sourceDx = xControl.source.x - origin.source.x;
+  const sourceDy = yControl.source.y - origin.source.y;
+  if (Math.abs(sourceDx) <= 1e-7 || Math.abs(sourceDy) <= 1e-7) {
+    throw new Error("candidate_visible_registration_control_points_degenerate");
+  }
+  const currentScaleX = Math.hypot(
+    xControl.model.x - origin.model.x,
+    xControl.model.y - origin.model.y
+  ) / Math.abs(sourceDx);
+  const currentScaleY = Math.hypot(
+    yControl.model.x - origin.model.x,
+    yControl.model.y - origin.model.y
+  ) / Math.abs(sourceDy);
+  const currentScale = Math.sqrt(currentScaleX * currentScaleY);
+  const desiredScale = Math.sqrt(nativeArea / sourceArea);
+  const similarityScale = currentScale / desiredScale;
+  if (!Number.isFinite(similarityScale) || similarityScale < 0.2 || similarityScale > 5) {
+    throw new Error("candidate_visible_room_enclosure_similarity_scale_out_of_range");
+  }
+  const sourceAnchor = polygonAnchor(args.source_polygon);
+  const anchorModel = mapRegisteredRenderPointToModel(
+    sourceAnchor,
+    args.render_width_px,
+    args.render_height_px,
+    args.registration_geometry
+  );
+  args.registration_geometry.control_points =
+    args.registration_geometry.control_points.map((entry) => ({
+      source: entry.source,
+      model: {
+        x: anchorModel.x + (entry.model.x - anchorModel.x) / similarityScale,
+        y: anchorModel.y + (entry.model.y - anchorModel.y) / similarityScale
+      }
+    }));
+  const [scaledOrigin, scaledXControl, scaledYControl] =
+    args.registration_geometry.control_points;
+  if (!scaledOrigin || !scaledXControl || !scaledYControl) {
+    throw new Error("candidate_visible_registration_control_points_required");
+  }
+  const scaledFourth = {
+    x: scaledXControl.model.x + scaledYControl.model.x - scaledOrigin.model.x,
+    y: scaledXControl.model.y + scaledYControl.model.y - scaledOrigin.model.y
+  };
+  const scaledCorners = [
+    scaledOrigin.model,
+    scaledXControl.model,
+    scaledYControl.model,
+    scaledFourth
+  ];
+  args.registration_geometry.model_bounds = {
+    min: {
+      x: Math.min(...scaledCorners.map((point) => point.x)),
+      y: Math.min(...scaledCorners.map((point) => point.y))
+    },
+    max: {
+      x: Math.max(...scaledCorners.map((point) => point.x)),
+      y: Math.max(...scaledCorners.map((point) => point.y))
+    }
+  };
+  const nativeAnchor = polygonAnchor(args.native_room_polygon);
+  const projectedNativeAnchor = mapModelPointToRegisteredRender(
+    nativeAnchor,
+    args.render_width_px,
+    args.render_height_px,
+    args.registration_geometry
+  );
+  const translationX = projectedNativeAnchor.x - sourceAnchor.x;
+  const translationY = projectedNativeAnchor.y - sourceAnchor.y;
+  shiftCandidateVisibleRegistrationGeometrySourcePixels({
+    registration_geometry: args.registration_geometry,
+    delta_x_px: translationX,
+    delta_y_px: translationY
+  });
+  return {
+    similarity_scale: similarityScale,
+    translation_x_px: translationX,
+    translation_y_px: translationY
   };
 }
 
@@ -3154,14 +3390,34 @@ function validateCandidateVisibleSpatialScope(args: {
       );
     }
   }
-  let nativeRoomPixelPolygon = nativeRoomPolygon
-    ? projectedNativeRoomPixelPolygon({
+  let nativeRoomProjectionVisible = true;
+  let nativeRoomPixelPolygon: ExistingConditionsPlanPoint[] | null = null;
+  if (nativeRoomPolygon) {
+    try {
+      nativeRoomPixelPolygon = projectedNativeRoomPixelPolygon({
         native_room_polygon: nativeRoomPolygon,
         render_width_px: args.render_width_px,
         render_height_px: args.render_height_px,
         registration_geometry: args.registration_geometry
-      })
-    : null;
+      });
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        error.message !== "candidate_visible_verified_room_scope_not_visible_in_registered_render"
+      ) {
+        throw error;
+      }
+      nativeRoomProjectionVisible = false;
+      nativeRoomPixelPolygon = nativeRoomPolygon.map((point) =>
+        mapModelPointToRegisteredRender(
+          point,
+          args.render_width_px,
+          args.render_height_px,
+          args.registration_geometry
+        )
+      );
+    }
+  }
   const exactTagNativeVisibleRoomLabel = nativeRoomScope?.visible_room_label;
   const exactTagNativeLabelProjectedPoint = exactTagNativeVisibleRoomLabel
     ? mapModelPointToRegisteredRender(
@@ -3219,6 +3475,7 @@ function validateCandidateVisibleSpatialScope(args: {
       render_height_px: args.render_height_px,
       registration_geometry: args.registration_geometry
     });
+    nativeRoomProjectionVisible = true;
     const tagOnlyGeometryIsDisjoint = args.payload.observations.some((observation) => {
       const raw = observation as unknown as Record<string, unknown>;
       const routePoints = (Array.isArray(raw.pixel_points) ? raw.pixel_points : [])
@@ -3268,6 +3525,149 @@ function validateCandidateVisibleSpatialScope(args: {
     }
     scope = undefined;
     sourceObservedPolygon = null;
+  }
+  let roomEnclosureRegistration: {
+    similarity_scale: number;
+    translation_x_px: number;
+    translation_y_px: number;
+  } | null = null;
+  let roomEnclosureShapeVerification: CandidateVisibleSourceRoomShapeVerification | null = null;
+  let roomEnclosureNativeBasis:
+    | "full_native_room"
+    | "primary_orthogonal_enclosure_containing_room_location" =
+      "full_native_room";
+  if (
+    !nativeRoomProjectionVisible &&
+    !exactTagTranslationApplied &&
+    !exactTagNativeVisibleRoomLabel &&
+    roomNumber &&
+    scope &&
+    sourceObservedPolygon &&
+    nativeRoomPolygon &&
+    nativeRoomScope?.location_model_point &&
+    pointInsidePolygonOrNearBoundary(
+      nativeRoomScope.location_model_point,
+      nativeRoomPolygon,
+      0.01
+    ) &&
+    args.source_room_label_anchor &&
+    args.source_enclosure_raster_verification?.accepted === true &&
+    roomLabelMatchesExactIdentity(
+      normalizedRoomLabelToken(args.source_room_label_anchor.text),
+      exactTagRoomToken,
+      exactTagRoomNameToken
+    )
+  ) {
+    const submittedAnchor = normalizePoint(scope.anchor_pixel_point);
+    if (
+      submittedAnchor &&
+      sourceRoomAnchorMatchesLocatedLabel({
+        source_polygon: sourceObservedPolygon,
+        submitted_anchor: submittedAnchor,
+        source_room_label_anchor: args.source_room_label_anchor,
+        render_width_px: args.render_width_px,
+        render_height_px: args.render_height_px
+      })
+    ) {
+      roomEnclosureShapeVerification = verifySourceRoomShape({
+        source_polygon: sourceObservedPolygon,
+        native_room_polygon: nativeRoomPolygon,
+        submitted_anchor: submittedAnchor,
+        source_room_label_anchor: args.source_room_label_anchor,
+        render_width_px: args.render_width_px,
+        render_height_px: args.render_height_px
+      });
+      let verifiedNativeEnclosure = nativeRoomPolygon;
+      if (!roomEnclosureShapeVerification.accepted) {
+        const primaryOrthogonalEnclosure =
+          primaryOrthogonalEnclosureContainingPoint(
+            nativeRoomPolygon,
+            nativeRoomScope.location_model_point,
+            (() => {
+              const sourceBounds = pointBounds(sourceObservedPolygon);
+              return (sourceBounds.max.x - sourceBounds.min.x) /
+                (sourceBounds.max.y - sourceBounds.min.y);
+            })()
+          );
+        if (primaryOrthogonalEnclosure) {
+          const primaryVerification = verifySourceRoomShape({
+            source_polygon: sourceObservedPolygon,
+            native_room_polygon: primaryOrthogonalEnclosure,
+            submitted_anchor: submittedAnchor,
+            source_room_label_anchor: args.source_room_label_anchor,
+            render_width_px: args.render_width_px,
+            render_height_px: args.render_height_px
+          });
+          roomEnclosureShapeVerification = primaryVerification;
+          if (primaryVerification.accepted) {
+            verifiedNativeEnclosure = primaryOrthogonalEnclosure;
+            roomEnclosureNativeBasis =
+              "primary_orthogonal_enclosure_containing_room_location";
+          }
+        }
+      }
+      if (roomEnclosureShapeVerification.accepted) {
+        roomEnclosureRegistration =
+          fitCandidateVisibleRegistrationGeometryToVerifiedRoomEnclosure({
+            registration_geometry: args.registration_geometry,
+            source_polygon: sourceObservedPolygon,
+            native_room_polygon: verifiedNativeEnclosure,
+            render_width_px: args.render_width_px,
+            render_height_px: args.render_height_px
+          });
+        nativeRoomPixelPolygon = projectedNativeRoomPixelPolygon({
+          native_room_polygon: nativeRoomPolygon,
+          render_width_px: args.render_width_px,
+          render_height_px: args.render_height_px,
+          registration_geometry: args.registration_geometry
+        });
+        nativeRoomProjectionVisible = true;
+      }
+    }
+  }
+  if (!nativeRoomProjectionVisible) {
+    const shapeDetail = roomEnclosureShapeVerification
+      ? `:source_shape_accepted=${roomEnclosureShapeVerification.accepted}` +
+        `:normalized_symmetric_hausdorff=${roomEnclosureShapeVerification.normalized_symmetric_hausdorff.toFixed(4)}` +
+        `:normalized_area_difference=${roomEnclosureShapeVerification.normalized_area_difference.toFixed(4)}`
+      : "";
+    const enclosurePreconditionDetail = roomEnclosureShapeVerification
+      ? ""
+      : `:room_enclosure_preconditions=` + [
+          `exact_tag_absent=${!exactTagNativeVisibleRoomLabel}`,
+          `room_number=${!!roomNumber}`,
+          `source_scope=${!!scope}`,
+          `source_polygon=${!!sourceObservedPolygon}`,
+          `native_polygon=${!!nativeRoomPolygon}`,
+          `native_location=${!!nativeRoomScope?.location_model_point}`,
+          `native_location_inside=${!!(
+            nativeRoomScope?.location_model_point &&
+            nativeRoomPolygon &&
+            pointInsidePolygonOrNearBoundary(
+              nativeRoomScope.location_model_point,
+              nativeRoomPolygon,
+              0.01
+            )
+          )}`,
+          `source_label=${!!args.source_room_label_anchor}`,
+          `source_enclosure_raster=${args.source_enclosure_raster_verification?.accepted === true}`,
+          `source_enclosure_area=${args.source_enclosure_raster_verification?.polygon_area_ratio ?? "unavailable"}`,
+          `source_enclosure_mean_edge=${args.source_enclosure_raster_verification?.mean_edge_support_ratio ?? "unavailable"}`,
+          `source_enclosure_min_edge=${args.source_enclosure_raster_verification?.minimum_edge_support_ratio ?? "unavailable"}`,
+          `source_label_identity=${!!(
+            args.source_room_label_anchor &&
+            roomLabelMatchesExactIdentity(
+              normalizedRoomLabelToken(args.source_room_label_anchor.text),
+              exactTagRoomToken,
+              exactTagRoomNameToken
+            )
+          )}`
+        ].join(",");
+    throw new Error(
+      "candidate_visible_verified_room_scope_not_visible_in_registered_render" +
+      shapeDetail +
+      enclosurePreconditionDetail
+    );
   }
   if (!scope && roomNumber && nativeRoomPixelPolygon) {
     const normalizedBounds = (points: ExistingConditionsPlanPoint[]): string => {
@@ -3556,7 +3956,7 @@ function validateCandidateVisibleSpatialScope(args: {
     const sourceBounds = pointBounds(sourceObservedPolygon);
     const targetBounds = pointBounds(nativeRoomPixelPolygon);
     const minimumAreaOverlapRatio = boundsIntersectionRatio(sourceBounds, targetBounds);
-    if (!roomLabelIdentityVerified && minimumAreaOverlapRatio < 0.75) {
+    if (minimumAreaOverlapRatio < 0.75) {
       const sourceRoomLabelUv = args.source_room_label_anchor
         ? [
             args.source_room_label_anchor.pixel_point.x / args.render_width_px,
@@ -3575,7 +3975,9 @@ function validateCandidateVisibleSpatialScope(args: {
     // registration; no source room bounds are stretched onto native bounds.
     const registrationReason = roomLabelIdentityVerified
       ? "server_verified_room_label_translation" as const
-      : null;
+      : roomEnclosureRegistration
+        ? "server_verified_room_enclosure_similarity" as const
+        : null;
     if (registrationReason) {
       validateCandidateVisiblePointsToScope(
         args.payload,
@@ -3599,8 +4001,21 @@ function validateCandidateVisibleSpatialScope(args: {
           : {}),
         source_scope_bounds: sourceBounds,
         target_native_room_bounds: targetBounds,
-        scale_x: 1,
-        scale_y: 1,
+        scale_x: roomEnclosureRegistration?.similarity_scale ?? 1,
+        scale_y: roomEnclosureRegistration?.similarity_scale ?? 1,
+        ...(roomEnclosureRegistration
+          ? {
+              translation_x_px: rounded(
+                roomEnclosureRegistration.translation_x_px
+              ),
+              translation_y_px: rounded(
+                roomEnclosureRegistration.translation_y_px
+              ),
+              source_room_shape_verification:
+                roomEnclosureShapeVerification ?? undefined,
+              native_enclosure_basis: roomEnclosureNativeBasis
+            }
+          : {}),
         ...(nativeVisibleRoomLabel &&
         originalNativeRoomLabelProjectedPoint
           ? {
@@ -3640,13 +4055,26 @@ function validateCandidateVisibleSpatialScope(args: {
           : {})
       };
       normalizationWarnings.push(
-        "The source PDF and focused Revit room-tag inventory uniquely identified the same room label, so the source-local registration geometry was translated without changing scale, rotation, or source observations before strict native-room clipping."
+        roomEnclosureRegistration
+          ? "The exact source room label, raster-verified source enclosure, verified linked-room identity, and matching room shape repaired a false-positive sheet crop with one similarity fit; source observations were unchanged before strict native-room clipping."
+          : "The source PDF and focused Revit room-tag inventory uniquely identified the same room label, so the source-local registration geometry was translated without changing scale, rotation, or source observations before strict native-room clipping."
       );
     }
   }
-  const polygon = nativeRoomPixelPolygon ?? sourceObservedPolygon;
+  // A verified room-enclosure similarity is intentionally uniform: it does not
+  // stretch a source trace to force an exact native outline. Use the
+  // raster-verified source enclosure for source-pixel clipping, then retain the
+  // independent native-room containment check below (with its bounded model
+  // tolerance) for every mapped route and point.
+  const polygon = roomEnclosureRegistration && sourceObservedPolygon
+    ? sourceObservedPolygon
+    : nativeRoomPixelPolygon ?? sourceObservedPolygon;
   if (!polygon) throw new Error("candidate_visible_scope_polygon_required");
-  if (nativeRoomPixelPolygon) {
+  if (roomEnclosureRegistration && sourceObservedPolygon) {
+    normalizationWarnings.push(
+      "Used the raster-verified source enclosure for source-pixel clipping after the room similarity fit; mapped geometry remains independently constrained to the verified native linked-room boundary."
+    );
+  } else if (nativeRoomPixelPolygon) {
     normalizationWarnings.push(
       nativeRoomScope
         ? "Used the verified native linked-room boundary projected into registered source pixels as the authoritative spatial scope."
@@ -3799,16 +4227,20 @@ function validateCandidateVisibleSpatialScope(args: {
     args.render_height_px,
     args.registration_geometry
   ));
-  if (nativeRoomPolygon) {
+  if (nativeRoomPolygon && !roomEnclosureRegistration) {
     for (const [index, point] of modelBoundaryPoints.entries()) {
       if (!pointInsidePolygonOrNearBoundary(point, nativeRoomPolygon, 0.75)) {
         throw new Error(
           `${nativeRoomScope
             ? "candidate_visible_projected_room_boundary_outside_native_room_scope"
-            : "candidate_visible_projected_area_boundary_outside_native_landmark_scope"}:${index}`
+            : "candidate_visible_projected_area_boundary_outside_native_landmark_scope"}:${index}` +
+          `:point=${point.x.toFixed(4)},${point.y.toFixed(4)}` +
+          `:native_bounds=${JSON.stringify(pointBounds(nativeRoomPolygon))}`
         );
       }
     }
+  }
+  if (nativeRoomPolygon) {
     const modelAnchor = mapRegisteredRenderPointToModel(
       anchor,
       args.render_width_px,

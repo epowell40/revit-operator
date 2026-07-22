@@ -444,6 +444,7 @@ export function registerExistingConditionsStagedWorkflow(args: {
   sourceViewId: number;
   registrationContextId: string;
   workflow: AtomicMepDraftWorkflowRequest;
+  executionBoundary?: "compile_only" | "staged_execution";
 }): ExistingConditionsRepairLedgerEntry {
   validateWorkflow(args.workflow);
   const workflowSha256 = sha256(workflowForHash(args.workflow));
@@ -459,6 +460,7 @@ export function registerExistingConditionsStagedWorkflow(args: {
       source_frame_id: clean(args.sourceFrameId),
       source_view_id: args.sourceViewId,
       registration_context_id: clean(args.registrationContextId),
+      execution_boundary: args.executionBoundary ?? "staged_execution",
       workflow: JSON.parse(JSON.stringify(args.workflow))
     },
     nextRepair: "Dry-run the next dependency-ready stage."
@@ -469,6 +471,7 @@ export function latestExistingConditionsStagedWorkflow(sessionId: string): {
   source_frame_id: string;
   source_view_id: number;
   registration_context_id: string;
+  execution_boundary: "compile_only" | "staged_execution";
   workflow: AtomicMepDraftWorkflowRequest;
   workflow_sha256: string;
   updated_at_ms: number;
@@ -484,6 +487,9 @@ export function latestExistingConditionsStagedWorkflow(sessionId: string): {
     source_frame_id: clean(entry.payload.source_frame_id),
     source_view_id: Number(entry.payload.source_view_id),
     registration_context_id: clean(entry.payload.registration_context_id),
+    execution_boundary: entry.payload.execution_boundary === "compile_only"
+      ? "compile_only"
+      : "staged_execution",
     workflow: JSON.parse(JSON.stringify(workflow)) as AtomicMepDraftWorkflowRequest,
     workflow_sha256: entry.workflow_sha256,
     updated_at_ms: Date.parse(entry.ts) || Date.now()

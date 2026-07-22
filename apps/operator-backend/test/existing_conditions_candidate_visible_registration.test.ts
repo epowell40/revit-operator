@@ -434,7 +434,15 @@ test("candidate-visible room-local route requests a source enclosure without del
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "candidate-visible-room-enclosure-"));
   const sourcePdfPath = path.join(directory, "source.pdf");
   const renderPath = path.join(directory, "source.png");
-  writeSinglePageTextPdf(sourcePdfPath, "100");
+  writeSinglePageTextPdf(
+    sourcePdfPath,
+    "100",
+    20,
+    45,
+    "0 G",
+    1,
+    "0 G\n1 w\n90 45 m\n55 45 l\n55 10 l\nS\n"
+  );
   await renderFirstPdfPage(sourcePdfPath, renderPath);
 
   await assert.rejects(
@@ -651,10 +659,10 @@ test("candidate-visible room-label translation shifts only registration geometry
       text: "100",
       normalized_x: 0.27,
       normalized_y: 0.52,
-      min_u: 0.2,
-      min_v: 0.47,
-      max_u: 0.34,
-      max_v: 0.57,
+      min_u: 0.18,
+      min_v: 0.43,
+      max_u: 0.36,
+      max_v: 0.61,
       score: 0.97
     }]
   };
@@ -677,6 +685,153 @@ test("candidate-visible room-label translation shifts only registration geometry
   );
   assert.deepEqual(
     (structuredImageLabel.package.observations[0] as any).pixel_points,
+    originalRoute
+  );
+
+  const splitStructuredRoomLabel = await compileCandidateVisibleMepReconstruction({
+    source_pdf_path: renderPath,
+    registered_render_path: renderPath,
+    alignment: {
+      ...ALIGNMENT,
+      provider: "gemini" as const,
+      source_room_labels: [{
+        text: "TEST ROOM",
+        normalized_x: 0.27,
+        normalized_y: 0.46,
+        min_u: 0.18,
+        min_v: 0.41,
+        max_u: 0.36,
+        max_v: 0.49,
+        score: 0.96
+      }, {
+        text: "100",
+        normalized_x: 0.27,
+        normalized_y: 0.535,
+        min_u: 0.22,
+        min_v: 0.50,
+        max_u: 0.32,
+        max_v: 0.57,
+        score: 0.98
+      }, {
+        text: "P-18",
+        normalized_x: 0.27,
+        normalized_y: 0.72,
+        min_u: 0.22,
+        min_v: 0.69,
+        max_u: 0.32,
+        max_v: 0.75,
+        score: 0.95
+      }]
+    },
+    frame: FRAME,
+    verified_room_scope: {
+      ...nativeRoom,
+      room_name: "TEST ROOM 100",
+      visible_room_label: {
+        ...nativeRoom.visible_room_label,
+        text: "TEST ROOM 100"
+      }
+    },
+    planner_payload: {
+      ...structuredClone(plannerPayload),
+      spatial_scope: {
+        ...structuredClone(plannerPayload.spatial_scope),
+        anchor_pixel_point: { x: 27, y: 53.5 },
+        anchor_label: "TEST ROOM 100"
+      }
+    }
+  });
+  assert.equal(
+    splitStructuredRoomLabel.spatial_scope_receipt?.local_room_registration_fallback
+      ?.source_room_label_evidence_basis,
+    "gemini_structured_source_label"
+  );
+
+  const enclosurePayload = structuredClone(plannerPayload);
+  enclosurePayload.spatial_scope.boundary_pixel_points = [
+    { x: 10, y: 10 },
+    { x: 90, y: 10 },
+    { x: 90, y: 55 },
+    { x: 55, y: 55 },
+    { x: 55, y: 90 },
+    { x: 10, y: 90 },
+    { x: 10, y: 10 }
+  ];
+  const enclosureRepaired = await compileCandidateVisibleMepReconstruction({
+    source_pdf_path: renderPath,
+    registered_render_path: renderPath,
+    alignment: {
+      ...structuredImageLabelAlignment,
+      crop: { min_u: 0.8, min_v: 0.8, max_u: 0.96, max_v: 0.96 }
+    },
+    frame: FRAME,
+    verified_room_scope: {
+      ...verifiedRoomScope(),
+      boundary_model_points: [
+        { x: 120, y: 120 },
+        { x: 180, y: 120 },
+        { x: 180, y: 153.75 },
+        { x: 153.75, y: 153.75 },
+        { x: 153.75, y: 180 },
+        { x: 120, y: 180 }
+      ],
+      location_model_point: { x: 140, y: 140 }
+    },
+    planner_payload: enclosurePayload
+  });
+  const enclosureFallback =
+    enclosureRepaired.spatial_scope_receipt?.local_room_registration_fallback;
+  assert.equal(
+    enclosureFallback?.reason,
+    "server_verified_room_enclosure_similarity"
+  );
+  assert.equal(
+    enclosureFallback?.source_room_shape_verification?.accepted,
+    true
+  );
+  assert.ok((enclosureFallback?.scale_x ?? 1) < 1);
+  assert.deepEqual(
+    (enclosureRepaired.package.observations[0] as any).pixel_points,
+    originalRoute
+  );
+
+  const primaryBayPayload = structuredClone(plannerPayload);
+  const primaryBayRepaired = await compileCandidateVisibleMepReconstruction({
+    source_pdf_path: renderPath,
+    registered_render_path: renderPath,
+    alignment: {
+      ...structuredImageLabelAlignment,
+      crop: { min_u: 0.8, min_v: 0.8, max_u: 0.96, max_v: 0.96 }
+    },
+    frame: FRAME,
+    verified_room_scope: {
+      ...verifiedRoomScope(),
+      boundary_model_points: [
+        { x: 120, y: 120 },
+        { x: 180, y: 120 },
+        { x: 180, y: 140 },
+        { x: 220, y: 140 },
+        { x: 220, y: 160 },
+        { x: 180, y: 160 },
+        { x: 180, y: 180 },
+        { x: 120, y: 180 }
+      ],
+      location_model_point: { x: 140, y: 140 }
+    },
+    planner_payload: primaryBayPayload
+  });
+  const primaryBayFallback =
+    primaryBayRepaired.spatial_scope_receipt?.local_room_registration_fallback;
+  assert.equal(
+    primaryBayFallback?.native_enclosure_basis,
+    "primary_orthogonal_enclosure_containing_room_location"
+  );
+  assert.equal(
+    primaryBayFallback?.source_room_shape_verification?.accepted,
+    true
+  );
+  assert.deepEqual(
+    (primaryBayRepaired.package.observations[0] as any).pixel_points,
     originalRoute
   );
 

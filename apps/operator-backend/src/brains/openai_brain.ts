@@ -987,6 +987,7 @@ type RedlineVisionProgressState = {
     source_frame_id: string;
     source_view_id: number;
     registration_context_id: string;
+    execution_boundary: "compile_only" | "staged_execution";
     workflow: AtomicMepDraftWorkflowRequest;
     updated_at_ms: number;
   } | null;
@@ -994,6 +995,10 @@ type RedlineVisionProgressState = {
     source_path: string;
     frame_id: string;
     view_id: number;
+    updated_at_ms: number;
+  } | null;
+  candidate_visible_compile_only_request: {
+    message_root: string;
     updated_at_ms: number;
   } | null;
   candidate_visible_pending_focused_room_tag: {
@@ -1117,6 +1122,7 @@ function getRedlineVisionState(sessionId: string): RedlineVisionProgressState {
     last_view_alignment: null,
     last_registered_mep_workflow: null,
     candidate_visible_ready_to_compile: null,
+    candidate_visible_compile_only_request: null,
     candidate_visible_pending_focused_room_tag: null,
     candidate_visible_requested_room_number: null,
     last_candidate_visible_compile_context: null,
@@ -1338,7 +1344,8 @@ function noteRedlineViewAlignmentResult(
   sourceImagePath: string,
   frameId: string,
   viewId: number,
-  alignment: ViewAlignmentResult
+  alignment: ViewAlignmentResult,
+  persistForRecovery = false
 ): void {
   if (!sessionId || !sourceImagePath || !frameId || !Number.isFinite(viewId) || viewId <= 0) return;
   const st = getRedlineVisionState(sessionId);
@@ -1374,12 +1381,96 @@ function noteRedlineViewAlignmentResult(
       alignment.deterministic_raster_registration,
     updated_at_ms: Date.now()
   };
+  if (persistForRecovery) {
+    try {
+      const sessionDir = path.join(
+        ensureWorkspaceLayout().runsSessions,
+        safeRunBundleSessionDirName(sessionId)
+      );
+      fs.mkdirSync(sessionDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(sessionDir, "candidate_visible_alignment.json"),
+        canonicalJsonString({
+          schema: "operator.candidate_visible_alignment.v1",
+          ...st.last_view_alignment
+        }) + "\n",
+        "utf8"
+      );
+    } catch {
+      // In-memory alignment remains valid for this process; the caller will
+      // re-register after restart if the recovery receipt cannot be persisted.
+    }
+  }
   st.updated_at_ms = Date.now();
 }
 
 function getPersistedRedlineViewAlignment(sessionId: string): RedlineVisionProgressState["last_view_alignment"] {
   if (!sessionId) return null;
-  return getRedlineVisionState(sessionId).last_view_alignment;
+  const state = getRedlineVisionState(sessionId);
+  if (state.last_view_alignment) return state.last_view_alignment;
+  try {
+    const receiptPath = path.join(
+      ensureWorkspaceLayout().runsSessions,
+      safeRunBundleSessionDirName(sessionId),
+      "candidate_visible_alignment.json"
+    );
+    if (!fs.existsSync(receiptPath)) return null;
+    const raw = JSON.parse(fs.readFileSync(receiptPath, "utf8")) as Record<string, unknown>;
+    const frameId = typeof raw.frame_id === "string" ? raw.frame_id.trim() : "";
+    const viewId = toFiniteInt(raw.view_id);
+    const sourceImagePath = typeof raw.source_image_path === "string"
+      ? normalizeWorkspacePath(raw.source_image_path)
+      : "";
+    const confidence = toFiniteNumber(raw.confidence);
+    const crop = raw.crop && typeof raw.crop === "object"
+      ? raw.crop as ViewAlignmentResult["crop"]
+      : null;
+    if (
+      raw.schema !== "operator.candidate_visible_alignment.v1" ||
+      !frameId ||
+      !viewId ||
+      viewId <= 0 ||
+      !sourceImagePath ||
+      raw.matched !== true ||
+      confidence === null ||
+      confidence < 0.35 ||
+      !crop
+    ) {
+      return null;
+    }
+    state.last_view_alignment = {
+      source_image_path: sourceImagePath,
+      frame_id: frameId,
+      view_id: viewId,
+      matched: true,
+      confidence: clamp01(confidence),
+      crop,
+      registration_controls: Array.isArray(raw.registration_controls)
+        ? raw.registration_controls as ViewAlignmentRegistrationControl[]
+        : [],
+      source_room_labels: Array.isArray(raw.source_room_labels)
+        ? raw.source_room_labels as ViewAlignmentResult["source_room_labels"]
+        : [],
+      analysis: typeof raw.analysis === "string" ? raw.analysis : "",
+      provider: raw.provider === "gemini" || raw.provider === "openai"
+        ? raw.provider
+        : null,
+      model: typeof raw.model === "string" ? raw.model : null,
+      attempted_models: Array.isArray(raw.attempted_models)
+        ? raw.attempted_models.filter((value): value is string => typeof value === "string")
+        : [],
+      fallback_reason: typeof raw.fallback_reason === "string" ? raw.fallback_reason : null,
+      deterministic_raster_registration:
+        raw.deterministic_raster_registration && typeof raw.deterministic_raster_registration === "object"
+          ? raw.deterministic_raster_registration as ViewAlignmentResult["deterministic_raster_registration"]
+          : undefined,
+      updated_at_ms: Date.now()
+    };
+    state.updated_at_ms = Date.now();
+    return state.last_view_alignment;
+  } catch {
+    return null;
+  }
 }
 
 function shouldUseOpenAiGeometryFallbackAfterGemini(args: {
@@ -1892,6 +1983,10 @@ function consumeCandidateVisibleFocusedRoomTagCompletion(args: {
     result?.action_id === actionId &&
     (result.path ?? "").trim().toLowerCase() === "/revit/export-visible-elements" &&
     (result.status === "done" || result.status === "failed")
+  ) || persistedExistingConditionsActionCompleted(
+    args.session_id,
+    actionId,
+    "/revit/export-visible-elements"
   );
   if (!completed) return false;
   state.candidate_visible_pending_focused_room_tag = null;
@@ -1905,6 +2000,48 @@ function consumeCandidateVisibleFocusedRoomTagCompletion(args: {
   };
   state.updated_at_ms = Date.now();
   return true;
+}
+
+function persistedExistingConditionsActionCompleted(
+  sessionId: string,
+  actionId: string,
+  expectedPath: string
+): boolean {
+  if (!sessionId || !actionId || !expectedPath) return false;
+  try {
+    const ledgerPath = path.join(
+      ensureWorkspaceLayout().runsSessions,
+      safeRunBundleSessionDirName(sessionId),
+      "existing_conditions_execution_ledger.jsonl"
+    );
+    if (!fs.existsSync(ledgerPath)) return false;
+    const size = fs.statSync(ledgerPath).size;
+    const maximumBytes = 512 * 1024;
+    const start = Math.max(0, size - maximumBytes);
+    const handle = fs.openSync(ledgerPath, "r");
+    try {
+      const buffer = Buffer.alloc(size - start);
+      fs.readSync(handle, buffer, 0, buffer.length, start);
+      const lines = buffer.toString("utf8").split(/\r?\n/);
+      if (start > 0) lines.shift();
+      return lines.slice(-400).some(line => {
+        if (!line.trim()) return false;
+        try {
+          const row = JSON.parse(line) as Record<string, unknown>;
+          return row.event === "action_completed" &&
+            row.action_id === actionId &&
+            String(row.path ?? "").trim().toLowerCase() === expectedPath.trim().toLowerCase() &&
+            (row.status === "done" || row.status === "failed");
+        } catch {
+          return false;
+        }
+      });
+    } finally {
+      fs.closeSync(handle);
+    }
+  } catch {
+    return false;
+  }
 }
 
 function candidateVisibleExactFrameResultIndex(
@@ -2186,6 +2323,12 @@ function candidateVisibleRecoveryImmutableClaimsSha256(
     }
   } else if (
     failureSummary.includes(
+      "candidate_visible_verified_room_scope_not_visible_in_registered_render"
+    )
+  ) {
+    clone.spatial_scope = "__allowed_recovery_spatial_scope__";
+  } else if (
+    failureSummary.includes(
       "candidate_visible_source_room_enclosure_raster_verification_required:"
     )
   ) {
@@ -2463,10 +2606,14 @@ async function compileRegisteredMepReconstructionForSession(args: {
       ? {}
       : { maximum_created_elements: args.action.maximum_created_elements })
   });
+  const executionBoundary = isExplicitExistingConditionsCompileOnlyRequest(args.req)
+    ? "compile_only"
+    : "staged_execution";
   visionState.last_registered_mep_workflow = {
     source_frame_id: frame.frame_id,
     source_view_id: frame.view_id,
     registration_context_id: reconstruction.registration_context_id,
+    execution_boundary: executionBoundary,
     workflow: JSON.parse(JSON.stringify(reconstruction.workflow)) as AtomicMepDraftWorkflowRequest,
     updated_at_ms: Date.now()
   };
@@ -2476,6 +2623,7 @@ async function compileRegisteredMepReconstructionForSession(args: {
     sourceFrameId: frame.frame_id,
     sourceViewId: frame.view_id,
     registrationContextId: reconstruction.registration_context_id,
+    executionBoundary,
     workflow: reconstruction.workflow
   });
   visionState.updated_at_ms = Date.now();
@@ -2565,6 +2713,7 @@ function persistedRegisteredMepWorkflow(
     source_frame_id: persisted.source_frame_id,
     source_view_id: persisted.source_view_id,
     registration_context_id: persisted.registration_context_id,
+    execution_boundary: persisted.execution_boundary,
     workflow: persisted.workflow,
     updated_at_ms: persisted.updated_at_ms
   };
@@ -2608,7 +2757,8 @@ function buildRegisteredMepWorkflowHandoffResponse(
   sessionId: string,
   toolResults: ToolResult[],
   messageId = "",
-  latestToolResults: ToolResult[] = toolResults
+  latestToolResults: ToolResult[] = toolResults,
+  req?: ChatRequest
 ): ChatResponse | null {
   void messageId;
   void latestToolResults;
@@ -2628,6 +2778,13 @@ function buildRegisteredMepWorkflowHandoffResponse(
     sessionId,
     workflow: persisted.workflow
   });
+  if (
+    persisted.execution_boundary === "compile_only" ||
+    (req && isExplicitExistingConditionsCompileOnlyRequest(req)) ||
+    persistedRequestLogDeclaresExistingConditionsCompileOnly(sessionId)
+  ) {
+    return buildRegisteredMepCompileOnlyReceipt(persisted, plan);
+  }
   if (plan.state === "blocked") {
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
@@ -2687,18 +2844,77 @@ function buildRegisteredMepWorkflowHandoffResponse(
   };
 }
 
+function buildRegisteredMepCompileOnlyReceipt(
+  persisted: NonNullable<RedlineVisionProgressState["last_registered_mep_workflow"]>,
+  plan: ReturnType<typeof buildNextExistingConditionsStagePlan>
+): ChatResponse {
+  const provisionalBatchKeys = Array.from(new Set(
+    persisted.workflow.operations
+      .filter((operation) => operation.execution_mode === "provisional_backbone_batch")
+      .map((operation) => String(operation.provisional_batch_key ?? "").trim())
+      .filter(Boolean)
+  ));
+  const receipt = {
+    schema: "operator.existing_conditions_compilation_receipt.v1",
+    status: "compiled_read_only",
+    workflow_fingerprint_sha256: persisted.workflow.inputFingerprintSha256,
+    source_frame_id: persisted.source_frame_id,
+    source_view_id: persisted.source_view_id,
+    registration_context_id: persisted.registration_context_id,
+    operation_count: persisted.workflow.operations.length,
+    provisional_backbone_batch_count: provisionalBatchKeys.length,
+    single_action_count: persisted.workflow.operations.filter(
+      (operation) => operation.execution_mode !== "provisional_backbone_batch"
+    ).length,
+    next_stage: plan.state,
+    accepted_prior_stage_count: plan.accepted_action_outputs.length,
+    dry_runs_performed: 0,
+    writes_performed: 0,
+    action_queue: persisted.workflow.operations.map((operation) => ({
+      action_key: operation.action_key,
+      execution_mode: operation.execution_mode ?? "single_action",
+      provisional_batch_key: operation.provisional_batch_key ?? null,
+      depends_on: operation.depends_on
+    }))
+  };
+  return {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    assistant_message:
+      "The source-supported existing-conditions workflow is compiled and persisted. " +
+      "I stopped at the requested read-only boundary before dry-run, apply, or any Revit model write. " +
+      `Compilation receipt: ${canonicalJsonString(receipt)}`,
+    actions: []
+  };
+}
+
+function enforcePersistedExistingConditionsCompileOnlyBoundary(
+  req: ChatRequest,
+  response: ChatResponse
+): ChatResponse {
+  if (!Array.isArray(response.actions) || response.actions.length === 0) return response;
+  const persisted = persistedRegisteredMepWorkflow(req.session_id);
+  if (!persisted || persisted.execution_boundary !== "compile_only") return response;
+  const plan = buildNextExistingConditionsStagePlan({
+    sessionId: req.session_id,
+    workflow: persisted.workflow
+  });
+  return buildRegisteredMepCompileOnlyReceipt(persisted, plan);
+}
+
 export function __testOnlyNoteRegisteredMepWorkflow(
   sessionId: string,
   sourceFrameId: string,
   sourceViewId: number,
   workflow: AtomicMepDraftWorkflowRequest,
-  registrationContextId = `test:${sourceFrameId}:${sourceViewId}`
+  registrationContextId = `test:${sourceFrameId}:${sourceViewId}`,
+  executionBoundary: "compile_only" | "staged_execution" = "staged_execution"
 ): void {
   const state = getRedlineVisionState(sessionId);
   state.last_registered_mep_workflow = {
     source_frame_id: sourceFrameId,
     source_view_id: sourceViewId,
     registration_context_id: registrationContextId,
+    execution_boundary: executionBoundary,
     workflow: JSON.parse(JSON.stringify(workflow)) as AtomicMepDraftWorkflowRequest,
     updated_at_ms: Date.now()
   };
@@ -2707,6 +2923,7 @@ export function __testOnlyNoteRegisteredMepWorkflow(
     sourceFrameId,
     sourceViewId,
     registrationContextId,
+    executionBoundary,
     workflow
   });
   state.updated_at_ms = Date.now();
@@ -2716,13 +2933,22 @@ export function __testOnlyBuildRegisteredMepWorkflowHandoffResponse(
   sessionId: string,
   toolResults: ToolResult[],
   messageId = "test-message",
-  latestToolResults: ToolResult[] = toolResults
+  latestToolResults: ToolResult[] = toolResults,
+  userText = ""
 ): ChatResponse | null {
   return buildRegisteredMepWorkflowHandoffResponse(
     sessionId,
     toolResults,
     messageId,
-    latestToolResults
+    latestToolResults,
+    userText
+      ? {
+          version: OPERATOR_BACKEND_CONTRACT_VERSION,
+          session_id: sessionId,
+          message_id: messageId,
+          user_text: userText
+        }
+      : undefined
   );
 }
 
@@ -3869,7 +4095,7 @@ function loadPersistedExistingConditionsSourcePreflightResults(
 function textLooksLikeExistingConditionsReconstruction(text: string): boolean {
   const normalized = text.toLowerCase();
   const reconstructionVerb =
-    /\b(recreate|reconstruct|reconstruction|redraw|draft|drawing|model|trace)\b/.test(normalized);
+    /\b(recreate|reconstruct|reconstruction|redraw|draft|drawing|model|trace|compile|compilation)\b/.test(normalized);
   const registrationVerb =
     /\b(register|registration|align|alignment)\b/.test(normalized);
   const explicitExistingConditions =
@@ -3900,6 +4126,95 @@ function isExplicitExistingConditionsRegistrationOnlyRequest(req: ChatRequest): 
     /\b(?:source\s+observation\s+and\s+)?registration\s+only\b/.test(text) ||
     /\bdo\s+not\b[^.!?\n]{0,120}\b(?:compile|compilation)\b/.test(text);
   return registrationIntent && explicitStop;
+}
+
+function textDeclaresExplicitExistingConditionsCompileOnly(raw: string): boolean {
+  const text = raw.toLowerCase();
+  const compileIntent = /\b(?:compile|compilation)\b/.test(text) &&
+    /\b(?:existing[\s-]*conditions?|source[\s-]*supported|provisional\s+backbone|repair\s+queue)\b/.test(text);
+  const noExecution =
+    /\b(?:do\s+not|don't|dont)\b[^.!?\n]{0,180}\b(?:dry[\s-]?run|apply|write|modify|change)\b/.test(text) ||
+    /\bstop\s+(?:after|at)\b[^.!?\n]{0,120}\b(?:compilation|compiled|plan)\b[^.!?\n]{0,80}\breceipt\b/.test(text) ||
+    /\bcompile[\s-]*only\b[^.!?\n]{0,180}\bstop\b/.test(text);
+  return compileIntent && noExecution;
+}
+
+function existingConditionsMessageRoot(messageId: string): string {
+  return String(messageId ?? "").replace(/:assistant:\d+$/i, "").trim();
+}
+
+function noteExplicitExistingConditionsCompileOnlyIntent(req: ChatRequest): void {
+  const raw = String(req.user_text ?? "").trim();
+  if (!raw || !req.session_id) return;
+  const state = getRedlineVisionState(req.session_id);
+  const messageRoot = existingConditionsMessageRoot(req.message_id);
+  if (textDeclaresExplicitExistingConditionsCompileOnly(raw)) {
+    state.candidate_visible_compile_only_request = {
+      message_root: messageRoot,
+      updated_at_ms: Date.now()
+    };
+    state.updated_at_ms = Date.now();
+    return;
+  }
+  if (
+    state.candidate_visible_compile_only_request &&
+    state.candidate_visible_compile_only_request.message_root !== messageRoot
+  ) {
+    state.candidate_visible_compile_only_request = null;
+    state.updated_at_ms = Date.now();
+  }
+}
+
+function isExplicitExistingConditionsCompileOnlyRequest(req: ChatRequest): boolean {
+  if (textDeclaresExplicitExistingConditionsCompileOnly(getRecentUserTextForRedline(req))) {
+    return true;
+  }
+  const marker = getRedlineVisionState(req.session_id).candidate_visible_compile_only_request;
+  if (
+    marker &&
+    marker.message_root === existingConditionsMessageRoot(req.message_id)
+  ) {
+    return true;
+  }
+  return persistedRequestLogDeclaresExistingConditionsCompileOnly(req.session_id);
+}
+
+function persistedRequestLogDeclaresExistingConditionsCompileOnly(
+  sessionId: string
+): boolean {
+  if (!sessionId) return false;
+  try {
+    const requestLogPath = path.join(
+      ensureWorkspaceLayout().runsSessions,
+      safeRunBundleSessionDirName(sessionId),
+      "request_log.jsonl"
+    );
+    if (!fs.existsSync(requestLogPath)) return false;
+    const size = fs.statSync(requestLogPath).size;
+    const maximumBytes = 512 * 1024;
+    const start = Math.max(0, size - maximumBytes);
+    const handle = fs.openSync(requestLogPath, "r");
+    try {
+      const buffer = Buffer.alloc(size - start);
+      fs.readSync(handle, buffer, 0, buffer.length, start);
+      const lines = buffer.toString("utf8").split(/\r?\n/);
+      if (start > 0) lines.shift();
+      return lines.slice(-300).some(line => {
+        if (!line.trim()) return false;
+        try {
+          const row = JSON.parse(line) as Record<string, unknown>;
+          return typeof row.user_text === "string" &&
+            textDeclaresExplicitExistingConditionsCompileOnly(row.user_text);
+        } catch {
+          return false;
+        }
+      });
+    } finally {
+      fs.closeSync(handle);
+    }
+  } catch {
+    return false;
+  }
 }
 
 function persistedRequestLogDeclaresExistingConditionsReconstruction(sessionId: string): boolean {
@@ -4129,11 +4444,31 @@ export async function prepareExistingConditionsProviderDecision(
 ): Promise<ChatResponse | null> {
   if (!isExistingConditionsReconstructionRequest(req)) return null;
 
+  const compileReadyAtEntry = buildCandidateVisibleReadyToCompilePrompt(req);
+  if (compileReadyAtEntry) {
+    return decideOpenAiInternal({
+      ...req,
+      context: withServerContext(req.context, {
+        candidate_visible_compile_gate: compileReadyAtEntry
+      })
+    });
+  }
+
   const beforeAlignment = buildCandidateVisibleDeterministicPreparationResponse(
     req,
     getAugmentedToolResults(req, 120)
   );
   if (beforeAlignment) return beforeAlignment;
+
+  const compileReadyAfterPreparation = buildCandidateVisibleReadyToCompilePrompt(req);
+  if (compileReadyAfterPreparation) {
+    return decideOpenAiInternal({
+      ...req,
+      context: withServerContext(req.context, {
+        candidate_visible_compile_gate: compileReadyAfterPreparation
+      })
+    });
+  }
 
   await maybeAutoAlignRedlineViewHints({
     req,
@@ -4594,6 +4929,9 @@ function buildCandidateVisibleRecoveryPrompt(req: ChatRequest): string | null {
   const sourceRoomEnclosureRequired = failure.summary.includes(
     "candidate_visible_source_room_enclosure_required:"
   );
+  const verifiedRoomScopeNotVisible = failure.summary.includes(
+    "candidate_visible_verified_room_scope_not_visible_in_registered_render"
+  );
   const sourceRoomEnclosureRasterVerificationRequired = failure.summary.includes(
     "candidate_visible_source_room_enclosure_raster_verification_required:"
   );
@@ -4617,6 +4955,8 @@ function buildCandidateVisibleRecoveryPrompt(req: ChatRequest): string | null {
       ? "- Preserve schema_version, discipline, room_number, spatial_scope, registration evidence, limits, and every other package field exactly. Populate only observations with the smallest source-visible supported observation set. Do not move or redraw spatial_scope, change the requested room, or introduce unsupported system/type claims."
       : provisionalSymbolSourceGraphicRequired
       ? "- Preserve the observation identity, pixel_point, spatial_scope, native target, every other claim, and all evidence exactly. If and only if the source visibly supports an MEP connection symbol at that unchanged point, set representation_classification.source_graphic exactly to \"mep_connection_symbol\". Do not move the symbol. If the source does not support that classification, issue no second compile and report the exact ambiguity."
+      : verifiedRoomScopeNotVisible
+      ? "- Preserve every observation, its exact source geometry, system/type/size claims, placement, and evidence byte-for-byte. Revise only spatial_scope so its boundary_pixel_points trace the visible source-room enclosure containing the route and its anchor_pixel_point lands on the visible room label or other source-supported room-local anchor named by the failure. Do not move, clip, shorten, add, delete, or otherwise alter any observation. The authoritative native room remains fixed; this correction only repairs the source-local enclosure used for registered comparison."
       : sourceRoomEnclosureRequired
       ? "- Preserve every source-supported observation and its exact source geometry. Add spatial_scope by tracing only the visible room enclosure that contains the route and the source-detected room label; use the exact source_room_label_uv from the error for anchor_pixel_point and include the room number in anchor_label. Do not translate, shorten, or delete a supported route merely because the full-view projection disagrees. If the enclosure is not visibly established, defer the affected observation."
       : sourceRoomEnclosureRasterVerificationRequired
@@ -4648,6 +4988,9 @@ function candidateVisibleReadyToCompile(req: ChatRequest): boolean {
     readyMarker.frame_id === alignment.frame_id &&
     readyMarker.view_id === alignment.view_id
   ) {
+    return true;
+  }
+  if (candidateVisibleFocusedRoomTagReceiptReadyToCompile(req)) {
     return true;
   }
   if (!seed?.file_path || !hasRedlineAnalyzeSuccess(req.session_id, seed.file_path)) return false;
@@ -4710,6 +5053,41 @@ function candidateVisibleReadyToCompile(req: ChatRequest): boolean {
   }) !== null;
 }
 
+function candidateVisibleFocusedRoomTagReceiptReadyToCompile(
+  req: ChatRequest
+): boolean {
+  if (!isExplicitExistingConditionsCompileOnlyRequest(req)) return false;
+  const seed = getRedlineSessionSeed(req.session_id);
+  if (!seed?.file_path || !hasRedlineAnalyzeSuccess(req.session_id, seed.file_path)) {
+    return false;
+  }
+  const alignment = getPersistedRedlineViewAlignment(req.session_id);
+  if (
+    !alignment?.matched ||
+    alignment.confidence < 0.35 ||
+    !alignment.crop
+  ) {
+    return false;
+  }
+  const roomNumber = candidateVisibleRequestedRoomNumber(req);
+  const roomToken = normalizeForMatch(roomNumber ?? "").replace(/\s+/g, "");
+  if (!roomToken) return false;
+  const expectedActionId = [
+    "candidate-visible-focused-room-tags",
+    alignment.frame_id,
+    roomToken
+  ].join(":");
+  return getAugmentedToolResults(req, 120).some((result) =>
+    result.action_id === expectedActionId &&
+    (result.path ?? "").trim().toLowerCase() === "/revit/export-visible-elements" &&
+    (result.status === "done" || result.status === "failed")
+  ) || persistedExistingConditionsActionCompleted(
+    req.session_id,
+    expectedActionId,
+    "/revit/export-visible-elements"
+  );
+}
+
 function candidateVisibleReadyToCompilePromptText(): string {
   return [
     "REGISTERED EXISTING-CONDITIONS EVIDENCE GATE: READY TO COMPILE",
@@ -4763,6 +5141,72 @@ export function __testOnlyIsExistingConditionsReconstructionRequest(
   req: ChatRequest
 ): boolean {
   return isExistingConditionsReconstructionRequest(req);
+}
+
+export function __testOnlyIsExplicitExistingConditionsCompileOnlyRequest(
+  req: ChatRequest
+): boolean {
+  return isExplicitExistingConditionsCompileOnlyRequest(req);
+}
+
+export function __testOnlyPersistedExistingConditionsActionCompleted(
+  sessionId: string,
+  actionId: string,
+  expectedPath: string
+): boolean {
+  return persistedExistingConditionsActionCompleted(sessionId, actionId, expectedPath);
+}
+
+export function __testOnlyCandidateVisibleReadyDiagnostics(req: ChatRequest): Record<string, unknown> {
+  const state = getRedlineVisionState(req.session_id);
+  const seed = getRedlineSessionSeed(req.session_id);
+  const alignment = getPersistedRedlineViewAlignment(req.session_id);
+  const roomNumber = candidateVisibleRequestedRoomNumber(req);
+  const roomToken = normalizeForMatch(roomNumber ?? "").replace(/\s+/g, "");
+  const expectedFocusedActionId = alignment?.frame_id && roomToken
+    ? `candidate-visible-focused-room-tags:${alignment.frame_id}:${roomToken}`
+    : null;
+  return {
+    existing_conditions_request: isExistingConditionsReconstructionRequest(req),
+    compile_only_request: isExplicitExistingConditionsCompileOnlyRequest(req),
+    active_guard: !!activeCandidateVisibleGuardFailure(req.session_id),
+    persisted_workflow: !!persistedRegisteredMepWorkflow(req.session_id),
+    seed_path: seed?.file_path ?? null,
+    analyze_success: !!seed?.file_path && hasRedlineAnalyzeSuccess(req.session_id, seed.file_path),
+    alignment: alignment ? {
+      frame_id: alignment.frame_id,
+      view_id: alignment.view_id,
+      matched: alignment.matched,
+      confidence: alignment.confidence,
+      has_crop: !!alignment.crop
+    } : null,
+    ready_marker: state.candidate_visible_ready_to_compile,
+    compile_only_marker: state.candidate_visible_compile_only_request,
+    requested_room_number: roomNumber,
+    expected_focused_action_id: expectedFocusedActionId,
+    focused_completion_in_tool_results: expectedFocusedActionId
+      ? getAugmentedToolResults(req, 120).some((result) =>
+          result.action_id === expectedFocusedActionId &&
+          (result.path ?? "").trim().toLowerCase() === "/revit/export-visible-elements" &&
+          (result.status === "done" || result.status === "failed")
+        )
+      : false,
+    focused_completion_in_ledger: expectedFocusedActionId
+      ? persistedExistingConditionsActionCompleted(
+          req.session_id,
+          expectedFocusedActionId,
+          "/revit/export-visible-elements"
+        )
+      : false,
+    focused_receipt_ready: candidateVisibleFocusedRoomTagReceiptReadyToCompile(req),
+    ready_to_compile: candidateVisibleReadyToCompile(req)
+  };
+}
+
+export function __testOnlyNoteExplicitExistingConditionsCompileOnlyIntent(
+  req: ChatRequest
+): void {
+  noteExplicitExistingConditionsCompileOnlyIntent(req);
 }
 
 export function __testOnlyBuildCandidateVisibleRecoveryPrompt(req: ChatRequest): string | null {
@@ -7865,6 +8309,7 @@ export function __testOnlySeedRedlineViewAlignment(args: {
   registrationControls?: ViewAlignmentRegistrationControl[];
   sourceRoomLabels?: ViewAlignmentResult["source_room_labels"];
   analysis?: string;
+  persistForRecovery?: boolean;
 }): void {
   noteRedlineViewAlignmentResult(
     args.sessionId,
@@ -7880,8 +8325,13 @@ export function __testOnlySeedRedlineViewAlignment(args: {
       source_room_labels: args.sourceRoomLabels ?? [],
       marks: [],
       analysis: args.analysis ?? "test alignment"
-    }
+    },
+    args.persistForRecovery ?? false
   );
+}
+
+export function __testOnlyForgetRedlineVisionSession(sessionId: string): void {
+  redlineVisionBySession.delete(sessionId);
 }
 
 export function __testOnlySeedRedlineFrameAlignedHint(args: {
@@ -16619,7 +17069,8 @@ async function maybeAutoAlignRedlineViewHints(args: {
     alignmentImagePath,
     latestFrameImage.frame.frame_id,
     latestFrameImage.view_id,
-    alignment
+    alignment,
+    true
   );
 
   const alignmentMarks =
@@ -17694,7 +18145,8 @@ async function maybeBuildRedlineExecutionBridge(req: ChatRequest, workbenchResul
     req.session_id,
     getAugmentedToolResults(req, 120),
     req.message_id,
-    Array.isArray(req.tool_results) ? req.tool_results : []
+    Array.isArray(req.tool_results) ? req.tool_results : [],
+    req
   );
   if (registeredMepHandoff) return registeredMepHandoff;
   if (isExistingConditionsReconstructionRequest(req)) {
@@ -19393,6 +19845,112 @@ function explicitExistingConditionsViewId(
   return null;
 }
 
+function persistedExplicitExistingConditionsViewAnchor(
+  sessionId: string
+): { sheet_number: string; view_id: number; view_name: string | null } | null {
+  if (!sessionId) return null;
+  try {
+    const sessionDir = path.join(
+      ensureWorkspaceLayout().runsSessions,
+      safeRunBundleSessionDirName(sessionId)
+    );
+    const requestLogPath = path.join(sessionDir, "request_log.jsonl");
+    const toolOutputsPath = path.join(sessionDir, "tool_outputs.jsonl");
+    if (!fs.existsSync(requestLogPath)) return null;
+
+    const requestRows = fs.readFileSync(requestLogPath, "utf8")
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(-300)
+      .map((line) => {
+        try {
+          return JSON.parse(line) as Record<string, unknown>;
+        } catch {
+          return null;
+        }
+      })
+      .filter((row): row is Record<string, unknown> => !!row);
+
+    let anchorMessageRoot: string | null = null;
+    let explicitViewId: number | null = null;
+    for (let index = requestRows.length - 1; index >= 0; index -= 1) {
+      const row = requestRows[index]!;
+      const text = typeof row.user_text === "string" ? row.user_text : "";
+      if (!textLooksLikeExistingConditionsReconstruction(text)) continue;
+      const probe = {
+        version: OPERATOR_BACKEND_CONTRACT_VERSION,
+        session_id: sessionId,
+        message_id: typeof row.message_id === "string" ? row.message_id : "",
+        user_text: text
+      } satisfies ChatRequest;
+      explicitViewId = explicitExistingConditionsViewId(probe);
+      const requestedActiveView = explicitActiveExistingConditionsViewRequested(probe);
+      if (explicitViewId || requestedActiveView) {
+        anchorMessageRoot = probe.message_id.split(":assistant:")[0] || probe.message_id;
+        break;
+      }
+      const hasSourceAttachment = Array.isArray(row.user_attachments) &&
+        row.user_attachments.some((attachment) => {
+          if (!attachment || typeof attachment !== "object") return false;
+          const relativePath = typeof (attachment as Record<string, unknown>).relative_path === "string"
+            ? String((attachment as Record<string, unknown>).relative_path)
+            : "";
+          return isRedlineAttachmentPath(relativePath);
+        });
+      if (hasSourceAttachment) return null;
+    }
+    if (!anchorMessageRoot) return null;
+    if (explicitViewId && explicitViewId > 0) {
+      return {
+        sheet_number: "EXPLICIT_VIEW",
+        view_id: explicitViewId,
+        view_name: `View ${explicitViewId}`
+      };
+    }
+    if (!fs.existsSync(toolOutputsPath)) return null;
+
+    const outputRows = fs.readFileSync(toolOutputsPath, "utf8")
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(-600);
+    for (const line of outputRows) {
+      let row: Record<string, unknown>;
+      try {
+        row = JSON.parse(line) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      const messageId = typeof row.message_id === "string" ? row.message_id : "";
+      if (!messageId || !messageId.startsWith(anchorMessageRoot)) continue;
+      const result = row.tool_result && typeof row.tool_result === "object"
+        ? row.tool_result as Record<string, unknown>
+        : null;
+      if (
+        !result ||
+        result.status !== "done" ||
+        String(result.path ?? "").trim().toLowerCase() !== "/revit/context"
+      ) {
+        continue;
+      }
+      const root = result.result_json && typeof result.result_json === "object"
+        ? result.result_json as Record<string, unknown>
+        : null;
+      if (!root) continue;
+      const activeView = extractActiveViewSummaryFromContext({ revit: root });
+      if (!activeView.id || activeView.id <= 0) continue;
+      return {
+        sheet_number: "EXPLICIT_VIEW",
+        view_id: activeView.id,
+        view_name: activeView.name ?? `View ${activeView.id}`
+      };
+    }
+  } catch {
+    // Request-log recovery is best-effort. The live request remains the normal
+    // authority and an unresolved anchor fails closed before model writes.
+  }
+  return null;
+}
+
 export function __testOnlyExplicitExistingConditionsViewId(req: ChatRequest): number | null {
   return explicitExistingConditionsViewId(req);
 }
@@ -19459,13 +20017,15 @@ function existingConditionsPlacedViewAnchor(
   const persistedExplicitView =
     state.last_existing_conditions_placed_view?.sheet_number === "EXPLICIT_VIEW"
       ? state.last_existing_conditions_placed_view
-      : null;
+      : persistedExplicitExistingConditionsViewAnchor(req.session_id);
   if (persistedExplicitView) {
     // The user's exact active/target-view anchor is a session safety invariant,
     // not a one-turn hint. Internal continuation prompts are not guaranteed to
     // leave user_text empty, so preserve the verified view until the source or
     // session changes instead of reinterpreting a source-sheet mention as the
     // target partway through registration.
+    state.last_existing_conditions_placed_view = persistedExplicitView;
+    state.updated_at_ms = Date.now();
     return persistedExplicitView;
   }
   let latestPlacedView: { sheet_number: string; view_id: number; view_name: string | null } | null = null;
@@ -21110,6 +21670,7 @@ function suppressCompletedReadReplays(req: ChatRequest, response: ChatResponse):
 }
 
 export function __testOnlyFinalizeOpenAiResponseForRequest(req: ChatRequest, response: ChatResponse): ChatResponse {
+  response = enforcePersistedExistingConditionsCompileOnlyBoundary(req, response);
   if (Array.isArray(response.actions) && response.actions.length > 0) {
     response = {
       ...response,
@@ -21125,6 +21686,7 @@ export function __testOnlyFinalizeOpenAiResponseForRequest(req: ChatRequest, res
 }
 
 async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal): Promise<ChatResponse> {
+  noteExplicitExistingConditionsCompileOnlyIntent(req);
   const requirementsGuard = captureRequirementsResponseGuard(req);
   const finishResponse = (response: ChatResponse): ChatResponse => {
     response = __testOnlyFinalizeOpenAiResponseForRequest(req, response);
@@ -21731,7 +22293,23 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     getAugmentedToolResults(currentReq, 80)
   );
   if (preAnalysisRoomScope) return finishResponse(preAnalysisRoomScope);
-  const initialLane = await runInitialRedlineDecisionLane({ req: currentReq, initialAction: initialPreflightAction, runInitialPreflight, runFastPreflight: () => maybeBuildFastElectricalRedlinePreflight(currentReq), summarize: () => callModel(currentReq) });
+  // Consume deterministic existing-conditions evidence before any provider
+  // decision lane. In particular, the focused room-tag completion is the
+  // final registration receipt for a compile-only run. Letting the legacy
+  // planner run first causes it to rediscover rooms/tools even though the
+  // monotonic ledger is already ready for compilation.
+  const preLaneCandidatePreparation =
+    buildCandidateVisibleDeterministicPreparationResponse(
+      currentReq,
+      getAugmentedToolResults(currentReq, 120)
+    );
+  if (preLaneCandidatePreparation) {
+    return finishResponse(preLaneCandidatePreparation);
+  }
+  const candidateReadyBeforeLegacyFastLane = candidateVisibleReadyToCompile(currentReq);
+  const initialLane = candidateReadyBeforeLegacyFastLane
+    ? { response: null, fastPreflight: null, initialPreflightCompleted: false }
+    : await runInitialRedlineDecisionLane({ req: currentReq, initialAction: initialPreflightAction, runInitialPreflight, runFastPreflight: () => maybeBuildFastElectricalRedlinePreflight(currentReq), summarize: () => callModel(currentReq) });
   if (initialLane.response) return finishResponse(initialLane.response);
   const fastPreflight = initialLane.fastPreflight;
   if (fastPreflight) {
@@ -21905,7 +22483,8 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
         req.session_id,
         getAugmentedToolResults(currentReq, 120),
         currentReq.message_id,
-        Array.isArray(currentReq.tool_results) ? currentReq.tool_results : []
+        Array.isArray(currentReq.tool_results) ? currentReq.tool_results : [],
+        currentReq
       );
       if (registeredMepHandoff) return finishResponse(registeredMepHandoff);
     }

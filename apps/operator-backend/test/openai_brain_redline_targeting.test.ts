@@ -260,6 +260,126 @@ test("registered existing-conditions compiler hands off exact dry-run then exact
   assert.doesNotMatch(complete.assistant_message, /will not compile or apply a second geometry set/i);
 });
 
+test("registered existing-conditions compile-only request returns a persisted plan receipt without Revit actions", () => {
+  const sessionId = `registered-mep-compile-only-${Date.now()}`;
+  const fingerprint = "9".repeat(64);
+  const workflow = {
+    inputFingerprintSha256: fingerprint,
+    provisionalObservationIds: ["backbone-1", "backbone-2"],
+    operations: [
+      {
+        action_key: "route:backbone-1",
+        observation_ids: ["backbone-1"],
+        path: "/revit/mep-route-workflow",
+        depends_on: [],
+        expected_created_min: 1,
+        expected_created_max: 1,
+        execution_mode: "provisional_backbone_batch",
+        provisional_batch_key: "orthogonal-main",
+        apply_body: { kind: "pipe", apply: true }
+      },
+      {
+        action_key: "route:backbone-2",
+        observation_ids: ["backbone-2"],
+        path: "/revit/mep-route-workflow",
+        depends_on: [],
+        expected_created_min: 1,
+        expected_created_max: 1,
+        execution_mode: "provisional_backbone_batch",
+        provisional_batch_key: "orthogonal-main",
+        apply_body: { kind: "pipe", apply: true }
+      }
+    ],
+    dryRun: true,
+    verify: true,
+    maximumCreatedElements: 2,
+    benchmarkCredit: false,
+    authorizationBasis: "explicit_unscored_user_direction"
+  } as any;
+  __testOnlyNoteRegisteredMepWorkflow(sessionId, "frame-compile-only", 424242, workflow);
+
+  const response = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(
+    sessionId,
+    [],
+    "compile-only-message",
+    [],
+    "Compile the source-supported existing-conditions provisional backbone and one-action repair queue. Do not dry-run, apply, or write. Stop after the compilation plan receipt."
+  );
+
+  assert.ok(response);
+  assert.deepEqual(response.actions, []);
+  assert.match(response.assistant_message, /operator\.existing_conditions_compilation_receipt\.v1/);
+  assert.match(response.assistant_message, /compiled_read_only/);
+  assert.match(response.assistant_message, /provisional_backbone_batch_count":1/);
+  assert.match(response.assistant_message, /dry_runs_performed":0/);
+  assert.match(response.assistant_message, /writes_performed":0/);
+});
+
+test("registered compile boundary survives an empty tool continuation and suppresses staged dry-run", () => {
+  const sessionId = `registered-mep-compile-boundary-${Date.now()}`;
+  const workflow = {
+    inputFingerprintSha256: "8".repeat(64),
+    provisionalObservationIds: ["backbone-1"],
+    operations: [{
+      action_key: "route:backbone-1",
+      observation_ids: ["backbone-1"],
+      path: "/revit/mep-route-workflow",
+      depends_on: [],
+      expected_created_min: 1,
+      expected_created_max: 1,
+      execution_mode: "provisional_backbone_batch",
+      provisional_batch_key: "orthogonal-main",
+      apply_body: { kind: "pipe", apply: true }
+    }],
+    dryRun: true,
+    verify: true,
+    maximumCreatedElements: 1,
+    benchmarkCredit: false,
+    authorizationBasis: "explicit_unscored_user_direction"
+  } as any;
+  __testOnlyNoteRegisteredMepWorkflow(
+    sessionId,
+    "frame-compile-boundary",
+    424242,
+    workflow,
+    "registration-compile-boundary",
+    "compile_only"
+  );
+
+  const response = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(
+    sessionId,
+    [],
+    "compile-boundary:assistant:9",
+    [],
+    ""
+  );
+
+  assert.ok(response);
+  assert.deepEqual(response.actions, []);
+  assert.match(response.assistant_message, /compiled_read_only/);
+  assert.match(response.assistant_message, /dry_runs_performed":0/);
+  assert.doesNotMatch(response.assistant_message, /dry-run only/i);
+
+  const finalized = __testOnlyFinalizeOpenAiResponseForRequest({
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    session_id: sessionId,
+    message_id: "compile-boundary:assistant:10",
+    user_text: ""
+  }, {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    assistant_message: "Dry-running the next stage.",
+    actions: [{
+      action_id: "must-be-suppressed",
+      method: "POST",
+      path: "/revit/existing-conditions-mep-draft-workflow",
+      body: { dryRun: true }
+    }]
+  });
+  assert.deepEqual(finalized.actions, []);
+  assert.match(finalized.assistant_message, /compiled_read_only/);
+  assert.doesNotMatch(finalized.assistant_message, /Dry-running the next stage/i);
+});
+
 test("registered existing-conditions apply guard is scoped to one user message", () => {
   const sessionId = `registered-mep-message-scope-${Date.now()}`;
   const firstFingerprint = "d".repeat(64);
