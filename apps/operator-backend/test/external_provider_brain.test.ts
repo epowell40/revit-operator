@@ -557,6 +557,61 @@ test("Claude existing-conditions route completes provider-neutral source preflig
   }
 });
 
+test("external providers honor deterministic existing-conditions registration decisions before planner calls", { concurrency: false }, async () => {
+  const previous = { OPERATOR_BRAIN: process.env.OPERATOR_BRAIN };
+  process.env.OPERATOR_BRAIN = "gemini";
+  const req = request(
+    "Continue the existing-conditions reconstruction from the registered source in exact target view 123."
+  );
+  let providerCalls = 0;
+  let gateCalls = 0;
+  const gateResponse: ChatResponse = {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    assistant_message: "Exporting the exact frame before source-to-view alignment.",
+    actions: [{
+      action_id: "exact-frame-123",
+      method: "POST",
+      path: "/revit/export-view-frame",
+      body: { viewId: 123, imageSize: 2200, includeMapping: true }
+    }]
+  };
+  const plannerResponse: ChatResponse = {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    assistant_message: "planner",
+    actions: []
+  };
+  const dependencies = {
+    existingConditionsSourcePreflight: async (incoming: ChatRequest) => incoming,
+    existingConditionsProviderDecision: async () => {
+      gateCalls += 1;
+      return gateResponse;
+    },
+    geminiBrain: async () => {
+      providerCalls += 1;
+      return plannerResponse;
+    },
+    geminiStreamingBrain: async () => {
+      providerCalls += 1;
+      return plannerResponse;
+    }
+  };
+
+  try {
+    const nonStreaming = await decide(req, dependencies);
+    const streaming = await decideStreaming(
+      { ...req, session_id: `${req.session_id}-stream` },
+      {},
+      dependencies
+    );
+    assert.equal(gateCalls, 2);
+    assert.equal(providerCalls, 0);
+    assert.equal(nonStreaming.actions[0]?.path, "/revit/export-view-frame");
+    assert.equal(streaming.actions[0]?.path, "/revit/export-view-frame");
+  } finally {
+    restoreEnvironment(previous);
+  }
+});
+
 test("streaming and non-streaming dispatch resolve the same configured brain", async () => {
   const previous = { OPERATOR_BRAIN: process.env.OPERATOR_BRAIN };
   const routes = [

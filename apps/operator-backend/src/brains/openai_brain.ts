@@ -4007,6 +4007,29 @@ export async function prepareExistingConditionsSourcePreflight(
   return withExistingConditionsSourcePreflightContext(req, results);
 }
 
+export async function prepareExistingConditionsProviderDecision(
+  req: ChatRequest
+): Promise<ChatResponse | null> {
+  if (!isExistingConditionsReconstructionRequest(req)) return null;
+
+  const beforeAlignment = buildCandidateVisibleDeterministicPreparationResponse(
+    req,
+    getAugmentedToolResults(req, 120)
+  );
+  if (beforeAlignment) return beforeAlignment;
+
+  await maybeAutoAlignRedlineViewHints({
+    req,
+    workbenchResults: loadPersistedExistingConditionsSourcePreflightResults(req.session_id),
+    allowSyntheticFallback: false
+  });
+
+  return buildCandidateVisibleDeterministicPreparationResponse(
+    req,
+    getAugmentedToolResults(req, 120)
+  );
+}
+
 export function isExplicitReadOnlyRedlineAnalysisRequest(req: ChatRequest): boolean { if (!hasRedlineAttachment(req)) return false; const text = `${req.user_text ?? ""}`.toLowerCase(); const verb = "(?:add|provide|install|place|create|implement|duplicate|copy|clone|insert|put|drop|apply|assign|set|connect|route|run|extend|tap|branch|take\\s*(?:off|out)|reroute|offset|draw|delete|remove|demo|demolish|erase|omit|strike|x\\s*out|edit|modify|update|change|revise|replace|correct|resize|size|adjust|move|shift|relocate|slide|rotate|reorient|turn|flip|swap|tag|label|hide|show|display|override|write)"; const noAction = /\b(?:do\s+not|don't|dont)\b(?=[^.!?;]*\bexecute\b)(?=[^.!?;]*\/revit\/)(?![^.!?;]*\b(?:merely|but|then|instead|rather|except)\b)[^.!?;]*\b(?:actions?|model\s+elements?)\b(?:\s*,?\s*including\s+(?=[^.!?;]*\b(?:dry[\s-]?run|apply|create|edit|delete|write)\b)(?![^.!?;]*\b(?:but|then|instead|rather|except|or\s+later)\b)(?:(?:dry[\s-]?run|apply|create|edit|delete|write|any\s+other\s+endpoint)(?:\s*,\s*(?:(?:or|and)\s+)?|\s+(?:or|and)\s+)?)+(?=\s*(?:[.!?;]|\n|$))|(?!\s*,?\s*including\b))/; const slashList = new RegExp(`\\b(?:do\\s+not|don't|dont)\\s+${verb}(?:\\s*\\/\\s*${verb})+`); const directModel = /\b(?:do\s+not|don't|dont)\s+(?:modify|change|edit|write(?:\s+to)?)\s+(?:the\s+)?(?:revit\s+)?model(?:\s+or\s+files?)?(?=\s*(?:[.!?;]|\n|$))/; const withoutModel = /\bwithout\s+(?:changing|modifying|editing|writing(?:\s+to)?)\s+(?:the\s+)?(?:revit\s+)?model(?:\s+or\s+files?)?(?=\s*(?:[.!?;]|\n|$))/; const positive = /\b(?:analysis|evidence|interpretation)(?:\s+record)?\s+only\b|\bonly\s+(?:analy[sz]e|interpret|review)\b|\bread[- ]only\s+(?:analysis|review|interpretation)\b/.test(text) || [noAction, slashList, directModel, withoutModel].some((pattern) => pattern.test(text)); const isolated = text.replace(noAction, "").replace(slashList, "").replace(directModel, "").replace(withoutModel, "").replace(/(?:^|[.!?;]\s*)provide\s+(?:concise\s+)?(?:structured\s+)?(?:evidence|analysis|interpretation)(?:\s+with\s+source\s+references)?(?=\s*(?:[.!?;]|\n|$))/g, ""); const inflected = "(?:add(?:ed|ing)|provide(?:d|ing)|install(?:ed|ing)|place(?:d|ing)|create(?:d|ing)|implement(?:ed|ing)|duplicate(?:d|ing)|cop(?:ied|ying)|clone(?:d|ing)|insert(?:ed|ing)|put(?:ting)?|drop(?:ped|ping)|appl(?:ied|ying)|assign(?:ed|ing)|set(?:ting)?|connect(?:ed|ing)|rout(?:ed|ing)|run(?:ning)?|extend(?:ed|ing)|tap(?:ped|ping)|branch(?:ed|ing)|tak(?:en|ing)\\s*(?:off|out)|rerout(?:ed|ing)|offset(?:ting)?|drawn|drawing\\s+(?:(?:the|a|an)\\s+)?(?:marked|new|existing|selected)|delet(?:ed|ing)|remov(?:ed|ing)|demo(?:ed|ing)|demolish(?:ed|ing)|eras(?:ed|ing)|omit(?:ted|ting)|str(?:uck|iking)|x(?:ed|ing)?\\s*out|edit(?:ed|ing)|modif(?:ied|ying)|updat(?:ed|ing)|chang(?:ed|ing)|revis(?:ed|ing)|replac(?:ed|ing)|correct(?:ed|ing)|resiz(?:ed|ing)|siz(?:ed|ing)|adjust(?:ed|ing)|mov(?:ed|ing)|shift(?:ed|ing)|relocat(?:ed|ing)|slid(?:ing)?|rotat(?:ed|ing)|reorient(?:ed|ing)|turn(?:ed|ing)|flipp(?:ed|ing)|swapp(?:ed|ing)|tagg(?:ed|ing)|label(?:ed|ing)|hid(?:den|ing)|show(?:n|ing)|display(?:ed|ing)|overrid(?:den|ing)|writ(?:ten|ing))"; const mutation = new RegExp(`\\b${verb}\\b|\\b${inflected}\\b|\\bmake\\b[^.!?;]{0,48}\\b(?:change|changes|edit|edits)\\b`); const unknownAffirmative = /\b(?:and|then|also)\s+[a-z][a-z-]{2,24}\s+(?:the\s+)?(?:marked|existing|new|selected)\b/.test(isolated); return positive && /\b(redline|red line|markup)\b/.test(text) && /\b(analy[sz]e|analysis|interpret|evidence)\b/.test(text) && !mutation.test(isolated) && !unknownAffirmative; }
 async function runInitialRedlineDecisionLane(args: { req: ChatRequest; initialAction: WorkbenchAction | null; runInitialPreflight: (action: WorkbenchAction) => Promise<void>; runFastPreflight: () => Promise<RedlineFastPathPreflight | null>; summarize: () => Promise<OpenAiDecision | { error: string }> }): Promise<{ response: ChatResponse | null; fastPreflight: RedlineFastPathPreflight | null; initialPreflightCompleted: boolean }> {
   if (args.initialAction && isExistingConditionsReconstructionRequest(args.req)) {
@@ -21327,7 +21350,19 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     (!!getRedlineSessionSeed(currentReq.session_id) || hasRedlineAttachment(currentReq))
   ) {
     const preModelBridge = await maybeBuildRedlineExecutionBridge(currentReq, workbenchResults);
-    if (preModelBridge && preModelBridge.actions.length > 0) return finishResponse(preModelBridge);
+    if (
+      preModelBridge &&
+      (
+        preModelBridge.actions.length > 0 ||
+        isExistingConditionsReconstructionRequest(currentReq)
+      )
+    ) {
+      // Existing-conditions preparation owns the visual registration gate.
+      // A no-action response here is an intentional terminal blocker (for
+      // example a failed exact-frame alignment), not permission for the
+      // provider planner to fall through into unbounded discovery.
+      return finishResponse(preModelBridge);
+    }
   }
 
   for (let round = 0; round <= maxContinuationRounds; round++) {

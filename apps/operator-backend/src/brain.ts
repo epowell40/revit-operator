@@ -7,6 +7,7 @@ import {
   decideOpenAi,
   decideOpenAiStreaming,
   isExplicitReadOnlyRedlineAnalysisRequest,
+  prepareExistingConditionsProviderDecision,
   prepareExistingConditionsSourcePreflight
 } from "./brains/openai_brain.js";
 import { decideCodex, decideCodexStreaming, type StreamCallbacks } from "./brains/codex_brain.js";
@@ -301,6 +302,7 @@ export type BrainDecisionDependencies = {
   geminiStreamingBrain?: typeof decideGeminiStreaming;
   anthropicBrain?: typeof decideAnthropic;
   anthropicStreamingBrain?: typeof decideAnthropicStreaming;
+  existingConditionsProviderDecision?: typeof prepareExistingConditionsProviderDecision;
   existingConditionsSourcePreflight?: typeof prepareExistingConditionsSourcePreflight;
 };
 
@@ -416,6 +418,13 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
   const routedReq = route !== "openai" && route !== "rule"
     ? await (dependencies.existingConditionsSourcePreflight ?? prepareExistingConditionsSourcePreflight)(req)
     : req;
+  if (route !== "openai" && route !== "rule") {
+    const providerDecision = await (
+      dependencies.existingConditionsProviderDecision ??
+      prepareExistingConditionsProviderDecision
+    )(routedReq);
+    if (providerDecision) return finalizeDecision(routedReq, providerDecision);
+  }
   return finalizeDecision(routedReq, await decideWithSelectedBrain(route, routedReq, dependencies));
 }
 
@@ -541,6 +550,18 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dep
   const routedReq = route !== "openai" && route !== "rule"
     ? await (dependencies.existingConditionsSourcePreflight ?? prepareExistingConditionsSourcePreflight)(req)
     : req;
+  if (route !== "openai" && route !== "rule") {
+    const providerDecision = await (
+      dependencies.existingConditionsProviderDecision ??
+      prepareExistingConditionsProviderDecision
+    )(routedReq);
+    if (providerDecision) {
+      const text = providerDecision.assistant_message || "";
+      cb.onDelta?.(text);
+      cb.onDone?.(text);
+      return finalizeDecision(routedReq, providerDecision);
+    }
+  }
   const decision = finalizeDecision(
     routedReq,
     await decideWithSelectedBrainStreaming(route, routedReq, cb, dependencies)
