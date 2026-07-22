@@ -34,6 +34,10 @@ import {
 } from "../redline/view_alignment.js";
 import { orientRedlineFile } from "../redline/redline_orienter.js";
 import { analyzeRedlineFile } from "../redline/redline_analyzer.js";
+import {
+  extractSheetCandidatesFromFilename,
+  extractSheetCandidatesFromText
+} from "../redline/sheet_candidate_classifier.js";
 import { pdfDefaultPageBudget } from "../redline/pdf_intake_policy.js";
 import type { StreamCallbacks } from "./codex_brain.js";
 import { getRequestPrincipal } from "../request_context.js";
@@ -986,6 +990,22 @@ type RedlineVisionProgressState = {
     workflow: AtomicMepDraftWorkflowRequest;
     updated_at_ms: number;
   } | null;
+  candidate_visible_ready_to_compile: {
+    source_path: string;
+    frame_id: string;
+    view_id: number;
+    updated_at_ms: number;
+  } | null;
+  candidate_visible_pending_focused_room_tag: {
+    source_path: string;
+    frame_id: string;
+    view_id: number;
+    room_number: string;
+    action_id: string;
+    compile_on_completion: boolean;
+    updated_at_ms: number;
+  } | null;
+  candidate_visible_requested_room_number: string | null;
   last_candidate_visible_compile_context: {
     context_key: string;
     source_path: string;
@@ -1096,6 +1116,9 @@ function getRedlineVisionState(sessionId: string): RedlineVisionProgressState {
     last_analysis_image_paths: [],
     last_view_alignment: null,
     last_registered_mep_workflow: null,
+    candidate_visible_ready_to_compile: null,
+    candidate_visible_pending_focused_room_tag: null,
+    candidate_visible_requested_room_number: null,
     last_candidate_visible_compile_context: null,
     last_candidate_visible_guard_failure: null,
     last_candidate_visible_package_json: null,
@@ -1173,14 +1196,21 @@ function noteRedlineAnalyzeSuccess(
   st.oriented_mapped_files.delete(key);
   st.orient_remap_requested_files.delete(key);
   st.baseline_export_attempted_files.delete(key);
-  if (resetCandidateVisibleCompilerState) {
+  // Workbench evidence is replayed on continuation turns. Re-ingesting the
+  // same successful source analysis must not erase accepted frame/inventory
+  // stages or a pending one-action receipt. A genuinely new source (or the
+  // first source in this session) still starts a fresh compiler ledger.
+  if (resetCandidateVisibleCompilerState && (!previousSourceKey || sourceChanged)) {
     st.last_registered_mep_workflow = null;
+    st.candidate_visible_ready_to_compile = null;
+    st.candidate_visible_pending_focused_room_tag = null;
     st.last_candidate_visible_compile_context = null;
     st.last_candidate_visible_guard_failure = null;
     st.last_candidate_visible_package_json = null;
     if (sourceChanged) {
       st.last_existing_conditions_placed_view = null;
       st.last_existing_conditions_frame = null;
+      st.candidate_visible_requested_room_number = null;
     }
     // Registration is source-specific. An explicit fresh analysis must not
     // compile the new source through a frame aligned for an earlier attachment.
@@ -1322,6 +1352,8 @@ function noteRedlineViewAlignmentResult(
     JSON.stringify(previousAlignment.crop) !== JSON.stringify(alignment.crop);
   if (alignmentChanged) {
     st.last_registered_mep_workflow = null;
+    st.candidate_visible_ready_to_compile = null;
+    st.candidate_visible_pending_focused_room_tag = null;
     st.last_candidate_visible_compile_context = null;
   }
   st.last_view_alignment = {
@@ -1820,6 +1852,59 @@ function candidateVisibleFocusedRoomTagActionId(args: {
     args.frame.frame_id,
     normalizeForMatch(args.room_scope.room_number).replace(/\s+/g, "")
   ].join(":");
+}
+
+function consumeCandidateVisibleFocusedRoomTagCompletion(args: {
+  session_id: string;
+  source_path: string;
+  room_number: string | null;
+  compile_on_completion: boolean;
+  tool_results: ToolResult[];
+}): boolean {
+  const state = getRedlineVisionState(args.session_id);
+  const alignment = state.last_view_alignment;
+  const pending = state.candidate_visible_pending_focused_room_tag;
+  const roomToken = normalizeForMatch(args.room_number ?? "").replace(/\s+/g, "");
+  const durableActionId =
+    alignment?.frame_id && roomToken
+      ? `candidate-visible-focused-room-tags:${alignment.frame_id}:${roomToken}`
+      : null;
+  const currentPending =
+    pending &&
+    alignment &&
+    pending.action_id === durableActionId &&
+    pending.frame_id === alignment.frame_id &&
+    pending.view_id === alignment.view_id
+      ? pending
+      : null;
+  const actionId = durableActionId ?? currentPending?.action_id ?? null;
+  if (!actionId) return false;
+  const stillCurrent =
+    alignment?.matched === true &&
+    alignment.confidence >= 0.35 &&
+    !!alignment.crop;
+  if (!stillCurrent) {
+    state.candidate_visible_pending_focused_room_tag = null;
+    state.updated_at_ms = Date.now();
+    return false;
+  }
+  const completed = args.tool_results.some((result) =>
+    result?.action_id === actionId &&
+    (result.path ?? "").trim().toLowerCase() === "/revit/export-visible-elements" &&
+    (result.status === "done" || result.status === "failed")
+  );
+  if (!completed) return false;
+  state.candidate_visible_pending_focused_room_tag = null;
+  state.updated_at_ms = Date.now();
+  if (!(currentPending?.compile_on_completion ?? args.compile_on_completion)) return false;
+  state.candidate_visible_ready_to_compile = {
+    source_path: args.source_path,
+    frame_id: alignment.frame_id,
+    view_id: alignment.view_id,
+    updated_at_ms: Date.now()
+  };
+  state.updated_at_ms = Date.now();
+  return true;
 }
 
 function candidateVisibleExactFrameResultIndex(
@@ -2385,6 +2470,7 @@ async function compileRegisteredMepReconstructionForSession(args: {
     workflow: JSON.parse(JSON.stringify(reconstruction.workflow)) as AtomicMepDraftWorkflowRequest,
     updated_at_ms: Date.now()
   };
+  visionState.candidate_visible_ready_to_compile = null;
   registerExistingConditionsStagedWorkflow({
     sessionId: args.req.session_id,
     sourceFrameId: frame.frame_id,
@@ -3425,21 +3511,15 @@ function extractAttachmentFilenameSheetHints(req: ChatRequest): Array<{ file: st
   const out: Array<{ file: string; sheet: string }> = [];
   const seen = new Set<string>();
   const atts = Array.isArray(req.user_attachments) ? req.user_attachments : [];
-  const pattern = /(?:^|[^A-Z0-9])([A-Z]{1,4}\s*[-_.]?\s*\d{1,4}(?:\s*[.-]\s*\d{1,3})?)(?=$|[^A-Z0-9])/gi;
-
   for (const a of atts.slice(0, 20)) {
     const nameRaw =
       (typeof a?.filename === "string" && a.filename.trim()) ||
       (typeof a?.relative_path === "string" && path.basename(a.relative_path.trim())) ||
       "";
     if (!nameRaw) continue;
-    const stem = nameRaw.replace(/\.[^.]+$/, "");
-
-    let m: RegExpExecArray | null;
-    while ((m = pattern.exec(stem)) !== null) {
-      const token = normalizeSheetToken((m[1] ?? "").trim());
+    for (const candidate of extractSheetCandidatesFromFilename({ filePath: nameRaw })) {
+      const token = normalizeSheetToken(candidate.sheet_number);
       if (!token) continue;
-      if (/^(ROOM|RM|UNIT|SUITE)[-_.]?\d/.test(token)) continue;
       const key = `${nameRaw.toLowerCase()}::${token}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -3449,6 +3529,17 @@ function extractAttachmentFilenameSheetHints(req: ChatRequest): Array<{ file: st
   }
 
   return out.slice(0, 8);
+}
+
+function explicitUserSheetHint(req: ChatRequest): string | null {
+  const candidates = extractSheetCandidatesFromText({
+    text: getRecentUserTextForRedline(req),
+    maxCandidates: 8
+  });
+  const contextual = candidates.find(candidate =>
+    /\b(sheet|source|drawing|dwg|plan|crop)\b/i.test(candidate.evidence ?? "")
+  );
+  return normalizeExpectedSheet(contextual?.sheet_number ?? null);
 }
 
 function isRedlineAttachmentPath(p: string): boolean {
@@ -3570,6 +3661,7 @@ function pickRedlineAttachmentSeed(req: ChatRequest): { file_path: string; expec
   const atts = Array.isArray(req.user_attachments) ? req.user_attachments : [];
   if (atts.length === 0) return null;
   const hints = extractAttachmentFilenameSheetHints(req);
+  const expectedFromUser = explicitUserSheetHint(req);
   const hintByFile = new Map<string, string>();
   for (const h of hints) {
     const k = (h.file ?? "").trim().toLowerCase();
@@ -3582,7 +3674,7 @@ function pickRedlineAttachmentSeed(req: ChatRequest): { file_path: string; expec
     const filename =
       (typeof a.filename === "string" && a.filename.trim()) ||
       path.basename(rel);
-    const expectedFromName = hintByFile.get(filename.toLowerCase()) ?? hints[0]?.sheet;
+    const expectedFromName = expectedFromUser ?? hintByFile.get(filename.toLowerCase()) ?? hints[0]?.sheet;
     const seed = {
       file_path: rel,
       ...(expectedFromName ? { expected_sheet: expectedFromName } : {})
@@ -3591,6 +3683,12 @@ function pickRedlineAttachmentSeed(req: ChatRequest): { file_path: string; expec
     return seed;
   }
   return null;
+}
+
+export function __testOnlyPickRedlineAttachmentSeed(
+  req: ChatRequest
+): { file_path: string; expected_sheet?: string } | null {
+  return pickRedlineAttachmentSeed(req);
 }
 
 function pickRedlineSeed(req: ChatRequest, opts?: { allowSessionFallback?: boolean }): { file_path: string; expected_sheet?: string } | null {
@@ -3799,8 +3897,8 @@ function isExplicitExistingConditionsRegistrationOnlyRequest(req: ChatRequest): 
   const registrationIntent = /\b(register|registration|align|alignment)\b/.test(text);
   const explicitStop =
     /\bstop\s+before\s+(?:source-local\s+)?compilation\b/.test(text) ||
-    /\bregistration\s+receipt\b/.test(text) ||
-    /\bdo\s+not\b[^.!?\n]{0,120}\b(?:model\s+write|write|compile|compilation)\b/.test(text);
+    /\b(?:source\s+observation\s+and\s+)?registration\s+only\b/.test(text) ||
+    /\bdo\s+not\b[^.!?\n]{0,120}\b(?:compile|compilation)\b/.test(text);
   return registrationIntent && explicitStop;
 }
 
@@ -4538,8 +4636,21 @@ function candidateVisibleReadyToCompile(req: ChatRequest): boolean {
   if (activeCandidateVisibleGuardFailure(req.session_id)) return false;
   if (persistedRegisteredMepWorkflow(req.session_id)) return false;
   const seed = getRedlineSessionSeed(req.session_id);
-  if (!seed?.file_path || !hasRedlineAnalyzeSuccess(req.session_id, seed.file_path)) return false;
   const alignment = getPersistedRedlineViewAlignment(req.session_id);
+  const readyMarker = getRedlineVisionState(req.session_id).candidate_visible_ready_to_compile;
+  if (
+    readyMarker &&
+    seed?.file_path &&
+    resolvedWorkspacePathKey(readyMarker.source_path) === resolvedWorkspacePathKey(seed.file_path) &&
+    alignment?.matched &&
+    alignment.confidence >= 0.35 &&
+    !!alignment.crop &&
+    readyMarker.frame_id === alignment.frame_id &&
+    readyMarker.view_id === alignment.view_id
+  ) {
+    return true;
+  }
+  if (!seed?.file_path || !hasRedlineAnalyzeSuccess(req.session_id, seed.file_path)) return false;
   if (
     !alignment ||
     !alignment.matched ||
@@ -4599,8 +4710,7 @@ function candidateVisibleReadyToCompile(req: ChatRequest): boolean {
   }) !== null;
 }
 
-function buildCandidateVisibleReadyToCompilePrompt(req: ChatRequest): string | null {
-  if (!candidateVisibleReadyToCompile(req)) return null;
+function candidateVisibleReadyToCompilePromptText(): string {
   return [
     "REGISTERED EXISTING-CONDITIONS EVIDENCE GATE: READY TO COMPILE",
     "- Source analysis, verified source-to-view alignment, its exact current frame, and a matching visible-element inventory are complete. When a room was explicitly requested, its authoritative linked-room scope is also present. Otherwise the server has verified a hash-bound, spatially separated durable-landmark receipt and will enforce the aligned crop as the native containment boundary.",
@@ -4613,6 +4723,40 @@ function buildCandidateVisibleReadyToCompilePrompt(req: ChatRequest): string | n
     "- That source-observed trace is evidence only, never permission to widen the verified native room. A compile may use a fully source-contained, disjoint crop trace as a local room-coordinate basis, after which strict verified native-room clipping still applies. If the crop does not visibly establish a room-local enclosure, defer the affected observations instead of guessing.",
     "- For a plumbing_fixture with placement.mode=\"provisional_plan_symbol\", include representation_classification.source_graphic=\"mep_connection_symbol\" and native_target=\"plan_only_marker\" only when the source visibly supports that classification. Otherwise defer the observation; never submit a generic source_symbol_present claim as a substitute."
   ].join("\n");
+}
+
+function buildCandidateVisibleReadyToCompilePrompt(req: ChatRequest): string | null {
+  if (!candidateVisibleReadyToCompile(req)) return null;
+  return candidateVisibleReadyToCompilePromptText();
+}
+
+function buildCandidateVisibleCompileGateCorrection(
+  req: ChatRequest,
+  actions: WorkbenchAction[]
+): string | null {
+  const serverCompileGate =
+    typeof (req.context as any)?.__server?.candidate_visible_compile_gate === "string"
+      ? String((req.context as any).__server.candidate_visible_compile_gate).trim()
+      : "";
+  const readyPrompt = buildCandidateVisibleReadyToCompilePrompt(req) || serverCompileGate;
+  if (!readyPrompt) return null;
+  if (actions.some((action) => action.type === "compile_registered_mep_reconstruction")) {
+    return null;
+  }
+  return [
+    readyPrompt,
+    "PLANNER CORRECTION: the prior decision ignored the accepted registration gate.",
+    "- Do not emit any native Revit action, discovery call, web request, dev action, or prose-only completion.",
+    "- Return exactly one compile_registered_mep_reconstruction workbench action now."
+  ].join("\n");
+}
+
+function shouldBypassCandidateVisiblePreModelBridge(req: ChatRequest): boolean {
+  const serverCompileGate =
+    typeof (req.context as any)?.__server?.candidate_visible_compile_gate === "string"
+      ? String((req.context as any).__server.candidate_visible_compile_gate).trim()
+      : "";
+  return candidateVisibleReadyToCompile(req) || !!serverCompileGate;
 }
 
 export function __testOnlyIsExistingConditionsReconstructionRequest(
@@ -4642,6 +4786,19 @@ export function __testOnlyShouldBypassCandidateVisiblePreModelDiscovery(req: Cha
 
 export function __testOnlyBuildCandidateVisibleReadyToCompilePrompt(req: ChatRequest): string | null {
   return buildCandidateVisibleReadyToCompilePrompt(req);
+}
+
+export function __testOnlyBuildCandidateVisibleCompileGateCorrection(
+  req: ChatRequest,
+  actions: WorkbenchAction[]
+): string | null {
+  return buildCandidateVisibleCompileGateCorrection(req, actions);
+}
+
+export function __testOnlyShouldBypassCandidateVisiblePreModelBridge(
+  req: ChatRequest
+): boolean {
+  return shouldBypassCandidateVisiblePreModelBridge(req);
 }
 
 function suppressCandidateVisibleCompileReadyWorkbenchActions(
@@ -17817,6 +17974,14 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
     }
     lines.push("");
   }
+  const candidateVisibleCompileGateBlock =
+    typeof serverCtx?.candidate_visible_compile_gate === "string"
+      ? serverCtx.candidate_visible_compile_gate.trim()
+      : "";
+  if (candidateVisibleCompileGateBlock) {
+    lines.push(candidateVisibleCompileGateBlock);
+    lines.push("");
+  }
   const candidateVisibleRecoveryPrompt = buildCandidateVisibleRecoveryPrompt(req);
   if (candidateVisibleRecoveryPrompt) {
     lines.push(candidateVisibleRecoveryPrompt);
@@ -19192,13 +19357,44 @@ function isExistingConditionsReconstructionRequest(req: ChatRequest | null | und
   return matched || persistedSourcePreflight || state.existing_conditions_reconstruction;
 }
 
-function explicitExistingConditionsViewId(req: ChatRequest | null | undefined): number | null {
+function explicitActiveExistingConditionsViewRequested(
+  req: ChatRequest | null | undefined
+): boolean {
+  return !!req && /\b(?:exact|current|active)\s+(?:model\s+)?(?:plumbing\s+|mechanical\s+|electrical\s+)?view\b/i.test(
+    getRecentUserTextForRedline(req)
+  );
+}
+
+function explicitExistingConditionsViewId(
+  req: ChatRequest | null | undefined,
+  toolResults: ToolResult[] = []
+): number | null {
   if (!req) return null;
-  const match = getRecentUserTextForRedline(req).match(
+  const recentText = getRecentUserTextForRedline(req);
+  const match = recentText.match(
     /\b(?:target|candidate|registered|active|current|exact)?\s*(?:model\s+)?view(?:\s+(?:id|element\s+id))?\s*(?:is|=|:)?\s*#?(\d+)\b/i
   );
   const viewId = match ? toFiniteInt(match[1]) : null;
-  return viewId && viewId > 0 ? viewId : null;
+  if (viewId && viewId > 0) return viewId;
+  if (explicitActiveExistingConditionsViewRequested(req)) {
+    const activeViewId = extractActiveViewSummaryFromContext(req.context).id;
+    if (activeViewId && activeViewId > 0) return activeViewId;
+    for (let index = toolResults.length - 1; index >= 0; index--) {
+      const result = toolResults[index];
+      if (result?.status !== "done" || String(result.path ?? "").trim().toLowerCase() !== "/revit/context") continue;
+      const root = result.result_json && typeof result.result_json === "object"
+        ? result.result_json as Record<string, unknown>
+        : null;
+      if (!root) continue;
+      const toolActiveViewId = extractActiveViewSummaryFromContext({ revit: root }).id;
+      if (toolActiveViewId && toolActiveViewId > 0) return toolActiveViewId;
+    }
+  }
+  return null;
+}
+
+export function __testOnlyExplicitExistingConditionsViewId(req: ChatRequest): number | null {
+  return explicitExistingConditionsViewId(req);
 }
 
 function existingConditionsPlacedViewAnchor(
@@ -19210,7 +19406,7 @@ function existingConditionsPlacedViewAnchor(
   const filenameSheet = extractAttachmentFilenameSheetHints(req)[0]?.sheet?.trim().toUpperCase() ?? "";
   const requestedSheet = seedSheet || filenameSheet;
   const state = getRedlineVisionState(req.session_id);
-  const explicitViewId = explicitExistingConditionsViewId(req);
+  const explicitViewId = explicitExistingConditionsViewId(req, toolResults);
   if (explicitViewId && explicitViewId > 0) {
     const activeView = extractActiveViewSummaryFromContext(req.context);
     let verified = activeView.id === explicitViewId;
@@ -19259,6 +19455,18 @@ function existingConditionsPlacedViewAnchor(
     state.last_existing_conditions_placed_view = exact;
     state.updated_at_ms = Date.now();
     return exact;
+  }
+  const persistedExplicitView =
+    state.last_existing_conditions_placed_view?.sheet_number === "EXPLICIT_VIEW"
+      ? state.last_existing_conditions_placed_view
+      : null;
+  if (persistedExplicitView) {
+    // The user's exact active/target-view anchor is a session safety invariant,
+    // not a one-turn hint. Internal continuation prompts are not guaranteed to
+    // leave user_text empty, so preserve the verified view until the source or
+    // session changes instead of reinterpreting a source-sheet mention as the
+    // target partway through registration.
+    return persistedExplicitView;
   }
   let latestPlacedView: { sheet_number: string; view_id: number; view_name: string | null } | null = null;
 
@@ -19316,7 +19524,13 @@ function existingConditionsPlacedViewAnchor(
 }
 
 function existingConditionsExpectedSheet(req: ChatRequest): string | null {
-  if (explicitExistingConditionsViewId(req)) return null;
+  if (explicitExistingConditionsViewId(req) || explicitActiveExistingConditionsViewRequested(req)) return null;
+  if (
+    getRedlineVisionState(req.session_id).last_existing_conditions_placed_view?.sheet_number ===
+    "EXPLICIT_VIEW"
+  ) {
+    return null;
+  }
   const seedSheet = (getRedlineSessionSeed(req.session_id)?.expected_sheet ?? "").trim();
   const filenameSheet = extractAttachmentFilenameSheetHints(req)[0]?.sheet?.trim() ?? "";
   return normalizeExpectedSheet(seedSheet || filenameSheet || null);
@@ -19350,7 +19564,72 @@ function existingConditionsExpectedSheetHasAmbiguousPlacedViews(
 function candidateVisibleRequestedRoomNumber(req: ChatRequest): string | null {
   // Source OCR, labels, and vision hints may identify a room, but they do not
   // authorize a hard native-room scope. Only explicit user wording does.
-  return extractSpatialRoomNumber(getRecentUserTextForRedline(req));
+  const state = getRedlineVisionState(req.session_id);
+  const currentUserText = String(req.user_text ?? "").trim();
+  const explicitRoomNumber = extractSpatialRoomNumber(
+    currentUserText || getRecentUserTextForRedline(req)
+  );
+  if (explicitRoomNumber) {
+    state.candidate_visible_requested_room_number = explicitRoomNumber;
+    state.updated_at_ms = Date.now();
+    return explicitRoomNumber;
+  }
+  const persistedRoomNumber =
+    state.candidate_visible_requested_room_number ??
+    persistedExistingConditionsRequestedRoomNumber(req.session_id);
+  if (persistedRoomNumber) {
+    // The explicit room is source/session scope, not a one-turn hint. Internal
+    // continuation prompts can be nonempty while omitting the room number, so
+    // retain the user's room until a different room is explicitly requested or
+    // the source changes.
+    state.candidate_visible_requested_room_number = persistedRoomNumber;
+    state.updated_at_ms = Date.now();
+    return persistedRoomNumber;
+  }
+  return null;
+}
+
+function persistedExistingConditionsRequestedRoomNumber(
+  sessionId: string
+): string | null {
+  if (!sessionId) return null;
+  try {
+    const requestLogPath = path.join(
+      ensureWorkspaceLayout().runsSessions,
+      safeRunBundleSessionDirName(sessionId),
+      "request_log.jsonl"
+    );
+    if (!fs.existsSync(requestLogPath)) return null;
+    const size = fs.statSync(requestLogPath).size;
+    const maximumBytes = 512 * 1024;
+    const start = Math.max(0, size - maximumBytes);
+    const handle = fs.openSync(requestLogPath, "r");
+    try {
+      const buffer = Buffer.alloc(size - start);
+      fs.readSync(handle, buffer, 0, buffer.length, start);
+      const lines = buffer.toString("utf8").split(/\r?\n/);
+      if (start > 0) lines.shift();
+      for (let index = lines.length - 1; index >= 0; index -= 1) {
+        const line = lines[index]?.trim();
+        if (!line) continue;
+        try {
+          const row = JSON.parse(line) as Record<string, unknown>;
+          const text = typeof row.user_text === "string" ? row.user_text : "";
+          if (!textLooksLikeExistingConditionsReconstruction(text)) continue;
+          const roomNumber = extractSpatialRoomNumber(text);
+          if (roomNumber) return roomNumber;
+        } catch {
+          // Ignore malformed historical rows and keep searching older turns.
+        }
+      }
+    } finally {
+      fs.closeSync(handle);
+    }
+  } catch {
+    // Request-log recovery is a bounded fallback; in-memory state remains the
+    // normal path.
+  }
+  return null;
 }
 
 function buildCandidateVisibleRoomScopeResponse(
@@ -20087,9 +20366,43 @@ function buildCandidateVisibleDeterministicPreparationResponse(
   if (!isExistingConditionsReconstructionRequest(req) || candidateVisibleGuardForRequest(req)) return null;
   const seed = getRedlineSessionSeed(req.session_id);
   if (!seed?.file_path || !hasRedlineAnalyzeSuccess(req.session_id, seed.file_path)) return null;
+  const requestedRoomNumber = candidateVisibleRequestedRoomNumber(req);
+  if (consumeCandidateVisibleFocusedRoomTagCompletion({
+    session_id: req.session_id,
+    source_path: seed.file_path,
+    room_number: requestedRoomNumber,
+    compile_on_completion: !isExplicitExistingConditionsRegistrationOnlyRequest(req),
+    tool_results: toolResults
+  })) {
+    return null;
+  }
 
   const roomScope = buildCandidateVisibleRoomScopeResponse(req, toolResults);
   if (roomScope) return roomScope;
+
+  if (
+    explicitActiveExistingConditionsViewRequested(req) &&
+    !explicitExistingConditionsViewId(req, toolResults)
+  ) {
+    if (countToolPath(toolResults, "/revit/context") < 2) {
+      return {
+        version: OPERATOR_BACKEND_CONTRACT_VERSION,
+        assistant_message:
+          "I’ll resolve the exact active Revit view before source-to-model registration.",
+        actions: [{
+          action_id: randomUUID(),
+          method: "GET",
+          path: "/revit/context"
+        }]
+      };
+    }
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message:
+        "The exact active-view request could not be resolved from current Revit context. I stopped before sheet fallback, registration, or drafting.",
+      actions: []
+    };
+  }
 
   const expectedSheet = existingConditionsExpectedSheet(req);
   const placedView = existingConditionsPlacedViewAnchor(req, toolResults);
@@ -20190,7 +20503,6 @@ function buildCandidateVisibleDeterministicPreparationResponse(
     return null;
   }
 
-  const requestedRoomNumber = candidateVisibleRequestedRoomNumber(req);
   let verifiedRoomScope: CandidateVisibleMepReconstructionInput["verified_room_scope"] | null = null;
   try {
     verifiedRoomScope = requestedRoomNumber
@@ -20271,16 +20583,28 @@ function buildCandidateVisibleDeterministicPreparationResponse(
     !visibleRoomLabel &&
     focusedRoomTagInventoryAttemptCount < 1
   ) {
+    const focusedRoomTagActionId = candidateVisibleFocusedRoomTagActionId({
+      room_scope: verifiedRoomScope,
+      frame
+    });
+    const state = getRedlineVisionState(req.session_id);
+    state.candidate_visible_pending_focused_room_tag = {
+      source_path: seed.file_path,
+      frame_id: frame.frame_id,
+      view_id: frame.view_id,
+      room_number: verifiedRoomScope.room_number,
+      action_id: focusedRoomTagActionId,
+      compile_on_completion: !isExplicitExistingConditionsRegistrationOnlyRequest(req),
+      updated_at_ms: Date.now()
+    };
+    state.updated_at_ms = Date.now();
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
       assistant_message:
         `The broad inventory is complete, but its bounded sample did not prove the exact room ${verifiedRoomScope.room_number} label anchor. ` +
         "I’ll run one focused room-tag inventory before source-local compilation.",
       actions: [{
-        action_id: candidateVisibleFocusedRoomTagActionId({
-          room_scope: verifiedRoomScope,
-          frame
-        }),
+        action_id: focusedRoomTagActionId,
         method: "POST",
         path: "/revit/export-visible-elements",
         body: {
@@ -20360,12 +20684,19 @@ function buildCandidateVisibleDeterministicPreparationResponse(
   if (
     hasInventory &&
     verifiedRoomScope &&
-    focusedRoomTagInventoryAttemptCount >= 1 &&
-    !visibleRoomLabel
+    (visibleRoomLabel || focusedRoomTagInventoryAttemptCount >= 1)
   ) {
     // Room tags are optional evidence. Continue through the verified frame and
     // visible stable geometry; the compiler still enforces alignment, native
     // room containment, source-raster support, and bounded clipping.
+    const state = getRedlineVisionState(req.session_id);
+    state.candidate_visible_ready_to_compile = {
+      source_path: seed.file_path,
+      frame_id: frame.frame_id,
+      view_id: frame.view_id,
+      updated_at_ms: Date.now()
+    };
+    state.updated_at_ms = Date.now();
     return null;
   }
   if (hasInventory && !verifiedRoomScope && alignment.provider !== "gemini") {
@@ -21437,9 +21768,18 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
       preModelToolResults
     );
     if (deterministicPreparation) return finishResponse(deterministicPreparation);
+    if (getRedlineVisionState(currentReq.session_id).candidate_visible_ready_to_compile) {
+      currentReq = withPlacementWorkItem({
+        ...currentReq,
+        context: withServerContext(currentReq.context, {
+          candidate_visible_compile_gate: candidateVisibleReadyToCompilePromptText()
+        })
+      });
+    }
   }
   if (
     !candidateGuardBeforePreModel &&
+    !shouldBypassCandidateVisiblePreModelBridge(currentReq) &&
     preModelToolResults.length > 0 &&
     (!!getRedlineSessionSeed(currentReq.session_id) || hasRedlineAttachment(currentReq))
   ) {
@@ -21471,6 +21811,25 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     lastDecision = d;
 
     let wbActions = normalizeWorkbenchActions(d.workbench_actions);
+    const candidateVisibleCompileGateCorrection =
+      buildCandidateVisibleCompileGateCorrection(currentReq, wbActions);
+    if (candidateVisibleCompileGateCorrection) {
+      if (round < maxContinuationRounds) {
+        currentReq = withPlacementWorkItem({
+          ...currentReq,
+          context: withServerContext(currentReq.context, {
+            candidate_visible_compile_gate: candidateVisibleCompileGateCorrection
+          })
+        });
+        continue;
+      }
+      return finishResponse({
+        version: OPERATOR_BACKEND_CONTRACT_VERSION,
+        assistant_message:
+          "The source and exact Revit view are registered and ready for read-only compilation, but the planner failed to return the required compile_registered_mep_reconstruction action after a bounded correction. I stopped before dispatching any redundant discovery or model write.",
+        actions: []
+      });
+    }
     const proposedWorkbenchTypes = wbActions.map((action) => action.type);
     const recentToolResults = getAugmentedToolResults(currentReq, 80);
     const autoBootstrap = maybeBuildAutoBootstrapAnalyzeAction(currentReq, d, round, wbActions);

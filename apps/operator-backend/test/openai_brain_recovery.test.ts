@@ -11,6 +11,7 @@ import {
   __testOnlyCandidateVisibleRoomLabelFromToolResults,
   __testOnlyBuildCandidateVisibleRecoveryPrompt,
   __testOnlyBuildCandidateVisibleRoomScopeResponse,
+  __testOnlyBuildCandidateVisibleCompileGateCorrection,
   __testOnlyBuildCandidateVisibleReadyToCompilePrompt,
   __testOnlyBuildCandidateVisibleTerminalGuardAfterWorkbench,
   __testOnlyBuildCandidateVisibleTerminalGuardResponse,
@@ -21,14 +22,17 @@ import {
   __testOnlyIsExistingConditionsReconstructionRequest,
   __testOnlyExtractFirstJsonObject,
   __testOnlyExtractResponsesApiOutputText,
+  __testOnlyExplicitExistingConditionsViewId,
   __testOnlyNormalizeNativeRevitActionBodiesForRouting,
   __testOnlyNoteAutomaticRedlineAnalyzeSuccessForRecoveryTest,
   __testOnlyNoteRedlineSeedForRecoveryTest,
+  __testOnlyPickRedlineAttachmentSeed,
   __testOnlyRehydrateRedlineVisionProgressFromRunBundle,
   __testOnlyRecordCandidateVisibleCompileResults,
   __testOnlyRecordRedlineWorkbenchEvidenceAttempts,
   __testOnlySeedRedlineViewAlignment,
   __testOnlySetCandidateVisibleCompileContext,
+  __testOnlyShouldBypassCandidateVisiblePreModelBridge,
   __testOnlyShouldBypassCandidateVisiblePreModelDiscovery,
   __testOnlyShouldUseOpenAiGeometryFallbackAfterGemini,
   __testOnlyStartFreshCandidateVisibleSourceForRecoveryTest,
@@ -415,6 +419,22 @@ test("clean source-PDF drafting wording enters existing-conditions reconstructio
       userText
     );
   }
+});
+
+test("explicit source sheet text outranks opaque upload filename tokens", () => {
+  const seed = __testOnlyPickRedlineAttachmentSeed(mkReq({
+    session_id: "session-uuid-sheet-hint",
+    user_text:
+      "Analyze the attached M1.01 source crop as existing plumbing in the exact active view without writing.",
+    user_attachments: [{
+      id: "uuid-upload",
+      relative_path:
+        "artifacts/uploads/20260722111311_codex-clipboard-896bb65c-b1ea-4039-a069-3d6925111aea.png",
+      filename: "codex-clipboard-896bb65c-b1ea-4039-a069-3d6925111aea.png",
+      mime: "image/png"
+    }]
+  }));
+  assert.equal(seed?.expected_sheet, "M1.01");
 });
 
 test("capability recovery falls back to tool discovery and native api search", () => {
@@ -1557,6 +1577,7 @@ test("candidate-visible evidence gate suppresses discovery after the source is r
     /representation_classification\.source_graphic="mep_connection_symbol"/
   );
   assert.match(prompt ?? "", /never submit a generic source_symbol_present claim/i);
+  assert.equal(__testOnlyShouldBypassCandidateVisiblePreModelBridge(req), true);
 
   const suppression = __testOnlySuppressCandidateVisibleCompileReadyWorkbenchActions(
     req,
@@ -1579,6 +1600,50 @@ test("candidate-visible evidence gate suppresses discovery after the source is r
   assert.deepEqual(
     suppression.actions.map((action) => action.type),
     ["compile_registered_mep_reconstruction"]
+  );
+  const correction = __testOnlyBuildCandidateVisibleCompileGateCorrection(
+    req,
+    [{ type: "gemini_redline_analyze", file_path: sourcePath }] as any
+  );
+  assert.match(correction ?? "", /prior decision ignored the accepted registration gate/i);
+  assert.match(correction ?? "", /exactly one compile_registered_mep_reconstruction/);
+  assert.equal(
+    __testOnlyBuildCandidateVisibleCompileGateCorrection(
+      req,
+      [{ type: "compile_registered_mep_reconstruction", package_json: "{}" }] as any
+    ),
+    null
+  );
+  assert.match(
+    __testOnlyBuildCandidateVisibleCompileGateCorrection(
+      mkReq({
+        session_id: "session-context-only-compile-gate",
+        user_text: "Continue the existing-conditions compilation.",
+        context: {
+          __server: {
+            candidate_visible_compile_gate:
+              "REGISTERED EXISTING-CONDITIONS EVIDENCE GATE: READY TO COMPILE"
+          }
+        } as any
+      }),
+      []
+    ) ?? "",
+    /prior decision ignored the accepted registration gate/i
+  );
+  assert.equal(
+    __testOnlyShouldBypassCandidateVisiblePreModelBridge(
+      mkReq({
+        session_id: "session-context-only-pre-model-bridge-gate",
+        user_text: "Continue the existing-conditions compilation.",
+        context: {
+          __server: {
+            candidate_visible_compile_gate:
+              "REGISTERED EXISTING-CONDITIONS EVIDENCE GATE: READY TO COMPILE"
+          }
+        } as any
+      })
+    ),
+    true
   );
 });
 
@@ -1855,6 +1920,25 @@ test("candidate-visible deterministic preparation owns room, exact sheet, frame,
       }]
     }
   };
+  assert.equal(
+    __testOnlyBuildCandidateVisibleRoomScopeResponse(
+      { ...req, user_text: "" },
+      [roomResult]
+    ),
+    null,
+    "the explicitly requested room must survive an empty internal continuation turn"
+  );
+  assert.equal(
+    __testOnlyBuildCandidateVisibleRoomScopeResponse(
+      {
+        ...req,
+        user_text: "Continue the accepted registration and compile the provisional backbone."
+      },
+      [roomResult]
+    ),
+    null,
+    "the explicitly requested room must survive a nonempty internal continuation prompt"
+  );
   const sheet = __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(req, [roomResult]);
   assert.equal(sheet?.actions[0]?.path, "/revit/sheets");
   assert.equal((sheet?.actions[0]?.body as any)?.sheetNumber, "P1.01");
@@ -2094,6 +2178,27 @@ test("candidate-visible deterministic preparation owns room, exact sheet, frame,
     focusedRoomTagInventory?.actions[0]?.action_id,
     "candidate-visible-focused-room-tags:frame-register:100"
   );
+  // Continuation requests replay the same analyze_redline workbench result.
+  // That replay must not clear the pending focused-action receipt.
+  __testOnlyStartFreshCandidateVisibleSourceForRecoveryTest(sessionId, sourcePath);
+  const compactedFocusedCompletion =
+    __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(
+      {
+        ...req,
+        user_text: "Continue the exact registered Room 100 compilation stage."
+      },
+      [{
+        action_id: "candidate-visible-focused-room-tags:frame-register:100",
+        path: "/revit/export-visible-elements",
+        status: "failed",
+        result_json: { ok: false }
+      }] as any
+    );
+  assert.equal(compactedFocusedCompletion, null);
+  assert.match(
+    __testOnlyBuildCandidateVisibleReadyToCompilePrompt(req) ?? "",
+    /READY TO COMPILE/
+  );
   const unrelatedFocusedAttempts: any[] = [
     {
       action_id: "unrelated-focused-1",
@@ -2148,6 +2253,10 @@ test("candidate-visible deterministic preparation owns room, exact sheet, frame,
       ] as any
     );
   assert.equal(exhaustedFocusedAttempts, null);
+  assert.match(
+    __testOnlyBuildCandidateVisibleReadyToCompilePrompt(req) ?? "",
+    /READY TO COMPILE/
+  );
 
   const registrationOnlyReceipt =
     __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(
@@ -2179,6 +2288,26 @@ test("candidate-visible deterministic preparation owns room, exact sheet, frame,
     /Source observation compilation was explicitly excluded/
   );
 
+  const readOnlyCompilationRequest =
+    __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(
+      {
+        ...req,
+        user_text:
+          "Register the source, compile only source-supported plumbing observations, and produce the provisional backbone plus one-action repair queue. Do not write, dry-run, or apply any model change yet. Stop after the compilation plan receipt."
+      },
+      [
+        roomResult,
+        sheetResult,
+        frameResult,
+        inventoryResult,
+        failedFocusedAttempt
+      ] as any
+    );
+  assert.doesNotMatch(
+    readOnlyCompilationRequest?.assistant_message ?? "",
+    /accepted_read_only_registration|Source observation compilation was explicitly excluded/
+  );
+
   const roomTagResult: any = {
     action_id: "candidate-visible-focused-room-tags:frame-register:100",
     path: "/revit/export-visible-elements",
@@ -2208,6 +2337,10 @@ test("candidate-visible deterministic preparation owns room, exact sheet, frame,
       [roomResult, sheetResult, frameResult, inventoryResult, roomTagResult]
     ),
     null
+  );
+  assert.match(
+    __testOnlyBuildCandidateVisibleReadyToCompilePrompt(req) ?? "",
+    /READY TO COMPILE/
   );
 });
 
@@ -2259,6 +2392,124 @@ test("candidate-visible preparation verifies an explicit target view before file
   assert.equal(unverified?.actions[0]?.path, "/revit/export-view-frame");
   assert.equal((unverified?.actions[0]?.body as any)?.viewId, 12345678);
   assert.doesNotMatch(unverified?.assistant_message ?? "", /source sheet a069/i);
+});
+
+test("candidate-visible preparation treats an explicitly requested active view as the target anchor", () => {
+  const sessionId = "session-candidate-visible-active-view";
+  const sourcePath = "artifacts/uploads/active-room-crop.png";
+  const req = mkReq({
+    session_id: sessionId,
+    user_text:
+      "Register the attached M1.01 source crop to the exact active view and do not write.",
+    user_attachments: [{
+      id: "active-crop-source",
+      relative_path: sourcePath,
+      filename: "codex-clipboard-896bb65c-b1ea-4039-a069-3d6925111aea.png",
+      mime: "image/png"
+    }],
+    context: {
+      revit: {
+        document: {
+          activeView: {
+            id: 424242,
+            name: "LEVEL 01 - BUILDING 200 - NEW WORK - PLUMBING Copy 2",
+            type: "FloorPlan"
+          }
+        }
+      }
+    } as any
+  });
+  assert.equal(__testOnlyExplicitExistingConditionsViewId(req), 424242);
+});
+
+test("candidate-visible preparation resolves an unreported active view through Revit context", () => {
+  const sessionId = "session-candidate-visible-active-context";
+  const sourcePath = "artifacts/uploads/active-context-crop.png";
+  const req = mkReq({
+    session_id: sessionId,
+    user_text:
+      "Register the attached M1.01 existing-conditions source crop to the exact active plumbing view and do not write.",
+    user_attachments: [{
+      id: "active-context-source",
+      relative_path: sourcePath,
+      filename: "active-context-crop.png",
+      mime: "image/png"
+    }]
+  });
+  __testOnlyNoteAutomaticRedlineAnalyzeSuccessForRecoveryTest(sessionId, sourcePath);
+
+  const resolve = __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(req, []);
+  assert.equal(resolve?.actions[0]?.path, "/revit/context");
+
+  const frame = __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(req, [{
+    action_id: "active-context",
+    method: "GET",
+    path: "/revit/context",
+    status: "done",
+    result_json: {
+      document: {
+        activeView: {
+          id: 424242,
+          name: "LEVEL 01 - BUILDING 200 - NEW WORK - PLUMBING Copy 2",
+          type: "FloorPlan"
+        }
+      }
+    }
+  } as any]);
+  assert.equal(frame?.actions[0]?.path, "/revit/export-view-frame");
+  assert.equal((frame?.actions[0]?.body as any)?.viewId, 424242);
+});
+
+test("candidate-visible preparation preserves an explicit active-view anchor across tool-result continuation turns", () => {
+  const sessionId = "session-candidate-visible-active-continuation";
+  const sourcePath = "artifacts/uploads/active-continuation-crop.png";
+  const req = mkReq({
+    session_id: sessionId,
+    user_text:
+      "Register the attached M1.01 existing-conditions source crop to the exact active plumbing view and do not write.",
+    user_attachments: [{
+      id: "active-continuation-source",
+      relative_path: sourcePath,
+      filename: "active-continuation-crop.png",
+      mime: "image/png"
+    }],
+    context: {
+      revit: {
+        document: {
+          activeView: {
+            id: 424242,
+            name: "LEVEL 01 - BUILDING 200 - NEW WORK - PLUMBING Copy 2",
+            type: "FloorPlan"
+          }
+        }
+      }
+    } as any
+  });
+  __testOnlyNoteAutomaticRedlineAnalyzeSuccessForRecoveryTest(sessionId, sourcePath);
+
+  const initial = __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(req, []);
+  assert.equal(initial?.actions[0]?.path, "/revit/export-view-frame");
+  assert.equal((initial?.actions[0]?.body as any)?.viewId, 424242);
+
+  const continuation = __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(
+    { ...req, user_text: "", context: undefined },
+    []
+  );
+  assert.equal(continuation?.actions[0]?.path, "/revit/export-view-frame");
+  assert.equal((continuation?.actions[0]?.body as any)?.viewId, 424242);
+  assert.doesNotMatch(continuation?.assistant_message ?? "", /source sheet p2\.10/i);
+
+  const promptedContinuation = __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(
+    {
+      ...req,
+      user_text: "Continue the registered M1.01 compilation in the exact target frame.",
+      context: undefined
+    },
+    []
+  );
+  assert.equal(promptedContinuation?.actions[0]?.path, "/revit/export-view-frame");
+  assert.equal((promptedContinuation?.actions[0]?.body as any)?.viewId, 424242);
+  assert.doesNotMatch(promptedContinuation?.assistant_message ?? "", /source sheet p2\.10/i);
 });
 
 test("candidate-visible stable native controls require a real exterior wall identity", () => {

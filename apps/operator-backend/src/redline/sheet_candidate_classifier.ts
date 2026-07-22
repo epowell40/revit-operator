@@ -105,7 +105,12 @@ export function extractSheetCandidatesFromFilename(args: {
   maxCandidates?: number;
 }): RedlineSheetCandidate[] {
   const base = path.basename(args.filePath ?? "");
-  const stem = base.replace(/\.[^.]+$/, "");
+  const stem = base
+    .replace(/\.[^.]+$/, "")
+    // Upload names commonly preserve a UUID. A UUID group such as `a069`
+    // looks like a plausible architectural sheet token but is opaque identity,
+    // not user-authored sheet evidence.
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, " ");
   if (!stem.trim()) return [];
 
   const expected = normalizeSheetNumber(args.expectedSheet ?? "");
