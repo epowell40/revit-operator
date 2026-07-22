@@ -65,6 +65,7 @@ function textDeclaresExistingConditionsReconstruction(userText: string): boolean
   return [
     /\bexisting[-\s]+conditions?\s+reconstruction\b/,
     /\b(?:reconstruct|recreate|restore|redraft|re-draft|redraw|re-draw|draft|draw|model)\b.{0,100}\bexisting[-\s]+conditions?\b/,
+    /^(?=[\s\S]*\b(?:register|registration|align|alignment)\b)(?=[\s\S]*\bexisting[-\s]+conditions?\b)(?=[\s\S]*\b(?:attached|attachment|pdf|drawing|plan|sheet|source|scan|image)\b)/,
     /\bexisting[-\s]+conditions?\b.{0,100}\b(?:from|using|based\s+on)\b.{0,60}\b(?:pdf|drawing|sheet|scan|image)\b/,
     /\bunmarked\s+(?:source\s+)?(?:pdf|drawing|sheet)\b/,
     /\bnot\s+(?:a\s+)?redline\b/
@@ -371,11 +372,7 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
 
   if (isDirectBrainRouteRequest(req)) {
     const route = resolveOperatorBrainRoute();
-    if (
-      __testOnlyIsExistingConditionsReconstructionRequest(req) &&
-      route !== "openai" &&
-      route !== "rule"
-    ) {
+    if (__testOnlyIsExistingConditionsReconstructionRequest(req)) {
       const routedReq = await (
         dependencies.existingConditionsSourcePreflight ??
         prepareExistingConditionsSourcePreflight
@@ -469,11 +466,7 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dep
 
   if (isDirectBrainRouteRequest(req)) {
     const route = resolveOperatorBrainRoute();
-    if (
-      __testOnlyIsExistingConditionsReconstructionRequest(req) &&
-      route !== "openai" &&
-      route !== "rule"
-    ) {
+    if (__testOnlyIsExistingConditionsReconstructionRequest(req)) {
       const routedReq = await (
         dependencies.existingConditionsSourcePreflight ??
         prepareExistingConditionsSourcePreflight

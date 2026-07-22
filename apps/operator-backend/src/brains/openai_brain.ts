@@ -976,6 +976,7 @@ type RedlineVisionProgressState = {
     model: string | null;
     attempted_models: string[];
     fallback_reason: string | null;
+    deterministic_raster_registration?: ViewAlignmentResult["deterministic_raster_registration"];
     updated_at_ms: number;
   } | null;
   last_registered_mep_workflow: {
@@ -1337,6 +1338,8 @@ function noteRedlineViewAlignmentResult(
     model: alignment.model ?? null,
     attempted_models: alignment.attempted_models ?? [],
     fallback_reason: alignment.fallback_reason ?? null,
+    deterministic_raster_registration:
+      alignment.deterministic_raster_registration,
     updated_at_ms: Date.now()
   };
   st.updated_at_ms = Date.now();
@@ -3769,6 +3772,8 @@ function textLooksLikeExistingConditionsReconstruction(text: string): boolean {
   const normalized = text.toLowerCase();
   const reconstructionVerb =
     /\b(recreate|reconstruct|reconstruction|redraw|draft|drawing|model|trace)\b/.test(normalized);
+  const registrationVerb =
+    /\b(register|registration|align|alignment)\b/.test(normalized);
   const explicitExistingConditions =
     /\b(existing[\s-]*conditions?|as[\s-]*built|record drawing)\b/.test(normalized);
   const sourceArtifact =
@@ -3782,9 +3787,21 @@ function textLooksLikeExistingConditionsReconstruction(text: string): boolean {
     directExistingSystemObject;
   const ordinaryNewElementEdit =
     /\b(?:add|create|draw|place|model)\b(?=[^.!?\n]{0,64}\b(?:a|an|one|new)\b[^.!?\n]{0,48}\b(?:pipe|duct|branch|receptacle|device|fixture|equipment|family|element|outlet|diffuser|grille|valve)\b)/.test(normalized);
-  return reconstructionVerb &&
+  const existingConditionsRegistration =
+    registrationVerb && explicitExistingConditions && sourceArtifact;
+  return (reconstructionVerb || existingConditionsRegistration) &&
     !ordinaryNewElementEdit &&
     (explicitExistingConditions || (sourceArtifact && existingDisciplineContent && wholeSourceOrSystemObject));
+}
+
+function isExplicitExistingConditionsRegistrationOnlyRequest(req: ChatRequest): boolean {
+  const text = getRecentUserTextForRedline(req).toLowerCase();
+  const registrationIntent = /\b(register|registration|align|alignment)\b/.test(text);
+  const explicitStop =
+    /\bstop\s+before\s+(?:source-local\s+)?compilation\b/.test(text) ||
+    /\bregistration\s+receipt\b/.test(text) ||
+    /\bdo\s+not\b[^.!?\n]{0,120}\b(?:model\s+write|write|compile|compilation)\b/.test(text);
+  return registrationIntent && explicitStop;
 }
 
 function persistedRequestLogDeclaresExistingConditionsReconstruction(sessionId: string): boolean {
@@ -16500,6 +16517,8 @@ async function maybeAutoAlignRedlineViewHints(args: {
           model: alignmentModel,
           attempted_models: alignment.attempted_models ?? [],
           fallback_reason: alignment.fallback_reason ?? null,
+          deterministic_raster_registration:
+            alignment.deterministic_raster_registration ?? null,
           registration_controls: (alignment.registration_controls ?? []).map(
             (control) => ({
               kind: control.kind,
@@ -16535,6 +16554,8 @@ async function maybeAutoAlignRedlineViewHints(args: {
         model: alignmentModel,
         attempted_models: alignment.attempted_models ?? [],
         fallback_reason: alignment.fallback_reason ?? null,
+        deterministic_raster_registration:
+          alignment.deterministic_raster_registration ?? null,
         registration_controls: (alignment.registration_controls ?? []).map(
           (control) => ({
             kind: control.kind,
@@ -20272,6 +20293,68 @@ function buildCandidateVisibleDeterministicPreparationResponse(
           limit: 750
         }
       }]
+    };
+  }
+  if (
+    hasInventory &&
+    verifiedRoomScope &&
+    isExplicitExistingConditionsRegistrationOnlyRequest(req) &&
+    (visibleRoomLabel || focusedRoomTagInventoryAttemptCount >= 1)
+  ) {
+    let sourceFileSha256: string | null = null;
+    let registeredImageSha256: string | null = null;
+    try {
+      sourceFileSha256 = sha256LocalFile(resolveExistingFileUnderWorkspace(seed.file_path));
+      registeredImageSha256 = sha256LocalFile(
+        resolveExistingFileUnderWorkspace(alignment.source_image_path)
+      );
+    } catch {
+      // The accepted live frame, room boundary, and inventory remain useful;
+      // missing optional hashes are surfaced in the receipt instead of hidden.
+    }
+    const receipt = {
+      schema: "operator.existing_conditions_registration_receipt.v1",
+      status: "accepted_read_only_registration",
+      source_file_sha256: sourceFileSha256,
+      registered_image_sha256: registeredImageSha256,
+      frame: {
+        frame_id: frame.frame_id,
+        view_id: frame.view_id,
+        width_px: frame.width_px,
+        height_px: frame.height_px
+      },
+      alignment: {
+        matched: alignment.matched,
+        confidence: alignment.confidence,
+        crop: alignment.crop,
+        provider: alignment.provider,
+        model: alignment.model,
+        deterministic_raster_registration:
+          alignment.deterministic_raster_registration ?? null
+      },
+      native_scope: {
+        kind: "verified_linked_room_boundary",
+        room_number: verifiedRoomScope.room_number,
+        source_scoped_id: verifiedRoomScope.source_scoped_id,
+        boundary_point_count: verifiedRoomScope.boundary_model_points.length,
+        stable_boundary_segment_count:
+          verifiedRoomScope.stable_boundary_segments?.length ?? 0,
+        model_bounds: modelBounds,
+        exact_frame_inventory_verified: true,
+        room_tag_anchor: visibleRoomLabel ?? null,
+        room_tag_anchor_optional: true
+      },
+      writes_performed: 0,
+      exact_next_blocker:
+        "Source observation compilation was explicitly excluded from this registration-only run."
+    };
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message:
+        "The read-only source-to-view registration gate completed and no model write was dispatched. " +
+        `Receipt: ${canonicalJsonString(receipt)} ` +
+        `Exact next blocker: ${receipt.exact_next_blocker}`,
+      actions: []
     };
   }
   if (

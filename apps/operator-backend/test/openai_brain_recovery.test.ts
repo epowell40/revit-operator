@@ -2149,6 +2149,36 @@ test("candidate-visible deterministic preparation owns room, exact sheet, frame,
     );
   assert.equal(exhaustedFocusedAttempts, null);
 
+  const registrationOnlyReceipt =
+    __testOnlyBuildCandidateVisibleDeterministicPreparationResponse(
+      {
+        ...req,
+        user_text:
+          "Register the attached room 100 existing-conditions plumbing crop, report the registration receipt, and stop before compilation or any model write."
+      },
+      [
+        roomResult,
+        sheetResult,
+        frameResult,
+        inventoryResult,
+        failedFocusedAttempt
+      ] as any
+    );
+  assert.deepEqual(registrationOnlyReceipt?.actions, []);
+  assert.match(
+    registrationOnlyReceipt?.assistant_message ?? "",
+    /operator\.existing_conditions_registration_receipt\.v1/
+  );
+  assert.match(
+    registrationOnlyReceipt?.assistant_message ?? "",
+    /accepted_read_only_registration/
+  );
+  assert.match(registrationOnlyReceipt?.assistant_message ?? "", /writes_performed\":0/);
+  assert.match(
+    registrationOnlyReceipt?.assistant_message ?? "",
+    /Source observation compilation was explicitly excluded/
+  );
+
   const roomTagResult: any = {
     action_id: "candidate-visible-focused-room-tags:frame-register:100",
     path: "/revit/export-visible-elements",
@@ -2186,7 +2216,7 @@ test("candidate-visible preparation verifies an explicit target view before file
   const sourcePath = "artifacts/uploads/room_crop.png";
   const req = mkReq({
     session_id: sessionId,
-    user_text: "Draft the visible existing conditions from this crop in target view 12345678.",
+    user_text: "Register the attached existing-conditions plumbing crop to exact target model view 12345678, verify native landmarks, and do not write.",
     user_attachments: [{
       id: "crop-source",
       relative_path: sourcePath,

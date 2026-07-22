@@ -2,6 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { createOpenAiClient, resolveOpenAiApiKey } from "../openai_client.js";
 import { ensureWorkspaceLayout, resolveExistingFileUnderWorkspace } from "../workspace.js";
+import {
+  alignRasterCropDeterministically,
+  type DeterministicRasterRegistration
+} from "./deterministic_raster_registration.js";
 
 export type ViewAlignmentMark = {
   normalized_x: number;
@@ -60,6 +64,7 @@ export type ViewAlignmentResult = {
   attempted_models?: string[];
   fallback_reason?: string;
   warning?: string;
+  deterministic_raster_registration?: DeterministicRasterRegistration;
 };
 
 function clamp01(value: number): number {
@@ -485,6 +490,92 @@ function buildViewAlignmentSchema(): Record<string, unknown> {
   };
 }
 
+function isExistingConditionsRasterRegistrationObjective(
+  objective: string | null | undefined
+): boolean {
+  return /\b(?:existing[ -]?conditions?|as[ -]?built|record drawing|reconstruct(?:ion)?)\b/i.test(
+    objective ?? ""
+  );
+}
+
+async function refineExistingConditionsAlignmentWithDeterministicRaster(args: {
+  alignment: ViewAlignmentResult;
+  redline_data_url: string;
+  view_data_url: string;
+  objective?: string | null;
+}): Promise<ViewAlignmentResult> {
+  if (
+    !isExistingConditionsRasterRegistrationObjective(args.objective) ||
+    !args.alignment.ok
+  ) {
+    return args.alignment;
+  }
+  try {
+    const deterministic = await alignRasterCropDeterministically({
+      source_image_data_url: args.redline_data_url,
+      target_image_data_url: args.view_data_url
+    });
+    return applyDeterministicRasterRegistrationToAlignment(
+      args.alignment,
+      deterministic
+    );
+  } catch (error) {
+    return {
+      ...args.alignment,
+      warning: [
+        args.alignment.warning,
+        error instanceof Error
+          ? `Deterministic raster registration failed: ${error.message}`
+          : "Deterministic raster registration failed."
+      ].filter(Boolean).join(" ")
+    };
+  }
+}
+
+export function applyDeterministicRasterRegistrationToAlignment(
+  alignment: ViewAlignmentResult,
+  deterministic: DeterministicRasterRegistration
+): ViewAlignmentResult {
+  if (
+    !deterministic.matched ||
+    !deterministic.crop ||
+    !alignment.matched ||
+    alignment.registration_controls.length < 2
+  ) {
+    return {
+      ...alignment,
+      deterministic_raster_registration: deterministic
+    };
+  }
+  const crop = deterministic.crop;
+    const cropWidth = crop.max_u - crop.min_u;
+    const cropHeight = crop.max_v - crop.min_v;
+  const controls = alignment.registration_controls.map((control) => ({
+      ...control,
+      view_normalized_x: clamp01(
+        crop.min_u + control.source_normalized_x * cropWidth
+      ),
+      view_normalized_y: clamp01(
+        crop.min_v + control.source_normalized_y * cropHeight
+      )
+    }));
+    const deterministicSummary =
+      `Deterministic raster registration accepted an axis-aligned crop ` +
+      `(confidence ${deterministic.confidence.toFixed(3)}, ` +
+      `edge support ${deterministic.source_edge_support_ratio.toFixed(3)}, ` +
+      `density consistency ${deterministic.edge_density_consistency.toFixed(3)}).`;
+  return {
+    ...alignment,
+    confidence: Math.min(alignment.confidence, deterministic.confidence),
+    analysis: [alignment.analysis, deterministicSummary]
+      .filter(Boolean)
+      .join(" "),
+    crop,
+    registration_controls: controls,
+    deterministic_raster_registration: deterministic
+  };
+}
+
 type GeminiAlignmentAttempt = {
   result: ViewAlignmentResult | null;
   attempted_models: string[];
@@ -696,7 +787,14 @@ export async function alignRedlineToView(args: {
       viewDataUrl,
       schema
     });
-    if (geminiAttempt.result) return geminiAttempt.result;
+    if (geminiAttempt.result) {
+      return refineExistingConditionsAlignmentWithDeterministicRaster({
+        alignment: geminiAttempt.result,
+        redline_data_url: redlineDataUrl,
+        view_data_url: viewDataUrl,
+        objective: args.objective
+      });
+    }
   }
 
   const apiKey = resolveOpenAiApiKey();
@@ -787,13 +885,19 @@ export async function alignRedlineToView(args: {
       }
     });
 
-    return {
+    const providerAlignment: ViewAlignmentResult = {
       ...parseResult(extractResponseText(response)),
       provider: "openai",
       model,
       attempted_models: attemptedModels,
       fallback_reason: fallbackReason
     };
+    return refineExistingConditionsAlignmentWithDeterministicRaster({
+      alignment: providerAlignment,
+      redline_data_url: redlineDataUrl,
+      view_data_url: viewDataUrl,
+      objective: args.objective
+    });
   } catch (err) {
     return {
       ok: false,

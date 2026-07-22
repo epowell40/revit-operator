@@ -801,6 +801,70 @@ test("explicit direct existing-conditions routes retain the provider-neutral reg
   }
 });
 
+test("explicit direct existing-conditions registration is provider-neutral for OpenAI and rule routes", { concurrency: false }, async () => {
+  const previous = {
+    OPERATOR_BRAIN: process.env.OPERATOR_BRAIN,
+    OPERATOR_WORKSPACE_ROOT: process.env.OPERATOR_WORKSPACE_ROOT
+  };
+  process.env.OPERATOR_WORKSPACE_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "operator-direct-registration-provider-neutral-"));
+  const gateResponse: ChatResponse = {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    assistant_message: "Registering the exact frame before provider planning.",
+    actions: [{
+      action_id: "direct-frame-123",
+      method: "POST",
+      path: "/revit/export-view-frame",
+      body: { viewId: 123 }
+    }]
+  };
+
+  try {
+    for (const configured of ["openai", "rule"] as const) {
+      process.env.OPERATOR_BRAIN = configured;
+      let gateCalls = 0;
+      let providerCalls = 0;
+      const baseRequest = request("Register the attached existing-conditions plumbing crop to exact target model view 123.");
+      const req: ChatRequest = {
+        ...baseRequest,
+        session_id: `${baseRequest.session_id}-direct-registration-${configured}`,
+        context: { operator_brain_route: "direct" }
+      };
+      const dependencies = {
+        existingConditionsSourcePreflight: async (incoming: ChatRequest) => incoming,
+        existingConditionsProviderDecision: async () => {
+          gateCalls += 1;
+          return gateResponse;
+        },
+        openAiBrain: async () => {
+          providerCalls += 1;
+          return gateResponse;
+        },
+        openAiStreamingBrain: async () => {
+          providerCalls += 1;
+          return gateResponse;
+        },
+        ruleBrain: async () => {
+          providerCalls += 1;
+          return gateResponse;
+        }
+      };
+
+      const nonStreaming = await decide(req, dependencies);
+      const streaming = await decideStreaming(
+        { ...req, session_id: `${req.session_id}-stream` },
+        {},
+        dependencies
+      );
+      assert.equal(gateCalls, 2);
+      assert.equal(providerCalls, 0);
+      assert.equal(nonStreaming.actions[0]?.action_id, "direct-frame-123");
+      assert.equal(streaming.actions[0]?.action_id, "direct-frame-123");
+    }
+  } finally {
+    restoreEnvironment(previous);
+  }
+});
+
 test("persisted existing-conditions stages advance without another provider call", { concurrency: false }, async () => {
   const previous = {
     OPERATOR_BRAIN: process.env.OPERATOR_BRAIN,
