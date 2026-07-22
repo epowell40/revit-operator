@@ -2550,16 +2550,19 @@ function buildRegisteredMepWorkflowHandoffResponse(
   }
   if (
     plan.state === "verify_readback" ||
+    plan.state === "verify_continuation" ||
     plan.state === "verify_visual" ||
     plan.state === "checkpoint"
   ) {
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
       assistant_message: plan.state === "verify_readback"
-        ? `Stage ${plan.action_key} applied provisionally. I will read back only that stage before another write.`
+        ? `Stage ${plan.action_keys.join(", ")} applied provisionally. I will read back only that stage before another write.`
+        : plan.state === "verify_continuation"
+          ? `Stage ${plan.action_keys.join(", ")} passed element readback. I will audit its registered continuation connectors before visual acceptance.`
         : plan.state === "verify_visual"
-          ? `Stage ${plan.action_key} passed native readback. I will capture focused visual evidence before accepting it or advancing.`
-          : `Stage ${plan.action_key} passed native and visual checks. I will save a reversible checkpoint before advancing.`,
+          ? `Stage ${plan.action_keys.join(", ")} passed native and continuation readback. I will capture focused visual evidence before accepting it or advancing.`
+          : `Stage ${plan.action_keys.join(", ")} passed native and visual checks. I will save a reversible checkpoint before advancing.`,
       actions: [{
         action_id: randomUUID(),
         method: plan.method,
@@ -2569,11 +2572,12 @@ function buildRegisteredMepWorkflowHandoffResponse(
     };
   }
   if (plan.state !== "dry_run" && plan.state !== "apply") return null;
+  const stageLabel = plan.action_keys.join(", ");
   return {
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
     assistant_message: plan.state === "apply"
-      ? `Stage ${plan.action_key} passed rollback-verified dry-run. I’ll apply only that accepted stage and preserve all earlier progress.`
-      : `I’ll dry-run only the next dependency-ready stage, ${plan.action_key}, while preserving ${plan.accepted_action_outputs.length} accepted prior stage(s).`,
+      ? `Stage ${stageLabel} passed rollback-verified dry-run. I’ll apply only that accepted stage and preserve all earlier progress.`
+      : `I’ll dry-run only the next dependency-ready stage, ${stageLabel}, while preserving ${plan.accepted_action_outputs.length} accepted prior action(s).`,
     actions: [
       {
         action_id: randomUUID(),
@@ -16955,7 +16959,7 @@ function defaultSystemPrompt(): string {
     "- A registered source-point plumbing route observation minimally uses {kind:'pipe_route',discipline:'plumbing',observation_id,visibility,confidence,supported_attributes,attribute_evidence,service,pixel_points,elevation_ft,pipe_type,system_type}; include explicit size/type/system values only when source or native evidence supports them, otherwise include pipe_size_policy/type_policy/system_classification_policy:'unresolved_placeholder' as applicable.",
     "- A registered plumbing fixture observation uses schema_version:2, kind:'plumbing_fixture', pixel_point, role, placement, representation_classification, service_route_connections, and attribute_evidence. If family/type/host meaning is not defensible, use placement.mode:'provisional_plan_symbol' and representation_classification.native_target:'plan_only_marker'; do not turn an architectural sink graphic into a claimed MEP connector.",
     "- Before creating replacement geometry, inventory the bounded target region and retain useful source-grounded elements. Prefer one staged /revit/move-elements, /revit/rotate-elements, /revit/edit-mep-route-elements, or /revit/repair-mep-connectors operation when the existing graph is safely editable. Persist affected_element_ids and verify them; do not create a duplicate merely because the first location, size, or connection is wrong.",
-    "- After compile_registered_mep_reconstruction returns status ready or partially_ready, use the persisted staged handoff for /revit/existing-conditions-mep-draft-workflow. Dry-run only the next dependency-ready operation, apply only that accepted stage, persist its created or affected output IDs, and continue from those IDs. Never submit the entire operation graph as one all-or-nothing request. A write remains provisional until complete native ID readback, focused visual evidence, and a reversible save-as checkpoint all succeed.",
+    "- After compile_registered_mep_reconstruction returns status ready or partially_ready, use the persisted staged handoff for /revit/existing-conditions-mep-draft-workflow. The harness may group only explicitly marked, independent high-confidence straight backbones into one bounded provisional batch; all other work advances as the next single dependency-ready operation. Persist created or affected IDs plus registered continuation endpoints, then continue from those IDs. Never submit the entire operation graph as one all-or-nothing request. A write remains provisional until complete native ID readback, continuation-connector readback where applicable, focused visual evidence, and a reversible save-as checkpoint all succeed.",
     "- If a staged dry-run is rejected, preserve every accepted prior stage. Use workbench action register_existing_conditions_mep_repair with the exact blocked supersedes_stage_key, a new repair_stage_key, and operation_json containing one smaller replacement operation with the same action_key. Then let the staged handoff dry-run and apply that repair; do not recompile or replay accepted stages.",
     "- After one successful /revit/export-visible-elements call, do not repeat broad inventory exports in a loop. Use the sampled inventory plus /revit/pick-candidate-cluster or /revit/get-placement-context to continue.",
     "- If titleblock/sheet regions dominate, prefer full-sheet targeting (sheet viewId) before selecting any nested viewport.",

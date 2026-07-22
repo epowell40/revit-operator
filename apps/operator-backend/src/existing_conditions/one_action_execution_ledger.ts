@@ -789,14 +789,17 @@ function stagedHandoffDecision(args: {
     };
   }
   if (plan.state === "awaiting_readback") return null;
-  if (plan.state === "verify_readback" || plan.state === "verify_visual" || plan.state === "checkpoint") {
+  if (plan.state === "verify_readback" || plan.state === "verify_continuation" || plan.state === "verify_visual" || plan.state === "checkpoint") {
+    const stageLabel = plan.action_keys.join(", ");
     return {
       version: "operator.backend.v1",
       assistant_message: plan.state === "verify_readback"
-        ? `Stage ${plan.action_key} is provisional; reading back every created or affected native ID before another write.`
+        ? `Stage ${stageLabel} is provisional; reading back every created or affected native ID before another write.`
+        : plan.state === "verify_continuation"
+          ? `Stage ${stageLabel} passed element readback; auditing its registered continuation connectors before visual acceptance.`
         : plan.state === "verify_visual"
-          ? `Stage ${plan.action_key} passed native readback; capturing focused visual evidence.`
-          : `Stage ${plan.action_key} passed native and visual checks; saving its reversible checkpoint.`,
+          ? `Stage ${stageLabel} passed native and continuation readback; capturing focused visual evidence.`
+          : `Stage ${stageLabel} passed native and visual checks; saving its reversible checkpoint.`,
       actions: [{
         action_id: randomUUID(),
         method: plan.method,
@@ -806,11 +809,12 @@ function stagedHandoffDecision(args: {
     };
   }
   if (plan.state !== "dry_run" && plan.state !== "apply") return null;
+  const stageLabel = plan.action_keys.join(", ");
   return {
     version: "operator.backend.v1",
     assistant_message: plan.state === "dry_run"
-      ? `Dry-running only ${plan.action_key}; ${plan.accepted_action_outputs.length} accepted prior stage(s) remain untouched.`
-      : `Applying only rollback-verified stage ${plan.action_key}; earlier accepted progress remains untouched.`,
+      ? `Dry-running only ${stageLabel}; ${plan.accepted_action_outputs.length} accepted prior action(s) remain untouched.`
+      : `Applying only rollback-verified stage ${stageLabel}; earlier accepted progress remains untouched.`,
     actions: [{
       action_id: randomUUID(),
       method: "POST",

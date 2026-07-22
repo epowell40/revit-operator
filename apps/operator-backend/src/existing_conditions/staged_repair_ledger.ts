@@ -3,7 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { atomicAppendJsonlLine } from "../persistence/jsonl.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
-import type { AtomicMepDraftWorkflowRequest } from "./mep_draft_plan.js";
+import type {
+  AtomicMepDraftWorkflowRequest,
+  MepDraftContinuationEndpointPlan
+} from "./mep_draft_plan.js";
 
 export type ExistingConditionsStageStatus =
   | "provisional"
@@ -19,6 +22,7 @@ export type ExistingConditionsStageEvent =
   | "stage_rejected"
   | "repair_registered"
   | "readback_accepted"
+  | "continuation_accepted"
   | "visual_accepted"
   | "checkpoint_saved";
 
@@ -31,6 +35,9 @@ export type ExistingConditionsPriorActionOutput = {
   route_end_element_ids?: number[];
   split_main_start_element_ids?: number[];
   split_main_end_element_ids?: number[];
+  continuation_endpoints?: Array<MepDraftContinuationEndpointPlan & {
+    element_id: number;
+  }>;
 };
 
 type StagedOperation = AtomicMepDraftWorkflowRequest["operations"][number];
@@ -59,6 +66,7 @@ export type ExistingConditionsStagePlan =
       state: "dry_run" | "apply";
       stage_key: string;
       action_key: string;
+      action_keys: string[];
       request: AtomicMepDraftWorkflowRequest;
       accepted_action_outputs: ExistingConditionsPriorActionOutput[];
     }
@@ -74,9 +82,10 @@ export type ExistingConditionsStagePlan =
       accepted_action_outputs: ExistingConditionsPriorActionOutput[];
     }
   | {
-      state: "verify_readback" | "verify_visual";
+      state: "verify_readback" | "verify_continuation" | "verify_visual";
       stage_key: string;
       action_key: string;
+      action_keys: string[];
       method: "GET" | "POST";
       path: string;
       body?: Record<string, unknown>;
@@ -86,6 +95,7 @@ export type ExistingConditionsStagePlan =
       state: "checkpoint";
       stage_key: string;
       action_key: string;
+      action_keys: string[];
       method: "POST";
       path: "/revit/save-as";
       body: Record<string, unknown>;
@@ -141,12 +151,60 @@ function normalizeIds(value: unknown): number[] {
   )).sort((left, right) => left - right);
 }
 
+function normalizeContinuationEndpoints(
+  value: unknown,
+  output: ExistingConditionsPriorActionOutput
+): NonNullable<ExistingConditionsPriorActionOutput["continuation_endpoints"]> {
+  if (!Array.isArray(value)) return [];
+  const idsByOutput = {
+    route_start: output.route_start_element_ids ?? [],
+    route_end: output.route_end_element_ids ?? []
+  };
+  const seen = new Set<string>();
+  const result: NonNullable<ExistingConditionsPriorActionOutput["continuation_endpoints"]> = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const row = item as Record<string, unknown>;
+    const endpointKey = clean(row.endpoint_key);
+    const outputKind = clean(row.output) as "route_start" | "route_end";
+    const outputIndex = Number(row.output_index ?? 0);
+    const elementId = Number(row.element_id ?? idsByOutput[outputKind]?.[outputIndex]);
+    const modelPoint = row.model_point;
+    const direction = row.direction_xyz;
+    if (
+      !endpointKey || seen.has(endpointKey.toLowerCase()) ||
+      (outputKind !== "route_start" && outputKind !== "route_end") ||
+      !Number.isSafeInteger(outputIndex) || outputIndex < 0 ||
+      !Number.isSafeInteger(elementId) || elementId <= 0 ||
+      !modelPoint || typeof modelPoint !== "object" || Array.isArray(modelPoint) ||
+      !Array.isArray(direction) || direction.length !== 3 ||
+      !direction.every(value => typeof value === "number" && Number.isFinite(value))
+    ) continue;
+    seen.add(endpointKey.toLowerCase());
+    result.push({
+      endpoint_key: endpointKey,
+      output: outputKind,
+      ...(outputIndex > 0 ? { output_index: outputIndex } : {}),
+      model_point: JSON.parse(JSON.stringify(modelPoint)) as MepDraftContinuationEndpointPlan["model_point"],
+      direction_xyz: [...direction] as [number, number, number],
+      source_observation_ids: Array.isArray(row.source_observation_ids)
+        ? row.source_observation_ids.map(clean).filter(Boolean)
+        : [],
+      system_classification: clean(row.system_classification),
+      size: clean(row.size),
+      state: "unresolved_continuation",
+      element_id: elementId
+    });
+  }
+  return result;
+}
+
 function normalizeActionOutput(value: unknown): ExistingConditionsPriorActionOutput | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const row = value as Record<string, unknown>;
   const actionKey = clean(row.action_key ?? row.actionKey);
   if (!actionKey) return null;
-  return {
+  const output: ExistingConditionsPriorActionOutput = {
     action_key: actionKey,
     created_element_ids: normalizeIds(row.created_element_ids ?? row.createdElementIds),
     affected_element_ids: normalizeIds(row.affected_element_ids ?? row.affectedElementIds),
@@ -160,6 +218,12 @@ function normalizeActionOutput(value: unknown): ExistingConditionsPriorActionOut
       row.split_main_end_element_ids ?? row.splitMainEndElementIds
     )
   };
+  const continuationEndpoints = normalizeContinuationEndpoints(
+    row.continuation_endpoints ?? row.continuationEndpoints,
+    output
+  );
+  if (continuationEndpoints.length > 0) output.continuation_endpoints = continuationEndpoints;
+  return output;
 }
 
 function workflowForHash(workflow: AtomicMepDraftWorkflowRequest): Record<string, unknown> {
@@ -180,6 +244,7 @@ function validateWorkflow(workflow: AtomicMepDraftWorkflowRequest): void {
     throw new Error("existing_conditions_stage_action_keys_must_be_unique");
   }
   const known = new Set(keys.map(key => key.toLowerCase()));
+  const endpointKeys = new Set<string>();
   for (const operation of workflow.operations) {
     for (const dependency of operation.depends_on ?? []) {
       if (!known.has(clean(dependency).toLowerCase())) {
@@ -188,7 +253,46 @@ function validateWorkflow(workflow: AtomicMepDraftWorkflowRequest): void {
         );
       }
     }
+    if (operation.execution_mode === "provisional_backbone_batch") {
+      if (!clean(operation.provisional_batch_key)) {
+        throw new Error(`existing_conditions_stage_batch_key_required:${operation.action_key}`);
+      }
+      if (clean(operation.path).toLowerCase() !== "/revit/mep-route-workflow") {
+        throw new Error(`existing_conditions_stage_batch_route_only:${operation.action_key}`);
+      }
+      if ((operation.depends_on ?? []).length > 0) {
+        throw new Error(`existing_conditions_stage_batch_must_be_dependency_free:${operation.action_key}`);
+      }
+    } else if (clean(operation.provisional_batch_key)) {
+      throw new Error(`existing_conditions_stage_batch_mode_required:${operation.action_key}`);
+    }
+    for (const endpoint of operation.continuation_endpoints ?? []) {
+      const key = clean(endpoint.endpoint_key).toLowerCase();
+      if (!key || endpointKeys.has(key)) {
+        throw new Error(`existing_conditions_stage_continuation_key_invalid:${operation.action_key}`);
+      }
+      endpointKeys.add(key);
+      if (endpoint.output !== "route_start" && endpoint.output !== "route_end") {
+        throw new Error(`existing_conditions_stage_continuation_output_invalid:${operation.action_key}`);
+      }
+    }
   }
+}
+
+function withPlannedContinuationEndpoints(
+  workflow: AtomicMepDraftWorkflowRequest,
+  output: ExistingConditionsPriorActionOutput
+): ExistingConditionsPriorActionOutput {
+  const operation = workflow.operations.find(candidate =>
+    clean(candidate.action_key).toLowerCase() === output.action_key.toLowerCase()
+  );
+  const continuationEndpoints = normalizeContinuationEndpoints(
+    operation?.continuation_endpoints,
+    output
+  );
+  return continuationEndpoints.length > 0
+    ? { ...output, continuation_endpoints: continuationEndpoints }
+    : output;
 }
 
 function ledgerPaths(sessionId: string): {
@@ -416,8 +520,7 @@ function acceptedOutputs(
     if (
       entry.event !== "stage_applied" ||
       entry.status !== "provisional" ||
-      !stageReadbackAccepted(entries, entry.stage_key ?? "") ||
-      !stageVisualAccepted(entries, entry.stage_key ?? "")
+      !stageAccepted(entries, entry.stage_key ?? "")
     ) continue;
     const values = Array.isArray(entry.payload.action_outputs)
       ? entry.payload.action_outputs
@@ -463,6 +566,34 @@ function stageVisualAccepted(
   );
 }
 
+function stageContinuationAccepted(
+  entries: ExistingConditionsRepairLedgerEntry[],
+  stageKey: string
+): boolean {
+  return entries.some(entry =>
+    entry.event === "continuation_accepted" &&
+    entry.status === "accepted" &&
+    entry.stage_key === stageKey
+  );
+}
+
+function stageContinuationEndpoints(
+  entries: ExistingConditionsRepairLedgerEntry[],
+  stageKey: string
+): NonNullable<ExistingConditionsPriorActionOutput["continuation_endpoints"]> {
+  const applied = entries
+    .filter(entry =>
+      entry.event === "stage_applied" &&
+      entry.status === "provisional" &&
+      entry.stage_key === stageKey
+    )
+    .at(-1);
+  if (!applied || !Array.isArray(applied.payload.action_outputs)) return [];
+  return applied.payload.action_outputs.flatMap(value =>
+    normalizeActionOutput(value)?.continuation_endpoints ?? []
+  );
+}
+
 function stageCheckpointSaved(
   entries: ExistingConditionsRepairLedgerEntry[],
   stageKey: string
@@ -480,6 +611,8 @@ function stageAccepted(
 ): boolean {
   return stageApplied(entries, stageKey) &&
     stageReadbackAccepted(entries, stageKey) &&
+    (stageContinuationEndpoints(entries, stageKey).length === 0 ||
+      stageContinuationAccepted(entries, stageKey)) &&
     stageVisualAccepted(entries, stageKey) &&
     stageCheckpointSaved(entries, stageKey);
 }
@@ -513,7 +646,8 @@ function actionOutputIds(entry: ExistingConditionsRepairLedgerEntry): number[] {
             ...(normalized.route_start_element_ids ?? []),
             ...(normalized.route_end_element_ids ?? []),
             ...(normalized.split_main_start_element_ids ?? []),
-            ...(normalized.split_main_end_element_ids ?? [])
+            ...(normalized.split_main_end_element_ids ?? []),
+            ...(normalized.continuation_endpoints ?? []).map(endpoint => endpoint.element_id)
           ]
         : [];
     })
@@ -591,7 +725,8 @@ export function buildNextExistingConditionsStagePlan(args: {
   );
   if (pendingApplied?.stage_key) {
     const stageKey = pendingApplied.stage_key;
-    const actionKey = clean(pendingApplied.action_keys[0]);
+    const actionKeys = pendingApplied.action_keys.map(clean).filter(Boolean);
+    const actionKey = actionKeys[0] ?? "stage";
     const ids = actionOutputIds(pendingApplied);
     const priorIds = outputs.flatMap(output => [
       ...output.created_element_ids,
@@ -600,7 +735,8 @@ export function buildNextExistingConditionsStagePlan(args: {
       ...(output.route_start_element_ids ?? []),
       ...(output.route_end_element_ids ?? []),
       ...(output.split_main_start_element_ids ?? []),
-      ...(output.split_main_end_element_ids ?? [])
+      ...(output.split_main_end_element_ids ?? []),
+      ...(output.continuation_endpoints ?? []).map(endpoint => endpoint.element_id)
     ]);
     const verificationIds = normalizeIds([...ids, ...priorIds]);
     if (!stageReadbackAccepted(entries, stageKey)) {
@@ -608,9 +744,28 @@ export function buildNextExistingConditionsStagePlan(args: {
         state: "verify_readback",
         stage_key: stageKey,
         action_key: actionKey,
+        action_keys: actionKeys,
         method: "POST",
         path: ids.length > 0 ? "/revit/get-element-summary" : "/revit/get-connectors",
         body: { elementIds: ids.length > 0 ? ids : verificationIds },
+        accepted_action_outputs: outputs
+      };
+    }
+    const continuationEndpoints = stageContinuationEndpoints(entries, stageKey);
+    if (continuationEndpoints.length > 0 && !stageContinuationAccepted(entries, stageKey)) {
+      return {
+        state: "verify_continuation",
+        stage_key: stageKey,
+        action_key: actionKey,
+        action_keys: actionKeys,
+        method: "POST",
+        path: "/revit/get-connectors",
+        body: {
+          elementIds: normalizeIds(continuationEndpoints.map(endpoint => endpoint.element_id)),
+          includeAllRefs: true,
+          includeCoordinateSystem: true,
+          maxConnectorsPerElement: 16
+        },
         accepted_action_outputs: outputs
       };
     }
@@ -619,6 +774,7 @@ export function buildNextExistingConditionsStagePlan(args: {
         state: "verify_visual",
         stage_key: stageKey,
         action_key: actionKey,
+        action_keys: actionKeys,
         method: "POST",
         path: "/revit/highlight-and-export",
         body: {
@@ -645,6 +801,7 @@ export function buildNextExistingConditionsStagePlan(args: {
       state: "checkpoint",
       stage_key: stageKey,
       action_key: actionKey,
+      action_keys: actionKeys,
       method: "POST",
       path: "/revit/save-as",
       body: {
@@ -670,18 +827,35 @@ export function buildNextExistingConditionsStagePlan(args: {
     } => value.operation != null)
     .filter(value => !stageAccepted(entries, value.entry.stage_key ?? ""));
 
-  let operation: StagedOperation | null = null;
+  let operations: StagedOperation[] = [];
   let stageKey = "";
   if (repairs.length > 0) {
     const repair = repairs[0]!;
-    operation = repair.operation;
+    operations = [repair.operation];
     stageKey = repair.entry.stage_key ?? "";
   } else {
     for (const candidate of args.workflow.operations) {
-      const candidateStageKey = `operation:${candidate.action_key}`;
+      const candidateActionKey = clean(candidate.action_key).toLowerCase();
+      if (appliedActionKeys.has(candidateActionKey)) continue;
+      const isBackboneBatch = candidate.execution_mode === "provisional_backbone_batch";
+      const batchCandidates = isBackboneBatch
+        ? args.workflow.operations.filter(operation =>
+            operation.execution_mode === "provisional_backbone_batch" &&
+            clean(operation.provisional_batch_key).toLowerCase() ===
+              clean(candidate.provisional_batch_key).toLowerCase() &&
+            !appliedActionKeys.has(clean(operation.action_key).toLowerCase())
+          ).slice(0, 8)
+        : [candidate];
+      const batchIdentity = batchCandidates.map(operation => clean(operation.action_key).toLowerCase());
+      const candidateStageKey = isBackboneBatch
+        ? `backbone:${sha256({
+            batch_key: clean(candidate.provisional_batch_key).toLowerCase(),
+            action_keys: batchIdentity
+          }).slice(0, 20)}`
+        : `operation:${candidate.action_key}`;
       if (
         stageAccepted(entries, candidateStageKey) ||
-        stageResolvedByAppliedRepair(entries, candidateStageKey)
+        (!isBackboneBatch && stageResolvedByAppliedRepair(entries, candidateStageKey))
       ) continue;
       const rejected = unresolvedRejectedStage(entries, candidateStageKey);
       if (rejected) {
@@ -699,14 +873,15 @@ export function buildNextExistingConditionsStagePlan(args: {
       if (!dependencies.every(dependency => appliedActionKeys.has(dependency))) {
         continue;
       }
-      operation = candidate;
+      operations = batchCandidates;
       stageKey = candidateStageKey;
       break;
     }
   }
 
-  if (!operation) {
+  if (operations.length === 0) {
     const remaining = args.workflow.operations.filter(candidate =>
+      !appliedActionKeys.has(clean(candidate.action_key).toLowerCase()) &&
       !stageAccepted(entries, `operation:${candidate.action_key}`) &&
       !stageResolvedByAppliedRepair(entries, `operation:${candidate.action_key}`)
     );
@@ -733,16 +908,26 @@ export function buildNextExistingConditionsStagePlan(args: {
     status: "provisional",
     acceptedProgress: true,
     stageKey,
-    actionKeys: [operation.action_key],
+    actionKeys: operations.map(operation => operation.action_key),
     payload: {
-      operation,
+      operation: operations.length === 1 ? operations[0] : null,
+      operations,
+      execution_mode: operations.length > 1 ? "provisional_backbone_batch" : "single_action",
+      provisional_batch_key: operations.length > 1
+        ? clean(operations[0]?.provisional_batch_key)
+        : null,
       accepted_prior_action_keys: outputs.map(output => output.action_key)
     },
-    nextRepair: "Dry-run this stage only."
+    nextRepair: operations.length > 1
+      ? "Dry-run this bounded provisional backbone batch only."
+      : "Dry-run this stage only."
   });
 
   const dryRunAccepted = stageDryRunAccepted(entries, stageKey);
-  const expectedMaximum = Number(operation.expected_created_max);
+  const expectedMaximum = operations.reduce(
+    (sum, operation) => sum + Math.max(0, Number(operation.expected_created_max) || 0),
+    0
+  );
   const maximumCreatedElements = Math.max(
     1,
     Math.min(
@@ -754,7 +939,7 @@ export function buildNextExistingConditionsStagePlan(args: {
   );
   const request: AtomicMepDraftWorkflowRequest = {
     ...JSON.parse(JSON.stringify(args.workflow)),
-    operations: [JSON.parse(JSON.stringify(operation))],
+    operations: JSON.parse(JSON.stringify(operations)) as StagedOperation[],
     stageKey,
     priorActionOutputs: outputs,
     dryRun: !dryRunAccepted,
@@ -763,7 +948,8 @@ export function buildNextExistingConditionsStagePlan(args: {
   return {
     state: dryRunAccepted ? "apply" : "dry_run",
     stage_key: stageKey,
-    action_key: operation.action_key,
+    action_key: operations[0]!.action_key,
+    action_keys: operations.map(operation => operation.action_key),
     request,
     accepted_action_outputs: outputs
   };
@@ -792,7 +978,8 @@ export function recordExistingConditionsStageResult(args: {
     : [];
   const normalizedOutputs = operationOutputs
     .map(normalizeActionOutput)
-    .filter((value): value is ExistingConditionsPriorActionOutput => value != null);
+    .filter((value): value is ExistingConditionsPriorActionOutput => value != null)
+    .map(output => withPlannedContinuationEndpoints(args.workflow, output));
   const failedOperation = args.result.failedOperation &&
     typeof args.result.failedOperation === "object" &&
     !Array.isArray(args.result.failedOperation)
@@ -843,11 +1030,11 @@ export function recordExistingConditionsStageResult(args: {
     !clean(args.result.error)
   ) {
     const fallbackOutput = normalizedOutputs.length === 0 && actionKeys.length === 1
-      ? [{
+      ? [withPlannedContinuationEndpoints(args.workflow, {
         action_key: actionKeys[0]!,
           created_element_ids: normalizeIds(args.result.createdElementIds),
           affected_element_ids: normalizeIds(args.result.affectedElementIds)
-        }]
+        })]
       : [];
     return appendEntry({
       sessionId: args.sessionId,
@@ -969,6 +1156,7 @@ export function recordExistingConditionsVerificationResult(args: {
   });
   if (
     plan.state !== "verify_readback" &&
+    plan.state !== "verify_continuation" &&
     plan.state !== "verify_visual" &&
     plan.state !== "checkpoint"
   ) {
@@ -1006,9 +1194,25 @@ export function recordExistingConditionsVerificationResult(args: {
       return null;
     }
   }
+  if (plan.state === "verify_continuation") {
+    const expectedIds = normalizeIds(plan.body?.elementIds);
+    const returnedIds = new Set(collectNativeElementIds(resultJson));
+    const connectorResults = Array.isArray(row.results)
+      ? row.results as Array<Record<string, unknown>>
+      : [];
+    if (
+      expectedIds.some(id => !returnedIds.has(id)) ||
+      connectorResults.length < expectedIds.length ||
+      connectorResults.some(item => item.ok === false || !Array.isArray(item.connectors) || item.connectors.length === 0)
+    ) {
+      return null;
+    }
+  }
 
   const event = plan.state === "verify_readback"
     ? "readback_accepted"
+    : plan.state === "verify_continuation"
+      ? "continuation_accepted"
     : plan.state === "verify_visual"
       ? "visual_accepted"
       : "checkpoint_saved";
@@ -1017,7 +1221,7 @@ export function recordExistingConditionsVerificationResult(args: {
     workflow: args.workflow,
     event,
     stageKey: plan.stage_key,
-    actionKeys: [plan.action_key],
+    actionKeys: plan.action_keys,
     payload: {
       tool_action_id: clean(args.result.action_id),
       tool_path: plan.path,
@@ -1025,12 +1229,27 @@ export function recordExistingConditionsVerificationResult(args: {
       verification_element_ids: normalizeIds(plan.body?.elementIds),
       ...(plan.state === "verify_visual"
         ? { visual_artifact_present: true }
+        : plan.state === "verify_continuation"
+          ? {
+              continuation_connector_readback_present: true,
+              continuation_endpoints: stageContinuationEndpoints(
+                readExistingConditionsRepairLedger(args.sessionId),
+                plan.stage_key
+              )
+            }
         : plan.state === "verify_readback"
           ? { native_readback_present: true }
           : { checkpoint_path: clean(row.path ?? row.filePath ?? row.file_path) })
     },
     nextRepair: plan.state === "verify_readback"
-      ? "Capture focused visual evidence for this stage."
+      ? (stageContinuationEndpoints(
+          readExistingConditionsRepairLedger(args.sessionId),
+          plan.stage_key
+        ).length > 0
+          ? "Read back the registered continuation connectors before visual acceptance."
+          : "Capture focused visual evidence for this stage.")
+      : plan.state === "verify_continuation"
+        ? "Capture focused visual evidence for this stage."
       : plan.state === "verify_visual"
         ? "Save a reversible model checkpoint before advancing."
         : "Stage accepted and checkpointed; dry-run the next dependency-ready action."
@@ -1113,7 +1332,7 @@ export function appendExistingConditionsAcceptanceEvent(args: {
   workflow: AtomicMepDraftWorkflowRequest;
   event: Extract<
     ExistingConditionsStageEvent,
-    "readback_accepted" | "visual_accepted" | "checkpoint_saved"
+    "readback_accepted" | "continuation_accepted" | "visual_accepted" | "checkpoint_saved"
   >;
   stageKey?: string | null;
   actionKeys?: string[];

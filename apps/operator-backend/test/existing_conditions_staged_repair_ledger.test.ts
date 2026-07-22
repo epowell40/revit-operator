@@ -55,6 +55,211 @@ function workflow(): AtomicMepDraftWorkflowRequest {
   };
 }
 
+function backboneWorkflow(): AtomicMepDraftWorkflowRequest {
+  const endpoint = (
+    actionKey: string,
+    output: "route_start" | "route_end",
+    x: number,
+    directionX: number
+  ) => ({
+    endpoint_key: `${actionKey}:${output}`,
+    output,
+    model_point: { x, y: 10, z: 8 },
+    direction_xyz: [directionX, 0, 0] as [number, number, number],
+    source_observation_ids: [actionKey],
+    system_classification: "Domestic Cold Water",
+    size: "1 inch",
+    state: "unresolved_continuation" as const
+  });
+  return {
+    inputFingerprintSha256: "b".repeat(64),
+    provisionalObservationIds: [],
+    operations: [
+      {
+        action_key: "route:backbone-1",
+        observation_ids: ["backbone-1"],
+        path: "/revit/mep-route-workflow",
+        depends_on: [],
+        expected_created_min: 1,
+        expected_created_max: 2,
+        execution_mode: "provisional_backbone_batch",
+        provisional_batch_key: "backbone:plumbing:view-1",
+        continuation_endpoints: [
+          endpoint("route:backbone-1", "route_start", 0, -1),
+          endpoint("route:backbone-1", "route_end", 20, 1)
+        ],
+        apply_body: { kind: "pipe", apply: true }
+      },
+      {
+        action_key: "route:backbone-2",
+        observation_ids: ["backbone-2"],
+        path: "/revit/mep-route-workflow",
+        depends_on: [],
+        expected_created_min: 1,
+        expected_created_max: 2,
+        execution_mode: "provisional_backbone_batch",
+        provisional_batch_key: "backbone:plumbing:view-1",
+        continuation_endpoints: [
+          endpoint("route:backbone-2", "route_start", 0, -1),
+          endpoint("route:backbone-2", "route_end", 20, 1)
+        ],
+        apply_body: { kind: "pipe", apply: true }
+      },
+      {
+        action_key: "connect:local-repair",
+        observation_ids: ["local-repair"],
+        path: "/revit/connect-mep-elements",
+        depends_on: ["route:backbone-1", "route:backbone-2"],
+        expected_created_min: 0,
+        expected_created_max: 1,
+        apply_body: { requiredConnectionCount: 1 }
+      }
+    ],
+    dryRun: true,
+    verify: true,
+    maximumCreatedElements: 10
+  };
+}
+
+test("staged ledger batches explicit backbones, audits continuation connectors, then returns to one-action repair", { concurrency: false }, () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-backbone-batch-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const sessionId = "backbone-batch-session";
+    const registered = backboneWorkflow();
+    registerExistingConditionsStagedWorkflow({
+      sessionId,
+      sourceFrameId: "frame-backbone",
+      sourceViewId: 101,
+      registrationContextId: "registration-backbone",
+      workflow: registered
+    });
+    const dryRun = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(dryRun.state, "dry_run");
+    if (dryRun.state !== "dry_run") return;
+    assert.equal(dryRun.request.operations.length, 2);
+    assert.deepEqual(dryRun.action_keys, ["route:backbone-1", "route:backbone-2"]);
+    recordExistingConditionsStageResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        inputFingerprintSha256: registered.inputFingerprintSha256,
+        stageKey: dryRun.stage_key,
+        status: "DryRunReady",
+        dryRun: true,
+        rollbackVerified: true,
+        residualCreatedElementIds: [],
+        transientCreatedElementIds: [101, 102, 103, 104],
+        operationOutputs: [
+          { action_key: "route:backbone-1", created_element_ids: [101, 102], route_start_element_ids: [101], route_end_element_ids: [102] },
+          { action_key: "route:backbone-2", created_element_ids: [103, 104], route_start_element_ids: [103], route_end_element_ids: [104] }
+        ]
+      }
+    });
+    const apply = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(apply.state, "apply");
+    if (apply.state !== "apply") return;
+    assert.equal(apply.request.operations.length, 2);
+    recordExistingConditionsStageResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        inputFingerprintSha256: registered.inputFingerprintSha256,
+        stageKey: apply.stage_key,
+        status: "Applied",
+        dryRun: false,
+        atomic: true,
+        createdElementIds: [201, 202, 203, 204],
+        operationOutputs: [
+          { action_key: "route:backbone-1", created_element_ids: [201, 202], route_start_element_ids: [201], route_end_element_ids: [202] },
+          { action_key: "route:backbone-2", created_element_ids: [203, 204], route_start_element_ids: [203], route_end_element_ids: [204] }
+        ]
+      }
+    });
+    const readback = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(readback.state, "verify_readback");
+    if (readback.state !== "verify_readback") return;
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "backbone-readback",
+        method: "POST",
+        path: readback.path,
+        status: "done",
+        result_json: [201, 202, 203, 204].map(id => ({ id, found: true }))
+      }
+    });
+    const continuation = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(continuation.state, "verify_continuation");
+    if (continuation.state !== "verify_continuation") return;
+    assert.deepEqual(continuation.body?.elementIds, [201, 202, 203, 204]);
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "backbone-connectors",
+        method: "POST",
+        path: continuation.path,
+        status: "done",
+        result_json: {
+          status: "Ok",
+          results: [201, 202, 203, 204].map(id => ({
+            id,
+            ok: true,
+            connectors: [{ connectorId: 1, origin: [id, 10, 8], physicalConnectedTo: [] }]
+          }))
+        }
+      }
+    });
+    const visual = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(visual.state, "verify_visual");
+    if (visual.state !== "verify_visual") return;
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "backbone-visual",
+        method: "POST",
+        path: visual.path,
+        status: "done",
+        result_json: { status: "ok", path: "C:\\evidence\\backbones.png" }
+      }
+    });
+    const checkpoint = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(checkpoint.state, "checkpoint");
+    if (checkpoint.state !== "checkpoint") return;
+    recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "backbone-checkpoint",
+        method: "POST",
+        path: checkpoint.path,
+        status: "done",
+        result_json: { status: "Success", path: checkpoint.body.filePath }
+      }
+    });
+    const localRepair = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
+    assert.equal(localRepair.state, "dry_run");
+    if (localRepair.state !== "dry_run") return;
+    assert.equal(localRepair.request.operations.length, 1);
+    assert.equal(localRepair.action_key, "connect:local-repair");
+    assert.equal(localRepair.request.priorActionOutputs?.length, 2);
+    assert.deepEqual(
+      localRepair.request.priorActionOutputs?.flatMap(output =>
+        output.continuation_endpoints?.map(endpoint => endpoint.element_id) ?? []),
+      [201, 202, 203, 204]
+    );
+    const ledger = readExistingConditionsRepairLedger(sessionId);
+    assert.ok(ledger.some(entry => entry.event === "continuation_accepted"));
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+  }
+});
+
 test("staged repair ledger preserves accepted progress and resumes through a smaller repair", { concurrency: false }, () => {
   const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-staged-repair-"));

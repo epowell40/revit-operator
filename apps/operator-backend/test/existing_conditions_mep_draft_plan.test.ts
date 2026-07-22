@@ -190,6 +190,53 @@ test("plumbing fixture representation gate prevents architectural graphics from 
   assert.equal(grounded.actions.some((entry) => entry.action_key === "place:fixture-random-29"), true);
 });
 
+test("compiler marks only clear long exact orthogonal routes as provisional backbone batches with continuation endpoints", () => {
+  const input = plumbingTopologyPackage();
+  const first = input.observations[0];
+  if (first?.kind !== "pipe_route" || first.geometry_mode === "source_branch_tee"
+    || first.geometry_mode === "native_connector_bridge"
+    || first.geometry_mode === "created_route_connector_bridge"
+    || first.geometry_mode === "downstream_vent_tee") {
+    throw new Error("route_setup_failed");
+  }
+  const second = structuredClone(first);
+  second.observation_id = "route-hw-backbone-2";
+  second.service = "domestic_hot_water";
+  second.system_type = "Domestic Hot Water";
+  second.points = [{ x: 0, y: 2 }, { x: 5, y: 2 }];
+  input.observations = [first, second];
+
+  const plan = compileMepDraftPlan(input);
+  assert.equal(plan.status, "ready");
+  assert.equal(plan.actions.length, 2);
+  assert.deepEqual(
+    plan.actions.map(action => action.execution_mode),
+    ["provisional_backbone_batch", "provisional_backbone_batch"]
+  );
+  assert.equal(plan.actions[0]?.provisional_batch_key, plan.actions[1]?.provisional_batch_key);
+  assert.deepEqual(
+    plan.actions.map(action => action.continuation_endpoints?.map(endpoint => endpoint.output)),
+    [["route_start", "route_end"], ["route_start", "route_end"]]
+  );
+  const workflow = buildAtomicMepDraftWorkflowRequest(plan);
+  assert.equal(workflow.operations.length, 2);
+  assert.equal(workflow.operations[0]?.continuation_endpoints?.[0]?.state, "unresolved_continuation");
+
+  const tooShort = structuredClone(input);
+  const shortRoute = tooShort.observations[0];
+  if (shortRoute?.kind !== "pipe_route" || shortRoute.geometry_mode === "source_branch_tee"
+    || shortRoute.geometry_mode === "native_connector_bridge"
+    || shortRoute.geometry_mode === "created_route_connector_bridge"
+    || shortRoute.geometry_mode === "downstream_vent_tee") {
+    throw new Error("route_setup_failed");
+  }
+  shortRoute.points = [{ x: 0, y: 0 }, { x: 1, y: 0 }];
+  tooShort.observations = [shortRoute];
+  const shortPlan = compileMepDraftPlan(tooShort);
+  assert.equal(shortPlan.actions[0]?.execution_mode, undefined);
+  assert.equal(shortPlan.actions[0]?.continuation_endpoints?.length, 2);
+});
+
 test("retraced planner pipe geometry becomes independent visible strokes without claiming tee topology", () => {
   const input = plumbingTopologyPackage();
   const route = input.observations[0];

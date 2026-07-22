@@ -517,6 +517,18 @@ export type MepDraftElementReference = {
   index?: number;
 };
 
+export type MepDraftContinuationEndpointPlan = {
+  endpoint_key: string;
+  output: "route_start" | "route_end";
+  output_index?: number;
+  model_point: ExistingConditionsPlanPoint & { z: number };
+  direction_xyz: [number, number, number];
+  source_observation_ids: string[];
+  system_classification: string;
+  size: string;
+  state: "unresolved_continuation";
+};
+
 export type MepDraftAction = {
   action_key: string;
   observation_ids: string[];
@@ -561,6 +573,12 @@ export type MepDraftAction = {
   expected_model_point?: ExistingConditionsPlanPoint & { z: number };
   expected_created_min: number;
   expected_created_max: number;
+  /** Explicit opt-in for a bounded, rollback-capable batch of independent high-confidence backbones. */
+  execution_mode?: "single_action" | "provisional_backbone_batch";
+  /** Only operations with the same non-empty key may share a provisional backbone stage. */
+  provisional_batch_key?: string;
+  /** Planned crop-boundary/frontier endpoints that must receive connector readback before acceptance. */
+  continuation_endpoints?: MepDraftContinuationEndpointPlan[];
   provisional_system_classification?: {
     policy: "unresolved_placeholder";
     native_system_type_role: "editable_native_drafting_container";
@@ -620,7 +638,7 @@ export type CompiledMepDraftPlan = {
 
 export type AtomicMepDraftWorkflowRequest = {
   inputFingerprintSha256: string;
-  operations: Array<Pick<MepDraftAction, "action_key" | "observation_ids" | "path" | "depends_on" | "apply_body" | "deferred_body" | "expected_created_min" | "expected_created_max" | "provisional_system_classification" | "provisional_route_attributes" | "provisional_plan_representation">>;
+  operations: Array<Pick<MepDraftAction, "action_key" | "observation_ids" | "path" | "depends_on" | "apply_body" | "deferred_body" | "expected_created_min" | "expected_created_max" | "execution_mode" | "provisional_batch_key" | "continuation_endpoints" | "provisional_system_classification" | "provisional_route_attributes" | "provisional_plan_representation">>;
   stageKey?: string;
   priorActionOutputs?: Array<{
     action_key: string;
@@ -632,6 +650,9 @@ export type AtomicMepDraftWorkflowRequest = {
     route_end_element_ids?: number[];
     split_main_start_element_ids?: number[];
     split_main_end_element_ids?: number[];
+    continuation_endpoints?: Array<MepDraftContinuationEndpointPlan & {
+      element_id: number;
+    }>;
   }>;
   provisionalObservationIds: string[];
   dryRun: boolean;
@@ -728,6 +749,76 @@ function provisionalRouteAttributes(
     benchmark_credit: false,
     complete_scope_credit: false,
     external_topology_credit: false
+  };
+}
+
+function routeContinuationMetadata(
+  observation: MepPipeRouteObservation | MechanicalDuctRouteObservation | ElectricalConduitRouteObservation,
+  actionKey: string,
+  points: Array<ExistingConditionsPlanPoint & { z: number }>,
+  batchScope: string
+): Pick<MepDraftAction, "execution_mode" | "provisional_batch_key" | "continuation_endpoints"> {
+  if (points.length < 2) return {};
+  const start = points[0]!;
+  const next = points[1]!;
+  const end = points.at(-1)!;
+  const previous = points.at(-2)!;
+  const normalizeDirection = (dx: number, dy: number, dz: number): [number, number, number] => {
+    const length = Math.hypot(dx, dy, dz);
+    return length <= 1e-9 ? [0, 0, 0] : [dx / length, dy / length, dz / length];
+  };
+  const systemClassification = observation.kind === "conduit_route"
+    ? observation.service
+    : observation.system_type;
+  const size = observation.kind === "pipe_route"
+    ? clean(observation.pipe_size)
+    : observation.kind === "duct_route"
+      ? clean(observation.duct_size)
+      : clean(observation.conduit_size);
+  const continuation_endpoints: MepDraftContinuationEndpointPlan[] = [
+    {
+      endpoint_key: `${actionKey}:start`,
+      output: "route_start",
+      model_point: { ...start },
+      direction_xyz: normalizeDirection(start.x - next.x, start.y - next.y, start.z - next.z),
+      source_observation_ids: [observation.observation_id],
+      system_classification: clean(systemClassification),
+      size,
+      state: "unresolved_continuation"
+    },
+    {
+      endpoint_key: `${actionKey}:end`,
+      output: "route_end",
+      model_point: { ...end },
+      direction_xyz: normalizeDirection(end.x - previous.x, end.y - previous.y, end.z - previous.z),
+      source_observation_ids: [observation.observation_id],
+      system_classification: clean(systemClassification),
+      size,
+      state: "unresolved_continuation"
+    }
+  ];
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const dz = end.z - start.z;
+  const length = Math.hypot(dx, dy, dz);
+  const axisAligned = Math.min(Math.abs(dx), Math.abs(dy)) <= (1 / 48)
+    && Math.abs(dz) <= (1 / 48);
+  const exactAttributes = !provisionalRouteAttributes(observation)
+    && observation.service !== "unclassified"
+    && (observation.kind === "conduit_route"
+      || routeSystemClassificationPolicy(observation) === "explicit_required");
+  const highConfidenceBackbone = observation.visibility === "clear"
+    && observation.confidence >= 0.92
+    && points.length === 2
+    && length >= 4
+    && axisAligned
+    && exactAttributes;
+  return {
+    ...(highConfidenceBackbone ? {
+      execution_mode: "provisional_backbone_batch" as const,
+      provisional_batch_key: `backbone:${observation.discipline}:${observation.kind}:${batchScope}`
+    } : {}),
+    continuation_endpoints
   };
 }
 
@@ -2744,11 +2835,13 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
   const actions: MepDraftAction[] = [];
   const pendingVentBranches: MepDraftAction[] = [];
   const pendingVentAudits: MepDraftAction[] = [];
+  const backboneBatchScope = targetViewId == null ? levelName : String(targetViewId);
 
   if (blockers.length === 0
     && (ambiguities.length === 0 || partialPromotionPolicy === "defer_ambiguous_observations")) {
     for (const observation of input.observations) {
       if (observation.kind === "duct_route") {
+        const actionKey = `route:${observation.observation_id}`;
         const points = observation.points.map((entry) => ({
           ...transformExistingConditionsPlanPoint(registration, entry),
           z: levelElevationFt + observation.elevation_ft
@@ -2775,7 +2868,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         if (observation.workset_name) common.worksetName = observation.workset_name;
         if (input.room_number) common.roomNumber = input.room_number;
         actions.push({
-          action_key: `route:${observation.observation_id}`,
+          action_key: actionKey,
           observation_ids: [observation.observation_id],
           method: "POST",
           path: "/revit/mep-route-workflow",
@@ -2784,6 +2877,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
           apply_body: { ...common, apply: true },
           expected_created_min: observation.points.length - 1,
           expected_created_max: (observation.points.length - 1) + Math.max(0, observation.points.length - 2),
+          ...routeContinuationMetadata(observation, actionKey, points, backboneBatchScope),
           ...(routeSystemClassificationPolicy(observation) === "unresolved_placeholder" ? {
             provisional_system_classification: {
               policy: "unresolved_placeholder" as const,
@@ -2796,6 +2890,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         continue;
       }
       if (observation.kind === "conduit_route") {
+        const actionKey = `route:${observation.observation_id}`;
         const points = observation.points.map((entry) => ({
           ...transformExistingConditionsPlanPoint(registration, entry),
           z: levelElevationFt + observation.elevation_ft
@@ -2819,7 +2914,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
         if (observation.workset_name) common.worksetName = observation.workset_name;
         if (input.room_number) common.roomNumber = input.room_number;
         actions.push({
-          action_key: `route:${observation.observation_id}`,
+          action_key: actionKey,
           observation_ids: [observation.observation_id],
           method: "POST",
           path: "/revit/mep-route-workflow",
@@ -2827,7 +2922,8 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
           dry_run_body: { ...common, apply: false },
           apply_body: { ...common, apply: true },
           expected_created_min: observation.points.length - 1,
-          expected_created_max: (observation.points.length - 1) + Math.max(0, observation.points.length - 2)
+          expected_created_max: (observation.points.length - 1) + Math.max(0, observation.points.length - 2),
+          ...routeContinuationMetadata(observation, actionKey, points, backboneBatchScope)
         });
         continue;
       }
@@ -2843,6 +2939,9 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
           );
         }
         strokes.forEach((stroke, strokeIndex) => {
+          const actionKey = strokeIndex === 0
+            ? `route:${observation.observation_id}`
+            : `route:${observation.observation_id}:stroke:${strokeIndex + 1}`;
           const points = stroke.points.map((entry) => ({
             ...transformExistingConditionsPlanPoint(registration, entry),
             z: levelElevationFt + observation.elevation_ft
@@ -2870,9 +2969,7 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
           if (routeWorksetName(observation)) common.worksetName = routeWorksetName(observation);
           if (input.room_number) common.roomNumber = input.room_number;
           actions.push({
-            action_key: strokeIndex === 0
-              ? `route:${observation.observation_id}`
-              : `route:${observation.observation_id}:stroke:${strokeIndex + 1}`,
+            action_key: actionKey,
             observation_ids: [observation.observation_id],
             method: "POST",
             path: "/revit/mep-route-workflow",
@@ -2881,6 +2978,11 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
             apply_body: { ...common, apply: true },
             expected_created_min: stroke.points.length - 1,
             expected_created_max: (stroke.points.length - 1) + Math.max(0, stroke.points.length - 2),
+            ...routeContinuationMetadata(observation, actionKey, points, backboneBatchScope),
+            ...(strokes.length > 1 ? {
+              execution_mode: "single_action" as const,
+              provisional_batch_key: undefined
+            } : {}),
             ...(routeSystemClassificationPolicy(observation) === "unresolved_placeholder" ? {
               provisional_system_classification: {
                 policy: "unresolved_placeholder" as const,
@@ -3365,6 +3467,11 @@ export function buildAtomicMepDraftWorkflowRequest(
       depends_on: entry.depends_on,
       expected_created_min: entry.expected_created_min,
       expected_created_max: entry.expected_created_max,
+      ...(entry.execution_mode ? { execution_mode: entry.execution_mode } : {}),
+      ...(entry.provisional_batch_key ? { provisional_batch_key: entry.provisional_batch_key } : {}),
+      ...(entry.continuation_endpoints
+        ? { continuation_endpoints: entry.continuation_endpoints }
+        : {}),
       ...(entry.apply_body ? { apply_body: entry.apply_body } : {}),
       ...(entry.deferred_body ? { deferred_body: entry.deferred_body } : {}),
       ...(entry.provisional_system_classification
