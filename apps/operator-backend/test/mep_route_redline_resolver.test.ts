@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   __testOnlyClassifyRedlineGeometry,
+  __testOnlyIsMepRouteContinuationToolResult,
   resolveMepRouteRedline,
   type ResolveMepRouteRedlineRequest
 } from "../src/deterministic/mep_route_redline.js";
@@ -9,6 +10,11 @@ import {
   __testOnlyBuildRedlineRouteCandidates,
   type RedlineAnalyzeResponse
 } from "../src/redline/redline_analyzer.js";
+
+test("sheet inventory results cannot wake the MEP redline continuation", () => {
+  assert.equal(__testOnlyIsMepRouteContinuationToolResult({ action_id: "aec-query-document-sheets", method: "POST", path: "/revit/sheets", status: "done", result_json: { action: "count", totalSheets: 17 } }), false);
+  assert.equal(__testOnlyIsMepRouteContinuationToolResult({ action_id: "redline-sheet-detail", method: "POST", path: "/revit/sheets", status: "done", result_json: { action: "detail", sheetNumber: "M104" } }), true);
+});
 
 function baseAnalysis(overrides: Partial<RedlineAnalyzeResponse> = {}): RedlineAnalyzeResponse {
   return {
