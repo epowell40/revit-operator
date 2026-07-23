@@ -218,3 +218,30 @@ test("raw provider output is captured before strict normalization rejects it", a
     else process.env.OPERATOR_GEMINI_SHEET_MODEL = previousModel;
   }
 });
+
+test("malformed provider JSON is captured before parsing rejects it", async () => {
+  const previousKey = process.env.OPERATOR_GEMINI_API_KEY;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "operator-gemini-malformed-capture-"));
+  const imagePath = path.join(dir, "source.png");
+  fs.writeFileSync(imagePath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"));
+  process.env.OPERATOR_GEMINI_API_KEY = "test-key";
+  try {
+    const malformed = '{"schema_version":1,"primitives":[,]}';
+    const captures: GeminiExistingConditionsRawResponseCaptureV1[] = [];
+    await assert.rejects(
+      analyzeExistingConditionsSheetWithGeminiV1(
+        { ...request(), views: [{ view_key: "main", image_path: imagePath }] },
+        { fetch_impl: async () => new Response(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: malformed }] } }], usageMetadata: { candidatesTokenCount: 10 } }), { status: 200 }), on_raw_response: capture => { captures.push(capture); } }
+      ),
+      /gemini_sheet_interpreter_invalid_json/
+    );
+    assert.equal(captures.length, 1);
+    assert.equal(captures[0]?.raw_text, malformed);
+    assert.equal(captures[0]?.parsed, null);
+    assert.match(captures[0]?.parse_error ?? "", /JSON|position|property/i);
+    assert.deepEqual(captures[0]?.provider_finish_reasons, ["STOP"]);
+  } finally {
+    if (previousKey === undefined) delete process.env.OPERATOR_GEMINI_API_KEY;
+    else process.env.OPERATOR_GEMINI_API_KEY = previousKey;
+  }
+});

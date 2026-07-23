@@ -179,6 +179,10 @@ import {
   type SourceNativePairHealthInputV1
 } from "../existing_conditions/source_native_pair_health.js";
 import {
+  evaluateSealedCandidateNativeRouteGradeV1,
+  type SealedCandidateNativeRouteGradeInputV1
+} from "../existing_conditions/sealed_candidate_native_route_grade.js";
+import {
   compileProvisionalPlanTraceDraftV1,
   type ProvisionalPlanTraceDraftContext,
   type ProvisionalPlanTraceDraftInputV1
@@ -413,6 +417,7 @@ function usage(): never {
     "  npm run existing-conditions -- validate-sheet-route-chromatic-coverage --input <hash-bound-source-policy.json> [--candidate <sheet-interpretation-or-provider-receipt.json>] --out <coverage-receipt.json> [--overlay-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- compile-sheet-overlap-routes --input <registered-overlap-tiles.json> --out <parent-route-compilation.json>",
     "  npm run existing-conditions -- evaluate-source-native-pair-health --input <evaluator-only-pair.json> --out <pair-health-receipt.json>",
+    "  npm run existing-conditions -- grade-sealed-candidate-native-routes --input <evaluator-only-post-seal-grade.json> --out <native-grade-receipt.json>",
     "  npm run existing-conditions -- validate-mep-region-coverage --input <source-coverage.json> --context <coverage-context.json> --out <coverage-receipt.json>",
     "  npm run existing-conditions -- compile-sheet-topology --input <whole-sheet-primitives.json> --context <trusted-views-and-calibration.json> --out <compiled-topology.json>",
     "  npm run existing-conditions -- build-sheet-topology-calibration --input <sealed-blind-outcomes.json> --out <calibration-profile.json>",
@@ -2045,6 +2050,15 @@ async function main(): Promise<void> {
     const receipt = await evaluateSourceNativePairHealthV1(readJson(inputPath) as SourceNativePairHealthInputV1);
     writeJson(outputPath, receipt);
     if (!receipt.candidate_release_allowed) process.exitCode = 1;
+    return;
+  }
+  if (command === "grade-sealed-candidate-native-routes") {
+    const inputPath = requiredArgument("--input");
+    const outputPath = requiredArgument("--out");
+    assertFreshDistinctOutputPaths([{ flag: "--out", value: outputPath }], [{ flag: "--input", value: inputPath }]);
+    const receipt = await evaluateSealedCandidateNativeRouteGradeV1(readJson(inputPath) as SealedCandidateNativeRouteGradeInputV1);
+    writeJson(outputPath, receipt);
+    if (receipt.status !== "accepted_post_seal_native_grade") process.exitCode = 1;
     return;
   }
   if (command === "validate-mep-region-coverage") {

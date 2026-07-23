@@ -41,7 +41,8 @@ export type GeminiExistingConditionsRawResponseCaptureV1 = {
   package_id: string;
   raw_response_sha256: string;
   raw_text: string;
-  parsed: unknown;
+  parsed: unknown | null;
+  parse_error?: string;
   provider_finish_reasons: string[];
   provider_usage_metadata?: unknown;
 };
@@ -467,18 +468,28 @@ export async function analyzeExistingConditionsSheetWithGeminiV1(
     };
     const rawText = (envelope.candidates ?? []).flatMap(candidate => candidate.content?.parts ?? []).map(part => clean(part.text)).filter(Boolean).join("\n");
     if (!rawText) throw new Error("gemini_sheet_interpreter_empty_response");
-    const parsed = JSON.parse(rawText) as unknown;
     const rawResponseSha256 = sha256Text(rawText);
-    await options.on_raw_response?.({
-      schema_version: 1,
-      provider: "gemini",
+    const captureBase = {
+      schema_version: 1 as const,
+      provider: "gemini" as const,
       model,
       package_id: request.package_id,
       raw_response_sha256: rawResponseSha256,
       raw_text: rawText,
-      parsed,
       provider_finish_reasons: (envelope.candidates ?? []).map(candidate => clean(candidate.finishReason)).filter(Boolean),
       ...(envelope.usageMetadata === undefined ? {} : { provider_usage_metadata: envelope.usageMetadata })
+    };
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawText) as unknown;
+    } catch (error) {
+      const parseError = error instanceof Error ? error.message : clean(error);
+      await options.on_raw_response?.({ ...captureBase, parsed: null, parse_error: parseError });
+      throw new Error(`gemini_sheet_interpreter_invalid_json:${parseError}`);
+    }
+    await options.on_raw_response?.({
+      ...captureBase,
+      parsed,
     });
     const normalized = normalizeGeminiExistingConditionsSheetResponseV1({ request, raw: parsed });
     return {
