@@ -2049,6 +2049,55 @@ test("a new circuit can use a hash-bound existing native equipment member withou
   assert.deepEqual(plan.actions[1]?.deferred_body?.panel_element, { created_by_action: "place:panel-p404" });
 });
 
+test("a source-matched circuit with only existing members exposes directly executable camel-case bodies", () => {
+  const plan = compileMepDraftPlan({
+    schema_version: 1,
+    fixture_id: "electrical-existing-member-source-circuit-v1",
+    scope_id: "level-4-existing-member-source-circuit",
+    source_evidence_sha256: SOURCE_HASH,
+    visible_evidence: visibleEvidence(),
+    native_element_references: nativeReferences(),
+    registration: registration(),
+    level_name: "L4",
+    level_elevation_ft: 0,
+    observations: [{
+      kind: "electrical_circuit",
+      observation_id: "match-existing-member-to-source",
+      discipline: "electrical",
+      evidence_role: "native_model_inventory",
+      visibility: "clear",
+      confidence: 1,
+      supported_attributes: ["circuit"],
+      member_observation_ids: [],
+      native_member_reference_keys: ["hru-existing"],
+      source_reference_key: "circuit-source",
+      expected_power_system_id: "system-333",
+      membership_basis: "native_source_power_system"
+    }]
+  });
+
+  assert.equal(plan.status, "ready");
+  assert.equal(plan.actions.length, 1);
+  const circuit = plan.actions[0]!;
+  assert.equal(circuit.path, "/revit/assign-electrical-circuit");
+  assert.deepEqual(circuit.dry_run_body, {
+    elementIds: [555],
+    sourceElementId: 333,
+    parameterOnlyFallback: false,
+    dryRun: true,
+    confirm: false
+  });
+  assert.deepEqual(circuit.apply_body, {
+    elementIds: [555],
+    sourceElementId: 333,
+    parameterOnlyFallback: false,
+    dryRun: false,
+    confirm: true
+  });
+  assert.deepEqual(circuit.deferred_body?.existing_element_ids, [555]);
+  assert.equal(circuit.deferred_body?.source_element_id, 333);
+});
+
 test("a created panel circuit rejects missing distribution precedent and self-membership", () => {
   const base: MepDraftPackage = {
     schema_version: 1,

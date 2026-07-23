@@ -3024,12 +3024,25 @@ export function compileMepDraftPlan(input: MepDraftPackage): CompiledMepDraftPla
       const panelReference = observation.circuit_mode === "create_new_power_system" && observation.panel_reference_key
         ? nativeReferences.get(observation.panel_reference_key)
         : undefined;
+      const directCircuitBody = memberDependencies.length === 0 && existingMemberIds.length > 0
+        ? {
+            elementIds: existingMemberIds,
+            ...(sourceReference ? { sourceElementId: sourceReference.element_id } : {}),
+            ...(observation.circuit_mode === "create_new_power_system" ? { createSystemType: "PowerCircuit" as const } : {}),
+            ...(panelReference ? { panelElementId: panelReference.element_id } : {}),
+            parameterOnlyFallback: false
+          }
+        : undefined;
       actions.push({
         action_key: `circuit:${observation.observation_id}`,
         observation_ids: [observation.observation_id, ...observation.member_observation_ids],
         method: "POST",
         path: "/revit/assign-electrical-circuit",
         depends_on: dependencies,
+        ...(directCircuitBody ? {
+          dry_run_body: { ...directCircuitBody, dryRun: true, confirm: false },
+          apply_body: { ...directCircuitBody, dryRun: false, confirm: true }
+        } : {}),
         deferred_body: {
           element_ids: memberDependencies.map((createdByAction) => ({ created_by_action: createdByAction })),
           ...(existingMemberIds.length > 0 ? { existing_element_ids: existingMemberIds } : {}),

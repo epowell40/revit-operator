@@ -958,6 +958,7 @@ namespace RevitBridge.Operator
                     if (!ValidateRequiredNumber(region, "centerY", out error)) return false;
                     if (!ValidateRequiredNumber(region, "halfWidth", out error)) return false;
                     if (!ValidateRequiredNumber(region, "halfHeight", out error)) return false;
+                    if (!ValidateOptionalString(region, "coordinateSpace", maxLen: 24, out error)) return false;
                     return true;
                 }
 

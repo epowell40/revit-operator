@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
@@ -25,6 +26,7 @@ namespace RevitBridge.Logic.Handlers
             public double centerY { get; set; }
             public double halfWidth { get; set; }
             public double halfHeight { get; set; }
+            public string? coordinateSpace { get; set; } // view | model_xy
         }
 
         public sealed class Params
@@ -34,6 +36,7 @@ namespace RevitBridge.Logic.Handlers
             public int? imageSize { get; set; } // backward/compat alias
             public string folder { get; set; } = "";
             public bool includeMapping { get; set; } = true;
+            public bool preserveViewSpecificDetailing { get; set; } = false;
             public string? fileName { get; set; }
             public RegionSpec? region { get; set; }
             public List<string>? hideCategories { get; set; }
@@ -83,7 +86,10 @@ namespace RevitBridge.Logic.Handlers
                     {
                         tx.Start();
 
-                        tempViewId = view.Duplicate(ViewDuplicateOption.Duplicate);
+                        var duplicateOption = p.preserveViewSpecificDetailing
+                            ? ViewDuplicateOption.WithDetailing
+                            : ViewDuplicateOption.Duplicate;
+                        tempViewId = view.Duplicate(duplicateOption);
                         tempView = doc.GetElement(tempViewId) as View;
                         if (tempView == null) throw new Exception("Failed to duplicate view.");
 
@@ -105,6 +111,16 @@ namespace RevitBridge.Logic.Handlers
                                 warnings.Add("Could not clear view template on temp view; export may be restricted.");
                             }
                         }
+
+                        // A duplicated view can retain a template that silently restores its crop after
+                        // CropBox assignment. Because this view is disposable, clear the template before
+                        // any crop/scope edits instead of waiting for the API setter to throw.
+                        TryClearTemplateForCrop();
+
+                        if (TryClearScopeBox(tempView))
+                            warnings.Add("Temp view scope box cleared so the requested region controls the export crop.");
+                        if (TryRemoveNonRectangularCropShape(tempView))
+                            warnings.Add("Temp view non-rectangular crop shape removed so the requested rectangular region can be applied.");
 
                         try { tempView.CropBoxActive = true; }
                         catch
@@ -141,6 +157,7 @@ namespace RevitBridge.Logic.Handlers
                             tempView.CropBox = newCrop;
                         }
                         try { tempView.CropBoxVisible = false; } catch { }
+                        TryConfigureAnnotationCrop(tempView, 0.0, warnings);
 
                         doc.Regenerate();
                         tx.Commit();
@@ -189,8 +206,11 @@ namespace RevitBridge.Logic.Handlers
                         tx.Start();
                         try
                         {
+                            if (TryClearScopeBox(exportView))
+                                warnings.Add("Temp view scope box cleared before final region crop.");
                             try { exportView.CropBoxActive = true; } catch { }
                             try { exportView.CropBoxVisible = false; } catch { }
+                            TryConfigureAnnotationCrop(exportView, 0.0, warnings);
                             ApplyHiddenCategories(doc, exportView, p.hideCategories, warnings);
                         }
                         finally
@@ -438,6 +458,11 @@ namespace RevitBridge.Logic.Handlers
             {
                 tx.Start();
 
+                if (TryClearScopeBox(view))
+                    warnings.Add("Scope box cleared so the requested region controls the export crop.");
+                if (TryRemoveNonRectangularCropShape(view))
+                    warnings.Add("Non-rectangular crop shape removed so the requested rectangular region can be applied.");
+
                 try { view.CropBoxActive = true; }
                 catch { throw new ArgumentException("View does not support crop regions; export-view-region is not supported for this view type."); }
 
@@ -458,8 +483,93 @@ namespace RevitBridge.Logic.Handlers
 
                 view.CropBox = newCrop;
                 try { view.CropBoxVisible = false; } catch { }
+                TryConfigureAnnotationCrop(view, 0.0, warnings);
                 doc.Regenerate();
+
+                var applied = view.CropBox;
+                var appliedWidth = Math.Abs(applied.Max.X - applied.Min.X);
+                var appliedHeight = Math.Abs(applied.Max.Y - applied.Min.Y);
+                var requestedWidth = Math.Abs(maxX - minX);
+                var requestedHeight = Math.Abs(maxY - minY);
+                if (Math.Abs(appliedWidth - requestedWidth) > 1e-4 ||
+                    Math.Abs(appliedHeight - requestedHeight) > 1e-4)
+                {
+                    throw new InvalidOperationException(
+                        $"Requested region crop was not retained (requested {requestedWidth:F6}x{requestedHeight:F6} ft, " +
+                        $"read back {appliedWidth:F6}x{appliedHeight:F6} ft)."
+                    );
+                }
                 tx.Commit();
+            }
+        }
+
+        private static bool TryClearScopeBox(View view)
+        {
+            try
+            {
+                var parameter = view.get_Parameter(BuiltInParameter.VIEWER_VOLUME_OF_INTEREST_CROP);
+                if (parameter == null || parameter.IsReadOnly || parameter.StorageType != StorageType.ElementId) return false;
+                var current = parameter.AsElementId();
+                if (current == null || current == ElementId.InvalidElementId) return false;
+                parameter.Set(ElementId.InvalidElementId);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool TryRemoveNonRectangularCropShape(View view)
+        {
+            try
+            {
+                var manager = view.GetCropRegionShapeManager();
+                if (manager == null || !manager.ShapeSet) return false;
+                manager.RemoveCropRegionShape();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static void TryConfigureAnnotationCrop(View view, double marginFt, List<string> warnings)
+        {
+            try
+            {
+                var parameter = view.get_Parameter(BuiltInParameter.VIEWER_ANNOTATION_CROP_ACTIVE);
+                if (parameter != null && !parameter.IsReadOnly && parameter.StorageType == StorageType.Integer)
+                    parameter.Set(1);
+            }
+            catch (Exception ex)
+            {
+                warnings.Add($"Could not activate annotation crop on temporary view: {ex.Message}");
+            }
+
+            object? manager = null;
+            try { manager = view.GetType().GetMethod("GetCropRegionShapeManager", Type.EmptyTypes)?.Invoke(view, null); }
+            catch { manager = null; }
+            if (manager == null) return;
+
+            foreach (var propertyName in new[]
+            {
+                "LeftAnnotationCropOffset",
+                "RightAnnotationCropOffset",
+                "TopAnnotationCropOffset",
+                "BottomAnnotationCropOffset"
+            })
+            {
+                try
+                {
+                    var property = manager.GetType().GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public);
+                    if (property != null && property.CanWrite) property.SetValue(manager, marginFt);
+                }
+                catch
+                {
+                    // Best effort: not every supported view exposes writable annotation-crop edges.
+                }
             }
         }
 
@@ -589,9 +699,22 @@ namespace RevitBridge.Logic.Handlers
                 try { origin = originalView.Origin; }
                 catch { origin = tempCrop.Transform.Origin; }
 
-                var centerModel = origin
-                                 + originalView.RightDirection.Multiply(region.centerX)
-                                 + originalView.UpDirection.Multiply(region.centerY);
+                var coordinateSpace = (region.coordinateSpace ?? "view").Trim();
+                XYZ centerModel;
+                if (coordinateSpace.Equals("model_xy", StringComparison.OrdinalIgnoreCase))
+                {
+                    centerModel = new XYZ(region.centerX, region.centerY, origin.Z);
+                }
+                else if (coordinateSpace.Equals("view", StringComparison.OrdinalIgnoreCase) || coordinateSpace.Length == 0)
+                {
+                    centerModel = origin
+                                + originalView.RightDirection.Multiply(region.centerX)
+                                + originalView.UpDirection.Multiply(region.centerY);
+                }
+                else
+                {
+                    throw new ArgumentException($"Unsupported region.coordinateSpace '{region.coordinateSpace}'. Supported: view, model_xy");
+                }
 
                 var centerV = viewTInv.OfPoint(centerModel);
                 var minX = centerV.X - halfW;
