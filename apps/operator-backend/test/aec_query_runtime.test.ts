@@ -70,6 +70,19 @@ test("whole-document sheet count reports the exact native total", async () => {
   assert.deepEqual(done.response?.aec_query_receipt, { schema: "revit-operator.aec-query-receipt.v1", terminal: true, status: "complete", workflow_id: "query.document_sheets", bounded: true, broadened: false });
 });
 
+test("whole-document sheet count completes from its exact result after volatile state is lost", async () => {
+  __testOnlyClearAecQueryStates();
+  const done = await maybeRunAecSemanticQuery(request("sheet-count-orphaned", [{ action_id: "aec-query-document-sheets", method: "POST", path: "/revit/sheets", status: "done", result_json: { totalSheets: 42, items: [] } }]));
+  assert.match(done.response?.assistant_message ?? "", /42 sheets matched in the whole Revit document/);
+  assert.deepEqual(done.response?.aec_query_receipt, { schema: "revit-operator.aec-query-receipt.v1", terminal: true, status: "complete", workflow_id: "query.document_sheets", bounded: true, broadened: false });
+});
+
+test("orphaned results with the sheet action id but a different endpoint still fail closed", async () => {
+  __testOnlyClearAecQueryStates();
+  const done = await maybeRunAecSemanticQuery(request("sheet-count-spoofed", [{ action_id: "aec-query-document-sheets", method: "POST", path: "/revit/find-elements", status: "done", result_json: { count: 42 } }]));
+  assert.equal(done.response, null);
+});
+
 test("scoped list returns bounded element identity and location details instead of count-only prose", async () => {
   __testOnlyClearAecQueryStates();
   const value = ahu();

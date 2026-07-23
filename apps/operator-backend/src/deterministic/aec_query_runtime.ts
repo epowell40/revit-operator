@@ -21,6 +21,23 @@ function response(message: string, actions: ChatResponse["actions"] = [], receip
 function resultPayload(result: ToolResult | undefined): Record<string, unknown> | null { const value = result?.result_json; return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null; }
 function matchingResult(req: ChatRequest, actionId: string): ToolResult | undefined { return req.tool_results?.find(result => result.action_id === actionId); }
 
+function completeOrphanedDocumentSheetCount(req: ChatRequest): ChatResponse | null {
+  const result = req.tool_results?.find(candidate =>
+    candidate.action_id === "aec-query-document-sheets" &&
+    candidate.method === "POST" &&
+    candidate.path === "/revit/sheets"
+  );
+  if (!result) return null;
+  if (result.status !== "done") {
+    return response(`I could not complete the bounded sheet-count query: ${result.error || "the Revit read action failed"}. No model changes were made.`, [], { workflow_id: "query.document_sheets", status: "failed" });
+  }
+  const count = countFromPayload(resultPayload(result));
+  if (count === null) {
+    return response("The bounded sheet-count query completed, but the Revit result did not report a trustworthy count, so I did not guess. No model changes were made.", [], { workflow_id: "query.document_sheets", status: "failed" });
+  }
+  return response(`${count} sheet${count === 1 ? "" : "s"} matched in the whole Revit document. The result came from the scoped document sheets workflow; no model changes were made.`, [], { workflow_id: "query.document_sheets", status: "complete" });
+}
+
 function countFromPayload(payload: Record<string, unknown> | null): number | null {
   for (const key of ["count", "totalMatches", "total", "totalSheets"]) {
     if (Number.isSafeInteger(payload?.[key]) && (payload?.[key] as number) >= 0) return payload?.[key] as number;
@@ -242,7 +259,7 @@ export async function maybeRunAecSemanticQuery(req: ChatRequest, interpreter?: A
   purge();
   const state = states.get(key(req));
   if (state && (req.tool_results?.length ?? 0) > 0) return { task: state.task, response: continueRun(req, state) };
-  if ((req.tool_results?.length ?? 0) > 0) return { task: null, response: null };
+  if ((req.tool_results?.length ?? 0) > 0) return { task: null, response: completeOrphanedDocumentSheetCount(req) };
   return begin(req, interpreter);
 }
 
