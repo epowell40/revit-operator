@@ -196,6 +196,7 @@ namespace RevitBridge.Operator
                     "/revit/create-similar-from-instance",
                     "/revit/adjust-hosted-instance-on-host",
                     "/revit/assign-electrical-circuit",
+                    "/revit/assign-electrical-distribution-system",
                     "/revit/load-family",
                     "/revit/create-family-from-template",
                     "/revit/duplicate-view",

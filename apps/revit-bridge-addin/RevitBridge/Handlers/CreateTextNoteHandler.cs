@@ -1,5 +1,7 @@
 using System;
+using System.Collections;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
@@ -11,10 +13,13 @@ namespace RevitBridge.Handlers
     {
         public class Params
         {
-            public string? action { get; set; } // create|list_types|create_type
+            public string? action { get; set; } // create|list_types|create_type|inspect|repair
+            public long? textNoteId { get; set; } // inspect|repair
             public long? viewId { get; set; }
             public double? x { get; set; }
             public double? y { get; set; }
+            // Revit TextNote width is measured in paper-space feet, not model-space feet.
+            public double? widthFt { get; set; }
             public string? text { get; set; }
             public long? typeId { get; set; }
             public string? typeName { get; set; }
@@ -63,6 +68,100 @@ namespace RevitBridge.Handlers
                 });
             }
 
+            if (action == "inspect" || action == "repair")
+            {
+                if (!p.textNoteId.HasValue || p.textNoteId.Value <= 0)
+                    throw new InvalidOperationException($"create-text({action}) requires textNoteId.");
+
+                var note = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.textNoteId.Value)) as TextNote;
+                if (note == null)
+                    throw new InvalidOperationException($"TextNote {p.textNoteId.Value} not found.");
+
+                var noteView = doc.GetElement(note.OwnerViewId) as View;
+                if (action == "inspect")
+                {
+                    return Task.FromResult<object>(new
+                    {
+                        status = "Success",
+                        action = "inspect",
+                        textNote = CaptureTextNote(note, noteView)
+                    });
+                }
+
+                var hasPoint = p.x.HasValue || p.y.HasValue;
+                if (hasPoint && (!p.x.HasValue || !p.y.HasValue))
+                    throw new InvalidOperationException("create-text(repair) requires both x and y when moving a note.");
+                if (p.widthFt.HasValue && p.widthFt.Value <= 0)
+                    throw new InvalidOperationException("create-text.widthFt must be positive.");
+
+                var hasType = (p.typeId.HasValue && p.typeId.Value > 0) || !string.IsNullOrWhiteSpace(p.typeName);
+                var requestedType = hasType ? ResolveTextType(doc, p.typeId, p.typeName) : null;
+                if (hasType && requestedType == null)
+                    throw new InvalidOperationException("No matching TextNoteType found.");
+
+                var hasRepair = hasPoint || p.widthFt.HasValue || p.text != null || requestedType != null;
+                if (!hasRepair)
+                    throw new InvalidOperationException("create-text(repair) requires x/y, widthFt, text, or typeId/typeName.");
+
+                var before = CaptureTextNote(note, noteView);
+                var plannedText = p.text == null
+                    ? note.Text
+                    : RevitBridge.Common.RevitTextCasePolicy.NormalizeDraftingText(p.text);
+                var targetPoint = hasPoint ? new XYZ(p.x!.Value, p.y!.Value, note.Coord.Z) : note.Coord;
+                var dryRunRepair = p.dryRun ?? false;
+
+                if (dryRunRepair)
+                {
+                    return Task.FromResult<object>(new
+                    {
+                        status = "Dry Run",
+                        action = "repair",
+                        dryRun = true,
+                        before,
+                        plannedAfter = new
+                        {
+                            textNoteId = RevitBridge.Common.ElementIdCompat.GetValue(note.Id),
+                            viewId = RevitBridge.Common.ElementIdCompat.GetValue(note.OwnerViewId),
+                            text = plannedText,
+                            point = new { x = targetPoint.X, y = targetPoint.Y, z = targetPoint.Z },
+                            widthFt = p.widthFt ?? TryGetTextNoteWidth(note),
+                            textType = new
+                            {
+                                id = RevitBridge.Common.ElementIdCompat.GetValue((requestedType ?? doc.GetElement(note.GetTypeId()) as TextNoteType)!.Id),
+                                name = (requestedType ?? doc.GetElement(note.GetTypeId()) as TextNoteType)!.Name
+                            }
+                        }
+                    });
+                }
+
+                using (var t = new Transaction(doc, "Repair Text Note"))
+                {
+                    t.Start();
+
+                    if (hasPoint)
+                    {
+                        var move = targetPoint - note.Coord;
+                        if (!move.IsZeroLength()) ElementTransformUtils.MoveElement(doc, note.Id, move);
+                    }
+                    if (p.text != null) note.Text = plannedText;
+                    if (requestedType != null && requestedType.Id != note.GetTypeId()) note.ChangeTypeId(requestedType.Id);
+                    if (p.widthFt.HasValue) SetTextNoteWidth(note, p.widthFt.Value);
+
+                    t.Commit();
+                }
+
+                note = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.textNoteId.Value)) as TextNote
+                       ?? throw new InvalidOperationException($"TextNote {p.textNoteId.Value} disappeared after repair.");
+                return Task.FromResult<object>(new
+                {
+                    status = "Success",
+                    action = "repair",
+                    dryRun = false,
+                    before,
+                    after = CaptureTextNote(note, doc.GetElement(note.OwnerViewId) as View)
+                });
+            }
+
             if (action == "create_type")
             {
                 var newTypeName = (p.newTypeName ?? "").Trim();
@@ -93,6 +192,8 @@ namespace RevitBridge.Handlers
                             viewId = p.viewId ?? RevitBridge.Common.ElementIdCompat.GetValue(viewForCreate?.Id),
                             x = p.x,
                             y = p.y,
+                            widthFt = p.widthFt,
+                            widthSpace = "paper",
                             text = RevitBridge.Common.RevitTextCasePolicy.NormalizeDraftingText(p.text)
                         }
                         : new { requested = false };
@@ -135,7 +236,10 @@ namespace RevitBridge.Handlers
                         if (viewForCreate == null)
                             throw new InvalidOperationException("View not found. Provide viewId or activate a view.");
                         var origin = new XYZ(p.x!.Value, p.y!.Value, 0);
-                        var created = TextNote.Create(doc, viewForCreate.Id, origin, RevitBridge.Common.RevitTextCasePolicy.NormalizeDraftingText(p.text), targetType.Id);
+                        var normalizedText = RevitBridge.Common.RevitTextCasePolicy.NormalizeDraftingText(p.text);
+                        var created = p.widthFt.HasValue
+                            ? TextNote.Create(doc, viewForCreate.Id, origin, p.widthFt.Value, normalizedText, targetType.Id)
+                            : TextNote.Create(doc, viewForCreate.Id, origin, normalizedText, targetType.Id);
                         createdTypeTextNoteId = RevitBridge.Common.ElementIdCompat.GetValue(created.Id);
                     }
 
@@ -163,6 +267,8 @@ namespace RevitBridge.Handlers
 
             if (!p.x.HasValue || !p.y.HasValue || string.IsNullOrWhiteSpace(p.text))
                 throw new InvalidOperationException("create-text(create) requires x, y, and text.");
+            if (p.widthFt.HasValue && p.widthFt.Value <= 0)
+                throw new InvalidOperationException("create-text.widthFt must be positive.");
 
             var textType = ResolveTextType(doc, p.typeId, p.typeName);
             if (textType == null) throw new InvalidOperationException("No matching TextNoteType found.");
@@ -181,6 +287,8 @@ namespace RevitBridge.Handlers
                         viewName = view.Name,
                         x = p.x.Value,
                         y = p.y.Value,
+                        widthFt = p.widthFt,
+                        widthSpace = "paper",
                         text = RevitBridge.Common.RevitTextCasePolicy.NormalizeDraftingText(p.text),
                         textType = new { id = RevitBridge.Common.ElementIdCompat.GetValue(textType.Id), name = textType.Name }
                     }
@@ -198,8 +306,13 @@ namespace RevitBridge.Handlers
                 // We'll trust the user provided X/Y relative to the view's coordinate system.
                 XYZ origin = new XYZ(p.x.Value, p.y.Value, 0);
 
-                // Adjust creation for View vs Sheet if necessary, but TextNote.Create takes a viewId
-                var created = TextNote.Create(doc, view.Id, origin, RevitBridge.Common.RevitTextCasePolicy.NormalizeDraftingText(p.text), textType.Id);
+                // Width-bearing creation must use Revit's line-wrapping overload. Creating an
+                // unwrapped note and assigning Width later can leave different wrapping/layout
+                // state even when the final numeric width matches a reference note.
+                var normalizedText = RevitBridge.Common.RevitTextCasePolicy.NormalizeDraftingText(p.text);
+                var created = p.widthFt.HasValue
+                    ? TextNote.Create(doc, view.Id, origin, p.widthFt.Value, normalizedText, textType.Id)
+                    : TextNote.Create(doc, view.Id, origin, normalizedText, textType.Id);
                 textNoteId = RevitBridge.Common.ElementIdCompat.GetValue(created.Id);
 
                 t.Commit();
@@ -211,8 +324,89 @@ namespace RevitBridge.Handlers
                 action = "create",
                 textNoteId,
                 viewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
-                textType = new { id = RevitBridge.Common.ElementIdCompat.GetValue(textType.Id), name = textType.Name }
+                textType = new { id = RevitBridge.Common.ElementIdCompat.GetValue(textType.Id), name = textType.Name },
+                textNote = CaptureTextNote(doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(textNoteId)) as TextNote
+                    ?? throw new InvalidOperationException($"TextNote {textNoteId} disappeared after creation."), view)
             });
+        }
+
+        private static object CaptureTextNote(TextNote note, View? view)
+        {
+            var type = note.Document.GetElement(note.GetTypeId()) as TextNoteType;
+            var point = note.Coord;
+            var paperWidthFt = TryGetTextNoteWidth(note);
+            var viewScale = view?.Scale;
+            return new
+            {
+                textNoteId = RevitBridge.Common.ElementIdCompat.GetValue(note.Id),
+                viewId = RevitBridge.Common.ElementIdCompat.GetValue(note.OwnerViewId),
+                viewName = view?.Name,
+                text = note.Text,
+                point = new { x = point.X, y = point.Y, z = point.Z },
+                widthFt = paperWidthFt,
+                widthSpace = "paper",
+                modelSpaceWidthFt = paperWidthFt.HasValue && viewScale.HasValue
+                    ? (double?)(paperWidthFt.Value * viewScale.Value)
+                    : null,
+                viewScale,
+                isTextWrappingActive = TryGetTextWrappingActive(note),
+                leaderCount = TryGetLeaderCount(note),
+                textType = new
+                {
+                    id = RevitBridge.Common.ElementIdCompat.GetValue(note.GetTypeId()),
+                    name = type?.Name
+                }
+            };
+        }
+
+        private static double? TryGetTextNoteWidth(TextNote note)
+        {
+            try
+            {
+                var prop = typeof(TextNote).GetProperty("Width", BindingFlags.Instance | BindingFlags.Public);
+                var value = prop?.GetValue(note);
+                return value is double width ? width : (double?)null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool? TryGetTextWrappingActive(TextNote note)
+        {
+            try
+            {
+                var prop = typeof(TextElement).GetProperty("IsTextWrappingActive", BindingFlags.Instance | BindingFlags.Public);
+                var value = prop?.GetValue(note);
+                return value is bool active ? active : (bool?)null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static void SetTextNoteWidth(TextNote note, double widthFt)
+        {
+            var prop = typeof(TextNote).GetProperty("Width", BindingFlags.Instance | BindingFlags.Public);
+            if (prop == null || !prop.CanWrite)
+                throw new InvalidOperationException("This Revit version does not expose a writable TextNote.Width property.");
+            prop.SetValue(note, widthFt);
+        }
+
+        private static int? TryGetLeaderCount(TextNote note)
+        {
+            try
+            {
+                var method = typeof(TextNote).GetMethod("GetLeaders", BindingFlags.Instance | BindingFlags.Public, null, Type.EmptyTypes, null);
+                var leaders = method?.Invoke(note, null) as ICollection;
+                return leaders?.Count;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static View? ResolveView(Document doc, long? viewId)

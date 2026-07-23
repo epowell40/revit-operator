@@ -61,8 +61,11 @@ namespace RevitBridge.Logic.Handlers.MEP
             public List<long>? existing_element_ids { get; set; }
             public long? source_element_id { get; set; }
             public string? create_system_type { get; set; }
+            public long? electrical_connector_id { get; set; }
             public long? panel_element_id { get; set; }
             public ElementReference? panel_element { get; set; }
+            public int? target_panel_slot_number { get; set; }
+            public string? expected_circuit_number { get; set; }
             public long? target_element_id { get; set; }
             public int? required_connection_count { get; set; }
             public List<ElementReference>? fixture_elements { get; set; }
@@ -490,7 +493,10 @@ namespace RevitBridge.Logic.Handlers.MEP
                     elementIds,
                     sourceElementId = createNew ? null : deferred.source_element_id,
                     createSystemType = createNew ? "PowerCircuit" : null,
+                    electricalConnectorId = createNew ? deferred.electrical_connector_id : null,
                     panelElementId,
+                    targetPanelSlotNumber = deferred.target_panel_slot_number,
+                    expectedCircuitNumber = deferred.expected_circuit_number,
                     dryRun = false,
                     confirm = true,
                     parameterOnlyFallback = false

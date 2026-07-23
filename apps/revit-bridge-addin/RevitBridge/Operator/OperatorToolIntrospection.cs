@@ -407,6 +407,7 @@ namespace RevitBridge.Operator
                 { "/revit/create-similar-from-instance", typeof(RevitBridge.Logic.Handlers.CreateSimilarFromInstanceHandler.Params) },
                 { "/revit/adjust-hosted-instance-on-host", typeof(RevitBridge.Logic.Handlers.AdjustHostedInstanceOnHostHandler.Params) },
                 { "/revit/assign-electrical-circuit", typeof(RevitBridge.Logic.Handlers.AssignElectricalCircuitHandler.Params) },
+                { "/revit/assign-electrical-distribution-system", typeof(RevitBridge.Logic.Handlers.AssignElectricalDistributionSystemHandler.Params) },
                 { "/revit/load-family", typeof(RevitBridge.Logic.Handlers.LoadFamilyHandler.Params) },
                 { "/revit/create-family-from-template", typeof(RevitBridge.Logic.Handlers.CreateFamilyFromTemplateHandler.Params) },
                 { "/revit/tag-elements", typeof(RevitBridge.Logic.Handlers.TagElementsHandler.TagRequest) },

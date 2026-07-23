@@ -190,6 +190,7 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/create-similar-from-instance", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/adjust-hosted-instance-on-host", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/assign-electrical-circuit", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/assign-electrical-distribution-system", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
 
                 // Drafting / annotation.
                 if (string.Equals(p, "/revit/visibility", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;

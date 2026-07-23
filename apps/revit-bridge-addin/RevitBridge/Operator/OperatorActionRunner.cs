@@ -16,6 +16,7 @@ using AuditHostedInstancePlacementActionHandler = RevitBridge.Logic.Handlers.Aud
 using ResolveRoomWallActionHandler = RevitBridge.Logic.Handlers.ResolveRoomWallHandler;
 using RankSimilarDevicesOnWallActionHandler = RevitBridge.Logic.Handlers.RankSimilarDevicesOnWallHandler;
 using AssignElectricalCircuitActionHandler = RevitBridge.Logic.Handlers.AssignElectricalCircuitHandler;
+using AssignElectricalDistributionSystemActionHandler = RevitBridge.Logic.Handlers.AssignElectricalDistributionSystemHandler;
 
 namespace RevitBridge.Operator
 {
@@ -196,6 +197,7 @@ namespace RevitBridge.Operator
                 { "/revit/create-similar-from-instance", new CreateSimilarFromInstanceActionHandler() },
                 { "/revit/adjust-hosted-instance-on-host", new AdjustHostedInstanceOnHostActionHandler() },
                 { "/revit/assign-electrical-circuit", new AssignElectricalCircuitActionHandler() },
+                { "/revit/assign-electrical-distribution-system", new AssignElectricalDistributionSystemActionHandler() },
                 { "/revit/load-family", new LoadFamilyHandler() },
                 { "/revit/create-family-from-template", new CreateFamilyFromTemplateHandler() },
                 { "/revit/duplicate-view", new DuplicateViewHandler() },

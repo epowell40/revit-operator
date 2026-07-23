@@ -4894,7 +4894,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/create-text", StringComparison.OrdinalIgnoreCase))
             {
-                // { action?:"create"|"list_types"|"create_type", viewId?, x?, y?, text?, typeId?|typeName?, newTypeName?, baseTypeId?|baseTypeName?, fontName?, textSize?, bold?, italic?, allowExisting?, dryRun? }
+                // { action?:"create"|"list_types"|"create_type"|"inspect"|"repair", textNoteId?, viewId?, x?, y?, widthFt?, text?, typeId?|typeName?, newTypeName?, baseTypeId?|baseTypeName?, fontName?, textSize?, bold?, italic?, allowExisting?, dryRun? }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "create-text body must be an object.";
@@ -4902,9 +4902,11 @@ namespace RevitBridge.Operator
                 }
 
                 if (!ValidateOptionalString(obj.Value, "action", maxLen: 32, out error)) return false;
+                if (!ValidateOptionalLong(obj.Value, "textNoteId", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "viewId", out error)) return false;
                 if (!ValidateOptionalNumber(obj.Value, "x", out error)) return false;
                 if (!ValidateOptionalNumber(obj.Value, "y", out error)) return false;
+                if (!ValidateOptionalNumber(obj.Value, "widthFt", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "text", maxLen: 2000, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "typeId", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "typeName", maxLen: 140, out error)) return false;
@@ -4924,9 +4926,10 @@ namespace RevitBridge.Operator
                     createTextAction = (av.GetString() ?? "").Trim().ToLowerInvariant();
                 }
 
-                if (createTextAction != "create" && createTextAction != "list_types" && createTextAction != "create_type")
+                if (createTextAction != "create" && createTextAction != "list_types" && createTextAction != "create_type" &&
+                    createTextAction != "inspect" && createTextAction != "repair")
                 {
-                    error = "create-text.action must be create|list_types|create_type.";
+                    error = "create-text.action must be create|list_types|create_type|inspect|repair.";
                     return false;
                 }
 
@@ -4935,6 +4938,20 @@ namespace RevitBridge.Operator
                     if (!ValidateRequiredNumber(obj.Value, "x", out error)) return false;
                     if (!ValidateRequiredNumber(obj.Value, "y", out error)) return false;
                     if (!ValidateRequiredString(obj.Value, "text", maxLen: 2000, out error)) return false;
+                }
+
+                if (createTextAction == "inspect" || createTextAction == "repair")
+                {
+                    if (!ValidateRequiredLong(obj.Value, "textNoteId", out error)) return false;
+                }
+
+                if (obj.Value.TryGetProperty("widthFt", out var widthFt) && widthFt.ValueKind == JsonValueKind.Number)
+                {
+                    if (!widthFt.TryGetDouble(out var width) || width <= 0 || width > 10_000)
+                    {
+                        error = "create-text.widthFt must be a positive number.";
+                        return false;
+                    }
                 }
 
                 if (createTextAction == "create_type")
@@ -5448,6 +5465,7 @@ namespace RevitBridge.Operator
                     if (el.ValueKind != JsonValueKind.Object) { error = "draw-detail-curves.curves items must be objects."; return false; }
                     if (!ValidateRequiredString(el, "kind", maxLen: 32, out error)) return false;
                 }
+
                 return true;
             }
 

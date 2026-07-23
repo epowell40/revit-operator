@@ -64,7 +64,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         if (c == null) continue;
                         var hasNativeConnectorId = MepSystemUtil.TryGetNativeConnectorId(c, out var nativeConnectorId);
 
-                        var origin = c.Origin;
+                        var origin = TryGetConnectorOrigin(c);
                         var shape = c.Shape.ToString();
                         var domain = "";
                         try { domain = c.Domain.ToString(); } catch { domain = ""; }
@@ -160,10 +160,23 @@ namespace RevitBridge.Logic.Handlers.MEP
                             index = idx,
                             connectorId = hasNativeConnectorId ? nativeConnectorId : idx,
                             connectorIdBasis = hasNativeConnectorId ? "revit_native_connector_id" : "enumeration_index_with_origin_guard_required",
-                            origin = new[] { origin.X, origin.Y, origin.Z },
+                            origin,
                             domain,
                             shape,
+                            connectorType = TryGetConnectorPropertyValue(c, "ConnectorType"),
+                            direction = TryGetConnectorPropertyValue(c, "Direction"),
+                            isConnected = TryGetConnectorPropertyValue(c, "IsConnected"),
                             systemClassification = TryGetConnectorSystemClassification(c),
+                            electrical = new
+                            {
+                                systemType = TryGetConnectorPropertyValue(c, "ElectricalSystemType"),
+                                voltageInternal = TryGetConnectorPropertyValue(c, "Voltage"),
+                                poles = TryGetConnectorPropertyValue(c, "NumberOfPoles"),
+                                apparentLoadInternal = TryGetConnectorPropertyValue(c, "ApparentLoad"),
+                                trueLoadInternal = TryGetConnectorPropertyValue(c, "TrueLoad"),
+                                powerFactor = TryGetConnectorPropertyValue(c, "PowerFactor"),
+                                loadClassification = TryGetConnectorPropertyValue(c, "LoadClassification")
+                            },
                             size,
                             coordinateSystem = cs,
                             connectedTo = refsOut,
@@ -214,6 +227,41 @@ namespace RevitBridge.Logic.Handlers.MEP
                 return value > 0 ? value : (long?)null;
             }
             catch { return null; }
+        }
+
+        private static object? TryGetConnectorOrigin(Connector connector)
+        {
+            try
+            {
+                var origin = connector.Origin;
+                return new[] { origin.X, origin.Y, origin.Z };
+            }
+            catch
+            {
+                // Logical electrical connectors do not expose a physical origin. They are
+                // still essential to circuit and panel diagnostics, so retain the connector
+                // with a null origin instead of failing the entire owning element.
+                return null;
+            }
+        }
+
+        private static object? TryGetConnectorPropertyValue(Connector connector, string propertyName)
+        {
+            try
+            {
+                var property = connector.GetType().GetProperty(propertyName);
+                var value = property?.GetValue(connector, null);
+                if (value == null) return null;
+                if (value is ElementId elementId) return ElementIdCompat.GetValue(elementId);
+                if (value is Enum) return value.ToString();
+                if (value is string || value is bool || value is int || value is long || value is double || value is float || value is decimal)
+                    return value;
+                return value.ToString();
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static string TryGetConnectorSystemClassification(Connector connector)

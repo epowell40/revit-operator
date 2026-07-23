@@ -12,6 +12,7 @@ using Autodesk.Revit.UI;
 using RevitBridge.Common;
 using RevitBridge.Common.Electrical;
 using RevitBridge.Logic.Handlers.Core;
+using RevitBridge.Logic.Handlers.MEP;
 
 namespace RevitBridge.Logic.Handlers
 {
@@ -518,6 +519,7 @@ namespace RevitBridge.Logic.Handlers
             public string? circuitNumber { get; set; }
             public long? sourceElementId { get; set; }
             public string? createSystemType { get; set; }
+            public long? electricalConnectorId { get; set; }
             public long? electricalSystemId { get; set; }
             public long? panelElementId { get; set; }
             public int? targetPanelSlotNumber { get; set; }
@@ -870,11 +872,25 @@ namespace RevitBridge.Logic.Handlers
                             nativeFailures,
                             rollbackOnErrors: true,
                             deleteWarnings: true));
-                        var system = ElectricalSystem.Create(
-                            doc,
-                            members.Select(instance => instance.Id).ToList(),
-                            ElectricalSystemType.PowerCircuit)
-                            ?? throw new InvalidOperationException("revit_did_not_create_electrical_system");
+                        ElectricalSystem? system;
+                        if (p.electricalConnectorId.HasValue)
+                        {
+                            if (members.Count != 1)
+                                throw new InvalidOperationException("electrical_connector_id_requires_exactly_one_member");
+                            var connector = ResolveUnusedPowerConnector(members[0], p.electricalConnectorId.Value);
+                            system = ElectricalSystem.Create(connector, ElectricalSystemType.PowerCircuit);
+                        }
+                        else
+                        {
+                            system = ElectricalSystem.Create(
+                                doc,
+                                members.Select(instance => instance.Id).ToList(),
+                                ElectricalSystemType.PowerCircuit);
+                        }
+                        if (system == null)
+                            throw new InvalidOperationException(p.electricalConnectorId.HasValue
+                                ? $"revit_did_not_create_electrical_system_from_connector:{p.electricalConnectorId.Value}"
+                                : "revit_did_not_create_electrical_system");
                         if (panel != null) system.SelectPanel(panel);
                         doc.Regenerate();
 
@@ -964,6 +980,7 @@ namespace RevitBridge.Logic.Handlers
                         rollbackVerified,
                         mode = "create_new_power_circuit",
                         requestedSystemType = "PowerCircuit",
+                        electricalConnectorId = p.electricalConnectorId,
                         createdElectricalSystemId = systemId,
                         panelElementId = p.panelElementId,
                         targetPanelSlotNumber = p.targetPanelSlotNumber,
@@ -994,6 +1011,45 @@ namespace RevitBridge.Logic.Handlers
                     throw;
                 }
             }
+        }
+
+        private static Connector ResolveUnusedPowerConnector(FamilyInstance member, long connectorId)
+        {
+            var matches = MepSystemUtil.GetConnectors(member)
+                .Where(connector => MepSystemUtil.TryGetNativeConnectorId(connector, out var nativeId) && nativeId == connectorId)
+                .ToList();
+            if (matches.Count != 1)
+                throw new InvalidOperationException($"electrical_connector_id_not_unique:{connectorId}:found={matches.Count}");
+
+            var connector = matches[0];
+            string domain;
+            try { domain = connector.Domain.ToString(); }
+            catch { domain = string.Empty; }
+            if (!string.Equals(domain, "DomainElectrical", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"connector_is_not_electrical:{connectorId}:domain={domain}");
+
+            string systemType;
+            try { systemType = connector.ElectricalSystemType.ToString(); }
+            catch { systemType = string.Empty; }
+            if (!string.Equals(systemType, ElectricalSystemType.PowerCircuit.ToString(), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"connector_is_not_power_circuit:{connectorId}:systemType={systemType}");
+
+            var existingSystemIds = new HashSet<long>();
+            try
+            {
+                foreach (Connector reference in connector.AllRefs)
+                {
+                    if (reference?.Owner is ElectricalSystem existing)
+                        existingSystemIds.Add(ElementIdCompat.GetValue(existing.Id));
+                }
+            }
+            catch
+            {
+                // ElectricalSystem.Create remains the final native unused-connector guard.
+            }
+            if (existingSystemIds.Count > 0)
+                throw new InvalidOperationException($"connector_already_has_electrical_system:{connectorId}:{string.Join(",", existingSystemIds.OrderBy(id => id))}");
+            return connector;
         }
 
         private static PanelScheduleSlotReadback MoveCircuitToPanelScheduleSlot(
