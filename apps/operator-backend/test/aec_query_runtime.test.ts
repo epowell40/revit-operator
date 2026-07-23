@@ -63,8 +63,8 @@ test("whole-document sheet count reports the exact native total", async () => {
   value.execution.allow_document_fallback = true;
   const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
   const first = await maybeRunAecSemanticQuery(request("sheet-count"), interpreter);
-  assert.deepEqual(first.response?.actions, [{ action_id: "aec-query-document-sheets", method: "POST", path: "/revit/sheets", body: { action: "count", countOnly: true } }]);
-  const done = await maybeRunAecSemanticQuery(request("sheet-count", [{ action_id: "aec-query-document-sheets", method: "POST", path: "/revit/sheets", status: "done", result_json: { action: "count", countOnly: true, totalSheets: 42, totalMatches: 42, total: 42, returned: 0, items: [] } }]), interpreter);
+  assert.deepEqual(first.response?.actions, [{ action_id: "aec-query-document-sheets", method: "POST", path: "/revit/sheets", body: { action: "list", offset: 0, limit: 1 } }]);
+  const done = await maybeRunAecSemanticQuery(request("sheet-count", [{ action_id: "aec-query-document-sheets", method: "POST", path: "/revit/sheets", status: "done", result_json: { action: "list", totalSheets: 42, totalMatches: 42, total: 42, returned: 1, items: [{ id: 1, sheetNumber: "A1", name: "Cover" }] } }]), interpreter);
   assert.match(done.response?.assistant_message ?? "", /42 sheets matched in the current model/);
   assert.match(done.response?.assistant_message ?? "", /no model changes/i);
   assert.deepEqual(done.response?.aec_query_receipt, { schema: "revit-operator.aec-query-receipt.v1", terminal: true, status: "complete", workflow_id: "query.document_sheets", bounded: true, broadened: false });
