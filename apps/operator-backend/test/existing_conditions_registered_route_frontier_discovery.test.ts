@@ -193,3 +193,48 @@ test("pipe frontier carries the stable native type id into route planning", () =
   assert.equal(receipt.resolved_candidate?.route_type_name, "Standard");
   assert.equal(receipt.resolved_candidate?.route_type_id, 139186);
 });
+
+for (const profile of [
+  { shape: "Rectangular", widthFt: 1, heightFt: 2 / 3, expectedShape: "rectangular", expectedSize: "12x8" },
+  { shape: "Oval", widthFt: 14 / 12, heightFt: 2 / 3, expectedShape: "oval", expectedSize: "14x8" }
+] as const) {
+  test(`discovers ${profile.expectedShape} duct profile consensus from both retained frontiers`, () => {
+    const profileReadback = readback();
+    for (const row of profileReadback.results as any[]) {
+      for (const c of row.connectors ?? []) {
+        c.shape = profile.shape;
+        c.size = { widthFt: profile.widthFt, heightFt: profile.heightFt };
+      }
+      if (String(row.category).includes("DuctCurves")) {
+        row.typeName = row.name = `${profile.shape} Duct`;
+      }
+    }
+    const receipt = discoverRegisteredRouteFrontierV1({ ...candidate(), source_claims: [] }, {
+      native_connector_readback: profileReadback,
+      policy
+    });
+    assert.equal(receipt.status, "ready");
+    assert.equal(receipt.native_consensus?.shape, profile.expectedShape);
+    assert.equal(receipt.native_consensus?.size, profile.expectedSize);
+    assert.equal(receipt.native_consensus?.diameter_ft, null);
+    assert.equal(receipt.native_consensus?.width_ft, profile.widthFt);
+    assert.equal(receipt.native_consensus?.height_ft, profile.heightFt);
+    assert.equal(receipt.resolved_candidate?.shape, profile.expectedShape);
+  });
+}
+
+test("defers when rectangular frontier heights disagree despite matching widths", () => {
+  const profileReadback = readback();
+  for (const row of profileReadback.results as any[]) {
+    for (const c of row.connectors ?? []) {
+      c.shape = "Rectangular";
+      c.size = { widthFt: 1, heightFt: row.id === 202 ? 10 / 12 : 2 / 3 };
+    }
+  }
+  const receipt = discoverRegisteredRouteFrontierV1({ ...candidate(), source_claims: [] }, {
+    native_connector_readback: profileReadback,
+    policy
+  });
+  assert.equal(receipt.status, "deferred");
+  assert.ok(receipt.blockers.includes("frontier_size_consensus_failed"));
+});

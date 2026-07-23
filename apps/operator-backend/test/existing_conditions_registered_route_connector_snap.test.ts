@@ -130,10 +130,54 @@ test("requires native physical connection counts instead of assuming connectors 
   );
 });
 
-test("blocks unsupported non-round profiles until dimension matching is implemented", () => {
+test("snaps rectangular duct endpoints by both native dimensions", () => {
+  const input = { ...candidate(), shape: "rectangular" as const, size: "12x8" };
+  const readback = connectorReadback();
+  for (const row of readback.results as any[]) {
+    for (const connector of row.connectors) {
+      connector.shape = "Rectangular";
+      connector.size = { widthFt: 1, heightFt: 2 / 3 };
+    }
+  }
+  const receipt = planRegisteredRouteConnectorSnapV1(input, { native_connector_readback: readback });
+  assert.equal(receipt.status, "ready");
+  assert.equal(receipt.dry_run_action?.body.ductShape, "rectangular");
+  assert.equal(receipt.dry_run_action?.body.ductSize, "12x8");
+  assert.equal(receipt.dry_run_action?.body.diameter, undefined);
+});
+
+test("snaps oval duct endpoints by both native dimensions", () => {
+  const input = { ...candidate(), shape: "oval" as const, size: "14\" x 8\"" };
+  const readback = connectorReadback();
+  for (const row of readback.results as any[]) {
+    for (const connector of row.connectors) {
+      connector.shape = "Oval";
+      connector.size = { widthFt: 14 / 12, heightFt: 2 / 3 };
+    }
+  }
+  const receipt = planRegisteredRouteConnectorSnapV1(input, { native_connector_readback: readback });
+  assert.equal(receipt.status, "ready");
+  assert.equal(receipt.dry_run_action?.body.ductShape, "oval");
+});
+
+test("defers a rectangular duct when either native profile dimension differs", () => {
+  const input = { ...candidate(), shape: "rectangular" as const, size: "12x8" };
+  const readback = connectorReadback();
+  for (const row of readback.results as any[]) {
+    for (const connector of row.connectors) {
+      connector.shape = "Rectangular";
+      connector.size = { widthFt: 1, heightFt: 10 / 12 };
+    }
+  }
+  const receipt = planRegisteredRouteConnectorSnapV1(input, { native_connector_readback: readback });
+  assert.equal(receipt.status, "deferred");
+  assert.ok(receipt.blockers.includes("start_endpoint_has_no_compatible_open_connector"));
+});
+
+test("rejects non-round pipe and conduit profiles as unsupported native domains", () => {
   assert.throws(
-    () => planRegisteredRouteConnectorSnapV1({ ...candidate(), shape: "rectangular" as const, size: "12x8" }, { native_connector_readback: connectorReadback() }),
-    /v1_only_supports_round_profiles/
+    () => planRegisteredRouteConnectorSnapV1({ ...candidate(), kind: "pipe" as const, shape: "rectangular" as const, size: "12x8" }, { native_connector_readback: connectorReadback() }),
+    /profile_not_supported_for_kind/
   );
 });
 

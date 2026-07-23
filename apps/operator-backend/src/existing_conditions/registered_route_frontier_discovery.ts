@@ -5,6 +5,14 @@ import type {
   RegisteredRouteSnapCandidateV1,
   RegisteredRouteSnapPolicyV1
 } from "./registered_route_connector_snap.js";
+import {
+  formatRouteProfileSizeV1,
+  normalizeRouteProfileShapeV1,
+  parseRouteProfileSizeV1,
+  routeProfileDimensionsCompatibleV1,
+  type RouteProfileDimensionsV1,
+  type RouteProfileShapeV1
+} from "./route_profile.js";
 
 export type RegisteredRouteSourceClaimV1 = {
   attribute: "shape" | "size" | "system_type" | "elevation_z_ft";
@@ -65,9 +73,11 @@ export type RegisteredRouteFrontierReceiptV1 = {
   endpoint_matches: RegisteredRouteEndpointSnapV1[];
   native_consensus: null | {
     domain: string;
-    shape: "round";
+    shape: RouteProfileShapeV1;
     size: string;
-    diameter_ft: number;
+    diameter_ft: number | null;
+    width_ft: number | null;
+    height_ft: number | null;
     elevation_z_ft: number;
     system_type: string;
     route_type_id: number;
@@ -184,8 +194,26 @@ function routeDirection(points: SheetTopologyPoint[], endpoint: "start" | "end")
   const b = endpoint === "start" ? points[1]! : points[points.length - 2]!;
   return [finite(b.x, "frontier_direction_x") - finite(a.x, "frontier_direction_x"), finite(b.y, "frontier_direction_y") - finite(a.y, "frontier_direction_y"), 0];
 }
-function inches(feet: number): string { const value = Math.round(feet * 12 * 1e6) / 1e6; return `${Number.isInteger(value) ? value.toFixed(0) : String(value)}\"`; }
-function parseInches(value: unknown): number | null { const match = clean(value).match(/^([0-9]+(?:\.[0-9]+)?)\s*(?:\"|in|inch|inches)?$/i); return match ? Number(match[1]) / 12 : null; }
+function connectorProfile(connector: NativeConnector): RouteProfileDimensionsV1 | null {
+  const shape = normalizeRouteProfileShapeV1(connector.shape);
+  if (!shape) return null;
+  const profile = {
+    shape,
+    diameter_ft: connector.diameter_ft,
+    width_ft: connector.width_ft,
+    height_ft: connector.height_ft
+  };
+  if (shape === "round") return profile.diameter_ft !== null ? profile : null;
+  return profile.width_ft !== null && profile.height_ft !== null ? profile : null;
+}
+function meanProfile(left: RouteProfileDimensionsV1, right: RouteProfileDimensionsV1): RouteProfileDimensionsV1 {
+  return {
+    shape: left.shape,
+    diameter_ft: left.diameter_ft === null || right.diameter_ft === null ? null : (left.diameter_ft + right.diameter_ft) / 2,
+    width_ft: left.width_ft === null || right.width_ft === null ? null : (left.width_ft + right.width_ft) / 2,
+    height_ft: left.height_ft === null || right.height_ft === null ? null : (left.height_ft + right.height_ft) / 2
+  };
+}
 function humanizeSystem(value: string): string {
   const spaced = clean(value).replace(/([a-z])([A-Z])/g, "$1 $2").replace(/_/g, " ").replace(/\s+/g, " ").trim();
   return spaced.replace(/\b\w/g, letter => letter.toUpperCase());
@@ -235,7 +263,9 @@ export function discoverRegisteredRouteFrontierV1(
     const point = endpoint === "start" ? candidate.points[0]! : candidate.points[candidate.points.length - 1]!;
     const direction = routeDirection(candidate.points, endpoint);
     const ranked = connectors.flatMap(connector => {
-      if (connector.physical_connection_count !== 0 || connector.domain !== expectedDomain || connector.shape !== "round" || connector.diameter_ft === null) return [];
+      const profile = connectorProfile(connector);
+      if (connector.physical_connection_count !== 0 || connector.domain !== expectedDomain || !profile) return [];
+      if (candidate.kind !== "duct" && profile.shape !== "round") return [];
       const distance = Math.hypot(connector.origin[0] - point.x, connector.origin[1] - point.y);
       const dot = directionDot(connector.direction, direction);
       return distance <= policy.maximum_endpoint_snap_ft && dot >= policy.minimum_direction_dot ? [{ connector, distance, dot }] : [];
@@ -262,9 +292,11 @@ export function discoverRegisteredRouteFrontierV1(
   if (start && end && connectorKey(start) === connectorKey(end)) blockers.push("frontier_endpoints_resolve_to_same_connector");
   let consensus: RegisteredRouteFrontierReceiptV1["native_consensus"] = null;
   if (start && end) {
+    const startProfile = connectorProfile(start);
+    const endProfile = connectorProfile(end);
     if (start.domain !== end.domain) blockers.push("frontier_domain_consensus_failed");
-    if (start.shape !== end.shape || start.shape !== "round") blockers.push("frontier_shape_consensus_failed");
-    if (start.diameter_ft === null || end.diameter_ft === null || Math.abs(start.diameter_ft - end.diameter_ft) > policy.maximum_size_delta_ft) blockers.push("frontier_size_consensus_failed");
+    if (!startProfile || !endProfile || startProfile.shape !== endProfile.shape) blockers.push("frontier_shape_consensus_failed");
+    else if (!routeProfileDimensionsCompatibleV1(startProfile, endProfile, policy.maximum_size_delta_ft)) blockers.push("frontier_size_consensus_failed");
     if (Math.abs(start.origin[2] - end.origin[2]) > policy.maximum_connector_z_delta_ft) blockers.push("frontier_elevation_consensus_failed");
     const startSystem = systemToken(start); const endSystem = systemToken(end);
     if (!startSystem || startSystem !== endSystem) blockers.push("frontier_system_consensus_failed");
@@ -280,12 +312,15 @@ export function discoverRegisteredRouteFrontierV1(
     if (typeIds.length !== 1 || typeNames.length !== 1) blockers.push("frontier_route_type_consensus_failed");
     const phases = [...new Set(adjacentRows.map(row => row.created_phase_id).filter((id): id is number => id !== null))];
     if (phases.length > 1) blockers.push("frontier_created_phase_consensus_failed");
-    if (blockers.length === 0 && start.diameter_ft !== null && typeIds[0] && typeNames[0]) {
+    if (blockers.length === 0 && startProfile && endProfile && typeIds[0] && typeNames[0]) {
+      const profile = meanProfile(startProfile, endProfile);
       consensus = {
         domain: start.domain,
-        shape: "round",
-        size: inches((start.diameter_ft + (end.diameter_ft ?? start.diameter_ft)) / 2),
-        diameter_ft: (start.diameter_ft + (end.diameter_ft ?? start.diameter_ft)) / 2,
+        shape: profile.shape,
+        size: formatRouteProfileSizeV1(profile),
+        diameter_ft: profile.diameter_ft,
+        width_ft: profile.width_ft,
+        height_ft: profile.height_ft,
         elevation_z_ft: (start.origin[2] + end.origin[2]) / 2,
         system_type: humanizeSystem(start.system_classification || startSystem),
         route_type_id: typeIds[0],
@@ -302,7 +337,11 @@ export function discoverRegisteredRouteFrontierV1(
       if (!clean(claim.evidence_reference)) throw new Error(`frontier_source_claim_${index}_evidence_reference_required`);
       const nativeValue = claim.attribute === "shape" ? consensus.shape : claim.attribute === "size" ? consensus.size : claim.attribute === "system_type" ? consensus.system_type : consensus.elevation_z_ft;
       const agrees = claim.attribute === "size"
-        ? parseInches(claim.value) !== null && Math.abs(parseInches(claim.value)! - consensus.diameter_ft) <= policy.maximum_size_delta_ft
+        ? (() => {
+          const claimed = parseRouteProfileSizeV1(consensus.shape, claim.value);
+          const native = parseRouteProfileSizeV1(consensus.shape, consensus.size);
+          return claimed !== null && native !== null && routeProfileDimensionsCompatibleV1(claimed, native, policy.maximum_size_delta_ft);
+        })()
         : claim.attribute === "elevation_z_ft"
           ? typeof claim.value === "number" && Math.abs(claim.value - consensus.elevation_z_ft) <= policy.maximum_connector_z_delta_ft
           : normalized(claim.value) === normalized(nativeValue);

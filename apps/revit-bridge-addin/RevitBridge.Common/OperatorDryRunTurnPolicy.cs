@@ -1,5 +1,6 @@
 using System;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace RevitBridge.Common
 {
@@ -29,15 +30,31 @@ namespace RevitBridge.Common
             var mentionsDryRun = text.Contains("dry-run") || text.Contains("dry run");
             if (!mentionsDryRun) return false;
 
-            return ContainsAny(text,
-                "only",
-                "stop",
-                "do not continue",
-                "don't continue",
-                "dont continue",
-                "one action",
-                "single action",
-                "without apply");
+            // "Only" frequently scopes the apply condition in a staged write request
+            // (for example, "dry-run first, then apply only if readback passes").
+            // Treat an explicit staged continuation as authoritative unless a stronger
+            // no-apply phrase above already made the request dry-run-only.
+            if (Regex.IsMatch(
+                    text,
+                    @"\bdry[-\s]?run\b[^.!?\n]{0,180}\b(?:then|after(?:wards)?|if\s+(?:it|that|the\s+(?:result|readback|dry[-\s]?run)))\b[^.!?\n]{0,120}\bapply\b",
+                    RegexOptions.IgnoreCase) ||
+                Regex.IsMatch(
+                    text,
+                    @"\b(?:then|after(?:wards)?)\b[^.!?\n]{0,120}\bapply\b",
+                    RegexOptions.IgnoreCase))
+            {
+                return false;
+            }
+
+            return Regex.IsMatch(text, @"\bdry[-\s]?run\s+only\b", RegexOptions.IgnoreCase) ||
+                Regex.IsMatch(text, @"\b(?:one|single)\b[^.!?\n]{0,40}\bdry[-\s]?run\b", RegexOptions.IgnoreCase) ||
+                Regex.IsMatch(text, @"\bstop\b[^.!?\n]{0,80}\b(?:after|following)\b[^.!?\n]{0,50}\bdry[-\s]?run\b", RegexOptions.IgnoreCase) ||
+                Regex.IsMatch(text, @"\bdry[-\s]?run\b[^.!?\n]{0,80}\band\s+stop\b", RegexOptions.IgnoreCase) ||
+                ContainsAny(text,
+                    "do not continue",
+                    "don't continue",
+                    "dont continue",
+                    "without apply");
         }
 
         public static bool BodyRequestsDryRun(string? bodyJson)

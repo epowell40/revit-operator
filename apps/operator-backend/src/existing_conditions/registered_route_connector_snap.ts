@@ -1,5 +1,10 @@
 import crypto from "node:crypto";
 import type { AtomicMepDraftWorkflowRequest } from "./mep_draft_plan.js";
+import {
+  parseRouteProfileSizeV1,
+  routeProfileDimensionsCompatibleV1,
+  type RouteProfileDimensionsV1
+} from "./route_profile.js";
 import type { SheetTopologyPoint } from "./sheet_topology_compiler.js";
 
 export type RegisteredRouteSnapCandidateV1 = {
@@ -188,14 +193,15 @@ function normalizeConnectors(readback: unknown): NativeConnector[] {
   return connectors;
 }
 
-function parseInches(value: string): number | null {
-  const match = clean(value).match(/^([0-9]+(?:\.[0-9]+)?)\s*(?:\"|in|inch|inches)?$/i);
-  return match ? Number(match[1]) / 12 : null;
-}
-
 function sizeCompatible(connector: NativeConnector, candidate: RegisteredRouteSnapCandidateV1, tolerance: number): boolean {
-  const expected = parseInches(candidate.size);
-  return expected !== null && connector.diameter_ft !== null && Math.abs(connector.diameter_ft - expected) <= tolerance;
+  const expected = parseRouteProfileSizeV1(candidate.shape, candidate.size);
+  const actual: RouteProfileDimensionsV1 = {
+    shape: candidate.shape,
+    diameter_ft: connector.diameter_ft,
+    width_ft: connector.width_ft,
+    height_ft: connector.height_ft
+  };
+  return expected !== null && routeProfileDimensionsCompatibleV1(actual, expected, tolerance);
 }
 
 function directionDot(a: [number, number, number], b: [number, number, number]): number {
@@ -236,7 +242,8 @@ export function planRegisteredRouteConnectorSnapV1(
   if (!Array.isArray(candidate.points) || candidate.points.length < 2) throw new Error("registered_route_snap_requires_two_points");
   if (!Number.isSafeInteger(candidate.view_id) || candidate.view_id <= 0) throw new Error("registered_route_snap_view_id_invalid");
   if (!clean(candidate.level_name) || !clean(candidate.size) || (candidate.kind !== "conduit" && !clean(candidate.system_type))) throw new Error("registered_route_snap_native_mapping_required");
-  if (candidate.shape !== "round") throw new Error("registered_route_snap_v1_only_supports_round_profiles");
+  if (candidate.kind !== "duct" && candidate.shape !== "round") throw new Error("registered_route_snap_profile_not_supported_for_kind");
+  if (!parseRouteProfileSizeV1(candidate.shape, candidate.size)) throw new Error("registered_route_snap_size_does_not_match_profile");
   const elevation = finite(candidate.elevation_z_ft, "registered_route_snap_elevation_z_ft");
   const policy: RegisteredRouteSnapPolicyV1 = {
     maximum_endpoint_snap_ft: positive(context.policy?.maximum_endpoint_snap_ft ?? DEFAULT_REGISTERED_ROUTE_SNAP_POLICY_V1.maximum_endpoint_snap_ft, "maximum_endpoint_snap_ft"),
@@ -314,7 +321,6 @@ export function planRegisteredRouteConnectorSnapV1(
     viewId: candidate.view_id,
     levelName: candidate.level_name,
     systemType: candidate.system_type,
-    ductShape: candidate.shape,
     sizePolicy: "explicit_required",
     elevationPolicy: "explicit_required",
     routingMode: "polyline",
@@ -323,7 +329,11 @@ export function planRegisteredRouteConnectorSnapV1(
     requireExistingEndpointConnections: true,
     externalConnectionToleranceFt: policy.final_connection_tolerance_ft,
     verify: true,
-    ...(candidate.kind === "duct" ? { ductSize: candidate.size, diameter: candidate.size } : {}),
+    ...(candidate.kind === "duct" ? {
+      ductShape: candidate.shape,
+      ductSize: candidate.size,
+      ...(candidate.shape === "round" ? { diameter: candidate.size } : {})
+    } : {}),
     ...(candidate.kind === "pipe" ? { pipeSize: candidate.size, diameter: candidate.size } : {}),
     ...(candidate.kind === "conduit" ? { diameter: candidate.size } : {}),
     ...(candidate.route_type_name ? { [candidate.kind === "duct" ? "ductType" : candidate.kind === "pipe" ? "pipeType" : "conduitType"]: candidate.route_type_name } : {}),

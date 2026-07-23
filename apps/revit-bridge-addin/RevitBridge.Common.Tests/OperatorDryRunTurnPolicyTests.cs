@@ -17,6 +17,9 @@ namespace RevitBridge.Common.Tests
 
         [Theory]
         [InlineData("Dry-run this first, then apply it if valid.")]
+        [InlineData("Dry-run only this exact action first, then apply it if native readback passes.")]
+        [InlineData("Dry-run that one bounded action, then apply only if native readback passes.")]
+        [InlineData("This is a staged write: dry run first and afterwards apply the identical action.")]
         [InlineData("Place the receptacle and verify it.")]
         [InlineData("")]
         public void DoesNotConflateNormalStagedWorkWithDryRunOnly(string text)

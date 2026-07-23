@@ -661,6 +661,18 @@ namespace RevitBridge.Operator
                     return OneOf(Null(), core);
                 }
 
+                // Route request DTOs contain several mutually exclusive nullable string
+                // selectors (ductType/pipeType/conduitType and their sizes). The generic
+                // net48 reflection fallback cannot recover nullable-reference metadata and
+                // would incorrectly advertise every selector as simultaneously required.
+                // The handlers require ordered points; kind defaults to duct and every
+                // other selector is conditional or has a guarded native fallback.
+                if (string.Equals(p, "/revit/create-mep-route", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(p, "/revit/mep-route-workflow", StringComparison.OrdinalIgnoreCase))
+                {
+                    return WithRequiredFields(SchemaFromType(RequestTypesByPath[p], depth: 0), "points");
+                }
+
                 // Default: schema from request type when known, else generic object.
                 if (RequestTypesByPath.TryGetValue(p, out var t))
                 {
@@ -936,7 +948,8 @@ namespace RevitBridge.Operator
 
                 if (p == "/revit/create-mep-route")
                 {
-                    enumMap["kind"] = new[] { "duct", "pipe" };
+                    enumMap["kind"] = new[] { "duct", "pipe", "conduit" };
+                    enumMap["ductShape"] = new[] { "round", "rectangular", "oval" };
                     enumMap["sizePolicy"] = new[] { "explicit_required", "use_default_with_warning" };
                     enumMap["elevationPolicy"] = new[] { "explicit_required", "resolve_context_default" };
                     enumMap["routingMode"] = new[] { "orthogonal", "polyline" };
@@ -946,6 +959,7 @@ namespace RevitBridge.Operator
                     notes.Add("Use segmentSizes with one size per segment to draft multi-section routes; internal joints with differing adjacent sizes expect transition fittings.");
                     notes.Add("Internal route joints attempt Revit NewTransitionFitting for size changes, otherwise NewElbowFitting, then fall back to Connector.ConnectTo; fitting ids are returned when created.");
                     notes.Add("Connector verification is conservative: created standalone routes normally report open endpoint connectors until connected to equipment or existing runs.");
+                    notes.Add("Only points is universally required. For kind=duct use ductType or ductTypeId plus ductSize/diameter; for kind=pipe use pipeType or pipeTypeId plus pipeSize/diameter; for kind=conduit use conduitType or conduitTypeId plus diameter. These alternatives are not simultaneous requirements.");
                 }
 
                 if (p == "/revit/connect-mep-branch")
@@ -963,7 +977,8 @@ namespace RevitBridge.Operator
 
                 if (p == "/revit/mep-route-workflow")
                 {
-                    enumMap["kind"] = new[] { "duct", "pipe" };
+                    enumMap["kind"] = new[] { "duct", "pipe", "conduit" };
+                    enumMap["ductShape"] = new[] { "round", "rectangular", "oval" };
                     enumMap["sizePolicy"] = new[] { "explicit_required", "use_default_with_warning" };
                     enumMap["elevationPolicy"] = new[] { "explicit_required", "resolve_context_default" };
                     enumMap["routingMode"] = new[] { "orthogonal", "polyline" };
@@ -972,6 +987,7 @@ namespace RevitBridge.Operator
                     notes.Add("Execution order is fixed: resolve context, dry-run route, apply route only if dry-run is not blocked, then highlight/export the applied elements for visual review.");
                     notes.Add("When apply=false the workflow returns DryRunReady and no visual capture because dry-run elements are rolled back.");
                     notes.Add("When apply=true and visualVerify=true, successful responses include visualVerification.capture.path plus AI review checklist text.");
+                    notes.Add("Only points is universally required. Route type, system, shape, and size fields are conditional on kind and may use either stable type IDs or names.");
                 }
 
                 if (p == "/revit/mep-branch-network-workflow")
@@ -1230,6 +1246,15 @@ namespace RevitBridge.Operator
                 catch
                 {
                     // ignore
+                }
+                return schema;
+            }
+
+            private static object WithRequiredFields(object schema, params string[] requiredFields)
+            {
+                if (schema is Dictionary<string, object> dictionary)
+                {
+                    dictionary["required"] = requiredFields ?? Array.Empty<string>();
                 }
                 return schema;
             }
