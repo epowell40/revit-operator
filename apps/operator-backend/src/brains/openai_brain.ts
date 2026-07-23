@@ -25,7 +25,7 @@ import { captureRequirementsResponseGuard, enforceRequirementsResponseGuard, for
 import { createOpenAiClient, resolveOpenAiApiKey } from "../openai_client.js";
 import { executeWorkbenchActions, maxWorkbenchActions, type WorkbenchAction, type WorkbenchActionResult } from "../workbench/workbench_runner.js";
 import { createArtifactShare } from "../artifacts/artifact_bus.js";
-import { compactIncomingToolResult, compactVisibleElementsResult, describeVisibleElementsInventory } from "../tool_result_compaction.js";
+import { compactIncomingToolResult, compactParameterReadResultForPrompt, compactScheduleReadResultForPrompt, compactVisibleElementsResult, describeVisibleElementsInventory } from "../tool_result_compaction.js";
 import { alignRedlineToView, type ViewAlignmentMark, type ViewAlignmentResult } from "../redline/view_alignment.js";
 import { orientRedlineFile } from "../redline/redline_orienter.js";
 import { analyzeRedlineFile } from "../redline/redline_analyzer.js";
@@ -14179,6 +14179,8 @@ function defaultSystemPrompt(): string {
     "- If you need element IDs for follow-on checks (e.g. reading parameters), prefer /revit/quantify intent 'list' or 'count_and_list' (not 'count').",
     "- If tool results include element IDs and you need to classify/filter by a parameter, your next action is usually POST /revit/get-parameters with elementIds + names.",
     "- For a bounded category-wide parameter audit, do not serialize thousands of elementIds. Call POST /revit/get-parameters with category/categories, includeStringParameters:true when appropriate, offset:0, and limit:500; follow nextOffset until hasMore is false. Keep the exact confirmed categories and fail closed on any unresolved category.",
+    "- For a custom parameter audit that may cross Revit categories, do not guess or repeatedly widen categories. Search the active host document with POST /revit/get-parameters using allModelInstances:true, includeStringParameters:true, exact names learned from schedule/read evidence and/or a non-empty literal valueContains filter, writableOnly when appropriate, offset:0, and limit:500. Filters are applied before paging; follow nextOffset until hasMore is false and treat totalMatched as the matching-element count. This scope excludes links and element types.",
+    "- When the user points to schedule sheets, first resolve each sheet with POST /revit/sheets action:\"detail\" and inspect placedSchedules. Then read the relevant schedule with POST /revit/schedules action:\"detail\", includeData:true, and bounded row/column paging. Reconcile the visible schedule evidence with the host-model parameter search before writing; a screenshot alone does not supply writable element IDs.",
     "- If recent tool results say an element id is missing/not found after an apply, treat that id as stale. Do not keep querying it in a loop; re-resolve the live successor element from the active view, nearby exemplars, or the latest write payload before continuing.",
     "- If a parameter name is unclear, fetch parameters for 1 element/type to discover the correct name, then re-query in batch.",
     "- For physical printing, prefer POST /revit/print with dryRun:true first to preflight the exact sheets and printer, then dryRun:false only after the intended target is clear. For PDF deliverables, use POST /revit/export-pdf with dryRun/preflight first when the sheet scope is ambiguous; inspect selectedSheets/preflight.outputs, then export with combine=true when the user asks for a single combined/bound PDF and combine=false when the user asks for individual PDFs. For requested individual naming conventions, set perSheetFileNameTemplate directly (for example \"36478953 - {sheetNumber} - {sheetName}\") rather than exporting default names and copying/renaming afterward. For black-and-white/monochrome output set colorMode:\"BlackLine\"; for grayscale set colorMode:\"Grayscale\"; for color set colorMode:\"Color\". Verify returned verification.ok before reporting success.",
@@ -14862,7 +14864,7 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
     lines.push("");
   }
   lines.push("Fast Revit edit playbooks:");
-  lines.push("- Parameter edits: resolve the target element ID, read its relevant parameters with POST /revit/get-parameters, then write the exact resolved parameter with POST /revit/set-parameter or a purpose-built updater, then require post-commit verification. For a confirmed category-wide audit, use categories + includeStringParameters + offset/limit and page through nextOffset instead of emitting a huge elementIds array. Do not guess parameter names when a quick parameter read can resolve them.");
+  lines.push("- Parameter edits: resolve the exact writable parameter name from read evidence, then write and require post-commit verification. For a confirmed category-wide audit, use categories + includeStringParameters + offset/limit. When a literal value may occur across categories, use allModelInstances:true + valueContains + writableOnly and page the filtered matches; do not guess categories or parameter names. If the scope comes from schedule sheets, resolve placedSchedules and read bounded schedule data first, then reconcile against host-model element IDs.");
   lines.push("- For a named electrical panel AIC/SCCR edit, prefer one targeted POST /revit/update-panel-parameter using panelName, parameterName:\"A.I.C. Rating\" or \"Short Circuit Rating\", value, onlyWhenBlank:false, targetScope:\"panel\", dryRun:false when the user asked to make the change and write grant is active; avoid /revit/tool-doc or /revit/tool-examples unless that direct call fails.");
   lines.push("- Avoid exploratory tool-doc/tool-examples calls for common parameter updates when /revit/find-elements, /revit/get-parameters, /revit/set-parameter, or /revit/update-panel-parameter are already available.");
   lines.push("");
@@ -15350,28 +15352,26 @@ function projectToolResultsForPrompt(toolResults: ToolResult[]): unknown {
         sheetNumber: it?.sheetNumber ?? null,
         name: it?.name ?? null
       }));
+      if (String(res.action ?? "").toLowerCase() === "detail") {
+        base.sheet = {
+          sheetElementId: res.sheetElementId ?? res.sheetId ?? null,
+          sheetNumber: res.sheetNumber ?? null,
+          sheetName: res.sheetName ?? res.title ?? null,
+          placedViewCount: res.placedViewCount ?? null,
+          placedScheduleCount: res.placedScheduleCount ?? null,
+          viewportCount: res.viewportCount ?? null
+        };
+        base.placedSchedules = Array.isArray(res.placedSchedules) ? res.placedSchedules.slice(0, 100) : [];
+      }
     } else if (r.path === "/revit/query" && Array.isArray(res)) {
       base.ids = res
         .map(row => row?.id)
         .filter(id => typeof id === "number")
         .slice(0, 500);
     } else if (r.path === "/revit/get-parameters" && res && typeof res === "object") {
-      const parameterItems = extractResultItems(res);
-      if (parameterItems.length > 0) {
-        const items = parameterItems.slice(0, 80).map((it: any) => ({
-          id: it?.id ?? null,
-          elementId: it?.elementId ?? it?.element_id ?? null,
-          name: it?.name ?? null,
-          category: it?.category ?? null,
-          parameters: truncateValue(it?.parameters ?? null, 600),
-          error: it?.error ?? null
-        }));
-        base.items = items;
-      } else {
-        base.parameters = res.parameters ?? null;
-        base.id = res.id ?? null;
-        base.name = res.name ?? null;
-      }
+      base.parameterEvidence = compactParameterReadResultForPrompt(res);
+    } else if (r.path === "/revit/schedules" && res && typeof res === "object") {
+      base.scheduleEvidence = compactScheduleReadResultForPrompt(res);
     } else if (r.path === "/revit/export-visible-elements" && res && typeof res === "object") {
       base.inventory = compactVisibleElementsResult(res, { maxItems: 16, maxCountEntries: 6 });
     } else if (r.path === "/revit/spatial-context" && res && typeof res === "object") {

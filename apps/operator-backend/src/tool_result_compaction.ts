@@ -587,6 +587,116 @@ export function compactVisibleElementsResult(
   return compacted;
 }
 
+export function compactParameterReadResultForPrompt(value: unknown, options?: { maxEvidence?: number; maxElementIds?: number }): unknown {
+  const obj = asObject(value);
+  if (!obj) return value;
+  const items = Array.isArray(obj.items) ? obj.items : [];
+  const literal = pickString(obj.valueContains);
+  const literalLower = literal?.toLowerCase() ?? "";
+  const maxEvidence = Math.max(1, Math.min(100, options?.maxEvidence ?? 16));
+  const maxElementIds = Math.max(1, Math.min(500, options?.maxElementIds ?? 500));
+  const evidence: Array<Record<string, unknown> & { _score: number; _order: number }> = [];
+  let order = 0;
+
+  for (const rawItem of items) {
+    const item = asObject(rawItem);
+    if (!item) continue;
+    const elementId = pickFirstNumber(item.id, item.elementId, item.element_id);
+    const details = Array.isArray(item.parameterDetails) ? item.parameterDetails : [];
+    for (const rawDetail of details) {
+      const detail = asObject(rawDetail);
+      if (!detail) continue;
+      const parameterName = pickString(detail.name);
+      const parameterValue = typeof detail.value === "string" ? detail.value : detail.value == null ? "" : String(detail.value);
+      if (!parameterName || !parameterValue) continue;
+      const nameLower = parameterName.toLowerCase();
+      const valueLower = parameterValue.toLowerCase();
+      const literalMatch = literalLower ? valueLower.includes(literalLower) : false;
+      const designationMatch = /\bdesig(?:nation)?\.?\b/i.test(parameterName);
+      const shockMatch = /shock\s*arrest|(?:^|[-_\s])sa(?:[-_\s]|$)/i.test(`${parameterName} ${parameterValue} ${pickString(item.name) ?? ""}`);
+      const codeMatch = /-[a-z0-9]+-/i.test(parameterValue);
+      const isReadOnly = pickBool(detail.isReadOnly);
+      const score = (literalMatch ? 1000 : 0) + (designationMatch ? 500 : 0) + (shockMatch ? 250 : 0) + (codeMatch ? 100 : 0) + (isReadOnly === false ? 25 : 0);
+      evidence.push({
+        elementId,
+        elementName: pickString(item.name),
+        category: pickString(item.category),
+        parameterName,
+        value: parameterValue,
+        storageType: pickString(detail.storageType),
+        isReadOnly,
+        parameterId: pickFirstNumber(detail.parameterId),
+        literalMatch,
+        _score: score,
+        _order: order++
+      });
+    }
+  }
+
+  evidence.sort((a, b) => b._score - a._score || a._order - b._order);
+  const relevant = literal
+    ? evidence.filter((entry) => entry.literalMatch)
+    : evidence.filter((entry) => entry._score >= 100);
+  const selectedPool = relevant.length > 0 ? relevant : evidence;
+  const matchingElementIds = Array.from(new Set(selectedPool.map((entry) => entry.elementId).filter((id): id is number => typeof id === "number"))).slice(0, maxElementIds);
+  const parameterCounts = new Map<string, number>();
+  for (const entry of selectedPool) {
+    const name = String(entry.parameterName);
+    parameterCounts.set(name, (parameterCounts.get(name) ?? 0) + 1);
+  }
+  const evidenceSample = selectedPool.slice(0, maxEvidence).map(({ _score, _order, ...entry }) => entry);
+
+  return {
+    _compacted: true,
+    compaction: "parameter-evidence-summary",
+    selector: obj.selector ?? null,
+    hostModelOnly: obj.hostModelOnly ?? null,
+    instanceOnly: obj.instanceOnly ?? null,
+    valueContains: literal,
+    writableOnly: obj.writableOnly ?? null,
+    totalScanned: obj.totalScanned ?? null,
+    totalMatched: obj.totalMatched ?? null,
+    returnedCount: obj.returnedCount ?? items.length,
+    offset: obj.offset ?? null,
+    hasMore: obj.hasMore ?? null,
+    nextOffset: obj.nextOffset ?? null,
+    matchingElementIds,
+    matchingElementIdsOmitted: Math.max(0, new Set(selectedPool.map((entry) => entry.elementId).filter((id) => typeof id === "number")).size - matchingElementIds.length),
+    parameterCounts: Array.from(parameterCounts.entries()).map(([name, count]) => ({ name, count })).slice(0, 20),
+    evidenceSample,
+    evidenceOmitted: Math.max(0, selectedPool.length - evidenceSample.length),
+    errors: items.map((entry) => asObject(entry)?.error).filter((entry) => typeof entry === "string").slice(0, 20)
+  };
+}
+
+export function compactScheduleReadResultForPrompt(value: unknown): unknown {
+  const obj = asObject(value);
+  if (!obj) return value;
+  const compactRows = (section: unknown, maxRows: number) => {
+    const row = asObject(section);
+    return {
+      totalRows: row?.totalRows ?? null,
+      totalColumns: row?.totalColumns ?? null,
+      rowOffset: row?.rowOffset ?? null,
+      returnedRows: row?.returnedRows ?? null,
+      hasMoreRows: row?.hasMoreRows ?? null,
+      nextRowOffset: row?.nextRowOffset ?? null,
+      rows: Array.isArray(row?.rows) ? row.rows.slice(0, maxRows) : []
+    };
+  };
+  const table = asObject(obj.table);
+  return {
+    action: obj.action ?? null,
+    status: obj.status ?? null,
+    returned: obj.returned ?? null,
+    query: obj.query ?? null,
+    items: Array.isArray(obj.items) ? obj.items.slice(0, 200) : null,
+    schedule: obj.schedule ?? null,
+    fields: Array.isArray(obj.fields) ? obj.fields.slice(0, 80) : null,
+    table: table ? { header: compactRows(table.header, 10), body: compactRows(table.body, 30) } : null
+  };
+}
+
 export function compactIncomingToolResult(result: ToolResult): ToolResult {
   const pathName = (result.path ?? "").trim().toLowerCase();
   const attachments = Array.isArray(result.attachments)
