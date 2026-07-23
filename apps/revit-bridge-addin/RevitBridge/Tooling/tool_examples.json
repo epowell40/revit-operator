@@ -2698,6 +2698,37 @@
               }
             ]
           }
+        },
+        {
+          "name": "Page all string parameters in an exact category scope",
+          "request": {
+            "categories": [
+              "OST_ElectricalEquipment",
+              "OST_MechanicalEquipment"
+            ],
+            "includeStringParameters": true,
+            "offset": 0,
+            "limit": 500
+          },
+          "expected_response_shape": {
+            "totalMatched": 2428,
+            "returnedCount": 500,
+            "hasMore": true,
+            "nextOffset": 500,
+            "items": [
+              {
+                "id": 123,
+                "parameterDetails": [
+                  {
+                    "name": "Mark",
+                    "value": "B3-G-IA-01",
+                    "storageType": "String",
+                    "isReadOnly": false
+                  }
+                ]
+              }
+            ]
+          }
         }
       ]
     },

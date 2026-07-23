@@ -6013,18 +6013,38 @@ namespace RevitBridge.Operator
             if (string.Equals(path, "/revit/get-parameters", StringComparison.OrdinalIgnoreCase))
             {
                 const string getParamsExample = "{\"elementIds\":[12345],\"names\":[\"Sheet Name\"]}";
+                const string getParamsCategoryExample = "{\"categories\":[\"OST_ElectricalEquipment\"],\"includeStringParameters\":true,\"offset\":0,\"limit\":500}";
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
-                    error = "get-parameters body must be an object at $. Example: " + getParamsExample;
+                    error = "get-parameters body must be an object at $. Examples: " + getParamsExample + " or " + getParamsCategoryExample;
                     return false;
                 }
 
                 var hasElementId = obj.Value.TryGetProperty("elementId", out var eid) && eid.ValueKind != JsonValueKind.Null;
                 var hasElementIds = obj.Value.TryGetProperty("elementIds", out var eids) && eids.ValueKind != JsonValueKind.Null;
+                if (!ValidateOptionalString(obj.Value, "category", maxLen: 96, out error)) return false;
+                if (!ValidateOptionalStringArray(obj.Value, "categories", maxCount: 20, maxLen: 96, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "includeStringParameters", out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "offset", out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "limit", out error)) return false;
+                var hasCategory = obj.Value.TryGetProperty("category", out var category) &&
+                                  category.ValueKind == JsonValueKind.String &&
+                                  !string.IsNullOrWhiteSpace(category.GetString());
+                var hasCategories = obj.Value.TryGetProperty("categories", out var categories) &&
+                                    categories.ValueKind == JsonValueKind.Array &&
+                                    categories.GetArrayLength() > 0;
+                var hasIdSelector = hasElementId || hasElementIds;
+                var hasCategorySelector = hasCategory || hasCategories;
 
-                if (!hasElementId && !hasElementIds)
+                if (!hasIdSelector && !hasCategorySelector)
                 {
-                    error = "get-parameters requires $.elementId or $.elementIds. Example: " + getParamsExample;
+                    error = "get-parameters requires $.elementId, $.elementIds, $.category, or $.categories. Examples: " + getParamsExample + " or " + getParamsCategoryExample;
+                    return false;
+                }
+
+                if (hasIdSelector && hasCategorySelector)
+                {
+                    error = "get-parameters accepts either elementId/elementIds or category/categories, not both.";
                     return false;
                 }
 
@@ -6095,6 +6115,24 @@ namespace RevitBridge.Operator
                                     ". Example: " + getParamsExample;
                             return false;
                         }
+                    }
+                }
+
+                if (obj.Value.TryGetProperty("offset", out var offset) && offset.ValueKind != JsonValueKind.Null)
+                {
+                    if (!offset.TryGetInt32(out var value) || value < 0 || value > 1000000)
+                    {
+                        error = "get-parameters.offset must be an integer from 0 through 1000000.";
+                        return false;
+                    }
+                }
+
+                if (obj.Value.TryGetProperty("limit", out var limit) && limit.ValueKind != JsonValueKind.Null)
+                {
+                    if (!limit.TryGetInt32(out var value) || value < 1 || value > 5000)
+                    {
+                        error = "get-parameters.limit must be an integer from 1 through 5000; category reads are safely paged at no more than 500 items per response.";
+                        return false;
                     }
                 }
 
