@@ -58,6 +58,14 @@ Interactive hardware-token signing:
 
 The script runs the updater tests before publishing a self-contained Windows x64 single-file executable. The signing path signs and then verifies the executable.
 
+Sign a built Revit payload on the release workstation before manifest hashes are generated:
+
+```powershell
+.\scripts\deploy\sign_revit_operator_payload.ps1 -PayloadDir <PAYLOAD_DIRECTORY> -SigningThumbprint <CERT_THUMBPRINT> -SignToolPath <PATH_TO_SIGNTOOL.EXE>
+```
+
+This signs and verifies only the first-party `RevitBridge*.dll` assemblies. The hardware-token private key remains on the release workstation; target workstations receive only signed binaries.
+
 ## Intentionally deferred
 
 - Per-machine installation and MSI/Intune/SCCM deployment remain the IT-managed channel.
