@@ -175,6 +175,10 @@ import {
   type SheetOverlapRouteCompilationInputV1
 } from "../existing_conditions/sheet_overlap_route_compiler.js";
 import {
+  evaluateSourceNativePairHealthV1,
+  type SourceNativePairHealthInputV1
+} from "../existing_conditions/source_native_pair_health.js";
+import {
   compileProvisionalPlanTraceDraftV1,
   type ProvisionalPlanTraceDraftContext,
   type ProvisionalPlanTraceDraftInputV1
@@ -408,6 +412,7 @@ function usage(): never {
     "  npm run existing-conditions -- detect-sheet-chromatic-components --input <hash-bound-hue-component-search.json> --out <candidate-receipt.json> [--overlay-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- validate-sheet-route-chromatic-coverage --input <hash-bound-source-policy.json> [--candidate <sheet-interpretation-or-provider-receipt.json>] --out <coverage-receipt.json> [--overlay-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- compile-sheet-overlap-routes --input <registered-overlap-tiles.json> --out <parent-route-compilation.json>",
+    "  npm run existing-conditions -- evaluate-source-native-pair-health --input <evaluator-only-pair.json> --out <pair-health-receipt.json>",
     "  npm run existing-conditions -- validate-mep-region-coverage --input <source-coverage.json> --context <coverage-context.json> --out <coverage-receipt.json>",
     "  npm run existing-conditions -- compile-sheet-topology --input <whole-sheet-primitives.json> --context <trusted-views-and-calibration.json> --out <compiled-topology.json>",
     "  npm run existing-conditions -- build-sheet-topology-calibration --input <sealed-blind-outcomes.json> --out <calibration-profile.json>",
@@ -2031,6 +2036,15 @@ async function main(): Promise<void> {
     const receipt = await compileSheetOverlapRoutesV1(readJson(inputPath) as SheetOverlapRouteCompilationInputV1);
     writeJson(outputPath, receipt);
     if (receipt.status !== "source_graph_compiled") process.exitCode = 1;
+    return;
+  }
+  if (command === "evaluate-source-native-pair-health") {
+    const inputPath = requiredArgument("--input");
+    const outputPath = requiredArgument("--out");
+    assertFreshDistinctOutputPaths([{ flag: "--out", value: outputPath }], [{ flag: "--input", value: inputPath }]);
+    const receipt = await evaluateSourceNativePairHealthV1(readJson(inputPath) as SourceNativePairHealthInputV1);
+    writeJson(outputPath, receipt);
+    if (!receipt.candidate_release_allowed) process.exitCode = 1;
     return;
   }
   if (command === "validate-mep-region-coverage") {
