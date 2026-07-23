@@ -14861,7 +14861,6 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
     }
     lines.push("");
   }
-
   lines.push("Fast Revit edit playbooks:");
   lines.push("- Parameter edits: resolve the target element ID, read its relevant parameters with POST /revit/get-parameters, then write the exact resolved parameter with POST /revit/set-parameter or a purpose-built updater, then require post-commit verification. For a confirmed category-wide audit, use categories + includeStringParameters + offset/limit and page through nextOffset instead of emitting a huge elementIds array. Do not guess parameter names when a quick parameter read can resolve them.");
   lines.push("- For a named electrical panel AIC/SCCR edit, prefer one targeted POST /revit/update-panel-parameter using panelName, parameterName:\"A.I.C. Rating\" or \"Short Circuit Rating\", value, onlyWhenBlank:false, targetScope:\"panel\", dryRun:false when the user asked to make the change and write grant is active; avoid /revit/tool-doc or /revit/tool-examples unless that direct call fails.");
