@@ -153,3 +153,78 @@ test("host-owned raster evidence blocks an overconfident unsupported route", () 
   assert.ok(decision?.reasons.includes("geometry_confidence_below_threshold"));
   assert.ok(result.compiled_topology.warnings.includes("raster_evidence_rejected_raster_extent:run-left"));
 });
+
+test("hash-bound candidate receipts compile near-coincident points into an explicit cross-sheet identity", () => {
+  const candidateHash = "c".repeat(64);
+  const pointInput: SheetPixelInterpretationInputV1 = {
+    schema_version: 1,
+    package_id: "two-sheet-shared-candidate",
+    coordinate_space: "normalized_uv_top_left",
+    view_keys: ["sheet-a", "sheet-b"],
+    source_marks: [
+      { source_mark_id: "mark-a", source_view_key: "sheet-a", disposition: { status: "candidate", primitive_ids: ["point-a"] } },
+      { source_mark_id: "mark-b", source_view_key: "sheet-b", disposition: { status: "candidate", primitive_ids: ["point-b"] } }
+    ],
+    primitives: [
+      { primitive_id: "point-a", source_view_key: "sheet-a", source_mark_ids: ["mark-a"], kind: "point_symbol", points: [{ u: 0.2, v: 0.2 }], confidence: { geometry: 0.9, classification: 0.5, topology: 0.5, visibility: 1 } },
+      { primitive_id: "point-b", source_view_key: "sheet-b", source_mark_ids: ["mark-b"], kind: "point_symbol", points: [{ u: 0.8, v: 0.2 }], confidence: { geometry: 0.9, classification: 0.5, topology: 0.5, visibility: 1 } }
+    ]
+  };
+  const sourceView = (viewKey: string, sheetKey: string, sourceHash: string) => ({
+    view_key: viewKey,
+    sheet_key: sheetKey,
+    source_sha256: sourceHash,
+    registration_sha256: HASH_B,
+    discipline: "electrical" as const,
+    level_key: "L1",
+    phase_key: "EXISTING",
+    role: "main_plan" as const,
+    resolution_rank: 1,
+    registration: { verified: true, rms_residual_ft: 0, maximum_residual_ft: 0, confidence: 0.99 }
+  });
+  const candidateFrame = { frame_id: "candidate-frame", view_id: 501, width_px: 1000, height_px: 800, top_left_xyz: [0, 0, 0] as [number, number, number], top_right_xyz: [100, 0, 0] as [number, number, number], bottom_left_xyz: [0, -80, 0] as [number, number, number], target_level_elevation_ft: 0 };
+  const trusted: SheetPixelInterpretationContextV1 = {
+    trusted_views: [
+      { source_view: sourceView("sheet-a", "E-100", HASH_A), frame: { ...candidateFrame, frame_id: "source-a", width_px: 400, height_px: 400 } },
+      { source_view: sourceView("sheet-b", "E-101", HASH_B), frame: { ...candidateFrame, frame_id: "source-b", width_px: 400, height_px: 400 } }
+    ],
+    calibration_profile: {
+      schema_version: 1,
+      profile_id: "point-identity-calibration",
+      provenance: { outcomes_sha256: HASH_A, prediction_count: 1, fixture_count: 1, evaluator_receipt_sha256s: [HASH_B], truth_revealed_only_after_seal: true },
+      bins: [{ discipline: "electrical", primitive_kind: "point_symbol", raw_confidence_min: 0.4, raw_confidence_max: 0.6, trials: 1, successes: 1, fixture_count: 1 }]
+    },
+    raster_evidence_receipts: [
+      {
+        schema_version: 1, package_id: pointInput.package_id, source_view_key: "sheet-a", image: { path: "a.png", sha256: HASH_A, width_px: 400, height_px: 400 }, policy: { maximum_luminance: 180, corridor_radius_px: 7, sample_spacing_px: 2, accepted_support_fraction: 0.82, provisional_support_fraction: 0.55, maximum_accepted_unsupported_run_fraction: 0.18 }, route_evidence: [], point_evidence: [{ primitive_id: "point-a", sampled_pixel_count: 100, supported_pixel_count: 20, chromatic_pixel_count: 20, monochrome_pixel_count: 0, dominant_hue_fraction: 1, status: "accepted_raster_support", support_modality: "chromatic_symbol", coherent_hue_degrees: 225 }], accepted_primitive_ids: ["point-a"], provisional_primitive_ids: [], rejected_primitive_ids: []
+      },
+      {
+        schema_version: 1, package_id: pointInput.package_id, source_view_key: "sheet-b", image: { path: "b.png", sha256: HASH_B, width_px: 400, height_px: 400 }, policy: { maximum_luminance: 180, corridor_radius_px: 7, sample_spacing_px: 2, accepted_support_fraction: 0.82, provisional_support_fraction: 0.55, maximum_accepted_unsupported_run_fraction: 0.18 }, route_evidence: [], point_evidence: [{ primitive_id: "point-b", sampled_pixel_count: 100, supported_pixel_count: 20, chromatic_pixel_count: 20, monochrome_pixel_count: 0, dominant_hue_fraction: 1, status: "accepted_raster_support", support_modality: "chromatic_symbol", coherent_hue_degrees: 225 }], accepted_primitive_ids: ["point-b"], provisional_primitive_ids: [], rejected_primitive_ids: []
+      }
+    ],
+    candidate_raster_by_view: {
+      "sheet-a": { image_path: "candidate.png", image_sha256: candidateHash, frame: candidateFrame, point_identity_tolerance_px: 8 },
+      "sheet-b": { image_path: "candidate.png", image_sha256: candidateHash, frame: candidateFrame, point_identity_tolerance_px: 8 }
+    },
+    candidate_presence_receipts: [
+      {
+        schema_version: 1, package_id: pointInput.package_id, source_view_key: "sheet-a", source_image_sha256: HASH_A, candidate_image: { path: "candidate.png", sha256: candidateHash, width_px: 1000, height_px: 800, frame_id: candidateFrame.frame_id, view_id: candidateFrame.view_id }, policy: { maximum_luminance: 180, corridor_radius_px: 7, sample_spacing_px: 2, accepted_support_fraction: 0.82, provisional_support_fraction: 0.55, maximum_accepted_unsupported_run_fraction: 0.18 }, point_evidence: [{ primitive_id: "point-a", source_status: "accepted_raster_support", candidate_status: "accepted_raster_support", mapped_candidate_uv: { u: 0.4, v: 0.2 }, status: "existing_candidate_visible", supported_pixel_count: 20, coherent_hue_degrees: 225 }], existing_candidate_visible_primitive_ids: ["point-a"], ambiguous_candidate_presence_primitive_ids: [], not_present_primitive_ids: [], source_not_accepted_primitive_ids: []
+      },
+      {
+        schema_version: 1, package_id: pointInput.package_id, source_view_key: "sheet-b", source_image_sha256: HASH_B, candidate_image: { path: "candidate.png", sha256: candidateHash, width_px: 1000, height_px: 800, frame_id: candidateFrame.frame_id, view_id: candidateFrame.view_id }, policy: { maximum_luminance: 180, corridor_radius_px: 7, sample_spacing_px: 2, accepted_support_fraction: 0.82, provisional_support_fraction: 0.55, maximum_accepted_unsupported_run_fraction: 0.18 }, point_evidence: [{ primitive_id: "point-b", source_status: "accepted_raster_support", candidate_status: "accepted_raster_support", mapped_candidate_uv: { u: 0.405, v: 0.202 }, status: "existing_candidate_visible", supported_pixel_count: 20, coherent_hue_degrees: 225 }], existing_candidate_visible_primitive_ids: ["point-b"], ambiguous_candidate_presence_primitive_ids: [], not_present_primitive_ids: [], source_not_accepted_primitive_ids: []
+      }
+    ]
+  };
+
+  const result = compileSheetPixelInterpretationV1(pointInput, trusted);
+  assert.equal(result.candidate_identity_groups.length, 1);
+  assert.equal(result.candidate_identity_groups[0]?.scope, "cross_sheet");
+  assert.deepEqual(result.candidate_identity_groups[0]?.members.map(member => member.primitive_id), ["point-a", "point-b"]);
+  assert.ok((result.candidate_identity_groups[0]?.maximum_member_separation_px ?? 99) < 6);
+  assert.equal(result.candidate_identity_groups[0]?.native_write_allowed, false);
+  assert.ok(result.compiled_topology.warnings.some(value => value.includes("candidate_identity_cross_sheet")));
+
+  trusted.candidate_presence_receipts![1]!.point_evidence[0]!.coherent_hue_degrees = 90;
+  const wrongHue = compileSheetPixelInterpretationV1(pointInput, trusted);
+  assert.equal(wrongHue.candidate_identity_groups.length, 0, "different coherent hues must not share a candidate identity");
+});

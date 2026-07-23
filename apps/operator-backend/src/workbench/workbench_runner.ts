@@ -9,7 +9,12 @@ import { tryCreateRedlineAnalyzeEvidence } from "../redline/redline_analyze_evid
 import { mapSheetRegions } from "../redline/sheet_region_mapper.js";
 import { orientRedlineFile } from "../redline/redline_orienter.js";
 import { analyzeRedlinePackageWithGemini } from "../vision/gemini_redline_package.js";
-import { validateSheetCandidatePresenceV1, validateSheetPixelEvidenceV1 } from "../existing_conditions/sheet_pixel_evidence.js";
+import {
+  validateSheetCandidatePresenceV1,
+  validateSheetPixelEvidenceV1,
+  type SheetCandidatePresenceReceiptV1,
+  type SheetPixelEvidenceReceiptV1
+} from "../existing_conditions/sheet_pixel_evidence.js";
 import {
   compileSheetPixelInterpretationV1,
   type SheetPixelInterpretationContextV1,
@@ -460,6 +465,46 @@ function isSafeRedlineWorkbenchAction(action: WorkbenchAction): boolean {
     action.type === "register_existing_conditions_mep_repair";
 }
 
+function hydrateSheetEvidenceReceiptFiles(
+  context: SheetPixelInterpretationContextV1,
+  maxBytes: number
+): { context?: SheetPixelInterpretationContextV1; error?: string } {
+  const receiptPaths = context.evidence_receipt_file_paths ?? [];
+  if (!Array.isArray(receiptPaths) || receiptPaths.length > 24) {
+    return { error: "Sheet trusted context evidence_receipt_file_paths must contain at most 24 entries." };
+  }
+  const rasterEvidence = [...(context.raster_evidence_receipts ?? [])];
+  const candidatePresence = [...(context.candidate_presence_receipts ?? [])];
+  for (const [index, value] of receiptPaths.entries()) {
+    if (typeof value !== "string" || !value.trim()) return { error: `Sheet evidence receipt path ${index} is invalid.` };
+    let file: ReturnType<typeof safeReadFile>;
+    try {
+      file = safeReadFile(value, maxBytes);
+    } catch {
+      return { error: `Sheet evidence receipt ${value} is not a readable Workspace file.` };
+    }
+    if (file.truncated) return { error: `Sheet evidence receipt ${value} exceeds the configured workbench read limit.` };
+    let document: Record<string, unknown>;
+    try {
+      document = JSON.parse(file.content) as Record<string, unknown>;
+    } catch {
+      return { error: `Sheet evidence receipt ${value} is not valid JSON.` };
+    }
+    const raster = document.raster_evidence as SheetPixelEvidenceReceiptV1 | undefined;
+    const candidate = document.candidate_presence as SheetCandidatePresenceReceiptV1 | undefined;
+    if (!raster && !candidate) return { error: `Sheet evidence receipt ${value} contains neither raster_evidence nor candidate_presence.` };
+    if (raster) rasterEvidence.push(raster);
+    if (candidate) candidatePresence.push(candidate);
+  }
+  return {
+    context: {
+      ...context,
+      raster_evidence_receipts: rasterEvidence,
+      candidate_presence_receipts: candidatePresence
+    }
+  };
+}
+
 export function maxWorkbenchActions(): number {
   return toInt(process.env.OPERATOR_WORKBENCH_MAX_ACTIONS, 6, 1, 20);
 }
@@ -851,17 +896,37 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
           });
           break;
         }
+        const hydratedContext = hydrateSheetEvidenceReceiptFiles(context, maxReadBytes);
+        if (!hydratedContext.context) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: hydratedContext.error ?? "Sheet evidence receipt hydration failed."
+          });
+          break;
+        }
+        context = hydratedContext.context;
         const resolvedImagePath = resolveExistingFileUnderWorkspace(imagePath);
         const requestedViewKey = (action.source_view_key ?? "").trim();
+        const effectiveViewKey = requestedViewKey || (interpretation.view_keys.length === 1 ? interpretation.view_keys[0]! : "");
+        const viewInterpretation: SheetPixelInterpretationInputV1 = effectiveViewKey
+          ? {
+              ...interpretation,
+              view_keys: [effectiveViewKey],
+              source_marks: interpretation.source_marks.filter(mark => mark.source_view_key === effectiveViewKey),
+              primitives: interpretation.primitives.filter(primitive => primitive.source_view_key === effectiveViewKey)
+            }
+          : interpretation;
         const priorReceipt = (context.raster_evidence_receipts ?? []).find(receipt =>
-          !requestedViewKey || receipt.source_view_key === requestedViewKey
+          !effectiveViewKey || receipt.source_view_key === effectiveViewKey
         );
-        const trustedRasterPolicy = context.raster_evidence_policy_by_view?.[requestedViewKey];
+        const trustedRasterPolicy = context.raster_evidence_policy_by_view?.[effectiveViewKey];
         const overlayPath = (action.overlay_output_path ?? "").trim();
         const rasterReceipt = await validateSheetPixelEvidenceV1({
           image_path: resolvedImagePath,
-          interpretation,
-          ...(requestedViewKey ? { source_view_key: requestedViewKey } : {}),
+          interpretation: viewInterpretation,
+          ...(effectiveViewKey ? { source_view_key: effectiveViewKey } : {}),
           ...(trustedRasterPolicy || priorReceipt?.policy
             ? { policy: { ...(priorReceipt?.policy ?? {}), ...(trustedRasterPolicy ?? {}) } }
             : {}),
@@ -875,7 +940,7 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
             expected_image_sha256: candidateRaster.image_sha256,
             candidate_frame: candidateRaster.frame,
             source_frame: trustedView.frame,
-            interpretation,
+            interpretation: viewInterpretation,
             source_evidence: rasterReceipt,
             policy: candidateRaster.policy ?? trustedRasterPolicy ?? priorReceipt?.policy,
             ...(candidateRaster.overlay_output_path
@@ -920,7 +985,8 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
             `rejected_routes=${rasterReceipt.route_evidence.filter(value => value.status === "rejected_raster_extent").length}, ` +
             `accepted_points=${(rasterReceipt.point_evidence ?? []).filter(value => value.status === "accepted_raster_support").length}, ` +
             `rejected_points=${(rasterReceipt.point_evidence ?? []).filter(value => value.status === "rejected_raster_extent").length}, ` +
-            `existing_points=${candidatePresence?.existing_candidate_visible_primitive_ids.length ?? 0}, junctions=${topology.junctions.length}.`,
+            `existing_points=${candidatePresence?.existing_candidate_visible_primitive_ids.length ?? 0}, ` +
+            `identity_groups=${compiled.candidate_identity_groups.length}, junctions=${topology.junctions.length}.`,
           details: {
             ...receipt,
             ...(persisted ? { persisted_receipt: persisted } : {})

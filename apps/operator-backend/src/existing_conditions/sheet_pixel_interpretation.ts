@@ -76,10 +76,31 @@ export type SheetPixelInterpretationContextV1 = {
     image_sha256: string;
     frame: CandidateVisibleFrameMapping;
     policy?: Partial<SheetPixelEvidencePolicyV1>;
+    point_identity_tolerance_px?: number;
     overlay_output_path?: string;
   }>;
   candidate_presence_receipts?: SheetCandidatePresenceReceiptV1[];
+  evidence_receipt_file_paths?: string[];
   policy?: Partial<SheetTopologyCompilationPolicyV1>;
+};
+
+export type SheetCandidateIdentityGroupV1 = {
+  identity_group_id: string;
+  candidate_image_sha256: string;
+  candidate_frame_id: string;
+  candidate_view_id: number;
+  scope: "cross_view" | "cross_sheet";
+  representative_candidate_uv: { u: number; v: number };
+  maximum_member_separation_px: number;
+  members: Array<{
+    primitive_id: string;
+    source_view_key: string;
+    source_sheet_key: string;
+    mapped_candidate_uv: { u: number; v: number };
+    coherent_hue_degrees?: number;
+  }>;
+  status: "shared_candidate_visible";
+  native_write_allowed: false;
 };
 
 export type CompiledSheetPixelInterpretationV1 = {
@@ -87,6 +108,22 @@ export type CompiledSheetPixelInterpretationV1 = {
   pixel_interpretation_sha256: string;
   trusted_context_sha256: string;
   compiled_topology: CompiledSheetTopologyV1;
+  candidate_identity_groups: SheetCandidateIdentityGroupV1[];
+};
+
+type CandidateIdentityObservation = {
+  primitive_id: string;
+  source_view_key: string;
+  source_sheet_key: string;
+  candidate_image_sha256: string;
+  candidate_frame_id: string;
+  candidate_view_id: number;
+  candidate_width_px: number;
+  candidate_height_px: number;
+  mapped_candidate_uv: { u: number; v: number };
+  coherent_hue_degrees?: number;
+  hue_tolerance_degrees: number;
+  tolerance_px: number;
 };
 
 function clean(value: unknown): string {
@@ -119,6 +156,86 @@ function canonical(value: unknown): string {
 
 function digest(value: unknown): string {
   return crypto.createHash("sha256").update(canonical(value)).digest("hex");
+}
+
+function candidatePixelDistance(left: CandidateIdentityObservation, right: CandidateIdentityObservation): number {
+  return Math.hypot(
+    (left.mapped_candidate_uv.u - right.mapped_candidate_uv.u) * left.candidate_width_px,
+    (left.mapped_candidate_uv.v - right.mapped_candidate_uv.v) * left.candidate_height_px
+  );
+}
+
+function candidateHueCompatible(left: CandidateIdentityObservation, right: CandidateIdentityObservation): boolean {
+  if (left.coherent_hue_degrees === undefined || right.coherent_hue_degrees === undefined) return true;
+  const rawDistance = Math.abs(left.coherent_hue_degrees - right.coherent_hue_degrees);
+  const circularDistance = Math.min(rawDistance, 360 - rawDistance);
+  return circularDistance <= Math.min(left.hue_tolerance_degrees, right.hue_tolerance_degrees);
+}
+
+function compileCandidateIdentityGroups(observations: CandidateIdentityObservation[]): SheetCandidateIdentityGroupV1[] {
+  const byCandidateFrame = new Map<string, CandidateIdentityObservation[]>();
+  for (const observation of observations) {
+    const key = `${observation.candidate_image_sha256}|${observation.candidate_frame_id}|${observation.candidate_view_id}|${observation.candidate_width_px}|${observation.candidate_height_px}`;
+    byCandidateFrame.set(key, [...(byCandidateFrame.get(key) ?? []), observation]);
+  }
+  const result: SheetCandidateIdentityGroupV1[] = [];
+  for (const [frameKey, frameObservations] of byCandidateFrame) {
+    frameObservations.sort((left, right) => left.source_view_key.localeCompare(right.source_view_key) || left.primitive_id.localeCompare(right.primitive_id));
+    const clusters: CandidateIdentityObservation[][] = [];
+    for (const observation of frameObservations) {
+      const eligible = clusters
+        .map((members, index) => ({
+          index,
+          members,
+          maximum_distance: members.reduce((maximum, member) => Math.max(maximum, candidatePixelDistance(member, observation)), 0)
+        }))
+        .filter(candidate =>
+          !candidate.members.some(member => member.source_view_key === observation.source_view_key) &&
+          candidate.members.every(member =>
+            candidatePixelDistance(member, observation) <= Math.min(member.tolerance_px, observation.tolerance_px) &&
+            candidateHueCompatible(member, observation)
+          )
+        )
+        .sort((left, right) => left.maximum_distance - right.maximum_distance || left.index - right.index);
+      if (eligible.length === 0) clusters.push([observation]);
+      else clusters[eligible[0]!.index]!.push(observation);
+    }
+    for (const members of clusters) {
+      if (new Set(members.map(member => member.source_view_key)).size < 2) continue;
+      const sheets = new Set(members.map(member => member.source_sheet_key));
+      let maximumSeparation = 0;
+      for (let left = 0; left < members.length; left += 1) {
+        for (let right = left + 1; right < members.length; right += 1) {
+          maximumSeparation = Math.max(maximumSeparation, candidatePixelDistance(members[left]!, members[right]!));
+        }
+      }
+      const representative = {
+        u: members.reduce((sum, member) => sum + member.mapped_candidate_uv.u, 0) / members.length,
+        v: members.reduce((sum, member) => sum + member.mapped_candidate_uv.v, 0) / members.length
+      };
+      const sortedMembers = [...members].sort((left, right) => left.source_view_key.localeCompare(right.source_view_key) || left.primitive_id.localeCompare(right.primitive_id));
+      result.push({
+        identity_group_id: `candidate-identity:${digest({ frame_key: frameKey, members: sortedMembers.map(member => [member.source_view_key, member.primitive_id]) }).slice(0, 16)}`,
+        candidate_image_sha256: sortedMembers[0]!.candidate_image_sha256,
+        candidate_frame_id: sortedMembers[0]!.candidate_frame_id,
+        candidate_view_id: sortedMembers[0]!.candidate_view_id,
+        scope: sheets.size > 1 ? "cross_sheet" : "cross_view",
+        representative_candidate_uv: representative,
+        maximum_member_separation_px: maximumSeparation,
+        members: sortedMembers.map(member => ({
+          primitive_id: member.primitive_id,
+          source_view_key: member.source_view_key,
+          source_sheet_key: member.source_sheet_key,
+          mapped_candidate_uv: member.mapped_candidate_uv,
+          ...(member.coherent_hue_degrees === undefined ? {} : { coherent_hue_degrees: member.coherent_hue_degrees })
+        })),
+        status: "shared_candidate_visible",
+        native_write_allowed: false
+      });
+    }
+  }
+  result.sort((left, right) => left.identity_group_id.localeCompare(right.identity_group_id));
+  return result;
 }
 
 function framePoint(frame: CandidateVisibleFrameMapping, value: SheetPixelPointV1, label: string): SheetTopologyPoint {
@@ -211,6 +328,7 @@ export function compileSheetPixelInterpretationV1(
   }
 
   const candidatePresenceByPrimitive = new Map<string, SheetCandidatePresenceReceiptV1["point_evidence"][number]>();
+  const candidateIdentityObservations: CandidateIdentityObservation[] = [];
   for (const [receiptIndex, receipt] of (context.candidate_presence_receipts ?? []).entries()) {
     if (!receipt || receipt.schema_version !== 1) throw new Error(`sheet_candidate_presence_schema_invalid:${receiptIndex}`);
     const viewKey = requiredText(receipt.source_view_key, `sheet_candidate_presence_${receiptIndex}_view_key`);
@@ -233,10 +351,36 @@ export function compileSheetPixelInterpretationV1(
     ) {
       throw new Error(`sheet_candidate_presence_candidate_frame_mismatch:${viewKey}`);
     }
+    const identityTolerance = binding.point_identity_tolerance_px === undefined
+      ? 3
+      : finite(binding.point_identity_tolerance_px, `sheet_candidate_presence_identity_tolerance_${viewKey}`);
+    if (identityTolerance <= 0 || identityTolerance > 50) throw new Error(`sheet_candidate_presence_identity_tolerance_out_of_range:${viewKey}`);
+    const identityHueTolerance = binding.policy?.point_hue_tolerance_degrees === undefined
+      ? 30
+      : finite(binding.policy.point_hue_tolerance_degrees, `sheet_candidate_presence_identity_hue_tolerance_${viewKey}`);
+    if (identityHueTolerance < 0 || identityHueTolerance > 180) throw new Error(`sheet_candidate_presence_identity_hue_tolerance_out_of_range:${viewKey}`);
     for (const evidence of receipt.point_evidence ?? []) {
       const primitiveId = requiredText(evidence.primitive_id, `sheet_candidate_presence_${viewKey}_primitive_id`);
       if (candidatePresenceByPrimitive.has(primitiveId)) throw new Error(`sheet_candidate_presence_duplicate_primitive:${primitiveId}`);
       candidatePresenceByPrimitive.set(primitiveId, evidence);
+      if (evidence.status === "existing_candidate_visible") {
+        const u = normalized(evidence.mapped_candidate_uv?.u, `sheet_candidate_presence_${primitiveId}_candidate_u`);
+        const v = normalized(evidence.mapped_candidate_uv?.v, `sheet_candidate_presence_${primitiveId}_candidate_v`);
+        candidateIdentityObservations.push({
+          primitive_id: primitiveId,
+          source_view_key: viewKey,
+          source_sheet_key: trusted.source_view.sheet_key,
+          candidate_image_sha256: receipt.candidate_image.sha256,
+          candidate_frame_id: receipt.candidate_image.frame_id,
+          candidate_view_id: receipt.candidate_image.view_id,
+          candidate_width_px: receipt.candidate_image.width_px,
+          candidate_height_px: receipt.candidate_image.height_px,
+          mapped_candidate_uv: { u, v },
+          ...(evidence.coherent_hue_degrees === undefined ? {} : { coherent_hue_degrees: evidence.coherent_hue_degrees }),
+          hue_tolerance_degrees: identityHueTolerance,
+          tolerance_px: identityTolerance
+        });
+      }
     }
   }
 
@@ -298,11 +442,16 @@ export function compileSheetPixelInterpretationV1(
   for (const [primitiveId, evidence] of candidatePresenceByPrimitive) {
     if (evidence.status !== "not_present") compiledTopology.warnings.push(`candidate_presence_${evidence.status}:${primitiveId}`);
   }
+  const candidateIdentityGroups = compileCandidateIdentityGroups(candidateIdentityObservations);
+  for (const group of candidateIdentityGroups) {
+    compiledTopology.warnings.push(`candidate_identity_${group.scope}:${group.identity_group_id}:${group.members.map(member => member.primitive_id).join(",")}`);
+  }
 
   return {
     schema_version: 1,
     pixel_interpretation_sha256: digest(input),
     trusted_context_sha256: digest(context),
-    compiled_topology: compiledTopology
+    compiled_topology: compiledTopology,
+    candidate_identity_groups: candidateIdentityGroups
   };
 }

@@ -143,7 +143,7 @@ test("sheet workbench rechecks chromatic routes and compiles junctions as one te
 
     assert.equal(out.length, 1);
     assert.equal(out[0]?.ok, true);
-    assert.match(out[0]?.summary ?? "", /accepted_routes=4, rejected_routes=1, accepted_points=0, rejected_points=0, existing_points=0, junctions=2/);
+    assert.match(out[0]?.summary ?? "", /accepted_routes=4, rejected_routes=1, accepted_points=0, rejected_points=0, existing_points=0, identity_groups=0, junctions=2/);
     const details = out[0]?.details as any;
     const evidence = new Map(details.raster_evidence.route_evidence.map((value: any) => [value.primitive_id, value]));
     assert.equal((evidence.get("black-overlap") as any)?.support_modality, "chromatic_line");
@@ -284,12 +284,27 @@ test("sheet workbench excludes a source-supported point already visible in the r
           overlay_output_path: "artifacts/sheet/candidate-overlay.png"
         }
       },
+      evidence_receipt_file_paths: ["fixtures/prior-receipt.json"],
       policy: { maximum_registration_residual_ft: 0.03 }
     };
     fs.mkdirSync(path.join(root, "fixtures"), { recursive: true });
     fs.writeFileSync(path.join(root, "fixtures", "source.png"), sourceImage);
     fs.writeFileSync(path.join(root, "fixtures", "candidate.png"), candidateImage);
     fs.writeFileSync(path.join(root, "fixtures", "interpretation.json"), JSON.stringify({ interpretation }));
+    fs.writeFileSync(path.join(root, "fixtures", "prior-receipt.json"), JSON.stringify({
+      raster_evidence: {
+        schema_version: 1,
+        package_id: "stale-prior-receipt-replaced-by-live-source-check",
+        source_view_key: "view",
+        image: { path: "fixtures/source.png", sha256: sourceHash, width_px: 100, height_px: 100 },
+        policy: pointPolicy,
+        route_evidence: [],
+        point_evidence: [],
+        accepted_primitive_ids: [],
+        provisional_primitive_ids: [],
+        rejected_primitive_ids: []
+      }
+    }));
     fs.writeFileSync(path.join(root, "fixtures", "context.json"), JSON.stringify(context));
 
     const out = await executeWorkbenchActions([{
@@ -308,6 +323,94 @@ test("sheet workbench excludes a source-supported point already visible in the r
     assert.deepEqual(details.candidate_presence.not_present_primitive_ids, ["missing"]);
     assert.ok(details.compilation.compiled_topology.warnings.includes("candidate_presence_existing_candidate_visible:already-visible"));
     assert.equal(fs.existsSync(path.join(root, "artifacts", "sheet", "candidate-overlay.png")), true);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("sheet workbench hydrates prior evidence and compiles a cross-sheet candidate identity", async () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-sheet-cross-identity-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const fixtures = path.join(root, "fixtures");
+    fs.mkdirSync(fixtures, { recursive: true });
+    const symbolImage = (x: number) => {
+      const canvas = createCanvas(100, 100);
+      const drawing = canvas.getContext("2d");
+      drawing.fillStyle = "white";
+      drawing.fillRect(0, 0, 100, 100);
+      drawing.strokeStyle = "#003fff";
+      drawing.lineWidth = 3;
+      drawing.beginPath();
+      drawing.arc(x, 50, 9, 0, Math.PI * 2);
+      drawing.moveTo(x - 14, 50);
+      drawing.lineTo(x + 14, 50);
+      drawing.stroke();
+      return canvas.toBuffer("image/png");
+    };
+    const sourceA = symbolImage(25);
+    const sourceB = symbolImage(75);
+    const candidate = symbolImage(25);
+    const hash = (bytes: Buffer) => crypto.createHash("sha256").update(bytes).digest("hex");
+    const hashA = hash(sourceA);
+    const hashB = hash(sourceB);
+    const candidateHash = hash(candidate);
+    fs.writeFileSync(path.join(fixtures, "source-a.png"), sourceA);
+    fs.writeFileSync(path.join(fixtures, "source-b.png"), sourceB);
+    fs.writeFileSync(path.join(fixtures, "candidate.png"), candidate);
+    const policy = { point_support_mode: "chromatic", point_radius_px: 20, point_minimum_supported_pixel_count: 8, point_provisional_supported_pixel_count: 4, point_expected_hue_degrees: 225, point_hue_tolerance_degrees: 30 };
+    const candidateFrame = { frame_id: "candidate-frame", view_id: 900, width_px: 100, height_px: 100, top_left_xyz: [0, 100, 0], top_right_xyz: [100, 100, 0], bottom_left_xyz: [0, 0, 0], target_level_elevation_ft: 0 };
+    const interpretation = {
+      schema_version: 1,
+      package_id: "cross-sheet-candidate-identity",
+      coordinate_space: "normalized_uv_top_left",
+      view_keys: ["view-a", "view-b"],
+      source_marks: [
+        { source_mark_id: "mark-a", source_view_key: "view-a", disposition: { status: "candidate", primitive_ids: ["point-a"] } },
+        { source_mark_id: "mark-b", source_view_key: "view-b", disposition: { status: "candidate", primitive_ids: ["point-b"] } }
+      ],
+      primitives: [
+        { primitive_id: "point-a", source_view_key: "view-a", source_mark_ids: ["mark-a"], kind: "point_symbol", points: [{ u: 25 / 99, v: 50 / 99 }], claims: {}, confidence: { geometry: 0.9, classification: 0.5, topology: 0.5, visibility: 1 } },
+        { primitive_id: "point-b", source_view_key: "view-b", source_mark_ids: ["mark-b"], kind: "point_symbol", points: [{ u: 75 / 99, v: 50 / 99 }], claims: {}, confidence: { geometry: 0.9, classification: 0.5, topology: 0.5, visibility: 1 } }
+      ]
+    };
+    const sourceView = (viewKey: string, sheetKey: string, sourceHash: string) => ({ view_key: viewKey, sheet_key: sheetKey, source_sha256: sourceHash, registration_sha256: "b".repeat(64), discipline: "electrical", level_key: "L1", phase_key: "EXISTING", role: "main_plan", resolution_rank: 1, registration: { verified: true, rms_residual_ft: 0.001, maximum_residual_ft: 0.002, confidence: 0.99 } });
+    const context = {
+      trusted_views: [
+        { source_view: sourceView("view-a", "E-100", hashA), frame: { ...candidateFrame, frame_id: "source-a" } },
+        { source_view: sourceView("view-b", "E-101", hashB), frame: { ...candidateFrame, frame_id: "source-b", top_left_xyz: [-50, 100, 0], top_right_xyz: [50, 100, 0], bottom_left_xyz: [-50, 0, 0] } }
+      ],
+      calibration_profile: { schema_version: 1, profile_id: "point-calibration", provenance: { outcomes_sha256: "a".repeat(64), prediction_count: 1, fixture_count: 1, evaluator_receipt_sha256s: ["b".repeat(64)], truth_revealed_only_after_seal: true }, bins: [{ discipline: "electrical", primitive_kind: "point_symbol", raw_confidence_min: 0.4, raw_confidence_max: 0.6, trials: 1, successes: 1, fixture_count: 1 }] },
+      evidence_receipt_file_paths: ["fixtures/prior.json"],
+      raster_evidence_policy_by_view: { "view-a": policy, "view-b": policy },
+      candidate_raster_by_view: {
+        "view-a": { image_path: "fixtures/candidate.png", image_sha256: candidateHash, frame: candidateFrame, policy, point_identity_tolerance_px: 3 },
+        "view-b": { image_path: "fixtures/candidate.png", image_sha256: candidateHash, frame: candidateFrame, policy, point_identity_tolerance_px: 3 }
+      }
+    };
+    fs.writeFileSync(path.join(fixtures, "interpretation.json"), JSON.stringify({ interpretation }));
+    fs.writeFileSync(path.join(fixtures, "context.json"), JSON.stringify(context));
+    fs.writeFileSync(path.join(fixtures, "prior.json"), JSON.stringify({
+      raster_evidence: { schema_version: 1, package_id: interpretation.package_id, source_view_key: "view-a", image: { path: "source-a.png", sha256: hashA, width_px: 100, height_px: 100 }, policy, route_evidence: [], point_evidence: [{ primitive_id: "point-a", sampled_pixel_count: 100, supported_pixel_count: 20, chromatic_pixel_count: 20, monochrome_pixel_count: 0, dominant_hue_fraction: 1, status: "accepted_raster_support", support_modality: "chromatic_symbol", coherent_hue_degrees: 225 }], accepted_primitive_ids: ["point-a"], provisional_primitive_ids: [], rejected_primitive_ids: [] },
+      candidate_presence: { schema_version: 1, package_id: interpretation.package_id, source_view_key: "view-a", source_image_sha256: hashA, candidate_image: { path: "candidate.png", sha256: candidateHash, width_px: 100, height_px: 100, frame_id: candidateFrame.frame_id, view_id: candidateFrame.view_id }, policy, point_evidence: [{ primitive_id: "point-a", source_status: "accepted_raster_support", candidate_status: "accepted_raster_support", mapped_candidate_uv: { u: 25 / 99, v: 50 / 99 }, status: "existing_candidate_visible", supported_pixel_count: 20, coherent_hue_degrees: 225 }], existing_candidate_visible_primitive_ids: ["point-a"], ambiguous_candidate_presence_primitive_ids: [], not_present_primitive_ids: [], source_not_accepted_primitive_ids: [] }
+    }));
+
+    const out = await executeWorkbenchActions([{
+      type: "compile_existing_conditions_sheet_interpretation",
+      interpretation_file_path: "fixtures/interpretation.json",
+      context_file_path: "fixtures/context.json",
+      source_image_path: "fixtures/source-b.png",
+      source_view_key: "view-b",
+      receipt_output_path: "artifacts/cross-sheet/receipt.json"
+    }]);
+    assert.equal(out[0]?.ok, true);
+    assert.match(out[0]?.summary ?? "", /accepted_points=1, rejected_points=0, existing_points=1, identity_groups=1/);
+    const details = out[0]?.details as any;
+    assert.equal(details.compilation.candidate_identity_groups[0]?.scope, "cross_sheet");
+    assert.deepEqual(details.compilation.candidate_identity_groups[0]?.members.map((member: any) => member.primitive_id), ["point-a", "point-b"]);
   } finally {
     if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
