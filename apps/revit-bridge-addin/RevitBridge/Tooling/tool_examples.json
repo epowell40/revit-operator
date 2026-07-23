@@ -2729,6 +2729,47 @@
               }
             ]
           }
+        },
+        {
+          "name": "Search every active-host instance for a literal writable string value",
+          "request": {
+            "allModelInstances": true,
+            "includeStringParameters": true,
+            "names": [
+              "DESIG."
+            ],
+            "valueContains": "-G-",
+            "caseSensitive": false,
+            "writableOnly": true,
+            "offset": 0,
+            "limit": 500
+          },
+          "expected_response_shape": {
+            "selector": "allModelInstances",
+            "hostModelOnly": true,
+            "instanceOnly": true,
+            "totalScanned": 120000,
+            "totalMatched": 175,
+            "hasMore": false,
+            "items": [
+              {
+                "id": 123,
+                "category": "Pipe Accessories",
+                "parameterDetails": [
+                  {
+                    "name": "DESIG.",
+                    "value": "B3-G-SA-01",
+                    "storageType": "String",
+                    "isReadOnly": false,
+                    "parameterId": 700064
+                  }
+                ]
+              }
+            ]
+          },
+          "notes": [
+            "The literal value filter is applied before paging, so totalMatched is the complete matching-element count rather than the source model size. Revit links and element types are excluded."
+          ]
         }
       ]
     },
@@ -2895,6 +2936,7 @@
             "sheetNumber": "A2.00",
             "sheetName": "Plans",
             "placedViewCount": 2,
+            "placedScheduleCount": 3,
             "viewportCount": 2,
             "titleBlockCount": 1
           }
@@ -2924,12 +2966,16 @@
           }
         },
         {
-          "name": "Get schedule detail with fields",
+          "name": "Get bounded visible schedule rows",
           "request": {
             "action": "detail",
             "query": "Door Schedule",
             "exact": true,
-            "includeFields": true
+            "includeFields": true,
+            "includeData": true,
+            "rowOffset": 0,
+            "maxRows": 100,
+            "maxColumns": 40
           },
           "expected_response_shape": {
             "status": "Ok",
@@ -2942,7 +2988,24 @@
                 "index": 0,
                 "name": "Mark"
               }
-            ]
+            ],
+            "table": {
+              "body": {
+                "totalRows": 250,
+                "returnedRows": 100,
+                "hasMoreRows": true,
+                "nextRowOffset": 100,
+                "rows": [
+                  {
+                    "rowIndex": 0,
+                    "cells": [
+                      "101",
+                      "Single Flush"
+                    ]
+                  }
+                ]
+              }
+            }
           }
         }
       ]

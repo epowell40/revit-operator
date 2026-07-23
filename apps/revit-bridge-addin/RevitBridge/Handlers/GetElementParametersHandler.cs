@@ -18,8 +18,13 @@ namespace RevitBridge.Handlers
             public List<long>? elementIds { get; set; }
             public string? category { get; set; }
             public List<string>? categories { get; set; }
+            public bool? allModelInstances { get; set; }
             public List<string>? names { get; set; }
             public bool? includeStringParameters { get; set; }
+            public string? valueContains { get; set; }
+            public bool? caseSensitive { get; set; }
+            public bool? writableOnly { get; set; }
+            public bool? includeEmpty { get; set; }
             public int? offset { get; set; }
             public int? limit { get; set; }
         }
@@ -33,18 +38,54 @@ namespace RevitBridge.Handlers
             var requestedCategories = NormalizeCategories(p);
             var hasIdSelector = p.elementId.HasValue || (p.elementIds != null && p.elementIds.Count > 0);
             var hasCategorySelector = requestedCategories.Count > 0;
+            var hasAllModelSelector = p.allModelInstances ?? false;
 
-            if (hasIdSelector && hasCategorySelector)
+            if ((hasIdSelector ? 1 : 0) + (hasCategorySelector ? 1 : 0) + (hasAllModelSelector ? 1 : 0) > 1)
             {
-                throw new InvalidOperationException("get-parameters accepts either elementId/elementIds or category/categories, not both.");
+                throw new InvalidOperationException("get-parameters accepts exactly one selector: elementId/elementIds, category/categories, or allModelInstances:true.");
             }
 
             var wantedNames = NormalizeNames(p.names);
             var stringsOnly = p.includeStringParameters ?? false;
+            var valueContains = string.IsNullOrWhiteSpace(p.valueContains) ? null : p.valueContains;
+            var caseSensitive = p.caseSensitive ?? false;
+            var writableOnly = p.writableOnly ?? false;
+            var includeEmpty = p.includeEmpty ?? true;
+
+            if (hasAllModelSelector && string.IsNullOrEmpty(valueContains) && wantedNames.Count == 0)
+            {
+                throw new InvalidOperationException("allModelInstances:true requires a non-empty literal valueContains filter or at least one exact parameter name so the active-host scan remains bounded.");
+            }
+            if (hasAllModelSelector && !stringsOnly)
+            {
+                throw new InvalidOperationException("allModelInstances:true requires includeStringParameters:true; this bounded workflow searches string parameter values only.");
+            }
 
             if (hasCategorySelector)
             {
-                return Task.FromResult(ReadCategoryPage(doc, requestedCategories, wantedNames, stringsOnly, p.offset, p.limit));
+                return Task.FromResult(ReadCategoryPage(doc, requestedCategories, wantedNames, stringsOnly, valueContains, caseSensitive, writableOnly, includeEmpty, p.offset, p.limit));
+            }
+
+            if (hasAllModelSelector)
+            {
+                var elements = new FilteredElementCollector(doc)
+                    .WhereElementIsNotElementType()
+                    .ToElements()
+                    .Where(x => x != null && x.Category != null)
+                    .OrderBy(x => ElementIdCompat.GetValue(x.Id))
+                    .ToList();
+                return Task.FromResult(ReadElementPage(
+                    elements,
+                    selector: "allModelInstances",
+                    categories: null,
+                    wantedNames,
+                    stringsOnly,
+                    valueContains,
+                    caseSensitive,
+                    writableOnly,
+                    includeEmpty,
+                    p.offset,
+                    p.limit));
             }
 
             if (p.elementIds != null && p.elementIds.Count > 0)
@@ -55,7 +96,7 @@ namespace RevitBridge.Handlers
                     var elem = doc.GetElement(ElementIdCompat.Create(id));
                     items.Add(elem == null
                         ? new { id, error = "Element not found" }
-                        : BuildElementItem(elem, wantedNames, stringsOnly));
+                        : BuildElementItem(elem, wantedNames, stringsOnly, valueContains, caseSensitive, writableOnly, includeEmpty));
                 }
 
                 return Task.FromResult<object>(new { items });
@@ -68,7 +109,7 @@ namespace RevitBridge.Handlers
 
             var single = doc.GetElement(ElementIdCompat.Create(p.elementId.Value));
             if (single == null) throw new InvalidOperationException("Element not found");
-            return Task.FromResult(BuildElementItem(single, wantedNames, stringsOnly));
+            return Task.FromResult(BuildElementItem(single, wantedNames, stringsOnly, valueContains, caseSensitive, writableOnly, includeEmpty));
         }
 
         private static object ReadCategoryPage(
@@ -76,6 +117,10 @@ namespace RevitBridge.Handlers
             IReadOnlyList<string> requestedCategories,
             HashSet<string> wantedNames,
             bool stringsOnly,
+            string? valueContains,
+            bool caseSensitive,
+            bool writableOnly,
+            bool includeEmpty,
             int? offset,
             int? limit)
         {
@@ -123,9 +168,47 @@ namespace RevitBridge.Handlers
                 .Where(x => x != null)
                 .OrderBy(x => ElementIdCompat.GetValue(x.Id))
                 .ToList();
+
+            return ReadElementPage(
+                elements,
+                selector: "categories",
+                categories: resolved.Select(x => new
+                {
+                    requested = x.RequestedToken,
+                    id = x.Id,
+                    name = x.Name,
+                    builtInToken = x.BuiltInToken
+                }).Cast<object>().ToList(),
+                wantedNames,
+                stringsOnly,
+                valueContains,
+                caseSensitive,
+                writableOnly,
+                includeEmpty,
+                offset,
+                limit);
+        }
+
+        private static object ReadElementPage(
+            IReadOnlyList<Element> sourceElements,
+            string selector,
+            IReadOnlyList<object>? categories,
+            HashSet<string> wantedNames,
+            bool stringsOnly,
+            string? valueContains,
+            bool caseSensitive,
+            bool writableOnly,
+            bool includeEmpty,
+            int? offset,
+            int? limit)
+        {
+            var narrowed = wantedNames.Count > 0 || !string.IsNullOrEmpty(valueContains) || writableOnly || !includeEmpty;
+            var elements = narrowed
+                ? sourceElements.Where(x => ElementHasMatchingParameter(x, wantedNames, stringsOnly, valueContains, caseSensitive, writableOnly, includeEmpty)).ToList()
+                : sourceElements.ToList();
             var page = ParameterReadPagingPolicy.Normalize(offset, limit);
             var selected = elements.Skip(page.Offset).Take(page.Limit).ToList();
-            var items = selected.Select(x => BuildElementItem(x, wantedNames, stringsOnly)).ToList();
+            var items = selected.Select(x => BuildElementItem(x, wantedNames, stringsOnly, valueContains, caseSensitive, writableOnly, includeEmpty)).ToList();
             var nextOffset = ParameterReadPagingPolicy.NextOffset(elements.Count, page.Offset, selected.Count);
             var warnings = new List<string>();
             if (page.LimitWasClamped)
@@ -135,19 +218,20 @@ namespace RevitBridge.Handlers
 
             return new
             {
-                selector = "categories",
-                categories = resolved.Select(x => new
-                {
-                    requested = x.RequestedToken,
-                    id = x.Id,
-                    name = x.Name,
-                    builtInToken = x.BuiltInToken
-                }).ToList(),
+                selector,
+                hostModelOnly = true,
+                instanceOnly = true,
+                categories,
                 includeStringParameters = stringsOnly,
+                valueContains,
+                caseSensitive,
+                writableOnly,
+                includeEmpty,
                 offset = page.Offset,
                 requestedLimit = page.RequestedLimit,
                 limit = page.Limit,
                 returnedCount = selected.Count,
+                totalScanned = sourceElements.Count,
                 totalMatched = elements.Count,
                 hasMore = nextOffset.HasValue,
                 nextOffset,
@@ -156,18 +240,28 @@ namespace RevitBridge.Handlers
             };
         }
 
-        private static object BuildElementItem(Element elem, HashSet<string> wantedNames, bool stringsOnly)
+        private static object BuildElementItem(
+            Element elem,
+            HashSet<string> wantedNames,
+            bool stringsOnly,
+            string? valueContains,
+            bool caseSensitive,
+            bool writableOnly,
+            bool includeEmpty)
         {
             var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var parameterDetails = new List<object>();
-            foreach (Parameter parameter in elem.Parameters)
+            foreach (var parameter in EnumerateParameters(elem, wantedNames))
             {
                 if (parameter?.Definition == null) continue;
                 if (stringsOnly && parameter.StorageType != StorageType.String) continue;
+                if (writableOnly && parameter.IsReadOnly) continue;
                 var name = parameter.Definition.Name ?? "";
                 if (wantedNames.Count > 0 && !wantedNames.Contains(name)) continue;
 
                 var value = ReadParameterValue(parameter);
+                if (!includeEmpty && string.IsNullOrEmpty(value)) continue;
+                if (!string.IsNullOrEmpty(valueContains) && value.IndexOf(valueContains, caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase) < 0) continue;
                 if (!parameters.ContainsKey(name)) parameters.Add(name, value);
                 parameterDetails.Add(new
                 {
@@ -189,6 +283,41 @@ namespace RevitBridge.Handlers
                 parameters,
                 parameterDetails
             };
+        }
+
+        private static bool ElementHasMatchingParameter(
+            Element elem,
+            HashSet<string> wantedNames,
+            bool stringsOnly,
+            string? valueContains,
+            bool caseSensitive,
+            bool writableOnly,
+            bool includeEmpty)
+        {
+            foreach (var parameter in EnumerateParameters(elem, wantedNames))
+            {
+                if (parameter?.Definition == null) continue;
+                if (stringsOnly && parameter.StorageType != StorageType.String) continue;
+                if (writableOnly && parameter.IsReadOnly) continue;
+                var name = parameter.Definition.Name ?? "";
+                if (wantedNames.Count > 0 && !wantedNames.Contains(name)) continue;
+                var value = ReadParameterValue(parameter);
+                if (!includeEmpty && string.IsNullOrEmpty(value)) continue;
+                if (!string.IsNullOrEmpty(valueContains) && value.IndexOf(valueContains, caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase) < 0) continue;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static IEnumerable<Parameter> EnumerateParameters(Element elem, HashSet<string> wantedNames)
+        {
+            if (wantedNames.Count == 0)
+            {
+                return elem.Parameters.Cast<Parameter>();
+            }
+
+            return wantedNames.SelectMany(name => elem.GetParameters(name) ?? new List<Parameter>());
         }
 
         private static string ReadParameterValue(Parameter parameter)
@@ -236,6 +365,19 @@ namespace RevitBridge.Handlers
                 if (doc.RootElement.ValueKind != JsonValueKind.Object) throw new Exception("Invalid request: body must be an object.");
                 var root = doc.RootElement;
                 var parsed = new Params();
+                var allowed = new HashSet<string>(new[]
+                {
+                    "elementId", "elementIds", "category", "categories", "allModelInstances", "names",
+                    "includeStringParameters", "valueContains", "caseSensitive", "writableOnly", "includeEmpty",
+                    "offset", "limit"
+                }, StringComparer.OrdinalIgnoreCase);
+                foreach (var property in root.EnumerateObject())
+                {
+                    if (!allowed.Contains(property.Name))
+                    {
+                        throw new Exception("Unknown get-parameters field '" + property.Name + "'. Supported fields: " + string.Join(", ", allowed.OrderBy(x => x)) + ".");
+                    }
+                }
 
                 if (root.TryGetProperty("elementId", out var elementIdProp) && elementIdProp.ValueKind != JsonValueKind.Null)
                     parsed.elementId = ParseLong(elementIdProp, "elementId");
@@ -245,10 +387,20 @@ namespace RevitBridge.Handlers
                     parsed.category = ParseString(categoryProp, "category");
                 if (root.TryGetProperty("categories", out var categoriesProp) && categoriesProp.ValueKind != JsonValueKind.Null)
                     parsed.categories = ParseStringList(categoriesProp, "categories");
+                if (root.TryGetProperty("allModelInstances", out var allModelProp) && allModelProp.ValueKind != JsonValueKind.Null)
+                    parsed.allModelInstances = ParseBool(allModelProp, "allModelInstances");
                 if (root.TryGetProperty("names", out var namesProp) && namesProp.ValueKind != JsonValueKind.Null)
                     parsed.names = ParseStringList(namesProp, "names");
                 if (root.TryGetProperty("includeStringParameters", out var stringsProp) && stringsProp.ValueKind != JsonValueKind.Null)
                     parsed.includeStringParameters = ParseBool(stringsProp, "includeStringParameters");
+                if (root.TryGetProperty("valueContains", out var valueContainsProp) && valueContainsProp.ValueKind != JsonValueKind.Null)
+                    parsed.valueContains = ParseString(valueContainsProp, "valueContains");
+                if (root.TryGetProperty("caseSensitive", out var caseSensitiveProp) && caseSensitiveProp.ValueKind != JsonValueKind.Null)
+                    parsed.caseSensitive = ParseBool(caseSensitiveProp, "caseSensitive");
+                if (root.TryGetProperty("writableOnly", out var writableOnlyProp) && writableOnlyProp.ValueKind != JsonValueKind.Null)
+                    parsed.writableOnly = ParseBool(writableOnlyProp, "writableOnly");
+                if (root.TryGetProperty("includeEmpty", out var includeEmptyProp) && includeEmptyProp.ValueKind != JsonValueKind.Null)
+                    parsed.includeEmpty = ParseBool(includeEmptyProp, "includeEmpty");
                 if (root.TryGetProperty("offset", out var offsetProp) && offsetProp.ValueKind != JsonValueKind.Null)
                     parsed.offset = ParseInt(offsetProp, "offset");
                 if (root.TryGetProperty("limit", out var limitProp) && limitProp.ValueKind != JsonValueKind.Null)
