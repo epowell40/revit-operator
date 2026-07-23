@@ -14,12 +14,14 @@ import { getHistory, getPinnedGoal } from "../session_store.js";
 import { ensureWorkspaceLayout, resolveExistingFileUnderWorkspace } from "../workspace.js";
 import type { StreamCallbacks } from "./codex_brain.js";
 import { getOperatorAgentBaseInstructions } from "./codex_brain.js";
+import { executeExistingConditionsProviderWorkbenchActions } from "./openai_brain.js";
 
 type ExternalProvider = "gemini" | "anthropic";
 type FetchLike = typeof fetch;
 
 export type ExternalProviderDependencies = {
   fetchImpl?: FetchLike;
+  existingConditionsWorkbenchExecutor?: typeof executeExistingConditionsProviderWorkbenchActions;
 };
 
 type ProviderImage = {
@@ -30,12 +32,52 @@ type ProviderImage = {
 type ProviderDecision = {
   assistant_message?: unknown;
   actions?: unknown;
+  workbench_actions?: unknown;
 };
+
+const EXISTING_CONDITIONS_WORKBENCH_SCHEMA = {
+  type: "array",
+  description: "Deterministic backend workbench actions. These are structured values, never HTTP endpoints.",
+  items: {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "type",
+      "package_json",
+      "maximum_created_elements",
+      "candidate_json",
+      "connector_tool_action_id",
+      "supersedes_stage_key",
+      "repair_stage_key",
+      "operation_json",
+      "reason"
+    ],
+    properties: {
+      type: {
+        type: "string",
+        enum: [
+          "compile_registered_mep_reconstruction",
+          "register_existing_conditions_route_frontier",
+          "register_existing_conditions_route_snap",
+          "register_existing_conditions_mep_repair"
+        ]
+      },
+      package_json: { type: ["string", "null"] },
+      maximum_created_elements: { type: ["number", "null"] },
+      candidate_json: { type: ["string", "null"] },
+      connector_tool_action_id: { type: ["string", "null"] },
+      supersedes_stage_key: { type: ["string", "null"] },
+      repair_stage_key: { type: ["string", "null"] },
+      operation_json: { type: ["string", "null"] },
+      reason: { type: ["string", "null"] }
+    }
+  }
+} as const;
 
 const RESPONSE_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["assistant_message", "actions"],
+  required: ["assistant_message", "actions", "workbench_actions"],
   properties: {
     assistant_message: {
       type: "string",
@@ -59,7 +101,8 @@ const RESPONSE_SCHEMA = {
           }
         }
       }
-    }
+    },
+    workbench_actions: EXISTING_CONDITIONS_WORKBENCH_SCHEMA
   }
 } as const;
 
@@ -70,7 +113,7 @@ const RESPONSE_SCHEMA = {
 const ANTHROPIC_RESPONSE_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["assistant_message", "actions"],
+  required: ["assistant_message", "actions", "workbench_actions"],
   properties: {
     assistant_message: RESPONSE_SCHEMA.properties.assistant_message,
     actions: {
@@ -90,7 +133,8 @@ const ANTHROPIC_RESPONSE_SCHEMA = {
           }
         }
       }
-    }
+    },
+    workbench_actions: EXISTING_CONDITIONS_WORKBENCH_SCHEMA
   }
 } as const;
 
@@ -352,7 +396,9 @@ function buildPrompt(req: ChatRequest, provider: ExternalProvider): string {
     getOperatorAgentBaseInstructions(),
     "",
     `You are running as the Operator ${provider} brain. You do not call MCP directly in this process.`,
-    "Instead, return the next bridge calls in the actions array. The host executes them and returns tool_results on the next turn.",
+    "Return native Revit bridge calls in actions, or deterministic backend steps in workbench_actions. The host executes them and returns receipts on the next turn.",
+    "A workbench action is a structured output value, never a /revit/* or /workbench/* HTTP endpoint. Do not search for or invent an endpoint for compile_registered_mep_reconstruction, register_existing_conditions_route_frontier, register_existing_conditions_route_snap, or register_existing_conditions_mep_repair.",
+    "When registered source XY needs native route resolution after /revit/get-connectors, emit exactly one workbench_actions item with type=register_existing_conditions_route_frontier, candidate_json as the verbatim JSON string, and connector_tool_action_id as the exact completed connector action id; keep actions empty.",
     "Use /revit/search-tools, /revit/tool-doc, and /revit/tool-examples when an exact contract is unknown.",
     "Prefer bounded predicate queries over unfiltered collection reads. A tool result marked _compacted, result_clipped, truncated, or containing a truncation marker is incomplete: never infer absence from it; immediately take the next smallest bounded read-only query that can resolve the target.",
     "For Revit writes: observe first, emit only the next smallest reversible action or tightly coupled action group, dry-run it, then apply and verify on later turns.",
@@ -601,6 +647,28 @@ function normalizeProviderDecision(raw: ProviderDecision): ChatResponse {
   };
 }
 
+async function finalizeProviderDecision(
+  req: ChatRequest,
+  raw: ProviderDecision,
+  dependencies: ExternalProviderDependencies
+): Promise<ChatResponse> {
+  const normalized = normalizeProviderDecision(raw);
+  const workbenchActions = Array.isArray(raw.workbench_actions) ? raw.workbench_actions : [];
+  if (workbenchActions.length === 0) return normalized;
+  if (normalized.actions.length > 0) {
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message:
+        "The provider mixed native Revit actions with a deterministic workbench transition. I stopped before dispatch; return only the next smallest lane.",
+      actions: []
+    };
+  }
+  return (dependencies.existingConditionsWorkbenchExecutor ?? executeExistingConditionsProviderWorkbenchActions)(
+    req,
+    workbenchActions
+  );
+}
+
 function providerError(provider: ExternalProvider, message: string): ChatResponse {
   return {
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
@@ -716,7 +784,7 @@ async function callGemini(
           .filter(Boolean)
           .join("\n");
         if (!text) throw new Error("Gemini returned no text decision.");
-        return normalizeProviderDecision(parseProviderDecision(text));
+        return await finalizeProviderDecision(req, parseProviderDecision(text), dependencies);
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
       }
@@ -806,7 +874,7 @@ async function callAnthropic(
         `No text decision returned${payload.stop_reason ? ` (stop_reason=${payload.stop_reason})` : ""}.`
       );
     }
-    return normalizeProviderDecision(parseProviderDecision(text));
+    return await finalizeProviderDecision(req, parseProviderDecision(text), dependencies);
   } catch (error) {
     return providerError("anthropic", error instanceof Error ? error.message : String(error));
   }

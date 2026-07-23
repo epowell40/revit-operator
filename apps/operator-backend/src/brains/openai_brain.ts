@@ -85,6 +85,11 @@ import {
   planRegisteredRouteConnectorSnapV1,
   type RegisteredRouteSnapCandidateV1
 } from "../existing_conditions/registered_route_connector_snap.js";
+import {
+  DEFAULT_REGISTERED_ROUTE_FRONTIER_POLICY_V1,
+  discoverRegisteredRouteFrontierV1,
+  type RegisteredRouteFrontierCandidateV1
+} from "../existing_conditions/registered_route_frontier_discovery.js";
 
 type OpenAiDecision = {
   assistant_message: string;
@@ -120,6 +125,7 @@ type OpenAiDecision = {
       | "redline_orient"
       | "gemini_redline_analyze"
       | "compile_registered_mep_reconstruction"
+      | "register_existing_conditions_route_frontier"
       | "register_existing_conditions_route_snap"
       | "register_existing_conditions_mep_repair";
     command: string | null;
@@ -2682,6 +2688,137 @@ async function compileRegisteredMepReconstructionForSession(args: {
   };
 }
 
+async function registerExistingConditionsRouteFrontierForSession(args: {
+  req: ChatRequest;
+  action: Extract<WorkbenchAction, {
+    type: "register_existing_conditions_route_frontier";
+  }>;
+}): Promise<Record<string, unknown>> {
+  let candidateValue: unknown;
+  try {
+    candidateValue = JSON.parse(args.action.candidate_json);
+  } catch {
+    throw new Error("registered_route_frontier_candidate_json_invalid");
+  }
+  if (!candidateValue || typeof candidateValue !== "object" || Array.isArray(candidateValue)) {
+    throw new Error("registered_route_frontier_candidate_json_must_be_object");
+  }
+  const connectorActionId = args.action.connector_tool_action_id.trim();
+  const connectorResult = (args.req.tool_results ?? []).find(result =>
+    result.action_id === connectorActionId &&
+    result.status === "done" &&
+    String(result.path ?? "").trim().toLowerCase() === "/revit/get-connectors" &&
+    result.result_json &&
+    typeof result.result_json === "object"
+  );
+  if (!connectorResult) {
+    throw new Error("registered_route_frontier_requires_matching_live_connector_result");
+  }
+  const sourceCandidate = candidateValue as RegisteredRouteFrontierCandidateV1;
+  const frontierReceipt = discoverRegisteredRouteFrontierV1(sourceCandidate, {
+    native_connector_readback: connectorResult.result_json
+  });
+  if (frontierReceipt.status !== "ready" || !frontierReceipt.resolved_candidate) {
+    throw new Error(`registered_route_frontier_deferred:${frontierReceipt.blockers.join(",")}`);
+  }
+  const candidate = frontierReceipt.resolved_candidate;
+  const policy = DEFAULT_REGISTERED_ROUTE_FRONTIER_POLICY_V1;
+  const snapReceipt = planRegisteredRouteConnectorSnapV1(candidate, {
+    native_connector_readback: connectorResult.result_json,
+    policy: {
+      maximum_endpoint_snap_ft: policy.maximum_endpoint_snap_ft,
+      minimum_ambiguity_margin_ft: policy.minimum_ambiguity_margin_ft,
+      minimum_direction_dot: policy.minimum_direction_dot,
+      maximum_size_delta_ft: policy.maximum_size_delta_ft,
+      maximum_connector_z_delta_ft: policy.maximum_connector_z_delta_ft,
+      final_connection_tolerance_ft: policy.final_connection_tolerance_ft
+    }
+  });
+  if (snapReceipt.status !== "ready") {
+    throw new Error(`registered_route_frontier_snap_deferred:${snapReceipt.blockers.join(",")}`);
+  }
+  const workflow = buildRegisteredRouteSnapStagedWorkflowV1(candidate, snapReceipt);
+  const sourceFrameId = String(candidate.source_frame_id ?? candidate.package_id ?? "").trim();
+  const registrationContextId = String(
+    candidate.registration_context_id ?? candidate.registration_receipt_sha256 ?? ""
+  ).trim();
+  const visionState = getRedlineVisionState(args.req.session_id);
+  visionState.last_registered_mep_workflow = {
+    source_frame_id: sourceFrameId,
+    source_view_id: candidate.view_id,
+    registration_context_id: registrationContextId,
+    execution_boundary: "staged_execution",
+    workflow: JSON.parse(JSON.stringify(workflow)) as AtomicMepDraftWorkflowRequest,
+    updated_at_ms: Date.now()
+  };
+  registerExistingConditionsStagedWorkflow({
+    sessionId: args.req.session_id,
+    sourceFrameId,
+    sourceViewId: candidate.view_id,
+    registrationContextId,
+    executionBoundary: "staged_execution",
+    workflow
+  });
+  visionState.updated_at_ms = Date.now();
+  return {
+    status: "frontier_resolved_and_registered_for_staged_dry_run",
+    connector_tool_action_id: connectorActionId,
+    frontier_receipt: frontierReceipt,
+    snap_receipt: snapReceipt,
+    workflow
+  };
+}
+
+export async function executeExistingConditionsProviderWorkbenchActions(
+  req: ChatRequest,
+  rawActions: unknown
+): Promise<ChatResponse> {
+  const actions = normalizeWorkbenchActions(rawActions);
+  const allowedTypes = new Set<WorkbenchAction["type"]>([
+    "compile_registered_mep_reconstruction",
+    "register_existing_conditions_route_frontier",
+    "register_existing_conditions_route_snap",
+    "register_existing_conditions_mep_repair"
+  ]);
+  if (actions.length === 0 || actions.some(action => !allowedTypes.has(action.type))) {
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message:
+        "The external provider returned no valid deterministic existing-conditions workbench action. I stopped before any model write.",
+      actions: []
+    };
+  }
+  const results = attachArtifactSharesToWorkbenchResults(await executeWorkbenchActions(actions, {
+    compileRegisteredMepReconstruction: action =>
+      compileRegisteredMepReconstructionForSession({ req, action }),
+    registerExistingConditionsRouteFrontier: action =>
+      registerExistingConditionsRouteFrontierForSession({ req, action }),
+    registerExistingConditionsRouteSnap: action =>
+      registerExistingConditionsRouteSnapForSession({ req, action }),
+    registerExistingConditionsMepRepair: action =>
+      registerExistingConditionsMepRepairForSession({ req, action })
+  }));
+  noteCandidateVisibleCompileResults(req.session_id, results);
+  const failed = results.find(result => !result.ok);
+  if (failed) {
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message:
+        `The deterministic ${failed.type} workbench step was rejected: ${failed.summary || "unknown_error"}. ` +
+        "No native Revit action was dispatched.",
+      actions: []
+    };
+  }
+  const bridge = await maybeBuildRedlineExecutionBridge(req, results);
+  if (bridge) return bridge;
+  return {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    assistant_message:
+      "The deterministic existing-conditions workbench step succeeded and was persisted. The next host transition will continue from that ledger state.",
+    actions: []
+  };
+}
+
 async function registerExistingConditionsRouteSnapForSession(args: {
   req: ChatRequest;
   action: Extract<WorkbenchAction, {
@@ -5234,6 +5371,74 @@ function buildCandidateVisibleCompileGateCorrection(
     "- Do not emit any native Revit action, discovery call, web request, dev action, or prose-only completion.",
     "- Return exactly one compile_registered_mep_reconstruction workbench action now."
   ].join("\n");
+}
+
+const STRUCTURED_WORKBENCH_ACTION_NAMES = [
+  "compile_registered_mep_reconstruction",
+  "register_existing_conditions_route_frontier",
+  "register_existing_conditions_route_snap",
+  "register_existing_conditions_mep_repair"
+] as const;
+
+function buildWorkbenchNamespaceCorrection(
+  decision: OpenAiDecision,
+  workbenchActions: WorkbenchAction[]
+): string | null {
+  const alreadyRequested = new Set(workbenchActions.map((action) => action.type));
+  const misrouted = new Set<string>();
+
+  for (const action of decision.actions ?? []) {
+    const actionPath = (action.path ?? "").trim().toLowerCase();
+    const actionId = (action.action_id ?? "").trim().toLowerCase();
+    for (const name of STRUCTURED_WORKBENCH_ACTION_NAMES) {
+      if (alreadyRequested.has(name)) continue;
+      const dashed = name.replace(/_/g, "-");
+      if (
+        actionId.includes(name) ||
+        actionId.includes(dashed) ||
+        actionPath.includes(name) ||
+        actionPath.includes(dashed)
+      ) {
+        misrouted.add(name);
+      }
+    }
+    if (actionPath !== "/revit/tool-search") continue;
+    let body: unknown = null;
+    try {
+      body = action.body_json ? JSON.parse(action.body_json) : null;
+    } catch {
+      body = null;
+    }
+    const query = typeof (body as any)?.query === "string"
+      ? String((body as any).query).trim().toLowerCase()
+      : "";
+    if (!query) continue;
+    for (const name of STRUCTURED_WORKBENCH_ACTION_NAMES) {
+      if (alreadyRequested.has(name)) continue;
+      const spaced = name.replace(/_/g, " ");
+      if (query.includes(name) || query.includes(spaced)) misrouted.add(name);
+    }
+  }
+
+  if (misrouted.size === 0) return null;
+  const names = Array.from(misrouted);
+  return [
+    "WORKBENCH ACTION NAMESPACE CORRECTION:",
+    `- ${names.join(", ")} ${names.length === 1 ? "is" : "are"} a structured Operator workbench action, not a native /revit/* endpoint.`,
+    "- Never call /revit/tool-search, /revit/tool-doc, /revit/tool-examples, or native API discovery for a workbench action name.",
+    "- Do not invent a /workbench/* HTTP endpoint. Put the requested action in the top-level workbench_actions array, not the native actions array. Keep actions empty unless a separate native Revit step is still required.",
+    names.includes("register_existing_conditions_route_frontier")
+      ? "- For this frontier step, return workbench_actions:[{type:\"register_existing_conditions_route_frontier\",candidate_json:\"<the verbatim source-only candidate JSON>\",connector_tool_action_id:\"<the exact completed /revit/get-connectors action_id>\"}]."
+      : `- Return the requested ${names.join(" or ")} workbench action now.`,
+    "- The host will execute the deterministic workbench action and re-call you with its structured result."
+  ].join("\n");
+}
+
+export function __testOnlyBuildWorkbenchNamespaceCorrection(args: {
+  decision: OpenAiDecision;
+  workbenchActions?: WorkbenchAction[];
+}): string | null {
+  return buildWorkbenchNamespaceCorrection(args.decision, args.workbenchActions ?? []);
 }
 
 function shouldBypassCandidateVisiblePreModelBridge(req: ChatRequest): boolean {
@@ -17696,6 +17901,7 @@ function defaultSystemPrompt(): string {
     "EC2 workbench (interim backend compute/file steps):",
     "- You may request bounded backend work by populating workbench_actions.",
     "- Use workbench_actions for interim planning/calculation/transform steps before proposing final /revit/* actions.",
+    "- Workbench action names are structured output values, not HTTP endpoints. They are neither /revit/* nor /workbench/* paths and are not present in /revit/tool-search, /revit/tool-doc, /revit/tool-examples, or native API catalogs. Never search for or invent an endpoint for a workbench action; emit it directly in the top-level workbench_actions array and keep the native actions array empty for that response.",
     "- Keep workbench operations inside Workspace paths. Prefer artifacts/* for generated outputs.",
     "- When shell helpers need Windows user folders, use environment/known-folder paths (`$env:USERPROFILE`, `$env:LOCALAPPDATA`, `$env:APPDATA`, `[Environment]::GetFolderPath(...)`) instead of hard-coded user Desktop paths.",
     "- Avoid long-running tasks; keep commands/scripts bounded and deterministic.",
@@ -17729,7 +17935,9 @@ function defaultSystemPrompt(): string {
     "- Before creating replacement geometry, inventory the bounded target region and retain useful source-grounded elements. Prefer one staged /revit/move-elements, /revit/rotate-elements, /revit/edit-mep-route-elements, or /revit/repair-mep-connectors operation when the existing graph is safely editable. Persist affected_element_ids and verify them; do not create a duplicate merely because the first location, size, or connection is wrong.",
     "- After compile_registered_mep_reconstruction returns status ready or partially_ready, use the persisted staged handoff for /revit/existing-conditions-mep-draft-workflow. The harness may group only explicitly marked, independent high-confidence straight backbones into one bounded provisional batch; all other work advances as the next single dependency-ready operation. Persist created or affected IDs plus registered continuation endpoints, then continue from those IDs. Never submit the entire operation graph as one all-or-nothing request. A write remains provisional until complete native ID readback, continuation-connector readback where applicable, focused visual evidence, and a reversible save-as checkpoint all succeed.",
     "- If a staged dry-run is rejected, preserve every accepted prior stage. Use workbench action register_existing_conditions_mep_repair with the exact blocked supersedes_stage_key, a new repair_stage_key, and operation_json containing one smaller replacement operation with the same action_key. Then let the staged handoff dry-run and apply that repair; do not recompile or replay accepted stages.",
-    "- After a registered route candidate exists and /revit/get-connectors returned current native readback, use register_existing_conditions_route_snap with candidate_json and the exact connector_tool_action_id. The deterministic host will reject fabricated, occupied, ambiguous, wrong-domain, wrong-size, wrong-system, wrong-direction, or over-tolerance endpoints and will register only one staged dry-run; do not author a monolithic replacement graph.",
+    "- When source registration establishes route XY but size, system, elevation, or native type remains unresolved, first scan the bounded retained MEP graph and call /revit/get-connectors with includeAllRefs=true for the nearby fittings plus their adjacent route elements. Then emit register_existing_conditions_route_frontier as a top-level workbench_actions item with candidate_json set to the source-only candidate JSON string and connector_tool_action_id set to that exact completed connector action ID. It is not a native endpoint: never search for it with /revit/tool-search or /revit/tool-doc. The deterministic host requires two unique open, correctly facing connectors plus agreement on domain, shape, size, system, elevation, adjacent native route type, and phase. Contextual source labels that disagree are recorded as provisional native overrides; a high-confidence exact source conflict or any native ambiguity defers the action.",
+    "- Exact frontier workbench shape: workbench_actions:[{type:\"register_existing_conditions_route_frontier\",candidate_json:\"<source-only JSON string>\",connector_tool_action_id:\"<completed get-connectors action_id>\"}]. Keep native actions empty for that response.",
+    "- After a fully resolved registered route candidate exists and /revit/get-connectors returned current native readback, use register_existing_conditions_route_snap with candidate_json and the exact connector_tool_action_id. The deterministic host will reject fabricated, occupied, ambiguous, wrong-domain, wrong-size, wrong-system, wrong-direction, or over-tolerance endpoints and will register only one staged dry-run; do not author a monolithic replacement graph.",
     "- After one successful /revit/export-visible-elements call, do not repeat broad inventory exports in a loop. Use the sampled inventory plus /revit/pick-candidate-cluster or /revit/get-placement-context to continue.",
     "- If titleblock/sheet regions dominate, prefer full-sheet targeting (sheet viewId) before selecting any nested viewport.",
     "- /revit/export-view-frame does not support DrawingSheet or ThreeD views. For sheet/titleblock targets, pivot to /revit/find-elements on sheetNumber (+ includeSheetElements; add sheetRegions when available) and then /revit/get-element-summary.",
@@ -19321,6 +19529,16 @@ function normalizeWorkbenchActions(raw: unknown): WorkbenchAction[] {
           typeof a.maximum_created_elements === "number" && Number.isFinite(a.maximum_created_elements)
             ? Math.floor(a.maximum_created_elements)
             : undefined
+      });
+      continue;
+    }
+
+    if (type === "register_existing_conditions_route_frontier") {
+      out.push({
+        type: "register_existing_conditions_route_frontier",
+        candidate_json: typeof a.candidate_json === "string" ? a.candidate_json : "",
+        connector_tool_action_id:
+          typeof a.connector_tool_action_id === "string" ? a.connector_tool_action_id : ""
       });
       continue;
     }
@@ -22017,7 +22235,7 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
           properties: {
             type: {
               type: "string",
-              enum: ["shell", "python", "write_file", "read_file", "list_files", "analyze_redline", "map_sheet_regions", "redline_orient", "gemini_redline_analyze", "compile_registered_mep_reconstruction", "register_existing_conditions_route_snap", "register_existing_conditions_mep_repair"]
+              enum: ["shell", "python", "write_file", "read_file", "list_files", "analyze_redline", "map_sheet_regions", "redline_orient", "gemini_redline_analyze", "compile_registered_mep_reconstruction", "register_existing_conditions_route_frontier", "register_existing_conditions_route_snap", "register_existing_conditions_mep_repair"]
             },
             command: { type: ["string", "null"] },
             code: { type: ["string", "null"] },
@@ -22061,7 +22279,10 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     }
   };
 
-  async function callModel(r: ChatRequest): Promise<OpenAiDecision | { error: string }> {
+  async function callModel(
+    r: ChatRequest,
+    workbenchNamespaceCorrectionAttempted = false
+  ): Promise<OpenAiDecision | { error: string }> {
     const speedSettings = resolveSpeedSettings(r.context);
     const route = selectSpeedRoute(r, speedSettings, { model: defaultModel, reasoning_effort: defaultReasoningEffort });
     const promptStartedMs = Date.now();
@@ -22204,6 +22425,41 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     } catch {
       // ignore usage telemetry errors
     }
+    const workbenchNamespaceCorrection = buildWorkbenchNamespaceCorrection(
+      decision,
+      normalizeWorkbenchActions(decision.workbench_actions)
+    );
+    if (workbenchNamespaceCorrection) {
+      if (workbenchNamespaceCorrectionAttempted) {
+        return {
+          error:
+            "The planner repeatedly treated an Operator workbench action as an HTTP endpoint. " +
+            "The host stopped the invalid namespace loop before dispatching any action."
+        };
+      }
+      try {
+        appendEvent(r.session_id, "assistant", "workbench.namespace_correction", {
+          correction: workbenchNamespaceCorrection
+        });
+        appendNotification(
+          r.session_id,
+          "workbench.progress",
+          "Correcting a planner workbench-action namespace error before dispatch.",
+          { phase: "namespace_correction" }
+        );
+      } catch {
+        // ignore correction telemetry errors
+      }
+      return callModel(
+        {
+          ...r,
+          context: withServerContext(r.context, {
+            workbench_action_namespace_correction: workbenchNamespaceCorrection
+          })
+        },
+        true
+      );
+    }
     return decision;
   }
 
@@ -22332,6 +22588,8 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     let wb = attachArtifactSharesToWorkbenchResults(await executeWorkbenchActions(wbActions, {
       compileRegisteredMepReconstruction: (action) =>
         compileRegisteredMepReconstructionForSession({ req, action }),
+      registerExistingConditionsRouteFrontier: (action) =>
+        registerExistingConditionsRouteFrontierForSession({ req, action }),
       registerExistingConditionsRouteSnap: (action) =>
         registerExistingConditionsRouteSnapForSession({ req, action }),
       registerExistingConditionsMepRepair: (action) =>
@@ -22513,6 +22771,24 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     lastDecision = d;
 
     let wbActions = normalizeWorkbenchActions(d.workbench_actions);
+    const workbenchNamespaceCorrection = buildWorkbenchNamespaceCorrection(d, wbActions);
+    if (workbenchNamespaceCorrection) {
+      if (round < maxContinuationRounds) {
+        currentReq = withPlacementWorkItem({
+          ...currentReq,
+          context: withServerContext(currentReq.context, {
+            workbench_action_namespace_correction: workbenchNamespaceCorrection
+          })
+        });
+        continue;
+      }
+      return finishResponse({
+        version: OPERATOR_BACKEND_CONTRACT_VERSION,
+        assistant_message:
+          "The planner repeatedly treated an Operator workbench action as a native Revit endpoint. I stopped the invalid tool-discovery loop before any model write; the next response must emit the named action in workbench_actions.",
+        actions: []
+      });
+    }
     const candidateVisibleCompileGateCorrection =
       buildCandidateVisibleCompileGateCorrection(currentReq, wbActions);
     if (candidateVisibleCompileGateCorrection) {

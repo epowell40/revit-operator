@@ -47,6 +47,11 @@ namespace RevitBridge.Logic.Handlers.MEP
 
                 var catToken = SelectionUtil.GetCategoryToken(e) ?? (e.Category?.Name ?? "None");
                 var sys = MepSystemUtil.TryGetSystemName(e);
+                var typeId = TryGetPositiveElementId(e.GetTypeId());
+                var typeName = typeId.HasValue
+                    ? (doc.GetElement(ElementIdCompat.Create(typeId.Value))?.Name ?? e.Name)
+                    : e.Name;
+                var createdPhaseId = TryGetPositiveElementId(e.CreatedPhaseId);
                 var flexGeometry = p.includeFlexGeometry ? TryGetFlexGeometry(e) : null;
 
                 var connectorsOut = new List<object>();
@@ -158,6 +163,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                             origin = new[] { origin.X, origin.Y, origin.Z },
                             domain,
                             shape,
+                            systemClassification = TryGetConnectorSystemClassification(c),
                             size,
                             coordinateSystem = cs,
                             connectedTo = refsOut,
@@ -180,6 +186,9 @@ namespace RevitBridge.Logic.Handlers.MEP
                     ok = true,
                     category = catToken,
                     name = e.Name,
+                    typeId,
+                    typeName,
+                    createdPhaseId,
                     systemName = sys,
                     connectorCount = connectorsOut.Count,
                     connectors = connectorsOut,
@@ -194,6 +203,38 @@ namespace RevitBridge.Logic.Handlers.MEP
                 results,
                 warnings
             });
+        }
+
+        private static long? TryGetPositiveElementId(ElementId? id)
+        {
+            if (id == null) return null;
+            try
+            {
+                var value = ElementIdCompat.GetValue(id);
+                return value > 0 ? value : (long?)null;
+            }
+            catch { return null; }
+        }
+
+        private static string TryGetConnectorSystemClassification(Connector connector)
+        {
+            if (connector == null) return "";
+            foreach (var propertyName in new[] { "DuctSystemType", "PipeSystemType", "ElectricalSystemType" })
+            {
+                try
+                {
+                    var property = connector.GetType().GetProperty(propertyName);
+                    var value = property?.GetValue(connector, null);
+                    var text = value?.ToString() ?? "";
+                    if (!string.IsNullOrWhiteSpace(text) && !string.Equals(text, "UndefinedSystemType", StringComparison.OrdinalIgnoreCase))
+                        return text;
+                }
+                catch
+                {
+                    // Continue through the cross-discipline property fallbacks.
+                }
+            }
+            return "";
         }
 
         private static object? TryGetFlexGeometry(Element element)

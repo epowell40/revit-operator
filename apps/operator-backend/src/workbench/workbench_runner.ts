@@ -98,6 +98,11 @@ export type WorkbenchAction =
       maximum_created_elements?: number;
     }
   | {
+      type: "register_existing_conditions_route_frontier";
+      candidate_json: string;
+      connector_tool_action_id: string;
+    }
+  | {
       type: "register_existing_conditions_route_snap";
       candidate_json: string;
       connector_tool_action_id: string;
@@ -422,6 +427,7 @@ function isSafeRedlineWorkbenchAction(action: WorkbenchAction): boolean {
     action.type === "redline_orient" ||
     action.type === "gemini_redline_analyze" ||
     action.type === "compile_registered_mep_reconstruction" ||
+    action.type === "register_existing_conditions_route_frontier" ||
     action.type === "register_existing_conditions_route_snap" ||
     action.type === "register_existing_conditions_mep_repair";
 }
@@ -434,6 +440,9 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
   createRedlineAnalyzeEvidence?: typeof tryCreateRedlineAnalyzeEvidence;
   compileRegisteredMepReconstruction?: (
     action: Extract<WorkbenchAction, { type: "compile_registered_mep_reconstruction" }>
+  ) => Promise<Record<string, unknown>>;
+  registerExistingConditionsRouteFrontier?: (
+    action: Extract<WorkbenchAction, { type: "register_existing_conditions_route_frontier" }>
   ) => Promise<Record<string, unknown>>;
   registerExistingConditionsRouteSnap?: (
     action: Extract<WorkbenchAction, { type: "register_existing_conditions_route_snap" }>
@@ -720,6 +729,36 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
           type: action.type,
           ok: true,
           summary: `Registered staged existing-conditions repair ${action.repair_stage_key}.`,
+          details: registered
+        });
+        break;
+      }
+
+      if (action.type === "register_existing_conditions_route_frontier") {
+        if (!deps.registerExistingConditionsRouteFrontier) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "Existing-conditions native frontier discovery is unavailable in this runtime."
+          });
+          break;
+        }
+        if (!(action.candidate_json ?? "").trim() || !(action.connector_tool_action_id ?? "").trim()) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "register_existing_conditions_route_frontier requires candidate_json and connector_tool_action_id."
+          });
+          break;
+        }
+        const registered = await deps.registerExistingConditionsRouteFrontier(action);
+        results.push({
+          index: i + 1,
+          type: action.type,
+          ok: true,
+          summary: "Discovered a unique retained native frontier and registered one connector-snapped route for staged dry-run.",
           details: registered
         });
         break;

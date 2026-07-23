@@ -186,6 +186,11 @@ import {
   type RegisteredRouteSnapContextV1
 } from "../existing_conditions/registered_route_connector_snap.js";
 import {
+  discoverRegisteredRouteFrontierV1,
+  type RegisteredRouteFrontierCandidateV1,
+  type RegisteredRouteFrontierPolicyV1
+} from "../existing_conditions/registered_route_frontier_discovery.js";
+import {
   analyzeExistingConditionsSheetWithGeminiV1,
   type GeminiExistingConditionsSheetRequestV1
 } from "../vision/gemini_existing_conditions_sheet.js";
@@ -393,6 +398,7 @@ function usage(): never {
     "  npm run existing-conditions -- interpret-sheet-gemini --input <source-only-sheet-request.json> --out <normalized-sheet-observations.json>",
     "  npm run existing-conditions -- validate-sheet-pixel-evidence --input <observations-or-provider-receipt.json> --image <source-image.png> --out <evidence-receipt.json> [--overlay-out <overlay.png>]",
     "  npm run existing-conditions -- plan-registered-route-snap --input <registered-route-candidate.json> --context <native-connectors-and-policy.json> --out <staged-route-action.json>",
+    "  npm run existing-conditions -- discover-registered-route-frontier --input <source-registered-route.json> --context <native-connectors-and-policy.json> --out <resolved-frontier.json>",
     "  npm run existing-conditions -- compile-provisional-plan-traces --input <plan-trace-draft.json> --context <source-accounting-context.json> --out <compiled-plan.json> [--workflow-out <atomic-dry-run-request.json> --allow-unscored-user-workflow] [--max-created <count>]",
     "  npm run existing-conditions -- compile-registered-mep-observations --input <registered-pixel-observations.json> --out <compilation.json> [--package-out <mep-draft-package.json>] [--workflow-out <atomic-dry-run-request.json> --allow-unscored-user-workflow] [--max-created <count>]",
     "  npm run existing-conditions -- promote-registered-mep-observations --input <registered-pixel-observations.json> --truth <evaluator-ground-truth.json> --out <promotion.json> --score-out <pre-apply-score.json> --workflow-out <atomic-request.json> [--max-created <count>] [--apply]",
@@ -2030,6 +2036,27 @@ async function main(): Promise<void> {
       planRegisteredRouteConnectorSnapV1(
         readJson(inputPath) as RegisteredRouteSnapCandidateV1,
         readJson(contextPath) as RegisteredRouteSnapContextV1
+      )
+    );
+    return;
+  }
+  if (command === "discover-registered-route-frontier") {
+    const inputPath = requiredArgument("--input");
+    const contextPath = requiredArgument("--context");
+    const outputPath = requiredArgument("--out");
+    assertFreshDistinctOutputPaths(
+      [{ flag: "--out", value: outputPath }],
+      [{ flag: "--input", value: inputPath }, { flag: "--context", value: contextPath }]
+    );
+    const context = readJson(contextPath) as {
+      native_connector_readback: unknown;
+      policy?: Partial<RegisteredRouteFrontierPolicyV1>;
+    };
+    writeJson(
+      outputPath,
+      discoverRegisteredRouteFrontierV1(
+        readJson(inputPath) as RegisteredRouteFrontierCandidateV1,
+        context
       )
     );
     return;

@@ -12,6 +12,7 @@ import {
   __testOnlyBuildCandidateVisibleRecoveryPrompt,
   __testOnlyBuildCandidateVisibleRoomScopeResponse,
   __testOnlyBuildCandidateVisibleCompileGateCorrection,
+  __testOnlyBuildWorkbenchNamespaceCorrection,
   __testOnlyCandidateVisibleReadyDiagnostics,
   __testOnlyBuildCandidateVisibleReadyToCompilePrompt,
   __testOnlyBuildCandidateVisibleTerminalGuardAfterWorkbench,
@@ -59,6 +60,66 @@ function mkReq(args?: Partial<ChatRequest>): ChatRequest {
     ...args
   };
 }
+
+test("native tool search for a structured frontier action gets a workbench namespace correction", () => {
+  const correction = __testOnlyBuildWorkbenchNamespaceCorrection({
+    decision: {
+      assistant_message: "I will look up the tool.",
+      actions: [{
+        action_id: "wrong-search",
+        method: "POST",
+        path: "/revit/tool-search",
+        body_json: JSON.stringify({ query: "register_existing_conditions_route_frontier" })
+      }],
+      web_requests: [],
+      workbench_actions: []
+    }
+  });
+  assert.match(correction ?? "", /structured Operator workbench action/);
+  assert.match(correction ?? "", /top-level workbench_actions array/);
+  assert.match(correction ?? "", /connector_tool_action_id/);
+});
+
+test("valid frontier workbench output suppresses the namespace correction", () => {
+  const frontierAction = {
+    type: "register_existing_conditions_route_frontier" as const,
+    candidate_json: "{}",
+    connector_tool_action_id: "connectors-1"
+  };
+  const correction = __testOnlyBuildWorkbenchNamespaceCorrection({
+    decision: {
+      assistant_message: "Registering the frontier.",
+      actions: [{
+        action_id: "redundant-search",
+        method: "POST",
+        path: "/revit/tool-search",
+        body_json: JSON.stringify({ query: "register existing conditions route frontier" })
+      }],
+      web_requests: [],
+      workbench_actions: [frontierAction as any]
+    },
+    workbenchActions: [frontierAction]
+  });
+  assert.equal(correction, null);
+});
+
+test("invented workbench HTTP endpoint gets corrected before dispatch", () => {
+  const correction = __testOnlyBuildWorkbenchNamespaceCorrection({
+    decision: {
+      assistant_message: "Registering the frontier.",
+      actions: [{
+        action_id: "register_existing_conditions_route_frontier",
+        method: "POST",
+        path: "/workbench/register-existing-conditions-route-frontier",
+        body_json: "{}"
+      }],
+      web_requests: [],
+      workbench_actions: []
+    }
+  });
+  assert.match(correction ?? "", /Do not invent a \/workbench\/\* HTTP endpoint/);
+  assert.match(correction ?? "", /not the native actions array/);
+});
 
 test("candidate-visible native inventory follows Gemini registration-control categories", () => {
   assert.deepEqual(

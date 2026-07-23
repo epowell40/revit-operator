@@ -128,6 +128,8 @@ test("Gemini brain uses structured output and normalizes action body_json", asyn
     assert.equal(requestedHeaders["x-goog-api-key"], "test-gemini-key");
     assert.equal(requestedBody.generationConfig.responseMimeType, "application/json");
     assert.equal(requestedBody.generationConfig.responseJsonSchema.properties.actions.type, "array");
+    assert.equal(requestedBody.generationConfig.responseJsonSchema.properties.workbench_actions.type, "array");
+    assert.ok(requestedBody.generationConfig.responseJsonSchema.required.includes("workbench_actions"));
     assert.ok(
       requestedBody.generationConfig.responseJsonSchema.properties.actions.items.properties.body_json.type.includes("object")
     );
@@ -144,6 +146,58 @@ test("Gemini brain uses structured output and normalizes action body_json", asyn
       systemType: "Sanitary",
       dryRun: true
     });
+  } finally {
+    restoreEnvironment(previous);
+  }
+});
+
+test("Gemini emits a frontier as a backend workbench action instead of inventing an HTTP endpoint", async () => {
+  const previous = {
+    OPERATOR_GEMINI_API_KEY: process.env.OPERATOR_GEMINI_API_KEY,
+    OPERATOR_GEMINI_AGENT_MODEL: process.env.OPERATOR_GEMINI_AGENT_MODEL,
+    OPERATOR_GEMINI_AGENT_BASE_URL: process.env.OPERATOR_GEMINI_AGENT_BASE_URL
+  };
+  process.env.OPERATOR_GEMINI_API_KEY = "test-gemini-key";
+  process.env.OPERATOR_GEMINI_AGENT_MODEL = "gemini-test";
+  process.env.OPERATOR_GEMINI_AGENT_BASE_URL = "https://gemini.test/v1beta";
+  const workbenchAction = {
+    type: "register_existing_conditions_route_frontier",
+    package_json: null,
+    maximum_created_elements: null,
+    candidate_json: JSON.stringify({ schema_version: 1, primitive_id: "p-1" }),
+    connector_tool_action_id: "connectors-1",
+    supersedes_stage_key: null,
+    repair_stage_key: null,
+    operation_json: null,
+    reason: null
+  };
+  let received: unknown = null;
+  const fetchImpl = (async () => new Response(JSON.stringify({
+    candidates: [{ content: { parts: [{ text: JSON.stringify({
+      assistant_message: "Registering the retained route frontier.",
+      actions: [],
+      workbench_actions: [workbenchAction]
+    }) }] } }]
+  }), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
+  try {
+    const response = await decideGemini(request(), {
+      fetchImpl,
+      existingConditionsWorkbenchExecutor: async (_req, actions) => {
+        received = actions;
+        return {
+          version: OPERATOR_BACKEND_CONTRACT_VERSION,
+          assistant_message: "Registered; dry-run is next.",
+          actions: [{
+            action_id: "staged-dry-run",
+            method: "POST",
+            path: "/revit/existing-conditions-mep-draft-workflow",
+            body: { dryRun: true }
+          }]
+        };
+      }
+    });
+    assert.deepEqual(received, [workbenchAction]);
+    assert.equal(response.actions[0]?.path, "/revit/existing-conditions-mep-draft-workflow");
   } finally {
     restoreEnvironment(previous);
   }
