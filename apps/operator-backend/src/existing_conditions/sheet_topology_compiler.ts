@@ -150,6 +150,17 @@ export type SheetTopologyConnectionV1 = {
   status: "accepted" | "provisional";
 };
 
+export type SheetTopologyJunctionV1 = {
+  junction_id: string;
+  primitive_ids: string[];
+  endpoint_keys: string[];
+  point: SheetTopologyPoint;
+  kind: "elbow_or_offset" | "tee_or_branch" | "multiway";
+  basis: "registered_endpoint_junction";
+  scope: "within_view" | "cross_view" | "cross_sheet";
+  status: "accepted" | "provisional";
+};
+
 export type SheetTopologyPrimitiveDecisionV1 = {
   primitive_id: string;
   canonical_primitive_id: string;
@@ -171,6 +182,7 @@ export type CompiledSheetTopologyV1 = {
   canonical_primitive_ids: string[];
   source_mark_ids_by_canonical_primitive: Record<string, string[]>;
   connections: SheetTopologyConnectionV1[];
+  junctions: SheetTopologyJunctionV1[];
   component_by_primitive_id: Record<string, string>;
   frontier_endpoint_keys: string[];
   decisions: SheetTopologyPrimitiveDecisionV1[];
@@ -536,6 +548,7 @@ export function compileSheetTopologyV1(
   const disjoint = new DisjointSet();
   canonicalIds.forEach(id => disjoint.add(id));
   const connections: SheetTopologyConnectionV1[] = [];
+  const junctions: SheetTopologyJunctionV1[] = [];
   const connectedEndpointKeys = new Set<string>();
 
   const addConnection = (leftKey: string, rightKey: string, basis: SheetTopologyConnectionV1["basis"]): void => {
@@ -571,6 +584,10 @@ export function compileSheetTopologyV1(
     const leftId = canonicalById.get(left.primitive.primitive_id)!;
     const rightId = canonicalById.get(right.primitive.primitive_id)!;
     if (leftId === rightId) return "same_primitive";
+    if (left.primitive.kind !== right.primitive.kind) return "primitive_kind_mismatch";
+    if (left.primitive.kind !== "route_segment" && left.primitive.kind !== "wall_segment") return "primitive_kind_not_connectable";
+    if (left.primitive.confidence.geometry < policy.minimum_geometry_confidence
+      || right.primitive.confidence.geometry < policy.minimum_geometry_confidence) return "geometry_confidence_below_threshold";
     const leftView = views.get(left.primitive.source_view_key)!;
     const rightView = views.get(right.primitive.source_view_key)!;
     if (leftView.discipline !== rightView.discipline) return "discipline_mismatch";
@@ -580,6 +597,62 @@ export function compileSheetTopologyV1(
     const dot = left.direction[0] * right.direction[0] + left.direction[1] * right.direction[1];
     if (dot > -policy.minimum_opposed_direction_dot) return "directions_not_opposed";
     return null;
+  };
+
+  const compatibleJunctionPair = (leftKey: string, rightKey: string): string | null => {
+    const left = endpoints.get(leftKey)!;
+    const right = endpoints.get(rightKey)!;
+    const leftId = canonicalById.get(left.primitive.primitive_id)!;
+    const rightId = canonicalById.get(right.primitive.primitive_id)!;
+    if (leftId === rightId) return "same_primitive";
+    if (left.primitive.kind !== right.primitive.kind) return "primitive_kind_mismatch";
+    if (left.primitive.kind !== "route_segment" && left.primitive.kind !== "wall_segment") return "primitive_kind_not_connectable";
+    if (left.primitive.confidence.geometry < policy.minimum_geometry_confidence
+      || right.primitive.confidence.geometry < policy.minimum_geometry_confidence) return "geometry_confidence_below_threshold";
+    const leftView = views.get(left.primitive.source_view_key)!;
+    const rightView = views.get(right.primitive.source_view_key)!;
+    if (leftView.discipline !== rightView.discipline) return "discipline_mismatch";
+    if (leftView.level_key !== rightView.level_key) return "level_mismatch";
+    if (!claimsCompatible(left.primitive, right.primitive)) return "claim_mismatch";
+    if (distance(left.endpoint.point, right.endpoint.point) > policy.endpoint_tolerance_ft) return "endpoint_distance_exceeded";
+    return null;
+  };
+
+  const addJunction = (memberKeys: string[]): void => {
+    const members = [...memberKeys].sort();
+    const memberValues = members.map(key => endpoints.get(key)!);
+    const primitiveIds = [...new Set(memberValues.map(value => canonicalById.get(value.primitive.primitive_id)!))].sort();
+    if (primitiveIds.length < 2) return;
+    const memberViews = memberValues.map(value => views.get(value.primitive.source_view_key)!);
+    const sheetKeys = new Set(memberViews.map(value => value.sheet_key));
+    const viewKeys = new Set(memberViews.map(value => value.view_key));
+    const scope = sheetKeys.size > 1 ? "cross_sheet" : viewKeys.size > 1 ? "cross_view" : "within_view";
+    const status = memberValues.every(value => {
+      const view = views.get(value.primitive.source_view_key)!;
+      return connectionClaimsResolved(value.primitive, view.discipline);
+    }) && memberValues.every((left, leftIndex) => memberValues.every((right, rightIndex) =>
+      leftIndex >= rightIndex || claimsCompatible(left.primitive, right.primitive)
+    )) ? "accepted" : "provisional";
+    const pointCount = memberValues.length;
+    const junctionPoint: SheetTopologyPoint = {
+      x: memberValues.reduce((sum, value) => sum + value.endpoint.point.x, 0) / pointCount,
+      y: memberValues.reduce((sum, value) => sum + value.endpoint.point.y, 0) / pointCount,
+      ...(memberValues.some(value => value.endpoint.point.z !== undefined)
+        ? { z: memberValues.reduce((sum, value) => sum + (value.endpoint.point.z ?? 0), 0) / pointCount }
+        : {})
+    };
+    junctions.push({
+      junction_id: `junction:${digest(members).slice(0, 20)}`,
+      primitive_ids: primitiveIds,
+      endpoint_keys: members,
+      point: junctionPoint,
+      kind: members.length === 2 ? "elbow_or_offset" : members.length === 3 ? "tee_or_branch" : "multiway",
+      basis: "registered_endpoint_junction",
+      scope,
+      status
+    });
+    for (const key of members) connectedEndpointKeys.add(key);
+    for (let index = 1; index < primitiveIds.length; index += 1) disjoint.union(primitiveIds[0]!, primitiveIds[index]!);
   };
 
   const explicitGroups = new Map<string, string[]>();
@@ -604,11 +677,37 @@ export function compileSheetTopologyV1(
       && !connectedEndpointKeys.has(key)
       && !clean(value.endpoint.continuation_key);
   }).sort();
+  const endpointAdjacency = new Map<string, string[]>();
   for (const leftKey of remaining) {
-    if (connectedEndpointKeys.has(leftKey)) continue;
-    const matches = remaining.filter(rightKey => rightKey !== leftKey && !connectedEndpointKeys.has(rightKey) && compatibleEndpointPair(leftKey, rightKey) === null);
-    if (matches.length === 1) addConnection(leftKey, matches[0]!, "registered_endpoint_proximity");
-    else if (matches.length > 1) conflicts.push(`ambiguous_endpoint_match:${leftKey}:${matches.join(",")}`);
+    endpointAdjacency.set(leftKey, remaining.filter(rightKey => rightKey !== leftKey && compatibleJunctionPair(leftKey, rightKey) === null));
+  }
+  const visitedEndpoints = new Set<string>();
+  for (const seedKey of remaining) {
+    if (visitedEndpoints.has(seedKey) || connectedEndpointKeys.has(seedKey)) continue;
+    const cluster: string[] = [];
+    const queue = [seedKey];
+    while (queue.length > 0) {
+      const currentKey = queue.shift()!;
+      if (visitedEndpoints.has(currentKey) || connectedEndpointKeys.has(currentKey)) continue;
+      visitedEndpoints.add(currentKey);
+      cluster.push(currentKey);
+      for (const neighbor of endpointAdjacency.get(currentKey) ?? []) {
+        if (!visitedEndpoints.has(neighbor) && !connectedEndpointKeys.has(neighbor)) queue.push(neighbor);
+      }
+    }
+    if (cluster.length < 2) continue;
+    const isClique = cluster.every((leftKey, leftIndex) => cluster.every((rightKey, rightIndex) =>
+      leftIndex === rightIndex || compatibleJunctionPair(leftKey, rightKey) === null
+    ));
+    if (!isClique) {
+      conflicts.push(`ambiguous_endpoint_cluster:${cluster.sort().join(",")}`);
+      continue;
+    }
+    if (cluster.length === 2 && compatibleEndpointPair(cluster[0]!, cluster[1]!) === null) {
+      addConnection(cluster[0]!, cluster[1]!, "registered_endpoint_proximity");
+    } else {
+      addJunction(cluster);
+    }
   }
 
   const decisions: SheetTopologyPrimitiveDecisionV1[] = [];
@@ -708,6 +807,7 @@ export function compileSheetTopologyV1(
     canonical_primitive_ids: canonicalIds,
     source_mark_ids_by_canonical_primitive: sourceMarkIdsByCanonicalPrimitive,
     connections: connections.sort((a, b) => a.connection_id.localeCompare(b.connection_id)),
+    junctions: junctions.sort((a, b) => a.junction_id.localeCompare(b.junction_id)),
     component_by_primitive_id: componentByPrimitiveId,
     frontier_endpoint_keys: frontierEndpointKeys,
     decisions,

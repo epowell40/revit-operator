@@ -43,6 +43,12 @@ const EXISTING_CONDITIONS_WORKBENCH_SCHEMA = {
     additionalProperties: false,
     required: [
       "type",
+      "interpretation_file_path",
+      "context_file_path",
+      "source_image_path",
+      "source_view_key",
+      "overlay_output_path",
+      "receipt_output_path",
       "package_json",
       "maximum_created_elements",
       "candidate_json",
@@ -56,12 +62,19 @@ const EXISTING_CONDITIONS_WORKBENCH_SCHEMA = {
       type: {
         type: "string",
         enum: [
+          "compile_existing_conditions_sheet_interpretation",
           "compile_registered_mep_reconstruction",
           "register_existing_conditions_route_frontier",
           "register_existing_conditions_route_snap",
           "register_existing_conditions_mep_repair"
         ]
       },
+      interpretation_file_path: { type: ["string", "null"] },
+      context_file_path: { type: ["string", "null"] },
+      source_image_path: { type: ["string", "null"] },
+      source_view_key: { type: ["string", "null"] },
+      overlay_output_path: { type: ["string", "null"] },
+      receipt_output_path: { type: ["string", "null"] },
       package_json: { type: ["string", "null"] },
       maximum_created_elements: { type: ["number", "null"] },
       candidate_json: { type: ["string", "null"] },
@@ -397,7 +410,8 @@ function buildPrompt(req: ChatRequest, provider: ExternalProvider): string {
     "",
     `You are running as the Operator ${provider} brain. You do not call MCP directly in this process.`,
     "Return native Revit bridge calls in actions, or deterministic backend steps in workbench_actions. The host executes them and returns receipts on the next turn.",
-    "A workbench action is a structured output value, never a /revit/* or /workbench/* HTTP endpoint. Do not search for or invent an endpoint for compile_registered_mep_reconstruction, register_existing_conditions_route_frontier, register_existing_conditions_route_snap, or register_existing_conditions_mep_repair.",
+    "A workbench action is a structured output value, never a /revit/* or /workbench/* HTTP endpoint. Do not search for or invent an endpoint for compile_existing_conditions_sheet_interpretation, compile_registered_mep_reconstruction, register_existing_conditions_route_frontier, register_existing_conditions_route_snap, or register_existing_conditions_mep_repair.",
+    "When the user supplies Workspace paths for a structured sheet interpretation, trusted context, and source image, emit exactly one compile_existing_conditions_sheet_interpretation action with those three paths plus optional source_view_key, overlay_output_path, and receipt_output_path. Keep native actions empty. Do not substitute compile_registered_mep_reconstruction or shell.",
     "When registered source XY needs native route resolution after /revit/get-connectors, emit exactly one workbench_actions item with type=register_existing_conditions_route_frontier, candidate_json as the verbatim JSON string, and connector_tool_action_id as the exact completed connector action id; keep actions empty.",
     "Use /revit/search-tools, /revit/tool-doc, and /revit/tool-examples when an exact contract is unknown.",
     "Prefer bounded predicate queries over unfiltered collection reads. A tool result marked _compacted, result_clipped, truncated, or containing a truncation marker is incomplete: never infer absence from it; immediately take the next smallest bounded read-only query that can resolve the target.",

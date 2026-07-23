@@ -11,6 +11,8 @@ export type SheetPixelEvidencePolicyV1 = {
   accepted_support_fraction: number;
   provisional_support_fraction: number;
   maximum_accepted_unsupported_run_fraction: number;
+  minimum_chromatic_chroma?: number;
+  minimum_chromatic_activation_fraction?: number;
 };
 
 export type SheetPixelRouteEvidenceV1 = {
@@ -20,6 +22,10 @@ export type SheetPixelRouteEvidenceV1 = {
   support_fraction: number;
   longest_unsupported_run_fraction: number;
   status: "accepted_raster_support" | "provisional_raster_support" | "rejected_raster_extent";
+  support_modality?: "chromatic_line" | "monochrome_line";
+  chromatic_support_fraction?: number;
+  monochrome_support_fraction?: number;
+  coherent_hue_degrees?: number;
 };
 
 export type SheetPixelEvidenceReceiptV1 = {
@@ -41,7 +47,9 @@ const DEFAULT_POLICY: SheetPixelEvidencePolicyV1 = {
   sample_spacing_px: 2,
   accepted_support_fraction: 0.82,
   provisional_support_fraction: 0.55,
-  maximum_accepted_unsupported_run_fraction: 0.18
+  maximum_accepted_unsupported_run_fraction: 0.18,
+  minimum_chromatic_chroma: 40,
+  minimum_chromatic_activation_fraction: 0.1
 };
 
 type PixelBuffer = { width: number; height: number; data: Uint8ClampedArray };
@@ -64,22 +72,41 @@ function bounded(value: unknown, fallback: number, minimum: number, maximum: num
   return result;
 }
 
-function policy(input?: Partial<SheetPixelEvidencePolicyV1>): SheetPixelEvidencePolicyV1 {
+function policy(input?: Partial<SheetPixelEvidencePolicyV1>): Required<SheetPixelEvidencePolicyV1> {
   return {
     maximum_luminance: bounded(input?.maximum_luminance, DEFAULT_POLICY.maximum_luminance, 0, 255, "sheet_pixel_evidence_maximum_luminance"),
     corridor_radius_px: bounded(input?.corridor_radius_px, DEFAULT_POLICY.corridor_radius_px, 0, 50, "sheet_pixel_evidence_corridor_radius_px"),
     sample_spacing_px: bounded(input?.sample_spacing_px, DEFAULT_POLICY.sample_spacing_px, 0.25, 50, "sheet_pixel_evidence_sample_spacing_px"),
     accepted_support_fraction: unit(input?.accepted_support_fraction ?? DEFAULT_POLICY.accepted_support_fraction, "sheet_pixel_evidence_accepted_support_fraction"),
     provisional_support_fraction: unit(input?.provisional_support_fraction ?? DEFAULT_POLICY.provisional_support_fraction, "sheet_pixel_evidence_provisional_support_fraction"),
-    maximum_accepted_unsupported_run_fraction: unit(input?.maximum_accepted_unsupported_run_fraction ?? DEFAULT_POLICY.maximum_accepted_unsupported_run_fraction, "sheet_pixel_evidence_maximum_accepted_unsupported_run_fraction")
+    maximum_accepted_unsupported_run_fraction: unit(input?.maximum_accepted_unsupported_run_fraction ?? DEFAULT_POLICY.maximum_accepted_unsupported_run_fraction, "sheet_pixel_evidence_maximum_accepted_unsupported_run_fraction"),
+    minimum_chromatic_chroma: bounded(input?.minimum_chromatic_chroma, DEFAULT_POLICY.minimum_chromatic_chroma!, 0, 255, "sheet_pixel_evidence_minimum_chromatic_chroma"),
+    minimum_chromatic_activation_fraction: unit(input?.minimum_chromatic_activation_fraction ?? DEFAULT_POLICY.minimum_chromatic_activation_fraction!, "sheet_pixel_evidence_minimum_chromatic_activation_fraction")
   };
 }
 
-function darkNear(buffer: PixelBuffer, x: number, y: number, maximumLuminance: number, radius: number): boolean {
+const HUE_BIN_COUNT = 24;
+const HUE_BIN_WIDTH_DEGREES = 360 / HUE_BIN_COUNT;
+
+function circularHueBinDistance(left: number, right: number): number {
+  const distance = Math.abs(left - right);
+  return Math.min(distance, HUE_BIN_COUNT - distance);
+}
+
+function nearbyEvidence(
+  buffer: PixelBuffer,
+  x: number,
+  y: number,
+  maximumLuminance: number,
+  minimumChromaticChroma: number,
+  radius: number
+): { monochrome: boolean; hue_bins: Set<number> } {
   const cx = Math.round(x);
   const cy = Math.round(y);
   const r = Math.ceil(radius);
   const radiusSquared = radius * radius;
+  let monochrome = false;
+  const hueBins = new Set<number>();
   for (let dy = -r; dy <= r; dy += 1) {
     for (let dx = -r; dx <= r; dx += 1) {
       if ((dx * dx) + (dy * dy) > radiusSquared) continue;
@@ -93,10 +120,24 @@ function darkNear(buffer: PixelBuffer, x: number, y: number, maximumLuminance: n
       const green = buffer.data[offset + 1] ?? 255;
       const blue = buffer.data[offset + 2] ?? 255;
       const luminance = (0.2126 * red) + (0.7152 * green) + (0.0722 * blue);
-      if (luminance <= maximumLuminance) return true;
+      if (luminance <= maximumLuminance) monochrome = true;
+      const maximum = Math.max(red, green, blue);
+      const minimum = Math.min(red, green, blue);
+      const chroma = maximum - minimum;
+      if (chroma < minimumChromaticChroma || maximum < 45 || luminance > 0.97 * 255) continue;
+      let hue = 0;
+      if (maximum === red) {
+        hue = 60 * (((green - blue) / chroma) % 6);
+      } else if (maximum === green) {
+        hue = 60 * ((blue - red) / chroma + 2);
+      } else {
+        hue = 60 * ((red - green) / chroma + 4);
+      }
+      if (hue < 0) hue += 360;
+      hueBins.add(Math.floor(hue / HUE_BIN_WIDTH_DEGREES) % HUE_BIN_COUNT);
     }
   }
-  return false;
+  return { monochrome, hue_bins: hueBins };
 }
 
 function routeSamples(primitive: SheetPixelPrimitiveV1, width: number, height: number, spacing: number): Array<{ x: number; y: number }> {
@@ -131,7 +172,31 @@ export function scoreSheetPixelRouteEvidenceV1(args: {
     .map(primitive => {
       const samples = routeSamples(primitive, args.pixels.width, args.pixels.height, resolvedPolicy.sample_spacing_px);
       if (samples.length === 0) throw new Error(`sheet_pixel_evidence_route_has_no_samples:${primitive.primitive_id}`);
-      const supported = samples.map(sample => darkNear(args.pixels, sample.x, sample.y, resolvedPolicy.maximum_luminance, resolvedPolicy.corridor_radius_px));
+      const evidence = samples.map(sample => nearbyEvidence(
+        args.pixels,
+        sample.x,
+        sample.y,
+        resolvedPolicy.maximum_luminance,
+        resolvedPolicy.minimum_chromatic_chroma,
+        resolvedPolicy.corridor_radius_px
+      ));
+      const hueSupportCounts = Array.from({ length: HUE_BIN_COUNT }, (_, hueBin) =>
+        evidence.filter(sample => [...sample.hue_bins].some(sampleBin => circularHueBinDistance(sampleBin, hueBin) <= 1)).length
+      );
+      const coherentHueBin = hueSupportCounts.reduce(
+        (best, count, hueBin) => count > hueSupportCounts[best]! ? hueBin : best,
+        0
+      );
+      const chromaticSupported = evidence.map(sample =>
+        [...sample.hue_bins].some(sampleBin => circularHueBinDistance(sampleBin, coherentHueBin) <= 1)
+      );
+      const monochromeSupported = evidence.map(sample => sample.monochrome);
+      const chromaticSupportFraction = chromaticSupported.filter(Boolean).length / chromaticSupported.length;
+      const monochromeSupportFraction = monochromeSupported.filter(Boolean).length / monochromeSupported.length;
+      const supportModality = chromaticSupportFraction >= resolvedPolicy.minimum_chromatic_activation_fraction
+        ? "chromatic_line" as const
+        : "monochrome_line" as const;
+      const supported = supportModality === "chromatic_line" ? chromaticSupported : monochromeSupported;
       const supportedCount = supported.filter(Boolean).length;
       let longestUnsupported = 0;
       let currentUnsupported = 0;
@@ -152,7 +217,13 @@ export function scoreSheetPixelRouteEvidenceV1(args: {
         supported_sample_count: supportedCount,
         support_fraction: supportFraction,
         longest_unsupported_run_fraction: longestUnsupportedFraction,
-        status
+        status,
+        support_modality: supportModality,
+        chromatic_support_fraction: chromaticSupportFraction,
+        monochrome_support_fraction: monochromeSupportFraction,
+        ...(supportModality === "chromatic_line"
+          ? { coherent_hue_degrees: coherentHueBin * HUE_BIN_WIDTH_DEGREES }
+          : {})
       } satisfies SheetPixelRouteEvidenceV1;
     });
   return { policy: resolvedPolicy, route_evidence: routeEvidence };

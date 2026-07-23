@@ -130,6 +130,11 @@ test("Gemini brain uses structured output and normalizes action body_json", asyn
     assert.equal(requestedBody.generationConfig.responseJsonSchema.properties.actions.type, "array");
     assert.equal(requestedBody.generationConfig.responseJsonSchema.properties.workbench_actions.type, "array");
     assert.ok(requestedBody.generationConfig.responseJsonSchema.required.includes("workbench_actions"));
+    const workbenchSchema = requestedBody.generationConfig.responseJsonSchema.properties.workbench_actions.items;
+    assert.ok(workbenchSchema.properties.type.enum.includes("compile_existing_conditions_sheet_interpretation"));
+    assert.ok(workbenchSchema.required.includes("interpretation_file_path"));
+    assert.ok(workbenchSchema.required.includes("context_file_path"));
+    assert.ok(workbenchSchema.required.includes("source_image_path"));
     assert.ok(
       requestedBody.generationConfig.responseJsonSchema.properties.actions.items.properties.body_json.type.includes("object")
     );

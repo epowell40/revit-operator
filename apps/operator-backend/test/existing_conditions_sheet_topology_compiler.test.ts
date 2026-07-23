@@ -47,6 +47,8 @@ function route(
     endContinuation?: string;
     system?: string;
     confidence?: number;
+    startDirection?: [number, number];
+    endDirection?: [number, number];
   } = {}
 ): SheetTopologyPrimitiveV1 {
   const confidence = options.confidence ?? 0.99;
@@ -60,14 +62,14 @@ function route(
       {
         endpoint_key: `${id}:start`,
         point: { x: start[0], y: start[1] },
-        outward_direction_xy: [-1, 0],
+        outward_direction_xy: options.startDirection ?? [-1, 0],
         boundary: options.startContinuation ? "view_boundary" : "internal",
         ...(options.startContinuation ? { continuation_key: options.startContinuation } : {})
       },
       {
         endpoint_key: `${id}:end`,
         point: { x: end[0], y: end[1] },
-        outward_direction_xy: [1, 0],
+        outward_direction_xy: options.endDirection ?? [1, 0],
         boundary: options.endContinuation ? "view_boundary" : "internal",
         ...(options.endContinuation ? { continuation_key: options.endContinuation } : {})
       }
@@ -165,6 +167,45 @@ test("continuation identities preserve long runs across different sheets", () =>
   assert.equal(result.connections[0]?.scope, "cross_sheet");
   assert.equal(result.component_by_primitive_id.left, result.component_by_primitive_id.right);
   assert.equal(result.frontier_endpoint_keys.length, 0);
+});
+
+test("registered endpoint clusters preserve elbows and a three-way route junction", () => {
+  const top = route("top", "main", "mark-top", [0, 0], [10, 0]);
+  const leftDrop = route("left-drop", "main", "mark-left-drop", [0, 0], [0, -5], {
+    startDirection: [0, 1],
+    endDirection: [0, -1]
+  });
+  const rightDrop = route("right-drop", "main", "mark-right-drop", [10, 0], [10, -5], {
+    startDirection: [0, 1],
+    endDirection: [0, -1]
+  });
+  const bottom = route("bottom", "main", "mark-bottom", [5, -5], [10, -5]);
+  const continuation = route("continuation", "main", "mark-continuation", [10, -5], [10, -10], {
+    startDirection: [0, 1],
+    endDirection: [0, -1]
+  });
+  const rejectedNoise = route("rejected-noise", "main", "mark-rejected-noise", [0, -5], [-2, -5], {
+    confidence: 0,
+    startDirection: [1, 0],
+    endDirection: [-1, 0]
+  });
+  const result = compileFixture(fixture(
+    [view("main", "P-100", 1)],
+    [top, leftDrop, rightDrop, bottom, continuation, rejectedNoise]
+  ));
+
+  assert.equal(result.connections.length, 0);
+  assert.equal(result.junctions.length, 3);
+  assert.equal(result.junctions.filter(value => value.kind === "elbow_or_offset").length, 2);
+  const tee = result.junctions.find(value => value.kind === "tee_or_branch");
+  assert.deepEqual(tee?.primitive_ids, ["bottom", "continuation", "right-drop"]);
+  assert.equal(tee?.endpoint_keys.length, 3);
+  assert.equal(tee?.status, "accepted");
+  const acceptedComponentIds = new Set(["top", "left-drop", "right-drop", "bottom", "continuation"]
+    .map(id => result.component_by_primitive_id[id]));
+  assert.equal(acceptedComponentIds.size, 1);
+  assert.notEqual(result.component_by_primitive_id["rejected-noise"], result.component_by_primitive_id.top);
+  assert.deepEqual(result.conflicts, []);
 });
 
 test("incompatible systems never stitch merely because endpoints overlap", () => {

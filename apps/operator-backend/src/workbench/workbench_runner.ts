@@ -9,6 +9,12 @@ import { tryCreateRedlineAnalyzeEvidence } from "../redline/redline_analyze_evid
 import { mapSheetRegions } from "../redline/sheet_region_mapper.js";
 import { orientRedlineFile } from "../redline/redline_orienter.js";
 import { analyzeRedlinePackageWithGemini } from "../vision/gemini_redline_package.js";
+import { validateSheetPixelEvidenceV1 } from "../existing_conditions/sheet_pixel_evidence.js";
+import {
+  compileSheetPixelInterpretationV1,
+  type SheetPixelInterpretationContextV1,
+  type SheetPixelInterpretationInputV1
+} from "../existing_conditions/sheet_pixel_interpretation.js";
 
 export type WorkbenchAction =
   | {
@@ -96,6 +102,15 @@ export type WorkbenchAction =
       type: "compile_registered_mep_reconstruction";
       package_json: string;
       maximum_created_elements?: number;
+    }
+  | {
+      type: "compile_existing_conditions_sheet_interpretation";
+      interpretation_file_path: string;
+      context_file_path: string;
+      source_image_path: string;
+      source_view_key?: string;
+      overlay_output_path?: string;
+      receipt_output_path?: string;
     }
   | {
       type: "register_existing_conditions_route_frontier";
@@ -426,6 +441,7 @@ function isSafeRedlineWorkbenchAction(action: WorkbenchAction): boolean {
     action.type === "map_sheet_regions" ||
     action.type === "redline_orient" ||
     action.type === "gemini_redline_analyze" ||
+    action.type === "compile_existing_conditions_sheet_interpretation" ||
     action.type === "compile_registered_mep_reconstruction" ||
     action.type === "register_existing_conditions_route_frontier" ||
     action.type === "register_existing_conditions_route_snap" ||
@@ -696,6 +712,116 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
         // Compilation is terminal within a workbench batch. This prevents a
         // model-authored batch from executing multiple compiler attempts, or
         // reopening vision/orientation work after a deterministic failure.
+        break;
+      }
+
+      if (action.type === "compile_existing_conditions_sheet_interpretation") {
+        const interpretationPath = (action.interpretation_file_path ?? "").trim();
+        const contextPath = (action.context_file_path ?? "").trim();
+        const imagePath = (action.source_image_path ?? "").trim();
+        if (!interpretationPath || !contextPath || !imagePath) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "compile_existing_conditions_sheet_interpretation requires interpretation_file_path, context_file_path, and source_image_path."
+          });
+          break;
+        }
+        const interpretationFile = safeReadFile(interpretationPath, maxReadBytes);
+        const contextFile = safeReadFile(contextPath, maxReadBytes);
+        if (interpretationFile.truncated || contextFile.truncated) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "Sheet interpretation inputs exceed the configured workbench read limit."
+          });
+          break;
+        }
+        let interpretation: SheetPixelInterpretationInputV1;
+        let context: SheetPixelInterpretationContextV1;
+        try {
+          const interpretationDocument = JSON.parse(interpretationFile.content) as Record<string, unknown>;
+          interpretation = (
+            interpretationDocument?.interpretation &&
+            typeof interpretationDocument.interpretation === "object" &&
+            !Array.isArray(interpretationDocument.interpretation)
+              ? interpretationDocument.interpretation
+              : interpretationDocument
+          ) as SheetPixelInterpretationInputV1;
+          context = JSON.parse(contextFile.content) as SheetPixelInterpretationContextV1;
+        } catch {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "Sheet interpretation or trusted context is not valid JSON."
+          });
+          break;
+        }
+        if (
+          interpretation?.schema_version !== 1 ||
+          !Array.isArray(interpretation.view_keys) ||
+          !Array.isArray(interpretation.primitives) ||
+          !context ||
+          !Array.isArray(context.trusted_views)
+        ) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "Sheet interpretation or trusted context does not satisfy the schema-v1 input contract."
+          });
+          break;
+        }
+        const resolvedImagePath = resolveExistingFileUnderWorkspace(imagePath);
+        const requestedViewKey = (action.source_view_key ?? "").trim();
+        const priorReceipt = (context.raster_evidence_receipts ?? []).find(receipt =>
+          !requestedViewKey || receipt.source_view_key === requestedViewKey
+        );
+        const overlayPath = (action.overlay_output_path ?? "").trim();
+        const rasterReceipt = await validateSheetPixelEvidenceV1({
+          image_path: resolvedImagePath,
+          interpretation,
+          ...(requestedViewKey ? { source_view_key: requestedViewKey } : {}),
+          ...(priorReceipt?.policy ? { policy: priorReceipt.policy } : {}),
+          ...(overlayPath ? { overlay_path: resolveFileUnderWorkspace(overlayPath) } : {})
+        });
+        const compiled = compileSheetPixelInterpretationV1(interpretation, {
+          ...context,
+          raster_evidence_receipts: [
+            ...(context.raster_evidence_receipts ?? []).filter(receipt => receipt.source_view_key !== rasterReceipt.source_view_key),
+            rasterReceipt
+          ]
+        });
+        const receipt = {
+          schema_version: 1,
+          interpretation_path: interpretationFile.pathRel,
+          context_path: contextFile.pathRel,
+          raster_evidence: rasterReceipt,
+          compilation: compiled
+        };
+        const receiptOutputPath = (action.receipt_output_path ?? "").trim();
+        const persisted = receiptOutputPath
+          ? safeWriteFile(receiptOutputPath, `${JSON.stringify(receipt, null, 2)}\n`)
+          : undefined;
+        const topology = compiled.compiled_topology;
+        results.push({
+          index: i + 1,
+          type: action.type,
+          ok: topology.status === "ready" || topology.status === "partially_ready",
+          summary:
+            `Sheet interpretation compiled; status=${topology.status}, accepted_routes=${rasterReceipt.accepted_primitive_ids.length}, ` +
+            `rejected_routes=${rasterReceipt.rejected_primitive_ids.length}, junctions=${topology.junctions.length}.`,
+          details: {
+            ...receipt,
+            ...(persisted ? { persisted_receipt: persisted } : {})
+          }
+        });
+        // One source verification and topology compilation is a complete,
+        // inspectable workbench transition. Never continue into a model action
+        // in the same provider-authored batch.
         break;
       }
 
