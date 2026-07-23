@@ -11,6 +11,13 @@ namespace RevitBridge.Handlers
 {
     public class SetParameterHandler : IRequestHandler
     {
+        private sealed class AppliedTarget
+        {
+            public long ElementId { get; set; }
+            public string ParameterName { get; set; } = "";
+            public string ExpectedValue { get; set; } = "";
+        }
+
         public class SetParamEntry
         {
             public long elementId { get; set; }
@@ -82,6 +89,7 @@ namespace RevitBridge.Handlers
             var changedCount = 0;
             var changedElementIds = new HashSet<long>();
             var titleblockHits = new Dictionary<long, HashSet<string>>();
+            var appliedTargets = new List<AppliedTarget>();
 
             using (Transaction trans = new Transaction(doc, "Set Parameters"))
             {
@@ -137,6 +145,12 @@ namespace RevitBridge.Handlers
                     }
 
                     var after = ParameterValueUtil.SnapshotForWire(param);
+                    appliedTargets.Add(new AppliedTarget
+                    {
+                        ElementId = entry.elementId,
+                        ParameterName = entry.parameterName.Trim(),
+                        ExpectedValue = requestedValue
+                    });
                     if (didChange) changedCount++;
                     if (didChange) changedElementIds.Add(entry.elementId);
                     diffs.Add(new
@@ -181,21 +195,79 @@ namespace RevitBridge.Handlers
                 try { app.ActiveUIDocument?.RefreshActiveView(); } catch { }
             }
 
-            List<long>? missingAfterElementIds = null;
-            if (apply && changedElementIds.Count > 0)
+            var verification = new List<object>();
+            var unresolvedElementIds = new HashSet<long>();
+            var verifiedCount = 0;
+            var verificationFailedCount = 0;
+            if (apply)
             {
-                try
+                foreach (var target in appliedTargets)
                 {
-                    missingAfterElementIds = changedElementIds
-                        .Where(id => doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(id)) == null)
-                        .OrderBy(x => x)
-                        .ToList();
-                }
-                catch
-                {
-                    missingAfterElementIds = null;
+                    var element = doc.GetElement(ElementIdCompat.Create(target.ElementId));
+                    if (element == null)
+                    {
+                        unresolvedElementIds.Add(target.ElementId);
+                        verificationFailedCount++;
+                        verification.Add(new
+                        {
+                            elementId = target.ElementId,
+                            parameterName = target.ParameterName,
+                            expectedValue = target.ExpectedValue,
+                            status = "unresolved_element",
+                            actual = (object?)null,
+                            error = "Element could not be re-resolved after commit."
+                        });
+                        continue;
+                    }
+
+                    var parameter = element.LookupParameter(target.ParameterName);
+                    if (parameter == null)
+                    {
+                        verificationFailedCount++;
+                        verification.Add(new
+                        {
+                            elementId = target.ElementId,
+                            parameterName = target.ParameterName,
+                            expectedValue = target.ExpectedValue,
+                            status = "unresolved_parameter",
+                            actual = (object?)null,
+                            error = "Parameter could not be re-resolved after commit."
+                        });
+                        continue;
+                    }
+
+                    var actual = ParameterValueUtil.SnapshotForWire(parameter);
+                    if (ParameterValueUtil.SnapshotMatchesRequestedValue(actual, target.ExpectedValue))
+                    {
+                        verifiedCount++;
+                        verification.Add(new
+                        {
+                            elementId = target.ElementId,
+                            parameterName = target.ParameterName,
+                            expectedValue = target.ExpectedValue,
+                            status = "verified",
+                            actual,
+                            error = (string?)null
+                        });
+                    }
+                    else
+                    {
+                        verificationFailedCount++;
+                        verification.Add(new
+                        {
+                            elementId = target.ElementId,
+                            parameterName = target.ParameterName,
+                            expectedValue = target.ExpectedValue,
+                            status = "mismatch",
+                            actual,
+                            error = "Post-commit readback did not match the requested value."
+                        });
+                    }
                 }
             }
+
+            var unresolvedIds = unresolvedElementIds.OrderBy(x => x).ToList();
+            var writeFailedCount = Math.Max(0, effectiveCount - appliedTargets.Count);
 
             List<object>? titleblockImpacts = null;
             try
@@ -225,14 +297,20 @@ namespace RevitBridge.Handlers
 
             return Task.FromResult<object>(new
             {
-                status = apply ? "Applied" : "Dry Run",
+                status = !apply ? "Dry Run" : writeFailedCount > 0 || verificationFailedCount > 0 ? "Applied With Failures" : "Applied and Verified",
                 dryRun = !apply,
                 requestedCount,
                 effectiveCount,
                 excludedCount,
                 changedCount,
+                writeFailedCount,
                 changedElementIds = changedElementIds.OrderBy(x => x).ToList(),
-                missingAfterElementIds,
+                missingAfterElementIds = unresolvedIds,
+                verificationPerformed = apply,
+                verifiedCount,
+                verificationFailedCount,
+                unresolvedElementIds = unresolvedIds,
+                verification,
                 diffs,
                 requiredConfirm,
                 confirmReceived,
