@@ -6759,6 +6759,16 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalBool(obj.Value, "requireElectricalCircuitMatch", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "copyRotation", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "copyFacingHandState", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "workPlaneFlipped", out error)) return false;
+                if (!ValidateOptionalStringArray(obj.Value, "parameterNamesToCopy", maxCount: 100, maxLen: 128, out error)) return false;
+                if (!ValidateOptionalNumberArray(obj.Value, "pointXyz", maxCount: 3, out error)) return false;
+                if (obj.Value.TryGetProperty("pointXyz", out var pointXyz) &&
+                    pointXyz.ValueKind != JsonValueKind.Null &&
+                    pointXyz.GetArrayLength() != 3)
+                {
+                    error = "pointXyz must have exactly 3 numbers.";
+                    return false;
+                }
                 if (!ValidateOptionalNumber(obj.Value, "alongHostDeltaFt", out error)) return false;
                 if (!ValidateOptionalNumber(obj.Value, "targetChainageFt", out error)) return false;
                 if (!ValidateOptionalNumber(obj.Value, "targetNormalizedChainage", out error)) return false;

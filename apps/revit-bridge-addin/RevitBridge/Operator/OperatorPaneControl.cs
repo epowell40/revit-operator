@@ -105,6 +105,10 @@ namespace RevitBridge.Operator
             public string LastActionPlanSignature { get; set; } = "";
             public int RepeatedActionPlanCount { get; set; }
             public int VisibleAssistantProgressCount { get; set; }
+            public bool DryRunOnly { get; set; }
+            public bool DryRunMutationAttempted { get; set; }
+            public bool DryRunOnlyBlockedAction { get; set; }
+            public bool DryRunOnlyStopped { get; set; }
         }
 
         private Grid? _rootGrid;
@@ -2537,7 +2541,8 @@ namespace RevitBridge.Operator
                     RootMessageId = messageId,
                     Context = context,
                     Step = 0,
-                    UserAttachments = outgoingAttachments
+                    UserAttachments = outgoingAttachments,
+                    DryRunOnly = OperatorDryRunTurnPolicy.IsDryRunOnlyRequest(text)
                 };
                 _activeTurn = turn;
 
@@ -2707,6 +2712,12 @@ namespace RevitBridge.Operator
                     try { await _backendClient.NotifyLoopStopAsync(turn.SessionId, assistantMessageId, "AWAITING_APPROVAL", CancellationToken.None).ConfigureAwait(false); } catch { }
                     return;
                 }
+
+                if (turn.DryRunOnly && (turn.DryRunMutationAttempted || turn.DryRunOnlyBlockedAction))
+                {
+                    await StopDryRunOnlyTurnAsync(turn, assistantMessageId).ConfigureAwait(false);
+                    return;
+                }
             }
 
             Ui(() => AppendChat("system", $"Stopped after max tool-loop steps ({maxSteps}).", null));
@@ -2723,6 +2734,35 @@ namespace RevitBridge.Operator
                 _activeTurnCts = null;
                 Ui(() => { if (_webView?.CoreWebView2 != null) PostToUi("loop.state", new { running = false }); });
             }
+        }
+
+        private async Task StopDryRunOnlyTurnAsync(OperatorTurnState turn, string assistantMessageId)
+        {
+            if (turn.DryRunOnlyStopped) return;
+            turn.DryRunOnlyStopped = true;
+
+            var message = turn.DryRunOnlyBlockedAction
+                ? "Stopped: the model returned an applying action for a dry-run-only request, so Operator blocked it."
+                : "Dry-run-only request complete. Operator stopped after the first bounded dry-run mutation attempt.";
+            Ui(() => AppendChat("system", message, null));
+
+            if (_logger != null)
+            {
+                await _logger.LogAsync("loop.guard.dry_run_only", new
+                {
+                    backend_session_id = turn.SessionId,
+                    root_message_id = turn.RootMessageId,
+                    message_id = assistantMessageId,
+                    mutation_attempted = turn.DryRunMutationAttempted,
+                    blocked_applying_action = turn.DryRunOnlyBlockedAction
+                }, CancellationToken.None).ConfigureAwait(false);
+            }
+
+            _activeTurn = null;
+            try { _activeTurnCts?.Dispose(); } catch { }
+            _activeTurnCts = null;
+            Ui(() => { if (_webView?.CoreWebView2 != null) PostToUi("loop.state", new { running = false }); });
+            try { await _backendClient.NotifyLoopStopAsync(turn.SessionId, assistantMessageId, "DRY_RUN_ONLY_COMPLETE", CancellationToken.None).ConfigureAwait(false); } catch { }
         }
 
         private bool TryConsumeInterject(OperatorTurnState turn, out string interjectMessageId, out string interjectText)
@@ -3132,6 +3172,38 @@ namespace RevitBridge.Operator
                 var risk = OperatorApprovalPolicy.GetRisk(action.Method, action.Path);
                 var needsApproval = OperatorApprovalPolicy.RequiresApproval(_approvalMode, risk);
                 Ui(() => AddAction(actionId, title, action.Path, action.Body, needsApproval, risk));
+
+                if (turn.DryRunOnly && risk != OperatorActionRisk.Low)
+                {
+                    var bodyJson = action.Body is JsonElement dryRunBody
+                        ? dryRunBody.GetRawText()
+                        : JsonSerializer.Serialize(action.Body, OperatorUiProtocol.JsonOptions);
+                    var explicitlyDryRun = OperatorDryRunTurnPolicy.BodyRequestsDryRun(bodyJson);
+                    if (!explicitlyDryRun || turn.DryRunMutationAttempted)
+                    {
+                        turn.DryRunOnlyBlockedAction = true;
+                        var guardError = !explicitlyDryRun
+                            ? "Blocked by the user's dry-run-only instruction: this action could apply changes."
+                            : "Blocked by the user's dry-run-only instruction: only one bounded dry-run mutation attempt is allowed.";
+                        Ui(() => UpdateActionStatus(actionId, "blocked", guardError));
+                        var guardException = new InvalidOperationException(guardError);
+                        toolResultsForThisStep.Add(await BuildToolResultAsync(action, DateTime.UtcNow, result: null, guardException).ConfigureAwait(false));
+                        await _logger!.LogAsync("loop.guard.dry_run_action_blocked", new
+                        {
+                            backend_session_id = turn.SessionId,
+                            root_message_id = turn.RootMessageId,
+                            message_id = assistantMessageId,
+                            action_id = actionId,
+                            method = action.Method,
+                            path = action.Path,
+                            explicitly_dry_run = explicitlyDryRun,
+                            prior_dry_run_attempt = turn.DryRunMutationAttempted
+                        }, CancellationToken.None).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    turn.DryRunMutationAttempted = true;
+                }
 
                 if (needsApproval)
                 {
@@ -5764,7 +5836,10 @@ namespace RevitBridge.Operator
                         turn.AwaitingApproval = false;
                         // Deterministic verification: execute any deferred capture/verify actions only after all approvals are applied.
                         await TryRunDeferredVerificationAsync(turn, $"{turn.RootMessageId}:assistant:{Math.Max(1, turn.Step)}", turn.PendingToolResults).ConfigureAwait(false);
-                        _ = ContinueTurnAsync(turn);
+                        if (turn.DryRunOnly && (turn.DryRunMutationAttempted || turn.DryRunOnlyBlockedAction))
+                            await StopDryRunOnlyTurnAsync(turn, $"{turn.RootMessageId}:assistant:{Math.Max(1, turn.Step)}").ConfigureAwait(false);
+                        else
+                            _ = ContinueTurnAsync(turn);
                     }
                 }
             }
@@ -5799,7 +5874,10 @@ namespace RevitBridge.Operator
                     {
                         turn.AwaitingApproval = false;
                         await TryRunDeferredVerificationAsync(turn, $"{turn.RootMessageId}:assistant:{Math.Max(1, turn.Step)}", turn.PendingToolResults).ConfigureAwait(false);
-                        _ = ContinueTurnAsync(turn);
+                        if (turn.DryRunOnly && (turn.DryRunMutationAttempted || turn.DryRunOnlyBlockedAction))
+                            await StopDryRunOnlyTurnAsync(turn, $"{turn.RootMessageId}:assistant:{Math.Max(1, turn.Step)}").ConfigureAwait(false);
+                        else
+                            _ = ContinueTurnAsync(turn);
                     }
                 }
             }

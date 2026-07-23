@@ -2546,9 +2546,39 @@ namespace RevitBridge.Logic.Handlers
             }
         }
 
-        internal static void ApplyResolvedLevelToFaceHostedInstance(FamilyInstance instance, Level level, List<string> warnings)
+        internal static long? ReadInstanceLevelId(Element instance)
         {
-            if (instance == null || level == null) return;
+            if (instance == null) return null;
+            foreach (var parameter in new[]
+            {
+                instance.get_Parameter(BuiltInParameter.INSTANCE_SCHEDULE_ONLY_LEVEL_PARAM),
+                instance.get_Parameter(BuiltInParameter.FAMILY_LEVEL_PARAM),
+                instance.get_Parameter(BuiltInParameter.INSTANCE_REFERENCE_LEVEL_PARAM)
+            }.Where(value => value != null).Distinct())
+            {
+                if (parameter == null || parameter.StorageType != StorageType.ElementId) continue;
+                try
+                {
+                    var value = parameter.AsElementId();
+                    if (value != ElementId.InvalidElementId) return ElementIdCompat.GetValue(value);
+                }
+                catch { }
+            }
+
+            try
+            {
+                if (instance.LevelId != null && instance.LevelId != ElementId.InvalidElementId)
+                    return ElementIdCompat.GetValue(instance.LevelId);
+            }
+            catch { }
+            return null;
+        }
+
+        internal static bool ApplyResolvedLevelToFaceHostedInstance(FamilyInstance instance, Level level, List<string> warnings)
+        {
+            if (instance == null || level == null) return false;
+            var requestedLevelId = ElementIdCompat.GetValue(level.Id);
+            if (ReadInstanceLevelId(instance) == requestedLevelId) return true;
             var candidates = new[]
             {
                 instance.get_Parameter(BuiltInParameter.INSTANCE_SCHEDULE_ONLY_LEVEL_PARAM),
@@ -2560,15 +2590,32 @@ namespace RevitBridge.Logic.Handlers
                 if (parameter == null || parameter.IsReadOnly || parameter.StorageType != StorageType.ElementId) continue;
                 try
                 {
-                    parameter.Set(level.Id);
-                    return;
+                    if (!parameter.Set(level.Id)) continue;
+                    instance.Document.Regenerate();
+                    if (ReadInstanceLevelId(instance) == requestedLevelId) return true;
+                    warnings.Add($"Face-hosted instance level verification failed after setting '{level.Name}'.");
                 }
                 catch (Exception ex)
                 {
                     warnings.Add($"Failed to set face-hosted instance level '{level.Name}': {ex.Message}");
                 }
             }
-            warnings.Add($"Face-hosted instance did not expose a writable schedule/reference level for '{level.Name}'.");
+            warnings.Add($"Face-hosted instance did not retain resolved level '{level.Name}' ({requestedLevelId}).");
+            return false;
+        }
+
+        internal static bool CopySourceLevelContext(Element source, FamilyInstance target, List<string> warnings)
+        {
+            var sourceLevelId = ReadInstanceLevelId(source);
+            if (!sourceLevelId.HasValue || sourceLevelId.Value <= 0) return true;
+            var level = target.Document.GetElement(ElementIdCompat.Create(sourceLevelId.Value)) as Level;
+            if (level == null)
+            {
+                warnings.Add($"Source level {sourceLevelId.Value} is not available in the target document.");
+                return false;
+            }
+            return ApplyResolvedLevelToFaceHostedInstance(target, level, warnings) &&
+                ReadInstanceLevelId(target) == sourceLevelId;
         }
 
         internal static object? ApplyAndAuditElectricalDistributionSystem(
@@ -3980,6 +4027,9 @@ namespace RevitBridge.Logic.Handlers
             var apiPoint = facePlacement?.placementPoint ?? HostedPlacementUtil.ConvertWorldPointForHost(host, finalPoint);
             long createdId = 0;
             long? verifiedCreatedLinkedElementId = null;
+            var requestedLevelId = ElementIdCompat.GetValue(level.Id);
+            long? verifiedCreatedLevelId = null;
+            bool? resolvedLevelMatched = null;
             long? sourceCreatedPhaseId = sourceElement == null
                 ? null
                 : ElementIdCompat.GetValue(sourceElement.CreatedPhaseId);
@@ -4032,7 +4082,16 @@ namespace RevitBridge.Logic.Handlers
                     }
                     verifiedCreatedLinkedElementId = ElementIdCompat.GetValue(createdHostFace.LinkedElementId);
                 }
-                if (facePlacement != null) HostedPlacementUtil.ApplyResolvedLevelToFaceHostedInstance(created, level, warnings);
+                if (facePlacement != null)
+                {
+                    resolvedLevelMatched = HostedPlacementUtil.ApplyResolvedLevelToFaceHostedInstance(created, level, warnings);
+                    if (resolvedLevelMatched != true)
+                        throw new InvalidOperationException($"Created face-hosted instance did not retain resolved level {requestedLevelId}.");
+                }
+                verifiedCreatedLevelId = HostedPlacementUtil.ReadInstanceLevelId(created);
+                resolvedLevelMatched = verifiedCreatedLevelId == requestedLevelId;
+                if (resolvedLevelMatched != true)
+                    throw new InvalidOperationException($"Created hosted instance level mismatch: expected {requestedLevelId}, got {verifiedCreatedLevelId}.");
                 if (sourceElement != null)
                 {
                     var phaseCopied = HostedPlacementUtil.CopySourceCreatedPhase(sourceElement, created, warnings);
@@ -4240,6 +4299,7 @@ namespace RevitBridge.Logic.Handlers
                         point = HostedPlacementUtil.BuildVector(facePlacement.placementPoint),
                         referenceDirection = HostedPlacementUtil.BuildVector(facePlacement.referenceDirection)
                     },
+                    levelContext = new { requestedLevelId, verifiedCreatedLevelId, resolvedLevelMatched },
                     phasing = sourceElement == null ? null : new
                     {
                         sourceCreatedPhaseId,
@@ -4366,6 +4426,7 @@ namespace RevitBridge.Logic.Handlers
                     point = HostedPlacementUtil.BuildVector(facePlacement.placementPoint),
                     referenceDirection = HostedPlacementUtil.BuildVector(facePlacement.referenceDirection)
                 },
+                levelContext = new { requestedLevelId, verifiedCreatedLevelId, resolvedLevelMatched },
                 phasing = sourceElement == null ? null : new
                 {
                     sourceCreatedPhaseId,
@@ -4499,6 +4560,8 @@ namespace RevitBridge.Logic.Handlers
             string? transactionStatus = null;
             var exemplarPoint = HostedPlacementUtil.TryGetElementPoint(exemplar);
             var exemplarElectricalCircuit = HostedPlacementUtil.BuildElectricalCircuitAuditPayload(exemplarFi);
+            var requestedLevelId = ElementIdCompat.GetValue(level.Id);
+            var exemplarCreatedPhaseId = ElementIdCompat.GetValue(exemplar.CreatedPhaseId);
             long? exemplarWorksetId = doc.IsWorkshared
                 ? exemplar.WorksetId.IntegerValue
                 : null;
@@ -4631,6 +4694,15 @@ namespace RevitBridge.Logic.Handlers
                     {
                         created = doc.Create.NewFamilyInstance(apiPoint, symbol, host, level, StructuralType.NonStructural);
                     }
+                    if ((facePlacement != null || copiedLinkedHostedExemplar) &&
+                        !HostedPlacementUtil.ApplyResolvedLevelToFaceHostedInstance(created, level, warnings))
+                        throw new InvalidOperationException($"Created similar face-hosted instance did not retain resolved level {requestedLevelId}.");
+                    doc.Regenerate();
+                    var verifiedCreatedLevelId = HostedPlacementUtil.ReadInstanceLevelId(created);
+                    var resolvedLevelMatched = verifiedCreatedLevelId == requestedLevelId;
+                    if (!resolvedLevelMatched)
+                        throw new InvalidOperationException($"Created similar instance level mismatch: expected {requestedLevelId}, got {verifiedCreatedLevelId}.");
+                    var phaseCopied = HostedPlacementUtil.CopySourceCreatedPhase(exemplar, created, warnings);
                     var worksetCopied = !doc.IsWorkshared ||
                         HostedPlacementUtil.CopySourceWorkset(exemplar, created, warnings);
                     HostedPlacementUtil.CopyParameters(exemplar, created, p.parameterNamesToCopy, warnings);
@@ -4642,6 +4714,11 @@ namespace RevitBridge.Logic.Handlers
                     bool? sourceWorksetMatched = doc.IsWorkshared
                         ? exemplarWorksetId == verifiedCreatedWorksetId
                         : null;
+                    var verifiedCreatedPhaseId = ElementIdCompat.GetValue(created.CreatedPhaseId);
+                    var sourceCreatedPhaseMatched = exemplarCreatedPhaseId == verifiedCreatedPhaseId;
+                    if (!phaseCopied || !sourceCreatedPhaseMatched)
+                        throw new InvalidOperationException(
+                            $"Created similar instance did not retain exemplar created phase {exemplarCreatedPhaseId}.");
                     if (doc.IsWorkshared && (!worksetCopied || sourceWorksetMatched != true))
                     {
                         throw new InvalidOperationException(
@@ -4715,6 +4792,8 @@ namespace RevitBridge.Logic.Handlers
                         alongHostOffsetFt = item.alongHostOffsetFt,
                         targetChainageFt = item.targetChainageFt,
                         targetNormalizedChainage = item.targetNormalizedChainage,
+                        levelContext = new { requestedLevelId, verifiedCreatedLevelId, resolvedLevelMatched },
+                        phasing = new { sourceCreatedPhaseId = exemplarCreatedPhaseId, verifiedCreatedPhaseId, sourceCreatedPhaseMatched },
                         workset = !doc.IsWorkshared ? null : new
                         {
                             sourceWorksetId = exemplarWorksetId,
@@ -5247,6 +5326,8 @@ namespace RevitBridge.Logic.Handlers
             public bool requireElectricalCircuitMatch { get; set; } = false;
             public bool copyRotation { get; set; } = true;
             public bool copyFacingHandState { get; set; } = true;
+            public bool? workPlaneFlipped { get; set; }
+            public List<string>? parameterNamesToCopy { get; set; }
             public double[]? pointXyz { get; set; }
             public double? alongHostDeltaFt { get; set; }
             public double? targetChainageFt { get; set; }
@@ -5328,6 +5409,13 @@ namespace RevitBridge.Logic.Handlers
             string circuitActionDetail = "";
             var circuitAuditBefore = HostedPlacementUtil.BuildElectricalCircuitAuditPayload(familyInstance);
             var originalElementId = ElementIdCompat.GetValue(element.Id);
+            bool? originalWorkPlaneFlipped = null;
+            try { originalWorkPlaneFlipped = familyInstance.IsWorkPlaneFlipped; } catch { }
+            var requestedWorkPlaneFlipped = p.workPlaneFlipped ?? originalWorkPlaneFlipped;
+            bool? verifiedWorkPlaneFlipped = originalWorkPlaneFlipped;
+            bool? workPlaneFlipMatched = requestedWorkPlaneFlipped.HasValue
+                ? originalWorkPlaneFlipped == requestedWorkPlaneFlipped
+                : null;
             var activeElement = element;
             var activeFamilyInstance = familyInstance;
             var usedFaceHostedReplacement = false;
@@ -5362,6 +5450,33 @@ namespace RevitBridge.Logic.Handlers
                 return relative.HasValue ? RotateInPlan(tangent, relative.Value) : tangent;
             }
 
+            void ApplyRequestedWorkPlaneFlip(FamilyInstance instance)
+            {
+                if (!requestedWorkPlaneFlipped.HasValue) return;
+                try
+                {
+                    if (instance.IsWorkPlaneFlipped != requestedWorkPlaneFlipped.Value)
+                    {
+                        if (!instance.CanFlipWorkPlane)
+                            throw new InvalidOperationException($"Family instance {ElementIdCompat.GetValue(instance.Id)} cannot flip its work plane.");
+                        instance.IsWorkPlaneFlipped = requestedWorkPlaneFlipped.Value;
+                        doc.Regenerate();
+                    }
+
+                    verifiedWorkPlaneFlipped = instance.IsWorkPlaneFlipped;
+                    workPlaneFlipMatched = verifiedWorkPlaneFlipped == requestedWorkPlaneFlipped;
+                    if (workPlaneFlipMatched != true)
+                        throw new InvalidOperationException($"Family instance did not retain requested workPlaneFlipped={requestedWorkPlaneFlipped.Value}.");
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException(
+                        $"Unable to apply requested workPlaneFlipped={requestedWorkPlaneFlipped.Value}: {ex.Message}",
+                        ex
+                    );
+                }
+            }
+
             void ApplyAdjustment()
             {
                 if (HostedInstanceAdjustmentPolicy.RequiresLinkedFaceReplacement(
@@ -5392,7 +5507,17 @@ namespace RevitBridge.Logic.Handlers
                         facePlacement.referenceDirection,
                         symbol
                     );
-                    HostedPlacementUtil.CopyParameters(element, replacement, new[] { "Mark", "Comments" }, warnings);
+                    var levelCopied = HostedPlacementUtil.CopySourceLevelContext(element, replacement, warnings);
+                    var phaseCopied = HostedPlacementUtil.CopySourceCreatedPhase(element, replacement, warnings);
+                    var worksetCopied = HostedPlacementUtil.CopySourceWorkset(element, replacement, warnings);
+                    if (!levelCopied || !phaseCopied || !worksetCopied)
+                        throw new InvalidOperationException("Hosted replacement did not retain the original level, created phase, and workset context.");
+                    var replacementParameterNames = new[] { "Mark", "Comments" }
+                        .Concat(p.parameterNamesToCopy ?? Enumerable.Empty<string>())
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray();
+                    HostedPlacementUtil.CopyParameters(element, replacement, replacementParameterNames, warnings);
+                    ApplyRequestedWorkPlaneFlip(replacement);
 
                     var circuitMatched = HostedPlacementUtil.TryMatchElectricalCircuitFromSource(
                         element,
@@ -5457,6 +5582,8 @@ namespace RevitBridge.Logic.Handlers
                         }
                     }
                 }
+
+                ApplyRequestedWorkPlaneFlip(familyInstance);
 
                 if (p.matchElectricalCircuitFromSource)
                 {
@@ -5540,6 +5667,9 @@ namespace RevitBridge.Logic.Handlers
                     hostLocalFrameAfter = HostedPlacementUtil.BuildHostLocalFramePayload(targetFrame, (p.matchOrientationFromSource ?? false) ? orientationSource : element),
                     electricalCircuitBefore = circuitAuditBefore,
                     electricalCircuitAfter = plannedCircuitAfter,
+                    requestedWorkPlaneFlipped,
+                    verifiedWorkPlaneFlipped,
+                    workPlaneFlipMatched,
                     placementValidation,
                     circuitActionDetail = string.IsNullOrWhiteSpace(circuitActionDetail) ? null : circuitActionDetail,
                     preview = previewPath != null ? new { path = previewPath, widthPx = previewWidth, heightPx = previewHeight } : null,
@@ -5581,6 +5711,9 @@ namespace RevitBridge.Logic.Handlers
                 hostLocalFrameAfter = HostedPlacementUtil.BuildHostLocalFramePayload(finalFrame, (p.matchOrientationFromSource ?? false) ? orientationSource : element),
                 electricalCircuitBefore = circuitAuditBefore,
                 electricalCircuitAfter = circuitAuditAfter,
+                requestedWorkPlaneFlipped,
+                verifiedWorkPlaneFlipped,
+                workPlaneFlipMatched,
                 placementValidation,
                 circuitActionDetail = string.IsNullOrWhiteSpace(circuitActionDetail) ? null : circuitActionDetail,
                 preview = previewPath != null ? new { path = previewPath, widthPx = previewWidth, heightPx = previewHeight } : null,
