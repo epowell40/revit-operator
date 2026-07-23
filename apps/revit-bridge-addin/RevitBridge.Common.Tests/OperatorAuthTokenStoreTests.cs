@@ -1,6 +1,8 @@
 using RevitBridge.Common;
 using System;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using Xunit;
 
 namespace RevitBridge.Common.Tests
@@ -41,6 +43,41 @@ namespace RevitBridge.Common.Tests
 
                 OperatorAuthTokenStore.ClearPath(file);
                 Assert.Null(OperatorAuthTokenStore.TryLoadFromPath(file));
+            }
+            finally
+            {
+                try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
+            }
+        }
+
+        [Fact]
+        public async Task RefreshLease_SerializesCompetingRefreshers()
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "revitoperator-tests", Guid.NewGuid().ToString("N"));
+            var lockPath = Path.Combine(dir, "auth-cache.bin.refresh.lock");
+
+            try
+            {
+                using var first = await OperatorAuthTokenStore.AcquireRefreshLeaseAtPathAsync(
+                    lockPath,
+                    timeoutMilliseconds: 2_000,
+                    staleAfterMilliseconds: 10_000,
+                    CancellationToken.None);
+
+                var secondTask = OperatorAuthTokenStore.AcquireRefreshLeaseAtPathAsync(
+                    lockPath,
+                    timeoutMilliseconds: 2_000,
+                    staleAfterMilliseconds: 10_000,
+                    CancellationToken.None);
+
+                await Task.Delay(250);
+                Assert.False(secondTask.IsCompleted);
+
+                first.Dispose();
+                using (var second = await secondTask)
+                {
+                    Assert.True(File.Exists(lockPath));
+                }
             }
             finally
             {

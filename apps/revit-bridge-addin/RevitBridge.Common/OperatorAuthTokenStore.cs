@@ -3,6 +3,8 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace RevitBridge.Common
 {
@@ -22,6 +24,27 @@ namespace RevitBridge.Common
     public static class OperatorAuthTokenStore
     {
         private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("RevitOperator.Auth.v1");
+
+        private sealed class RefreshLease : IDisposable
+        {
+            private readonly string _path;
+            private FileStream? _stream;
+
+            public RefreshLease(string path, FileStream stream)
+            {
+                _path = path;
+                _stream = stream;
+            }
+
+            public void Dispose()
+            {
+                var stream = Interlocked.Exchange(ref _stream, null);
+                if (stream == null) return;
+
+                try { stream.Dispose(); } catch { }
+                try { if (File.Exists(_path)) File.Delete(_path); } catch { }
+            }
+        }
 
         public static string GetStorePath()
         {
@@ -45,6 +68,61 @@ namespace RevitBridge.Common
         public static void Clear()
         {
             ClearPath(GetStorePath());
+        }
+
+        public static Task<IDisposable> AcquireRefreshLeaseAsync(CancellationToken cancellationToken)
+        {
+            return AcquireRefreshLeaseAtPathAsync(
+                GetStorePath() + ".refresh.lock",
+                timeoutMilliseconds: 15_000,
+                staleAfterMilliseconds: 60_000,
+                cancellationToken);
+        }
+
+        public static async Task<IDisposable> AcquireRefreshLeaseAtPathAsync(
+            string lockPath,
+            int timeoutMilliseconds,
+            int staleAfterMilliseconds,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(lockPath)) throw new ArgumentException("Refresh lock path is required.", nameof(lockPath));
+            if (timeoutMilliseconds <= 0) throw new ArgumentOutOfRangeException(nameof(timeoutMilliseconds));
+            if (staleAfterMilliseconds <= 0) throw new ArgumentOutOfRangeException(nameof(staleAfterMilliseconds));
+
+            var dir = Path.GetDirectoryName(lockPath);
+            if (!string.IsNullOrWhiteSpace(dir)) Directory.CreateDirectory(dir);
+
+            var started = DateTime.UtcNow;
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    var stream = new FileStream(lockPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+                    return new RefreshLease(lockPath, stream);
+                }
+                catch (IOException)
+                {
+                    try
+                    {
+                        if (File.Exists(lockPath) &&
+                            DateTime.UtcNow - File.GetLastWriteTimeUtc(lockPath) > TimeSpan.FromMilliseconds(staleAfterMilliseconds))
+                        {
+                            File.Delete(lockPath);
+                            continue;
+                        }
+                    }
+                    catch
+                    {
+                        // The current owner may still hold the file. Retry until timeout.
+                    }
+                }
+
+                if (DateTime.UtcNow - started >= TimeSpan.FromMilliseconds(timeoutMilliseconds))
+                    throw new TimeoutException("Timed out waiting for the shared Operator authentication refresh lease.");
+
+                await Task.Delay(100, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         public static OperatorAuthTokenSet? TryLoadFromPath(string path)
