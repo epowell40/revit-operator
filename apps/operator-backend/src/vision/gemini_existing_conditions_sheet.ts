@@ -198,6 +198,7 @@ function prompt(request: GeminiExistingConditionsSheetRequestV1): string {
     "Do not infer system, size, type, family, host, elevation, or wall height from graphical proximity. Use legible_source_evidence only for visible text/geometry and provider_hypothesis or unresolved otherwise.",
     "A route_segment or wall_segment is one straight source-supported span. Break bends and branches into separate primitives with explicit endpoints.",
     "Text, tags, leaders, and dimensions are annotation primitives, not modeled devices or routes.",
+    "A graphical point-symbol glyph alone never proves native family, type, or host. Unless directly legible text in the supplied crop proves the attribute, report those claims as provider_hypothesis or unresolved; an approved project mapping can be applied only by the deterministic host later.",
     "For internal endpoints continuation_key must be an empty string. For sheet_continuation endpoints it must be non-empty.",
     `Objective: ${requiredText(request.objective, "gemini_sheet_interpreter_objective")}`,
     `Package: ${requiredText(request.package_id, "gemini_sheet_interpreter_package_id")}`,
@@ -257,6 +258,7 @@ export function normalizeGeminiExistingConditionsSheetResponseV1(args: {
     return { source_mark_id: markId, source_view_key: viewKey, disposition: { status: "unresolved", reason: requiredText(mark.reason, `gemini_sheet_mark_${markId}_reason`) } };
   });
 
+  const normalizationQuestions: string[] = [];
   const primitives: SheetPixelPrimitiveV1[] = raw.primitives.map((primitive, index) => {
     const primitiveId = requiredText(primitive.primitive_id, `gemini_sheet_primitive_${index}_id`);
     const viewKey = requiredText(primitive.source_view_key, `gemini_sheet_primitive_${primitiveId}_view_key`);
@@ -276,6 +278,26 @@ export function normalizeGeminiExistingConditionsSheetResponseV1(args: {
       boundary: endpoint.boundary,
       ...(clean(endpoint.continuation_key) ? { continuation_key: clean(endpoint.continuation_key) } : {})
     }));
+    const claims = claimMap(primitive.claims ?? [], primitiveId) ?? {};
+    let classificationConfidence = unit(primitive.confidence?.classification, `gemini_sheet_primitive_${primitiveId}_classification_confidence`);
+    if (primitive.kind === "point_symbol") {
+      for (const attribute of ["family", "type", "host"] as const) {
+        const materialClaim = claims[attribute];
+        if (!materialClaim || materialClaim.basis !== "legible_source_evidence") continue;
+        claims[attribute] = {
+          ...materialClaim,
+          confidence: Math.min(materialClaim.confidence, 0.5),
+          basis: "provider_hypothesis"
+        };
+        classificationConfidence = Math.min(classificationConfidence, 0.5);
+        normalizationQuestions.push(`Point symbol ${primitiveId} ${attribute} is graphical-only and requires a legible annotation or approved project mapping.`);
+      }
+      const materialClaims = (["family", "type", "host"] as const).map(attribute => claims[attribute]);
+      if (materialClaims.some(materialClaim => !materialClaim || materialClaim.basis === "provider_hypothesis" || materialClaim.basis === "unresolved")) {
+        classificationConfidence = Math.min(classificationConfidence, 0.5);
+        normalizationQuestions.push(`Point symbol ${primitiveId} classification remains provisional until family, type, and host are source-grounded or project-mapped.`);
+      }
+    }
     return {
       primitive_id: primitiveId,
       source_view_key: viewKey,
@@ -283,10 +305,10 @@ export function normalizeGeminiExistingConditionsSheetResponseV1(args: {
       kind: primitive.kind,
       points,
       endpoints,
-      claims: claimMap(primitive.claims ?? [], primitiveId),
+      claims,
       confidence: {
         geometry: unit(primitive.confidence?.geometry, `gemini_sheet_primitive_${primitiveId}_geometry_confidence`),
-        classification: unit(primitive.confidence?.classification, `gemini_sheet_primitive_${primitiveId}_classification_confidence`),
+        classification: classificationConfidence,
         topology: unit(primitive.confidence?.topology, `gemini_sheet_primitive_${primitiveId}_topology_confidence`),
         visibility: unit(primitive.confidence?.visibility, `gemini_sheet_primitive_${primitiveId}_visibility_confidence`)
       }
@@ -302,7 +324,10 @@ export function normalizeGeminiExistingConditionsSheetResponseV1(args: {
       source_marks: sourceMarks,
       primitives
     },
-    open_questions: Array.isArray(raw.open_questions) ? raw.open_questions.map(value => clean(value)).filter(Boolean).slice(0, 200) : []
+    open_questions: [...new Set([
+      ...(Array.isArray(raw.open_questions) ? raw.open_questions.map(value => clean(value)).filter(Boolean) : []),
+      ...normalizationQuestions
+    ])].slice(0, 200)
   };
 }
 

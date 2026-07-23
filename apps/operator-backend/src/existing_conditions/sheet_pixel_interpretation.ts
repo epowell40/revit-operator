@@ -1,6 +1,12 @@
 import crypto from "node:crypto";
 import type { CandidateVisibleFrameMapping } from "./candidate_visible_registration.js";
-import type { SheetPixelEvidenceReceiptV1 } from "./sheet_pixel_evidence.js";
+import type {
+  SheetCandidatePresenceReceiptV1,
+  SheetPixelEvidencePolicyV1,
+  SheetPixelEvidenceReceiptV1,
+  SheetPixelPointEvidenceV1,
+  SheetPixelRouteEvidenceV1
+} from "./sheet_pixel_evidence.js";
 import {
   compileSheetTopologyV1,
   type CompiledSheetTopologyV1,
@@ -64,6 +70,15 @@ export type SheetPixelInterpretationContextV1 = {
   }>;
   calibration_profile: SheetTopologyCalibrationProfileV1;
   raster_evidence_receipts?: SheetPixelEvidenceReceiptV1[];
+  raster_evidence_policy_by_view?: Record<string, Partial<SheetPixelEvidencePolicyV1>>;
+  candidate_raster_by_view?: Record<string, {
+    image_path: string;
+    image_sha256: string;
+    frame: CandidateVisibleFrameMapping;
+    policy?: Partial<SheetPixelEvidencePolicyV1>;
+    overlay_output_path?: string;
+  }>;
+  candidate_presence_receipts?: SheetCandidatePresenceReceiptV1[];
   policy?: Partial<SheetTopologyCompilationPolicyV1>;
 };
 
@@ -174,7 +189,7 @@ export function compileSheetPixelInterpretationV1(
     if (!selectedKeys.has(clean(mark.source_view_key))) throw new Error(`sheet_pixel_source_mark_view_not_selected:${clean(mark.source_mark_id)}`);
   }
 
-  const rasterEvidenceByPrimitive = new Map<string, SheetPixelEvidenceReceiptV1["route_evidence"][number]>();
+  const rasterEvidenceByPrimitive = new Map<string, SheetPixelRouteEvidenceV1 | SheetPixelPointEvidenceV1>();
   const rasterEvidenceViews = new Set<string>();
   for (const [receiptIndex, receipt] of (context.raster_evidence_receipts ?? []).entries()) {
     if (!receipt || receipt.schema_version !== 1) throw new Error(`sheet_pixel_raster_evidence_schema_invalid:${receiptIndex}`);
@@ -188,6 +203,41 @@ export function compileSheetPixelInterpretationV1(
       if (rasterEvidenceByPrimitive.has(primitiveId)) throw new Error(`sheet_pixel_raster_evidence_duplicate_primitive:${primitiveId}`);
       rasterEvidenceByPrimitive.set(primitiveId, evidence);
     }
+    for (const evidence of receipt.point_evidence ?? []) {
+      const primitiveId = requiredText(evidence.primitive_id, `sheet_pixel_point_evidence_${viewKey}_primitive_id`);
+      if (rasterEvidenceByPrimitive.has(primitiveId)) throw new Error(`sheet_pixel_raster_evidence_duplicate_primitive:${primitiveId}`);
+      rasterEvidenceByPrimitive.set(primitiveId, evidence);
+    }
+  }
+
+  const candidatePresenceByPrimitive = new Map<string, SheetCandidatePresenceReceiptV1["point_evidence"][number]>();
+  for (const [receiptIndex, receipt] of (context.candidate_presence_receipts ?? []).entries()) {
+    if (!receipt || receipt.schema_version !== 1) throw new Error(`sheet_candidate_presence_schema_invalid:${receiptIndex}`);
+    const viewKey = requiredText(receipt.source_view_key, `sheet_candidate_presence_${receiptIndex}_view_key`);
+    const trusted = trustedByKey.get(viewKey);
+    if (!trusted || !selectedKeys.has(viewKey)) throw new Error(`sheet_candidate_presence_unknown_view:${viewKey}`);
+    const binding = context.candidate_raster_by_view?.[viewKey];
+    if (!binding) throw new Error(`sheet_candidate_presence_unbound:${viewKey}`);
+    if (clean(receipt.source_image_sha256).toLowerCase() !== clean(trusted.source_view.source_sha256).toLowerCase()) {
+      throw new Error(`sheet_candidate_presence_source_hash_mismatch:${viewKey}`);
+    }
+    if (receipt.candidate_image?.view_id !== trusted.frame.view_id) throw new Error(`sheet_candidate_presence_view_mismatch:${viewKey}`);
+    if (clean(receipt.candidate_image?.sha256).toLowerCase() !== clean(binding.image_sha256).toLowerCase()) {
+      throw new Error(`sheet_candidate_presence_candidate_hash_mismatch:${viewKey}`);
+    }
+    if (
+      receipt.candidate_image?.frame_id !== binding.frame.frame_id
+      || receipt.candidate_image?.view_id !== binding.frame.view_id
+      || receipt.candidate_image?.width_px !== binding.frame.width_px
+      || receipt.candidate_image?.height_px !== binding.frame.height_px
+    ) {
+      throw new Error(`sheet_candidate_presence_candidate_frame_mismatch:${viewKey}`);
+    }
+    for (const evidence of receipt.point_evidence ?? []) {
+      const primitiveId = requiredText(evidence.primitive_id, `sheet_candidate_presence_${viewKey}_primitive_id`);
+      if (candidatePresenceByPrimitive.has(primitiveId)) throw new Error(`sheet_candidate_presence_duplicate_primitive:${primitiveId}`);
+      candidatePresenceByPrimitive.set(primitiveId, evidence);
+    }
   }
 
   const primitives = input.primitives.map((primitive, index) => {
@@ -196,8 +246,16 @@ export function compileSheetPixelInterpretationV1(
     if (!trusted || !selectedKeys.has(primitive.source_view_key)) throw new Error(`sheet_pixel_primitive_view_not_selected:${id}`);
     if (!Array.isArray(primitive.points) || primitive.points.length === 0) throw new Error(`sheet_pixel_primitive_points_required:${id}`);
     const rasterEvidence = rasterEvidenceByPrimitive.get(id);
-    if (primitive.kind === "route_segment" && rasterEvidenceViews.has(primitive.source_view_key) && !rasterEvidence) throw new Error(`sheet_pixel_raster_evidence_missing_primitive:${id}`);
+    if ((primitive.kind === "route_segment" || primitive.kind === "point_symbol") && rasterEvidenceViews.has(primitive.source_view_key) && !rasterEvidence) {
+      throw new Error(`sheet_pixel_raster_evidence_missing_primitive:${id}`);
+    }
     const rasterGeometryCap = !rasterEvidence || rasterEvidence.status === "accepted_raster_support" ? 1 : rasterEvidence.status === "provisional_raster_support" ? 0.5 : 0;
+    const candidatePresence = candidatePresenceByPrimitive.get(id);
+    const candidateGeometryCap = !candidatePresence || candidatePresence.status === "not_present"
+      ? 1
+      : candidatePresence.status === "ambiguous_candidate_presence"
+        ? 0.5
+        : 0;
     const points = primitive.points.map((value, pointIndex) => framePoint(trusted.frame, value, `sheet_pixel_primitive_${id}_point_${pointIndex}`));
     const endpoints = (primitive.endpoints ?? []).map((endpoint, endpointIndex): SheetTopologyEndpointV1 => ({
       endpoint_key: requiredText(endpoint.endpoint_key, `sheet_pixel_primitive_${id}_endpoint_${endpointIndex}_key`),
@@ -214,7 +272,7 @@ export function compileSheetPixelInterpretationV1(
       points,
       endpoints,
       ...(primitive.claims ? { claims: primitive.claims } : {}),
-      confidence: { ...primitive.confidence, geometry: Math.min(primitive.confidence.geometry, rasterGeometryCap) },
+      confidence: { ...primitive.confidence, geometry: Math.min(primitive.confidence.geometry, rasterGeometryCap, candidateGeometryCap) },
       independently_reversible: primitive.kind === "route_segment" || primitive.kind === "wall_segment"
     };
   });
@@ -236,6 +294,9 @@ export function compileSheetPixelInterpretationV1(
   );
   for (const [primitiveId, evidence] of rasterEvidenceByPrimitive) {
     if (evidence.status !== "accepted_raster_support") compiledTopology.warnings.push(`raster_evidence_${evidence.status}:${primitiveId}`);
+  }
+  for (const [primitiveId, evidence] of candidatePresenceByPrimitive) {
+    if (evidence.status !== "not_present") compiledTopology.warnings.push(`candidate_presence_${evidence.status}:${primitiveId}`);
   }
 
   return {

@@ -314,6 +314,10 @@ function sameLinearGeometry(a: SheetTopologyPrimitiveV1, b: SheetTopologyPrimiti
     || (distance(a.points[0]!, b.points[1]!) <= tolerance && distance(a.points[1]!, b.points[0]!) <= tolerance);
 }
 
+function samePointGeometry(a: SheetTopologyPrimitiveV1, b: SheetTopologyPrimitiveV1, tolerance: number): boolean {
+  return a.points.length === 1 && b.points.length === 1 && distance(a.points[0]!, b.points[0]!) <= tolerance;
+}
+
 function wilsonLowerBound(successes: number, trials: number): number {
   if (trials <= 0) return 0;
   const z = 1.959963984540054;
@@ -523,14 +527,17 @@ export function compileSheetTopologyV1(
   const candidates = [...primitives.values()].sort((a, b) => a.primitive_id.localeCompare(b.primitive_id));
   for (const current of candidates) {
     canonicalById.set(current.primitive_id, current.primitive_id);
-    if (current.kind !== "route_segment" && current.kind !== "wall_segment") continue;
+    if (current.kind !== "route_segment" && current.kind !== "wall_segment" && current.kind !== "point_symbol") continue;
     const currentView = views.get(current.source_view_key)!;
     for (const previous of candidates) {
       if (previous.primitive_id >= current.primitive_id) break;
       if (previous.kind !== current.kind || canonicalById.get(previous.primitive_id) !== previous.primitive_id) continue;
       const previousView = views.get(previous.source_view_key)!;
       if (previousView.discipline !== currentView.discipline || previousView.level_key !== currentView.level_key) continue;
-      if (!sameLinearGeometry(previous, current, policy.duplicate_tolerance_ft)) continue;
+      const sameGeometry = current.kind === "point_symbol"
+        ? samePointGeometry(previous, current, policy.duplicate_tolerance_ft)
+        : sameLinearGeometry(previous, current, policy.duplicate_tolerance_ft);
+      if (!sameGeometry) continue;
       if (!claimsCompatible(previous, current)) {
         conflicts.push(`duplicate_geometry_claim_conflict:${previous.primitive_id}:${current.primitive_id}`);
         continue;
@@ -739,7 +746,9 @@ export function compileSheetTopologyV1(
     if (hasConflict) reasons.push("topology_conflict_present");
     const eligibleBatchKind = primitive.kind === "route_segment" || primitive.kind === "wall_segment";
     const canBatch = eligibleBatchKind && reasons.length === 0 && calibration.lower! >= policy.minimum_batch_precision_lower_bound;
-    const canSingle = view.registration.verified
+    const hardSingleActionConflict = primitive.kind === "point_symbol" && hasConflict;
+    const canSingle = !hardSingleActionConflict
+      && view.registration.verified
       && view.registration.maximum_residual_ft <= policy.maximum_registration_residual_ft
       && primitive.confidence.geometry >= policy.minimum_geometry_confidence
       && calibration.trials >= policy.minimum_calibration_trials

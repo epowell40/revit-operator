@@ -87,3 +87,36 @@ test("provider schema stays inside Gemini's supported OpenAPI subset", () => {
     maximum: 1
   });
 });
+
+test("a graphical point symbol cannot self-certify its native type", () => {
+  const point = raw();
+  point.primitives[0]!.kind = "point_symbol";
+  point.primitives[0]!.points = [{ u: 0.5, v: 0.5 }];
+  point.primitives[0]!.endpoints = [];
+  point.primitives[0]!.claims = [
+    { attribute: "type", value: "duplex receptacle", confidence: 0.99, basis: "legible_source_evidence" }
+  ];
+
+  const result = normalizeGeminiExistingConditionsSheetResponseV1({ request: request(), raw: point });
+
+  assert.equal(result.interpretation.primitives[0]?.claims?.type?.basis, "provider_hypothesis");
+  assert.equal(result.interpretation.primitives[0]?.claims?.type?.confidence, 0.5);
+  assert.equal(result.interpretation.primitives[0]?.confidence.classification, 0.5);
+  assert.ok(result.open_questions.some(value => value.includes("requires a legible annotation or approved project mapping")));
+});
+
+test("provider-hypothesis point symbols remain classification-capped", () => {
+  const point = raw();
+  point.primitives[0]!.kind = "point_symbol";
+  point.primitives[0]!.points = [{ u: 0.5, v: 0.5 }];
+  point.primitives[0]!.endpoints = [];
+  point.primitives[0]!.claims = [
+    { attribute: "type", value: "duplex receptacle", confidence: 0.8, basis: "provider_hypothesis" }
+  ];
+
+  const result = normalizeGeminiExistingConditionsSheetResponseV1({ request: request(), raw: point });
+
+  assert.equal(result.interpretation.primitives[0]?.claims?.type?.basis, "provider_hypothesis");
+  assert.equal(result.interpretation.primitives[0]?.confidence.classification, 0.5);
+  assert.ok(result.open_questions.some(value => value.includes("classification remains provisional")));
+});

@@ -9,7 +9,7 @@ import { tryCreateRedlineAnalyzeEvidence } from "../redline/redline_analyze_evid
 import { mapSheetRegions } from "../redline/sheet_region_mapper.js";
 import { orientRedlineFile } from "../redline/redline_orienter.js";
 import { analyzeRedlinePackageWithGemini } from "../vision/gemini_redline_package.js";
-import { validateSheetPixelEvidenceV1 } from "../existing_conditions/sheet_pixel_evidence.js";
+import { validateSheetCandidatePresenceV1, validateSheetPixelEvidenceV1 } from "../existing_conditions/sheet_pixel_evidence.js";
 import {
   compileSheetPixelInterpretationV1,
   type SheetPixelInterpretationContextV1,
@@ -780,26 +780,54 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
         const priorReceipt = (context.raster_evidence_receipts ?? []).find(receipt =>
           !requestedViewKey || receipt.source_view_key === requestedViewKey
         );
+        const trustedRasterPolicy = context.raster_evidence_policy_by_view?.[requestedViewKey];
         const overlayPath = (action.overlay_output_path ?? "").trim();
         const rasterReceipt = await validateSheetPixelEvidenceV1({
           image_path: resolvedImagePath,
           interpretation,
           ...(requestedViewKey ? { source_view_key: requestedViewKey } : {}),
-          ...(priorReceipt?.policy ? { policy: priorReceipt.policy } : {}),
+          ...(trustedRasterPolicy || priorReceipt?.policy
+            ? { policy: { ...(priorReceipt?.policy ?? {}), ...(trustedRasterPolicy ?? {}) } }
+            : {}),
           ...(overlayPath ? { overlay_path: resolveFileUnderWorkspace(overlayPath) } : {})
         });
+        const trustedView = context.trusted_views.find(value => value.source_view.view_key === rasterReceipt.source_view_key);
+        const candidateRaster = context.candidate_raster_by_view?.[rasterReceipt.source_view_key];
+        const candidatePresence = candidateRaster && trustedView
+          ? await validateSheetCandidatePresenceV1({
+            image_path: resolveExistingFileUnderWorkspace(candidateRaster.image_path),
+            expected_image_sha256: candidateRaster.image_sha256,
+            candidate_frame: candidateRaster.frame,
+            source_frame: trustedView.frame,
+            interpretation,
+            source_evidence: rasterReceipt,
+            policy: candidateRaster.policy ?? trustedRasterPolicy ?? priorReceipt?.policy,
+            ...(candidateRaster.overlay_output_path
+              ? { overlay_path: resolveFileUnderWorkspace(candidateRaster.overlay_output_path) }
+              : {})
+          })
+          : undefined;
         const compiled = compileSheetPixelInterpretationV1(interpretation, {
           ...context,
           raster_evidence_receipts: [
             ...(context.raster_evidence_receipts ?? []).filter(receipt => receipt.source_view_key !== rasterReceipt.source_view_key),
             rasterReceipt
-          ]
+          ],
+          ...(candidatePresence
+            ? {
+              candidate_presence_receipts: [
+                ...(context.candidate_presence_receipts ?? []).filter(receipt => receipt.source_view_key !== candidatePresence.source_view_key),
+                candidatePresence
+              ]
+            }
+            : {})
         });
         const receipt = {
           schema_version: 1,
           interpretation_path: interpretationFile.pathRel,
           context_path: contextFile.pathRel,
           raster_evidence: rasterReceipt,
+          ...(candidatePresence ? { candidate_presence: candidatePresence } : {}),
           compilation: compiled
         };
         const receiptOutputPath = (action.receipt_output_path ?? "").trim();
@@ -812,8 +840,11 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
           type: action.type,
           ok: topology.status === "ready" || topology.status === "partially_ready",
           summary:
-            `Sheet interpretation compiled; status=${topology.status}, accepted_routes=${rasterReceipt.accepted_primitive_ids.length}, ` +
-            `rejected_routes=${rasterReceipt.rejected_primitive_ids.length}, junctions=${topology.junctions.length}.`,
+            `Sheet interpretation compiled; status=${topology.status}, accepted_routes=${rasterReceipt.route_evidence.filter(value => value.status === "accepted_raster_support").length}, ` +
+            `rejected_routes=${rasterReceipt.route_evidence.filter(value => value.status === "rejected_raster_extent").length}, ` +
+            `accepted_points=${(rasterReceipt.point_evidence ?? []).filter(value => value.status === "accepted_raster_support").length}, ` +
+            `rejected_points=${(rasterReceipt.point_evidence ?? []).filter(value => value.status === "rejected_raster_extent").length}, ` +
+            `existing_points=${candidatePresence?.existing_candidate_visible_primitive_ids.length ?? 0}, junctions=${topology.junctions.length}.`,
           details: {
             ...receipt,
             ...(persisted ? { persisted_receipt: persisted } : {})

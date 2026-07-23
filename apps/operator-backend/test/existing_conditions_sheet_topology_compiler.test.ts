@@ -85,6 +85,29 @@ function route(
   };
 }
 
+function electricalPoint(
+  id: string,
+  sourceViewKey: string,
+  markId: string,
+  location: [number, number],
+  type: string
+): SheetTopologyPrimitiveV1 {
+  return {
+    primitive_id: id,
+    source_view_key: sourceViewKey,
+    source_mark_ids: [markId],
+    kind: "point_symbol",
+    points: [{ x: location[0], y: location[1] }],
+    claims: {
+      family: { value: "electrical device", confidence: 0.99, basis: "approved_project_mapping" },
+      type: { value: type, confidence: 0.99, basis: "approved_project_mapping" },
+      host: { value: "wall", confidence: 0.99, basis: "approved_project_mapping" }
+    },
+    confidence: { geometry: 0.99, classification: 0.99, topology: 0.99, visibility: 0.99 },
+    independently_reversible: true
+  };
+}
+
 function fixture(
   sourceViews: SheetTopologySourceViewV1[],
   primitives: SheetTopologyPrimitiveV1[],
@@ -220,6 +243,31 @@ test("incompatible systems never stitch merely because endpoints overlap", () =>
   assert.ok(result.conflicts.some(value => value.includes("claim_mismatch")));
   assert.deepEqual(result.native_batch_groups, []);
   assert.deepEqual(result.single_action_primitive_ids, ["cold", "hot"]);
+});
+
+test("registered cross-sheet point symbols with conflicting identities are deferred", () => {
+  const lighting = electricalPoint("lighting-symbol", "lighting", "mark-lighting", [12, 8], "lighting fixture");
+  const power = electricalPoint("power-symbol", "power", "mark-power", [12, 8], "power receptacle");
+  const compiledFixture = fixture(
+    [view("lighting", "E-100", 1, "electrical"), view("power", "E-101", 1, "electrical")],
+    [lighting, power]
+  );
+  compiledFixture.context.calibration_profile.bins = [{
+    discipline: "electrical",
+    primitive_kind: "point_symbol",
+    raw_confidence_min: 0.9,
+    raw_confidence_max: 1,
+    trials: 100,
+    successes: 100,
+    fixture_count: 4
+  }];
+
+  const result = compileFixture(compiledFixture);
+
+  assert.ok(result.conflicts.includes("duplicate_geometry_claim_conflict:lighting-symbol:power-symbol"));
+  assert.deepEqual(result.single_action_primitive_ids, []);
+  assert.deepEqual(result.deferred_primitive_ids, ["lighting-symbol", "power-symbol"]);
+  assert.ok(result.decisions.every(value => value.reasons.includes("topology_conflict_present")));
 });
 
 test("raw model confidence cannot authorize batching without empirical calibration support", () => {
