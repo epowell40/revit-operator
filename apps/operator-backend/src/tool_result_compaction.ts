@@ -669,6 +669,34 @@ export function compactParameterReadResultForPrompt(value: unknown, options?: { 
   };
 }
 
+export function compactScheduleReadResultForPrompt(value: unknown): unknown {
+  const obj = asObject(value);
+  if (!obj) return value;
+  const compactRows = (section: unknown, maxRows: number) => {
+    const row = asObject(section);
+    return {
+      totalRows: row?.totalRows ?? null,
+      totalColumns: row?.totalColumns ?? null,
+      rowOffset: row?.rowOffset ?? null,
+      returnedRows: row?.returnedRows ?? null,
+      hasMoreRows: row?.hasMoreRows ?? null,
+      nextRowOffset: row?.nextRowOffset ?? null,
+      rows: Array.isArray(row?.rows) ? row.rows.slice(0, maxRows) : []
+    };
+  };
+  const table = asObject(obj.table);
+  return {
+    action: obj.action ?? null,
+    status: obj.status ?? null,
+    returned: obj.returned ?? null,
+    query: obj.query ?? null,
+    items: Array.isArray(obj.items) ? obj.items.slice(0, 200) : null,
+    schedule: obj.schedule ?? null,
+    fields: Array.isArray(obj.fields) ? obj.fields.slice(0, 80) : null,
+    table: table ? { header: compactRows(table.header, 10), body: compactRows(table.body, 30) } : null
+  };
+}
+
 export function compactIncomingToolResult(result: ToolResult): ToolResult {
   const pathName = (result.path ?? "").trim().toLowerCase();
   const attachments = Array.isArray(result.attachments)

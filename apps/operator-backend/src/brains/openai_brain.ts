@@ -25,7 +25,7 @@ import { captureRequirementsResponseGuard, enforceRequirementsResponseGuard, for
 import { createOpenAiClient, resolveOpenAiApiKey } from "../openai_client.js";
 import { executeWorkbenchActions, maxWorkbenchActions, type WorkbenchAction, type WorkbenchActionResult } from "../workbench/workbench_runner.js";
 import { createArtifactShare } from "../artifacts/artifact_bus.js";
-import { compactIncomingToolResult, compactParameterReadResultForPrompt, compactVisibleElementsResult, describeVisibleElementsInventory } from "../tool_result_compaction.js";
+import { compactIncomingToolResult, compactParameterReadResultForPrompt, compactScheduleReadResultForPrompt, compactVisibleElementsResult, describeVisibleElementsInventory } from "../tool_result_compaction.js";
 import { alignRedlineToView, type ViewAlignmentMark, type ViewAlignmentResult } from "../redline/view_alignment.js";
 import { orientRedlineFile } from "../redline/redline_orienter.js";
 import { analyzeRedlineFile } from "../redline/redline_analyzer.js";
@@ -15371,19 +15371,7 @@ function projectToolResultsForPrompt(toolResults: ToolResult[]): unknown {
     } else if (r.path === "/revit/get-parameters" && res && typeof res === "object") {
       base.parameterEvidence = compactParameterReadResultForPrompt(res);
     } else if (r.path === "/revit/schedules" && res && typeof res === "object") {
-      const table: any = res.table && typeof res.table === "object" ? res.table : null;
-      const compactRows = (section: any, maxRows: number) => ({
-        totalRows: section?.totalRows ?? null,
-        totalColumns: section?.totalColumns ?? null,
-        rowOffset: section?.rowOffset ?? null,
-        returnedRows: section?.returnedRows ?? null,
-        hasMoreRows: section?.hasMoreRows ?? null,
-        nextRowOffset: section?.nextRowOffset ?? null,
-        rows: Array.isArray(section?.rows) ? section.rows.slice(0, maxRows) : []
-      });
-      base.schedule = res.schedule ?? null;
-      base.fields = Array.isArray(res.fields) ? res.fields.slice(0, 80) : null;
-      base.table = table ? { header: compactRows(table.header, 10), body: compactRows(table.body, 30) } : null;
+      base.scheduleEvidence = compactScheduleReadResultForPrompt(res);
     } else if (r.path === "/revit/export-visible-elements" && res && typeof res === "object") {
       base.inventory = compactVisibleElementsResult(res, { maxItems: 16, maxCountEntries: 6 });
     } else if (r.path === "/revit/spatial-context" && res && typeof res === "object") {
