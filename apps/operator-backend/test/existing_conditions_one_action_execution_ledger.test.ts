@@ -799,9 +799,27 @@ test("provider-independent loop enforces staged repair readback visual and check
           path: (checkpoint.actions[0]?.body as Record<string, unknown>)?.filePath
         }
       }]),
-      decision: response([])
+      decision: response([{
+        action_id: "provider-replay-after-checkpoint",
+        method: "POST",
+        path: "/revit/existing-conditions-mep-draft-workflow",
+        body: {
+          stageKey: "operation:repair:move-retained",
+          dryRun: false
+        }
+      }])
     });
     assert.deepEqual(complete.actions, []);
+    assert.match(complete.assistant_message, /accepted and checkpointed/i);
+    assert.match(complete.assistant_message, /before provider rediscovery or replay/i);
+
+    const terminalContinuation = maybeContinueExistingConditionsOneActionLoop({
+      ...request(sessionId),
+      user_text: ""
+    });
+    assert.ok(terminalContinuation);
+    assert.deepEqual(terminalContinuation.actions, []);
+    assert.match(terminalContinuation.assistant_message, /accepted and checkpointed/i);
   } finally {
     if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
@@ -1054,6 +1072,32 @@ test("explicit dry-run-only request pauses before apply after an accepted dry-ru
     const repairLedger = readExistingConditionsRepairLedger(sessionId);
     assert.ok(repairLedger.some(entry => entry.event === "dry_run_accepted"));
     assert.ok(!repairLedger.some(entry => entry.event === "stage_applied"));
+
+    const requestLogPath = path.join(
+      process.env.OPERATOR_WORKSPACE_ROOT!,
+      "runs",
+      "sessions",
+      sessionId,
+      "request_log.jsonl"
+    );
+    fs.appendFileSync(
+      requestLogPath,
+      `${JSON.stringify({
+        user_text: "Dry-run only. Never apply this stage."
+      })}\n`,
+      "utf8"
+    );
+
+    const resumed = maybeContinueExistingConditionsOneActionLoop({
+      ...request(sessionId),
+      user_text: "Apply only the exact rollback-verified stage now."
+    });
+    assert.ok(resumed);
+    assert.equal(resumed.actions.length, 1);
+    assert.equal(
+      (resumed.actions[0]?.body as Record<string, unknown>).dryRun,
+      false
+    );
   } finally {
     if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;

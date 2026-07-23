@@ -161,6 +161,12 @@ function textRequestsDryRunOnly(value: string): boolean {
     /\b(?:do\s+not|don't|never)\s+apply\b/i.test(value);
 }
 
+function textAuthorizesVerifiedStageApply(value: string): boolean {
+  if (textRequestsDryRunOnly(value)) return false;
+  return /\bapply\b[^.!?\n]{0,120}\b(?:exact|accepted|verified|rollback[-\s]?verified|dry[-\s]?run)\b[^.!?\n]{0,120}\bstage\b/i.test(value) ||
+    /\bapply\b[^.!?\n]{0,120}\bstage\b[^.!?\n]{0,120}\b(?:exact|accepted|verified|rollback[-\s]?verified|dry[-\s]?run)\b/i.test(value);
+}
+
 function persistedExecutionControl(sessionId: string): {
   dry_run_only: boolean;
   pause_before_automatic_split: boolean;
@@ -172,8 +178,12 @@ function persistedExecutionControl(sessionId: string): {
     for (const line of fs.readFileSync(filePath, "utf8").split(/\r?\n/).filter(Boolean).slice(-120)) {
       try {
         const row = JSON.parse(line) as Record<string, unknown>;
-        if (row.dry_run_only === true) control.dry_run_only = true;
-        if (row.pause_before_automatic_split === true) control.pause_before_automatic_split = true;
+        if (typeof row.dry_run_only === "boolean") {
+          control.dry_run_only = row.dry_run_only;
+        }
+        if (typeof row.pause_before_automatic_split === "boolean") {
+          control.pause_before_automatic_split = row.pause_before_automatic_split;
+        }
       } catch {
         // Ignore an incomplete append tail; prior durable directives remain valid.
       }
@@ -189,18 +199,24 @@ function persistExecutionControlDirectives(req: ChatRequest): void {
   if (!text) return;
   const dryRunOnly = textRequestsDryRunOnly(text);
   const pauseBeforeAutomaticSplit = textRequestsPauseBeforeAutomaticSplit(text);
-  if (!dryRunOnly && !pauseBeforeAutomaticSplit) return;
+  const authorizeVerifiedApply = textAuthorizesVerifiedStageApply(text);
+  if (!dryRunOnly && !pauseBeforeAutomaticSplit && !authorizeVerifiedApply) return;
   const previous = persistedExecutionControl(req.session_id);
+  const nextDryRunOnly = authorizeVerifiedApply
+    ? false
+    : dryRunOnly || previous.dry_run_only;
+  const nextPauseBeforeAutomaticSplit =
+    pauseBeforeAutomaticSplit || previous.pause_before_automatic_split;
   if (
-    (!dryRunOnly || previous.dry_run_only) &&
-    (!pauseBeforeAutomaticSplit || previous.pause_before_automatic_split)
+    nextDryRunOnly === previous.dry_run_only &&
+    nextPauseBeforeAutomaticSplit === previous.pause_before_automatic_split
   ) {
     return;
   }
   atomicAppendJsonlLine(executionControlPath(req.session_id), {
     ts: new Date().toISOString(),
-    dry_run_only: dryRunOnly || previous.dry_run_only,
-    pause_before_automatic_split: pauseBeforeAutomaticSplit || previous.pause_before_automatic_split
+    dry_run_only: nextDryRunOnly,
+    pause_before_automatic_split: nextPauseBeforeAutomaticSplit
   });
 }
 
@@ -882,7 +898,10 @@ function recordProviderIndependentStageResults(
 }
 
 function userRequestedPauseBeforeAutomaticSplit(req: ChatRequest): boolean {
-  if (persistedExecutionControl(req.session_id).pause_before_automatic_split) return true;
+  const controlFilePath = executionControlPath(req.session_id);
+  if (fs.existsSync(controlFilePath)) {
+    return persistedExecutionControl(req.session_id).pause_before_automatic_split;
+  }
   const texts = [clean(req.user_text)];
   const requestLogPath = path.join(
     ensureWorkspaceLayout().runsSessions,
@@ -907,7 +926,10 @@ function userRequestedPauseBeforeAutomaticSplit(req: ChatRequest): boolean {
 }
 
 function userRequestedDryRunOnly(req: ChatRequest): boolean {
-  if (persistedExecutionControl(req.session_id).dry_run_only) return true;
+  const controlFilePath = executionControlPath(req.session_id);
+  if (fs.existsSync(controlFilePath)) {
+    return persistedExecutionControl(req.session_id).dry_run_only;
+  }
   const texts = [clean(req.user_text)];
   const requestLogPath = path.join(
     ensureWorkspaceLayout().runsSessions,
@@ -1035,7 +1057,15 @@ function stagedHandoffDecision(args: {
       actions: []
     };
   }
-  if (plan.state === "awaiting_readback") return null;
+  if (plan.state === "awaiting_readback") {
+    return {
+      version: "operator.backend.v1",
+      assistant_message:
+        `All ${plan.accepted_action_outputs.length} registered existing-conditions stage(s) are accepted and checkpointed. ` +
+        "The host stopped this workflow before provider rediscovery or replay.",
+      actions: []
+    };
+  }
   if (plan.state === "verify_readback" || plan.state === "verify_continuation" || plan.state === "verify_visual" || plan.state === "checkpoint") {
     const stageLabel = plan.action_keys.join(", ");
     return {
@@ -1123,7 +1153,7 @@ export function maybeContinueExistingConditionsOneActionLoop(
   if (dryRunOnlyPause) return dryRunOnlyPause;
   const splitPause = automaticSplitPauseDecision(req, plan);
   if (splitPause) return splitPause;
-  if (plan.state === "blocked" || plan.state === "awaiting_readback") {
+  if (plan.state === "blocked") {
     return null;
   }
 
