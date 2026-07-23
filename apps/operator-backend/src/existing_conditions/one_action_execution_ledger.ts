@@ -167,11 +167,58 @@ function textAuthorizesVerifiedStageApply(value: string): boolean {
     /\bapply\b[^.!?\n]{0,120}\bstage\b[^.!?\n]{0,120}\b(?:exact|accepted|verified|rollback[-\s]?verified|dry[-\s]?run)\b/i.test(value);
 }
 
+type OneBoundedReadKind = "export" | "read" | "inventory" | "query" | "capture" | "inspection";
+
+function textRequestsExactlyOneBoundedReadWithoutRetry(value: string): OneBoundedReadKind | null {
+  const text = clean(value);
+  if (!text) return null;
+  const match = /\b(?:exactly\s+)?(?:one|single)\b[^.!?\n]{0,80}\b(?:bounded\s+)?(export|read|inventory|query|capture|inspection)\b/i.exec(text);
+  if (!match) return null;
+  const noRetry = /\b(?:no|do\s+not|don't|never|without)\s+(?:a\s+)?(?:retry|retries|retrying|repeat|repeating|rerun|rerunning)\b/i.test(text);
+  return noRetry ? match[1]!.toLowerCase() as OneBoundedReadKind : null;
+}
+
+function actionMatchesOneBoundedReadKind(
+  action: Pick<ActionCall | ToolResult, "method" | "path">,
+  kind: OneBoundedReadKind
+): boolean {
+  const actionPath = clean(action.path).toLowerCase();
+  if (!actionPath.startsWith("/revit/")) return false;
+  if (kind === "export") {
+    return /\/(?:export(?:-|\/)|highlight-and-export\b|print(?:-|\/))/.test(actionPath);
+  }
+  if (kind === "capture") {
+    return /\/(?:capture(?:-|\/)|export-view(?:-|\/)|export-visible-elements\b|highlight-and-export\b|print(?:-|\/))/.test(actionPath);
+  }
+  if (kind === "inventory") {
+    return /\/(?:export-visible-elements\b|find-elements\b|get-element-summary\b|room-contents\b|query\b)/.test(actionPath);
+  }
+  if (kind === "query") {
+    return action.method === "GET" || /\/(?:query\b|find-|get-|list-|rooms\b|room-contents\b|context\b)/.test(actionPath);
+  }
+  if (kind === "inspection") {
+    return action.method === "GET" || /\/(?:computer-use-observe\b|export-view|export-visible-elements\b|highlight-and-export\b|find-|get-|query\b)/.test(actionPath);
+  }
+  return action.method === "GET" ||
+    READBACK_PATHS.has(actionPath) ||
+    OBSERVE_PATHS.has(actionPath) ||
+    /\/(?:export-|find-|get-|list-|query\b|capture-)/.test(actionPath);
+}
+
 function persistedExecutionControl(sessionId: string): {
   dry_run_only: boolean;
   pause_before_automatic_split: boolean;
+  one_bounded_read_kind: OneBoundedReadKind | null;
 } {
-  const control = { dry_run_only: false, pause_before_automatic_split: false };
+  const control: {
+    dry_run_only: boolean;
+    pause_before_automatic_split: boolean;
+    one_bounded_read_kind: OneBoundedReadKind | null;
+  } = {
+    dry_run_only: false,
+    pause_before_automatic_split: false,
+    one_bounded_read_kind: null
+  };
   const filePath = executionControlPath(sessionId);
   if (!fs.existsSync(filePath)) return control;
   try {
@@ -183,6 +230,11 @@ function persistedExecutionControl(sessionId: string): {
         }
         if (typeof row.pause_before_automatic_split === "boolean") {
           control.pause_before_automatic_split = row.pause_before_automatic_split;
+        }
+        if (row.one_bounded_read_kind === null) {
+          control.one_bounded_read_kind = null;
+        } else if (["export", "read", "inventory", "query", "capture", "inspection"].includes(clean(row.one_bounded_read_kind))) {
+          control.one_bounded_read_kind = clean(row.one_bounded_read_kind) as OneBoundedReadKind;
         }
       } catch {
         // Ignore an incomplete append tail; prior durable directives remain valid.
@@ -200,24 +252,47 @@ function persistExecutionControlDirectives(req: ChatRequest): void {
   const dryRunOnly = textRequestsDryRunOnly(text);
   const pauseBeforeAutomaticSplit = textRequestsPauseBeforeAutomaticSplit(text);
   const authorizeVerifiedApply = textAuthorizesVerifiedStageApply(text);
-  if (!dryRunOnly && !pauseBeforeAutomaticSplit && !authorizeVerifiedApply) return;
+  const oneBoundedReadKind = textRequestsExactlyOneBoundedReadWithoutRetry(text);
   const previous = persistedExecutionControl(req.session_id);
   const nextDryRunOnly = authorizeVerifiedApply
     ? false
     : dryRunOnly || previous.dry_run_only;
   const nextPauseBeforeAutomaticSplit =
     pauseBeforeAutomaticSplit || previous.pause_before_automatic_split;
+  const nextOneBoundedReadKind = oneBoundedReadKind;
   if (
     nextDryRunOnly === previous.dry_run_only &&
-    nextPauseBeforeAutomaticSplit === previous.pause_before_automatic_split
+    nextPauseBeforeAutomaticSplit === previous.pause_before_automatic_split &&
+    nextOneBoundedReadKind === previous.one_bounded_read_kind
   ) {
     return;
   }
   atomicAppendJsonlLine(executionControlPath(req.session_id), {
     ts: new Date().toISOString(),
     dry_run_only: nextDryRunOnly,
-    pause_before_automatic_split: nextPauseBeforeAutomaticSplit
+    pause_before_automatic_split: nextPauseBeforeAutomaticSplit,
+    one_bounded_read_kind: nextOneBoundedReadKind
   });
+}
+
+function oneBoundedReadTerminalDecision(
+  req: ChatRequest,
+  toolResults: ToolResult[]
+): ChatResponse | null {
+  const kind = persistedExecutionControl(req.session_id).one_bounded_read_kind;
+  if (!kind) return null;
+  const terminal = toolResults.find(result =>
+    (result.status === "done" || result.status === "failed") &&
+    actionMatchesOneBoundedReadKind(result, kind)
+  );
+  if (!terminal) return null;
+  return {
+    version: "operator.backend.v1",
+    assistant_message: terminal.status === "done"
+      ? `The requested single bounded ${kind} completed, so I stopped before any retry or follow-on read. Its result remains registered for the next deliberate stage.`
+      : `The requested single bounded ${kind} failed, and the no-retry instruction remains in force. I stopped without issuing another read or action.`,
+    actions: []
+  };
 }
 
 type RegisteredModelRect = {
@@ -1118,6 +1193,8 @@ export function maybeContinueExistingConditionsOneActionLoop(
   persistExecutionControlDirectives(req);
   const toolResults = Array.isArray(req.tool_results) ? req.tool_results : [];
   recordToolResults(req.session_id, toolResults, documentScopeSha256(req.context));
+  const boundedReadTerminal = oneBoundedReadTerminalDecision(req, toolResults);
+  if (boundedReadTerminal) return boundedReadTerminal;
 
   const persistedBeforeRecovery = latestExistingConditionsStagedWorkflow(req.session_id);
   if (persistedBeforeRecovery?.execution_boundary === "compile_only") {
@@ -1176,6 +1253,8 @@ export function enforceExistingConditionsOneActionLoop(args: {
   const toolResults = Array.isArray(args.req.tool_results) ? args.req.tool_results : [];
   const currentDocumentScope = documentScopeSha256(args.req.context);
   recordToolResults(args.req.session_id, toolResults, currentDocumentScope);
+  const boundedReadTerminal = oneBoundedReadTerminalDecision(args.req, toolResults);
+  if (boundedReadTerminal) return boundedReadTerminal;
 
   const persistedBeforeRecovery = latestExistingConditionsStagedWorkflow(args.req.session_id);
   if (persistedBeforeRecovery?.execution_boundary === "compile_only") {
@@ -1253,7 +1332,7 @@ export function enforceExistingConditionsOneActionLoop(args: {
   const proposedActions = Array.isArray(decision.actions) ? decision.actions : [];
   const registeredRect = loadRegisteredModelRect(args.req);
   let spatiallyRejectedCount = 0;
-  const actions = proposedActions.filter(action => {
+  const spatiallyAcceptedActions = proposedActions.filter(action => {
     if (!registeredRect) return true;
     const phase = classifyPhase(action.path, action.body);
     if (phase !== "dry_run" && phase !== "apply") return true;
@@ -1272,6 +1351,15 @@ export function enforceExistingConditionsOneActionLoop(args: {
     });
     return false;
   });
+  const oneBoundedReadKind = persistedExecutionControl(args.req.session_id).one_bounded_read_kind;
+  let wrongBoundedReadKindCount = 0;
+  const actions = oneBoundedReadKind
+    ? spatiallyAcceptedActions.filter(action => {
+        const allowed = actionMatchesOneBoundedReadKind(action, oneBoundedReadKind);
+        if (!allowed) wrongBoundedReadKindCount += 1;
+        return allowed;
+      })
+    : spatiallyAcceptedActions;
   const ledger = readExistingConditionsExecutionLedger(args.req.session_id);
   const completedPlans = ledger.filter(entry => {
     if (entry.event !== "action_planned") return false;
@@ -1372,10 +1460,18 @@ export function enforceExistingConditionsOneActionLoop(args: {
       `I rejected ${spatiallyRejectedCount} proposed spatial action${spatiallyRejectedCount === 1 ? "" : "s"} outside the persisted registered model rectangle X ${registeredRect.minX}..${registeredRect.maxX}, Y ${registeredRect.minY}..${registeredRect.maxY}. No model write was issued; the next repair is to remap the source-normalized point and retry only the bounded dry-run.`
     );
   }
+  if (wrongBoundedReadKindCount > 0 && oneBoundedReadKind) {
+    suffixParts.push(
+      `I blocked ${wrongBoundedReadKindCount} proposed action${wrongBoundedReadKindCount === 1 ? "" : "s"} that did not match the authorized single bounded ${oneBoundedReadKind}.`
+    );
+  }
   const suffix = suffixParts.length > 0 ? ` ${suffixParts.join(" ")}` : "";
+  const onlyWrongBoundedReadKind = wrongBoundedReadKindCount > 0 && actions.length === 0;
   return {
     ...decision,
-    assistant_message: onlySuppressedActions
+    assistant_message: onlyWrongBoundedReadKind
+      ? `No action was executed because this turn authorizes exactly one bounded ${oneBoundedReadKind}; provider preparation or follow-on actions were outside that boundary.${suffix}`
+      : onlySuppressedActions
       ? replayedCount > 0
         ? `No action was executed because the provider proposed only already completed or in-flight actions. The persisted result remains accepted; the authoritative current request still needs a new plan.${suffix}`
         : `No duplicate action was dispatched because the exact requested action is already in flight.${suffix}`

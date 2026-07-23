@@ -102,6 +102,71 @@ test("completed strict exact action terminates without provider continuation", (
   assert.match(decision.assistant_message, /No further action was dispatched/i);
 });
 
+test("natural single bounded export is provider-agnostic, durable, and terminal after one result", () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  process.env.OPERATOR_WORKSPACE_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "operator-one-bounded-export-"));
+  try {
+    const sessionId = `one-bounded-export-${Date.now()}`;
+    const initial = enforceExistingConditionsOneActionLoop({
+      req: {
+        version: "operator.backend.v1",
+        session_id: sessionId,
+        message_id: "bounded-export-turn",
+        user_text: "Run exactly one bounded export for this area. Do not retry or repeat it.",
+        tool_results: []
+      },
+      decision: {
+        version: "operator.backend.v1",
+        assistant_message: "I will prepare and run the export.",
+        actions: [
+          { action_id: "catalog", method: "POST", path: "/revit/tool-search", body: { query: "export-visible-elements" } },
+          { action_id: "bounded-export", method: "POST", path: "/revit/export-visible-elements", body: { viewId: 100, modelBounds: [0, 0, 0, 10, 10, 10] } },
+          { action_id: "wider-export", method: "POST", path: "/revit/export-visible-elements", body: { viewId: 100, modelBounds: [-10, -10, 0, 20, 20, 10] } }
+        ]
+      }
+    });
+    assert.deepEqual(initial.actions.map(action => action.action_id), ["bounded-export"]);
+    assert.doesNotMatch(JSON.stringify(initial.actions), /tool-search|wider-export/i);
+
+    const terminal = maybeContinueExistingConditionsOneActionLoop({
+      version: "operator.backend.v1",
+      session_id: sessionId,
+      message_id: "bounded-export-turn:continuation",
+      user_text: "",
+      tool_results: [{
+        action_id: "bounded-export",
+        method: "POST",
+        path: "/revit/export-visible-elements",
+        status: "done",
+        result_json: { count: 26, truncated: false }
+      }]
+    });
+    assert.ok(terminal);
+    assert.deepEqual(terminal.actions, []);
+    assert.match(terminal.assistant_message, /single bounded export completed/i);
+    assert.match(terminal.assistant_message, /stopped before any retry or follow-on read/i);
+
+    const newTurn = enforceExistingConditionsOneActionLoop({
+      req: {
+        version: "operator.backend.v1",
+        session_id: sessionId,
+        message_id: "new-user-turn",
+        user_text: "Now inspect the registered connectors.",
+        tool_results: []
+      },
+      decision: {
+        version: "operator.backend.v1",
+        assistant_message: "Inspecting connectors.",
+        actions: [{ action_id: "connectors-new-turn", method: "POST", path: "/revit/get-connectors", body: { elementIds: [1] } }]
+      }
+    });
+    assert.deepEqual(newTurn.actions.map(action => action.action_id), ["connectors-new-turn"]);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+  }
+});
+
 function response(actions: ChatResponse["actions"]): ChatResponse {
   return {
     version: "operator.backend.v1",
