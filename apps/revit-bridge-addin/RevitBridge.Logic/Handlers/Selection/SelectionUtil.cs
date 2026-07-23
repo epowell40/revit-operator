@@ -25,6 +25,7 @@ namespace RevitBridge.Logic.Handlers
         public double AspectMismatch { get; set; }
         public bool AspectCorrectionApplied { get; set; }
         public string AspectCorrectionAxis { get; set; } = "";
+        public string SourceFrameKind { get; set; } = "crop_box";
     }
 
     internal static class SelectionUtil
@@ -105,7 +106,9 @@ namespace RevitBridge.Logic.Handlers
                 + right.Multiply(outline.Min.U * scale)
                 + up.Multiply(outline.Min.V * scale);
 
-            return BuildRasterAffineFrame(topLeft, topRight, bottomLeft, widthPx, heightPx);
+            var frame = BuildRasterAffineFrame(topLeft, topRight, bottomLeft, widthPx, heightPx);
+            frame.SourceFrameKind = "view_outline";
+            return frame;
         }
 
         public static (string path, int widthPx, int heightPx, string diagnostic) CropRasterToModelFrame(
@@ -244,6 +247,7 @@ namespace RevitBridge.Logic.Handlers
                 pixelAxes = new { x = "right", y = "down" },
                 modelUnits = "feet",
                 frameBasis = "exported_raster",
+                modelFrameSource = frame.SourceFrameKind,
                 rasterWidthPx = frame.WidthPx,
                 rasterHeightPx = frame.HeightPx,
                 rasterAspect = frame.RasterAspect,
@@ -252,12 +256,19 @@ namespace RevitBridge.Logic.Handlers
                 aspectMismatch = frame.AspectMismatch,
                 aspectCorrectionApplied = frame.AspectCorrectionApplied,
                 aspectCorrectionAxis = string.IsNullOrWhiteSpace(frame.AspectCorrectionAxis) ? null : frame.AspectCorrectionAxis,
-                cropBoxReference = new
+                sourceFrameReference = new
                 {
+                    kind = frame.SourceFrameKind,
                     topLeftXyz = new[] { frame.CropTopLeft.X, frame.CropTopLeft.Y, frame.CropTopLeft.Z },
                     topRightXyz = new[] { frame.CropTopRight.X, frame.CropTopRight.Y, frame.CropTopRight.Z },
                     bottomLeftXyz = new[] { frame.CropBottomLeft.X, frame.CropBottomLeft.Y, frame.CropBottomLeft.Z }
                 },
+                cropBoxReference = frame.SourceFrameKind == "crop_box" ? new
+                {
+                    topLeftXyz = new[] { frame.CropTopLeft.X, frame.CropTopLeft.Y, frame.CropTopLeft.Z },
+                    topRightXyz = new[] { frame.CropTopRight.X, frame.CropTopRight.Y, frame.CropTopRight.Z },
+                    bottomLeftXyz = new[] { frame.CropBottomLeft.X, frame.CropBottomLeft.Y, frame.CropBottomLeft.Z }
+                } : null,
                 notes
             };
         }

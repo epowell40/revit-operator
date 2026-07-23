@@ -86,7 +86,19 @@ namespace RevitBridge.Logic.Handlers
                 var stem = $"Revit_{ElementIdCompat.GetValue(view.Id)}_{frameId}_inventory";
                 var path = SelectionUtil.ExportViewImage(doc, view, p.imageSize, folder, stem);
                 var (widthPx, heightPx) = SelectionUtil.ReadImageSize(path);
-                var frame = SelectionUtil.BuildRasterAffineFrame(view, widthPx, heightPx);
+                RasterAffineFrame frame;
+                try
+                {
+                    frame = SelectionUtil.BuildRasterAffineFrameFromViewOutline(view, widthPx, heightPx);
+                    if (frame.CropAspect <= 1e-9 || frame.FrameAspect <= 1e-9)
+                        throw new InvalidOperationException("The view outline produced a degenerate exported-raster frame.");
+                    warnings.Add("export-visible-elements mapped the fit-to-page raster from View.Outline and view basis directions.");
+                }
+                catch (Exception ex)
+                {
+                    frame = SelectionUtil.BuildRasterAffineFrame(view, widthPx, heightPx);
+                    warnings.Add($"View.Outline raster mapping was unavailable; fell back to CropBox mapping ({ex.Message}).");
+                }
 
                 if (frame.AspectCorrectionApplied)
                 {
@@ -255,7 +267,9 @@ namespace RevitBridge.Logic.Handlers
                 {
                     mapping = SelectionUtil.BuildRasterAffineMappingPayload(
                         frame,
-                        "Per-element pixel/image coordinates are derived from the same exported-raster affine mapping used for the saved frame.");
+                        frame.SourceFrameKind == "view_outline"
+                            ? "Per-element pixel/image coordinates are derived from View.Outline, view Origin/RightDirection/UpDirection, and the same fit-to-page raster used for the saved frame."
+                            : "Per-element pixel/image coordinates use the CropBox fallback because View.Outline mapping was unavailable.");
                 }
 
                 return Task.FromResult<object>(new

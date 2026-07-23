@@ -378,6 +378,11 @@ namespace RevitBridge.Logic.Handlers
             XYZ requestedPoint,
             FamilySymbol symbol)
         {
+            if (host is ReferencePlane referencePlane)
+            {
+                return PlaceOnReferencePlane(doc, referencePlane, requestedPoint, symbol);
+            }
+
             var options = new Options
             {
                 ComputeReferences = true,
@@ -408,6 +413,39 @@ namespace RevitBridge.Logic.Handlers
                 Instance = instance,
                 ProjectedPoint = selected.projection.XYZPoint,
                 ProjectionDistanceFt = selected.distance
+            };
+        }
+
+        private static HostFacePlacement PlaceOnReferencePlane(
+            Document doc,
+            ReferencePlane referencePlane,
+            XYZ requestedPoint,
+            FamilySymbol symbol)
+        {
+            var hostReference = referencePlane.GetReference();
+            if (hostReference == null)
+            {
+                throw new Exception(
+                    $"Reference plane {RevitBridge.Common.ElementIdCompat.GetValue(referencePlane.Id)} has no placement reference.");
+            }
+
+            var normal = referencePlane.Normal.Normalize();
+            var origin = referencePlane.BubbleEnd;
+            var signedDistance = (requestedPoint - origin).DotProduct(normal);
+            var projectedPoint = requestedPoint - normal.Multiply(signedDistance);
+            var referenceDirection = TangentDirection(normal);
+            var instance = doc.Create.NewFamilyInstance(
+                hostReference,
+                projectedPoint,
+                referenceDirection,
+                symbol);
+            if (instance == null) throw new Exception("Revit reference-plane placement returned no family instance.");
+
+            return new HostFacePlacement
+            {
+                Instance = instance,
+                ProjectedPoint = projectedPoint,
+                ProjectionDistanceFt = Math.Abs(signedDistance)
             };
         }
 
