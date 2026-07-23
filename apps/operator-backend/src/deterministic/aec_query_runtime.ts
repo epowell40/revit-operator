@@ -22,12 +22,15 @@ function resultPayload(result: ToolResult | undefined): Record<string, unknown> 
 function matchingResult(req: ChatRequest, actionId: string): ToolResult | undefined { return req.tool_results?.find(result => result.action_id === actionId); }
 
 function countFromPayload(payload: Record<string, unknown> | null): number | null {
-  if (Number.isSafeInteger(payload?.count) && (payload?.count as number) >= 0) return payload?.count as number;
+  for (const key of ["count", "totalMatches", "total", "totalSheets"]) {
+    if (Number.isSafeInteger(payload?.[key]) && (payload?.[key] as number) >= 0) return payload?.[key] as number;
+  }
   for (const key of ["elementIds", "elements", "items", "results"]) if (Array.isArray(payload?.[key])) return (payload?.[key] as unknown[]).length;
   return null;
 }
 
 function subjectLabel(task: AecSemanticTaskV1): string {
+  if (task.subject.semantic_class === "sheet" || task.subject.categories.some(category => category.toLocaleUpperCase() === "OST_SHEETS")) return "sheet";
   return task.subject.semantic_class === "other" ? (task.subject.terms[0] ?? "matching elements") : task.subject.semantic_class.replaceAll("_", " ");
 }
 
@@ -39,6 +42,7 @@ function scopeLabel(task: AecSemanticTaskV1): string {
   if (task.scope.sheets[0]) return `sheet ${task.scope.sheets[0]}`;
   if (task.scope.systems[0]) return `system ${task.scope.systems[0]}`;
   if (task.scope.kind === "selection") return "the current selection";
+  if (task.scope.kind === "document") return task.scope.document ?? "the whole Revit document";
   return "the requested scope";
 }
 
@@ -208,6 +212,7 @@ function continueRun(req: ChatRequest, state: QueryState): ChatResponse | null {
   const actionIds: Partial<Record<AecQueryWorkflowId, string>> = {
     "query.room_contents": "aec-query-room-contents",
     "query.level_elements": "aec-query-level-elements",
+    "query.document_sheets": "aec-query-document-sheets",
     "query.view_elements": "aec-query-view-elements",
     "query.sheet_elements": "aec-query-sheet-elements",
     "query.selection": "aec-query-selection"

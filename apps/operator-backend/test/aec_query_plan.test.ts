@@ -59,6 +59,22 @@ test("room count uses room-contents rather than a document-wide element query", 
   assert.deepEqual(plan.actions[0], { action_id: "aec-query-room-contents", method: "POST", path: "/revit/room-contents", body: { roomNumber: "403", mode: "auto", verticalScope: "room", limit: 10, categories: ["OST_ElectricalFixtures"], includeKeywords: ["receptacle"] } });
 });
 
+test("whole-document sheet count uses the native totals-only sheet inventory", () => {
+  const value = task();
+  value.operation = "count";
+  value.subject = { kind: "category", semantic_class: "sheet", terms: ["sheets"], categories: ["OST_Sheets"], family_name: null, type_name: null, system_name: null, identifiers: [] };
+  value.scope = { ...value.scope, kind: "document", document: "the current model" };
+  value.outputs = ["count", "summary"];
+  value.execution.allow_document_fallback = true;
+  const plan = planAecQueryTask(value);
+  assert.equal(plan.workflow_id, "query.document_sheets");
+  assert.deepEqual(plan.actions, [{ action_id: "aec-query-document-sheets", method: "POST", path: "/revit/sheets", body: { action: "count", countOnly: true } }]);
+  assert.equal(plan.evidence.exact_document_inventory, true);
+
+  value.subject = { ...value.subject, semantic_class: "mechanical_equipment", terms: ["equipment"], categories: ["OST_MechanicalEquipment"] };
+  assert.match(planAecQueryTask(value).blockers[0], /No bounded query workflow/);
+});
+
 test("planner pushes canonical level/category predicates and fails closed when native pushdown is impossible", () => {
   const namedView = task();
   namedView.scope = { ...namedView.scope, kind: "view", views: [{ id: null, name: "L4 - POWER" }] };
