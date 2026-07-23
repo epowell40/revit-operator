@@ -535,6 +535,7 @@ export type MepDraftAction = {
   method: "POST";
   path:
     | "/revit/mep-route-workflow"
+    | "/revit/create-mep-route"
     | "/revit/place-families"
     | "/revit/place-family-instance-on-host"
     | "/revit/connect-mep-elements"

@@ -588,6 +588,14 @@ namespace RevitBridge.Logic.Handlers.MEP
                 body["visualVerify"] = false;
                 body["verify"] = verify;
             }
+            else if (path == "/revit/create-mep-route")
+            {
+                // The enclosing TransactionGroup owns staged rollback. Keep the
+                // child route alive long enough for phase/visibility/readback
+                // checks, then roll the whole stage back when p.dryRun is true.
+                body["dryRun"] = false;
+                body["verify"] = verify;
+            }
             else if (path == "/revit/connect-mep-branch")
             {
                 body["dryRun"] = false;
@@ -624,6 +632,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             switch (NormalizePath(rawPath))
             {
                 case "/revit/mep-route-workflow": return new MepRouteWorkflowHandler();
+                case "/revit/create-mep-route": return new CreateMepRouteHandler();
                 case "/revit/place-families": return new PlaceFamiliesHandler();
                 case "/revit/place-family-instance-on-host": return new PlaceFamilyInstanceOnHostHandler();
                 case "/revit/connect-mep-elements": return new ConnectMepElementsHandler();
@@ -689,6 +698,22 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 var segmentIds = ReadLongArray(applyResult, "createdElementIds");
                 var fittingIds = ReadLongArray(applyResult, "createdFittingIds");
+                return new OperationOutput
+                {
+                    CreatedElementIds = segmentIds.Concat(fittingIds).Distinct().ToList(),
+                    RouteSegmentElementIds = segmentIds,
+                    RouteStartElementIds = segmentIds.Count > 0 ? new List<long> { segmentIds[0] } : new List<long>(),
+                    RouteEndElementIds = segmentIds.Count > 0 ? new List<long> { segmentIds[segmentIds.Count - 1] } : new List<long>()
+                };
+            }
+            if (path == "/revit/create-mep-route")
+            {
+                var segmentIds = ReadLongArray(response, "createdElementIds");
+                if (segmentIds.Count == 0)
+                    segmentIds = ReadLongArray(response, "dryRunElementIds");
+                var fittingIds = ReadLongArray(response, "createdFittingIds");
+                if (fittingIds.Count == 0)
+                    fittingIds = ReadLongArray(response, "dryRunFittingIds");
                 return new OperationOutput
                 {
                     CreatedElementIds = segmentIds.Concat(fittingIds).Distinct().ToList(),

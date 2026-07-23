@@ -80,6 +80,11 @@ import {
   registerExistingConditionsStagedWorkflow
 } from "../existing_conditions/staged_repair_ledger.js";
 import type { ExistingConditionsPlanPoint } from "../existing_conditions/registration.js";
+import {
+  buildRegisteredRouteSnapStagedWorkflowV1,
+  planRegisteredRouteConnectorSnapV1,
+  type RegisteredRouteSnapCandidateV1
+} from "../existing_conditions/registered_route_connector_snap.js";
 
 type OpenAiDecision = {
   assistant_message: string;
@@ -115,6 +120,7 @@ type OpenAiDecision = {
       | "redline_orient"
       | "gemini_redline_analyze"
       | "compile_registered_mep_reconstruction"
+      | "register_existing_conditions_route_snap"
       | "register_existing_conditions_mep_repair";
     command: string | null;
     code: string | null;
@@ -146,6 +152,8 @@ type OpenAiDecision = {
     include_code_execution: boolean | null;
     package_json: string | null;
     maximum_created_elements: number | null;
+    candidate_json: string | null;
+    connector_tool_action_id: string | null;
     supersedes_stage_key: string | null;
     repair_stage_key: string | null;
     operation_json: string | null;
@@ -2671,6 +2679,70 @@ async function compileRegisteredMepReconstructionForSession(args: {
       : {}),
     usage_constraints: reconstruction.compilation.usage_constraints,
     planner_normalization_warnings: reconstruction.planner_normalization_warnings
+  };
+}
+
+async function registerExistingConditionsRouteSnapForSession(args: {
+  req: ChatRequest;
+  action: Extract<WorkbenchAction, {
+    type: "register_existing_conditions_route_snap";
+  }>;
+}): Promise<Record<string, unknown>> {
+  let candidateValue: unknown;
+  try {
+    candidateValue = JSON.parse(args.action.candidate_json);
+  } catch {
+    throw new Error("registered_route_snap_candidate_json_invalid");
+  }
+  if (!candidateValue || typeof candidateValue !== "object" || Array.isArray(candidateValue)) {
+    throw new Error("registered_route_snap_candidate_json_must_be_object");
+  }
+  const connectorActionId = args.action.connector_tool_action_id.trim();
+  const connectorResult = (args.req.tool_results ?? []).find(result =>
+    result.action_id === connectorActionId &&
+    result.status === "done" &&
+    String(result.path ?? "").trim().toLowerCase() === "/revit/get-connectors" &&
+    result.result_json &&
+    typeof result.result_json === "object"
+  );
+  if (!connectorResult) {
+    throw new Error("registered_route_snap_requires_matching_live_connector_result");
+  }
+  const candidate = candidateValue as RegisteredRouteSnapCandidateV1;
+  const receipt = planRegisteredRouteConnectorSnapV1(candidate, {
+    native_connector_readback: connectorResult.result_json
+  });
+  if (receipt.status !== "ready") {
+    throw new Error(`registered_route_snap_deferred:${receipt.blockers.join(",")}`);
+  }
+  const workflow = buildRegisteredRouteSnapStagedWorkflowV1(candidate, receipt);
+  const sourceFrameId = String(candidate.source_frame_id ?? candidate.package_id ?? "").trim();
+  const registrationContextId = String(
+    candidate.registration_context_id ?? candidate.registration_receipt_sha256 ?? ""
+  ).trim();
+  const visionState = getRedlineVisionState(args.req.session_id);
+  visionState.last_registered_mep_workflow = {
+    source_frame_id: sourceFrameId,
+    source_view_id: candidate.view_id,
+    registration_context_id: registrationContextId,
+    execution_boundary: "staged_execution",
+    workflow: JSON.parse(JSON.stringify(workflow)) as AtomicMepDraftWorkflowRequest,
+    updated_at_ms: Date.now()
+  };
+  registerExistingConditionsStagedWorkflow({
+    sessionId: args.req.session_id,
+    sourceFrameId,
+    sourceViewId: candidate.view_id,
+    registrationContextId,
+    executionBoundary: "staged_execution",
+    workflow
+  });
+  visionState.updated_at_ms = Date.now();
+  return {
+    status: "registered_for_staged_dry_run",
+    connector_tool_action_id: connectorActionId,
+    snap_receipt: receipt,
+    workflow
   };
 }
 
@@ -17657,6 +17729,7 @@ function defaultSystemPrompt(): string {
     "- Before creating replacement geometry, inventory the bounded target region and retain useful source-grounded elements. Prefer one staged /revit/move-elements, /revit/rotate-elements, /revit/edit-mep-route-elements, or /revit/repair-mep-connectors operation when the existing graph is safely editable. Persist affected_element_ids and verify them; do not create a duplicate merely because the first location, size, or connection is wrong.",
     "- After compile_registered_mep_reconstruction returns status ready or partially_ready, use the persisted staged handoff for /revit/existing-conditions-mep-draft-workflow. The harness may group only explicitly marked, independent high-confidence straight backbones into one bounded provisional batch; all other work advances as the next single dependency-ready operation. Persist created or affected IDs plus registered continuation endpoints, then continue from those IDs. Never submit the entire operation graph as one all-or-nothing request. A write remains provisional until complete native ID readback, continuation-connector readback where applicable, focused visual evidence, and a reversible save-as checkpoint all succeed.",
     "- If a staged dry-run is rejected, preserve every accepted prior stage. Use workbench action register_existing_conditions_mep_repair with the exact blocked supersedes_stage_key, a new repair_stage_key, and operation_json containing one smaller replacement operation with the same action_key. Then let the staged handoff dry-run and apply that repair; do not recompile or replay accepted stages.",
+    "- After a registered route candidate exists and /revit/get-connectors returned current native readback, use register_existing_conditions_route_snap with candidate_json and the exact connector_tool_action_id. The deterministic host will reject fabricated, occupied, ambiguous, wrong-domain, wrong-size, wrong-system, wrong-direction, or over-tolerance endpoints and will register only one staged dry-run; do not author a monolithic replacement graph.",
     "- After one successful /revit/export-visible-elements call, do not repeat broad inventory exports in a loop. Use the sampled inventory plus /revit/pick-candidate-cluster or /revit/get-placement-context to continue.",
     "- If titleblock/sheet regions dominate, prefer full-sheet targeting (sheet viewId) before selecting any nested viewport.",
     "- /revit/export-view-frame does not support DrawingSheet or ThreeD views. For sheet/titleblock targets, pivot to /revit/find-elements on sheetNumber (+ includeSheetElements; add sheetRegions when available) and then /revit/get-element-summary.",
@@ -19248,6 +19321,16 @@ function normalizeWorkbenchActions(raw: unknown): WorkbenchAction[] {
           typeof a.maximum_created_elements === "number" && Number.isFinite(a.maximum_created_elements)
             ? Math.floor(a.maximum_created_elements)
             : undefined
+      });
+      continue;
+    }
+
+    if (type === "register_existing_conditions_route_snap") {
+      out.push({
+        type: "register_existing_conditions_route_snap",
+        candidate_json: typeof a.candidate_json === "string" ? a.candidate_json : "",
+        connector_tool_action_id:
+          typeof a.connector_tool_action_id === "string" ? a.connector_tool_action_id : ""
       });
       continue;
     }
@@ -21924,6 +22007,8 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
             "include_code_execution",
             "package_json",
             "maximum_created_elements",
+            "candidate_json",
+            "connector_tool_action_id",
             "supersedes_stage_key",
             "repair_stage_key",
             "operation_json",
@@ -21932,7 +22017,7 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
           properties: {
             type: {
               type: "string",
-              enum: ["shell", "python", "write_file", "read_file", "list_files", "analyze_redline", "map_sheet_regions", "redline_orient", "gemini_redline_analyze", "compile_registered_mep_reconstruction", "register_existing_conditions_mep_repair"]
+              enum: ["shell", "python", "write_file", "read_file", "list_files", "analyze_redline", "map_sheet_regions", "redline_orient", "gemini_redline_analyze", "compile_registered_mep_reconstruction", "register_existing_conditions_route_snap", "register_existing_conditions_mep_repair"]
             },
             command: { type: ["string", "null"] },
             code: { type: ["string", "null"] },
@@ -21964,6 +22049,8 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
             include_code_execution: { type: ["boolean", "null"] },
             package_json: { type: ["string", "null"] },
             maximum_created_elements: { type: ["number", "null"] },
+            candidate_json: { type: ["string", "null"] },
+            connector_tool_action_id: { type: ["string", "null"] },
             supersedes_stage_key: { type: ["string", "null"] },
             repair_stage_key: { type: ["string", "null"] },
             operation_json: { type: ["string", "null"] },
@@ -22245,6 +22332,8 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     let wb = attachArtifactSharesToWorkbenchResults(await executeWorkbenchActions(wbActions, {
       compileRegisteredMepReconstruction: (action) =>
         compileRegisteredMepReconstructionForSession({ req, action }),
+      registerExistingConditionsRouteSnap: (action) =>
+        registerExistingConditionsRouteSnapForSession({ req, action }),
       registerExistingConditionsMepRepair: (action) =>
         registerExistingConditionsMepRepairForSession({ req, action })
     }));

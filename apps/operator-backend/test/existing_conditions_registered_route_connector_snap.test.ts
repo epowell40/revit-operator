@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { planRegisteredRouteConnectorSnapV1 } from "../src/existing_conditions/registered_route_connector_snap.js";
+import {
+  buildRegisteredRouteSnapStagedWorkflowV1,
+  planRegisteredRouteConnectorSnapV1
+} from "../src/existing_conditions/registered_route_connector_snap.js";
 
 const HASH = "a".repeat(64);
 
@@ -146,5 +149,29 @@ test("fails closed when a pipe candidate supplies a route type id unsupported by
   assert.throws(
     () => planRegisteredRouteConnectorSnapV1({ ...candidate(), kind: "pipe" as const }, { native_connector_readback: connectorReadback() }),
     /pipe_route_type_id_unsupported/
+  );
+});
+
+test("converts a ready snap receipt into one staged route workflow", () => {
+  const input = candidate();
+  const receipt = planRegisteredRouteConnectorSnapV1(input, { native_connector_readback: connectorReadback() });
+  const workflow = buildRegisteredRouteSnapStagedWorkflowV1(input, receipt);
+  assert.equal(workflow.operations.length, 1);
+  assert.equal(workflow.operations[0]?.path, "/revit/create-mep-route");
+  assert.equal(workflow.operations[0]?.execution_mode, "single_action");
+  assert.equal(workflow.operations[0]?.apply_body?.dryRun, undefined);
+  assert.equal(workflow.maximumCreatedElements, 1);
+  assert.equal(workflow.targetViewId, 303);
+  assert.equal(workflow.inputFingerprintSha256, receipt.input_fingerprint_sha256);
+});
+
+test("rejects staged snap actions that differ beyond dryRun", () => {
+  const input = candidate();
+  const receipt = planRegisteredRouteConnectorSnapV1(input, { native_connector_readback: connectorReadback() });
+  assert.ok(receipt.apply_action);
+  receipt.apply_action!.body.ductSize = "10 inch";
+  assert.throws(
+    () => buildRegisteredRouteSnapStagedWorkflowV1(input, receipt),
+    /staged_actions_diverge/
   );
 });

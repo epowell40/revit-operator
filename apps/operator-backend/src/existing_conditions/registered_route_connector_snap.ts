@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import type { AtomicMepDraftWorkflowRequest } from "./mep_draft_plan.js";
 import type { SheetTopologyPoint } from "./sheet_topology_compiler.js";
 
 export type RegisteredRouteSnapCandidateV1 = {
@@ -16,6 +17,8 @@ export type RegisteredRouteSnapCandidateV1 = {
   system_type: string;
   route_type_name?: string;
   route_type_id?: number;
+  source_frame_id?: string;
+  registration_context_id?: string;
   shape: "round" | "rectangular" | "oval";
   size: string;
 };
@@ -350,5 +353,65 @@ export function planRegisteredRouteConnectorSnapV1(
       "each_created_endpoint_has_one_physical_external_connection",
       "focused_visual_overlay_matches_registered_source"
     ]
+  };
+}
+
+export function buildRegisteredRouteSnapStagedWorkflowV1(
+  candidate: RegisteredRouteSnapCandidateV1,
+  receipt: RegisteredRouteSnapReceiptV1
+): AtomicMepDraftWorkflowRequest {
+  if (receipt.status !== "ready" || receipt.blockers.length > 0) {
+    throw new Error(`registered_route_snap_not_ready:${receipt.blockers.join(",") || receipt.status}`);
+  }
+  if (
+    receipt.package_id !== clean(candidate.package_id) ||
+    receipt.primitive_id !== clean(candidate.primitive_id) ||
+    receipt.input_fingerprint_sha256 !== digest(candidate)
+  ) {
+    throw new Error("registered_route_snap_candidate_receipt_mismatch");
+  }
+  const dryRunAction = receipt.dry_run_action;
+  const applyAction = receipt.apply_action;
+  if (
+    !dryRunAction || !applyAction ||
+    dryRunAction.method !== "POST" || applyAction.method !== "POST" ||
+    dryRunAction.path !== "/revit/create-mep-route" || applyAction.path !== "/revit/create-mep-route" ||
+    dryRunAction.body.dryRun !== true || applyAction.body.dryRun !== false
+  ) {
+    throw new Error("registered_route_snap_staged_actions_invalid");
+  }
+  const dryRunBody = { ...dryRunAction.body };
+  const applyBody = { ...applyAction.body };
+  delete dryRunBody.dryRun;
+  delete applyBody.dryRun;
+  if (canonical(dryRunBody) !== canonical(applyBody)) {
+    throw new Error("registered_route_snap_staged_actions_diverge");
+  }
+  const pointCount = candidate.points.length;
+  const expectedCreatedMaximum = Math.max(1, (pointCount - 1) + Math.max(0, pointCount - 2));
+  const actionKey = `registered-route:${clean(candidate.primitive_id).replace(/[^a-zA-Z0-9._:-]+/g, "-")}`;
+  return {
+    inputFingerprintSha256: receipt.input_fingerprint_sha256,
+    provisionalObservationIds: [clean(candidate.primitive_id)],
+    operations: [{
+      action_key: actionKey,
+      observation_ids: [clean(candidate.primitive_id)],
+      path: "/revit/create-mep-route",
+      depends_on: [],
+      apply_body: JSON.parse(JSON.stringify(applyBody)) as NonNullable<
+        AtomicMepDraftWorkflowRequest["operations"][number]["apply_body"]
+      >,
+      expected_created_min: 1,
+      expected_created_max: expectedCreatedMaximum,
+      execution_mode: "single_action"
+    }],
+    dryRun: true,
+    verify: true,
+    maximumCreatedElements: expectedCreatedMaximum,
+    targetViewId: candidate.view_id,
+    applyTargetViewPhase: true,
+    requireAllCreatedElementsVisibleInTargetView: true,
+    benchmarkCredit: false,
+    authorizationBasis: "explicit_unscored_user_direction"
   };
 }

@@ -98,6 +98,11 @@ export type WorkbenchAction =
       maximum_created_elements?: number;
     }
   | {
+      type: "register_existing_conditions_route_snap";
+      candidate_json: string;
+      connector_tool_action_id: string;
+    }
+  | {
       type: "register_existing_conditions_mep_repair";
       supersedes_stage_key: string;
       repair_stage_key: string;
@@ -417,6 +422,7 @@ function isSafeRedlineWorkbenchAction(action: WorkbenchAction): boolean {
     action.type === "redline_orient" ||
     action.type === "gemini_redline_analyze" ||
     action.type === "compile_registered_mep_reconstruction" ||
+    action.type === "register_existing_conditions_route_snap" ||
     action.type === "register_existing_conditions_mep_repair";
 }
 
@@ -428,6 +434,9 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
   createRedlineAnalyzeEvidence?: typeof tryCreateRedlineAnalyzeEvidence;
   compileRegisteredMepReconstruction?: (
     action: Extract<WorkbenchAction, { type: "compile_registered_mep_reconstruction" }>
+  ) => Promise<Record<string, unknown>>;
+  registerExistingConditionsRouteSnap?: (
+    action: Extract<WorkbenchAction, { type: "register_existing_conditions_route_snap" }>
   ) => Promise<Record<string, unknown>>;
   registerExistingConditionsMepRepair?: (
     action: Extract<WorkbenchAction, { type: "register_existing_conditions_mep_repair" }>
@@ -716,6 +725,36 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
         break;
       }
 
+      if (action.type === "register_existing_conditions_route_snap") {
+        if (!deps.registerExistingConditionsRouteSnap) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "Existing-conditions registered route snapping is unavailable in this runtime."
+          });
+          break;
+        }
+        if (!(action.candidate_json ?? "").trim() || !(action.connector_tool_action_id ?? "").trim()) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "register_existing_conditions_route_snap requires candidate_json and connector_tool_action_id."
+          });
+          break;
+        }
+        const registered = await deps.registerExistingConditionsRouteSnap(action);
+        results.push({
+          index: i + 1,
+          type: action.type,
+          ok: true,
+          summary: "Registered one source-grounded connector-snapped route for staged dry-run.",
+          details: registered
+        });
+        break;
+      }
+
       if (action.type === "python") {
         const code = (action.code ?? "").trim();
         if (!code) {
@@ -782,6 +821,7 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
       });
       if (
         action.type === "compile_registered_mep_reconstruction" ||
+        action.type === "register_existing_conditions_route_snap" ||
         action.type === "register_existing_conditions_mep_repair"
       ) break;
     }
