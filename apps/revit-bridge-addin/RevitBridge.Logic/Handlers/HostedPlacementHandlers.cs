@@ -4001,17 +4001,19 @@ namespace RevitBridge.Logic.Handlers
             var preferredFaceNormal = p.hostFaceNormalXyz == null
                 ? null
                 : new XYZ(p.hostFaceNormalXyz[0], p.hostFaceNormalXyz[1], p.hostFaceNormalXyz[2]);
-            var facePlacement = HostedPlacementUtil.TryResolveFaceHostedPlacementReference(
-                host,
-                roomWall,
-                faceResolutionPoint,
-                preferredFaceReferenceDirection,
-                warnings,
-                sourceHostFaceStableReference,
-                preferredFaceNormal
-            );
             var requiresFaceHostedPlacement = HostedPlacementUtil.RequiresLinkedFaceHostedPlacement(host, roomWall)
                 || symbol.Family.FamilyPlacementType == FamilyPlacementType.WorkPlaneBased;
+            var facePlacement = requiresFaceHostedPlacement
+                ? HostedPlacementUtil.TryResolveFaceHostedPlacementReference(
+                    host,
+                    roomWall,
+                    faceResolutionPoint,
+                    preferredFaceReferenceDirection,
+                    warnings,
+                    sourceHostFaceStableReference,
+                    preferredFaceNormal
+                )
+                : null;
             if (requiresFaceHostedPlacement && facePlacement == null)
             {
                 var resolutionDetail = warnings.LastOrDefault(value =>
