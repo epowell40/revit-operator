@@ -136,6 +136,10 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 warnings.Add($"One or more route points used resolved routing elevation Z={ctx.RecommendedZ:G6} ft ({ctx.Assumption}).");
             }
+            else
+            {
+                warnings.RemoveAll(IsUnusedElevationContextWarning);
+            }
 
             var totalLength = 0.0;
             for (var i = 0; i < resolvedPoints.Count - 1; i++)
@@ -407,7 +411,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                             fromSize = j.FromSize,
                             toSize = j.ToSize
                         }).ToList(),
-                        chosenElevation = new { zFt = ctx.RecommendedZ, mode = ctx.RecommendedMode, confidence = ctx.Confidence, assumption = ctx.Assumption, usedFallback = usedElevationFallback },
+                        chosenElevation = BuildChosenElevation(ctx, resolvedPoints, usedElevationFallback),
                         createdElementIds = p.dryRun ? new List<long>() : createdIds,
                         createdFittingIds = p.dryRun ? new List<long>() : fittingIds,
                         dryRunElementIds = p.dryRun ? createdIds : new List<long>(),
@@ -601,6 +605,42 @@ namespace RevitBridge.Logic.Handlers.MEP
                 return null;
             }
             return byId ?? byName;
+        }
+
+        private static bool IsUnusedElevationContextWarning(string warning)
+        {
+            var value = warning ?? "";
+            return value.IndexOf("recommended elevation", StringComparison.OrdinalIgnoreCase) >= 0
+                || value.IndexOf("using explicit level offset routing mode", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static object BuildChosenElevation(MepRoutingUtil.RoutingContext ctx, List<XYZ> resolvedPoints, bool usedFallback)
+        {
+            if (usedFallback)
+            {
+                return new
+                {
+                    zFt = (double?)ctx.RecommendedZ,
+                    mode = ctx.RecommendedMode,
+                    confidence = ctx.Confidence,
+                    assumption = ctx.Assumption,
+                    usedFallback = true
+                };
+            }
+
+            var minimumZ = resolvedPoints.Min(point => point.Z);
+            var maximumZ = resolvedPoints.Max(point => point.Z);
+            var uniform = maximumZ - minimumZ <= 1e-6;
+            return new
+            {
+                zFt = uniform ? (double?)minimumZ : null,
+                mode = uniform ? "explicit_points" : "explicit_profile",
+                confidence = "high",
+                assumption = uniform
+                    ? "All route points supplied the same explicit Z."
+                    : "All route points supplied explicit Z values defining the route profile.",
+                usedFallback = false
+            };
         }
 
         private static object ApplyAndVerifyWorkset(Element element, Workset workset, bool verify)

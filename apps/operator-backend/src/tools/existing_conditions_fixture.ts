@@ -181,6 +181,11 @@ import {
 } from "../existing_conditions/sheet_pixel_interpretation.js";
 import { validateSheetPixelEvidenceV1 } from "../existing_conditions/sheet_pixel_evidence.js";
 import {
+  planRegisteredRouteConnectorSnapV1,
+  type RegisteredRouteSnapCandidateV1,
+  type RegisteredRouteSnapContextV1
+} from "../existing_conditions/registered_route_connector_snap.js";
+import {
   analyzeExistingConditionsSheetWithGeminiV1,
   type GeminiExistingConditionsSheetRequestV1
 } from "../vision/gemini_existing_conditions_sheet.js";
@@ -387,6 +392,7 @@ function usage(): never {
     "  npm run existing-conditions -- compile-sheet-pixel-interpretation --input <normalized-sheet-observations.json> --context <trusted-frames-and-calibration.json> --out <compiled-topology.json>",
     "  npm run existing-conditions -- interpret-sheet-gemini --input <source-only-sheet-request.json> --out <normalized-sheet-observations.json>",
     "  npm run existing-conditions -- validate-sheet-pixel-evidence --input <observations-or-provider-receipt.json> --image <source-image.png> --out <evidence-receipt.json> [--overlay-out <overlay.png>]",
+    "  npm run existing-conditions -- plan-registered-route-snap --input <registered-route-candidate.json> --context <native-connectors-and-policy.json> --out <staged-route-action.json>",
     "  npm run existing-conditions -- compile-provisional-plan-traces --input <plan-trace-draft.json> --context <source-accounting-context.json> --out <compiled-plan.json> [--workflow-out <atomic-dry-run-request.json> --allow-unscored-user-workflow] [--max-created <count>]",
     "  npm run existing-conditions -- compile-registered-mep-observations --input <registered-pixel-observations.json> --out <compilation.json> [--package-out <mep-draft-package.json>] [--workflow-out <atomic-dry-run-request.json> --allow-unscored-user-workflow] [--max-created <count>]",
     "  npm run existing-conditions -- promote-registered-mep-observations --input <registered-pixel-observations.json> --truth <evaluator-ground-truth.json> --out <promotion.json> --score-out <pre-apply-score.json> --workflow-out <atomic-request.json> [--max-created <count>] [--apply]",
@@ -2009,6 +2015,23 @@ async function main(): Promise<void> {
       interpretation: sheetPixelInterpretation(readJson(inputPath)),
       ...(overlayPath ? { overlay_path: overlayPath } : {})
     }));
+    return;
+  }
+  if (command === "plan-registered-route-snap") {
+    const inputPath = requiredArgument("--input");
+    const contextPath = requiredArgument("--context");
+    const outputPath = requiredArgument("--out");
+    assertFreshDistinctOutputPaths(
+      [{ flag: "--out", value: outputPath }],
+      [{ flag: "--input", value: inputPath }, { flag: "--context", value: contextPath }]
+    );
+    writeJson(
+      outputPath,
+      planRegisteredRouteConnectorSnapV1(
+        readJson(inputPath) as RegisteredRouteSnapCandidateV1,
+        readJson(contextPath) as RegisteredRouteSnapContextV1
+      )
+    );
     return;
   }
   if (command === "interpret-sheet-gemini") {
