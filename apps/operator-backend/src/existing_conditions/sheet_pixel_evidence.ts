@@ -12,6 +12,10 @@ export type SheetPixelEvidencePolicyV1 = {
   outlined_network_min_half_span_px?: number;
   outlined_network_max_half_span_px?: number;
   outlined_network_edge_radius_px?: number;
+  outlined_network_topology_interruption_mode?: "ignore" | "defer";
+  outlined_network_center_ink_radius_px?: number;
+  outlined_network_topology_endpoint_exclusion_fraction?: number;
+  outlined_network_topology_min_run_samples?: number;
   sample_spacing_px: number;
   accepted_support_fraction: number;
   provisional_support_fraction: number;
@@ -38,6 +42,9 @@ export type SheetPixelRouteEvidenceV1 = {
   chromatic_support_fraction?: number;
   monochrome_support_fraction?: number;
   coherent_hue_degrees?: number;
+  topology_interruption_sample_fractions?: number[];
+  topology_interruption_run_count?: number;
+  requires_topology_split?: boolean;
 };
 
 export type SheetPixelPointEvidenceV1 = {
@@ -105,6 +112,10 @@ const DEFAULT_POLICY: SheetPixelEvidencePolicyV1 = {
   outlined_network_min_half_span_px: 2,
   outlined_network_max_half_span_px: 15,
   outlined_network_edge_radius_px: 1,
+  outlined_network_topology_interruption_mode: "ignore",
+  outlined_network_center_ink_radius_px: 1,
+  outlined_network_topology_endpoint_exclusion_fraction: 0.05,
+  outlined_network_topology_min_run_samples: 1,
   sample_spacing_px: 2,
   accepted_support_fraction: 0.82,
   provisional_support_fraction: 0.55,
@@ -151,6 +162,10 @@ function policy(input?: Partial<SheetPixelEvidencePolicyV1>): ResolvedSheetPixel
   if (pointSupportMode !== "auto" && pointSupportMode !== "chromatic" && pointSupportMode !== "monochrome") {
     throw new Error("sheet_pixel_evidence_point_support_mode_invalid");
   }
+  const topologyInterruptionMode = input?.outlined_network_topology_interruption_mode ?? DEFAULT_POLICY.outlined_network_topology_interruption_mode!;
+  if (topologyInterruptionMode !== "ignore" && topologyInterruptionMode !== "defer") {
+    throw new Error("sheet_pixel_evidence_outlined_network_topology_interruption_mode_invalid");
+  }
   const result = {
     route_support_mode: routeSupportMode,
     maximum_luminance: bounded(input?.maximum_luminance, DEFAULT_POLICY.maximum_luminance, 0, 255, "sheet_pixel_evidence_maximum_luminance"),
@@ -158,6 +173,10 @@ function policy(input?: Partial<SheetPixelEvidencePolicyV1>): ResolvedSheetPixel
     outlined_network_min_half_span_px: bounded(input?.outlined_network_min_half_span_px, DEFAULT_POLICY.outlined_network_min_half_span_px!, 1, 50, "sheet_pixel_evidence_outlined_network_min_half_span_px"),
     outlined_network_max_half_span_px: bounded(input?.outlined_network_max_half_span_px, DEFAULT_POLICY.outlined_network_max_half_span_px!, 1, 100, "sheet_pixel_evidence_outlined_network_max_half_span_px"),
     outlined_network_edge_radius_px: bounded(input?.outlined_network_edge_radius_px, DEFAULT_POLICY.outlined_network_edge_radius_px!, 0, 10, "sheet_pixel_evidence_outlined_network_edge_radius_px"),
+    outlined_network_topology_interruption_mode: topologyInterruptionMode,
+    outlined_network_center_ink_radius_px: bounded(input?.outlined_network_center_ink_radius_px, DEFAULT_POLICY.outlined_network_center_ink_radius_px!, 0, 10, "sheet_pixel_evidence_outlined_network_center_ink_radius_px"),
+    outlined_network_topology_endpoint_exclusion_fraction: unit(input?.outlined_network_topology_endpoint_exclusion_fraction ?? DEFAULT_POLICY.outlined_network_topology_endpoint_exclusion_fraction!, "sheet_pixel_evidence_outlined_network_topology_endpoint_exclusion_fraction"),
+    outlined_network_topology_min_run_samples: bounded(input?.outlined_network_topology_min_run_samples, DEFAULT_POLICY.outlined_network_topology_min_run_samples!, 1, 100, "sheet_pixel_evidence_outlined_network_topology_min_run_samples"),
     sample_spacing_px: bounded(input?.sample_spacing_px, DEFAULT_POLICY.sample_spacing_px, 0.25, 50, "sheet_pixel_evidence_sample_spacing_px"),
     accepted_support_fraction: unit(input?.accepted_support_fraction ?? DEFAULT_POLICY.accepted_support_fraction, "sheet_pixel_evidence_accepted_support_fraction"),
     provisional_support_fraction: unit(input?.provisional_support_fraction ?? DEFAULT_POLICY.provisional_support_fraction, "sheet_pixel_evidence_provisional_support_fraction"),
@@ -177,6 +196,28 @@ function policy(input?: Partial<SheetPixelEvidencePolicyV1>): ResolvedSheetPixel
   if (result.outlined_network_min_half_span_px > result.outlined_network_max_half_span_px) {
     throw new Error("sheet_pixel_evidence_outlined_network_span_invalid");
   }
+  return result;
+}
+
+function topologyInterruptionFractions(flags: boolean[], endpointExclusionFraction: number, minimumRunSamples: number): number[] {
+  const result: number[] = [];
+  const denominator = Math.max(1, flags.length - 1);
+  let runStart = -1;
+  const closeRun = (runEnd: number) => {
+    if (runStart < 0 || (runEnd - runStart + 1) < minimumRunSamples) {
+      runStart = -1;
+      return;
+    }
+    const center = (runStart + runEnd) / 2;
+    const fraction = center / denominator;
+    if (fraction > endpointExclusionFraction && fraction < 1 - endpointExclusionFraction) result.push(fraction);
+    runStart = -1;
+  };
+  flags.forEach((value, index) => {
+    if (value && runStart < 0) runStart = index;
+    if (!value && runStart >= 0) closeRun(index - 1);
+  });
+  if (runStart >= 0) closeRun(flags.length - 1);
   return result;
 }
 
@@ -313,6 +354,25 @@ export function scoreSheetPixelRouteEvidenceV1(args: {
             resolvedPolicy.minimum_chromatic_chroma,
             resolvedPolicy.corridor_radius_px
           ));
+      const topologyInterruptionSampleFractions = resolvedPolicy.route_support_mode === "outlined_network_centerline"
+        ? topologyInterruptionFractions(
+            samples.map(sample => {
+              const center = nearbyEvidence(
+                args.pixels,
+                sample.x,
+                sample.y,
+                resolvedPolicy.maximum_luminance,
+                resolvedPolicy.minimum_chromatic_chroma,
+                resolvedPolicy.outlined_network_center_ink_radius_px
+              );
+              return center.monochrome || center.hue_bins.size > 0;
+            }),
+            resolvedPolicy.outlined_network_topology_endpoint_exclusion_fraction,
+            resolvedPolicy.outlined_network_topology_min_run_samples
+          )
+        : [];
+      const requiresTopologySplit = resolvedPolicy.outlined_network_topology_interruption_mode === "defer"
+        && topologyInterruptionSampleFractions.length > 0;
       const hueSupportCounts = Array.from({ length: HUE_BIN_COUNT }, (_, hueBin) =>
         evidence.filter(sample => [...sample.hue_bins].some(sampleBin => circularHueBinDistance(sampleBin, hueBin) <= 1)).length
       );
@@ -340,11 +400,14 @@ export function scoreSheetPixelRouteEvidenceV1(args: {
       }
       const supportFraction = supportedCount / supported.length;
       const longestUnsupportedFraction = longestUnsupported / supported.length;
-      const status = supportFraction >= resolvedPolicy.accepted_support_fraction && longestUnsupportedFraction <= resolvedPolicy.maximum_accepted_unsupported_run_fraction
+      const geometryStatus = supportFraction >= resolvedPolicy.accepted_support_fraction && longestUnsupportedFraction <= resolvedPolicy.maximum_accepted_unsupported_run_fraction
         ? "accepted_raster_support"
         : supportFraction >= resolvedPolicy.provisional_support_fraction
           ? "provisional_raster_support"
           : "rejected_raster_extent";
+      const status = geometryStatus === "accepted_raster_support" && requiresTopologySplit
+        ? "provisional_raster_support"
+        : geometryStatus;
       return {
         primitive_id: primitive.primitive_id,
         sample_count: samples.length,
@@ -355,6 +418,13 @@ export function scoreSheetPixelRouteEvidenceV1(args: {
         support_modality: supportModality,
         chromatic_support_fraction: chromaticSupportFraction,
         monochrome_support_fraction: monochromeSupportFraction,
+        ...(topologyInterruptionSampleFractions.length > 0
+          ? {
+              topology_interruption_sample_fractions: topologyInterruptionSampleFractions,
+              topology_interruption_run_count: topologyInterruptionSampleFractions.length
+            }
+          : {}),
+        ...(requiresTopologySplit ? { requires_topology_split: true } : {}),
         ...(usesChromaticSupport
           ? { coherent_hue_degrees: coherentHueBin * HUE_BIN_WIDTH_DEGREES }
           : {})

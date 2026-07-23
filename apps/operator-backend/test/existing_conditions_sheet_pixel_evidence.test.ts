@@ -125,6 +125,64 @@ test("outlined-network mode accepts the centerline and rejects tracing either vi
   assert.equal(corridor.route_evidence.find(item => item.primitive_id === "visible-boundary")?.status, "accepted_raster_support");
 });
 
+test("outlined-network topology interruptions defer a geometrically supported unsplit route", () => {
+  const canvas = createCanvas(200, 100);
+  const context = canvas.getContext("2d");
+  context.fillStyle = "white";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.strokeStyle = "black";
+  context.lineWidth = 2;
+  context.beginPath();
+  context.moveTo(20, 30);
+  context.lineTo(180, 30);
+  context.moveTo(20, 40);
+  context.lineTo(180, 40);
+  context.moveTo(100, 27);
+  context.lineTo(100, 43);
+  context.stroke();
+  const input = interpretation();
+  input.primitives = [{
+    ...input.primitives[0]!,
+    primitive_id: "unsplit-outline",
+    source_mark_ids: ["mark-unsplit-outline"],
+    points: [{ u: 0.1, v: 0.35 }, { u: 0.9, v: 0.35 }]
+  }];
+  input.source_marks = [{
+    source_mark_id: "mark-unsplit-outline",
+    source_view_key: "view",
+    disposition: { status: "candidate", primitive_ids: ["unsplit-outline"] }
+  }];
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+  const commonPolicy = {
+    route_support_mode: "outlined_network_centerline" as const,
+    outlined_network_min_half_span_px: 3,
+    outlined_network_max_half_span_px: 8,
+    outlined_network_edge_radius_px: 1,
+    outlined_network_center_ink_radius_px: 1,
+    outlined_network_topology_endpoint_exclusion_fraction: 0.05
+  };
+
+  const legacy = scoreSheetPixelRouteEvidenceV1({
+    pixels: { width: canvas.width, height: canvas.height, data: pixels.data },
+    interpretation: input,
+    policy: commonPolicy
+  }).route_evidence[0]!;
+  assert.equal(legacy.status, "accepted_raster_support");
+  assert.equal(legacy.requires_topology_split, undefined);
+  assert.equal(legacy.topology_interruption_run_count, 1);
+
+  const guarded = scoreSheetPixelRouteEvidenceV1({
+    pixels: { width: canvas.width, height: canvas.height, data: pixels.data },
+    interpretation: input,
+    policy: { ...commonPolicy, outlined_network_topology_interruption_mode: "defer" }
+  }).route_evidence[0]!;
+  assert.equal(guarded.support_fraction, 1);
+  assert.equal(guarded.status, "provisional_raster_support");
+  assert.equal(guarded.requires_topology_split, true);
+  assert.equal(guarded.topology_interruption_run_count, 1);
+  assert.ok(Math.abs(guarded.topology_interruption_sample_fractions![0]! - 0.5) < 0.03);
+});
+
 test("chromatic routes use coherent hue support and do not inherit black-symbol overlap", () => {
   const canvas = createCanvas(200, 120);
   const context = canvas.getContext("2d");
