@@ -237,7 +237,6 @@ export function planRegisteredRouteConnectorSnapV1(
   if (!Number.isSafeInteger(candidate.view_id) || candidate.view_id <= 0) throw new Error("registered_route_snap_view_id_invalid");
   if (!clean(candidate.level_name) || !clean(candidate.size) || (candidate.kind !== "conduit" && !clean(candidate.system_type))) throw new Error("registered_route_snap_native_mapping_required");
   if (candidate.shape !== "round") throw new Error("registered_route_snap_v1_only_supports_round_profiles");
-  if (candidate.kind === "pipe" && candidate.route_type_id !== undefined) throw new Error("registered_route_snap_pipe_route_type_id_unsupported");
   const elevation = finite(candidate.elevation_z_ft, "registered_route_snap_elevation_z_ft");
   const policy: RegisteredRouteSnapPolicyV1 = {
     maximum_endpoint_snap_ft: positive(context.policy?.maximum_endpoint_snap_ft ?? DEFAULT_REGISTERED_ROUTE_SNAP_POLICY_V1.maximum_endpoint_snap_ft, "maximum_endpoint_snap_ft"),
@@ -329,6 +328,7 @@ export function planRegisteredRouteConnectorSnapV1(
     ...(candidate.kind === "conduit" ? { diameter: candidate.size } : {}),
     ...(candidate.route_type_name ? { [candidate.kind === "duct" ? "ductType" : candidate.kind === "pipe" ? "pipeType" : "conduitType"]: candidate.route_type_name } : {}),
     ...(candidate.route_type_id && candidate.kind === "duct" ? { ductTypeId: candidate.route_type_id } : {}),
+    ...(candidate.route_type_id && candidate.kind === "pipe" ? { pipeTypeId: candidate.route_type_id } : {}),
     ...(candidate.route_type_id && candidate.kind === "conduit" ? { conduitTypeId: candidate.route_type_id } : {})
   };
   const action = (dryRun: boolean) => ({ method: "POST" as const, path: "/revit/create-mep-route" as const, body: { ...baseBody, dryRun } });

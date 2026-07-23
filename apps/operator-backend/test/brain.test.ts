@@ -318,6 +318,17 @@ test("existing-conditions intent persists across empty tool-result continuation 
   assert.equal(calls, 0);
 });
 
+test("structured existing-conditions workbench names enter the provider-neutral one-action loop", () => {
+  const req = {
+    ...mkReq(
+      "Emit exactly one register_existing_conditions_route_frontier workbench action, then permit only the generated staged dry-run; do not apply or save."
+    ),
+    session_id: `structured-existing-routing-${Date.now()}-${Math.random()}`
+  } satisfies ChatRequest;
+
+  assert.equal(__testOnlyIsExistingConditionsReconstructionRequest(req), true);
+});
+
 test("staged existing-conditions harness wording enters the host one-action guard", { concurrency: false }, () => {
   const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
   process.env.OPERATOR_WORKSPACE_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "operator-staged-harness-routing-"));

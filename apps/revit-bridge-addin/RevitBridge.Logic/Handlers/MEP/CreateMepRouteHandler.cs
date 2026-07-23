@@ -30,6 +30,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             public long? ductTypeId { get; set; }
             public string? ductShape { get; set; }
             public string? pipeType { get; set; }
+            public long? pipeTypeId { get; set; }
             public string? conduitType { get; set; }
             public long? conduitTypeId { get; set; }
             public string? ductSize { get; set; }
@@ -157,7 +158,10 @@ namespace RevitBridge.Logic.Handlers.MEP
                 ? MepRoutingUtil.ResolveDuctType(doc, p.ductTypeId, p.ductType)
                 : null;
             DuctType? dType = ductTypeResolution?.Selected;
-            PipeType? pType = kind == "pipe" ? MepRoutingUtil.FindPipeType(doc, p.pipeType) : null;
+            MepRoutingUtil.PipeTypeResolution? pipeTypeResolution = kind == "pipe"
+                ? MepRoutingUtil.ResolvePipeType(doc, p.pipeTypeId, p.pipeType)
+                : null;
+            PipeType? pType = pipeTypeResolution?.Selected;
             MepRoutingUtil.ConduitTypeResolution? conduitTypeResolution = kind == "conduit"
                 ? MepRoutingUtil.ResolveConduitType(doc, p.conduitTypeId, p.conduitType)
                 : null;
@@ -174,9 +178,12 @@ namespace RevitBridge.Logic.Handlers.MEP
                         ? ductTypeResolution!.Receipt.Error
                         : kind == "conduit" && conduitType == null && !string.IsNullOrWhiteSpace(conduitTypeResolution?.Error)
                             ? conduitTypeResolution!.Error
+                            : kind == "pipe" && pType == null && !string.IsNullOrWhiteSpace(pipeTypeResolution?.Error)
+                                ? pipeTypeResolution!.Error
                             : "Could not find required Revit MEP definitions for level/system/type.",
                     selected = BuildSelected(ctx, sysType, dType, pType, conduitType),
                     ductTypeCandidates = ductTypeResolution?.Receipt.Candidates,
+                    pipeTypeCandidates = pipeTypeResolution?.Candidates,
                     conduitTypeCandidates = conduitTypeResolution?.Candidates,
                     warnings
                 });

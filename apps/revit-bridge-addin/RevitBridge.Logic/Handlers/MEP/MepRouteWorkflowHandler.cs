@@ -27,6 +27,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             public long? ductTypeId { get; set; }
             public string? ductShape { get; set; }
             public string? pipeType { get; set; }
+            public long? pipeTypeId { get; set; }
             public string? conduitType { get; set; }
             public long? conduitTypeId { get; set; }
             public string? ductSize { get; set; }
@@ -299,6 +300,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             ductTypeId = p.ductTypeId,
             ductShape = p.ductShape,
             pipeType = p.pipeType,
+            pipeTypeId = p.pipeTypeId,
             conduitType = p.conduitType,
             conduitTypeId = p.conduitTypeId,
             ductSize = p.ductSize,

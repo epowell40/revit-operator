@@ -175,7 +175,7 @@ test("defers when adjacent native route type metadata is absent", () => {
   assert.ok(receipt.blockers.includes("frontier_route_type_consensus_failed"));
 });
 
-test("pipe frontier resolves by native type name without emitting unsupported pipe type id", () => {
+test("pipe frontier carries the stable native type id into route planning", () => {
   const input = { ...candidate(), kind: "pipe" as const, source_claims: [] };
   const pipeReadback = readback();
   for (const row of pipeReadback.results as any[]) {
@@ -191,5 +191,5 @@ test("pipe frontier resolves by native type name without emitting unsupported pi
   assert.equal(receipt.status, "ready");
   assert.equal(receipt.resolved_candidate?.system_type, "Domestic Cold Water");
   assert.equal(receipt.resolved_candidate?.route_type_name, "Standard");
-  assert.equal(receipt.resolved_candidate?.route_type_id, undefined);
+  assert.equal(receipt.resolved_candidate?.route_type_id, 139186);
 });

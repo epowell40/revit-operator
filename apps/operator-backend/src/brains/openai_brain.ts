@@ -3044,6 +3044,48 @@ function buildRegisteredMepWorkflowHandoffResponse(
     sessionId,
     workflow: persisted.workflow
   });
+  if (
+    plan.state === "apply" &&
+    req &&
+    isExplicitExistingConditionsDryRunOnlyRequest(req)
+  ) {
+    const dryRunResult = [...toolResults].reverse().find(result =>
+      result.status === "done" &&
+      String(result.path ?? "").trim().toLowerCase() ===
+        "/revit/existing-conditions-mep-draft-workflow" &&
+      result.result_json &&
+      typeof result.result_json === "object" &&
+      String((result.result_json as Record<string, unknown>).inputFingerprintSha256 ?? "")
+        .trim()
+        .toLowerCase() === fingerprint &&
+      String((result.result_json as Record<string, unknown>).status ?? "")
+        .trim()
+        .toLowerCase() === "dryrunready"
+    );
+    const result = (dryRunResult?.result_json ?? {}) as Record<string, unknown>;
+    const receipt = {
+      schema: "operator.existing_conditions_dry_run_receipt.v1",
+      status: "dry_run_verified_no_apply",
+      workflow_fingerprint_sha256: fingerprint,
+      stage_key: String(result.stageKey ?? plan.stage_key ?? ""),
+      rollback_verified: result.rollbackVerified === true,
+      residual_created_element_ids: Array.isArray(result.residualCreatedElementIds)
+        ? result.residualCreatedElementIds
+        : [],
+      transient_created_element_ids: Array.isArray(result.transientCreatedElementIds)
+        ? result.transientCreatedElementIds
+        : [],
+      next_stage: "apply_requires_new_authorization"
+    };
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message:
+        `Stage ${plan.action_keys.join(", ")} passed its rollback-verified dry-run. ` +
+        "I stopped before apply or save as requested. " +
+        `Dry-run receipt: ${canonicalJsonString(receipt)}`,
+      actions: []
+    };
+  }
   if (plan.state === "blocked") {
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
@@ -3101,6 +3143,36 @@ function buildRegisteredMepWorkflowHandoffResponse(
       }
     ]
   };
+}
+
+function buildCurrentRegisteredMepToolContinuationResponse(
+  req: ChatRequest
+): ChatResponse | null {
+  const latestToolResults = Array.isArray(req.tool_results) ? req.tool_results : [];
+  const toolResults = getAugmentedToolResults(req, 120);
+  const persisted = persistedRegisteredMepWorkflow(req.session_id);
+  if (!persisted) return null;
+  const fingerprint = String(
+    persisted.workflow.inputFingerprintSha256 ?? ""
+  ).trim().toLowerCase();
+  const hasMatchingWorkflowResult = toolResults.some(result =>
+    result.status === "done" &&
+    String(result.path ?? "").trim().toLowerCase() ===
+      "/revit/existing-conditions-mep-draft-workflow" &&
+    result.result_json &&
+    typeof result.result_json === "object" &&
+    String((result.result_json as Record<string, unknown>).inputFingerprintSha256 ?? "")
+      .trim()
+      .toLowerCase() === fingerprint
+  );
+  if (!hasMatchingWorkflowResult) return null;
+  return buildRegisteredMepWorkflowHandoffResponse(
+    req.session_id,
+    toolResults,
+    req.message_id,
+    latestToolResults,
+    req
+  );
 }
 
 function buildRegisteredMepCompileOnlyReceipt(
@@ -4218,6 +4290,36 @@ function toolResultKey(r: ToolResult): string {
   return `${r.action_id}|${r.method}|${(r.path ?? "").trim().toLowerCase()}|${r.status}`;
 }
 
+function loadPersistedToolResultsFromRunBundle(
+  sessionId: string,
+  maxRecent: number
+): ToolResult[] {
+  if (!sessionId) return [];
+  try {
+    const filePath = path.join(
+      ensureWorkspaceLayout().runsSessions,
+      safeRunBundleSessionDirName(sessionId),
+      "tool_outputs.jsonl"
+    );
+    if (!fs.existsSync(filePath)) return [];
+    return fs.readFileSync(filePath, "utf8")
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(-Math.max(1, Math.min(200, maxRecent)))
+      .map(line => {
+        try {
+          const row = JSON.parse(line) as Record<string, unknown>;
+          return asToolResult(row.tool_result);
+        } catch {
+          return null;
+        }
+      })
+      .filter((result): result is ToolResult => !!result);
+  } catch {
+    return [];
+  }
+}
+
 function getAugmentedToolResults(req: ChatRequest, maxRecent = 40): ToolResult[] {
   const current = (Array.isArray(req.tool_results) ? req.tool_results : [])
     .map((r) => asToolResult(r))
@@ -4231,9 +4333,13 @@ function getAugmentedToolResults(req: ChatRequest, maxRecent = 40): ToolResult[]
   } catch {
     recent = [];
   }
-  if (recent.length === 0) return current;
+  const persisted = loadPersistedToolResultsFromRunBundle(
+    req.session_id,
+    maxRecent
+  );
+  if (recent.length === 0 && persisted.length === 0) return current;
 
-  const merged = recent.concat(current);
+  const merged = recent.concat(persisted, current);
   const seen = new Set<string>();
   const deduped: ToolResult[] = [];
   for (let i = merged.length - 1; i >= 0; i--) {
@@ -4395,6 +4501,46 @@ function textDeclaresExplicitExistingConditionsCompileOnly(raw: string): boolean
     /\bstop\s+(?:after|at)\b[^.!?\n]{0,120}\b(?:compilation|compiled|plan)\b[^.!?\n]{0,80}\breceipt\b/.test(text) ||
     /\bcompile[\s-]*only\b[^.!?\n]{0,180}\bstop\b/.test(text);
   return compileIntent && noExecution;
+}
+
+function textDeclaresExplicitExistingConditionsDryRunOnly(raw: string): boolean {
+  const text = raw.toLowerCase();
+  const dryRunIntent = /\bdry[\s-]?run\b/.test(text);
+  const boundedToDryRun =
+    /\b(?:only|permit\s+only)\b[^.!?\n]{0,120}\bdry[\s-]?run\b/.test(text) ||
+    /\bdry[\s-]?run\b[^.!?\n]{0,120}\bonly\b/.test(text) ||
+    /\bstop\s+after\b[^.!?\n]{0,160}\bdry[\s-]?run\b/.test(text);
+  const noApply =
+    /\b(?:do\s+not|don't|dont)\b[^.!?\n]{0,160}\b(?:apply|save|write|modify)\b/.test(text);
+  return dryRunIntent && boundedToDryRun && noApply;
+}
+
+function isExplicitExistingConditionsDryRunOnlyRequest(req: ChatRequest): boolean {
+  if (textDeclaresExplicitExistingConditionsDryRunOnly(getRecentUserTextForRedline(req))) {
+    return true;
+  }
+  if (!req.session_id) return false;
+  try {
+    const requestLogPath = path.join(
+      ensureWorkspaceLayout().runsSessions,
+      safeRunBundleSessionDirName(req.session_id),
+      "request_log.jsonl"
+    );
+    if (!fs.existsSync(requestLogPath)) return false;
+    const lines = fs.readFileSync(requestLogPath, "utf8").split(/\r?\n/).slice(-300);
+    return lines.some(line => {
+      if (!line.trim()) return false;
+      try {
+        const row = JSON.parse(line) as Record<string, unknown>;
+        return typeof row.user_text === "string" &&
+          textDeclaresExplicitExistingConditionsDryRunOnly(row.user_text);
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
+  }
 }
 
 function existingConditionsMessageRoot(messageId: string): string {
@@ -22735,6 +22881,11 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     );
   if (preLaneCandidatePreparation) {
     return finishResponse(preLaneCandidatePreparation);
+  }
+  const registeredMepToolContinuation =
+    buildCurrentRegisteredMepToolContinuationResponse(currentReq);
+  if (registeredMepToolContinuation) {
+    return finishResponse(registeredMepToolContinuation);
   }
   const candidateReadyBeforeLegacyFastLane = candidateVisibleReadyToCompile(currentReq);
   const initialLane = candidateReadyBeforeLegacyFastLane

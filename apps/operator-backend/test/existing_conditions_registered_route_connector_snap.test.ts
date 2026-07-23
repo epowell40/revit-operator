@@ -145,11 +145,29 @@ test("filters connectors from the wrong native domain", () => {
   assert.ok(receipt.blockers.includes("start_endpoint_has_no_compatible_open_connector"));
 });
 
-test("fails closed when a pipe candidate supplies a route type id unsupported by the native API", () => {
-  assert.throws(
-    () => planRegisteredRouteConnectorSnapV1({ ...candidate(), kind: "pipe" as const }, { native_connector_readback: connectorReadback() }),
-    /pipe_route_type_id_unsupported/
-  );
+test("passes a stable pipe type id through the native route action", () => {
+  const input = {
+    ...candidate(),
+    kind: "pipe" as const,
+    system_type: "Sanitary",
+    route_type_name: "PVC - DWV",
+    route_type_id: 246810,
+    size: '2"'
+  };
+  const readback = connectorReadback();
+  for (const row of readback.results as any[]) {
+    row.category = "OST_PipeFitting";
+    row.systemName = "Building Sanitary";
+    for (const connector of row.connectors) {
+      connector.domain = "DomainPiping";
+      connector.size.diameterFt = 1 / 6;
+    }
+  }
+  const receipt = planRegisteredRouteConnectorSnapV1(input, { native_connector_readback: readback });
+  assert.equal(receipt.status, "ready");
+  assert.equal(receipt.dry_run_action?.body.pipeTypeId, 246810);
+  assert.equal(receipt.dry_run_action?.body.pipeType, "PVC - DWV");
+  assert.equal(receipt.dry_run_action?.body.ductTypeId, undefined);
 });
 
 test("converts a ready snap receipt into one staged route workflow", () => {

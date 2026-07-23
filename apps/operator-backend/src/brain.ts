@@ -69,6 +69,7 @@ function textDeclaresExistingConditionsReconstruction(userText: string): boolean
     /\b(?:reconstruct|recreate|restore|redraft|re-draft|redraw|re-draw|draft|draw|model)\b.{0,100}\bexisting[-\s]+conditions?\b/,
     /^(?=[\s\S]*\b(?:register|registration|align|alignment)\b)(?=[\s\S]*\bexisting[-\s]+conditions?\b)(?=[\s\S]*\b(?:attached|attachment|pdf|drawing|plan|sheet|source|scan|image)\b)/,
     /\bexisting[-\s]+conditions?\b.{0,100}\b(?:from|using|based\s+on)\b.{0,60}\b(?:pdf|drawing|sheet|scan|image)\b/,
+    /\b(?:register_existing_conditions_(?:route_frontier|route_snap|mep_repair)|compile_existing_conditions_sheet_interpretation|compile_registered_mep_reconstruction)\b/,
     /\bunmarked\s+(?:source\s+)?(?:pdf|drawing|sheet)\b/,
     /\bnot\s+(?:a\s+)?redline\b/
   ].some(pattern => pattern.test(text));

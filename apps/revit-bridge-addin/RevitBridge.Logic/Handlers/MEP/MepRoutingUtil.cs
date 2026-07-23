@@ -137,6 +137,13 @@ namespace RevitBridge.Logic.Handlers.MEP
             public double? DiameterFt { get; set; }
         }
 
+        internal sealed class PipeTypeResolution
+        {
+            public PipeType? Selected { get; set; }
+            public IReadOnlyList<MepDuctTypeCandidate> Candidates { get; set; } = Array.Empty<MepDuctTypeCandidate>();
+            public string Error { get; set; } = string.Empty;
+        }
+
         internal sealed class ConduitTypeResolution
         {
             public ConduitType? Selected { get; set; }
@@ -430,6 +437,33 @@ namespace RevitBridge.Logic.Handlers.MEP
                 if (contains != null) return contains;
             }
             return all.FirstOrDefault();
+        }
+
+        internal static PipeTypeResolution ResolvePipeType(Document doc, long? requestedId, string? requestedName)
+        {
+            var all = new FilteredElementCollector(doc).OfClass(typeof(PipeType)).Cast<PipeType>().ToList();
+            var receipt = MepDuctTypeSelectionPolicy.Resolve(
+                all.Select(x => new MepDuctTypeCandidate
+                {
+                    Id = ElementIdCompat.GetValue(x.Id),
+                    Name = x.Name ?? string.Empty,
+                    FamilyName = "Pipe Type"
+                }),
+                requestedId,
+                requestedName);
+            var selected = receipt.Selected == null
+                ? null
+                : all.FirstOrDefault(x => ElementIdCompat.GetValue(x.Id) == receipt.Selected.Id);
+            return new PipeTypeResolution
+            {
+                Selected = selected,
+                Candidates = receipt.Candidates,
+                Error = receipt.Error
+                    .Replace("Duct type", "Pipe type")
+                    .Replace("duct type", "pipe type")
+                    .Replace("ductTypeId", "pipeTypeId")
+                    .Replace("ductType", "pipeType")
+            };
         }
 
         internal static ConduitTypeResolution ResolveConduitType(Document doc, long? requestedId, string? requestedName)

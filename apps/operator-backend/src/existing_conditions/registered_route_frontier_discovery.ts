@@ -326,7 +326,7 @@ export function discoverRegisteredRouteFrontierV1(
     elevation_z_ft: consensus!.elevation_z_ft,
     system_type: consensus!.system_type,
     route_type_name: consensus!.route_type_name,
-    ...(candidate.kind === "pipe" ? {} : { route_type_id: consensus!.route_type_id }),
+    route_type_id: consensus!.route_type_id,
     source_frame_id: candidate.source_frame_id,
     registration_context_id: candidate.registration_context_id,
     shape: consensus!.shape,

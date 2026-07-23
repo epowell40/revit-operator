@@ -260,6 +260,64 @@ test("registered existing-conditions compiler hands off exact dry-run then exact
   assert.doesNotMatch(complete.assistant_message, /will not compile or apply a second geometry set/i);
 });
 
+test("registered existing-conditions dry-run-only request stops before apply with a receipt", () => {
+  const sessionId = `registered-mep-dry-run-only-${Date.now()}-${Math.random()}`;
+  const fingerprint = "d".repeat(64);
+  const workflow = {
+    inputFingerprintSha256: fingerprint,
+    provisionalObservationIds: ["route-1"],
+    operations: [{
+      action_key: "registered-route:route-1",
+      observation_ids: ["route-1"],
+      path: "/revit/create-mep-route",
+      depends_on: [],
+      expected_created_min: 1,
+      expected_created_max: 1,
+      apply_body: { kind: "pipe", pipeTypeId: 246810 }
+    }],
+    dryRun: true,
+    verify: true,
+    maximumCreatedElements: 1,
+    benchmarkCredit: false,
+    authorizationBasis: "explicit_unscored_user_direction"
+  } as any;
+  __testOnlyNoteRegisteredMepWorkflow(sessionId, "frame-dry-run-only", 303, workflow);
+
+  const response = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(
+    sessionId,
+    [{
+      action_id: "verified-dry-run-only",
+      method: "POST",
+      path: "/revit/existing-conditions-mep-draft-workflow",
+      status: "done",
+      result_json: {
+        inputFingerprintSha256: fingerprint,
+        stageKey: "operation:registered-route:route-1",
+        status: "DryRunReady",
+        dryRun: true,
+        rollbackVerified: true,
+        residualCreatedElementIds: [],
+        transientCreatedElementIds: [901],
+        error: null,
+        operationOutputs: [{
+          action_key: "registered-route:route-1",
+          created_element_ids: [901]
+        }]
+      }
+    }],
+    "dry-run-only:assistant:3",
+    [],
+    "Permit only the generated staged dry-run; do not apply or save any new element. Stop after reporting the dry-run rollback receipt."
+  );
+
+  assert.ok(response);
+  assert.deepEqual(response.actions, []);
+  assert.match(response.assistant_message, /operator\.existing_conditions_dry_run_receipt\.v1/);
+  assert.match(response.assistant_message, /dry_run_verified_no_apply/);
+  assert.match(response.assistant_message, /901/);
+  assert.match(response.assistant_message, /apply_requires_new_authorization/);
+});
+
 test("registered existing-conditions compile-only request returns a persisted plan receipt without Revit actions", () => {
   const sessionId = `registered-mep-compile-only-${Date.now()}`;
   const fingerprint = "9".repeat(64);
