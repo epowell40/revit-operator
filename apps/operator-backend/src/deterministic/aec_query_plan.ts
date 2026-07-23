@@ -136,7 +136,7 @@ export function planAecQueryTask(value: unknown): AecQueryPlanV1 {
       status: "ready",
       workflow_id: "query.document_sheets",
       actions: [action("aec-query-document-sheets", "/revit/sheets", countOnly
-        ? { action: "count", countOnly: true }
+        ? { action: "list", offset: 0, limit: 1 }
         : { action: "list", offset: 0, limit: task.execution.max_results })],
       blockers: [],
       evidence: { predicate_pushed: true, document_payload_requested: false, exact_document_inventory: true }
