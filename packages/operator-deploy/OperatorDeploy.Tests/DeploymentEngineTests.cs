@@ -85,6 +85,16 @@ public sealed class DeploymentEngineTests : IDisposable
     }
 
     [Fact]
+    public void Unsupported_windows_version_is_rejected()
+    {
+        var bundle = CreateBundle("1.0.0");
+        var context = Context(windowsVersion: new Version(6, 3, 9600));
+        var result = new DeploymentEngine(context, Options("update", bundle), TextWriter.Null).Execute();
+        Assert.False(result.Ok);
+        Assert.Equal(ExitCodes.Unsupported, result.ExitCode);
+    }
+
+    [Fact]
     public void Failed_new_release_does_not_replace_current_state()
     {
         Assert.True(Run("update", CreateBundle("1.0.0")).Ok);
@@ -125,6 +135,17 @@ public sealed class DeploymentEngineTests : IDisposable
     }
 
     [Fact]
+    public void Validation_fails_when_duplicate_addin_id_is_registered()
+    {
+        Assert.True(Run("update", CreateBundle("1.0.0")).Ok);
+        var conflict = Path.Combine(Context().AppData, "Autodesk", "Revit", "Addins", "2023", "Duplicate.addin");
+        File.WriteAllText(conflict, "<AddInId>B2883307-2852-4740-9833-281048674F77</AddInId>");
+        var result = Run("validate");
+        Assert.False(result.Ok);
+        Assert.Contains("Conflicting", result.Message);
+    }
+
+    [Fact]
     public void Machine_scope_fails_with_actionable_error()
     {
         var bundle = CreateBundle("1.0.0");
@@ -155,13 +176,15 @@ public sealed class DeploymentEngineTests : IDisposable
             Quiet = true
         };
 
-    private DeploymentContext Context(bool revitRunning = false)
+    private DeploymentContext Context(bool revitRunning = false, Version? windowsVersion = null)
         => new()
         {
             LocalAppData = Path.Combine(_root, "local"),
             AppData = Path.Combine(_root, "roaming"),
             Desktop = Path.Combine(_root, "desktop"),
             ProgramFiles = Path.Combine(_root, "program-files"),
+            CommonAppData = Path.Combine(_root, "program-data"),
+            WindowsVersion = windowsVersion ?? new Version(10, 0, 19045),
             IsRevitRunning = () => revitRunning,
             UtcNow = () => new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero)
         };

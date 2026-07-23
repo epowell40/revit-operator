@@ -8,6 +8,8 @@ public sealed class DeploymentContext
     public string AppData { get; init; } = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
     public string Desktop { get; init; } = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
     public string ProgramFiles { get; init; } = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+    public string CommonAppData { get; init; } = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+    public Version WindowsVersion { get; init; } = Environment.OSVersion.Version;
     public Func<bool> IsRevitRunning { get; init; } = () => Process.GetProcessesByName("Revit").Length > 0;
     public Func<DateTimeOffset> UtcNow { get; init; } = () => DateTimeOffset.UtcNow;
 

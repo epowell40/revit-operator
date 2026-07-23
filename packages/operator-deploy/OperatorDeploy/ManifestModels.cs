@@ -45,6 +45,8 @@ public sealed class ReleaseManifest
         if (SchemaVersion != 1) throw new DeploymentException(ExitCodes.ManifestInvalid, $"Unsupported manifest schemaVersion {SchemaVersion}; expected 1.");
         if (string.IsNullOrWhiteSpace(ReleaseVersion) || ReleaseVersion.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
             throw new DeploymentException(ExitCodes.ManifestInvalid, "releaseVersion is required and must be safe for a directory name.");
+        if (!Version.TryParse(MinimumWindowsVersion, out _))
+            throw new DeploymentException(ExitCodes.ManifestInvalid, $"minimumWindowsVersion is invalid: '{MinimumWindowsVersion}'.");
         if (Components.Count == 0) throw new DeploymentException(ExitCodes.ManifestInvalid, "Manifest must contain at least one component.");
 
         var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

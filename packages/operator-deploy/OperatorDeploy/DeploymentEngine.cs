@@ -79,6 +79,9 @@ public sealed class DeploymentEngine
         var manifestPath = Path.GetFullPath(_options.ManifestPath);
         var bundleRoot = Path.GetDirectoryName(manifestPath)!;
         var manifest = ReleaseManifest.Load(manifestPath);
+        var minimumWindows = Version.Parse(manifest.MinimumWindowsVersion);
+        if (_context.WindowsVersion.CompareTo(minimumWindows) < 0)
+            throw new DeploymentException(ExitCodes.Unsupported, $"Windows {_context.WindowsVersion} is older than this release's minimum supported version {minimumWindows}.");
         var applicable = ApplicableComponents(manifest).ToList();
         if (applicable.Count == 0) throw new DeploymentException(ExitCodes.ManifestInvalid, "No manifest components apply to this workstation or requested Revit version.");
         foreach (var component in applicable) FileIntegrity.VerifyComponent(bundleRoot, component);
@@ -191,6 +194,9 @@ public sealed class DeploymentEngine
                 var xml = File.ReadAllText(addinPath);
                 if (!xml.Contains(expectedDll, StringComparison.OrdinalIgnoreCase))
                     throw new DeploymentException(ExitCodes.ValidationFailed, $"Revit {addin.RevitYear} add-in manifest does not reference the active release DLL.");
+                var conflicts = FindConflictingAddinManifests(addin.RevitYear!, addinPath).ToList();
+                if (conflicts.Count > 0)
+                    throw new DeploymentException(ExitCodes.ValidationFailed, $"Conflicting Revit Operator .addin manifest(s) were found for Revit {addin.RevitYear}: {string.Join("; ", conflicts)}");
             }
 
             var desktop = components.FirstOrDefault(c => c.Kind == "operator-desktop");
@@ -388,6 +394,29 @@ public sealed class DeploymentEngine
 
     private string AddinManifestPath(string year)
         => Path.Combine(_context.AppData, "Autodesk", "Revit", "Addins", year, "RevitBridge.addin");
+
+    private IEnumerable<string> FindConflictingAddinManifests(string year, string primaryPath)
+    {
+        var roots = new[]
+        {
+            Path.Combine(_context.AppData, "Autodesk", "Revit", "Addins", year),
+            Path.Combine(_context.CommonAppData, "Autodesk", "Revit", "Addins", year)
+        };
+        foreach (var root in roots.Where(Directory.Exists))
+        {
+            foreach (var path in Directory.GetFiles(root, "*.addin", SearchOption.TopDirectoryOnly))
+            {
+                if (path.Equals(primaryPath, StringComparison.OrdinalIgnoreCase)) continue;
+                var matches = false;
+                try
+                {
+                    matches = File.ReadAllText(path).Contains("B2883307-2852-4740-9833-281048674F77", StringComparison.OrdinalIgnoreCase);
+                }
+                catch { /* An unreadable unrelated manifest is not owned by this installer. */ }
+                if (matches) yield return path;
+            }
+        }
+    }
 
     private Dictionary<string, byte[]?> CaptureControlFiles(ReleaseManifest manifest)
     {
