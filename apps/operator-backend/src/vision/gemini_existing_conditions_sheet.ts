@@ -19,6 +19,7 @@ export type GeminiExistingConditionsSheetRequestV1 = {
   }>;
   maximum_source_marks?: number;
   maximum_primitives?: number;
+  maximum_output_tokens?: number;
   timeout_ms?: number;
 };
 
@@ -31,6 +32,18 @@ export type GeminiExistingConditionsSheetResponseV1 = {
   raw_response_sha256: string;
   interpretation: SheetPixelInterpretationInputV1;
   open_questions: string[];
+};
+
+export type GeminiExistingConditionsRawResponseCaptureV1 = {
+  schema_version: 1;
+  provider: "gemini";
+  model: string;
+  package_id: string;
+  raw_response_sha256: string;
+  raw_text: string;
+  parsed: unknown;
+  provider_finish_reasons: string[];
+  provider_usage_metadata?: unknown;
 };
 
 type RawGeminiSheetResponse = {
@@ -199,10 +212,12 @@ function prompt(request: GeminiExistingConditionsSheetRequestV1): string {
   const lines = [
     "Analyze these registered architectural/MEP source views for existing-conditions reconstruction.",
     "Return every in-scope visible source mark exactly once as candidate or unresolved. Never silently omit a mark.",
+    "Before finalizing, scan each supplied view systematically from top-left to bottom-right and account for every in-scope line, symbol, fitting glyph, label, leader, and boundary continuation that can affect the objective.",
     "Use normalized top-left UV coordinates within each supplied view. Do not emit model coordinates or Revit IDs.",
     "Preserve long-run continuity: give matching continuation_key values only when two crop/sheet boundary endpoints visibly represent the same run.",
     "Do not infer system, size, type, family, host, elevation, or wall height from graphical proximity. Use legible_source_evidence only for visible text/geometry and provider_hypothesis or unresolved otherwise.",
     "A route_segment or wall_segment is one straight source-supported span. Break bends and branches into separate primitives with explicit endpoints.",
+    "Treat a repeated dashed or broken line pattern as one continuous straight span when the collinear marks visibly form one drafting line; do not emit one primitive per dash. Split at visible bends, branches, system or size changes, and view boundaries.",
     "Text, tags, leaders, and dimensions are annotation primitives, not modeled devices or routes.",
     "A graphical point-symbol glyph alone never proves native family, type, or host. Unless directly legible text in the supplied crop proves the attribute, report those claims as provider_hypothesis or unresolved; an approved project mapping can be applied only by the deterministic host later.",
     "For internal endpoints continuation_key must be an empty string. For sheet_continuation endpoints it must be non-empty.",
@@ -391,9 +406,20 @@ function baseUrl(): string {
   return clean(process.env.OPERATOR_GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta").replace(/\/$/, "");
 }
 
+function maximumOutputTokens(request: GeminiExistingConditionsSheetRequestV1): number {
+  const value = request.maximum_output_tokens ?? 32_768;
+  if (!Number.isSafeInteger(value) || value < 1_024 || value > 65_536) {
+    throw new Error("gemini_sheet_interpreter_maximum_output_tokens_must_be_1024_through_65536");
+  }
+  return value;
+}
+
 export async function analyzeExistingConditionsSheetWithGeminiV1(
   request: GeminiExistingConditionsSheetRequestV1,
-  options: { fetch_impl?: typeof fetch } = {}
+  options: {
+    fetch_impl?: typeof fetch;
+    on_raw_response?: (capture: GeminiExistingConditionsRawResponseCaptureV1) => void | Promise<void>;
+  } = {}
 ): Promise<GeminiExistingConditionsSheetResponseV1> {
   if (!request || request.schema_version !== 1) throw new Error("gemini_sheet_interpreter_requires_schema_v1");
   if (!Array.isArray(request.views) || request.views.length === 0 || request.views.length > 12) throw new Error("gemini_sheet_interpreter_views_must_have_one_to_twelve_items");
@@ -427,6 +453,7 @@ export async function analyzeExistingConditionsSheetWithGeminiV1(
         contents: [{ role: "user", parts }],
         generationConfig: {
           temperature: 0.2,
+          maxOutputTokens: maximumOutputTokens(request),
           responseMimeType: "application/json",
           responseSchema: GEMINI_EXISTING_CONDITIONS_SHEET_RESPONSE_SCHEMA_V1
         }
@@ -434,10 +461,25 @@ export async function analyzeExistingConditionsSheetWithGeminiV1(
     });
     const responseText = await response.text();
     if (!response.ok) throw new Error(`gemini_sheet_interpreter_http_${response.status}:${responseText.slice(0, 800)}`);
-    const envelope = JSON.parse(responseText) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+    const envelope = JSON.parse(responseText) as {
+      candidates?: Array<{ finishReason?: string; content?: { parts?: Array<{ text?: string }> } }>;
+      usageMetadata?: unknown;
+    };
     const rawText = (envelope.candidates ?? []).flatMap(candidate => candidate.content?.parts ?? []).map(part => clean(part.text)).filter(Boolean).join("\n");
     if (!rawText) throw new Error("gemini_sheet_interpreter_empty_response");
     const parsed = JSON.parse(rawText) as unknown;
+    const rawResponseSha256 = sha256Text(rawText);
+    await options.on_raw_response?.({
+      schema_version: 1,
+      provider: "gemini",
+      model,
+      package_id: request.package_id,
+      raw_response_sha256: rawResponseSha256,
+      raw_text: rawText,
+      parsed,
+      provider_finish_reasons: (envelope.candidates ?? []).map(candidate => clean(candidate.finishReason)).filter(Boolean),
+      ...(envelope.usageMetadata === undefined ? {} : { provider_usage_metadata: envelope.usageMetadata })
+    });
     const normalized = normalizeGeminiExistingConditionsSheetResponseV1({ request, raw: parsed });
     return {
       schema_version: 1,
@@ -445,7 +487,7 @@ export async function analyzeExistingConditionsSheetWithGeminiV1(
       model,
       package_id: request.package_id,
       source_image_sha256_by_view: sourceHashes,
-      raw_response_sha256: sha256Text(rawText),
+      raw_response_sha256: rawResponseSha256,
       interpretation: normalized.interpretation,
       open_questions: normalized.open_questions
     };

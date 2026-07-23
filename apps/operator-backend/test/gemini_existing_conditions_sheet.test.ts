@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   GEMINI_EXISTING_CONDITIONS_SHEET_RESPONSE_SCHEMA_V1,
+  analyzeExistingConditionsSheetWithGeminiV1,
   normalizeGeminiExistingConditionsSheetResponseV1,
+  type GeminiExistingConditionsRawResponseCaptureV1,
   type GeminiExistingConditionsSheetRequestV1
 } from "../src/vision/gemini_existing_conditions_sheet.js";
 
@@ -162,4 +167,54 @@ test("provider-hypothesis point symbols remain classification-capped", () => {
   assert.equal(result.interpretation.primitives[0]?.claims?.type?.basis, "provider_hypothesis");
   assert.equal(result.interpretation.primitives[0]?.confidence.classification, 0.5);
   assert.ok(result.open_questions.some(value => value.includes("classification remains provisional")));
+});
+
+test("raw provider output is captured before strict normalization rejects it", async () => {
+  const previousKey = process.env.OPERATOR_GEMINI_API_KEY;
+  const previousModel = process.env.OPERATOR_GEMINI_SHEET_MODEL;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "operator-gemini-raw-capture-"));
+  const imagePath = path.join(dir, "source.png");
+  fs.writeFileSync(imagePath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"));
+  process.env.OPERATOR_GEMINI_API_KEY = "test-key";
+  process.env.OPERATOR_GEMINI_SHEET_MODEL = "test-model";
+  try {
+    const invalid = raw();
+    invalid.source_marks[0]!.primitive_ids.push("missing-run");
+    const envelope = {
+      candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [{ text: JSON.stringify(invalid) }] } }],
+      usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 200 }
+    };
+    const captures: GeminiExistingConditionsRawResponseCaptureV1[] = [];
+    let requestedMaximumOutputTokens: unknown;
+    await assert.rejects(
+      analyzeExistingConditionsSheetWithGeminiV1(
+        {
+          ...request(),
+          views: [{ view_key: "main", image_path: imagePath, discipline_hint: "mechanical" }]
+        },
+        {
+          fetch_impl: async (_input, init) => {
+            const body = JSON.parse(String(init?.body ?? "{}"));
+            requestedMaximumOutputTokens = body.generationConfig?.maxOutputTokens;
+            return new Response(JSON.stringify(envelope), { status: 200 });
+          },
+          on_raw_response: capture => { captures.push(capture); }
+        }
+      ),
+      /gemini_sheet_mark_unknown_primitive:mark-1:missing-run/
+    );
+    assert.equal(captures.length, 1);
+    assert.equal(captures[0]?.model, "test-model");
+    assert.equal(captures[0]?.package_id, "blind-sheet");
+    assert.match(captures[0]?.raw_response_sha256 ?? "", /^[a-f0-9]{64}$/);
+    assert.deepEqual(captures[0]?.parsed, invalid);
+    assert.deepEqual(captures[0]?.provider_finish_reasons, ["MAX_TOKENS"]);
+    assert.deepEqual(captures[0]?.provider_usage_metadata, envelope.usageMetadata);
+    assert.equal(requestedMaximumOutputTokens, 32_768);
+  } finally {
+    if (previousKey === undefined) delete process.env.OPERATOR_GEMINI_API_KEY;
+    else process.env.OPERATOR_GEMINI_API_KEY = previousKey;
+    if (previousModel === undefined) delete process.env.OPERATOR_GEMINI_SHEET_MODEL;
+    else process.env.OPERATOR_GEMINI_SHEET_MODEL = previousModel;
+  }
 });

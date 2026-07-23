@@ -166,6 +166,11 @@ import {
   type SheetChromaticComponentDetectionInputV1
 } from "../existing_conditions/sheet_chromatic_component_detection.js";
 import {
+  renderSheetRouteChromaticCoverageOverlayV1,
+  validateSheetRouteChromaticCoverageV1,
+  type SheetRouteChromaticCoverageInputV1
+} from "../existing_conditions/sheet_route_chromatic_coverage.js";
+import {
   compileProvisionalPlanTraceDraftV1,
   type ProvisionalPlanTraceDraftContext,
   type ProvisionalPlanTraceDraftInputV1
@@ -397,6 +402,7 @@ function usage(): never {
     "  npm run existing-conditions -- extract-plan-traces --input <hash-bound-extraction-policy.json> --out <trace-receipt.json> [--preview-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- detect-repeated-mep-symbols --input <hash-bound-template-search.json> --out <candidate-receipt.json>",
     "  npm run existing-conditions -- detect-sheet-chromatic-components --input <hash-bound-hue-component-search.json> --out <candidate-receipt.json> [--overlay-out <diagnostic-overlay.png>]",
+    "  npm run existing-conditions -- validate-sheet-route-chromatic-coverage --input <hash-bound-source-policy.json> [--candidate <sheet-interpretation-or-provider-receipt.json>] --out <coverage-receipt.json> [--overlay-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- validate-mep-region-coverage --input <source-coverage.json> --context <coverage-context.json> --out <coverage-receipt.json>",
     "  npm run existing-conditions -- compile-sheet-topology --input <whole-sheet-primitives.json> --context <trusted-views-and-calibration.json> --out <compiled-topology.json>",
     "  npm run existing-conditions -- build-sheet-topology-calibration --input <sealed-blind-outcomes.json> --out <calibration-profile.json>",
@@ -1977,6 +1983,40 @@ async function main(): Promise<void> {
         })
       : undefined;
     writeJson(outputPath, overlay ? { ...receipt, overlay } : receipt);
+    return;
+  }
+  if (command === "validate-sheet-route-chromatic-coverage") {
+    const inputPath = requiredArgument("--input");
+    const candidatePath = argument("--candidate");
+    const outputPath = requiredArgument("--out");
+    const overlayPath = argument("--overlay-out");
+    assertFreshDistinctOutputPaths(
+      [
+        { flag: "--out", value: outputPath },
+        ...(overlayPath ? [{ flag: "--overlay-out", value: overlayPath }] : [])
+      ],
+      [{ flag: "--input", value: inputPath }, ...(candidatePath ? [{ flag: "--candidate", value: candidatePath }] : [])]
+    );
+    const rawInput = readJson(inputPath) as Partial<SheetRouteChromaticCoverageInputV1>;
+    const interpretation = candidatePath
+      ? sheetPixelInterpretation(readJson(candidatePath))
+      : sheetPixelInterpretation({ interpretation: rawInput.interpretation });
+    const input = {
+      ...rawInput,
+      source_view_key: rawInput.source_view_key || (interpretation.view_keys.length === 1 ? interpretation.view_keys[0] : undefined),
+      interpretation
+    } as SheetRouteChromaticCoverageInputV1;
+    const receipt = await validateSheetRouteChromaticCoverageV1(input);
+    const overlay = overlayPath
+      ? await renderSheetRouteChromaticCoverageOverlayV1({
+          source_image_path: input.source_image_path,
+          interpretation: input.interpretation,
+          receipt,
+          output_path: overlayPath
+        })
+      : undefined;
+    writeJson(outputPath, overlay ? { ...receipt, overlay } : receipt);
+    if (!receipt.accepted) process.exitCode = 1;
     return;
   }
   if (command === "validate-mep-region-coverage") {
