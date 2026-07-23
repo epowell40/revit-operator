@@ -42,6 +42,15 @@ public sealed class DeploymentEngineTests : IDisposable
     }
 
     [Fact]
+    public void Bundle_validation_does_not_create_installed_state()
+    {
+        var bundle = CreateBundle("1.0.0");
+        var result = Run("validate", bundle, bundleOnly: true);
+        Assert.True(result.Ok, result.Message);
+        Assert.False(File.Exists(Context().StatePath));
+    }
+
+    [Fact]
     public void Install_and_validate_use_versioned_release_and_addin_pointer()
     {
         var bundle = CreateBundle("1.0.0");

@@ -19,8 +19,9 @@ public sealed class DeploymentEngine
         _context = context;
         _options = options;
         _output = output ?? Console.Out;
-        Directory.CreateDirectory(_context.LogsRoot);
-        _logPath = options.LogPath ?? Path.Combine(_context.LogsRoot, $"OperatorDeploy-{_context.UtcNow():yyyyMMdd-HHmmss}.log");
+        _logPath = options.LogPath ?? (options.BundleOnly
+            ? Path.Combine(Path.GetTempPath(), "RevitOperator", $"OperatorDeploy-bundle-validation-{_context.UtcNow():yyyyMMdd-HHmmss}.log")
+            : Path.Combine(_context.LogsRoot, $"OperatorDeploy-{_context.UtcNow():yyyyMMdd-HHmmss}.log"));
     }
 
     public OperationResult Execute()
@@ -505,6 +506,7 @@ public sealed class DeploymentEngine
 
     private void PersistResult(OperationResult result)
     {
+        if (_options.BundleOnly) return;
         try
         {
             Directory.CreateDirectory(_context.DeploymentRoot);
