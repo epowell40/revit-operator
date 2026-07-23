@@ -103,6 +103,7 @@ export const GEMINI_EXISTING_CONDITIONS_SHEET_RESPONSE_SCHEMA_V1 = {
           kind: { type: "string", enum: ["wall_segment", "route_segment", "opening", "point_symbol", "annotation"] },
           points: {
             type: "array",
+            minItems: 1,
             items: {
               type: "object",
               required: ["u", "v"],
@@ -170,6 +171,11 @@ function requiredText(value: unknown, label: string): string {
 function unit(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) throw new Error(`${label}_must_be_between_zero_and_one`);
   return value;
+}
+
+function qualifiedEndpointKey(primitiveId: string, endpointKey: unknown, label: string): string {
+  const local = requiredText(endpointKey, label);
+  return local.startsWith(`${primitiveId}:`) ? local : `${primitiveId}:${local}`;
 }
 
 function sha256Buffer(value: Buffer): string {
@@ -269,7 +275,7 @@ export function normalizeGeminiExistingConditionsSheetResponseV1(args: {
       v: unit(point.v, `gemini_sheet_primitive_${primitiveId}_point_${pointIndex}_v`)
     }));
     const endpoints = (primitive.endpoints ?? []).map((endpoint, endpointIndex) => ({
-      endpoint_key: requiredText(endpoint.endpoint_key, `gemini_sheet_primitive_${primitiveId}_endpoint_${endpointIndex}_key`),
+      endpoint_key: qualifiedEndpointKey(primitiveId, endpoint.endpoint_key, `gemini_sheet_primitive_${primitiveId}_endpoint_${endpointIndex}_key`),
       point: {
         u: unit(endpoint.point?.u, `gemini_sheet_endpoint_${primitiveId}_${endpointIndex}_u`),
         v: unit(endpoint.point?.v, `gemini_sheet_endpoint_${primitiveId}_${endpointIndex}_v`)
@@ -278,6 +284,9 @@ export function normalizeGeminiExistingConditionsSheetResponseV1(args: {
       boundary: endpoint.boundary,
       ...(clean(endpoint.continuation_key) ? { continuation_key: clean(endpoint.continuation_key) } : {})
     }));
+    if (new Set(endpoints.map(endpoint => endpoint.endpoint_key)).size !== endpoints.length) {
+      throw new Error(`gemini_sheet_primitive_duplicate_endpoint_key:${primitiveId}`);
+    }
     const claims = claimMap(primitive.claims ?? [], primitiveId) ?? {};
     let classificationConfidence = unit(primitive.confidence?.classification, `gemini_sheet_primitive_${primitiveId}_classification_confidence`);
     if (primitive.kind === "point_symbol") {
@@ -314,6 +323,45 @@ export function normalizeGeminiExistingConditionsSheetResponseV1(args: {
       }
     };
   });
+
+  const marksById = new Map<string, SheetTopologySourceMarkV1>();
+  for (const mark of sourceMarks) {
+    if (marksById.has(mark.source_mark_id)) throw new Error(`gemini_sheet_duplicate_source_mark:${mark.source_mark_id}`);
+    marksById.set(mark.source_mark_id, mark);
+  }
+  const primitivesById = new Map<string, SheetPixelPrimitiveV1>();
+  for (const primitive of primitives) {
+    if (primitivesById.has(primitive.primitive_id)) throw new Error(`gemini_sheet_duplicate_primitive:${primitive.primitive_id}`);
+    primitivesById.set(primitive.primitive_id, primitive);
+  }
+  for (const mark of sourceMarks) {
+    if (mark.disposition.status !== "candidate") continue;
+    for (const primitiveId of mark.disposition.primitive_ids) {
+      const primitive = primitivesById.get(primitiveId);
+      if (!primitive) throw new Error(`gemini_sheet_mark_unknown_primitive:${mark.source_mark_id}:${primitiveId}`);
+      if (primitive.source_view_key !== mark.source_view_key) throw new Error(`gemini_sheet_mark_primitive_view_mismatch:${mark.source_mark_id}:${primitiveId}`);
+      if (!primitive.source_mark_ids.includes(mark.source_mark_id)) {
+        primitive.source_mark_ids.push(mark.source_mark_id);
+        normalizationQuestions.push(`Normalized reciprocal source-mark linkage ${mark.source_mark_id} -> ${primitiveId}.`);
+      }
+    }
+  }
+  for (const primitive of primitives) {
+    for (const markId of primitive.source_mark_ids) {
+      const mark = marksById.get(markId);
+      if (!mark) throw new Error(`gemini_sheet_primitive_unknown_source_mark:${primitive.primitive_id}:${markId}`);
+      if (mark.source_view_key !== primitive.source_view_key) throw new Error(`gemini_sheet_primitive_source_mark_view_mismatch:${primitive.primitive_id}:${markId}`);
+      if (mark.disposition.status !== "candidate") throw new Error(`gemini_sheet_primitive_cites_unresolved_source_mark:${primitive.primitive_id}:${markId}`);
+      if (!mark.disposition.primitive_ids.includes(primitive.primitive_id)) {
+        mark.disposition.primitive_ids.push(primitive.primitive_id);
+        normalizationQuestions.push(`Normalized reciprocal primitive-mark linkage ${primitive.primitive_id} -> ${markId}.`);
+      }
+    }
+  }
+  for (const mark of sourceMarks) {
+    if (mark.disposition.status === "candidate") mark.disposition.primitive_ids = [...new Set(mark.disposition.primitive_ids)].sort();
+  }
+  for (const primitive of primitives) primitive.source_mark_ids = [...new Set(primitive.source_mark_ids)].sort();
 
   return {
     interpretation: {

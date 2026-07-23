@@ -103,12 +103,30 @@ export type SheetCandidateIdentityGroupV1 = {
   native_write_allowed: false;
 };
 
+export type SheetSourceRouteJunctionRepairV1 = {
+  repair_id: string;
+  source_view_key: string;
+  trunk_primitive_id: string;
+  trunk_segment_index: number;
+  branch_primitive_id: string;
+  branch_endpoint_key: string;
+  branch_endpoint_uv: SheetPixelPointV1;
+  projected_junction_uv: SheetPixelPointV1;
+  gap_px: number;
+  maximum_gap_px: number;
+  intersection_angle_degrees: number;
+  status: "requires_source_junction_split";
+  exact_next_repair: "split_trunk_and_snap_branch_endpoint_after_source_raster_reverification";
+  native_write_allowed: false;
+};
+
 export type CompiledSheetPixelInterpretationV1 = {
   schema_version: 1;
   pixel_interpretation_sha256: string;
   trusted_context_sha256: string;
   compiled_topology: CompiledSheetTopologyV1;
   candidate_identity_groups: SheetCandidateIdentityGroupV1[];
+  source_route_junction_repairs: SheetSourceRouteJunctionRepairV1[];
 };
 
 type CandidateIdentityObservation = {
@@ -156,6 +174,154 @@ function canonical(value: unknown): string {
 
 function digest(value: unknown): string {
   return crypto.createHash("sha256").update(canonical(value)).digest("hex");
+}
+
+type PixelRouteEndpoint = {
+  endpoint_key: string;
+  point: SheetPixelPointV1;
+  inward_vector_px: [number, number];
+};
+
+function rounded(value: number): number {
+  return Number(value.toFixed(6));
+}
+
+function qualifiedEndpointKey(primitiveId: string, endpointKey: string): string {
+  const local = requiredText(endpointKey, `sheet_pixel_primitive_${primitiveId}_endpoint_key`);
+  return local.startsWith(`${primitiveId}:`) ? local : `${primitiveId}:${local}`;
+}
+
+function pixelPoint(point: SheetPixelPointV1, widthPx: number, heightPx: number): [number, number] {
+  return [point.u * widthPx, point.v * heightPx];
+}
+
+function routeEndpoints(
+  primitive: SheetPixelPrimitiveV1,
+  widthPx: number,
+  heightPx: number
+): PixelRouteEndpoint[] {
+  if (primitive.points.length < 2) return [];
+  const first = primitive.points[0]!;
+  const second = primitive.points[1]!;
+  const last = primitive.points[primitive.points.length - 1]!;
+  const previous = primitive.points[primitive.points.length - 2]!;
+  const candidates = primitive.endpoints && primitive.endpoints.length > 0
+    ? primitive.endpoints.map(endpoint => ({ endpoint_key: qualifiedEndpointKey(primitive.primitive_id, endpoint.endpoint_key), point: endpoint.point }))
+    : [
+        { endpoint_key: `${primitive.primitive_id}:start`, point: first },
+        { endpoint_key: `${primitive.primitive_id}:end`, point: last }
+      ];
+  return candidates.map(candidate => {
+    const [candidateX, candidateY] = pixelPoint(candidate.point, widthPx, heightPx);
+    const [firstX, firstY] = pixelPoint(first, widthPx, heightPx);
+    const [lastX, lastY] = pixelPoint(last, widthPx, heightPx);
+    const useFirst = Math.hypot(candidateX - firstX, candidateY - firstY) <= Math.hypot(candidateX - lastX, candidateY - lastY);
+    const inner = useFirst ? second : previous;
+    const [innerX, innerY] = pixelPoint(inner, widthPx, heightPx);
+    return {
+      endpoint_key: candidate.endpoint_key,
+      point: candidate.point,
+      inward_vector_px: [innerX - candidateX, innerY - candidateY]
+    };
+  });
+}
+
+function compileSourceRouteJunctionRepairs(
+  input: SheetPixelInterpretationInputV1,
+  receiptsByView: Map<string, SheetPixelEvidenceReceiptV1>
+): SheetSourceRouteJunctionRepairV1[] {
+  const result: SheetSourceRouteJunctionRepairV1[] = [];
+  const routes = input.primitives
+    .filter(primitive => primitive.kind === "route_segment" && primitive.points.length >= 2)
+    .sort((left, right) => left.primitive_id.localeCompare(right.primitive_id));
+  for (const branch of routes) {
+    const receipt = receiptsByView.get(branch.source_view_key);
+    if (!receipt) continue;
+    const accepted = new Set(receipt.accepted_primitive_ids);
+    if (!accepted.has(branch.primitive_id)) continue;
+    const widthPx = receipt.image.width_px;
+    const heightPx = receipt.image.height_px;
+    const maximumGapPx = Math.min(32, Math.max(6, receipt.policy.corridor_radius_px * 3));
+    const interiorMarginPx = Math.max(2, receipt.policy.corridor_radius_px);
+    for (const endpoint of routeEndpoints(branch, widthPx, heightPx)) {
+      const [pointX, pointY] = pixelPoint(endpoint.point, widthPx, heightPx);
+      const branchLength = Math.hypot(endpoint.inward_vector_px[0], endpoint.inward_vector_px[1]);
+      if (branchLength <= 1e-9) continue;
+      for (const trunk of routes) {
+        if (trunk.primitive_id === branch.primitive_id || trunk.source_view_key !== branch.source_view_key || !accepted.has(trunk.primitive_id)) continue;
+        for (let segmentIndex = 0; segmentIndex < trunk.points.length - 1; segmentIndex += 1) {
+          const startUv = trunk.points[segmentIndex]!;
+          const endUv = trunk.points[segmentIndex + 1]!;
+          const [startX, startY] = pixelPoint(startUv, widthPx, heightPx);
+          const [endX, endY] = pixelPoint(endUv, widthPx, heightPx);
+          const segmentX = endX - startX;
+          const segmentY = endY - startY;
+          const segmentLengthSquared = segmentX * segmentX + segmentY * segmentY;
+          if (segmentLengthSquared <= 1e-9) continue;
+          const segmentLength = Math.sqrt(segmentLengthSquared);
+          const projection = ((pointX - startX) * segmentX + (pointY - startY) * segmentY) / segmentLengthSquared;
+          if (projection * segmentLength < interiorMarginPx || (1 - projection) * segmentLength < interiorMarginPx) continue;
+          const projectedX = startX + projection * segmentX;
+          const projectedY = startY + projection * segmentY;
+          const gapPx = Math.hypot(pointX - projectedX, pointY - projectedY);
+          if (gapPx > maximumGapPx + 1e-9) continue;
+          const absoluteCosine = Math.min(1, Math.abs(
+            (endpoint.inward_vector_px[0] * segmentX + endpoint.inward_vector_px[1] * segmentY)
+            / (branchLength * segmentLength)
+          ));
+          const intersectionAngle = Math.acos(absoluteCosine) * 180 / Math.PI;
+          if (intersectionAngle < 70) continue;
+          const repairIdentity = {
+            source_view_key: branch.source_view_key,
+            trunk_primitive_id: trunk.primitive_id,
+            trunk_segment_index: segmentIndex,
+            branch_primitive_id: branch.primitive_id,
+            branch_endpoint_key: endpoint.endpoint_key
+          };
+          result.push({
+            repair_id: `source-route-junction:${digest(repairIdentity).slice(0, 20)}`,
+            ...repairIdentity,
+            branch_endpoint_uv: { u: rounded(endpoint.point.u), v: rounded(endpoint.point.v) },
+            projected_junction_uv: { u: rounded(projectedX / widthPx), v: rounded(projectedY / heightPx) },
+            gap_px: rounded(gapPx),
+            maximum_gap_px: rounded(maximumGapPx),
+            intersection_angle_degrees: rounded(intersectionAngle),
+            status: "requires_source_junction_split",
+            exact_next_repair: "split_trunk_and_snap_branch_endpoint_after_source_raster_reverification",
+            native_write_allowed: false
+          });
+        }
+      }
+    }
+  }
+  return result.sort((left, right) => left.repair_id.localeCompare(right.repair_id));
+}
+
+function deferTopologyForSourceRouteJunctionRepairs(
+  topology: CompiledSheetTopologyV1,
+  repairs: SheetSourceRouteJunctionRepairV1[]
+): void {
+  if (repairs.length === 0) return;
+  const affected = new Set(repairs.flatMap(repair => [repair.trunk_primitive_id, repair.branch_primitive_id]));
+  for (const decision of topology.decisions) {
+    if (!affected.has(decision.primitive_id) || decision.decision === "duplicate") continue;
+    decision.decision = "deferred";
+    decision.reasons = [...new Set([...decision.reasons, "source_route_near_t_junction_unresolved"])].sort();
+  }
+  topology.native_batch_groups = topology.native_batch_groups
+    .map(group => ({ ...group, primitive_ids: group.primitive_ids.filter(primitiveId => !affected.has(primitiveId)) }))
+    .filter(group => group.primitive_ids.length > 0);
+  topology.single_action_primitive_ids = topology.single_action_primitive_ids.filter(primitiveId => !affected.has(primitiveId));
+  topology.deferred_primitive_ids = [...new Set([
+    ...topology.deferred_primitive_ids,
+    ...topology.decisions.filter(decision => decision.decision === "deferred").map(decision => decision.primitive_id)
+  ])].sort();
+  for (const repair of repairs) {
+    topology.conflicts.push(`source_route_requires_junction_split:${repair.trunk_primitive_id}:${repair.branch_primitive_id}:${repair.branch_endpoint_key}`);
+  }
+  topology.conflicts = [...new Set(topology.conflicts)].sort();
+  const canonicalCount = topology.canonical_primitive_ids.length;
+  topology.status = canonicalCount > 0 && topology.deferred_primitive_ids.length >= canonicalCount ? "blocked" : "partially_ready";
 }
 
 function candidatePixelDistance(left: CandidateIdentityObservation, right: CandidateIdentityObservation): number {
@@ -302,18 +468,73 @@ export function compileSheetPixelInterpretationV1(
   const selectedKeys = new Set(requestedViewKeys);
   if (!Array.isArray(input.source_marks) || input.source_marks.length === 0) throw new Error("sheet_pixel_interpretation_source_marks_required");
   if (!Array.isArray(input.primitives)) throw new Error("sheet_pixel_interpretation_primitives_required");
-  for (const mark of input.source_marks) {
+  const sourceMarks: SheetTopologySourceMarkV1[] = input.source_marks.map(mark => ({
+    ...mark,
+    disposition: mark.disposition.status === "candidate"
+      ? { ...mark.disposition, primitive_ids: [...mark.disposition.primitive_ids] }
+      : { ...mark.disposition }
+  }));
+  const pixelPrimitives: SheetPixelPrimitiveV1[] = input.primitives.map(primitive => ({
+    ...primitive,
+    source_mark_ids: [...primitive.source_mark_ids],
+    points: primitive.points.map(point => ({ ...point })),
+    ...(primitive.endpoints ? { endpoints: primitive.endpoints.map(endpoint => ({ ...endpoint, point: { ...endpoint.point }, outward_direction_uv: [...endpoint.outward_direction_uv] as [number, number] })) } : {})
+  }));
+  const sourceAccountingWarnings: string[] = [];
+  const marksById = new Map<string, SheetTopologySourceMarkV1>();
+  for (const mark of sourceMarks) {
     if (!selectedKeys.has(clean(mark.source_view_key))) throw new Error(`sheet_pixel_source_mark_view_not_selected:${clean(mark.source_mark_id)}`);
+    if (marksById.has(mark.source_mark_id)) throw new Error(`sheet_pixel_duplicate_source_mark:${mark.source_mark_id}`);
+    marksById.set(mark.source_mark_id, mark);
   }
+  const primitivesById = new Map<string, SheetPixelPrimitiveV1>();
+  for (const primitive of pixelPrimitives) {
+    if (primitivesById.has(primitive.primitive_id)) throw new Error(`sheet_pixel_duplicate_primitive:${primitive.primitive_id}`);
+    primitivesById.set(primitive.primitive_id, primitive);
+  }
+  for (const mark of sourceMarks) {
+    if (mark.disposition.status !== "candidate") continue;
+    for (const primitiveId of mark.disposition.primitive_ids) {
+      const primitive = primitivesById.get(primitiveId);
+      if (!primitive) throw new Error(`sheet_pixel_source_mark_unknown_primitive:${mark.source_mark_id}:${primitiveId}`);
+      if (primitive.source_view_key !== mark.source_view_key) throw new Error(`sheet_pixel_source_mark_primitive_view_mismatch:${mark.source_mark_id}:${primitiveId}`);
+      if (!primitive.source_mark_ids.includes(mark.source_mark_id)) {
+        primitive.source_mark_ids.push(mark.source_mark_id);
+        sourceAccountingWarnings.push(`source_accounting_reciprocity_normalized:${mark.source_mark_id}:${primitiveId}`);
+      }
+    }
+  }
+  for (const primitive of pixelPrimitives) {
+    for (const markId of primitive.source_mark_ids) {
+      const mark = marksById.get(markId);
+      if (!mark) throw new Error(`sheet_pixel_primitive_unknown_source_mark:${primitive.primitive_id}:${markId}`);
+      if (mark.source_view_key !== primitive.source_view_key) throw new Error(`sheet_pixel_primitive_source_mark_view_mismatch:${primitive.primitive_id}:${markId}`);
+      if (mark.disposition.status !== "candidate") throw new Error(`sheet_pixel_primitive_cites_unresolved_source_mark:${primitive.primitive_id}:${markId}`);
+      if (!mark.disposition.primitive_ids.includes(primitive.primitive_id)) {
+        mark.disposition.primitive_ids.push(primitive.primitive_id);
+        sourceAccountingWarnings.push(`source_accounting_reciprocity_normalized:${markId}:${primitive.primitive_id}`);
+      }
+    }
+  }
+  for (const mark of sourceMarks) {
+    if (mark.disposition.status === "candidate") mark.disposition.primitive_ids = [...new Set(mark.disposition.primitive_ids)].sort();
+  }
+  for (const primitive of pixelPrimitives) primitive.source_mark_ids = [...new Set(primitive.source_mark_ids)].sort();
 
   const rasterEvidenceByPrimitive = new Map<string, SheetPixelRouteEvidenceV1 | SheetPixelPointEvidenceV1>();
   const rasterEvidenceViews = new Set<string>();
+  const rasterEvidenceReceiptByView = new Map<string, SheetPixelEvidenceReceiptV1>();
   for (const [receiptIndex, receipt] of (context.raster_evidence_receipts ?? []).entries()) {
     if (!receipt || receipt.schema_version !== 1) throw new Error(`sheet_pixel_raster_evidence_schema_invalid:${receiptIndex}`);
     const viewKey = requiredText(receipt.source_view_key, `sheet_pixel_raster_evidence_${receiptIndex}_view_key`);
     const trusted = trustedByKey.get(viewKey);
     if (!trusted || !selectedKeys.has(viewKey)) throw new Error(`sheet_pixel_raster_evidence_unknown_view:${viewKey}`);
     if (clean(receipt.image?.sha256).toLowerCase() !== clean(trusted.source_view.source_sha256).toLowerCase()) throw new Error(`sheet_pixel_raster_evidence_source_hash_mismatch:${viewKey}`);
+    if (!Number.isSafeInteger(receipt.image?.width_px) || receipt.image.width_px <= 0 || !Number.isSafeInteger(receipt.image?.height_px) || receipt.image.height_px <= 0) {
+      throw new Error(`sheet_pixel_raster_evidence_dimensions_invalid:${viewKey}`);
+    }
+    if (rasterEvidenceReceiptByView.has(viewKey)) throw new Error(`sheet_pixel_raster_evidence_duplicate_view:${viewKey}`);
+    rasterEvidenceReceiptByView.set(viewKey, receipt);
     rasterEvidenceViews.add(viewKey);
     for (const evidence of receipt.route_evidence ?? []) {
       const primitiveId = requiredText(evidence.primitive_id, `sheet_pixel_raster_evidence_${viewKey}_primitive_id`);
@@ -384,7 +605,7 @@ export function compileSheetPixelInterpretationV1(
     }
   }
 
-  const primitives = input.primitives.map((primitive, index) => {
+  const primitives = pixelPrimitives.map((primitive, index) => {
     const id = requiredText(primitive.primitive_id, `sheet_pixel_primitive_${index}_id`);
     const trusted = trustedByKey.get(requiredText(primitive.source_view_key, `sheet_pixel_primitive_${id}_view_key`));
     if (!trusted || !selectedKeys.has(primitive.source_view_key)) throw new Error(`sheet_pixel_primitive_view_not_selected:${id}`);
@@ -402,7 +623,7 @@ export function compileSheetPixelInterpretationV1(
         : 0;
     const points = primitive.points.map((value, pointIndex) => framePoint(trusted.frame, value, `sheet_pixel_primitive_${id}_point_${pointIndex}`));
     const endpoints = (primitive.endpoints ?? []).map((endpoint, endpointIndex): SheetTopologyEndpointV1 => ({
-      endpoint_key: requiredText(endpoint.endpoint_key, `sheet_pixel_primitive_${id}_endpoint_${endpointIndex}_key`),
+      endpoint_key: qualifiedEndpointKey(id, requiredText(endpoint.endpoint_key, `sheet_pixel_primitive_${id}_endpoint_${endpointIndex}_key`)),
       point: framePoint(trusted.frame, endpoint.point, `sheet_pixel_endpoint_${endpoint.endpoint_key}_point`),
       outward_direction_xy: frameDirection(trusted.frame, endpoint.outward_direction_uv, `sheet_pixel_endpoint_${endpoint.endpoint_key}_direction`),
       boundary: endpoint.boundary,
@@ -427,7 +648,7 @@ export function compileSheetPixelInterpretationV1(
       package_id: input.package_id,
       coordinate_space: "model_xyz_feet",
       source_views: selected.map(value => value.source_view),
-      source_marks: input.source_marks,
+      source_marks: sourceMarks,
       primitives
     },
     {
@@ -436,9 +657,13 @@ export function compileSheetPixelInterpretationV1(
       ...(context.policy ? { policy: context.policy } : {})
     }
   );
+  const sourceRouteJunctionRepairs = compileSourceRouteJunctionRepairs(input, rasterEvidenceReceiptByView);
+  deferTopologyForSourceRouteJunctionRepairs(compiledTopology, sourceRouteJunctionRepairs);
   for (const [primitiveId, evidence] of rasterEvidenceByPrimitive) {
     if (evidence.status !== "accepted_raster_support") compiledTopology.warnings.push(`raster_evidence_${evidence.status}:${primitiveId}`);
   }
+  compiledTopology.warnings.push(...sourceAccountingWarnings);
+  compiledTopology.warnings = [...new Set(compiledTopology.warnings)].sort();
   for (const [primitiveId, evidence] of candidatePresenceByPrimitive) {
     if (evidence.status !== "not_present") compiledTopology.warnings.push(`candidate_presence_${evidence.status}:${primitiveId}`);
   }
@@ -452,6 +677,7 @@ export function compileSheetPixelInterpretationV1(
     pixel_interpretation_sha256: digest(input),
     trusted_context_sha256: digest(context),
     compiled_topology: compiledTopology,
-    candidate_identity_groups: candidateIdentityGroups
+    candidate_identity_groups: candidateIdentityGroups,
+    source_route_junction_repairs: sourceRouteJunctionRepairs
   };
 }

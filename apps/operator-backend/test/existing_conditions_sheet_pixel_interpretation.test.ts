@@ -119,6 +119,20 @@ test("only host-registered view keys may enter topology compilation", () => {
   );
 });
 
+test("pixel compilation closes safe reciprocal source-mark omissions before topology compilation", () => {
+  const incomplete = input();
+  const leftDisposition = incomplete.source_marks[0]!.disposition;
+  if (leftDisposition.status !== "candidate") throw new Error("test_fixture_expected_candidate_mark");
+  leftDisposition.primitive_ids = [];
+  incomplete.primitives[1]!.source_mark_ids = [];
+
+  const result = compileSheetPixelInterpretationV1(incomplete, context());
+
+  assert.equal(result.compiled_topology.status, "ready");
+  assert.ok(result.compiled_topology.warnings.includes("source_accounting_reciprocity_normalized:mark-left:run-left"));
+  assert.ok(result.compiled_topology.warnings.includes("source_accounting_reciprocity_normalized:mark-right:run-right"));
+});
+
 test("host-owned raster evidence blocks an overconfident unsupported route", () => {
   const trusted = context();
   trusted.raster_evidence_receipts = [{
@@ -152,6 +166,105 @@ test("host-owned raster evidence blocks an overconfident unsupported route", () 
   assert.equal(decision?.decision, "deferred");
   assert.ok(decision?.reasons.includes("geometry_confidence_below_threshold"));
   assert.ok(result.compiled_topology.warnings.includes("raster_evidence_rejected_raster_extent:run-left"));
+});
+
+test("accepted source routes with a near-orthogonal endpoint at another route interior are deferred for split and snap repair", () => {
+  const junctionInput = input();
+  const claims = junctionInput.primitives[0]!.claims;
+  const confidence = junctionInput.primitives[0]!.confidence;
+  junctionInput.package_id = "source-near-t-junction";
+  junctionInput.view_keys = ["left"];
+  junctionInput.source_marks = [
+    { source_mark_id: "mark-trunk", source_view_key: "left", disposition: { status: "candidate", primitive_ids: ["trunk"] } },
+    { source_mark_id: "mark-branch", source_view_key: "left", disposition: { status: "candidate", primitive_ids: ["branch"] } }
+  ];
+  junctionInput.primitives = [
+    {
+      primitive_id: "trunk", source_view_key: "left", source_mark_ids: ["mark-trunk"], kind: "route_segment",
+      points: [{ u: 0.54, v: 0.2 }, { u: 0.54, v: 0.8 }],
+      endpoints: [
+        { endpoint_key: "trunk:start", point: { u: 0.54, v: 0.2 }, outward_direction_uv: [0, -1], boundary: "internal" },
+        { endpoint_key: "trunk:end", point: { u: 0.54, v: 0.8 }, outward_direction_uv: [0, 1], boundary: "internal" }
+      ],
+      claims, confidence
+    },
+    {
+      primitive_id: "branch", source_view_key: "left", source_mark_ids: ["mark-branch"], kind: "route_segment",
+      points: [{ u: 0.2, v: 0.45 }, { u: 0.519, v: 0.45 }],
+      endpoints: [
+        { endpoint_key: "branch:start", point: { u: 0.2, v: 0.45 }, outward_direction_uv: [-1, 0], boundary: "internal" },
+        { endpoint_key: "branch:end", point: { u: 0.519, v: 0.45 }, outward_direction_uv: [1, 0], boundary: "internal" }
+      ],
+      claims, confidence
+    }
+  ];
+  const trusted = context();
+  trusted.trusted_views = [trusted.trusted_views[0]!];
+  trusted.raster_evidence_receipts = [{
+    schema_version: 1,
+    package_id: junctionInput.package_id,
+    source_view_key: "left",
+    image: { path: "left.png", sha256: HASH_A, width_px: 1000, height_px: 500 },
+    policy: { maximum_luminance: 180, corridor_radius_px: 7, sample_spacing_px: 2, accepted_support_fraction: 0.82, provisional_support_fraction: 0.55, maximum_accepted_unsupported_run_fraction: 0.18 },
+    route_evidence: ["trunk", "branch"].map(primitive_id => ({ primitive_id, sample_count: 100, supported_sample_count: 100, support_fraction: 1, longest_unsupported_run_fraction: 0, status: "accepted_raster_support" as const })),
+    accepted_primitive_ids: ["trunk", "branch"],
+    provisional_primitive_ids: [],
+    rejected_primitive_ids: []
+  }];
+
+  const result = compileSheetPixelInterpretationV1(junctionInput, trusted);
+
+  assert.equal(result.source_route_junction_repairs.length, 1);
+  assert.deepEqual(result.source_route_junction_repairs[0], {
+    repair_id: result.source_route_junction_repairs[0]!.repair_id,
+    source_view_key: "left",
+    trunk_primitive_id: "trunk",
+    trunk_segment_index: 0,
+    branch_primitive_id: "branch",
+    branch_endpoint_key: "branch:end",
+    branch_endpoint_uv: { u: 0.519, v: 0.45 },
+    projected_junction_uv: { u: 0.54, v: 0.45 },
+    gap_px: 21,
+    maximum_gap_px: 21,
+    intersection_angle_degrees: 90,
+    status: "requires_source_junction_split",
+    exact_next_repair: "split_trunk_and_snap_branch_endpoint_after_source_raster_reverification",
+    native_write_allowed: false
+  });
+  assert.equal(result.compiled_topology.status, "blocked");
+  assert.deepEqual(result.compiled_topology.deferred_primitive_ids, ["branch", "trunk"]);
+  assert.equal(result.compiled_topology.native_batch_groups.length, 0);
+  assert.ok(result.compiled_topology.decisions.every(decision => decision.reasons.includes("source_route_near_t_junction_unresolved")));
+  assert.ok(result.compiled_topology.conflicts.includes("source_route_requires_junction_split:trunk:branch:branch:end"));
+});
+
+test("a route endpoint outside the raster-derived junction corridor does not invent a split", () => {
+  const farInput = input();
+  farInput.package_id = "source-no-near-t-junction";
+  farInput.view_keys = ["left"];
+  farInput.source_marks = [
+    { source_mark_id: "mark-trunk", source_view_key: "left", disposition: { status: "candidate", primitive_ids: ["trunk"] } },
+    { source_mark_id: "mark-branch", source_view_key: "left", disposition: { status: "candidate", primitive_ids: ["branch"] } }
+  ];
+  const claims = farInput.primitives[0]!.claims;
+  const confidence = farInput.primitives[0]!.confidence;
+  farInput.primitives = [
+    { primitive_id: "trunk", source_view_key: "left", source_mark_ids: ["mark-trunk"], kind: "route_segment", points: [{ u: 0.54, v: 0.2 }, { u: 0.54, v: 0.8 }], claims, confidence },
+    { primitive_id: "branch", source_view_key: "left", source_mark_ids: ["mark-branch"], kind: "route_segment", points: [{ u: 0.2, v: 0.45 }, { u: 0.5, v: 0.45 }], claims, confidence }
+  ];
+  const trusted = context();
+  trusted.trusted_views = [trusted.trusted_views[0]!];
+  trusted.raster_evidence_receipts = [{
+    schema_version: 1, package_id: farInput.package_id, source_view_key: "left",
+    image: { path: "left.png", sha256: HASH_A, width_px: 1000, height_px: 500 },
+    policy: { maximum_luminance: 180, corridor_radius_px: 7, sample_spacing_px: 2, accepted_support_fraction: 0.82, provisional_support_fraction: 0.55, maximum_accepted_unsupported_run_fraction: 0.18 },
+    route_evidence: ["trunk", "branch"].map(primitive_id => ({ primitive_id, sample_count: 100, supported_sample_count: 100, support_fraction: 1, longest_unsupported_run_fraction: 0, status: "accepted_raster_support" as const })),
+    accepted_primitive_ids: ["trunk", "branch"], provisional_primitive_ids: [], rejected_primitive_ids: []
+  }];
+
+  const result = compileSheetPixelInterpretationV1(farInput, trusted);
+  assert.equal(result.source_route_junction_repairs.length, 0);
+  assert.ok(result.compiled_topology.decisions.every(decision => decision.decision === "native_batch"));
 });
 
 test("hash-bound candidate receipts compile near-coincident points into an explicit cross-sheet identity", () => {

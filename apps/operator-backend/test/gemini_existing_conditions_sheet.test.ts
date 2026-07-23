@@ -52,6 +52,48 @@ test("strict Gemini sheet output normalizes into provider-neutral pixel observat
   assert.deepEqual(result.open_questions, ["Route elevation is not visible."]);
 });
 
+test("provider-local endpoint keys are deterministically namespaced by primitive", () => {
+  const localKeys = raw();
+  localKeys.primitives[0]!.endpoints[0]!.endpoint_key = "ep_1";
+  localKeys.primitives[0]!.endpoints[1]!.endpoint_key = "ep_2";
+  const second = structuredClone(localKeys.primitives[0]!);
+  second.primitive_id = "run-2";
+  localKeys.source_marks[0]!.primitive_ids.push("run-2");
+  localKeys.primitives.push(second);
+
+  const result = normalizeGeminiExistingConditionsSheetResponseV1({ request: request(), raw: localKeys });
+
+  assert.deepEqual(result.interpretation.primitives.map(primitive => primitive.endpoints?.map(endpoint => endpoint.endpoint_key)), [
+    ["run-1:ep_1", "run-1:ep_2"],
+    ["run-2:ep_1", "run-2:ep_2"]
+  ]);
+});
+
+test("duplicate endpoint keys within one primitive remain invalid", () => {
+  const duplicate = raw();
+  duplicate.primitives[0]!.endpoints[0]!.endpoint_key = "ep";
+  duplicate.primitives[0]!.endpoints[1]!.endpoint_key = "ep";
+  assert.throws(
+    () => normalizeGeminiExistingConditionsSheetResponseV1({ request: request(), raw: duplicate }),
+    /gemini_sheet_primitive_duplicate_endpoint_key:run-1/
+  );
+});
+
+test("normalization closes reciprocal source-mark omissions without inventing unknown references", () => {
+  const incomplete = raw();
+  incomplete.primitives[0]!.source_mark_ids = [];
+  const result = normalizeGeminiExistingConditionsSheetResponseV1({ request: request(), raw: incomplete });
+  assert.deepEqual(result.interpretation.primitives[0]!.source_mark_ids, ["mark-1"]);
+  assert.ok(result.open_questions.includes("Normalized reciprocal source-mark linkage mark-1 -> run-1."));
+
+  const unknown = raw();
+  unknown.primitives[0]!.source_mark_ids = ["invented-mark"];
+  assert.throws(
+    () => normalizeGeminiExistingConditionsSheetResponseV1({ request: request(), raw: unknown }),
+    /gemini_sheet_primitive_unknown_source_mark:run-1:invented-mark/
+  );
+});
+
 test("provider cannot add a source view that was not supplied by the host", () => {
   const invalid = raw();
   invalid.view_keys = ["invented"];
@@ -73,6 +115,7 @@ test("provider cannot approve its own exclusions", () => {
 test("structured schema makes all topology and confidence fields explicit", () => {
   const primitive = (GEMINI_EXISTING_CONDITIONS_SHEET_RESPONSE_SCHEMA_V1.properties.primitives.items as any);
   assert.deepEqual(primitive.required, ["primitive_id", "source_view_key", "source_mark_ids", "kind", "points", "endpoints", "claims", "confidence"]);
+  assert.equal(primitive.properties.points.minItems, 1);
   assert.equal(primitive.properties.points.items.properties.u.minimum, 0);
   assert.equal(primitive.properties.points.items.properties.u.maximum, 1);
   assert.deepEqual(primitive.properties.endpoints.items.properties.boundary.enum, ["internal", "view_boundary", "sheet_continuation"]);
