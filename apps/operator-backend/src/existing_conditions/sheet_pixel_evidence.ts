@@ -6,8 +6,12 @@ import type { CandidateVisibleFrameMapping } from "./candidate_visible_registrat
 import type { SheetPixelInterpretationInputV1, SheetPixelPrimitiveV1 } from "./sheet_pixel_interpretation.js";
 
 export type SheetPixelEvidencePolicyV1 = {
+  route_support_mode?: "ink_corridor" | "outlined_network_centerline";
   maximum_luminance: number;
   corridor_radius_px: number;
+  outlined_network_min_half_span_px?: number;
+  outlined_network_max_half_span_px?: number;
+  outlined_network_edge_radius_px?: number;
   sample_spacing_px: number;
   accepted_support_fraction: number;
   provisional_support_fraction: number;
@@ -30,7 +34,7 @@ export type SheetPixelRouteEvidenceV1 = {
   support_fraction: number;
   longest_unsupported_run_fraction: number;
   status: "accepted_raster_support" | "provisional_raster_support" | "rejected_raster_extent";
-  support_modality?: "chromatic_line" | "monochrome_line";
+  support_modality?: "chromatic_line" | "monochrome_line" | "chromatic_outline_centerline" | "monochrome_outline_centerline";
   chromatic_support_fraction?: number;
   monochrome_support_fraction?: number;
   coherent_hue_degrees?: number;
@@ -95,8 +99,12 @@ export type SheetCandidatePresenceReceiptV1 = {
 };
 
 const DEFAULT_POLICY: SheetPixelEvidencePolicyV1 = {
+  route_support_mode: "ink_corridor",
   maximum_luminance: 180,
   corridor_radius_px: 7,
+  outlined_network_min_half_span_px: 2,
+  outlined_network_max_half_span_px: 15,
+  outlined_network_edge_radius_px: 1,
   sample_spacing_px: 2,
   accepted_support_fraction: 0.82,
   provisional_support_fraction: 0.55,
@@ -135,13 +143,21 @@ function bounded(value: unknown, fallback: number, minimum: number, maximum: num
 }
 
 function policy(input?: Partial<SheetPixelEvidencePolicyV1>): ResolvedSheetPixelEvidencePolicyV1 {
+  const routeSupportMode = input?.route_support_mode ?? DEFAULT_POLICY.route_support_mode!;
+  if (routeSupportMode !== "ink_corridor" && routeSupportMode !== "outlined_network_centerline") {
+    throw new Error("sheet_pixel_evidence_route_support_mode_invalid");
+  }
   const pointSupportMode = input?.point_support_mode ?? DEFAULT_POLICY.point_support_mode!;
   if (pointSupportMode !== "auto" && pointSupportMode !== "chromatic" && pointSupportMode !== "monochrome") {
     throw new Error("sheet_pixel_evidence_point_support_mode_invalid");
   }
-  return {
+  const result = {
+    route_support_mode: routeSupportMode,
     maximum_luminance: bounded(input?.maximum_luminance, DEFAULT_POLICY.maximum_luminance, 0, 255, "sheet_pixel_evidence_maximum_luminance"),
     corridor_radius_px: bounded(input?.corridor_radius_px, DEFAULT_POLICY.corridor_radius_px, 0, 50, "sheet_pixel_evidence_corridor_radius_px"),
+    outlined_network_min_half_span_px: bounded(input?.outlined_network_min_half_span_px, DEFAULT_POLICY.outlined_network_min_half_span_px!, 1, 50, "sheet_pixel_evidence_outlined_network_min_half_span_px"),
+    outlined_network_max_half_span_px: bounded(input?.outlined_network_max_half_span_px, DEFAULT_POLICY.outlined_network_max_half_span_px!, 1, 100, "sheet_pixel_evidence_outlined_network_max_half_span_px"),
+    outlined_network_edge_radius_px: bounded(input?.outlined_network_edge_radius_px, DEFAULT_POLICY.outlined_network_edge_radius_px!, 0, 10, "sheet_pixel_evidence_outlined_network_edge_radius_px"),
     sample_spacing_px: bounded(input?.sample_spacing_px, DEFAULT_POLICY.sample_spacing_px, 0.25, 50, "sheet_pixel_evidence_sample_spacing_px"),
     accepted_support_fraction: unit(input?.accepted_support_fraction ?? DEFAULT_POLICY.accepted_support_fraction, "sheet_pixel_evidence_accepted_support_fraction"),
     provisional_support_fraction: unit(input?.provisional_support_fraction ?? DEFAULT_POLICY.provisional_support_fraction, "sheet_pixel_evidence_provisional_support_fraction"),
@@ -158,6 +174,10 @@ function policy(input?: Partial<SheetPixelEvidencePolicyV1>): ResolvedSheetPixel
       : { point_expected_hue_degrees: bounded(input.point_expected_hue_degrees, 0, 0, 360, "sheet_pixel_evidence_point_expected_hue_degrees") }),
     point_hue_tolerance_degrees: bounded(input?.point_hue_tolerance_degrees, DEFAULT_POLICY.point_hue_tolerance_degrees!, 0, 180, "sheet_pixel_evidence_point_hue_tolerance_degrees")
   };
+  if (result.outlined_network_min_half_span_px > result.outlined_network_max_half_span_px) {
+    throw new Error("sheet_pixel_evidence_outlined_network_span_invalid");
+  }
+  return result;
 }
 
 const HUE_BIN_COUNT = 24;
@@ -215,8 +235,10 @@ function nearbyEvidence(
   return { monochrome, hue_bins: hueBins };
 }
 
-function routeSamples(primitive: SheetPixelPrimitiveV1, width: number, height: number, spacing: number): Array<{ x: number; y: number }> {
-  const result: Array<{ x: number; y: number }> = [];
+type RouteSample = { x: number; y: number; normal_x: number; normal_y: number };
+
+function routeSamples(primitive: SheetPixelPrimitiveV1, width: number, height: number, spacing: number): RouteSample[] {
+  const result: RouteSample[] = [];
   for (let index = 1; index < primitive.points.length; index += 1) {
     const start = primitive.points[index - 1]!;
     const end = primitive.points[index]!;
@@ -225,13 +247,47 @@ function routeSamples(primitive: SheetPixelPrimitiveV1, width: number, height: n
     const endX = unit(end.u, `sheet_pixel_evidence_${primitive.primitive_id}_${index}_u`) * width;
     const endY = unit(end.v, `sheet_pixel_evidence_${primitive.primitive_id}_${index}_v`) * height;
     const length = Math.hypot(endX - startX, endY - startY);
+    const normalX = length > 1e-9 ? -(endY - startY) / length : 0;
+    const normalY = length > 1e-9 ? (endX - startX) / length : 1;
     const steps = Math.max(1, Math.ceil(length / spacing));
     for (let step = index === 1 ? 0 : 1; step <= steps; step += 1) {
       const t = step / steps;
-      result.push({ x: startX + ((endX - startX) * t), y: startY + ((endY - startY) * t) });
+      result.push({ x: startX + ((endX - startX) * t), y: startY + ((endY - startY) * t), normal_x: normalX, normal_y: normalY });
     }
   }
   return result;
+}
+
+function outlinedNetworkEvidence(
+  buffer: PixelBuffer,
+  sample: RouteSample,
+  resolvedPolicy: ResolvedSheetPixelEvidencePolicyV1
+): { monochrome: boolean; hue_bins: Set<number> } {
+  const sideEvidence = [-1, 1].map(side => {
+    let monochrome = false;
+    const hueBins = new Set<number>();
+    for (let offset = resolvedPolicy.outlined_network_min_half_span_px; offset <= resolvedPolicy.outlined_network_max_half_span_px; offset += 1) {
+      const evidence = nearbyEvidence(
+        buffer,
+        sample.x + (side * sample.normal_x * offset),
+        sample.y + (side * sample.normal_y * offset),
+        resolvedPolicy.maximum_luminance,
+        resolvedPolicy.minimum_chromatic_chroma,
+        resolvedPolicy.outlined_network_edge_radius_px
+      );
+      monochrome ||= evidence.monochrome;
+      for (const hueBin of evidence.hue_bins) hueBins.add(hueBin);
+    }
+    return { monochrome, hue_bins: hueBins };
+  });
+  const pairedHueBins = new Set<number>();
+  for (const left of sideEvidence[0]!.hue_bins) {
+    if ([...sideEvidence[1]!.hue_bins].some(right => circularHueBinDistance(left, right) <= 1)) pairedHueBins.add(left);
+  }
+  return {
+    monochrome: sideEvidence[0]!.monochrome && sideEvidence[1]!.monochrome,
+    hue_bins: pairedHueBins
+  };
 }
 
 export function scoreSheetPixelRouteEvidenceV1(args: {
@@ -247,14 +303,16 @@ export function scoreSheetPixelRouteEvidenceV1(args: {
     .map(primitive => {
       const samples = routeSamples(primitive, args.pixels.width, args.pixels.height, resolvedPolicy.sample_spacing_px);
       if (samples.length === 0) throw new Error(`sheet_pixel_evidence_route_has_no_samples:${primitive.primitive_id}`);
-      const evidence = samples.map(sample => nearbyEvidence(
-        args.pixels,
-        sample.x,
-        sample.y,
-        resolvedPolicy.maximum_luminance,
-        resolvedPolicy.minimum_chromatic_chroma,
-        resolvedPolicy.corridor_radius_px
-      ));
+      const evidence = samples.map(sample => resolvedPolicy.route_support_mode === "outlined_network_centerline"
+        ? outlinedNetworkEvidence(args.pixels, sample, resolvedPolicy)
+        : nearbyEvidence(
+            args.pixels,
+            sample.x,
+            sample.y,
+            resolvedPolicy.maximum_luminance,
+            resolvedPolicy.minimum_chromatic_chroma,
+            resolvedPolicy.corridor_radius_px
+          ));
       const hueSupportCounts = Array.from({ length: HUE_BIN_COUNT }, (_, hueBin) =>
         evidence.filter(sample => [...sample.hue_bins].some(sampleBin => circularHueBinDistance(sampleBin, hueBin) <= 1)).length
       );
@@ -268,10 +326,11 @@ export function scoreSheetPixelRouteEvidenceV1(args: {
       const monochromeSupported = evidence.map(sample => sample.monochrome);
       const chromaticSupportFraction = chromaticSupported.filter(Boolean).length / chromaticSupported.length;
       const monochromeSupportFraction = monochromeSupported.filter(Boolean).length / monochromeSupported.length;
-      const supportModality = chromaticSupportFraction >= resolvedPolicy.minimum_chromatic_activation_fraction
-        ? "chromatic_line" as const
-        : "monochrome_line" as const;
-      const supported = supportModality === "chromatic_line" ? chromaticSupported : monochromeSupported;
+      const usesChromaticSupport = chromaticSupportFraction >= resolvedPolicy.minimum_chromatic_activation_fraction;
+      const supportModality = resolvedPolicy.route_support_mode === "outlined_network_centerline"
+        ? (usesChromaticSupport ? "chromatic_outline_centerline" as const : "monochrome_outline_centerline" as const)
+        : (usesChromaticSupport ? "chromatic_line" as const : "monochrome_line" as const);
+      const supported = usesChromaticSupport ? chromaticSupported : monochromeSupported;
       const supportedCount = supported.filter(Boolean).length;
       let longestUnsupported = 0;
       let currentUnsupported = 0;
@@ -296,7 +355,7 @@ export function scoreSheetPixelRouteEvidenceV1(args: {
         support_modality: supportModality,
         chromatic_support_fraction: chromaticSupportFraction,
         monochrome_support_fraction: monochromeSupportFraction,
-        ...(supportModality === "chromatic_line"
+        ...(usesChromaticSupport
           ? { coherent_hue_degrees: coherentHueBin * HUE_BIN_WIDTH_DEGREES }
           : {})
       } satisfies SheetPixelRouteEvidenceV1;

@@ -169,7 +169,7 @@ test("provider-hypothesis point symbols remain classification-capped", () => {
   assert.ok(result.open_questions.some(value => value.includes("classification remains provisional")));
 });
 
-test("raw provider output is captured before strict normalization rejects it", async () => {
+test("strict normalization failure is captured and repaired once with exact feedback", async () => {
   const previousKey = process.env.OPERATOR_GEMINI_API_KEY;
   const previousModel = process.env.OPERATOR_GEMINI_SHEET_MODEL;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "operator-gemini-raw-capture-"));
@@ -186,8 +186,9 @@ test("raw provider output is captured before strict normalization rejects it", a
     };
     const captures: GeminiExistingConditionsRawResponseCaptureV1[] = [];
     let requestedMaximumOutputTokens: unknown;
-    await assert.rejects(
-      analyzeExistingConditionsSheetWithGeminiV1(
+    const requestBodies: any[] = [];
+    let fetchCount = 0;
+    const result = await analyzeExistingConditionsSheetWithGeminiV1(
         {
           ...request(),
           views: [{ view_key: "main", image_path: imagePath, discipline_hint: "mechanical" }]
@@ -195,15 +196,26 @@ test("raw provider output is captured before strict normalization rejects it", a
         {
           fetch_impl: async (_input, init) => {
             const body = JSON.parse(String(init?.body ?? "{}"));
+            requestBodies.push(body);
             requestedMaximumOutputTokens = body.generationConfig?.maxOutputTokens;
-            return new Response(JSON.stringify(envelope), { status: 200 });
+            fetchCount += 1;
+            return new Response(JSON.stringify(fetchCount === 1
+              ? envelope
+              : { candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(raw()) }] } }] }), { status: 200 });
           },
           on_raw_response: capture => { captures.push(capture); }
         }
-      ),
-      /gemini_sheet_mark_unknown_primitive:mark-1:missing-run/
     );
-    assert.equal(captures.length, 1);
+    assert.equal(result.attempt_count, 2);
+    assert.equal(result.repair?.trigger_error, "gemini_sheet_mark_unknown_primitive:mark-1:missing-run");
+    assert.equal(result.repair?.first_raw_response_sha256, captures[0]?.raw_response_sha256);
+    assert.equal(result.repair?.first_raw_response.raw_text, JSON.stringify(invalid));
+    assert.equal(result.repair?.first_raw_response.normalization_error, "gemini_sheet_mark_unknown_primitive:mark-1:missing-run");
+    assert.equal(captures.length, 2);
+    assert.equal(captures[0]?.attempt, 1);
+    assert.equal(captures[0]?.normalization_error, "gemini_sheet_mark_unknown_primitive:mark-1:missing-run");
+    assert.equal(captures[1]?.attempt, 2);
+    assert.equal(captures[1]?.repair_of_raw_response_sha256, captures[0]?.raw_response_sha256);
     assert.equal(captures[0]?.model, "test-model");
     assert.equal(captures[0]?.package_id, "blind-sheet");
     assert.match(captures[0]?.raw_response_sha256 ?? "", /^[a-f0-9]{64}$/);
@@ -211,11 +223,41 @@ test("raw provider output is captured before strict normalization rejects it", a
     assert.deepEqual(captures[0]?.provider_finish_reasons, ["MAX_TOKENS"]);
     assert.deepEqual(captures[0]?.provider_usage_metadata, envelope.usageMetadata);
     assert.equal(requestedMaximumOutputTokens, 32_768);
+    assert.equal(requestBodies[1]?.generationConfig?.temperature, 0);
+    assert.equal(requestBodies[1]?.contents?.[1]?.role, "model");
+    assert.match(requestBodies[1]?.contents?.[2]?.parts?.[0]?.text ?? "", /Exact validation error: gemini_sheet_mark_unknown_primitive:mark-1:missing-run/);
   } finally {
     if (previousKey === undefined) delete process.env.OPERATOR_GEMINI_API_KEY;
     else process.env.OPERATOR_GEMINI_API_KEY = previousKey;
     if (previousModel === undefined) delete process.env.OPERATOR_GEMINI_SHEET_MODEL;
     else process.env.OPERATOR_GEMINI_SHEET_MODEL = previousModel;
+  }
+});
+
+test("a second strict normalization failure is not retried indefinitely", async () => {
+  const previousKey = process.env.OPERATOR_GEMINI_API_KEY;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "operator-gemini-repair-limit-"));
+  const imagePath = path.join(dir, "source.png");
+  fs.writeFileSync(imagePath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"));
+  process.env.OPERATOR_GEMINI_API_KEY = "test-key";
+  try {
+    const invalid = raw();
+    invalid.source_marks[0]!.primitive_ids.push("missing-run");
+    let fetchCount = 0;
+    await assert.rejects(
+      analyzeExistingConditionsSheetWithGeminiV1(
+        { ...request(), views: [{ view_key: "main", image_path: imagePath }] },
+        { fetch_impl: async () => {
+          fetchCount += 1;
+          return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(invalid) }] } }] }), { status: 200 });
+        } }
+      ),
+      /gemini_sheet_mark_unknown_primitive:mark-1:missing-run/
+    );
+    assert.equal(fetchCount, 2);
+  } finally {
+    if (previousKey === undefined) delete process.env.OPERATOR_GEMINI_API_KEY;
+    else process.env.OPERATOR_GEMINI_API_KEY = previousKey;
   }
 });
 

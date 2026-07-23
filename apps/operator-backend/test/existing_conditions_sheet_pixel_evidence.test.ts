@@ -74,6 +74,57 @@ test("raw model confidence cannot override missing raster support", () => {
   assert.equal(result.route_evidence[0]?.status, "rejected_raster_extent");
 });
 
+test("outlined-network mode accepts the centerline and rejects tracing either visible boundary", () => {
+  const canvas = createCanvas(200, 100);
+  const context = canvas.getContext("2d");
+  context.fillStyle = "white";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.strokeStyle = "black";
+  context.lineWidth = 2;
+  context.beginPath();
+  context.moveTo(20, 30);
+  context.lineTo(180, 30);
+  context.moveTo(20, 40);
+  context.lineTo(180, 40);
+  context.stroke();
+  const input = interpretation();
+  const makeRoute = (primitive_id: string, y: number) => ({
+    ...input.primitives[0]!,
+    primitive_id,
+    source_mark_ids: [`mark-${primitive_id}`],
+    points: [{ u: 0.1, v: y / 100 }, { u: 0.9, v: y / 100 }]
+  });
+  input.primitives = [makeRoute("centerline", 35), makeRoute("visible-boundary", 30)];
+  input.source_marks = input.primitives.map(primitive => ({
+    source_mark_id: primitive.source_mark_ids[0]!,
+    source_view_key: "view",
+    disposition: { status: "candidate" as const, primitive_ids: [primitive.primitive_id] }
+  }));
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+
+  const outlined = scoreSheetPixelRouteEvidenceV1({
+    pixels: { width: canvas.width, height: canvas.height, data: pixels.data },
+    interpretation: input,
+    policy: {
+      route_support_mode: "outlined_network_centerline",
+      outlined_network_min_half_span_px: 3,
+      outlined_network_max_half_span_px: 8,
+      outlined_network_edge_radius_px: 1
+    }
+  });
+  const outlinedById = new Map(outlined.route_evidence.map(item => [item.primitive_id, item]));
+  assert.equal(outlinedById.get("centerline")?.status, "accepted_raster_support");
+  assert.equal(outlinedById.get("centerline")?.support_modality, "monochrome_outline_centerline");
+  assert.equal(outlinedById.get("visible-boundary")?.status, "rejected_raster_extent");
+
+  const corridor = scoreSheetPixelRouteEvidenceV1({
+    pixels: { width: canvas.width, height: canvas.height, data: pixels.data },
+    interpretation: input,
+    policy: { route_support_mode: "ink_corridor", corridor_radius_px: 2 }
+  });
+  assert.equal(corridor.route_evidence.find(item => item.primitive_id === "visible-boundary")?.status, "accepted_raster_support");
+});
+
 test("chromatic routes use coherent hue support and do not inherit black-symbol overlap", () => {
   const canvas = createCanvas(200, 120);
   const context = canvas.getContext("2d");

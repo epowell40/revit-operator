@@ -30,6 +30,12 @@ export type GeminiExistingConditionsSheetResponseV1 = {
   package_id: string;
   source_image_sha256_by_view: Record<string, string>;
   raw_response_sha256: string;
+  attempt_count: number;
+  repair?: {
+    trigger_error: string;
+    first_raw_response_sha256: string;
+    first_raw_response: GeminiExistingConditionsRawResponseCaptureV1;
+  };
   interpretation: SheetPixelInterpretationInputV1;
   open_questions: string[];
 };
@@ -40,6 +46,9 @@ export type GeminiExistingConditionsRawResponseCaptureV1 = {
   model: string;
   package_id: string;
   raw_response_sha256: string;
+  attempt: number;
+  repair_of_raw_response_sha256?: string;
+  normalization_error?: string;
   raw_text: string;
   parsed: unknown | null;
   parse_error?: string;
@@ -232,6 +241,17 @@ function prompt(request: GeminiExistingConditionsSheetRequestV1): string {
     lines.push(JSON.stringify({ view_key: view.view_key, sheet_hint: view.sheet_hint ?? "", discipline_hint: view.discipline_hint ?? "" }));
   }
   return lines.join("\n");
+}
+
+function repairPrompt(error: string): string {
+  return [
+    "The prior structured response failed strict host normalization.",
+    `Exact validation error: ${error}`,
+    "Return the complete corrected response, not a patch.",
+    "Preserve source-grounded geometry and claims, but repair every invalid reference or field.",
+    "Every candidate source mark primitive_ids entry must name an emitted primitive, and every primitive source_mark_ids entry must name an emitted candidate source mark in the same view.",
+    "Before returning, verify reciprocal referential integrity across the entire response."
+  ].join("\n");
 }
 
 function claimMap(entries: RawGeminiSheetResponse["primitives"][number]["claims"], primitiveId: string): SheetPixelPrimitiveV1["claims"] {
@@ -446,62 +466,88 @@ export async function analyzeExistingConditionsSheetWithGeminiV1(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Math.max(10_000, Math.min(request.timeout_ms ?? 120_000, 300_000)));
   try {
-    const response = await (options.fetch_impl ?? fetch)(`${baseUrl()}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`, {
-      method: "POST",
-      signal: controller.signal,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts }],
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: maximumOutputTokens(request),
-          responseMimeType: "application/json",
-          responseSchema: GEMINI_EXISTING_CONDITIONS_SHEET_RESPONSE_SCHEMA_V1
-        }
-      })
-    });
-    const responseText = await response.text();
-    if (!response.ok) throw new Error(`gemini_sheet_interpreter_http_${response.status}:${responseText.slice(0, 800)}`);
-    const envelope = JSON.parse(responseText) as {
-      candidates?: Array<{ finishReason?: string; content?: { parts?: Array<{ text?: string }> } }>;
-      usageMetadata?: unknown;
-    };
-    const rawText = (envelope.candidates ?? []).flatMap(candidate => candidate.content?.parts ?? []).map(part => clean(part.text)).filter(Boolean).join("\n");
-    if (!rawText) throw new Error("gemini_sheet_interpreter_empty_response");
-    const rawResponseSha256 = sha256Text(rawText);
-    const captureBase = {
-      schema_version: 1 as const,
-      provider: "gemini" as const,
-      model,
-      package_id: request.package_id,
-      raw_response_sha256: rawResponseSha256,
-      raw_text: rawText,
-      provider_finish_reasons: (envelope.candidates ?? []).map(candidate => clean(candidate.finishReason)).filter(Boolean),
-      ...(envelope.usageMetadata === undefined ? {} : { provider_usage_metadata: envelope.usageMetadata })
-    };
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(rawText) as unknown;
-    } catch (error) {
-      const parseError = error instanceof Error ? error.message : clean(error);
-      await options.on_raw_response?.({ ...captureBase, parsed: null, parse_error: parseError });
-      throw new Error(`gemini_sheet_interpreter_invalid_json:${parseError}`);
+    let firstRawResponseSha256 = "";
+    let firstRawResponse: GeminiExistingConditionsRawResponseCaptureV1 | undefined;
+    let repairTriggerError = "";
+    let previousRawText = "";
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const contents = attempt === 1
+        ? [{ role: "user", parts }]
+        : [
+            { role: "user", parts },
+            { role: "model", parts: [{ text: previousRawText }] },
+            { role: "user", parts: [{ text: repairPrompt(repairTriggerError) }] }
+          ];
+      const response = await (options.fetch_impl ?? fetch)(`${baseUrl()}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`, {
+        method: "POST",
+        signal: controller.signal,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          contents,
+          generationConfig: {
+            temperature: attempt === 1 ? 0.2 : 0,
+            maxOutputTokens: maximumOutputTokens(request),
+            responseMimeType: "application/json",
+            responseSchema: GEMINI_EXISTING_CONDITIONS_SHEET_RESPONSE_SCHEMA_V1
+          }
+        })
+      });
+      const responseText = await response.text();
+      if (!response.ok) throw new Error(`gemini_sheet_interpreter_http_${response.status}:${responseText.slice(0, 800)}`);
+      const envelope = JSON.parse(responseText) as {
+        candidates?: Array<{ finishReason?: string; content?: { parts?: Array<{ text?: string }> } }>;
+        usageMetadata?: unknown;
+      };
+      const rawText = (envelope.candidates ?? []).flatMap(candidate => candidate.content?.parts ?? []).map(part => clean(part.text)).filter(Boolean).join("\n");
+      if (!rawText) throw new Error("gemini_sheet_interpreter_empty_response");
+      const rawResponseSha256 = sha256Text(rawText);
+      const captureBase = {
+        schema_version: 1 as const,
+        provider: "gemini" as const,
+        model,
+        package_id: request.package_id,
+        raw_response_sha256: rawResponseSha256,
+        attempt,
+        ...(attempt === 1 ? {} : { repair_of_raw_response_sha256: firstRawResponseSha256 }),
+        raw_text: rawText,
+        provider_finish_reasons: (envelope.candidates ?? []).map(candidate => clean(candidate.finishReason)).filter(Boolean),
+        ...(envelope.usageMetadata === undefined ? {} : { provider_usage_metadata: envelope.usageMetadata })
+      };
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(rawText) as unknown;
+      } catch (error) {
+        const parseError = error instanceof Error ? error.message : clean(error);
+        await options.on_raw_response?.({ ...captureBase, parsed: null, parse_error: parseError });
+        throw new Error(`gemini_sheet_interpreter_invalid_json:${parseError}`);
+      }
+      try {
+        const normalized = normalizeGeminiExistingConditionsSheetResponseV1({ request, raw: parsed });
+        await options.on_raw_response?.({ ...captureBase, parsed });
+        return {
+          schema_version: 1,
+          provider: "gemini",
+          model,
+          package_id: request.package_id,
+          source_image_sha256_by_view: sourceHashes,
+          raw_response_sha256: rawResponseSha256,
+          attempt_count: attempt,
+          ...(attempt === 1 ? {} : { repair: { trigger_error: repairTriggerError, first_raw_response_sha256: firstRawResponseSha256, first_raw_response: firstRawResponse! } }),
+          interpretation: normalized.interpretation,
+          open_questions: normalized.open_questions
+        };
+      } catch (error) {
+        const normalizationError = error instanceof Error ? error.message : clean(error);
+        const failedCapture = { ...captureBase, parsed, normalization_error: normalizationError };
+        await options.on_raw_response?.(failedCapture);
+        if (attempt === 2) throw error;
+        firstRawResponseSha256 = rawResponseSha256;
+        firstRawResponse = failedCapture;
+        previousRawText = rawText;
+        repairTriggerError = normalizationError;
+      }
     }
-    await options.on_raw_response?.({
-      ...captureBase,
-      parsed,
-    });
-    const normalized = normalizeGeminiExistingConditionsSheetResponseV1({ request, raw: parsed });
-    return {
-      schema_version: 1,
-      provider: "gemini",
-      model,
-      package_id: request.package_id,
-      source_image_sha256_by_view: sourceHashes,
-      raw_response_sha256: rawResponseSha256,
-      interpretation: normalized.interpretation,
-      open_questions: normalized.open_questions
-    };
+    throw new Error("gemini_sheet_interpreter_repair_loop_exhausted");
   } finally {
     clearTimeout(timeout);
   }
