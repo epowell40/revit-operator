@@ -15,6 +15,11 @@ import {
   type SheetPixelInterpretationContextV1,
   type SheetPixelInterpretationInputV1
 } from "../existing_conditions/sheet_pixel_interpretation.js";
+import {
+  detectSheetChromaticComponentsV1,
+  renderSheetChromaticComponentOverlayV1,
+  type SheetChromaticComponentDetectionInputV1
+} from "../existing_conditions/sheet_chromatic_component_detection.js";
 
 export type WorkbenchAction =
   | {
@@ -102,6 +107,12 @@ export type WorkbenchAction =
       type: "compile_registered_mep_reconstruction";
       package_json: string;
       maximum_created_elements?: number;
+    }
+  | {
+      type: "detect_sheet_chromatic_components";
+      input_file_path: string;
+      overlay_output_path?: string;
+      receipt_output_path?: string;
     }
   | {
       type: "compile_existing_conditions_sheet_interpretation";
@@ -441,6 +452,7 @@ function isSafeRedlineWorkbenchAction(action: WorkbenchAction): boolean {
     action.type === "map_sheet_regions" ||
     action.type === "redline_orient" ||
     action.type === "gemini_redline_analyze" ||
+    action.type === "detect_sheet_chromatic_components" ||
     action.type === "compile_existing_conditions_sheet_interpretation" ||
     action.type === "compile_registered_mep_reconstruction" ||
     action.type === "register_existing_conditions_route_frontier" ||
@@ -712,6 +724,70 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
         // Compilation is terminal within a workbench batch. This prevents a
         // model-authored batch from executing multiple compiler attempts, or
         // reopening vision/orientation work after a deterministic failure.
+        break;
+      }
+
+      if (action.type === "detect_sheet_chromatic_components") {
+        const inputPath = (action.input_file_path ?? "").trim();
+        if (!inputPath) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "detect_sheet_chromatic_components requires input_file_path."
+          });
+          break;
+        }
+        const inputFile = safeReadFile(inputPath, maxReadBytes);
+        if (inputFile.truncated) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "Chromatic component input exceeds the configured workbench read limit."
+          });
+          break;
+        }
+        let input: SheetChromaticComponentDetectionInputV1;
+        try {
+          input = JSON.parse(inputFile.content) as SheetChromaticComponentDetectionInputV1;
+        } catch {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "Chromatic component input is not valid JSON."
+          });
+          break;
+        }
+        const resolvedSourceImagePath = resolveExistingFileUnderWorkspace(input.source_image_path);
+        const receipt = await detectSheetChromaticComponentsV1({
+          ...input,
+          source_image_path: resolvedSourceImagePath
+        });
+        const overlayOutputPath = (action.overlay_output_path ?? "").trim();
+        const overlay = overlayOutputPath
+          ? await renderSheetChromaticComponentOverlayV1({
+              source_image_path: resolvedSourceImagePath,
+              receipt,
+              output_path: resolveFileUnderWorkspace(overlayOutputPath)
+            })
+          : undefined;
+        const persistedReceipt = (action.receipt_output_path ?? "").trim()
+          ? safeWriteFile(action.receipt_output_path!, `${JSON.stringify(overlay ? { ...receipt, overlay } : receipt, null, 2)}\n`)
+          : undefined;
+        results.push({
+          index: i + 1,
+          type: action.type,
+          ok: true,
+          summary: `Chromatic component detection completed; candidates=${receipt.candidates.length}, qualifying_pixels=${receipt.qualifying_pixel_count}.`,
+          details: {
+            ...(overlay ? { ...receipt, overlay } : receipt),
+            ...(persistedReceipt ? { persisted_receipt: persistedReceipt } : {})
+          }
+        });
+        // Detection is a complete source-only observation. Never continue into
+        // classification, topology, or a native model action in the same turn.
         break;
       }
 

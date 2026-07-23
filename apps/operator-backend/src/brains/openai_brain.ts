@@ -124,6 +124,7 @@ type OpenAiDecision = {
       | "map_sheet_regions"
       | "redline_orient"
       | "gemini_redline_analyze"
+      | "detect_sheet_chromatic_components"
       | "compile_existing_conditions_sheet_interpretation"
       | "compile_registered_mep_reconstruction"
       | "register_existing_conditions_route_frontier"
@@ -157,6 +158,7 @@ type OpenAiDecision = {
     max_regions: number | null;
     min_confidence: number | null;
     include_code_execution: boolean | null;
+    input_file_path: string | null;
     interpretation_file_path: string | null;
     context_file_path: string | null;
     source_image_path: string | null;
@@ -2782,6 +2784,7 @@ export async function executeExistingConditionsProviderWorkbenchActions(
 ): Promise<ChatResponse> {
   const actions = normalizeWorkbenchActions(rawActions);
   const allowedTypes = new Set<WorkbenchAction["type"]>([
+    "detect_sheet_chromatic_components",
     "compile_existing_conditions_sheet_interpretation",
     "compile_registered_mep_reconstruction",
     "register_existing_conditions_route_frontier",
@@ -2824,6 +2827,16 @@ export async function executeExistingConditionsProviderWorkbenchActions(
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
       assistant_message: `${sheetCompilation.summary} No native Revit action was dispatched.`,
+      actions: []
+    };
+  }
+  const componentDetection = results.find(result =>
+    result.type === "detect_sheet_chromatic_components"
+  );
+  if (componentDetection) {
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message: `${componentDetection.summary} No native Revit action was dispatched.`,
       actions: []
     };
   }
@@ -5538,6 +5551,7 @@ function buildCandidateVisibleCompileGateCorrection(
 }
 
 const STRUCTURED_WORKBENCH_ACTION_NAMES = [
+  "detect_sheet_chromatic_components",
   "compile_existing_conditions_sheet_interpretation",
   "compile_registered_mep_reconstruction",
   "register_existing_conditions_route_frontier",
@@ -18090,6 +18104,7 @@ function defaultSystemPrompt(): string {
     "- Existing-conditions registration must not require rooms, spaces, room tags, or matching room names. Treat those as useful but potentially absent or stale controls. When the record plan and current model differ, prefer common stable geometry in this order: exterior envelope/corners, stairs and elevators, shafts, grids and columns, then persistent interior geometry. Record every accepted/rejected control and transform residual. Do not use changed interior partitions or a name match as the only registration basis; if exact registration remains unresolved, preserve supported relative geometry as provisional and iterate rather than abandoning the draft.",
     "- Once existing-conditions source-to-view alignment is verified and the aligned view has one visible-element inventory, use workbench action compile_registered_mep_reconstruction to turn source-pixel observations into an atomic native draft workflow. Do not fall back to generic redline edit targeting.",
     "- When a structured sheet interpretation and trusted registered context already exist as Workspace files, use exactly one compile_existing_conditions_sheet_interpretation workbench action with interpretation_file_path, context_file_path, source_image_path, optional source_view_key, and optional overlay_output_path/receipt_output_path. The deterministic host rechecks source pixels, compiles elbows/tees/continuations, persists the requested receipt, and terminates before any Revit action. Never substitute compile_registered_mep_reconstruction or a shell action for this verification stage.",
+    "- When a source-only sheet crop has a trusted hue but repeated anti-aliased point glyphs are not exact template matches, use exactly one detect_sheet_chromatic_components workbench action with input_file_path plus optional overlay_output_path and receipt_output_path. The input must hash-bind the source image and host-configure hue/component geometry. Treat all detections as native_write_allowed=false; stop after the diagnostic receipt and overlay instead of assigning family, type, host, circuit, system, or topology meaning.",
     "- compile_registered_mep_reconstruction takes package_json as a JSON string containing only planner-owned fields: schema_version (use 2 when plumbing fixtures are present), fixture_id, scope_id, discipline, coordinate_space, level_name, optional level_elevation_ft (schema compatibility only; omit it when unknown because the server injects verified target-level metadata from the aligned Revit view), optional room_number, optional spatial_scope, partial_promotion_policy, maximum_observations, optional native_element_references, and observations. Set coordinate_space to normalized_uv_top_left and express every source point as x/y fractions from 0 to 1 relative to the attached source crop, with origin at its top-left. Never submit raster width/height: the server owns the exact registered-render dimensions, source-to-model transform, target drafting view, verified target-level elevation, native-room scope, and a hash-bound registration context. A planner room trace is evidence only and cannot override or widen the native projected room. Never invent hashes or treat crop-box/frame Z as level elevation.",
     "- For a room-targeted reconstruction, include room_number and first POST /revit/linked-room-boundaries. The compiler projects that verified native linked-room boundary into registered source pixels and uses it as the authoritative spatial scope; do not repeatedly redraw or widen a room polygon to bypass a scope rejection. You may also include spatial_scope with a source-observed boundary_pixel_points trace, anchor_pixel_point on the visible room label, anchor_label including the requested room number, and evidence_reference. The compiler preserves that trace as evidence but does not let an approximate planner polygon override the native projected room boundary.",
     "- Before compiling a room-targeted reconstruction, POST /revit/linked-room-boundaries with the exact room number and the loaded architectural-link name when known. Compilation requires a bounded native linked-room boundary and rejects point placements and routes that do not agree with its deterministic registered-source projection. Treat warnings about other unloaded legacy links separately from the loaded target architectural link.",
@@ -19695,6 +19710,18 @@ function normalizeWorkbenchActions(raw: unknown): WorkbenchAction[] {
           typeof a.maximum_created_elements === "number" && Number.isFinite(a.maximum_created_elements)
             ? Math.floor(a.maximum_created_elements)
             : undefined
+      });
+      continue;
+    }
+
+    if (type === "detect_sheet_chromatic_components") {
+      out.push({
+        type: "detect_sheet_chromatic_components",
+        input_file_path: typeof a.input_file_path === "string" ? a.input_file_path : "",
+        overlay_output_path:
+          typeof a.overlay_output_path === "string" ? a.overlay_output_path : undefined,
+        receipt_output_path:
+          typeof a.receipt_output_path === "string" ? a.receipt_output_path : undefined
       });
       continue;
     }
@@ -22405,6 +22432,7 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
             "max_regions",
             "min_confidence",
             "include_code_execution",
+            "input_file_path",
             "interpretation_file_path",
             "context_file_path",
             "source_image_path",
@@ -22423,7 +22451,7 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
           properties: {
             type: {
               type: "string",
-              enum: ["shell", "python", "write_file", "read_file", "list_files", "analyze_redline", "map_sheet_regions", "redline_orient", "gemini_redline_analyze", "compile_existing_conditions_sheet_interpretation", "compile_registered_mep_reconstruction", "register_existing_conditions_route_frontier", "register_existing_conditions_route_snap", "register_existing_conditions_mep_repair"]
+              enum: ["shell", "python", "write_file", "read_file", "list_files", "analyze_redline", "map_sheet_regions", "redline_orient", "gemini_redline_analyze", "detect_sheet_chromatic_components", "compile_existing_conditions_sheet_interpretation", "compile_registered_mep_reconstruction", "register_existing_conditions_route_frontier", "register_existing_conditions_route_snap", "register_existing_conditions_mep_repair"]
             },
             command: { type: ["string", "null"] },
             code: { type: ["string", "null"] },
@@ -22453,6 +22481,7 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
             max_regions: { type: ["number", "null"] },
             min_confidence: { type: ["number", "null"] },
             include_code_execution: { type: ["boolean", "null"] },
+            input_file_path: { type: ["string", "null"] },
             interpretation_file_path: { type: ["string", "null"] },
             context_file_path: { type: ["string", "null"] },
             source_image_path: { type: ["string", "null"] },

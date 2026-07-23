@@ -43,6 +43,7 @@ const EXISTING_CONDITIONS_WORKBENCH_SCHEMA = {
     additionalProperties: false,
     required: [
       "type",
+      "input_file_path",
       "interpretation_file_path",
       "context_file_path",
       "source_image_path",
@@ -62,6 +63,7 @@ const EXISTING_CONDITIONS_WORKBENCH_SCHEMA = {
       type: {
         type: "string",
         enum: [
+          "detect_sheet_chromatic_components",
           "compile_existing_conditions_sheet_interpretation",
           "compile_registered_mep_reconstruction",
           "register_existing_conditions_route_frontier",
@@ -69,6 +71,7 @@ const EXISTING_CONDITIONS_WORKBENCH_SCHEMA = {
           "register_existing_conditions_mep_repair"
         ]
       },
+      input_file_path: { type: ["string", "null"] },
       interpretation_file_path: { type: ["string", "null"] },
       context_file_path: { type: ["string", "null"] },
       source_image_path: { type: ["string", "null"] },
@@ -410,7 +413,8 @@ function buildPrompt(req: ChatRequest, provider: ExternalProvider): string {
     "",
     `You are running as the Operator ${provider} brain. You do not call MCP directly in this process.`,
     "Return native Revit bridge calls in actions, or deterministic backend steps in workbench_actions. The host executes them and returns receipts on the next turn.",
-    "A workbench action is a structured output value, never a /revit/* or /workbench/* HTTP endpoint. Do not search for or invent an endpoint for compile_existing_conditions_sheet_interpretation, compile_registered_mep_reconstruction, register_existing_conditions_route_frontier, register_existing_conditions_route_snap, or register_existing_conditions_mep_repair.",
+    "A workbench action is a structured output value, never a /revit/* or /workbench/* HTTP endpoint. Do not search for or invent an endpoint for detect_sheet_chromatic_components, compile_existing_conditions_sheet_interpretation, compile_registered_mep_reconstruction, register_existing_conditions_route_frontier, register_existing_conditions_route_snap, or register_existing_conditions_mep_repair.",
+    "When a source-only sheet crop has a trusted hue but repeated anti-aliased point glyphs are not exact template matches, emit exactly one detect_sheet_chromatic_components action with input_file_path plus optional overlay_output_path and receipt_output_path. Keep native actions empty. Every detected component remains native_write_allowed=false and must not be assigned family, type, host, circuit, system, or topology meaning in the same turn.",
     "When the user supplies Workspace paths for a structured sheet interpretation, trusted context, and source image, emit exactly one compile_existing_conditions_sheet_interpretation action with those three paths plus optional source_view_key, overlay_output_path, and receipt_output_path. Keep native actions empty. Do not substitute compile_registered_mep_reconstruction or shell.",
     "When registered source XY needs native route resolution after /revit/get-connectors, emit exactly one workbench_actions item with type=register_existing_conditions_route_frontier, candidate_json as the verbatim JSON string, and connector_tool_action_id as the exact completed connector action id; keep actions empty.",
     "Use /revit/search-tools, /revit/tool-doc, and /revit/tool-examples when an exact contract is unknown.",

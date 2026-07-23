@@ -161,6 +161,11 @@ import {
   type MepRepeatedSymbolDetectionInputV1
 } from "../existing_conditions/mep_repeated_symbol_detection.js";
 import {
+  detectSheetChromaticComponentsV1,
+  renderSheetChromaticComponentOverlayV1,
+  type SheetChromaticComponentDetectionInputV1
+} from "../existing_conditions/sheet_chromatic_component_detection.js";
+import {
   compileProvisionalPlanTraceDraftV1,
   type ProvisionalPlanTraceDraftContext,
   type ProvisionalPlanTraceDraftInputV1
@@ -391,6 +396,7 @@ function usage(): never {
     "  npm run existing-conditions -- compare-calibrated-crops --input <hash-bound-source-candidate-controls-and-features.json> --out-dir <evidence-dir> --out <comparison-receipt.json>",
     "  npm run existing-conditions -- extract-plan-traces --input <hash-bound-extraction-policy.json> --out <trace-receipt.json> [--preview-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- detect-repeated-mep-symbols --input <hash-bound-template-search.json> --out <candidate-receipt.json>",
+    "  npm run existing-conditions -- detect-sheet-chromatic-components --input <hash-bound-hue-component-search.json> --out <candidate-receipt.json> [--overlay-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- validate-mep-region-coverage --input <source-coverage.json> --context <coverage-context.json> --out <coverage-receipt.json>",
     "  npm run existing-conditions -- compile-sheet-topology --input <whole-sheet-primitives.json> --context <trusted-views-and-calibration.json> --out <compiled-topology.json>",
     "  npm run existing-conditions -- build-sheet-topology-calibration --input <sealed-blind-outcomes.json> --out <calibration-profile.json>",
@@ -1948,6 +1954,29 @@ async function main(): Promise<void> {
       readJson(requiredArgument("--input")) as MepRepeatedSymbolDetectionInputV1
     );
     writeJson(requiredArgument("--out"), receipt);
+    return;
+  }
+  if (command === "detect-sheet-chromatic-components") {
+    const inputPath = requiredArgument("--input");
+    const outputPath = requiredArgument("--out");
+    const overlayPath = argument("--overlay-out");
+    assertFreshDistinctOutputPaths(
+      [
+        { flag: "--out", value: outputPath },
+        ...(overlayPath ? [{ flag: "--overlay-out", value: overlayPath }] : [])
+      ],
+      [{ flag: "--input", value: inputPath }]
+    );
+    const input = readJson(inputPath) as SheetChromaticComponentDetectionInputV1;
+    const receipt = await detectSheetChromaticComponentsV1(input);
+    const overlay = overlayPath
+      ? await renderSheetChromaticComponentOverlayV1({
+          source_image_path: input.source_image_path,
+          receipt,
+          output_path: overlayPath
+        })
+      : undefined;
+    writeJson(outputPath, overlay ? { ...receipt, overlay } : receipt);
     return;
   }
   if (command === "validate-mep-region-coverage") {
