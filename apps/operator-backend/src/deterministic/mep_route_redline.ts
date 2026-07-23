@@ -275,16 +275,7 @@ function findAttachment(req: ResolveMepRouteRedlineRequest): { file_path: string
 
 function findContinuationAttachment(req: ResolveMepRouteRedlineRequest): { file_path: string; filename?: string } | null {
   const toolResults = Array.isArray(req.tool_results) ? req.tool_results : [];
-  const hasMepRouteContext = toolResults.some(r => {
-    const p = textOf(r?.path).toLowerCase();
-    return (
-      p === "/revit/sheets" ||
-      p === "/revit/export-view-frame" ||
-      p === "/tools/redline/align-to-view" ||
-      p === "/revit/resolve-mep-routing-context" ||
-      p === "/revit/mep-route-workflow"
-    );
-  });
+  const hasMepRouteContext = toolResults.some(isMepRouteContinuationToolResult);
   if (!hasMepRouteContext) return null;
   const latest = readLatestUploadIndexRecords(30).find(r => {
     const rel = textOf(r.relative_path);
@@ -295,6 +286,17 @@ function findContinuationAttachment(req: ResolveMepRouteRedlineRequest): { file_
   if (!rel) return null;
   const filename = textOf(latest?.filename);
   return { file_path: rel, ...(filename ? { filename } : {}) };
+}
+
+function isMepRouteContinuationToolResult(result: ToolResult): boolean {
+  const path = textOf(result?.path).toLowerCase();
+  if (path === "/revit/sheets") return textOf(asRecord(result.result_json)?.action).toLowerCase() === "detail";
+  return (
+    path === "/revit/export-view-frame" ||
+    path === "/tools/redline/align-to-view" ||
+    path === "/revit/resolve-mep-routing-context" ||
+    path === "/revit/mep-route-workflow"
+  );
 }
 
 function extractRoomNumber(text: string): string | undefined {
@@ -2911,4 +2913,8 @@ export async function maybeRunDeterministicMepRouteRedline(req: ChatRequest): Pr
 
 export function __testOnlyClassifyRedlineGeometry(analysis: RedlineAnalyzeResponse): ClassifiedRedlineGeometry {
   return classifyRedlineGeometry(analysis);
+}
+
+export function __testOnlyIsMepRouteContinuationToolResult(result: ToolResult): boolean {
+  return isMepRouteContinuationToolResult(result);
 }
