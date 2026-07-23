@@ -17,6 +17,7 @@ namespace RevitBridge.Logic.Handlers
         {
             public string? levelName { get; set; }
             public long? viewId { get; set; }
+            public long? familySymbolId { get; set; }
             public string? familyName { get; set; }
             public string symbolName { get; set; } = "";
             public long? worksetId { get; set; }
@@ -56,6 +57,19 @@ namespace RevitBridge.Logic.Handlers
             public long? worksetId { get; set; }
             public string? worksetName { get; set; }
             public bool? worksetVerified { get; set; }
+            public long? familySymbolId { get; set; }
+            public long? ownerViewId { get; set; }
+            public double? locationX { get; set; }
+            public double? locationY { get; set; }
+            public double? locationZ { get; set; }
+            public bool? inTargetViewCollector { get; set; }
+            public bool? viewSpecificBoundingBoxAvailable { get; set; }
+            public double? bboxMinX { get; set; }
+            public double? bboxMinY { get; set; }
+            public double? bboxMinZ { get; set; }
+            public double? bboxMaxX { get; set; }
+            public double? bboxMaxY { get; set; }
+            public double? bboxMaxZ { get; set; }
             public List<string> warnings { get; set; } = new List<string>();
         }
 
@@ -110,32 +124,39 @@ namespace RevitBridge.Logic.Handlers
                         result.selectedWorksetName = requestedWorkset.Name;
                     }
 
+                    View? targetView = null;
                     Level? defaultLevel = null;
                     if (p.viewId.HasValue && p.viewId.Value > 0)
                     {
-                        var targetView = doc.GetElement(ElementIdCompat.Create(p.viewId.Value)) as View
+                        targetView = doc.GetElement(ElementIdCompat.Create(p.viewId.Value)) as View
                             ?? throw new Exception($"View {p.viewId.Value} not found.");
                         defaultLevel = targetView.GenLevel;
-                        if (defaultLevel == null)
-                            throw new Exception($"View {p.viewId.Value} has no associated level.");
                     }
                     if (defaultLevel == null)
                     {
                         defaultLevel = levels
                             .FirstOrDefault(l => l.Name.Equals(p.levelName ?? "", StringComparison.OrdinalIgnoreCase));
                     }
-                    if (defaultLevel == null) throw new Exception($"Level {p.levelName} not found.");
-
                     var levelByName = levels
                         .GroupBy(l => l.Name ?? "", StringComparer.OrdinalIgnoreCase)
                         .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
-                    FamilySymbol symbol = new FilteredElementCollector(doc)
-                        .OfClass(typeof(FamilySymbol))
-                        .Cast<FamilySymbol>()
-                        .FirstOrDefault(s =>
-                            (string.IsNullOrEmpty(p.familyName) || s.FamilyName.Equals(p.familyName, StringComparison.OrdinalIgnoreCase)) &&
-                            s.Name.Equals(p.symbolName, StringComparison.OrdinalIgnoreCase));
+                    FamilySymbol? symbol = null;
+                    if (p.familySymbolId.HasValue && p.familySymbolId.Value > 0)
+                    {
+                        symbol = doc.GetElement(ElementIdCompat.Create(p.familySymbolId.Value)) as FamilySymbol;
+                        if (symbol == null)
+                            throw new Exception($"Family symbol {p.familySymbolId.Value} not found.");
+                    }
+                    else
+                    {
+                        symbol = new FilteredElementCollector(doc)
+                            .OfClass(typeof(FamilySymbol))
+                            .Cast<FamilySymbol>()
+                            .FirstOrDefault(s =>
+                                (string.IsNullOrEmpty(p.familyName) || s.FamilyName.Equals(p.familyName, StringComparison.OrdinalIgnoreCase)) &&
+                                s.Name.Equals(p.symbolName, StringComparison.OrdinalIgnoreCase));
+                    }
 
                     if (symbol == null) throw new Exception($"Symbol {p.symbolName} not found.");
                     if (!symbol.IsActive)
@@ -151,6 +172,10 @@ namespace RevitBridge.Logic.Handlers
                     result.familyPlacementType = familyPlacementType.ToString();
                     result.requiresExplicitHost = requiresExplicitHost;
                     result.unhostedWorkPlanePlacementAllowed = unhostedWorkPlanePlacementAllowed;
+                    if (familyPlacementType == FamilyPlacementType.ViewBased && targetView == null)
+                        throw new Exception("View-based family placement requires viewId.");
+                    if (familyPlacementType != FamilyPlacementType.ViewBased && defaultLevel == null)
+                        throw new Exception($"Level {p.levelName} not found and the target view has no associated level.");
 
                     List<(long id, XYZ point)> existingPoints = new List<(long id, XYZ point)>();
                     if (useIdempotency && toleranceFt > 0.0)
@@ -188,12 +213,12 @@ namespace RevitBridge.Logic.Handlers
                             StringComparison.OrdinalIgnoreCase);
                         XYZ idempotencyPoint = point;
                         XYZ levelPlacementPoint = point;
-                        if (usesAbsoluteModelCoordinates)
+                        if (usesAbsoluteModelCoordinates && familyPlacementType != FamilyPlacementType.ViewBased)
                         {
                             // Revit's level-based overload interprets Z as an offset from the supplied level.
                             // Keep the external contract in absolute model coordinates and translate only for
                             // that overload. Hosted and level-free overloads continue to receive absolute XYZ.
-                            levelPlacementPoint = new XYZ(point.X, point.Y, point.Z - instanceLevel.Elevation);
+                            levelPlacementPoint = new XYZ(point.X, point.Y, point.Z - instanceLevel!.Elevation);
                         }
 
                         try
@@ -270,10 +295,19 @@ namespace RevitBridge.Logic.Handlers
                                     var nativePlacementPoint = unhostedWorkPlanePlacementAllowed
                                         ? point
                                         : levelPlacementPoint;
-                                    fi = doc.Create.NewFamilyInstance(nativePlacementPoint, symbol, instanceLevel, StructuralType.NonStructural);
+                                    if (familyPlacementType == FamilyPlacementType.ViewBased)
+                                    {
+                                        fi = doc.Create.NewFamilyInstance(point, symbol, targetView!);
+                                    }
+                                    else
+                                    {
+                                        fi = doc.Create.NewFamilyInstance(nativePlacementPoint, symbol, instanceLevel!, StructuralType.NonStructural);
+                                    }
                                 }
                                 catch
                                 {
+                                    if (familyPlacementType == FamilyPlacementType.ViewBased)
+                                        throw;
                                     fi = doc.Create.NewFamilyInstance(point, symbol, StructuralType.NonStructural);
                                 }
                             }
@@ -315,6 +349,19 @@ namespace RevitBridge.Logic.Handlers
                             }
 
                             SetParameter(fi, "ROS_AutoGenerated", "1");
+                            doc.Regenerate();
+                            PopulateNativeReadback(doc, targetView, fi, instResult);
+                            if (familyPlacementType == FamilyPlacementType.ViewBased && targetView != null &&
+                                (instResult.ownerViewId != ElementIdCompat.GetValue(targetView.Id) ||
+                                 instResult.inTargetViewCollector != true ||
+                                 instResult.viewSpecificBoundingBoxAvailable != true))
+                            {
+                                var failedId = ElementIdCompat.GetValue(fi.Id);
+                                doc.Delete(fi.Id);
+                                throw new Exception(
+                                    $"View-based placement {failedId} did not retain owner view {ElementIdCompat.GetValue(targetView.Id)} " +
+                                    "with collector and view-specific bounding-box proof; placement was discarded.");
+                            }
                             plannedOrCreatedPoints.Add(idempotencyPoint);
 
                             if (p.dryRun)
@@ -364,6 +411,73 @@ namespace RevitBridge.Logic.Handlers
             }
 
             return Task.FromResult<object>(result);
+        }
+
+        private static void PopulateNativeReadback(
+            Document doc,
+            View? targetView,
+            FamilyInstance instance,
+            InstanceResult result)
+        {
+            result.familySymbolId = ElementIdCompat.GetValue(instance.GetTypeId());
+            try
+            {
+                var ownerViewId = instance.OwnerViewId;
+                result.ownerViewId = ownerViewId == null || ownerViewId == ElementId.InvalidElementId
+                    ? (long?)null
+                    : ElementIdCompat.GetValue(ownerViewId);
+            }
+            catch
+            {
+                result.ownerViewId = null;
+            }
+
+            try
+            {
+                if (instance.Location is LocationPoint locationPoint)
+                {
+                    result.locationX = locationPoint.Point.X;
+                    result.locationY = locationPoint.Point.Y;
+                    result.locationZ = locationPoint.Point.Z;
+                }
+            }
+            catch
+            {
+                // Keep location readback null when Revit does not expose it.
+            }
+
+            if (targetView == null) return;
+
+            try
+            {
+                result.inTargetViewCollector = new FilteredElementCollector(doc, targetView.Id)
+                    .WhereElementIsNotElementType()
+                    .ToElementIds()
+                    .Any(id => id == instance.Id);
+            }
+            catch
+            {
+                result.inTargetViewCollector = null;
+            }
+
+            try
+            {
+                var bbox = instance.get_BoundingBox(targetView);
+                result.viewSpecificBoundingBoxAvailable = bbox != null;
+                if (bbox != null)
+                {
+                    result.bboxMinX = bbox.Min.X;
+                    result.bboxMinY = bbox.Min.Y;
+                    result.bboxMinZ = bbox.Min.Z;
+                    result.bboxMaxX = bbox.Max.X;
+                    result.bboxMaxY = bbox.Max.Y;
+                    result.bboxMaxZ = bbox.Max.Z;
+                }
+            }
+            catch
+            {
+                result.viewSpecificBoundingBoxAvailable = false;
+            }
         }
 
         private static bool RequiresExplicitHost(FamilyPlacementType familyPlacementType)

@@ -221,7 +221,10 @@ namespace RevitBridge.Logic.Handlers
                     }
 
                     // Apply region crop to temp view.
-                    ApplyRegionCrop(doc, exportView, p.region, warnings);
+                    // The duplicated view owns copied detail elements with new ids. Resolve
+                    // focusElementIds against the original view, then project their model
+                    // bounds into the disposable export view's crop frame.
+                    ApplyRegionCrop(doc, view, exportView, p.region, warnings);
 
                     // Ensure annotation/tag text reflects the latest model state before export.
                     try { doc.Regenerate(); } catch { }
@@ -257,7 +260,7 @@ namespace RevitBridge.Logic.Handlers
                     var restored = false;
                     try
                     {
-                        ApplyRegionCrop(doc, view, p.region, warnings);
+                        ApplyRegionCrop(doc, view, view, p.region, warnings);
                         try { doc.Regenerate(); } catch { }
                         try { uidoc.RefreshActiveView(); } catch { }
                         path = SelectionUtil.ExportViewImage(doc, view, imageSize, folder, stem);
@@ -452,27 +455,32 @@ namespace RevitBridge.Logic.Handlers
             }
         }
 
-        private static void ApplyRegionCrop(Document doc, View view, RegionSpec region, List<string> warnings)
+        private static void ApplyRegionCrop(
+            Document doc,
+            View sourceView,
+            View exportView,
+            RegionSpec region,
+            List<string> warnings)
         {
             using (var tx = new Transaction(doc, "Operator Export View Region (Temp Crop)"))
             {
                 tx.Start();
 
-                if (TryClearScopeBox(view))
+                if (TryClearScopeBox(exportView))
                     warnings.Add("Scope box cleared so the requested region controls the export crop.");
-                if (TryRemoveNonRectangularCropShape(view))
+                if (TryRemoveNonRectangularCropShape(exportView))
                     warnings.Add("Non-rectangular crop shape removed so the requested rectangular region can be applied.");
 
-                try { view.CropBoxActive = true; }
+                try { exportView.CropBoxActive = true; }
                 catch { throw new ArgumentException("View does not support crop regions; export-view-region is not supported for this view type."); }
 
                 BoundingBoxXYZ crop;
-                try { crop = view.CropBox; }
+                try { crop = exportView.CropBox; }
                 catch { throw new ArgumentException("View crop box is not available; export-view-region is not supported for this view type."); }
 
                 var viewT = crop.Transform;
                 var viewTInv = viewT.Inverse;
-                var (minX, minY, maxX, maxY) = GetRegionExtentsInViewCoords(doc, view, view, crop, viewTInv, region, warnings);
+                var (minX, minY, maxX, maxY) = GetRegionExtentsInViewCoords(doc, sourceView, exportView, crop, viewTInv, region, warnings);
 
                 var newCrop = new BoundingBoxXYZ
                 {
@@ -481,12 +489,12 @@ namespace RevitBridge.Logic.Handlers
                     Max = new XYZ(maxX, maxY, crop.Max.Z)
                 };
 
-                view.CropBox = newCrop;
-                try { view.CropBoxVisible = false; } catch { }
-                TryConfigureAnnotationCrop(view, 0.0, warnings);
+                exportView.CropBox = newCrop;
+                try { exportView.CropBoxVisible = false; } catch { }
+                TryConfigureAnnotationCrop(exportView, 0.0, warnings);
                 doc.Regenerate();
 
-                var applied = view.CropBox;
+                var applied = exportView.CropBox;
                 var appliedWidth = Math.Abs(applied.Max.X - applied.Min.X);
                 var appliedHeight = Math.Abs(applied.Max.Y - applied.Min.Y);
                 var requestedWidth = Math.Abs(maxX - minX);
