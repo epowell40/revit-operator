@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   latestExistingConditionsSourceDispositionV1,
+  listLatestExistingConditionsSourceDispositionsV1,
   recordExistingConditionsSourceDispositionV1,
   type ExistingConditionsSourceDispositionV1
 } from "../src/existing_conditions/source_disposition_ledger.js";
@@ -308,6 +309,87 @@ test("a read-only disposition inspection reports the persisted reason and exact 
     assert.match(response.assistant_message, new RegExp(input.next_repair.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.match(response.assistant_message, new RegExp(entry.event_key));
     assert.match(response.assistant_message, /did not repeat the source search/i);
+    assert.match(response.assistant_message, /did not .*dispatch a native Revit action/i);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+});
+
+test("the replay frontier retains the latest disposition for every target and selects only one repair per turn", { concurrency: false }, async () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-source-disposition-frontier-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const sessionId = "source-disposition-frontier-session";
+    recordExistingConditionsSourceDispositionV1({
+      sessionId,
+      disposition: disposition({
+        target_key: "electrical:target-a",
+        disposition: "abstained",
+        reason_code: "no_label_within_gate",
+        evidence_group_ids: [],
+        next_repair: "Inspect the registered panel schedule for target A."
+      })
+    });
+    const targetB = recordExistingConditionsSourceDispositionV1({
+      sessionId,
+      disposition: disposition({
+        target_key: "mechanical:target-b",
+        source_receipt_sha256: "c".repeat(64),
+        next_repair: "Verify target B against native connector readback."
+      })
+    });
+    const targetARepair = recordExistingConditionsSourceDispositionV1({
+      sessionId,
+      disposition: disposition({
+        target_key: "electrical:target-a",
+        source_receipt_sha256: "d".repeat(64),
+        next_repair: "Dry-run only the source-supported target A placement."
+      })
+    });
+
+    const frontier = listLatestExistingConditionsSourceDispositionsV1(sessionId);
+    assert.equal(frontier.length, 2);
+    assert.deepEqual(frontier.map(value => value.sequence), [targetB.sequence, targetARepair.sequence]);
+    assert.deepEqual(frontier.map(value => value.disposition.target_key), [
+      "mechanical:target-b",
+      "electrical:target-a"
+    ]);
+    assert.equal(frontier[1]?.disposition.disposition, "accepted_source_observation");
+
+    const contextual = withLatestExistingConditionsSourceDispositionContext({
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "frontier-context-message",
+      user_text: "Continue the existing-conditions reconstruction."
+    });
+    const replay = (contextual.context as any)?.__server;
+    assert.equal(replay?.existing_conditions_source_disposition?.event_key, targetARepair.event_key);
+    assert.equal(replay?.existing_conditions_source_disposition_frontier?.total_targets, 2);
+    assert.equal(replay?.existing_conditions_source_disposition_frontier?.truncated, false);
+    assert.deepEqual(
+      replay?.existing_conditions_source_disposition_frontier?.targets?.map((value: any) => value.target_key),
+      ["mechanical:target-b", "electrical:target-a"]
+    );
+    assert.match(
+      replay?.existing_conditions_source_disposition_frontier?.continuation_contract ?? "",
+      /exactly one target/i
+    );
+
+    const response = await decide({
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "frontier-inspection-message",
+      user_text: "Do not modify Revit. Report all persisted source disposition frontiers and exact next repairs."
+    });
+    assert.deepEqual(response.actions, []);
+    assert.match(response.assistant_message, /Persisted source frontier: 2 target\(s\)/);
+    assert.match(response.assistant_message, /mechanical:target-b/);
+    assert.match(response.assistant_message, /electrical:target-a/);
+    assert.doesNotMatch(response.assistant_message, /Inspect the registered panel schedule for target A/);
+    assert.match(response.assistant_message, /Select exactly one target/i);
     assert.match(response.assistant_message, /did not .*dispatch a native Revit action/i);
   } finally {
     if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
