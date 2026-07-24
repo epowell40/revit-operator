@@ -8,6 +8,17 @@ import { ensureDir, writeJsonFile } from "./files.js";
 import { positiveInteger } from "./filter_rule_types.js";
 import { runAecMepEval } from "./aec_mep_eval.js";
 import { collectLocalRevitHostEvidence } from "./revit_host_evidence.js";
+import {
+  buildBlockedTypeChangeResult,
+  buildRejectedTypeChangeResult,
+  normalizedTypeName,
+  typeChangeAppliedMatchesRequest,
+  typeChangeEffectIds,
+  typeChangeReadbackMatchesRequest,
+  typeChangeRows,
+  typeChangeSourceFamilyGroundingMatches,
+  typeChangeSourceGroundingMatches
+} from "./redline_type_change_runtime.js";
 import type { RevitHostEvidence } from "./revit_preflight.js";
 import { buildPdfJsDocumentOptions, loadPdfJsForNode } from "../pdf/pdfjs_node.js";
 import {
@@ -151,121 +162,8 @@ function moveSnapshotPoint(result: unknown, elementId: number, phase: "before" |
   return [x, y, z].every(Number.isFinite) ? { x, y, z } : null;
 }
 
-function typeChangeRows(result: unknown): JsonMap[] {
-  const rows = asObject(result).changes;
-  return Array.isArray(rows) ? rows.map((row) => asObject(row)).filter((row) => Object.keys(row).length > 0) : [];
-}
-
 function objectRows(value: unknown): JsonMap[] {
   return Array.isArray(value) ? value.map((row) => asObject(row)).filter((row) => Object.keys(row).length > 0) : [];
-}
-
-function typeChangeEffectIds(result: unknown): number[] {
-  const obj = asObject(result);
-  const rowIds = typeChangeRows(result).filter((row) => row.ok !== false).map((row) => row.elementId);
-  return uniquePositiveIds(obj.changedElementIds, rowIds);
-}
-
-function typeChangeRowsCover(result: unknown, elementIds: number[], typeId: number | null): boolean {
-  const rows = typeChangeRows(result);
-  return elementIds.length > 0 && elementIds.every((id) => {
-    const row = rows.find((entry) => Number(entry.elementId) === id);
-    if (!row || row.ok === false) return false;
-    if (typeId === null) return true;
-    const oldTypeId = firstPositiveId(row.oldTypeId);
-    const newTypeId = firstPositiveId(row.newTypeId, asObject(result).newTypeId);
-    return oldTypeId === typeId || newTypeId === typeId;
-  });
-}
-
-function normalizedTypeName(value: unknown): string {
-  return normalizedTextProof(firstString(value));
-}
-
-function typeChangeRowMatchesRequestedType(row: JsonMap, expectedTypeId: number | null, expectedTypeName: string, phase: "apply" | "readback"): boolean {
-  if (row.ok === false) return false;
-  if (expectedTypeId !== null) {
-    const typeId = phase === "readback"
-      ? firstPositiveId(row.oldTypeId, row.currentTypeId, row.typeId)
-      : firstPositiveId(row.newTypeId, row.currentTypeId, row.typeId);
-    return typeId === expectedTypeId;
-  }
-  if (!expectedTypeName) return false;
-  const typeName = phase === "readback"
-    ? normalizedTypeName(row.oldTypeName ?? row.currentTypeName ?? row.typeName ?? row.newTypeName)
-    : normalizedTypeName(row.newTypeName ?? row.currentTypeName ?? row.typeName);
-  return typeName === expectedTypeName;
-}
-
-function typeChangeGlobalTypeMatches(result: unknown, expectedTypeId: number | null, expectedTypeName: string): boolean {
-  const obj = asObject(result);
-  if (expectedTypeId !== null) return firstPositiveId(obj.newTypeId, obj.currentTypeId, obj.typeId) === expectedTypeId;
-  return Boolean(expectedTypeName) && normalizedTypeName(obj.newTypeName ?? obj.currentTypeName ?? obj.typeName) === expectedTypeName;
-}
-
-function typeChangeAppliedMatchesRequest(result: unknown, elementIds: number[], expectedTypeId: number | null, expectedTypeName: string): boolean {
-  const rows = typeChangeRows(result);
-  if (rows.length > 0) {
-    return elementIds.length > 0 && elementIds.every((id) => {
-      const row = rows.find((entry) => Number(entry.elementId) === id);
-      return Boolean(row) && typeChangeRowMatchesRequestedType(row ?? {}, expectedTypeId, expectedTypeName, "apply");
-    });
-  }
-  return elementIds.length > 0 && elementIds.every((id) => typeChangeEffectIds(result).includes(id)) && typeChangeGlobalTypeMatches(result, expectedTypeId, expectedTypeName);
-}
-
-function typeChangeReadbackMatchesRequest(result: unknown, elementIds: number[], expectedTypeId: number | null, expectedTypeName: string): boolean {
-  const rows = typeChangeRows(result);
-  return elementIds.length > 0 && elementIds.every((id) => {
-    const row = rows.find((entry) => Number(entry.elementId) === id);
-    return Boolean(row) && typeChangeRowMatchesRequestedType(row ?? {}, expectedTypeId, expectedTypeName, "readback");
-  });
-}
-
-function typeChangeSourceGroundingMatches(result: unknown, elementIds: number[], expectedTypeId: number | null, expectedTypeName: string): boolean {
-  const rows = typeChangeRows(result);
-  return elementIds.length > 0 && elementIds.every((id) => {
-    const row = rows.find((entry) => Number(entry.elementId) === id);
-    if (!row || row.ok === false) return false;
-    const oldTypeId = firstPositiveId(row.oldTypeId, row.currentTypeId, row.typeId);
-    const oldTypeName = normalizedTypeName(row.oldTypeName ?? row.currentTypeName ?? row.typeName);
-    if (expectedTypeId !== null) return oldTypeId === expectedTypeId;
-    if (expectedTypeName) return oldTypeName === expectedTypeName;
-    return oldTypeId !== null || Boolean(oldTypeName);
-  });
-}
-
-function typeChangeSourceFamilyGroundingMatches(result: unknown, elementIds: number[], expectedFamilyName: string, expectedTypeName: string, expectedCategory: string): boolean {
-  if (!expectedFamilyName && !expectedTypeName && !expectedCategory) return true;
-  const rows = typeChangeRows(result);
-  return elementIds.length > 0 && elementIds.every((id) => {
-    const row = rows.find((entry) => Number(entry.elementId) === id);
-    if (!row || row.ok === false) return false;
-    const familyLabels = [
-      row.oldFamilyName,
-      row.familyName,
-      row.currentFamilyName,
-      row.oldTypeName,
-      row.typeName,
-      row.currentTypeName
-    ].map((value) => clip(value, 240)).filter(Boolean);
-    const typeLabels = [
-      row.oldTypeName,
-      row.typeName,
-      row.currentTypeName
-    ].map((value) => clip(value, 240)).filter(Boolean);
-    const categoryLabels = [
-      row.category,
-      row.categoryName,
-      row.builtInCategory,
-      row.built_in_category,
-      row.oldCategory,
-      row.currentCategory
-    ].map((value) => clip(value, 240)).filter(Boolean);
-    return proofLabelsMatchRequest(expectedFamilyName, familyLabels) &&
-      proofLabelsMatchRequest(expectedTypeName, typeLabels) &&
-      proofLabelsMatchRequest(expectedCategory, categoryLabels);
-  });
 }
 
 function firstPathLike(...values: unknown[]): string {
@@ -1620,54 +1518,12 @@ async function runRedlineTypeChange(transport: BridgeTransport, request: JsonMap
   const preApplyOk = countOk(preApplyChecks);
   const summaryJsonPath = path.join(runDir, "artifacts", "redline_type_change_summary.json");
   if (!preApplyOk) {
-    writeJsonFile(summaryJsonPath, {
-      elementIds,
-      category,
-      targetTypeId,
-      targetTypeName,
-      expectedNewTypeId,
-      expectedNewTypeName,
-      expectedOriginalTypeId,
-      expectedOriginalTypeName,
-      expectedSourceFamilyName,
-      expectedSourceTypeName,
-      expectedSourceCategory,
-      sourceFamilyGroundingOk,
-      dryRunIds,
-      dryRunPreflightReviewed,
-      targetTypeCompatibilityReviewed,
-      blockedBeforeModelWrite: true,
-      rawDryRun: dryRun
+    return buildBlockedTypeChangeResult({
+      runDir, elementIds, category, targetTypeId, targetTypeName, expectedNewTypeId, expectedNewTypeName,
+      expectedOriginalTypeId, expectedOriginalTypeName, expectedSourceFamilyName, expectedSourceTypeName,
+      expectedSourceCategory, sourceFamilyGroundingOk, dryRunIds, dryRunPreflightReviewed,
+      targetTypeCompatibilityReviewed, dryRun, preApplyChecks, rawResults, verification, writeMarkdownTable
     });
-    const summaryMarkdownPath = writeMarkdownTable(path.join(runDir, "artifacts", "redline_type_change_summary.md"), elementIds.map((id) => ({
-      elementId: id,
-      requestedTypeId: expectedNewTypeId ?? targetTypeId ?? "",
-      requestedTypeName: targetTypeName,
-      blockedBeforeModelWrite: true
-    })));
-    const blockedChecks = [
-      ...preApplyChecks,
-      verification("type_change_apply_ids_present", false, "blocked before model write", []),
-      verification("type_change_readback_matches_target", false, "blocked before model write", null),
-      verification("type_change_post_change_capture_returned", false, "blocked before model write", null),
-      verification("type_change_post_change_capture_view_id_matches_request", false, "blocked before model write", null),
-      verification("type_change_revert_dry_run_ok", false, "blocked before model write", []),
-      verification("type_change_revert_apply_ids_present", false, "blocked before model write", []),
-      verification("type_change_revert_readback_matches_original", false, "blocked before model write", null),
-      verification("type_change_summary_written", fs.existsSync(summaryJsonPath) && fs.existsSync(summaryMarkdownPath), "summary artifacts", [summaryJsonPath, summaryMarkdownPath])
-    ];
-    return {
-      workflow: "redline_type_change",
-      success: false,
-      failure_reason: "Type-change redline blocked before model write because dry-run/source-type evidence was incomplete.",
-      tool_calls: 1,
-      revit_transactions: 0,
-      computer_use_actions: 0,
-      output_artifacts: [summaryJsonPath, summaryMarkdownPath],
-      verification_results: blockedChecks,
-      user_message: "Type-change redline blocked before model write because dry-run compatibility/source-type proof was incomplete.",
-      raw_results: rawResults
-    };
   }
   const expectedOldTypes = elementIds.map((elementId) => ({
     elementId,
@@ -1688,44 +1544,11 @@ async function runRedlineTypeChange(transport: BridgeTransport, request: JsonMap
     && elementIds.every((id) => appliedIds.includes(id))
     && appliedTypeMatchesRequest;
   if (!applyAccepted) {
-    writeJsonFile(summaryJsonPath, {
-      elementIds,
-      targetTypeId,
-      targetTypeName,
-      expectedOldTypes,
-      appliedIds,
-      appliedTypeMatchesRequest,
-      applyAccepted: false,
-      blockedBeforeReadbackOrRevert: true,
-      rawApplied: applied
+    return buildRejectedTypeChangeResult({
+      runDir, elementIds, targetTypeId, targetTypeName, expectedNewTypeId, expectedOldTypes,
+      appliedIds, appliedTypeMatchesRequest, applied, preApplyChecks, rawResults, verification,
+      writeMarkdownTable
     });
-    const summaryMarkdownPath = writeMarkdownTable(path.join(runDir, "artifacts", "redline_type_change_summary.md"), elementIds.map((elementId) => ({
-      elementId,
-      requestedTypeId: expectedNewTypeId ?? targetTypeId ?? "",
-      requestedTypeName: targetTypeName,
-      applied: false,
-      blockedBeforeReadbackOrRevert: true
-    })));
-    const checks = [
-      ...preApplyChecks,
-      verification("type_change_apply_ids_present", false, elementIds, appliedIds),
-      verification("type_change_apply_committed", false, "ok=true, committed=true, and rolledBack=false", applied),
-      verification("type_change_readback_matches_target", false, "blocked after failed apply", null),
-      verification("type_change_revert_readback_matches_original", false, "revert intentionally not attempted after failed apply", null),
-      verification("type_change_summary_written", fs.existsSync(summaryJsonPath) && fs.existsSync(summaryMarkdownPath), "summary artifacts", [summaryJsonPath, summaryMarkdownPath])
-    ];
-    return {
-      workflow: "redline_type_change",
-      success: false,
-      failure_reason: "Type-change apply failed or rolled back; readback and revert were not attempted to avoid overwriting a concurrent model change.",
-      tool_calls: rawResults.length,
-      revit_transactions: 1,
-      computer_use_actions: 0,
-      output_artifacts: [summaryJsonPath, summaryMarkdownPath],
-      verification_results: checks,
-      user_message: "Type change was not applied. I stopped before readback or revert so I would not overwrite another change.",
-      raw_results: rawResults
-    };
   }
   const readback = await transport.post("/revit/change-element-type", { ...changeRequest, dryRun: true });
   rawResults.push(readback);

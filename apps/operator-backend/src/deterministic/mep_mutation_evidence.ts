@@ -1,0 +1,61 @@
+type MepKind = "duct" | "pipe";
+type PointEvidence = { x?: number; y?: number; z?: number };
+
+export type VerifiedMepSizeTransitionEvidence = {
+  kind?: MepKind;
+  viewId?: number;
+  visualViewId?: number;
+  hostElementId?: number;
+  transitionNormalized?: number;
+  transitionChainageFt?: number;
+  transitionPoint?: PointEvidence;
+  upstreamSize?: string;
+  downstreamSize?: string;
+  upstreamDuctSize?: string;
+  downstreamDuctSize?: string;
+  upstreamPipeSize?: string;
+  downstreamPipeSize?: string;
+  expectedFitting?: string;
+};
+export type VerifiedMepTapBranchEvidence = {
+  kind?: MepKind;
+  viewId?: number;
+  visualViewId?: number;
+  mainElementId?: number;
+  projectedTapPoint?: PointEvidence;
+  branchPoints?: PointEvidence[];
+  branchSize?: string;
+  ductSize?: string;
+  pipeSize?: string;
+  systemType?: string;
+  levelName?: string;
+  connectionMode?: string;
+  expectedFitting?: string;
+  fittingTypeId?: number;
+  orientation?: string;
+  takeoffFamilyName?: string;
+  takeoffTypeName?: string;
+};
+
+export type VerifiedMepRerouteOffsetEvidence = {
+  kind?: MepKind;
+  viewId?: number;
+  visualViewId?: number;
+  hostElementId?: number;
+  splitPoints?: PointEvidence[];
+  split1Point?: PointEvidence;
+  split2Point?: PointEvidence;
+  split1ChainageFt?: number;
+  split2ChainageFt?: number;
+  split1Normalized?: number;
+  split2Normalized?: number;
+  offsetVector?: PointEvidence;
+  dropFt?: number;
+  riseFt?: number;
+  elevationOffsetFt?: number;
+  offsetMode?: string;
+  expectedFittings?: string;
+  expectedFitting?: string;
+  preserveConnectedEndpoints?: boolean;
+  endpointReconnectionPlanReviewed?: boolean;
+};

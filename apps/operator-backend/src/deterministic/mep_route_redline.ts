@@ -5,6 +5,11 @@ import { pdfDefaultPageBudget } from "../redline/pdf_intake_policy.js";
 import { mapSheetRegions, type MapSheetRegionsResponse } from "../redline/sheet_region_mapper.js";
 import { readLatestUploadIndexRecords } from "../attachments/upload_index.js";
 import { evaluateRedlineVisualVerificationGate, type RedlineVisualGateResult } from "../verification/redline_visual_verification_gate.js";
+import type {
+  VerifiedMepRerouteOffsetEvidence,
+  VerifiedMepSizeTransitionEvidence,
+  VerifiedMepTapBranchEvidence
+} from "./mep_mutation_evidence.js";
 
 type MepKind = "duct" | "pipe";
 type RedlineRouteStatus = "not_applicable" | "needs_sheet_detail" | "needs_view_frame" | "needs_pick" | "needs_context" | "ready" | "done" | "blocked";
@@ -15,66 +20,6 @@ type UnsafeMepEditIntentKind =
   | "reroute_offset"
   | "accessory"
   | "move_delete_type_change";
-
-type VerifiedMepSizeTransitionEvidence = {
-  kind?: MepKind;
-  viewId?: number;
-  visualViewId?: number;
-  hostElementId?: number;
-  transitionNormalized?: number;
-  transitionChainageFt?: number;
-  transitionPoint?: { x?: number; y?: number; z?: number };
-  upstreamSize?: string;
-  downstreamSize?: string;
-  upstreamDuctSize?: string;
-  downstreamDuctSize?: string;
-  upstreamPipeSize?: string;
-  downstreamPipeSize?: string;
-  expectedFitting?: string;
-};
-
-type VerifiedMepTapBranchEvidence = {
-  kind?: MepKind;
-  viewId?: number;
-  visualViewId?: number;
-  mainElementId?: number;
-  projectedTapPoint?: { x?: number; y?: number; z?: number };
-  branchPoints?: Array<{ x?: number; y?: number; z?: number }>;
-  branchSize?: string;
-  ductSize?: string;
-  pipeSize?: string;
-  systemType?: string;
-  levelName?: string;
-  connectionMode?: string;
-  expectedFitting?: string;
-  fittingTypeId?: number;
-  orientation?: string;
-  takeoffFamilyName?: string;
-  takeoffTypeName?: string;
-};
-
-type VerifiedMepRerouteOffsetEvidence = {
-  kind?: MepKind;
-  viewId?: number;
-  visualViewId?: number;
-  hostElementId?: number;
-  splitPoints?: Array<{ x?: number; y?: number; z?: number }>;
-  split1Point?: { x?: number; y?: number; z?: number };
-  split2Point?: { x?: number; y?: number; z?: number };
-  split1ChainageFt?: number;
-  split2ChainageFt?: number;
-  split1Normalized?: number;
-  split2Normalized?: number;
-  offsetVector?: { x?: number; y?: number; z?: number };
-  dropFt?: number;
-  riseFt?: number;
-  elevationOffsetFt?: number;
-  offsetMode?: string;
-  expectedFittings?: string;
-  expectedFitting?: string;
-  preserveConnectedEndpoints?: boolean;
-  endpointReconnectionPlanReviewed?: boolean;
-};
 
 type ClassifiedRedlineGeometry = {
   route_candidate?: {

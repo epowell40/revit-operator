@@ -36,6 +36,7 @@ import { startUploadQueueWorker } from "./improvement/upload_queue_worker.js";
 import { readCloudUploadConfig, writeCloudUploadConfig, type CloudUploadMode } from "./config/cloud_upload.js";
 import { findLatestUploadIndexRecord, getLatestImageUploadWithContext, uploadIndexRelativePathExists } from "./attachments/upload_index.js";
 import { getAttachmentUploadRequestLimitBytes, storeAttachmentUpload } from "./attachments/upload_store.js";
+import { parseAttachmentUploadInput } from "./attachments/upload_request.js";
 import { ingestDocument, knowledgeBaseOwnerIdForPrincipal, listKnowledgeBaseDocuments, getKnowledgeBaseDocumentStatus, searchKnowledgeBase } from "./knowledge_base/service.js";
 import { ocrImage } from "./tools/ocr.js";
 import { getOcrCapabilities } from "./tools/ocr_capabilities.js";
@@ -2329,53 +2330,13 @@ const server = http.createServer(async (req, res) => {
       const parsed = body as any;
       if (!parsed || typeof parsed !== "object") return writeJson(res, 400, { ok: false, error: "Invalid JSON body" });
 
-      const id = typeof parsed.id === "string" ? parsed.id.trim() : undefined;
-      const filename =
-        typeof parsed.filename === "string"
-          ? parsed.filename.trim()
-          : typeof parsed.file_name === "string"
-            ? parsed.file_name.trim()
-            : undefined;
-      const relative_path =
-        typeof parsed.relative_path === "string"
-          ? parsed.relative_path.trim()
-          : typeof parsed.relativePath === "string"
-            ? parsed.relativePath.trim()
-            : undefined;
-      const sha256 = typeof parsed.sha256 === "string" ? parsed.sha256.trim() : undefined;
-      const mime = typeof parsed.mime === "string" ? parsed.mime.trim() : undefined;
-      const created_at =
-        typeof parsed.created_at === "string"
-          ? parsed.created_at.trim()
-          : typeof parsed.createdAt === "string"
-            ? parsed.createdAt.trim()
-            : undefined;
-      const session_id =
-        typeof parsed.session_id === "string"
-          ? parsed.session_id.trim()
-          : typeof parsed.sessionId === "string"
-            ? parsed.sessionId.trim()
-            : undefined;
+      const upload = parseAttachmentUploadInput(parsed);
+      const session_id = upload.session_id;
       if (!session_id) return writeJson(res, 400, { ok: false, error: "session_id is required." });
       if (!sessionAccessAllowed(res, session_id, auth.principal)) return;
-      const data_base64 =
-        typeof parsed.data_base64 === "string"
-          ? parsed.data_base64
-          : typeof parsed.dataBase64 === "string"
-            ? parsed.dataBase64
-            : "";
 
       try {
-        const stored = storeAttachmentUpload({
-          id,
-          filename,
-          relative_path,
-          sha256,
-          mime,
-          created_at,
-          session_id,
-          data_base64
-        });
+        const stored = storeAttachmentUpload(upload);
         return writeJson(res, 200, { ok: true, attachment: stored });
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);

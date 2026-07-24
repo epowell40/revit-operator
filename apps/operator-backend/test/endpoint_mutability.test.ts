@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { __testOnlyPathLooksWrite } from "../src/brains/openai_brain.js";
+import { pathLooksWrite } from "../src/action_path_mutability.js";
 
 test("scoped duct resize is classified as a write", () => {
-  assert.equal(__testOnlyPathLooksWrite("/revit/resize-ductwork-by-scope"), true);
+  assert.equal(pathLooksWrite("/revit/resize-ductwork-by-scope"), true);
 });
 
 test("known read-only POST endpoints remain read-only", () => {
-  assert.equal(__testOnlyPathLooksWrite("/revit/context"), false);
-  assert.equal(__testOnlyPathLooksWrite("/revit/sheets"), false);
+  assert.equal(pathLooksWrite("/revit/context"), false);
+  assert.equal(pathLooksWrite("/revit/sheets"), false);
 });

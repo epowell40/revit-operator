@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { buildAllowlistFromPairs, filterAllowlistedActions } from "../allowlist.js";
+import { pathLooksWrite } from "../action_path_mutability.js";
 import {
   OPERATOR_BACKEND_CONTRACT_VERSION,
   type ActionCall,
@@ -746,63 +747,6 @@ async function maybeBuildFastElectricalRedlinePreflight(req: ChatRequest): Promi
   };
 }
 
-const READ_ONLY_PATHS = new Set<string>([
-  "/revit/ping",
-  "/revit/context",
-  "/revit/state-snapshot",
-  "/revit/computer-use-observe",
-  "/revit/views",
-  "/revit/capabilities",
-  "/revit/tool-registry",
-  "/revit/tool-search",
-  "/revit/tool-doc",
-  "/revit/tool-examples",
-  "/revit/native-api-policy",
-  "/revit/native-api-catalog",
-  "/revit/native-api-search",
-  "/revit/self-test",
-  "/revit/rooms",
-  "/revit/room-contents",
-  "/revit/find-elements",
-  "/revit/resolve-mep-routing-context",
-  "/revit/trace-connected-network",
-  "/revit/find-elements-by-parameter",
-  "/revit/ducts-by-spatial-scope",
-  "/revit/get-connectors",
-  "/revit/resolve-room-wall",
-  "/revit/rank-similar-devices-on-wall",
-  "/revit/project-point-to-host-frame",
-  "/revit/pick-candidate-cluster",
-  "/revit/export-image",
-  "/revit/export-pdf",
-  "/revit/export-images",
-  "/revit/export-dwg",
-  "/revit/export-ifc",
-  "/revit/export-view-frame",
-  "/revit/export-view-region",
-  "/revit/export-visible-elements",
-  "/revit/highlight-and-export",
-  "/revit/query",
-  "/revit/resolve",
-  "/revit/get-element-summary",
-  "/revit/get-parameters",
-  "/revit/quantify",
-  "/revit/sheets",
-  "/revit/measure-gap",
-  "/revit/get-lighting-data",
-  "/revit/analyze-dimensions",
-  "/revit/spatial-analysis",
-  "/revit/fire-damper-audit",
-  "/revit/lighting-audit",
-  "/revit/query-zone-data",
-  "/revit/list-element-types",
-  "/revit/resolve-element-type",
-  "/revit/titleblock-label-map",
-  "/revit/titleblock-date-candidates",
-  "/revit/verify-parameter-on-sheet",
-  "/revit/capture-sheet-region"
-]);
-
 const REDLINE_DISCOVERY_PATHS = new Set<string>([
   "/revit/sheets",
   "/revit/context",
@@ -819,17 +763,6 @@ const REDLINE_DISCOVERY_PATHS = new Set<string>([
   "/revit/pick-candidate-cluster",
   "/revit/pick-at-pixel"
 ]);
-
-function pathLooksWrite(pathname: string): boolean {
-  const p = (pathname || "").trim().toLowerCase();
-  if (!p.startsWith("/revit/")) return false;
-  if (READ_ONLY_PATHS.has(p)) return false;
-  return true;
-}
-
-export function __testOnlyPathLooksWrite(pathname: string): boolean {
-  return pathLooksWrite(pathname);
-}
 
 type LoopPressureState = {
   consecutive_read_only_steps: number;
