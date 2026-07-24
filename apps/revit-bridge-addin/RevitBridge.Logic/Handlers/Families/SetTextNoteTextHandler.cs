@@ -15,6 +15,7 @@ namespace RevitBridge.Logic.Handlers
             public string? familyDocumentId { get; set; }
             public long textNoteId { get; set; }
             public string newText { get; set; } = "";
+            public string? expectedOldText { get; set; }
 
             public bool? apply { get; set; }
             public bool? dryRun { get; set; }
@@ -55,6 +56,7 @@ namespace RevitBridge.Logic.Handlers
 
             var before = tn.Text ?? "";
             var changed = !string.Equals(before, nextText, StringComparison.Ordinal);
+            var expectedOldText = p.expectedOldText == null ? null : NormalizeUserText(p.expectedOldText);
 
             var requiredConfirm = (string?)null;
             var confirmReceived = BulkConfirmUtil.Normalize(p.confirm);
@@ -73,13 +75,39 @@ namespace RevitBridge.Logic.Handlers
                 }
             }
 
-            if (apply && changed)
+            if ((apply && changed) || expectedOldText != null)
             {
                 using (var tx = new Transaction(targetDoc, "Operator Set TextNote Text"))
                 {
                     tx.Start();
-                    tn.Text = nextText;
-                    tx.Commit();
+                    before = tn.Text ?? "";
+                    changed = !string.Equals(before, nextText, StringComparison.Ordinal);
+                    if (expectedOldText != null && !string.Equals(before, expectedOldText, StringComparison.Ordinal))
+                    {
+                        tx.RollBack();
+                        return Task.FromResult<object>(new
+                        {
+                            ok = false,
+                            status = "Precondition Failed",
+                            errorCode = "expected_old_text_mismatch",
+                            error = "Text note changed after it was read; no text was replaced.",
+                            dryRun = !apply,
+                            scope,
+                            familyDocumentId,
+                            familyName,
+                            textNoteId = p.textNoteId,
+                            elementId = p.textNoteId,
+                            ownerViewId = SafeOwnerViewId(tn),
+                            expectedOldText,
+                            actualText = before,
+                            changed = false,
+                            requiredConfirm,
+                            confirmReceived
+                        });
+                    }
+                    if (apply && changed) tn.Text = nextText;
+                    if (apply) tx.Commit();
+                    else tx.RollBack();
                 }
             }
 

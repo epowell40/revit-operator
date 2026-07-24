@@ -36,6 +36,7 @@ import { startUploadQueueWorker } from "./improvement/upload_queue_worker.js";
 import { readCloudUploadConfig, writeCloudUploadConfig, type CloudUploadMode } from "./config/cloud_upload.js";
 import { findLatestUploadIndexRecord, getLatestImageUploadWithContext, uploadIndexRelativePathExists } from "./attachments/upload_index.js";
 import { getAttachmentUploadRequestLimitBytes, storeAttachmentUpload } from "./attachments/upload_store.js";
+import { parseAttachmentUploadInput } from "./attachments/upload_request.js";
 import { ingestDocument, knowledgeBaseOwnerIdForPrincipal, listKnowledgeBaseDocuments, getKnowledgeBaseDocumentStatus, searchKnowledgeBase } from "./knowledge_base/service.js";
 import { ocrImage } from "./tools/ocr.js";
 import { getOcrCapabilities } from "./tools/ocr_capabilities.js";
@@ -165,12 +166,13 @@ function readAttachmentPolicy(ctx: unknown): { shareWithAgent: boolean; autoOpen
 
 function maybeAutoAttachLatestUpload(
   userAttachments: NonNullable<ChatRequest["user_attachments"]>,
-  ctx: unknown
+  ctx: unknown,
+  sessionId: string
 ): NonNullable<ChatRequest["user_attachments"]> {
   const pol = readAttachmentPolicy(ctx);
   if (!pol.autoOpenLatestAttachment) return userAttachments;
 
-  const { image, context } = getLatestImageUploadWithContext();
+  const { image, context } = getLatestImageUploadWithContext(sessionId);
   const next = Array.isArray(userAttachments) ? [...userAttachments] : [];
 
   const hasId = (id: string) => next.some(a => (a?.id ?? "").toString() === id);
@@ -1683,8 +1685,15 @@ const server = http.createServer(async (req, res) => {
         // ignore environment memory failures
       }
       let userAttachments = normalizeUserAttachments((parsed as any).user_attachments);
-      userAttachments = maybeAutoAttachLatestUpload(userAttachments, parsed.context);
+      userAttachments = maybeAutoAttachLatestUpload(userAttachments, parsed.context, parsed.session_id);
       const userTextWithAttachments = appendAttachmentsToUserText(userText, userAttachments);
+      const canonicalRequest: ChatRequest = {
+        ...(parsed as ChatRequest),
+        context: withServerContext(parsed.context, { dev_agent_unlocked: devAgentUnlocked(req) }),
+        user_text: userTextWithAttachments,
+        tool_results: toolResults,
+        user_attachments: userAttachments
+      };
       if (!userText.trim() && toolResults.length === 0 && userAttachments.length === 0) {
         res.statusCode = 400;
         res.setHeader("content-type", "text/plain; charset=utf-8");
@@ -1714,16 +1723,9 @@ const server = http.createServer(async (req, res) => {
           // ignore
         }
       }
-      const brainRequest: ChatRequest = {
-        ...(parsed as ChatRequest),
-        user_text: userTextWithAttachments,
-        tool_results: toolResults,
-        user_attachments: userAttachments,
-        context: withServerContext(parsed.context, { dev_agent_unlocked: devAgentUnlocked(req) })
-      };
-      const macroResp = isDirectBrainRouteRequest(brainRequest)
+      const macroResp = isDirectBrainRouteRequest(canonicalRequest)
         ? null
-        : maybeHandleMacroSkill(brainRequest);
+        : maybeHandleMacroSkill(canonicalRequest);
 
       let streamClosed = false;
       const send = (event: string, data: unknown) => {
@@ -1838,9 +1840,7 @@ const server = http.createServer(async (req, res) => {
         send("chat.start", { session_id: parsed.session_id, message_id: parsed.message_id });
 
       ensureSession(parsed.session_id);
-      if (userTextWithAttachments.trim()) {
-        appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments });
-      }
+      if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments });
       for (const tr of toolResults) {
         appendToolSummary(parsed.session_id, summarizeToolResult(tr));
         try {
@@ -1877,13 +1877,7 @@ const server = http.createServer(async (req, res) => {
         }, 5_000);
 
         const decision = await decideStreaming(
-          {
-            ...(parsed as ChatRequest),
-            context: withServerContext(parsed.context, { dev_agent_unlocked: devUnlocked }),
-            user_text: userTextWithAttachments,
-            tool_results: toolResults,
-            user_attachments: userAttachments
-          },
+          canonicalRequest,
           {
             abortSignal: streamAbort.signal,
             onDelta: delta => {
@@ -2045,7 +2039,7 @@ const server = http.createServer(async (req, res) => {
         // ignore environment memory failures
       }
       let userAttachments = normalizeUserAttachments((parsed as any).user_attachments);
-      userAttachments = maybeAutoAttachLatestUpload(userAttachments, parsed.context);
+      userAttachments = maybeAutoAttachLatestUpload(userAttachments, parsed.context, parsed.session_id);
       const userTextWithAttachments = appendAttachmentsToUserText(userText, userAttachments);
       if (!userText.trim() && toolResults.length === 0 && userAttachments.length === 0) {
         return writeJson(res, 400, { error: "Provide user_text or tool_results" });
@@ -2344,44 +2338,13 @@ const server = http.createServer(async (req, res) => {
       const parsed = body as any;
       if (!parsed || typeof parsed !== "object") return writeJson(res, 400, { ok: false, error: "Invalid JSON body" });
 
-      const id = typeof parsed.id === "string" ? parsed.id.trim() : undefined;
-      const filename =
-        typeof parsed.filename === "string"
-          ? parsed.filename.trim()
-          : typeof parsed.file_name === "string"
-            ? parsed.file_name.trim()
-            : undefined;
-      const relative_path =
-        typeof parsed.relative_path === "string"
-          ? parsed.relative_path.trim()
-          : typeof parsed.relativePath === "string"
-            ? parsed.relativePath.trim()
-            : undefined;
-      const sha256 = typeof parsed.sha256 === "string" ? parsed.sha256.trim() : undefined;
-      const mime = typeof parsed.mime === "string" ? parsed.mime.trim() : undefined;
-      const created_at =
-        typeof parsed.created_at === "string"
-          ? parsed.created_at.trim()
-          : typeof parsed.createdAt === "string"
-            ? parsed.createdAt.trim()
-            : undefined;
-      const data_base64 =
-        typeof parsed.data_base64 === "string"
-          ? parsed.data_base64
-          : typeof parsed.dataBase64 === "string"
-            ? parsed.dataBase64
-            : "";
+      const upload = parseAttachmentUploadInput(parsed);
+      const session_id = upload.session_id;
+      if (!session_id) return writeJson(res, 400, { ok: false, error: "session_id is required." });
+      if (!sessionAccessAllowed(res, session_id, auth.principal)) return;
 
       try {
-        const stored = storeAttachmentUpload({
-          id,
-          filename,
-          relative_path,
-          sha256,
-          mime,
-          created_at,
-          data_base64
-        });
+        const stored = storeAttachmentUpload(upload);
         return writeJson(res, 200, { ok: true, attachment: stored });
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);

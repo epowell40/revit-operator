@@ -1005,7 +1005,7 @@ namespace RevitBridge.Operator
                     notes.Add("This workflow drafts a main route plus multiple branch connections by composing /revit/create-mep-route and /revit/connect-mep-branch.");
                     notes.Add("Dry-run plans branch projections and branch-level reducer/transition joint plans against the requested main segment geometry before any model write.");
                     notes.Add("Use branches[*].branchSegmentSizes with one size per branch segment; networkPlan.branches[*].jointPlan reports transition expectations before apply.");
-                    notes.Add("Apply creates the main first, then each branch. A branch failure reports BlockedPartialApply; the failed branch rolls back, but previously created main/branch elements remain for inspection/cleanup.");
+                    notes.Add("Apply creates the main, branches, and accessories inside one TransactionGroup. Any branch, accessory, or semantic-verification failure rolls back the complete network; success reports atomicCommitSucceeded=true.");
                     notes.Add("Accessory graph nodes are accepted in the request and surfaced in networkPlan. Apply supports duct/pipe accessory insertion hosted on a created main or branch segment with a compatible resolved family symbol and chainageFt/point, optionally loading an explicit workspace-scoped familyPath first, plus explicit target-id duct/pipe accessory delete and type_change with a compatible loaded type.");
                     notes.Add("Accessory delete/type_change must provide targetElementId or targetElementIds. Type changes also require typeId, targetTypeName, familySymbolId, or familyName/typeName. Inserted accessories must match the route kind category.");
                 }

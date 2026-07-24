@@ -111,19 +111,26 @@ namespace RevitBridge.Common
                     }
                     case StorageType.Double:
                     {
-                        if (!TryParseDouble(value, out var next))
+                        if (TryParseDouble(value, out var next))
                         {
-                            message = $"Invalid number '{value}'.";
-                            return false;
+                            var current = param.AsDouble();
+                            if (Math.Abs(current - next) < 1e-9)
+                            {
+                                changed = false;
+                                return true;
+                            }
+                            changed = param.Set(next);
+                            if (!changed) message = "Set returned false.";
+                            return changed;
                         }
-                        var current = param.AsDouble();
-                        if (Math.Abs(current - next) < 1e-9)
+                        var currentDisplay = param.AsValueString() ?? "";
+                        if (DisplayValuesMatch(currentDisplay, value))
                         {
                             changed = false;
                             return true;
                         }
-                        changed = param.Set(next);
-                        if (!changed) message = "Set returned false.";
+                        changed = param.SetValueString(value ?? "");
+                        if (!changed) message = $"Revit could not parse formatted value '{value}'.";
                         return changed;
                     }
                     case StorageType.ElementId:
@@ -188,10 +195,15 @@ namespace RevitBridge.Common
                     }
                     case "Double":
                     {
-                        if (!TryParseDouble(requestedValue, out var expected)) return false;
-                        if (!root.TryGetProperty("value", out var valueEl)) return false;
-                        if (valueEl.ValueKind == JsonValueKind.Number && valueEl.TryGetDouble(out var actualDouble)) return Math.Abs(actualDouble - expected) < 1e-9;
-                        return valueEl.ValueKind == JsonValueKind.String && double.TryParse(valueEl.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var actualStringDouble) && Math.Abs(actualStringDouble - expected) < 1e-9;
+                        if (TryParseDouble(requestedValue, out var expected) && root.TryGetProperty("value", out var valueEl))
+                        {
+                            if (valueEl.ValueKind == JsonValueKind.Number && valueEl.TryGetDouble(out var actualDouble) && Math.Abs(actualDouble - expected) < 1e-9) return true;
+                            if (valueEl.ValueKind == JsonValueKind.String && double.TryParse(valueEl.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var actualStringDouble) && Math.Abs(actualStringDouble - expected) < 1e-9) return true;
+                        }
+                        var formatted = root.TryGetProperty("valueString", out var valueStringEl) && valueStringEl.ValueKind == JsonValueKind.String
+                            ? valueStringEl.GetString() ?? ""
+                            : "";
+                        return DisplayValuesMatch(formatted, requestedValue);
                     }
                     case "ElementId":
                     {
@@ -215,6 +227,28 @@ namespace RevitBridge.Common
             {
                 return false;
             }
+        }
+
+        public static bool SnapshotMatchesExpectedCurrentValue(object? snapshot, string? expectedValue)
+        {
+            return SnapshotMatchesRequestedValue(snapshot, expectedValue);
+        }
+
+        private static bool DisplayValuesMatch(string? actual, string? expected)
+        {
+            return string.Equals(CanonicalDisplayValue(actual), CanonicalDisplayValue(expected), StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string CanonicalDisplayValue(string? value)
+        {
+            return (value ?? "")
+                .Trim()
+                .Replace(",", "")
+                .Replace(" ", "")
+                .Replace("\u00a0", "")
+                .Replace("\u201c", "\"")
+                .Replace("\u201d", "\"")
+                .Replace("\u2033", "\"");
         }
 
         private static bool TryParseInt(string? s, out int value)

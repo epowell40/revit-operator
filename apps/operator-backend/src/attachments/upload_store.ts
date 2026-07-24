@@ -11,6 +11,7 @@ export type AttachmentUploadInput = {
   sha256?: string;
   mime?: string;
   created_at?: string;
+  session_id?: string;
   data_base64: string;
 };
 
@@ -22,6 +23,7 @@ export type StoredAttachment = {
   sha256: string;
   mime?: string;
   created_at: string;
+  session_id?: string;
 };
 
 const DEFAULT_MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -214,6 +216,7 @@ export function storeAttachmentUpload(input: AttachmentUploadInput): StoredAttac
 
   const created_at = (input.created_at ?? "").trim() || new Date().toISOString();
   const id = (input.id ?? "").trim() || randomUUID().replace(/-/g, "");
+  const session_id = (input.session_id ?? "").trim();
 
   const rec: StoredAttachment = {
     id,
@@ -222,7 +225,8 @@ export function storeAttachmentUpload(input: AttachmentUploadInput): StoredAttac
     bytes: bytes.length,
     sha256: sha,
     ...(mime ? { mime } : {}),
-    created_at
+    created_at,
+    ...(session_id ? { session_id } : {})
   };
 
   appendUploadIndexRecord(rec as unknown as Record<string, unknown>);

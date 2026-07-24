@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { buildAllowlistFromPairs, filterAllowlistedActions } from "../allowlist.js";
+import { pathLooksWrite } from "../action_path_mutability.js";
 import {
   OPERATOR_BACKEND_CONTRACT_VERSION,
   type ActionCall,
@@ -810,64 +811,6 @@ async function maybeBuildFastElectricalRedlinePreflight(req: ChatRequest): Promi
   };
 }
 
-const READ_ONLY_PATHS = new Set<string>([
-  "/revit/ping",
-  "/revit/context",
-  "/revit/state-snapshot",
-  "/revit/computer-use-observe",
-  "/revit/views",
-  "/revit/capabilities",
-  "/revit/tool-registry",
-  "/revit/tool-search",
-  "/revit/tool-doc",
-  "/revit/tool-examples",
-  "/revit/native-api-policy",
-  "/revit/native-api-catalog",
-  "/revit/native-api-search",
-  "/revit/self-test",
-  "/revit/rooms",
-  "/revit/room-contents",
-  "/revit/find-elements",
-  "/revit/resolve-mep-routing-context",
-  "/revit/trace-connected-network",
-  "/revit/find-elements-by-parameter",
-  "/revit/ducts-by-spatial-scope",
-  "/revit/get-connectors",
-  "/revit/resolve-room-wall",
-  "/revit/rank-similar-devices-on-wall",
-  "/revit/project-point-to-host-frame",
-  "/revit/pick-candidate-cluster",
-  "/revit/export-image",
-  "/revit/export-pdf",
-  "/revit/export-images",
-  "/revit/export-dwg",
-  "/revit/export-ifc",
-  "/revit/export-view-frame",
-  "/revit/export-view-region",
-  "/revit/export-visible-elements",
-  "/revit/highlight-and-export",
-  "/revit/query",
-  "/revit/resolve",
-  "/revit/get-element-summary",
-  "/revit/get-parameters",
-  "/revit/quantify",
-  "/revit/sheets",
-  "/revit/measure-gap",
-  "/revit/get-lighting-data",
-  "/revit/analyze-dimensions",
-  "/revit/spatial-analysis",
-  "/revit/fire-damper-audit",
-  "/revit/lighting-audit",
-  "/revit/query-zone-data",
-  "/revit/resize-ductwork-by-scope",
-  "/revit/list-element-types",
-  "/revit/resolve-element-type",
-  "/revit/titleblock-label-map",
-  "/revit/titleblock-date-candidates",
-  "/revit/verify-parameter-on-sheet",
-  "/revit/capture-sheet-region"
-]);
-
 const REDLINE_DISCOVERY_PATHS = new Set<string>([
   "/revit/sheets",
   "/revit/context",
@@ -884,13 +827,6 @@ const REDLINE_DISCOVERY_PATHS = new Set<string>([
   "/revit/pick-candidate-cluster",
   "/revit/pick-at-pixel"
 ]);
-
-function pathLooksWrite(pathname: string): boolean {
-  const p = (pathname || "").trim().toLowerCase();
-  if (!p.startsWith("/revit/")) return false;
-  if (READ_ONLY_PATHS.has(p)) return false;
-  return true;
-}
 
 type LoopPressureState = {
   consecutive_read_only_steps: number;
@@ -18168,6 +18104,7 @@ function defaultSystemPrompt(): string {
     "- For snippet-driven type changes, resolve candidate element IDs first, then use /revit/resolve-element-type or /revit/list-element-types and finally /revit/change-element-type.",
     "- Do not ask whether the attachment changed unless the user explicitly says it changed; default to reusing the session redline anchor and continue execution.",
     "- For vague semantic MEP requests such as extending piping from a main to a sink or routing ductwork to diffusers, call /tools/mep/semantic-route-plan first and follow its read-only discovery actions or guarded dry-run action before any model write. For drawing MEP geometry from redlines, prefer /revit/mep-route-workflow for route creation because it enforces resolve context -> dry-run -> optional apply -> post-change focused visual capture. A single line is two ordered points; connected path segments are one ordered point list. Use apply=false first when still uncertain, then apply=true with visualVerify=true once bounded. Inspect planned points, selected level/type/system, chosen size/elevation, connectionAttempts, createdFittingIds, openConnectorCount, and visualVerification.capture.path. If size/elevation is missing, use conservative defaults with explicit warnings (8x8 duct, 1 inch pipe, resolved routing elevation) instead of silently guessing or stopping before a useful draft. Differing segmentSizes or branchSegmentSizes plan transition fittings for reducers. For editing existing explicit duct/pipe curve ids, use /revit/edit-mep-route-elements dryRun first for whole-element size or simple level-straight elevation edits; it blocks connected elevation moves unless allowConnectedElevationMove:true and returns before/after size, curve, connector, network-audit, and optional focused capture evidence. If the requested edit changes size part way down one straight curve, use /revit/reroute-mep-route-segment size-transition mode with transitionNormalized or transitionChainageFt plus explicit upstream/downstream sizes, and require a transition fitting in connectionAttempts before completion. If the requested edit offsets a middle section of one straight curve, use /revit/reroute-mep-route-segment offset mode; set offsetMode:\"dogleg45\" when diagonal 45-degree legs are required. Connected endpoints on /revit/reroute-mep-route-segment are blocked by default; only set preserveConnectedEndpoints:true after dry-run reports a concrete endpointReconnectionPlan, then require endpoint reconnection attempts plus connector/network audit before completion. For branch/tee/tap requests, dry-run /revit/connect-mep-branch for one branch or /revit/mep-branch-network-workflow for a main route plus multiple branches. Apply is supported for existing open connector branches, straight duct tap/takeoff at a projected non-connector point, pipe tap/takeoff only when dry-run tapApplyPrecheck confirms an explicit takeoff/tap routing preference, straight duct/pipe split tee cases, branch-level reducer transitions via branchSegmentSizes, explicit duct/pipe accessory insertion on created main or branch segments when a compatible familyPath/family/type and chainage/point preconditions pass, and explicit target-id duct/pipe accessory delete/type_change with compatible loaded types. When the user names a tap/takeoff family or type, pass takeoffFamilyName/takeoffTypeName, inspect selected.takeoffRoutingPreference and tapApplyPrecheck on dry-run, and require connectionAttempts[*].fitting to match on apply. Do not claim branch/tap/accessory completion unless connector/fitting/accessory verification passes.",
+    "- MEP mutation flag rule: /revit/edit-mep-route-elements and /revit/reroute-mep-route-segment require a canonical pair. Preview with apply:false,dryRun:true; write with apply:true,dryRun:false. Never omit either flag or send equal values.",
     "- Large PDF package rule: analyze up to the configured package budget (default 150 pages) instead of silently stopping at page 2. Preserve native comment page/index provenance. For flattened or scanned comments, call gemini_redline_analyze with the full desired page budget; the backend executes bounded eight-page batches, aggregates/deduplicates findings, and reports exact processed, failed, and omitted ranges. Do not propose Revit writes unless package_coverage.complete is true.",
     "- Do not use /revit/create-similar-from-instance or wall-hosted family placement for duct/pipe redlines. Those tools are for hosted family instances such as receptacles/devices, not MEP curve geometry.",
     "",
@@ -19170,7 +19107,7 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
       400,
       Math.min(6000, Number.parseInt(process.env.OPERATOR_PROMPT_COMPACT_SUMMARY_MAX_CHARS ?? "1400", 10) || 1400)
     );
-    lines.push(`Conversation compact summary (older ${omittedCount} message(s)):`); 
+    lines.push(`Conversation compact summary (older ${omittedCount} message(s)):`);
     lines.push(summarizeOlderConversation(older, maxCompactChars));
     lines.push("");
   }

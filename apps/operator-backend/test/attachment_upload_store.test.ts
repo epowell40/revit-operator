@@ -13,6 +13,7 @@ test("attachment upload store: persists upload + index record", () => {
   const bytes = Buffer.from("%PDF-1.4 sample", "utf8");
   const rec = storeAttachmentUpload({
     id: "att_1",
+    session_id: "session-a",
     filename: "M000_Cover_Sheet.pdf",
     mime: "application/pdf",
     data_base64: bytes.toString("base64")
@@ -21,11 +22,12 @@ test("attachment upload store: persists upload + index record", () => {
   assert.equal(rec.id, "att_1");
   assert.equal(path.extname(rec.relative_path).toLowerCase(), ".pdf");
   assert.equal(rec.bytes, bytes.length);
+  assert.equal(rec.session_id, "session-a");
   const full = path.join(root, rec.relative_path.replace(/\//g, path.sep));
   assert.equal(fs.existsSync(full), true);
 
   const latest = readLatestUploadIndexRecords(5);
-  assert.equal(latest.some(x => x.id === "att_1" && x.relative_path === rec.relative_path), true);
+  assert.equal(latest.some(x => x.id === "att_1" && x.relative_path === rec.relative_path && x.session_id === "session-a"), true);
 });
 
 test("attachment upload store: rejects unsupported type", () => {

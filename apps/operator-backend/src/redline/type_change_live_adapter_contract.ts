@@ -249,27 +249,48 @@ function adapterOperations(
   const visualViewId = request.visualViewId;
   if (elementIds.length <= 0) return [];
   const changeRequest = {
-    ids: elementIds,
+    elementIds,
     category: request.category,
     ...(isPositiveInteger(targetTypeId) ? { typeId: targetTypeId } : { typeName: request.targetTypeName })
   };
   const revertRequest = {
-    ids: elementIds,
+    elementIds,
     category: request.category,
     ...(isPositiveInteger(sourceTypeId) ? { typeId: sourceTypeId } : {}),
     ...(!isPositiveInteger(sourceTypeId) && nonEmpty(sourceTypeName) ? { typeName: sourceTypeName } : {})
   };
   const operations: RedlineTypeChangeLiveAdapterOperation[] = [
-    { path: "/revit/change-element-type", purpose: "type_change_dry_run", request: { ...changeRequest, dryRun: true } },
-    { path: "/revit/change-element-type", purpose: "type_change_apply", request: { ...changeRequest, dryRun: false } },
-    { path: "/revit/change-element-type", purpose: "type_change_readback", request: { ...changeRequest, dryRun: true } }
+    { path: "/revit/change-element-type", purpose: "type_change_dry_run", request: { ...changeRequest, dryRun: true } }
   ];
+  if (!isPositiveInteger(sourceTypeId) || !isPositiveInteger(targetTypeId)) {
+    return operations;
+  }
+  operations.push(
+    {
+      path: "/revit/change-element-type",
+      purpose: "type_change_apply",
+      request: {
+        ...changeRequest,
+        expectedOldTypes: elementIds.map((elementId) => ({ elementId, typeId: sourceTypeId })),
+        dryRun: false
+      }
+    },
+    { path: "/revit/change-element-type", purpose: "type_change_readback", request: { ...changeRequest, dryRun: true } }
+  );
   if (isPositiveInteger(visualViewId)) {
     operations.push({ path: "/revit/export-image", purpose: "post_change_visual_capture", request: { viewId: visualViewId, imageSize: 1800 } });
   }
   operations.push(
     { path: "/revit/change-element-type", purpose: "revert_dry_run", request: { ...revertRequest, dryRun: true } },
-    { path: "/revit/change-element-type", purpose: "revert_apply", request: { ...revertRequest, dryRun: false } },
+    {
+      path: "/revit/change-element-type",
+      purpose: "revert_apply",
+      request: {
+        ...revertRequest,
+        expectedOldTypes: elementIds.map((elementId) => ({ elementId, typeId: targetTypeId })),
+        dryRun: false
+      }
+    },
     { path: "/revit/change-element-type", purpose: "revert_readback", request: { ...revertRequest, dryRun: true } }
   );
   return operations;

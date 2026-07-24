@@ -5,6 +5,11 @@ import { pdfDefaultPageBudget } from "../redline/pdf_intake_policy.js";
 import { mapSheetRegions, type MapSheetRegionsResponse } from "../redline/sheet_region_mapper.js";
 import { readLatestUploadIndexRecords } from "../attachments/upload_index.js";
 import { evaluateRedlineVisualVerificationGate, type RedlineVisualGateResult } from "../verification/redline_visual_verification_gate.js";
+import type {
+  VerifiedMepRerouteOffsetEvidence,
+  VerifiedMepSizeTransitionEvidence,
+  VerifiedMepTapBranchEvidence
+} from "./mep_mutation_evidence.js";
 
 type MepKind = "duct" | "pipe";
 type RedlineRouteStatus = "not_applicable" | "needs_sheet_detail" | "needs_view_frame" | "needs_pick" | "needs_context" | "ready" | "done" | "blocked";
@@ -15,64 +20,6 @@ type UnsafeMepEditIntentKind =
   | "reroute_offset"
   | "accessory"
   | "move_delete_type_change";
-
-type VerifiedMepSizeTransitionEvidence = {
-  kind?: MepKind;
-  viewId?: number;
-  visualViewId?: number;
-  hostElementId?: number;
-  transitionNormalized?: number;
-  transitionChainageFt?: number;
-  transitionPoint?: { x?: number; y?: number; z?: number };
-  upstreamSize?: string;
-  downstreamSize?: string;
-  upstreamDuctSize?: string;
-  downstreamDuctSize?: string;
-  upstreamPipeSize?: string;
-  downstreamPipeSize?: string;
-  expectedFitting?: string;
-};
-
-type VerifiedMepTapBranchEvidence = {
-  kind?: MepKind;
-  viewId?: number;
-  visualViewId?: number;
-  mainElementId?: number;
-  projectedTapPoint?: { x?: number; y?: number; z?: number };
-  branchPoints?: Array<{ x?: number; y?: number; z?: number }>;
-  branchSize?: string;
-  ductSize?: string;
-  pipeSize?: string;
-  systemType?: string;
-  levelName?: string;
-  connectionMode?: string;
-  expectedFitting?: string;
-  fittingTypeId?: number;
-  orientation?: string;
-  takeoffFamilyName?: string;
-  takeoffTypeName?: string;
-};
-
-type VerifiedMepRerouteOffsetEvidence = {
-  kind?: MepKind;
-  viewId?: number;
-  visualViewId?: number;
-  hostElementId?: number;
-  splitPoints?: Array<{ x?: number; y?: number; z?: number }>;
-  split1Point?: { x?: number; y?: number; z?: number };
-  split2Point?: { x?: number; y?: number; z?: number };
-  split1ChainageFt?: number;
-  split2ChainageFt?: number;
-  offsetVector?: { x?: number; y?: number; z?: number };
-  dropFt?: number;
-  riseFt?: number;
-  elevationOffsetFt?: number;
-  offsetMode?: string;
-  expectedFittings?: string;
-  expectedFitting?: string;
-  preserveConnectedEndpoints?: boolean;
-  endpointReconnectionPlanReviewed?: boolean;
-};
 
 type ClassifiedRedlineGeometry = {
   route_candidate?: {
@@ -793,6 +740,8 @@ function rerouteOffsetEvidenceFrom(value: unknown): VerifiedMepRerouteOffsetEvid
     ...(split2Point ? { split2Point } : {}),
     ...(positiveNumber(nested.split1ChainageFt ?? nested.split1_chainage_ft) !== null ? { split1ChainageFt: positiveNumber(nested.split1ChainageFt ?? nested.split1_chainage_ft)! } : {}),
     ...(positiveNumber(nested.split2ChainageFt ?? nested.split2_chainage_ft) !== null ? { split2ChainageFt: positiveNumber(nested.split2ChainageFt ?? nested.split2_chainage_ft)! } : {}),
+    ...(toFiniteNumber(nested.split1Normalized ?? nested.split1_normalized) !== null ? { split1Normalized: toFiniteNumber(nested.split1Normalized ?? nested.split1_normalized)! } : {}),
+    ...(toFiniteNumber(nested.split2Normalized ?? nested.split2_normalized) !== null ? { split2Normalized: toFiniteNumber(nested.split2Normalized ?? nested.split2_normalized)! } : {}),
     ...(offsetVector ? { offsetVector } : {}),
     ...(toFiniteNumber(nested.dropFt ?? nested.drop_ft) !== null ? { dropFt: toFiniteNumber(nested.dropFt ?? nested.drop_ft)! } : {}),
     ...(toFiniteNumber(nested.riseFt ?? nested.rise_ft) !== null ? { riseFt: toFiniteNumber(nested.riseFt ?? nested.rise_ft)! } : {}),
@@ -834,6 +783,8 @@ function buildRerouteOffsetDryRunAction(
   const split2Point = finitePoint(evidence?.split2Point) ?? splitPoints[1] ?? null;
   const split1ChainageFt = positiveNumber(evidence?.split1ChainageFt);
   const split2ChainageFt = positiveNumber(evidence?.split2ChainageFt);
+  const split1Normalized = toFiniteNumber(evidence?.split1Normalized);
+  const split2Normalized = toFiniteNumber(evidence?.split2Normalized);
   const offsetVector = nonzeroOffsetVector(finitePoint(evidence?.offsetVector));
   const dropFt = toFiniteNumber(evidence?.dropFt);
   const riseFt = toFiniteNumber(evidence?.riseFt);
@@ -847,11 +798,14 @@ function buildRerouteOffsetDryRunAction(
   if (viewId === null) blockers.push("verified viewId");
   if (visualViewId === null) blockers.push("verified visualViewId for focused capture");
   if (hostElementId === null) blockers.push("verified hostElementId");
-  if ((!split1Point || !split2Point) && (split1ChainageFt === null || split2ChainageFt === null)) {
-    blockers.push("two splitPoints or split chainages");
+  const hasChainages = split1ChainageFt !== null && split2ChainageFt !== null;
+  const hasNormalized = split1Normalized !== null && split2Normalized !== null &&
+    split1Normalized >= 0 && split1Normalized <= 1 && split2Normalized >= 0 && split2Normalized <= 1;
+  if (!hasChainages && !hasNormalized) {
+    blockers.push("handler-supported split1/split2 chainages or normalized chainages");
   }
-  if (!offsetVector && dropFt === null && riseFt === null && elevationOffsetFt === null) {
-    blockers.push("nonzero offsetVector, dropFt, riseFt, or elevationOffsetFt");
+  if (!offsetVector) {
+    blockers.push("handler-supported nonzero offsetVector");
   }
   if (!offsetMode) blockers.push("offsetMode");
   if (!expectedFittings) blockers.push("expected elbow/transition fitting plan");
@@ -866,17 +820,16 @@ function buildRerouteOffsetDryRunAction(
     viewId,
     visualViewId,
     hostElementId,
-    ...(split1Point && split2Point ? { split1Point, split2Point, splitPoints: [split1Point, split2Point] } : {}),
     ...(split1ChainageFt !== null ? { split1ChainageFt } : {}),
     ...(split2ChainageFt !== null ? { split2ChainageFt } : {}),
+    ...(split1Normalized !== null ? { split1Normalized } : {}),
+    ...(split2Normalized !== null ? { split2Normalized } : {}),
     ...(offsetVector ? { offsetVector } : {}),
-    ...(dropFt !== null ? { dropFt } : {}),
-    ...(riseFt !== null ? { riseFt } : {}),
-    ...(elevationOffsetFt !== null ? { elevationOffsetFt } : {}),
     offsetMode,
     expectedFittings,
     preserveConnectedEndpoints,
     apply: false,
+    dryRun: true,
     verify: true,
     verifyConnectorNetwork: true,
     visualVerify: false,
@@ -1017,8 +970,8 @@ function buildSizeTransitionDryRunAction(
   if (hostElementId === null) blockers.push("verified hostElementId");
   if (!upstreamSize) blockers.push(`upstream ${isPipe ? "pipe" : "duct"} size`);
   if (!downstreamSize) blockers.push(`downstream ${isPipe ? "pipe" : "duct"} size`);
-  if ((transitionNormalized === null || transitionNormalized < 0 || transitionNormalized > 1) && transitionChainageFt === null && !transitionPoint) {
-    blockers.push("transitionNormalized, transitionChainageFt, or projected transitionPoint");
+  if ((transitionNormalized === null || transitionNormalized < 0 || transitionNormalized > 1) && transitionChainageFt === null) {
+    blockers.push("handler-supported transitionNormalized or transitionChainageFt");
   }
   if (!expectedFitting) blockers.push("expected transition/reducer fitting");
   if (blockers.length > 0) return { blockers };
@@ -1031,10 +984,10 @@ function buildSizeTransitionDryRunAction(
     hostElementId,
     ...(transitionNormalized !== null ? { transitionNormalized } : {}),
     ...(transitionChainageFt !== null ? { transitionChainageFt } : {}),
-    ...(transitionPoint ? { transitionPoint, projectedTransitionPoint: transitionPoint } : {}),
     ...(isPipe ? { upstreamPipeSize: upstreamSize, downstreamPipeSize: downstreamSize } : { upstreamDuctSize: upstreamSize, downstreamDuctSize: downstreamSize }),
     expectedFitting,
     apply: false,
+    dryRun: true,
     verify: true,
     verifyConnectorNetwork: true,
     visualVerify: false,

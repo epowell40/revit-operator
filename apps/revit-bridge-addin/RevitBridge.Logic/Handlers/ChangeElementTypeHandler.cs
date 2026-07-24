@@ -23,6 +23,13 @@ namespace RevitBridge.Logic.Handlers
             public bool dryRun { get; set; }
             public bool cacheBust { get; set; }
             public int cacheMaxAgeSeconds { get; set; } = 180;
+            public List<TypePrecondition>? expectedOldTypes { get; set; }
+        }
+
+        public class TypePrecondition
+        {
+            public long elementId { get; set; }
+            public long typeId { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -39,6 +46,7 @@ namespace RevitBridge.Logic.Handlers
                 ids.Add(p.elementId.Value);
             }
             if (ids.Count == 0) throw new ArgumentException("Missing required parameter: elementId (or elementIds).");
+            ids = ids.Distinct().ToList();
 
             var doc = app.ActiveUIDocument.Document;
 
@@ -121,37 +129,100 @@ namespace RevitBridge.Logic.Handlers
             }
 
             var changes = new List<object>();
+            var expectedOldTypes = (p.expectedOldTypes ?? new List<TypePrecondition>())
+                .Where(x => x.elementId > 0 && x.typeId > 0)
+                .GroupBy(x => x.elementId)
+                .ToDictionary(group => group.Key, group => group.Last().typeId);
+            var conflictingGuardIds = (p.expectedOldTypes ?? new List<TypePrecondition>())
+                .Where(x => x.elementId > 0 && x.typeId > 0)
+                .GroupBy(x => x.elementId)
+                .Where(group => group.Select(x => x.typeId).Distinct().Count() > 1)
+                .Select(group => group.Key)
+                .OrderBy(x => x)
+                .ToList();
+            var missingGuardIds = p.expectedOldTypes == null
+                ? (p.dryRun ? new List<long>() : ids.OrderBy(id => id).ToList())
+                : ids.Where(id => !expectedOldTypes.ContainsKey(id)).OrderBy(id => id).ToList();
+            if (conflictingGuardIds.Count > 0 || missingGuardIds.Count > 0)
+            {
+                return Task.FromResult<object>(new
+                {
+                    ok = false,
+                    dryRun = p.dryRun,
+                    count = 0,
+                    failureReason = "expectedOldTypes must contain exactly one unambiguous guard for every target element.",
+                    conflictingGuardIds,
+                    missingGuardIds,
+                    changedElementIds = new List<long>(),
+                    changes
+                });
+            }
 
             // Dry-run: validate only.
             if (p.dryRun)
             {
+                var dryRunOk = true;
                 foreach (var id in ids)
                 {
                     var elem = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(id));
                     if (elem == null)
                     {
+                        dryRunOk = false;
                         changes.Add(new { elementId = id, ok = false, error = "Element not found" });
                         continue;
                     }
                     var oldTypeId = elem.GetTypeId();
+                    var oldTypeIdValue = RevitBridge.Common.ElementIdCompat.GetValue(oldTypeId);
+                    var preconditionMatched = !expectedOldTypes.TryGetValue(id, out var expectedOldTypeId)
+                        || expectedOldTypeId == oldTypeIdValue;
+                    if (!preconditionMatched) dryRunOk = false;
                     changes.Add(new
                     {
                         elementId = id,
-                        ok = true,
+                        ok = preconditionMatched,
                         dryRun = true,
-                        oldTypeId = RevitBridge.Common.ElementIdCompat.GetValue(oldTypeId),
-                        newTypeId = newTypeIdValue
+                        oldTypeId = oldTypeIdValue,
+                        newTypeId = newTypeIdValue,
+                        preconditionMatched,
+                        expectedOldTypeId = expectedOldTypes.TryGetValue(id, out var expected) ? expected : (long?)null,
+                        error = preconditionMatched ? null : "Current type no longer matches expectedOldTypes."
                     });
                 }
 
-                return Task.FromResult<object>(new { ok = true, dryRun = true, changes });
+                return Task.FromResult<object>(new { ok = dryRunOk, dryRun = true, changes });
             }
 
             using (var t = new Transaction(doc, "Change Element Type"))
             {
-                t.Start();
-                var successCount = 0;
-                var changedElementIds = new HashSet<long>();
+                try
+                {
+                    var startStatus = t.Start();
+                    if (startStatus != TransactionStatus.Started)
+                    {
+                        return Task.FromResult<object>(new
+                        {
+                            ok = false,
+                            count = 0,
+                            rolledBack = false,
+                            failureReason = "Revit did not start the type-change transaction.",
+                            transactionStartStatus = startStatus.ToString(),
+                            changedElementIds = new List<long>()
+                        });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    return Task.FromResult<object>(new
+                    {
+                        ok = false,
+                        count = 0,
+                        rolledBack = false,
+                        failureReason = "Revit could not start the type-change transaction.",
+                        error = ex.Message,
+                        changedElementIds = new List<long>()
+                    });
+                }
+                var targets = new List<(long Id, Element Element, long OldTypeId, string? OldTypeName)>();
                 foreach (var id in ids)
                 {
                     var elem = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(id));
@@ -163,56 +234,188 @@ namespace RevitBridge.Logic.Handlers
 
                     var oldTypeId = elem.GetTypeId();
                     var oldType = doc.GetElement(oldTypeId) as ElementType;
-
-                    try
+                    var oldTypeIdValue = RevitBridge.Common.ElementIdCompat.GetValue(oldTypeId);
+                    if (expectedOldTypes.TryGetValue(id, out var expectedOldTypeId) && expectedOldTypeId != oldTypeIdValue)
                     {
-                        elem.ChangeTypeId(newType!.Id);
-                        successCount++;
-                        changedElementIds.Add(id);
                         changes.Add(new
                         {
                             elementId = id,
-                            ok = true,
-                            oldTypeId = RevitBridge.Common.ElementIdCompat.GetValue(oldTypeId),
-                            oldTypeName = oldType?.Name,
-                            newTypeId = RevitBridge.Common.ElementIdCompat.GetValue(newType!.Id),
-                            newTypeName = newType!.Name
+                            ok = false,
+                            error = "Current type no longer matches expectedOldTypes.",
+                            oldTypeId = oldTypeIdValue,
+                            expectedOldTypeId,
+                            newTypeId = newTypeIdValue
                         });
+                        continue;
                     }
-                    catch (Exception ex)
-                    {
-                        changes.Add(new { elementId = id, ok = false, error = ex.Message, oldTypeId = RevitBridge.Common.ElementIdCompat.GetValue(oldTypeId), newTypeId = newTypeIdValue });
-                    }
+                    targets.Add((id, elem, oldTypeIdValue, oldType?.Name));
                 }
-                t.Commit();
 
-                try { doc.Regenerate(); } catch { }
-                try { app.ActiveUIDocument?.RefreshActiveView(); } catch { }
+                if (changes.Count > 0 || targets.Count != ids.Count)
+                {
+                    var rolledBack = RollBackTransaction(t);
+                    return Task.FromResult<object>(new
+                    {
+                        ok = false,
+                        count = 0,
+                        rolledBack,
+                        failureReason = "Type-change preconditions failed before any element was changed.",
+                        changedElementIds = new List<long>(),
+                        changes
+                    });
+                }
 
-                List<long>? missingAfterElementIds = null;
+                var attemptedChanges = new List<object>();
                 try
                 {
-                    missingAfterElementIds = changedElementIds
-                        .Where(x => doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(x)) == null)
-                        .OrderBy(x => x)
-                        .ToList();
+                    foreach (var target in targets)
+                    {
+                        target.Element.ChangeTypeId(newType!.Id);
+                        attemptedChanges.Add(new
+                        {
+                            elementId = target.Id,
+                            ok = true,
+                            oldTypeId = target.OldTypeId,
+                            oldTypeName = target.OldTypeName,
+                            newTypeId = RevitBridge.Common.ElementIdCompat.GetValue(newType.Id),
+                            newTypeName = newType.Name
+                        });
+                    }
+                    doc.Regenerate();
                 }
-                catch
+                catch (Exception ex)
                 {
-                    missingAfterElementIds = null;
+                    var rolledBack = RollBackTransaction(t);
+                    return Task.FromResult<object>(new
+                    {
+                        ok = false,
+                        count = 0,
+                        rolledBack,
+                        failureReason = "A type change failed; the complete batch was rolled back.",
+                        error = ex.Message,
+                        changedElementIds = new List<long>(),
+                        attemptedChanges
+                    });
+                }
+
+                var newTypeIdActual = RevitBridge.Common.ElementIdCompat.GetValue(newType!.Id);
+                var preCommitReadback = targets.Select(target => new
+                {
+                    elementId = target.Id,
+                    actualTypeId = RevitBridge.Common.ElementIdCompat.GetValue(target.Element.GetTypeId()),
+                    expectedTypeId = newTypeIdActual
+                }).ToList();
+                var mismatches = preCommitReadback.Where(row => row.actualTypeId != row.expectedTypeId).ToList();
+                if (mismatches.Count > 0)
+                {
+                    var rolledBack = RollBackTransaction(t);
+                    return Task.FromResult<object>(new
+                    {
+                        ok = false,
+                        count = 0,
+                        rolledBack,
+                        failureReason = "Type-change readback failed; the complete batch was rolled back.",
+                        changedElementIds = new List<long>(),
+                        readback = preCommitReadback,
+                        mismatches,
+                        attemptedChanges
+                    });
+                }
+
+                try
+                {
+                    var commitStatus = t.Commit();
+                    if (commitStatus != TransactionStatus.Committed)
+                    {
+                        var rolledBack = EnsureRolledBack(t, commitStatus);
+                        return Task.FromResult<object>(new
+                        {
+                            ok = false,
+                            count = 0,
+                            rolledBack,
+                            failureReason = "Revit did not commit the complete type-change batch.",
+                            transactionCommitStatus = commitStatus.ToString(),
+                            changedElementIds = new List<long>(),
+                            attemptedChanges
+                        });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    var rolledBack = RollBackTransaction(t);
+                    return Task.FromResult<object>(new
+                    {
+                        ok = false,
+                        count = 0,
+                        rolledBack,
+                        failureReason = "Revit could not commit the type-change batch.",
+                        error = ex.Message,
+                        changedElementIds = new List<long>(),
+                        attemptedChanges
+                    });
+                }
+
+                changes.AddRange(attemptedChanges);
+                try { app.ActiveUIDocument?.RefreshActiveView(); } catch { }
+
+                var readback = targets.Select(target =>
+                {
+                    var current = doc.GetElement(ElementIdCompat.Create(target.Id));
+                    return new
+                    {
+                        elementId = target.Id,
+                        actualTypeId = current == null ? 0 : ElementIdCompat.GetValue(current.GetTypeId()),
+                        expectedTypeId = newTypeIdActual
+                    };
+                }).ToList();
+                var postCommitMismatches = readback.Where(row => row.actualTypeId != row.expectedTypeId).ToList();
+                if (postCommitMismatches.Count > 0)
+                {
+                    return Task.FromResult<object>(new
+                    {
+                        ok = false,
+                        count = targets.Count,
+                        committed = true,
+                        rolledBack = false,
+                        failureReason = "Committed type-change readback did not match the requested type.",
+                        newTypeId = newTypeIdActual,
+                        changedElementIds = targets.Select(target => target.Id).OrderBy(x => x).ToList(),
+                        readback,
+                        mismatches = postCommitMismatches,
+                        changes
+                    });
                 }
 
                 return Task.FromResult<object>(new
                 {
                     ok = true,
-                    count = successCount,
-                    newTypeId = RevitBridge.Common.ElementIdCompat.GetValue(newType!.Id),
+                    count = targets.Count,
+                    committed = true,
+                    rolledBack = false,
+                    newTypeId = newTypeIdActual,
                     newTypeName = newType!.Name,
-                    changedElementIds = changedElementIds.OrderBy(x => x).ToList(),
-                    missingAfterElementIds,
+                    changedElementIds = targets.Select(target => target.Id).OrderBy(x => x).ToList(),
+                    readback,
                     changes
                 });
             }
+        }
+
+        private static bool RollBackTransaction(Transaction transaction)
+        {
+            try { return transaction.RollBack() == TransactionStatus.RolledBack; }
+            catch { return false; }
+        }
+
+        private static bool EnsureRolledBack(Transaction transaction, TransactionStatus knownStatus)
+        {
+            if (knownStatus == TransactionStatus.RolledBack) return true;
+            try
+            {
+                if (transaction.GetStatus() == TransactionStatus.RolledBack) return true;
+            }
+            catch { }
+            return RollBackTransaction(transaction);
         }
     }
 }

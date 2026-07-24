@@ -2742,23 +2742,7 @@ test("rotate-like redline workflow rejects missing rotated id", async () => {
 
 test("type-change redline workflow dry-runs applies captures and reverts", async () => {
   const dir = tempDir("redline-type-change-device-success");
-  const result = await runRevitDemoWorkflow(
-    {
-      workflow: "redline_type_change",
-      request: {
-        elementIds: [9301],
-        category: "OST_ElectricalFixtures",
-        targetTypeId: 9402,
-        sourceTypeGrounding: { expectedCurrentTypeId: 9401 },
-        dryRunPreflightReviewed: true,
-        targetTypeCompatibilityReviewed: true,
-        visualViewId: 101,
-        visualVerify: true,
-        revertAfterVerify: true
-      }
-    },
-    dir,
-    new MockBridgeTransport({
+  const bridge = new MockBridgeTransport({
       "/revit/change-element-type:1": {
         ok: true,
         dryRun: true,
@@ -2766,6 +2750,8 @@ test("type-change redline workflow dry-runs applies captures and reverts", async
       },
       "/revit/change-element-type:2": {
         ok: true,
+        committed: true,
+        rolledBack: false,
         count: 1,
         newTypeId: 9402,
         newTypeName: "Target Device Type",
@@ -2789,6 +2775,8 @@ test("type-change redline workflow dry-runs applies captures and reverts", async
       },
       "/revit/change-element-type:5": {
         ok: true,
+        committed: true,
+        rolledBack: false,
         count: 1,
         newTypeId: 9401,
         newTypeName: "Original Device Type",
@@ -2800,22 +2788,87 @@ test("type-change redline workflow dry-runs applies captures and reverts", async
         dryRun: true,
         changes: [{ elementId: 9301, ok: true, dryRun: true, oldTypeId: 9401, newTypeId: 9401 }]
       }
-    })
+    });
+  const result = await runRevitDemoWorkflow(
+    {
+      workflow: "redline_type_change",
+      request: {
+        elementIds: [9301],
+        category: "OST_ElectricalFixtures",
+        targetTypeId: 9402,
+        sourceTypeGrounding: { expectedCurrentTypeId: 9401 },
+        dryRunPreflightReviewed: true,
+        targetTypeCompatibilityReviewed: true,
+        visualViewId: 101,
+        visualVerify: true,
+        revertAfterVerify: true
+      }
+    },
+    dir,
+    bridge
   );
 
   assert.equal(result.workflow, "redline_type_change");
   assert.equal(result.success, true);
   assert.equal(result.verification_results.some((entry) => entry.name === "type_change_apply_ids_present" && entry.ok), true);
+  assert.equal(result.verification_results.some((entry) => entry.name === "type_change_apply_committed" && entry.ok), true);
   assert.equal(result.verification_results.some((entry) => entry.name === "type_change_dry_run_target_matches_request" && entry.ok), true);
   assert.equal(result.verification_results.some((entry) => entry.name === "type_change_source_type_grounding_ok" && entry.ok), true);
   assert.equal(result.verification_results.some((entry) => entry.name === "type_change_readback_matches_target" && entry.ok), true);
   assert.equal(result.verification_results.some((entry) => entry.name === "type_change_revert_readback_matches_original" && entry.ok), true);
+  assert.equal(result.verification_results.some((entry) => entry.name === "type_change_revert_apply_committed" && entry.ok), true);
   const summary = JSON.parse(fs.readFileSync(path.join(dir, "artifacts", "redline_type_change_summary.json"), "utf8"));
   assert.equal(summary.expectedNewTypeId, 9402);
   assert.deepEqual(summary.appliedIds, [9301]);
   assert.equal(summary.readbackMatches, true);
   assert.deepEqual(summary.revertedIds, [9301]);
   assert.equal(summary.revertReadbackMatches, true);
+  const typeChangeCalls = bridge.calls.filter((call) => call.pathname === "/revit/change-element-type");
+  assert.deepEqual((typeChangeCalls[1].body as any).expectedOldTypes, [{ elementId: 9301, typeId: 9401 }]);
+  assert.deepEqual((typeChangeCalls[4].body as any).expectedOldTypes, [{ elementId: 9301, typeId: 9402 }]);
+});
+
+test("type-change redline stops after stale guarded apply instead of reverting another actor's change", async () => {
+  const dir = tempDir("redline-type-change-stale-apply");
+  const bridge = new MockBridgeTransport({
+    "/revit/change-element-type:1": {
+      ok: true,
+      dryRun: true,
+      changes: [{ elementId: 9301, ok: true, oldTypeId: 9401, newTypeId: 9402 }]
+    },
+    "/revit/change-element-type:2": {
+      ok: false,
+      count: 0,
+      rolledBack: true,
+      failureReason: "Current type no longer matches expectedOldTypes.",
+      changedElementIds: [],
+      changes: [{ elementId: 9301, ok: false, oldTypeId: 9402, expectedOldTypeId: 9401 }]
+    }
+  });
+
+  const result = await runRevitDemoWorkflow(
+    {
+      workflow: "redline_type_change",
+      request: {
+        elementIds: [9301],
+        category: "OST_ElectricalFixtures",
+        targetTypeId: 9402,
+        sourceTypeGrounding: { expectedCurrentTypeId: 9401 },
+        dryRunPreflightReviewed: true,
+        targetTypeCompatibilityReviewed: true,
+        visualVerify: false,
+        revertAfterVerify: true
+      }
+    },
+    dir,
+    bridge
+  );
+
+  assert.equal(result.success, false);
+  assert.match(result.failure_reason ?? "", /readback and revert were not attempted/i);
+  const calls = bridge.calls.filter((call) => call.pathname === "/revit/change-element-type");
+  assert.equal(calls.length, 2);
+  assert.deepEqual((calls[1].body as any).expectedOldTypes, [{ elementId: 9301, typeId: 9401 }]);
 });
 
 test("type-change redline workflow blocks before writes when dry-run compatibility is incomplete", async () => {
@@ -2917,7 +2970,7 @@ test("type-change redline workflow blocks MEP accessory when source family groun
   assert.equal(summary.expectedSourceFamilyName, "Manual Balancing Damper");
 });
 
-test("type-change redline workflow accepts target type name readback when no type id is available", async () => {
+test("type-change redline workflow resolves numeric guards from a target type name before writing", async () => {
   const dir = tempDir("redline-type-change-name-only-success");
   const result = await runRevitDemoWorkflow(
     {
@@ -2939,19 +2992,22 @@ test("type-change redline workflow accepts target type name readback when no typ
       "/revit/change-element-type:1": {
         ok: true,
         dryRun: true,
-        changes: [{ elementId: 9301, ok: true, dryRun: true, oldTypeId: 9401, oldTypeName: "Original Device Type", newTypeName: "Target Device Type" }]
+        changes: [{ elementId: 9301, ok: true, dryRun: true, oldTypeId: 9401, oldTypeName: "Original Device Type", newTypeId: 9402, newTypeName: "Target Device Type" }]
       },
       "/revit/change-element-type:2": {
         ok: true,
+        committed: true,
+        rolledBack: false,
         count: 1,
+        newTypeId: 9402,
         newTypeName: "Target Device Type",
         changedElementIds: [9301],
-        changes: [{ elementId: 9301, ok: true, oldTypeId: 9401, oldTypeName: "Original Device Type", newTypeName: "Target Device Type" }]
+        changes: [{ elementId: 9301, ok: true, oldTypeId: 9401, oldTypeName: "Original Device Type", newTypeId: 9402, newTypeName: "Target Device Type" }]
       },
       "/revit/change-element-type:3": {
         ok: true,
         dryRun: true,
-        changes: [{ elementId: 9301, ok: true, dryRun: true, oldTypeId: 9402, oldTypeName: "Target Device Type", newTypeName: "Target Device Type" }]
+        changes: [{ elementId: 9301, ok: true, dryRun: true, oldTypeId: 9402, oldTypeName: "Target Device Type", newTypeId: 9402, newTypeName: "Target Device Type" }]
       },
       "/revit/export-image": {
         status: "Captured",
@@ -2965,6 +3021,8 @@ test("type-change redline workflow accepts target type name readback when no typ
       },
       "/revit/change-element-type:5": {
         ok: true,
+        committed: true,
+        rolledBack: false,
         count: 1,
         newTypeId: 9401,
         newTypeName: "Original Device Type",
@@ -2984,7 +3042,7 @@ test("type-change redline workflow accepts target type name readback when no typ
   assert.equal(result.verification_results.some((entry) => entry.name === "type_change_target_type_matches_request" && entry.ok), true);
   assert.equal(result.verification_results.some((entry) => entry.name === "type_change_readback_matches_target" && entry.ok), true);
   const summary = JSON.parse(fs.readFileSync(path.join(dir, "artifacts", "redline_type_change_summary.json"), "utf8"));
-  assert.equal(summary.expectedNewTypeId, null);
+  assert.equal(summary.expectedNewTypeId, 9402);
   assert.equal(summary.expectedNewTypeName, "target device type");
   assert.equal(summary.appliedTypeMatchesRequest, true);
   assert.equal(summary.readbackMatches, true);
@@ -3012,19 +3070,22 @@ test("type-change redline workflow rejects target type name readback mismatch", 
       "/revit/change-element-type:1": {
         ok: true,
         dryRun: true,
-        changes: [{ elementId: 9301, ok: true, dryRun: true, oldTypeId: 9401, oldTypeName: "Original Device Type", newTypeName: "Target Device Type" }]
+        changes: [{ elementId: 9301, ok: true, dryRun: true, oldTypeId: 9401, oldTypeName: "Original Device Type", newTypeId: 9402, newTypeName: "Target Device Type" }]
       },
       "/revit/change-element-type:2": {
         ok: true,
+        committed: true,
+        rolledBack: false,
         count: 1,
+        newTypeId: 9402,
         newTypeName: "Target Device Type",
         changedElementIds: [9301],
-        changes: [{ elementId: 9301, ok: true, oldTypeId: 9401, oldTypeName: "Original Device Type", newTypeName: "Target Device Type" }]
+        changes: [{ elementId: 9301, ok: true, oldTypeId: 9401, oldTypeName: "Original Device Type", newTypeId: 9402, newTypeName: "Target Device Type" }]
       },
       "/revit/change-element-type:3": {
         ok: true,
         dryRun: true,
-        changes: [{ elementId: 9301, ok: true, dryRun: true, oldTypeId: 9403, oldTypeName: "Wrong Device Type", newTypeName: "Target Device Type" }]
+        changes: [{ elementId: 9301, ok: true, dryRun: true, oldTypeId: 9403, oldTypeName: "Wrong Device Type", newTypeId: 9402, newTypeName: "Target Device Type" }]
       },
       "/revit/export-image": {
         status: "Captured",
@@ -3038,6 +3099,8 @@ test("type-change redline workflow rejects target type name readback mismatch", 
       },
       "/revit/change-element-type:5": {
         ok: true,
+        committed: true,
+        rolledBack: false,
         count: 1,
         newTypeId: 9401,
         newTypeName: "Original Device Type",
@@ -3084,6 +3147,8 @@ test("type-change redline workflow rejects post-change capture from the wrong re
       },
       "/revit/change-element-type:2": {
         ok: true,
+        committed: true,
+        rolledBack: false,
         count: 1,
         newTypeId: 9402,
         newTypeName: "Target Device Type",
@@ -3107,6 +3172,8 @@ test("type-change redline workflow rejects post-change capture from the wrong re
       },
       "/revit/change-element-type:5": {
         ok: true,
+        committed: true,
+        rolledBack: false,
         count: 1,
         newTypeId: 9401,
         newTypeName: "Original Device Type",
@@ -3128,6 +3195,222 @@ test("type-change redline workflow rejects post-change capture from the wrong re
   const summary = JSON.parse(fs.readFileSync(path.join(dir, "artifacts", "redline_type_change_summary.json"), "utf8"));
   assert.equal(summary.postChangeCaptureViewId, 9999);
 });
+
+test("type-change redline blocks name-only requests when dry run cannot resolve numeric guards", async () => {
+  const dir = tempDir("redline-type-change-name-only-missing-guard");
+  const bridge = new MockBridgeTransport({
+    "/revit/change-element-type:1": {
+      ok: true,
+      dryRun: true,
+      changes: [{ elementId: 9301, ok: true, oldTypeId: 9401, oldTypeName: "Original Device Type", newTypeName: "Target Device Type" }]
+    }
+  });
+  const result = await runRevitDemoWorkflow({
+    workflow: "redline_type_change",
+    request: {
+      elementIds: [9301],
+      targetTypeName: "Target Device Type",
+      sourceTypeGrounding: { expectedCurrentTypeName: "Original Device Type" },
+      dryRunPreflightReviewed: true,
+      targetTypeCompatibilityReviewed: true,
+      visualVerify: false,
+      revertAfterVerify: true
+    }
+  }, dir, bridge);
+
+  assert.equal(result.success, false);
+  assert.equal(bridge.calls.filter((call) => call.pathname === "/revit/change-element-type").length, 1);
+  assert.equal(result.verification_results.some((entry) => entry.name === "type_change_numeric_guards_resolved" && !entry.ok), true);
+});
+
+test("documentation existing-value edits compare current state before any write", async () => {
+  const cases: Array<{
+    name: string;
+    request: Record<string, unknown>;
+    fixtures: Record<string, unknown>;
+    expectedFailure: RegExp;
+    expectedReadPaths: string[];
+  }> = [
+    {
+      name: "schedule",
+      request: {
+        visualVerify: false,
+        schedule: {
+          editExistingValue: true,
+          scheduleId: 100,
+          elementId: 200,
+          rowKey: "AHU-1",
+          parameterName: "Supply Air",
+          expectedExistingValue: "10000",
+          replacementValue: "20000",
+          readbackRequired: true,
+          revertAfterVerify: true
+        }
+      },
+      fixtures: {
+        "/revit/get-parameters": { items: [{ id: 200, parameters: { "Supply Air": "15000" } }] }
+      },
+      expectedFailure: /schedule edit blocked before write/i,
+      expectedReadPaths: ["/revit/get-parameters"]
+    },
+    {
+      name: "text-note",
+      request: {
+        visualVerify: false,
+        textNote: {
+          editExisting: true,
+          viewId: 300,
+          textNoteId: 301,
+          expectedExistingText: "EXISTING TO REMAIN",
+          newText: "REMOVE",
+          readbackRequired: true,
+          revertAfterVerify: true
+        }
+      },
+      fixtures: {
+        "/revit/find-text-notes": { items: [{ id: 301, ownerViewId: 300, text: "FIELD CHANGED" }] }
+      },
+      expectedFailure: /text-note edit blocked before write/i,
+      expectedReadPaths: ["/revit/find-text-notes"]
+    },
+    {
+      name: "tag-value",
+      request: {
+        visualVerify: false,
+        tag: {
+          editExistingValue: true,
+          viewId: 400,
+          elementIds: [401],
+          existingTagIds: [402],
+          valueSourceParameterName: "Mark",
+          expectedExistingValue: "AHU-1",
+          requestedTagValueHint: "AHU-2",
+          expectedExistingVisibleText: "AHU-1",
+          requestedVisibleText: "AHU-2",
+          readbackRequired: true,
+          revertAfterVerify: true
+        }
+      },
+      fixtures: {
+        "/revit/get-parameters": { items: [{ id: 401, parameters: { Mark: "FIELD-EDITED" } }] },
+        "/revit/export-visible-elements": { items: [{ id: 402, visibleText: "AHU-1" }] }
+      },
+      expectedFailure: /tag value edit blocked before write/i,
+      expectedReadPaths: ["/revit/get-parameters", "/revit/export-visible-elements"]
+    }
+  ];
+
+  for (const entry of cases) {
+    const dir = tempDir(`documentation-cas-${entry.name}`);
+    const bridge = new MockBridgeTransport(entry.fixtures);
+    const result = await runRevitDemoWorkflow(
+      { workflow: "documentation_primitives", request: entry.request },
+      dir,
+      bridge
+    );
+
+    assert.equal(result.success, false, entry.name);
+    assert.match(result.failure_reason ?? "", entry.expectedFailure, entry.name);
+    assert.deepEqual(bridge.calls.map((call) => call.pathname), entry.expectedReadPaths, entry.name);
+    assert.equal(bridge.calls.some((call) =>
+      call.pathname === "/revit/set-parameter" ||
+      call.pathname === "/revit/replace-text-note"
+    ), false, entry.name);
+  }
+});
+
+test("documentation schedule edit accepts Revit-formatted numeric values and carries atomic old-value guards", async () => {
+  const dir = tempDir("documentation-schedule-formatted-cas");
+  const afterCsv = path.join(dir, "schedule-after.csv");
+  const finalCsv = path.join(dir, "schedule-final.csv");
+  fs.writeFileSync(afterCsv, "Equipment,Supply Air\nAHU-1,20,000 CFM\n");
+  fs.writeFileSync(finalCsv, "Equipment,Supply Air\nAHU-1,10,000 CFM\n");
+  const bridge = new MockBridgeTransport({
+    "/revit/get-parameters:1": { items: [{ id: 200, parameters: { "Supply Air": "166.6666667" }, parameterDetails: [{ name: "Supply Air", value: "166.6666667", valueString: "10,000 CFM", storageType: "Double" }] }] },
+    "/revit/set-parameter:1": { status: "Dry Run", dryRun: true, diffs: [{ elementId: 200, parameterName: "Supply Air", ok: true, changed: true }] },
+    "/revit/set-parameter:2": { status: "Applied and Verified", dryRun: false, changedCount: 1, diffs: [{ elementId: 200, parameterName: "Supply Air", ok: true, changed: true }] },
+    "/revit/get-parameters:2": { items: [{ id: 200, parameters: { "Supply Air": "333.3333333" }, parameterDetails: [{ name: "Supply Air", value: "333.3333333", valueString: "20,000 CFM", storageType: "Double" }] }] },
+    "/revit/export-schedule-csv:1": { status: "Success", scheduleId: 100, path: afterCsv },
+    "/revit/set-parameter:3": { status: "Dry Run", dryRun: true, diffs: [{ elementId: 200, parameterName: "Supply Air", ok: true, changed: true }] },
+    "/revit/set-parameter:4": { status: "Applied and Verified", dryRun: false, changedCount: 1, diffs: [{ elementId: 200, parameterName: "Supply Air", ok: true, changed: true }] },
+    "/revit/get-parameters:3": { items: [{ id: 200, parameters: { "Supply Air": "166.6666667" }, parameterDetails: [{ name: "Supply Air", value: "166.6666667", valueString: "10,000 CFM", storageType: "Double" }] }] },
+    "/revit/export-schedule-csv:2": { status: "Success", scheduleId: 100, path: finalCsv }
+  });
+
+  const result = await runRevitDemoWorkflow({
+    workflow: "documentation_primitives",
+    request: {
+      visualVerify: false,
+      schedule: {
+        editExistingValue: true,
+        scheduleId: 100,
+        scheduleName: "AHU Schedule",
+        elementId: 200,
+        rowKey: "AHU-1",
+        parameterName: "Supply Air",
+        expectedExistingValue: "10,000 CFM",
+        replacementValue: "20,000 CFM",
+        readbackRequired: true,
+        revertAfterVerify: true
+      }
+    }
+  }, dir, bridge);
+
+  assert.equal(result.success, true);
+  const setCalls = bridge.calls.filter((call) => call.pathname === "/revit/set-parameter");
+  assert.equal(((setCalls[0].body as any).changes[0]).expectedOldValue, "10,000 CFM");
+  assert.equal(((setCalls[1].body as any).changes[0]).expectedOldValue, "10,000 CFM");
+  assert.equal(((setCalls[2].body as any).changes[0]).expectedOldValue, "20,000 CFM");
+  assert.equal(((setCalls[3].body as any).changes[0]).expectedOldValue, "20,000 CFM");
+});
+
+test("documentation schedule edit performs guarded recovery when verification throws after apply", async () => {
+  class ThrowAfterScheduleApplyTransport extends MockBridgeTransport {
+    async post(pathname: string, body: unknown): Promise<unknown> {
+      if (pathname === "/revit/export-schedule-csv") {
+        this.calls.push({ pathname, body });
+        throw new Error("simulated schedule export failure after parameter apply");
+      }
+      return super.post(pathname, body);
+    }
+  }
+  const bridge = new ThrowAfterScheduleApplyTransport({
+    "/revit/get-parameters:1": { items: [{ id: 200, parameters: { "Supply Air": "10,000 CFM" } }] },
+    "/revit/set-parameter:1": { status: "Dry Run", dryRun: true, diffs: [{ elementId: 200, parameterName: "Supply Air", ok: true, changed: true }] },
+    "/revit/set-parameter:2": { status: "Applied and Verified", dryRun: false, changedCount: 1, diffs: [{ elementId: 200, parameterName: "Supply Air", ok: true, changed: true }] },
+    "/revit/get-parameters:2": { items: [{ id: 200, parameters: { "Supply Air": "20,000 CFM" } }] },
+    "/revit/set-parameter:3": { status: "Dry Run", dryRun: true, diffs: [{ elementId: 200, parameterName: "Supply Air", ok: true, changed: true }] },
+    "/revit/set-parameter:4": { status: "Applied and Verified", dryRun: false, changedCount: 1, diffs: [{ elementId: 200, parameterName: "Supply Air", ok: true, changed: true }] },
+    "/revit/get-parameters:3": { items: [{ id: 200, parameters: { "Supply Air": "10,000 CFM" } }] }
+  });
+
+  const result = await runRevitDemoWorkflow({
+    workflow: "documentation_primitives",
+    request: {
+      visualVerify: false,
+      schedule: {
+        editExistingValue: true,
+        scheduleId: 100,
+        elementId: 200,
+        rowKey: "AHU-1",
+        parameterName: "Supply Air",
+        expectedExistingValue: "10,000 CFM",
+        replacementValue: "20,000 CFM",
+        readbackRequired: true,
+        revertAfterVerify: true
+      }
+    }
+  }, tempDir("documentation-schedule-failure-recovery"), bridge);
+
+  assert.equal(result.success, false);
+  assert.match(result.failure_reason ?? "", /simulated schedule export failure/i);
+  assert.equal(result.verification_results.some((entry) => entry.name === "documentation_failure_existing_parameter_revert_verified" && entry.ok), true);
+  const setCalls = bridge.calls.filter((call) => call.pathname === "/revit/set-parameter");
+  assert.equal(setCalls.length, 4);
+  assert.equal(((setCalls[2].body as any).changes[0]).expectedOldValue, "20,000 CFM");
+  assert.equal(((setCalls[3].body as any).changes[0]).expectedOldValue, "20,000 CFM");
+});
+
 
 test("redline receptacle workflow verifies room, host, and source circuit evidence", async () => {
   const dir = tempDir("redline-strong-audit");
@@ -4612,6 +4895,8 @@ test("redline MEP duct reroute workflow requires split offset fitting network ca
   assert.equal(result.verification_results.some((entry) => entry.name === "mep_reroute_cleanup_applied_ids_present" && entry.ok), true);
   const rerouteBridgeCall = bridge.calls.find((call) => call.pathname === "/revit/reroute-mep-route-segment");
   assert.deepEqual((rerouteBridgeCall?.body as Record<string, unknown>).offsetVector, { x: 0, y: 0, z: -1 });
+  assert.equal((rerouteBridgeCall?.body as Record<string, unknown>).apply, true);
+  assert.equal((rerouteBridgeCall?.body as Record<string, unknown>).dryRun, false);
   const summary = JSON.parse(fs.readFileSync(path.join(dir, "artifacts", "redline_mep_reroute_summary.json"), "utf8"));
   assert.equal(summary.kind, "duct");
   assert.equal(summary.hostElementId, 1542919);
@@ -5321,6 +5606,36 @@ test("redline MEP pipe size transition workflow reads pipe sizes and cleans up f
 
 test("redline MEP pipe size transition workflow can create a disposable host route before apply", async () => {
   const dir = tempDir("redline-mep-pipe-size-transition-disposable-host");
+  const bridge = new MockBridgeTransport({
+    "/revit/create-mep-route": {
+      status: "CreatedWithOpenConnectors",
+      createdElementIds: [1543016]
+    },
+    "/revit/reroute-mep-route-segment:1": {
+      status: "Dry Run",
+      projectedTransitionPoint: { x: 82, y: -70, z: 43 },
+      upstreamSize: { requested: "1 inch", applied: "1 inch" },
+      downstreamSize: { requested: "1.5 in", applied: "1.5 in" },
+      connectorAudit: { openConnectorCount: 0, connectedNetworkOk: true }
+    },
+    "/revit/reroute-mep-route-segment:2": {
+      status: "ChangedSizeAtTransition",
+      createdElementIds: [1543020, 1543023],
+      createdFittingIds: [1543026],
+      projectedTransitionPoint: { x: 82, y: -70, z: 43 },
+      upstreamSize: { requested: "1 inch", applied: "1 inch" },
+      downstreamSize: { requested: "1.5 in", applied: "1.5 in" },
+      connectorAudit: { openConnectorCount: 0, connectedNetworkOk: true },
+      visualVerification: {
+        path: "artifacts/captures/pipe-size-transition-l4.jpg",
+        widthPx: 2200,
+        heightPx: 1140,
+        focusCrop: { requested: true, applied: true }
+      }
+    },
+    "/revit/delete:1": { status: "Dry Run", impactedIds: [1543020, 1543021, 1543023, 1543024, 1543026, 1543027] },
+    "/revit/delete:2": { status: "Deleted", impactedIds: [1543020, 1543021, 1543023, 1543024, 1543026, 1543027] }
+  });
   const result = await runRevitDemoWorkflow(
     {
       workflow: "redline_mep_size_transition",
@@ -5346,40 +5661,16 @@ test("redline MEP pipe size transition workflow can create a disposable host rou
       }
     },
     dir,
-    new MockBridgeTransport({
-      "/revit/create-mep-route": {
-        status: "CreatedWithOpenConnectors",
-        createdElementIds: [1543016]
-      },
-      "/revit/reroute-mep-route-segment:1": {
-        status: "Dry Run",
-        projectedTransitionPoint: { x: 82, y: -70, z: 43 },
-        upstreamSize: { requested: "1 inch", applied: "1 inch" },
-        downstreamSize: { requested: "1.5 in", applied: "1.5 in" },
-        connectorAudit: { openConnectorCount: 0, connectedNetworkOk: true }
-      },
-      "/revit/reroute-mep-route-segment:2": {
-        status: "ChangedSizeAtTransition",
-        createdElementIds: [1543020, 1543023],
-        createdFittingIds: [1543026],
-        projectedTransitionPoint: { x: 82, y: -70, z: 43 },
-        upstreamSize: { requested: "1 inch", applied: "1 inch" },
-        downstreamSize: { requested: "1.5 in", applied: "1.5 in" },
-        connectorAudit: { openConnectorCount: 0, connectedNetworkOk: true },
-        visualVerification: {
-          path: "artifacts/captures/pipe-size-transition-l4.jpg",
-          widthPx: 2200,
-          heightPx: 1140,
-          focusCrop: { requested: true, applied: true }
-        }
-      },
-      "/revit/delete:1": { status: "Dry Run", impactedIds: [1543020, 1543021, 1543023, 1543024, 1543026, 1543027] },
-      "/revit/delete:2": { status: "Deleted", impactedIds: [1543020, 1543021, 1543023, 1543024, 1543026, 1543027] }
-    })
+    bridge
   );
 
   assert.equal(result.workflow, "redline_mep_size_transition");
   assert.equal(result.success, true);
+  const rerouteCalls = bridge.calls.filter((call) => call.pathname === "/revit/reroute-mep-route-segment");
+  assert.equal((rerouteCalls[0]?.body as Record<string, unknown>).apply, false);
+  assert.equal((rerouteCalls[0]?.body as Record<string, unknown>).dryRun, true);
+  assert.equal((rerouteCalls[1]?.body as Record<string, unknown>).apply, true);
+  assert.equal((rerouteCalls[1]?.body as Record<string, unknown>).dryRun, false);
   const summary = JSON.parse(fs.readFileSync(path.join(dir, "artifacts", "redline_mep_size_transition_summary.json"), "utf8"));
   assert.equal(summary.hostElementId, 1543016);
   assert.deepEqual(summary.setupCreatedElementIds, [1543016]);
@@ -7815,6 +8106,8 @@ test("documentation primitives workflow edits existing tag value through tagged 
   assert.equal(bridge.calls.filter((call) => call.pathname === "/revit/set-parameter").length, 4);
   assert.equal(result.verification_results.some((entry) => entry.name === "tag_value_visible_readback_matches_request" && entry.ok), true);
   assert.equal(result.verification_results.some((entry) => entry.name === "tag_value_revert_visible_readback_matches_original" && entry.ok), true);
+  const tagSetCalls = bridge.calls.filter((call) => call.pathname === "/revit/set-parameter");
+  assert.deepEqual(tagSetCalls.map((call) => ((call.body as any).changes[0]).expectedOldValue), ["EF-1", "EF-1", "EF-2", "EF-2"]);
 });
 
 test("documentation primitives workflow edits composite visible tag text through one source parameter", async () => {
@@ -10792,6 +11085,8 @@ test("documentation primitives workflow edits existing text note with readback c
   assert.equal(result.verification_results.some((entry) => entry.name === "text_note_edit_revert_readback_matches_original" && entry.ok), true);
   assert.equal(bridge.calls.some((call) => call.pathname === "/revit/create-text"), false);
   assert.equal(bridge.calls.filter((call) => call.pathname === "/revit/replace-text-note").length, 4);
+  const textReplaceCalls = bridge.calls.filter((call) => call.pathname === "/revit/replace-text-note");
+  assert.deepEqual(textReplaceCalls.map((call) => (call.body as any).expectedOldText), ["COUNTERBALANCED", "COUNTERBALANCED", "MOTORIZED", "MOTORIZED"]);
 });
 
 test("documentation primitives workflow rejects existing text note edit without same-id readback", async () => {

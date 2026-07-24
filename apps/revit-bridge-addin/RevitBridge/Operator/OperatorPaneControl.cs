@@ -2460,7 +2460,7 @@ namespace RevitBridge.Operator
                     try
                     {
                         outgoingAttachments = await _backendClient
-                            .UploadUserAttachmentsAsync(outgoingAttachments, CancellationToken.None)
+                            .UploadUserAttachmentsAsync(outgoingAttachments, sid, CancellationToken.None)
                             .ConfigureAwait(false);
                     }
                     catch (Exception ex)
@@ -5097,7 +5097,8 @@ namespace RevitBridge.Operator
                 System.Collections.Generic.List<OperatorUserAttachment> uploaded;
                 try
                 {
-                    uploaded = await _backendClient.UploadUserAttachmentsAsync(uploadItems, CancellationToken.None).ConfigureAwait(false);
+                    var uploadSessionId = await EnsureSessionAsync().ConfigureAwait(false);
+                    uploaded = await _backendClient.UploadUserAttachmentsAsync(uploadItems, uploadSessionId, CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {

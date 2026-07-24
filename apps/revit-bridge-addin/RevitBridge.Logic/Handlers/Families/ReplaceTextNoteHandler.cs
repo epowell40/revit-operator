@@ -15,6 +15,7 @@ namespace RevitBridge.Logic.Handlers
             public long elementId { get; set; }
             public long? textNoteId { get; set; }
             public string newText { get; set; } = "";
+            public string? expectedOldText { get; set; }
 
             public bool? apply { get; set; }
             public bool? dryRun { get; set; }
@@ -34,6 +35,7 @@ namespace RevitBridge.Logic.Handlers
                 familyDocumentId = string.IsNullOrWhiteSpace(sid) ? null : sid,
                 textNoteId = id,
                 newText = p.newText ?? "",
+                expectedOldText = p.expectedOldText,
                 apply = p.apply,
                 dryRun = p.dryRun,
                 confirm = p.confirm

@@ -9,6 +9,17 @@ import { positiveInteger } from "./filter_rule_types.js";
 import { runAecMepEval } from "./aec_mep_eval.js";
 import { runExistingConditionsReconstructionEvaluation } from "./existing_conditions_reconstruction.js";
 import { collectLocalRevitHostEvidence } from "./revit_host_evidence.js";
+import {
+  buildBlockedTypeChangeResult,
+  buildRejectedTypeChangeResult,
+  normalizedTypeName,
+  typeChangeAppliedMatchesRequest,
+  typeChangeEffectIds,
+  typeChangeReadbackMatchesRequest,
+  typeChangeRows,
+  typeChangeSourceFamilyGroundingMatches,
+  typeChangeSourceGroundingMatches
+} from "./redline_type_change_runtime.js";
 import type { RevitHostEvidence } from "./revit_preflight.js";
 import { buildPdfJsDocumentOptions, loadPdfJsForNode } from "../pdf/pdfjs_node.js";
 import {
@@ -153,121 +164,8 @@ function moveSnapshotPoint(result: unknown, elementId: number, phase: "before" |
   return [x, y, z].every(Number.isFinite) ? { x, y, z } : null;
 }
 
-function typeChangeRows(result: unknown): JsonMap[] {
-  const rows = asObject(result).changes;
-  return Array.isArray(rows) ? rows.map((row) => asObject(row)).filter((row) => Object.keys(row).length > 0) : [];
-}
-
 function objectRows(value: unknown): JsonMap[] {
   return Array.isArray(value) ? value.map((row) => asObject(row)).filter((row) => Object.keys(row).length > 0) : [];
-}
-
-function typeChangeEffectIds(result: unknown): number[] {
-  const obj = asObject(result);
-  const rowIds = typeChangeRows(result).filter((row) => row.ok !== false).map((row) => row.elementId);
-  return uniquePositiveIds(obj.changedElementIds, rowIds);
-}
-
-function typeChangeRowsCover(result: unknown, elementIds: number[], typeId: number | null): boolean {
-  const rows = typeChangeRows(result);
-  return elementIds.length > 0 && elementIds.every((id) => {
-    const row = rows.find((entry) => Number(entry.elementId) === id);
-    if (!row || row.ok === false) return false;
-    if (typeId === null) return true;
-    const oldTypeId = firstPositiveId(row.oldTypeId);
-    const newTypeId = firstPositiveId(row.newTypeId, asObject(result).newTypeId);
-    return oldTypeId === typeId || newTypeId === typeId;
-  });
-}
-
-function normalizedTypeName(value: unknown): string {
-  return normalizedTextProof(firstString(value));
-}
-
-function typeChangeRowMatchesRequestedType(row: JsonMap, expectedTypeId: number | null, expectedTypeName: string, phase: "apply" | "readback"): boolean {
-  if (row.ok === false) return false;
-  if (expectedTypeId !== null) {
-    const typeId = phase === "readback"
-      ? firstPositiveId(row.oldTypeId, row.currentTypeId, row.typeId)
-      : firstPositiveId(row.newTypeId, row.currentTypeId, row.typeId);
-    return typeId === expectedTypeId;
-  }
-  if (!expectedTypeName) return false;
-  const typeName = phase === "readback"
-    ? normalizedTypeName(row.oldTypeName ?? row.currentTypeName ?? row.typeName ?? row.newTypeName)
-    : normalizedTypeName(row.newTypeName ?? row.currentTypeName ?? row.typeName);
-  return typeName === expectedTypeName;
-}
-
-function typeChangeGlobalTypeMatches(result: unknown, expectedTypeId: number | null, expectedTypeName: string): boolean {
-  const obj = asObject(result);
-  if (expectedTypeId !== null) return firstPositiveId(obj.newTypeId, obj.currentTypeId, obj.typeId) === expectedTypeId;
-  return Boolean(expectedTypeName) && normalizedTypeName(obj.newTypeName ?? obj.currentTypeName ?? obj.typeName) === expectedTypeName;
-}
-
-function typeChangeAppliedMatchesRequest(result: unknown, elementIds: number[], expectedTypeId: number | null, expectedTypeName: string): boolean {
-  const rows = typeChangeRows(result);
-  if (rows.length > 0) {
-    return elementIds.length > 0 && elementIds.every((id) => {
-      const row = rows.find((entry) => Number(entry.elementId) === id);
-      return Boolean(row) && typeChangeRowMatchesRequestedType(row ?? {}, expectedTypeId, expectedTypeName, "apply");
-    });
-  }
-  return elementIds.length > 0 && elementIds.every((id) => typeChangeEffectIds(result).includes(id)) && typeChangeGlobalTypeMatches(result, expectedTypeId, expectedTypeName);
-}
-
-function typeChangeReadbackMatchesRequest(result: unknown, elementIds: number[], expectedTypeId: number | null, expectedTypeName: string): boolean {
-  const rows = typeChangeRows(result);
-  return elementIds.length > 0 && elementIds.every((id) => {
-    const row = rows.find((entry) => Number(entry.elementId) === id);
-    return Boolean(row) && typeChangeRowMatchesRequestedType(row ?? {}, expectedTypeId, expectedTypeName, "readback");
-  });
-}
-
-function typeChangeSourceGroundingMatches(result: unknown, elementIds: number[], expectedTypeId: number | null, expectedTypeName: string): boolean {
-  const rows = typeChangeRows(result);
-  return elementIds.length > 0 && elementIds.every((id) => {
-    const row = rows.find((entry) => Number(entry.elementId) === id);
-    if (!row || row.ok === false) return false;
-    const oldTypeId = firstPositiveId(row.oldTypeId, row.currentTypeId, row.typeId);
-    const oldTypeName = normalizedTypeName(row.oldTypeName ?? row.currentTypeName ?? row.typeName);
-    if (expectedTypeId !== null) return oldTypeId === expectedTypeId;
-    if (expectedTypeName) return oldTypeName === expectedTypeName;
-    return oldTypeId !== null || Boolean(oldTypeName);
-  });
-}
-
-function typeChangeSourceFamilyGroundingMatches(result: unknown, elementIds: number[], expectedFamilyName: string, expectedTypeName: string, expectedCategory: string): boolean {
-  if (!expectedFamilyName && !expectedTypeName && !expectedCategory) return true;
-  const rows = typeChangeRows(result);
-  return elementIds.length > 0 && elementIds.every((id) => {
-    const row = rows.find((entry) => Number(entry.elementId) === id);
-    if (!row || row.ok === false) return false;
-    const familyLabels = [
-      row.oldFamilyName,
-      row.familyName,
-      row.currentFamilyName,
-      row.oldTypeName,
-      row.typeName,
-      row.currentTypeName
-    ].map((value) => clip(value, 240)).filter(Boolean);
-    const typeLabels = [
-      row.oldTypeName,
-      row.typeName,
-      row.currentTypeName
-    ].map((value) => clip(value, 240)).filter(Boolean);
-    const categoryLabels = [
-      row.category,
-      row.categoryName,
-      row.builtInCategory,
-      row.built_in_category,
-      row.oldCategory,
-      row.currentCategory
-    ].map((value) => clip(value, 240)).filter(Boolean);
-    return proofLabelsMatchRequest(expectedFamilyName, familyLabels) &&
-      proofLabelsMatchRequest(expectedTypeName, typeLabels) &&
-      proofLabelsMatchRequest(expectedCategory, categoryLabels);
-  });
 }
 
 function firstPathLike(...values: unknown[]): string {
@@ -1609,74 +1507,52 @@ async function runRedlineTypeChange(transport: BridgeTransport, request: JsonMap
   const dryRunTargetMatches = typeChangeAppliedMatchesRequest(dryRun, elementIds, expectedNewTypeId, expectedNewTypeName);
   const sourceTypeGroundingOk = typeChangeSourceGroundingMatches(dryRun, elementIds, expectedOriginalTypeId, expectedOriginalTypeName);
   const sourceFamilyGroundingOk = typeChangeSourceFamilyGroundingMatches(dryRun, elementIds, expectedSourceFamilyName, expectedSourceTypeName, expectedSourceCategory);
+  const numericGuardsResolved = expectedNewTypeId !== null && elementIds.every((id) => originalTypeIds.has(id));
   const preApplyChecks = [
     verification("type_change_request_present", elementIds.length > 0 && (targetTypeId !== null || !!targetTypeName), "element ids and target type", { elementIds, targetTypeId, targetTypeName }),
     verification("type_change_dry_run_ok", dryRunOk, elementIds, dryRun),
     verification("type_change_dry_run_target_matches_request", dryRunTargetMatches, expectedNewTypeId ?? expectedNewTypeName, dryRun),
     verification("type_change_source_type_grounding_ok", sourceTypeGroundingOk, (expectedOriginalTypeId ?? expectedOriginalTypeName) || "source type readback", dryRun),
     verification("type_change_source_family_grounding_ok", sourceFamilyGroundingOk, { expectedSourceFamilyName, expectedSourceTypeName, expectedSourceCategory }, dryRun),
+    verification("type_change_numeric_guards_resolved", numericGuardsResolved, "numeric old and new type ids from dry run", { expectedNewTypeId, originalTypeIds: Object.fromEntries(originalTypeIds) }),
     verification("type_change_dry_run_preflight_reviewed", dryRunPreflightReviewed, true, dryRunPreflightReviewed),
     verification("type_change_target_compatibility_reviewed", targetTypeCompatibilityReviewed, true, targetTypeCompatibilityReviewed)
   ];
   const preApplyOk = countOk(preApplyChecks);
   const summaryJsonPath = path.join(runDir, "artifacts", "redline_type_change_summary.json");
   if (!preApplyOk) {
-    writeJsonFile(summaryJsonPath, {
-      elementIds,
-      category,
-      targetTypeId,
-      targetTypeName,
-      expectedNewTypeId,
-      expectedNewTypeName,
-      expectedOriginalTypeId,
-      expectedOriginalTypeName,
-      expectedSourceFamilyName,
-      expectedSourceTypeName,
-      expectedSourceCategory,
-      sourceFamilyGroundingOk,
-      dryRunIds,
-      dryRunPreflightReviewed,
-      targetTypeCompatibilityReviewed,
-      blockedBeforeModelWrite: true,
-      rawDryRun: dryRun
+    return buildBlockedTypeChangeResult({
+      runDir, elementIds, category, targetTypeId, targetTypeName, expectedNewTypeId, expectedNewTypeName,
+      expectedOriginalTypeId, expectedOriginalTypeName, expectedSourceFamilyName, expectedSourceTypeName,
+      expectedSourceCategory, sourceFamilyGroundingOk, dryRunIds, dryRunPreflightReviewed,
+      targetTypeCompatibilityReviewed, dryRun, preApplyChecks, rawResults, verification, writeMarkdownTable
     });
-    const summaryMarkdownPath = writeMarkdownTable(path.join(runDir, "artifacts", "redline_type_change_summary.md"), elementIds.map((id) => ({
-      elementId: id,
-      requestedTypeId: expectedNewTypeId ?? targetTypeId ?? "",
-      requestedTypeName: targetTypeName,
-      blockedBeforeModelWrite: true
-    })));
-    const blockedChecks = [
-      ...preApplyChecks,
-      verification("type_change_apply_ids_present", false, "blocked before model write", []),
-      verification("type_change_readback_matches_target", false, "blocked before model write", null),
-      verification("type_change_post_change_capture_returned", false, "blocked before model write", null),
-      verification("type_change_post_change_capture_view_id_matches_request", false, "blocked before model write", null),
-      verification("type_change_revert_dry_run_ok", false, "blocked before model write", []),
-      verification("type_change_revert_apply_ids_present", false, "blocked before model write", []),
-      verification("type_change_revert_readback_matches_original", false, "blocked before model write", null),
-      verification("type_change_summary_written", fs.existsSync(summaryJsonPath) && fs.existsSync(summaryMarkdownPath), "summary artifacts", [summaryJsonPath, summaryMarkdownPath])
-    ];
-    return {
-      workflow: "redline_type_change",
-      success: false,
-      failure_reason: "Type-change redline blocked before model write because dry-run/source-type evidence was incomplete.",
-      tool_calls: 1,
-      revit_transactions: 0,
-      computer_use_actions: 0,
-      output_artifacts: [summaryJsonPath, summaryMarkdownPath],
-      verification_results: blockedChecks,
-      user_message: "Type-change redline blocked before model write because dry-run compatibility/source-type proof was incomplete.",
-      raw_results: rawResults
-    };
   }
-  const applied = await transport.post("/revit/change-element-type", { ...changeRequest, dryRun: false });
+  const expectedOldTypes = elementIds.map((elementId) => ({
+    elementId,
+    typeId: originalTypeIds.get(elementId)!
+  }));
+  const guardedChangeRequest: JsonMap = { ...changeRequest, typeId: expectedNewTypeId };
+  delete guardedChangeRequest.typeName;
+  const applied = await transport.post("/revit/change-element-type", { ...guardedChangeRequest, expectedOldTypes, dryRun: false });
   rawResults.push(applied);
   const appliedIds = typeChangeEffectIds(applied);
   const appliedObj = asObject(applied);
   const appliedNewTypeId = firstPositiveId(appliedObj.newTypeId, ...typeChangeRows(applied).map((row) => row.newTypeId));
   const appliedNewTypeName = firstString(appliedObj.newTypeName, ...typeChangeRows(applied).map((row) => row.newTypeName));
   const appliedTypeMatchesRequest = typeChangeAppliedMatchesRequest(applied, elementIds, expectedNewTypeId, expectedNewTypeName);
+  const applyAccepted = appliedObj.ok === true
+    && appliedObj.committed === true
+    && appliedObj.rolledBack === false
+    && elementIds.every((id) => appliedIds.includes(id))
+    && appliedTypeMatchesRequest;
+  if (!applyAccepted) {
+    return buildRejectedTypeChangeResult({
+      runDir, elementIds, targetTypeId, targetTypeName, expectedNewTypeId, expectedOldTypes,
+      appliedIds, appliedTypeMatchesRequest, applied, preApplyChecks, rawResults, verification,
+      writeMarkdownTable
+    });
+  }
   const readback = await transport.post("/revit/change-element-type", { ...changeRequest, dryRun: true });
   rawResults.push(readback);
   const readbackRows = typeChangeRows(readback);
@@ -1700,10 +1576,15 @@ async function runRedlineTypeChange(transport: BridgeTransport, request: JsonMap
   let revertDryRunIds: number[] = [];
   let revertedIds: number[] = [];
   let revertReadbackMatches = true;
+  let revertApplyAccepted = !revertAfterVerify;
   if (revertAfterVerify) {
     const originalTypeId = originalTypeIds.get(elementIds[0]);
     if (originalTypeId !== undefined && [...originalTypeIds.values()].every((id) => id === originalTypeId)) {
-      const revertRequest = { elementIds, typeId: originalTypeId };
+      const revertRequest = {
+        elementIds,
+        typeId: originalTypeId,
+        expectedOldTypes: elementIds.map((elementId) => ({ elementId, typeId: expectedNewTypeId! }))
+      };
       revertDryRun = await transport.post("/revit/change-element-type", { ...revertRequest, dryRun: true });
       rawResults.push(revertDryRun);
       reverted = await transport.post("/revit/change-element-type", { ...revertRequest, dryRun: false });
@@ -1712,6 +1593,11 @@ async function runRedlineTypeChange(transport: BridgeTransport, request: JsonMap
       rawResults.push(revertReadback);
       revertDryRunIds = typeChangeEffectIds(revertDryRun);
       revertedIds = typeChangeEffectIds(reverted);
+      const revertedObj = asObject(reverted);
+      revertApplyAccepted = revertedObj.ok === true
+        && revertedObj.committed === true
+        && revertedObj.rolledBack === false
+        && elementIds.every((id) => revertedIds.includes(id));
       const rows = typeChangeRows(revertReadback);
       revertReadbackMatches = elementIds.every((id) => {
         const row = rows.find((entry) => Number(entry.elementId) === id);
@@ -1774,12 +1660,14 @@ async function runRedlineTypeChange(transport: BridgeTransport, request: JsonMap
   const checks = [
     ...preApplyChecks,
     verification("type_change_apply_ids_present", elementIds.every((id) => appliedIds.includes(id)), elementIds, appliedIds),
+    verification("type_change_apply_committed", appliedObj.ok === true && appliedObj.committed === true && appliedObj.rolledBack === false, "truthful committed apply receipt", applied),
     verification("type_change_target_type_matches_request", appliedTypeMatchesRequest, expectedNewTypeId ?? expectedNewTypeName, { appliedNewTypeId, appliedNewTypeName }),
     verification("type_change_readback_matches_target", readbackMatches, expectedNewTypeId ?? expectedNewTypeName, readback),
     verification("type_change_post_change_capture_returned", !visualVerify || visualViewId === null || !!postChangeCapturePath, "post-change capture path", postChangeCapturePath || postChangeCapture),
     verification("type_change_post_change_capture_view_id_matches_request", !visualVerify || visualViewId === null || captureViewMatchesRequest(postChangeCapture, request), visualViewId ?? "no requested capture view", postChangeCapture),
     verification("type_change_revert_dry_run_ok", !revertAfterVerify || elementIds.every((id) => revertDryRunIds.includes(id)), elementIds, revertDryRunIds),
     verification("type_change_revert_apply_ids_present", !revertAfterVerify || elementIds.every((id) => revertedIds.includes(id)), elementIds, revertedIds),
+    verification("type_change_revert_apply_committed", revertApplyAccepted, "truthful committed revert receipt", reverted),
     verification("type_change_revert_readback_matches_original", !revertAfterVerify || revertReadbackMatches, "original type ids restored", revertReadback),
     verification("type_change_summary_written", fs.existsSync(summaryJsonPath) && fs.existsSync(summaryMarkdownPath), "summary artifacts", [summaryJsonPath, summaryMarkdownPath])
   ];
@@ -4521,6 +4409,7 @@ async function runRedlineMepReroute(transport: BridgeTransport, request: JsonMap
     ...(derivedOffsetVector ? { offsetVector: derivedOffsetVector } : {}),
     operation: firstPathLike(request.operation, request.rerouteOperation, request.offsetMode) || "reroute_offset",
     apply: request.apply !== false,
+    dryRun: request.apply === false,
     verify: request.verify !== false,
     visualVerify: request.visualVerify !== false
   };
@@ -4765,6 +4654,7 @@ async function runRedlineMepSizeTransition(transport: BridgeTransport, request: 
     ...(setupHostElementId ? { hostElementId: setupHostElementId } : {}),
     operation: "size_transition",
     apply: request.apply !== false,
+    dryRun: request.apply === false,
     verify: request.verify !== false,
     visualVerify: request.visualVerify !== false
   };
@@ -6430,9 +6320,20 @@ function tagVisibleTextReadbackMatches(result: unknown, tagIds: number[], expect
 }
 
 function parameterSnapshotMatches(snapshot: unknown, elementIds: number[], parameterName: string, expectedValue: string): boolean {
-  const expected = String(expectedValue ?? "");
-  const values = parameterValueByElementId(snapshot, parameterName);
-  return elementIds.length > 0 && elementIds.every((id) => values.get(id) === expected);
+  const canonical = (value: unknown): string => String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[,\s\u00a0]/g, "")
+    .replace(/[\u201c\u201d\u2033]/g, '"');
+  const expected = canonical(expectedValue);
+  return elementIds.length > 0 && elementIds.every((id) => {
+    const item = parameterSnapshotItems(snapshot).find((candidate) => Number(candidate.id ?? candidate.elementId) === id);
+    if (!item) return false;
+    const parameters = asObject(item.parameters);
+    const details = objectArray(item.parameterDetails ?? item.parameter_details);
+    const detail = details.find((candidate) => normalizedTextProof(candidate.name) === normalizedTextProof(parameterName));
+    return [parameters[parameterName], detail?.valueString, detail?.value].some((value) => canonical(value) === expected);
+  });
 }
 
 function exportedScheduleCsvContains(exportResult: unknown, rowKey: string, expectedValue: string): boolean {
@@ -7305,6 +7206,8 @@ async function runDocumentationPrimitives(transport: BridgeTransport, request: J
   let phaseVisibilityRevertRequest: JsonMap | null = null;
   let phaseFilterVisibilityRevertRequest: JsonMap | null = null;
   let filterVisibilityRevertRequest: JsonMap | null = null;
+  const pendingParameterReverts: Array<{ changes: JsonMap[]; preserveTextCase?: boolean; confirm?: string }> = [];
+  const pendingTextReverts: Array<{ elementId: number; viewId: number; originalText: string; replacementText: string; confirm: string }> = [];
 
   try {
     const graphicsPreWriteBlockers = documentationGraphicsPreWriteBlockers(request);
@@ -7404,10 +7307,12 @@ async function runDocumentationPrimitives(transport: BridgeTransport, request: J
       const rowKey = clip(scheduleOnlyBase.rowKey ?? scheduleOnlyBase.row_key ?? scheduleOnlyBase.expectedRowKey ?? scheduleOnlyBase.expected_row_key, 240);
       const expectedExistingValueRaw = scheduleOnlyBase.expectedExistingValue ?? scheduleOnlyBase.expected_existing_value ?? scheduleOnlyBase.originalValue ?? scheduleOnlyBase.original_value;
       const expectedExistingValue = clip(expectedExistingValueRaw, 1000);
-      const replacementValue = clip(scheduleOnlyBase.replacementValue ?? scheduleOnlyBase.replacement_value ?? scheduleOnlyBase.newValue ?? scheduleOnlyBase.new_value ?? scheduleOnlyBase.text ?? scheduleOnlyBase.value, 1000);
+      const replacementValueRaw = scheduleOnlyBase.replacementValue ?? scheduleOnlyBase.replacement_value ?? scheduleOnlyBase.newValue ?? scheduleOnlyBase.new_value ?? scheduleOnlyBase.text ?? scheduleOnlyBase.value;
+      const replacementValue = clip(replacementValueRaw, 1000);
       const preserveTextCase = scheduleOnlyBase.preserveTextCase !== false && scheduleOnlyBase.preserve_text_case !== false;
       const hasExpectedExistingValue = expectedExistingValueRaw !== undefined && expectedExistingValueRaw !== null;
-      const canEditSchedule = scheduleId !== null && elementId !== null && parameterName && rowKey && hasExpectedExistingValue && replacementValue;
+      const hasReplacementValue = replacementValueRaw !== undefined && replacementValueRaw !== null;
+      const canEditSchedule = scheduleId !== null && elementId !== null && parameterName && rowKey && hasExpectedExistingValue && hasReplacementValue;
       let scheduleRemarkNoteId: number | null = null;
       let scheduleRemarkNoteResult: unknown = null;
       let scheduleRemarkNoteCleanupDryRun: unknown = null;
@@ -7417,9 +7322,18 @@ async function runDocumentationPrimitives(transport: BridgeTransport, request: J
       if (canEditSchedule) {
         const beforeParameters = await transport.post("/revit/get-parameters", { elementIds: [elementId], names: [parameterName] });
         rawResults.push(beforeParameters);
-        const changes = [{ elementId, parameterName, value: replacementValue, preserveTextCase }];
+        if (!parameterSnapshotMatches(beforeParameters, [elementId], parameterName, expectedExistingValue)) {
+          throw new Error(`schedule edit blocked before write: backing parameter ${parameterName} on element ${elementId} no longer matches the expected existing value`);
+        }
+        const changes = [{ elementId, parameterName, value: replacementValue, expectedOldValue: expectedExistingValue, preserveTextCase }];
         const parameterDryRun = await transport.post("/revit/set-parameter", { changes, preserveTextCase, apply: false });
         rawResults.push(parameterDryRun);
+        const guardedScheduleRevert = {
+          changes: [{ elementId, parameterName, value: expectedExistingValue, expectedOldValue: replacementValue, preserveTextCase }],
+          preserveTextCase,
+          ...(scheduleOnlyBase.revertConfirm ?? scheduleOnlyBase.confirm ? { confirm: clip(scheduleOnlyBase.revertConfirm ?? scheduleOnlyBase.confirm, 120) } : {})
+        };
+        pendingParameterReverts.push(guardedScheduleRevert);
         const parameterApplied = await transport.post("/revit/set-parameter", {
           changes,
           preserveTextCase,
@@ -7437,7 +7351,7 @@ async function runDocumentationPrimitives(transport: BridgeTransport, request: J
         });
         rawResults.push(scheduleAfter);
         checks.push(
-          verification("schedule_parameter_original_matches_expected", parameterSnapshotMatches(beforeParameters, [elementId], parameterName, expectedExistingValue), { elementId, parameterName, expectedExistingValue }, beforeParameters),
+          verification("schedule_parameter_original_matches_expected", true, { elementId, parameterName, expectedExistingValue }, beforeParameters),
           verification("schedule_parameter_dry_run_ok", !hasParameterWriteErrors(parameterDryRun), "dry-run schedule backing parameter write has no errors", parameterDryRun),
           verification("schedule_parameter_apply_ok", !hasParameterWriteErrors(parameterApplied), "schedule backing parameter write applied without errors", parameterApplied),
           verification("schedule_parameter_readback_matches_request", parameterSnapshotMatches(afterParameters, [elementId], parameterName, replacementValue), { elementId, parameterName, replacementValue }, afterParameters),
@@ -7502,7 +7416,7 @@ async function runDocumentationPrimitives(transport: BridgeTransport, request: J
           }
         }
 
-        const revertChanges = [{ elementId, parameterName, value: expectedExistingValue, preserveTextCase }];
+        const revertChanges = guardedScheduleRevert.changes;
         const revertDryRun = await transport.post("/revit/set-parameter", { changes: revertChanges, preserveTextCase, apply: false });
         rawResults.push(revertDryRun);
         const revertApplied = await transport.post("/revit/set-parameter", {
@@ -7512,6 +7426,7 @@ async function runDocumentationPrimitives(transport: BridgeTransport, request: J
           ...(scheduleOnlyBase.revertConfirm ?? scheduleOnlyBase.confirm ? { confirm: clip(scheduleOnlyBase.revertConfirm ?? scheduleOnlyBase.confirm, 120) } : {})
         });
         rawResults.push(revertApplied);
+        pendingParameterReverts.splice(pendingParameterReverts.indexOf(guardedScheduleRevert), 1);
         const revertedParameters = await transport.post("/revit/get-parameters", { elementIds: [elementId], names: [parameterName] });
         rawResults.push(revertedParameters);
         const scheduleFinal = await transport.post("/revit/export-schedule-csv", {
@@ -8770,15 +8685,26 @@ async function runDocumentationPrimitives(transport: BridgeTransport, request: J
       if (editViewId !== null && editTextNoteId !== null && expectedExistingText && replacementText) {
         const findBefore = await transport.post("/revit/find-text-notes", { viewId: editViewId, contains: expectedExistingText, max: 50 });
         rawResults.push(findBefore);
-        const replaceRequest = { elementId: editTextNoteId, newText: replacementText };
+        if (!textNoteFindResultMatches(findBefore, editTextNoteId, editViewId, expectedExistingText)) {
+          throw new Error(`text-note edit blocked before write: text note ${editTextNoteId} no longer matches the expected text in view ${editViewId}`);
+        }
+        const replaceRequest = { elementId: editTextNoteId, newText: replacementText, expectedOldText: expectedExistingText };
         const replaceDryRun = await transport.post("/revit/replace-text-note", { ...replaceRequest, dryRun: true, apply: false });
         rawResults.push(replaceDryRun);
+        const guardedTextRevert = {
+          elementId: editTextNoteId,
+          viewId: editViewId,
+          originalText: expectedExistingText,
+          replacementText,
+          confirm: clip(textOnlyBase.revertConfirm ?? textOnlyBase.confirm ?? "APPLY 1 TEXT NOTE CHANGE", 120)
+        };
+        pendingTextReverts.push(guardedTextRevert);
         const replaceApplied = await transport.post("/revit/replace-text-note", { ...replaceRequest, dryRun: false, apply: true, confirm: clip(textOnlyBase.confirm ?? "APPLY 1 TEXT NOTE CHANGE", 120) });
         rawResults.push(replaceApplied);
         const findAfter = await transport.post("/revit/find-text-notes", { viewId: editViewId, contains: replacementText, max: 50 });
         rawResults.push(findAfter);
         checks.push(
-          verification("text_note_existing_target_found", textNoteFindResultMatches(findBefore, editTextNoteId, editViewId, expectedExistingText), { textNoteId: editTextNoteId, viewId: editViewId, expectedExistingText }, findBefore),
+          verification("text_note_existing_target_found", true, { textNoteId: editTextNoteId, viewId: editViewId, expectedExistingText }, findBefore),
           verification("text_note_edit_dry_run_ok", asObject(replaceDryRun).dryRun === true || /dry run/i.test(clip(asObject(replaceDryRun).status, 80)), "dry-run text-note replacement preview", replaceDryRun),
           verification("text_note_edit_applied_success", statusLooksOk(replaceApplied), "text-note replacement applied", replaceApplied),
           verification("text_note_edit_apply_matches_request", textNoteReplaceResultMatches(replaceApplied, editTextNoteId, editViewId, replacementText), { textNoteId: editTextNoteId, viewId: editViewId, replacementText }, replaceApplied),
@@ -8803,11 +8729,12 @@ async function runDocumentationPrimitives(transport: BridgeTransport, request: J
           summaryRows.push({ primitive: "post_change_capture", id: editViewId, reportedViewId: postChangeCaptureViewId ?? "", path: postChangeCapturePath, status: clip(captureObj.status ?? "captured", 80) });
         }
 
-        const revertRequest = { elementId: editTextNoteId, newText: expectedExistingText };
+        const revertRequest = { elementId: editTextNoteId, newText: expectedExistingText, expectedOldText: replacementText };
         const revertDryRun = await transport.post("/revit/replace-text-note", { ...revertRequest, dryRun: true, apply: false });
         rawResults.push(revertDryRun);
         const revertApplied = await transport.post("/revit/replace-text-note", { ...revertRequest, dryRun: false, apply: true, confirm: clip(textOnlyBase.revertConfirm ?? textOnlyBase.confirm ?? "APPLY 1 TEXT NOTE CHANGE", 120) });
         rawResults.push(revertApplied);
+        pendingTextReverts.splice(pendingTextReverts.indexOf(guardedTextRevert), 1);
         const findReverted = await transport.post("/revit/find-text-notes", { viewId: editViewId, contains: expectedExistingText, max: 50 });
         rawResults.push(findReverted);
         checks.push(
@@ -8858,9 +8785,20 @@ async function runDocumentationPrimitives(transport: BridgeTransport, request: J
         rawResults.push(beforeParameters);
         const beforeVisibleTags = await transport.post("/revit/export-visible-elements", { viewId: editViewId, includeMapping: true, limit: 5000 });
         rawResults.push(beforeVisibleTags);
-        const changes = taggedElementIds.map((elementId) => ({ elementId, parameterName, value: replacementValue }));
+        if (!parameterSnapshotMatches(beforeParameters, taggedElementIds, parameterName, expectedExistingValue)) {
+          throw new Error(`tag value edit blocked before write: tagged-element parameter ${parameterName} no longer matches the expected existing value`);
+        }
+        if (!tagVisibleTextReadbackMatches(beforeVisibleTags, existingTagIds, expectedExistingVisibleText)) {
+          throw new Error(`tag value edit blocked before write: visible tag text no longer matches the expected existing value in view ${editViewId}`);
+        }
+        const changes = taggedElementIds.map((elementId) => ({ elementId, parameterName, value: replacementValue, expectedOldValue: expectedExistingValue }));
         const parameterDryRun = await transport.post("/revit/set-parameter", { changes, apply: false });
         rawResults.push(parameterDryRun);
+        const guardedTagRevert = {
+          changes: taggedElementIds.map((elementId) => ({ elementId, parameterName, value: expectedExistingValue, expectedOldValue: replacementValue })),
+          ...(tagOnlyBase.revertConfirm ?? tagOnlyBase.confirm ? { confirm: clip(tagOnlyBase.revertConfirm ?? tagOnlyBase.confirm, 120) } : {})
+        };
+        pendingParameterReverts.push(guardedTagRevert);
         const parameterApplied = await transport.post("/revit/set-parameter", {
           changes,
           apply: true,
@@ -8872,8 +8810,8 @@ async function runDocumentationPrimitives(transport: BridgeTransport, request: J
         const afterVisibleTags = await transport.post("/revit/export-visible-elements", { viewId: editViewId, includeMapping: true, limit: 5000 });
         rawResults.push(afterVisibleTags);
         checks.push(
-          verification("tag_value_existing_visible_readback_matches_original", tagVisibleTextReadbackMatches(beforeVisibleTags, existingTagIds, expectedExistingVisibleText), { existingTagIds, viewId: editViewId, expectedExistingVisibleText }, beforeVisibleTags),
-          verification("tag_value_parameter_original_matches_expected", parameterSnapshotMatches(beforeParameters, taggedElementIds, parameterName, expectedExistingValue), { taggedElementIds, parameterName, expectedExistingValue }, beforeParameters),
+          verification("tag_value_existing_visible_readback_matches_original", true, { existingTagIds, viewId: editViewId, expectedExistingVisibleText }, beforeVisibleTags),
+          verification("tag_value_parameter_original_matches_expected", true, { taggedElementIds, parameterName, expectedExistingValue }, beforeParameters),
           verification("tag_value_parameter_dry_run_ok", !hasParameterWriteErrors(parameterDryRun), "dry-run tagged-element parameter write has no errors", parameterDryRun),
           verification("tag_value_parameter_apply_ok", !hasParameterWriteErrors(parameterApplied), "tagged-element parameter write applied without errors", parameterApplied),
           verification("tag_value_parameter_readback_matches_request", parameterSnapshotMatches(afterParameters, taggedElementIds, parameterName, replacementValue), { taggedElementIds, parameterName, replacementValue }, afterParameters),
@@ -8898,7 +8836,7 @@ async function runDocumentationPrimitives(transport: BridgeTransport, request: J
           summaryRows.push({ primitive: "post_change_capture", id: editViewId, reportedViewId: postChangeCaptureViewId ?? "", path: postChangeCapturePath, status: clip(captureObj.status ?? "captured", 80) });
         }
 
-        const revertChanges = taggedElementIds.map((elementId) => ({ elementId, parameterName, value: expectedExistingValue }));
+        const revertChanges = guardedTagRevert.changes;
         const revertDryRun = await transport.post("/revit/set-parameter", { changes: revertChanges, apply: false });
         rawResults.push(revertDryRun);
         const revertApplied = await transport.post("/revit/set-parameter", {
@@ -8907,6 +8845,7 @@ async function runDocumentationPrimitives(transport: BridgeTransport, request: J
           ...(tagOnlyBase.revertConfirm ?? tagOnlyBase.confirm ? { confirm: clip(tagOnlyBase.revertConfirm ?? tagOnlyBase.confirm, 120) } : {})
         });
         rawResults.push(revertApplied);
+        pendingParameterReverts.splice(pendingParameterReverts.indexOf(guardedTagRevert), 1);
         const revertedParameters = await transport.post("/revit/get-parameters", { elementIds: taggedElementIds, names: [parameterName] });
         rawResults.push(revertedParameters);
         const revertedVisibleTags = await transport.post("/revit/export-visible-elements", { viewId: editViewId, includeMapping: true, limit: 5000 });
@@ -10281,11 +10220,63 @@ async function runDocumentationPrimitives(transport: BridgeTransport, request: J
   } catch (error) {
     const failureMessage = error instanceof Error ? error.message : String(error);
     const cleanupIds = trackedTransport.cleanupIds();
+    const failureReverts: unknown[] = [];
     let cleanupDryRun: unknown = null;
     let cleanupApplied: unknown = null;
     let cleanupDryRunIds: number[] = [];
     let cleanupDeletedIds: number[] = [];
     checks.push(verification("documentation_workflow_exception_caught", false, "no thrown bridge error", null, failureMessage));
+    for (const pending of pendingParameterReverts) {
+      try {
+        const dryRun = await transport.post("/revit/set-parameter", {
+          changes: pending.changes,
+          ...(pending.preserveTextCase !== undefined ? { preserveTextCase: pending.preserveTextCase } : {}),
+          apply: false
+        });
+        rawResults.push(dryRun);
+        const applied = await transport.post("/revit/set-parameter", {
+          changes: pending.changes,
+          ...(pending.preserveTextCase !== undefined ? { preserveTextCase: pending.preserveTextCase } : {}),
+          apply: true,
+          ...(pending.confirm ? { confirm: pending.confirm } : {})
+        });
+        rawResults.push(applied);
+        const ids = uniquePositiveIds(pending.changes.map((change) => change.elementId));
+        const names = Array.from(new Set(pending.changes.map((change) => clip(change.parameterName, 200)).filter(Boolean)));
+        const readback = await transport.post("/revit/get-parameters", { elementIds: ids, names });
+        rawResults.push(readback);
+        const recovered = pending.changes.every((change) => {
+          const id = firstPositiveId(change.elementId);
+          return id !== null && parameterSnapshotMatches(readback, [id], clip(change.parameterName, 200), clip(change.value, 1000));
+        });
+        failureReverts.push({ kind: "parameter", dryRun, applied, readback, recovered });
+        checks.push(verification("documentation_failure_existing_parameter_revert_verified", recovered, pending.changes, readback));
+        summaryRows.push({ primitive: "failure_revert_existing_parameter", id: ids.join(";"), status: recovered ? "recovered" : "unverified" });
+      } catch (revertError) {
+        const message = revertError instanceof Error ? revertError.message : String(revertError);
+        failureReverts.push({ kind: "parameter", recovered: false, error: message });
+        checks.push(verification("documentation_failure_existing_parameter_revert_verified", false, pending.changes, null, message));
+      }
+    }
+    for (const pending of pendingTextReverts) {
+      try {
+        const requestBody = { elementId: pending.elementId, newText: pending.originalText, expectedOldText: pending.replacementText };
+        const dryRun = await transport.post("/revit/replace-text-note", { ...requestBody, dryRun: true, apply: false });
+        rawResults.push(dryRun);
+        const applied = await transport.post("/revit/replace-text-note", { ...requestBody, dryRun: false, apply: true, confirm: pending.confirm });
+        rawResults.push(applied);
+        const readback = await transport.post("/revit/find-text-notes", { viewId: pending.viewId, contains: pending.originalText, max: 50 });
+        rawResults.push(readback);
+        const recovered = textNoteFindResultMatches(readback, pending.elementId, pending.viewId, pending.originalText);
+        failureReverts.push({ kind: "text_note", dryRun, applied, readback, recovered });
+        checks.push(verification("documentation_failure_existing_text_revert_verified", recovered, pending, readback));
+        summaryRows.push({ primitive: "failure_revert_existing_text_note", id: pending.elementId, parent: pending.viewId, status: recovered ? "recovered" : "unverified" });
+      } catch (revertError) {
+        const message = revertError instanceof Error ? revertError.message : String(revertError);
+        failureReverts.push({ kind: "text_note", recovered: false, error: message });
+        checks.push(verification("documentation_failure_existing_text_revert_verified", false, pending, null, message));
+      }
+    }
     if (cleanupRequested && cleanupIds.length > 0) {
       try {
         cleanupDryRun = await transport.post("/revit/delete", {
@@ -10332,6 +10323,7 @@ async function runDocumentationPrimitives(transport: BridgeTransport, request: J
       cleanupDeletedIds,
       cleanupDryRun,
       cleanupApplied,
+      failureReverts,
       failure: failureMessage,
       tracked: {
         scheduleIds: trackedTransport.scheduleIds,
