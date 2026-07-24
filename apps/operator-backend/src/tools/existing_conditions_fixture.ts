@@ -216,6 +216,10 @@ import {
 } from "../existing_conditions/sheet_pixel_interpretation.js";
 import { validateSheetPixelEvidenceV1 } from "../existing_conditions/sheet_pixel_evidence.js";
 import {
+  extractSheetVectorTextV1,
+  type SheetVectorTextExtractionInputV1
+} from "../existing_conditions/sheet_vector_text.js";
+import {
   planRegisteredRouteConnectorSnapV1,
   type RegisteredRouteSnapCandidateV1,
   type RegisteredRouteSnapContextV1
@@ -429,6 +433,7 @@ function usage(): never {
     "  npm run existing-conditions -- compile-plan-trace-seed-spines --input <host-trusted-seed-spans.json> --receipt <trace-receipt.json> --out <spine-receipt.json>",
     "  npm run existing-conditions -- normalize-plan-trace-spines --input <bounded-normalization-policy.json> --receipt <spine-receipt.json> --out <normalized-spine-receipt.json>",
     "  npm run existing-conditions -- detect-repeated-mep-symbols --input <hash-bound-template-search.json> --out <candidate-receipt.json>",
+    "  npm run existing-conditions -- extract-sheet-vector-text --input <hash-bound-pdf-render-and-text-filter.json> --out <vector-text-receipt.json>",
     "  npm run existing-conditions -- detect-sheet-chromatic-components --input <hash-bound-hue-component-search.json> --out <candidate-receipt.json> [--overlay-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- validate-sheet-route-chromatic-coverage --input <hash-bound-source-policy.json> [--candidate <sheet-interpretation-or-provider-receipt.json>] --out <coverage-receipt.json> [--overlay-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- compile-sheet-overlap-routes --input <registered-overlap-tiles.json> --out <parent-route-compilation.json>",
@@ -2042,6 +2047,19 @@ async function main(): Promise<void> {
       readJson(requiredArgument("--input")) as MepRepeatedSymbolDetectionInputV1
     );
     writeJson(requiredArgument("--out"), receipt);
+    return;
+  }
+  if (command === "extract-sheet-vector-text") {
+    const inputPath = requiredArgument("--input");
+    const outputPath = requiredArgument("--out");
+    assertFreshDistinctOutputPaths(
+      [{ flag: "--out", value: outputPath }],
+      [{ flag: "--input", value: inputPath }]
+    );
+    writeJson(
+      outputPath,
+      await extractSheetVectorTextV1(readJson(inputPath) as SheetVectorTextExtractionInputV1)
+    );
     return;
   }
   if (command === "detect-sheet-chromatic-components") {
