@@ -1,6 +1,62 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { compactIncomingToolResult, compactViewsResult, compactVisibleElementsResult, describeVisibleElementsInventory, getChatRequestLimitBytes } from "../src/tool_result_compaction.js";
+import {
+  compactIncomingToolResult,
+  compactParameterReadResultForPrompt,
+  compactScheduleReadResultForPrompt,
+  compactViewsResult,
+  compactVisibleElementsResult,
+  describeVisibleElementsInventory,
+  getChatRequestLimitBytes
+} from "../src/tool_result_compaction.js";
+
+test("compact parameter reads preserves late DESIG and shock-arrestor evidence", () => {
+  const clutter = Array.from({ length: 120 }, (_, index) => ({
+    name: `Parameter ${index}`,
+    value: `ordinary-${index}`,
+    storageType: "String",
+    isReadOnly: false,
+    parameterId: index
+  }));
+  const compacted = compactParameterReadResultForPrompt({
+    selector: "allModelInstances",
+    hostModelOnly: true,
+    instanceOnly: true,
+    valueContains: "-G-",
+    writableOnly: true,
+    totalScanned: 100000,
+    totalMatched: 2,
+    returnedCount: 2,
+    hasMore: false,
+    items: [
+      { id: 42, name: "Shock Arrestor SA-1", category: "Pipe Accessories", parameterDetails: [...clutter, { name: "DESIG.", value: "B3-G-SA-01", storageType: "String", isReadOnly: false, parameterId: 700064 }] },
+      { id: 43, name: "Sump Pump", category: "Mechanical Equipment", parameterDetails: [{ name: "DESIG.", value: "H-G-SP-03", storageType: "String", isReadOnly: false, parameterId: 700064 }] }
+    ]
+  }) as any;
+
+  assert.deepEqual(compacted.matchingElementIds, [42, 43]);
+  assert.equal(compacted.totalMatched, 2);
+  assert.equal(compacted.parameterCounts[0]?.name, "DESIG.");
+  assert.equal(compacted.parameterCounts[0]?.count, 2);
+  assert.equal(compacted.evidenceSample[0]?.value, "B3-G-SA-01");
+  assert.equal(compacted.evidenceSample[0]?.isReadOnly, false);
+});
+
+test("compact schedule reads preserves paging and bounded visible cells", () => {
+  const rows = Array.from({ length: 45 }, (_, index) => ({ rowIndex: index, cells: [`SA-${index}`, `B3-G-SA-${index}`] }));
+  const compacted = compactScheduleReadResultForPrompt({
+    action: "detail",
+    status: "Ok",
+    schedule: { id: 100, name: "Shock Arrestor Schedule" },
+    fields: [{ name: "DESIG." }],
+    table: { body: { totalRows: 100, totalColumns: 2, rowOffset: 0, returnedRows: 45, hasMoreRows: true, nextRowOffset: 45, rows } }
+  }) as any;
+
+  assert.equal(compacted.schedule.name, "Shock Arrestor Schedule");
+  assert.equal(compacted.table.body.rows.length, 30);
+  assert.equal(compacted.table.body.nextRowOffset, 45);
+  assert.equal(compacted.table.body.rows[0].cells[1], "B3-G-SA-0");
+});
 
 test("compact visible-elements result preserves mapped inventory summary and samples items", () => {
   const items = Array.from({ length: 30 }, (_, i) => ({

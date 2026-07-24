@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Electrical;
 using Autodesk.Revit.UI;
 
 namespace RevitBridge.Handlers
@@ -33,6 +34,7 @@ namespace RevitBridge.Handlers
             public bool? includeTitleBlocks { get; set; }
             public bool? includeViewportGeometry { get; set; }
             public bool? includeSheetOutline { get; set; }
+            public bool? includeSchedules { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -180,6 +182,7 @@ namespace RevitBridge.Handlers
             var includeTitleBlocks = p.includeTitleBlocks ?? true;
             var includeViewportGeometry = p.includeViewportGeometry ?? true;
             var includeSheetOutline = p.includeSheetOutline ?? true;
+            var includeSchedules = p.includeSchedules ?? true;
 
             var sheet = ResolveSheet(doc, p, query, exact);
             if (sheet == null)
@@ -296,6 +299,41 @@ namespace RevitBridge.Handlers
                 });
             }
 
+            var placedSchedules = new List<object>();
+            foreach (var scheduleInstance in new FilteredElementCollector(doc, sheet.Id)
+                .OfClass(typeof(ScheduleSheetInstance))
+                .Cast<ScheduleSheetInstance>())
+            {
+                var schedule = doc.GetElement(scheduleInstance.ScheduleId) as ViewSchedule;
+                placedSchedules.Add(new
+                {
+                    placementType = "ScheduleSheetInstance",
+                    instanceId = RevitBridge.Common.ElementIdCompat.GetValue(scheduleInstance.Id),
+                    scheduleId = RevitBridge.Common.ElementIdCompat.GetValue(scheduleInstance.ScheduleId),
+                    name = schedule?.Name,
+                    viewType = schedule?.ViewType.ToString(),
+                    point = PointObject(scheduleInstance.Point),
+                    boundingBox = BoundingBoxObject(scheduleInstance, sheet)
+                });
+            }
+
+            foreach (var scheduleInstance in new FilteredElementCollector(doc, sheet.Id)
+                .OfClass(typeof(PanelScheduleSheetInstance))
+                .Cast<PanelScheduleSheetInstance>())
+            {
+                var schedule = doc.GetElement(scheduleInstance.ScheduleId) as View;
+                placedSchedules.Add(new
+                {
+                    placementType = "PanelScheduleSheetInstance",
+                    instanceId = RevitBridge.Common.ElementIdCompat.GetValue(scheduleInstance.Id),
+                    scheduleId = RevitBridge.Common.ElementIdCompat.GetValue(scheduleInstance.ScheduleId),
+                    name = schedule?.Name,
+                    viewType = schedule?.ViewType.ToString(),
+                    point = PointObject(scheduleInstance.Origin),
+                    boundingBox = BoundingBoxObject(scheduleInstance, sheet)
+                });
+            }
+
             var titleBlocks = new List<object>();
             foreach (var tb in new FilteredElementCollector(doc, sheet.Id)
                 .OfCategory(BuiltInCategory.OST_TitleBlocks)
@@ -364,13 +402,40 @@ namespace RevitBridge.Handlers
                 isPlaceholder = sheet.IsPlaceholder,
                 viewportCount = viewportIds.Count,
                 placedViewCount = placedViews.Count,
+                placedScheduleCount = placedSchedules.Count,
                 titleBlockCount = titleBlocks.Count,
                 sheetOutline = includeSheetOutline ? sheetOutline : null,
                 viewportIds = includeViewports ? viewportIds : null,
                 viewportGeometry = includeViewportGeometry ? viewportGeometry : null,
                 placedViews = includePlacedViews ? placedViews : null,
+                placedSchedules = includeSchedules ? placedSchedules : null,
                 titleBlocks = includeTitleBlocks ? titleBlocks : null
             };
+        }
+
+        private static object? PointObject(XYZ? point)
+        {
+            return point == null ? null : new { u = point.X, v = point.Y };
+        }
+
+        private static object? BoundingBoxObject(Element element, ViewSheet sheet)
+        {
+            try
+            {
+                var box = element.get_BoundingBox(sheet);
+                if (box == null) return null;
+                return new
+                {
+                    minU = box.Min.X,
+                    minV = box.Min.Y,
+                    maxU = box.Max.X,
+                    maxV = box.Max.Y
+                };
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static ViewSheet? ResolveSheet(Document doc, Params p, string query, bool exact)

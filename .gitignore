@@ -28,6 +28,7 @@ coverage/
 logs/
 *.log
 .codex-run-logs/
+local-work/
 apps/operator-backend/tmp_marked_*
 
 apps/operator-backend/local-work/

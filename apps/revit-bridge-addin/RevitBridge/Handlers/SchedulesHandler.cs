@@ -19,6 +19,11 @@ namespace RevitBridge.Handlers
             public bool? exact { get; set; }
             public int? max { get; set; }
             public bool? includeFields { get; set; }
+            public bool? includeData { get; set; }
+            public int? rowOffset { get; set; }
+            public int? columnOffset { get; set; }
+            public int? maxRows { get; set; }
+            public int? maxColumns { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -93,15 +98,107 @@ namespace RevitBridge.Handlers
             }
 
             var includeFields = p.includeFields ?? true;
+            var includeData = p.includeData ?? false;
             var summary = BuildScheduleSummary(doc, schedule);
             var details = includeFields ? BuildFieldDetails(doc, schedule) : null;
+            var table = includeData ? BuildTableData(schedule, p) : null;
 
             return new
             {
                 status = "Ok",
                 action = "detail",
                 schedule = summary,
-                fields = details
+                fields = details,
+                table
+            };
+        }
+
+        private static object BuildTableData(ViewSchedule schedule, Params p)
+        {
+            var rowOffset = Math.Max(0, p.rowOffset ?? 0);
+            var columnOffset = Math.Max(0, p.columnOffset ?? 0);
+            var maxRows = Math.Min(500, Math.Max(1, p.maxRows ?? 100));
+            var maxColumns = Math.Min(100, Math.Max(1, p.maxColumns ?? 40));
+
+            try
+            {
+                var tableData = schedule.GetTableData();
+                return new
+                {
+                    rowOffset,
+                    columnOffset,
+                    maxRows,
+                    maxColumns,
+                    header = ReadTableSection(schedule, tableData.GetSectionData(SectionType.Header), SectionType.Header, 0, columnOffset, 25, maxColumns),
+                    body = ReadTableSection(schedule, tableData.GetSectionData(SectionType.Body), SectionType.Body, rowOffset, columnOffset, maxRows, maxColumns)
+                };
+            }
+            catch (Exception ex)
+            {
+                return new
+                {
+                    rowOffset,
+                    columnOffset,
+                    maxRows,
+                    maxColumns,
+                    error = ex.Message
+                };
+            }
+        }
+
+        private static object ReadTableSection(
+            ViewSchedule schedule,
+            TableSectionData section,
+            SectionType sectionType,
+            int rowOffset,
+            int columnOffset,
+            int maxRows,
+            int maxColumns)
+        {
+            var totalRows = Math.Max(0, section.NumberOfRows);
+            var totalColumns = Math.Max(0, section.NumberOfColumns);
+            var firstRow = section.FirstRowNumber;
+            var firstColumn = section.FirstColumnNumber;
+            var returnedRows = Math.Max(0, Math.Min(maxRows, totalRows - rowOffset));
+            var returnedColumns = Math.Max(0, Math.Min(maxColumns, totalColumns - columnOffset));
+            var rows = new List<object>(returnedRows);
+
+            for (var rowIndex = 0; rowIndex < returnedRows; rowIndex++)
+            {
+                var absoluteRow = firstRow + rowOffset + rowIndex;
+                var cells = new List<string>(returnedColumns);
+                for (var columnIndex = 0; columnIndex < returnedColumns; columnIndex++)
+                {
+                    var absoluteColumn = firstColumn + columnOffset + columnIndex;
+                    try
+                    {
+                        cells.Add(schedule.GetCellText(sectionType, absoluteRow, absoluteColumn) ?? "");
+                    }
+                    catch
+                    {
+                        cells.Add("");
+                    }
+                }
+
+                rows.Add(new { rowIndex = absoluteRow, cells });
+            }
+
+            var nextRowOffset = rowOffset + returnedRows < totalRows ? rowOffset + returnedRows : (int?)null;
+            var nextColumnOffset = columnOffset + returnedColumns < totalColumns ? columnOffset + returnedColumns : (int?)null;
+            return new
+            {
+                section = sectionType.ToString(),
+                totalRows,
+                totalColumns,
+                rowOffset,
+                columnOffset,
+                returnedRows,
+                returnedColumns,
+                hasMoreRows = nextRowOffset.HasValue,
+                nextRowOffset,
+                hasMoreColumns = nextColumnOffset.HasValue,
+                nextColumnOffset,
+                rows
             };
         }
 

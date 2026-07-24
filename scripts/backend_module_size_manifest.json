@@ -6,7 +6,7 @@
     { "path": "benchmark/redline_routing_readiness.ts", "max_lines": 6285, "reason": "Legacy readiness report aggregator awaiting report-section extraction." },
     { "path": "index.ts", "max_lines": 4155, "reason": "Backend composition root; private hosted routes make the integration variant larger than public. Durable requirements routes are extracted to requirements_http_routes.ts, leaving nine reviewed authentication, adapter, and audit wiring lines alongside bounded large-PDF page-range forwarding." },
     { "path": "redline/redline_analyzer.ts", "max_lines": 3238, "reason": "Sheet classification and pure PDF annotation geometry are extracted; page analysis and image rendering remain coupled pending later bounded splits." },
-    { "path": "deterministic/mep_route_redline.ts", "max_lines": 2914, "reason": "Deterministic MEP route resolver awaiting parsing and scoring extraction; one policy import aligns its PDF budget." },
+    { "path": "deterministic/mep_route_redline.ts", "max_lines": 2920, "reason": "Deterministic MEP route resolver awaiting parsing and scoring extraction; the reviewed sheet-inventory continuation guard adds six bounded lines." },
     { "path": "redline/corpus_classifier.ts", "max_lines": 2876, "reason": "Corpus classification and promotion preparation remain coupled pending a focused split." },
     { "path": "tools/seed_redline_review_promotions.ts", "max_lines": 1903, "reason": "Offline migration tool; lower runtime risk but still size-ratcheted." },
     { "path": "tools/promote_redline_review_rows.ts", "max_lines": 1821, "reason": "Offline migration tool; lower runtime risk but still size-ratcheted." },

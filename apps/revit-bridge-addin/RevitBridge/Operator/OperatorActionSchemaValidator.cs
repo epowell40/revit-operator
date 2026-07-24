@@ -6492,19 +6492,67 @@ namespace RevitBridge.Operator
             if (string.Equals(path, "/revit/get-parameters", StringComparison.OrdinalIgnoreCase))
             {
                 const string getParamsExample = "{\"elementIds\":[12345],\"names\":[\"Sheet Name\"]}";
+                const string getParamsCategoryExample = "{\"categories\":[\"OST_ElectricalEquipment\"],\"includeStringParameters\":true,\"offset\":0,\"limit\":500}";
+                const string getParamsModelExample = "{\"allModelInstances\":true,\"includeStringParameters\":true,\"valueContains\":\"-G-\",\"writableOnly\":true,\"offset\":0,\"limit\":500}";
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
-                    error = "get-parameters body must be an object at $. Example: " + getParamsExample;
+                    error = "get-parameters body must be an object at $. Examples: " + getParamsExample + " or " + getParamsCategoryExample;
                     return false;
                 }
 
                 var hasElementId = obj.Value.TryGetProperty("elementId", out var eid) && eid.ValueKind != JsonValueKind.Null;
                 var hasElementIds = obj.Value.TryGetProperty("elementIds", out var eids) && eids.ValueKind != JsonValueKind.Null;
+                if (!ValidateOptionalString(obj.Value, "category", maxLen: 96, out error)) return false;
+                if (!ValidateOptionalStringArray(obj.Value, "categories", maxCount: 20, maxLen: 96, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "allModelInstances", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "includeStringParameters", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "valueContains", maxLen: 256, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "caseSensitive", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "writableOnly", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "includeEmpty", out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "offset", out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "limit", out error)) return false;
+                var hasCategory = obj.Value.TryGetProperty("category", out var category) &&
+                                  category.ValueKind == JsonValueKind.String &&
+                                  !string.IsNullOrWhiteSpace(category.GetString());
+                var hasCategories = obj.Value.TryGetProperty("categories", out var categories) &&
+                                    categories.ValueKind == JsonValueKind.Array &&
+                                    categories.GetArrayLength() > 0;
+                var hasIdSelector = hasElementId || hasElementIds;
+                var hasCategorySelector = hasCategory || hasCategories;
+                var hasAllModelSelector = obj.Value.TryGetProperty("allModelInstances", out var allModel) && allModel.ValueKind == JsonValueKind.True;
 
-                if (!hasElementId && !hasElementIds)
+                if (!hasIdSelector && !hasCategorySelector && !hasAllModelSelector)
                 {
-                    error = "get-parameters requires $.elementId or $.elementIds. Example: " + getParamsExample;
+                    error = "get-parameters requires $.elementId, $.elementIds, $.category, $.categories, or $.allModelInstances:true. Examples: " + getParamsExample + ", " + getParamsCategoryExample + ", or " + getParamsModelExample;
                     return false;
+                }
+
+                if ((hasIdSelector ? 1 : 0) + (hasCategorySelector ? 1 : 0) + (hasAllModelSelector ? 1 : 0) > 1)
+                {
+                    error = "get-parameters accepts exactly one selector: elementId/elementIds, category/categories, or allModelInstances:true.";
+                    return false;
+                }
+
+                if (hasAllModelSelector)
+                {
+                    var hasValueFilter = obj.Value.TryGetProperty("valueContains", out var valueFilter) &&
+                                         valueFilter.ValueKind == JsonValueKind.String &&
+                                         !string.IsNullOrEmpty(valueFilter.GetString());
+                    var hasNameFilter = obj.Value.TryGetProperty("names", out var exactNames) &&
+                                        exactNames.ValueKind == JsonValueKind.Array &&
+                                        exactNames.GetArrayLength() > 0;
+                    if (!hasValueFilter && !hasNameFilter)
+                    {
+                        error = "get-parameters with allModelInstances:true requires a non-empty literal valueContains filter or at least one exact parameter name. Example: " + getParamsModelExample;
+                        return false;
+                    }
+                    var stringsOnly = obj.Value.TryGetProperty("includeStringParameters", out var stringFilter) && stringFilter.ValueKind == JsonValueKind.True;
+                    if (!stringsOnly)
+                    {
+                        error = "get-parameters with allModelInstances:true requires includeStringParameters:true. Example: " + getParamsModelExample;
+                        return false;
+                    }
                 }
 
                 if (hasElementId)
@@ -6574,6 +6622,24 @@ namespace RevitBridge.Operator
                                     ". Example: " + getParamsExample;
                             return false;
                         }
+                    }
+                }
+
+                if (obj.Value.TryGetProperty("offset", out var offset) && offset.ValueKind != JsonValueKind.Null)
+                {
+                    if (!offset.TryGetInt32(out var value) || value < 0 || value > 1000000)
+                    {
+                        error = "get-parameters.offset must be an integer from 0 through 1000000.";
+                        return false;
+                    }
+                }
+
+                if (obj.Value.TryGetProperty("limit", out var limit) && limit.ValueKind != JsonValueKind.Null)
+                {
+                    if (!limit.TryGetInt32(out var value) || value < 1 || value > 5000)
+                    {
+                        error = "get-parameters.limit must be an integer from 1 through 5000; category reads are safely paged at no more than 500 items per response.";
+                        return false;
                     }
                 }
 
@@ -7592,14 +7658,17 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalBool(obj.Value, "includePlacedViews", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeViewports", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeTitleBlocks", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "includeSchedules", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "includeViewportGeometry", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "includeSheetOutline", out error)) return false;
 
                 var sheetsAction = "list";
                 if (obj.Value.TryGetProperty("action", out var actionEl) && actionEl.ValueKind != JsonValueKind.Null)
                 {
                     sheetsAction = (actionEl.GetString() ?? "").Trim().ToLowerInvariant();
-                    if (!(sheetsAction == "list" || sheetsAction == "detail"))
+                    if (!(sheetsAction == "list" || sheetsAction == "detail" || sheetsAction == "count"))
                     {
-                        error = "sheets.action must be 'list' or 'detail'.";
+                        error = "sheets.action must be 'list', 'count', or 'detail'.";
                         return false;
                     }
                 }
@@ -7799,6 +7868,11 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalString(obj.Value, "query", maxLen: 128, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "exact", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeFields", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "includeData", out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "rowOffset", out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "columnOffset", out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "maxRows", out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "maxColumns", out error)) return false;
 
                 var schedulesAction = "list";
                 if (obj.Value.TryGetProperty("action", out var actionEl) && actionEl.ValueKind != JsonValueKind.Null)
@@ -7823,6 +7897,28 @@ namespace RevitBridge.Operator
                         error = "schedules.max out of range.";
                         return false;
                     }
+                }
+
+                foreach (var field in new[] { "rowOffset", "columnOffset" })
+                {
+                    if (obj.Value.TryGetProperty(field, out var value) && value.ValueKind != JsonValueKind.Null &&
+                        (!value.TryGetInt32(out var parsed) || parsed < 0 || parsed > 1000000))
+                    {
+                        error = "schedules." + field + " must be an integer from 0 through 1000000.";
+                        return false;
+                    }
+                }
+                if (obj.Value.TryGetProperty("maxRows", out var maxRows) && maxRows.ValueKind != JsonValueKind.Null &&
+                    (!maxRows.TryGetInt32(out var rows) || rows < 1 || rows > 500))
+                {
+                    error = "schedules.maxRows must be an integer from 1 through 500.";
+                    return false;
+                }
+                if (obj.Value.TryGetProperty("maxColumns", out var maxColumns) && maxColumns.ValueKind != JsonValueKind.Null &&
+                    (!maxColumns.TryGetInt32(out var columns) || columns < 1 || columns > 100))
+                {
+                    error = "schedules.maxColumns must be an integer from 1 through 100.";
+                    return false;
                 }
 
                 if (schedulesAction == "detail")

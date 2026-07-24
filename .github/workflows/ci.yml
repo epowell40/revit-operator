@@ -66,6 +66,17 @@ jobs:
       - uses: actions/checkout@v4
       - run: bash scripts/check-secrets.sh
 
+  operator-deploy:
+    name: OperatorDeploy Build/Test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet test packages/operator-deploy/OperatorDeploy.Tests/OperatorDeploy.Tests.csproj -c Release
+      - run: dotnet publish packages/operator-deploy/OperatorDeploy/OperatorDeploy.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false
+
   revit-addin:
     name: Revit Add-in Build
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_revit_addin == true }}

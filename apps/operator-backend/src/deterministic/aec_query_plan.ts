@@ -7,6 +7,7 @@ export type AecQueryWorkflowId =
   | "query.exact_identifier"
   | "query.room_contents"
   | "query.level_elements"
+  | "query.document_sheets"
   | "query.view_elements"
   | "query.sheet_elements"
   | "query.selection";
@@ -38,6 +39,12 @@ function categoryBody(task: AecSemanticTaskV1): Record<string, unknown> {
   return task.subject.categories.length === 1
     ? { category: task.subject.categories[0] }
     : task.subject.categories.length > 1 ? { categories: task.subject.categories } : {};
+}
+
+function isSheetInventory(task: AecSemanticTaskV1): boolean {
+  return task.subject.semantic_class === "sheet"
+    || task.subject.categories.some(category => category.toLocaleUpperCase() === "OST_SHEETS")
+    || task.subject.terms.some(term => /(?:^|\s)sheets?(?:\s|$)/i.test(term));
 }
 
 function planBoundedComparison(task: AecSemanticTaskV1): AecQueryPlanV1 {
@@ -121,6 +128,19 @@ export function planAecQueryTask(value: unknown): AecQueryPlanV1 {
     if (task.subject.categories.length) body.categories = task.subject.categories;
     if (task.subject.terms.length) body.includeKeywords = task.subject.terms;
     return { status: "ready", workflow_id: "query.room_contents", actions: [action("aec-query-room-contents", "/revit/room-contents", body)], blockers: [], evidence: { predicate_pushed: true, document_payload_requested: false } };
+  }
+
+  if (task.scope.kind === "document" && isSheetInventory(task)) {
+    const countOnly = task.operation === "count";
+    return {
+      status: "ready",
+      workflow_id: "query.document_sheets",
+      actions: [action("aec-query-document-sheets", "/revit/sheets", countOnly
+        ? { action: "list", offset: 0, limit: 1 }
+        : { action: "list", offset: 0, limit: task.execution.max_results })],
+      blockers: [],
+      evidence: { predicate_pushed: true, document_payload_requested: false, exact_document_inventory: true }
+    };
   }
 
   if (task.scope.kind === "view" && numericViewId(task) !== null) {

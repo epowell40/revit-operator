@@ -600,7 +600,8 @@ namespace RevitBridge.Operator
                             { "includeViewports", Bool() }, // detail
                             { "includeTitleBlocks", Bool() }, // detail
                             { "includeViewportGeometry", Bool() }, // detail
-                            { "includeSheetOutline", Bool() } // detail
+                            { "includeSheetOutline", Bool() }, // detail
+                            { "includeSchedules", Bool() } // detail
                         },
                         required: Array.Empty<string>(),
                         additionalProps: false);
