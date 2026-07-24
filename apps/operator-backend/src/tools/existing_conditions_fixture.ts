@@ -148,8 +148,13 @@ import { scoreArchitecturalOpeningHostResolution } from "../existing_conditions/
 import {
   extractPlanTraces,
   renderPlanTraceExtractionPreview,
-  type PlanTraceExtractionInput
+  type PlanTraceExtractionInput,
+  type PlanTraceExtractionReceipt
 } from "../existing_conditions/plan_trace_extraction.js";
+import {
+  compilePlanTraceSeedSpinesV1,
+  type PlanTraceSeedSpineInputV1
+} from "../existing_conditions/plan_trace_seed_spine.js";
 import {
   validateBoundedMepRegionCoverage,
   type BoundedMepRegionCoverageContext,
@@ -412,6 +417,7 @@ function usage(): never {
     "  npm run existing-conditions -- assess-registration-ambiguity --input <candidate-search.json> --out <ambiguity-receipt.json>",
     "  npm run existing-conditions -- compare-calibrated-crops --input <hash-bound-source-candidate-controls-and-features.json> --out-dir <evidence-dir> --out <comparison-receipt.json>",
     "  npm run existing-conditions -- extract-plan-traces --input <hash-bound-extraction-policy.json> --out <trace-receipt.json> [--preview-out <diagnostic-overlay.png>]",
+    "  npm run existing-conditions -- compile-plan-trace-seed-spines --input <host-trusted-seed-spans.json> --receipt <trace-receipt.json> --out <spine-receipt.json>",
     "  npm run existing-conditions -- detect-repeated-mep-symbols --input <hash-bound-template-search.json> --out <candidate-receipt.json>",
     "  npm run existing-conditions -- detect-sheet-chromatic-components --input <hash-bound-hue-component-search.json> --out <candidate-receipt.json> [--overlay-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- validate-sheet-route-chromatic-coverage --input <hash-bound-source-policy.json> [--candidate <sheet-interpretation-or-provider-receipt.json>] --out <coverage-receipt.json> [--overlay-out <diagnostic-overlay.png>]",
@@ -1968,6 +1974,23 @@ async function main(): Promise<void> {
       ? await renderPlanTraceExtractionPreview(input.source_image_path, receipt, previewOut)
       : undefined;
     writeJson(requiredArgument("--out"), diagnosticPreview ? { ...receipt, diagnostic_preview: diagnosticPreview } : receipt);
+    return;
+  }
+  if (command === "compile-plan-trace-seed-spines") {
+    const inputPath = requiredArgument("--input");
+    const receiptPath = requiredArgument("--receipt");
+    const outputPath = requiredArgument("--out");
+    assertFreshDistinctOutputPaths(
+      [{ flag: "--out", value: outputPath }],
+      [{ flag: "--input", value: inputPath }, { flag: "--receipt", value: receiptPath }]
+    );
+    writeJson(
+      outputPath,
+      compilePlanTraceSeedSpinesV1(
+        readJson(inputPath) as PlanTraceSeedSpineInputV1,
+        readJson(receiptPath) as PlanTraceExtractionReceipt
+      )
+    );
     return;
   }
   if (command === "detect-repeated-mep-symbols") {
