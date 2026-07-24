@@ -7,6 +7,11 @@ import {
   listLatestExistingConditionsSourceDispositionsV1,
   type ExistingConditionsSourceDispositionStateV1
 } from "./source_disposition_ledger.js";
+import {
+  latestExistingConditionsSourceTargetManifestV1,
+  type ExistingConditionsSourceTargetManifestStateV1,
+  type ExistingConditionsSourceTargetV1
+} from "./source_target_manifest_ledger.js";
 
 const MAX_REPLAY_FRONTIER_TARGETS = 32;
 
@@ -19,6 +24,8 @@ function record(value: unknown): Record<string, unknown> {
 function isSourceDispositionContinuationRequest(req: ChatRequest): boolean {
   const text = String(req.user_text ?? "");
   return /source[\s_-]+disposition/i.test(text) ||
+    /(?:source[\s_-]+target|sheet[\s_-]+target)[\s_-]+manifest/i.test(text) ||
+    (/existing[\s_-]+conditions/i.test(text) && /\b(?:coverage|accounting|manifest)\b/i.test(text)) ||
     (/existing[\s_-]+conditions/i.test(text) && /\b(?:latest|last|persisted|saved|resume|continue)\b/i.test(text));
 }
 
@@ -31,7 +38,7 @@ function isReadOnlyDispositionInspection(req: ChatRequest): boolean {
 
 function requestsWholeDispositionFrontier(req: ChatRequest): boolean {
   const text = String(req.user_text ?? "");
-  return /\b(?:all|every|frontier|frontiers|targets|unresolved)\b/i.test(text);
+  return /\b(?:all|every|frontier|frontiers|targets|unresolved|coverage|accounting|manifest)\b/i.test(text);
 }
 
 function frontierTarget(state: ExistingConditionsSourceDispositionStateV1): Record<string, unknown> {
@@ -50,12 +57,97 @@ function frontierTarget(state: ExistingConditionsSourceDispositionStateV1): Reco
   };
 }
 
+function manifestTarget(
+  target: ExistingConditionsSourceTargetV1,
+  dispositionByTarget: Map<string, ExistingConditionsSourceDispositionStateV1>
+): Record<string, unknown> {
+  const disposition = dispositionByTarget.get(target.target_key.toLowerCase());
+  return {
+    ...target,
+    source_progress: target.source_status === "approved_exclusion"
+      ? "approved_exclusion"
+      : disposition?.disposition.disposition ?? "unregistered",
+    ...(disposition ? { source_disposition_event_key: disposition.event_key } : {})
+  };
+}
+
+function sourceTargetManifestContext(
+  state: ExistingConditionsSourceTargetManifestStateV1 | null,
+  frontier: ExistingConditionsSourceDispositionStateV1[]
+): Record<string, unknown> {
+  if (!state) {
+    return {
+      schema: "operator.existing_conditions.source_target_manifest_context.v1",
+      status: "not_found",
+      total_targets: 0,
+      targets: [],
+      native_write_allowed: false
+    };
+  }
+  const dispositionByTarget = new Map(frontier.map(value => [value.disposition.target_key.toLowerCase(), value] as const));
+  const ordered = [...state.manifest.targets].sort((left, right) => {
+    const leftTerminal = left.source_status === "approved_exclusion" ? 1 : 0;
+    const rightTerminal = right.source_status === "approved_exclusion" ? 1 : 0;
+    return leftTerminal - rightTerminal || left.target_key.localeCompare(right.target_key);
+  });
+  const bounded = ordered.slice(0, MAX_REPLAY_FRONTIER_TARGETS);
+  const registered = ordered.filter(target => dispositionByTarget.has(target.target_key.toLowerCase())).length;
+  return {
+    schema: "operator.existing_conditions.source_target_manifest_context.v1",
+    status: "available",
+    sequence: state.sequence,
+    event_key: state.event_key,
+    entry_sha256: state.entry_sha256,
+    package_fingerprint_sha256: state.manifest.package_fingerprint_sha256,
+    source_receipt_sha256: state.manifest.source_receipt_sha256,
+    source_accounting_closure: state.manifest.source_accounting_closure,
+    total_targets: ordered.length,
+    included_targets: bounded.length,
+    truncated: bounded.length < ordered.length,
+    counts: state.manifest.counts,
+    registered_source_dispositions: registered,
+    unregistered_source_targets: ordered.filter(target =>
+      target.source_status !== "approved_exclusion" && !dispositionByTarget.has(target.target_key.toLowerCase())
+    ).length,
+    targets: bounded.map(target => manifestTarget(target, dispositionByTarget)),
+    native_write_allowed: false,
+    continuation_contract:
+      "The manifest proves complete source-mark accounting only. Select exactly one non-excluded target and perform only its exact next_repair; do not infer native-write authority or discard other targets."
+  };
+}
+
 export function maybeBuildExistingConditionsSourceDispositionInspection(
   req: ChatRequest
 ): ChatResponse | null {
   if (!isReadOnlyDispositionInspection(req)) return null;
   const frontier = listLatestExistingConditionsSourceDispositionsV1(req.session_id);
+  const manifestState = latestExistingConditionsSourceTargetManifestV1(req.session_id);
   const state = frontier.at(-1) ?? null;
+  if (manifestState && (requestsWholeDispositionFrontier(req) || !state)) {
+    const dispositionByTarget = new Map(frontier.map(value => [value.disposition.target_key.toLowerCase(), value] as const));
+    const ordered = [...manifestState.manifest.targets].sort((left, right) => {
+      const leftTerminal = left.source_status === "approved_exclusion" ? 1 : 0;
+      const rightTerminal = right.source_status === "approved_exclusion" ? 1 : 0;
+      return leftTerminal - rightTerminal || left.target_key.localeCompare(right.target_key);
+    });
+    const bounded = ordered.slice(0, MAX_REPLAY_FRONTIER_TARGETS);
+    const lines = bounded.map((target, index) => {
+      const disposition = dispositionByTarget.get(target.target_key.toLowerCase());
+      const progress = target.source_status === "approved_exclusion"
+        ? "approved_exclusion"
+        : disposition?.disposition.disposition ?? "unregistered";
+      return `${index + 1}. ${target.target_key}: ${target.source_status}/${target.compilation_decision}/${progress}. Exact next repair: ${target.next_repair}`;
+    });
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message:
+        `Persisted sheet source manifest: closure=1, ${ordered.length} target(s); ` +
+        `candidate=${manifestState.manifest.counts.candidate}, unresolved=${manifestState.manifest.counts.unresolved}, ` +
+        `approved_exclusion=${manifestState.manifest.counts.approved_exclusion}. ${lines.join(" ")} ` +
+        "Select exactly one non-excluded target and perform only its exact next repair. This source-accounting report did not dispatch a native Revit action.",
+      actions: []
+    };
+  }
   if (!state) {
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
@@ -98,9 +190,10 @@ export function withLatestExistingConditionsSourceDispositionContext(
   req: ChatRequest
 ): ChatRequest {
   const frontier = listLatestExistingConditionsSourceDispositionsV1(req.session_id);
+  const manifestState = latestExistingConditionsSourceTargetManifestV1(req.session_id);
   const state = frontier.at(-1) ?? null;
   if (!state) {
-    if (!isSourceDispositionContinuationRequest(req)) return req;
+    if (!manifestState && !isSourceDispositionContinuationRequest(req)) return req;
     const context = record(req.context);
     const server = record(context.__server);
     return {
@@ -122,7 +215,8 @@ export function withLatestExistingConditionsSourceDispositionContext(
             total_targets: 0,
             targets: [],
             native_write_allowed: false
-          }
+          },
+          existing_conditions_source_target_manifest: sourceTargetManifestContext(manifestState, frontier)
         }
       }
     };
@@ -168,7 +262,8 @@ export function withLatestExistingConditionsSourceDispositionContext(
           native_write_allowed: false,
           continuation_contract:
             "Select exactly one target and its stored next_repair per turn. Preserve every other target and do not repeat accepted source searches or infer native writes from this source-only frontier."
-        }
+        },
+        existing_conditions_source_target_manifest: sourceTargetManifestContext(manifestState, frontier)
       }
     }
   };

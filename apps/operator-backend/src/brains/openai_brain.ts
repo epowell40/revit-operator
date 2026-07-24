@@ -91,6 +91,7 @@ import {
   recordExistingConditionsSourceDispositionV1,
   type ExistingConditionsSourceDispositionV1
 } from "../existing_conditions/source_disposition_ledger.js";
+import { recordExistingConditionsSourceTargetManifestV1 } from "../existing_conditions/source_target_manifest_ledger.js";
 import {
   buildRegisteredRouteSnapStagedWorkflowV1,
   planRegisteredRouteConnectorSnapV1,
@@ -2758,7 +2759,8 @@ export async function executeExistingConditionsProviderWorkbenchActions(
     registerExistingConditionsMepRepair: action =>
       registerExistingConditionsMepRepairForSession({ req, action }),
     registerExistingConditionsSourceDisposition: action =>
-      registerExistingConditionsSourceDispositionForSession({ req, action })
+      registerExistingConditionsSourceDispositionForSession({ req, action }),
+    registerExistingConditionsSourceTargetManifest: manifest => Promise.resolve(recordExistingConditionsSourceTargetManifestV1({ sessionId: req.session_id, manifest }))
   }));
   noteCandidateVisibleCompileResults(req.session_id, results);
   const failed = results.find(result => !result.ok);
@@ -22811,7 +22813,8 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
       registerExistingConditionsMepRepair: (action) =>
         registerExistingConditionsMepRepairForSession({ req, action }),
       registerExistingConditionsSourceDisposition: (action) =>
-        registerExistingConditionsSourceDispositionForSession({ req, action })
+        registerExistingConditionsSourceDispositionForSession({ req, action }),
+      registerExistingConditionsSourceTargetManifest: manifest => Promise.resolve(recordExistingConditionsSourceTargetManifestV1({ sessionId: req.session_id, manifest }))
     }));
     if (opts.initialPreflight) wb = await groundInitialRedlineWorkbenchResults(req.session_id, wb);
     noteCandidateVisibleCompileResults(req.session_id, wb);
