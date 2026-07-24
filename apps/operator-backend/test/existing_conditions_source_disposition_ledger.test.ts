@@ -15,7 +15,7 @@ import {
 import { executeExistingConditionsProviderWorkbenchActions } from "../src/brains/openai_brain.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
 import { withLatestExistingConditionsSourceDispositionContext } from "../src/existing_conditions/source_disposition_replay_context.js";
-import { decide } from "../src/brain.js";
+import { decide, decideStreaming } from "../src/brain.js";
 
 function disposition(
   overrides: Partial<ExistingConditionsSourceDispositionV1> = {}
@@ -218,6 +218,100 @@ test("a later agent turn receives the latest source disposition and exact contin
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
     if (previousBrain === undefined) delete process.env.OPERATOR_BRAIN;
     else process.env.OPERATOR_BRAIN = previousBrain;
+    try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+});
+
+test("a read-only disposition inspection never fabricates missing source state or calls a provider", { concurrency: false }, async () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-source-disposition-missing-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const request = {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: "missing-source-disposition-session",
+      message_id: "missing-source-disposition-message",
+      user_text: "Continue from the latest persisted source disposition. Do not modify Revit; report the exact next repair.",
+      context: { retained_context: "keep-me" }
+    } as const;
+    const contextual = withLatestExistingConditionsSourceDispositionContext(request);
+    assert.equal((contextual.context as any)?.retained_context, "keep-me");
+    assert.equal(
+      (contextual.context as any)?.__server?.existing_conditions_source_disposition?.status,
+      "not_found"
+    );
+    assert.equal(
+      (contextual.context as any)?.__server?.existing_conditions_source_disposition?.native_write_allowed,
+      false
+    );
+
+    let providerCalled = false;
+    const response = await decide(request, {
+      existingConditionsSourcePreflight: async value => value,
+      existingConditionsProviderDecision: async () => {
+        providerCalled = true;
+        return null;
+      },
+      geminiBrain: async () => {
+        providerCalled = true;
+        throw new Error("provider_must_not_run");
+      }
+    });
+    assert.equal(providerCalled, false);
+    assert.deepEqual(response.actions, []);
+    assert.match(response.assistant_message, /No persisted existing-conditions source disposition/i);
+    assert.match(response.assistant_message, /did not synthesize/i);
+    assert.match(response.assistant_message, /did not .*dispatch a native Revit action/i);
+
+    const deltas: string[] = [];
+    const streamed = await decideStreaming(request, {
+      onDelta: value => deltas.push(value)
+    }, {
+      geminiStreamingBrain: async () => {
+        providerCalled = true;
+        throw new Error("provider_must_not_run");
+      }
+    });
+    assert.equal(providerCalled, false);
+    assert.deepEqual(streamed.actions, []);
+    assert.equal(deltas.join(""), streamed.assistant_message);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+});
+
+test("a read-only disposition inspection reports the persisted reason and exact next repair without repeating work", { concurrency: false }, async () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-source-disposition-inspection-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const input = disposition({
+      disposition: "abstained",
+      reason_code: "registered_cross_page_no_target",
+      evidence_group_ids: [],
+      next_repair: "Inspect the next registered lighting control; preserve the provisional circuit."
+    });
+    const entry = recordExistingConditionsSourceDispositionV1({
+      sessionId: "source-disposition-inspection-session",
+      disposition: input
+    });
+    const response = await decide({
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: "source-disposition-inspection-session",
+      message_id: "source-disposition-inspection-message",
+      user_text: "Do not modify the model. Report and explain the latest persisted source disposition."
+    });
+    assert.deepEqual(response.actions, []);
+    assert.match(response.assistant_message, /registered_cross_page_no_target/);
+    assert.match(response.assistant_message, new RegExp(input.next_repair.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(response.assistant_message, new RegExp(entry.event_key));
+    assert.match(response.assistant_message, /did not repeat the source search/i);
+    assert.match(response.assistant_message, /did not .*dispatch a native Revit action/i);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
     try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* best effort */ }
   }
 });
