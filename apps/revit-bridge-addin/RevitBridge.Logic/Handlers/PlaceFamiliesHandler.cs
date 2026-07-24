@@ -54,6 +54,12 @@ namespace RevitBridge.Logic.Handlers
             public string status { get; set; } = ""; // created | skipped | failed | planned
             public long? elementId { get; set; }
             public string? reason { get; set; }
+            public string? coordinateMode { get; set; }
+            public double? requestedLocationX { get; set; }
+            public double? requestedLocationY { get; set; }
+            public double? requestedLocationZ { get; set; }
+            public double? absoluteModelCorrectionDistanceFt { get; set; }
+            public bool? absoluteModelLocationVerified { get; set; }
             public long? worksetId { get; set; }
             public string? worksetName { get; set; }
             public bool? worksetVerified { get; set; }
@@ -211,6 +217,12 @@ namespace RevitBridge.Logic.Handlers
                             instData.coordinateMode,
                             "absolute_model",
                             StringComparison.OrdinalIgnoreCase);
+                        instResult.coordinateMode = usesAbsoluteModelCoordinates
+                            ? "absolute_model"
+                            : "legacy_level_offset";
+                        instResult.requestedLocationX = point.X;
+                        instResult.requestedLocationY = point.Y;
+                        instResult.requestedLocationZ = point.Z;
                         XYZ idempotencyPoint = point;
                         XYZ levelPlacementPoint = point;
                         if (usesAbsoluteModelCoordinates && familyPlacementType != FamilyPlacementType.ViewBased)
@@ -328,6 +340,16 @@ namespace RevitBridge.Logic.Handlers
                                 throw new Exception(
                                     $"Revit created {symbol.FamilyName} / {symbol.Name} without the requested host " +
                                     $"{instData.hostElementId.Value}; placement was discarded.");
+                            }
+
+                            if (usesAbsoluteModelCoordinates &&
+                                !instData.hostElementId.HasValue &&
+                                familyPlacementType != FamilyPlacementType.ViewBased)
+                            {
+                                instResult.absoluteModelCorrectionDistanceFt =
+                                    AlignAndVerifyAbsoluteModelLocation(doc, fi, point);
+                                instResult.absoluteModelLocationVerified = true;
+                                actualPlacementPoint = point;
                             }
 
                             if (instData.rotationDegrees.HasValue && Math.Abs(instData.rotationDegrees.Value) > 1e-9)
@@ -630,6 +652,46 @@ namespace RevitBridge.Logic.Handlers
         {
             if (fi.Location is LocationPoint lp) return lp.Point;
             return null;
+        }
+
+        private static double AlignAndVerifyAbsoluteModelLocation(
+            Document doc,
+            FamilyInstance instance,
+            XYZ requestedPoint)
+        {
+            const double toleranceFt = 1e-7;
+            doc.Regenerate();
+            if (instance.Location is not LocationPoint beforeLocation)
+            {
+                throw new Exception(
+                    $"absolute_model placement for element {ElementIdCompat.GetValue(instance.Id)} " +
+                    "cannot be verified because Revit did not expose a LocationPoint.");
+            }
+
+            var correction = requestedPoint - beforeLocation.Point;
+            var correctionDistance = correction.GetLength();
+            if (correctionDistance > toleranceFt)
+            {
+                ElementTransformUtils.MoveElement(doc, instance.Id, correction);
+                doc.Regenerate();
+            }
+
+            if (instance.Location is not LocationPoint afterLocation)
+            {
+                throw new Exception(
+                    $"absolute_model placement for element {ElementIdCompat.GetValue(instance.Id)} " +
+                    "lost its LocationPoint during verification.");
+            }
+
+            var residual = afterLocation.Point.DistanceTo(requestedPoint);
+            if (residual > toleranceFt)
+            {
+                throw new Exception(
+                    $"absolute_model placement for element {ElementIdCompat.GetValue(instance.Id)} " +
+                    $"did not retain the requested point; residual is {residual:0.#########} ft.");
+            }
+
+            return correctionDistance;
         }
 
         private static void RotateAboutZ(Document doc, ElementId elementId, XYZ origin, double rotationDegrees)

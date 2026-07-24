@@ -1372,11 +1372,22 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalLong(obj.Value, "sourceViewId", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "startElementId", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "endElementId", out error)) return false;
+                if (!ValidateOptionalLong(obj.Value, "startConnectorId", out error)) return false;
+                if (!ValidateOptionalXyzArray(obj.Value, "expectedStartOriginXyz", out error)) return false;
+                if (!ValidateOptionalNumber(obj.Value, "originToleranceFt", out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "equipmentElementId", out error)) return false;
                 if (!ValidateOptionalLongArray(obj.Value, "terminalElementIds", maxCount: 20000, out error)) return false;
                 if (!ValidateOptionalLongArray(obj.Value, "equipmentElementIds", maxCount: 20000, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "ductTypeName", maxLen: 160, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "ductSize", maxLen: 64, out error)) return false;
+                if (!ValidateOptionalLong(obj.Value, "flexDuctTypeId", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "flexDuctTypeName", maxLen: 160, out error)) return false;
+                if (!ValidateRoutePointArray(obj.Value, "flexPoints", minCount: 1, maxCount: 64, required: false, out error)) return false;
+                if (!ValidateOptionalXyzArray(obj.Value, "flexStartTangentXyz", out error)) return false;
+                if (!ValidateOptionalXyzArray(obj.Value, "flexEndTangentXyz", out error)) return false;
+                if (!ValidateOptionalLong(obj.Value, "worksetId", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "worksetName", maxLen: 160, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "verify", out error)) return false;
                 if (!ValidateOptionalInt(obj.Value, "maxBranches", out error)) return false;
                 if (!ValidateOptionalInt(obj.Value, "maxElbowsPerBranch", out error)) return false;
                 if (!ValidateOptionalNumber(obj.Value, "maxLengthFeet", out error)) return false;
@@ -1514,6 +1525,7 @@ namespace RevitBridge.Operator
                     actionName == "connect_elements_with_flex" ||
                     actionName == "connect_with_flex" ||
                     actionName == "add_flex" ||
+                    actionName == "create_open_flex_from_element" ||
                     actionName == "route_terminals_to_equipment" ||
                     actionName == "route_duct_system" ||
                     actionName == "route_to_terminals" ||
@@ -1634,6 +1646,22 @@ namespace RevitBridge.Operator
                     if (!hasEquipment)
                     {
                         error = "mep-workflows.route_terminals_to_equipment requires equipmentElementId.";
+                        return false;
+                    }
+                }
+
+                if (normalizedAction == "create_open_flex_from_element")
+                {
+                    var hasStart = obj.Value.TryGetProperty("startElementId", out var startElement) &&
+                                   startElement.ValueKind == JsonValueKind.Number &&
+                                   startElement.TryGetInt64(out var startElementId) &&
+                                   startElementId > 0;
+                    var hasFlexPoints = obj.Value.TryGetProperty("flexPoints", out var flexPoints) &&
+                                        flexPoints.ValueKind == JsonValueKind.Array &&
+                                        flexPoints.GetArrayLength() >= 1;
+                    if (!hasStart || !hasFlexPoints)
+                    {
+                        error = "mep-workflows.create_open_flex_from_element requires a positive startElementId and at least one flexPoints entry.";
                         return false;
                     }
                 }
@@ -2592,6 +2620,8 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalLong(obj.Value, "expectedTakeoffTypeId", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "expectedTakeoffFamilyName", maxLen: 256, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "expectedTakeoffTypeName", maxLen: 256, out error)) return false;
+                if (!ValidateOptionalLong(obj.Value, "worksetId", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "worksetName", maxLen: 160, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "verify", out error)) return false;
 

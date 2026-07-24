@@ -214,11 +214,18 @@ import {
   type SheetPixelInterpretationContextV1,
   type SheetPixelInterpretationInputV1
 } from "../existing_conditions/sheet_pixel_interpretation.js";
-import { validateSheetPixelEvidenceV1 } from "../existing_conditions/sheet_pixel_evidence.js";
+import {
+  validateSheetPixelEvidenceV1,
+  type SheetPixelEvidencePolicyV1
+} from "../existing_conditions/sheet_pixel_evidence.js";
 import {
   extractSheetVectorTextV1,
   type SheetVectorTextExtractionInputV1
 } from "../existing_conditions/sheet_vector_text.js";
+import {
+  associateSheetVectorSymbolsV1,
+  type SheetVectorSymbolAssociationInputV1
+} from "../existing_conditions/sheet_vector_symbol_association.js";
 import {
   planRegisteredRouteConnectorSnapV1,
   type RegisteredRouteSnapCandidateV1,
@@ -434,6 +441,7 @@ function usage(): never {
     "  npm run existing-conditions -- normalize-plan-trace-spines --input <bounded-normalization-policy.json> --receipt <spine-receipt.json> --out <normalized-spine-receipt.json>",
     "  npm run existing-conditions -- detect-repeated-mep-symbols --input <hash-bound-template-search.json> --out <candidate-receipt.json>",
     "  npm run existing-conditions -- extract-sheet-vector-text --input <hash-bound-pdf-render-and-text-filter.json> --out <vector-text-receipt.json>",
+    "  npm run existing-conditions -- associate-sheet-vector-symbols --input <hash-bound-vector-and-repeated-symbol-receipts.json> --out <association-receipt.json>",
     "  npm run existing-conditions -- detect-sheet-chromatic-components --input <hash-bound-hue-component-search.json> --out <candidate-receipt.json> [--overlay-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- validate-sheet-route-chromatic-coverage --input <hash-bound-source-policy.json> [--candidate <sheet-interpretation-or-provider-receipt.json>] --out <coverage-receipt.json> [--overlay-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- compile-sheet-overlap-routes --input <registered-overlap-tiles.json> --out <parent-route-compilation.json>",
@@ -444,7 +452,7 @@ function usage(): never {
     "  npm run existing-conditions -- build-sheet-topology-calibration --input <sealed-blind-outcomes.json> --out <calibration-profile.json>",
     "  npm run existing-conditions -- compile-sheet-pixel-interpretation --input <normalized-sheet-observations.json> --context <trusted-frames-and-calibration.json> --out <compiled-topology.json>",
     "  npm run existing-conditions -- interpret-sheet-gemini --input <source-only-sheet-request.json> --out <normalized-sheet-observations.json>",
-    "  npm run existing-conditions -- validate-sheet-pixel-evidence --input <observations-or-provider-receipt.json> --image <source-image.png> --out <evidence-receipt.json> [--overlay-out <overlay.png>]",
+    "  npm run existing-conditions -- validate-sheet-pixel-evidence --input <observations-or-provider-receipt.json> --image <source-image.png> --out <evidence-receipt.json> [--policy <evidence-policy.json>] [--overlay-out <overlay.png>]",
     "  npm run existing-conditions -- plan-registered-route-snap --input <registered-route-candidate.json> --context <native-connectors-and-policy.json> --out <staged-route-action.json>",
     "  npm run existing-conditions -- discover-registered-route-frontier --input <source-registered-route.json> --context <native-connectors-and-policy.json> --out <resolved-frontier.json>",
     "  npm run existing-conditions -- compile-provisional-plan-traces --input <plan-trace-draft.json> --context <source-accounting-context.json> --out <compiled-plan.json> [--workflow-out <atomic-dry-run-request.json> --allow-unscored-user-workflow] [--max-created <count>]",
@@ -2062,6 +2070,19 @@ async function main(): Promise<void> {
     );
     return;
   }
+  if (command === "associate-sheet-vector-symbols") {
+    const inputPath = requiredArgument("--input");
+    const outputPath = requiredArgument("--out");
+    assertFreshDistinctOutputPaths(
+      [{ flag: "--out", value: outputPath }],
+      [{ flag: "--input", value: inputPath }]
+    );
+    writeJson(
+      outputPath,
+      await associateSheetVectorSymbolsV1(readJson(inputPath) as SheetVectorSymbolAssociationInputV1)
+    );
+    return;
+  }
   if (command === "detect-sheet-chromatic-components") {
     const inputPath = requiredArgument("--input");
     const outputPath = requiredArgument("--out");
@@ -2207,14 +2228,16 @@ async function main(): Promise<void> {
     const inputPath = requiredArgument("--input");
     const imagePath = requiredArgument("--image");
     const outputPath = requiredArgument("--out");
+    const policyPath = argument("--policy");
     const overlayPath = argument("--overlay-out");
     assertFreshDistinctOutputPaths(
       [{ flag: "--out", value: outputPath }, ...(overlayPath ? [{ flag: "--overlay-out", value: overlayPath }] : [])],
-      [{ flag: "--input", value: inputPath }, { flag: "--image", value: imagePath }]
+      [{ flag: "--input", value: inputPath }, { flag: "--image", value: imagePath }, ...(policyPath ? [{ flag: "--policy", value: policyPath }] : [])]
     );
     writeJson(outputPath, await validateSheetPixelEvidenceV1({
       image_path: imagePath,
       interpretation: sheetPixelInterpretation(readJson(inputPath)),
+      ...(policyPath ? { policy: readJson(policyPath) as Partial<SheetPixelEvidencePolicyV1> } : {}),
       ...(overlayPath ? { overlay_path: overlayPath } : {})
     }));
     return;

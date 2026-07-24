@@ -33,6 +33,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             public long? expectedTakeoffTypeId { get; set; }
             public string? expectedTakeoffFamilyName { get; set; }
             public string? expectedTakeoffTypeName { get; set; }
+            public long? worksetId { get; set; }
+            public string? worksetName { get; set; }
             public bool dryRun { get; set; } = true;
             public bool verify { get; set; } = true;
         }
@@ -70,6 +72,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 return Task.FromResult<object>(HandleAirTerminalOnDuct(doc, main, branch, p));
             }
             GuardCurveKind(branch, kind, "branchElementId", allowFlex: true);
+            var targetWorkset = ResolveTargetWorkset(doc, branch, p.worksetId, p.worksetName, out var worksetSource);
 
             var branchConnector = ResolveOpenBranchConnector(branch, p);
             var branchOrigin = branchConnector.Origin;
@@ -102,6 +105,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             var connectedDuringTransaction = false;
             var connectedAfterCommit = false;
             var committedFittingVerified = false;
+            var worksetVerified = targetWorkset == null;
+            object? fittingWorksetReadback = null;
             var rolledBack = false;
             var rollbackVerified = false;
             var nativeFailures = new List<string>();
@@ -127,6 +132,12 @@ namespace RevitBridge.Logic.Handlers.MEP
                         createdTypeId = ElementIdCompat.GetValue(fitting.GetTypeId());
                         ReadFamilyType(fitting, out createdFamilyName, out createdTypeName);
                         GuardExpectedTakeoffIdentity(p, createdTypeId.Value, createdFamilyName, createdTypeName);
+                        if (targetWorkset != null)
+                        {
+                            SetAndVerifyWorkset(fitting, targetWorkset);
+                            worksetVerified = true;
+                            fittingWorksetReadback = DescribeWorkset(targetWorkset, worksetSource);
+                        }
 
                         var refreshedBranchConnector = ResolveConnectorByIdentityOrOrigin(
                             branch,
@@ -155,6 +166,12 @@ namespace RevitBridge.Logic.Handlers.MEP
                         createdTypeId = ElementIdCompat.GetValue(committedFitting.GetTypeId());
                         ReadFamilyType(committedFitting, out createdFamilyName, out createdTypeName);
                         GuardExpectedTakeoffIdentity(p, createdTypeId.Value, createdFamilyName, createdTypeName);
+                        if (targetWorkset != null)
+                        {
+                            VerifyWorkset(committedFitting, targetWorkset);
+                            worksetVerified = true;
+                            fittingWorksetReadback = DescribeWorkset(targetWorkset, worksetSource);
+                        }
 
                         var committedBranchConnector = ResolveConnectorByIdentityOrOrigin(
                             branch,
@@ -253,6 +270,9 @@ namespace RevitBridge.Logic.Handlers.MEP
                 createdTypeId,
                 createdFamilyName,
                 createdTypeName,
+                requestedWorkset = targetWorkset == null ? null : DescribeWorkset(targetWorkset, worksetSource),
+                fittingWorkset = fittingWorksetReadback,
+                worksetVerified,
                 connectedDuringTransaction,
                 connectedAfterCommit,
                 committedFittingVerified,
@@ -648,6 +668,83 @@ namespace RevitBridge.Logic.Handlers.MEP
                 throw new InvalidOperationException($"Created takeoff type name '{actualTypeName}' does not match expected type name '{p.expectedTakeoffTypeName}'.");
             }
         }
+
+        private static Workset? ResolveTargetWorkset(
+            Document doc,
+            Element branch,
+            long? requestedWorksetId,
+            string? requestedWorksetName,
+            out string source)
+        {
+            source = "not_applicable";
+            var requestedName = (requestedWorksetName ?? string.Empty).Trim();
+            var hasRequestedId = requestedWorksetId.HasValue && requestedWorksetId.Value > 0;
+            var hasRequestedName = requestedName.Length > 0;
+            if (!doc.IsWorkshared)
+            {
+                if (hasRequestedId || hasRequestedName)
+                    throw new InvalidOperationException("A takeoff workset was requested, but the active model is not workshared.");
+                return null;
+            }
+
+            var userWorksets = new FilteredWorksetCollector(doc)
+                .OfKind(WorksetKind.UserWorkset)
+                .Cast<Workset>()
+                .ToList();
+            if (hasRequestedId || hasRequestedName)
+            {
+                var byId = hasRequestedId
+                    ? userWorksets.FirstOrDefault(workset => workset.Id.IntegerValue == requestedWorksetId!.Value)
+                    : null;
+                var byName = hasRequestedName
+                    ? userWorksets.FirstOrDefault(workset => string.Equals(workset.Name, requestedName, StringComparison.OrdinalIgnoreCase))
+                    : null;
+                if (hasRequestedId && byId == null)
+                    throw new InvalidOperationException($"Takeoff workset id {requestedWorksetId} was not found as a user workset.");
+                if (hasRequestedName && byName == null)
+                    throw new InvalidOperationException($"Takeoff workset '{requestedName}' was not found as a user workset.");
+                if (byId != null && byName != null && byId.Id.IntegerValue != byName.Id.IntegerValue)
+                    throw new InvalidOperationException($"Takeoff workset id {requestedWorksetId} does not match workset name '{requestedName}'.");
+                source = "explicit";
+                return byId ?? byName;
+            }
+
+            var branchWorksetId = branch.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM)?.AsInteger() ?? -1;
+            var inherited = userWorksets.FirstOrDefault(workset => workset.Id.IntegerValue == branchWorksetId);
+            if (inherited != null)
+            {
+                source = "branch_element";
+                return inherited;
+            }
+
+            source = "unresolved_branch_workset";
+            return null;
+        }
+
+        private static void SetAndVerifyWorkset(Element fitting, Workset workset)
+        {
+            var parameter = fitting.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM)
+                ?? throw new InvalidOperationException($"Takeoff fitting {ElementIdCompat.GetValue(fitting.Id)} does not expose ELEM_PARTITION_PARAM.");
+            if (parameter.IsReadOnly)
+                throw new InvalidOperationException($"Takeoff fitting {ElementIdCompat.GetValue(fitting.Id)} has a read-only workset parameter.");
+            parameter.Set(workset.Id.IntegerValue);
+            VerifyWorkset(fitting, workset);
+        }
+
+        private static void VerifyWorkset(Element fitting, Workset workset)
+        {
+            var actual = fitting.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM)?.AsInteger() ?? -1;
+            if (actual != workset.Id.IntegerValue)
+                throw new InvalidOperationException(
+                    $"Takeoff fitting {ElementIdCompat.GetValue(fitting.Id)} workset {actual} did not match requested workset {workset.Id.IntegerValue} ({workset.Name}).");
+        }
+
+        private static object DescribeWorkset(Workset workset, string source) => new
+        {
+            id = workset.Id.IntegerValue,
+            name = workset.Name,
+            source
+        };
 
         private static void ReadFamilyType(Element element, out string? familyName, out string? typeName)
         {

@@ -81,6 +81,9 @@ namespace RevitBridge.Handlers
             public long? sourceViewId { get; set; }
             public long? startElementId { get; set; }
             public long? endElementId { get; set; }
+            public long? startConnectorId { get; set; }
+            public double[]? expectedStartOriginXyz { get; set; }
+            public double? originToleranceFt { get; set; }
             public long? equipmentElementId { get; set; }
             public List<long>? terminalElementIds { get; set; }
             public List<long>? equipmentElementIds { get; set; }
@@ -89,6 +92,8 @@ namespace RevitBridge.Handlers
             public long? flexDuctTypeId { get; set; }
             public string? flexDuctTypeName { get; set; }
             public List<FlexRoutePoint>? flexPoints { get; set; }
+            public double[]? flexStartTangentXyz { get; set; }
+            public double[]? flexEndTangentXyz { get; set; }
             public long? worksetId { get; set; }
             public string? worksetName { get; set; }
             public bool? verify { get; set; }
@@ -129,6 +134,7 @@ namespace RevitBridge.Handlers
                 "connect_elements_with_elbow" => Task.FromResult(ConnectElementsWithDuct(app, doc, p, "elbow")),
                 "connect_elements_with_transition" => Task.FromResult(ConnectElementsWithDuct(app, doc, p, "transition")),
                 "connect_elements_with_flex" => Task.FromResult(ConnectElementsWithDuct(app, doc, p, "flex")),
+                "create_open_flex_from_element" => Task.FromResult(CreateOpenFlexFromElement(doc, p)),
                 "route_terminals_to_equipment" => Task.FromResult(RouteTerminalsToEquipment(app, doc, p)),
                 "place_equipment_and_connect" => Task.FromResult(PlaceEquipmentAndConnect(app, doc, p)),
                 "create_riser_offset" => Task.FromResult(CreateRiserOffset(app, doc, p)),
@@ -136,7 +142,7 @@ namespace RevitBridge.Handlers
                 "create_hvac_schematic" => Task.FromResult(CreateHvacSchematic(app, doc, p)),
                 "duplicate_3d_with_section_box" => Task.FromResult(Duplicate3dWithSectionBox(app, doc, p)),
                 "create_dependent_with_crop" => Task.FromResult(CreateDependentWithCrop(app, doc, p)),
-                _ => throw new InvalidOperationException("mep-workflows.action must be one of: set_duct_parameter_set, audit_duct_slope, create_duct_fitting_schedule, create_mechanical_plan, create_coordination_3d_view, create_sections_along_ducts, place_family_along_ducts, connect_elements_with_duct, connect_elements_with_elbow, connect_elements_with_transition, connect_elements_with_flex, route_terminals_to_equipment, place_equipment_and_connect, create_riser_offset, ensure_spaces_and_tag, create_hvac_schematic, duplicate_3d_with_section_box, create_dependent_with_crop.")
+                _ => throw new InvalidOperationException("mep-workflows.action must be one of: set_duct_parameter_set, audit_duct_slope, create_duct_fitting_schedule, create_mechanical_plan, create_coordination_3d_view, create_sections_along_ducts, place_family_along_ducts, connect_elements_with_duct, connect_elements_with_elbow, connect_elements_with_transition, connect_elements_with_flex, create_open_flex_from_element, route_terminals_to_equipment, place_equipment_and_connect, create_riser_offset, ensure_spaces_and_tag, create_hvac_schematic, duplicate_3d_with_section_box, create_dependent_with_crop.")
             };
         }
 
