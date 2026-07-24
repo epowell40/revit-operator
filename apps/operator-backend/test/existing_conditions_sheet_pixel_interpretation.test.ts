@@ -101,6 +101,33 @@ test("normalized sheet observations compile into one cross-sheet model-space run
   assert.deepEqual(result.compiled_topology.native_batch_groups[0]?.primitive_ids, ["run-left", "run-right"]);
 });
 
+test("pixel compilation accepts a hash-bound vertical riser across registered levels", () => {
+  const verticalInput = input();
+  verticalInput.primitives[0]!.endpoints![1]!.continuation_kind = "vertical_riser";
+  verticalInput.primitives[1]!.endpoints![0]!.continuation_kind = "vertical_riser";
+  const trusted = context();
+  trusted.trusted_views[0]!.source_view.level_key = "L1";
+  trusted.trusted_views[1]!.source_view.level_key = "L2";
+  trusted.trusted_views[1]!.frame.top_left_xyz[2] = 12;
+  trusted.trusted_views[1]!.frame.top_right_xyz[2] = 12;
+  trusted.trusted_views[1]!.frame.bottom_left_xyz[2] = 12;
+  trusted.trusted_views[1]!.frame.target_level_elevation_ft = 12;
+  trusted.trusted_continuations = [{
+    continuation_key: "RUN-1",
+    continuation_kind: "vertical_riser",
+    endpoint_keys: ["run-left:left:end", "run-right:right:start"],
+    evidence_basis: "legible_source_evidence",
+    evidence_sha256: HASH_B
+  }];
+
+  const result = compileSheetPixelInterpretationV1(verticalInput, trusted);
+
+  assert.equal(result.compiled_topology.connections.length, 1);
+  assert.equal(result.compiled_topology.connections[0]?.continuation_kind, "vertical_riser");
+  assert.equal(result.compiled_topology.connections[0]?.continuation_evidence_sha256, HASH_B);
+  assert.deepEqual(result.compiled_topology.trusted_continuation_evidence_sha256s, [HASH_B]);
+});
+
 test("pixel interpretation cannot escape the normalized source frame", () => {
   const invalid = input();
   invalid.primitives[0]!.points[0]!.u = 1.01;

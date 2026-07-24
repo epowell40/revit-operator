@@ -34,12 +34,15 @@ export type SheetTopologyClaimV1 = {
   basis: "legible_source_evidence" | "approved_project_mapping" | "provider_hypothesis" | "unresolved";
 };
 
+export type SheetTopologyContinuationKindV1 = "same_level_run" | "vertical_riser";
+
 export type SheetTopologyEndpointV1 = {
   endpoint_key: string;
   point: SheetTopologyPoint;
   outward_direction_xy: [number, number];
   boundary: "internal" | "view_boundary" | "sheet_continuation";
   continuation_key?: string;
+  continuation_kind?: SheetTopologyContinuationKindV1;
 };
 
 export type SheetTopologyPrimitiveV1 = {
@@ -138,7 +141,16 @@ export type SheetTopologyCompilationInputV1 = {
 export type SheetTopologyCompilationContextV1 = {
   trusted_source_views: SheetTopologySourceViewV1[];
   calibration_profile: SheetTopologyCalibrationProfileV1;
+  trusted_continuations?: SheetTopologyTrustedContinuationV1[];
   policy?: Partial<SheetTopologyCompilationPolicyV1>;
+};
+
+export type SheetTopologyTrustedContinuationV1 = {
+  continuation_key: string;
+  continuation_kind: SheetTopologyContinuationKindV1;
+  endpoint_keys: [string, string];
+  evidence_basis: "legible_source_evidence" | "approved_project_mapping";
+  evidence_sha256: string;
 };
 
 export type SheetTopologyConnectionV1 = {
@@ -148,6 +160,8 @@ export type SheetTopologyConnectionV1 = {
   basis: "explicit_continuation" | "registered_endpoint_proximity";
   scope: "within_view" | "cross_view" | "cross_sheet";
   status: "accepted" | "provisional";
+  continuation_kind?: SheetTopologyContinuationKindV1;
+  continuation_evidence_sha256?: string;
 };
 
 export type SheetTopologyJunctionV1 = {
@@ -177,6 +191,7 @@ export type CompiledSheetTopologyV1 = {
   package_id: string;
   input_fingerprint_sha256: string;
   calibration_profile_sha256: string;
+  trusted_continuation_evidence_sha256s: string[];
   status: "ready" | "partially_ready" | "blocked";
   source_accounting_closure: number;
   canonical_primitive_ids: string[];
@@ -250,6 +265,10 @@ function distance(a: SheetTopologyPoint, b: SheetTopologyPoint): number {
   return Math.hypot(a.x - b.x, a.y - b.y, dz);
 }
 
+function planDistance(a: SheetTopologyPoint, b: SheetTopologyPoint): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
 function normalizedDirection(value: [number, number], label: string): [number, number] {
   if (!Array.isArray(value) || value.length !== 2) throw new Error(`${label}_must_have_two_values`);
   const x = finite(value[0], `${label}_x`);
@@ -271,6 +290,15 @@ function claim(value: SheetTopologyClaimV1 | undefined, label: string): SheetTop
 
 function claimsCompatible(a: SheetTopologyPrimitiveV1, b: SheetTopologyPrimitiveV1): boolean {
   for (const key of ["system", "size", "type", "family", "host", "elevation", "vertical_extent"] as const) {
+    const left = clean(a.claims?.[key]?.value).toLowerCase();
+    const right = clean(b.claims?.[key]?.value).toLowerCase();
+    if (left && right && left !== right) return false;
+  }
+  return true;
+}
+
+function verticalContinuationClaimsCompatible(a: SheetTopologyPrimitiveV1, b: SheetTopologyPrimitiveV1): boolean {
+  for (const key of ["system", "size", "type", "family", "host"] as const) {
     const left = clean(a.claims?.[key]?.value).toLowerCase();
     const right = clean(b.claims?.[key]?.value).toLowerCase();
     if (left && right && left !== right) return false;
@@ -419,6 +447,34 @@ export function compileSheetTopologyV1(
     views.set(key, value);
   }
 
+  const trustedContinuations = new Map<string, SheetTopologyTrustedContinuationV1>();
+  for (const [index, value] of (context.trusted_continuations ?? []).entries()) {
+    if (!value || typeof value !== "object") throw new Error(`sheet_topology_trusted_continuation_${index}_invalid`);
+    const key = requiredText(value.continuation_key, `sheet_topology_trusted_continuation_${index}_key`);
+    if (trustedContinuations.has(key)) throw new Error(`sheet_topology_duplicate_trusted_continuation:${key}`);
+    if (!["same_level_run", "vertical_riser"].includes(value.continuation_kind)) {
+      throw new Error(`sheet_topology_trusted_continuation_${key}_kind_invalid`);
+    }
+    if (!Array.isArray(value.endpoint_keys) || value.endpoint_keys.length !== 2) {
+      throw new Error(`sheet_topology_trusted_continuation_${key}_endpoint_pair_required`);
+    }
+    const endpointKeys = value.endpoint_keys.map((endpointKey, endpointIndex) => requiredText(
+      endpointKey,
+      `sheet_topology_trusted_continuation_${key}_endpoint_${endpointIndex}`
+    )).sort() as [string, string];
+    if (endpointKeys[0] === endpointKeys[1]) throw new Error(`sheet_topology_trusted_continuation_${key}_distinct_endpoints_required`);
+    if (!["legible_source_evidence", "approved_project_mapping"].includes(value.evidence_basis)) {
+      throw new Error(`sheet_topology_trusted_continuation_${key}_basis_invalid`);
+    }
+    trustedContinuations.set(key, {
+      continuation_key: key,
+      continuation_kind: value.continuation_kind,
+      endpoint_keys: endpointKeys,
+      evidence_basis: value.evidence_basis,
+      evidence_sha256: sha256(value.evidence_sha256, `sheet_topology_trusted_continuation_${key}_evidence_sha256`)
+    });
+  }
+
   const bins = context.calibration_profile.bins;
   requiredText(context.calibration_profile.profile_id, "sheet_topology_calibration_profile_id");
   const calibrationProvenance = context.calibration_profile.provenance;
@@ -475,11 +531,15 @@ export function compileSheetTopologyV1(
         endpoint_key: endpointKey,
         point: point(entry.point, `sheet_topology_endpoint_${endpointKey}_point`),
         outward_direction_xy: normalizedDirection(entry.outward_direction_xy, `sheet_topology_endpoint_${endpointKey}_direction`),
-        ...(clean(entry.continuation_key) ? { continuation_key: clean(entry.continuation_key) } : {})
+        ...(clean(entry.continuation_key) ? { continuation_key: clean(entry.continuation_key) } : {}),
+        ...(entry.continuation_kind ? { continuation_kind: entry.continuation_kind } : {})
       };
       if (!["internal", "view_boundary", "sheet_continuation"].includes(normalized.boundary)) throw new Error(`sheet_topology_endpoint_boundary_invalid:${endpointKey}`);
-      if (normalized.boundary === "internal" && normalized.continuation_key) throw new Error(`sheet_topology_internal_endpoint_cannot_have_continuation:${endpointKey}`);
+      if (normalized.continuation_kind && !["same_level_run", "vertical_riser"].includes(normalized.continuation_kind)) throw new Error(`sheet_topology_endpoint_continuation_kind_invalid:${endpointKey}`);
+      if (normalized.boundary === "internal" && (normalized.continuation_key || normalized.continuation_kind)) throw new Error(`sheet_topology_internal_endpoint_cannot_have_continuation:${endpointKey}`);
       if (normalized.boundary === "sheet_continuation" && !normalized.continuation_key) throw new Error(`sheet_topology_sheet_continuation_key_required:${endpointKey}`);
+      if (normalized.continuation_kind && !normalized.continuation_key) throw new Error(`sheet_topology_endpoint_continuation_kind_requires_key:${endpointKey}`);
+      if (normalized.continuation_kind === "vertical_riser" && normalized.boundary !== "sheet_continuation") throw new Error(`sheet_topology_vertical_riser_requires_sheet_continuation:${endpointKey}`);
       const atPrimitiveEnd = distance(normalized.point, value.points[0]!) <= policy.endpoint_tolerance_ft
         || distance(normalized.point, value.points[value.points.length - 1]!) <= policy.endpoint_tolerance_ft;
       if (!atPrimitiveEnd) throw new Error(`sheet_topology_endpoint_not_on_primitive_end:${endpointKey}`);
@@ -557,6 +617,26 @@ export function compileSheetTopologyV1(
   const connections: SheetTopologyConnectionV1[] = [];
   const junctions: SheetTopologyJunctionV1[] = [];
   const connectedEndpointKeys = new Set<string>();
+  const usedTrustedContinuationEvidenceSha256s = new Set<string>();
+
+  const continuationKind = (endpoint: SheetTopologyEndpointV1): SheetTopologyContinuationKindV1 | undefined => (
+    endpoint.continuation_key ? endpoint.continuation_kind ?? "same_level_run" : undefined
+  );
+
+  const trustedContinuationForPair = (leftKey: string, rightKey: string): SheetTopologyTrustedContinuationV1 | undefined => {
+    const left = endpoints.get(leftKey)!;
+    const right = endpoints.get(rightKey)!;
+    const key = clean(left.endpoint.continuation_key);
+    if (!key || key !== clean(right.endpoint.continuation_key)) return undefined;
+    const trusted = trustedContinuations.get(key);
+    if (!trusted) return undefined;
+    const pair = [leftKey, rightKey].sort();
+    return pair[0] === trusted.endpoint_keys[0] && pair[1] === trusted.endpoint_keys[1]
+      && continuationKind(left.endpoint) === trusted.continuation_kind
+      && continuationKind(right.endpoint) === trusted.continuation_kind
+      ? trusted
+      : undefined;
+  };
 
   const addConnection = (leftKey: string, rightKey: string, basis: SheetTopologyConnectionV1["basis"]): void => {
     const left = endpoints.get(leftKey)!;
@@ -572,13 +652,18 @@ export function compileSheetTopologyV1(
       && connectionClaimsResolved(right.primitive, rightView.discipline)
       ? "accepted" : "provisional";
     const pair = [leftKey, rightKey].sort() as [string, string];
+    const explicitContinuationKind = basis === "explicit_continuation" ? continuationKind(left.endpoint) : undefined;
+    const trustedContinuation = basis === "explicit_continuation" ? trustedContinuationForPair(leftKey, rightKey) : undefined;
+    if (trustedContinuation) usedTrustedContinuationEvidenceSha256s.add(trustedContinuation.evidence_sha256);
     connections.push({
       connection_id: `connection:${digest(pair).slice(0, 20)}`,
       primitive_ids: [leftId, rightId].sort() as [string, string],
       endpoint_keys: pair,
       basis,
       scope,
-      status
+      status,
+      ...(explicitContinuationKind ? { continuation_kind: explicitContinuationKind } : {}),
+      ...(trustedContinuation ? { continuation_evidence_sha256: trustedContinuation.evidence_sha256 } : {})
     });
     connectedEndpointKeys.add(leftKey);
     connectedEndpointKeys.add(rightKey);
@@ -598,9 +683,22 @@ export function compileSheetTopologyV1(
     const leftView = views.get(left.primitive.source_view_key)!;
     const rightView = views.get(right.primitive.source_view_key)!;
     if (leftView.discipline !== rightView.discipline) return "discipline_mismatch";
-    if (leftView.level_key !== rightView.level_key) return "level_mismatch";
-    if (!claimsCompatible(left.primitive, right.primitive)) return "claim_mismatch";
-    if (distance(left.endpoint.point, right.endpoint.point) > policy.endpoint_tolerance_ft) return "endpoint_distance_exceeded";
+    const leftKind = continuationKind(left.endpoint);
+    const rightKind = continuationKind(right.endpoint);
+    if (leftKind !== rightKind) return "continuation_kind_mismatch";
+    const crossLevel = leftView.level_key !== rightView.level_key;
+    if (crossLevel) {
+      if (leftKind !== "vertical_riser") return "level_mismatch";
+      if (left.endpoint.boundary !== "sheet_continuation" || right.endpoint.boundary !== "sheet_continuation") return "vertical_riser_requires_sheet_continuation";
+      if (leftView.sheet_key === rightView.sheet_key) return "vertical_riser_requires_cross_sheet_pair";
+      if (!trustedContinuationForPair(leftKey, rightKey)) return "vertical_riser_trusted_evidence_required";
+      if (!verticalContinuationClaimsCompatible(left.primitive, right.primitive)) return "claim_mismatch";
+      if (planDistance(left.endpoint.point, right.endpoint.point) > policy.endpoint_tolerance_ft) return "endpoint_plan_distance_exceeded";
+    } else {
+      if (leftKind === "vertical_riser") return "vertical_riser_requires_level_transition";
+      if (!claimsCompatible(left.primitive, right.primitive)) return "claim_mismatch";
+      if (distance(left.endpoint.point, right.endpoint.point) > policy.endpoint_tolerance_ft) return "endpoint_distance_exceeded";
+    }
     const dot = left.direction[0] * right.direction[0] + left.direction[1] * right.direction[1];
     if (dot > -policy.minimum_opposed_direction_dot) return "directions_not_opposed";
     return null;
@@ -811,6 +909,7 @@ export function compileSheetTopologyV1(
     package_id: packageId,
     input_fingerprint_sha256: digest(input),
     calibration_profile_sha256: digest(context.calibration_profile),
+    trusted_continuation_evidence_sha256s: [...usedTrustedContinuationEvidenceSha256s].sort(),
     status,
     source_accounting_closure: input.source_marks.length === sourceMarkIds.size ? 1 : sourceMarkIds.size / input.source_marks.length,
     canonical_primitive_ids: canonicalIds,

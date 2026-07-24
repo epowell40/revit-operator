@@ -196,14 +196,16 @@ export function proposeSheetRouteJunctionRepairsV1(args: {
             point: { ...childStart },
             outward_direction_uv: [-forward[0], -forward[1]],
             boundary: startOuter?.boundary ?? "internal",
-            ...(startOuter?.continuation_key ? { continuation_key: startOuter.continuation_key } : {})
+            ...(startOuter?.continuation_key ? { continuation_key: startOuter.continuation_key } : {}),
+            ...(startOuter?.continuation_kind ? { continuation_kind: startOuter.continuation_kind } : {})
           },
           {
             endpoint_key: `${childId}:end`,
             point: { ...childEnd },
             outward_direction_uv: forward,
             boundary: endOuter?.boundary ?? "internal",
-            ...(endOuter?.continuation_key ? { continuation_key: endOuter.continuation_key } : {})
+            ...(endOuter?.continuation_key ? { continuation_key: endOuter.continuation_key } : {}),
+            ...(endOuter?.continuation_kind ? { continuation_kind: endOuter.continuation_kind } : {})
           }
         ],
         ...(source.claims ? { claims: Object.fromEntries(Object.entries(source.claims).map(([key, claim]) => [key, claim ? { ...claim } : claim])) as SheetPixelPrimitiveV1["claims"] } : {}),

@@ -17,7 +17,8 @@ import {
   type SheetTopologyPoint,
   type SheetTopologyPrimitiveKind,
   type SheetTopologySourceMarkV1,
-  type SheetTopologySourceViewV1
+  type SheetTopologySourceViewV1,
+  type SheetTopologyTrustedContinuationV1
 } from "./sheet_topology_compiler.js";
 
 export type SheetPixelPointV1 = { u: number; v: number };
@@ -28,6 +29,7 @@ export type SheetPixelEndpointV1 = {
   outward_direction_uv: [number, number];
   boundary: SheetTopologyEndpointV1["boundary"];
   continuation_key?: string;
+  continuation_kind?: SheetTopologyEndpointV1["continuation_kind"];
 };
 
 export type SheetPixelPrimitiveV1 = {
@@ -86,6 +88,7 @@ export type SheetPixelInterpretationContextV1 = {
     overlay_output_path?: string;
   }>;
   candidate_presence_receipts?: SheetCandidatePresenceReceiptV1[];
+  trusted_continuations?: SheetTopologyTrustedContinuationV1[];
   evidence_receipt_file_paths?: string[];
   policy?: Partial<SheetTopologyCompilationPolicyV1>;
 };
@@ -673,7 +676,8 @@ export function compileSheetPixelInterpretationV1(
       point: framePoint(trusted.frame, endpoint.point, `sheet_pixel_endpoint_${endpoint.endpoint_key}_point`),
       outward_direction_xy: frameDirection(trusted.frame, endpoint.outward_direction_uv, `sheet_pixel_endpoint_${endpoint.endpoint_key}_direction`),
       boundary: endpoint.boundary,
-      ...(clean(endpoint.continuation_key) ? { continuation_key: clean(endpoint.continuation_key) } : {})
+      ...(clean(endpoint.continuation_key) ? { continuation_key: clean(endpoint.continuation_key) } : {}),
+      ...(endpoint.continuation_kind ? { continuation_kind: endpoint.continuation_kind } : {})
     }));
     return {
       primitive_id: id,
@@ -700,6 +704,7 @@ export function compileSheetPixelInterpretationV1(
     {
       trusted_source_views: selected.map(value => value.source_view),
       calibration_profile: context.calibration_profile,
+      ...(context.trusted_continuations ? { trusted_continuations: context.trusted_continuations } : {}),
       ...(context.policy ? { policy: context.policy } : {})
     }
   );

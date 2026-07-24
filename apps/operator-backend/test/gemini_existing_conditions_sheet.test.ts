@@ -34,8 +34,8 @@ function raw() {
       kind: "route_segment",
       points: [{ u: 0.1, v: 0.5 }, { u: 0.9, v: 0.5 }],
       endpoints: [
-        { endpoint_key: "run-1:start", point: { u: 0.1, v: 0.5 }, outward_direction_uv: [-1, 0], boundary: "internal", continuation_key: "" },
-        { endpoint_key: "run-1:end", point: { u: 0.9, v: 0.5 }, outward_direction_uv: [1, 0], boundary: "view_boundary", continuation_key: "" }
+        { endpoint_key: "run-1:start", point: { u: 0.1, v: 0.5 }, outward_direction_uv: [-1, 0], boundary: "internal", continuation_key: "", continuation_kind: "" },
+        { endpoint_key: "run-1:end", point: { u: 0.9, v: 0.5 }, outward_direction_uv: [1, 0], boundary: "view_boundary", continuation_key: "", continuation_kind: "" }
       ],
       claims: [
         { attribute: "system", value: "supply air", confidence: 0.98, basis: "legible_source_evidence" },
@@ -54,6 +54,7 @@ test("strict Gemini sheet output normalizes into provider-neutral pixel observat
   assert.equal(result.interpretation.primitives[0]?.claims?.system?.value, "supply air");
   assert.equal(result.interpretation.primitives[0]?.claims?.elevation?.basis, "unresolved");
   assert.equal(result.interpretation.primitives[0]?.endpoints?.[1]?.continuation_key, undefined);
+  assert.equal(result.interpretation.primitives[0]?.endpoints?.[1]?.continuation_kind, undefined);
   assert.deepEqual(result.open_questions, ["Route elevation is not visible."]);
 });
 
@@ -124,6 +125,20 @@ test("structured schema makes all topology and confidence fields explicit", () =
   assert.equal(primitive.properties.points.items.properties.u.minimum, 0);
   assert.equal(primitive.properties.points.items.properties.u.maximum, 1);
   assert.deepEqual(primitive.properties.endpoints.items.properties.boundary.enum, ["internal", "view_boundary", "sheet_continuation"]);
+  assert.deepEqual(primitive.properties.endpoints.items.properties.continuation_kind.enum, ["", "same_level_run", "vertical_riser"]);
+  assert.ok(primitive.properties.endpoints.items.required.includes("continuation_kind"));
+});
+
+test("Gemini vertical-riser proposals remain explicit provider observations", () => {
+  const vertical = raw();
+  vertical.primitives[0]!.endpoints[1]!.boundary = "sheet_continuation";
+  vertical.primitives[0]!.endpoints[1]!.continuation_key = "RISER-7";
+  vertical.primitives[0]!.endpoints[1]!.continuation_kind = "vertical_riser";
+
+  const result = normalizeGeminiExistingConditionsSheetResponseV1({ request: request(), raw: vertical });
+
+  assert.equal(result.interpretation.primitives[0]?.endpoints?.[1]?.continuation_key, "RISER-7");
+  assert.equal(result.interpretation.primitives[0]?.endpoints?.[1]?.continuation_kind, "vertical_riser");
 });
 
 test("provider schema stays inside Gemini's supported OpenAPI subset", () => {

@@ -80,6 +80,7 @@ type RawGeminiSheetResponse = {
       outward_direction_uv: [number, number];
       boundary: "internal" | "view_boundary" | "sheet_continuation";
       continuation_key: string;
+      continuation_kind: "" | "same_level_run" | "vertical_riser";
     }>;
     claims: Array<{
       attribute: "system" | "size" | "type" | "family" | "host" | "elevation" | "vertical_extent";
@@ -137,7 +138,7 @@ export const GEMINI_EXISTING_CONDITIONS_SHEET_RESPONSE_SCHEMA_V1 = {
             type: "array",
             items: {
               type: "object",
-              required: ["endpoint_key", "point", "outward_direction_uv", "boundary", "continuation_key"],
+              required: ["endpoint_key", "point", "outward_direction_uv", "boundary", "continuation_key", "continuation_kind"],
               properties: {
                 endpoint_key: { type: "string" },
                 point: {
@@ -147,7 +148,8 @@ export const GEMINI_EXISTING_CONDITIONS_SHEET_RESPONSE_SCHEMA_V1 = {
                 },
                 outward_direction_uv: { type: "array", minItems: 2, maxItems: 2, items: { type: "number" } },
                 boundary: { type: "string", enum: ["internal", "view_boundary", "sheet_continuation"] },
-                continuation_key: { type: "string" }
+                continuation_key: { type: "string" },
+                continuation_kind: { type: "string", enum: ["", "same_level_run", "vertical_riser"] }
               }
             }
           },
@@ -225,12 +227,13 @@ function prompt(request: GeminiExistingConditionsSheetRequestV1): string {
     "Before finalizing, scan each supplied view systematically from top-left to bottom-right and account for every in-scope line, symbol, fitting glyph, label, leader, and boundary continuation that can affect the objective.",
     "Use normalized top-left UV coordinates within each supplied view. Do not emit model coordinates or Revit IDs.",
     "Preserve long-run continuity: give matching continuation_key values only when two crop/sheet boundary endpoints visibly represent the same run.",
+    "Set continuation_kind to same_level_run for an ordinary continuation. Use vertical_riser only when reciprocal, directly legible above/below/next-level source evidence is visibly bound to the exact endpoint pair; the deterministic host will still require its own hash-bound evidence receipt.",
     "Do not infer system, size, type, family, host, elevation, or wall height from graphical proximity. Use legible_source_evidence only for visible text/geometry and provider_hypothesis or unresolved otherwise.",
     "A route_segment or wall_segment is one straight source-supported span. Break bends and branches into separate primitives with explicit endpoints.",
     "Treat a repeated dashed or broken line pattern as one continuous straight span when the collinear marks visibly form one drafting line; do not emit one primitive per dash. Split at visible bends, branches, system or size changes, and view boundaries.",
     "Text, tags, leaders, and dimensions are annotation primitives, not modeled devices or routes.",
     "A graphical point-symbol glyph alone never proves native family, type, or host. Unless directly legible text in the supplied crop proves the attribute, report those claims as provider_hypothesis or unresolved; an approved project mapping can be applied only by the deterministic host later.",
-    "For internal endpoints continuation_key must be an empty string. For sheet_continuation endpoints it must be non-empty.",
+    "For internal endpoints continuation_key and continuation_kind must be empty strings. For sheet_continuation endpoints continuation_key must be non-empty and continuation_kind must be same_level_run or vertical_riser.",
     `Objective: ${requiredText(request.objective, "gemini_sheet_interpreter_objective")}`,
     `Package: ${requiredText(request.package_id, "gemini_sheet_interpreter_package_id")}`,
     `Maximum source marks: ${request.maximum_source_marks ?? 500}`,
@@ -318,7 +321,8 @@ export function normalizeGeminiExistingConditionsSheetResponseV1(args: {
       },
       outward_direction_uv: endpoint.outward_direction_uv,
       boundary: endpoint.boundary,
-      ...(clean(endpoint.continuation_key) ? { continuation_key: clean(endpoint.continuation_key) } : {})
+      ...(clean(endpoint.continuation_key) ? { continuation_key: clean(endpoint.continuation_key) } : {}),
+      ...(clean(endpoint.continuation_kind) ? { continuation_kind: endpoint.continuation_kind as "same_level_run" | "vertical_riser" } : {})
     }));
     if (new Set(endpoints.map(endpoint => endpoint.endpoint_key)).size !== endpoints.length) {
       throw new Error(`gemini_sheet_primitive_duplicate_endpoint_key:${primitiveId}`);
