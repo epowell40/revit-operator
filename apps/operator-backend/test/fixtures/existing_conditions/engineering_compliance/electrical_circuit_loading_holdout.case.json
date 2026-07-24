@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "case_id": "holdout-electrical-nondwelling-receptacle-circuit-loading-v1",
+  "task_class": "standards_compliance_repair",
+  "discipline": "electrical",
+  "standards_profile_sha256": "e28ae52a495eaeec357987854c75d5f1cfec1b455a71c6612f74b5a235ef373e",
+  "checks": [
+    {
+      "check_id": "receptacle-circuit-load",
+      "type": "receptacle_circuit_loading",
+      "rule": {
+        "rule_id": "nec-220.14-i-holdout",
+        "applicable_load_scope": "non_dwelling_general_use",
+        "capacity_calculation": "single_phase_va",
+        "source": {
+          "authority": "NFPA",
+          "title": "NFPA 70 second-revision statements",
+          "edition": "2023 development cycle",
+          "section": "220.14(I)",
+          "url": "https://www.nfpa.org/api/files?path=%2Ffiles%2FAboutTheCodes%2F70%2F70_A2022_NEC_P02_SD_SRStatements.pdf",
+          "sha256": "b6dd4874948020971838a5b28933b5f53a09b505a1326283c6d06bac9979caaf"
+        },
+        "volt_amperes_per_yoke_or_strap": 180,
+        "continuous_load_multiplier": 1.25
+      }
+    }
+  ]
+}

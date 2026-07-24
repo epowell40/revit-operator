@@ -17,10 +17,13 @@
     "check:tool-contracts": "tsx src/tools/check_tool_contracts.ts",
     "check:repo": "npm run check:skills-manifest && npm run check:tool-contracts",
     "benchmark": "tsx src/tools/benchmark.ts",
+    "existing-conditions": "tsx src/tools/existing_conditions_fixture.ts",
     "report:runs": "tsx src/tools/run_report.ts",
     "prompts:scrub": "tsx src/tools/scrub_human_prompts.ts"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^0.1.100",
+    "ajv": "^8.20.0",
     "better-sqlite3": "^11.7.0",
     "dotenv": "^16.6.1",
     "mammoth": "^1.8.0",

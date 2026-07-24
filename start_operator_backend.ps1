@@ -34,9 +34,9 @@ try {
     Write-Host ("Generated OPERATOR_TOKEN for this session: " + $env:OPERATOR_TOKEN)
   }
 
-  if (-not $env:OPERATOR_BRAIN) {
-    $env:OPERATOR_BRAIN = "auto"
-  }
+  # Leave OPERATOR_BRAIN unset when the caller did not provide it so the
+  # backend env loader can honor operator-backend/.env.local. With no file
+  # override, the backend's normal empty/auto selection behavior is unchanged.
 
   if (-not $env:OPERATOR_DEV_MODE) {
     $env:OPERATOR_DEV_MODE = "1"

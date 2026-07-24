@@ -2419,6 +2419,198 @@
     },
     {
       "method": "POST",
+      "path": "/revit/repair-mep-connectors",
+      "examples": [
+        {
+          "name": "Dry-run replace one disconnected fitting with a native tee",
+          "request": {
+            "expectedModelPath": "C:\\RevitOperator\\Workspace\\reconstruction_checkpoint.rvt",
+            "connectOpenTee": {
+              "run1": {
+                "elementId": 101,
+                "connectorId": 1,
+                "expectedOriginXyz": [
+                  10.0,
+                  20.0,
+                  8.0
+                ]
+              },
+              "run2": {
+                "elementId": 102,
+                "connectorId": 0,
+                "expectedOriginXyz": [
+                  9.5,
+                  20.0,
+                  8.0
+                ]
+              },
+              "branch": {
+                "elementId": 103,
+                "connectorId": 0,
+                "expectedOriginXyz": [
+                  9.75,
+                  20.0,
+                  8.25
+                ]
+              },
+              "replaceDisconnectedFittingElementId": 104,
+              "expectedReplacementTypeId": 700983
+            },
+            "connectionMaxDistanceFt": 3.0,
+            "originToleranceFt": 0.001,
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "status": "DryRunPassed",
+            "dryRun": true,
+            "transientFittingId": 105,
+            "transientFittingTypeId": 209706,
+            "rolledBack": true,
+            "rollbackVerified": true
+          }
+        },
+        {
+          "name": "Dry-run: move a bounded pipe subgraph and reconnect the same guarded endpoints",
+          "request": {
+            "expectedModelPath": "C:\\authorized-disposable-models\\working-copy.rvt",
+            "disconnectPairs": [
+              {
+                "first": {
+                  "elementId": 1001,
+                  "connectorId": 0,
+                  "expectedOriginXyz": [10.0, 20.0, 9.5],
+                  "afterOriginXyz": [12.0, 20.0, 9.5]
+                },
+                "second": {
+                  "elementId": 2001,
+                  "connectorId": 1,
+                  "expectedOriginXyz": [10.0, 20.0, 9.5],
+                  "afterOriginXyz": [12.0, 20.0, 9.5]
+                }
+              }
+            ],
+            "repair": {
+              "kind": "move_elements_vector",
+              "elementIds": [1001, 2001],
+              "vectorX": 2.0,
+              "vectorY": 0.0,
+              "vectorZ": 0.0
+            },
+            "originToleranceFt": 0.001,
+            "maxConnectorDistanceFt": 0.02,
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "status": "DryRunReady",
+            "dryRun": true,
+            "operationKind": "move_elements_vector",
+            "transactionGroupRolledBack": true,
+            "rollbackVerified": true,
+            "afterPairs": [
+              {
+                "connected": true,
+                "distanceFt": 0.0
+              }
+            ],
+            "topologyExactMatch": true
+          }
+        },
+        {
+          "name": "Dry-run: resize explicit round fitting connectors with origin guards",
+          "request": {
+            "expectedModelPath": "C:\\authorized-disposable-models\\working-copy.rvt",
+            "repair": {
+              "kind": "resize_round_connectors",
+              "elementId": 2001,
+              "connectorChanges": [
+                {
+                  "connectorId": 1,
+                  "expectedOriginXyz": [10.0, 20.0, 9.5],
+                  "diameterFt": 0.0625
+                },
+                {
+                  "connectorId": 2,
+                  "expectedOriginXyz": [9.875, 20.0, 9.5],
+                  "diameterFt": 0.0625
+                }
+              ]
+            },
+            "originToleranceFt": 0.001,
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "status": "DryRunReady",
+            "dryRun": true,
+            "operationKind": "resize_round_connectors",
+            "transactionGroupRolledBack": true,
+            "rollbackVerified": true
+          }
+        },
+        {
+          "name": "Dry-run: rebuild two exact split sanitary systems without changing the connected graph",
+          "request": {
+            "expectedModelPath": "C:\\authorized-disposable-models\\working-copy.rvt",
+            "rebuildPipingSystem": {
+              "expectedSystemTypeId": 575466,
+              "finalSystemName": "SAN 84",
+              "systems": [
+                {
+                  "systemId": 3001,
+                  "expectedSystemName": "SAN 84",
+                  "expectedCascadeDeleteElementIds": [3101]
+                },
+                {
+                  "systemId": 3002,
+                  "expectedSystemName": "SAN 87",
+                  "expectedCascadeDeleteElementIds": [3102]
+                }
+              ],
+              "expectedElementSystemAssignments": [
+                {
+                  "elementId": 4001,
+                  "systemIds": [3001]
+                },
+                {
+                  "elementId": 4002,
+                  "systemIds": [3002]
+                },
+                {
+                  "elementId": 4003,
+                  "systemIds": [3001, 3002]
+                }
+              ],
+              "seedConnectors": [
+                {
+                  "elementId": 4001,
+                  "connectorId": 0,
+                  "expectedOriginXyz": [10.0, 20.0, 8.0]
+                },
+                {
+                  "elementId": 4002,
+                  "connectorId": 1,
+                  "expectedOriginXyz": [15.0, 20.0, 8.0]
+                }
+              ]
+            },
+            "originToleranceFt": 0.001,
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "status": "DryRunReady",
+            "dryRun": true,
+            "transactionGroupRolledBack": true,
+            "rollbackVerified": true,
+            "transientSystemId": 3003
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/duplicate-element-type",
       "examples": [
         {
@@ -4041,12 +4233,21 @@
               "OST_ElectricalDevices",
               "OST_ElectricalFixtures"
             ],
+            "modelBounds": [
+              10.0,
+              20.0,
+              -1000.0,
+              40.0,
+              60.0,
+              1000.0
+            ],
             "limit": 250
           },
           "expected_response_shape": {
             "frameId": "frame_...",
             "path": "C:\\\\...\\\\inventory.png",
             "count": 42,
+            "modelBoundsApplied": true,
             "items": [
               {
                 "elementId": 111,
@@ -5476,6 +5677,78 @@
     },
     {
       "method": "POST",
+      "path": "/revit/annotation-symbol-leaders",
+      "examples": [
+        {
+          "name": "Read native generic-annotation leaders",
+          "request": {
+            "action": "read",
+            "elementId": 123
+          },
+          "expected_response_shape": {
+            "status": "Read",
+            "elementId": 123,
+            "leaders": [
+              {
+                "index": 0,
+                "shape": "Kinked",
+                "anchorXyz": [
+                  10.0,
+                  20.0,
+                  0.0
+                ],
+                "elbowXyz": [
+                  9.0,
+                  20.0,
+                  0.0
+                ],
+                "endXyz": [
+                  8.0,
+                  22.0,
+                  0.0
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "Dry-run one replacement leader and verify rollback",
+          "request": {
+            "action": "replace",
+            "elementId": 123,
+            "leaders": [
+              {
+                "endXyz": [
+                  8.0,
+                  22.0,
+                  0.0
+                ],
+                "elbowXyz": [
+                  9.0,
+                  20.0,
+                  0.0
+                ]
+              }
+            ],
+            "dryRun": true
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "dryRun": true,
+            "rollbackVerified": true,
+            "before": [],
+            "after": [
+              {
+                "shape": "Kinked"
+              }
+            ],
+            "persisted": []
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/create-filled-region",
       "examples": [
         {
@@ -6192,6 +6465,22 @@
             "linkTypeId": 123,
             "linkInstanceId": 456
           }
+        },
+        {
+          "name": "Reload an existing architectural background link without changing its placement",
+          "request": {
+            "action": "reload",
+            "linkTypeId": 123,
+            "sourcePath": "local-work/existing-conditions/links/architectural.rvt",
+            "dryRun": false
+          },
+          "expected_response_shape": {
+            "status": "Reloaded",
+            "linkTypeId": 123,
+            "loadedInstances": [
+              { "instanceId": 456, "loaded": true }
+            ]
+          }
         }
       ]
     },
@@ -6296,6 +6585,75 @@
             "wallTypeAssignments": {
               "Generic - 6\"": 2
             }
+          }
+        },
+        {
+          "name": "Dry-run an exact registered architectural shell",
+          "request": {
+            "levelName": "Level 4",
+            "levelElevationFt": 32,
+            "normalizeWallGeometry": false,
+            "importWalls": true,
+            "importDoors": true,
+            "importWindows": true,
+            "requireExactWallTypes": true,
+            "requireExactOpeningTypes": true,
+            "requireSourceWallHosts": true,
+            "requireAllElements": true,
+            "maximumCreatedElements": 3,
+            "maximumOpeningHostDistanceFeet": 0.5,
+            "disableWallJoins": false,
+            "dryRun": true,
+            "geometry": {
+              "metadata": {
+                "source": "existing_conditions_architectural_shell_compiler",
+                "units": "feet"
+              },
+              "elements": [
+                {
+                  "id": "wall-source-17",
+                  "element": "wall",
+                  "path": [[0, 0], [12, 4]],
+                  "thickness": 0.5,
+                  "height": 10,
+                  "typeName": "Generic - 6\""
+                },
+                {
+                  "id": "door-source-23",
+                  "element": "door",
+                  "position": [4.743416, 1.581139],
+                  "width": 3,
+                  "height": 7,
+                  "familyName": "Single-Flush",
+                  "typeName": "36 x 84",
+                  "hostWallId": "wall-source-17",
+                  "chainageFt": 5
+                },
+                {
+                  "id": "window-source-31",
+                  "element": "window",
+                  "position": [8.53815, 2.84605],
+                  "width": 2,
+                  "height": 4,
+                  "sillHeight": 3,
+                  "familyName": "Fixed",
+                  "typeName": "24 x 48",
+                  "hostWallId": "wall-source-17",
+                  "chainageFt": 9
+                }
+              ]
+            }
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "summary": {
+              "wallsCreated": 1,
+              "doorsCreated": 1,
+              "windowsCreated": 1
+            },
+            "walls": [],
+            "doors": [],
+            "windows": []
           }
         }
       ]
@@ -6750,6 +7108,433 @@
     },
     {
       "method": "POST",
+      "path": "/revit/existing-conditions-mep-draft-workflow",
+      "examples": [
+        {
+          "name": "Atomically dry-run a registered plumbing fixture and pipe dependency graph",
+          "request": {
+            "inputFingerprintSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "operations": [
+              {
+                "action_key": "route:cold-1",
+                "path": "/revit/mep-route-workflow",
+                "depends_on": [],
+                "expected_created_min": 1,
+                "expected_created_max": 1,
+                "apply_body": {
+                  "kind": "pipe",
+                  "levelName": "L4",
+                  "systemType": "Domestic Cold Water",
+                  "pipeType": "Copper",
+                  "pipeSize": "1/2 inch",
+                  "points": [
+                    { "x": 0, "y": 0, "z": 9 },
+                    { "x": 6, "y": 0, "z": 9 }
+                  ],
+                  "apply": true,
+                  "verify": true
+                }
+              },
+              {
+                "action_key": "place:lav-1",
+                "path": "/revit/place-families",
+                "depends_on": [],
+                "expected_created_min": 1,
+                "expected_created_max": 1,
+                "apply_body": {
+                  "levelName": "L4",
+                  "familyName": "SinkConnection",
+                  "symbolName": "Vanity",
+                  "instances": [{ "x": 0, "y": 0, "z": 0 }],
+                  "dryRun": false
+                }
+              },
+              {
+                "action_key": "connect:lav-1",
+                "path": "/revit/connect-mep-elements",
+                "depends_on": ["route:cold-1", "place:lav-1"],
+                "expected_created_min": 0,
+                "expected_created_max": 0,
+                "deferred_body": {
+                  "source_element": { "created_by_action": "place:lav-1", "output": "created" },
+                  "target_elements": [{ "created_by_action": "route:cold-1", "output": "route_start" }],
+                  "required_connection_count": 1
+                }
+              }
+            ],
+            "targetViewId": 12345,
+            "applyTargetViewPhase": true,
+            "requireAllCreatedElementsVisibleInTargetView": true,
+            "dryRun": true,
+            "verify": true,
+            "maximumCreatedElements": 8
+          },
+          "expected_response_shape": {
+            "schema": "operator.existing_conditions_mep_draft_workflow.v1",
+            "inputFingerprintSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "status": "DryRunReady",
+            "dryRun": true,
+            "transactionGroupRolledBack": true,
+            "rollbackVerified": true,
+            "atomic": true,
+            "operationCount": 3,
+            "createdElementIds": [],
+            "transientCreatedElementIds": [101, 102]
+          }
+        },
+        {
+          "name": "Atomically dry-run a downstream Vent tee and exact-fixture reachability audit",
+          "request": {
+            "inputFingerprintSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "operations": [
+              {
+                "action_key": "route:vent-tee-1",
+                "path": "/revit/connect-mep-branch",
+                "depends_on": [],
+                "expected_created_min": 3,
+                "expected_created_max": 6,
+                "apply_body": {
+                  "kind": "pipe",
+                  "mainElementId": 1499787,
+                  "branchPoints": [
+                    { "x": 17, "y": -6.56, "z": 31.1666666667 },
+                    { "x": 17, "y": -2.5, "z": 35.1666666667 }
+                  ],
+                  "branchSize": "2 inch",
+                  "branchSystemType": "Vent",
+                  "branchPipeType": "PVC - DWV",
+                  "connectionMode": "tee",
+                  "levelName": "L4",
+                  "verify": true,
+                  "visualVerify": false
+                }
+              },
+              {
+                "action_key": "verify:vent:vent-tee-1",
+                "path": "/revit/audit-plumbing-fixture-services",
+                "depends_on": ["route:vent-tee-1"],
+                "expected_created_min": 0,
+                "expected_created_max": 0,
+                "apply_body": {
+                  "levelName": "L4",
+                  "maxElements": 5000,
+                  "maxVentSearchElements": 10000,
+                  "maxVentSearchHops": 500
+                },
+                "deferred_body": {
+                  "fixture_element_ids": [1372407],
+                  "require_downstream_vent": true
+                }
+              }
+            ],
+            "dryRun": true,
+            "verify": true,
+            "maximumCreatedElements": 8
+          },
+          "expected_response_shape": {
+            "schema": "operator.existing_conditions_mep_draft_workflow.v1",
+            "status": "DryRunReady",
+            "transactionGroupRolledBack": true,
+            "rollbackVerified": true,
+            "atomic": true,
+            "operationCount": 2
+          }
+        },
+        {
+          "name": "Atomically dry-run a new water closet, Sanitary route, downstream Vent tee, and network audit",
+          "request": {
+            "inputFingerprintSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "operations": [
+              {
+                "action_key": "route:sanitary-1",
+                "path": "/revit/mep-route-workflow",
+                "depends_on": [],
+                "expected_created_min": 2,
+                "expected_created_max": 3,
+                "apply_body": {
+                  "kind": "pipe",
+                  "levelName": "L4",
+                  "systemType": "Sanitary",
+                  "pipeType": "PVC - DWV",
+                  "pipeSize": "4 inch",
+                  "points": [
+                    { "x": 0, "y": 0, "z": 31.1666666667 },
+                    { "x": 4, "y": 0, "z": 31.1666666667 },
+                    { "x": 8, "y": 0, "z": 31.1666666667 }
+                  ],
+                  "apply": true,
+                  "verify": true,
+                  "visualVerify": false
+                }
+              },
+              {
+                "action_key": "place:water-closet-1",
+                "path": "/revit/place-families",
+                "depends_on": [],
+                "expected_created_min": 1,
+                "expected_created_max": 1,
+                "apply_body": {
+                  "levelName": "L4",
+                  "familyName": "WaterClosetConnection",
+                  "symbolName": "Water Closet Connection",
+                  "instances": [{ "x": 0, "y": 0, "z": 0 }],
+                  "dryRun": false
+                }
+              },
+              {
+                "action_key": "route:vent-tee-1",
+                "path": "/revit/connect-mep-branch",
+                "depends_on": ["route:sanitary-1"],
+                "expected_created_min": 3,
+                "expected_created_max": 6,
+                "apply_body": {
+                  "kind": "pipe",
+                  "branchPoints": [
+                    { "x": 2, "y": 0, "z": 31.1666666667 },
+                    { "x": 2, "y": 4, "z": 35.1666666667 }
+                  ],
+                  "branchSize": "2 inch",
+                  "branchSystemType": "Vent",
+                  "branchPipeType": "PVC - DWV",
+                  "connectionMode": "tee",
+                  "levelName": "L4",
+                  "verify": true,
+                  "visualVerify": false
+                },
+                "deferred_body": {
+                  "main_element": {
+                    "created_by_action": "route:sanitary-1",
+                    "output": "route_segment",
+                    "index": 0
+                  }
+                }
+              },
+              {
+                "action_key": "connect:water-closet-1",
+                "path": "/revit/connect-mep-elements",
+                "depends_on": ["route:sanitary-1", "place:water-closet-1", "route:vent-tee-1"],
+                "expected_created_min": 0,
+                "expected_created_max": 0,
+                "deferred_body": {
+                  "source_element": { "created_by_action": "place:water-closet-1", "output": "created" },
+                  "target_elements": [{ "created_by_action": "route:vent-tee-1", "output": "split_main_start" }],
+                  "required_connection_count": 1
+                }
+              },
+              {
+                "action_key": "verify:vent:vent-tee-1",
+                "path": "/revit/audit-plumbing-fixture-services",
+                "depends_on": ["route:vent-tee-1", "connect:water-closet-1"],
+                "expected_created_min": 0,
+                "expected_created_max": 0,
+                "apply_body": {
+                  "levelName": "L4",
+                  "maxElements": 5000,
+                  "maxVentSearchElements": 10000,
+                  "maxVentSearchHops": 500
+                },
+                "deferred_body": {
+                  "fixture_elements": [{ "created_by_action": "place:water-closet-1", "output": "created" }],
+                  "require_downstream_vent": true
+                }
+              }
+            ],
+            "dryRun": true,
+            "verify": true,
+            "maximumCreatedElements": 12
+          },
+          "expected_response_shape": {
+            "schema": "operator.existing_conditions_mep_draft_workflow.v1",
+            "status": "DryRunReady",
+            "transactionGroupRolledBack": true,
+            "rollbackVerified": true,
+            "atomic": true,
+            "operationCount": 5
+          }
+        },
+        {
+          "name": "Atomically place a panel and two devices then create and assign a native power circuit",
+          "request": {
+            "inputFingerprintSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "operations": [
+              {
+                "action_key": "place:panel-p403",
+                "path": "/revit/place-family-instance-on-host",
+                "depends_on": [],
+                "expected_created_min": 1,
+                "expected_created_max": 1,
+                "apply_body": {
+                  "sourceElementId": 11111,
+                  "hostElementId": 99999,
+                  "roomNumber": "403",
+                  "pointXyz": [4, 10, 4],
+                  "parameterNamesToCopy": ["Distribution System"],
+                  "matchElectricalCircuitFromSource": false,
+                  "dryRun": false
+                }
+              },
+              {
+                "action_key": "place:receptacle-a",
+                "path": "/revit/place-families",
+                "depends_on": [],
+                "expected_created_min": 1,
+                "expected_created_max": 1,
+                "apply_body": {
+                  "levelName": "L4",
+                  "familyName": "Duplex Receptacle",
+                  "symbolName": "Standard",
+                  "instances": [{ "x": 10, "y": 10, "z": 0 }],
+                  "dryRun": false
+                }
+              },
+              {
+                "action_key": "place:receptacle-b",
+                "path": "/revit/place-families",
+                "depends_on": [],
+                "expected_created_min": 1,
+                "expected_created_max": 1,
+                "apply_body": {
+                  "levelName": "L4",
+                  "familyName": "Duplex Receptacle",
+                  "symbolName": "Standard",
+                  "instances": [{ "x": 16, "y": 10, "z": 0 }],
+                  "dryRun": false
+                }
+              },
+              {
+                "action_key": "circuit:new-p403-8",
+                "path": "/revit/assign-electrical-circuit",
+                "depends_on": ["place:receptacle-a", "place:receptacle-b", "place:panel-p403"],
+                "expected_created_min": 1,
+                "expected_created_max": 1,
+                "deferred_body": {
+                  "element_ids": [
+                    { "created_by_action": "place:receptacle-a", "output": "created" },
+                    { "created_by_action": "place:receptacle-b", "output": "created" }
+                  ],
+                  "create_system_type": "PowerCircuit",
+                  "panel_element": { "created_by_action": "place:panel-p403", "output": "created" }
+                }
+              }
+            ],
+            "dryRun": true,
+            "verify": true,
+            "maximumCreatedElements": 4
+          },
+          "expected_response_shape": {
+            "schema": "operator.existing_conditions_mep_draft_workflow.v1",
+            "status": "DryRunReady",
+            "transactionGroupRolledBack": true,
+            "rollbackVerified": true,
+            "atomic": true,
+            "operationCount": 4,
+            "transientCreatedElementIds": [11112, 22222, 22223, 44444],
+            "residualCreatedElementIds": []
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/connect-mep-elements",
+      "examples": [
+        {
+          "name": "Dry-run fixture connections to explicit pipe targets",
+          "request": {
+            "sourceElementId": 1716456,
+            "targetElementIds": [1716457, 1716459, 1716470],
+            "toleranceFt": 0.5,
+            "sizeToleranceFt": 0.01,
+            "requiredConnectionCount": 3,
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "status": "Ready",
+            "dryRun": true,
+            "requiredConnectionCount": 3,
+            "plannedConnectionCount": 3,
+            "connectionPlan": []
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/create-pipe-between-connectors",
+      "examples": [
+        {
+          "name": "Dry-run a concealed fixture service stub between explicit native owners",
+          "request": {
+            "sourceElementId": 1716456,
+            "targetElementId": 1617216,
+            "service": "domestic_cold_water",
+            "systemType": "Domestic Cold Water",
+            "pipeType": "Copper",
+            "pipeSize": "1/2 inch",
+            "levelName": "L4",
+            "maximumLengthFt": 2,
+            "sizeToleranceFt": 0.005208333333333333,
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "schema": "revit-operator.pipe-between-connectors.v1",
+            "status": "DryRunReady",
+            "dryRun": true,
+            "sourceElementId": 1716456,
+            "targetElementId": 1617216,
+            "service": "domestic_cold_water",
+            "connectorGeometryBasis": "native_runtime_connectors",
+            "hiddenGeometryInferred": true,
+            "createdElementIds": [],
+            "dryRunElementIds": [1716457],
+            "sourceConnectionVerified": true,
+            "targetConnectionVerified": true,
+            "openConnectorCount": 0,
+            "rolledBack": true
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/copy-mep-pattern",
+      "examples": [
+        {
+          "name": "Dry-run a translated connected pipe and fixture precedent",
+          "request": {
+            "sourceElementIds": [1372145, 1612224, 1612255],
+            "translationXyz": [0, 0, 13.3333333333333],
+            "externalConnections": [
+              {
+                "copiedSourceElementId": 1612224,
+                "existingElementId": 1617192
+              },
+              {
+                "copiedSourceElementId": 1612255,
+                "existingElementId": 1617216
+              }
+            ],
+            "connectionToleranceFt": 0.125,
+            "connectionSizeToleranceFt": 0.01,
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "status": "Ready",
+            "dryRun": true,
+            "nativePreflightSucceeded": true,
+            "transactionRolledBack": true,
+            "plannedCreatedCount": 3,
+            "internalPhysicalConnectionCount": 2,
+            "externalConnections": []
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/connect-mep-branch",
       "examples": [
         {
@@ -6806,6 +7591,69 @@
                 "candidates": []
               }
             }
+          }
+        },
+        {
+          "name": "Dry-run a downstream vent tee from a sanitary main",
+          "request": {
+            "kind": "pipe",
+            "mainElementId": 1499787,
+            "branchSize": "2 inch",
+            "branchSystemType": "Vent",
+            "branchPipeType": "PVC - DWV",
+            "connectionMode": "tee",
+            "branchPoints": [
+              { "x": 13.5, "y": -6.5, "z": 31.5 },
+              { "x": 13.5, "y": -2.5, "z": 35.5 }
+            ],
+            "dryRun": true,
+            "verify": true,
+            "visualVerify": true
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "branchPlan": {
+              "requestedSystemType": "Vent",
+              "requestedPipeType": "PVC - DWV",
+              "connectionMode": "tee"
+            },
+            "selected": {
+              "branchSystemType": { "name": "Vent" },
+              "branchPipeType": { "name": "PVC - DWV" }
+            },
+            "splitPlan": {
+              "applySupported": true,
+              "expectedFitting": "tee"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/connect-existing-mep-branch",
+      "examples": [
+        {
+          "name": "Dry-run: attach one retained rectangular branch to an existing main",
+          "request": {
+            "expectedModelPath": "C:\\authorized-disposable-models\\working-copy.rvt",
+            "kind": "duct",
+            "mainElementId": 12345,
+            "branchElementId": 12346,
+            "branchConnectorId": 1,
+            "expectedBranchOriginXyz": [10.0, 12.0, 10.0],
+            "originToleranceFt": 0.001,
+            "expectedTakeoffTypeName": "Tap - Rectangular",
+            "dryRun": true,
+            "verify": true
+          },
+          "expected_response_shape": {
+            "status": "DryRunReady",
+            "dryRun": true,
+            "connectedDuringTransaction": true,
+            "rolledBack": true,
+            "rollbackVerified": true,
+            "nativeFailures": []
           }
         }
       ]
@@ -7860,6 +8708,36 @@
             ],
             "rolledBack": true
           }
+        },
+        {
+          "name": "Dry-run rotate about an arbitrary 3D axis",
+          "request": {
+            "ids": [
+              111
+            ],
+            "angleDegrees": 90,
+            "axis": {
+              "mode": "throughPoints",
+              "pointX": 10,
+              "pointY": 20,
+              "pointZ": 30,
+              "endPointX": 11,
+              "endPointY": 20,
+              "endPointZ": 30
+            },
+            "dryRun": true,
+            "behavior": "allOrNothing",
+            "options": {
+              "failOnPinned": true
+            }
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "rotatedIds": [
+              111
+            ],
+            "rolledBack": true
+          }
         }
       ]
     },
@@ -8682,6 +9560,25 @@
           }
         },
         {
+          "name": "Create one native power circuit from newly drafted uncircuitized devices",
+          "request": {
+            "elementIds": [22222, 22223],
+            "createSystemType": "PowerCircuit",
+            "panelElementId": 33333,
+            "dryRun": false,
+            "confirm": true
+          },
+          "expected_response_shape": {
+            "schema": "operator.assign_electrical_circuit.v3",
+            "status": "Applied",
+            "applied": true,
+            "mode": "create_new_power_circuit",
+            "createdElectricalSystemId": 44444,
+            "verifiedMemberElementIds": [22222, 22223],
+            "panelElementId": 33333
+          }
+        },
+        {
           "name": "Apply writable panel and circuit parameters when Revit exposes them",
           "request": {
             "elementIds": [
@@ -8698,6 +9595,50 @@
             "applied": true,
             "mode": "explicit_parameter_only_fallback",
             "limitation": "Direct panel/circuit values are labels only and do not prove circuit membership."
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/assign-electrical-distribution-system",
+      "examples": [
+        {
+          "name": "Audit compatible native distribution systems without changing equipment",
+          "request": {
+            "elementIds": [22222]
+          },
+          "expected_response_shape": {
+            "schema": "operator.assign_electrical_distribution_system.v1",
+            "status": "Audit",
+            "applied": false,
+            "dryRun": true,
+            "results": [
+              {
+                "elementId": 22222,
+                "ok": true,
+                "validDistributionSystems": []
+              }
+            ]
+          }
+        },
+        {
+          "name": "Dry-run assigning an exact compatible native distribution system",
+          "request": {
+            "elementIds": [22222],
+            "distributionSystemId": 33333,
+            "dryRun": true
+          },
+          "expected_response_shape": {
+            "schema": "operator.assign_electrical_distribution_system.v1",
+            "status": "Planned",
+            "applied": false,
+            "dryRun": true,
+            "rollbackVerified": true,
+            "distributionSystem": {
+              "id": 33333,
+              "name": "480Y/277V 3PH 4W"
+            }
           }
         }
       ]
@@ -8981,6 +9922,94 @@
               }
             ],
             "safeToAutoApply": false
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/audit-electrical-circuit-loading",
+      "examples": [
+        {
+          "name": "Audit complete native panel receptacle inventory",
+          "request": {
+            "panelName": "PANEL-A",
+            "wireAmpacityProfiles": [
+              {
+                "wireSizeToken": "1-#12, 1-#12, 1-#12",
+                "ampacityAmps": 20
+              }
+            ],
+            "maxElements": 5000
+          },
+          "expected_response_shape": {
+            "schema": "revit-operator.electrical-circuit-loading-audit.v1",
+            "scopeMode": "panel_inventory",
+            "selectedPanelName": "PANEL-A",
+            "selectedPanelElementId": 123456,
+            "scopeElementIds": [],
+            "scopedDevices": [],
+            "circuits": [],
+            "diagnostics": {
+              "complete": true,
+              "truncated": false,
+              "inventoryComplete": true,
+              "discoveredElectricalFixtureCount": 100,
+              "selectedElectricalFixtureCount": 12
+            }
+          },
+          "notes": [
+            "Use either panelName for endpoint-owned native discovery or elementIds for an explicit bounded scope, never both.",
+            "The endpoint reports factual native evidence only; the evaluator applies the adopted standards and device profiles."
+          ]
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/audit-plumbing-fixture-services",
+      "examples": [
+        {
+          "name": "Audit level fixture connector and vent topology",
+          "request": {
+            "levelName": "L4",
+            "familyMatchTokens": ["fixture connection"],
+            "typeMatchTokens": ["vanity", "water closet"],
+            "maxElements": 5000,
+            "maxVentSearchElements": 2000,
+            "maxVentSearchHops": 40
+          },
+          "expected_response_shape": {
+            "schema": "revit-operator.plumbing-fixture-services-audit.v1",
+            "scopeMode": "level_inventory",
+            "selectedLevelName": "L4",
+            "fixtures": [],
+            "diagnostics": {
+              "complete": true,
+              "truncated": false,
+              "inventoryComplete": true
+            }
+          },
+          "notes": [
+            "Use family/type tokens for a complete level-scoped inventory, or fixtureElementIds for an exact bounded post-write verification scope.",
+            "The endpoint reports factual native evidence only; the evaluator applies fixture service and size profiles."
+          ]
+        },
+        {
+          "name": "Audit exact fixtures for downstream Vent reachability",
+          "request": {
+            "levelName": "L4",
+            "fixtureElementIds": [1372407],
+            "maxElements": 5000,
+            "maxVentSearchElements": 10000,
+            "maxVentSearchHops": 500
+          },
+          "expected_response_shape": {
+            "schema": "revit-operator.plumbing-fixture-services-audit.v1",
+            "scopeMode": "exact_fixture_ids",
+            "selectedLevelName": "L4",
+            "fixtureElementIds": [1372407],
+            "fixtures": []
           }
         }
       ]

@@ -16,6 +16,7 @@
     { "path": "skills/INDEX.md", "max_chars": 1600 },
     { "path": "skills/runbooks/mep_resize_runbook.md", "max_chars": 2200 },
     { "path": "skills/workflows/mep_pathway_create.md", "max_chars": 3200 },
+    { "path": "skills/workflows/existing_conditions_reconstruct.md", "max_chars": 3600 },
     { "path": "skills/workflows/mep_resize_scope.md", "max_chars": 2200 },
     { "path": "skills/workflows/mep_trace_connected_network.md", "max_chars": 2200 },
     { "path": "skills/workflows/duct_resize_connected_run.md", "max_chars": 2200 },

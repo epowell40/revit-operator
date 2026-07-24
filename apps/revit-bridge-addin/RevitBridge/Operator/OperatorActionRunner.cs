@@ -16,6 +16,7 @@ using AuditHostedInstancePlacementActionHandler = RevitBridge.Logic.Handlers.Aud
 using ResolveRoomWallActionHandler = RevitBridge.Logic.Handlers.ResolveRoomWallHandler;
 using RankSimilarDevicesOnWallActionHandler = RevitBridge.Logic.Handlers.RankSimilarDevicesOnWallHandler;
 using AssignElectricalCircuitActionHandler = RevitBridge.Logic.Handlers.AssignElectricalCircuitHandler;
+using AssignElectricalDistributionSystemActionHandler = RevitBridge.Logic.Handlers.AssignElectricalDistributionSystemHandler;
 
 namespace RevitBridge.Operator
 {
@@ -54,6 +55,7 @@ namespace RevitBridge.Operator
                 { "/revit/purge-unused", new PurgeUnusedHandler() },
                 { "/revit/transfer-view-templates", new TransferViewTemplatesHandler() },
                 { "/revit/rooms", new RoomHandler() },
+                { "/revit/linked-room-boundaries", new LinkedRoomBoundariesHandler() },
                 { "/revit/renumber-rooms", new RenumberRoomsHandler() },
                 { "/revit/room-contents", new RoomContentsHandler() },
                 { "/revit/spatial-context", new SpatialContextHandler() },
@@ -75,10 +77,16 @@ namespace RevitBridge.Operator
                 { "/revit/resolve-mep-routing-context", new ResolveMepRoutingContextHandler() },
                 { "/revit/create-mep-route", new CreateMepRouteHandler() },
                 { "/revit/connect-mep-branch", new ConnectMepBranchHandler() },
+                { "/revit/connect-existing-mep-branch", new ConnectExistingMepBranchHandler() },
+                { "/revit/connect-mep-elements", new RevitBridge.Logic.Handlers.MEP.ConnectMepElementsHandler() },
+                { "/revit/create-pipe-between-connectors", new RevitBridge.Logic.Handlers.MEP.CreatePipeBetweenConnectorsHandler() },
+                { "/revit/existing-conditions-mep-draft-workflow", new RevitBridge.Logic.Handlers.MEP.ExistingConditionsMepDraftWorkflowHandler() },
+                { "/revit/copy-mep-pattern", new RevitBridge.Logic.Handlers.MEP.CopyMepPatternHandler() },
                 { "/revit/mep-route-workflow", new MepRouteWorkflowHandler() },
                 { "/revit/mep-branch-network-workflow", new RevitBridge.Logic.Handlers.MEP.MepBranchNetworkWorkflowHandler() },
                 { "/revit/edit-mep-route-elements", new RevitBridge.Logic.Handlers.MEP.EditMepRouteElementsHandler() },
                 { "/revit/reroute-mep-route-segment", new RevitBridge.Logic.Handlers.MEP.RerouteMepRouteSegmentHandler() },
+                { "/revit/arch-workflows", new ArchWorkflowsHandler() },
 
                 // MEP / connectivity helpers (read-only)
                 { "/revit/trace-connected-network", new TraceConnectedNetworkHandler() },
@@ -91,6 +99,7 @@ namespace RevitBridge.Operator
                 { "/revit/resize-ducts-in-room", new ResizeDuctsInRoomHandler() },
                 { "/revit/resize-ductwork-by-scope", new ResizeDuctworkByScopeHandler() },
                 { "/revit/repair-duct-continuity-by-scope", new RepairDuctContinuityByScopeHandler() },
+                { "/revit/repair-mep-connectors", new RepairMepConnectorsHandler() },
                 { "/revit/get-connectors", new GetConnectorsHandler() },
                 { "/revit/align-room-tops-to-ceilings", new AlignRoomTopsToCeilingsHandler() },
                 { "/revit/export-image", new ExportViewImageHandler() },
@@ -158,6 +167,7 @@ namespace RevitBridge.Operator
                 { "/revit/create-drafting-view", new CreateDraftingViewHandler() },
                 { "/revit/create-view", new CreateViewHandler() },
                 { "/revit/draw-detail-curves", new DrawDetailCurvesHandler() },
+                { "/revit/annotation-symbol-leaders", new AnnotationSymbolLeadersHandler() },
                 { "/revit/create-filled-region", new CreateFilledRegionHandler() },
                 { "/revit/create-revision-cloud", new CreateRevisionCloudHandler() },
                 { "/revit/keynotes", new KeynotesHandler() },
@@ -188,6 +198,7 @@ namespace RevitBridge.Operator
                 { "/revit/create-similar-from-instance", new CreateSimilarFromInstanceActionHandler() },
                 { "/revit/adjust-hosted-instance-on-host", new AdjustHostedInstanceOnHostActionHandler() },
                 { "/revit/assign-electrical-circuit", new AssignElectricalCircuitActionHandler() },
+                { "/revit/assign-electrical-distribution-system", new AssignElectricalDistributionSystemActionHandler() },
                 { "/revit/load-family", new LoadFamilyHandler() },
                 { "/revit/create-family-from-template", new CreateFamilyFromTemplateHandler() },
                 { "/revit/duplicate-view", new DuplicateViewHandler() },
@@ -222,6 +233,8 @@ namespace RevitBridge.Operator
                 { "/revit/set-selection", new SetSelectionHandler() },
                 { "/revit/resolve-room-plan-view", new ResolveRoomPlanViewHandler() },
                 { "/revit/plan-dwelling-receptacles", new PlanDwellingReceptaclesHandler() },
+                { "/revit/audit-electrical-circuit-loading", new RevitBridge.Logic.Handlers.ElectricalCircuitLoadingAuditHandler() },
+                { "/revit/audit-plumbing-fixture-services", new RevitBridge.Logic.Handlers.PlumbingFixtureServicesAuditHandler() },
                 { "/revit/plan-room-receptacles-from-analog", new PlanRoomReceptaclesFromAnalogHandler() },
                 { "/revit/apply-room-receptacles-from-analog", new ApplyRoomReceptaclesFromAnalogHandler() },
                 { "/revit/list-element-types", new ListElementTypesHandler() },
@@ -283,19 +296,71 @@ namespace RevitBridge.Operator
                 return await handler.Handle(null!, jsonBody).ConfigureAwait(false);
             }
 
-            return await _eventService.Run(app =>
+            var dialogComputerUse = App.Instance?.DialogComputerUse;
+            var dialogEventCursor = dialogComputerUse?.CaptureEventCursor() ?? 0;
+            var autoGuardArmed = ShouldAutoArmRetryableDialogGuard(method, path, jsonBody) && dialogComputerUse != null;
+            var autoGuardId = autoGuardArmed ? dialogComputerUse!.ArmRetryableWarningCancelGuard() : null;
+
+            object result;
+            try
             {
-                var result = handler.Handle(app, jsonBody).GetAwaiter().GetResult();
-
-                // Best-effort UI refresh after actions that likely modified the model. This reduces "it worked but I can't see it"
-                // confusion due to view redraw / regeneration lag.
-                if (method == "POST" && risk >= OperatorActionRisk.Medium)
+                result = await _eventService.Run(app =>
                 {
-                    TryRefreshGraphics(app);
-                }
+                    var handlerResult = handler.Handle(app, jsonBody).GetAwaiter().GetResult();
 
-                return result;
-            }).ConfigureAwait(false);
+                    // Best-effort UI refresh after actions that likely modified the model. This reduces "it worked but I can't see it"
+                    // confusion due to view redraw / regeneration lag.
+                    if (method == "POST" && risk >= OperatorActionRisk.Medium)
+                    {
+                        TryRefreshGraphics(app);
+                    }
+
+                    return handlerResult;
+                }).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (autoGuardId != null) dialogComputerUse?.DisarmGuard(autoGuardId);
+            }
+
+            var recoveredDialog = dialogComputerUse?.GetResolvedRetryableRecoveryAfter(dialogEventCursor);
+            // Dialog resolution is finalized asynchronously after the handler can return. Poll whenever
+            // any new dialog event occurred during this action, including when the guard was armed
+            // explicitly by the sidecar rather than by this runner.
+            if (recoveredDialog == null && dialogComputerUse != null && dialogComputerUse.CaptureEventCursor() > dialogEventCursor)
+            {
+                for (var attempt = 0; attempt < 10 && recoveredDialog == null; attempt++)
+                {
+                    await Task.Delay(100, cancellationToken).ConfigureAwait(false);
+                    recoveredDialog = dialogComputerUse?.GetResolvedRetryableRecoveryAfter(dialogEventCursor);
+                }
+            }
+
+            if (recoveredDialog != null)
+            {
+                throw new OperatorRecoveredDialogException(recoveredDialog, result);
+            }
+
+            return result;
+        }
+
+        private static bool ShouldAutoArmRetryableDialogGuard(string method, string path, string jsonBody)
+        {
+            if (!string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)) return false;
+            if (!string.Equals(path, "/revit/existing-conditions-mep-draft-workflow", StringComparison.OrdinalIgnoreCase)) return false;
+            if (string.IsNullOrWhiteSpace(jsonBody)) return false;
+
+            try
+            {
+                using var document = JsonDocument.Parse(jsonBody);
+                if (document.RootElement.ValueKind != JsonValueKind.Object) return false;
+                return document.RootElement.TryGetProperty("dryRun", out var dryRun) &&
+                    dryRun.ValueKind == JsonValueKind.False;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static bool IsDirectDialogComputerUsePath(string path)
@@ -319,5 +384,41 @@ namespace RevitBridge.Operator
                 // Never fail the action on refresh issues.
             }
         }
+    }
+
+    internal sealed class OperatorRecoveredDialogException : InvalidOperationException
+    {
+        public OperatorRecoveredDialogException(
+            OperatorDialogComputerUse.ResolvedDialogRecovery recovery,
+            object provisionalHandlerResult)
+            : base($"Revit retryable dialog {recovery.DialogId} was cancelled by sidecar guard {recovery.MatchedGuardId}; the handler result is provisional and native readback is required before any retry.")
+        {
+            var receipt = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                using var document = JsonDocument.Parse(JsonSerializer.Serialize(provisionalHandlerResult, OperatorUiProtocol.JsonOptions));
+                if (document.RootElement.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var property in document.RootElement.EnumerateObject())
+                    {
+                        receipt[property.Name] = property.Value.Clone();
+                    }
+                }
+            }
+            catch
+            {
+                // The typed recovery receipt below remains sufficient even when the provisional result is not serializable.
+            }
+
+            receipt["status"] = "Blocked";
+            receipt["error"] = "retryable_revit_dialog_recovered";
+            receipt["rollbackVerified"] = false;
+            receipt["requiresReadback"] = true;
+            receipt["provisionalHandlerResult"] = provisionalHandlerResult;
+            receipt["dialogRecovery"] = recovery.ToReceipt();
+            Receipt = receipt;
+        }
+
+        public object Receipt { get; }
     }
 }

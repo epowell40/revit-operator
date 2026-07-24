@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-wall-candidate-clarification.v1.schema.json",
+  "title": "Existing conditions architectural wall-candidate clarification V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "fixture_id",
+    "scope_id",
+    "status",
+    "candidate_receipt_sha256",
+    "selected_candidate_id",
+    "material_ambiguity",
+    "question",
+    "candidate_ids_requiring_resolution",
+    "evidence_basis",
+    "native_write"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "fixture_id": { "type": "string", "minLength": 1 },
+    "scope_id": { "type": "string", "minLength": 1 },
+    "status": { "const": "clarification_required" },
+    "candidate_receipt_sha256": {
+      "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/sha256"
+    },
+    "selected_candidate_id": { "type": "null" },
+    "material_ambiguity": { "const": true },
+    "question": { "type": "string", "minLength": 1 },
+    "candidate_ids_requiring_resolution": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "evidence_basis": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "source_pdf_render",
+          "surrounding_model_capture",
+          "source_to_model_registration",
+          "architectural_source_redacted_delta",
+          "architectural_source_aligned",
+          "architectural_redacted_aligned",
+          "architectural_candidate_delta_mask",
+          "architectural_source_redacted_comparison",
+          "architectural_registered_measurement",
+          "architectural_registered_measurement_overlay",
+          "architectural_wall_line_candidates",
+          "architectural_wall_line_candidate_overlay",
+          "architectural_opening_source_crop",
+          "architectural_opening_evidence_overlay"
+        ]
+      }
+    },
+    "native_write": { "const": false }
+  }
+}

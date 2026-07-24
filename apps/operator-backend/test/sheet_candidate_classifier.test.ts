@@ -31,6 +31,13 @@ test("sheet classifier rejects room-like filename tokens and keeps discipline sh
   assert.deepEqual(candidates.map((candidate) => candidate.sheet_number), ["M-201"]);
 });
 
+test("sheet classifier ignores UUID groups in uploaded filenames", () => {
+  const candidates = extractSheetCandidatesFromFilename({
+    filePath: "codex-clipboard-896bb65c-b1ea-4039-a069-3d6925111aea.png"
+  });
+  assert.deepEqual(candidates, []);
+});
+
 test("sheet candidate merge combines evidence without losing the first known page", () => {
   const merged = mergeSheetCandidates([
     { sheet_number: "m_201", score: 30, source: "text", page: 8, hit_count: 1, evidence: "page text" },

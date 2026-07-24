@@ -102,6 +102,37 @@ function planningLeaseDirectory(p = ledgerPath()): string {
   return `${p}.planning-leases`;
 }
 
+function isPlanningLeaseProcessAlive(pid: unknown): boolean {
+  const parsed = Number(pid);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return true;
+  try {
+    process.kill(parsed, 0);
+    return true;
+  } catch (error) {
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? String((error as { code?: unknown }).code ?? "")
+        : "";
+    return code !== "ESRCH";
+  }
+}
+
+function hasActiveFilesystemPlanningLease(leaseDir: string): boolean {
+  for (const entry of fs.readdirSync(leaseDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) return true;
+    try {
+      const parsed = JSON.parse(
+        fs.readFileSync(path.join(leaseDir, entry.name), "utf8")
+      ) as { pid?: unknown };
+      if (isPlanningLeaseProcessAlive(parsed.pid)) return true;
+    } catch {
+      // Malformed lease evidence is fail-closed.
+      return true;
+    }
+  }
+  return false;
+}
+
 export function beginRequirementsPlanningLease(receiptSha256: string): RequirementsPlanningLease {
   const hash = String(receiptSha256 ?? "").trim().toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error("receipt_sha256 is invalid for a requirements planning lease.");
@@ -149,7 +180,9 @@ function assertRequirementsWriteUnlocked(p = ledgerPath()): void {
   if (leases && leases.size > 0) throw new Error("Requirements write blocked by an active planning lease; retry after the current plan finishes.");
   const leaseDir = planningLeaseDirectory(p);
   try {
-    if (fs.readdirSync(leaseDir).length > 0) throw new Error("Requirements write blocked by an active planning lease; retry after the current plan finishes.");
+    if (hasActiveFilesystemPlanningLease(leaseDir)) {
+      throw new Error("Requirements write blocked by an active planning lease; retry after the current plan finishes.");
+    }
   } catch (error) {
     const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code ?? "") : "";
     if (code !== "ENOENT") throw error;

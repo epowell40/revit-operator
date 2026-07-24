@@ -1,6 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { formatToolResultsForCodexForTest, getCodexBaseInstructionsForTest } from "../src/brains/codex_brain.js";
+import {
+  __testOnlyTrackCodexBrainTurnAbort,
+  cancelCodexBrainTurn,
+  formatToolResultsForCodexForTest,
+  getCodexBaseInstructionsForTest
+} from "../src/brains/codex_brain.js";
+
+test("Codex planner cancellation aborts the active turn so its planning lease can unwind", () => {
+  const tracked = __testOnlyTrackCodexBrainTurnAbort("session-cancel", "message-cancel");
+  try {
+    assert.equal(tracked.signal.aborted, false);
+    assert.equal(cancelCodexBrainTurn("session-cancel", "message-cancel"), true);
+    assert.equal(tracked.signal.aborted, true);
+  } finally {
+    tracked.cleanup();
+  }
+  assert.equal(cancelCodexBrainTurn("session-cancel", "message-cancel"), false);
+});
 
 test("codex base instructions explicitly steer spatial export workflows", () => {
   const instructions = getCodexBaseInstructionsForTest();

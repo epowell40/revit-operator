@@ -20,9 +20,16 @@ namespace RevitBridge.Logic.Handlers.MEP
             public string? roomNumber { get; set; }
             public string? levelName { get; set; }
             public long? levelId { get; set; }
+            public string? worksetName { get; set; }
+            public long? worksetId { get; set; }
             public string? systemType { get; set; }
             public string? ductType { get; set; }
+            public long? ductTypeId { get; set; }
+            public string? ductShape { get; set; }
             public string? pipeType { get; set; }
+            public long? pipeTypeId { get; set; }
+            public string? conduitType { get; set; }
+            public long? conduitTypeId { get; set; }
             public string? ductSize { get; set; }
             public string? diameter { get; set; }
             public string? pipeSize { get; set; }
@@ -31,6 +38,9 @@ namespace RevitBridge.Logic.Handlers.MEP
             public string? elevationPolicy { get; set; } = "resolve_context_default";
             public string? routingMode { get; set; } = "polyline";
             public bool connectSegments { get; set; } = true;
+            public bool connectToExisting { get; set; } = false;
+            public bool requireExistingEndpointConnections { get; set; } = false;
+            public double externalConnectionToleranceFt { get; set; } = 0.1;
             public bool verify { get; set; } = true;
             public double? defaultOffsetFt { get; set; }
             public double? ceilingOffsetFt { get; set; }
@@ -213,12 +223,34 @@ namespace RevitBridge.Logic.Handlers.MEP
 
                 var capture = Invoke(new HighlightAndExportHandler(), app, captureRequest);
                 var captureJson = ToElement(capture);
+                var visibilityJson = captureJson.ValueKind == JsonValueKind.Object &&
+                    captureJson.TryGetProperty("elementVisibility", out var visibilityValue)
+                    ? visibilityValue.Clone()
+                    : default;
+                var allCreatedElementsVisible = ReadBool(visibilityJson, "allRequestedElementsVisible");
+                var notVisibleElementIds = ReadLongArray(visibilityJson, "notVisibleElementIds");
+                if (allCreatedElementsVisible != true)
+                {
+                    return new
+                    {
+                        status = "CreatedElementsNotVisibleInView",
+                        reason = "The post-change export completed, but one or more created elements were not verifiably visible in the requested view.",
+                        capture,
+                        createdElementIds,
+                        createdFittingIds,
+                        notVisibleElementIds,
+                        elementVisibility = visibilityJson.ValueKind == JsonValueKind.Undefined ? (object?)null : visibilityJson,
+                        capturePath = ReadString(captureJson, "path"),
+                        nextStep = "Choose a view whose range, category visibility, phase, filters, and crop include every created element, then rerun visual verification."
+                    };
+                }
                 return new
                 {
                     status = "CaptureReadyForAIReview",
                     capture,
                     createdElementIds,
                     createdFittingIds,
+                    elementVisibility = visibilityJson,
                     expected = new
                     {
                         orderedPoints = ReadObjectArray(applyJson, "plannedPoints"),
@@ -261,9 +293,16 @@ namespace RevitBridge.Logic.Handlers.MEP
             roomNumber = p.roomNumber,
             levelName = p.levelName,
             levelId = p.levelId,
+            worksetName = p.worksetName,
+            worksetId = p.worksetId,
             systemType = p.systemType,
             ductType = p.ductType,
+            ductTypeId = p.ductTypeId,
+            ductShape = p.ductShape,
             pipeType = p.pipeType,
+            pipeTypeId = p.pipeTypeId,
+            conduitType = p.conduitType,
+            conduitTypeId = p.conduitTypeId,
             ductSize = p.ductSize,
             diameter = p.diameter,
             pipeSize = p.pipeSize,
@@ -272,6 +311,9 @@ namespace RevitBridge.Logic.Handlers.MEP
             elevationPolicy = p.elevationPolicy,
             routingMode = p.routingMode,
             connectSegments = p.connectSegments,
+            connectToExisting = p.connectToExisting,
+            requireExistingEndpointConnections = p.requireExistingEndpointConnections,
+            externalConnectionToleranceFt = p.externalConnectionToleranceFt,
             verify = p.verify,
             dryRun = dryRun,
             defaultOffsetFt = p.defaultOffsetFt,
@@ -326,6 +368,17 @@ namespace RevitBridge.Logic.Handlers.MEP
                 value.TryGetInt32(out var result))
             {
                 return result;
+            }
+            return null;
+        }
+
+        private static bool? ReadBool(JsonElement obj, string name)
+        {
+            if (obj.ValueKind == JsonValueKind.Object &&
+                obj.TryGetProperty(name, out var value) &&
+                (value.ValueKind == JsonValueKind.True || value.ValueKind == JsonValueKind.False))
+            {
+                return value.GetBoolean();
             }
             return null;
         }

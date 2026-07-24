@@ -1551,6 +1551,8 @@ namespace RevitBridge.Handlers
             if (category == null) return null;
             OverrideGraphicSettings? ogs = null;
             try { ogs = view.GetCategoryOverrides(category.Id); } catch { }
+            bool? hidden = null;
+            try { hidden = view.GetCategoryHidden(category.Id); } catch { }
 
             var lineWeight = ogs == null ? null : TryReadInt(ogs, "ProjectionLineWeight", "GetProjectionLineWeight");
             var color = ogs == null ? null : TryReadColor(ogs, "ProjectionLineColor", "GetProjectionLineColor");
@@ -1565,6 +1567,7 @@ namespace RevitBridge.Handlers
             {
                 categoryId = RevitBridge.Common.ElementIdCompat.GetValue(category.Id),
                 categoryName = category.Name,
+                hidden,
                 lineWeight,
                 linePatternId = patternId,
                 linePatternName = pattern?.Name,

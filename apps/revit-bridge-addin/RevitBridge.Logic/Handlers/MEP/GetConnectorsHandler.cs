@@ -16,6 +16,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             public List<long> elementIds { get; set; } = new List<long>();
             public bool includeAllRefs { get; set; } = true;
             public bool includeCoordinateSystem { get; set; } = true;
+            public bool includeFlexGeometry { get; set; } = true;
             public int maxConnectorsPerElement { get; set; } = 64;
         }
 
@@ -46,6 +47,12 @@ namespace RevitBridge.Logic.Handlers.MEP
 
                 var catToken = SelectionUtil.GetCategoryToken(e) ?? (e.Category?.Name ?? "None");
                 var sys = MepSystemUtil.TryGetSystemName(e);
+                var typeId = TryGetPositiveElementId(e.GetTypeId());
+                var typeName = typeId.HasValue
+                    ? (doc.GetElement(ElementIdCompat.Create(typeId.Value))?.Name ?? e.Name)
+                    : e.Name;
+                var createdPhaseId = TryGetPositiveElementId(e.CreatedPhaseId);
+                var flexGeometry = p.includeFlexGeometry ? TryGetFlexGeometry(e) : null;
 
                 var connectorsOut = new List<object>();
                 try
@@ -55,8 +62,9 @@ namespace RevitBridge.Logic.Handlers.MEP
                     {
                         if (idx >= maxConn) break;
                         if (c == null) continue;
+                        var hasNativeConnectorId = MepSystemUtil.TryGetNativeConnectorId(c, out var nativeConnectorId);
 
-                        var origin = c.Origin;
+                        var origin = TryGetConnectorOrigin(c);
                         var shape = c.Shape.ToString();
                         var domain = "";
                         try { domain = c.Domain.ToString(); } catch { domain = ""; }
@@ -69,9 +77,15 @@ namespace RevitBridge.Logic.Handlers.MEP
                                 var d = 2.0 * c.Radius;
                                 size = new { kind = "round", radiusFt = c.Radius, diameterFt = d };
                             }
-                            else if (c.Shape == ConnectorProfileType.Rectangular)
+                            else if (c.Shape == ConnectorProfileType.Rectangular ||
+                                     c.Shape == ConnectorProfileType.Oval)
                             {
-                                size = new { kind = "rect", widthFt = c.Width, heightFt = c.Height };
+                                size = new
+                                {
+                                    kind = c.Shape == ConnectorProfileType.Oval ? "oval" : "rect",
+                                    widthFt = c.Width,
+                                    heightFt = c.Height
+                                };
                             }
                         }
                         catch { size = null; }
@@ -97,6 +111,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         }
 
                         var refsOut = new List<object>();
+                        var physicalRefsOut = new List<object>();
                         if (p.includeAllRefs)
                         {
                             var seen = new HashSet<long>();
@@ -115,11 +130,17 @@ namespace RevitBridge.Logic.Handlers.MEP
                                             if (o.Id == null) continue;
                                             if (o.Id.IntegerValue == e.Id.IntegerValue) continue;
                                             if (!seen.Add(RevitBridge.Common.ElementIdCompat.GetValue(o.Id))) continue;
-                                            refsOut.Add(new
+                                            var ownerCategory = SelectionUtil.GetCategoryToken(o) ?? (o.Category?.Name ?? "None");
+                                            var isMepSystem = o is MEPSystem;
+                                            var reference = new
                                             {
                                                 ownerId = RevitBridge.Common.ElementIdCompat.GetValue(o.Id),
-                                                ownerCategory = SelectionUtil.GetCategoryToken(o) ?? (o.Category?.Name ?? "None")
-                                            });
+                                                ownerCategory,
+                                                isMepSystem,
+                                                isPhysicalElement = !isMepSystem
+                                            };
+                                            refsOut.Add(reference);
+                                            if (!isMepSystem) physicalRefsOut.Add(reference);
                                         }
                                         catch
                                         {
@@ -137,12 +158,31 @@ namespace RevitBridge.Logic.Handlers.MEP
                         connectorsOut.Add(new
                         {
                             index = idx,
-                            origin = new[] { origin.X, origin.Y, origin.Z },
+                            connectorId = hasNativeConnectorId ? nativeConnectorId : idx,
+                            connectorIdBasis = hasNativeConnectorId ? "revit_native_connector_id" : "enumeration_index_with_origin_guard_required",
+                            origin,
                             domain,
                             shape,
+                            connectorType = TryGetConnectorPropertyValue(c, "ConnectorType"),
+                            direction = TryGetConnectorPropertyValue(c, "Direction"),
+                            isConnected = TryGetConnectorPropertyValue(c, "IsConnected"),
+                            systemClassification = TryGetConnectorSystemClassification(c),
+                            electrical = new
+                            {
+                                systemType = TryGetConnectorPropertyValue(c, "ElectricalSystemType"),
+                                voltageInternal = TryGetConnectorPropertyValue(c, "Voltage"),
+                                poles = TryGetConnectorPropertyValue(c, "NumberOfPoles"),
+                                apparentLoadInternal = TryGetConnectorPropertyValue(c, "ApparentLoad"),
+                                trueLoadInternal = TryGetConnectorPropertyValue(c, "TrueLoad"),
+                                powerFactor = TryGetConnectorPropertyValue(c, "PowerFactor"),
+                                loadClassification = TryGetConnectorPropertyValue(c, "LoadClassification")
+                            },
                             size,
                             coordinateSystem = cs,
-                            connectedTo = refsOut
+                            connectedTo = refsOut,
+                            physicalConnectedTo = physicalRefsOut,
+                            physicalConnectionCount = physicalRefsOut.Count,
+                            isPhysicallyConnected = physicalRefsOut.Count > 0
                         });
                         idx++;
                     }
@@ -159,9 +199,13 @@ namespace RevitBridge.Logic.Handlers.MEP
                     ok = true,
                     category = catToken,
                     name = e.Name,
+                    typeId,
+                    typeName,
+                    createdPhaseId,
                     systemName = sys,
                     connectorCount = connectorsOut.Count,
-                    connectors = connectorsOut
+                    connectors = connectorsOut,
+                    flexGeometry
                 });
             }
 
@@ -172,6 +216,111 @@ namespace RevitBridge.Logic.Handlers.MEP
                 results,
                 warnings
             });
+        }
+
+        private static long? TryGetPositiveElementId(ElementId? id)
+        {
+            if (id == null) return null;
+            try
+            {
+                var value = ElementIdCompat.GetValue(id);
+                return value > 0 ? value : (long?)null;
+            }
+            catch { return null; }
+        }
+
+        private static object? TryGetConnectorOrigin(Connector connector)
+        {
+            try
+            {
+                var origin = connector.Origin;
+                return new[] { origin.X, origin.Y, origin.Z };
+            }
+            catch
+            {
+                // Logical electrical connectors do not expose a physical origin. They are
+                // still essential to circuit and panel diagnostics, so retain the connector
+                // with a null origin instead of failing the entire owning element.
+                return null;
+            }
+        }
+
+        private static object? TryGetConnectorPropertyValue(Connector connector, string propertyName)
+        {
+            try
+            {
+                var property = connector.GetType().GetProperty(propertyName);
+                var value = property?.GetValue(connector, null);
+                if (value == null) return null;
+                if (value is ElementId elementId) return ElementIdCompat.GetValue(elementId);
+                if (value is Enum) return value.ToString();
+                if (value is string || value is bool || value is int || value is long || value is double || value is float || value is decimal)
+                    return value;
+                return value.ToString();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string TryGetConnectorSystemClassification(Connector connector)
+        {
+            if (connector == null) return "";
+            foreach (var propertyName in new[] { "DuctSystemType", "PipeSystemType", "ElectricalSystemType" })
+            {
+                try
+                {
+                    var property = connector.GetType().GetProperty(propertyName);
+                    var value = property?.GetValue(connector, null);
+                    var text = value?.ToString() ?? "";
+                    if (!string.IsNullOrWhiteSpace(text) && !string.Equals(text, "UndefinedSystemType", StringComparison.OrdinalIgnoreCase))
+                        return text;
+                }
+                catch
+                {
+                    // Continue through the cross-discipline property fallbacks.
+                }
+            }
+            return "";
+        }
+
+        private static object? TryGetFlexGeometry(Element element)
+        {
+            if (element is Autodesk.Revit.DB.Mechanical.FlexDuct flexDuct)
+            {
+                return BuildFlexGeometry(
+                    "duct",
+                    flexDuct.Points,
+                    flexDuct.StartTangent,
+                    flexDuct.EndTangent);
+            }
+            if (element is Autodesk.Revit.DB.Plumbing.FlexPipe flexPipe)
+            {
+                return BuildFlexGeometry(
+                    "pipe",
+                    flexPipe.Points,
+                    flexPipe.StartTangent,
+                    flexPipe.EndTangent);
+            }
+            return null;
+        }
+
+        private static object BuildFlexGeometry(
+            string kind,
+            IList<XYZ> points,
+            XYZ startTangent,
+            XYZ endTangent)
+        {
+            return new
+            {
+                kind,
+                points = (points ?? new List<XYZ>())
+                    .Select(point => new[] { point.X, point.Y, point.Z })
+                    .ToList(),
+                startTangent = new[] { startTangent.X, startTangent.Y, startTangent.Z },
+                endTangent = new[] { endTangent.X, endTangent.Y, endTangent.Z }
+            };
         }
     }
 }

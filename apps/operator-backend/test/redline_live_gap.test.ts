@@ -55,6 +55,27 @@ test("exact failed-live request uses the production read-only decision lane once
   assert.deepEqual(lane.response, { version: "operator.backend.v1", assistant_message: "Grounded deterministic evidence summary.", actions: [] }); assert.equal(JSON.stringify(lane.response).includes("should-not-run"), false); assert.equal(JSON.stringify(lane.response).includes("/revit/delete"), false);
 });
 
+test("existing-conditions reconstruction analyzes the source before any fast Revit preflight", async () => {
+  const order: string[] = [];
+  const lane = await __testOnlyRunInitialRedlineDecisionLane({
+    userText: "Draft existing conditions in room 100 from the attached P1.01 source PDF.",
+    userAttachments: [{
+      id: "p210",
+      filename: "P1.01_ems_lounge_sink_crop.pdf",
+      relative_path: "artifacts/uploads/P1.01_ems_lounge_sink_crop.pdf",
+      mime: "application/pdf"
+    }] as any,
+    runInitialPreflight: async (action) => { order.push(action.type); },
+    runFastPreflight: async () => { order.push("fast"); return null; },
+    summarize: async () => { order.push("summary"); return { assistant_message: "unexpected" } as any; }
+  });
+
+  assert.deepEqual(order, ["analyze_redline"]);
+  assert.equal(lane.initialPreflightCompleted, true);
+  assert.equal(lane.fastPreflight, null);
+  assert.equal(lane.response, null);
+});
+
 test("authoritative step 1968 safety list keeps both dispatches on one analysis-only lane", async () => {
   const req = { version: "operator.backend.v1", session_id: "ff088c6a-359c-4d15-97ff-7894e1d3415c", message_id: "f053cd9f-2b13-4389-b455-434f65f0f000", user_text: step1968Prompt, user_attachments: step1968Attachment } as any;
   const action = __testOnlyBuildInitialRedlinePreflightAction({ userText: step1968Prompt, userAttachments: step1968Attachment }); assert.equal(action?.type, "analyze_redline"); if (action?.type === "analyze_redline") assert.equal(action.file_path, step1968Attachment[0].relative_path);

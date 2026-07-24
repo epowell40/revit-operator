@@ -1,7 +1,7 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import { decide, decideStreaming } from "./brain.js";
+import { decide, decideStreaming, isDirectBrainRouteRequest } from "./brain.js";
 import { readJson, writeJson } from "./http.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ToolResult } from "./contracts.js";
 import { appendMessage, appendToolSummary, assertSessionOwnership, ensureSession } from "./session_store.js";
@@ -20,7 +20,7 @@ import {
 import { maybeHandleMacroSkill } from "./skills/macro_skill_commands.js";
 import { ensureDefaultMacroSkills } from "./skills/default_macro_skills.js";
 import { writeIssueBundle } from "./telemetry/issue_bundles.js";
-import { warmCodexAppServer } from "./brains/codex_brain.js";
+import { cancelCodexBrainTurn, warmCodexAppServer } from "./brains/codex_brain.js";
 import { persistence } from "./persistence/persistence_manager.js";
 import { appendFeedbackAndMaybePromote } from "./feedback/feedback_store.js";
 import { startFeedbackDevAutofix } from "./feedback/dev_autofix.js";
@@ -1714,13 +1714,16 @@ const server = http.createServer(async (req, res) => {
           // ignore
         }
       }
-      const macroResp = maybeHandleMacroSkill({
+      const brainRequest: ChatRequest = {
         ...(parsed as ChatRequest),
         user_text: userTextWithAttachments,
         tool_results: toolResults,
         user_attachments: userAttachments,
         context: withServerContext(parsed.context, { dev_agent_unlocked: devAgentUnlocked(req) })
-      });
+      };
+      const macroResp = isDirectBrainRouteRequest(brainRequest)
+        ? null
+        : maybeHandleMacroSkill(brainRequest);
 
       let streamClosed = false;
       const send = (event: string, data: unknown) => {
@@ -1835,7 +1838,9 @@ const server = http.createServer(async (req, res) => {
         send("chat.start", { session_id: parsed.session_id, message_id: parsed.message_id });
 
       ensureSession(parsed.session_id);
-      if (userText.trim()) appendMessage(parsed.session_id, { role: "user", text: userText });
+      if (userTextWithAttachments.trim()) {
+        appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments });
+      }
       for (const tr of toolResults) {
         appendToolSummary(parsed.session_id, summarizeToolResult(tr));
         try {
@@ -1875,8 +1880,9 @@ const server = http.createServer(async (req, res) => {
           {
             ...(parsed as ChatRequest),
             context: withServerContext(parsed.context, { dev_agent_unlocked: devUnlocked }),
-            user_text: userText,
-            tool_results: toolResults
+            user_text: userTextWithAttachments,
+            tool_results: toolResults,
+            user_attachments: userAttachments
           },
           {
             abortSignal: streamAbort.signal,
@@ -2070,13 +2076,16 @@ const server = http.createServer(async (req, res) => {
       }
 
       const devUnlocked = devAgentUnlocked(req);
-      const macroResp = maybeHandleMacroSkill({
+      const brainRequest: ChatRequest = {
         ...(parsed as ChatRequest),
         user_text: userTextWithAttachments,
         tool_results: toolResults,
         user_attachments: userAttachments,
         context: withServerContext(parsed.context, { dev_agent_unlocked: devUnlocked })
-      });
+      };
+      const macroResp = isDirectBrainRouteRequest(brainRequest)
+        ? null
+        : maybeHandleMacroSkill(brainRequest);
       if (macroResp) {
         macroResp.actions = applyEnvironmentPolicyToActions(macroResp.actions);
         ensureSession(parsed.session_id);
@@ -2291,6 +2300,9 @@ const server = http.createServer(async (req, res) => {
         return writeJson(res, 400, { error: "Invalid stop_reason" });
       }
       try {
+        if (stop_reason === "USER_CANCELLED") {
+          cancelCodexBrainTurn(session_id, message_id);
+        }
         setStepStopReason(session_id, message_id, stop_reason as any);
         appendEvent(session_id, "assistant", "loop.stop", { message_id, stop_reason });
       } catch {
@@ -3556,6 +3568,9 @@ function normalizeToolResults(input: unknown): ToolResult[] {
       status: r.status,
       ...(r.result_json !== undefined ? { result_json: r.result_json } : {}),
       ...(typeof r.error === "string" ? { error: r.error } : {}),
+      ...(typeof r.failure_kind === "string" ? { failure_kind: r.failure_kind } : {}),
+      ...(typeof r.failure_code === "string" ? { failure_code: r.failure_code } : {}),
+      ...(typeof r.failure_hint === "string" ? { failure_hint: r.failure_hint } : {}),
       ...(typeof r.duration_ms === "number" ? { duration_ms: r.duration_ms } : {}),
       ...(Array.isArray(r.attachments) ? { attachments: r.attachments } : {})
     }));

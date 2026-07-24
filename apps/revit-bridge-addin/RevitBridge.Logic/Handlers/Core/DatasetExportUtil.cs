@@ -155,6 +155,9 @@ namespace RevitBridge.Logic.Handlers.Core
             var associatedSpatialPayload = BuildSpatialPayload(effectiveAssociatedSpatial);
             var systemPayload = BuildSystemPayload(element, linkInstance);
             var connectors = BuildConnectorSummary(element, linkInstance);
+            var electricalCircuit = element is FamilyInstance electricalFamilyInstance
+                ? HostedPlacementUtil.BuildElectricalCircuitAuditPayload(electricalFamilyInstance)
+                : null;
             var parameters = BuildCuratedParameters(sourceDocument, element);
             var parameterGroups = BuildParameterGroups(parameters);
             var hostScopedId = ResolveHostScopedId(element, linkInstance, host, hostingSurface);
@@ -340,6 +343,7 @@ namespace RevitBridge.Logic.Handlers.Core
                 ["system"] = systemPayload,
                 ["connectorCount"] = connectors.TryGetValue("count", out var connectorCount) ? connectorCount : 0,
                 ["connectorsSummary"] = connectors,
+                ["electricalCircuit"] = electricalCircuit,
                 ["parameters"] = parameters,
                 ["parameterGroups"] = parameterGroups
             };

@@ -68,6 +68,19 @@ namespace RevitBridge.Logic.Handlers
             public int failedCount { get; set; }
         }
 
+        private sealed class ElementVisibilityCheck
+        {
+            public long elementId { get; set; }
+            public bool found { get; set; }
+            public string? category { get; set; }
+            public bool? inViewCollector { get; set; }
+            public bool viewSpecificBoundingBoxAvailable { get; set; }
+            public bool? elementHidden { get; set; }
+            public bool? categoryHidden { get; set; }
+            public bool visibleInRequestedView { get; set; }
+            public List<string> blockingReasons { get; set; } = new List<string>();
+        }
+
         public Task<object> Handle(UIApplication app, string jsonData)
         {
             var p = string.IsNullOrEmpty(jsonData) ? new Params() : JsonSerializer.Deserialize<Params>(jsonData);
@@ -97,6 +110,13 @@ namespace RevitBridge.Logic.Handlers
 
             if (groups.All(g => g == null || g.elementIds == null || g.elementIds.Count == 0))
                 throw new ArgumentException("highlight-and-export requires elementIds or highlightGroups[].elementIds.");
+
+            var requestedIds = (p.elementIds ?? new List<long>())
+                .Concat(groups.Where(g => g != null).SelectMany(g => g.elementIds ?? new List<long>()))
+                .Where(id => id != 0)
+                .Distinct()
+                .ToList();
+            var elementVisibility = AssessElementVisibility(doc, view, requestedIds);
 
             string path;
             var warnings = new List<string>();
@@ -141,8 +161,69 @@ namespace RevitBridge.Logic.Handlers
                 heightPx,
                 trace = traceResult,
                 focusCrop,
+                elementVisibility,
                 warnings
             });
+        }
+
+        private static object AssessElementVisibility(Document doc, View view, List<long> requestedIds)
+        {
+            HashSet<long>? collectorIds = null;
+            try
+            {
+                collectorIds = new FilteredElementCollector(doc, view.Id)
+                    .WhereElementIsNotElementType()
+                    .ToElementIds()
+                    .Select(ElementIdCompat.GetValue)
+                    .ToHashSet();
+            }
+            catch
+            {
+                collectorIds = null;
+            }
+
+            var checks = new List<ElementVisibilityCheck>();
+            foreach (var id in requestedIds)
+            {
+                var check = new ElementVisibilityCheck { elementId = id };
+                var element = doc.GetElement(ElementIdCompat.Create(id));
+                check.found = element != null;
+                check.category = element?.Category?.Name;
+                check.inViewCollector = collectorIds == null ? (bool?)null : collectorIds.Contains(id);
+
+                if (element == null)
+                {
+                    check.blockingReasons.Add("element_not_found");
+                    checks.Add(check);
+                    continue;
+                }
+
+                try { check.viewSpecificBoundingBoxAvailable = element.get_BoundingBox(view) != null; }
+                catch { check.viewSpecificBoundingBoxAvailable = false; }
+                try { check.elementHidden = element.IsHidden(view); }
+                catch { check.elementHidden = null; }
+                try { check.categoryHidden = element.Category == null ? (bool?)null : view.GetCategoryHidden(element.Category.Id); }
+                catch { check.categoryHidden = null; }
+
+                if (check.inViewCollector != true) check.blockingReasons.Add(check.inViewCollector == false ? "not_in_view_collector" : "view_collector_unavailable");
+                if (!check.viewSpecificBoundingBoxAvailable) check.blockingReasons.Add("no_view_specific_bounding_box");
+                if (check.elementHidden == true) check.blockingReasons.Add("element_hidden_in_view");
+                if (check.categoryHidden == true) check.blockingReasons.Add("category_hidden_in_view");
+                check.visibleInRequestedView = check.blockingReasons.Count == 0;
+                checks.Add(check);
+            }
+
+            var visibleIds = checks.Where(x => x.visibleInRequestedView).Select(x => x.elementId).ToList();
+            var notVisibleIds = checks.Where(x => !x.visibleInRequestedView).Select(x => x.elementId).ToList();
+            return new
+            {
+                viewId = ElementIdCompat.GetValue(view.Id),
+                requestedElementIds = requestedIds,
+                visibleElementIds = visibleIds,
+                notVisibleElementIds = notVisibleIds,
+                allRequestedElementsVisible = requestedIds.Count > 0 && notVisibleIds.Count == 0,
+                checks
+            };
         }
 
         private static TraceResult? TryCreateElementCurveTraces(Document doc, View view, List<HighlightGroup> groups, OverrideStyle? defaultStyle, bool requested, List<string> warnings)

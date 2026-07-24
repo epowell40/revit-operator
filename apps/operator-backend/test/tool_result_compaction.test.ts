@@ -1,6 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { compactIncomingToolResult, compactParameterReadResultForPrompt, compactScheduleReadResultForPrompt, compactVisibleElementsResult, describeVisibleElementsInventory, getChatRequestLimitBytes } from "../src/tool_result_compaction.js";
+import {
+  compactIncomingToolResult,
+  compactParameterReadResultForPrompt,
+  compactScheduleReadResultForPrompt,
+  compactViewsResult,
+  compactVisibleElementsResult,
+  describeVisibleElementsInventory,
+  getChatRequestLimitBytes
+} from "../src/tool_result_compaction.js";
 
 test("compact parameter reads preserves late DESIG and shock-arrestor evidence", () => {
   const clutter = Array.from({ length: 120 }, (_, index) => ({
@@ -192,6 +200,66 @@ test("compact visible-elements result prioritizes actionable electrical samples 
   assert.equal(compacted.itemsSampled[1]?.electricalCircuit?.primaryLabel, "P405/1");
   assert.equal(compacted.itemsSampled[1]?.anchor?.image?.insideFrame, true);
   assert.equal(compacted.itemsOmitted, 24);
+});
+
+test("compact visible-elements result preserves category and spatial diversity for durable registration landmarks", () => {
+  const walls = Array.from({ length: 40 }, (_, index) => ({
+    elementId: 6000 + index,
+    sourceScopedId: `link:1:${6000 + index}`,
+    category: "Walls",
+    builtInCategory: "OST_Walls",
+    anchor: {
+      model: { x: index, y: index, z: 0 },
+      image: {
+        normalizedX: (index % 4) / 3,
+        normalizedY: (Math.floor(index / 4) % 4) / 3,
+        insideFrame: true
+      }
+    }
+  }));
+  const compacted = compactVisibleElementsResult({
+    frameId: "registration-frame",
+    count: walls.length + 3,
+    items: [
+      ...walls,
+      {
+        elementId: 7001,
+        sourceScopedId: "link:1:7001",
+        category: "Stairs",
+        builtInCategory: "OST_Stairs",
+        anchor: { model: { x: 20, y: 20, z: 0 }, image: { normalizedX: 0.8, normalizedY: 0.2, insideFrame: true } }
+      },
+      {
+        elementId: 7002,
+        sourceScopedId: "link:1:7002",
+        category: "Shaft Openings",
+        builtInCategory: "OST_ShaftOpening",
+        anchor: { model: { x: 25, y: 25, z: 0 }, image: { normalizedX: 0.2, normalizedY: 0.8, insideFrame: true } }
+      },
+      {
+        elementId: 7003,
+        sourceScopedId: "link:1:7003",
+        category: "Grids",
+        builtInCategory: "OST_Grids",
+        anchor: { model: { x: 30, y: 30, z: 0 }, image: { normalizedX: 0.5, normalizedY: 0.5, insideFrame: true } }
+      }
+    ]
+  }, { maxItems: 8, maxCountEntries: 8 }) as any;
+
+  const sampledCategories = new Set(
+    compacted.itemsSampled.map((item: any) => item.builtInCategory)
+  );
+  assert.ok(sampledCategories.has("OST_Walls"));
+  assert.ok(sampledCategories.has("OST_Stairs"));
+  assert.ok(sampledCategories.has("OST_ShaftOpening"));
+  assert.ok(sampledCategories.has("OST_Grids"));
+  const sampledWalls = compacted.itemsSampled.filter(
+    (item: any) => item.builtInCategory === "OST_Walls"
+  );
+  assert.ok(sampledWalls.length >= 4);
+  assert.ok(new Set(sampledWalls.map((item: any) =>
+    `${Math.floor(item.anchor.image.normalizedX * 4)}:${Math.floor(item.anchor.image.normalizedY * 4)}`
+  )).size >= 4);
 });
 
 test("compact visible-elements result preserves room tag text and tagged spatial evidence", () => {
@@ -458,7 +526,13 @@ test("compact incoming tool result preserves bounded image base64 payloads and s
     path: "/revit/export-visible-elements",
     status: "done",
     result_json: {
+      ok: true,
       count: 1,
+      modelBoundsApplied: true,
+      modelBoundsFt: {
+        min: { x: 1, y: 2, z: 3 },
+        max: { x: 4, y: 5, z: 6 }
+      },
       items: [
         {
           elementId: 42,
@@ -490,6 +564,12 @@ test("compact incoming tool result preserves bounded image base64 payloads and s
 
   assert.equal((result.attachments?.[0] as any)?.data_base64, "abc123");
   assert.equal((result.result_json as any)?._compacted, true);
+  assert.equal((result.result_json as any)?.ok, true);
+  assert.equal((result.result_json as any)?.modelBoundsApplied, true);
+  assert.deepEqual((result.result_json as any)?.modelBoundsFt, {
+    min: { x: 1, y: 2, z: 3 },
+    max: { x: 4, y: 5, z: 6 }
+  });
   assert.equal((result.result_json as any)?.itemsSampled.length, 1);
   assert.equal((result.result_json as any)?.itemsSampled?.[0]?.hostId, 777);
   assert.equal((result.result_json as any)?.itemsSampled?.[0]?.hostScopedId, "link:555:777");
@@ -497,6 +577,45 @@ test("compact incoming tool result preserves bounded image base64 payloads and s
   assert.equal((result.result_json as any)?.itemsSampled?.[0]?.parameters?.panel, "P403");
   assert.equal((result.result_json as any)?.itemsSampled?.[0]?.parameterGroups?.electrical?.circuitNumber, "1");
   assert.equal((result.result_json as any)?.itemsSampled?.[0]?.orientation?.planAzimuthRadians, 1.57);
+});
+
+test("large view inventories become explicit incomplete receipts instead of silently clipped JSON", () => {
+  const views = Array.from({ length: 40 }, (_, index) => ({
+    id: 1000 + index,
+    name: index === 35 ? "LEVEL 01 - BUILDING 200 - NEW WORK - PLUMBING" : `View ${index}`,
+    type: index % 2 === 0 ? "FloorPlan" : "DrawingSheet"
+  }));
+
+  const compacted = compactViewsResult(views, { maxItems: 8, maxJsonChars: 1000 }) as any;
+  assert.equal(compacted._compacted, true);
+  assert.equal(compacted.compaction, "views-index-summary");
+  assert.equal(compacted.count, 40);
+  assert.equal(compacted.result_clipped, true);
+  assert.equal(compacted.viewsSampled.length, 8);
+  assert.equal(compacted.viewsOmitted, 32);
+  assert.doesNotMatch(JSON.stringify(compacted.viewsSampled), /BUILDING 200/);
+  assert.match(compacted.guidance, /Never infer that a view is absent/);
+  assert.match(compacted.guidance, /POST \/revit\/views/);
+});
+
+test("bounded POST view query results remain complete", () => {
+  const bounded = {
+    status: "ok",
+    count: 1,
+    returned: 1,
+    truncated: false,
+    appliedFilters: ["view_names_exact"],
+    views: [{ id: 3960410, name: "LEVEL 01 - BUILDING 200 - NEW WORK - PLUMBING", type: "FloorPlan" }]
+  };
+
+  const compacted = compactIncomingToolResult({
+    action_id: "bounded-views",
+    method: "POST",
+    path: "/revit/views",
+    status: "done",
+    result_json: bounded
+  });
+  assert.deepEqual(compacted.result_json, bounded);
 });
 
 test("compact visible-elements result preserves raster-consistent frame metadata", () => {

@@ -9,6 +9,7 @@ This is the quick list of repo-shipped skills.
 4. `004` Trace connected MEP network: `skills/workflows/mep_trace_connected_network.md`
 5. `005` Resize connected duct run: `skills/workflows/duct_resize_connected_run.md`
 6. `006` Create MEP pathway routes: `skills/workflows/mep_pathway_create.md`
+7. `007` Reconstruct existing conditions from as-builts: `skills/workflows/existing_conditions_reconstruct.md`
 
 ## Runbooks
 1. `101` MEP resize runbook: `skills/runbooks/mep_resize_runbook.md`

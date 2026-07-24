@@ -345,6 +345,7 @@ namespace RevitBridge.Operator
                 { "/revit/export-elements-xlsx", typeof(RevitBridge.Handlers.ExportElementsXlsxHandler.Params) },
                 { "/revit/import-elements-xlsx-updates", typeof(RevitBridge.Handlers.ImportElementsXlsxUpdatesHandler.Params) },
                 { "/revit/create-view", typeof(RevitBridge.Handlers.CreateViewHandler.Params) },
+                { "/revit/annotation-symbol-leaders", typeof(RevitBridge.Logic.Handlers.Drafting.AnnotationSymbolLeadersHandler.Params) },
                 { "/revit/keynotes", typeof(RevitBridge.Handlers.KeynotesHandler.Params) },
 
                 // Logic handlers (proxies)
@@ -370,6 +371,11 @@ namespace RevitBridge.Operator
                 { "/revit/resolve-mep-routing-context", typeof(RevitBridge.Logic.Handlers.MEP.ResolveMepRoutingContextHandler.Params) },
                 { "/revit/create-mep-route", typeof(RevitBridge.Logic.Handlers.MEP.CreateMepRouteHandler.Params) },
                 { "/revit/connect-mep-branch", typeof(RevitBridge.Logic.Handlers.MEP.ConnectMepBranchHandler.Params) },
+                { "/revit/connect-existing-mep-branch", typeof(RevitBridge.Logic.Handlers.MEP.ConnectExistingMepBranchHandler.Params) },
+                { "/revit/connect-mep-elements", typeof(RevitBridge.Logic.Handlers.MEP.ConnectMepElementsHandler.Params) },
+                { "/revit/create-pipe-between-connectors", typeof(RevitBridge.Logic.Handlers.MEP.CreatePipeBetweenConnectorsHandler.Params) },
+                { "/revit/existing-conditions-mep-draft-workflow", typeof(RevitBridge.Logic.Handlers.MEP.ExistingConditionsMepDraftWorkflowHandler.Params) },
+                { "/revit/copy-mep-pattern", typeof(RevitBridge.Logic.Handlers.MEP.CopyMepPatternHandler.Params) },
                 { "/revit/mep-route-workflow", typeof(RevitBridge.Logic.Handlers.MEP.MepRouteWorkflowHandler.Params) },
                 { "/revit/mep-branch-network-workflow", typeof(RevitBridge.Logic.Handlers.MEP.MepBranchNetworkWorkflowHandler.Params) },
                 { "/revit/edit-mep-route-elements", typeof(RevitBridge.Logic.Handlers.MEP.EditMepRouteElementsHandler.Params) },
@@ -385,6 +391,7 @@ namespace RevitBridge.Operator
                 { "/revit/resize-ducts-in-room", typeof(RevitBridge.Logic.Handlers.MEP.ResizeDuctsInRoomHandler.Params) },
                 { "/revit/resize-ductwork-by-scope", typeof(RevitBridge.Logic.Handlers.MEP.ResizeDuctworkByScopeHandler.Params) },
                 { "/revit/repair-duct-continuity-by-scope", typeof(RevitBridge.Logic.Handlers.MEP.RepairDuctContinuityByScopeHandler.Params) },
+                { "/revit/repair-mep-connectors", typeof(RevitBridge.Logic.Handlers.MEP.RepairMepConnectorsHandler.Params) },
                 { "/revit/get-connectors", typeof(RevitBridge.Logic.Handlers.MEP.GetConnectorsHandler.Params) },
                 { "/revit/align-room-tops-to-ceilings", typeof(RevitBridge.Logic.Handlers.AlignRoomTopsToCeilingsHandler.Params) },
                 { "/revit/analyze-dimensions", typeof(RevitBridge.Logic.Handlers.AnalyzeDimensionsHandler.Params) },
@@ -400,6 +407,7 @@ namespace RevitBridge.Operator
                 { "/revit/create-similar-from-instance", typeof(RevitBridge.Logic.Handlers.CreateSimilarFromInstanceHandler.Params) },
                 { "/revit/adjust-hosted-instance-on-host", typeof(RevitBridge.Logic.Handlers.AdjustHostedInstanceOnHostHandler.Params) },
                 { "/revit/assign-electrical-circuit", typeof(RevitBridge.Logic.Handlers.AssignElectricalCircuitHandler.Params) },
+                { "/revit/assign-electrical-distribution-system", typeof(RevitBridge.Logic.Handlers.AssignElectricalDistributionSystemHandler.Params) },
                 { "/revit/load-family", typeof(RevitBridge.Logic.Handlers.LoadFamilyHandler.Params) },
                 { "/revit/create-family-from-template", typeof(RevitBridge.Logic.Handlers.CreateFamilyFromTemplateHandler.Params) },
                 { "/revit/tag-elements", typeof(RevitBridge.Logic.Handlers.TagElementsHandler.TagRequest) },
@@ -442,6 +450,8 @@ namespace RevitBridge.Operator
                 { "/revit/computer-use-guard", typeof(RevitBridge.Operator.OperatorDialogComputerUse.GuardParams) },
                 { "/revit/resolve-room-plan-view", typeof(RevitBridge.Logic.Handlers.ResolveRoomPlanViewHandler.Params) },
                 { "/revit/plan-dwelling-receptacles", typeof(RevitBridge.Logic.Handlers.PlanDwellingReceptaclesHandler.Params) },
+                { "/revit/audit-electrical-circuit-loading", typeof(RevitBridge.Logic.Handlers.ElectricalCircuitLoadingAuditHandler.Params) },
+                { "/revit/audit-plumbing-fixture-services", typeof(RevitBridge.Logic.Handlers.PlumbingFixtureServicesAuditHandler.Params) },
                 { "/revit/plan-room-receptacles-from-analog", typeof(RevitBridge.Logic.Handlers.RoomReceptacleAnalogParams) },
                 { "/revit/apply-room-receptacles-from-analog", typeof(RevitBridge.Logic.Handlers.RoomReceptacleAnalogParams) },
                 { "/revit/list-element-types", typeof(RevitBridge.Logic.Handlers.ListElementTypesHandler.Params) },
@@ -654,6 +664,18 @@ namespace RevitBridge.Operator
                     return OneOf(Null(), core);
                 }
 
+                // Route request DTOs contain several mutually exclusive nullable string
+                // selectors (ductType/pipeType/conduitType and their sizes). The generic
+                // net48 reflection fallback cannot recover nullable-reference metadata and
+                // would incorrectly advertise every selector as simultaneously required.
+                // The handlers require ordered points; kind defaults to duct and every
+                // other selector is conditional or has a guarded native fallback.
+                if (string.Equals(p, "/revit/create-mep-route", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(p, "/revit/mep-route-workflow", StringComparison.OrdinalIgnoreCase))
+                {
+                    return WithRequiredFields(SchemaFromType(RequestTypesByPath[p], depth: 0), "points");
+                }
+
                 // Default: schema from request type when known, else generic object.
                 if (RequestTypesByPath.TryGetValue(p, out var t))
                 {
@@ -752,15 +774,16 @@ namespace RevitBridge.Operator
                     enumMap["mode"] = new[] { "vector", "fromTo" };
                     enumMap["behavior"] = new[] { "allOrNothing", "bestEffort" };
                     unitNotes.Add(new { unit = "feet", fields = new[] { "vectorX", "vectorY", "vectorZ", "fromX", "fromY", "fromZ", "toX", "toY", "toZ" } });
+                    notes.Add("Set moveTogether=true with behavior=allOrNothing to translate a connected set in one ElementTransformUtils.MoveElements call. moveTogether is incompatible with bestEffort.");
                 }
 
                 if (p == "/revit/rotate-elements")
                 {
                     enumMap["behavior"] = new[] { "allOrNothing", "bestEffort" };
-                    enumMap["axis.mode"] = new[] { "zThroughPoint" };
+                    enumMap["axis.mode"] = new[] { "zThroughPoint", "throughPoints" };
                     unitNotes.Add(new { unit = "degrees", fields = new[] { "angleDegrees" } });
                     unitNotes.Add(new { unit = "feet", fields = new[] { "axis.pointX", "axis.pointY", "axis.pointZ" } });
-                    notes.Add("Rotation axis v1: axis.mode=zThroughPoint creates a vertical axis line through (pointX,pointY,pointZ).");
+                    notes.Add("axis.mode=zThroughPoint creates a vertical axis through (pointX,pointY,pointZ); throughPoints creates an arbitrary 3D axis from that point to (endPointX,endPointY,endPointZ).");
                 }
 
                 if (p == "/revit/room-contents")
@@ -806,10 +829,23 @@ namespace RevitBridge.Operator
                 {
                     enumMap["scope.roomMode"] = new[] { "auto", "roomAware", "geometry" };
                     enumMap["scope.verticalScope"] = new[] { "room", "plenum", "room+plenum" };
-                    unitNotes.Add(new { unit = "feet", fields = new[] { "maxGapFt", "inferredTargetDiameterFt", "preAudit.likelyMissingSegments[*].distanceFt" } });
-                    notes.Add("Repairs continuity in scoped duct networks without resizing target diameter.");
-                    notes.Add("When dryRun=false, the tool attempts direct connector reconnects first, then short bridge duct insertion for compatible nearby open connectors.");
-                    notes.Add("Post-apply status checks created repair segments for isolation and system-name mismatch (createdSegmentAudit).");
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "maxGapFt", "preAudit.likelyMissingSegments[*].distanceFt", "attempts[*].gapFt", "attempts[*].profile.widthFt", "attempts[*].profile.heightFt", "attempts[*].profile.diameterFt" } });
+                    notes.Add("Provide either scope or exact elementIds. Exact elementIds require expectedModelPath and are preferred for staged benchmark repairs.");
+                    notes.Add("Supports Round, Rectangular, and Oval profiles. Facing collinear endpoints use one direct bridge; orthogonal endpoints use two matching-profile segments and a native elbow.");
+                    notes.Add("Dry-run executes the native repair in one transaction, rolls it back, and returns exact connector-topology and transient-created-ID proof.");
+                }
+
+                if (p == "/revit/repair-mep-connectors")
+                {
+                    enumMap["connectionKind"] = new[] { "auto", "direct", "elbow", "transition" };
+                    enumMap["repair.kind"] = new[] { "move_elements_vector", "set_curve_line", "set_flex_curve", "resize_round_connectors" };
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "repair.vectorX", "repair.vectorY", "repair.vectorZ", "repair.startXyz[*]", "repair.endXyz[*]", "repair.flexPoints[*][*]", "repair.connectorChanges[*].expectedOriginXyz[*]", "repair.connectorChanges[*].diameterFt", "originToleranceFt", "maxConnectorDistanceFt", "connectionMaxDistanceFt" } });
+                    notes.Add("Choose exactly one mode: disconnectOnlyPairs, connectOpenPair, disconnectPairs plus repair, or standalone repair.");
+                    notes.Add("Use native connector IDs when available. Enumeration-index connector IDs must include exact expectedOriginXyz guards.");
+                    notes.Add("resize_round_connectors changes only explicitly identified native round connector diameters and includes connector sizes in rollback fingerprints.");
+                    notes.Add("connectOpenPair dry-runs execute the native connection or fitting operation, roll it back, and return the transient fitting identity plus rollback proof.");
+                    notes.Add("Positive-gap elbows are allowed within connectionMaxDistanceFt because Revit trims connected curves back from the theoretical fitting centerline.");
+                    notes.Add("All dry-runs preserve exact before/final connector-topology fingerprints and report rollback proof.");
                 }
 
                 if (p == "/revit/resize-ducts-in-room")
@@ -915,7 +951,8 @@ namespace RevitBridge.Operator
 
                 if (p == "/revit/create-mep-route")
                 {
-                    enumMap["kind"] = new[] { "duct", "pipe" };
+                    enumMap["kind"] = new[] { "duct", "pipe", "conduit" };
+                    enumMap["ductShape"] = new[] { "round", "rectangular", "oval" };
                     enumMap["sizePolicy"] = new[] { "explicit_required", "use_default_with_warning" };
                     enumMap["elevationPolicy"] = new[] { "explicit_required", "resolve_context_default" };
                     enumMap["routingMode"] = new[] { "orthogonal", "polyline" };
@@ -925,6 +962,7 @@ namespace RevitBridge.Operator
                     notes.Add("Use segmentSizes with one size per segment to draft multi-section routes; internal joints with differing adjacent sizes expect transition fittings.");
                     notes.Add("Internal route joints attempt Revit NewTransitionFitting for size changes, otherwise NewElbowFitting, then fall back to Connector.ConnectTo; fitting ids are returned when created.");
                     notes.Add("Connector verification is conservative: created standalone routes normally report open endpoint connectors until connected to equipment or existing runs.");
+                    notes.Add("Only points is universally required. For kind=duct use ductType or ductTypeId plus ductSize/diameter; for kind=pipe use pipeType or pipeTypeId plus pipeSize/diameter; for kind=conduit use conduitType or conduitTypeId plus diameter. These alternatives are not simultaneous requirements.");
                 }
 
                 if (p == "/revit/connect-mep-branch")
@@ -942,7 +980,8 @@ namespace RevitBridge.Operator
 
                 if (p == "/revit/mep-route-workflow")
                 {
-                    enumMap["kind"] = new[] { "duct", "pipe" };
+                    enumMap["kind"] = new[] { "duct", "pipe", "conduit" };
+                    enumMap["ductShape"] = new[] { "round", "rectangular", "oval" };
                     enumMap["sizePolicy"] = new[] { "explicit_required", "use_default_with_warning" };
                     enumMap["elevationPolicy"] = new[] { "explicit_required", "resolve_context_default" };
                     enumMap["routingMode"] = new[] { "orthogonal", "polyline" };
@@ -951,6 +990,7 @@ namespace RevitBridge.Operator
                     notes.Add("Execution order is fixed: resolve context, dry-run route, apply route only if dry-run is not blocked, then highlight/export the applied elements for visual review.");
                     notes.Add("When apply=false the workflow returns DryRunReady and no visual capture because dry-run elements are rolled back.");
                     notes.Add("When apply=true and visualVerify=true, successful responses include visualVerification.capture.path plus AI review checklist text.");
+                    notes.Add("Only points is universally required. Route type, system, shape, and size fields are conditional on kind and may use either stable type IDs or names.");
                 }
 
                 if (p == "/revit/mep-branch-network-workflow")
@@ -1209,6 +1249,15 @@ namespace RevitBridge.Operator
                 catch
                 {
                     // ignore
+                }
+                return schema;
+            }
+
+            private static object WithRequiredFields(object schema, params string[] requiredFields)
+            {
+                if (schema is Dictionary<string, object> dictionary)
+                {
+                    dictionary["required"] = requiredFields ?? Array.Empty<string>();
                 }
                 return schema;
             }

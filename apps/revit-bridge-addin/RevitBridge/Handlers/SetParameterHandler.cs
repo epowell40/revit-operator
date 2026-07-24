@@ -144,6 +144,10 @@ namespace RevitBridge.Handlers
                         continue;
                     }
 
+                    // Revit can defer derived/display-value updates until regeneration.
+                    // Regenerate inside the transaction so both apply and rollback-backed
+                    // dry-run receipts report the value that Revit actually accepted.
+                    doc.Regenerate();
                     var after = ParameterValueUtil.SnapshotForWire(param);
                     appliedTargets.Add(new AppliedTarget
                     {

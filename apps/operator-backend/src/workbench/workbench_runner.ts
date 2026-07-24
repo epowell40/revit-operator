@@ -9,6 +9,22 @@ import { tryCreateRedlineAnalyzeEvidence } from "../redline/redline_analyze_evid
 import { mapSheetRegions } from "../redline/sheet_region_mapper.js";
 import { orientRedlineFile } from "../redline/redline_orienter.js";
 import { analyzeRedlinePackageWithGemini } from "../vision/gemini_redline_package.js";
+import {
+  validateSheetCandidatePresenceV1,
+  validateSheetPixelEvidenceV1,
+  type SheetCandidatePresenceReceiptV1,
+  type SheetPixelEvidenceReceiptV1
+} from "../existing_conditions/sheet_pixel_evidence.js";
+import {
+  compileSheetPixelInterpretationV1,
+  type SheetPixelInterpretationContextV1,
+  type SheetPixelInterpretationInputV1
+} from "../existing_conditions/sheet_pixel_interpretation.js";
+import {
+  detectSheetChromaticComponentsV1,
+  renderSheetChromaticComponentOverlayV1,
+  type SheetChromaticComponentDetectionInputV1
+} from "../existing_conditions/sheet_chromatic_component_detection.js";
 
 export type WorkbenchAction =
   | {
@@ -81,6 +97,7 @@ export type WorkbenchAction =
       file_path: string;
       image_paths?: string[];
       expected_sheet?: string;
+      analysis_mode?: "redline" | "existing_conditions";
       max_pages?: number;
       page_start?: number;
       baseline_file_path?: string;
@@ -90,6 +107,43 @@ export type WorkbenchAction =
       min_confidence?: number;
       include_code_execution?: boolean;
       timeout_ms?: number;
+    }
+  | {
+      type: "compile_registered_mep_reconstruction";
+      package_json: string;
+      maximum_created_elements?: number;
+    }
+  | {
+      type: "detect_sheet_chromatic_components";
+      input_file_path: string;
+      overlay_output_path?: string;
+      receipt_output_path?: string;
+    }
+  | {
+      type: "compile_existing_conditions_sheet_interpretation";
+      interpretation_file_path: string;
+      context_file_path: string;
+      source_image_path: string;
+      source_view_key?: string;
+      overlay_output_path?: string;
+      receipt_output_path?: string;
+    }
+  | {
+      type: "register_existing_conditions_route_frontier";
+      candidate_json: string;
+      connector_tool_action_id: string;
+    }
+  | {
+      type: "register_existing_conditions_route_snap";
+      candidate_json: string;
+      connector_tool_action_id: string;
+    }
+  | {
+      type: "register_existing_conditions_mep_repair";
+      supersedes_stage_key: string;
+      repair_stage_key: string;
+      operation_json: string;
+      reason: string;
     };
 
 export type WorkbenchActionResult = {
@@ -402,14 +456,74 @@ function isSafeRedlineWorkbenchAction(action: WorkbenchAction): boolean {
   return action.type === "analyze_redline" ||
     action.type === "map_sheet_regions" ||
     action.type === "redline_orient" ||
-    action.type === "gemini_redline_analyze";
+    action.type === "gemini_redline_analyze" ||
+    action.type === "detect_sheet_chromatic_components" ||
+    action.type === "compile_existing_conditions_sheet_interpretation" ||
+    action.type === "compile_registered_mep_reconstruction" ||
+    action.type === "register_existing_conditions_route_frontier" ||
+    action.type === "register_existing_conditions_route_snap" ||
+    action.type === "register_existing_conditions_mep_repair";
+}
+
+function hydrateSheetEvidenceReceiptFiles(
+  context: SheetPixelInterpretationContextV1,
+  maxBytes: number
+): { context?: SheetPixelInterpretationContextV1; error?: string } {
+  const receiptPaths = context.evidence_receipt_file_paths ?? [];
+  if (!Array.isArray(receiptPaths) || receiptPaths.length > 24) {
+    return { error: "Sheet trusted context evidence_receipt_file_paths must contain at most 24 entries." };
+  }
+  const rasterEvidence = [...(context.raster_evidence_receipts ?? [])];
+  const candidatePresence = [...(context.candidate_presence_receipts ?? [])];
+  for (const [index, value] of receiptPaths.entries()) {
+    if (typeof value !== "string" || !value.trim()) return { error: `Sheet evidence receipt path ${index} is invalid.` };
+    let file: ReturnType<typeof safeReadFile>;
+    try {
+      file = safeReadFile(value, maxBytes);
+    } catch {
+      return { error: `Sheet evidence receipt ${value} is not a readable Workspace file.` };
+    }
+    if (file.truncated) return { error: `Sheet evidence receipt ${value} exceeds the configured workbench read limit.` };
+    let document: Record<string, unknown>;
+    try {
+      document = JSON.parse(file.content) as Record<string, unknown>;
+    } catch {
+      return { error: `Sheet evidence receipt ${value} is not valid JSON.` };
+    }
+    const raster = document.raster_evidence as SheetPixelEvidenceReceiptV1 | undefined;
+    const candidate = document.candidate_presence as SheetCandidatePresenceReceiptV1 | undefined;
+    if (!raster && !candidate) return { error: `Sheet evidence receipt ${value} contains neither raster_evidence nor candidate_presence.` };
+    if (raster) rasterEvidence.push(raster);
+    if (candidate) candidatePresence.push(candidate);
+  }
+  return {
+    context: {
+      ...context,
+      raster_evidence_receipts: rasterEvidence,
+      candidate_presence_receipts: candidatePresence
+    }
+  };
 }
 
 export function maxWorkbenchActions(): number {
   return toInt(process.env.OPERATOR_WORKBENCH_MAX_ACTIONS, 6, 1, 20);
 }
 
-export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: { createRedlineAnalyzeEvidence?: typeof tryCreateRedlineAnalyzeEvidence } = {}): Promise<WorkbenchActionResult[]> {
+export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: {
+  createRedlineAnalyzeEvidence?: typeof tryCreateRedlineAnalyzeEvidence;
+  compileRegisteredMepReconstruction?: (
+    action: Extract<WorkbenchAction, { type: "compile_registered_mep_reconstruction" }>
+  ) => Promise<Record<string, unknown>>;
+  registerExistingConditionsRouteFrontier?: (
+    action: Extract<WorkbenchAction, { type: "register_existing_conditions_route_frontier" }>
+  ) => Promise<Record<string, unknown>>;
+  registerExistingConditionsRouteSnap?: (
+    action: Extract<WorkbenchAction, { type: "register_existing_conditions_route_snap" }>
+  ) => Promise<Record<string, unknown>>;
+  registerExistingConditionsMepRepair?: (
+    action: Extract<WorkbenchAction, { type: "register_existing_conditions_mep_repair" }>
+  ) => Promise<Record<string, unknown>>;
+} = {}): Promise<WorkbenchActionResult[]> {
   const results: WorkbenchActionResult[] = [];
   const fullWorkbenchEnabled = workbenchEnabled();
   const redlineOnlyEnabled = !fullWorkbenchEnabled && safeRedlineWorkbenchEnabled();
@@ -594,6 +708,7 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
           file_path: fp,
           image_paths: imagePaths,
           expected_sheet: typeof action.expected_sheet === "string" ? action.expected_sheet : undefined,
+          analysis_mode: action.analysis_mode === "existing_conditions" ? "existing_conditions" : "redline",
           max_pages: typeof action.max_pages === "number" && Number.isFinite(action.max_pages) ? Math.floor(action.max_pages) : undefined,
           page_start: typeof action.page_start === "number" && Number.isFinite(action.page_start) ? Math.floor(action.page_start) : undefined,
           baseline_file_path: typeof action.baseline_file_path === "string" ? action.baseline_file_path : undefined,
@@ -615,6 +730,367 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
           details: analyzed as unknown as Record<string, unknown>
         });
         continue;
+      }
+
+      if (action.type === "compile_registered_mep_reconstruction") {
+        if (!deps.compileRegisteredMepReconstruction) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "Registered MEP reconstruction compiler is unavailable in this runtime."
+          });
+          break;
+        }
+        const raw = (action.package_json ?? "").trim();
+        if (!raw) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "compile_registered_mep_reconstruction requires package_json."
+          });
+          break;
+        }
+        const compiled = await deps.compileRegisteredMepReconstruction(action);
+        const plan = compiled.compiled_plan && typeof compiled.compiled_plan === "object"
+          ? compiled.compiled_plan as Record<string, unknown>
+          : {};
+        const status = typeof plan.status === "string" ? plan.status : "unknown";
+        const promoted = Array.isArray(plan.promoted_observation_ids) ? plan.promoted_observation_ids.length : 0;
+        const deferred = Array.isArray(plan.deferred_observation_ids) ? plan.deferred_observation_ids.length : 0;
+        results.push({
+          index: i + 1,
+          type: action.type,
+          ok: status === "ready" || status === "partially_ready",
+          summary: `Registered MEP reconstruction compiled; status=${status}, promoted=${promoted}, deferred=${deferred}.`,
+          details: compiled
+        });
+        // Compilation is terminal within a workbench batch. This prevents a
+        // model-authored batch from executing multiple compiler attempts, or
+        // reopening vision/orientation work after a deterministic failure.
+        break;
+      }
+
+      if (action.type === "detect_sheet_chromatic_components") {
+        const inputPath = (action.input_file_path ?? "").trim();
+        if (!inputPath) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "detect_sheet_chromatic_components requires input_file_path."
+          });
+          break;
+        }
+        const inputFile = safeReadFile(inputPath, maxReadBytes);
+        if (inputFile.truncated) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "Chromatic component input exceeds the configured workbench read limit."
+          });
+          break;
+        }
+        let input: SheetChromaticComponentDetectionInputV1;
+        try {
+          input = JSON.parse(inputFile.content) as SheetChromaticComponentDetectionInputV1;
+        } catch {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "Chromatic component input is not valid JSON."
+          });
+          break;
+        }
+        const resolvedSourceImagePath = resolveExistingFileUnderWorkspace(input.source_image_path);
+        const receipt = await detectSheetChromaticComponentsV1({
+          ...input,
+          source_image_path: resolvedSourceImagePath
+        });
+        const overlayOutputPath = (action.overlay_output_path ?? "").trim();
+        const overlay = overlayOutputPath
+          ? await renderSheetChromaticComponentOverlayV1({
+              source_image_path: resolvedSourceImagePath,
+              receipt,
+              output_path: resolveFileUnderWorkspace(overlayOutputPath)
+            })
+          : undefined;
+        const persistedReceipt = (action.receipt_output_path ?? "").trim()
+          ? safeWriteFile(action.receipt_output_path!, `${JSON.stringify(overlay ? { ...receipt, overlay } : receipt, null, 2)}\n`)
+          : undefined;
+        results.push({
+          index: i + 1,
+          type: action.type,
+          ok: true,
+          summary: `Chromatic component detection completed; candidates=${receipt.candidates.length}, qualifying_pixels=${receipt.qualifying_pixel_count}.`,
+          details: {
+            ...(overlay ? { ...receipt, overlay } : receipt),
+            ...(persistedReceipt ? { persisted_receipt: persistedReceipt } : {})
+          }
+        });
+        // Detection is a complete source-only observation. Never continue into
+        // classification, topology, or a native model action in the same turn.
+        break;
+      }
+
+      if (action.type === "compile_existing_conditions_sheet_interpretation") {
+        const interpretationPath = (action.interpretation_file_path ?? "").trim();
+        const contextPath = (action.context_file_path ?? "").trim();
+        const imagePath = (action.source_image_path ?? "").trim();
+        if (!interpretationPath || !contextPath || !imagePath) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "compile_existing_conditions_sheet_interpretation requires interpretation_file_path, context_file_path, and source_image_path."
+          });
+          break;
+        }
+        const interpretationFile = safeReadFile(interpretationPath, maxReadBytes);
+        const contextFile = safeReadFile(contextPath, maxReadBytes);
+        if (interpretationFile.truncated || contextFile.truncated) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "Sheet interpretation inputs exceed the configured workbench read limit."
+          });
+          break;
+        }
+        let interpretation: SheetPixelInterpretationInputV1;
+        let context: SheetPixelInterpretationContextV1;
+        try {
+          const interpretationDocument = JSON.parse(interpretationFile.content) as Record<string, unknown>;
+          interpretation = (
+            interpretationDocument?.interpretation &&
+            typeof interpretationDocument.interpretation === "object" &&
+            !Array.isArray(interpretationDocument.interpretation)
+              ? interpretationDocument.interpretation
+              : interpretationDocument
+          ) as SheetPixelInterpretationInputV1;
+          context = JSON.parse(contextFile.content) as SheetPixelInterpretationContextV1;
+        } catch {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "Sheet interpretation or trusted context is not valid JSON."
+          });
+          break;
+        }
+        if (
+          interpretation?.schema_version !== 1 ||
+          !Array.isArray(interpretation.view_keys) ||
+          !Array.isArray(interpretation.primitives) ||
+          !context ||
+          !Array.isArray(context.trusted_views)
+        ) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "Sheet interpretation or trusted context does not satisfy the schema-v1 input contract."
+          });
+          break;
+        }
+        const hydratedContext = hydrateSheetEvidenceReceiptFiles(context, maxReadBytes);
+        if (!hydratedContext.context) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: hydratedContext.error ?? "Sheet evidence receipt hydration failed."
+          });
+          break;
+        }
+        context = hydratedContext.context;
+        const resolvedImagePath = resolveExistingFileUnderWorkspace(imagePath);
+        const requestedViewKey = (action.source_view_key ?? "").trim();
+        const effectiveViewKey = requestedViewKey || (interpretation.view_keys.length === 1 ? interpretation.view_keys[0]! : "");
+        const viewInterpretation: SheetPixelInterpretationInputV1 = effectiveViewKey
+          ? {
+              ...interpretation,
+              view_keys: [effectiveViewKey],
+              source_marks: interpretation.source_marks.filter(mark => mark.source_view_key === effectiveViewKey),
+              primitives: interpretation.primitives.filter(primitive => primitive.source_view_key === effectiveViewKey)
+            }
+          : interpretation;
+        const priorReceipt = (context.raster_evidence_receipts ?? []).find(receipt =>
+          !effectiveViewKey || receipt.source_view_key === effectiveViewKey
+        );
+        const trustedRasterPolicy = context.raster_evidence_policy_by_view?.[effectiveViewKey];
+        const overlayPath = (action.overlay_output_path ?? "").trim();
+        const rasterReceipt = await validateSheetPixelEvidenceV1({
+          image_path: resolvedImagePath,
+          interpretation: viewInterpretation,
+          ...(effectiveViewKey ? { source_view_key: effectiveViewKey } : {}),
+          ...(trustedRasterPolicy || priorReceipt?.policy
+            ? { policy: { ...(priorReceipt?.policy ?? {}), ...(trustedRasterPolicy ?? {}) } }
+            : {}),
+          ...(overlayPath ? { overlay_path: resolveFileUnderWorkspace(overlayPath) } : {})
+        });
+        const trustedView = context.trusted_views.find(value => value.source_view.view_key === rasterReceipt.source_view_key);
+        const candidateRaster = context.candidate_raster_by_view?.[rasterReceipt.source_view_key];
+        const candidatePresence = candidateRaster && trustedView
+          ? await validateSheetCandidatePresenceV1({
+            image_path: resolveExistingFileUnderWorkspace(candidateRaster.image_path),
+            expected_image_sha256: candidateRaster.image_sha256,
+            candidate_frame: candidateRaster.frame,
+            source_frame: trustedView.frame,
+            interpretation: viewInterpretation,
+            source_evidence: rasterReceipt,
+            policy: candidateRaster.policy ?? trustedRasterPolicy ?? priorReceipt?.policy,
+            ...(candidateRaster.overlay_output_path
+              ? { overlay_path: resolveFileUnderWorkspace(candidateRaster.overlay_output_path) }
+              : {})
+          })
+          : undefined;
+        const compiled = compileSheetPixelInterpretationV1(interpretation, {
+          ...context,
+          raster_evidence_receipts: [
+            ...(context.raster_evidence_receipts ?? []).filter(receipt => receipt.source_view_key !== rasterReceipt.source_view_key),
+            rasterReceipt
+          ],
+          ...(candidatePresence
+            ? {
+              candidate_presence_receipts: [
+                ...(context.candidate_presence_receipts ?? []).filter(receipt => receipt.source_view_key !== candidatePresence.source_view_key),
+                candidatePresence
+              ]
+            }
+            : {})
+        });
+        const receipt = {
+          schema_version: 1,
+          interpretation_path: interpretationFile.pathRel,
+          context_path: contextFile.pathRel,
+          raster_evidence: rasterReceipt,
+          ...(candidatePresence ? { candidate_presence: candidatePresence } : {}),
+          compilation: compiled
+        };
+        const receiptOutputPath = (action.receipt_output_path ?? "").trim();
+        const persisted = receiptOutputPath
+          ? safeWriteFile(receiptOutputPath, `${JSON.stringify(receipt, null, 2)}\n`)
+          : undefined;
+        const topology = compiled.compiled_topology;
+        results.push({
+          index: i + 1,
+          type: action.type,
+          ok: topology.status === "ready" || topology.status === "partially_ready",
+          summary:
+            `Sheet interpretation compiled; status=${topology.status}, accepted_routes=${rasterReceipt.route_evidence.filter(value => value.status === "accepted_raster_support").length}, ` +
+            `rejected_routes=${rasterReceipt.route_evidence.filter(value => value.status === "rejected_raster_extent").length}, ` +
+            `accepted_points=${(rasterReceipt.point_evidence ?? []).filter(value => value.status === "accepted_raster_support").length}, ` +
+            `rejected_points=${(rasterReceipt.point_evidence ?? []).filter(value => value.status === "rejected_raster_extent").length}, ` +
+            `existing_points=${candidatePresence?.existing_candidate_visible_primitive_ids.length ?? 0}, ` +
+            `identity_groups=${compiled.candidate_identity_groups.length}, junctions=${topology.junctions.length}.`,
+          details: {
+            ...receipt,
+            ...(persisted ? { persisted_receipt: persisted } : {})
+          }
+        });
+        // One source verification and topology compilation is a complete,
+        // inspectable workbench transition. Never continue into a model action
+        // in the same provider-authored batch.
+        break;
+      }
+
+      if (action.type === "register_existing_conditions_mep_repair") {
+        if (!deps.registerExistingConditionsMepRepair) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "Existing-conditions staged repair registration is unavailable in this runtime."
+          });
+          break;
+        }
+        if (
+          !(action.supersedes_stage_key ?? "").trim() ||
+          !(action.repair_stage_key ?? "").trim() ||
+          !(action.operation_json ?? "").trim() ||
+          !(action.reason ?? "").trim()
+        ) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "register_existing_conditions_mep_repair requires supersedes_stage_key, repair_stage_key, operation_json, and reason."
+          });
+          break;
+        }
+        const registered = await deps.registerExistingConditionsMepRepair(action);
+        results.push({
+          index: i + 1,
+          type: action.type,
+          ok: true,
+          summary: `Registered staged existing-conditions repair ${action.repair_stage_key}.`,
+          details: registered
+        });
+        break;
+      }
+
+      if (action.type === "register_existing_conditions_route_frontier") {
+        if (!deps.registerExistingConditionsRouteFrontier) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "Existing-conditions native frontier discovery is unavailable in this runtime."
+          });
+          break;
+        }
+        if (!(action.candidate_json ?? "").trim() || !(action.connector_tool_action_id ?? "").trim()) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "register_existing_conditions_route_frontier requires candidate_json and connector_tool_action_id."
+          });
+          break;
+        }
+        const registered = await deps.registerExistingConditionsRouteFrontier(action);
+        results.push({
+          index: i + 1,
+          type: action.type,
+          ok: true,
+          summary: "Discovered a unique retained native frontier and registered one connector-snapped route for staged dry-run.",
+          details: registered
+        });
+        break;
+      }
+
+      if (action.type === "register_existing_conditions_route_snap") {
+        if (!deps.registerExistingConditionsRouteSnap) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "Existing-conditions registered route snapping is unavailable in this runtime."
+          });
+          break;
+        }
+        if (!(action.candidate_json ?? "").trim() || !(action.connector_tool_action_id ?? "").trim()) {
+          results.push({
+            index: i + 1,
+            type: action.type,
+            ok: false,
+            summary: "register_existing_conditions_route_snap requires candidate_json and connector_tool_action_id."
+          });
+          break;
+        }
+        const registered = await deps.registerExistingConditionsRouteSnap(action);
+        results.push({
+          index: i + 1,
+          type: action.type,
+          ok: true,
+          summary: "Registered one source-grounded connector-snapped route for staged dry-run.",
+          details: registered
+        });
+        break;
       }
 
       if (action.type === "python") {
@@ -661,13 +1137,31 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
         });
       }
     } catch (e) {
+      const summary = e instanceof Error ? e.message : String(e);
+      const candidateVisibleGuardFailure =
+        action.type === "compile_registered_mep_reconstruction" &&
+        /^(candidate_visible_|registered_mep_reconstruction_)/i.test(summary);
       results.push({
         index: i + 1,
         type: action.type,
         ok: false,
-        summary: e instanceof Error ? e.message : String(e),
-        details: { host: os.hostname() }
+        summary,
+        details: {
+          host: os.hostname(),
+          ...(candidateVisibleGuardFailure
+            ? {
+                error_code: summary,
+                recovery_instruction:
+                  "Revise package_json against this exact deterministic compiler error. Do not rerun source vision, room discovery, frame export, or generic tool discovery unless the source attachment or verified native scope changes."
+              }
+            : {})
+        }
       });
+      if (
+        action.type === "compile_registered_mep_reconstruction" ||
+        action.type === "register_existing_conditions_route_snap" ||
+        action.type === "register_existing_conditions_mep_repair"
+      ) break;
     }
   }
 

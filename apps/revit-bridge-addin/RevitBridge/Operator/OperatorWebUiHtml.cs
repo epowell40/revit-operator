@@ -139,7 +139,7 @@ namespace RevitBridge.Operator
         .feedbackBar input[type=""text""] { min-width: 0; width: 100%; }
       }
 
-      @media (max-width: 980px) {
+      @media (max-width: 780px) {
         .main { grid-template-columns: 1fr; grid-template-rows: minmax(0,1fr) auto; }
         .right { border-left: none; border-top: 1px solid rgba(127,127,127,0.25); max-height: 42vh; }
         #actionsScroll { max-height: 38vh; }
@@ -391,7 +391,7 @@ namespace RevitBridge.Operator
         #chatScroll .paneIntro { margin-bottom: 8px; }
         #actionsScroll { max-height: none; }
       }
-      @media (max-width: 860px) {
+      @media (max-width: 780px) {
         .bar { align-items: flex-start; }
         .controls { justify-items: stretch; }
         .controlRowPrimary { justify-content: flex-start; }
@@ -621,8 +621,20 @@ namespace RevitBridge.Operator
         .main { grid-template-columns: minmax(0,1fr) minmax(170px,26%); }
         .right { padding: 8px; }
       }
-      @media (max-width: 860px) {
-        .main { grid-template-columns: 1fr; grid-template-rows: minmax(0,1fr) clamp(180px, 28vh, 260px); }
+      @media (max-width: 780px) {
+        .main { grid-template-columns: 1fr; grid-template-rows: minmax(72px,1fr) clamp(140px, 24vh, 200px); }
+        .chatPane { min-height: 0; }
+        .composer {
+          grid-template-columns: minmax(0,1fr) auto;
+          align-items: center;
+          padding: 8px;
+        }
+        .composerBtns {
+          flex-wrap: nowrap;
+          justify-content: flex-end;
+          gap: 4px;
+        }
+        textarea { min-height: 44px; max-height: 72px; }
       }
     </style>
   </head>
@@ -658,6 +670,13 @@ namespace RevitBridge.Operator
                   <option value=""balanced"">Balanced</option>
                   <option value=""broad"" selected>Broad</option>
                   <option value=""unrestricted"">Unrestricted</option>
+                </select>
+              </div>
+              <div class=""policy"">
+                <span>Brain:</span>
+                <select id=""brainRoute"" title=""Auto keeps deterministic routing; Configured direct sends the turn to OPERATOR_BRAIN (Codex, Claude, Gemini, OpenAI, or rule)."">
+                  <option value=""auto"" selected>Auto pipeline</option>
+                  <option value=""direct"">Configured direct</option>
                 </select>
               </div>
             </div>
@@ -867,6 +886,7 @@ namespace RevitBridge.Operator
       const cancelBtn = document.getElementById('cancel');
       const policySel = document.getElementById('policy');
       const nativeApiPolicySel = document.getElementById('nativeApiPolicy');
+      const brainRouteSel = document.getElementById('brainRoute');
       const reasoningSel = document.getElementById('reasoning');
       const speedModeEl = document.getElementById('speedMode');
       const speedDietEl = document.getElementById('speedDiet');
@@ -2431,7 +2451,7 @@ namespace RevitBridge.Operator
         const reasoningEffort = normalizeReasoningValue(reasoningSel ? reasoningSel.value : readStringPref('op.reasoningEffort', 'medium'));
         pendingAttachments = [];
         renderAttachStrip();
-        post('chat.send', { messageId, text, attachments, attachment_policy: policy, reasoning_effort: reasoningEffort, speed_settings: getSpeedSettings() });
+        post('chat.send', { messageId, text, attachments, attachment_policy: policy, reasoning_effort: reasoningEffort, speed_settings: getSpeedSettings(), brain_route: brainRouteSel && brainRouteSel.value === 'direct' ? 'direct' : 'auto' });
       }
 
       attachBtn.addEventListener('click', () => {
@@ -2949,6 +2969,13 @@ namespace RevitBridge.Operator
         nativeApiPolicySel.addEventListener('change', () => {
           const profile = nativeApiPolicySel.value;
           post('native_api_policy.set', { profile });
+        });
+      }
+      if (brainRouteSel) {
+        try { brainRouteSel.value = readStringPref('op.brainRoute', 'auto') === 'direct' ? 'direct' : 'auto'; } catch {}
+        brainRouteSel.addEventListener('change', () => {
+          brainRouteSel.value = brainRouteSel.value === 'direct' ? 'direct' : 'auto';
+          writeStringPref('op.brainRoute', brainRouteSel.value);
         });
       }
 
