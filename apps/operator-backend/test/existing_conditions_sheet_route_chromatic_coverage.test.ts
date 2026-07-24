@@ -121,3 +121,113 @@ test("reverse chromatic coverage rejects stale source and candidate hashes", asy
     /overlay_interpretation_hash_mismatch/
   );
 });
+
+test("host-trusted seeds scope completeness to one connected same-hue route network", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "sheet-route-network-scope-"));
+  const imagePath = path.join(directory, "source.png");
+  const canvas = createCanvas(220, 120);
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.strokeStyle = "hsl(0 100% 45%)";
+  context.lineWidth = 3;
+  context.beginPath();
+  context.moveTo(20, 30);
+  context.lineTo(100, 30);
+  context.moveTo(120, 90);
+  context.lineTo(200, 90);
+  context.stroke();
+  fs.writeFileSync(imagePath, canvas.toBuffer("image/png"));
+  const input: SheetRouteChromaticCoverageInputV1 = {
+    schema_version: 1,
+    source_image_path: imagePath,
+    source_image_sha256: sha256(imagePath),
+    source_image_width_px: canvas.width,
+    source_image_height_px: canvas.height,
+    source_view_key: "sheet-a",
+    expected_hue_degrees: 0,
+    hue_tolerance_degrees: 12,
+    minimum_chroma: 80,
+    route_buffer_radius_px: 5,
+    minimum_coverage_fraction: 0.8,
+    interpretation: {
+      schema_version: 1,
+      package_id: "candidate-network-a",
+      coordinate_space: "normalized_uv_top_left",
+      view_keys: ["sheet-a"],
+      source_marks: [],
+      primitives: [{
+        primitive_id: "selected-route",
+        source_view_key: "sheet-a",
+        source_mark_ids: [],
+        kind: "route_segment",
+        points: [{ u: 20 / 220, v: 30 / 120 }, { u: 100 / 220, v: 30 / 120 }],
+        confidence: { geometry: 0.9, classification: 0.5, topology: 0.5, visibility: 0.9 }
+      }]
+    }
+  };
+
+  const unscoped = await validateSheetRouteChromaticCoverageV1(input);
+  assert.equal(unscoped.accepted, false);
+  assert.ok(unscoped.coverage_fraction < 0.6);
+
+  const scoped = await validateSheetRouteChromaticCoverageV1({
+    ...input,
+    network_scope: {
+      mode: "seeded_connected_components",
+      seed_points_uv: [{ u: 60 / 220, v: 30 / 120 }],
+      seed_basis: "host_trusted_source_mark",
+      seed_evidence_sha256: "a".repeat(64),
+      seed_radius_px: 5,
+      adjacency_radius_px: 1
+    }
+  });
+  assert.equal(scoped.accepted, true);
+  assert.ok(scoped.coverage_fraction > 0.95);
+  assert.equal(scoped.network_scope?.seeded_component_count, 1);
+  assert.ok((scoped.network_scope?.excluded_qualifying_chromatic_pixel_count ?? 0) > 0);
+  assert.equal(scoped.all_search_region_qualifying_chromatic_pixel_count, unscoped.qualifying_chromatic_pixel_count);
+  assert.match(scoped.capability_boundary, /host-trusted, hash-bound chromatic components/i);
+});
+
+test("network scope fails closed on unbound or out-of-region seeds", async () => {
+  const { input } = fixture();
+  await assert.rejects(
+    validateSheetRouteChromaticCoverageV1({
+      ...input,
+      search_region: { min: { x: 0, y: 0 }, max: { x: 100, y: 100 } },
+      network_scope: {
+        mode: "seeded_connected_components",
+        seed_points_uv: [{ u: 0.9, v: 0.9 }],
+        seed_basis: "host_trusted_continuation_anchor",
+        seed_evidence_sha256: "c".repeat(64)
+      }
+    }),
+    /network_scope_seed_outside_search_region/
+  );
+  await assert.rejects(
+    validateSheetRouteChromaticCoverageV1({
+      ...input,
+      network_scope: {
+        mode: "seeded_connected_components",
+        seed_points_uv: [{ u: 0.2, v: 0.2 }],
+        seed_basis: "host_trusted_continuation_anchor",
+        seed_evidence_sha256: "not-a-hash"
+      }
+    }),
+    /network_scope_seed_evidence_sha256_must_be_sha256/
+  );
+  const noSeededComponent = await validateSheetRouteChromaticCoverageV1({
+    ...input,
+    network_scope: {
+      mode: "seeded_connected_components",
+      seed_points_uv: [{ u: 0.05, v: 0.05 }],
+      seed_basis: "host_trusted_source_mark",
+      seed_evidence_sha256: "b".repeat(64),
+      seed_radius_px: 1
+    }
+  });
+  assert.equal(noSeededComponent.accepted, false);
+  assert.equal(noSeededComponent.qualifying_chromatic_pixel_count, 0);
+  assert.equal(noSeededComponent.network_scope?.seeded_component_count, 0);
+});

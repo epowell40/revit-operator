@@ -22,6 +22,14 @@ export type SheetRouteChromaticCoverageInputV1 = {
   uncovered_adjacency_radius_px?: number;
   minimum_uncovered_component_pixels?: number;
   maximum_reported_uncovered_components?: number;
+  network_scope?: {
+    mode: "seeded_connected_components";
+    seed_points_uv: SheetPixelPointV1[];
+    seed_basis: "host_trusted_source_mark" | "host_trusted_continuation_anchor";
+    seed_evidence_sha256: string;
+    seed_radius_px?: number;
+    adjacency_radius_px?: number;
+  };
   interpretation: SheetPixelInterpretationInputV1;
 };
 
@@ -54,6 +62,17 @@ export type SheetRouteChromaticCoverageReceiptV1 = {
     maximum_reported_uncovered_components: number;
   };
   candidate_route_primitive_ids: string[];
+  all_search_region_qualifying_chromatic_pixel_count?: number;
+  network_scope?: {
+    mode: "seeded_connected_components";
+    seed_points_uv: SheetPixelPointV1[];
+    seed_basis: "host_trusted_source_mark" | "host_trusted_continuation_anchor";
+    seed_evidence_sha256: string;
+    seed_radius_px: number;
+    adjacency_radius_px: number;
+    seeded_component_count: number;
+    excluded_qualifying_chromatic_pixel_count: number;
+  };
   qualifying_chromatic_pixel_count: number;
   covered_chromatic_pixel_count: number;
   uncovered_chromatic_pixel_count: number;
@@ -179,6 +198,16 @@ function componentBounds(pixels: Pixel[]): PixelBounds {
   return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
 }
 
+function adjacencyOffsets(radius: number): Pixel[] {
+  const result: Pixel[] = [];
+  for (let dy = -radius; dy <= radius; dy += 1) {
+    for (let dx = -radius; dx <= radius; dx += 1) {
+      if (dx !== 0 || dy !== 0) result.push({ x: dx, y: dy });
+    }
+  }
+  return result;
+}
+
 function candidateRouteMask(args: {
   width: number;
   height: number;
@@ -262,9 +291,8 @@ export async function validateSheetRouteChromaticCoverageV1(
   });
   const localWidth = search.width;
   const localHeight = search.height;
-  const uncovered = new Uint8Array(localWidth * localHeight);
-  let qualifyingCount = 0;
-  let coveredCount = 0;
+  const allQualifying = new Uint8Array(localWidth * localHeight);
+  let allQualifyingCount = 0;
   for (let y = search.minY; y < search.maxY; y += 1) {
     for (let x = search.minX; x < search.maxX; x += 1) {
       const pixelOffset = ((y * width) + x) * 4;
@@ -272,6 +300,84 @@ export async function validateSheetRouteChromaticCoverageV1(
       const color = rgbHue(data[pixelOffset] ?? 255, data[pixelOffset + 1] ?? 255, data[pixelOffset + 2] ?? 255);
       if (color.chroma < policy.minimum_chroma || color.luminance > policy.maximum_luminance) continue;
       if (circularHueDistance(color.hue, policy.expected_hue_degrees) > policy.hue_tolerance_degrees) continue;
+      allQualifying[((y - search.minY) * localWidth) + (x - search.minX)] = 1;
+      allQualifyingCount += 1;
+    }
+  }
+
+  let qualifying = allQualifying;
+  let normalizedNetworkScope: SheetRouteChromaticCoverageReceiptV1["network_scope"];
+  if (input.network_scope !== undefined) {
+    if (input.network_scope?.mode !== "seeded_connected_components") {
+      throw new Error("sheet_route_chromatic_coverage_network_scope_mode_invalid");
+    }
+    const rawSeeds = input.network_scope.seed_points_uv;
+    if (!Array.isArray(rawSeeds) || rawSeeds.length === 0 || rawSeeds.length > 50) {
+      throw new Error("sheet_route_chromatic_coverage_network_scope_requires_one_to_fifty_seeds");
+    }
+    if (!["host_trusted_source_mark", "host_trusted_continuation_anchor"].includes(input.network_scope.seed_basis)) {
+      throw new Error("sheet_route_chromatic_coverage_network_scope_seed_basis_invalid");
+    }
+    const seedEvidenceSha256 = requiredSha256(input.network_scope.seed_evidence_sha256, "sheet_route_chromatic_coverage_network_scope_seed_evidence_sha256");
+    const seeds = rawSeeds.map((value, index) => normalizedPoint(value, `sheet_route_chromatic_coverage_network_scope_seed_${index}`));
+    const seedPixels = seeds.map((value, index) => {
+      const pixel = { x: value.u * width, y: value.v * height };
+      if (pixel.x < search.minX || pixel.x >= search.maxX || pixel.y < search.minY || pixel.y >= search.maxY) {
+        throw new Error(`sheet_route_chromatic_coverage_network_scope_seed_outside_search_region:${index}`);
+      }
+      return pixel;
+    });
+    const seedRadius = bounded(input.network_scope.seed_radius_px, 24, "sheet_route_chromatic_coverage_network_scope_seed_radius_px", 0.5, 250);
+    const adjacencyRadius = integer(input.network_scope.adjacency_radius_px, 1, "sheet_route_chromatic_coverage_network_scope_adjacency_radius_px", 1, 4);
+    const offsets = adjacencyOffsets(adjacencyRadius);
+    const visited = new Uint8Array(allQualifying.length);
+    const scoped = new Uint8Array(allQualifying.length);
+    let seededComponentCount = 0;
+    for (let start = 0; start < allQualifying.length; start += 1) {
+      if (!allQualifying[start] || visited[start]) continue;
+      const queue = [start];
+      visited[start] = 1;
+      let seeded = false;
+      for (let cursor = 0; cursor < queue.length; cursor += 1) {
+        const index = queue[cursor]!;
+        const localY = Math.floor(index / localWidth);
+        const localX = index - (localY * localWidth);
+        const globalX = search.minX + localX;
+        const globalY = search.minY + localY;
+        if (!seeded && seedPixels.some(seed => Math.hypot(globalX - seed.x, globalY - seed.y) <= seedRadius)) seeded = true;
+        for (const offset of offsets) {
+          const nextX = localX + offset.x;
+          const nextY = localY + offset.y;
+          if (nextX < 0 || nextY < 0 || nextX >= localWidth || nextY >= localHeight) continue;
+          const next = (nextY * localWidth) + nextX;
+          if (!allQualifying[next] || visited[next]) continue;
+          visited[next] = 1;
+          queue.push(next);
+        }
+      }
+      if (!seeded) continue;
+      seededComponentCount += 1;
+      for (const index of queue) scoped[index] = 1;
+    }
+    qualifying = scoped;
+    const scopedCount = qualifying.reduce((sum, value) => sum + value, 0);
+    normalizedNetworkScope = {
+      mode: "seeded_connected_components",
+      seed_points_uv: seeds,
+      seed_basis: input.network_scope.seed_basis,
+      seed_evidence_sha256: seedEvidenceSha256,
+      seed_radius_px: seedRadius,
+      adjacency_radius_px: adjacencyRadius,
+      seeded_component_count: seededComponentCount,
+      excluded_qualifying_chromatic_pixel_count: allQualifyingCount - scopedCount
+    };
+  }
+  const uncovered = new Uint8Array(localWidth * localHeight);
+  let qualifyingCount = 0;
+  let coveredCount = 0;
+  for (let y = search.minY; y < search.maxY; y += 1) {
+    for (let x = search.minX; x < search.maxX; x += 1) {
+      if (!qualifying[((y - search.minY) * localWidth) + (x - search.minX)]) continue;
       qualifyingCount += 1;
       if (coveredMask[(y * width) + x]) {
         coveredCount += 1;
@@ -282,12 +388,7 @@ export async function validateSheetRouteChromaticCoverageV1(
   }
 
   const visited = new Uint8Array(uncovered.length);
-  const neighborOffsets: Pixel[] = [];
-  for (let dy = -policy.uncovered_adjacency_radius_px; dy <= policy.uncovered_adjacency_radius_px; dy += 1) {
-    for (let dx = -policy.uncovered_adjacency_radius_px; dx <= policy.uncovered_adjacency_radius_px; dx += 1) {
-      if (dx !== 0 || dy !== 0) neighborOffsets.push({ x: dx, y: dy });
-    }
-  }
+  const neighborOffsets = adjacencyOffsets(policy.uncovered_adjacency_radius_px);
   const components: SheetRouteChromaticUncoveredComponentV1[] = [];
   for (let localY = 0; localY < localHeight; localY += 1) {
     for (let localX = 0; localX < localWidth; localX += 1) {
@@ -336,6 +437,8 @@ export async function validateSheetRouteChromaticCoverageV1(
     search_region: outputBounds(search),
     policy,
     candidate_route_primitive_ids: routeIds,
+    all_search_region_qualifying_chromatic_pixel_count: allQualifyingCount,
+    ...(normalizedNetworkScope ? { network_scope: normalizedNetworkScope } : {}),
     qualifying_chromatic_pixel_count: qualifyingCount,
     covered_chromatic_pixel_count: coveredCount,
     uncovered_chromatic_pixel_count: Math.max(0, qualifyingCount - coveredCount),
@@ -345,7 +448,7 @@ export async function validateSheetRouteChromaticCoverageV1(
     accepted,
     exact_next_repair: accepted ? "none" : "reinterpret_uncovered_chromatic_regions_before_candidate_seal",
     native_write_allowed: false,
-    capability_boundary: "This source-only reverse-coverage gate can veto an under-covered route interpretation and locate missed same-hue regions. Color and pixel coverage do not establish discipline, system, size, type, elevation, topology, connectivity, or native write authority; text and symbols sharing the hue may conservatively remain uncovered."
+    capability_boundary: "This source-only reverse-coverage gate can veto an under-covered route interpretation and locate missed same-hue regions. Optional network scoping measures only host-trusted, hash-bound chromatic components connected to supplied source seeds; it cannot turn provider-selected exclusions into completeness. Color and pixel coverage do not establish discipline, system, size, type, elevation, topology, connectivity, or native write authority; text and symbols sharing the hue may conservatively remain uncovered."
   };
 }
 
