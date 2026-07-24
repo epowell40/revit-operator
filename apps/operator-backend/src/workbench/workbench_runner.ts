@@ -145,6 +145,10 @@ export type WorkbenchAction =
       repair_stage_key: string;
       operation_json: string;
       reason: string;
+    }
+  | {
+      type: "register_existing_conditions_source_disposition";
+      source_disposition_json: string;
     };
 
 export type WorkbenchActionResult = {
@@ -463,7 +467,8 @@ function isSafeRedlineWorkbenchAction(action: WorkbenchAction): boolean {
     action.type === "compile_registered_mep_reconstruction" ||
     action.type === "register_existing_conditions_route_frontier" ||
     action.type === "register_existing_conditions_route_snap" ||
-    action.type === "register_existing_conditions_mep_repair";
+    action.type === "register_existing_conditions_mep_repair" ||
+    action.type === "register_existing_conditions_source_disposition";
 }
 
 function hydrateSheetEvidenceReceiptFiles(
@@ -524,6 +529,9 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
   registerExistingConditionsMepRepair?: (
     action: Extract<WorkbenchAction, { type: "register_existing_conditions_mep_repair" }>
   ) => Promise<Record<string, unknown>>;
+  registerExistingConditionsSourceDisposition?: (action: Extract<WorkbenchAction, {
+    type: "register_existing_conditions_source_disposition"
+  }>) => Promise<Record<string, unknown>>;
 } = {}): Promise<WorkbenchActionResult[]> {
   const results: WorkbenchActionResult[] = [];
   const fullWorkbenchEnabled = workbenchEnabled();
@@ -1037,6 +1045,24 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
         break;
       }
 
+      if (action.type === "register_existing_conditions_source_disposition") {
+        if (!deps.registerExistingConditionsSourceDisposition) {
+          results.push({ index: i + 1, type: action.type, ok: false,
+            summary: "Existing-conditions source disposition registration is unavailable in this runtime." });
+          break;
+        }
+        if (!(action.source_disposition_json ?? "").trim()) {
+          results.push({ index: i + 1, type: action.type, ok: false,
+            summary: "register_existing_conditions_source_disposition requires source_disposition_json." });
+          break;
+        }
+        const registered = await deps.registerExistingConditionsSourceDisposition(action);
+        results.push({ index: i + 1, type: action.type, ok: true,
+          summary: "Persisted one source-only existing-conditions disposition; no native Revit action was authorized.",
+          details: registered });
+        break;
+      }
+
       if (action.type === "register_existing_conditions_route_frontier") {
         if (!deps.registerExistingConditionsRouteFrontier) {
           results.push({
@@ -1164,7 +1190,8 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
       if (
         action.type === "compile_registered_mep_reconstruction" ||
         action.type === "register_existing_conditions_route_snap" ||
-        action.type === "register_existing_conditions_mep_repair"
+        action.type === "register_existing_conditions_mep_repair" ||
+        action.type === "register_existing_conditions_source_disposition"
       ) break;
     }
   }

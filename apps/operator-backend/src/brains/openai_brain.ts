@@ -88,6 +88,10 @@ import {
 } from "../existing_conditions/staged_repair_ledger.js";
 import type { ExistingConditionsPlanPoint } from "../existing_conditions/registration.js";
 import {
+  recordExistingConditionsSourceDispositionV1,
+  type ExistingConditionsSourceDispositionV1
+} from "../existing_conditions/source_disposition_ledger.js";
+import {
   buildRegisteredRouteSnapStagedWorkflowV1,
   planRegisteredRouteConnectorSnapV1,
   type RegisteredRouteSnapCandidateV1
@@ -136,7 +140,8 @@ type OpenAiDecision = {
       | "compile_registered_mep_reconstruction"
       | "register_existing_conditions_route_frontier"
       | "register_existing_conditions_route_snap"
-      | "register_existing_conditions_mep_repair";
+      | "register_existing_conditions_mep_repair"
+      | "register_existing_conditions_source_disposition";
     command: string | null;
     code: string | null;
     workdir: string | null;
@@ -180,6 +185,7 @@ type OpenAiDecision = {
     repair_stage_key: string | null;
     operation_json: string | null;
     reason: string | null;
+    source_disposition_json: string | null;
   }>;
 };
 
@@ -2731,7 +2737,8 @@ export async function executeExistingConditionsProviderWorkbenchActions(
     "compile_registered_mep_reconstruction",
     "register_existing_conditions_route_frontier",
     "register_existing_conditions_route_snap",
-    "register_existing_conditions_mep_repair"
+    "register_existing_conditions_mep_repair",
+    "register_existing_conditions_source_disposition"
   ]);
   if (actions.length === 0 || actions.some(action => !allowedTypes.has(action.type))) {
     return {
@@ -2749,7 +2756,9 @@ export async function executeExistingConditionsProviderWorkbenchActions(
     registerExistingConditionsRouteSnap: action =>
       registerExistingConditionsRouteSnapForSession({ req, action }),
     registerExistingConditionsMepRepair: action =>
-      registerExistingConditionsMepRepairForSession({ req, action })
+      registerExistingConditionsMepRepairForSession({ req, action }),
+    registerExistingConditionsSourceDisposition: action =>
+      registerExistingConditionsSourceDispositionForSession({ req, action })
   }));
   noteCandidateVisibleCompileResults(req.session_id, results);
   const failed = results.find(result => !result.ok);
@@ -2912,6 +2921,32 @@ async function registerExistingConditionsMepRepairForSession(args: {
     action_key: plan.action_key,
     accepted_prior_action_count: plan.accepted_action_outputs.length,
     next_repair: entry.next_repair
+  };
+}
+
+async function registerExistingConditionsSourceDispositionForSession(args: {
+  req: ChatRequest;
+  action: Extract<WorkbenchAction, { type: "register_existing_conditions_source_disposition" }>;
+}): Promise<Record<string, unknown>> {
+  let value: unknown;
+  try {
+    value = JSON.parse(args.action.source_disposition_json);
+  } catch {
+    throw new Error("existing_conditions_source_disposition_json_invalid");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("existing_conditions_source_disposition_json_must_be_object");
+  }
+  const entry = recordExistingConditionsSourceDispositionV1({
+    sessionId: args.req.session_id,
+    disposition: value as ExistingConditionsSourceDispositionV1
+  });
+  return {
+    status: "source_disposition_recorded",
+    sequence: entry.sequence,
+    ledger_status: entry.status,
+    next_repair: entry.next_repair,
+    native_write_allowed: false
   };
 }
 
@@ -5498,7 +5533,8 @@ const STRUCTURED_WORKBENCH_ACTION_NAMES = [
   "compile_registered_mep_reconstruction",
   "register_existing_conditions_route_frontier",
   "register_existing_conditions_route_snap",
-  "register_existing_conditions_mep_repair"
+  "register_existing_conditions_mep_repair",
+  "register_existing_conditions_source_disposition"
 ] as const;
 
 function buildWorkbenchNamespaceCorrection(
@@ -18063,6 +18099,7 @@ function defaultSystemPrompt(): string {
     "- Before creating replacement geometry, inventory the bounded target region and retain useful source-grounded elements. Prefer one staged /revit/move-elements, /revit/rotate-elements, /revit/edit-mep-route-elements, or /revit/repair-mep-connectors operation when the existing graph is safely editable. Persist affected_element_ids and verify them; do not create a duplicate merely because the first location, size, or connection is wrong.",
     "- After compile_registered_mep_reconstruction returns status ready or partially_ready, use the persisted staged handoff for /revit/existing-conditions-mep-draft-workflow. The harness may group only explicitly marked, independent high-confidence straight backbones into one bounded provisional batch; all other work advances as the next single dependency-ready operation. Persist created or affected IDs plus registered continuation endpoints, then continue from those IDs. Never submit the entire operation graph as one all-or-nothing request. A write remains provisional until complete native ID readback, continuation-connector readback where applicable, focused visual evidence, and a reversible save-as checkpoint all succeed.",
     "- If a staged dry-run is rejected, preserve every accepted prior stage. Use workbench action register_existing_conditions_mep_repair with the exact blocked supersedes_stage_key, a new repair_stage_key, and operation_json containing one smaller replacement operation with the same action_key. Then let the staged handoff dry-run and apply that repair; do not recompile or replay accepted stages.",
+    "- After a registered source-only topology check, emit register_existing_conditions_source_disposition with one source_disposition_json object to persist either accepted_source_observation/source_supported or an explicit abstention and exact next repair. It never authorizes a native write; keep actions empty and do not convert an abstention into geometry.",
     "- When source registration establishes route XY but size, system, elevation, or native type remains unresolved, first scan the bounded retained MEP graph and call /revit/get-connectors with includeAllRefs=true for the nearby fittings plus their adjacent route elements. Then emit register_existing_conditions_route_frontier as a top-level workbench_actions item with candidate_json set to the source-only candidate JSON string and connector_tool_action_id set to that exact completed connector action ID. It is not a native endpoint: never search for it with /revit/tool-search or /revit/tool-doc. The deterministic host requires two unique open, correctly facing connectors plus agreement on domain, shape, size, system, elevation, adjacent native route type, and phase. Contextual source labels that disagree are recorded as provisional native overrides; a high-confidence exact source conflict or any native ambiguity defers the action.",
     "- Exact frontier workbench shape: workbench_actions:[{type:\"register_existing_conditions_route_frontier\",candidate_json:\"<source-only JSON string>\",connector_tool_action_id:\"<completed get-connectors action_id>\"}]. Keep native actions empty for that response.",
     "- After a fully resolved registered route candidate exists and /revit/get-connectors returned current native readback, use register_existing_conditions_route_snap with candidate_json and the exact connector_tool_action_id. The deterministic host will reject fabricated, occupied, ambiguous, wrong-domain, wrong-size, wrong-system, wrong-direction, or over-tolerance endpoints and will register only one staged dry-run; do not author a monolithic replacement graph.",
@@ -19717,6 +19754,15 @@ function normalizeWorkbenchActions(raw: unknown): WorkbenchAction[] {
         operation_json:
           typeof a.operation_json === "string" ? a.operation_json : "",
         reason: typeof a.reason === "string" ? a.reason : ""
+      });
+      continue;
+    }
+
+    if (type === "register_existing_conditions_source_disposition") {
+      out.push({
+        type: "register_existing_conditions_source_disposition",
+        source_disposition_json:
+          typeof a.source_disposition_json === "string" ? a.source_disposition_json : ""
       });
     }
   }
@@ -22391,12 +22437,13 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
             "supersedes_stage_key",
             "repair_stage_key",
             "operation_json",
-            "reason"
+            "reason",
+            "source_disposition_json"
           ],
           properties: {
             type: {
               type: "string",
-              enum: ["shell", "python", "write_file", "read_file", "list_files", "analyze_redline", "map_sheet_regions", "redline_orient", "gemini_redline_analyze", "detect_sheet_chromatic_components", "compile_existing_conditions_sheet_interpretation", "compile_registered_mep_reconstruction", "register_existing_conditions_route_frontier", "register_existing_conditions_route_snap", "register_existing_conditions_mep_repair"]
+              enum: ["shell", "python", "write_file", "read_file", "list_files", "analyze_redline", "map_sheet_regions", "redline_orient", "gemini_redline_analyze", "detect_sheet_chromatic_components", "compile_existing_conditions_sheet_interpretation", "compile_registered_mep_reconstruction", "register_existing_conditions_route_frontier", "register_existing_conditions_route_snap", "register_existing_conditions_mep_repair", "register_existing_conditions_source_disposition"]
             },
             command: { type: ["string", "null"] },
             code: { type: ["string", "null"] },
@@ -22440,7 +22487,8 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
             supersedes_stage_key: { type: ["string", "null"] },
             repair_stage_key: { type: ["string", "null"] },
             operation_json: { type: ["string", "null"] },
-            reason: { type: ["string", "null"] }
+            reason: { type: ["string", "null"] },
+            source_disposition_json: { type: ["string", "null"] }
           }
         }
       }
@@ -22761,7 +22809,9 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
       registerExistingConditionsRouteSnap: (action) =>
         registerExistingConditionsRouteSnapForSession({ req, action }),
       registerExistingConditionsMepRepair: (action) =>
-        registerExistingConditionsMepRepairForSession({ req, action })
+        registerExistingConditionsMepRepairForSession({ req, action }),
+      registerExistingConditionsSourceDisposition: (action) =>
+        registerExistingConditionsSourceDispositionForSession({ req, action })
     }));
     if (opts.initialPreflight) wb = await groundInitialRedlineWorkbenchResults(req.session_id, wb);
     noteCandidateVisibleCompileResults(req.session_id, wb);
