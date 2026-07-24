@@ -14,6 +14,8 @@ import {
 } from "../src/existing_conditions/staged_repair_ledger.js";
 import { executeExistingConditionsProviderWorkbenchActions } from "../src/brains/openai_brain.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
+import { withLatestExistingConditionsSourceDispositionContext } from "../src/existing_conditions/source_disposition_replay_context.js";
+import { decide } from "../src/brain.js";
 
 function disposition(
   overrides: Partial<ExistingConditionsSourceDispositionV1> = {}
@@ -148,6 +150,74 @@ test("provider workbench persists one source disposition and returns no Revit ac
   } finally {
     if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+});
+
+test("a later agent turn receives the latest source disposition and exact continuation contract after restart", { concurrency: false }, async () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const previousBrain = process.env.OPERATOR_BRAIN;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-source-disposition-replay-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.OPERATOR_BRAIN = "gemini";
+  try {
+    const sessionId = "source-disposition-replay-session";
+    const input = disposition({
+      disposition: "abstained",
+      reason_code: "registered_cross_page_no_target",
+      evidence_group_ids: [],
+      next_repair: "Inspect the next registered lighting control; preserve the provisional circuit."
+    });
+    const entry = recordExistingConditionsSourceDispositionV1({ sessionId, disposition: input });
+    const restartedRequest = withLatestExistingConditionsSourceDispositionContext({
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "restarted-message",
+      user_text: "Continue the existing-conditions reconstruction.",
+      context: { operator_brain_route: "direct", retained_context: "keep-me" }
+    });
+    const replay = (restartedRequest.context as any)?.__server?.existing_conditions_source_disposition;
+    assert.equal((restartedRequest.context as any)?.retained_context, "keep-me");
+    assert.equal(replay?.event_key, entry.event_key);
+    assert.equal(replay?.target_key, input.target_key);
+    assert.equal(replay?.reason_code, "registered_cross_page_no_target");
+    assert.equal(replay?.next_repair, input.next_repair);
+    assert.equal(replay?.native_write_allowed, false);
+    assert.match(replay?.continuation_contract ?? "", /Do not repeat this accepted source search/);
+
+    let providerRequest: any = null;
+    const response = await decide({
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "provider-restart-message",
+      user_text: "Continue the existing-conditions reconstruction.",
+      context: { operator_brain_route: "direct" }
+    }, {
+      existingConditionsSourcePreflight: async request => request,
+      existingConditionsProviderDecision: async () => null,
+      geminiBrain: async request => {
+        providerRequest = request;
+        return {
+          version: OPERATOR_BACKEND_CONTRACT_VERSION,
+          assistant_message: "Continuing from the persisted source disposition.",
+          actions: []
+        };
+      }
+    });
+    assert.deepEqual(response.actions, []);
+    assert.equal(
+      providerRequest?.context?.__server?.existing_conditions_source_disposition?.event_key,
+      entry.event_key
+    );
+    assert.equal(
+      providerRequest?.context?.__server?.existing_conditions_source_disposition?.next_repair,
+      input.next_repair
+    );
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    if (previousBrain === undefined) delete process.env.OPERATOR_BRAIN;
+    else process.env.OPERATOR_BRAIN = previousBrain;
     try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* best effort */ }
   }
 });
