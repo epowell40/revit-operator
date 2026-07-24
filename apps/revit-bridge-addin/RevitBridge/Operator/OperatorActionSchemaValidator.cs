@@ -8014,6 +8014,84 @@ namespace RevitBridge.Operator
                 return true;
             }
 
+            if (string.Equals(path, "/revit/replace-schedule-values", StringComparison.OrdinalIgnoreCase))
+            {
+                // { sheetNumbers?|scheduleIds?, fieldNames?, valueContains, expectedValue?, replaceFrom, replaceTo, expectedPlanHash?, apply?, dryRun?, maxSchedules?, maxCandidates?, maxChanges? }
+                if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
+                {
+                    error = "replace-schedule-values body must be an object.";
+                    return false;
+                }
+                if (!ValidateOptionalStringArray(obj.Value, "sheetNumbers", maxCount: 50, maxLen: 64, out error)) return false;
+                if (obj.Value.TryGetProperty("scheduleIds", out var scheduleIds) && scheduleIds.ValueKind != JsonValueKind.Null)
+                {
+                    if (scheduleIds.ValueKind != JsonValueKind.Array || scheduleIds.GetArrayLength() > 200)
+                    {
+                        error = "replace-schedule-values.scheduleIds must be an array with at most 200 items.";
+                        return false;
+                    }
+                    foreach (var id in scheduleIds.EnumerateArray())
+                    {
+                        if (!id.TryGetInt64(out var parsed) || parsed <= 0)
+                        {
+                            error = "replace-schedule-values.scheduleIds must contain positive integers.";
+                            return false;
+                        }
+                    }
+                }
+                if (!ValidateOptionalStringArray(obj.Value, "fieldNames", maxCount: 20, maxLen: 128, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "valueContains", maxLen: 256, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "expectedValue", maxLen: 512, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "replaceFrom", maxLen: 256, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "replaceTo", maxLen: 256, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "expectedPlanHash", maxLen: 128, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "apply", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "maxSchedules", out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "maxCandidates", out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "maxChanges", out error)) return false;
+
+                var hasSheets = obj.Value.TryGetProperty("sheetNumbers", out var sheetValues) && sheetValues.ValueKind == JsonValueKind.Array && sheetValues.GetArrayLength() > 0;
+                var hasSchedules = obj.Value.TryGetProperty("scheduleIds", out scheduleIds) && scheduleIds.ValueKind == JsonValueKind.Array && scheduleIds.GetArrayLength() > 0;
+                if (!hasSheets && !hasSchedules)
+                {
+                    error = "replace-schedule-values requires sheetNumbers or scheduleIds.";
+                    return false;
+                }
+                foreach (var required in new[] { "valueContains", "replaceFrom" })
+                {
+                    if (!obj.Value.TryGetProperty(required, out var requiredValue) || requiredValue.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(requiredValue.GetString()))
+                    {
+                        error = "replace-schedule-values." + required + " is required and must be a non-empty string.";
+                        return false;
+                    }
+                }
+                if (!obj.Value.TryGetProperty("replaceTo", out var replaceTo) || replaceTo.ValueKind != JsonValueKind.String)
+                {
+                    error = "replace-schedule-values.replaceTo is required and must be a string.";
+                    return false;
+                }
+                if (obj.Value.TryGetProperty("maxSchedules", out var maxSchedules) && maxSchedules.ValueKind != JsonValueKind.Null &&
+                    (!maxSchedules.TryGetInt32(out var scheduleLimit) || scheduleLimit < 1 || scheduleLimit > 500))
+                {
+                    error = "replace-schedule-values.maxSchedules must be an integer from 1 through 500.";
+                    return false;
+                }
+                if (obj.Value.TryGetProperty("maxCandidates", out var maxCandidates) && maxCandidates.ValueKind != JsonValueKind.Null &&
+                    (!maxCandidates.TryGetInt32(out var candidateLimit) || candidateLimit < 1 || candidateLimit > 10000))
+                {
+                    error = "replace-schedule-values.maxCandidates must be an integer from 1 through 10000.";
+                    return false;
+                }
+                if (obj.Value.TryGetProperty("maxChanges", out var maxChanges) && maxChanges.ValueKind != JsonValueKind.Null &&
+                    (!maxChanges.TryGetInt32(out var changeLimit) || changeLimit < 1 || changeLimit > 10000))
+                {
+                    error = "replace-schedule-values.maxChanges must be an integer from 1 through 10000.";
+                    return false;
+                }
+                return true;
+            }
+
             if (string.Equals(path, "/revit/configure-schedule", StringComparison.OrdinalIgnoreCase))
             {
                 // { scheduleId?|query?, exact?, addFields?, filters?, replaceFilters?, sortGroup?, replaceSortGroup?, showGrandTotals?, columnWidths?, rowHeights?, calculatedFields?, fieldFormats?, conditionalFormats?, appearance?, filterBySheet?, dryRun? }

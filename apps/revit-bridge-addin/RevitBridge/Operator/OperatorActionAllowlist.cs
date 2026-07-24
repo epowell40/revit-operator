@@ -182,6 +182,7 @@ namespace RevitBridge.Operator
                     "/revit/delete",
                     "/revit/set-parameter",
                     "/revit/update-schedule-cell",
+                    "/revit/replace-schedule-values",
                     "/revit/sync-connected-sizes",
                     "/revit/resize-duct-run",
                     "/revit/resize-ducts-by-scope",

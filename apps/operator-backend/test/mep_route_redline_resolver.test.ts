@@ -13,7 +13,8 @@ import {
 
 test("sheet inventory results cannot wake the MEP redline continuation", () => {
   assert.equal(__testOnlyIsMepRouteContinuationToolResult({ action_id: "aec-query-document-sheets", method: "POST", path: "/revit/sheets", status: "done", result_json: { action: "count", totalSheets: 17 } }), false);
-  assert.equal(__testOnlyIsMepRouteContinuationToolResult({ action_id: "redline-sheet-detail", method: "POST", path: "/revit/sheets", status: "done", result_json: { action: "detail", sheetNumber: "M104" } }), true);
+  assert.equal(__testOnlyIsMepRouteContinuationToolResult({ action_id: "redline-sheet-detail", method: "POST", path: "/revit/sheets", status: "done", result_json: { action: "detail", sheetNumber: "M104" } }), false);
+  assert.equal(__testOnlyIsMepRouteContinuationToolResult({ action_id: "mep-route-sheet-redline-detail", method: "POST", path: "/revit/sheets", status: "done", result_json: { action: "detail", sheetNumber: "M104" } }), true);
 });
 
 function baseAnalysis(overrides: Partial<RedlineAnalyzeResponse> = {}): RedlineAnalyzeResponse {
