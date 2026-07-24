@@ -3,7 +3,12 @@ import {
   type ChatRequest,
   type ChatResponse
 } from "../contracts.js";
-import { latestExistingConditionsSourceDispositionV1 } from "./source_disposition_ledger.js";
+import {
+  listLatestExistingConditionsSourceDispositionsV1,
+  type ExistingConditionsSourceDispositionStateV1
+} from "./source_disposition_ledger.js";
+
+const MAX_REPLAY_FRONTIER_TARGETS = 32;
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -24,16 +29,55 @@ function isReadOnlyDispositionInspection(req: ChatRequest): boolean {
       /\b(?:do not|don't|without)\s+(?:modify|change|write|edit|draft)/i.test(text));
 }
 
+function requestsWholeDispositionFrontier(req: ChatRequest): boolean {
+  const text = String(req.user_text ?? "");
+  return /\b(?:all|every|frontier|frontiers|targets|unresolved)\b/i.test(text);
+}
+
+function frontierTarget(state: ExistingConditionsSourceDispositionStateV1): Record<string, unknown> {
+  return {
+    sequence: state.sequence,
+    event_key: state.event_key,
+    entry_sha256: state.entry_sha256,
+    status: state.status,
+    target_key: state.disposition.target_key,
+    disposition: state.disposition.disposition,
+    reason_code: state.disposition.reason_code,
+    source_receipt_sha256: state.disposition.source_receipt_sha256,
+    registration_context_id: state.disposition.registration_context_id,
+    next_repair: state.disposition.next_repair,
+    native_write_allowed: false
+  };
+}
+
 export function maybeBuildExistingConditionsSourceDispositionInspection(
   req: ChatRequest
 ): ChatResponse | null {
   if (!isReadOnlyDispositionInspection(req)) return null;
-  const state = latestExistingConditionsSourceDispositionV1(req.session_id);
+  const frontier = listLatestExistingConditionsSourceDispositionsV1(req.session_id);
+  const state = frontier.at(-1) ?? null;
   if (!state) {
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
       assistant_message:
         "No persisted existing-conditions source disposition exists for this Operator session, so there is no exact next repair to resume. I did not synthesize a source observation or dispatch a native Revit action. Reopen the original session or register a source-supported observation before continuing.",
+      actions: []
+    };
+  }
+  if (requestsWholeDispositionFrontier(req)) {
+    const bounded = frontier.slice(-MAX_REPLAY_FRONTIER_TARGETS);
+    const lines = bounded.map((candidate, index) =>
+      `${index + 1}. ${candidate.disposition.target_key}: ${candidate.disposition.disposition} ` +
+      `(${candidate.disposition.reason_code}). Exact next repair: ${candidate.disposition.next_repair}`
+    );
+    const omitted = frontier.length - bounded.length;
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message:
+        `Persisted source frontier: ${frontier.length} target(s). ` +
+        `${omitted > 0 ? `${omitted} older target(s) omitted from this bounded report. ` : ""}` +
+        `${lines.join(" ")} Select exactly one target and perform only its exact next repair. ` +
+        "This report did not repeat a source search or dispatch a native Revit action.",
       actions: []
     };
   }
@@ -53,7 +97,8 @@ export function maybeBuildExistingConditionsSourceDispositionInspection(
 export function withLatestExistingConditionsSourceDispositionContext(
   req: ChatRequest
 ): ChatRequest {
-  const state = latestExistingConditionsSourceDispositionV1(req.session_id);
+  const frontier = listLatestExistingConditionsSourceDispositionsV1(req.session_id);
+  const state = frontier.at(-1) ?? null;
   if (!state) {
     if (!isSourceDispositionContinuationRequest(req)) return req;
     const context = record(req.context);
@@ -70,6 +115,13 @@ export function withLatestExistingConditionsSourceDispositionContext(
             native_write_allowed: false,
             continuation_contract:
               "No persisted source disposition exists for this session. Do not synthesize or register one without source evidence, and do not author a native action from this missing state."
+          },
+          existing_conditions_source_disposition_frontier: {
+            schema: "operator.existing_conditions.source_disposition_frontier_context.v1",
+            status: "not_found",
+            total_targets: 0,
+            targets: [],
+            native_write_allowed: false
           }
         }
       }
@@ -78,6 +130,7 @@ export function withLatestExistingConditionsSourceDispositionContext(
   const context = record(req.context);
   const server = record(context.__server);
   const disposition = state.disposition;
+  const boundedFrontier = frontier.slice(-MAX_REPLAY_FRONTIER_TARGETS);
   return {
     ...req,
     context: {
@@ -104,6 +157,17 @@ export function withLatestExistingConditionsSourceDispositionContext(
           continuation_contract: disposition.disposition === "abstained"
             ? "Continue from next_repair or another source-supported target. Do not repeat this accepted source search or author a native action for target_key unless a later accepted source observation supersedes event_key."
             : "This is accepted source-only knowledge, not native-write authority. Continue with the next bounded native verification required by next_repair."
+        },
+        existing_conditions_source_disposition_frontier: {
+          schema: "operator.existing_conditions.source_disposition_frontier_context.v1",
+          status: "available",
+          total_targets: frontier.length,
+          included_targets: boundedFrontier.length,
+          truncated: boundedFrontier.length < frontier.length,
+          targets: boundedFrontier.map(frontierTarget),
+          native_write_allowed: false,
+          continuation_contract:
+            "Select exactly one target and its stored next_repair per turn. Preserve every other target and do not repeat accepted source searches or infer native writes from this source-only frontier."
         }
       }
     }

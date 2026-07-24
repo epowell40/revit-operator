@@ -178,3 +178,25 @@ export function latestExistingConditionsSourceDispositionV1(
     updated_at_ms: Date.parse(entry.ts) || Date.now()
   };
 }
+
+export function listLatestExistingConditionsSourceDispositionsV1(
+  sessionId: string
+): ExistingConditionsSourceDispositionStateV1[] {
+  const latestByTarget = new Map<string, ExistingConditionsSourceDispositionStateV1>();
+  for (const entry of readExistingConditionsRepairLedger(sessionId)) {
+    if (entry.event !== "source_disposition_recorded") continue;
+    const disposition = validateExistingConditionsSourceDispositionV1(
+      entry.payload.source_disposition as ExistingConditionsSourceDispositionV1
+    );
+    const targetKey = disposition.target_key.trim().toLowerCase();
+    latestByTarget.set(targetKey, {
+      disposition,
+      sequence: entry.sequence,
+      event_key: entry.event_key,
+      entry_sha256: entry.entry_sha256,
+      status: disposition.disposition === "accepted_source_observation" ? "accepted" : "follow_up",
+      updated_at_ms: Date.parse(entry.ts) || Date.now()
+    });
+  }
+  return [...latestByTarget.values()].sort((left, right) => left.sequence - right.sequence);
+}
