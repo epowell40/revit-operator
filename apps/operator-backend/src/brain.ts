@@ -28,6 +28,7 @@ import { maybeRunDeterministicRoomReceptacleAnalog } from "./deterministic/room_
 import { maybeRunSemanticAecWorkflow } from "./deterministic/aec_workflow_registry.js";
 import type { AecTaskIntentInterpreter } from "./aec_task_intent_interpreter.js";
 import { maybeRunDeterministicScheduleCellUpdate } from "./deterministic/schedule_cell_update_runtime.js";
+import { maybeRunDeterministicScheduleValueReplacement } from "./deterministic/schedule_value_replacement_runtime.js";
 import { getRecentMessages } from "./memory/sqlite_store.js";
 import {
   enforceExistingConditionsOneActionLoop,
@@ -298,6 +299,7 @@ export function __testOnlyFinalizeDecision(req: ChatRequest, decision: ChatRespo
 export type BrainDecisionDependencies = {
   mepRouteRedline?: typeof maybeRunDeterministicMepRouteRedline;
   scheduleCellUpdate?: typeof maybeRunDeterministicScheduleCellUpdate;
+  scheduleValueReplacement?: typeof maybeRunDeterministicScheduleValueReplacement;
   semanticAecWorkflow?: typeof maybeRunSemanticAecWorkflow;
   ruleBrain?: typeof decideRule;
   openAiBrain?: typeof decideOpenAi;
@@ -417,6 +419,11 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
   const enlargedPlanDecision = await maybeRunDeterministicEnlargedPlanSheet(req);
   if (enlargedPlanDecision) {
     return finalizeDecision(req, enlargedPlanDecision);
+  }
+
+  const scheduleValueReplacementDecision = await (dependencies.scheduleValueReplacement ?? maybeRunDeterministicScheduleValueReplacement)(req);
+  if (scheduleValueReplacementDecision) {
+    return finalizeDecision(req, scheduleValueReplacementDecision);
   }
 
   const mepRouteRedlineDecision = await maybeRunTopLevelMepRouteRedline(req, dependencies.mepRouteRedline);
@@ -560,6 +567,14 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dep
     }
     cb.onDone?.(text);
     return finalizeDecision(req, enlargedPlanDecision);
+  }
+
+  const scheduleValueReplacementDecision = await (dependencies.scheduleValueReplacement ?? maybeRunDeterministicScheduleValueReplacement)(req);
+  if (scheduleValueReplacementDecision) {
+    const text = scheduleValueReplacementDecision.assistant_message || "";
+    cb.onDelta?.(text);
+    cb.onDone?.(text);
+    return finalizeDecision(req, scheduleValueReplacementDecision);
   }
 
   const mepRouteRedlineDecision = await maybeRunTopLevelMepRouteRedline(req, dependencies.mepRouteRedline);
