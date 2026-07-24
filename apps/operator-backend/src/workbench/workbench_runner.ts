@@ -5,6 +5,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { ensureWorkspaceLayout, resolveExistingFileUnderWorkspace, resolveFileUnderWorkspace } from "../workspace.js";
 import { analyzeRedlineFile } from "../redline/redline_analyzer.js";
+import { buildRedlineActionUnits } from "../redline/redline_action_units.js";
 import { tryCreateRedlineAnalyzeEvidence } from "../redline/redline_analyze_evidence.js";
 import { mapSheetRegions } from "../redline/sheet_region_mapper.js";
 import { orientRedlineFile } from "../redline/redline_orienter.js";
@@ -503,6 +504,7 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
           timeout_ms: timeoutMs,
           baseline_file_path: typeof action.baseline_file_path === "string" ? action.baseline_file_path : undefined
         });
+        const redlineActionUnits = analyzed.ok ? buildRedlineActionUnits(analyzed) : [];
         let aec_intent_evidence; try { aec_intent_evidence = analyzed.ok ? await (deps.createRedlineAnalyzeEvidence ?? tryCreateRedlineAnalyzeEvidence)(analyzed, { id: randomUUID(), created_at: new Date().toISOString() }) : undefined; } catch { aec_intent_evidence = undefined; }
         results.push({
           index: i + 1,
@@ -513,6 +515,8 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
             : `Redline analysis failed: ${analyzed.warning ?? "unknown error"}`,
           details: {
             ...(analyzed as unknown as Record<string, unknown>),
+            redline_action_units: redlineActionUnits,
+            redline_action_unit_count: redlineActionUnits.length,
             ...(aec_intent_evidence ? { aec_intent_evidence } : {}),
             file_path: fp,
             request: {

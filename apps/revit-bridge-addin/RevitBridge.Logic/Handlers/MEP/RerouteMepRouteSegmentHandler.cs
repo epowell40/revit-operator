@@ -57,7 +57,7 @@ namespace RevitBridge.Logic.Handlers.MEP
         {
             var p = string.IsNullOrWhiteSpace(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
             var kind = MepRoutingUtil.NormalizeKind(p.kind);
-            var shouldApply = p.apply || !p.dryRun;
+            var shouldApply = MepMutationApplyPolicy.ResolveShouldApply(p.apply, p.dryRun);
             var warnings = new List<string>();
             if (p.hostElementId <= 0) throw new ArgumentException("hostElementId is required.");
 

@@ -165,12 +165,13 @@ function readAttachmentPolicy(ctx: unknown): { shareWithAgent: boolean; autoOpen
 
 function maybeAutoAttachLatestUpload(
   userAttachments: NonNullable<ChatRequest["user_attachments"]>,
-  ctx: unknown
+  ctx: unknown,
+  sessionId: string
 ): NonNullable<ChatRequest["user_attachments"]> {
   const pol = readAttachmentPolicy(ctx);
   if (!pol.autoOpenLatestAttachment) return userAttachments;
 
-  const { image, context } = getLatestImageUploadWithContext();
+  const { image, context } = getLatestImageUploadWithContext(sessionId);
   const next = Array.isArray(userAttachments) ? [...userAttachments] : [];
 
   const hasId = (id: string) => next.some(a => (a?.id ?? "").toString() === id);
@@ -1683,8 +1684,15 @@ const server = http.createServer(async (req, res) => {
         // ignore environment memory failures
       }
       let userAttachments = normalizeUserAttachments((parsed as any).user_attachments);
-      userAttachments = maybeAutoAttachLatestUpload(userAttachments, parsed.context);
+      userAttachments = maybeAutoAttachLatestUpload(userAttachments, parsed.context, parsed.session_id);
       const userTextWithAttachments = appendAttachmentsToUserText(userText, userAttachments);
+      const canonicalRequest: ChatRequest = {
+        ...(parsed as ChatRequest),
+        context: withServerContext(parsed.context, { dev_agent_unlocked: devAgentUnlocked(req) }),
+        user_text: userTextWithAttachments,
+        tool_results: toolResults,
+        user_attachments: userAttachments
+      };
       if (!userText.trim() && toolResults.length === 0 && userAttachments.length === 0) {
         res.statusCode = 400;
         res.setHeader("content-type", "text/plain; charset=utf-8");
@@ -1714,13 +1722,7 @@ const server = http.createServer(async (req, res) => {
           // ignore
         }
       }
-      const macroResp = maybeHandleMacroSkill({
-        ...(parsed as ChatRequest),
-        user_text: userTextWithAttachments,
-        tool_results: toolResults,
-        user_attachments: userAttachments,
-        context: withServerContext(parsed.context, { dev_agent_unlocked: devAgentUnlocked(req) })
-      });
+      const macroResp = maybeHandleMacroSkill(canonicalRequest);
 
       let streamClosed = false;
       const send = (event: string, data: unknown) => {
@@ -1835,7 +1837,7 @@ const server = http.createServer(async (req, res) => {
         send("chat.start", { session_id: parsed.session_id, message_id: parsed.message_id });
 
       ensureSession(parsed.session_id);
-      if (userText.trim()) appendMessage(parsed.session_id, { role: "user", text: userText });
+      if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments });
       for (const tr of toolResults) {
         appendToolSummary(parsed.session_id, summarizeToolResult(tr));
         try {
@@ -1872,12 +1874,7 @@ const server = http.createServer(async (req, res) => {
         }, 5_000);
 
         const decision = await decideStreaming(
-          {
-            ...(parsed as ChatRequest),
-            context: withServerContext(parsed.context, { dev_agent_unlocked: devUnlocked }),
-            user_text: userText,
-            tool_results: toolResults
-          },
+          canonicalRequest,
           {
             abortSignal: streamAbort.signal,
             onDelta: delta => {
@@ -2039,7 +2036,7 @@ const server = http.createServer(async (req, res) => {
         // ignore environment memory failures
       }
       let userAttachments = normalizeUserAttachments((parsed as any).user_attachments);
-      userAttachments = maybeAutoAttachLatestUpload(userAttachments, parsed.context);
+      userAttachments = maybeAutoAttachLatestUpload(userAttachments, parsed.context, parsed.session_id);
       const userTextWithAttachments = appendAttachmentsToUserText(userText, userAttachments);
       if (!userText.trim() && toolResults.length === 0 && userAttachments.length === 0) {
         return writeJson(res, 400, { error: "Provide user_text or tool_results" });
@@ -2353,6 +2350,14 @@ const server = http.createServer(async (req, res) => {
           : typeof parsed.createdAt === "string"
             ? parsed.createdAt.trim()
             : undefined;
+      const session_id =
+        typeof parsed.session_id === "string"
+          ? parsed.session_id.trim()
+          : typeof parsed.sessionId === "string"
+            ? parsed.sessionId.trim()
+            : undefined;
+      if (!session_id) return writeJson(res, 400, { ok: false, error: "session_id is required." });
+      if (!sessionAccessAllowed(res, session_id, auth.principal)) return;
       const data_base64 =
         typeof parsed.data_base64 === "string"
           ? parsed.data_base64
@@ -2368,6 +2373,7 @@ const server = http.createServer(async (req, res) => {
           sha256,
           mime,
           created_at,
+          session_id,
           data_base64
         });
         return writeJson(res, 200, { ok: true, attachment: stored });

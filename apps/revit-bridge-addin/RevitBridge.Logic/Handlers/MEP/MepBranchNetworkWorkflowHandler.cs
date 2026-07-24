@@ -111,12 +111,45 @@ namespace RevitBridge.Logic.Handlers.MEP
             }
 
             var mainResolved = ResolvePoints(p.mainPoints, p.frameId, ctx.RecommendedZ);
-            TransactionGroup? accessoryFamilyLoadGroup = null;
-            if (p.apply && AccessoryFamilyLoadRequested(kind, p.accessories))
+            TransactionGroup? networkApplyGroup = null;
+            var networkApplyCommitted = false;
+            if (p.apply)
             {
-                accessoryFamilyLoadGroup = new TransactionGroup(doc, "Preload MEP Accessory Families");
-                accessoryFamilyLoadGroup.Start();
+                networkApplyGroup = new TransactionGroup(doc, "Apply MEP Branch Network Atomically");
+                try
+                {
+                    var startStatus = networkApplyGroup.Start();
+                    if (startStatus != TransactionStatus.Started)
+                    {
+                        try { networkApplyGroup.Dispose(); } catch { }
+                        networkApplyGroup = null;
+                        return Task.FromResult<object>(new
+                        {
+                            status = "Blocked",
+                            workflowMode = "applyRequested",
+                            reason = "Revit did not start the atomic network transaction group.",
+                            transactionGroupStartStatus = startStatus.ToString(),
+                            warnings
+                        });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    try { networkApplyGroup.Dispose(); } catch { }
+                    networkApplyGroup = null;
+                    return Task.FromResult<object>(new
+                    {
+                        status = "Blocked",
+                        workflowMode = "applyRequested",
+                        reason = "Revit could not start the atomic network transaction group.",
+                        error = ex.Message,
+                        warnings
+                    });
+                }
             }
+
+            try
+            {
 
             var accessoryFamilyLoadResults = p.apply
                 ? EnsureAccessoryFamiliesLoaded(doc, kind, p.accessories, warnings)
@@ -128,12 +161,14 @@ namespace RevitBridge.Logic.Handlers.MEP
             });
             if (failedFamilyLoad != null)
             {
-                RollBackTransactionGroup(accessoryFamilyLoadGroup);
+                var rolledBack = RollBackTransactionGroup(networkApplyGroup);
+                networkApplyGroup = null;
                 return Task.FromResult<object>(new
                 {
-                    status = "Blocked",
+                    status = p.apply ? (rolledBack ? "BlockedRolledBack" : "BlockedRollbackFailed") : "Blocked",
                     workflowMode = "applyRequested",
                     reason = "One or more accessory families could not be loaded before route geometry was created.",
+                    atomicRollbackSucceeded = p.apply ? rolledBack : (bool?)null,
                     accessoryFamilyLoadResults,
                     warnings = warnings.Distinct().ToList()
                 });
@@ -148,12 +183,14 @@ namespace RevitBridge.Logic.Handlers.MEP
             warnings.AddRange(ReadStringArray(mainDryRunJson, "warnings"));
             if (IsBlocked(ReadString(mainDryRunJson, "status")))
             {
-                RollBackTransactionGroup(accessoryFamilyLoadGroup);
+                var rolledBack = RollBackTransactionGroup(networkApplyGroup);
+                networkApplyGroup = null;
                 return Task.FromResult<object>(new
                 {
-                    status = "Blocked",
+                    status = p.apply ? (rolledBack ? "BlockedRolledBack" : "BlockedRollbackFailed") : "Blocked",
                     workflowMode = p.apply ? "applyRequested" : "dryRun",
                     reason = "Main route dry-run failed.",
+                    atomicRollbackSucceeded = p.apply ? rolledBack : (bool?)null,
                     networkPlan = BuildNetworkPlan(mainResolved, branchPlans, accessoryPlans),
                     accessoryFamilyLoadResults,
                     mainDryRun,
@@ -163,12 +200,14 @@ namespace RevitBridge.Logic.Handlers.MEP
 
             if (blockingAccessoryPlans.Count > 0 && p.apply)
             {
-                RollBackTransactionGroup(accessoryFamilyLoadGroup);
+                var rolledBack = RollBackTransactionGroup(networkApplyGroup);
+                networkApplyGroup = null;
                 return Task.FromResult<object>(new
                 {
-                    status = "Blocked",
+                    status = rolledBack ? "BlockedRolledBack" : "BlockedRollbackFailed",
                     workflowMode = "applyRequested",
                     reason = "One or more accessory/damper graph nodes are not safe to apply.",
+                    atomicRollbackSucceeded = rolledBack,
                     networkPlan = BuildNetworkPlan(mainResolved, branchPlans, accessoryPlans),
                     accessoryFamilyLoadResults,
                     mainDryRun,
@@ -190,40 +229,19 @@ namespace RevitBridge.Logic.Handlers.MEP
                 });
             }
 
-            if (accessoryFamilyLoadGroup != null)
-            {
-                try
-                {
-                    accessoryFamilyLoadGroup.Assimilate();
-                    accessoryFamilyLoadGroup = null;
-                }
-                catch (Exception ex)
-                {
-                    RollBackTransactionGroup(accessoryFamilyLoadGroup);
-                    warnings.Add($"Accessory family load transaction group could not be assimilated: {ex.Message}");
-                    return Task.FromResult<object>(new
-                    {
-                        status = "Blocked",
-                        workflowMode = "applyRequested",
-                        reason = "Accessory families were loaded for planning, but Revit could not finalize the preload transaction before route geometry was created.",
-                        networkPlan = BuildNetworkPlan(mainResolved, branchPlans, accessoryPlans),
-                        accessoryFamilyLoadResults,
-                        mainDryRun,
-                        warnings = warnings.Distinct().ToList()
-                    });
-                }
-            }
-
             var mainApply = Invoke(new CreateMepRouteHandler(), app, ToCreateMainParams(p, kind, dryRun: false));
             var mainApplyJson = ToElement(mainApply);
             warnings.AddRange(ReadStringArray(mainApplyJson, "warnings"));
             if (IsBlocked(ReadString(mainApplyJson, "status")))
             {
+                var rolledBack = RollBackTransactionGroup(networkApplyGroup);
+                networkApplyGroup = null;
                 return Task.FromResult<object>(new
                 {
-                    status = "Blocked",
+                    status = rolledBack ? "BlockedRolledBack" : "BlockedRollbackFailed",
                     workflowMode = "apply",
                     reason = "Main route apply failed.",
+                    atomicRollbackSucceeded = rolledBack,
                     networkPlan = BuildNetworkPlan(mainResolved, branchPlans, accessoryPlans),
                     accessoryFamilyLoadResults,
                     mainDryRun,
@@ -245,11 +263,14 @@ namespace RevitBridge.Logic.Handlers.MEP
                 var branch = p.branches[i];
                 if (branch.mainSegmentIndex < 0 || branch.mainSegmentIndex >= mainElementIds.Count)
                 {
+                    var rolledBack = RollBackTransactionGroup(networkApplyGroup);
+                    networkApplyGroup = null;
                     return Task.FromResult<object>(new
                     {
-                        status = "Blocked",
+                        status = rolledBack ? "BlockedRolledBack" : "BlockedRollbackFailed",
                         workflowMode = "apply",
                         reason = $"Branch {i} references mainSegmentIndex {branch.mainSegmentIndex}, but only {mainElementIds.Count} main segment(s) were created.",
+                        atomicRollbackSucceeded = rolledBack,
                         networkPlan = BuildNetworkPlan(mainResolved, branchPlans, accessoryPlans),
                         accessoryFamilyLoadResults,
                         mainDryRun,
@@ -266,11 +287,14 @@ namespace RevitBridge.Logic.Handlers.MEP
                 branchResults.Add(new { index = i, name = branch.name, result = branchApply });
                 if (IsBlocked(ReadString(branchJson, "status")) || ReadBool(branchJson, "rolledBack"))
                 {
+                    var rolledBack = RollBackTransactionGroup(networkApplyGroup);
+                    networkApplyGroup = null;
                     return Task.FromResult<object>(new
                     {
-                        status = "BlockedPartialApply",
+                        status = rolledBack ? "BlockedRolledBack" : "BlockedRollbackFailed",
                         workflowMode = "apply",
-                        reason = $"Branch {i} failed after the main route was created. The failed branch transaction rolled back; inspect mainApply and branchResults for created main ids.",
+                        reason = $"Branch {i} failed. The complete network transaction group was rolled back.",
+                        atomicRollbackSucceeded = rolledBack,
                         networkPlan = BuildNetworkPlan(mainResolved, branchPlans, accessoryPlans),
                         accessoryFamilyLoadResults,
                         mainDryRun,
@@ -305,27 +329,20 @@ namespace RevitBridge.Logic.Handlers.MEP
                 .ToList();
             if (accessoryResults.Any(x => !x.Ok))
             {
-                var createdBeforeAccessoryFailure = mainElementIds
-                    .Concat(mainFittingIds)
-                    .Concat(splitMainIds)
-                    .Concat(createdBranchIds)
-                    .Concat(createdBranchFittingIds)
-                    .Where(x => x > 0)
-                    .Distinct()
-                    .ToList();
-                var cleanup = TryDeleteCreatedElements(app.ActiveUIDocument.Document, createdBeforeAccessoryFailure);
+                var rolledBack = RollBackTransactionGroup(networkApplyGroup);
+                networkApplyGroup = null;
                 return Task.FromResult<object>(new
                 {
-                    status = "BlockedPartialApply",
+                    status = rolledBack ? "BlockedRolledBack" : "BlockedRollbackFailed",
                     workflowMode = "apply",
-                    reason = "Accessory apply failed after route geometry was created; cleanup was attempted for created route ids.",
+                    reason = "Accessory apply failed. The complete network transaction group was rolled back.",
+                    atomicRollbackSucceeded = rolledBack,
                     networkPlan = BuildNetworkPlan(mainResolved, branchPlans, accessoryPlans),
                     accessoryFamilyLoadResults,
                     mainDryRun,
                     mainApply,
                     branchResults,
                     accessoryResults,
-                    cleanup,
                     warnings = warnings.Distinct().ToList()
                 });
             }
@@ -341,6 +358,38 @@ namespace RevitBridge.Logic.Handlers.MEP
                 .Distinct()
                 .ToList();
 
+            var existingModelIds = allModelIds
+                .Where(id => doc.GetElement(ElementIdCompat.Create(id)) != null)
+                .ToList();
+            var branchAuditStatuses = branchResults
+                .Select(ReadBranchNetworkAuditStatus)
+                .ToList();
+            var semanticVerification = MepNetworkApplyPolicy.Verify(
+                allModelIds,
+                existingModelIds,
+                branchAuditStatuses,
+                p.verify);
+            if (!semanticVerification.Pass)
+            {
+                var rolledBack = RollBackTransactionGroup(networkApplyGroup);
+                networkApplyGroup = null;
+                return Task.FromResult<object>(new
+                {
+                    status = rolledBack ? "BlockedRolledBack" : "BlockedRollbackFailed",
+                    workflowMode = "apply",
+                    reason = "Post-apply semantic verification failed. The complete network transaction group was rolled back.",
+                    atomicRollbackSucceeded = rolledBack,
+                    semanticVerification,
+                    networkPlan = BuildNetworkPlan(mainResolved, branchPlans, accessoryPlans),
+                    accessoryFamilyLoadResults,
+                    mainDryRun,
+                    mainApply,
+                    branchResults,
+                    accessoryResults,
+                    warnings = warnings.Distinct().ToList()
+                });
+            }
+
             object visualVerification = new { status = "SkippedByRequest" };
             var visualAttempted = false;
             if (p.visualVerify && allModelIds.Count > 0)
@@ -349,12 +398,40 @@ namespace RevitBridge.Logic.Handlers.MEP
                 visualVerification = TryExportVisual(app, p, mainElementIds, splitMainIds, createdBranchIds, mainFittingIds.Concat(createdBranchFittingIds).ToList(), createdAccessoryIds.Concat(changedAccessoryIds).ToList(), allModelIds);
             }
 
+            try
+            {
+                var commitStatus = networkApplyGroup?.Assimilate() ?? TransactionStatus.Error;
+                if (commitStatus != TransactionStatus.Committed)
+                    throw new InvalidOperationException($"TransactionGroup.Assimilate returned {commitStatus}.");
+                networkApplyCommitted = true;
+                networkApplyGroup = null;
+            }
+            catch (Exception ex)
+            {
+                warnings.Add($"The atomic network transaction group could not be committed: {ex.Message}");
+                var rolledBack = RollBackTransactionGroup(networkApplyGroup);
+                networkApplyGroup = null;
+                return Task.FromResult<object>(new
+                {
+                    status = rolledBack ? "BlockedRolledBack" : "BlockedRollbackFailed",
+                    workflowMode = "apply",
+                    reason = "Revit could not commit the complete network transaction group.",
+                    atomicRollbackSucceeded = rolledBack,
+                    semanticVerification,
+                    warnings = warnings.Distinct().ToList()
+                });
+            }
+
             return Task.FromResult<object>(new
             {
-                status = ReadString(ToElement(visualVerification), "status") == "CaptureReadyForAIReview"
-                    ? "AppliedNetworkVisualVerificationReady"
-                    : "AppliedNetworkVisualVerificationIncomplete",
+                status = !p.visualVerify
+                    ? "AppliedNetworkVerified"
+                    : ReadString(ToElement(visualVerification), "status") == "CaptureReadyForAIReview"
+                        ? "AppliedNetworkVisualVerificationReady"
+                        : "AppliedNetworkVisualVerificationIncomplete",
                 workflowMode = "apply",
+                atomicCommitSucceeded = true,
+                semanticVerification,
                 executionOrder = BuildExecutionOrder(p.branches.Count, accessoryPlans.Count, applied: true, visualAttempted),
                 networkPlan = BuildNetworkPlan(mainResolved, branchPlans, accessoryPlans),
                 accessoryFamilyLoadResults,
@@ -377,6 +454,29 @@ namespace RevitBridge.Logic.Handlers.MEP
                 visualVerification,
                 warnings = warnings.Distinct().ToList()
             });
+            }
+            catch (Exception ex)
+            {
+                warnings.Add($"Atomic MEP network apply failed: {ex.Message}");
+                var rolledBack = p.apply && RollBackTransactionGroup(networkApplyGroup);
+                networkApplyGroup = null;
+                return Task.FromResult<object>(new
+                {
+                    status = !p.apply ? "Blocked" : rolledBack ? "BlockedRolledBack" : "BlockedRollbackFailed",
+                    workflowMode = p.apply ? "apply" : "dryRun",
+                    reason = "The network workflow encountered an unexpected error.",
+                    error = ex.Message,
+                    atomicRollbackSucceeded = p.apply ? rolledBack : (bool?)null,
+                    warnings = warnings.Distinct().ToList()
+                });
+            }
+            finally
+            {
+                if (!networkApplyCommitted && networkApplyGroup != null)
+                {
+                    RollBackTransactionGroup(networkApplyGroup);
+                }
+            }
         }
 
         private static List<XYZ> ResolvePoints(List<MepRoutingUtil.RoutePoint> points, string? frameId, double fallbackZ)
@@ -789,11 +889,34 @@ namespace RevitBridge.Logic.Handlers.MEP
             });
         }
 
-        private static void RollBackTransactionGroup(TransactionGroup? group)
+        private static bool RollBackTransactionGroup(TransactionGroup? group)
         {
-            if (group == null) return;
-            try { group.RollBack(); } catch { }
+            if (group == null) return true;
+            var rolledBack = false;
+            try { rolledBack = group.RollBack() == TransactionStatus.RolledBack; } catch { }
             try { group.Dispose(); } catch { }
+            return rolledBack;
+        }
+
+        private static string? ReadBranchNetworkAuditStatus(object branchResult)
+        {
+            try
+            {
+                var row = ToElement(branchResult);
+                if (!row.TryGetProperty("result", out var result) || result.ValueKind != JsonValueKind.Object) return null;
+                if (!result.TryGetProperty("connectedNetworkAudit", out var audit) || audit.ValueKind != JsonValueKind.Object) return null;
+                var status = ReadString(audit, "status");
+                if (!string.Equals(status, "Ok", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(status, "Success", StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(status, "Passed", StringComparison.OrdinalIgnoreCase)) return "Failed";
+                if (!audit.TryGetProperty("systemAudit", out var systemAudit) || systemAudit.ValueKind != JsonValueKind.Object) return null;
+                if (!systemAudit.TryGetProperty("pass", out var pass) || pass.ValueKind != JsonValueKind.True) return "Failed";
+                return "Ok";
+            }
+            catch
+            {
+                return "Failed";
+            }
         }
 
         private static bool HasFamilyLoadedFromName(Document doc, string familyName)

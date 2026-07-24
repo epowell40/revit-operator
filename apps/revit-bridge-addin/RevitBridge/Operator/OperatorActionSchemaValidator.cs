@@ -3490,6 +3490,7 @@ namespace RevitBridge.Operator
                     if (!ValidateRequiredLong(ch, "elementId", out error)) return false;
                     if (!ValidateRequiredString(ch, "parameterName", maxLen: 128, out error)) return false;
                     if (!ValidateRequiredString(ch, "value", maxLen: 256, out error)) return false;
+                    if (!ValidateOptionalString(ch, "expectedOldValue", maxLen: 256, out error)) return false;
                 }
 
                 if (!ValidateOptionalBool(obj.Value, "apply", out error)) return false;
@@ -6708,7 +6709,44 @@ namespace RevitBridge.Operator
 
                 if (!ValidateOptionalString(obj.Value, "category", maxLen: 96, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "familyName", maxLen: 128, out error)) return false;
+                if (obj.Value.TryGetProperty("expectedOldTypes", out var expectedOldTypes) && expectedOldTypes.ValueKind != JsonValueKind.Null)
+                {
+                    if (expectedOldTypes.ValueKind != JsonValueKind.Array)
+                    {
+                        error = "change-element-type.expectedOldTypes must be an array.";
+                        return false;
+                    }
+                    var guardCount = 0;
+                    foreach (var guard in expectedOldTypes.EnumerateArray())
+                    {
+                        guardCount++;
+                        if (guardCount > 500)
+                        {
+                            error = "change-element-type.expectedOldTypes too large.";
+                            return false;
+                        }
+                        if (guard.ValueKind != JsonValueKind.Object
+                            || !guard.TryGetProperty("elementId", out var guardElementId)
+                            || guardElementId.ValueKind != JsonValueKind.Number
+                            || !guardElementId.TryGetInt64(out var guardElementIdValue)
+                            || guardElementIdValue <= 0
+                            || !guard.TryGetProperty("typeId", out var guardTypeId)
+                            || guardTypeId.ValueKind != JsonValueKind.Number
+                            || !guardTypeId.TryGetInt64(out var guardTypeIdValue)
+                            || guardTypeIdValue <= 0)
+                        {
+                            error = "change-element-type.expectedOldTypes entries require positive integer elementId and typeId.";
+                            return false;
+                        }
+                    }
+                }
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
+                var isDryRun = obj.Value.TryGetProperty("dryRun", out var dryRunValue) && dryRunValue.ValueKind == JsonValueKind.True;
+                if (!isDryRun && (!obj.Value.TryGetProperty("expectedOldTypes", out var requiredGuards) || requiredGuards.ValueKind != JsonValueKind.Array || requiredGuards.GetArrayLength() == 0))
+                {
+                    error = "change-element-type apply requires expectedOldTypes with one stale-state guard per target element.";
+                    return false;
+                }
                 if (!ValidateOptionalBool(obj.Value, "cacheBust", out error)) return false;
                 if (obj.Value.TryGetProperty("cacheMaxAgeSeconds", out var age) && age.ValueKind != JsonValueKind.Null)
                 {
@@ -8403,6 +8441,7 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalString(obj.Value, "familyDocumentId", maxLen: 64, out error)) return false;
                 if (!ValidateRequiredLong(obj.Value, "elementId", out error)) return false;
                 if (!ValidateRequiredString(obj.Value, "newText", maxLen: 200, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "expectedOldText", maxLen: 200, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "apply", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "confirm", maxLen: 120, out error)) return false;
@@ -8706,6 +8745,132 @@ namespace RevitBridge.Operator
                 return true;
             }
 
+            if (string.Equals(path, "/revit/edit-mep-route-elements", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!RequireObject(body, path, out var obj, out error)) return false;
+                if (!ValidateOptionalEnum(obj, "kind", new[] { "duct", "pipe" }, out error)) return false;
+                if (!ValidateRequiredPositiveLongArray(obj, "elementIds", maxCount: 500, out error)) return false;
+                if (!ValidateOptionalString(obj, "ductSize", maxLen: 64, out error)) return false;
+                if (!ValidateOptionalString(obj, "diameter", maxLen: 64, out error)) return false;
+                if (!ValidateOptionalString(obj, "pipeSize", maxLen: 64, out error)) return false;
+                if (!ValidateOptionalString(obj, "sizePolicy", maxLen: 64, out error)) return false;
+                if (!ValidateOptionalNumber(obj, "deltaZFt", out error)) return false;
+                if (!ValidateOptionalNumber(obj, "targetCenterlineZFt", out error)) return false;
+                if (!ValidateOptionalBool(obj, "allowConnectedElevationMove", out error)) return false;
+                if (!ValidateOptionalBool(obj, "apply", out error)) return false;
+                if (!ValidateOptionalBool(obj, "dryRun", out error)) return false;
+                if (!ValidateCanonicalApplyPair(obj, out error)) return false;
+                if (!ValidateOptionalBool(obj, "verify", out error)) return false;
+                if (!ValidateOptionalBool(obj, "visualVerify", out error)) return false;
+                if (!ValidateOptionalLong(obj, "visualViewId", out error)) return false;
+                if (!ValidateOptionalInt(obj, "imageSize", out error)) return false;
+                if (!ValidateOptionalNumber(obj, "focusPaddingFt", out error)) return false;
+                return true;
+            }
+
+            if (string.Equals(path, "/revit/reroute-mep-route-segment", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!RequireObject(body, path, out var obj, out error)) return false;
+                foreach (var unsupported in new[] { "split1Point", "split2Point", "splitPoints", "dropFt", "riseFt", "elevationOffsetFt", "transitionPoint", "projectedTransitionPoint" })
+                {
+                    if (!obj.TryGetProperty(unsupported, out var value) || value.ValueKind == JsonValueKind.Null) continue;
+                    error = $"{unsupported} is not supported by {path}; use chainage/normalized fields and offsetVector.";
+                    return false;
+                }
+                if (!ValidateOptionalEnum(obj, "kind", new[] { "duct", "pipe" }, out error)) return false;
+                if (!ValidateRequiredPositiveLong(obj, "hostElementId", out error)) return false;
+                foreach (var name in new[] { "split1ChainageFt", "split2ChainageFt", "split1Normalized", "split2Normalized", "transitionChainageFt", "transitionNormalized", "doglegAngleDegrees", "focusPaddingFt" })
+                    if (!ValidateOptionalNumber(obj, name, out error)) return false;
+                if (!ValidateOptionalEnum(obj, "offsetMode", new[] { "orthogonal", "dogleg45" }, out error)) return false;
+                if (!ValidateOptionalRoutePointObject(obj, "offsetVector", out error)) return false;
+                foreach (var name in new[] { "upstreamDuctSize", "downstreamDuctSize", "upstreamPipeSize", "downstreamPipeSize", "upstreamDiameter", "downstreamDiameter", "sizePolicy", "systemType" })
+                    if (!ValidateOptionalString(obj, name, maxLen: 96, out error)) return false;
+                if (!ValidateOptionalBool(obj, "apply", out error)) return false;
+                if (!ValidateOptionalBool(obj, "dryRun", out error)) return false;
+                if (!ValidateCanonicalApplyPair(obj, out error)) return false;
+                if (!ValidateOptionalBool(obj, "verify", out error)) return false;
+                if (!ValidateOptionalBool(obj, "visualVerify", out error)) return false;
+                if (!ValidateOptionalBool(obj, "preserveConnectedEndpoints", out error)) return false;
+                if (!ValidateOptionalLong(obj, "visualViewId", out error)) return false;
+                if (!ValidateOptionalInt(obj, "imageSize", out error)) return false;
+                var transitionRequested = obj.TryGetProperty("transitionChainageFt", out _) || obj.TryGetProperty("transitionNormalized", out _) ||
+                    obj.TryGetProperty("upstreamDuctSize", out _) || obj.TryGetProperty("downstreamDuctSize", out _) ||
+                    obj.TryGetProperty("upstreamPipeSize", out _) || obj.TryGetProperty("downstreamPipeSize", out _) ||
+                    obj.TryGetProperty("upstreamDiameter", out _) || obj.TryGetProperty("downstreamDiameter", out _);
+                if (transitionRequested)
+                {
+                    if (!obj.TryGetProperty("transitionChainageFt", out _) && !obj.TryGetProperty("transitionNormalized", out _))
+                    {
+                        error = "Size transition requires transitionChainageFt or transitionNormalized.";
+                        return false;
+                    }
+                }
+                else
+                {
+                    var hasChainagePair = obj.TryGetProperty("split1ChainageFt", out _) && obj.TryGetProperty("split2ChainageFt", out _);
+                    var hasNormalizedPair = obj.TryGetProperty("split1Normalized", out _) && obj.TryGetProperty("split2Normalized", out _);
+                    if (!hasChainagePair && !hasNormalizedPair)
+                    {
+                        error = "Offset reroute requires both split chainages or both split normalized values.";
+                        return false;
+                    }
+                    if (!obj.TryGetProperty("offsetVector", out var offset) || offset.ValueKind != JsonValueKind.Object)
+                    {
+                        error = "Offset reroute requires offsetVector.";
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            if (string.Equals(path, "/revit/connect-mep-branch", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!RequireObject(body, path, out var obj, out error)) return false;
+                if (!ValidateOptionalEnum(obj, "kind", new[] { "duct", "pipe" }, out error)) return false;
+                if (!ValidateRequiredPositiveLong(obj, "mainElementId", out error)) return false;
+                if (!ValidateRoutePointArray(obj, "branchPoints", minCount: 2, maxCount: 200, required: true, out error)) return false;
+                if (!ValidateOptionalString(obj, "branchSize", maxLen: 64, out error)) return false;
+                if (!ValidateOptionalStringArray(obj, "branchSegmentSizes", maxCount: 200, maxLen: 64, out error)) return false;
+                if (!ValidateOptionalEnum(obj, "connectionMode", new[] { "auto", "tee", "tap", "takeoff" }, out error)) return false;
+                if (!ValidateOptionalString(obj, "frameId", maxLen: 128, out error)) return false;
+                if (!ValidateOptionalLong(obj, "viewId", out error)) return false;
+                if (!ValidateOptionalString(obj, "roomNumber", maxLen: 64, out error)) return false;
+                if (!ValidateOptionalString(obj, "levelName", maxLen: 128, out error)) return false;
+                if (!ValidateOptionalLong(obj, "levelId", out error)) return false;
+                if (!ValidateOptionalBool(obj, "dryRun", out error)) return false;
+                if (!ValidateOptionalBool(obj, "verify", out error)) return false;
+                if (!ValidateOptionalBool(obj, "visualVerify", out error)) return false;
+                if (!ValidateOptionalLong(obj, "visualViewId", out error)) return false;
+                if (!ValidateOptionalInt(obj, "imageSize", out error)) return false;
+                if (!ValidateOptionalNumber(obj, "focusPaddingFt", out error)) return false;
+                if (!ValidateOptionalString(obj, "takeoffFamilyName", maxLen: 128, out error)) return false;
+                if (!ValidateOptionalString(obj, "takeoffTypeName", maxLen: 128, out error)) return false;
+                return true;
+            }
+
+            if (string.Equals(path, "/revit/mep-branch-network-workflow", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!RequireObject(body, path, out var obj, out error)) return false;
+                if (!ValidateOptionalEnum(obj, "kind", new[] { "duct", "pipe" }, out error)) return false;
+                if (!ValidateRoutePointArray(obj, "mainPoints", minCount: 2, maxCount: 500, required: true, out error)) return false;
+                if (!ValidateOptionalObjectArray(obj, "branches", maxCount: 200, out error)) return false;
+                if (!ValidateOptionalObjectArray(obj, "accessories", maxCount: 200, out error)) return false;
+                if (!ValidateOptionalStringArray(obj, "mainSegmentSizes", maxCount: 500, maxLen: 64, out error)) return false;
+                foreach (var name in new[] { "frameId", "roomNumber", "levelName", "systemType", "ductType", "pipeType", "ductSize", "diameter", "pipeSize", "sizePolicy", "elevationPolicy", "routingMode" })
+                    if (!ValidateOptionalString(obj, name, maxLen: 128, out error)) return false;
+                if (!ValidateOptionalLong(obj, "viewId", out error)) return false;
+                if (!ValidateOptionalLong(obj, "levelId", out error)) return false;
+                if (!ValidateOptionalBool(obj, "apply", out error)) return false;
+                if (!ValidateOptionalBool(obj, "verify", out error)) return false;
+                if (!ValidateOptionalBool(obj, "visualVerify", out error)) return false;
+                if (!ValidateOptionalLong(obj, "visualViewId", out error)) return false;
+                if (!ValidateOptionalInt(obj, "imageSize", out error)) return false;
+                if (!ValidateOptionalNumber(obj, "focusPaddingFt", out error)) return false;
+                if (!ValidateOptionalNumber(obj, "defaultOffsetFt", out error)) return false;
+                if (!ValidateOptionalNumber(obj, "ceilingOffsetFt", out error)) return false;
+                return true;
+            }
+
             if (string.Equals(path, "/revit/query", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/revit/resolve", StringComparison.OrdinalIgnoreCase))
             {
@@ -8724,6 +8889,168 @@ namespace RevitBridge.Operator
                 return false;
             }
 
+            return true;
+        }
+
+        private static bool RequireObject(JsonElement? body, string path, out JsonElement obj, out string? error)
+        {
+            error = null;
+            obj = default;
+            if (!IsNullOrObject(body, out var maybeObj) || !maybeObj.HasValue)
+            {
+                error = $"{path} body must be an object.";
+                return false;
+            }
+            obj = maybeObj.Value;
+            return true;
+        }
+
+        private static bool ValidateRequiredPositiveLong(JsonElement obj, string name, out string? error)
+        {
+            if (!ValidateRequiredLong(obj, name, out error)) return false;
+            if (obj.GetProperty(name).GetInt64() <= 0)
+            {
+                error = $"{name} must be a positive integer.";
+                return false;
+            }
+            return true;
+        }
+
+        private static bool ValidateRequiredPositiveLongArray(JsonElement obj, string name, int maxCount, out string? error)
+        {
+            if (!ValidateRequiredLongArray(obj, name, maxCount, out error)) return false;
+            var array = obj.GetProperty(name);
+            if (array.GetArrayLength() == 0)
+            {
+                error = $"{name} must not be empty.";
+                return false;
+            }
+            foreach (var item in array.EnumerateArray())
+            {
+                if (item.GetInt64() <= 0)
+                {
+                    error = $"{name} must contain only positive integers.";
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool ValidateOptionalEnum(JsonElement obj, string name, string[] allowed, out string? error)
+        {
+            error = null;
+            if (!obj.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null) return true;
+            if (value.ValueKind != JsonValueKind.String)
+            {
+                error = $"{name} must be a string.";
+                return false;
+            }
+            var actual = (value.GetString() ?? "").Trim();
+            foreach (var candidate in allowed)
+                if (string.Equals(actual, candidate, StringComparison.OrdinalIgnoreCase)) return true;
+            error = $"{name} must be one of: {string.Join(", ", allowed)}.";
+            return false;
+        }
+
+        private static bool ValidateCanonicalApplyPair(JsonElement obj, out string? error)
+        {
+            error = null;
+            if (!obj.TryGetProperty("apply", out var applyValue) || !obj.TryGetProperty("dryRun", out var dryRunValue))
+            {
+                error = "apply and dryRun are both required. Use apply:true with dryRun:false to mutate, or apply:false with dryRun:true to preflight.";
+                return false;
+            }
+            var apply = applyValue.ValueKind == JsonValueKind.True;
+            var dryRun = dryRunValue.ValueKind == JsonValueKind.True;
+            if (apply == dryRun)
+            {
+                error = "apply and dryRun are contradictory. Use apply:true with dryRun:false to mutate, or apply:false with dryRun:true to preflight.";
+                return false;
+            }
+            return true;
+        }
+
+        private static bool ValidateOptionalRoutePointObject(JsonElement obj, string name, out string? error)
+        {
+            error = null;
+            if (!obj.TryGetProperty(name, out var point) || point.ValueKind == JsonValueKind.Null) return true;
+            return ValidateRoutePoint(point, name, out error);
+        }
+
+        private static bool ValidateRoutePointArray(JsonElement obj, string name, int minCount, int maxCount, bool required, out string? error)
+        {
+            error = null;
+            if (!obj.TryGetProperty(name, out var array) || array.ValueKind == JsonValueKind.Null)
+            {
+                if (!required) return true;
+                error = $"{name} is required.";
+                return false;
+            }
+            if (array.ValueKind != JsonValueKind.Array)
+            {
+                error = $"{name} must be an array.";
+                return false;
+            }
+            var count = array.GetArrayLength();
+            if (count < minCount || count > maxCount)
+            {
+                error = $"{name} must contain between {minCount} and {maxCount} points.";
+                return false;
+            }
+            var index = 0;
+            foreach (var point in array.EnumerateArray())
+            {
+                if (!ValidateRoutePoint(point, $"{name}[{index}]", out error)) return false;
+                index++;
+            }
+            return true;
+        }
+
+        private static bool ValidateRoutePoint(JsonElement point, string name, out string? error)
+        {
+            error = null;
+            if (point.ValueKind != JsonValueKind.Object)
+            {
+                error = $"{name} must be an object.";
+                return false;
+            }
+            foreach (var coordinate in new[] { "x", "y", "z" })
+                if (!ValidateOptionalNumber(point, coordinate, out error)) return false;
+            foreach (var pixel in new[] { "xPx", "yPx" })
+                if (!ValidateOptionalInt(point, pixel, out error)) return false;
+            if (!ValidateOptionalNumberArray(point, "xyz", maxCount: 3, out error)) return false;
+            if (point.TryGetProperty("xyz", out var xyz) && xyz.ValueKind == JsonValueKind.Array && xyz.GetArrayLength() != 3)
+            {
+                error = $"{name}.xyz must contain exactly three numbers.";
+                return false;
+            }
+            return true;
+        }
+
+        private static bool ValidateOptionalObjectArray(JsonElement obj, string name, int maxCount, out string? error)
+        {
+            error = null;
+            if (!obj.TryGetProperty(name, out var array) || array.ValueKind == JsonValueKind.Null) return true;
+            if (array.ValueKind != JsonValueKind.Array)
+            {
+                error = $"{name} must be an array.";
+                return false;
+            }
+            var count = 0;
+            foreach (var item in array.EnumerateArray())
+            {
+                count++;
+                if (count > maxCount)
+                {
+                    error = $"{name} too large.";
+                    return false;
+                }
+                if (item.ValueKind != JsonValueKind.Object)
+                {
+                    error = $"{name} must contain only objects.";
+                    return false;
+                }
+            }
             return true;
         }
 

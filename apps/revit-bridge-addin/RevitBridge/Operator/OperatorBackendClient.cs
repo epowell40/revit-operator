@@ -235,6 +235,7 @@ namespace RevitBridge.Operator
 
         public async Task<List<OperatorUserAttachment>> UploadUserAttachmentsAsync(
             List<OperatorUserAttachment>? attachments,
+            string sessionId,
             CancellationToken cancellationToken)
         {
             var output = new List<OperatorUserAttachment>();
@@ -285,6 +286,7 @@ namespace RevitBridge.Operator
                 var fileBytes = File.ReadAllBytes(fullPath);
                 var payload = new OperatorAttachmentUploadRequest
                 {
+                    SessionId = string.IsNullOrWhiteSpace(sessionId) ? null : sessionId.Trim(),
                     Id = string.IsNullOrWhiteSpace(a.Id) ? Guid.NewGuid().ToString("N") : a.Id,
                     RelativePath = rel,
                     Filename = string.IsNullOrWhiteSpace(a.Filename) ? Path.GetFileName(fullPath) : a.Filename,

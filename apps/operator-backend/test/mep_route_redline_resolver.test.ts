@@ -1006,6 +1006,7 @@ test("MEP route redline resolver dry-runs verified size transition evidence inst
   assert.equal(body.downstreamDuctSize, "16x14");
   assert.equal(body.expectedFitting, "transition");
   assert.equal(body.apply, false);
+  assert.equal(body.dryRun, true);
   assert.equal(body.verifyConnectorNetwork, true);
   assert.equal(body.visualVerify, false);
   assert.equal(body.cleanupCreatedElements, false);
@@ -1022,7 +1023,7 @@ test("MEP route redline resolver accepts verified size transition evidence from 
         viewId: 1363433,
         visualViewId: 1363433,
         hostElementId: 1642001,
-        transitionPoint: { x: 82, y: -55, z: 43 },
+        transitionChainageFt: 12,
         upstreamPipeSize: "2 inch",
         downstreamPipeSize: "1 inch",
         expectedFitting: "reducer"
@@ -1035,7 +1036,7 @@ test("MEP route redline resolver accepts verified size transition evidence from 
   const body = response.next_action?.body as any;
   assert.equal(body.kind, "pipe");
   assert.equal(body.hostElementId, 1642001);
-  assert.deepEqual(body.transitionPoint, { x: 82, y: -55, z: 43 });
+  assert.equal(body.transitionChainageFt, 12);
   assert.equal(body.upstreamPipeSize, "2 inch");
   assert.equal(body.downstreamPipeSize, "1 inch");
   assert.equal(body.apply, false);
@@ -1118,7 +1119,8 @@ test("MEP route redline resolver dry-runs verified duct reroute evidence instead
       viewId: 1363433,
       visualViewId: 1363433,
       hostElementId: 1542919,
-      splitPoints: [{ x: 76, y: -35, z: 43 }, { x: 88, y: -35, z: 43 }],
+      split1Normalized: 0.3,
+      split2Normalized: 0.7,
       offsetVector: { x: 0, y: 0, z: -1 },
       offsetMode: "dogleg45",
       expectedFittings: "four connected elbows",
@@ -1133,12 +1135,15 @@ test("MEP route redline resolver dry-runs verified duct reroute evidence instead
   assert.equal(body.operation, "reroute_offset");
   assert.equal(body.kind, "duct");
   assert.equal(body.hostElementId, 1542919);
-  assert.deepEqual(body.splitPoints, [{ x: 76, y: -35, z: 43 }, { x: 88, y: -35, z: 43 }]);
+  assert.equal(body.split1Normalized, 0.3);
+  assert.equal(body.split2Normalized, 0.7);
   assert.deepEqual(body.offsetVector, { x: 0, y: 0, z: -1 });
   assert.equal(body.offsetMode, "dogleg45");
   assert.equal(body.expectedFittings, "four connected elbows");
   assert.equal(body.preserveConnectedEndpoints, false);
   assert.equal(body.apply, false);
+  assert.equal(body.dryRun, true);
+  assert.equal(body.dryRun, true);
   assert.equal(body.verifyConnectorNetwork, true);
   assert.equal(body.visualVerify, false);
   assert.equal(body.cleanupCreatedElements, false);
@@ -1157,8 +1162,8 @@ test("MEP route redline resolver accepts verified pipe reroute evidence from con
         hostElementId: 1642919,
         split1ChainageFt: 4,
         split2ChainageFt: 12,
-        dropFt: 1,
-        offsetMode: "vertical_drop",
+        offsetVector: { x: 0, y: 0, z: -1 },
+        offsetMode: "dogleg45",
         expectedFitting: "four elbows",
         preserveConnectedEndpoints: true,
         endpointReconnectionPlanReviewed: true
@@ -1173,11 +1178,12 @@ test("MEP route redline resolver accepts verified pipe reroute evidence from con
   assert.equal(body.hostElementId, 1642919);
   assert.equal(body.split1ChainageFt, 4);
   assert.equal(body.split2ChainageFt, 12);
-  assert.equal(body.dropFt, 1);
-  assert.equal(body.offsetMode, "vertical_drop");
+  assert.deepEqual(body.offsetVector, { x: 0, y: 0, z: -1 });
+  assert.equal(body.offsetMode, "dogleg45");
   assert.equal(body.expectedFittings, "four elbows");
   assert.equal(body.preserveConnectedEndpoints, true);
   assert.equal(body.apply, false);
+  assert.equal(body.dryRun, true);
 });
 
 test("MEP route redline resolver blocks connected reroute evidence until endpoint plan is reviewed", async () => {
@@ -1189,7 +1195,8 @@ test("MEP route redline resolver blocks connected reroute evidence until endpoin
       viewId: 1363433,
       visualViewId: 1363433,
       hostElementId: 1542919,
-      splitPoints: [{ x: 76, y: -35, z: 43 }, { x: 88, y: -35, z: 43 }],
+      split1Normalized: 0.3,
+      split2Normalized: 0.7,
       offsetVector: { x: 0, y: 0, z: -1 },
       offsetMode: "dogleg45",
       expectedFittings: "four connected elbows",
@@ -1202,6 +1209,29 @@ test("MEP route redline resolver blocks connected reroute evidence until endpoin
   assert.equal(response.next_action, undefined);
   assert.match(response.assistant_message, /Missing verified evidence/i);
   assert.equal(response.task?.warnings.some(w => /endpoint reconnection plan/i.test(w)), true);
+});
+
+test("MEP route redline resolver rejects point-only reroute geometry the native handler cannot consume", async () => {
+  const response = await resolveMepRouteRedline(request({
+    analysis: targetPathAnalysisWithLabel("Reroute existing 12x10 supply duct with a one foot drop"),
+    user_text: "Pick up the attached MEP redline from marked.pdf.",
+    verified_mep_reroute_offset: {
+      kind: "duct",
+      viewId: 1363433,
+      visualViewId: 1363433,
+      hostElementId: 1542919,
+      splitPoints: [{ x: 76, y: -35, z: 43 }, { x: 88, y: -35, z: 43 }],
+      dropFt: 1,
+      offsetMode: "dogleg45",
+      expectedFittings: "four connected elbows"
+    }
+  }));
+
+  assert.equal(response.handled, true);
+  assert.equal(response.ok, false);
+  assert.equal(response.next_action, undefined);
+  assert.match(response.assistant_message, /handler-supported split1\/split2 chainages or normalized chainages/i);
+  assert.match(response.assistant_message, /handler-supported nonzero offsetVector/i);
 });
 
 test("MEP route redline resolver reports verified reroute dry-run results", async () => {

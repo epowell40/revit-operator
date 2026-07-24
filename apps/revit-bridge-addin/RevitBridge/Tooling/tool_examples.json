@@ -7506,10 +7506,18 @@
           "name": "Change element type",
           "request": {
             "elementId": 111,
-            "newTypeId": 222
+            "newTypeId": 222,
+            "expectedOldTypes": [
+              {
+                "elementId": 111,
+                "typeId": 110
+              }
+            ]
           },
           "expected_response_shape": {
-            "status": "Success"
+            "ok": true,
+            "rolledBack": false,
+            "changedElementIds": [111]
           }
         }
       ]
@@ -8654,6 +8662,7 @@
             ],
             "ductSize": "10x8",
             "deltaZFt": -1.0,
+            "apply": false,
             "dryRun": true,
             "verify": true
           },
@@ -8725,6 +8734,7 @@
               "y": 0,
               "z": -1
             },
+            "apply": false,
             "dryRun": true,
             "verify": true
           },
@@ -8783,6 +8793,7 @@
               "z": -2
             },
             "offsetMode": "dogleg45",
+            "apply": false,
             "dryRun": true,
             "verify": true
           },
@@ -8812,6 +8823,7 @@
             },
             "offsetMode": "dogleg45",
             "preserveConnectedEndpoints": true,
+            "apply": false,
             "dryRun": true,
             "verify": true
           },
@@ -8844,6 +8856,7 @@
             "upstreamDuctSize": "12x8",
             "downstreamDuctSize": "8x8",
             "sizePolicy": "explicit_required",
+            "apply": false,
             "dryRun": true,
             "verify": true
           },

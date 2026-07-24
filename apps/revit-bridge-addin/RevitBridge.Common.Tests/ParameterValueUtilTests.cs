@@ -32,5 +32,20 @@ namespace RevitBridge.Common.Tests
             Assert.True(ParameterValueUtil.SnapshotMatchesRequestedValue(snapshot, "P102"));
             Assert.False(ParameterValueUtil.SnapshotMatchesRequestedValue(snapshot, "P105"));
         }
+
+        [Fact]
+        public void SnapshotMatchesExpectedCurrentValue_MatchesRevitFormattedDouble()
+        {
+            var snapshot = new
+            {
+                storageType = "Double",
+                value = 166.6666666667,
+                valueString = "10,000 CFM"
+            };
+
+            Assert.True(ParameterValueUtil.SnapshotMatchesExpectedCurrentValue(snapshot, "10000 cfm"));
+            Assert.True(ParameterValueUtil.SnapshotMatchesExpectedCurrentValue(snapshot, "10,000 CFM"));
+            Assert.False(ParameterValueUtil.SnapshotMatchesExpectedCurrentValue(snapshot, "20,000 CFM"));
+        }
     }
 }

@@ -135,6 +135,9 @@ namespace RevitBridge.Operator
 
     public sealed class OperatorAttachmentUploadRequest
     {
+        [JsonPropertyName("session_id")]
+        public string? SessionId { get; set; }
+
         [JsonPropertyName("id")]
         public string Id { get; set; } = "";
 

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { ensureWorkspaceLayout } from "../workspace.js";
 
 export type UploadIndexRecord = {
@@ -13,11 +14,18 @@ export type UploadIndexRecord = {
   kind?: string;
   context_relative_path?: string;
   related_image_relative_path?: string;
+  session_id?: string;
 };
 
 function uploadsIndexPath(): string {
   const root = ensureWorkspaceLayout().root;
   return path.join(root, "artifacts", "uploads", "_uploads.jsonl");
+}
+
+function uploadsSessionIndexPath(sessionId: string): string {
+  const root = ensureWorkspaceLayout().root;
+  const key = createHash("sha256").update(sessionId, "utf8").digest("hex");
+  return path.join(root, "artifacts", "uploads", "_sessions", `${key}.jsonl`);
 }
 
 export function appendUploadIndexRecord(record: Record<string, unknown>): void {
@@ -26,6 +34,12 @@ export function appendUploadIndexRecord(record: Record<string, unknown>): void {
   fs.mkdirSync(dir, { recursive: true });
   const line = JSON.stringify(record) + "\n";
   fs.appendFileSync(full, line, "utf8");
+  const sessionId = typeof record.session_id === "string" ? record.session_id.trim() : "";
+  if (sessionId) {
+    const sessionFull = uploadsSessionIndexPath(sessionId);
+    fs.mkdirSync(path.dirname(sessionFull), { recursive: true });
+    fs.appendFileSync(sessionFull, line, "utf8");
+  }
 }
 
 function readTailBytes(filePath: string, maxBytes: number): Buffer {
@@ -47,9 +61,8 @@ function readTailBytes(filePath: string, maxBytes: number): Buffer {
   }
 }
 
-export function readLatestUploadIndexRecords(limit: number): UploadIndexRecord[] {
+function readLatestUploadIndexRecordsFromFile(full: string, limit: number): UploadIndexRecord[] {
   const out: UploadIndexRecord[] = [];
-  const full = uploadsIndexPath();
   try {
     if (!fs.existsSync(full)) return [];
     const st = fs.statSync(full);
@@ -81,6 +94,14 @@ export function readLatestUploadIndexRecords(limit: number): UploadIndexRecord[]
   }
 }
 
+export function readLatestUploadIndexRecords(limit: number): UploadIndexRecord[] {
+  return readLatestUploadIndexRecordsFromFile(uploadsIndexPath(), limit);
+}
+
+function readLatestSessionUploadIndexRecords(sessionId: string, limit: number): UploadIndexRecord[] {
+  return readLatestUploadIndexRecordsFromFile(uploadsSessionIndexPath(sessionId), limit);
+}
+
 function looksLikeImagePath(relPath: string): boolean {
   const ext = path.extname(relPath).toLowerCase();
   return ext === ".png" || ext === ".jpg" || ext === ".jpeg";
@@ -103,8 +124,11 @@ function uploadRelativePathExists(relPath: string): boolean {
   }
 }
 
-export function getLatestImageUploadWithContext(): { image?: UploadIndexRecord; context?: UploadIndexRecord } {
-  const latest = readLatestUploadIndexRecords(40);
+export function getLatestImageUploadWithContext(sessionId?: string): { image?: UploadIndexRecord; context?: UploadIndexRecord } {
+  const requestedSessionId = (sessionId ?? "").toString().trim();
+  const latest = requestedSessionId
+    ? readLatestSessionUploadIndexRecords(requestedSessionId, 40)
+    : readLatestUploadIndexRecords(40);
   const image = latest.find(r => {
     const rp = (r.relative_path ?? "").toString().trim();
     if (!rp || !uploadRelativePathExists(rp)) return false;

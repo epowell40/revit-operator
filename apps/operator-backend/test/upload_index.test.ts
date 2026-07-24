@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { findLatestUploadIndexRecord, getLatestImageUploadWithContext, readLatestUploadIndexRecords, uploadIndexRelativePathExists } from "../src/attachments/upload_index.js";
+import { appendUploadIndexRecord, findLatestUploadIndexRecord, getLatestImageUploadWithContext, readLatestUploadIndexRecords, uploadIndexRelativePathExists } from "../src/attachments/upload_index.js";
 
 test("upload index: reads latest records from tail", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator_ws_"));
@@ -62,6 +62,24 @@ test("upload index: finds latest image + context pair", () => {
   assert.equal(r.image?.id, "img_new");
   assert.equal(r.image?.context_relative_path, "artifacts/uploads/new_ctx.json");
   assert.equal(r.context?.id, "ctx_new");
+});
+
+test("upload index: session-scoped latest image survives global displacement without crossing sessions", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator_ws_"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const uploadsDir = path.join(root, "artifacts", "uploads");
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  fs.writeFileSync(path.join(uploadsDir, "a.png"), "img", "utf8");
+  appendUploadIndexRecord({ id: "session_a_image", session_id: "session-a", relative_path: "artifacts/uploads/a.png", mime: "image/png" });
+  for (let index = 0; index < 250; index += 1) {
+    const file = `b-${index}.png`;
+    fs.writeFileSync(path.join(uploadsDir, file), "img", "utf8");
+    appendUploadIndexRecord({ id: `session_b_${index}`, session_id: "session-b", relative_path: `artifacts/uploads/${file}`, mime: "image/png" });
+  }
+
+  assert.equal(getLatestImageUploadWithContext("session-a").image?.id, "session_a_image");
+  assert.equal(getLatestImageUploadWithContext("session-b").image?.id, "session_b_249");
+  assert.equal(getLatestImageUploadWithContext("session-c").image, undefined);
 });
 
 test("upload index: resolves stale attachment path by id or sha", () => {

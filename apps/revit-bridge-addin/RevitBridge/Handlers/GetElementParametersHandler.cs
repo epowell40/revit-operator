@@ -267,6 +267,7 @@ namespace RevitBridge.Handlers
                 {
                     name,
                     value,
+                    valueString = ReadParameterDisplayValue(parameter),
                     storageType = parameter.StorageType.ToString(),
                     isReadOnly = parameter.IsReadOnly,
                     parameterId = ElementIdCompat.GetValue(parameter.Id)
@@ -335,6 +336,12 @@ namespace RevitBridge.Handlers
                 default:
                     return "";
             }
+        }
+
+        private static string ReadParameterDisplayValue(Parameter parameter)
+        {
+            try { return parameter.AsValueString() ?? ReadParameterValue(parameter); }
+            catch { return ReadParameterValue(parameter); }
         }
 
         private static HashSet<string> NormalizeNames(IEnumerable<string>? names)

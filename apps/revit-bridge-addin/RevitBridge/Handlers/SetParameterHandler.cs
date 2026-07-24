@@ -23,6 +23,7 @@ namespace RevitBridge.Handlers
             public long elementId { get; set; }
             public string parameterName { get; set; }
             public string value { get; set; }
+            public string? expectedOldValue { get; set; }
             public bool? preserveTextCase { get; set; }
         }
 
@@ -94,6 +95,52 @@ namespace RevitBridge.Handlers
             using (Transaction trans = new Transaction(doc, "Set Parameters"))
             {
                 trans.Start();
+                var preconditionFailures = new List<object>();
+                foreach (var entry in effectiveChanges.Where(x => x.expectedOldValue != null))
+                {
+                    var elem = doc.GetElement(ElementIdCompat.Create(entry.elementId));
+                    var param = elem?.LookupParameter(entry.parameterName);
+                    var actual = param == null ? null : ParameterValueUtil.SnapshotForWire(param);
+                    if (param != null && ParameterValueUtil.SnapshotMatchesExpectedCurrentValue(actual, entry.expectedOldValue)) continue;
+                    preconditionFailures.Add(new
+                    {
+                        elementId = entry.elementId,
+                        parameterName = entry.parameterName,
+                        ok = false,
+                        changed = false,
+                        errorCode = "expected_old_value_mismatch",
+                        error = elem == null ? "Element not found while checking expectedOldValue."
+                            : param == null ? $"Parameter '{entry.parameterName}' not found while checking expectedOldValue."
+                            : "Parameter changed after it was read; no requested changes were applied.",
+                        expectedOldValue = entry.expectedOldValue,
+                        actual
+                    });
+                }
+                if (preconditionFailures.Count > 0)
+                {
+                    trans.RollBack();
+                    return Task.FromResult<object>(new
+                    {
+                        status = "Precondition Failed",
+                        dryRun = !apply,
+                        requestedCount,
+                        effectiveCount,
+                        excludedCount,
+                        changedCount = 0,
+                        writeFailedCount = 0,
+                        preconditionFailedCount = preconditionFailures.Count,
+                        preconditionFailures,
+                        changedElementIds = Array.Empty<long>(),
+                        verificationPerformed = false,
+                        verifiedCount = 0,
+                        verificationFailedCount = 0,
+                        unresolvedElementIds = Array.Empty<long>(),
+                        verification = Array.Empty<object>(),
+                        diffs = preconditionFailures,
+                        requiredConfirm,
+                        confirmReceived
+                    });
+                }
                 foreach (var entry in effectiveChanges)
                 {
                     var elem = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(entry.elementId));

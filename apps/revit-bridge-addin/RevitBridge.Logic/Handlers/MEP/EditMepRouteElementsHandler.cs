@@ -42,7 +42,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             var p = string.IsNullOrWhiteSpace(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
             if (p.elementIds == null || p.elementIds.Count == 0) throw new ArgumentException("elementIds must be a non-empty array.");
             var normalizedKind = MepRoutingUtil.NormalizeKind(p.kind);
-            var shouldApply = p.apply || !p.dryRun;
+            var shouldApply = MepMutationApplyPolicy.ResolveShouldApply(p.apply, p.dryRun);
             var changesSize = HasSizeRequest(p);
             var changesElevation = p.deltaZFt.HasValue || p.targetCenterlineZFt.HasValue;
             if (!changesSize && !changesElevation) throw new ArgumentException("Request must include a size change or elevation change.");
