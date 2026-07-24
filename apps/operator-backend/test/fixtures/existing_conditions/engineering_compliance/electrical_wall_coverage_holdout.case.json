@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "case_id": "holdout-electrical-dwelling-wall-coverage-v1",
+  "task_class": "generative_layout",
+  "discipline": "electrical",
+  "standards_profile_sha256": "e28ae52a495eaeec357987854c75d5f1cfec1b455a71c6612f74b5a235ef373e",
+  "checks": [
+    {
+      "check_id": "wall-space-coverage",
+      "type": "dwelling_wall_coverage",
+      "rule": {
+        "rule_id": "nec-210.52-a-holdout",
+        "source": {
+          "authority": "NFPA",
+          "title": "NFPA 70 code-development record",
+          "edition": "2026 development cycle",
+          "section": "210.52(A)",
+          "url": "https://docinfofiles.nfpa.org/files/AboutTheCodes/70/70_A2025_NEC_P02_SD_PrelimSR.pdf",
+          "sha256": "fb437581c8f44b21c84952ca725eda35bbdb36bf00b8da4444cb93d20bd66c42"
+        },
+        "minimum_qualifying_wall_width_ft": 2,
+        "maximum_point_distance_to_receptacle_ft": 6,
+        "maximum_floor_receptacle_distance_from_wall_ft": 1.5,
+        "no_qualifying_segments": "fail_invalid_fixture"
+      },
+      "segments": [
+        {"segment_id": "living-west-of-door", "length_ft": 14, "interrupted": false},
+        {"segment_id": "living-east-of-door", "length_ft": 9, "interrupted": false},
+        {"segment_id": "door-opening", "length_ft": 3, "interrupted": true}
+      ]
+    }
+  ]
+}

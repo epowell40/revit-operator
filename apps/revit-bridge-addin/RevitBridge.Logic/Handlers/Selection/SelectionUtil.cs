@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
+using System.Linq;
 using Autodesk.Revit.DB;
 using RevitBridge.Common;
 
@@ -23,6 +25,7 @@ namespace RevitBridge.Logic.Handlers
         public double AspectMismatch { get; set; }
         public bool AspectCorrectionApplied { get; set; }
         public string AspectCorrectionAxis { get; set; } = "";
+        public string SourceFrameKind { get; set; } = "crop_box";
     }
 
     internal static class SelectionUtil
@@ -83,6 +86,97 @@ namespace RevitBridge.Logic.Handlers
         {
             var (cropTopLeft, cropTopRight, cropBottomLeft) = GetCropCorners(view);
             return BuildRasterAffineFrame(cropTopLeft, cropTopRight, cropBottomLeft, widthPx, heightPx);
+        }
+
+        public static RasterAffineFrame BuildRasterAffineFrameFromViewOutline(View view, int widthPx, int heightPx)
+        {
+            var outline = view.Outline;
+            var origin = view.Origin;
+            var right = view.RightDirection;
+            var up = view.UpDirection;
+            var scale = Math.Max(1, view.Scale);
+
+            var topLeft = origin
+                + right.Multiply(outline.Min.U * scale)
+                + up.Multiply(outline.Max.V * scale);
+            var topRight = origin
+                + right.Multiply(outline.Max.U * scale)
+                + up.Multiply(outline.Max.V * scale);
+            var bottomLeft = origin
+                + right.Multiply(outline.Min.U * scale)
+                + up.Multiply(outline.Min.V * scale);
+
+            var frame = BuildRasterAffineFrame(topLeft, topRight, bottomLeft, widthPx, heightPx);
+            frame.SourceFrameKind = "view_outline";
+            return frame;
+        }
+
+        public static (string path, int widthPx, int heightPx, string diagnostic) CropRasterToModelFrame(
+            string sourcePath,
+            RasterAffineFrame sourceFrame,
+            XYZ requestedTopLeft,
+            XYZ requestedTopRight,
+            XYZ requestedBottomLeft)
+        {
+            var xAxis = sourceFrame.TopRight - sourceFrame.TopLeft;
+            var yAxis = sourceFrame.BottomLeft - sourceFrame.TopLeft;
+            var xLengthSquared = xAxis.DotProduct(xAxis);
+            var yLengthSquared = yAxis.DotProduct(yAxis);
+            if (xLengthSquared < 1e-12 || yLengthSquared < 1e-12)
+                throw new InvalidOperationException("Exported view outline is degenerate; cannot crop the raster to the requested model frame.");
+
+            (double x, double y) ToPixel(XYZ point)
+            {
+                var delta = point - sourceFrame.TopLeft;
+                var x = delta.DotProduct(xAxis) / xLengthSquared * Math.Max(1, sourceFrame.WidthPx - 1);
+                var y = delta.DotProduct(yAxis) / yLengthSquared * Math.Max(1, sourceFrame.HeightPx - 1);
+                return (x, y);
+            }
+
+            var requestedBottomRight = requestedTopRight + (requestedBottomLeft - requestedTopLeft);
+            var pixels = new[]
+            {
+                ToPixel(requestedTopLeft),
+                ToPixel(requestedTopRight),
+                ToPixel(requestedBottomLeft),
+                ToPixel(requestedBottomRight)
+            };
+
+            var rawLeft = pixels.Min(point => point.x);
+            var rawRight = pixels.Max(point => point.x);
+            var rawTop = pixels.Min(point => point.y);
+            var rawBottom = pixels.Max(point => point.y);
+            const double containmentTolerancePx = 2.0;
+            if (rawLeft < -containmentTolerancePx || rawTop < -containmentTolerancePx ||
+                rawRight > sourceFrame.WidthPx - 1 + containmentTolerancePx ||
+                rawBottom > sourceFrame.HeightPx - 1 + containmentTolerancePx)
+            {
+                throw new InvalidOperationException(
+                    $"Requested model crop is not contained by the exported view outline " +
+                    $"(pixelBounds={rawLeft:0.###},{rawTop:0.###}..{rawRight:0.###},{rawBottom:0.###}; " +
+                    $"raster={sourceFrame.WidthPx}x{sourceFrame.HeightPx}).");
+            }
+
+            var left = Math.Max(0, Math.Min(sourceFrame.WidthPx - 2, (int)Math.Floor(rawLeft)));
+            var top = Math.Max(0, Math.Min(sourceFrame.HeightPx - 2, (int)Math.Floor(rawTop)));
+            var right = Math.Max(left + 1, Math.Min(sourceFrame.WidthPx - 1, (int)Math.Ceiling(rawRight)));
+            var bottom = Math.Max(top + 1, Math.Min(sourceFrame.HeightPx - 1, (int)Math.Ceiling(rawBottom)));
+            var cropWidth = right - left + 1;
+            var cropHeight = bottom - top + 1;
+
+            var outputPath = Path.Combine(
+                Path.GetDirectoryName(sourcePath) ?? "",
+                Path.GetFileNameWithoutExtension(sourcePath) + "-mapped.png");
+            using (var source = new Bitmap(sourcePath))
+            using (var cropped = source.Clone(new System.Drawing.Rectangle(left, top, cropWidth, cropHeight), PixelFormat.Format32bppArgb))
+            {
+                cropped.Save(outputPath, ImageFormat.Png);
+            }
+
+            var diagnostic =
+                $"sourceRaster={sourceFrame.WidthPx}x{sourceFrame.HeightPx}; " +
+                $"pixelBounds={left},{top}..{right},{bottom}; croppedRaster={cropWidth}x{cropHeight}";
+            return (outputPath, cropWidth, cropHeight, diagnostic);
         }
 
         public static RasterAffineFrame BuildRasterAffineFrame(
@@ -153,6 +247,7 @@ namespace RevitBridge.Logic.Handlers
                 pixelAxes = new { x = "right", y = "down" },
                 modelUnits = "feet",
                 frameBasis = "exported_raster",
+                modelFrameSource = frame.SourceFrameKind,
                 rasterWidthPx = frame.WidthPx,
                 rasterHeightPx = frame.HeightPx,
                 rasterAspect = frame.RasterAspect,
@@ -161,13 +256,34 @@ namespace RevitBridge.Logic.Handlers
                 aspectMismatch = frame.AspectMismatch,
                 aspectCorrectionApplied = frame.AspectCorrectionApplied,
                 aspectCorrectionAxis = string.IsNullOrWhiteSpace(frame.AspectCorrectionAxis) ? null : frame.AspectCorrectionAxis,
-                cropBoxReference = new
+                sourceFrameReference = new
                 {
+                    kind = frame.SourceFrameKind,
                     topLeftXyz = new[] { frame.CropTopLeft.X, frame.CropTopLeft.Y, frame.CropTopLeft.Z },
                     topRightXyz = new[] { frame.CropTopRight.X, frame.CropTopRight.Y, frame.CropTopRight.Z },
                     bottomLeftXyz = new[] { frame.CropBottomLeft.X, frame.CropBottomLeft.Y, frame.CropBottomLeft.Z }
                 },
+                cropBoxReference = frame.SourceFrameKind == "crop_box" ? new
+                {
+                    topLeftXyz = new[] { frame.CropTopLeft.X, frame.CropTopLeft.Y, frame.CropTopLeft.Z },
+                    topRightXyz = new[] { frame.CropTopRight.X, frame.CropTopRight.Y, frame.CropTopRight.Z },
+                    bottomLeftXyz = new[] { frame.CropBottomLeft.X, frame.CropBottomLeft.Y, frame.CropBottomLeft.Z }
+                } : null,
                 notes
+            };
+        }
+
+        public static object? BuildTargetLevelPayload(View view)
+        {
+            if (!(view is ViewPlan viewPlan)) return null;
+            Level? level = null;
+            try { level = viewPlan.GenLevel; } catch { }
+            if (level == null) return null;
+            return new
+            {
+                id = ElementIdCompat.GetValue(level.Id),
+                name = level.Name,
+                elevationFt = level.Elevation
             };
         }
 

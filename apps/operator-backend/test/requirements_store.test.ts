@@ -376,6 +376,35 @@ test("filesystem planning lease blocks a second backend process sharing the ledg
   assert.equal(createRequirement({ scope: ref, key: "tags.leaders", text: "Write after release." }).requirement.revision, 1);
 });
 
+test("dead-process planning lease remains auditable but does not block a restarted backend", () => {
+  const root = mkWorkspace();
+  const ref = scope("engineer", "local");
+  const receipt = resolveRequirements({ scope_refs: [ref] });
+  const leaseDir = `${path.join(root, "memory", "requirements.v1.jsonl")}.planning-leases`;
+  const leasePath = path.join(leaseDir, "reqlease_stale.json");
+  fs.mkdirSync(leaseDir, { recursive: true });
+  fs.writeFileSync(
+    leasePath,
+    JSON.stringify({
+      token: "reqlease_stale",
+      receipt_sha256: receipt.receipt_sha256,
+      pid: 2147483647,
+      created_at: "2026-01-01T00:00:00.000Z"
+    }) + "\n",
+    "utf8"
+  );
+
+  assert.equal(
+    createRequirement({
+      scope: ref,
+      key: "tags.leaders",
+      text: "Restarted backend may proceed."
+    }).requirement.revision,
+    1
+  );
+  assert.equal(fs.existsSync(leasePath), true);
+});
+
 test("OpenAI requirements policy formats prompts and blocks a stale action response", () => {
   mkWorkspace();
   const request: ChatRequest = {

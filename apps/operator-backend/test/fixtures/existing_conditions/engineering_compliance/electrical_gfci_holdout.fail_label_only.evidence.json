@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "case_id": "holdout-electrical-gfci-sink-breaker-v1",
+  "standards_profile_sha256": "e28ae52a495eaeec357987854c75d5f1cfec1b455a71c6612f74b5a235ef373e",
+  "native_evidence_owner": "evaluator",
+  "native_readback": true,
+  "checks": [
+    {
+      "check_id": "sink-protection",
+      "type": "gfci_protection",
+      "receptacles": [
+        {
+          "element_key": "host:gfci-holdout-r1",
+          "location_classes": ["dwelling_sink"],
+          "distance_to_sink_ft": 4.75,
+          "voltage_to_ground": 120,
+          "receptacle_amps": 20,
+          "protection": {
+            "method": "integral_device",
+            "protection_device_key": "host:gfci-holdout-r1",
+            "path_element_keys": ["host:gfci-holdout-r1"],
+            "native_path_verified": false
+          }
+        }
+      ]
+    }
+  ]
+}

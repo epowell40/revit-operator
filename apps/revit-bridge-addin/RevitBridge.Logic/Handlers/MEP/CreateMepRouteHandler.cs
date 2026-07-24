@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Electrical;
 using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Plumbing;
 using Autodesk.Revit.UI;
@@ -22,9 +23,16 @@ namespace RevitBridge.Logic.Handlers.MEP
             public string? roomNumber { get; set; }
             public string? levelName { get; set; }
             public long? levelId { get; set; }
+            public string? worksetName { get; set; }
+            public long? worksetId { get; set; }
             public string? systemType { get; set; }
             public string? ductType { get; set; }
+            public long? ductTypeId { get; set; }
+            public string? ductShape { get; set; }
             public string? pipeType { get; set; }
+            public long? pipeTypeId { get; set; }
+            public string? conduitType { get; set; }
+            public long? conduitTypeId { get; set; }
             public string? ductSize { get; set; }
             public string? diameter { get; set; }
             public string? pipeSize { get; set; }
@@ -33,6 +41,9 @@ namespace RevitBridge.Logic.Handlers.MEP
             public string? elevationPolicy { get; set; } = "resolve_context_default";
             public string? routingMode { get; set; } = "polyline";
             public bool connectSegments { get; set; } = true;
+            public bool connectToExisting { get; set; } = false;
+            public bool requireExistingEndpointConnections { get; set; } = false;
+            public double externalConnectionToleranceFt { get; set; } = 0.1;
             public bool verify { get; set; } = true;
             public bool dryRun { get; set; } = true;
             public double? defaultOffsetFt { get; set; }
@@ -51,8 +62,22 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 return Task.FromResult<object>(new { status = "Blocked", error = "At least two route points are required.", warnings });
             }
+            if (p.requireExistingEndpointConnections && !p.connectToExisting)
+            {
+                return Task.FromResult<object>(new
+                {
+                    status = "Blocked",
+                    error = "requireExistingEndpointConnections=true requires connectToExisting=true.",
+                    warnings
+                });
+            }
 
             var doc = app.ActiveUIDocument.Document;
+            var requestedWorkset = ResolveRequestedWorkset(doc, p.worksetId, p.worksetName, out var worksetError);
+            if (!string.IsNullOrWhiteSpace(worksetError))
+            {
+                return Task.FromResult<object>(new { status = "Blocked", error = worksetError, warnings });
+            }
             var ctxReq = new MepRoutingUtil.RoutingContextRequest
             {
                 viewId = p.viewId,
@@ -82,7 +107,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     status = "Blocked",
                     error = "Size is required by sizePolicy=explicit_required.",
                     plannedRoute = BuildPlanOnly(p.points, p.frameId, ctx.RecommendedZ, warnings),
-                    selected = BuildSelected(ctx, null, null, null),
+                    selected = BuildSelected(ctx, null, null, null, null),
                     warnings
                 });
             }
@@ -112,6 +137,10 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 warnings.Add($"One or more route points used resolved routing elevation Z={ctx.RecommendedZ:G6} ft ({ctx.Assumption}).");
             }
+            else
+            {
+                warnings.RemoveAll(IsUnusedElevationContextWarning);
+            }
 
             var totalLength = 0.0;
             for (var i = 0; i < resolvedPoints.Count - 1; i++)
@@ -124,16 +153,38 @@ namespace RevitBridge.Logic.Handlers.MEP
                 totalLength += len;
             }
 
-            MEPSystemType? sysType = MepRoutingUtil.FindSystemType(doc, p.systemType, kind);
-            DuctType? dType = kind == "duct" ? MepRoutingUtil.FindDuctType(doc, p.ductType) : null;
-            PipeType? pType = kind == "pipe" ? MepRoutingUtil.FindPipeType(doc, p.pipeType) : null;
-            if (sysType == null || (kind == "duct" && dType == null) || (kind == "pipe" && pType == null))
+            MEPSystemType? sysType = kind == "conduit" ? null : MepRoutingUtil.FindSystemType(doc, p.systemType, kind);
+            MepRoutingUtil.DuctTypeResolution? ductTypeResolution = kind == "duct"
+                ? MepRoutingUtil.ResolveDuctType(doc, p.ductTypeId, p.ductType)
+                : null;
+            DuctType? dType = ductTypeResolution?.Selected;
+            MepRoutingUtil.PipeTypeResolution? pipeTypeResolution = kind == "pipe"
+                ? MepRoutingUtil.ResolvePipeType(doc, p.pipeTypeId, p.pipeType)
+                : null;
+            PipeType? pType = pipeTypeResolution?.Selected;
+            MepRoutingUtil.ConduitTypeResolution? conduitTypeResolution = kind == "conduit"
+                ? MepRoutingUtil.ResolveConduitType(doc, p.conduitTypeId, p.conduitType)
+                : null;
+            ConduitType? conduitType = conduitTypeResolution?.Selected;
+            if ((kind != "conduit" && sysType == null) ||
+                (kind == "duct" && dType == null) ||
+                (kind == "pipe" && pType == null) ||
+                (kind == "conduit" && conduitType == null))
             {
                 return Task.FromResult<object>(new
                 {
                     status = "Blocked",
-                    error = "Could not find required Revit MEP definitions for level/system/type.",
-                    selected = BuildSelected(ctx, sysType, dType, pType),
+                    error = kind == "duct" && dType == null && !string.IsNullOrWhiteSpace(ductTypeResolution?.Receipt.Error)
+                        ? ductTypeResolution!.Receipt.Error
+                        : kind == "conduit" && conduitType == null && !string.IsNullOrWhiteSpace(conduitTypeResolution?.Error)
+                            ? conduitTypeResolution!.Error
+                            : kind == "pipe" && pType == null && !string.IsNullOrWhiteSpace(pipeTypeResolution?.Error)
+                                ? pipeTypeResolution!.Error
+                            : "Could not find required Revit MEP definitions for level/system/type.",
+                    selected = BuildSelected(ctx, sysType, dType, pType, conduitType),
+                    ductTypeCandidates = ductTypeResolution?.Receipt.Candidates,
+                    pipeTypeCandidates = pipeTypeResolution?.Candidates,
+                    conduitTypeCandidates = conduitTypeResolution?.Candidates,
                     warnings
                 });
             }
@@ -143,6 +194,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             var segmentResults = new List<object>();
             var connectionAttempts = new List<object>();
             var fittingIds = new List<long>();
+            var internalConnectionFailures = 0;
             var jointPlans = MepRouteJointPlanner.PlanJoints(segmentSizeTexts);
 
             using (var tx = new Transaction(doc, p.dryRun ? "Create MEP Route (Dry Run)" : "Create MEP Route"))
@@ -156,10 +208,13 @@ namespace RevitBridge.Logic.Handlers.MEP
                         var b = resolvedPoints[i + 1];
                         Element curve;
                         object sizeApplied;
+                        object? worksetApplied = null;
+                        object? nativeSizeReadback = null;
+                        object? nativeGeometryReadback = null;
                         var segmentSize = MepRoutingUtil.ChooseSize(
                             kind,
                             kind == "duct" ? segmentSizeTexts[i] : p.ductSize,
-                            kind == "pipe" ? segmentSizeTexts[i] : p.diameter,
+                            kind == "pipe" || kind == "conduit" ? segmentSizeTexts[i] : p.diameter,
                             kind == "pipe" ? segmentSizeTexts[i] : p.pipeSize,
                             p.sizePolicy,
                             warnings);
@@ -169,12 +224,46 @@ namespace RevitBridge.Logic.Handlers.MEP
                             MepRoutingUtil.TryApplyPipeSize(pipe, segmentSize, out sizeApplied);
                             curve = pipe;
                         }
+                        else if (kind == "conduit")
+                        {
+                            var conduit = Conduit.Create(doc, conduitType!.Id, a, b, ctx.Level.Id);
+                            MepRoutingUtil.TryApplyConduitSize(conduit, segmentSize, out sizeApplied);
+                            doc.Regenerate();
+                            var readbackValid = MepRoutingUtil.ValidateConduitSize(conduit, segmentSize, out var diameterFt, out var readbackError);
+                            if (p.verify && !readbackValid) throw new InvalidOperationException(readbackError);
+                            nativeSizeReadback = new { shape = "round", diameterFt };
+                            curve = conduit;
+                        }
                         else
                         {
                             var duct = Duct.Create(doc, sysType.Id, dType!.Id, ctx.Level.Id, a, b);
                             MepRoutingUtil.TryApplyDuctSize(duct, segmentSize, out sizeApplied);
+                            doc.Regenerate();
+                            var readbackValid = MepRoutingUtil.ValidateDuctSizeAndShape(duct, segmentSize, p.ductShape, out var readback, out var readbackError);
+                            if (p.verify && !readbackValid)
+                            {
+                                throw new InvalidOperationException(readbackError);
+                            }
+                            else
+                            {
+                                nativeSizeReadback = new
+                                {
+                                    shape = readback.Shape,
+                                    widthFt = readback.WidthFt,
+                                    heightFt = readback.HeightFt,
+                                    diameterFt = readback.DiameterFt
+                                };
+                            }
                             curve = duct;
                         }
+
+                        if (requestedWorkset != null)
+                        {
+                            worksetApplied = ApplyAndVerifyWorkset(curve, requestedWorkset, p.verify);
+                        }
+
+                        doc.Regenerate();
+                        nativeGeometryReadback = BuildNativeGeometryReadback(curve);
 
                         created.Add(curve);
                         createdIds.Add(ElementIdCompat.GetValue(curve.Id));
@@ -195,7 +284,10 @@ namespace RevitBridge.Logic.Handlers.MEP
                                 heightFt = segmentSize.HeightFt,
                                 diameterFt = segmentSize.DiameterFt
                             },
-                            sizeApplied
+                            sizeApplied,
+                            worksetApplied,
+                            nativeSizeReadback,
+                            nativeGeometryReadback
                         });
                     }
 
@@ -211,6 +303,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                             var jointPlan = jointPlans.FirstOrDefault(j => j.JointIndex == i);
                             var expectTransition = string.Equals(jointPlan?.ExpectedFitting, "transition", StringComparison.OrdinalIgnoreCase);
                             var ok = MepRoutingUtil.TryCreateTransitionElbowOrConnect(doc, a, b, expectTransition, out var fittingId, out var method, out var err);
+                            if (!ok) internalConnectionFailures++;
                             if (fittingId.HasValue) fittingIds.Add(fittingId.Value);
                             connectionAttempts.Add(new
                             {
@@ -225,9 +318,65 @@ namespace RevitBridge.Logic.Handlers.MEP
                             });
                         }
                         doc.Regenerate();
+
+                        if (kind == "conduit" && p.verify && internalConnectionFailures > 0)
+                        {
+                            throw new InvalidOperationException($"Conduit route verification failed because {internalConnectionFailures} internal segment connection(s) could not be created.");
+                        }
+                    }
+
+                    if (p.connectToExisting)
+                    {
+                        var excludedOwnerIds = new HashSet<long>(createdIds);
+                        var toleranceFt = Math.Max(1e-4, Math.Min(1.0, p.externalConnectionToleranceFt));
+                        var externalEndpointFailures = 0;
+                        TryConnectExternalEndpoint(
+                            doc,
+                            created[0],
+                            resolvedPoints[0],
+                            "start",
+                            excludedOwnerIds,
+                            toleranceFt,
+                            connectionAttempts,
+                            ref externalEndpointFailures);
+                        TryConnectExternalEndpoint(
+                            doc,
+                            created[created.Count - 1],
+                            resolvedPoints[resolvedPoints.Count - 1],
+                            "end",
+                            excludedOwnerIds,
+                            toleranceFt,
+                            connectionAttempts,
+                            ref externalEndpointFailures);
+                        doc.Regenerate();
+
+                        if (externalEndpointFailures > 0)
+                        {
+                            var message = $"Could not physically connect {externalEndpointFailures} route endpoint(s) to compatible existing connectors within {toleranceFt:G6} ft.";
+                            if (p.requireExistingEndpointConnections) throw new InvalidOperationException(message);
+                            warnings.Add(message);
+                        }
+                    }
+
+                    var createdFittingWorksets = new List<object>();
+                    if (requestedWorkset != null)
+                    {
+                        foreach (var fittingId in fittingIds.Distinct())
+                        {
+                            var fitting = doc.GetElement(ElementIdCompat.Create(fittingId));
+                            if (fitting == null) throw new InvalidOperationException($"Created route fitting {fittingId} was not found for workset assignment.");
+                            createdFittingWorksets.Add(ApplyAndVerifyWorkset(fitting, requestedWorkset, p.verify));
+                        }
+                        doc.Regenerate();
                     }
 
                     var openConnectorCount = p.verify ? MepRoutingUtil.CountOpenConnectors(created) : (int?)null;
+                    var postConnectionGeometryReadback = created.Select((element, index) => new
+                    {
+                        segmentIndex = index,
+                        elementId = ElementIdCompat.GetValue(element.Id),
+                        geometry = BuildNativeGeometryReadback(element)
+                    }).ToList();
                     var status = p.dryRun
                         ? "Dry Run"
                         : (openConnectorCount.GetValueOrDefault(0) == 0 ? "CreatedAndConnected" : "CreatedWithOpenConnectors");
@@ -245,7 +394,12 @@ namespace RevitBridge.Logic.Handlers.MEP
                         plannedPoints = resolvedPoints.Select(ToPointObject).ToList(),
                         segmentCount = resolvedPoints.Count - 1,
                         totalLengthFt = totalLength,
-                        selected = BuildSelected(ctx, sysType, dType, pType),
+                        selected = BuildSelected(ctx, sysType, dType, pType, conduitType),
+                        selectedWorkset = requestedWorkset == null ? null : new
+                        {
+                            id = requestedWorkset.Id.IntegerValue,
+                            name = requestedWorkset.Name
+                        },
                         chosenSize = new
                         {
                             requested = size.RequestedText.Length == 0 ? null : size.RequestedText,
@@ -264,13 +418,16 @@ namespace RevitBridge.Logic.Handlers.MEP
                             fromSize = j.FromSize,
                             toSize = j.ToSize
                         }).ToList(),
-                        chosenElevation = new { zFt = ctx.RecommendedZ, mode = ctx.RecommendedMode, confidence = ctx.Confidence, assumption = ctx.Assumption, usedFallback = usedElevationFallback },
+                        chosenElevation = BuildChosenElevation(ctx, resolvedPoints, usedElevationFallback),
                         createdElementIds = p.dryRun ? new List<long>() : createdIds,
                         createdFittingIds = p.dryRun ? new List<long>() : fittingIds,
                         dryRunElementIds = p.dryRun ? createdIds : new List<long>(),
                         dryRunFittingIds = p.dryRun ? fittingIds : new List<long>(),
                         segments = segmentResults,
+                        createdFittingWorksets,
+                        postConnectionGeometryReadback,
                         connectionAttempts,
+                        internalConnectionsVerified = !p.connectSegments || internalConnectionFailures == 0,
                         openConnectorCount,
                         warnings,
                         rolledBack = p.dryRun
@@ -311,6 +468,65 @@ namespace RevitBridge.Logic.Handlers.MEP
             }
         }
 
+        private static void TryConnectExternalEndpoint(
+            Document doc,
+            Element routeElement,
+            XYZ endpoint,
+            string endpointName,
+            ISet<long> excludedOwnerIds,
+            double toleranceFt,
+            List<object> connectionAttempts,
+            ref int failureCount)
+        {
+            var routeConnector = MepRoutingUtil.FindClosestConnector(MepRoutingUtil.GetConnectors(routeElement), endpoint, toleranceFt);
+            if (routeConnector == null)
+            {
+                failureCount++;
+                connectionAttempts.Add(new
+                {
+                    connectionKind = "existing_endpoint",
+                    endpoint = endpointName,
+                    routeElementId = ElementIdCompat.GetValue(routeElement.Id),
+                    connected = false,
+                    method = "route_connector_not_found",
+                    error = "Created route connector was not found near the requested endpoint."
+                });
+                return;
+            }
+
+            var external = MepRoutingUtil.FindClosestCompatibleOpenConnector(doc, routeConnector, excludedOwnerIds, toleranceFt, out var distanceFt);
+            if (external == null || external.Owner == null)
+            {
+                failureCount++;
+                connectionAttempts.Add(new
+                {
+                    connectionKind = "existing_endpoint",
+                    endpoint = endpointName,
+                    routeElementId = ElementIdCompat.GetValue(routeElement.Id),
+                    connected = false,
+                    method = "compatible_existing_connector_not_found",
+                    toleranceFt,
+                    error = "No physically open compatible existing connector was found near the route endpoint."
+                });
+                return;
+            }
+
+            var connected = MepRoutingUtil.TryConnect(routeConnector, external, out var error);
+            if (!connected) failureCount++;
+            connectionAttempts.Add(new
+            {
+                connectionKind = "existing_endpoint",
+                endpoint = endpointName,
+                routeElementId = ElementIdCompat.GetValue(routeElement.Id),
+                externalOwnerId = ElementIdCompat.GetValue(external.Owner.Id),
+                externalCategory = external.Owner.Category?.Name ?? "",
+                distanceFt,
+                connected,
+                method = connected ? "connector_connect_to" : "failed",
+                error
+            });
+        }
+
         private static object BuildPlan(List<XYZ> points)
         {
             return new
@@ -321,14 +537,15 @@ namespace RevitBridge.Logic.Handlers.MEP
             };
         }
 
-        private static object BuildSelected(MepRoutingUtil.RoutingContext ctx, MEPSystemType? sysType, DuctType? dType, PipeType? pType)
+        private static object BuildSelected(MepRoutingUtil.RoutingContext ctx, MEPSystemType? sysType, DuctType? dType, PipeType? pType, ConduitType? conduitType)
         {
             return new
             {
                 level = ctx.Level == null ? null : new { id = ElementIdCompat.GetValue(ctx.Level.Id), name = ctx.Level.Name, elevation = ctx.Level.Elevation },
                 systemType = sysType == null ? null : new { id = ElementIdCompat.GetValue(sysType.Id), name = sysType.Name },
-                ductType = dType == null ? null : new { id = ElementIdCompat.GetValue(dType.Id), name = dType.Name },
-                pipeType = pType == null ? null : new { id = ElementIdCompat.GetValue(pType.Id), name = pType.Name }
+                ductType = dType == null ? null : new { id = ElementIdCompat.GetValue(dType.Id), name = dType.Name, familyName = dType.FamilyName },
+                pipeType = pType == null ? null : new { id = ElementIdCompat.GetValue(pType.Id), name = pType.Name },
+                conduitType = conduitType == null ? null : new { id = ElementIdCompat.GetValue(conduitType.Id), name = conduitType.Name }
             };
         }
 
@@ -336,7 +553,9 @@ namespace RevitBridge.Logic.Handlers.MEP
         {
             var fallback = kind == "pipe"
                 ? FirstNonEmpty(p.pipeSize, p.diameter)
-                : (p.ductSize ?? "").Trim();
+                : kind == "conduit"
+                    ? FirstNonEmpty(p.diameter)
+                    : (p.ductSize ?? "").Trim();
             var values = new List<string?>();
             for (var i = 0; i < segmentCount; i++)
             {
@@ -357,5 +576,120 @@ namespace RevitBridge.Logic.Handlers.MEP
         }
 
         private static object ToPointObject(XYZ p) => new { x = p.X, y = p.Y, z = p.Z };
+
+        private static Workset? ResolveRequestedWorkset(Document doc, long? worksetId, string? worksetName, out string? error)
+        {
+            error = null;
+            var requestedName = (worksetName ?? "").Trim();
+            var hasId = worksetId.HasValue && worksetId.Value > 0;
+            var hasName = requestedName.Length > 0;
+            if (!hasId && !hasName) return null;
+            if (!doc.IsWorkshared)
+            {
+                error = "An explicit MEP route workset was requested, but the active document is not workshared.";
+                return null;
+            }
+
+            var worksets = new FilteredWorksetCollector(doc)
+                .OfKind(WorksetKind.UserWorkset)
+                .ToWorksets()
+                .ToList();
+            var byId = hasId ? worksets.FirstOrDefault(x => x.Id.IntegerValue == worksetId!.Value) : null;
+            var byName = hasName ? worksets.FirstOrDefault(x => string.Equals(x.Name, requestedName, StringComparison.OrdinalIgnoreCase)) : null;
+            if (hasId && byId == null)
+            {
+                error = $"MEP route workset id {worksetId} was not found as a user workset.";
+                return null;
+            }
+            if (hasName && byName == null)
+            {
+                error = $"MEP route workset '{requestedName}' was not found as a user workset.";
+                return null;
+            }
+            if (byId != null && byName != null && byId.Id.IntegerValue != byName.Id.IntegerValue)
+            {
+                error = $"MEP route workset id {worksetId} does not match workset name '{requestedName}'.";
+                return null;
+            }
+            return byId ?? byName;
+        }
+
+        private static bool IsUnusedElevationContextWarning(string warning)
+        {
+            var value = warning ?? "";
+            return value.IndexOf("recommended elevation", StringComparison.OrdinalIgnoreCase) >= 0
+                || value.IndexOf("using explicit level offset routing mode", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static object BuildChosenElevation(MepRoutingUtil.RoutingContext ctx, List<XYZ> resolvedPoints, bool usedFallback)
+        {
+            if (usedFallback)
+            {
+                return new
+                {
+                    zFt = (double?)ctx.RecommendedZ,
+                    mode = ctx.RecommendedMode,
+                    confidence = ctx.Confidence,
+                    assumption = ctx.Assumption,
+                    usedFallback = true
+                };
+            }
+
+            var minimumZ = resolvedPoints.Min(point => point.Z);
+            var maximumZ = resolvedPoints.Max(point => point.Z);
+            var uniform = maximumZ - minimumZ <= 1e-6;
+            return new
+            {
+                zFt = uniform ? (double?)minimumZ : null,
+                mode = uniform ? "explicit_points" : "explicit_profile",
+                confidence = "high",
+                assumption = uniform
+                    ? "All route points supplied the same explicit Z."
+                    : "All route points supplied explicit Z values defining the route profile.",
+                usedFallback = false
+            };
+        }
+
+        private static object ApplyAndVerifyWorkset(Element element, Workset workset, bool verify)
+        {
+            var parameter = element.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM);
+            if (parameter == null || parameter.IsReadOnly)
+            {
+                throw new InvalidOperationException($"Element {ElementIdCompat.GetValue(element.Id)} cannot be assigned to workset '{workset.Name}'.");
+            }
+            if (!parameter.Set(workset.Id.IntegerValue))
+            {
+                throw new InvalidOperationException($"Element {ElementIdCompat.GetValue(element.Id)} rejected workset '{workset.Name}'.");
+            }
+            var readbackId = parameter.AsInteger();
+            var verified = readbackId == workset.Id.IntegerValue;
+            if (verify && !verified)
+            {
+                throw new InvalidOperationException($"Element {ElementIdCompat.GetValue(element.Id)} workset readback {readbackId} did not match requested workset {workset.Id.IntegerValue}.");
+            }
+            return new
+            {
+                elementId = ElementIdCompat.GetValue(element.Id),
+                requestedWorksetId = workset.Id.IntegerValue,
+                requestedWorksetName = workset.Name,
+                readbackWorksetId = readbackId,
+                verified
+            };
+        }
+
+        private static object? BuildNativeGeometryReadback(Element element)
+        {
+            var locationCurve = element.Location as LocationCurve;
+            var curve = locationCurve?.Curve;
+            if (curve == null) return null;
+            var start = curve.GetEndPoint(0);
+            var end = curve.GetEndPoint(1);
+            return new
+            {
+                start = ToPointObject(start),
+                end = ToPointObject(end),
+                lengthFt = curve.Length
+            };
+        }
     }
 }

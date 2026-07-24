@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Architecture;
+using Autodesk.Revit.DB.Electrical;
 using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.DB.Plumbing;
 using Autodesk.Revit.UI;
@@ -120,6 +121,34 @@ namespace RevitBridge.Logic.Handlers.MEP
             public double? DiameterFt { get; set; }
             public bool UsedDefault { get; set; }
             public bool Missing { get; set; }
+        }
+
+        internal sealed class DuctTypeResolution
+        {
+            public DuctType? Selected { get; set; }
+            public MepDuctTypeSelection Receipt { get; set; } = new MepDuctTypeSelection();
+        }
+
+        internal sealed class DuctSizeReadback
+        {
+            public string Shape { get; set; } = "unknown";
+            public double? WidthFt { get; set; }
+            public double? HeightFt { get; set; }
+            public double? DiameterFt { get; set; }
+        }
+
+        internal sealed class PipeTypeResolution
+        {
+            public PipeType? Selected { get; set; }
+            public IReadOnlyList<MepDuctTypeCandidate> Candidates { get; set; } = Array.Empty<MepDuctTypeCandidate>();
+            public string Error { get; set; } = string.Empty;
+        }
+
+        internal sealed class ConduitTypeResolution
+        {
+            public ConduitType? Selected { get; set; }
+            public IReadOnlyList<MepDuctTypeCandidate> Candidates { get; set; } = Array.Empty<MepDuctTypeCandidate>();
+            public string Error { get; set; } = string.Empty;
         }
 
         internal static RoutingContext ResolveRoutingContext(Document doc, UIApplication app, RoutingContextRequest req)
@@ -368,10 +397,32 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 var exact = all.FirstOrDefault(x => x.Name.Equals(q, StringComparison.OrdinalIgnoreCase));
                 if (exact != null) return exact;
+                var exactFamily = all.FirstOrDefault(x => x.FamilyName.Equals(q, StringComparison.OrdinalIgnoreCase));
+                if (exactFamily != null) return exactFamily;
                 var contains = all.FirstOrDefault(x => x.Name.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0);
                 if (contains != null) return contains;
+                var familyContains = all.FirstOrDefault(x => x.FamilyName.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0);
+                if (familyContains != null) return familyContains;
             }
             return all.FirstOrDefault();
+        }
+
+        internal static DuctTypeResolution ResolveDuctType(Document doc, long? requestedId, string? requestedName)
+        {
+            var all = new FilteredElementCollector(doc).OfClass(typeof(DuctType)).Cast<DuctType>().ToList();
+            var receipt = MepDuctTypeSelectionPolicy.Resolve(
+                all.Select(x => new MepDuctTypeCandidate
+                {
+                    Id = ElementIdCompat.GetValue(x.Id),
+                    Name = x.Name ?? string.Empty,
+                    FamilyName = x.FamilyName ?? string.Empty
+                }),
+                requestedId,
+                requestedName);
+            var selected = receipt.Selected == null
+                ? null
+                : all.FirstOrDefault(x => ElementIdCompat.GetValue(x.Id) == receipt.Selected.Id);
+            return new DuctTypeResolution { Selected = selected, Receipt = receipt };
         }
 
         internal static PipeType? FindPipeType(Document doc, string? name)
@@ -388,13 +439,68 @@ namespace RevitBridge.Logic.Handlers.MEP
             return all.FirstOrDefault();
         }
 
+        internal static PipeTypeResolution ResolvePipeType(Document doc, long? requestedId, string? requestedName)
+        {
+            var all = new FilteredElementCollector(doc).OfClass(typeof(PipeType)).Cast<PipeType>().ToList();
+            var receipt = MepDuctTypeSelectionPolicy.Resolve(
+                all.Select(x => new MepDuctTypeCandidate
+                {
+                    Id = ElementIdCompat.GetValue(x.Id),
+                    Name = x.Name ?? string.Empty,
+                    FamilyName = "Pipe Type"
+                }),
+                requestedId,
+                requestedName);
+            var selected = receipt.Selected == null
+                ? null
+                : all.FirstOrDefault(x => ElementIdCompat.GetValue(x.Id) == receipt.Selected.Id);
+            return new PipeTypeResolution
+            {
+                Selected = selected,
+                Candidates = receipt.Candidates,
+                Error = receipt.Error
+                    .Replace("Duct type", "Pipe type")
+                    .Replace("duct type", "pipe type")
+                    .Replace("ductTypeId", "pipeTypeId")
+                    .Replace("ductType", "pipeType")
+            };
+        }
+
+        internal static ConduitTypeResolution ResolveConduitType(Document doc, long? requestedId, string? requestedName)
+        {
+            var all = new FilteredElementCollector(doc).OfClass(typeof(ConduitType)).Cast<ConduitType>().ToList();
+            var receipt = MepDuctTypeSelectionPolicy.Resolve(
+                all.Select(x => new MepDuctTypeCandidate
+                {
+                    Id = ElementIdCompat.GetValue(x.Id),
+                    Name = x.Name ?? string.Empty,
+                    FamilyName = "Conduit Type"
+                }),
+                requestedId,
+                requestedName);
+            var selected = receipt.Selected == null
+                ? null
+                : all.FirstOrDefault(x => ElementIdCompat.GetValue(x.Id) == receipt.Selected.Id);
+            return new ConduitTypeResolution
+            {
+                Selected = selected,
+                Candidates = receipt.Candidates,
+                Error = receipt.Error
+                    .Replace("Duct type", "Conduit type")
+                    .Replace("duct type", "conduit type")
+                    .Replace("ductTypeId", "conduitTypeId")
+                    .Replace("ductType", "conduitType")
+            };
+        }
+
         internal static SizeChoice ChooseSize(string kind, string? ductSize, string? diameter, string? pipeSize, string? sizePolicy, List<string> warnings)
         {
             var k = NormalizeKind(kind);
             var explicitRequired = string.Equals((sizePolicy ?? "").Trim(), "explicit_required", StringComparison.OrdinalIgnoreCase);
             var choice = new SizeChoice();
-            if (k == "pipe")
+            if (k == "pipe" || k == "conduit")
             {
+                var label = k == "conduit" ? "Conduit" : "Pipe";
                 var requested = FirstNonEmpty(diameter, pipeSize);
                 choice.RequestedText = requested;
                 if (requested.Length == 0)
@@ -404,16 +510,18 @@ namespace RevitBridge.Logic.Handlers.MEP
                     choice.AppliedText = "1";
                     choice.DiameterFt = 1.0 / 12.0;
                     choice.UsedDefault = true;
-                    warnings.Add("Pipe size was missing; using conservative placeholder 1 inch diameter.");
+                    warnings.Add($"{label} size was missing; using conservative placeholder 1 inch diameter.");
                     return choice;
                 }
                 choice.AppliedText = requested;
                 choice.DiameterFt = ParseLengthFeet(requested);
-                if (!choice.DiameterFt.HasValue) warnings.Add($"Could not parse pipe size '{requested}'.");
+                if (!choice.DiameterFt.HasValue) warnings.Add($"Could not parse {label.ToLowerInvariant()} size '{requested}'.");
                 return choice;
             }
 
-            var duct = (ductSize ?? "").Trim().Replace("X", "x").Replace("×", "x");
+            var duct = MepRouteSizeInputPolicy.ResolveDuctSize(ductSize, diameter)
+                .Replace("X", "x")
+                .Replace("×", "x");
             choice.RequestedText = duct;
             if (duct.Length == 0)
             {
@@ -449,14 +557,8 @@ namespace RevitBridge.Logic.Handlers.MEP
         internal static double? ParseLengthFeet(string? raw)
         {
             if (string.IsNullOrWhiteSpace(raw)) return null;
-            var t = raw.Trim().ToLowerInvariant();
-            var isFeet = t.Contains("ft") || t.Contains("'");
-            t = t.Replace("inches", "").Replace("inch", "").Replace("in", "");
-            t = t.Replace("feet", "").Replace("foot", "").Replace("ft", "");
-            t = t.Replace("\"", "").Replace("'", "").Trim();
-            if (!double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out var n)) return null;
-            if (double.IsNaN(n) || double.IsInfinity(n) || n <= 0) return null;
-            return isFeet ? n : n / 12.0;
+            if (!EngineeringLengthText.TryParseLengthToFeet(raw, unitlessIsInches: true, out var feet)) return null;
+            return double.IsNaN(feet) || double.IsInfinity(feet) || feet <= 0 ? (double?)null : feet;
         }
 
         internal static bool TryApplyDuctSize(Duct duct, SizeChoice size, out object result)
@@ -468,11 +570,115 @@ namespace RevitBridge.Logic.Handlers.MEP
             return width || height || diameter;
         }
 
+        internal static bool ValidateDuctSizeAndShape(
+            Duct duct,
+            SizeChoice size,
+            string? requestedShape,
+            out DuctSizeReadback readback,
+            out string error)
+        {
+            error = string.Empty;
+            readback = ReadDuctSize(duct);
+            var expectedShape = NormalizeDuctShape(requestedShape);
+            if (!string.IsNullOrWhiteSpace(requestedShape) && expectedShape.Length == 0)
+            {
+                error = "ductShape must be round, rectangular, or oval.";
+                return false;
+            }
+            if (expectedShape.Length == 0)
+            {
+                if (size.DiameterFt.HasValue) expectedShape = "round";
+                else if (size.WidthFt.HasValue || size.HeightFt.HasValue) expectedShape = "rectangular";
+            }
+
+            if (expectedShape.Length > 0 && !string.Equals(expectedShape, readback.Shape, StringComparison.OrdinalIgnoreCase))
+            {
+                error = $"Selected duct type created shape '{readback.Shape}', but requested size/ductShape requires '{expectedShape}'.";
+                return false;
+            }
+
+            const double toleranceFt = 1e-4;
+            if (size.DiameterFt.HasValue && (!readback.DiameterFt.HasValue || Math.Abs(readback.DiameterFt.Value - size.DiameterFt.Value) > toleranceFt))
+            {
+                error = $"Native duct diameter readback did not match requested {size.DiameterFt.Value:G9} ft.";
+                return false;
+            }
+            if (size.WidthFt.HasValue && (!readback.WidthFt.HasValue || Math.Abs(readback.WidthFt.Value - size.WidthFt.Value) > toleranceFt))
+            {
+                error = $"Native duct width readback did not match requested {size.WidthFt.Value:G9} ft.";
+                return false;
+            }
+            if (size.HeightFt.HasValue && (!readback.HeightFt.HasValue || Math.Abs(readback.HeightFt.Value - size.HeightFt.Value) > toleranceFt))
+            {
+                error = $"Native duct height readback did not match requested {size.HeightFt.Value:G9} ft.";
+                return false;
+            }
+            return true;
+        }
+
+        private static DuctSizeReadback ReadDuctSize(Duct duct)
+        {
+            var shape = "unknown";
+            try
+            {
+                var connector = GetConnectors(duct).FirstOrDefault();
+                if (connector != null) shape = NormalizeDuctShape(connector.Shape.ToString());
+            }
+            catch { }
+            return new DuctSizeReadback
+            {
+                Shape = shape.Length == 0 ? "unknown" : shape,
+                WidthFt = ReadBuiltinDouble(duct, BuiltInParameter.RBS_CURVE_WIDTH_PARAM),
+                HeightFt = ReadBuiltinDouble(duct, BuiltInParameter.RBS_CURVE_HEIGHT_PARAM),
+                DiameterFt = ReadBuiltinDouble(duct, BuiltInParameter.RBS_CURVE_DIAMETER_PARAM)
+            };
+        }
+
+        private static double? ReadBuiltinDouble(Element element, BuiltInParameter parameter)
+        {
+            try
+            {
+                var value = element.get_Parameter(parameter)?.AsDouble();
+                return value.HasValue && value.Value > 0 ? value : null;
+            }
+            catch { return null; }
+        }
+
+        private static string NormalizeDuctShape(string? value)
+        {
+            var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
+            if (normalized == "round") return "round";
+            if (normalized == "rectangular" || normalized == "rectangle") return "rectangular";
+            if (normalized == "oval") return "oval";
+            return string.Empty;
+        }
+
         internal static bool TryApplyPipeSize(Pipe pipe, SizeChoice size, out object result)
         {
             var diameter = size.DiameterFt.HasValue && TrySetBuiltinOrNamedDouble(pipe, BuiltInParameter.RBS_PIPE_DIAMETER_PARAM, new[] { "Diameter", "Pipe Diameter", "Size" }, size.DiameterFt.Value);
             result = new { diameter };
             return diameter;
+        }
+
+        internal static bool TryApplyConduitSize(Conduit conduit, SizeChoice size, out object result)
+        {
+            var diameter = size.DiameterFt.HasValue && TrySetBuiltinOrNamedDouble(conduit, BuiltInParameter.RBS_CONDUIT_DIAMETER_PARAM, new[] { "Diameter", "Conduit Diameter", "Size" }, size.DiameterFt.Value);
+            var readback = ReadBuiltinDouble(conduit, BuiltInParameter.RBS_CONDUIT_DIAMETER_PARAM);
+            result = new { diameter, diameterFt = readback };
+            return diameter;
+        }
+
+        internal static bool ValidateConduitSize(Conduit conduit, SizeChoice size, out double? diameterFt, out string error)
+        {
+            error = string.Empty;
+            diameterFt = ReadBuiltinDouble(conduit, BuiltInParameter.RBS_CONDUIT_DIAMETER_PARAM);
+            if (!size.DiameterFt.HasValue) return true;
+            if (!diameterFt.HasValue || Math.Abs(diameterFt.Value - size.DiameterFt.Value) > 1e-4)
+            {
+                error = $"Native conduit diameter readback did not match requested {size.DiameterFt.Value:G9} ft.";
+                return false;
+            }
+            return true;
         }
 
         internal static List<Connector> GetConnectors(Element e)
@@ -522,6 +728,76 @@ namespace RevitBridge.Logic.Handlers.MEP
             catch (Exception ex)
             {
                 error = ex.Message;
+                return false;
+            }
+        }
+
+        internal static bool IsPhysicallyConnected(Connector? connector)
+        {
+            if (connector == null) return false;
+            try
+            {
+                var ownerId = connector.Owner == null ? 0 : ElementIdCompat.GetValue(connector.Owner.Id);
+                foreach (Connector reference in connector.AllRefs)
+                {
+                    if (reference == null || reference.Owner == null) continue;
+                    if (reference.Owner is MEPSystem) continue;
+                    if (ElementIdCompat.GetValue(reference.Owner.Id) == ownerId) continue;
+                    return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        internal static Connector? FindClosestCompatibleOpenConnector(
+            Document doc,
+            Connector source,
+            ISet<long> excludedOwnerIds,
+            double maxDistanceFt,
+            out double distanceFt)
+        {
+            Connector? best = null;
+            distanceFt = double.MaxValue;
+            var bestOwnerId = long.MaxValue;
+            foreach (var element in new FilteredElementCollector(doc).WhereElementIsNotElementType().ToElements())
+            {
+                if (element == null || element is MEPSystem) continue;
+                var ownerId = ElementIdCompat.GetValue(element.Id);
+                if (excludedOwnerIds.Contains(ownerId)) continue;
+
+                foreach (var candidate in GetConnectors(element))
+                {
+                    if (candidate == null || IsPhysicallyConnected(candidate) || !AreConnectorsCompatible(source, candidate)) continue;
+                    double distance;
+                    try { distance = source.Origin.DistanceTo(candidate.Origin); }
+                    catch { continue; }
+                    if (distance > maxDistanceFt) continue;
+                    if (distance < distanceFt - 1e-9 || (Math.Abs(distance - distanceFt) <= 1e-9 && ownerId < bestOwnerId))
+                    {
+                        best = candidate;
+                        distanceFt = distance;
+                        bestOwnerId = ownerId;
+                    }
+                }
+            }
+            return best;
+        }
+
+        internal static bool AreConnectorsCompatible(Connector a, Connector b)
+        {
+            try
+            {
+                if (a.Domain != b.Domain || a.Shape != b.Shape) return false;
+                const double toleranceFt = 1.0 / 192.0; // 1/16 inch
+                if (a.Shape == ConnectorProfileType.Round)
+                    return Math.Abs(a.Radius - b.Radius) <= toleranceFt;
+                var direct = Math.Abs(a.Width - b.Width) <= toleranceFt && Math.Abs(a.Height - b.Height) <= toleranceFt;
+                var rotated = Math.Abs(a.Width - b.Height) <= toleranceFt && Math.Abs(a.Height - b.Width) <= toleranceFt;
+                return direct || rotated;
+            }
+            catch
+            {
                 return false;
             }
         }
@@ -644,7 +920,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 {
                     try
                     {
-                        if (!c.IsConnected) count++;
+                        if (!IsPhysicallyConnected(c)) count++;
                     }
                     catch
                     {
@@ -659,6 +935,7 @@ namespace RevitBridge.Logic.Handlers.MEP
         {
             var k = (kind ?? "").Trim().ToLowerInvariant();
             if (k == "pipe" || k == "piping") return "pipe";
+            if (k == "conduit" || k == "electrical_conduit") return "conduit";
             return "duct";
         }
 

@@ -83,6 +83,69 @@ function parseExamplesKeys(filePath: string): { keys: Set<ToolKey>; duplicates: 
   return { keys: out, duplicates: dupes };
 }
 
+function requireCriticalParity(
+  addinRoot: string,
+  criticalPaths: string[],
+  errors: string[]
+): void {
+  const sources = [
+    {
+      label: "native OperatorActionAllowlist",
+      file: path.join(addinRoot, "RevitBridge", "Operator", "OperatorActionAllowlist.cs"),
+      pattern: (p: string) => new RegExp(`"${escapeRegExp(p)}"`)
+    },
+    {
+      label: "Operator approval policy",
+      file: path.join(addinRoot, "RevitBridge", "Operator", "OperatorApprovalPolicy.cs"),
+      pattern: (p: string) => new RegExp(`string\\.Equals\\(p,\\s*"${escapeRegExp(p)}"[\\s\\S]{0,180}OperatorActionRisk\\.High`)
+    },
+    {
+      label: "Operator tool introspection",
+      file: path.join(addinRoot, "RevitBridge", "Operator", "OperatorToolIntrospection.cs"),
+      pattern: (p: string) => new RegExp(`\\{\\s*"${escapeRegExp(p)}",\\s*typeof\\(`)
+    },
+    {
+      label: "Operator action schema",
+      file: path.join(addinRoot, "RevitBridge", "Operator", "OperatorActionSchemaValidator.cs"),
+      pattern: (p: string) => new RegExp(`string\\.Equals\\(path,\\s*"${escapeRegExp(p)}"`)
+    },
+    {
+      label: "Operator action runtime",
+      file: path.join(addinRoot, "RevitBridge", "Operator", "OperatorActionRunner.cs"),
+      pattern: (p: string) => new RegExp(`\\{\\s*"${escapeRegExp(p)}",\\s*new\\s+`)
+    },
+    {
+      label: "direct HTTP runtime",
+      file: path.join(addinRoot, "RevitBridge", "Server", "RevitHttpServer.cs"),
+      pattern: (p: string) => new RegExp(`\\{\\s*"${escapeRegExp(p)}",\\s*new\\s+`)
+    },
+    {
+      label: "logic runtime",
+      file: path.join(addinRoot, "RevitBridge.Logic", "LogicService.cs"),
+      pattern: (p: string) => new RegExp(`\\{\\s*"${escapeRegExp(p)}",\\s*new\\s+`)
+    }
+  ];
+
+  for (const source of sources) {
+    if (!fs.existsSync(source.file)) {
+      errors.push(`${source.label} file is missing: ${source.file}`);
+      continue;
+    }
+    const text = fs.readFileSync(source.file, "utf8");
+    const missing = criticalPaths.filter(p => !source.pattern(p).test(text));
+    if (missing.length > 0) {
+      errors.push(
+        `${source.label} is missing critical repair endpoints (${missing.length}):\n` +
+          missing.map(p => `  - POST ${p}`).join("\n")
+      );
+    }
+  }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function diff(a: Set<ToolKey>, b: Set<ToolKey>): ToolKey[] {
   return [...a].filter(k => !b.has(k)).sort();
 }
@@ -108,6 +171,12 @@ function main(): void {
   const manifest = parseManifestKeys(manifestPath);
   const examples = parseExamplesKeys(examplesPath);
   const requireExampleCoverage = parseBool(process.env.OPERATOR_TOOL_CONTRACT_REQUIRE_EXAMPLES, true);
+  const criticalRepairPaths = [
+    "/revit/connect-existing-mep-branch",
+    "/revit/resize-ductwork-by-scope",
+    "/revit/repair-duct-continuity-by-scope",
+    "/revit/repair-mep-connectors"
+  ];
 
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -157,12 +226,15 @@ function main(): void {
     else warnings.push(msg);
   }
 
+  requireCriticalParity(addinRoot, criticalRepairPaths, errors);
+
   console.log(
     [
       "Tool contract summary:",
       `- allowlist entries: ${allow.keys.size}`,
       `- manifest entries: ${manifest.keys.size}`,
-      `- tool_examples entries: ${examples.keys.size}`
+      `- tool_examples entries: ${examples.keys.size}`,
+      `- critical four-way parity endpoints: ${criticalRepairPaths.length}`
     ].join("\n")
   );
 

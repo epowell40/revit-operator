@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -16,6 +17,27 @@ namespace RevitBridge.Logic.Handlers.MEP
     {
         public sealed class Params
         {
+            public sealed class EndpointEditParams
+            {
+                public long elementId { get; set; }
+                public int endpointIndex { get; set; }
+                public double[]? expectedEndpointXyz { get; set; }
+                public double[]? targetEndpointXyz { get; set; }
+                public double coordinateToleranceFt { get; set; } = 0.001;
+                public bool requireEditedEndpointOpen { get; set; } = true;
+                public bool preserveExistingPhysicalConnections { get; set; } = true;
+            }
+
+            public sealed class DirectionEditParams
+            {
+                public long elementId { get; set; }
+                public double[]? expectedStartXyz { get; set; }
+                public double[]? expectedEndXyz { get; set; }
+                public double coordinateToleranceFt { get; set; } = 0.001;
+                public bool preserveExistingPhysicalConnections { get; set; } = true;
+            }
+
+            public string? expectedModelPath { get; set; }
             public string kind { get; set; } = "duct";
             public List<long> elementIds { get; set; } = new List<long>();
             public bool dryRun { get; set; } = true;
@@ -31,6 +53,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             public bool allowConnectedElevationMove { get; set; } = false;
 
             public bool verify { get; set; } = true;
+            public EndpointEditParams? endpointEdit { get; set; }
+            public DirectionEditParams? directionEdit { get; set; }
             public bool visualVerify { get; set; } = false;
             public long? visualViewId { get; set; }
             public int imageSize { get; set; } = 1600;
@@ -45,12 +69,21 @@ namespace RevitBridge.Logic.Handlers.MEP
             var shouldApply = MepMutationApplyPolicy.ResolveShouldApply(p.apply, p.dryRun);
             var changesSize = HasSizeRequest(p);
             var changesElevation = p.deltaZFt.HasValue || p.targetCenterlineZFt.HasValue;
-            if (!changesSize && !changesElevation) throw new ArgumentException("Request must include a size change or elevation change.");
+            var changesCurve = p.endpointEdit != null || p.directionEdit != null;
+            if (!changesSize && !changesElevation && !changesCurve) throw new ArgumentException("Request must include a size, elevation, endpoint, or direction change.");
             if (p.deltaZFt.HasValue && p.targetCenterlineZFt.HasValue) throw new ArgumentException("Specify either deltaZFt or targetCenterlineZFt, not both.");
 
             var uidoc = app.ActiveUIDocument;
             if (uidoc == null) throw new InvalidOperationException("No active UI document.");
             var doc = uidoc.Document;
+            GuardExpectedModelPath(doc, p.expectedModelPath);
+
+            if (p.endpointEdit != null && p.directionEdit != null)
+                throw new ArgumentException("Specify endpointEdit or directionEdit, not both.");
+            if (p.directionEdit != null)
+                return Task.FromResult(HandleDirectionEdit(doc, p, normalizedKind, shouldApply));
+            if (p.endpointEdit != null)
+                return Task.FromResult(HandleEndpointEdit(doc, p, normalizedKind, shouldApply));
 
             var warnings = new List<string>();
             var ids = p.elementIds.Where(x => x > 0).Distinct().ToList();
@@ -346,6 +379,333 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (value is int i) return i;
             if (long.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)) return parsed;
             return 0;
+        }
+
+        private sealed class PhysicalConnectionSnapshot
+        {
+            public long? ConnectorId { get; set; }
+            public XYZ Origin { get; set; } = XYZ.Zero;
+            public long ConnectedOwnerId { get; set; }
+        }
+
+        private static object HandleEndpointEdit(Document doc, Params p, string normalizedKind, bool shouldApply)
+        {
+            var edit = p.endpointEdit ?? throw new InvalidOperationException("endpointEdit is required.");
+            if (p.elementIds.Count != 1 || p.elementIds[0] != edit.elementId)
+                throw new ArgumentException("Endpoint edit requires elementIds to contain exactly endpointEdit.elementId.");
+            if (edit.endpointIndex != 0 && edit.endpointIndex != 1)
+                throw new ArgumentException("endpointEdit.endpointIndex must be 0 or 1.");
+            if (!HasPoint(edit.expectedEndpointXyz) || !HasPoint(edit.targetEndpointXyz))
+                throw new ArgumentException("endpointEdit requires finite expectedEndpointXyz and targetEndpointXyz arrays.");
+            if (edit.coordinateToleranceFt <= 0 || edit.coordinateToleranceFt > 0.25 ||
+                double.IsNaN(edit.coordinateToleranceFt) || double.IsInfinity(edit.coordinateToleranceFt))
+                throw new ArgumentException("endpointEdit.coordinateToleranceFt must be greater than zero and no more than 0.25 ft.");
+
+            var element = ResolveElements(doc, p.elementIds, normalizedKind).Single();
+            var location = element.Location as LocationCurve
+                ?? throw new InvalidOperationException("The requested MEP curve has no LocationCurve.");
+            if (location.Curve is not Line originalLine)
+                throw new InvalidOperationException("Endpoint edit requires a straight MEP curve.");
+
+            var originalStart = originalLine.GetEndPoint(0);
+            var originalEnd = originalLine.GetEndPoint(1);
+            var expected = ToXyz(edit.expectedEndpointXyz!);
+            var target = ToXyz(edit.targetEndpointXyz!);
+            var originalEdited = edit.endpointIndex == 0 ? originalStart : originalEnd;
+            var fixedEndpoint = edit.endpointIndex == 0 ? originalEnd : originalStart;
+            var expectedDelta = originalEdited.DistanceTo(expected);
+            if (expectedDelta > edit.coordinateToleranceFt)
+                throw new InvalidOperationException($"Endpoint origin guard failed by {expectedDelta:F6} ft (tolerance {edit.coordinateToleranceFt:F6} ft).");
+            if (fixedEndpoint.DistanceTo(target) <= 0.01)
+                throw new InvalidOperationException("Endpoint edit would create a curve shorter than 0.01 ft.");
+
+            var originalConnectors = MepRoutingUtil.GetConnectors(element);
+            var editedConnector = originalConnectors.OrderBy(c => c.Origin.DistanceTo(originalEdited)).FirstOrDefault()
+                ?? throw new InvalidOperationException("The edited endpoint has no resolvable connector.");
+            if (editedConnector.Origin.DistanceTo(originalEdited) > Math.Max(edit.coordinateToleranceFt, 0.01))
+                throw new InvalidOperationException("No connector is located at the guarded endpoint.");
+            if (edit.requireEditedEndpointOpen && PhysicalConnectedOwnerIds(editedConnector).Count > 0)
+                throw new InvalidOperationException("The edited endpoint is physically connected; edit a verified open endpoint only.");
+
+            var preexistingConnections = CapturePhysicalConnections(element);
+            var before = SnapshotElement(element);
+            Dictionary<string, object>? after = null;
+            var postCommitVerified = false;
+            var rolledBack = false;
+            var rollbackVerified = false;
+            var failures = new List<string>();
+
+            using (var group = new TransactionGroup(doc, "Edit MEP Curve Endpoint"))
+            {
+                group.Start();
+                try
+                {
+                    using (var tx = new Transaction(doc, "Edit MEP Curve Endpoint"))
+                    {
+                        tx.Start();
+                        location.Curve = edit.endpointIndex == 0
+                            ? Line.CreateBound(target, originalEnd)
+                            : Line.CreateBound(originalStart, target);
+                        doc.Regenerate();
+
+                        VerifyEndpointEdit(element, edit.endpointIndex, target, edit.coordinateToleranceFt, edit.requireEditedEndpointOpen, edit.preserveExistingPhysicalConnections, preexistingConnections);
+                        after = SnapshotElement(element);
+                        tx.Commit();
+                    }
+
+                    var committedElement = doc.GetElement(element.Id)
+                        ?? throw new InvalidOperationException("The edited MEP curve did not survive transaction commit.");
+                    VerifyEndpointEdit(committedElement, edit.endpointIndex, target, edit.coordinateToleranceFt, edit.requireEditedEndpointOpen, edit.preserveExistingPhysicalConnections, preexistingConnections);
+                    postCommitVerified = true;
+
+                    if (shouldApply)
+                    {
+                        group.Assimilate();
+                        rollbackVerified = postCommitVerified;
+                    }
+                    else
+                    {
+                        group.RollBack();
+                        rolledBack = true;
+                        var restored = doc.GetElement(element.Id)
+                            ?? throw new InvalidOperationException("Dry-run rollback did not restore the edited MEP curve.");
+                        VerifyCurveEndpoints(restored, originalStart, originalEnd, edit.coordinateToleranceFt);
+                        if (FindMissingPhysicalConnections(restored, preexistingConnections, Math.Max(edit.coordinateToleranceFt, 0.01)).Count > 0)
+                            throw new InvalidOperationException("Dry-run rollback did not restore all pre-existing physical connections.");
+                        rollbackVerified = true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    failures.Add(ex.Message);
+                    try
+                    {
+                        group.RollBack();
+                        rolledBack = true;
+                        var restored = doc.GetElement(element.Id);
+                        rollbackVerified = restored != null && CurveEndpointsMatch(restored, originalStart, originalEnd, edit.coordinateToleranceFt) &&
+                            FindMissingPhysicalConnections(restored, preexistingConnections, Math.Max(edit.coordinateToleranceFt, 0.01)).Count == 0;
+                    }
+                    catch (Exception rollbackError)
+                    {
+                        failures.Add($"Rollback failed: {rollbackError.Message}");
+                    }
+                }
+            }
+
+            var ok = failures.Count == 0 && rollbackVerified;
+            return new
+            {
+                status = ok ? (shouldApply ? "Edited" : "DryRunReady") : "Blocked",
+                kind = normalizedKind,
+                dryRun = !shouldApply,
+                elementId = edit.elementId,
+                endpointIndex = edit.endpointIndex,
+                expectedEndpoint = ToPoint(expected),
+                targetEndpoint = ToPoint(target),
+                coordinateToleranceFt = edit.coordinateToleranceFt,
+                requireEditedEndpointOpen = edit.requireEditedEndpointOpen,
+                preserveExistingPhysicalConnections = edit.preserveExistingPhysicalConnections,
+                preexistingPhysicalConnections = preexistingConnections.Select(DescribePhysicalConnection).ToList(),
+                before,
+                after,
+                postCommitVerified,
+                transactionGroupRolledBack = rolledBack,
+                rollbackVerified,
+                failures,
+                nextAction = ok && !shouldApply
+                    ? "Apply this exact one-endpoint edit only if the guarded endpoint, retained connections, post-commit proof, and rollback proof are accepted."
+                    : null
+            };
+        }
+
+        private static object HandleDirectionEdit(Document doc, Params p, string normalizedKind, bool shouldApply)
+        {
+            var edit = p.directionEdit ?? throw new InvalidOperationException("directionEdit is required.");
+            if (p.elementIds.Count != 1 || p.elementIds[0] != edit.elementId) throw new ArgumentException("Direction edit requires elementIds to contain exactly directionEdit.elementId.");
+            if (!HasPoint(edit.expectedStartXyz) || !HasPoint(edit.expectedEndXyz)) throw new ArgumentException("directionEdit requires finite expectedStartXyz and expectedEndXyz arrays.");
+            if (edit.coordinateToleranceFt <= 0 || edit.coordinateToleranceFt > 0.25 || double.IsNaN(edit.coordinateToleranceFt) || double.IsInfinity(edit.coordinateToleranceFt)) throw new ArgumentException("directionEdit.coordinateToleranceFt must be greater than zero and no more than 0.25 ft.");
+            var element = ResolveElements(doc, p.elementIds, normalizedKind).Single();
+            if (element.Location is not LocationCurve location || location.Curve is not Line originalLine) throw new InvalidOperationException("Direction edit requires a straight MEP curve.");
+            var originalStart = originalLine.GetEndPoint(0);
+            var originalEnd = originalLine.GetEndPoint(1);
+            var expectedStart = ToXyz(edit.expectedStartXyz!);
+            var expectedEnd = ToXyz(edit.expectedEndXyz!);
+            if (originalStart.DistanceTo(expectedStart) > edit.coordinateToleranceFt || originalEnd.DistanceTo(expectedEnd) > edit.coordinateToleranceFt) throw new InvalidOperationException("Direction edit start/end guard does not match the current curve direction.");
+            var preexistingConnections = CapturePhysicalConnections(element);
+            var before = SnapshotElement(element);
+            Dictionary<string, object>? after = null;
+            var postCommitVerified = false;
+            var rolledBack = false;
+            var rollbackVerified = false;
+            var failures = new List<string>();
+            using (var group = new TransactionGroup(doc, "Reverse MEP Curve Direction"))
+            {
+                group.Start();
+                try
+                {
+                    using (var tx = new Transaction(doc, "Reverse MEP Curve Direction"))
+                    {
+                        tx.Start();
+                        location.Curve = Line.CreateBound(originalEnd, originalStart);
+                        doc.Regenerate();
+                        VerifyDirectionEdit(element, originalEnd, originalStart, edit.coordinateToleranceFt, edit.preserveExistingPhysicalConnections, preexistingConnections);
+                        after = SnapshotElement(element);
+                        tx.Commit();
+                    }
+                    var committedElement = doc.GetElement(element.Id) ?? throw new InvalidOperationException("The reversed MEP curve did not survive transaction commit.");
+                    VerifyDirectionEdit(committedElement, originalEnd, originalStart, edit.coordinateToleranceFt, edit.preserveExistingPhysicalConnections, preexistingConnections);
+                    postCommitVerified = true;
+                    if (shouldApply) { group.Assimilate(); rollbackVerified = true; }
+                    else
+                    {
+                        group.RollBack(); rolledBack = true;
+                        var restored = doc.GetElement(element.Id) ?? throw new InvalidOperationException("Dry-run rollback did not restore the reversed MEP curve.");
+                        VerifyCurveEndpoints(restored, originalStart, originalEnd, edit.coordinateToleranceFt);
+                        if (FindMissingPhysicalConnections(restored, preexistingConnections, Math.Max(edit.coordinateToleranceFt, 0.01)).Count > 0) throw new InvalidOperationException("Dry-run rollback did not restore all pre-existing physical connections.");
+                        rollbackVerified = true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    failures.Add(ex.Message);
+                    try
+                    {
+                        group.RollBack(); rolledBack = true;
+                        var restored = doc.GetElement(element.Id);
+                        rollbackVerified = restored != null && CurveEndpointsMatch(restored, originalStart, originalEnd, edit.coordinateToleranceFt) && FindMissingPhysicalConnections(restored, preexistingConnections, Math.Max(edit.coordinateToleranceFt, 0.01)).Count == 0;
+                    }
+                    catch (Exception rollbackError) { failures.Add($"Rollback failed: {rollbackError.Message}"); }
+                }
+            }
+            var ok = failures.Count == 0 && rollbackVerified;
+            return new
+            {
+                status = ok ? (shouldApply ? "Edited" : "DryRunReady") : "Blocked",
+                kind = normalizedKind,
+                dryRun = !shouldApply,
+                elementId = edit.elementId,
+                directionReversed = ok && shouldApply,
+                expectedStart = ToPoint(expectedStart),
+                expectedEnd = ToPoint(expectedEnd),
+                targetStart = ToPoint(originalEnd),
+                targetEnd = ToPoint(originalStart),
+                coordinateToleranceFt = edit.coordinateToleranceFt,
+                preserveExistingPhysicalConnections = edit.preserveExistingPhysicalConnections,
+                preexistingPhysicalConnections = preexistingConnections.Select(DescribePhysicalConnection).ToList(),
+                before,
+                after,
+                postCommitVerified,
+                transactionGroupRolledBack = rolledBack,
+                rollbackVerified,
+                failures,
+                nextAction = ok && !shouldApply ? "Apply this exact curve-direction reversal only if the unchanged geometry, retained topology, post-commit proof, and rollback proof are accepted." : null
+            };
+        }
+
+        private static void VerifyDirectionEdit(Element element, XYZ expectedStart, XYZ expectedEnd, double toleranceFt, bool preserveConnections, IReadOnlyList<PhysicalConnectionSnapshot> preexistingConnections)
+        {
+            VerifyCurveEndpoints(element, expectedStart, expectedEnd, toleranceFt);
+            if (preserveConnections)
+            {
+                var missing = FindMissingPhysicalConnections(element, preexistingConnections, Math.Max(toleranceFt, 0.01));
+                if (missing.Count > 0) throw new InvalidOperationException($"Direction edit disconnected retained topology: {string.Join("; ", missing)}");
+            }
+        }
+
+        private static void VerifyEndpointEdit(Element element, int endpointIndex, XYZ target, double toleranceFt, bool requireEditedEndpointOpen, bool preserveExistingPhysicalConnections, IReadOnlyList<PhysicalConnectionSnapshot> preexistingConnections)
+        {
+            if (element.Location is not LocationCurve location || location.Curve is not Line line)
+                throw new InvalidOperationException("The edited element is no longer a straight MEP curve.");
+            var actual = line.GetEndPoint(endpointIndex);
+            if (actual.DistanceTo(target) > toleranceFt)
+                throw new InvalidOperationException("The edited curve endpoint does not match the requested target.");
+            var connector = MepRoutingUtil.GetConnectors(element).OrderBy(c => c.Origin.DistanceTo(actual)).FirstOrDefault()
+                ?? throw new InvalidOperationException("The edited endpoint connector could not be re-resolved.");
+            if (connector.Origin.DistanceTo(actual) > Math.Max(toleranceFt, 0.01))
+                throw new InvalidOperationException("The edited endpoint connector does not match the requested target.");
+            if (requireEditedEndpointOpen && PhysicalConnectedOwnerIds(connector).Count > 0)
+                throw new InvalidOperationException("The edited endpoint unexpectedly became physically connected.");
+            if (preserveExistingPhysicalConnections)
+            {
+                var missing = FindMissingPhysicalConnections(element, preexistingConnections, Math.Max(toleranceFt, 0.01));
+                if (missing.Count > 0)
+                    throw new InvalidOperationException($"Endpoint edit disconnected retained topology: {string.Join("; ", missing)}");
+            }
+        }
+
+        private static void VerifyCurveEndpoints(Element element, XYZ expectedStart, XYZ expectedEnd, double toleranceFt)
+        {
+            if (!CurveEndpointsMatch(element, expectedStart, expectedEnd, toleranceFt))
+                throw new InvalidOperationException("MEP curve endpoints do not match the rollback baseline.");
+        }
+
+        private static bool CurveEndpointsMatch(Element element, XYZ expectedStart, XYZ expectedEnd, double toleranceFt)
+        {
+            if (element.Location is not LocationCurve location || location.Curve is not Line line) return false;
+            return line.GetEndPoint(0).DistanceTo(expectedStart) <= toleranceFt && line.GetEndPoint(1).DistanceTo(expectedEnd) <= toleranceFt;
+        }
+
+        private static List<PhysicalConnectionSnapshot> CapturePhysicalConnections(Element owner)
+        {
+            var result = new List<PhysicalConnectionSnapshot>();
+            foreach (var connector in MepRoutingUtil.GetConnectors(owner))
+            {
+                var connectorId = MepSystemUtil.TryGetNativeConnectorId(connector, out var nativeId) ? nativeId : (long?)null;
+                foreach (var connectedOwnerId in PhysicalConnectedOwnerIds(connector))
+                    result.Add(new PhysicalConnectionSnapshot { ConnectorId = connectorId, Origin = connector.Origin, ConnectedOwnerId = connectedOwnerId });
+            }
+            return result;
+        }
+
+        private static List<string> FindMissingPhysicalConnections(Element owner, IEnumerable<PhysicalConnectionSnapshot> expected, double toleranceFt)
+        {
+            var connectors = MepRoutingUtil.GetConnectors(owner);
+            var missing = new List<string>();
+            foreach (var edge in expected)
+            {
+                var connector = edge.ConnectorId.HasValue
+                    ? connectors.FirstOrDefault(candidate => MepSystemUtil.TryGetNativeConnectorId(candidate, out var nativeId) && nativeId == edge.ConnectorId.Value)
+                    : connectors.OrderBy(candidate => candidate.Origin.DistanceTo(edge.Origin)).FirstOrDefault();
+                if (connector == null || connector.Origin.DistanceTo(edge.Origin) > toleranceFt)
+                    connector = connectors.OrderBy(candidate => candidate.Origin.DistanceTo(edge.Origin)).FirstOrDefault();
+                if (connector == null || connector.Origin.DistanceTo(edge.Origin) > toleranceFt || !PhysicalConnectedOwnerIds(connector).Contains(edge.ConnectedOwnerId))
+                    missing.Add($"connector {edge.ConnectorId?.ToString() ?? "origin_guard"} -> owner {edge.ConnectedOwnerId}");
+            }
+            return missing;
+        }
+
+        private static List<long> PhysicalConnectedOwnerIds(Connector connector)
+        {
+            var result = new HashSet<long>();
+            try
+            {
+                foreach (Connector reference in connector.AllRefs)
+                {
+                    var owner = reference?.Owner;
+                    if (owner == null || owner is MEPSystem || owner.Id == connector.Owner?.Id) continue;
+                    result.Add(ElementIdCompat.GetValue(owner.Id));
+                }
+            }
+            catch { }
+            return result.OrderBy(id => id).ToList();
+        }
+
+        private static object DescribePhysicalConnection(PhysicalConnectionSnapshot edge) => new { connectorId = edge.ConnectorId, origin = ToPoint(edge.Origin), connectedOwnerId = edge.ConnectedOwnerId };
+
+        private static bool HasPoint(double[]? point) => point != null && point.Length == 3 && point.All(value => !double.IsNaN(value) && !double.IsInfinity(value));
+
+        private static XYZ ToXyz(double[] point) => new XYZ(point[0], point[1], point[2]);
+
+        private static double[] ToPoint(XYZ point) => new[] { point.X, point.Y, point.Z };
+
+        private static void GuardExpectedModelPath(Document doc, string? expectedModelPath)
+        {
+            if (string.IsNullOrWhiteSpace(expectedModelPath)) return;
+            var actual = string.IsNullOrWhiteSpace(doc.PathName) ? "" : Path.GetFullPath(doc.PathName);
+            var expected = Path.GetFullPath(expectedModelPath.Trim());
+            if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Active model path '{actual}' does not match expectedModelPath '{expected}'.");
         }
     }
 }

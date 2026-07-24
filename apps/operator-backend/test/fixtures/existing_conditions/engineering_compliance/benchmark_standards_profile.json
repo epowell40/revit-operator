@@ -1,0 +1,61 @@
+{
+  "profile_id": "bimtools-transferable-engineering-baseline-v1",
+  "profile_revision": "1",
+  "jurisdiction": "BIMTools benchmark baseline - not a permit-jurisdiction adoption",
+  "authority_having_jurisdiction": "BIMTools benchmark evaluator",
+  "code_family": "NFPA 70 and International Plumbing Code benchmark baseline",
+  "edition": "NFPA 70-2020 and IPC-2024",
+  "effective_date": "2026-07-13",
+  "occupancy_or_use_classification": "dwelling-unit GFCI/wall-space cases, non-dwelling general-use receptacle loading, and conventional plumbing-fixture cases",
+  "local_amendments": [],
+  "project_criteria": [],
+  "conflict_precedence": [
+    "case-specific project criteria",
+    "declared local amendments",
+    "declared adopted-code rule"
+  ],
+  "sources": [
+    {
+      "authority": "NFPA",
+      "title": "NFPA 70 National Electrical Code public access",
+      "edition": "2020",
+      "section": "210.8(A)(7)",
+      "url": "https://link.nfpa.org/all-publications/70/2020",
+      "sha256": "2a9043f36534f1ca7d774d24920f45d7be46041fc1946341ac33deded0c84227"
+    },
+    {
+      "authority": "NFPA",
+      "title": "NFPA 70 code-development record",
+      "edition": "2026 development cycle",
+      "section": "210.52(A)",
+      "url": "https://docinfofiles.nfpa.org/files/AboutTheCodes/70/70_A2025_NEC_P02_SD_PrelimSR.pdf",
+      "sha256": "fb437581c8f44b21c84952ca725eda35bbdb36bf00b8da4444cb93d20bd66c42"
+    },
+    {
+      "authority": "NFPA",
+      "title": "NFPA 70 second-revision statements",
+      "edition": "2023 development cycle",
+      "section": "220.14(I)",
+      "url": "https://www.nfpa.org/api/files?path=%2Ffiles%2FAboutTheCodes%2F70%2F70_A2022_NEC_P02_SD_SRStatements.pdf",
+      "sha256": "b6dd4874948020971838a5b28933b5f53a09b505a1326283c6d06bac9979caaf"
+    },
+    {
+      "authority": "ICC",
+      "title": "2024 International Plumbing Code Chapter 3",
+      "edition": "2024",
+      "section": "301.3 and 301.4",
+      "url": "https://codes.iccsafe.org/content/IPC2024P1/chapter-3-general-regulations",
+      "sha256": "e296a8e9b45ba9935a2d61d7374f9d203718db427f63e87cbcfa94f7e4baa2c6"
+    },
+    {
+      "authority": "ICC",
+      "title": "2024 International Plumbing Code Chapter 9",
+      "edition": "2024",
+      "section": "901",
+      "url": "https://codes.iccsafe.org/content/IPC2024P1/chapter-9-vents",
+      "sha256": "95e5a5fe4a68fdb2aa5ea43011444e2096c56e0ec09dec16713e9520ed006f09"
+    }
+  ],
+  "benchmark_only": true,
+  "benchmark_note": "Thresholds are frozen for transferable regression testing. A real project must substitute its adopted edition, AHJ amendments, and project criteria before any compliance claim."
+}

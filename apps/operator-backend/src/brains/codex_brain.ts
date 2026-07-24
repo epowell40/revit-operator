@@ -32,6 +32,68 @@ export type StreamCallbacks = {
 
 let client: CodexAppServer | null = null;
 const lastPermissionSignatureBySession = new Map<string, string>();
+const activeCodexTurnAborts = new Map<string, AbortController>();
+
+function clipPromptBlock(value: string, maxChars: number): string {
+  return value.length <= maxChars ? value : `${value.slice(0, maxChars)}\n…(truncated)`;
+}
+
+export function formatCodexRequestEnvelope(req: ChatRequest): string {
+  const blocks: string[] = [];
+  if (req.context !== undefined) {
+    try {
+      blocks.push(
+        `CURRENT REVIT/SERVER CONTEXT:\n${clipPromptBlock(JSON.stringify(req.context, null, 2), 20_000)}`
+      );
+    } catch {
+      blocks.push("CURRENT REVIT/SERVER CONTEXT:\n(not serializable)");
+    }
+  }
+
+  if (Array.isArray(req.user_attachments) && req.user_attachments.length > 0) {
+    const attachments = req.user_attachments.map(attachment => ({
+      id: attachment.id,
+      relative_path: attachment.relative_path,
+      filename: attachment.filename,
+      mime: attachment.mime,
+      bytes: attachment.bytes,
+      sha256: attachment.sha256
+    }));
+    blocks.push(
+      `USER ATTACHMENTS (paths are relative to the Operator Workspace; inspect these exact files when visual evidence is required):\n${clipPromptBlock(JSON.stringify(attachments, null, 2), 8_000)}`
+    );
+  }
+  return blocks.join("\n\n");
+}
+
+function codexTurnAbortKey(sessionId: string, messageId: string): string {
+  return `${sessionId.trim()}:${messageId.trim()}`;
+}
+
+export function cancelCodexBrainTurn(sessionId: string, messageId: string): boolean {
+  const key = codexTurnAbortKey(sessionId, messageId);
+  const controller = activeCodexTurnAborts.get(key);
+  if (!controller) return false;
+  controller.abort();
+  return true;
+}
+
+export function __testOnlyTrackCodexBrainTurnAbort(
+  sessionId: string,
+  messageId: string
+): { signal: AbortSignal; cleanup: () => void } {
+  const key = codexTurnAbortKey(sessionId, messageId);
+  const controller = new AbortController();
+  activeCodexTurnAborts.set(key, controller);
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      if (activeCodexTurnAborts.get(key) === controller) {
+        activeCodexTurnAborts.delete(key);
+      }
+    }
+  };
+}
 
 function getWorkspaceRoot(): string {
   return ensureWorkspaceLayout().root;
@@ -71,7 +133,7 @@ function codexTurnTimeoutMs(): number {
   return Math.max(60_000, Math.min(30 * 60_000, raw));
 }
 
-function baseInstructions(): string {
+export function getOperatorAgentBaseInstructions(): string {
   let environmentSummary = "";
   try {
     environmentSummary = formatEnvironmentSummaryForPrompt();
@@ -98,6 +160,7 @@ function baseInstructions(): string {
     "When performing spatial Revit tasks, think like a drafter using feedback. Place a reasonable first attempt using available context, then verify and correct. Do not require perfect spatial certainty before acting unless the action is destructive. Use nearby elements, room boundaries, wall vectors, view coordinates, and screenshots/captures to converge.",
     "Capability-aware routing: inspect `/revit/native-capabilities` or `/revit/capabilities` before planning if availability is unclear. Prefer native Revit API operations and captures; use sidecar/desktop automation only for capabilities reported as available or when native APIs cannot reach the target.",
     "Treat `/revit/export-visible-elements` as the default bridge from raster evidence to model context: it returns image-space anchor/bbox coordinates, host/room/space associations, orientation vectors, and a raster-consistent affine frame for supported 2D views.",
+    "Existing-conditions registration must not require rooms, spaces, room tags, or matching room names. Treat them as useful but potentially absent or stale. When the record plan and current model differ, prefer common stable geometry in this order: exterior envelope/corners, stairs and elevators, shafts, grids and columns, then persistent interior geometry. Record accepted and rejected controls plus transform residuals. Do not use changed interior partitions or a name match as the only registration basis; preserve supported relative geometry as provisional and iterate when exact registration remains unresolved.",
     "After one successful broad inventory export, avoid repeating it in a loop. Reuse the returned `frameId`, sampled inventory, and mapping to continue with targeted cluster/pick/context tools.",
     "For wall-hosted or same-room placements, prefer host-aware/exemplar-driven workflows over generic XYZ placement. Resolve the room wall, inspect nearby same-room exemplars, project to host-local chainage when needed, then place/adjust on the resolved host.",
     "For raw Revit API exploration, use `revit_native_api_search` / `revit_native_api_catalog` first, then call via `revit_native_api_call` only when no normal /revit/* primitive exists.",
@@ -118,6 +181,7 @@ function baseInstructions(): string {
     "MEP redline intent rule: a PDF annotation such as `12x10 supply duct` labels the requested duct to create/route unless the redline or model evidence clearly identifies an editable existing duct to resize. If no editable HVAC duct exists at the mark and the visible target is linked plumbing, do not ask to edit the plumbing link; draft a bounded HVAC duct route in the active HVAC model using `/revit/mep-route-workflow` or `/revit/create-duct` dryRun first.",
     "For vague semantic MEP requests such as extending piping from a main to a sink or routing ductwork to diffusers, call `/tools/mep/semantic-route-plan` first and follow its read-only discovery actions or guarded dry-run action before any model write. For MEP redline routing, prefer `revit_call_tool` for `/revit/mep-route-workflow`, which enforces resolve context -> dry-run -> optional apply -> focused post-change visual capture. A single line is two ordered points; bends are one ordered point list. Use apply=false first when uncertain, then apply=true with visualVerify=true once bounded. If size/elevation is missing, use conservative defaults with explicit warnings (8x8 duct, 1 inch pipe, resolved routing elevation) and ask follow-up questions after producing the bounded dry-run, not before. Internal route bends attempt Revit elbow fittings and return fitting ids; differing segmentSizes or branchSegmentSizes plan transition fittings for reducers. For editing existing explicit duct/pipe curve ids, use `/revit/edit-mep-route-elements` dryRun first for whole-element size or simple level-straight elevation edits; it blocks connected elevation moves unless allowConnectedElevationMove:true and returns before/after size, curve, connector, network-audit, and optional focused capture evidence. If the requested edit changes size part way down one straight curve, use `/revit/reroute-mep-route-segment` size-transition mode with transitionNormalized or transitionChainageFt plus explicit upstream/downstream sizes, and require a transition fitting in connectionAttempts before completion. If the requested edit offsets a middle section of one straight curve, use `/revit/reroute-mep-route-segment` offset mode; set offsetMode:\"dogleg45\" when diagonal 45-degree legs are required. Connected endpoints on `/revit/reroute-mep-route-segment` are blocked by default; only set preserveConnectedEndpoints:true after dry-run reports a concrete endpointReconnectionPlan, then require endpoint reconnection attempts plus connector/network audit before completion. For branch/tee/tap requests, dry-run `/revit/connect-mep-branch` for one branch or `/revit/mep-branch-network-workflow` for a main route plus multiple branches. Apply is supported for existing open connector branches, straight duct tap/takeoff at a projected non-connector point, pipe tap/takeoff only when dry-run tapApplyPrecheck confirms an explicit takeoff/tap routing preference, straight duct/pipe split tee cases, branch-level reducer transitions via branchSegmentSizes, explicit duct/pipe accessory insertion on created main or branch segments when a compatible familyPath/family/type and chainage/point preconditions pass, and explicit target-id duct/pipe accessory delete/type_change with compatible loaded types. When the user names a tap/takeoff family or type, pass takeoffFamilyName/takeoffTypeName, inspect selected.takeoffRoutingPreference and tapApplyPrecheck on dry-run, and require connectionAttempts[*].fitting to match on apply. Do not claim completion unless connector/fitting/accessory verification passes and post-change capture is reviewed.",
     "MEP mutation flag rule: `/revit/edit-mep-route-elements` and `/revit/reroute-mep-route-segment` require a canonical pair. Preview with `apply:false,dryRun:true`; write with `apply:true,dryRun:false`. Never omit either flag or send equal values.",
+    "For exact connector-identity disconnect/reconnect/reshape work, use `revit_dry_run_repair_mep_connectors` for rollback-only trials and reserve the apply-capable `revit_repair_mep_connectors` for an explicitly authorized staged commit. Connector-pair entries use exact keys `a` and `b`, each containing `elementId`, `connectorId`, and optional `expectedOriginXyz`. Do not invent generic `mode`, `pairs`, or `origin` keys: the typed tools expose `disconnectOnlyPairs`, `connectOpenPair`, `disconnectPairs`, and `repair` directly and enforce exactly one operation mode.",
     "Do not use `/revit/create-similar-from-instance` or wall-hosted family placement for duct/pipe redlines. Those tools are for hosted family instances such as receptacles/devices, not MEP curve geometry.",
     "Redline visual gate rule: after any redline-driven model or annotation write, completion requires a passing visual verification gate. If the write workflow did not return `verification.visual_gate.status=pass`, call `/tools/redline/verify-visual` with the original redline path, before capture, post-change highlighted capture, visible-element inventory/readback, intended action JSON, and observed location/points. If the gate returns `fail` or `uncertain`, correct the work or report the blocker; do not claim completion.",
     "Do not try to verify in parallel with a write. Apply first, then verify with a follow-up capture after a regenerate/refresh.",
@@ -201,7 +265,7 @@ function formatToolResultsForCodex(toolResults: ToolResult[] | undefined): strin
 }
 
 export function getCodexBaseInstructionsForTest(): string {
-  return baseInstructions();
+  return getOperatorAgentBaseInstructions();
 }
 
 export function formatToolResultsForCodexForTest(toolResults: ToolResult[] | undefined): string {
@@ -326,7 +390,7 @@ async function getOrCreateThreadId(sessionId: string): Promise<string> {
     sandbox: "workspace-write",
     approvalPolicy: "never",
     model: getDefaultModel(),
-    baseInstructions: baseInstructions(),
+    baseInstructions: getOperatorAgentBaseInstructions(),
     developerInstructions: developerInstructions(),
     experimentalRawEvents: false
   })) as any;
@@ -440,6 +504,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
                 else blocks.push(perms.summary);
               }
             } catch {}
+            const requestEnvelope = formatCodexRequestEnvelope(req);
+            if (requestEnvelope) blocks.push(requestEnvelope);
             if (text.trim()) blocks.push(`USER:\n${text}`);
             const tr = formatToolResultsForCodex(req.tool_results as any);
             if (tr) blocks.push(tr);
@@ -623,18 +689,41 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     }
   });
 
+  const activeTurnAbort = new AbortController();
+  const activeTurnKey = codexTurnAbortKey(req.session_id, req.message_id);
+  const priorActiveTurn = activeCodexTurnAborts.get(activeTurnKey);
+  if (priorActiveTurn) priorActiveTurn.abort();
+  activeCodexTurnAborts.set(activeTurnKey, activeTurnAbort);
+  const forwardExternalAbort = () => activeTurnAbort.abort();
+  cb.abortSignal?.addEventListener("abort", forwardExternalAbort, { once: true });
+  let turnCancelled = false;
   try {
     await withTransportRetry(() =>
       c.waitForTurnCompleted({
         threadId,
         turnId,
         timeoutMs: codexTurnTimeoutMs(),
-        abortSignal: cb.abortSignal
+        abortSignal: activeTurnAbort.signal
       })
     );
+  } catch (error) {
+    if (!activeTurnAbort.signal.aborted) throw error;
+    turnCancelled = true;
   } finally {
     unsubscribe();
+    cb.abortSignal?.removeEventListener("abort", forwardExternalAbort);
+    if (activeCodexTurnAborts.get(activeTurnKey) === activeTurnAbort) {
+      activeCodexTurnAborts.delete(activeTurnKey);
+    }
     endRequirementsPlanningLease(requirementsLease);
+  }
+
+  if (turnCancelled) {
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message: "",
+      actions: []
+    };
   }
 
   cb.onDone?.(assistantText);

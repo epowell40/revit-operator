@@ -68,8 +68,10 @@ namespace RevitBridge.Logic.Handlers.MEP
             public long ownerId { get; set; }
             public string ownerCategory { get; set; } = "";
             public string? systemName { get; set; }
+            public string? systemClassification { get; set; }
             public Connector connector { get; set; } = null!;
             public XYZ origin { get; set; } = XYZ.Zero;
+            public XYZ direction { get; set; } = XYZ.Zero;
             public ConnectorProfileType shape { get; set; }
             public double? diameterFt { get; set; }
             public double? widthFt { get; set; }
@@ -79,10 +81,19 @@ namespace RevitBridge.Logic.Handlers.MEP
         internal sealed class ContinuityRepairResult
         {
             public bool requested { get; set; }
+            public bool dryRun { get; set; }
+            public bool transactionGroupRolledBack { get; set; }
+            public bool transactionRolledBack { get; set; }
+            public bool rollbackVerified { get; set; }
             public int attempts { get; set; }
             public int repairedCount { get; set; }
             public List<long> createdSegmentIds { get; set; } = new List<long>();
+            public bool createdSegmentIdsAreTransient { get; set; }
+            public List<string> beforeConnectorFingerprint { get; set; } = new List<string>();
+            public List<string> afterConnectorFingerprint { get; set; } = new List<string>();
+            public List<string> finalConnectorFingerprint { get; set; } = new List<string>();
             public List<object> details { get; set; } = new List<object>();
+            public List<CapturedFailure> nativeFailures { get; set; } = new List<CapturedFailure>();
         }
 
         internal sealed class ContinuityAuditResult
@@ -332,12 +343,23 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (continuityScopeIds.Count == 0) continuityScopeIds = scopedIds;
             var continuityRepair = new ContinuityRepairResult
             {
-                requested = p.repairContinuity && !p.dryRun,
+                requested = p.repairContinuity,
+                dryRun = p.dryRun,
                 attempts = 0,
                 repairedCount = 0
             };
 
-            if (!p.dryRun && p.repairContinuity && continuityMaxRepairs > 0 && ductChangedCount > 0)
+            if (p.dryRun && p.repairContinuity && continuityMaxRepairs > 0 && continuityScopeIds.Count > 0)
+            {
+                continuityRepair = DryRunContinuityRepair(
+                    doc,
+                    continuityScopeIds,
+                    targetSizeFt,
+                    continuityMaxGapFt,
+                    continuityMaxRepairs,
+                    warnings);
+            }
+            else if (!p.dryRun && p.repairContinuity && continuityMaxRepairs > 0 && continuityScopeIds.Count > 0)
             {
                 continuityRepair = ApplyContinuityRepair(
                     doc,
@@ -418,7 +440,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 warnings.Add($"Post-condition failed: {postCondition.unresolvedCount} fitting/terminal elements are not at target size.");
             }
 
-            var requiresContinuityPostCondition = !p.dryRun && ductChangedCount > 0;
+            var requiresContinuityPostCondition = !p.dryRun && p.repairContinuity;
             var continuityPostConditionOk = !requiresContinuityPostCondition || (continuityAudit.ok && createdSegmentAudit.isolatedCount == 0 && createdSegmentAudit.systemMismatchCount == 0);
             if (!continuityPostConditionOk)
             {
@@ -744,57 +766,33 @@ namespace RevitBridge.Logic.Handlers.MEP
             using (var t = new Transaction(doc, "Repair Duct Continuity"))
             {
                 t.Start();
-                WarningSuppressionUtil.SuppressWarnings(t);
+                t.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(
+                    t,
+                    result.nativeFailures,
+                    rollbackOnErrors: true,
+                    deleteWarnings: false));
 
                 try
                 {
-                    for (var attempt = 1; attempt <= maxRepairs; attempt++)
+                    RunContinuityRepairAttempts(
+                        doc,
+                        touchedIds,
+                        targetSizeFt,
+                        maxGapFt,
+                        maxRepairs,
+                        blockedPairKeys,
+                        result);
+
+                    if (result.repairedCount > 0)
                     {
-                        var open = CollectOpenConnectors(doc, touchedIds, includeTerminals: false)
-                            .Where(x => x.shape == ConnectorProfileType.Round)
-                            .ToList();
-                        if (open.Count < 2) break;
-
-                        var pair = FindBestRepairPair(open, maxGapFt, blockedPairKeys, out var pairKey, out var distanceFt);
-                        if (pair == null || pairKey == null) break;
-
-                        result.attempts++;
-                        var repaired = TryRepairConnectorPair(
-                            doc,
-                            pair.Item1,
-                            pair.Item2,
-                            targetSizeFt,
-                            out var createdSegmentId,
-                            out var mode,
-                            out var detailMessage);
-
-                        if (repaired)
-                        {
-                            result.repairedCount++;
-                            if (createdSegmentId > 0) result.createdSegmentIds.Add(createdSegmentId);
-                        }
-                        else
-                        {
-                            blockedPairKeys.Add(pairKey);
-                        }
-
-                        result.details.Add(new
-                        {
-                            attempt,
-                            repaired,
-                            mode,
-                            distanceFt,
-                            fromElementId = pair.Item1.ownerId,
-                            toElementId = pair.Item2.ownerId,
-                            createdSegmentId = createdSegmentId > 0 ? (long?)createdSegmentId : null,
-                            message = detailMessage
-                        });
-
-                        try { doc.Regenerate(); } catch { }
+                        var status = t.Commit();
+                        if (status != TransactionStatus.Committed)
+                            warnings.Add($"continuity repair transaction was not committed: {status}");
                     }
-
-                    if (result.repairedCount > 0) t.Commit();
-                    else t.RollBack();
+                    else
+                    {
+                        t.RollBack();
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -804,6 +802,167 @@ namespace RevitBridge.Logic.Handlers.MEP
             }
 
             return result;
+        }
+
+        internal static ContinuityRepairResult DryRunContinuityRepair(
+            Document doc,
+            IEnumerable<long> scopedIds,
+            double targetSizeFt,
+            double maxGapFt,
+            int maxRepairs,
+            List<string> warnings)
+        {
+            var ids = (scopedIds ?? Enumerable.Empty<long>())
+                .Where(id => id > 0)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToList();
+            var before = SnapshotContinuityConnectorFingerprint(doc, ids);
+            var result = new ContinuityRepairResult
+            {
+                requested = true,
+                dryRun = true,
+                beforeConnectorFingerprint = before
+            };
+            using (var transaction = new Transaction(doc, "Dry Run Duct Continuity Repair"))
+            {
+                transaction.Start();
+                transaction.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(
+                    transaction,
+                    result.nativeFailures,
+                    rollbackOnErrors: true,
+                    deleteWarnings: false));
+                try
+                {
+                    RunContinuityRepairAttempts(
+                        doc,
+                        new HashSet<long>(ids),
+                        targetSizeFt,
+                        maxGapFt,
+                        maxRepairs,
+                        new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                        result);
+                    result.afterConnectorFingerprint = SnapshotContinuityConnectorFingerprint(doc, ids);
+                    result.createdSegmentIdsAreTransient = result.createdSegmentIds.Count > 0;
+                    transaction.RollBack();
+                    result.transactionRolledBack = true;
+                }
+                catch (Exception ex)
+                {
+                    try
+                    {
+                        if (transaction.GetStatus() == TransactionStatus.Started)
+                        {
+                            transaction.RollBack();
+                            result.transactionRolledBack = true;
+                        }
+                    }
+                    catch { }
+                    warnings.Add($"continuity dry-run failed: {ex.Message}");
+                }
+            }
+            result.finalConnectorFingerprint = SnapshotContinuityConnectorFingerprint(doc, ids);
+            result.rollbackVerified = result.transactionRolledBack &&
+                result.beforeConnectorFingerprint.SequenceEqual(result.finalConnectorFingerprint);
+            if (!result.rollbackVerified)
+                warnings.Add("continuity dry-run rollback did not restore the exact connector fingerprint.");
+            return result;
+        }
+
+        private static void RunContinuityRepairAttempts(
+            Document doc,
+            HashSet<long> touchedIds,
+            double targetSizeFt,
+            double maxGapFt,
+            int maxRepairs,
+            HashSet<string> blockedPairKeys,
+            ContinuityRepairResult result)
+        {
+            for (var attempt = 1; attempt <= maxRepairs; attempt++)
+            {
+                var open = CollectOpenConnectors(doc, touchedIds, includeTerminals: false)
+                    .Where(x => IsSupportedDuctConnectorShape(x.shape))
+                    .ToList();
+                if (open.Count < 2) break;
+
+                var pair = FindBestRepairPair(open, maxGapFt, blockedPairKeys, out var pairKey, out var distanceFt);
+                if (pair == null || pairKey == null) break;
+
+                result.attempts++;
+                var repaired = TryRepairConnectorPair(
+                    doc,
+                    pair.Item1,
+                    pair.Item2,
+                    targetSizeFt,
+                    out var createdSegmentIds,
+                    out var mode,
+                    out var detailMessage);
+
+                if (repaired)
+                {
+                    result.repairedCount++;
+                    result.createdSegmentIds.AddRange(createdSegmentIds.Where(id => id > 0));
+                }
+                else
+                {
+                    blockedPairKeys.Add(pairKey);
+                }
+
+                result.details.Add(new
+                {
+                    attempt,
+                    repaired,
+                    mode,
+                    distanceFt,
+                    fromElementId = pair.Item1.ownerId,
+                    toElementId = pair.Item2.ownerId,
+                    createdSegmentIds,
+                    message = detailMessage
+                });
+
+                try { doc.Regenerate(); } catch { }
+            }
+        }
+
+        private static List<string> SnapshotContinuityConnectorFingerprint(
+            Document doc,
+            IEnumerable<long> elementIds)
+        {
+            var result = new List<string>();
+            foreach (var elementId in (elementIds ?? Enumerable.Empty<long>())
+                .Where(id => id > 0)
+                .Distinct()
+                .OrderBy(id => id))
+            {
+                var element = doc.GetElement(ElementIdCompat.Create(elementId));
+                if (element == null)
+                {
+                    result.Add($"{elementId}|missing");
+                    continue;
+                }
+                foreach (var connector in MepSystemUtil.GetConnectors(element))
+                {
+                    if (connector == null) continue;
+                    var connectorId = MepSystemUtil.TryGetNativeConnectorId(connector, out var nativeId)
+                        ? $"native:{nativeId}"
+                        : $"origin:{PointFingerprint(connector.Origin)}";
+                    var owners = new HashSet<long>();
+                    try
+                    {
+                        foreach (Connector reference in connector.AllRefs)
+                        {
+                            var owner = reference?.Owner;
+                            if (owner == null || owner is MEPSystem || owner.Id == connector.Owner?.Id) continue;
+                            owners.Add(ElementIdCompat.GetValue(owner.Id));
+                        }
+                    }
+                    catch { }
+                    result.Add(
+                        $"{elementId}/{connectorId}@{PointFingerprint(connector.Origin)}=>" +
+                        string.Join(",", owners.OrderBy(id => id)));
+                }
+            }
+            return result.OrderBy(value => value, StringComparer.Ordinal).ToList();
         }
 
         private static Tuple<OpenConnectorInfo, OpenConnectorInfo>? FindBestRepairPair(
@@ -818,7 +977,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (open == null || open.Count < 2) return null;
 
             Tuple<OpenConnectorInfo, OpenConnectorInfo>? best = null;
-            var diameterTolFt = 1.0 / 12.0; // 1 inch
+            var sizeTolFt = 1.0 / 12.0; // 1 inch
             var gapFt = maxGapFt > 0 ? maxGapFt : 1.5;
 
             for (var i = 0; i < open.Count - 1; i++)
@@ -828,25 +987,16 @@ namespace RevitBridge.Logic.Handlers.MEP
                 {
                     var b = open[j];
                     if (a.ownerId == b.ownerId) continue;
-                    if (a.shape != ConnectorProfileType.Round || b.shape != ConnectorProfileType.Round) continue;
+                    if (!AreConnectorProfilesCompatible(a, b, sizeTolFt)) continue;
 
                     var thisKey = BuildConnectorPairKey(a, b);
                     if (blockedPairKeys.Contains(thisKey)) continue;
 
-                    if (!string.IsNullOrWhiteSpace(a.systemName) &&
-                        !string.IsNullOrWhiteSpace(b.systemName) &&
-                        !MepSystemUtil.SystemNameMatches(a.systemName, b.systemName))
-                    {
-                        continue;
-                    }
-
-                    if (a.diameterFt.HasValue && b.diameterFt.HasValue)
-                    {
-                        if (Math.Abs(a.diameterFt.Value - b.diameterFt.Value) > diameterTolFt) continue;
-                    }
+                    if (!AreDuctSystemsCompatible(a, b)) continue;
 
                     var d = a.origin.DistanceTo(b.origin);
                     if (d <= 1e-6 || d > gapFt) continue;
+                    if (ClassifyRepairRoute(a, b, out _) == ContinuityRouteKind.None) continue;
                     if (d >= distanceFt) continue;
 
                     distanceFt = d;
@@ -863,11 +1013,11 @@ namespace RevitBridge.Logic.Handlers.MEP
             OpenConnectorInfo a,
             OpenConnectorInfo b,
             double targetSizeFt,
-            out long createdSegmentId,
+            out List<long> createdSegmentIds,
             out string mode,
             out string detail)
         {
-            createdSegmentId = 0;
+            createdSegmentIds = new List<long>();
             mode = "none";
             detail = "";
             if (doc == null) return false;
@@ -885,6 +1035,14 @@ namespace RevitBridge.Logic.Handlers.MEP
                         detail = "Connected nearby open connectors directly.";
                         st.Commit();
                         return true;
+                    }
+
+                    var routeKind = ClassifyRepairRoute(a, b, out var corner);
+                    if (routeKind == ContinuityRouteKind.None)
+                    {
+                        detail = "Open connector directions do not define a source-safe facing or orthogonal route.";
+                        st.RollBack();
+                        return false;
                     }
 
                     var systemTypeId = ResolveSystemTypeId(doc, a, b);
@@ -909,46 +1067,102 @@ namespace RevitBridge.Logic.Handlers.MEP
                         return false;
                     }
 
-                    var bridge = Duct.Create(doc, systemTypeId, ductTypeId, levelId, a.origin, b.origin);
-                    if (bridge == null)
+                    if (routeKind == ContinuityRouteKind.Direct)
                     {
-                        detail = "Duct.Create returned null.";
-                        st.RollBack();
-                        return false;
+                        var bridge = CreateProfiledBridge(
+                            doc,
+                            systemTypeId,
+                            ductTypeId,
+                            levelId,
+                            a.origin,
+                            b.origin,
+                            a,
+                            b,
+                            targetSizeFt,
+                            out var profileError);
+                        if (bridge == null)
+                        {
+                            detail = profileError;
+                            st.RollBack();
+                            return false;
+                        }
+
+                        try { doc.Regenerate(); } catch { }
+                        if (!TryResolveBridgeEnds(bridge, a.origin, b.origin, out var nearA, out var nearB))
+                        {
+                            detail = "Could not resolve bridge end connectors.";
+                            st.RollBack();
+                            return false;
+                        }
+
+                        nearA.ConnectTo(a.connector);
+                        nearB.ConnectTo(b.connector);
+                        createdSegmentIds.Add(ElementIdCompat.GetValue(bridge.Id));
+                        mode = "bridgeSegment";
+                        detail = "Inserted a direction-validated bridge duct between facing open connectors.";
+                    }
+                    else
+                    {
+                        var first = CreateProfiledBridge(
+                            doc,
+                            systemTypeId,
+                            ductTypeId,
+                            levelId,
+                            a.origin,
+                            corner,
+                            a,
+                            b,
+                            targetSizeFt,
+                            out var firstError);
+                        if (first == null)
+                        {
+                            detail = firstError;
+                            st.RollBack();
+                            return false;
+                        }
+                        var second = CreateProfiledBridge(
+                            doc,
+                            systemTypeId,
+                            ductTypeId,
+                            levelId,
+                            b.origin,
+                            corner,
+                            a,
+                            b,
+                            targetSizeFt,
+                            out var secondError);
+                        if (second == null)
+                        {
+                            detail = secondError;
+                            st.RollBack();
+                            return false;
+                        }
+
+                        try { doc.Regenerate(); } catch { }
+                        if (!TryResolveBridgeEnds(first, a.origin, corner, out var firstOuter, out var firstCorner) ||
+                            !TryResolveBridgeEnds(second, b.origin, corner, out var secondOuter, out var secondCorner))
+                        {
+                            detail = "Could not resolve orthogonal bridge connectors.";
+                            st.RollBack();
+                            return false;
+                        }
+
+                        firstOuter.ConnectTo(a.connector);
+                        secondOuter.ConnectTo(b.connector);
+                        var elbow = doc.Create.NewElbowFitting(firstCorner, secondCorner);
+                        if (elbow == null)
+                        {
+                            detail = "Revit did not create the orthogonal bridge elbow.";
+                            st.RollBack();
+                            return false;
+                        }
+
+                        createdSegmentIds.Add(ElementIdCompat.GetValue(first.Id));
+                        createdSegmentIds.Add(ElementIdCompat.GetValue(second.Id));
+                        mode = "orthogonalBridge";
+                        detail = "Inserted two profile-matched duct segments and a native elbow between orthogonal open connectors.";
                     }
 
-                    var desiredDiameter = a.diameterFt ?? b.diameterFt ?? targetSizeFt;
-                    var pDia = bridge.get_Parameter(BuiltInParameter.RBS_CURVE_DIAMETER_PARAM);
-                    if (pDia != null && !pDia.IsReadOnly && pDia.StorageType == StorageType.Double && desiredDiameter > 0)
-                    {
-                        pDia.Set(desiredDiameter);
-                    }
-
-                    try { doc.Regenerate(); } catch { }
-
-                    var bridgeConns = MepSystemUtil.GetConnectors(bridge).ToList();
-                    if (bridgeConns.Count < 2)
-                    {
-                        detail = "Bridge duct has insufficient connectors.";
-                        st.RollBack();
-                        return false;
-                    }
-
-                    var nearA = bridgeConns.OrderBy(c => c.Origin.DistanceTo(a.origin)).FirstOrDefault();
-                    var nearB = bridgeConns.OrderBy(c => c.Origin.DistanceTo(b.origin)).FirstOrDefault();
-                    if (nearA == null || nearB == null || nearA == nearB)
-                    {
-                        detail = "Could not resolve bridge end connectors.";
-                        st.RollBack();
-                        return false;
-                    }
-
-                    nearA.ConnectTo(a.connector);
-                    nearB.ConnectTo(b.connector);
-
-                    createdSegmentId = RevitBridge.Common.ElementIdCompat.GetValue(bridge.Id);
-                    mode = "bridgeSegment";
-                    detail = "Inserted bridge duct between open connectors.";
                     st.Commit();
                     return true;
                 }
@@ -985,8 +1199,10 @@ namespace RevitBridge.Logic.Handlers.MEP
                             ownerId = RevitBridge.Common.ElementIdCompat.GetValue(e.Id),
                             ownerCategory = SelectionUtil.GetCategoryToken(e) ?? (e.Category?.Name ?? ""),
                             systemName = MepSystemUtil.TryGetSystemName(e),
+                            systemClassification = TryGetDuctSystemClassification(c),
                             connector = c,
                             origin = c.Origin,
+                            direction = TryGetConnectorDirection(c),
                             shape = c.Shape
                         };
 
@@ -994,7 +1210,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                         {
                             info.diameterFt = 2.0 * c.Radius;
                         }
-                        else if (c.Shape == ConnectorProfileType.Rectangular)
+                        else if (c.Shape == ConnectorProfileType.Rectangular ||
+                                 c.Shape == ConnectorProfileType.Oval)
                         {
                             info.widthFt = c.Width;
                             info.heightFt = c.Height;
@@ -1039,6 +1256,12 @@ namespace RevitBridge.Logic.Handlers.MEP
                     if (other == null) continue;
                     if (other.Id == null) continue;
                     if (other.Id.IntegerValue == owner.Id.IntegerValue) continue;
+                    // Revit exposes logical HVAC-system membership through
+                    // Connector.AllRefs as an MEPSystem owner. That reference
+                    // is not a physical curve/fitting connection and must not
+                    // hide an actually open duct connector from continuity
+                    // repair.
+                    if (other is MEPSystem) continue;
                     return false;
                 }
             }
@@ -1062,7 +1285,8 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 return LengthTextUtil.FormatLength(doc, c.diameterFt.Value);
             }
-            if (c.shape == ConnectorProfileType.Rectangular && c.widthFt.HasValue && c.heightFt.HasValue)
+            if ((c.shape == ConnectorProfileType.Rectangular || c.shape == ConnectorProfileType.Oval) &&
+                c.widthFt.HasValue && c.heightFt.HasValue)
             {
                 return LengthTextUtil.FormatLength(doc, c.widthFt.Value) + " x " + LengthTextUtil.FormatLength(doc, c.heightFt.Value);
             }
@@ -1080,15 +1304,13 @@ namespace RevitBridge.Logic.Handlers.MEP
             for (var i = 0; i < open.Count - 1; i++)
             {
                 var a = open[i];
-                if (a.shape != ConnectorProfileType.Round) continue;
+                if (!IsSupportedDuctConnectorShape(a.shape)) continue;
                 for (var j = i + 1; j < open.Count; j++)
                 {
                     var b = open[j];
-                    if (b.shape != ConnectorProfileType.Round) continue;
                     if (a.ownerId == b.ownerId) continue;
-                    if (!string.IsNullOrWhiteSpace(a.systemName) &&
-                        !string.IsNullOrWhiteSpace(b.systemName) &&
-                        !MepSystemUtil.SystemNameMatches(a.systemName, b.systemName)) continue;
+                    if (!AreConnectorProfilesCompatible(a, b, 1.0 / 12.0)) continue;
+                    if (!AreDuctSystemsCompatible(a, b)) continue;
 
                     var d = a.origin.DistanceTo(b.origin);
                     if (d <= 1e-6 || d > gap) continue;
@@ -1109,6 +1331,149 @@ namespace RevitBridge.Logic.Handlers.MEP
                 });
             }
             return outList;
+        }
+
+        private static bool IsSupportedDuctConnectorShape(ConnectorProfileType shape)
+        {
+            return shape == ConnectorProfileType.Round ||
+                   shape == ConnectorProfileType.Rectangular ||
+                   shape == ConnectorProfileType.Oval;
+        }
+
+        private static bool AreDuctSystemsCompatible(OpenConnectorInfo a, OpenConnectorInfo b)
+        {
+            var classificationA = (a.systemClassification ?? "").Trim();
+            var classificationB = (b.systemClassification ?? "").Trim();
+            if (classificationA.Length > 0 && classificationB.Length > 0)
+            {
+                // Disconnected pieces of one intended run commonly acquire
+                // different auto-generated MEP system instance names. The
+                // stable safety boundary is the native duct classification.
+                return string.Equals(classificationA, classificationB, StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (!string.IsNullOrWhiteSpace(a.systemName) &&
+                !string.IsNullOrWhiteSpace(b.systemName))
+            {
+                return MepSystemUtil.SystemNameMatches(a.systemName, b.systemName);
+            }
+
+            return true;
+        }
+
+        private static string? TryGetDuctSystemClassification(Connector connector)
+        {
+            if (connector == null) return null;
+            try
+            {
+                var value = connector.DuctSystemType.ToString().Trim();
+                if (value.Length == 0 ||
+                    value.IndexOf("undefined", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    value.IndexOf("invalid", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return null;
+                }
+                return value;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string PointFingerprint(XYZ point)
+        {
+            return $"{BitConverter.DoubleToInt64Bits(point.X)}," +
+                   $"{BitConverter.DoubleToInt64Bits(point.Y)}," +
+                   $"{BitConverter.DoubleToInt64Bits(point.Z)}";
+        }
+
+        private static bool AreConnectorProfilesCompatible(OpenConnectorInfo a, OpenConnectorInfo b, double sizeToleranceFt)
+        {
+            if (a == null || b == null || a.shape != b.shape || !IsSupportedDuctConnectorShape(a.shape)) return false;
+
+            var tolerance = sizeToleranceFt > 0 ? sizeToleranceFt : 1.0 / 12.0;
+            if (a.shape == ConnectorProfileType.Round)
+            {
+                return !a.diameterFt.HasValue ||
+                       !b.diameterFt.HasValue ||
+                       Math.Abs(a.diameterFt.Value - b.diameterFt.Value) <= tolerance;
+            }
+
+            if (!a.widthFt.HasValue || !a.heightFt.HasValue ||
+                !b.widthFt.HasValue || !b.heightFt.HasValue)
+            {
+                return true;
+            }
+
+            var sameOrientation =
+                Math.Abs(a.widthFt.Value - b.widthFt.Value) <= tolerance &&
+                Math.Abs(a.heightFt.Value - b.heightFt.Value) <= tolerance;
+            var rotatedOrientation =
+                Math.Abs(a.widthFt.Value - b.heightFt.Value) <= tolerance &&
+                Math.Abs(a.heightFt.Value - b.widthFt.Value) <= tolerance;
+            return sameOrientation || rotatedOrientation;
+        }
+
+        private static bool ApplyBridgeProfile(
+            Duct bridge,
+            OpenConnectorInfo a,
+            OpenConnectorInfo b,
+            double fallbackRoundSizeFt,
+            out string error)
+        {
+            error = "";
+            if (bridge == null)
+            {
+                error = "Bridge duct is null.";
+                return false;
+            }
+
+            if (a.shape != b.shape)
+            {
+                error = $"Connector shape mismatch: {a.shape} vs {b.shape}.";
+                return false;
+            }
+
+            if (a.shape == ConnectorProfileType.Round)
+            {
+                var desiredDiameter = a.diameterFt ?? b.diameterFt ?? fallbackRoundSizeFt;
+                var pDia = bridge.get_Parameter(BuiltInParameter.RBS_CURVE_DIAMETER_PARAM);
+                if (pDia == null || pDia.IsReadOnly || pDia.StorageType != StorageType.Double || desiredDiameter <= 0)
+                {
+                    error = "Could not set round bridge diameter.";
+                    return false;
+                }
+                pDia.Set(desiredDiameter);
+                return true;
+            }
+
+            if (a.shape == ConnectorProfileType.Rectangular || a.shape == ConnectorProfileType.Oval)
+            {
+                var desiredWidth = a.widthFt ?? b.widthFt;
+                var desiredHeight = a.heightFt ?? b.heightFt;
+                if (!desiredWidth.HasValue || !desiredHeight.HasValue || desiredWidth.Value <= 0 || desiredHeight.Value <= 0)
+                {
+                    error = $"Could not resolve {a.shape} bridge width and height.";
+                    return false;
+                }
+
+                var pWidth = bridge.get_Parameter(BuiltInParameter.RBS_CURVE_WIDTH_PARAM);
+                var pHeight = bridge.get_Parameter(BuiltInParameter.RBS_CURVE_HEIGHT_PARAM);
+                if (pWidth == null || pWidth.IsReadOnly || pWidth.StorageType != StorageType.Double ||
+                    pHeight == null || pHeight.IsReadOnly || pHeight.StorageType != StorageType.Double)
+                {
+                    error = $"Could not set {a.shape} bridge width and height.";
+                    return false;
+                }
+
+                pWidth.Set(desiredWidth.Value);
+                pHeight.Set(desiredHeight.Value);
+                return true;
+            }
+
+            error = $"Unsupported connector shape: {a.shape}.";
+            return false;
         }
 
         private static List<long> ReadSystemAuditDisconnectedIds(object payload)
@@ -1147,15 +1512,163 @@ namespace RevitBridge.Logic.Handlers.MEP
             }
             catch { }
 
+            var adjacentTypeId = TryResolveAdjacentDuctTypeId(a.connector) ?? TryResolveAdjacentDuctTypeId(b.connector);
+            if (adjacentTypeId != null && adjacentTypeId.IntegerValue > 0) return adjacentTypeId;
+
             try
             {
-                var any = new FilteredElementCollector(doc).OfClass(typeof(DuctType)).Cast<DuctType>().FirstOrDefault();
+                var any = new FilteredElementCollector(doc)
+                    .OfClass(typeof(DuctType))
+                    .Cast<DuctType>()
+                    .FirstOrDefault(type =>
+                    {
+                        try { return type.Shape == a.shape; }
+                        catch { return false; }
+                    });
                 return any?.Id;
             }
             catch
             {
                 return null;
             }
+        }
+
+        private enum ContinuityRouteKind
+        {
+            None,
+            Direct,
+            Orthogonal
+        }
+
+        private static ContinuityRouteKind ClassifyRepairRoute(
+            OpenConnectorInfo a,
+            OpenConnectorInfo b,
+            out XYZ corner)
+        {
+            corner = XYZ.Zero;
+            var delta = b.origin - a.origin;
+            var distance = delta.GetLength();
+            if (distance <= 1e-9) return ContinuityRouteKind.None;
+            var directionA = NormalizeOrZero(a.direction);
+            var directionB = NormalizeOrZero(b.direction);
+            if (directionA.IsZeroLength() || directionB.IsZeroLength())
+                return ContinuityRouteKind.None;
+
+            var unitAB = delta.Normalize();
+            var facesFromA = directionA.DotProduct(unitAB);
+            var facesFromB = directionB.DotProduct(unitAB.Negate());
+            var directionDot = directionA.DotProduct(directionB);
+            if (facesFromA >= 0.85 && facesFromB >= 0.85 && directionDot <= -0.85)
+                return ContinuityRouteKind.Direct;
+
+            if (Math.Abs(directionDot) > 0.15)
+                return ContinuityRouteKind.None;
+
+            var w0 = a.origin - b.origin;
+            var denominator = 1.0 - directionDot * directionDot;
+            if (Math.Abs(denominator) <= 1e-9)
+                return ContinuityRouteKind.None;
+
+            var d = directionA.DotProduct(w0);
+            var e = directionB.DotProduct(w0);
+            var distanceFromA = (directionDot * e - d) / denominator;
+            var distanceFromB = (e - directionDot * d) / denominator;
+            if (distanceFromA <= OpenConnectorMergeToleranceFt ||
+                distanceFromB <= OpenConnectorMergeToleranceFt)
+            {
+                return ContinuityRouteKind.None;
+            }
+
+            var cornerFromA = a.origin + directionA.Multiply(distanceFromA);
+            var cornerFromB = b.origin + directionB.Multiply(distanceFromB);
+            if (cornerFromA.DistanceTo(cornerFromB) > OpenConnectorMergeToleranceFt)
+                return ContinuityRouteKind.None;
+
+            corner = (cornerFromA + cornerFromB).Multiply(0.5);
+            return ContinuityRouteKind.Orthogonal;
+        }
+
+        private static XYZ TryGetConnectorDirection(Connector connector)
+        {
+            try
+            {
+                return NormalizeOrZero(connector.CoordinateSystem?.BasisZ ?? XYZ.Zero);
+            }
+            catch
+            {
+                return XYZ.Zero;
+            }
+        }
+
+        private static XYZ NormalizeOrZero(XYZ value)
+        {
+            if (value == null || value.IsZeroLength()) return XYZ.Zero;
+            try { return value.Normalize(); }
+            catch { return XYZ.Zero; }
+        }
+
+        private static Duct? CreateProfiledBridge(
+            Document doc,
+            ElementId systemTypeId,
+            ElementId ductTypeId,
+            ElementId levelId,
+            XYZ start,
+            XYZ end,
+            OpenConnectorInfo a,
+            OpenConnectorInfo b,
+            double targetSizeFt,
+            out string error)
+        {
+            error = "";
+            var bridge = Duct.Create(doc, systemTypeId, ductTypeId, levelId, start, end);
+            if (bridge == null)
+            {
+                error = "Duct.Create returned null.";
+                return null;
+            }
+            if (!ApplyBridgeProfile(bridge, a, b, targetSizeFt, out error))
+                return null;
+            return bridge;
+        }
+
+        private static bool TryResolveBridgeEnds(
+            Duct bridge,
+            XYZ start,
+            XYZ end,
+            out Connector startConnector,
+            out Connector endConnector)
+        {
+            startConnector = null!;
+            endConnector = null!;
+            var connectors = MepSystemUtil.GetConnectors(bridge).ToList();
+            if (connectors.Count < 2) return false;
+            startConnector = connectors.OrderBy(connector => connector.Origin.DistanceTo(start)).First();
+            endConnector = connectors.OrderBy(connector => connector.Origin.DistanceTo(end)).First();
+            return startConnector != endConnector;
+        }
+
+        private static ElementId? TryResolveAdjacentDuctTypeId(Connector connector)
+        {
+            if (connector == null) return null;
+            try
+            {
+                foreach (var ownerConnector in MepSystemUtil.GetConnectors(connector.Owner))
+                {
+                    ConnectorSet? refs = null;
+                    try { refs = ownerConnector.AllRefs; } catch { refs = null; }
+                    if (refs == null) continue;
+                    foreach (Connector reference in refs)
+                    {
+                        if (reference?.Owner is Duct adjacentDuct &&
+                            reference.Shape == connector.Shape)
+                        {
+                            return adjacentDuct.DuctType?.Id;
+                        }
+                    }
+                }
+            }
+            catch { }
+            return null;
         }
 
         private static ElementId? ResolveSystemTypeId(Document doc, OpenConnectorInfo a, OpenConnectorInfo b)

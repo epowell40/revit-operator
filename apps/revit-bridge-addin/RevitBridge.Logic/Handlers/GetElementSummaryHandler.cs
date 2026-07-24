@@ -102,6 +102,8 @@ namespace RevitBridge.Logic.Handlers
                 {
                     id = RevitBridge.Common.ElementIdCompat.GetValue(elem.Id),
                     found = true,
+                    className = elem.GetType().Name,
+                    fullClassName = elem.GetType().FullName,
                     category = elem.Category?.Name,
                     name = elem.Name,
                     boundingBox = bboxObj,

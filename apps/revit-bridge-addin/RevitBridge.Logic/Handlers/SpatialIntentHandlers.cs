@@ -298,7 +298,39 @@ namespace RevitBridge.Logic.Handlers
             var center = HostedPlacementUtil.TryGetElementPoint(e) ?? SpatialIntentUtils.GetElementCenter(e);
             var levelName = SpatialIntentUtils.GetLevelName(doc, e);
             var room = SpatialIntentUtils.GetSpatialElement(doc, e);
-            var host = (e as FamilyInstance)?.Host;
+            var familyInstance = e as FamilyInstance;
+            var host = familyInstance?.Host;
+            // Linked-face hosted instances can legitimately report Host == null
+            // while HostFace still points at the RevitLinkInstance. Preserve that
+            // factual host instead of misclassifying a valid device as unhosted.
+            if (host == null && familyInstance?.HostFace != null)
+            {
+                try { host = doc.GetElement(familyInstance.HostFace.ElementId); } catch { host = null; }
+            }
+            object? sourceHostFace = null;
+            if (familyInstance?.HostFace != null)
+            {
+                try
+                {
+                    var hostFace = familyInstance.HostFace;
+                    var elementId = ElementIdCompat.GetValue(hostFace.ElementId);
+                    var linkedElementId = ElementIdCompat.GetValue(hostFace.LinkedElementId);
+                    sourceHostFace = new
+                    {
+                        stableReference = hostFace.ConvertToStableRepresentation(doc),
+                        elementId,
+                        linkedElementId = linkedElementId > 0 ? linkedElementId : (long?)null,
+                        isLinked = linkedElementId > 0
+                    };
+                }
+                catch
+                {
+                    // Host-face references are read-only evidence. If Revit cannot
+                    // serialize one, preserve the rest of the placement context and
+                    // leave the exact-face fields unavailable instead of guessing.
+                    sourceHostFace = null;
+                }
+            }
             var bestView = ResolveBestView(doc, app.ActiveUIDocument?.ActiveView, e, levelName);
             var searchPoint =
                 p.pointXyz != null && p.pointXyz.Length >= 3
@@ -325,6 +357,12 @@ namespace RevitBridge.Logic.Handlers
             var insertionPoint = HostedPlacementUtil.TryGetElementPoint(e);
             var electricalCircuit = e is FamilyInstance circuitFamilyInstance
                 ? HostedPlacementUtil.BuildElectricalCircuitAuditPayload(circuitFamilyInstance)
+                : null;
+            // A null requested name makes this a read-only audit. This exposes the
+            // document's exact electrical settings and the equipment type's compatible
+            // systems without mutating the source model or guessing voltage settings.
+            var electricalDistributionSystem = e is FamilyInstance electricalFamilyInstance
+                ? HostedPlacementUtil.ApplyAndAuditElectricalDistributionSystem(doc, electricalFamilyInstance, null)
                 : null;
             var roomWallContext = requestedRoom != null && !string.IsNullOrWhiteSpace(p.roomSide)
                 ? HostedPlacementUtil.ResolveRoomWalls(doc, requestedRoom, view ?? doc.ActiveView, p.roomSide, 4)
@@ -420,9 +458,11 @@ namespace RevitBridge.Logic.Handlers
                     kind = SpatialIntentUtils.GetSpatialKind(room)
                 },
                 host = HostedPlacementUtil.BuildPlacementHostPayload(host),
+                sourceHostFace,
                 placementHost = HostedPlacementUtil.BuildPlacementHostPayload(placementHost),
                 placementHostContext,
                 electricalCircuit,
+                electricalDistributionSystem,
                 orientation = HostedPlacementUtil.BuildOrientationPayload(e),
                 wallPlacement,
                 hostLocalFrame = HostedPlacementUtil.BuildHostLocalFramePayload(placementFrame, e),

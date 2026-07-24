@@ -45,7 +45,14 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   });
   const backendPort = await listen(backend);
   const bridgeRequests: Array<{ method: string; path: string; token: string; grant: string }> = [];
-  const bridge = http.createServer((req, res) => {
+  const connectorRepairBodies: any[] = [];
+  const bridge = http.createServer(async (req, res) => {
+    const requestBody = await new Promise<string>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      req.on("data", chunk => chunks.push(Buffer.from(chunk)));
+      req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+      req.on("error", reject);
+    });
     const requestUrl = new URL(req.url ?? "/", "http://127.0.0.1");
     const token = String(req.headers["x-operator-token"] ?? "");
     const grant = String(req.headers["x-operator-write-grant"] ?? "");
@@ -72,6 +79,15 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     }
     if (requestUrl.pathname === "/revit/context") {
       res.end(JSON.stringify({ document: "Snowdon", view: "L4 - Power" }));
+      return;
+    }
+    if (requestUrl.pathname === "/revit/repair-mep-connectors") {
+      connectorRepairBodies.push(JSON.parse(requestBody || "{}"));
+      res.end(JSON.stringify({
+        status: "DryRunReady",
+        transactionGroupRolledBack: true,
+        rollbackVerified: true
+      }));
       return;
     }
     if (requestUrl.pathname === "/revit/test-write") {
@@ -134,10 +150,40 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     "fire_damper_audit",
     "validate_ies_files",
     "check_photometrics",
-    "audit_lpd"
+    "audit_lpd",
+    "revit_repair_mep_connectors",
+    "revit_dry_run_repair_mep_connectors"
   ]) {
     assert.equal(names.has(name), true, `Missing MCP tool: ${name}`);
   }
+  const connectorRepairTool = tools.tools.find(tool => tool.name === "revit_repair_mep_connectors");
+  const dryConnectorRepairTool = tools.tools.find(tool => tool.name === "revit_dry_run_repair_mep_connectors");
+  for (const tool of [connectorRepairTool, dryConnectorRepairTool]) {
+    const connectorRepairSchema = JSON.stringify(tool?.inputSchema ?? {});
+    assert.doesNotMatch(connectorRepairSchema, /"\$ref"/);
+    assert.doesNotMatch(connectorRepairSchema, /"anyOf"/);
+    assert.doesNotMatch(connectorRepairSchema, /"items":\[/);
+  }
+  assert.equal(dryConnectorRepairTool?.annotations?.readOnlyHint, true);
+  assert.equal(dryConnectorRepairTool?.annotations?.destructiveHint, false);
+  assert.equal(connectorRepairTool?.annotations?.destructiveHint, true);
+  const connectorRepair = await withTimeout(client.callTool({
+    name: "revit_dry_run_repair_mep_connectors",
+    arguments: {
+      expectedModelPath: "C:\\benchmarks\\synthetic_mep_fixture.rvt",
+      disconnectOnlyPairs: [{
+        a: { elementId: 101, connectorId: 2, expectedOriginXyz: [1, 2, 3] },
+        b: { elementId: 102, connectorId: 0, expectedOriginXyz: [1, 2, 3] }
+      }],
+      dryRun: true,
+      verify: true
+    }
+  }), "calling typed connector repair");
+  assert.match((connectorRepair as any).content[0].text, /DryRunReady/);
+  assert.deepEqual(connectorRepairBodies[0].disconnectOnlyPairs[0], {
+    first: { elementId: 101, connectorId: 2, expectedOriginXyz: [1, 2, 3] },
+    second: { elementId: 102, connectorId: 0, expectedOriginXyz: [1, 2, 3] }
+  });
 
   const ping = await withTimeout(client.callTool({ name: "revit_ping", arguments: {} }), "calling Revit ping over stdio");
   assert.match((ping as any).content[0].text, /stdio-smoke/);

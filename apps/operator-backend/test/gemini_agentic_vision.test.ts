@@ -399,3 +399,64 @@ test("gemini analyze: code execution is enabled by default", async () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("gemini existing-conditions mode treats colored drawing systems as source content, not redlines", async () => {
+  const root = makeTempWorkspace();
+  try {
+    const rel = "artifacts/source/existing_conditions_room.jpg";
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+    let capturedPrompt = "";
+    const originalFetch = globalThis.fetch;
+    try {
+      (globalThis as any).fetch = async (_url: string, init: any) => {
+        const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}");
+        capturedPrompt = String(body?.contents?.[0]?.parts?.[0]?.text ?? "");
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            candidates: [{
+              content: {
+                parts: [{
+                  text: JSON.stringify({
+                    summary: "Existing-condition source inventoried.",
+                    regions: [],
+                    open_questions: [],
+                    global_confidence: 0.9
+                  })
+                }]
+              }
+            }]
+          })
+        } as any;
+      };
+
+      await withEnv(
+        {
+          OPERATOR_WORKSPACE_ROOT: root,
+          OPERATOR_GEMINI_VISION_ENABLED: "1",
+          OPERATOR_GEMINI_API_KEY: "dummy-key",
+          OPERATOR_GEMINI_BASE_URL: "http://127.0.0.1:7099/v1beta"
+        },
+        async () => {
+          const out = await analyzeRedlineWithGemini({
+            file_path: rel,
+            analysis_mode: "existing_conditions",
+            include_code_execution: false
+          });
+          assert.equal(out.ok, true);
+        }
+      );
+    } finally {
+      (globalThis as any).fetch = originalFetch;
+    }
+
+    assert.match(capturedPrompt, /unmarked engineering record drawing/i);
+    assert.match(capturedPrompt, /not as redlines, revisions, or requested style changes/i);
+    assert.match(capturedPrompt, /mechanical, electrical, plumbing/i);
+    assert.doesNotMatch(capturedPrompt, /^You are analyzing engineering redlines/i);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

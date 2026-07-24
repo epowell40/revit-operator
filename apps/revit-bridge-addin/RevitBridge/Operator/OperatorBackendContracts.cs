@@ -97,6 +97,12 @@ namespace RevitBridge.Operator
         [JsonPropertyName("error")]
         public string? Error { get; set; }
 
+        [JsonPropertyName("failure_kind")]
+        public string? FailureKind { get; set; }
+
+        [JsonPropertyName("failure_code")]
+        public string? FailureCode { get; set; }
+
         [JsonPropertyName("duration_ms")]
         public double? DurationMs { get; set; }
 

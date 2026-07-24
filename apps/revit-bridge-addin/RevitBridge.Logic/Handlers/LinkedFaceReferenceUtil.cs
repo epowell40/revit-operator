@@ -71,7 +71,8 @@ namespace RevitBridge.Logic.Handlers
             double maximumResolvedDisplacementFt = DefaultMaximumResolvedDisplacementFt,
             double maximumVerticalDisplacementFt = DefaultMaximumVerticalDisplacementFt,
             bool requireVerticalFace = true,
-            string? sourceStableReferencePattern = null)
+            string? sourceStableReferencePattern = null,
+            XYZ? preferredFaceSidePoint = null)
         {
             resolution = null;
             error = string.Empty;
@@ -148,8 +149,13 @@ namespace RevitBridge.Logic.Handlers
                 }
             }
 
+            var hasFaceSidePreference = preferredFaceSidePoint != null && IsFinite(preferredFaceSidePoint);
+            double FaceSideDistance(Candidate candidate) => hasFaceSidePreference
+                ? candidate.Point.DistanceTo(preferredFaceSidePoint)
+                : 0.0;
             var ordered = byStableReference.Values
                 .OrderBy(candidate => candidate.DistanceFt)
+                .ThenBy(FaceSideDistance)
                 .ThenBy(candidate => candidate.Fingerprint, StringComparer.Ordinal)
                 .ThenBy(candidate => candidate.StableReference, StringComparer.Ordinal)
                 .ToList();
@@ -158,7 +164,7 @@ namespace RevitBridge.Logic.Handlers
             {
                 ordered.AddRange(ResolveFromOriginalSymbolGeometry(document, linkInstance, linkedElement, targetPoint, preferredReferenceDirection,
                     maximumResolvedDisplacementFt, maximumVerticalDisplacementFt, requireVerticalFace, out symbolGeometryError));
-                ordered = ordered.OrderBy(candidate => candidate.DistanceFt).ThenBy(candidate => candidate.Fingerprint, StringComparer.Ordinal).ThenBy(candidate => candidate.StableReference, StringComparer.Ordinal).ToList();
+                ordered = ordered.OrderBy(candidate => candidate.DistanceFt).ThenBy(FaceSideDistance).ThenBy(candidate => candidate.Fingerprint, StringComparer.Ordinal).ThenBy(candidate => candidate.StableReference, StringComparer.Ordinal).ToList();
             }
             var reboundError = string.Empty;
             if (ordered.Count == 0 && !string.IsNullOrWhiteSpace(sourceStableReferencePattern))
@@ -174,10 +180,30 @@ namespace RevitBridge.Logic.Handlers
                 return false;
             }
             if (ordered.Count > 1 && Math.Abs(ordered[1].DistanceFt - ordered[0].DistanceFt) <= ambiguityToleranceFt &&
-                !string.Equals(ordered[1].Fingerprint, ordered[0].Fingerprint, StringComparison.Ordinal))
+                !string.Equals(ordered[1].Fingerprint, ordered[0].Fingerprint, StringComparison.Ordinal) &&
+                !AreCoplanarFaceHits(ordered[0], ordered[1], ambiguityToleranceFt) &&
+                (!hasFaceSidePreference || Math.Abs(FaceSideDistance(ordered[1]) - FaceSideDistance(ordered[0])) <= ambiguityToleranceFt))
             {
-                error = "linked_face_reference_ambiguous";
-                return false;
+                if (!string.IsNullOrWhiteSpace(sourceStableReferencePattern))
+                {
+                    var rebound = TryResolveReboundStableReference(document, linkInstance, linkedElement, targetPoint, preferredReferenceDirection,
+                        sourceStableReferencePattern!, maximumResolvedDisplacementFt, maximumVerticalDisplacementFt, requireVerticalFace, out reboundError);
+                    if (rebound != null)
+                    {
+                        ordered.Clear();
+                        ordered.Add(rebound);
+                    }
+                    else
+                    {
+                        error = "linked_face_reference_ambiguous|" + reboundError;
+                        return false;
+                    }
+                }
+                else
+                {
+                    error = "linked_face_reference_ambiguous";
+                    return false;
+                }
             }
 
             var best = ordered[0];
@@ -196,9 +222,30 @@ namespace RevitBridge.Logic.Handlers
             return true;
         }
 
+        private static bool AreCoplanarFaceHits(Candidate first, Candidate second, double toleranceFt)
+        {
+            if (first == null || second == null || first.Point == null || second.Point == null ||
+                first.Normal == null || second.Normal == null ||
+                first.Normal.GetLength() <= Epsilon || second.Normal.GetLength() <= Epsilon)
+                return false;
+
+            var firstNormal = first.Normal.Normalize();
+            var secondNormal = second.Normal.Normalize();
+            if (firstNormal.DotProduct(secondNormal) < 1.0 - 1e-6)
+                return false;
+
+            // Compound and joined walls can expose multiple stable references for separate
+            // coplanar, identically oriented face fragments. They are the same safe support
+            // plane even when their fingerprints differ. Keep opposing faces and true corners
+            // ambiguous, and require both hit points to lie on the same plane within the
+            // existing ambiguity tolerance.
+            var delta = second.Point - first.Point;
+            return Math.Abs(delta.DotProduct(firstNormal)) <= toleranceFt + Epsilon &&
+                   Math.Abs(delta.DotProduct(secondNormal)) <= toleranceFt + Epsilon;
+        }
+
         private static IReadOnlyList<Candidate> ResolveFromOriginalSymbolGeometry(Document document, RevitLinkInstance linkInstance, Element linkedElement,
-            XYZ targetPoint, XYZ? preferredReferenceDirection, double maximumResolvedDisplacementFt, double maximumVerticalDisplacementFt, bool requireVerticalFace, out string error,
-            Reference? reboundReference = null)
+            XYZ targetPoint, XYZ? preferredReferenceDirection, double maximumResolvedDisplacementFt, double maximumVerticalDisplacementFt, bool requireVerticalFace, out string error)
         {
             error = string.Empty;
             var counts = new int[11];
@@ -210,7 +257,7 @@ namespace RevitBridge.Logic.Handlers
                 var geometry = linkedElement.get_Geometry(options);
                 if (geometry == null) return Array.Empty<Candidate>();
                 CollectReferenceFaces(document, linkInstance, linkedElement, geometry, Transform.Identity, targetPoint, preferredReferenceDirection,
-                    maximumResolvedDisplacementFt, maximumVerticalDisplacementFt, requireVerticalFace, result, counts, metrics, 0, reboundReference);
+                    maximumResolvedDisplacementFt, maximumVerticalDisplacementFt, requireVerticalFace, result, counts, metrics, 0);
             }
             catch (Exception ex) { error = "linked_face_symbol_geometry_exception:" + ex.GetType().Name; }
             if (result.Count == 0 && string.IsNullOrWhiteSpace(error)) error = "linked_face_symbol_geometry_empty:o=" + counts[0] + ",i=" + counts[1] + ",p=" + counts[2] + ",r=" + counts[3] + ",proj=" + counts[6] + ",vert=" + counts[7] + ",dist=" + counts[8] + ",mind=" + Round(metrics[0]) + ",minz=" + Round(metrics[1]) + ",dir=" + counts[9] + ",fb=" + counts[10] + ",l=" + counts[4] + ",a=" + counts[5];
@@ -219,8 +266,7 @@ namespace RevitBridge.Logic.Handlers
 
         private static void CollectReferenceFaces(Document document, RevitLinkInstance linkInstance, Element linkedElement, GeometryElement geometry,
             Transform elementTransform, XYZ targetPoint, XYZ? preferredReferenceDirection, double maximumResolvedDisplacementFt,
-            double maximumVerticalDisplacementFt, bool requireVerticalFace, IDictionary<string, Candidate> result, int[] counts, double[] metrics, int depth,
-            Reference? reboundReference)
+            double maximumVerticalDisplacementFt, bool requireVerticalFace, IDictionary<string, Candidate> result, int[] counts, double[] metrics, int depth)
         {
             if (depth > 8) return;
             foreach (var geometryObject in geometry)
@@ -233,7 +279,7 @@ namespace RevitBridge.Logic.Handlers
                     try { symbolGeometry = instance.GetSymbolGeometry(); } catch { }
                     if (symbolGeometry != null)
                         CollectReferenceFaces(document, linkInstance, linkedElement, symbolGeometry, elementTransform.Multiply(instance.Transform), targetPoint,
-                            preferredReferenceDirection, maximumResolvedDisplacementFt, maximumVerticalDisplacementFt, requireVerticalFace, result, counts, metrics, depth + 1, reboundReference);
+                            preferredReferenceDirection, maximumResolvedDisplacementFt, maximumVerticalDisplacementFt, requireVerticalFace, result, counts, metrics, depth + 1);
                     continue;
                 }
                 if (!(geometryObject is Solid solid) || solid.Faces == null || solid.Faces.Size == 0) continue;
@@ -266,8 +312,6 @@ namespace RevitBridge.Logic.Handlers
                         counts[9]++;
                         Reference? hostReference = null;
                         try { hostReference = face.Reference.CreateLinkReference(linkInstance); } catch { }
-                        if (hostReference == null || hostReference.ElementId != linkInstance.Id) hostReference = reboundReference;
-                        if (ReferenceEquals(hostReference, reboundReference) && reboundReference != null) counts[10]++;
                         if (hostReference == null || hostReference.ElementId != linkInstance.Id) continue;
                         counts[4]++;
                         var stable = hostReference.ConvertToStableRepresentation(document);
@@ -297,8 +341,10 @@ namespace RevitBridge.Logic.Handlers
             try
             {
                 var linkedId = ElementIdCompat.GetValue(linkedElement.Id).ToString(CultureInfo.InvariantCulture);
-                var stable = Regex.Replace(sourceStableReferencePattern, "(:RVTLINK:)-?\\d+", match => match.Groups[1].Value + linkedId, RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
-                if (string.Equals(stable, sourceStableReferencePattern, StringComparison.Ordinal)) { error = "linked_face_rebind_pattern_missing"; return null; }
+                var linkedElementPattern = new Regex("(:RVTLINK:)-?\\d+", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+                if (!linkedElementPattern.IsMatch(sourceStableReferencePattern)) { error = "linked_face_rebind_pattern_missing"; return null; }
+                var stable = linkedElementPattern.Replace(sourceStableReferencePattern, match => match.Groups[1].Value + linkedId);
+                var isExactSourceHostFaceReference = string.Equals(stable, sourceStableReferencePattern, StringComparison.Ordinal);
                 var reference = Reference.ParseFromStableRepresentation(document, stable);
                 if (reference == null) { error = "linked_face_rebind_parse_null"; return null; }
                 if (reference.ElementId != linkInstance.Id || reference.LinkedElementId != linkedElement.Id) { error = "linked_face_rebind_identity_mismatch"; return null; }
@@ -306,24 +352,48 @@ namespace RevitBridge.Logic.Handlers
                 var face = linkedElement.GetGeometryObjectFromReference(referenceInLink) as PlanarFace;
                 if (face == null)
                 {
-                    var reboundCandidates = ResolveFromOriginalSymbolGeometry(document, linkInstance, linkedElement, targetPoint, preferredReferenceDirection,
-                        maximumResolvedDisplacementFt, maximumVerticalDisplacementFt, requireVerticalFace, out var geometryError, reference);
-                    var reboundCandidate = reboundCandidates.OrderBy(candidate => candidate.DistanceFt).ThenBy(candidate => candidate.Fingerprint, StringComparer.Ordinal).FirstOrDefault();
-                    if (reboundCandidate != null) return reboundCandidate;
-                    if (preferredReferenceDirection != null && IsFinite(preferredReferenceDirection) && preferredReferenceDirection.GetLength() > Epsilon)
+                    var isSurfaceReference =
+                        reference.ElementReferenceType == ElementReferenceType.REFERENCE_TYPE_SURFACE ||
+                        Regex.IsMatch(stable, "(^|:)SURFACE($|:)", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+                    if (!isSurfaceReference && !isExactSourceHostFaceReference)
                     {
-                        var reboundDirection = preferredReferenceDirection.Normalize();
-                        reboundDirection -= XYZ.BasisZ.Multiply(reboundDirection.DotProduct(XYZ.BasisZ));
-                        if (reboundDirection.GetLength() > Epsilon)
-                        {
-                            reboundDirection = reboundDirection.Normalize();
-                            var inferredVerticalNormal = XYZ.BasisZ.CrossProduct(reboundDirection).Normalize();
-                            var reboundFingerprint = string.Join("|", new[] { linkedElement.UniqueId ?? string.Empty, stable, "stable_reference_plane_rebound" });
-                            return new Candidate(reference, targetPoint, reboundDirection, inferredVerticalNormal, reboundFingerprint, 0.0, stable);
-                        }
+                        error = "linked_face_rebind_not_surface";
+                        return null;
                     }
-                    error = "linked_face_rebind_nonplanar_or_missing" + (string.IsNullOrWhiteSpace(geometryError) ? string.Empty : "|" + geometryError);
-                    return null;
+                    if (requireVerticalFace)
+                    {
+                        error = "linked_face_rebind_planar_face_required";
+                        return null;
+                    }
+                    if (preferredReferenceDirection == null || !IsFinite(preferredReferenceDirection) || preferredReferenceDirection.GetLength() <= Epsilon)
+                    {
+                        error = "linked_face_rebind_direction_missing";
+                        return null;
+                    }
+                    var reboundDirection = preferredReferenceDirection.Normalize();
+                    reboundDirection -= XYZ.BasisZ.Multiply(reboundDirection.DotProduct(XYZ.BasisZ));
+                    if (reboundDirection.GetLength() <= Epsilon)
+                    {
+                        error = "linked_face_rebind_direction_invalid";
+                        return null;
+                    }
+                    reboundDirection = reboundDirection.Normalize();
+                    var inferredVerticalNormal = XYZ.BasisZ.CrossProduct(reboundDirection);
+                    if (inferredVerticalNormal.GetLength() <= Epsilon)
+                    {
+                        error = "linked_face_rebind_normal_invalid";
+                        return null;
+                    }
+                    inferredVerticalNormal = inferredVerticalNormal.Normalize();
+                    var reboundFingerprint = string.Join("|", new[]
+                    {
+                        linkedElement.UniqueId ?? string.Empty,
+                        stable,
+                        isExactSourceHostFaceReference
+                            ? "exact_source_host_face_reference"
+                            : "exact_surface_stable_reference_rebound"
+                    });
+                    return new Candidate(reference, targetPoint, reboundDirection, inferredVerticalNormal, reboundFingerprint, 0.0, stable);
                 }
                 var transform = GetLinkTransform(linkInstance);
                 var localTarget = transform.Inverse.OfPoint(targetPoint);

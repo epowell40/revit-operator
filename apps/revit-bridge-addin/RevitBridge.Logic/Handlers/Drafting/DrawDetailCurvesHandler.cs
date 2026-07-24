@@ -25,6 +25,9 @@ namespace RevitBridge.Logic.Handlers.Drafting
         {
             public long viewId { get; set; }
             public string? frameId { get; set; }
+            public string? expectedViewType { get; set; }
+            public string? expectedLevelName { get; set; }
+            public bool? projectToViewPlane { get; set; }
             public string? lineStyleName { get; set; }
             public LineStyleCreateSpec? lineStyleCreate { get; set; }
             public List<CurveSpec>? curves { get; set; }
@@ -50,12 +53,38 @@ namespace RevitBridge.Logic.Handlers.Drafting
             var view = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(p.viewId)) as View;
             if (view == null) throw new InvalidOperationException($"View {p.viewId} not found.");
 
+            var expectedViewType = (p.expectedViewType ?? "").Trim();
+            if (expectedViewType.Length > 0
+                && !string.Equals(view.ViewType.ToString(), expectedViewType, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"View {p.viewId} has ViewType={view.ViewType}, but request.expectedViewType={expectedViewType}.");
+            }
+
+            var expectedLevelName = (p.expectedLevelName ?? "").Trim();
+            if (expectedLevelName.Length > 0)
+            {
+                var planView = view as ViewPlan;
+                var actualLevelName = planView?.GenLevel?.Name;
+                if (string.IsNullOrWhiteSpace(actualLevelName))
+                {
+                    throw new InvalidOperationException(
+                        $"View {p.viewId} is not a level-associated plan view, but request.expectedLevelName={expectedLevelName}.");
+                }
+                if (!string.Equals(actualLevelName, expectedLevelName, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        $"View {p.viewId} has level '{actualLevelName}', but request.expectedLevelName={expectedLevelName}.");
+                }
+            }
+
             var curveSpecs = p.curves ?? new List<CurveSpec>();
             if (curveSpecs.Count == 0) throw new InvalidOperationException("draw-detail-curves.curves must be a non-empty array.");
             if (curveSpecs.Count > 2000) throw new InvalidOperationException("draw-detail-curves.curves too large (max 2000).");
 
             var dryRun = p.dryRun ?? false;
             var frameId = (p.frameId ?? "").Trim();
+            var projectToViewPlane = p.projectToViewPlane ?? false;
 
             // If frameId is provided, ensure it matches viewId to avoid accidental cross-view mapping.
             if (!string.IsNullOrWhiteSpace(frameId))
@@ -94,6 +123,7 @@ namespace RevitBridge.Logic.Handlers.Drafting
                 var createdIds = new List<long>();
                 var warnings = new List<string>();
                 var segmentsCreated = 0;
+                var maximumCreatedCurveViewPlaneDistanceFt = 0.0;
 
                 foreach (var cs in curveSpecs)
                 {
@@ -101,11 +131,12 @@ namespace RevitBridge.Logic.Handlers.Drafting
                     if (kind == "line")
                     {
                         if (cs.a == null || cs.b == null) throw new InvalidOperationException("line requires a and b points.");
-                        var a = cs.a.Resolve(frameId);
-                        var b = cs.b.Resolve(frameId);
+                        var a = ResolvePoint(cs.a, frameId, view, projectToViewPlane);
+                        var b = ResolvePoint(cs.b, frameId, view, projectToViewPlane);
                         if (a.IsAlmostEqualTo(b)) { warnings.Add("Skipped zero-length line."); continue; }
                         var line = Line.CreateBound(a, b);
                         var dc = CreateDetailCurve(doc, view, line, style);
+                        UpdateMaximumViewPlaneDistance(view, dc, ref maximumCreatedCurveViewPlaneDistanceFt);
                         createdIds.Add(RevitBridge.Common.ElementIdCompat.GetValue(dc.Id));
                         segmentsCreated++;
                     }
@@ -118,11 +149,12 @@ namespace RevitBridge.Logic.Handlers.Drafting
                         XYZ? prev = null;
                         for (int i = 0; i < pts.Count; i++)
                         {
-                            var pxyz = pts[i].Resolve(frameId);
+                            var pxyz = ResolvePoint(pts[i], frameId, view, projectToViewPlane);
                             if (prev == null) { prev = pxyz; continue; }
                             if (prev.IsAlmostEqualTo(pxyz)) { prev = pxyz; continue; }
                             var seg = Line.CreateBound(prev, pxyz);
                             var dc = CreateDetailCurve(doc, view, seg, style);
+                            UpdateMaximumViewPlaneDistance(view, dc, ref maximumCreatedCurveViewPlaneDistanceFt);
                             createdIds.Add(RevitBridge.Common.ElementIdCompat.GetValue(dc.Id));
                             segmentsCreated++;
                             prev = pxyz;
@@ -131,12 +163,13 @@ namespace RevitBridge.Logic.Handlers.Drafting
                     else if (kind == "arc")
                     {
                         if (cs.a == null || cs.b == null || cs.c == null) throw new InvalidOperationException("arc requires a, b, c points.");
-                        var a = cs.a.Resolve(frameId);
-                        var b = cs.b.Resolve(frameId);
-                        var c = cs.c.Resolve(frameId);
+                        var a = ResolvePoint(cs.a, frameId, view, projectToViewPlane);
+                        var b = ResolvePoint(cs.b, frameId, view, projectToViewPlane);
+                        var c = ResolvePoint(cs.c, frameId, view, projectToViewPlane);
                         if (a.IsAlmostEqualTo(b)) throw new InvalidOperationException("arc start/end cannot be the same.");
                         var arc = Arc.Create(a, b, c);
                         var dc = CreateDetailCurve(doc, view, arc, style);
+                        UpdateMaximumViewPlaneDistance(view, dc, ref maximumCreatedCurveViewPlaneDistanceFt);
                         createdIds.Add(RevitBridge.Common.ElementIdCompat.GetValue(dc.Id));
                         segmentsCreated++;
                     }
@@ -144,6 +177,12 @@ namespace RevitBridge.Logic.Handlers.Drafting
                     {
                         throw new InvalidOperationException($"Unsupported curve kind: {cs.kind}");
                     }
+                }
+
+                if (projectToViewPlane && maximumCreatedCurveViewPlaneDistanceFt > 1e-7)
+                {
+                    throw new InvalidOperationException(
+                        $"Created DetailCurve geometry is {maximumCreatedCurveViewPlaneDistanceFt:R} ft off the target view plane.");
                 }
 
                 if (dryRun)
@@ -154,6 +193,10 @@ namespace RevitBridge.Logic.Handlers.Drafting
                         status = "Dry Run",
                         dryRun = true,
                         viewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
+                        viewType = view.ViewType.ToString(),
+                        levelName = (view as ViewPlan)?.GenLevel?.Name,
+                        projectedToViewPlane = projectToViewPlane,
+                        maximumCreatedCurveViewPlaneDistanceFt,
                         createdCount = createdIds.Count,
                         segmentsCreated,
                         lineStyle = new
@@ -173,6 +216,10 @@ namespace RevitBridge.Logic.Handlers.Drafting
                     status = "Success",
                     dryRun = false,
                     viewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
+                    viewType = view.ViewType.ToString(),
+                    levelName = (view as ViewPlan)?.GenLevel?.Name,
+                    projectedToViewPlane = projectToViewPlane,
+                    maximumCreatedCurveViewPlaneDistanceFt,
                     detailCurveIds = createdIds,
                     createdCount = createdIds.Count,
                     segmentsCreated,
@@ -184,6 +231,43 @@ namespace RevitBridge.Logic.Handlers.Drafting
                     },
                     warnings = warnings.Concat(styleWarnings).ToArray()
                 });
+            }
+        }
+
+        private static XYZ ResolvePoint(DraftPoint point, string frameId, View view, bool projectToViewPlane)
+        {
+            var resolved = point.Resolve(frameId);
+            if (!projectToViewPlane) return resolved;
+
+            var normal = view.ViewDirection.Normalize();
+            var planeOrigin = ResolveViewPlaneOrigin(view);
+            var signedDistance = (resolved - planeOrigin).DotProduct(normal);
+            return resolved - normal.Multiply(signedDistance);
+        }
+
+        private static XYZ ResolveViewPlaneOrigin(View view)
+        {
+            if (view is ViewPlan planView && planView.GenLevel != null)
+            {
+                return new XYZ(view.Origin.X, view.Origin.Y, planView.GenLevel.Elevation);
+            }
+            if (view.SketchPlane != null)
+            {
+                return view.SketchPlane.GetPlane().Origin;
+            }
+            return view.Origin;
+        }
+
+        private static void UpdateMaximumViewPlaneDistance(View view, DetailCurve detailCurve, ref double maximumDistanceFt)
+        {
+            var curve = detailCurve.GeometryCurve;
+            if (curve == null) throw new InvalidOperationException("Created DetailCurve has no geometry.");
+            var normal = view.ViewDirection.Normalize();
+            var planeOrigin = ResolveViewPlaneOrigin(view);
+            foreach (var point in curve.Tessellate())
+            {
+                var distance = Math.Abs((point - planeOrigin).DotProduct(normal));
+                if (distance > maximumDistanceFt) maximumDistanceFt = distance;
             }
         }
 

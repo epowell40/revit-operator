@@ -88,6 +88,7 @@ namespace RevitBridge.Logic.Handlers
                     path,
                     widthPx,
                     heightPx,
+                    targetLevel = SelectionUtil.BuildTargetLevelPayload(view),
                     mapping,
                     warnings = warnings.Count > 0 ? warnings : null
                 });

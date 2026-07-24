@@ -53,8 +53,9 @@ namespace RevitBridge.Logic.Handlers
 
             var bindings = BuildWallSpaces(doc, spatial.element, view);
             AddOpeningExclusions(bindings);
+            var outsideSpatialNearBoundaryExcludedIds = new List<long>();
             var existing = p.includeExistingReceptacles
-                ? FindExistingReceptacles(doc, spatial.element, bindings)
+                ? FindExistingReceptacles(doc, spatial.element, bindings, outsideSpatialNearBoundaryExcludedIds)
                 : new List<DwellingExistingReceptacle>();
 
             var classifications = p.roomClassifications?.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).ToList()
@@ -131,6 +132,8 @@ namespace RevitBridge.Logic.Handlers
                     wallSpaceCount = bindings.Count,
                     openingExclusionCount = bindings.Sum(x => x.WallSpace.ExcludedIntervals.Count),
                     existingReceptacleCount = existing.Count,
+                    outsideSpatialNearBoundaryExcludedCount = outsideSpatialNearBoundaryExcludedIds.Count,
+                    outsideSpatialNearBoundaryExcludedIds,
                     wallSpaces = bindings.Select(x => new
                     {
                         id = x.WallSpace.WallSpaceId,
@@ -398,7 +401,11 @@ namespace RevitBridge.Logic.Handlers
             }
         }
 
-        private static List<DwellingExistingReceptacle> FindExistingReceptacles(Document doc, SpatialElement spatial, IReadOnlyCollection<WallSpaceBinding> bindings)
+        private static List<DwellingExistingReceptacle> FindExistingReceptacles(
+            Document doc,
+            SpatialElement spatial,
+            IReadOnlyCollection<WallSpaceBinding> bindings,
+            ICollection<long> outsideSpatialNearBoundaryExcludedIds)
         {
             var output = new List<DwellingExistingReceptacle>();
             foreach (var instance in new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_ElectricalFixtures).OfClass(typeof(FamilyInstance)).Cast<FamilyInstance>())
@@ -407,10 +414,16 @@ namespace RevitBridge.Logic.Handlers
                 if (searchable.IndexOf("receptacle", StringComparison.OrdinalIgnoreCase) < 0 && searchable.IndexOf("outlet", StringComparison.OrdinalIgnoreCase) < 0) continue;
                 var point = HostedPlacementUtil.TryGetElementPoint(instance);
                 if (point == null) continue;
-                if (!HostedPlacementUtil.TryIsPointInSpatial(spatial, point))
+                var associatedSpatialId = TryGetAssociatedSpatialId(instance);
+                var belongsToTargetSpatial = associatedSpatialId.HasValue
+                    ? associatedSpatialId.Value == ElementIdCompat.GetValue(spatial.Id)
+                    : HostedPlacementUtil.TryIsPointInSpatial(spatial, point);
+                if (!belongsToTargetSpatial)
                 {
                     var nearestBoundaryDistance = bindings.Select(x => ProjectToSegment(point, x.Segment.start, x.Segment.end).DistanceFt).DefaultIfEmpty(double.PositiveInfinity).Min();
-                    if (nearestBoundaryDistance > ProjectionToleranceFt) continue;
+                    if (nearestBoundaryDistance <= ProjectionToleranceFt)
+                        outsideSpatialNearBoundaryExcludedIds.Add(ElementIdCompat.GetValue(instance.Id));
+                    continue;
                 }
                 var best = bindings
                     .Select(binding => new { Binding = binding, Projection = ProjectToSegment(point, binding.Segment.start, binding.Segment.end) })
@@ -426,6 +439,21 @@ namespace RevitBridge.Logic.Handlers
                 });
             }
             return output.OrderBy(x => x.ElementId).ToList();
+        }
+
+        private static long? TryGetAssociatedSpatialId(FamilyInstance instance)
+        {
+            try
+            {
+                if (instance.Space != null) return ElementIdCompat.GetValue(instance.Space.Id);
+            }
+            catch { }
+            try
+            {
+                if (instance.Room != null) return ElementIdCompat.GetValue(instance.Room.Id);
+            }
+            catch { }
+            return null;
         }
 
         private static (double ChainageFt, double DistanceFt) ProjectToSegment(XYZ point, XYZ start, XYZ end)

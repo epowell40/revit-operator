@@ -742,6 +742,63 @@ namespace RevitBridge.Operator
             }
         }
 
+        internal long CaptureEventCursor()
+        {
+            lock (_gate)
+            {
+                return _lastEvent?.EventId ?? 0;
+            }
+        }
+
+        internal string? ArmRetryableWarningCancelGuard()
+        {
+            var response = ArmGuard(new GuardParams
+            {
+                button = "cancel",
+                dialogIdContains = "Dialog_Revit_DocWarnDialog",
+                interactionMode = "message_then_mouse",
+                cursorRestoreMode = "keep",
+                ttlMs = 120000,
+                maxTriggers = 1,
+                includeScreenshotAfter = false
+            });
+            return response.GetType().GetProperty("guard_id")?.GetValue(response)?.ToString();
+        }
+
+        internal void DisarmGuard(string? guardId)
+        {
+            if (!long.TryParse(guardId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)) return;
+            lock (_gate)
+            {
+                _guards.RemoveAll(guard => guard.GuardId == parsed);
+            }
+        }
+
+        internal ResolvedDialogRecovery? GetResolvedRetryableRecoveryAfter(long eventCursor)
+        {
+            lock (_gate)
+            {
+                if (_lastEvent == null || _lastEvent.EventId <= eventCursor) return null;
+                if (!string.Equals(_lastEvent.PolicyCategory, "retryable_error", StringComparison.OrdinalIgnoreCase)) return null;
+                if (string.IsNullOrWhiteSpace(_lastEvent.MatchedGuardId)) return null;
+                if (!string.Equals(_lastEvent.ActionStatus, "clicked", StringComparison.OrdinalIgnoreCase)) return null;
+                if (!_lastEvent.ResolvedAtUtc.HasValue) return null;
+
+                return new ResolvedDialogRecovery
+                {
+                    EventId = _lastEvent.EventId,
+                    CapturedAtUtc = _lastEvent.CapturedAtUtc,
+                    DialogId = _lastEvent.DialogId,
+                    PolicyCategory = _lastEvent.PolicyCategory ?? "retryable_error",
+                    PolicyAction = _lastEvent.PolicyAction,
+                    MatchedGuardId = _lastEvent.MatchedGuardId,
+                    ClickedButton = _lastEvent.ClickedButton,
+                    ScreenshotPath = _lastEvent.ScreenshotPath,
+                    ResolvedAtUtc = _lastEvent.ResolvedAtUtc.Value
+                };
+            }
+        }
+
         public object? GetLastDialogEventSummary()
         {
             var last = GetLastEventSnapshot();
@@ -1003,6 +1060,35 @@ namespace RevitBridge.Operator
             using var encoder = new EncoderParameters(1);
             encoder.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, Math.Max(10L, Math.Min(100L, quality)));
             bitmap.Save(fullPath, codec, encoder);
+        }
+
+        internal sealed class ResolvedDialogRecovery
+        {
+            public long EventId { get; set; }
+            public DateTime CapturedAtUtc { get; set; }
+            public string DialogId { get; set; } = string.Empty;
+            public string PolicyCategory { get; set; } = string.Empty;
+            public string? PolicyAction { get; set; }
+            public string? MatchedGuardId { get; set; }
+            public string? ClickedButton { get; set; }
+            public string? ScreenshotPath { get; set; }
+            public DateTime ResolvedAtUtc { get; set; }
+
+            public object ToReceipt()
+            {
+                return new
+                {
+                    event_id = EventId.ToString(CultureInfo.InvariantCulture),
+                    captured_at = CapturedAtUtc.ToString("o"),
+                    dialog_id = DialogId,
+                    policy_category = PolicyCategory,
+                    selected_action = PolicyAction,
+                    matched_guard_id = MatchedGuardId,
+                    clicked_button = ClickedButton,
+                    screenshot_path = ScreenshotPath,
+                    resolved_at = ResolvedAtUtc.ToString("o")
+                };
+            }
         }
 
         private sealed class DialogEventRecord

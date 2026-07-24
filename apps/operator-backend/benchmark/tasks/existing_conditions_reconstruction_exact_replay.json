@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "task_id": "existing_conditions_reconstruction_exact_replay",
+  "name": "Existing conditions reconstruction exact replay",
+  "description": "Exercises the leakage-safe deterministic scorer with recreated ductwork that has new Revit IDs but matching geometry, attributes, system, and connectivity.",
+  "environment": {
+    "adapter_id": "revit_workflow",
+    "app": "revit",
+    "website": null,
+    "metadata": { "suite": "existing_conditions_v1", "execution": "deterministic_replay" }
+  },
+  "setup_instructions": ["Use deterministic replay only; no live model write is required."],
+  "success_criteria": ["Run is valid and leakage-free.", "Semantic element matching succeeds despite new element IDs.", "Geometry, size, system, connectivity, and drawing-evidence gates pass."],
+  "failure_criteria": ["Ground-truth leakage or evidence drift is accepted.", "Element matching relies on original Revit IDs.", "A required score component fails."],
+  "max_time_seconds": 30,
+  "max_steps": 1,
+  "requires_manual_grade": false,
+  "grader_notes": ["This is a deterministic contract replay, not live-readiness proof."],
+  "tags": ["revit", "existing-conditions", "reconstruction", "deterministic", "mep"],
+  "optional_ground_truth_artifact": null,
+  "optional_cleanup_steps": [],
+  "adapter_config": {
+    "workflow": "existing_conditions_reconstruction",
+    "use_mocks": true,
+    "mock": {},
+    "request": {
+      "groundTruth": {
+        "schema_version": 1,
+        "fixture_id": "synthetic-duct-v1",
+        "scope_id": "synthetic-scope",
+        "visible_evidence": [{ "role": "source_pdf", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+        "snapshot": {
+          "native_readback": true,
+          "elements": [{
+            "key": "truth-101", "kind": "mep_curve", "category": "Ducts", "type": "Rectangular Duct",
+            "system_classification": "Supply Air", "system_type": "Supply Air 1",
+            "endpoints": [{ "x": 0, "y": 0, "z": 9 }, { "x": 10, "y": 0, "z": 9 }],
+            "size": { "shape": "rectangular", "width_ft": 1, "height_ft": 0.833333 }
+          }],
+          "connections": [{ "a": "truth-101", "b": "host:90" }],
+          "open_connector_count": 1
+        }
+      },
+      "candidate": {
+        "schema_version": 1,
+        "fixture_id": "synthetic-duct-v1",
+        "scope_id": "synthetic-scope",
+        "visible_evidence": [{ "role": "source_pdf", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+        "accessed_artifact_roles": ["agent_visible_package", "source_pdf", "redacted_model"],
+        "out_of_scope_changed_element_keys": [],
+        "snapshot": {
+          "native_readback": true,
+          "elements": [{
+            "key": "candidate-901", "kind": "mep_curve", "category": "Ducts", "type": "Rectangular Duct",
+            "system_classification": "Supply Air", "system_type": "Supply Air 1",
+            "endpoints": [{ "x": 10, "y": 0, "z": 9 }, { "x": 0, "y": 0, "z": 9 }],
+            "size": { "shape": "rectangular", "width_ft": 1, "height_ft": 0.833333 }
+          }],
+          "connections": [{ "a": "candidate-901", "b": "host:90" }],
+          "open_connector_count": 1
+        },
+        "visual_receipt": {
+          "post_change_capture_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "post_change_pdf_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "review_status": "pass"
+        }
+      }
+    }
+  }
+}

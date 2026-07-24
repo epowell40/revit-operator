@@ -22,6 +22,7 @@ using AuditHostedInstancePlacementActionHandler = RevitBridge.Logic.Handlers.Aud
 using ResolveRoomWallActionHandler = RevitBridge.Logic.Handlers.ResolveRoomWallHandler;
 using RankSimilarDevicesOnWallActionHandler = RevitBridge.Logic.Handlers.RankSimilarDevicesOnWallHandler;
 using AssignElectricalCircuitActionHandler = RevitBridge.Logic.Handlers.AssignElectricalCircuitHandler;
+using AssignElectricalDistributionSystemActionHandler = RevitBridge.Logic.Handlers.AssignElectricalDistributionSystemHandler;
 
 namespace RevitBridge.Server
 {
@@ -76,6 +77,7 @@ namespace RevitBridge.Server
                 { "/revit/create-drafting-view", new CreateDraftingViewHandler() },
                 { "/revit/create-view", new CreateViewHandler() },
                 { "/revit/draw-detail-curves", new DrawDetailCurvesHandler() },
+                { "/revit/annotation-symbol-leaders", new AnnotationSymbolLeadersHandler() },
                 { "/revit/create-filled-region", new CreateFilledRegionHandler() },
                 { "/revit/create-revision-cloud", new CreateRevisionCloudHandler() },
                 { "/revit/keynotes", new KeynotesHandler() },
@@ -134,6 +136,11 @@ namespace RevitBridge.Server
                 { "/revit/resolve-mep-routing-context", new ResolveMepRoutingContextHandler() },
                 { "/revit/create-mep-route", new CreateMepRouteHandler() },
                 { "/revit/connect-mep-branch", new ConnectMepBranchHandler() },
+                { "/revit/connect-existing-mep-branch", new ConnectExistingMepBranchHandler() },
+                { "/revit/connect-mep-elements", new RevitBridge.Logic.Handlers.MEP.ConnectMepElementsHandler() },
+                { "/revit/create-pipe-between-connectors", new RevitBridge.Logic.Handlers.MEP.CreatePipeBetweenConnectorsHandler() },
+                { "/revit/existing-conditions-mep-draft-workflow", new RevitBridge.Logic.Handlers.MEP.ExistingConditionsMepDraftWorkflowHandler() },
+                { "/revit/copy-mep-pattern", new RevitBridge.Logic.Handlers.MEP.CopyMepPatternHandler() },
                 { "/revit/mep-route-workflow", new MepRouteWorkflowHandler() },
                 { "/revit/mep-branch-network-workflow", new RevitBridge.Logic.Handlers.MEP.MepBranchNetworkWorkflowHandler() },
                 { "/revit/edit-mep-route-elements", new RevitBridge.Logic.Handlers.MEP.EditMepRouteElementsHandler() },
@@ -149,7 +156,10 @@ namespace RevitBridge.Server
                 { "/revit/resize-ducts-in-room", new ResizeDuctsInRoomHandler() },
                 { "/revit/resize-ductwork-by-scope", new ResizeDuctworkByScopeHandler() },
                 { "/revit/repair-duct-continuity-by-scope", new RepairDuctContinuityByScopeHandler() },
+                { "/revit/repair-mep-connectors", new RepairMepConnectorsHandler() },
                 { "/revit/get-connectors", new GetConnectorsHandler() },
+                { "/revit/audit-electrical-circuit-loading", new RevitBridge.Logic.Handlers.ElectricalCircuitLoadingAuditHandler() },
+                { "/revit/audit-plumbing-fixture-services", new RevitBridge.Logic.Handlers.PlumbingFixtureServicesAuditHandler() },
                 { "/revit/align-room-tops-to-ceilings", new AlignRoomTopsToCeilingsHandler() },
                 { "/revit/analyze-dimensions", new AnalyzeDimensionsHandler() },
                 { "/revit/export-dimensioning-v2", new ExportDimensioningV2Handler() },
@@ -166,6 +176,7 @@ namespace RevitBridge.Server
                 { "/revit/create-similar-from-instance", new CreateSimilarFromInstanceActionHandler() },
                 { "/revit/adjust-hosted-instance-on-host", new AdjustHostedInstanceOnHostActionHandler() },
                 { "/revit/assign-electrical-circuit", new AssignElectricalCircuitActionHandler() },
+                { "/revit/assign-electrical-distribution-system", new AssignElectricalDistributionSystemActionHandler() },
                 { "/revit/load-family", new LoadFamilyHandler() },
                 { "/revit/create-family-from-template", new CreateFamilyFromTemplateHandler() },
                 { "/revit/tag-elements", new TagElementsHandler() },
@@ -573,6 +584,14 @@ namespace RevitBridge.Server
                  string.Equals(path, "/revit/reroute-mep-route-segment", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/create-mep-route", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/connect-mep-branch", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/connect-existing-mep-branch", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/connect-mep-elements", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/create-pipe-between-connectors", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/existing-conditions-mep-draft-workflow", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/resize-ductwork-by-scope", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/repair-duct-continuity-by-scope", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/repair-mep-connectors", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(path, "/revit/copy-mep-pattern", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/create-duct", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(path, "/revit/create-pipe", StringComparison.OrdinalIgnoreCase)) &&
                 IsExplicitMepRoutePreview(path, body))

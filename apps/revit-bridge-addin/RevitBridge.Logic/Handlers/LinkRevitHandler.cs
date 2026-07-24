@@ -30,7 +30,8 @@ namespace RevitBridge.Logic.Handlers
             var doc = app.ActiveUIDocument.Document;
             var action = (p.action ?? "link").Trim().ToLowerInvariant();
             if (action == "unload") return Task.FromResult(UnloadRevitLinkType(doc, p));
-            if (action != "link") throw new InvalidOperationException("link-revit.action must be 'link' or 'unload'.");
+            if (action == "reload") return Task.FromResult(ReloadRevitLinkType(doc, p));
+            if (action != "link") throw new InvalidOperationException("link-revit.action must be 'link', 'reload', or 'unload'.");
 
             var src = (p.sourcePath ?? "").Trim();
             if (string.IsNullOrWhiteSpace(src)) throw new InvalidOperationException("link-revit.sourcePath is required.");
@@ -118,6 +119,66 @@ namespace RevitBridge.Logic.Handlers
                 dryRun = false,
                 linkTypeId = rawId,
                 name = linkType.Name
+            };
+        }
+
+        private static object ReloadRevitLinkType(Document doc, Params p)
+        {
+            var rawId = p.linkTypeId ?? 0;
+            if (rawId <= 0) throw new InvalidOperationException("link-revit.linkTypeId is required for action='reload'.");
+            var sourcePath = (p.sourcePath ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(sourcePath))
+                throw new InvalidOperationException("link-revit.sourcePath is required for action='reload'.");
+            var fullPath = ResolveSourcePath(sourcePath);
+            if (!string.Equals(Path.GetExtension(fullPath), ".rvt", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("link-revit reload only supports .rvt files.");
+
+            var linkTypeId = ElementIdCompat.Create(rawId);
+            var linkType = doc.GetElement(linkTypeId) as RevitLinkType;
+            if (linkType == null)
+                throw new InvalidOperationException($"Revit link type {rawId} was not found.");
+
+            var dryRun = p.dryRun ?? false;
+            var plan = new
+            {
+                action = "reload",
+                dryRun,
+                linkTypeId = rawId,
+                name = linkType.Name,
+                sourcePath,
+                sourceFullPath = fullPath,
+                preservesExistingInstances = true
+            };
+            if (dryRun) return new { status = "Dry Run", dryRun = true, plan };
+
+            var modelPath = ModelPathUtils.ConvertUserVisiblePathToModelPath(fullPath);
+            var worksets = new WorksetConfiguration(WorksetConfigurationOption.OpenAllWorksets);
+            var loadResult = linkType.LoadFrom(modelPath, worksets);
+            try { doc.Regenerate(); } catch { }
+            var loadedInstances = new FilteredElementCollector(doc)
+                .OfClass(typeof(RevitLinkInstance))
+                .Cast<RevitLinkInstance>()
+                .Where(instance => instance.GetTypeId() == linkTypeId)
+                .Select(instance => new
+                {
+                    instanceId = ElementIdCompat.GetValue(instance.Id),
+                    loaded = instance.GetLinkDocument() != null
+                })
+                .ToList();
+            if (loadedInstances.Count == 0 || loadedInstances.Any(instance => !instance.loaded))
+                throw new InvalidOperationException($"Revit link type {rawId} did not load every existing instance from the requested path.");
+
+            return new
+            {
+                status = "Reloaded",
+                action = "reload",
+                dryRun = false,
+                linkTypeId = rawId,
+                name = linkType.Name,
+                sourcePath,
+                sourceFullPath = fullPath,
+                loadResult = loadResult?.ToString(),
+                loadedInstances
             };
         }
 

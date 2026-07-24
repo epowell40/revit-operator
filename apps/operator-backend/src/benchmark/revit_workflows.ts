@@ -7,6 +7,7 @@ import { getWriteGrantToken } from "../operator_write_grant.js";
 import { ensureDir, writeJsonFile } from "./files.js";
 import { positiveInteger } from "./filter_rule_types.js";
 import { runAecMepEval } from "./aec_mep_eval.js";
+import { runExistingConditionsReconstructionEvaluation } from "./existing_conditions_reconstruction.js";
 import { collectLocalRevitHostEvidence } from "./revit_host_evidence.js";
 import {
   buildBlockedTypeChangeResult,
@@ -45,7 +46,8 @@ export type RevitWorkflowName =
   | "redline_mep_size_transition"
   | "documentation_primitives"
   | "model_edit_primitives"
-  | "aec_mep_eval";
+  | "aec_mep_eval"
+  | "existing_conditions_reconstruction";
 
 export type RevitWorkflowVerification = {
   name: string;
@@ -198,7 +200,8 @@ function workflowName(value: unknown): RevitWorkflowName {
     normalized === "redline_mep_size_transition" ||
     normalized === "documentation_primitives" ||
     normalized === "model_edit_primitives" ||
-    normalized === "aec_mep_eval"
+    normalized === "aec_mep_eval" ||
+    normalized === "existing_conditions_reconstruction"
   ) {
     return normalized;
   }
@@ -10791,7 +10794,8 @@ export async function runRevitDemoWorkflow(config: WorkflowConfig, runDir: strin
     else if (workflow === "redline_mep_size_transition") partial = await runRedlineMepSizeTransition(effectiveTransport, request, runDir);
     else if (workflow === "documentation_primitives") partial = await runDocumentationPrimitives(effectiveTransport, request, runDir);
     else if (workflow === "model_edit_primitives") partial = await runModelEditPrimitives(effectiveTransport, request, runDir);
-    else partial = await runAecMepEval(effectiveTransport, request, runDir);
+    else if (workflow === "aec_mep_eval") partial = await runAecMepEval(effectiveTransport, request, runDir);
+    else partial = await runExistingConditionsReconstructionEvaluation(effectiveTransport, request, runDir);
   } catch (error) {
     const message = errorMessage(error);
     const hostEvidence = executionSource === "live" ? collectLocalRevitHostEvidence() : undefined;

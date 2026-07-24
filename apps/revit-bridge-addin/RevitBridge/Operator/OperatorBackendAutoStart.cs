@@ -117,12 +117,11 @@ namespace RevitBridge.Operator
 
                 var psi = CreateStartInfo(workDir, baseUri, Trace);
                 try { psi.EnvironmentVariables["OPERATOR_TOKEN"] = OperatorSecurity.GetOrCreateOperatorToken(); } catch { }
-                try
-                {
-                    var existingBrain = Environment.GetEnvironmentVariable("OPERATOR_BRAIN");
-                    if (string.IsNullOrWhiteSpace(existingBrain)) psi.EnvironmentVariables["OPERATOR_BRAIN"] = "codex";
-                }
-                catch { }
+                // Do not force a provider when the parent Revit process has no
+                // OPERATOR_BRAIN override. The backend env loader must remain
+                // free to honor operator-backend/.env.local (for example,
+                // gemini or anthropic); an unset value retains normal auto
+                // selection when no local file config exists.
                 try
                 {
                     var existingDevMode = Environment.GetEnvironmentVariable("OPERATOR_DEV_MODE");

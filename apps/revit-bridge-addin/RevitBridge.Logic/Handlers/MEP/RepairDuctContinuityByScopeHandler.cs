@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -22,6 +23,8 @@ namespace RevitBridge.Logic.Handlers.MEP
         public sealed class Params
         {
             public ScopeSpec? scope { get; set; }
+            public List<long> elementIds { get; set; } = new List<long>();
+            public string? expectedModelPath { get; set; }
             public string? systemClassification { get; set; }
             public bool includeTerminals { get; set; } = false;
             public bool verify { get; set; } = true;
@@ -34,14 +37,11 @@ namespace RevitBridge.Logic.Handlers.MEP
         public Task<object> Handle(UIApplication app, string jsonData)
         {
             var p = string.IsNullOrWhiteSpace(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
-            if (p.scope == null) throw new ArgumentException("scope is required.");
-
-            var roomNumber = (p.scope.roomNumber ?? "").Trim();
-            if (roomNumber.Length == 0) throw new ArgumentException("scope.roomNumber is required.");
 
             var uidoc = app.ActiveUIDocument;
             if (uidoc == null) throw new InvalidOperationException("No active UI document.");
             var doc = uidoc.Document;
+            AssertExpectedModel(doc, p.expectedModelPath);
 
             var includeCategories = new List<string> { "Ducts", "Duct Fittings" };
             if (p.includeTerminals) includeCategories.Add("Air Terminals");
@@ -50,19 +50,48 @@ namespace RevitBridge.Logic.Handlers.MEP
             var maxGapFt = p.maxGapFt > 0 ? p.maxGapFt : 1.5;
             var maxRepairs = p.maxRepairs < 0 ? 0 : Math.Min(p.maxRepairs, 64);
             var warnings = new List<string>();
+            var explicitIds = (p.elementIds ?? new List<long>())
+                .Where(id => id > 0)
+                .Distinct()
+                .Take(maxElements + 1)
+                .ToList();
+            if (explicitIds.Count > maxElements)
+                throw new ArgumentException($"elementIds exceeds maxElements ({maxElements}).");
 
-            var scopeReq = new DuctsBySpatialScopeHandler.Params
+            object scopeResult;
+            List<long> scopedIds;
+            if (explicitIds.Count > 0)
             {
-                roomNumber = roomNumber,
-                roomMode = p.scope.roomMode,
-                verticalScope = p.scope.verticalScope,
-                includeCategories = includeCategories,
-                systemClassification = p.systemClassification,
-                limit = maxElements
-            };
-
-            var scopeResult = new DuctsBySpatialScopeHandler().Handle(app, JsonSerializer.Serialize(scopeReq)).GetAwaiter().GetResult();
-            var scopedIds = ReadIdList(scopeResult, "elementIds");
+                if (string.IsNullOrWhiteSpace(p.expectedModelPath))
+                    throw new ArgumentException("expectedModelPath is required when elementIds are supplied.");
+                scopedIds = explicitIds
+                    .Where(id => doc.GetElement(ElementIdCompat.Create(id)) != null)
+                    .ToList();
+                scopeResult = new
+                {
+                    mode = "explicit_element_ids",
+                    requestedCount = explicitIds.Count,
+                    elementIds = scopedIds,
+                    missingElementIds = explicitIds.Except(scopedIds).ToList()
+                };
+            }
+            else
+            {
+                if (p.scope == null) throw new ArgumentException("scope or elementIds is required.");
+                var roomNumber = (p.scope.roomNumber ?? "").Trim();
+                if (roomNumber.Length == 0) throw new ArgumentException("scope.roomNumber is required.");
+                var scopeReq = new DuctsBySpatialScopeHandler.Params
+                {
+                    roomNumber = roomNumber,
+                    roomMode = p.scope.roomMode,
+                    verticalScope = p.scope.verticalScope,
+                    includeCategories = includeCategories,
+                    systemClassification = p.systemClassification,
+                    limit = maxElements
+                };
+                scopeResult = new DuctsBySpatialScopeHandler().Handle(app, JsonSerializer.Serialize(scopeReq)).GetAwaiter().GetResult();
+                scopedIds = ReadIdList(scopeResult, "elementIds");
+            }
 
             if (scopedIds.Count == 0)
             {
@@ -99,23 +128,35 @@ namespace RevitBridge.Logic.Handlers.MEP
             var inferredTargetDiameterFt = InferTargetDiameterFt(doc, continuityScopeIds);
             var repairResult = new ResizeDuctworkByScopeHandler.ContinuityRepairResult
             {
-                requested = !p.dryRun && maxRepairs > 0,
+                requested = maxRepairs > 0,
+                dryRun = p.dryRun,
                 attempts = 0,
                 repairedCount = 0
             };
 
-            if (!p.dryRun && maxRepairs > 0 && preAudit.openConnectorCount > 0)
+            if (maxRepairs > 0 && preAudit.openConnectorCount > 0)
             {
-                repairResult = ResizeDuctworkByScopeHandler.ApplyContinuityRepair(
-                    doc,
-                    continuityScopeIds,
-                    inferredTargetDiameterFt,
-                    maxGapFt,
-                    maxRepairs,
-                    warnings);
+                repairResult = p.dryRun
+                    ? ResizeDuctworkByScopeHandler.DryRunContinuityRepair(
+                        doc,
+                        continuityScopeIds,
+                        inferredTargetDiameterFt,
+                        maxGapFt,
+                        maxRepairs,
+                        warnings)
+                    : ResizeDuctworkByScopeHandler.ApplyContinuityRepair(
+                        doc,
+                        continuityScopeIds,
+                        inferredTargetDiameterFt,
+                        maxGapFt,
+                        maxRepairs,
+                        warnings);
 
                 try { doc.Regenerate(); } catch { }
-                try { uidoc.RefreshActiveView(); } catch { }
+                if (!p.dryRun)
+                {
+                    try { uidoc.RefreshActiveView(); } catch { }
+                }
             }
 
             var postAudit = p.dryRun
@@ -158,7 +199,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             }
 
             var status = p.dryRun
-                ? "Dry Run"
+                ? (repairResult.repairedCount > 0 && repairResult.rollbackVerified ? "Dry Run Ready" : "Dry Run")
                 : (postAudit.ok && createdSegmentAudit.isolatedCount == 0 && createdSegmentAudit.systemMismatchCount == 0 ? "Applied" : "Partial");
             return Task.FromResult<object>(new
             {
@@ -192,6 +233,15 @@ namespace RevitBridge.Logic.Handlers.MEP
                 verify = verifyResult,
                 warnings
             });
+        }
+
+        private static void AssertExpectedModel(Document doc, string? expectedModelPath)
+        {
+            if (string.IsNullOrWhiteSpace(expectedModelPath)) return;
+            var expected = Path.GetFullPath(expectedModelPath);
+            var actual = string.IsNullOrWhiteSpace(doc.PathName) ? "" : Path.GetFullPath(doc.PathName);
+            if (!string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"expected_model_path_mismatch:{expected}:{actual}");
         }
 
         private static List<long> BuildContinuityScopeIds(Document doc, IEnumerable<long> scopedIds, bool includeTerminals, int cap)

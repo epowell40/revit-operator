@@ -77,6 +77,26 @@ namespace RevitBridge.Logic.Handlers.MEP
             // common duct/equipment/family instances and avoid reflection/dynamic.
         }
 
+        public static bool TryGetNativeConnectorId(Connector connector, out long connectorId)
+        {
+            connectorId = -1;
+            if (connector == null) return false;
+            try
+            {
+                var property = connector.GetType().GetProperty("Id");
+                if (property == null) return false;
+                var value = property.GetValue(connector);
+                if (value == null) return false;
+                connectorId = Convert.ToInt64(value);
+                return connectorId >= 0;
+            }
+            catch
+            {
+                connectorId = -1;
+                return false;
+            }
+        }
+
         public static IEnumerable<ElementId> GetConnectedOwnerElementIds(Element e)
         {
             if (e == null) yield break;

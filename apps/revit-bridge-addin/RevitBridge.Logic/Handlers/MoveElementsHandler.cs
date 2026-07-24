@@ -37,6 +37,7 @@ namespace RevitBridge.Logic.Handlers
 
             public bool dryRun { get; set; } = true;
             public string? behavior { get; set; } = "allOrNothing"; // allOrNothing | bestEffort
+            public bool moveTogether { get; set; } = false;
             public Options? options { get; set; }
         }
 
@@ -68,6 +69,10 @@ namespace RevitBridge.Logic.Handlers
 
             var opts = p.options ?? new Options();
             var bestEffort = string.Equals(p.behavior, "bestEffort", StringComparison.OrdinalIgnoreCase);
+            if (p.moveTogether && bestEffort)
+            {
+                throw new ArgumentException("moveTogether requires behavior='allOrNothing'.");
+            }
 
             var warnings = new List<string>();
             var movedIds = new List<long>();
@@ -81,86 +86,155 @@ namespace RevitBridge.Logic.Handlers
                 t.Start();
                 try
                 {
-                    foreach (var id in p.ids.Distinct())
+                    if (p.moveTogether)
                     {
-                        var eid = RevitBridge.Common.ElementIdCompat.Create(id);
-                        var e = doc.GetElement(eid);
-                        if (e == null)
+                        var elements = new List<Element>();
+                        var elementIds = new List<ElementId>();
+                        var beforeById = new Dictionary<long, object>();
+                        var repinAfterMove = new List<Element>();
+
+                        foreach (var id in p.ids.Distinct())
                         {
-                            skipped.Add(new { id, reason = "NotFound" });
-                            if (!bestEffort)
+                            var eid = RevitBridge.Common.ElementIdCompat.Create(id);
+                            var e = doc.GetElement(eid);
+                            if (e == null)
                             {
+                                skipped.Add(new { id, reason = "NotFound" });
                                 throw new Exception($"Element {id} not found.");
                             }
-                            continue;
-                        }
 
-                        bool wasPinned = false;
-                        bool unpinned = false;
-
-                        if (TryIsPinned(e, out var pinned) && pinned)
-                        {
-                            wasPinned = true;
-                            if (opts.unpinIfAllowed)
+                            if (TryIsPinned(e, out var pinned) && pinned)
                             {
-                                try
+                                if (opts.unpinIfAllowed)
                                 {
-                                    e.Pinned = false;
-                                    unpinned = true;
-                                    warnings.Add($"Element {id} was pinned; unpinned for move.");
-                                }
-                                catch
-                                {
-                                    if (opts.failOnPinned)
+                                    try
+                                    {
+                                        e.Pinned = false;
+                                        repinAfterMove.Add(e);
+                                        warnings.Add($"Element {id} was pinned; unpinned for group move.");
+                                    }
+                                    catch
                                     {
                                         skipped.Add(new { id, reason = "Pinned" });
-                                        if (!bestEffort)
-                                        {
-                                            throw new Exception($"Element {id} is pinned.");
-                                        }
-                                        continue;
+                                        throw new Exception($"Element {id} is pinned.");
                                     }
                                 }
+                                else if (opts.failOnPinned)
+                                {
+                                    skipped.Add(new { id, reason = "Pinned" });
+                                    throw new Exception($"Element {id} is pinned.");
+                                }
                             }
-                            else if (opts.failOnPinned)
+
+                            elements.Add(e);
+                            elementIds.Add(eid);
+                            beforeById[id] = SnapshotLocation(e);
+                        }
+
+                        ElementTransformUtils.MoveElements(doc, elementIds, vector);
+                        doc.Regenerate();
+
+                        foreach (var e in elements)
+                        {
+                            var id = RevitBridge.Common.ElementIdCompat.GetValue(e.Id);
+                            movedIds.Add(id);
+                            snapshots.Add(new { id, before = beforeById[id], after = SnapshotLocation(e) });
+                            TryAddJoinWarning(doc, e, warnings);
+                        }
+
+                        if (!p.dryRun)
+                        {
+                            foreach (var e in repinAfterMove)
                             {
-                                skipped.Add(new { id, reason = "Pinned" });
+                                var id = RevitBridge.Common.ElementIdCompat.GetValue(e.Id);
+                                try { e.Pinned = true; }
+                                catch { warnings.Add($"Element {id} was pinned before group move but could not be re-pinned."); }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        foreach (var id in p.ids.Distinct())
+                        {
+                            var eid = RevitBridge.Common.ElementIdCompat.Create(id);
+                            var e = doc.GetElement(eid);
+                            if (e == null)
+                            {
+                                skipped.Add(new { id, reason = "NotFound" });
                                 if (!bestEffort)
                                 {
-                                    throw new Exception($"Element {id} is pinned.");
+                                    throw new Exception($"Element {id} not found.");
                                 }
                                 continue;
                             }
-                        }
 
-                        var before = SnapshotLocation(e);
-                        try
-                        {
-                            ElementTransformUtils.MoveElement(doc, eid, vector);
-                        }
-                        catch (Exception ex)
-                        {
-                            skipped.Add(new { id, reason = ex.Message });
-                            if (!bestEffort)
+                            bool wasPinned = false;
+                            bool unpinned = false;
+
+                            if (TryIsPinned(e, out var pinned) && pinned)
                             {
-                                throw new Exception($"Move failed for element {id}: {ex.Message}", ex);
+                                wasPinned = true;
+                                if (opts.unpinIfAllowed)
+                                {
+                                    try
+                                    {
+                                        e.Pinned = false;
+                                        unpinned = true;
+                                        warnings.Add($"Element {id} was pinned; unpinned for move.");
+                                    }
+                                    catch
+                                    {
+                                        if (opts.failOnPinned)
+                                        {
+                                            skipped.Add(new { id, reason = "Pinned" });
+                                            if (!bestEffort)
+                                            {
+                                                throw new Exception($"Element {id} is pinned.");
+                                            }
+                                            continue;
+                                        }
+                                    }
+                                }
+                                else if (opts.failOnPinned)
+                                {
+                                    skipped.Add(new { id, reason = "Pinned" });
+                                    if (!bestEffort)
+                                    {
+                                        throw new Exception($"Element {id} is pinned.");
+                                    }
+                                    continue;
+                                }
                             }
-                            continue;
-                        }
-                        finally
-                        {
-                            if (!p.dryRun && wasPinned && unpinned)
+
+                            var before = SnapshotLocation(e);
+                            try
                             {
-                                try { e.Pinned = true; }
-                                catch { warnings.Add($"Element {id} was pinned before move but could not be re-pinned."); }
+                                ElementTransformUtils.MoveElement(doc, eid, vector);
                             }
+                            catch (Exception ex)
+                            {
+                                skipped.Add(new { id, reason = ex.Message });
+                                if (!bestEffort)
+                                {
+                                    throw new Exception($"Move failed for element {id}: {ex.Message}", ex);
+                                }
+                                continue;
+                            }
+                            finally
+                            {
+                                if (!p.dryRun && wasPinned && unpinned)
+                                {
+                                    try { e.Pinned = true; }
+                                    catch { warnings.Add($"Element {id} was pinned before move but could not be re-pinned."); }
+                                }
+                            }
+
+                            var after = SnapshotLocation(e);
+                            movedIds.Add(id);
+                            snapshots.Add(new { id, before, after });
+
+                            TryAddJoinWarning(doc, e, warnings);
                         }
-
-                        var after = SnapshotLocation(e);
-                        movedIds.Add(id);
-                        snapshots.Add(new { id, before, after });
-
-                        TryAddJoinWarning(doc, e, warnings);
                     }
 
                     if (p.dryRun)
@@ -173,6 +247,7 @@ namespace RevitBridge.Logic.Handlers
                             skipped,
                             warnings,
                             snapshots,
+                            movedTogether = p.moveTogether,
                             rolledBack = true
                         });
                     }
@@ -188,6 +263,7 @@ namespace RevitBridge.Logic.Handlers
                             skipped,
                             warnings,
                             snapshots,
+                            movedTogether = p.moveTogether,
                             rolledBack = true,
                             error = "allOrNothing: move rolled back due to failures."
                         });
@@ -201,6 +277,7 @@ namespace RevitBridge.Logic.Handlers
                         skipped,
                         warnings,
                         snapshots,
+                        movedTogether = p.moveTogether,
                         rolledBack = false
                     });
                 }
@@ -218,6 +295,7 @@ namespace RevitBridge.Logic.Handlers
                 skipped,
                 warnings,
                 snapshots,
+                movedTogether = p.moveTogether,
                 rolledBack = true,
                 error
             });

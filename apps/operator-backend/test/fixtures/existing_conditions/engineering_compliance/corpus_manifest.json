@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "description": "Transfer-oriented compliance fixtures. Evaluation cases use independent geometry, different prompts, and different mutation families from the Snowdon reconstruction examples.",
+  "cases": [
+    {
+      "case_id": "train-snowdon-electrical-exact-gfci",
+      "split": "train",
+      "task_class": "exact_reconstruction",
+      "source_model_family": "snowdon-electrical",
+      "source_region_id": "snowdon-l4-unit403",
+      "visible_evidence_fingerprint": "snowdon-l4-electrical-pdf",
+      "prompt_template_fingerprint": "exact-redacted-element-reconstruction",
+      "mutation_family": "bounded_source_deletion",
+      "geometry_origin": "source_model",
+      "hidden_answer_fingerprint": "snowdon-gfci-p403-6"
+    },
+    {
+      "case_id": "train-snowdon-plumbing-exact-vanity",
+      "split": "train",
+      "task_class": "exact_reconstruction",
+      "source_model_family": "snowdon-plumbing",
+      "source_region_id": "snowdon-l4-unit403",
+      "visible_evidence_fingerprint": "snowdon-l4-plumbing-pdf",
+      "prompt_template_fingerprint": "exact-redacted-system-reconstruction",
+      "mutation_family": "bounded_source_system_deletion",
+      "geometry_origin": "source_model",
+      "hidden_answer_fingerprint": "snowdon-vanity-three-service"
+    },
+    {
+      "case_id": "holdout-electrical-gfci-sink-breaker-v1",
+      "split": "evaluation",
+      "task_class": "standards_compliance_repair",
+      "source_model_family": "independent-benchmark-electrical",
+      "source_region_id": "independent-kitchen-a",
+      "visible_evidence_fingerprint": "generated-kitchen-a-plan",
+      "prompt_template_fingerprint": "inspect-and-prove-protection",
+      "mutation_family": "protection_provenance_substitution",
+      "geometry_origin": "independently_generated",
+      "standards_profile_sha256": "e28ae52a495eaeec357987854c75d5f1cfec1b455a71c6612f74b5a235ef373e",
+      "hidden_answer_fingerprint": "gfci-breaker-or-upstream-multi-solution"
+    },
+    {
+      "case_id": "holdout-electrical-dwelling-wall-coverage-v1",
+      "split": "evaluation",
+      "task_class": "generative_layout",
+      "source_model_family": "independent-benchmark-electrical",
+      "source_region_id": "independent-living-room-b",
+      "visible_evidence_fingerprint": "generated-two-segment-wall-plan",
+      "prompt_template_fingerprint": "generate-code-coverage-layout",
+      "mutation_family": "parametric_wall_segment_generation",
+      "geometry_origin": "independently_generated",
+      "standards_profile_sha256": "e28ae52a495eaeec357987854c75d5f1cfec1b455a71c6612f74b5a235ef373e",
+      "hidden_answer_fingerprint": "interval-coverage-solution-class"
+    },
+    {
+      "case_id": "holdout-electrical-nondwelling-receptacle-circuit-loading-v1",
+      "split": "evaluation",
+      "task_class": "standards_compliance_repair",
+      "source_model_family": "independent-benchmark-electrical",
+      "source_region_id": "independent-nondwelling-panel-c",
+      "visible_evidence_fingerprint": "generated-panel-and-device-schedule",
+      "prompt_template_fingerprint": "rebalance-native-circuit-membership",
+      "mutation_family": "circuit_membership_rebalance",
+      "geometry_origin": "independently_generated",
+      "standards_profile_sha256": "e28ae52a495eaeec357987854c75d5f1cfec1b455a71c6612f74b5a235ef373e",
+      "hidden_answer_fingerprint": "capacity-satisfying-circuit-partition-class"
+    },
+    {
+      "case_id": "holdout-plumbing-lavatory-water-closet-services-v1",
+      "split": "evaluation",
+      "task_class": "standards_compliance_repair",
+      "source_model_family": "independent-benchmark-plumbing",
+      "source_region_id": "independent-restroom-d",
+      "visible_evidence_fingerprint": "generated-restroom-service-diagram",
+      "prompt_template_fingerprint": "repair-fixture-service-topology",
+      "mutation_family": "service_topology_violation",
+      "geometry_origin": "independently_generated",
+      "standards_profile_sha256": "e28ae52a495eaeec357987854c75d5f1cfec1b455a71c6612f74b5a235ef373e",
+      "hidden_answer_fingerprint": "service-reachability-solution-class"
+    }
+  ]
+}

@@ -72,6 +72,11 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/resolve-mep-routing-context", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/create-mep-route", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/connect-mep-branch", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/connect-existing-mep-branch", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/connect-mep-elements", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/create-pipe-between-connectors", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/existing-conditions-mep-draft-workflow", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/copy-mep-pattern", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/mep-route-workflow", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/mep-branch-network-workflow", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/edit-mep-route-elements", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
@@ -87,6 +92,7 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/resize-ducts-in-room", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/resize-ductwork-by-scope", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/repair-duct-continuity-by-scope", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/repair-mep-connectors", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/get-connectors", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/pick-at-pixel", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/activate-view", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
@@ -142,6 +148,8 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/set-selection", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/resolve-room-plan-view", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/plan-dwelling-receptacles", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/audit-electrical-circuit-loading", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/audit-plumbing-fixture-services", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/plan-room-receptacles-from-analog", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/apply-room-receptacles-from-analog", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/tool-search", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
@@ -182,6 +190,7 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/create-similar-from-instance", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/adjust-hosted-instance-on-host", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/assign-electrical-circuit", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/assign-electrical-distribution-system", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
 
                 // Drafting / annotation.
                 if (string.Equals(p, "/revit/visibility", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
