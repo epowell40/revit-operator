@@ -204,7 +204,8 @@ test("cross-level continuation is rejected without exact host-trusted vertical-r
   });
   const upper = route("upper", "level-2", "mark-upper", [10, 0], [20, 0], {
     startContinuation: "RISER-7",
-    startContinuationKind: "vertical_riser"
+    startContinuationKind: "vertical_riser",
+    startDirection: [1, 0]
   });
   lower.points[1]!.z = 10;
   lower.endpoints![1]!.point.z = 10;
@@ -228,7 +229,8 @@ test("host-trusted vertical-riser identity joins different levels by registered 
   });
   const upper = route("upper", "level-2", "mark-upper", [10, 0], [20, 0], {
     startContinuation: "RISER-7",
-    startContinuationKind: "vertical_riser"
+    startContinuationKind: "vertical_riser",
+    startDirection: [1, 0]
   });
   lower.points[1]!.z = 10;
   lower.endpoints![1]!.point.z = 10;
@@ -254,6 +256,23 @@ test("host-trusted vertical-riser identity joins different levels by registered 
   assert.equal(result.connections[0]?.continuation_evidence_sha256, HASH_B);
   assert.deepEqual(result.trusted_continuation_evidence_sha256s, [HASH_B]);
   assert.equal(result.component_by_primitive_id.lower, result.component_by_primitive_id.upper);
+});
+
+test("point symbols cannot supply topology endpoints", () => {
+  const value = fixture([view("main", "M-001", 1)], [route("route", "main", "mark-route", [0, 0], [10, 0])]);
+  value.packageInput.source_marks.push({ source_mark_id: "mark-symbol", source_view_key: "main", disposition: { status: "candidate", primitive_ids: ["symbol"] } });
+  value.packageInput.primitives.push({
+    primitive_id: "symbol",
+    source_view_key: "main",
+    source_mark_ids: ["mark-symbol"],
+    kind: "point_symbol",
+    points: [{ x: 5, y: 0 }],
+    endpoints: [{ endpoint_key: "symbol:end", point: { x: 5, y: 0 }, outward_direction_xy: [1, 0], boundary: "internal" }],
+    confidence: { geometry: 0.9, classification: 0.5, topology: 0.5, visibility: 0.9 },
+    independently_reversible: true
+  });
+
+  assert.throws(() => compileFixture(value), /sheet_topology_non_linear_primitive_cannot_have_endpoints:symbol/);
 });
 
 test("registered endpoint clusters preserve elbows and a three-way route junction", () => {

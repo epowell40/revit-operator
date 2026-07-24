@@ -20,6 +20,7 @@ export type GeminiExistingConditionsSheetRequestV1 = {
   maximum_source_marks?: number;
   maximum_primitives?: number;
   maximum_output_tokens?: number;
+  thinking_level?: "minimal" | "low" | "medium" | "high";
   timeout_ms?: number;
 };
 
@@ -31,6 +32,7 @@ export type GeminiExistingConditionsSheetResponseV1 = {
   source_image_sha256_by_view: Record<string, string>;
   raw_response_sha256: string;
   attempt_count: number;
+  thinking_level?: "minimal" | "low" | "medium" | "high";
   repair?: {
     trigger_error: string;
     first_raw_response_sha256: string;
@@ -48,6 +50,7 @@ export type GeminiExistingConditionsRawResponseCaptureV1 = {
   raw_response_sha256: string;
   attempt: number;
   repair_of_raw_response_sha256?: string;
+  thinking_level?: "minimal" | "low" | "medium" | "high";
   normalization_error?: string;
   raw_text: string;
   parsed: unknown | null;
@@ -80,7 +83,7 @@ type RawGeminiSheetResponse = {
       outward_direction_uv: [number, number];
       boundary: "internal" | "view_boundary" | "sheet_continuation";
       continuation_key: string;
-      continuation_kind: "" | "same_level_run" | "vertical_riser";
+      continuation_kind: "none" | "same_level_run" | "vertical_riser";
     }>;
     claims: Array<{
       attribute: "system" | "size" | "type" | "family" | "host" | "elevation" | "vertical_extent";
@@ -149,7 +152,7 @@ export const GEMINI_EXISTING_CONDITIONS_SHEET_RESPONSE_SCHEMA_V1 = {
                 outward_direction_uv: { type: "array", minItems: 2, maxItems: 2, items: { type: "number" } },
                 boundary: { type: "string", enum: ["internal", "view_boundary", "sheet_continuation"] },
                 continuation_key: { type: "string" },
-                continuation_kind: { type: "string", enum: ["", "same_level_run", "vertical_riser"] }
+                continuation_kind: { type: "string", enum: ["none", "same_level_run", "vertical_riser"] }
               }
             }
           },
@@ -230,10 +233,11 @@ function prompt(request: GeminiExistingConditionsSheetRequestV1): string {
     "Set continuation_kind to same_level_run for an ordinary continuation. Use vertical_riser only when reciprocal, directly legible above/below/next-level source evidence is visibly bound to the exact endpoint pair; the deterministic host will still require its own hash-bound evidence receipt.",
     "Do not infer system, size, type, family, host, elevation, or wall height from graphical proximity. Use legible_source_evidence only for visible text/geometry and provider_hypothesis or unresolved otherwise.",
     "A route_segment or wall_segment is one straight source-supported span. Break bends and branches into separate primitives with explicit endpoints.",
+    "Only route_segment and wall_segment primitives may carry topology endpoints. Point symbols, equipment symbols, openings, and annotations must emit an empty endpoints array even when graphically coincident with a route endpoint.",
     "Treat a repeated dashed or broken line pattern as one continuous straight span when the collinear marks visibly form one drafting line; do not emit one primitive per dash. Split at visible bends, branches, system or size changes, and view boundaries.",
     "Text, tags, leaders, and dimensions are annotation primitives, not modeled devices or routes.",
     "A graphical point-symbol glyph alone never proves native family, type, or host. Unless directly legible text in the supplied crop proves the attribute, report those claims as provider_hypothesis or unresolved; an approved project mapping can be applied only by the deterministic host later.",
-    "For internal endpoints continuation_key and continuation_kind must be empty strings. For sheet_continuation endpoints continuation_key must be non-empty and continuation_kind must be same_level_run or vertical_riser.",
+    "For internal endpoints continuation_key must be an empty string and continuation_kind must be none. For sheet_continuation endpoints continuation_key must be non-empty and continuation_kind must be same_level_run or vertical_riser.",
     `Objective: ${requiredText(request.objective, "gemini_sheet_interpreter_objective")}`,
     `Package: ${requiredText(request.package_id, "gemini_sheet_interpreter_package_id")}`,
     `Maximum source marks: ${request.maximum_source_marks ?? 500}`,
@@ -248,9 +252,10 @@ function prompt(request: GeminiExistingConditionsSheetRequestV1): string {
 
 function repairPrompt(error: string): string {
   return [
-    "The prior structured response failed strict host normalization.",
+    "The prior structured response failed strict host parsing or normalization.",
     `Exact validation error: ${error}`,
     "Return the complete corrected response, not a patch.",
+    "The response must be one complete, valid JSON object and must not be truncated.",
     "Preserve source-grounded geometry and claims, but repair every invalid reference or field.",
     "Every candidate source mark primitive_ids entry must name an emitted primitive, and every primitive source_mark_ids entry must name an emitted candidate source mark in the same view.",
     "Before returning, verify reciprocal referential integrity across the entire response."
@@ -322,10 +327,13 @@ export function normalizeGeminiExistingConditionsSheetResponseV1(args: {
       outward_direction_uv: endpoint.outward_direction_uv,
       boundary: endpoint.boundary,
       ...(clean(endpoint.continuation_key) ? { continuation_key: clean(endpoint.continuation_key) } : {}),
-      ...(clean(endpoint.continuation_kind) ? { continuation_kind: endpoint.continuation_kind as "same_level_run" | "vertical_riser" } : {})
+      ...(endpoint.continuation_kind !== "none" ? { continuation_kind: endpoint.continuation_kind } : {})
     }));
     if (new Set(endpoints.map(endpoint => endpoint.endpoint_key)).size !== endpoints.length) {
       throw new Error(`gemini_sheet_primitive_duplicate_endpoint_key:${primitiveId}`);
+    }
+    if (endpoints.length > 0 && !["route_segment", "wall_segment"].includes(primitive.kind)) {
+      throw new Error(`gemini_sheet_non_linear_primitive_cannot_have_endpoints:${primitiveId}`);
     }
     const claims = claimMap(primitive.claims ?? [], primitiveId) ?? {};
     let classificationConfidence = unit(primitive.confidence?.classification, `gemini_sheet_primitive_${primitiveId}_classification_confidence`);
@@ -439,6 +447,21 @@ function maximumOutputTokens(request: GeminiExistingConditionsSheetRequestV1): n
   return value;
 }
 
+function thinkingLevel(
+  request: GeminiExistingConditionsSheetRequestV1,
+  model: string
+): GeminiExistingConditionsSheetRequestV1["thinking_level"] | undefined {
+  const configured = clean(request.thinking_level);
+  if (configured && !["minimal", "low", "medium", "high"].includes(configured)) {
+    throw new Error("gemini_sheet_interpreter_thinking_level_invalid");
+  }
+  if (!model.toLowerCase().startsWith("gemini-3")) {
+    if (configured) throw new Error("gemini_sheet_interpreter_thinking_level_requires_gemini_3");
+    return undefined;
+  }
+  return (configured || "low") as GeminiExistingConditionsSheetRequestV1["thinking_level"];
+}
+
 export async function analyzeExistingConditionsSheetWithGeminiV1(
   request: GeminiExistingConditionsSheetRequestV1,
   options: {
@@ -467,6 +490,7 @@ export async function analyzeExistingConditionsSheetWithGeminiV1(
   }
 
   const model = modelName();
+  const requestedThinkingLevel = thinkingLevel(request, model);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Math.max(10_000, Math.min(request.timeout_ms ?? 120_000, 300_000)));
   try {
@@ -491,6 +515,7 @@ export async function analyzeExistingConditionsSheetWithGeminiV1(
           generationConfig: {
             temperature: attempt === 1 ? 0.2 : 0,
             maxOutputTokens: maximumOutputTokens(request),
+            ...(requestedThinkingLevel ? { thinkingConfig: { thinkingLevel: requestedThinkingLevel } } : {}),
             responseMimeType: "application/json",
             responseSchema: GEMINI_EXISTING_CONDITIONS_SHEET_RESPONSE_SCHEMA_V1
           }
@@ -513,6 +538,7 @@ export async function analyzeExistingConditionsSheetWithGeminiV1(
         raw_response_sha256: rawResponseSha256,
         attempt,
         ...(attempt === 1 ? {} : { repair_of_raw_response_sha256: firstRawResponseSha256 }),
+        ...(requestedThinkingLevel ? { thinking_level: requestedThinkingLevel } : {}),
         raw_text: rawText,
         provider_finish_reasons: (envelope.candidates ?? []).map(candidate => clean(candidate.finishReason)).filter(Boolean),
         ...(envelope.usageMetadata === undefined ? {} : { provider_usage_metadata: envelope.usageMetadata })
@@ -522,8 +548,16 @@ export async function analyzeExistingConditionsSheetWithGeminiV1(
         parsed = JSON.parse(rawText) as unknown;
       } catch (error) {
         const parseError = error instanceof Error ? error.message : clean(error);
-        await options.on_raw_response?.({ ...captureBase, parsed: null, parse_error: parseError });
-        throw new Error(`gemini_sheet_interpreter_invalid_json:${parseError}`);
+        const failedCapture = { ...captureBase, parsed: null, parse_error: parseError };
+        await options.on_raw_response?.(failedCapture);
+        const finishReasons = captureBase.provider_finish_reasons.join(",") || "unreported";
+        const invalidJsonError = `gemini_sheet_interpreter_invalid_json:${parseError}:provider_finish_reasons=${finishReasons}`;
+        if (attempt === 2) throw new Error(invalidJsonError);
+        firstRawResponseSha256 = rawResponseSha256;
+        firstRawResponse = failedCapture;
+        previousRawText = rawText;
+        repairTriggerError = invalidJsonError;
+        continue;
       }
       try {
         const normalized = normalizeGeminiExistingConditionsSheetResponseV1({ request, raw: parsed });
@@ -536,6 +570,7 @@ export async function analyzeExistingConditionsSheetWithGeminiV1(
           source_image_sha256_by_view: sourceHashes,
           raw_response_sha256: rawResponseSha256,
           attempt_count: attempt,
+          ...(requestedThinkingLevel ? { thinking_level: requestedThinkingLevel } : {}),
           ...(attempt === 1 ? {} : { repair: { trigger_error: repairTriggerError, first_raw_response_sha256: firstRawResponseSha256, first_raw_response: firstRawResponse! } }),
           interpretation: normalized.interpretation,
           open_questions: normalized.open_questions

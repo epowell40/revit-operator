@@ -34,8 +34,8 @@ function raw() {
       kind: "route_segment",
       points: [{ u: 0.1, v: 0.5 }, { u: 0.9, v: 0.5 }],
       endpoints: [
-        { endpoint_key: "run-1:start", point: { u: 0.1, v: 0.5 }, outward_direction_uv: [-1, 0], boundary: "internal", continuation_key: "", continuation_kind: "" },
-        { endpoint_key: "run-1:end", point: { u: 0.9, v: 0.5 }, outward_direction_uv: [1, 0], boundary: "view_boundary", continuation_key: "", continuation_kind: "" }
+        { endpoint_key: "run-1:start", point: { u: 0.1, v: 0.5 }, outward_direction_uv: [-1, 0], boundary: "internal", continuation_key: "", continuation_kind: "none" },
+        { endpoint_key: "run-1:end", point: { u: 0.9, v: 0.5 }, outward_direction_uv: [1, 0], boundary: "view_boundary", continuation_key: "", continuation_kind: "none" }
       ],
       claims: [
         { attribute: "system", value: "supply air", confidence: 0.98, basis: "legible_source_evidence" },
@@ -125,7 +125,7 @@ test("structured schema makes all topology and confidence fields explicit", () =
   assert.equal(primitive.properties.points.items.properties.u.minimum, 0);
   assert.equal(primitive.properties.points.items.properties.u.maximum, 1);
   assert.deepEqual(primitive.properties.endpoints.items.properties.boundary.enum, ["internal", "view_boundary", "sheet_continuation"]);
-  assert.deepEqual(primitive.properties.endpoints.items.properties.continuation_kind.enum, ["", "same_level_run", "vertical_riser"]);
+  assert.deepEqual(primitive.properties.endpoints.items.properties.continuation_kind.enum, ["none", "same_level_run", "vertical_riser"]);
   assert.ok(primitive.properties.endpoints.items.required.includes("continuation_kind"));
 });
 
@@ -139,6 +139,16 @@ test("Gemini vertical-riser proposals remain explicit provider observations", ()
 
   assert.equal(result.interpretation.primitives[0]?.endpoints?.[1]?.continuation_key, "RISER-7");
   assert.equal(result.interpretation.primitives[0]?.endpoints?.[1]?.continuation_kind, "vertical_riser");
+});
+
+test("Gemini point symbols cannot smuggle topology endpoints into the compiler", () => {
+  const invalid = raw();
+  invalid.primitives[0]!.kind = "point_symbol";
+
+  assert.throws(
+    () => normalizeGeminiExistingConditionsSheetResponseV1({ request: request(), raw: invalid }),
+    /gemini_sheet_non_linear_primitive_cannot_have_endpoints:run-1/
+  );
 });
 
 test("provider schema stays inside Gemini's supported OpenAPI subset", () => {
@@ -191,7 +201,7 @@ test("strict normalization failure is captured and repaired once with exact feed
   const imagePath = path.join(dir, "source.png");
   fs.writeFileSync(imagePath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"));
   process.env.OPERATOR_GEMINI_API_KEY = "test-key";
-  process.env.OPERATOR_GEMINI_SHEET_MODEL = "test-model";
+  process.env.OPERATOR_GEMINI_SHEET_MODEL = "gemini-3-test-model";
   try {
     const invalid = raw();
     invalid.source_marks[0]!.primitive_ids.push("missing-run");
@@ -231,7 +241,7 @@ test("strict normalization failure is captured and repaired once with exact feed
     assert.equal(captures[0]?.normalization_error, "gemini_sheet_mark_unknown_primitive:mark-1:missing-run");
     assert.equal(captures[1]?.attempt, 2);
     assert.equal(captures[1]?.repair_of_raw_response_sha256, captures[0]?.raw_response_sha256);
-    assert.equal(captures[0]?.model, "test-model");
+    assert.equal(captures[0]?.model, "gemini-3-test-model");
     assert.equal(captures[0]?.package_id, "blind-sheet");
     assert.match(captures[0]?.raw_response_sha256 ?? "", /^[a-f0-9]{64}$/);
     assert.deepEqual(captures[0]?.parsed, invalid);
@@ -239,6 +249,9 @@ test("strict normalization failure is captured and repaired once with exact feed
     assert.deepEqual(captures[0]?.provider_usage_metadata, envelope.usageMetadata);
     assert.equal(requestedMaximumOutputTokens, 32_768);
     assert.equal(requestBodies[1]?.generationConfig?.temperature, 0);
+    assert.equal(requestBodies[0]?.generationConfig?.thinkingConfig?.thinkingLevel, "low");
+    assert.equal(captures[0]?.thinking_level, "low");
+    assert.equal(result.thinking_level, "low");
     assert.equal(requestBodies[1]?.contents?.[1]?.role, "model");
     assert.match(requestBodies[1]?.contents?.[2]?.parts?.[0]?.text ?? "", /Exact validation error: gemini_sheet_mark_unknown_primitive:mark-1:missing-run/);
   } finally {
@@ -276,7 +289,7 @@ test("a second strict normalization failure is not retried indefinitely", async 
   }
 });
 
-test("malformed provider JSON is captured before parsing rejects it", async () => {
+test("malformed provider JSON is captured and repaired once with exact finish metadata", async () => {
   const previousKey = process.env.OPERATOR_GEMINI_API_KEY;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "operator-gemini-malformed-capture-"));
   const imagePath = path.join(dir, "source.png");
@@ -285,18 +298,61 @@ test("malformed provider JSON is captured before parsing rejects it", async () =
   try {
     const malformed = '{"schema_version":1,"primitives":[,]}';
     const captures: GeminiExistingConditionsRawResponseCaptureV1[] = [];
-    await assert.rejects(
-      analyzeExistingConditionsSheetWithGeminiV1(
+    const requestBodies: any[] = [];
+    let fetchCount = 0;
+    const result = await analyzeExistingConditionsSheetWithGeminiV1(
         { ...request(), views: [{ view_key: "main", image_path: imagePath }] },
-        { fetch_impl: async () => new Response(JSON.stringify({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: malformed }] } }], usageMetadata: { candidatesTokenCount: 10 } }), { status: 200 }), on_raw_response: capture => { captures.push(capture); } }
-      ),
-      /gemini_sheet_interpreter_invalid_json/
+        { fetch_impl: async (_input, init) => {
+          requestBodies.push(JSON.parse(String(init?.body ?? "{}")));
+          fetchCount += 1;
+          return new Response(JSON.stringify(fetchCount === 1
+            ? { candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [{ text: malformed }] } }], usageMetadata: { candidatesTokenCount: 10 } }
+            : { candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(raw()) }] } }] }), { status: 200 });
+        }, on_raw_response: capture => { captures.push(capture); } }
     );
-    assert.equal(captures.length, 1);
+    assert.equal(result.attempt_count, 2);
+    assert.match(result.repair?.trigger_error ?? "", /^gemini_sheet_interpreter_invalid_json:/);
+    assert.match(result.repair?.trigger_error ?? "", /provider_finish_reasons=MAX_TOKENS$/);
+    assert.equal(result.repair?.first_raw_response.parse_error, captures[0]?.parse_error);
+    assert.equal(captures.length, 2);
     assert.equal(captures[0]?.raw_text, malformed);
     assert.equal(captures[0]?.parsed, null);
     assert.match(captures[0]?.parse_error ?? "", /JSON|position|property/i);
-    assert.deepEqual(captures[0]?.provider_finish_reasons, ["STOP"]);
+    assert.deepEqual(captures[0]?.provider_finish_reasons, ["MAX_TOKENS"]);
+    assert.equal(captures[1]?.repair_of_raw_response_sha256, captures[0]?.raw_response_sha256);
+    assert.equal(requestBodies[1]?.contents?.[1]?.parts?.[0]?.text, malformed);
+    assert.match(requestBodies[1]?.contents?.[2]?.parts?.[0]?.text ?? "", /complete, valid JSON object/);
+  } finally {
+    if (previousKey === undefined) delete process.env.OPERATOR_GEMINI_API_KEY;
+    else process.env.OPERATOR_GEMINI_API_KEY = previousKey;
+  }
+});
+
+test("a second malformed provider response is captured and not retried indefinitely", async () => {
+  const previousKey = process.env.OPERATOR_GEMINI_API_KEY;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "operator-gemini-malformed-limit-"));
+  const imagePath = path.join(dir, "source.png");
+  fs.writeFileSync(imagePath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"));
+  process.env.OPERATOR_GEMINI_API_KEY = "test-key";
+  try {
+    const captures: GeminiExistingConditionsRawResponseCaptureV1[] = [];
+    let fetchCount = 0;
+    await assert.rejects(
+      analyzeExistingConditionsSheetWithGeminiV1(
+        { ...request(), views: [{ view_key: "main", image_path: imagePath }] },
+        { fetch_impl: async () => {
+          fetchCount += 1;
+          return new Response(JSON.stringify({ candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [{ text: '{"schema_version":1' }] } }] }), { status: 200 });
+        }, on_raw_response: capture => { captures.push(capture); } }
+      ),
+      /gemini_sheet_interpreter_invalid_json:.*provider_finish_reasons=MAX_TOKENS/
+    );
+    assert.equal(fetchCount, 2);
+    assert.equal(captures.length, 2);
+    assert.equal(captures[0]?.attempt, 1);
+    assert.equal(captures[1]?.attempt, 2);
+    assert.equal(captures[1]?.repair_of_raw_response_sha256, captures[0]?.raw_response_sha256);
+    assert.ok(captures.every(capture => capture.parsed === null && Boolean(capture.parse_error)));
   } finally {
     if (previousKey === undefined) delete process.env.OPERATOR_GEMINI_API_KEY;
     else process.env.OPERATOR_GEMINI_API_KEY = previousKey;

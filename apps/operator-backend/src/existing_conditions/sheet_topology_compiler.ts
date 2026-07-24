@@ -523,6 +523,9 @@ export function compileSheetTopologyV1(
       const normalized = claim(value.claims?.[key], `sheet_topology_primitive_${id}_${key}`);
       if (normalized) (value.claims ??= {})[key] = normalized;
     }
+    if ((value.endpoints?.length ?? 0) > 0 && !["route_segment", "wall_segment"].includes(value.kind)) {
+      throw new Error(`sheet_topology_non_linear_primitive_cannot_have_endpoints:${id}`);
+    }
     const normalizedEndpoints = (value.endpoints ?? []).map((entry, endpointIndex) => {
       const endpointKey = requiredText(entry.endpoint_key, `sheet_topology_primitive_${id}_endpoint_${endpointIndex}_key`);
       if (endpoints.has(endpointKey)) throw new Error(`sheet_topology_duplicate_endpoint:${endpointKey}`);
@@ -694,6 +697,7 @@ export function compileSheetTopologyV1(
       if (!trustedContinuationForPair(leftKey, rightKey)) return "vertical_riser_trusted_evidence_required";
       if (!verticalContinuationClaimsCompatible(left.primitive, right.primitive)) return "claim_mismatch";
       if (planDistance(left.endpoint.point, right.endpoint.point) > policy.endpoint_tolerance_ft) return "endpoint_plan_distance_exceeded";
+      return null;
     } else {
       if (leftKind === "vertical_riser") return "vertical_riser_requires_level_transition";
       if (!claimsCompatible(left.primitive, right.primitive)) return "claim_mismatch";
