@@ -657,7 +657,9 @@ export function maybeBuildExplicitExistingConditionsAction(
   }
   if ((req.tool_results?.length ?? 0) > 0) return null;
   const userText = clean(req.user_text);
-  const match = /\b(?:perform|execute|run)\s+exactly\s+one\s+(GET|POST)\s+(\/revit\/[a-z0-9_\/-]+)\b/i.exec(userText);
+  const strictMatch = /\b(?:perform|execute|run)\s+exactly\s+one\s+(GET|POST)\s+(\/revit\/[a-z0-9_\/-]+)\b/i.exec(userText);
+  const literalCallMatch = /(?:^|[.!?;]\s+)(?:please\s+)?call\s+(GET|POST)\s+(\/revit\/[a-z0-9_\/-]+)\b/i.exec(userText);
+  const match = strictMatch ?? literalCallMatch;
   if (!match) return null;
   const method = match[1]!.toUpperCase() as "GET" | "POST";
   const actionPath = match[2]!;

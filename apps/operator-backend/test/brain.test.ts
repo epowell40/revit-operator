@@ -46,6 +46,21 @@ test("bridge running question pings bridge without opening Revit", async () => {
   assert.doesNotMatch(JSON.stringify(res.actions), /open-model|2026|launch/i);
 });
 
+test("literal Revit action outranks the bridge-status shortcut", async () => {
+  const res = await decide(mkReq(
+    'Read-only check. Call POST /revit/get-connectors with body {"elementIds":[1484508,1484814,1716442],"includeAllRefs":true,"includeCoordinateSystem":true}. This is read-only. Do not use /revit/find-elements-by-parameter.'
+  ));
+  assert.equal(res.actions.length, 1);
+  assert.equal(res.actions[0]?.method, "POST");
+  assert.equal(res.actions[0]?.path, "/revit/get-connectors");
+  assert.deepEqual(res.actions[0]?.body, {
+    elementIds: [1484508, 1484814, 1716442],
+    includeAllRefs: true,
+    includeCoordinateSystem: true
+  });
+  assert.match(res.assistant_message, /provider planning is bypassed/i);
+});
+
 test("bridge-only status question pings bridge without opening Revit", async () => {
   const res = await decide(mkReq("can you see whether the bridge is responsive now?"));
   assert.equal(res.actions.length, 1);

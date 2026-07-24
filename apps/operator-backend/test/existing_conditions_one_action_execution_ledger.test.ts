@@ -61,6 +61,42 @@ test("strict exact-action request becomes one deterministic bridge action", () =
   assert.match(decision.assistant_message, /provider planning is bypassed/i);
 });
 
+test("literal call request bypasses provider planning for the exact connector path", () => {
+  const decision = maybeBuildExplicitExistingConditionsAction({
+    version: "operator.backend.v1",
+    session_id: "literal-connector-action-session",
+    message_id: "literal-connector-action-message",
+    user_text:
+      'Read-only check. Call POST /revit/get-connectors with body {"elementIds":[1484508,1484814,1716442],"includeAllRefs":true,"includeCoordinateSystem":true}. This is read-only. Do not use /revit/find-elements-by-parameter.'
+  });
+
+  assert.ok(decision);
+  assert.equal(decision.actions.length, 1);
+  assert.equal(decision.actions[0]?.method, "POST");
+  assert.equal(decision.actions[0]?.path, "/revit/get-connectors");
+  assert.deepEqual(decision.actions[0]?.body, {
+    elementIds: [1484508, 1484814, 1716442],
+    includeAllRefs: true,
+    includeCoordinateSystem: true
+  });
+  assert.match(decision.assistant_message, /provider planning is bypassed/i);
+});
+
+test("literal call parser rejects explanatory and negated path mentions", () => {
+  assert.equal(maybeBuildExplicitExistingConditionsAction({
+    version: "operator.backend.v1",
+    session_id: "explanatory-call-session",
+    message_id: "explanatory-call-message",
+    user_text: "Why did the previous agent call POST /revit/get-connectors with body {\"elementIds\":[1]}?"
+  }), null);
+  assert.equal(maybeBuildExplicitExistingConditionsAction({
+    version: "operator.backend.v1",
+    session_id: "negated-call-session",
+    message_id: "negated-call-message",
+    user_text: "Do not call POST /revit/get-connectors with body {\"elementIds\":[1]}."
+  }), null);
+});
+
 test("strict exact-action parser rejects malformed or continuation requests", () => {
   assert.equal(maybeBuildExplicitExistingConditionsAction({
     version: "operator.backend.v1",
