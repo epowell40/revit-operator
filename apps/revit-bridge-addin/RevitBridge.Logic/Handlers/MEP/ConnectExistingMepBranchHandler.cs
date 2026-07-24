@@ -5,14 +5,16 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Mechanical;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
 
 namespace RevitBridge.Logic.Handlers.MEP
 {
     /// <summary>
-    /// Connects one existing open MEP-curve connector to the interior of an
-    /// existing main curve with Revit's native takeoff fitting. Unlike
+    /// Connects one existing open rigid/flex MEP-curve connector to the
+    /// interior of an existing rigid main curve with Revit's native takeoff
+    /// fitting. Unlike
     /// ConnectMepBranchHandler, this operation creates no replacement branch
     /// route and therefore preserves an already accepted branch element.
     /// </summary>
@@ -21,6 +23,7 @@ namespace RevitBridge.Logic.Handlers.MEP
         public sealed class Params
         {
             public string? expectedModelPath { get; set; }
+            public string connectionMode { get; set; } = "takeoff_fitting";
             public string kind { get; set; } = "duct";
             public long mainElementId { get; set; }
             public long branchElementId { get; set; }
@@ -51,6 +54,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 throw new ArgumentException("originToleranceFt must be a positive finite number.");
 
             var kind = MepRoutingUtil.NormalizeKind(p.kind);
+            var connectionMode = NormalizeConnectionMode(p.connectionMode);
             var main = doc.GetElement(ElementIdCompat.Create(p.mainElementId)) as MEPCurve;
             var branch = doc.GetElement(ElementIdCompat.Create(p.branchElementId));
             if (main == null)
@@ -58,6 +62,13 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (branch == null)
                 throw new ArgumentException($"branchElementId {p.branchElementId} was not found.");
             GuardCurveKind(main, kind, "mainElementId", allowFlex: false);
+            if (connectionMode == "air_terminal_on_duct")
+            {
+                if (kind != "duct")
+                    throw new ArgumentException("connectionMode air_terminal_on_duct requires kind duct.");
+                GuardAirTerminal(branch, "branchElementId");
+                return Task.FromResult<object>(HandleAirTerminalOnDuct(doc, main, branch, p));
+            }
             GuardCurveKind(branch, kind, "branchElementId", allowFlex: true);
 
             var branchConnector = ResolveOpenBranchConnector(branch, p);
@@ -82,11 +93,15 @@ namespace RevitBridge.Logic.Handlers.MEP
             }
 
             var beforeBranch = DescribeConnector(branchConnector);
+            var preexistingBranchConnections = CapturePhysicalConnections(branch);
+            var preexistingConnectionsPreservedDuringTransaction = false;
             var createdFittingId = (long?)null;
             var createdTypeId = (long?)null;
             var createdFamilyName = (string?)null;
             var createdTypeName = (string?)null;
             var connectedDuringTransaction = false;
+            var connectedAfterCommit = false;
+            var committedFittingVerified = false;
             var rolledBack = false;
             var rollbackVerified = false;
             var nativeFailures = new List<string>();
@@ -123,7 +138,51 @@ namespace RevitBridge.Logic.Handlers.MEP
                         if (p.verify && !connectedDuringTransaction)
                             throw new InvalidOperationException("The created takeoff did not physically connect to the requested existing branch connector.");
 
+                        var missingDuringTransaction = FindMissingPhysicalConnections(
+                            branch,
+                            preexistingBranchConnections,
+                            Math.Max(p.originToleranceFt, 0.01));
+                        preexistingConnectionsPreservedDuringTransaction = missingDuringTransaction.Count == 0;
+                        if (p.verify && !preexistingConnectionsPreservedDuringTransaction)
+                            throw new InvalidOperationException($"Creating the takeoff disconnected retained branch topology: {string.Join("; ", missingDuringTransaction)}");
+
                         tx.Commit();
+
+                        var committedFitting = doc.GetElement(ElementIdCompat.Create(createdFittingId.Value));
+                        if (committedFitting == null)
+                            throw new InvalidOperationException("The takeoff fitting did not survive transaction commit.");
+
+                        createdTypeId = ElementIdCompat.GetValue(committedFitting.GetTypeId());
+                        ReadFamilyType(committedFitting, out createdFamilyName, out createdTypeName);
+                        GuardExpectedTakeoffIdentity(p, createdTypeId.Value, createdFamilyName, createdTypeName);
+
+                        var committedBranchConnector = ResolveConnectorByIdentityOrOrigin(
+                            branch,
+                            p.branchConnectorId,
+                            branchOrigin,
+                            Math.Max(p.originToleranceFt, 0.01));
+                        connectedAfterCommit = PhysicalConnectedOwnerIds(committedBranchConnector)
+                            .Contains(createdFittingId.Value);
+                        if (!connectedAfterCommit)
+                            throw new InvalidOperationException("The takeoff fitting did not remain physically connected to the requested branch after transaction commit.");
+
+                        var committedFittingOwnerIds = MepRoutingUtil.GetConnectors(committedFitting)
+                            .SelectMany(PhysicalConnectedOwnerIds)
+                            .ToHashSet();
+                        if (!committedFittingOwnerIds.Contains(p.branchElementId) ||
+                            !committedFittingOwnerIds.Contains(p.mainElementId))
+                        {
+                            throw new InvalidOperationException("The committed takeoff does not expose physical connections to both the requested branch and main.");
+                        }
+
+                        var missingAfterCommit = FindMissingPhysicalConnections(
+                            branch,
+                            preexistingBranchConnections,
+                            Math.Max(p.originToleranceFt, 0.01));
+                        if (missingAfterCommit.Count > 0)
+                            throw new InvalidOperationException($"Transaction commit disconnected retained branch topology: {string.Join("; ", missingAfterCommit)}");
+
+                        committedFittingVerified = true;
                     }
 
                     if (p.dryRun)
@@ -137,14 +196,18 @@ namespace RevitBridge.Logic.Handlers.MEP
                             Math.Max(p.originToleranceFt, 0.01));
                         rollbackVerified =
                             doc.GetElement(ElementIdCompat.Create(createdFittingId!.Value)) == null &&
-                            !IsPhysicallyConnected(restoredBranchConnector);
+                            !IsPhysicallyConnected(restoredBranchConnector) &&
+                            FindMissingPhysicalConnections(
+                                branch,
+                                preexistingBranchConnections,
+                                Math.Max(p.originToleranceFt, 0.01)).Count == 0;
                         if (!rollbackVerified)
                             nativeFailures.Add("Dry-run rollback did not restore the original open branch connector exactly.");
                     }
                     else
                     {
                         group.Assimilate();
-                        rollbackVerified = true;
+                        rollbackVerified = committedFittingVerified && preexistingConnectionsPreservedDuringTransaction;
                     }
                 }
                 catch (Exception ex)
@@ -154,8 +217,12 @@ namespace RevitBridge.Logic.Handlers.MEP
                     {
                         group.RollBack();
                         rolledBack = true;
-                        rollbackVerified = createdFittingId == null ||
-                            doc.GetElement(ElementIdCompat.Create(createdFittingId.Value)) == null;
+                        rollbackVerified =
+                            (createdFittingId == null || doc.GetElement(ElementIdCompat.Create(createdFittingId.Value)) == null) &&
+                            FindMissingPhysicalConnections(
+                                branch,
+                                preexistingBranchConnections,
+                                Math.Max(p.originToleranceFt, 0.01)).Count == 0;
                     }
                     catch (Exception rollbackError)
                     {
@@ -174,6 +241,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                 mainElementId = p.mainElementId,
                 branchElementId = p.branchElementId,
                 branchConnector = beforeBranch,
+                preexistingBranchPhysicalConnections = preexistingBranchConnections.Select(DescribePhysicalConnection).ToList(),
+                preexistingConnectionsPreservedDuringTransaction,
                 projectedPoint = ToPoint(projectedPoint),
                 branchToMainDistanceFt = branchOrigin.DistanceTo(projectedPoint),
                 distanceToMainStartFt = distanceToStart,
@@ -185,6 +254,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                 createdFamilyName,
                 createdTypeName,
                 connectedDuringTransaction,
+                connectedAfterCommit,
+                committedFittingVerified,
                 transactionGroupRolledBack = rolledBack,
                 rollbackVerified,
                 nativeFailures,
@@ -192,6 +263,211 @@ namespace RevitBridge.Logic.Handlers.MEP
                     ? "Apply this exact existing-branch takeoff only if the guarded connector, projected main point, fitting type, and rollback proof are accepted."
                     : null
             });
+        }
+
+        private static object HandleAirTerminalOnDuct(
+            Document doc,
+            MEPCurve main,
+            Element terminal,
+            Params p)
+        {
+            var terminalConnector = ResolveOpenBranchConnector(terminal, p);
+            var terminalOrigin = terminalConnector.Origin;
+            var mainCurve = (main.Location as LocationCurve)?.Curve;
+            if (mainCurve == null || !mainCurve.IsBound)
+                throw new InvalidOperationException("The main duct must expose a bounded LocationCurve.");
+            var projection = mainCurve.Project(terminalOrigin)
+                ?? throw new InvalidOperationException("Could not project the air-terminal connector onto the main duct.");
+            var projectedPoint = projection.XYZPoint;
+            var mainStart = mainCurve.GetEndPoint(0);
+            var mainEnd = mainCurve.GetEndPoint(1);
+            var distanceToStart = projectedPoint.DistanceTo(mainStart);
+            var distanceToEnd = projectedPoint.DistanceTo(mainEnd);
+            if (distanceToStart <= 0.01 || distanceToEnd <= 0.01)
+                throw new InvalidOperationException("The projected air-terminal point must lie in the interior of the main duct.");
+
+            var terminalId = ElementIdCompat.GetValue(terminal.Id);
+            var mainId = ElementIdCompat.GetValue(main.Id);
+            var beforeTerminal = DescribeConnector(terminalConnector);
+            var preexistingTerminalConnections = CapturePhysicalConnections(terminal);
+            var preexistingMainConnections = CapturePhysicalConnections(main);
+            var mainConnectorCountBefore = MepRoutingUtil.GetConnectors(main).Count;
+            var mainConnectorCountDuringTransaction = (int?)null;
+            var mainConnectorCountAfterCommit = (int?)null;
+            var mainInteriorConnectorAfterCommit = (object?)null;
+            var nativeResult = false;
+            var connectedDuringTransaction = false;
+            var connectedAfterCommit = false;
+            var retainedMainConnectionsPreserved = false;
+            var postCommitVerified = false;
+            var rolledBack = false;
+            var rollbackVerified = false;
+            var nativeFailures = new List<string>();
+
+            using (var group = new TransactionGroup(doc, "Connect Air Terminal On Duct"))
+            {
+                group.Start();
+                try
+                {
+                    using (var tx = new Transaction(doc, "Connect Air Terminal On Duct"))
+                    {
+                        tx.Start();
+                        nativeResult = MechanicalUtils.ConnectAirTerminalOnDuct(doc, terminal.Id, main.Id);
+                        if (!nativeResult)
+                            throw new InvalidOperationException("Revit did not connect the air terminal to the duct.");
+                        doc.Regenerate();
+
+                        var refreshedTerminalConnector = ResolveConnectorByIdentityOrOrigin(
+                            terminal,
+                            p.branchConnectorId,
+                            terminalOrigin,
+                            Math.Max(p.originToleranceFt, 0.01));
+                        connectedDuringTransaction = PhysicalConnectedOwnerIds(refreshedTerminalConnector).Contains(mainId);
+                        if (p.verify && !connectedDuringTransaction)
+                            throw new InvalidOperationException("The air terminal did not expose a direct physical edge to the requested duct during the transaction.");
+
+                        var mainInteriorConnector = MepRoutingUtil.GetConnectors(main)
+                            .FirstOrDefault(connector => PhysicalConnectedOwnerIds(connector).Contains(terminalId));
+                        if (p.verify && mainInteriorConnector == null)
+                            throw new InvalidOperationException("The requested duct did not expose an interior connector to the air terminal during the transaction.");
+
+                        mainConnectorCountDuringTransaction = MepRoutingUtil.GetConnectors(main).Count;
+                        var missingMainConnections = FindMissingPhysicalConnections(
+                            main,
+                            preexistingMainConnections,
+                            Math.Max(p.originToleranceFt, 0.01));
+                        retainedMainConnectionsPreserved = missingMainConnections.Count == 0;
+                        if (p.verify && !retainedMainConnectionsPreserved)
+                            throw new InvalidOperationException($"Connecting the air terminal disconnected retained main topology: {string.Join("; ", missingMainConnections)}");
+
+                        tx.Commit();
+                    }
+
+                    var committedTerminal = doc.GetElement(terminal.Id)
+                        ?? throw new InvalidOperationException("The air terminal did not survive transaction commit.");
+                    var committedMain = doc.GetElement(main.Id) as MEPCurve
+                        ?? throw new InvalidOperationException("The main duct did not survive transaction commit.");
+                    var committedTerminalConnector = ResolveConnectorByIdentityOrOrigin(
+                        committedTerminal,
+                        p.branchConnectorId,
+                        terminalOrigin,
+                        Math.Max(p.originToleranceFt, 0.01));
+                    connectedAfterCommit = PhysicalConnectedOwnerIds(committedTerminalConnector).Contains(mainId);
+                    var committedMainConnector = MepRoutingUtil.GetConnectors(committedMain)
+                        .FirstOrDefault(connector => PhysicalConnectedOwnerIds(connector).Contains(terminalId));
+                    if (!connectedAfterCommit || committedMainConnector == null)
+                        throw new InvalidOperationException("The direct air-terminal-to-duct connection did not survive transaction commit.");
+
+                    var missingAfterCommit = FindMissingPhysicalConnections(
+                        committedMain,
+                        preexistingMainConnections,
+                        Math.Max(p.originToleranceFt, 0.01));
+                    if (missingAfterCommit.Count > 0)
+                        throw new InvalidOperationException($"Transaction commit disconnected retained main topology: {string.Join("; ", missingAfterCommit)}");
+                    if (FindMissingPhysicalConnections(
+                            committedTerminal,
+                            preexistingTerminalConnections,
+                            Math.Max(p.originToleranceFt, 0.01)).Count > 0)
+                        throw new InvalidOperationException("Transaction commit disconnected retained air-terminal topology.");
+
+                    mainConnectorCountAfterCommit = MepRoutingUtil.GetConnectors(committedMain).Count;
+                    mainInteriorConnectorAfterCommit = DescribeConnector(committedMainConnector);
+                    retainedMainConnectionsPreserved = true;
+                    postCommitVerified = true;
+
+                    if (p.dryRun)
+                    {
+                        group.RollBack();
+                        rolledBack = true;
+                        var restoredTerminal = doc.GetElement(terminal.Id)
+                            ?? throw new InvalidOperationException("Dry-run rollback did not restore the air terminal.");
+                        var restoredMain = doc.GetElement(main.Id) as MEPCurve
+                            ?? throw new InvalidOperationException("Dry-run rollback did not restore the main duct.");
+                        var restoredTerminalConnector = ResolveConnectorByIdentityOrOrigin(
+                            restoredTerminal,
+                            p.branchConnectorId,
+                            terminalOrigin,
+                            Math.Max(p.originToleranceFt, 0.01));
+                        rollbackVerified =
+                            !PhysicalConnectedOwnerIds(restoredTerminalConnector).Contains(mainId) &&
+                            !MepRoutingUtil.GetConnectors(restoredMain).Any(connector => PhysicalConnectedOwnerIds(connector).Contains(terminalId)) &&
+                            MepRoutingUtil.GetConnectors(restoredMain).Count == mainConnectorCountBefore &&
+                            FindMissingPhysicalConnections(
+                                restoredMain,
+                                preexistingMainConnections,
+                                Math.Max(p.originToleranceFt, 0.01)).Count == 0 &&
+                            FindMissingPhysicalConnections(
+                                restoredTerminal,
+                                preexistingTerminalConnections,
+                                Math.Max(p.originToleranceFt, 0.01)).Count == 0;
+                        if (!rollbackVerified)
+                            nativeFailures.Add("Dry-run rollback did not restore the original air-terminal and main-duct topology exactly.");
+                    }
+                    else
+                    {
+                        group.Assimilate();
+                        rollbackVerified = postCommitVerified && retainedMainConnectionsPreserved;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    nativeFailures.Add(ex.Message);
+                    try
+                    {
+                        group.RollBack();
+                        rolledBack = true;
+                        var restoredTerminal = doc.GetElement(terminal.Id);
+                        var restoredMain = doc.GetElement(main.Id) as MEPCurve;
+                        rollbackVerified = restoredTerminal != null && restoredMain != null &&
+                            !MepRoutingUtil.GetConnectors(restoredTerminal).Any(connector => PhysicalConnectedOwnerIds(connector).Contains(mainId)) &&
+                            !MepRoutingUtil.GetConnectors(restoredMain).Any(connector => PhysicalConnectedOwnerIds(connector).Contains(terminalId)) &&
+                            MepRoutingUtil.GetConnectors(restoredMain).Count == mainConnectorCountBefore &&
+                            FindMissingPhysicalConnections(
+                                restoredMain,
+                                preexistingMainConnections,
+                                Math.Max(p.originToleranceFt, 0.01)).Count == 0 &&
+                            FindMissingPhysicalConnections(
+                                restoredTerminal,
+                                preexistingTerminalConnections,
+                                Math.Max(p.originToleranceFt, 0.01)).Count == 0;
+                    }
+                    catch (Exception rollbackError)
+                    {
+                        nativeFailures.Add($"Rollback failed: {rollbackError.Message}");
+                    }
+                }
+            }
+
+            var ok = nativeFailures.Count == 0 && rollbackVerified;
+            return new
+            {
+                status = ok ? (p.dryRun ? "DryRunReady" : "Connected") : "Blocked",
+                connectionMode = "air_terminal_on_duct",
+                dryRun = p.dryRun,
+                mainElementId = mainId,
+                terminalElementId = terminalId,
+                terminalConnector = beforeTerminal,
+                projectedPoint = ToPoint(projectedPoint),
+                terminalToMainDistanceFt = terminalOrigin.DistanceTo(projectedPoint),
+                distanceToMainStartFt = distanceToStart,
+                distanceToMainEndFt = distanceToEnd,
+                nativeResult,
+                connectedDuringTransaction,
+                connectedAfterCommit,
+                retainedMainConnectionsPreserved,
+                postCommitVerified,
+                mainConnectorCountBefore,
+                mainConnectorCountDuringTransaction,
+                mainConnectorCountAfterCommit,
+                mainInteriorConnectorAfterCommit,
+                preexistingMainPhysicalConnections = preexistingMainConnections.Select(DescribePhysicalConnection).ToList(),
+                transactionGroupRolledBack = rolledBack,
+                rollbackVerified,
+                nativeFailures,
+                nextAction = ok && p.dryRun
+                    ? "Apply this exact direct air-terminal-to-duct connection only if the guarded terminal, projected duct point, retained main topology, post-commit proof, and rollback proof are accepted."
+                    : null
+            };
         }
 
         private static Connector ResolveOpenBranchConnector(Element branch, Params p)
@@ -273,6 +549,85 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (categoryId != rigidCategoryId && (!allowFlex || categoryId != flexCategoryId))
                 throw new ArgumentException($"{parameterName} category '{element.Category?.Name}' is not compatible with kind '{kind}'.");
         }
+
+        private static void GuardAirTerminal(Element element, string parameterName)
+        {
+            var categoryId = element.Category == null
+                ? long.MinValue
+                : ElementIdCompat.GetValue(element.Category.Id);
+            if (categoryId != (long)BuiltInCategory.OST_DuctTerminal || element is not FamilyInstance)
+                throw new ArgumentException($"{parameterName} category '{element.Category?.Name}' is not an air terminal family instance.");
+        }
+
+        private static string NormalizeConnectionMode(string? value)
+        {
+            var normalized = (value ?? "takeoff_fitting").Trim().ToLowerInvariant();
+            return normalized switch
+            {
+                "takeoff_fitting" => normalized,
+                "air_terminal_on_duct" => normalized,
+                _ => throw new ArgumentException("connectionMode must be takeoff_fitting or air_terminal_on_duct.")
+            };
+        }
+
+        private sealed class PhysicalConnectionSnapshot
+        {
+            public long? ConnectorId { get; set; }
+            public XYZ Origin { get; set; } = XYZ.Zero;
+            public long ConnectedOwnerId { get; set; }
+        }
+
+        private static List<PhysicalConnectionSnapshot> CapturePhysicalConnections(Element owner)
+        {
+            var result = new List<PhysicalConnectionSnapshot>();
+            foreach (var connector in MepRoutingUtil.GetConnectors(owner))
+            {
+                var connectorId = MepSystemUtil.TryGetNativeConnectorId(connector, out var nativeId)
+                    ? nativeId
+                    : (long?)null;
+                foreach (var connectedOwnerId in PhysicalConnectedOwnerIds(connector))
+                {
+                    result.Add(new PhysicalConnectionSnapshot
+                    {
+                        ConnectorId = connectorId,
+                        Origin = connector.Origin,
+                        ConnectedOwnerId = connectedOwnerId
+                    });
+                }
+            }
+            return result;
+        }
+
+        private static List<string> FindMissingPhysicalConnections(
+            Element owner,
+            IEnumerable<PhysicalConnectionSnapshot> expected,
+            double originToleranceFt)
+        {
+            var connectors = MepRoutingUtil.GetConnectors(owner);
+            var missing = new List<string>();
+            foreach (var edge in expected)
+            {
+                var connector = edge.ConnectorId.HasValue
+                    ? connectors.FirstOrDefault(candidate =>
+                        MepSystemUtil.TryGetNativeConnectorId(candidate, out var nativeId) &&
+                        nativeId == edge.ConnectorId.Value)
+                    : connectors.OrderBy(candidate => candidate.Origin.DistanceTo(edge.Origin)).FirstOrDefault();
+                if (connector == null || connector.Origin.DistanceTo(edge.Origin) > originToleranceFt ||
+                    !PhysicalConnectedOwnerIds(connector).Contains(edge.ConnectedOwnerId))
+                {
+                    missing.Add($"connector {edge.ConnectorId?.ToString() ?? "origin_guard"} -> owner {edge.ConnectedOwnerId}");
+                }
+            }
+            return missing;
+        }
+
+        private static object DescribePhysicalConnection(PhysicalConnectionSnapshot edge) => new
+        {
+            connectorId = edge.ConnectorId,
+            connectorIdBasis = edge.ConnectorId.HasValue ? "revit_native_connector_id" : "origin_guard",
+            origin = ToPoint(edge.Origin),
+            connectedOwnerId = edge.ConnectedOwnerId
+        };
 
         private static void GuardExpectedTakeoffIdentity(
             Params p,
