@@ -218,10 +218,7 @@ import {
   validateSheetPixelEvidenceV1,
   type SheetPixelEvidencePolicyV1
 } from "../existing_conditions/sheet_pixel_evidence.js";
-import {
-  extractSheetVectorTextV1,
-  type SheetVectorTextExtractionInputV1
-} from "../existing_conditions/sheet_vector_text.js";
+import { handleExistingConditionsSheetVectorCommand } from "./existing_conditions_sheet_vector_cli.js";
 import {
   associateSheetVectorSymbolsV1,
   type SheetVectorSymbolAssociationInputV1
@@ -441,6 +438,7 @@ function usage(): never {
     "  npm run existing-conditions -- normalize-plan-trace-spines --input <bounded-normalization-policy.json> --receipt <spine-receipt.json> --out <normalized-spine-receipt.json>",
     "  npm run existing-conditions -- detect-repeated-mep-symbols --input <hash-bound-template-search.json> --out <candidate-receipt.json>",
     "  npm run existing-conditions -- extract-sheet-vector-text --input <hash-bound-pdf-render-and-text-filter.json> --out <vector-text-receipt.json>",
+    "  npm run existing-conditions -- extract-sheet-vector-topology --input <hash-bound-pdf-render-and-region.json> --out <vector-topology-receipt.json>",
     "  npm run existing-conditions -- associate-sheet-vector-symbols --input <hash-bound-vector-and-repeated-symbol-receipts.json> --out <association-receipt.json>",
     "  npm run existing-conditions -- detect-sheet-chromatic-components --input <hash-bound-hue-component-search.json> --out <candidate-receipt.json> [--overlay-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- validate-sheet-route-chromatic-coverage --input <hash-bound-source-policy.json> [--candidate <sheet-interpretation-or-provider-receipt.json>] --out <coverage-receipt.json> [--overlay-out <diagnostic-overlay.png>]",
@@ -2057,19 +2055,9 @@ async function main(): Promise<void> {
     writeJson(requiredArgument("--out"), receipt);
     return;
   }
-  if (command === "extract-sheet-vector-text") {
-    const inputPath = requiredArgument("--input");
-    const outputPath = requiredArgument("--out");
-    assertFreshDistinctOutputPaths(
-      [{ flag: "--out", value: outputPath }],
-      [{ flag: "--input", value: inputPath }]
-    );
-    writeJson(
-      outputPath,
-      await extractSheetVectorTextV1(readJson(inputPath) as SheetVectorTextExtractionInputV1)
-    );
-    return;
-  }
+  if (await handleExistingConditionsSheetVectorCommand(command, {
+    requiredArgument, readJson, writeJson, assertFreshDistinctOutputPaths
+  })) return;
   if (command === "associate-sheet-vector-symbols") {
     const inputPath = requiredArgument("--input");
     const outputPath = requiredArgument("--out");
