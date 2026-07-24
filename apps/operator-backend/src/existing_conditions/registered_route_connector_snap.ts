@@ -93,8 +93,9 @@ export type RegisteredRouteSnapReceiptV1 = {
   blockers: string[];
   endpoint_snaps: RegisteredRouteEndpointSnapV1[];
   snapped_points: Array<{ x: number; y: number; z: number }>;
-  dry_run_action: null | { method: "POST"; path: "/revit/create-mep-route"; body: Record<string, unknown> };
-  apply_action: null | { method: "POST"; path: "/revit/create-mep-route"; body: Record<string, unknown> };
+  action_mode: "create_mep_route" | "pipe_between_existing_connectors";
+  dry_run_action: null | { method: "POST"; path: "/revit/create-mep-route" | "/revit/create-pipe-between-connectors"; body: Record<string, unknown> };
+  apply_action: null | { method: "POST"; path: "/revit/create-mep-route" | "/revit/create-pipe-between-connectors"; body: Record<string, unknown> };
   acceptance_requirements: string[];
 };
 
@@ -226,6 +227,15 @@ function connectorKey(value: NativeConnector): string {
   return `${value.owner_element_id}:${value.connector_id ?? `index-${value.connector_index}`}`;
 }
 
+function exactPipeBridgeService(systemType: string): "domestic_cold_water" | "domestic_hot_water" | "sanitary" | "vent" | null {
+  const value = normalized(systemType);
+  if (value.includes("domestic cold water")) return "domestic_cold_water";
+  if (value.includes("domestic hot water")) return "domestic_hot_water";
+  if (value.includes("sanitary")) return "sanitary";
+  if (value.includes("vent")) return "vent";
+  return null;
+}
+
 export function planRegisteredRouteConnectorSnapV1(
   candidate: RegisteredRouteSnapCandidateV1,
   context: RegisteredRouteSnapContextV1
@@ -341,7 +351,45 @@ export function planRegisteredRouteConnectorSnapV1(
     ...(candidate.route_type_id && candidate.kind === "pipe" ? { pipeTypeId: candidate.route_type_id } : {}),
     ...(candidate.route_type_id && candidate.kind === "conduit" ? { conduitTypeId: candidate.route_type_id } : {})
   };
-  const action = (dryRun: boolean) => ({ method: "POST" as const, path: "/revit/create-mep-route" as const, body: { ...baseBody, dryRun } });
+  const exactService = exactPipeBridgeService(candidate.system_type);
+  const bridgeLengthFt = selected.length === 2
+    ? Math.hypot(
+      selected[1]!.snapped_point.x - selected[0]!.snapped_point.x,
+      selected[1]!.snapped_point.y - selected[0]!.snapped_point.y,
+      selected[1]!.snapped_point.z - selected[0]!.snapped_point.z
+    )
+    : 0;
+  const exactPipeBridge = ready
+    && candidate.kind === "pipe"
+    && candidate.shape === "round"
+    && candidate.points.length === 2
+    && clean(candidate.route_type_name).length > 0
+    && exactService !== null
+    && selected.length === 2
+    && selected[0]!.owner_element_id !== selected[1]!.owner_element_id
+    && bridgeLengthFt + policy.final_connection_tolerance_ft <= 100;
+  const actionMode: RegisteredRouteSnapReceiptV1["action_mode"] = exactPipeBridge
+    ? "pipe_between_existing_connectors"
+    : "create_mep_route";
+  const action = (dryRun: boolean): NonNullable<RegisteredRouteSnapReceiptV1["dry_run_action"]> => exactPipeBridge
+    ? {
+      method: "POST",
+      path: "/revit/create-pipe-between-connectors",
+      body: {
+        sourceElementId: selected[0]!.owner_element_id,
+        targetElementId: selected[1]!.owner_element_id,
+        service: exactService,
+        systemType: candidate.system_type,
+        pipeType: candidate.route_type_name,
+        pipeSize: candidate.size,
+        levelName: candidate.level_name,
+        maximumLengthFt: bridgeLengthFt + policy.final_connection_tolerance_ft,
+        sizeToleranceFt: Math.min(policy.maximum_size_delta_ft, 1 / 192),
+        verify: true,
+        dryRun
+      }
+    }
+    : { method: "POST", path: "/revit/create-mep-route", body: { ...baseBody, dryRun } };
   return {
     schema_version: 1,
     artifact_role: "registered_route_connector_snap",
@@ -353,6 +401,7 @@ export function planRegisteredRouteConnectorSnapV1(
     blockers,
     endpoint_snaps: selected,
     snapped_points: snappedPoints,
+    action_mode: actionMode,
     dry_run_action: ready ? action(true) : null,
     apply_action: ready ? action(false) : null,
     acceptance_requirements: [
@@ -385,7 +434,8 @@ export function buildRegisteredRouteSnapStagedWorkflowV1(
   if (
     !dryRunAction || !applyAction ||
     dryRunAction.method !== "POST" || applyAction.method !== "POST" ||
-    dryRunAction.path !== "/revit/create-mep-route" || applyAction.path !== "/revit/create-mep-route" ||
+    dryRunAction.path !== applyAction.path ||
+    !["/revit/create-mep-route", "/revit/create-pipe-between-connectors"].includes(dryRunAction.path) ||
     dryRunAction.body.dryRun !== true || applyAction.body.dryRun !== false
   ) {
     throw new Error("registered_route_snap_staged_actions_invalid");
@@ -398,7 +448,9 @@ export function buildRegisteredRouteSnapStagedWorkflowV1(
     throw new Error("registered_route_snap_staged_actions_diverge");
   }
   const pointCount = candidate.points.length;
-  const expectedCreatedMaximum = Math.max(1, (pointCount - 1) + Math.max(0, pointCount - 2));
+  const expectedCreatedMaximum = receipt.action_mode === "pipe_between_existing_connectors"
+    ? 1
+    : Math.max(1, (pointCount - 1) + Math.max(0, pointCount - 2));
   const actionKey = `registered-route:${clean(candidate.primitive_id).replace(/[^a-zA-Z0-9._:-]+/g, "-")}`;
   return {
     inputFingerprintSha256: receipt.input_fingerprint_sha256,
@@ -406,7 +458,7 @@ export function buildRegisteredRouteSnapStagedWorkflowV1(
     operations: [{
       action_key: actionKey,
       observation_ids: [clean(candidate.primitive_id)],
-      path: "/revit/create-mep-route",
+      path: applyAction.path,
       depends_on: [],
       apply_body: JSON.parse(JSON.stringify(applyBody)) as NonNullable<
         AtomicMepDraftWorkflowRequest["operations"][number]["apply_body"]

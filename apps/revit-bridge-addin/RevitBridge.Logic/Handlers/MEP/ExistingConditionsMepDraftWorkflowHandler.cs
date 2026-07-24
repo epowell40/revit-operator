@@ -518,31 +518,42 @@ namespace RevitBridge.Logic.Handlers.MEP
             }
             if (path == "/revit/create-pipe-between-connectors")
             {
-                var deferred = operation.deferred_body ?? throw new InvalidOperationException($"deferred_body_required:{operation.action_key}");
-                var sourceIds = ResolveReference(deferred.source_element, outputs, operation.action_key, "source_element");
-                if (sourceIds.Count != 1)
-                    throw new InvalidOperationException($"source_element_reference_must_resolve_one_id:{operation.action_key}:found={sourceIds.Count}");
-                if (deferred.target_element_id.HasValue && deferred.target_element != null)
-                    throw new InvalidOperationException($"target_element_id_and_reference_are_mutually_exclusive:{operation.action_key}");
-                long targetElementId;
-                if (deferred.target_element != null)
-                {
-                    var targetIds = ResolveReference(deferred.target_element, outputs, operation.action_key, "target_element");
-                    if (targetIds.Count != 1)
-                        throw new InvalidOperationException($"target_element_reference_must_resolve_one_id:{operation.action_key}:found={targetIds.Count}");
-                    targetElementId = targetIds[0];
-                }
-                else if (deferred.target_element_id.HasValue && deferred.target_element_id.Value > 0)
-                {
-                    targetElementId = deferred.target_element_id.Value;
-                }
-                else throw new InvalidOperationException($"target_element_id_or_reference_required:{operation.action_key}");
                 if (!operation.apply_body.HasValue || operation.apply_body.Value.ValueKind != JsonValueKind.Object)
                     throw new InvalidOperationException($"apply_body_required:{operation.action_key}");
                 var bridgeBody = JsonSerializer.Deserialize<Dictionary<string, object>>(operation.apply_body.Value.GetRawText())
                     ?? new Dictionary<string, object>();
-                bridgeBody["sourceElementId"] = sourceIds[0];
-                bridgeBody["targetElementId"] = targetElementId;
+                var deferred = operation.deferred_body;
+                if (deferred != null)
+                {
+                    var sourceIds = ResolveReference(deferred.source_element, outputs, operation.action_key, "source_element");
+                    if (sourceIds.Count != 1)
+                        throw new InvalidOperationException($"source_element_reference_must_resolve_one_id:{operation.action_key}:found={sourceIds.Count}");
+                    if (deferred.target_element_id.HasValue && deferred.target_element != null)
+                        throw new InvalidOperationException($"target_element_id_and_reference_are_mutually_exclusive:{operation.action_key}");
+                    long targetElementId;
+                    if (deferred.target_element != null)
+                    {
+                        var targetIds = ResolveReference(deferred.target_element, outputs, operation.action_key, "target_element");
+                        if (targetIds.Count != 1)
+                            throw new InvalidOperationException($"target_element_reference_must_resolve_one_id:{operation.action_key}:found={targetIds.Count}");
+                        targetElementId = targetIds[0];
+                    }
+                    else if (deferred.target_element_id.HasValue && deferred.target_element_id.Value > 0)
+                    {
+                        targetElementId = deferred.target_element_id.Value;
+                    }
+                    else throw new InvalidOperationException($"target_element_id_or_reference_required:{operation.action_key}");
+                    bridgeBody["sourceElementId"] = sourceIds[0];
+                    bridgeBody["targetElementId"] = targetElementId;
+                }
+                else
+                {
+                    using var directBody = JsonDocument.Parse(operation.apply_body.Value.GetRawText());
+                    if (ReadLong(directBody.RootElement, "sourceElementId") <= 0)
+                        throw new InvalidOperationException($"source_element_id_required:{operation.action_key}");
+                    if (ReadLong(directBody.RootElement, "targetElementId") <= 0)
+                        throw new InvalidOperationException($"target_element_id_required:{operation.action_key}");
+                }
                 bridgeBody["dryRun"] = false;
                 bridgeBody["verify"] = verify;
                 return JsonSerializer.Serialize(bridgeBody);

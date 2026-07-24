@@ -9446,6 +9446,50 @@
     },
     {
       "method": "POST",
+      "path": "/revit/assign-electrical-distribution-system",
+      "examples": [
+        {
+          "name": "Audit compatible native distribution systems without changing equipment",
+          "request": {
+            "elementIds": [22222]
+          },
+          "expected_response_shape": {
+            "schema": "operator.assign_electrical_distribution_system.v1",
+            "status": "Audit",
+            "applied": false,
+            "dryRun": true,
+            "results": [
+              {
+                "elementId": 22222,
+                "ok": true,
+                "validDistributionSystems": []
+              }
+            ]
+          }
+        },
+        {
+          "name": "Dry-run assigning an exact compatible native distribution system",
+          "request": {
+            "elementIds": [22222],
+            "distributionSystemId": 33333,
+            "dryRun": true
+          },
+          "expected_response_shape": {
+            "schema": "operator.assign_electrical_distribution_system.v1",
+            "status": "Planned",
+            "applied": false,
+            "dryRun": true,
+            "rollbackVerified": true,
+            "distributionSystem": {
+              "id": 33333,
+              "name": "480Y/277V 3PH 4W"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/edit-mep-route-elements",
       "examples": [
         {

@@ -209,9 +209,102 @@ test("passes a stable pipe type id through the native route action", () => {
   }
   const receipt = planRegisteredRouteConnectorSnapV1(input, { native_connector_readback: readback });
   assert.equal(receipt.status, "ready");
-  assert.equal(receipt.dry_run_action?.body.pipeTypeId, 246810);
+  assert.equal(receipt.action_mode, "pipe_between_existing_connectors");
+  assert.equal(receipt.dry_run_action?.path, "/revit/create-pipe-between-connectors");
+  assert.equal(receipt.dry_run_action?.body.sourceElementId, 101);
+  assert.equal(receipt.dry_run_action?.body.targetElementId, 202);
+  assert.equal(receipt.dry_run_action?.body.service, "sanitary");
   assert.equal(receipt.dry_run_action?.body.pipeType, "PVC - DWV");
-  assert.equal(receipt.dry_run_action?.body.ductTypeId, undefined);
+  assert.equal(receipt.dry_run_action?.body.pipeSize, '2"');
+  assert.equal(receipt.dry_run_action?.body.verify, true);
+  assert.equal(receipt.dry_run_action?.body.dryRun, true);
+});
+
+test("keeps unsupported-service and multi-segment pipes on the general route creator", () => {
+  const hydronic = {
+    ...candidate(),
+    kind: "pipe" as const,
+    system_type: "Hydronic Supply",
+    route_type_name: "Steel",
+    size: '2"'
+  };
+  const hydronicReadback = connectorReadback();
+  for (const row of hydronicReadback.results as any[]) {
+    row.category = "OST_PipeFitting";
+    row.systemName = "Hydronic Supply Loop";
+    for (const connector of row.connectors) {
+      connector.domain = "DomainPiping";
+      connector.size.diameterFt = 1 / 6;
+    }
+  }
+  const hydronicReceipt = planRegisteredRouteConnectorSnapV1(hydronic, { native_connector_readback: hydronicReadback });
+  assert.equal(hydronicReceipt.status, "ready");
+  assert.equal(hydronicReceipt.action_mode, "create_mep_route");
+  assert.equal(hydronicReceipt.dry_run_action?.path, "/revit/create-mep-route");
+
+  const multiSegment = {
+    ...hydronic,
+    system_type: "Sanitary",
+    route_type_name: "PVC - DWV",
+    points: [{ x: 10.1, y: 20.1 }, { x: 12.5, y: 20.1 }, { x: 15.15, y: 20.1 }]
+  };
+  for (const row of hydronicReadback.results as any[]) row.systemName = "Building Sanitary";
+  const multiReceipt = planRegisteredRouteConnectorSnapV1(multiSegment, { native_connector_readback: hydronicReadback });
+  assert.equal(multiReceipt.status, "ready");
+  assert.equal(multiReceipt.action_mode, "create_mep_route");
+  assert.equal(multiReceipt.dry_run_action?.path, "/revit/create-mep-route");
+});
+
+test("keeps pipe spans beyond the exact bridge handler limit on the general route creator", () => {
+  const input = {
+    ...candidate(),
+    kind: "pipe" as const,
+    system_type: "Sanitary",
+    route_type_name: "PVC - DWV",
+    size: '2"',
+    points: [{ x: 0, y: 0 }, { x: 100, y: 0 }]
+  };
+  const readback = {
+    status: "Ok",
+    results: [
+      {
+        id: 101,
+        category: "OST_PipeFitting",
+        systemName: "Building Sanitary",
+        connectors: [{
+          index: 0,
+          connectorId: 1,
+          connectorIdBasis: "revit_native_connector_id",
+          origin: [0, 0, 30],
+          domain: "DomainPiping",
+          shape: "Round",
+          size: { diameterFt: 1 / 6 },
+          coordinateSystem: { basisZ: [1, 0, 0] },
+          physicalConnectionCount: 0
+        }]
+      },
+      {
+        id: 202,
+        category: "OST_PipeFitting",
+        systemName: "Building Sanitary",
+        connectors: [{
+          index: 0,
+          connectorId: 1,
+          connectorIdBasis: "revit_native_connector_id",
+          origin: [100, 0, 30],
+          domain: "DomainPiping",
+          shape: "Round",
+          size: { diameterFt: 1 / 6 },
+          coordinateSystem: { basisZ: [-1, 0, 0] },
+          physicalConnectionCount: 0
+        }]
+      }
+    ]
+  };
+  const receipt = planRegisteredRouteConnectorSnapV1(input, { native_connector_readback: readback });
+  assert.equal(receipt.status, "ready");
+  assert.equal(receipt.action_mode, "create_mep_route");
+  assert.equal(receipt.dry_run_action?.path, "/revit/create-mep-route");
 });
 
 test("converts a ready snap receipt into one staged route workflow", () => {
@@ -225,6 +318,34 @@ test("converts a ready snap receipt into one staged route workflow", () => {
   assert.equal(workflow.maximumCreatedElements, 1);
   assert.equal(workflow.targetViewId, 303);
   assert.equal(workflow.inputFingerprintSha256, receipt.input_fingerprint_sha256);
+});
+
+test("converts an exact sanitary single span into one staged pipe-between-connectors workflow", () => {
+  const input = {
+    ...candidate(),
+    kind: "pipe" as const,
+    system_type: "Sanitary",
+    route_type_name: "PVC - DWV",
+    route_type_id: 246810,
+    size: '2"'
+  };
+  const readback = connectorReadback();
+  for (const row of readback.results as any[]) {
+    row.category = "OST_PipeFitting";
+    row.systemName = "Building Sanitary";
+    for (const connector of row.connectors) {
+      connector.domain = "DomainPiping";
+      connector.size.diameterFt = 1 / 6;
+    }
+  }
+  const receipt = planRegisteredRouteConnectorSnapV1(input, { native_connector_readback: readback });
+  const workflow = buildRegisteredRouteSnapStagedWorkflowV1(input, receipt);
+  assert.equal(workflow.operations.length, 1);
+  assert.equal(workflow.operations[0]?.path, "/revit/create-pipe-between-connectors");
+  assert.equal(workflow.operations[0]?.apply_body?.sourceElementId, 101);
+  assert.equal(workflow.operations[0]?.apply_body?.targetElementId, 202);
+  assert.equal(workflow.operations[0]?.apply_body?.dryRun, undefined);
+  assert.equal(workflow.maximumCreatedElements, 1);
 });
 
 test("rejects staged snap actions that differ beyond dryRun", () => {
