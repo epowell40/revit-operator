@@ -3204,6 +3204,67 @@
     },
     {
       "method": "POST",
+      "path": "/revit/update-schedule-cell",
+      "examples": [
+        {
+          "name": "Dry-run a uniquely resolved equipment schedule value update",
+          "request": {
+            "scheduleQuery": "Mechanical Equipment Schedule",
+            "scheduleExact": true,
+            "rowKey": "AHU-1",
+            "rowField": "Mark",
+            "targetField": "Supply Air",
+            "expectedValue": "10,000",
+            "value": "20,000 CFM",
+            "dryRun": true
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "dryRun": true,
+            "applied": false,
+            "candidate": {
+              "schedule": {
+                "id": 4101,
+                "name": "Mechanical Equipment Schedule"
+              },
+              "row": {
+                "value": "AHU-1"
+              },
+              "target": {
+                "parameterName": "Supply Air",
+                "value": "10,000 CFM",
+                "storageType": "Double",
+                "readOnly": false
+              }
+            },
+            "proposed": {
+              "display": "20,000 CFM"
+            }
+          }
+        },
+        {
+          "name": "Apply and verify a schedule-backed parameter update",
+          "request": {
+            "rowKey": "AHU-1",
+            "targetField": "Supply Air",
+            "expectedValue": "10,000",
+            "value": "20,000",
+            "apply": true
+          },
+          "expected_response_shape": {
+            "status": "Applied and Verified",
+            "applied": true,
+            "verified": true,
+            "verificationFailedCount": 0,
+            "after": {
+              "display": "20,000 CFM"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/configure-schedule",
       "examples": [
         {

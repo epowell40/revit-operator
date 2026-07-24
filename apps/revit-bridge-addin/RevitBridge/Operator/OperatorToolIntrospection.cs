@@ -425,6 +425,7 @@ namespace RevitBridge.Operator
                 { "/revit/model-health", typeof(RevitBridge.Handlers.ModelHealthHandler.Params) },
                 { "/revit/qa-checks", typeof(RevitBridge.Handlers.QaChecksHandler.Params) },
                 { "/revit/schedules", typeof(RevitBridge.Handlers.SchedulesHandler.Params) },
+                { "/revit/update-schedule-cell", typeof(RevitBridge.Handlers.UpdateScheduleCellHandler.Params) },
                 { "/revit/configure-schedule", typeof(RevitBridge.Handlers.ConfigureScheduleHandler.Params) },
                 { "/revit/export-schedule-csv", typeof(RevitBridge.Handlers.ExportScheduleCsvHandler.Params) },
                 { "/revit/export-warnings-report", typeof(RevitBridge.Handlers.ExportWarningsReportHandler.Params) },

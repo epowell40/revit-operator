@@ -7937,6 +7937,45 @@ namespace RevitBridge.Operator
                 return true;
             }
 
+            if (string.Equals(path, "/revit/update-schedule-cell", StringComparison.OrdinalIgnoreCase))
+            {
+                // { scheduleId?|scheduleQuery?, scheduleExact?, rowKey, rowField?, targetField, expectedValue?, value, apply?, dryRun?, maxSchedules? }
+                if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
+                {
+                    error = "update-schedule-cell body must be an object.";
+                    return false;
+                }
+                if (!ValidateOptionalLong(obj.Value, "scheduleId", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "scheduleQuery", maxLen: 128, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "scheduleExact", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "rowKey", maxLen: 256, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "rowField", maxLen: 128, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "targetField", maxLen: 128, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "expectedValue", maxLen: 256, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "value", maxLen: 256, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "apply", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "maxSchedules", out error)) return false;
+
+                foreach (var required in new[] { "rowKey", "targetField", "value" })
+                {
+                    if (!obj.Value.TryGetProperty(required, out var requiredValue) ||
+                        requiredValue.ValueKind != JsonValueKind.String ||
+                        string.IsNullOrWhiteSpace(requiredValue.GetString()))
+                    {
+                        error = "update-schedule-cell." + required + " is required and must be a non-empty string.";
+                        return false;
+                    }
+                }
+                if (obj.Value.TryGetProperty("maxSchedules", out var maxSchedules) && maxSchedules.ValueKind != JsonValueKind.Null &&
+                    (!maxSchedules.TryGetInt32(out var maxValue) || maxValue < 1 || maxValue > 500))
+                {
+                    error = "update-schedule-cell.maxSchedules must be an integer from 1 through 500.";
+                    return false;
+                }
+                return true;
+            }
+
             if (string.Equals(path, "/revit/configure-schedule", StringComparison.OrdinalIgnoreCase))
             {
                 // { scheduleId?|query?, exact?, addFields?, filters?, replaceFilters?, sortGroup?, replaceSortGroup?, showGrandTotals?, columnWidths?, rowHeights?, calculatedFields?, fieldFormats?, conditionalFormats?, appearance?, filterBySheet?, dryRun? }
