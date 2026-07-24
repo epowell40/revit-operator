@@ -19107,7 +19107,7 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
       400,
       Math.min(6000, Number.parseInt(process.env.OPERATOR_PROMPT_COMPACT_SUMMARY_MAX_CHARS ?? "1400", 10) || 1400)
     );
-    lines.push(`Conversation compact summary (older ${omittedCount} message(s)):`); 
+    lines.push(`Conversation compact summary (older ${omittedCount} message(s)):`);
     lines.push(summarizeOlderConversation(older, maxCompactChars));
     lines.push("");
   }
