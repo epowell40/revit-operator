@@ -260,7 +260,7 @@ test("source target manifest is idempotent, hash chained, and restart safe", { c
   }
 });
 
-test("source disposition progress augments but never replaces the complete target manifest", { concurrency: false }, () => {
+test("source disposition progress augments but never replaces the complete target manifest", { concurrency: false }, async () => {
   const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-source-target-progress-"));
   process.env.OPERATOR_WORKSPACE_ROOT = root;
@@ -296,6 +296,18 @@ test("source disposition progress augments but never replaces the complete targe
     assert.equal(replay?.registered_source_dispositions, 1);
     assert.equal(replay?.unregistered_source_targets, 1);
     assert.equal(replay?.targets[0]?.source_progress, "accepted_source_observation");
+    assert.equal(replay?.targets[0]?.manifest_next_repair, original.targets[0]!.next_repair);
+    assert.equal(replay?.targets[0]?.next_repair, "Verify one native primitive and dry-run only that action.");
+    const inspection = await decide({
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "manifest-progress-inspection",
+      user_text: "Do not modify Revit. Report all existing-conditions sheet target manifest coverage and exact next repairs."
+    });
+    assert.match(
+      inspection.assistant_message,
+      new RegExp(`${original.targets[0]!.target_key}: candidate/single_action/accepted_source_observation\\. Exact next repair: Verify one native primitive and dry-run only that action\\.`)
+    );
     assert.equal(readExistingConditionsRepairLedger(sessionId).length, 2);
   } finally {
     if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;

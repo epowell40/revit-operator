@@ -77,6 +77,8 @@ function manifestTarget(
   const disposition = match?.state;
   return {
     ...target,
+    manifest_next_repair: target.next_repair,
+    next_repair: disposition?.disposition.next_repair ?? target.next_repair,
     source_progress: target.source_status === "approved_exclusion"
       ? "approved_exclusion"
       : disposition?.disposition.disposition ?? "unregistered",
@@ -154,7 +156,8 @@ export function maybeBuildExistingConditionsSourceDispositionInspection(
       const progress = target.source_status === "approved_exclusion"
         ? "approved_exclusion"
         : disposition?.disposition.disposition ?? "unregistered";
-      return `${index + 1}. ${target.target_key}: ${target.source_status}/${target.compilation_decision}/${progress}. Exact next repair: ${target.next_repair}`;
+      const effectiveNextRepair = disposition?.disposition.next_repair ?? target.next_repair;
+      return `${index + 1}. ${target.target_key}: ${target.source_status}/${target.compilation_decision}/${progress}. Exact next repair: ${effectiveNextRepair}`;
     });
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
