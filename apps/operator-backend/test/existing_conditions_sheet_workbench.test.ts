@@ -6,6 +6,9 @@ import os from "node:os";
 import path from "node:path";
 import { createCanvas } from "@napi-rs/canvas";
 import { executeWorkbenchActions } from "../src/workbench/workbench_runner.js";
+import { executeExistingConditionsProviderWorkbenchActions } from "../src/brains/openai_brain.js";
+import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
+import { latestExistingConditionsSourceTargetManifestV1 } from "../src/existing_conditions/source_target_manifest_ledger.js";
 
 test("sheet workbench rechecks chromatic routes and compiles junctions as one terminal step", async () => {
   const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
@@ -143,8 +146,12 @@ test("sheet workbench rechecks chromatic routes and compiles junctions as one te
 
     assert.equal(out.length, 1);
     assert.equal(out[0]?.ok, true);
-    assert.match(out[0]?.summary ?? "", /accepted_routes=4, rejected_routes=1, accepted_points=0, rejected_points=0, existing_points=0, identity_groups=0, junctions=2/);
+    assert.match(out[0]?.summary ?? "", /accepted_routes=4, rejected_routes=1, accepted_points=0, rejected_points=0, existing_points=0, source_targets=5, identity_groups=0, junctions=2/);
     const details = out[0]?.details as any;
+    assert.equal(details.source_target_manifest.source_accounting_closure, 1);
+    assert.equal(details.source_target_manifest.target_count, 5);
+    assert.equal(details.source_target_manifest.native_write_allowed, false);
+    assert.equal(JSON.stringify(details.source_target_manifest).includes("mark-top"), false);
     const evidence = new Map(details.raster_evidence.route_evidence.map((value: any) => [value.primitive_id, value]));
     assert.equal((evidence.get("black-overlap") as any)?.support_modality, "chromatic_line");
     assert.equal((evidence.get("black-overlap") as any)?.status, "rejected_raster_extent");
@@ -155,6 +162,48 @@ test("sheet workbench rechecks chromatic routes and compiles junctions as one te
     assert.notEqual(topology.component_by_primitive_id["black-overlap"], topology.component_by_primitive_id.top);
     assert.equal(fs.existsSync(path.join(root, "artifacts", "sheet", "overlay.png")), true);
     assert.equal(fs.existsSync(path.join(root, "artifacts", "sheet", "receipt.json")), true);
+
+    const failedRegistration = await executeWorkbenchActions([{
+      type: "compile_existing_conditions_sheet_interpretation",
+      interpretation_file_path: "fixtures/interpretation.json",
+      context_file_path: "fixtures/context.json",
+      source_image_path: "fixtures/source.png",
+      source_view_key: "view",
+      receipt_output_path: "artifacts/sheet/receipt-before-ledger-failure.json"
+    }, {
+      type: "write_file",
+      file_path: "artifacts/sheet/must-not-run.txt",
+      content: "unsafe continuation"
+    }], {
+      registerExistingConditionsSourceTargetManifest: async () => {
+        throw new Error("source_target_manifest_ledger_locked");
+      }
+    });
+    assert.equal(failedRegistration.length, 1);
+    assert.equal(failedRegistration[0]?.ok, false);
+    assert.match(failedRegistration[0]?.summary ?? "", /source_target_manifest_ledger_locked/);
+    assert.equal(fs.existsSync(path.join(root, "artifacts", "sheet", "receipt-before-ledger-failure.json")), true);
+    assert.equal(fs.existsSync(path.join(root, "artifacts", "sheet", "must-not-run.txt")), false);
+
+    const sessionId = "sheet-source-target-manifest-session";
+    const providerResponse = await executeExistingConditionsProviderWorkbenchActions({
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "compile-sheet-manifest",
+      user_text: "Compile this registered existing-conditions sheet without modifying Revit."
+    }, [{
+      type: "compile_existing_conditions_sheet_interpretation",
+      interpretation_file_path: "fixtures/interpretation.json",
+      context_file_path: "fixtures/context.json",
+      source_image_path: "fixtures/source.png",
+      source_view_key: "view"
+    }]);
+    assert.deepEqual(providerResponse.actions, []);
+    assert.match(providerResponse.assistant_message, /source_targets=5/);
+    const persistedManifest = latestExistingConditionsSourceTargetManifestV1(sessionId);
+    assert.equal(persistedManifest?.manifest.target_count, 5);
+    assert.equal(persistedManifest?.manifest.source_accounting_closure, 1);
+    assert.equal(persistedManifest?.manifest.native_write_allowed, false);
   } finally {
     if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
@@ -407,7 +456,7 @@ test("sheet workbench hydrates prior evidence and compiles a cross-sheet candida
       receipt_output_path: "artifacts/cross-sheet/receipt.json"
     }]);
     assert.equal(out[0]?.ok, true);
-    assert.match(out[0]?.summary ?? "", /accepted_points=1, rejected_points=0, existing_points=1, identity_groups=1/);
+    assert.match(out[0]?.summary ?? "", /accepted_points=1, rejected_points=0, existing_points=1, source_targets=2, identity_groups=1/);
     const details = out[0]?.details as any;
     assert.equal(details.compilation.candidate_identity_groups[0]?.scope, "cross_sheet");
     assert.deepEqual(details.compilation.candidate_identity_groups[0]?.members.map((member: any) => member.primitive_id), ["point-a", "point-b"]);

@@ -11,6 +11,7 @@ export type ExistingConditionsStageStatus =
   | "follow_up";
 
 export type ExistingConditionsStageEvent =
+  | "source_target_manifest_registered"
   | "source_disposition_recorded"
   | "workflow_registered"
   | "stage_registered"
