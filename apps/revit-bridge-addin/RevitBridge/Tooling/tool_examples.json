@@ -3265,6 +3265,57 @@
     },
     {
       "method": "POST",
+      "path": "/revit/replace-schedule-values",
+      "examples": [
+        {
+          "name": "Plan a sheet-scoped literal designation replacement",
+          "request": {
+            "sheetNumbers": ["P6.01", "P6.02", "P6.03"],
+            "fieldNames": ["DESIG", "Designation"],
+            "valueContains": "-G-",
+            "replaceFrom": "-G-",
+            "replaceTo": "-0-",
+            "apply": false,
+            "dryRun": true,
+            "maxSchedules": 200,
+            "maxCandidates": 5000
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "applied": false,
+            "planHash": "64-character SHA-256 plan hash",
+            "writableCandidateCount": 3,
+            "blockedCandidateCount": 0,
+            "saveOrSyncPerformed": false
+          }
+        },
+        {
+          "name": "Apply the exact dry-run replacement plan and verify readback",
+          "request": {
+            "sheetNumbers": ["P6.01", "P6.02", "P6.03"],
+            "fieldNames": ["DESIG", "Designation"],
+            "valueContains": "-G-",
+            "replaceFrom": "-G-",
+            "replaceTo": "-0-",
+            "expectedPlanHash": "plan hash returned by the dry run",
+            "apply": true,
+            "dryRun": false
+          },
+          "expected_response_shape": {
+            "status": "Applied and Verified",
+            "applied": true,
+            "verified": true,
+            "complete": true,
+            "changedCount": 3,
+            "remainingMatchCount": 0,
+            "verificationFailedCount": 0,
+            "saveOrSyncPerformed": false
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/configure-schedule",
       "examples": [
         {
