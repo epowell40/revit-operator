@@ -175,6 +175,7 @@ namespace RevitBridge.Operator
                     // Model manipulation (high risk; approval-gated)
                     "/revit/delete",
                     "/revit/set-parameter",
+                    "/revit/update-schedule-cell",
                     "/revit/sync-connected-sizes",
                     "/revit/resize-duct-run",
                     "/revit/resize-ducts-by-scope",

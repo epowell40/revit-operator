@@ -101,6 +101,7 @@ const defaultAllowed: Allowlist = {
     "/revit/quantify-visualize",
     "/revit/sheets",
     "/revit/schedules",
+    "/revit/update-schedule-cell",
     "/revit/configure-schedule",
     "/revit/export-schedule-csv",
     "/revit/export-warnings-report",
