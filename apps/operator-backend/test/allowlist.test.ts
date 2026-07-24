@@ -25,6 +25,8 @@ test("ui.open is allowlisted as POST", () => {
 test("schedule-backed cell update is allowlisted only as POST", () => {
   assert.equal(isAllowlisted("POST", "/revit/update-schedule-cell"), true);
   assert.equal(isAllowlisted("GET", "/revit/update-schedule-cell"), false);
+  assert.equal(isAllowlisted("POST", "/revit/replace-schedule-values"), true);
+  assert.equal(isAllowlisted("GET", "/revit/replace-schedule-values"), false);
 });
 
 test("redline visual verification gate is allowlisted as POST", () => {

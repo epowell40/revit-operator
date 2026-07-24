@@ -237,7 +237,10 @@ function findContinuationAttachment(req: ResolveMepRouteRedlineRequest): { file_
 
 function isMepRouteContinuationToolResult(result: ToolResult): boolean {
   const path = textOf(result?.path).toLowerCase();
-  if (path === "/revit/sheets") return textOf(asRecord(result.result_json)?.action).toLowerCase() === "detail";
+  if (path === "/revit/sheets") {
+    return textOf(result?.action_id).startsWith("mep-route-sheet-") &&
+      textOf(asRecord(result.result_json)?.action).toLowerCase() === "detail";
+  }
   return (
     path === "/revit/export-view-frame" ||
     path === "/tools/redline/align-to-view" ||
@@ -2264,7 +2267,8 @@ function rerouteOffsetDryRunResultMessage(
 }
 
 function action(pathName: string, body: Record<string, unknown>): ActionCall {
-  return { action_id: randomUUID(), method: "POST", path: pathName, body };
+  const actionId = pathName === "/revit/sheets" ? `mep-route-sheet-${randomUUID()}` : randomUUID();
+  return { action_id: actionId, method: "POST", path: pathName, body };
 }
 
 export async function resolveMepRouteRedline(req: ResolveMepRouteRedlineRequest): Promise<ResolveMepRouteRedlineResponse> {
