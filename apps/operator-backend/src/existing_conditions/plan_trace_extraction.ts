@@ -19,6 +19,13 @@ export type PlanTraceExtractionInput = {
   minimum_chroma?: number;
   minimum_alpha?: number;
   scope_polygon?: PlanTracePoint[];
+  network_scope?: {
+    mode: "seeded_connected_components";
+    seed_points_px: PlanTracePoint[];
+    seed_basis: "host_trusted_source_mark" | "host_trusted_route_seed";
+    seed_evidence_sha256: string;
+    seed_radius_px?: number;
+  };
   minimum_component_pixels?: number;
   simplify_tolerance_px?: number;
   interpretation_mode?: "ink_centerline" | "outlined_network_centerline";
@@ -88,6 +95,13 @@ export type PlanTraceExtractionReceipt = {
     minimum_chroma: number;
     minimum_alpha: number;
     scope_polygon: PlanTracePoint[] | null;
+    network_scope?: {
+      mode: "seeded_connected_components";
+      seed_points_px: PlanTracePoint[];
+      seed_basis: "host_trusted_source_mark" | "host_trusted_route_seed";
+      seed_evidence_sha256: string;
+      seed_radius_px: number;
+    };
     minimum_component_pixels: number;
     simplify_tolerance_px: number;
     interpretation_mode?: "outlined_network_centerline";
@@ -103,6 +117,16 @@ export type PlanTraceExtractionReceipt = {
   extraction_policy_sha256: string;
   matched_pixel_count: number;
   retained_pixel_count: number;
+  all_retained_component_count?: number;
+  network_scope?: {
+    mode: "seeded_connected_components";
+    seed_points_px: PlanTracePoint[];
+    seed_basis: "host_trusted_source_mark" | "host_trusted_route_seed";
+    seed_evidence_sha256: string;
+    seed_radius_px: number;
+    selected_component_count: number;
+    excluded_component_count: number;
+  };
   derived_fill_pixel_count?: number;
   components: PlanTraceComponent[];
   line_style_hypotheses?: PlanTraceLineStyleHypothesis[];
@@ -155,6 +179,12 @@ function checkedSha256(value: unknown): string {
 function checkedPixelSha256(value: unknown): string {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(normalized)) throw new Error("source_pixel_sha256_must_be_sha256");
+  return normalized;
+}
+
+function checkedEvidenceSha256(value: unknown, label: string): string {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(normalized)) throw new Error(`${label}_must_be_sha256`);
   return normalized;
 }
 
@@ -921,6 +951,48 @@ export function extractPlanTracesFromPixels(
     };
   }
   const polygon = validatePolygon(input.scope_polygon, width, height);
+  let networkScope: NonNullable<PlanTraceExtractionReceipt["network_scope"]> | undefined;
+  if (input.network_scope !== undefined) {
+    if (input.network_scope?.mode !== "seeded_connected_components") {
+      throw new Error("plan_trace_network_scope_mode_invalid");
+    }
+    if (!Array.isArray(input.network_scope.seed_points_px)
+      || input.network_scope.seed_points_px.length === 0
+      || input.network_scope.seed_points_px.length > 50) {
+      throw new Error("plan_trace_network_scope_requires_one_to_fifty_seeds");
+    }
+    if (!["host_trusted_source_mark", "host_trusted_route_seed"].includes(input.network_scope.seed_basis)) {
+      throw new Error("plan_trace_network_scope_seed_basis_invalid");
+    }
+    const seeds = input.network_scope.seed_points_px.map((value, index) => {
+      const seed = checkedPoint(value, `plan_trace_network_scope_seed_${index}`);
+      if (seed.x < 0 || seed.y < 0 || seed.x >= width || seed.y >= height) {
+        throw new Error(`plan_trace_network_scope_seed_outside_image:${index}`);
+      }
+      if (polygon && !pointInPolygon(seed.x + 0.5, seed.y + 0.5, polygon)) {
+        throw new Error(`plan_trace_network_scope_seed_outside_scope_polygon:${index}`);
+      }
+      return seed;
+    });
+    const seedRadius = input.network_scope.seed_radius_px == null
+      ? 24
+      : finite(input.network_scope.seed_radius_px, "plan_trace_network_scope_seed_radius_px");
+    if (seedRadius < 0.5 || seedRadius > 250) {
+      throw new Error("plan_trace_network_scope_seed_radius_px_must_be_between_0_5_and_250");
+    }
+    networkScope = {
+      mode: "seeded_connected_components",
+      seed_points_px: seeds,
+      seed_basis: input.network_scope.seed_basis,
+      seed_evidence_sha256: checkedEvidenceSha256(
+        input.network_scope.seed_evidence_sha256,
+        "plan_trace_network_scope_seed_evidence_sha256"
+      ),
+      seed_radius_px: seedRadius,
+      selected_component_count: 0,
+      excluded_component_count: 0
+    };
+  }
 
   const mask = new Uint8Array(width * height);
   let matchedPixelCount = 0;
@@ -948,9 +1020,23 @@ export function extractPlanTracesFromPixels(
   const interpreted = interpretationMode === "outlined_network_centerline"
     ? fillOutlinedNetworkInteriors(mask, width, height, maximumInteriorSpan!, minimumParallelSupport!)
     : { mask, derivedFillPixelCount: 0 };
-  const retained = connectedComponents(interpreted.mask, width, height)
+  const allRetained = connectedComponents(interpreted.mask, width, height)
     .filter((component) => component.length >= minimumComponentPixels)
     .sort((a, b) => b.length - a.length || a[0]! - b[0]!);
+  const retained = networkScope
+    ? allRetained.filter(component => component.some(pixel => {
+        const x = pixel % width;
+        const y = Math.floor(pixel / width);
+        return networkScope!.seed_points_px.some(seed => Math.hypot(x - seed.x, y - seed.y) <= networkScope!.seed_radius_px);
+      }))
+    : allRetained;
+  if (networkScope) {
+    networkScope.selected_component_count = retained.length;
+    networkScope.excluded_component_count = allRetained.length - retained.length;
+    if (retained.length === 0) {
+      throw new Error("plan_trace_network_scope_seed_reaches_no_component");
+    }
+  }
   let retainedPixelCount = 0;
   const components = retained.map((component, index) => {
     retainedPixelCount += component.length;
@@ -993,6 +1079,13 @@ export function extractPlanTracesFromPixels(
     minimum_chroma: minimumChroma,
     minimum_alpha: minimumAlpha,
     scope_polygon: polygon,
+    ...(networkScope ? { network_scope: {
+      mode: networkScope.mode,
+      seed_points_px: networkScope.seed_points_px,
+      seed_basis: networkScope.seed_basis,
+      seed_evidence_sha256: networkScope.seed_evidence_sha256,
+      seed_radius_px: networkScope.seed_radius_px
+    } } : {}),
     minimum_component_pixels: minimumComponentPixels,
     simplify_tolerance_px: simplifyTolerance
     ,...(interpretationMode === "outlined_network_centerline" ? {
@@ -1012,6 +1105,10 @@ export function extractPlanTracesFromPixels(
     extraction_policy_sha256: digest(extractionPolicy),
     matched_pixel_count: matchedPixelCount,
     retained_pixel_count: retainedPixelCount,
+    ...(networkScope ? {
+      all_retained_component_count: allRetained.length,
+      network_scope: networkScope
+    } : {}),
     ...(interpretationMode === "outlined_network_centerline"
       ? { derived_fill_pixel_count: interpreted.derivedFillPixelCount }
       : {}),
@@ -1030,6 +1127,10 @@ export function extractPlanTracesFromPixels(
       ,...(interpretationMode === "outlined_network_centerline" ? [
         "Outlined-network centerlines are derived only where paired boundary ink has the declared span and parallel-support evidence.",
         "Derived centerlines may still include connected symbols, terminals, fittings, or compact loops and require explicit source accounting before promotion."
+      ] : []),
+      ...(networkScope ? [
+        "Seeded component scoping retains only raster components connected within the declared radius of host-trusted, SHA-256-bound source seeds.",
+        "Seeded component scoping cannot turn provider-selected exclusions into source completeness or establish native write authority."
       ] : [])
     ]
   };
