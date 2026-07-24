@@ -364,6 +364,388 @@ namespace RevitBridge.Handlers
             };
         }
 
+        private static object CreateOpenFlexFromElement(Document doc, Params p)
+        {
+            var dryRun = p.dryRun ?? false;
+            var verify = p.verify ?? true;
+            var startId = p.startElementId.GetValueOrDefault(0);
+            if (startId <= 0)
+                throw new InvalidOperationException("create_open_flex_from_element requires startElementId.");
+
+            var start = doc.GetElement(ElementIdCompat.Create(startId))
+                ?? throw new InvalidOperationException($"Start element {startId} was not found.");
+            var originToleranceFt = Math.Max(1e-6, p.originToleranceFt ?? 0.01);
+            var startConnector = ResolveGuardedOpenConnector(
+                start,
+                p.startConnectorId,
+                p.expectedStartOriginXyz,
+                originToleranceFt,
+                "start");
+
+            if (startConnector.Domain != Domain.DomainHvac)
+                throw new InvalidOperationException("Open flex start connector must be HVAC.");
+            if (startConnector.Shape != ConnectorProfileType.Round)
+                throw new InvalidOperationException("Open flex start connector must be round.");
+
+            // Snapshot retained-element evidence before entering the transaction. A
+            // connector wrapper used by the transient flex relationship may become
+            // invalid after a dry-run rollback even though its owner still exists.
+            var startConnectorSnapshot = DescribeConnector(startConnector);
+
+            var diameterFt = startConnector.Radius * 2.0;
+            var requestedSize = (p.ductSize ?? "").Trim();
+            if (requestedSize.Length > 0)
+            {
+                if (!LengthTextUtil.TryParseLengthToFeet(doc, requestedSize, out var parsedDiameterFt, out var sizeError) ||
+                    parsedDiameterFt <= 0)
+                {
+                    throw new InvalidOperationException($"Invalid flex duct size '{requestedSize}'. {sizeError}");
+                }
+                if (Math.Abs(parsedDiameterFt - diameterFt) > 1e-4)
+                {
+                    throw new InvalidOperationException(
+                        $"Requested flex duct size {parsedDiameterFt:G9}ft does not match the guarded start connector diameter {diameterFt:G9}ft.");
+                }
+                diameterFt = parsedDiameterFt;
+            }
+
+            var systemType = ResolveSystemType(doc, (p.systemTypeName ?? "").Trim()) ?? ResolveDefaultMechanicalSystemType(doc)
+                ?? throw new InvalidOperationException("Unable to resolve a mechanical system type for open flex duct creation.");
+            var level = ResolveLevel(doc, p.levelId, p.levelName) ??
+                ResolveNearestLevel(
+                    new FilteredElementCollector(doc).OfClass(typeof(Level)).Cast<Level>().ToList(),
+                    startConnector.Origin.Z) ??
+                throw new InvalidOperationException("Unable to resolve a level for open flex duct creation.");
+            var flexType = ResolveFlexDuctType(doc, p.flexDuctTypeId, p.flexDuctTypeName)
+                ?? throw new InvalidOperationException("Unable to resolve the requested native flex duct type.");
+            var workset = ResolveFlexWorkset(doc, p.worksetId, p.worksetName);
+            var requestedStartTangent = ParseOptionalNonZeroVector(p.flexStartTangentXyz, "flexStartTangentXyz");
+            var requestedEndTangent = ParseOptionalNonZeroVector(p.flexEndTangentXyz, "flexEndTangentXyz");
+
+            var points = (p.flexPoints ?? new List<FlexRoutePoint>())
+                .Where(x => x != null)
+                .Select(x => new XYZ(x.x, x.y, x.z))
+                .Where(IsFinitePoint)
+                .ToList();
+            if (points.Count == 0)
+                throw new InvalidOperationException("create_open_flex_from_element requires flexPoints ending at the intended open connector origin.");
+            if (points[0].DistanceTo(startConnector.Origin) > 1e-6)
+                points.Insert(0, startConnector.Origin);
+            else
+                points[0] = startConnector.Origin;
+
+            points = RemoveAdjacentDuplicatePoints(points, 1e-5);
+            if (points.Count < 2)
+                throw new InvalidOperationException("Open flex duct creation requires at least two distinct points.");
+
+            var expectedOpenOrigin = points[points.Count - 1];
+            var maxLength = p.maxLengthFeet.GetValueOrDefault(0.0);
+            var controlPolylineLength = 0.0;
+            for (var i = 1; i < points.Count; i++)
+                controlPolylineLength += points[i - 1].DistanceTo(points[i]);
+            if (maxLength > 0 && controlPolylineLength > maxLength)
+            {
+                throw new InvalidOperationException(
+                    $"Flex control polyline length {controlPolylineLength:F3}ft exceeds maxLengthFeet {maxLength:F3}.");
+            }
+
+            long transientOrCreatedId = 0;
+            object? diameterWrite = null;
+            object? worksetWrite = null;
+            List<double[]> nativePoints = new List<double[]>();
+            double nativeDiameterFt = 0.0;
+            double[]? nativeStartTangent = null;
+            double[]? nativeEndTangent = null;
+            int createdConnectorCount = 0;
+            bool startConnected = false;
+            bool openEndVerified = false;
+            long? openConnectorId = null;
+            double[]? openConnectorOrigin = null;
+
+            using (var tx = new Transaction(doc, dryRun
+                ? "MEP Workflows - Open Flex Duct (Dry Run)"
+                : "MEP Workflows - Open Flex Duct"))
+            {
+                tx.Start();
+                try
+                {
+                    var flex = FlexDuct.Create(doc, systemType.Id, flexType.Id, level.Id, points);
+                    transientOrCreatedId = ElementIdCompat.GetValue(flex.Id);
+
+                    if (requestedStartTangent != null) flex.StartTangent = requestedStartTangent;
+                    if (requestedEndTangent != null) flex.EndTangent = requestedEndTangent;
+
+                    var diameterParameter = flex.get_Parameter(BuiltInParameter.RBS_CURVE_DIAMETER_PARAM)
+                        ?? flex.LookupParameter("Diameter")
+                        ?? flex.LookupParameter("Duct Diameter");
+                    if (diameterParameter == null || diameterParameter.IsReadOnly)
+                        throw new InvalidOperationException($"Flex duct {transientOrCreatedId} has no writable diameter parameter.");
+                    var diameterBefore = ParameterValueUtil.SnapshotForWire(diameterParameter);
+                    diameterParameter.Set(diameterFt);
+                    var diameterAfter = ParameterValueUtil.SnapshotForWire(diameterParameter);
+                    diameterWrite = new { requestedDiameterFt = diameterFt, before = diameterBefore, after = diameterAfter };
+
+                    if (workset != null)
+                    {
+                        var worksetParameter = flex.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM)
+                            ?? throw new InvalidOperationException($"Flex duct {transientOrCreatedId} does not expose ELEM_PARTITION_PARAM.");
+                        if (worksetParameter.IsReadOnly)
+                            throw new InvalidOperationException($"Flex duct {transientOrCreatedId} workset parameter is read-only.");
+                        worksetParameter.Set(workset.Id.IntegerValue);
+                        var readbackWorksetId = worksetParameter.AsInteger();
+                        if (readbackWorksetId != workset.Id.IntegerValue)
+                            throw new InvalidOperationException($"Flex duct {transientOrCreatedId} workset readback did not match the requested workset.");
+                        worksetWrite = new
+                        {
+                            requestedWorksetId = workset.Id.IntegerValue,
+                            requestedWorksetName = workset.Name,
+                            readbackWorksetId,
+                            verified = true
+                        };
+                    }
+
+                    doc.Regenerate();
+                    var createdConnectors = GetElementConnectors(flex);
+                    createdConnectorCount = createdConnectors.Count;
+                    var nearStart = FindClosestConnector(createdConnectors, startConnector.Origin)
+                        ?? throw new InvalidOperationException("Unable to resolve the created flex start connector.");
+                    var nearOpen = createdConnectors
+                        .Where(candidate => candidate != nearStart)
+                        .OrderBy(candidate => candidate.Origin.DistanceTo(expectedOpenOrigin))
+                        .FirstOrDefault()
+                        ?? throw new InvalidOperationException("Unable to resolve the created flex open-end connector.");
+
+                    if (!TryConnectTo(startConnector, nearStart, out var startError))
+                        throw new InvalidOperationException($"Open flex start connection failed. {startError}");
+
+                    doc.Regenerate();
+                    startConnected = IsConnectorPhysicallyConnectedToOwner(nearStart, startId);
+                    openEndVerified =
+                        !HasPhysicalConnection(nearOpen) &&
+                        nearOpen.Origin.DistanceTo(expectedOpenOrigin) <= originToleranceFt;
+                    if (TryGetNativeConnectorId(nearOpen, out var nativeOpenConnectorId))
+                        openConnectorId = nativeOpenConnectorId;
+                    openConnectorOrigin = new[] { nearOpen.Origin.X, nearOpen.Origin.Y, nearOpen.Origin.Z };
+                    nativeDiameterFt = flex.Diameter;
+                    nativePoints = flex.Points.Select(x => new[] { x.X, x.Y, x.Z }).ToList();
+                    nativeStartTangent = new[] { flex.StartTangent.X, flex.StartTangent.Y, flex.StartTangent.Z };
+                    nativeEndTangent = new[] { flex.EndTangent.X, flex.EndTangent.Y, flex.EndTangent.Z };
+
+                    if (verify)
+                    {
+                        if (!startConnected)
+                            throw new InvalidOperationException("Open flex start connection readback failed.");
+                        if (!openEndVerified)
+                            throw new InvalidOperationException("Open flex endpoint was not physically open at the guarded origin.");
+                        if (createdConnectorCount != 2)
+                            throw new InvalidOperationException($"Open flex connector readback returned {createdConnectorCount} connectors; expected exactly 2.");
+                        if (Math.Abs(nativeDiameterFt - diameterFt) > 1e-4)
+                            throw new InvalidOperationException(
+                                $"Open flex diameter readback {nativeDiameterFt:G9}ft did not match requested {diameterFt:G9}ft.");
+                        if (requestedStartTangent != null && !DirectionsMatch(flex.StartTangent, requestedStartTangent))
+                            throw new InvalidOperationException("Open flex start tangent readback did not match flexStartTangentXyz.");
+                        if (requestedEndTangent != null && !DirectionsMatch(flex.EndTangent, requestedEndTangent))
+                            throw new InvalidOperationException("Open flex end tangent readback did not match flexEndTangentXyz.");
+                    }
+
+                    if (dryRun) tx.RollBack();
+                    else tx.Commit();
+                }
+                catch
+                {
+                    if (tx.GetStatus() == TransactionStatus.Started)
+                        tx.RollBack();
+                    throw;
+                }
+            }
+
+            var startRestoredOpen = !HasPhysicalConnection(ResolveGuardedConnector(
+                start,
+                p.startConnectorId,
+                p.expectedStartOriginXyz,
+                originToleranceFt,
+                "start"));
+            if (dryRun && verify && !startRestoredOpen)
+                throw new InvalidOperationException("Dry-run rollback did not restore the guarded start connector to its prior open state.");
+
+            return new
+            {
+                status = dryRun ? "Dry Run" : "Applied",
+                action = "create_open_flex_from_element",
+                dryRun,
+                rolledBack = dryRun,
+                rollbackVerified = dryRun ? startRestoredOpen : (bool?)null,
+                startElementId = startId,
+                startConnector = startConnectorSnapshot,
+                flexDuctElementId = dryRun ? (long?)null : transientOrCreatedId,
+                dryRunFlexDuctElementId = dryRun ? transientOrCreatedId : (long?)null,
+                selected = new
+                {
+                    systemType = new { id = ElementIdCompat.GetValue(systemType.Id), name = systemType.Name },
+                    flexDuctType = new { id = ElementIdCompat.GetValue(flexType.Id), name = flexType.Name },
+                    level = new { id = ElementIdCompat.GetValue(level.Id), name = level.Name },
+                    workset = workset == null ? null : new { id = workset.Id.IntegerValue, name = workset.Name }
+                },
+                requestedDuctSize = requestedSize.Length == 0 ? null : requestedSize,
+                diameterWrite,
+                worksetWrite,
+                controlPoints = points.Select(x => new[] { x.X, x.Y, x.Z }).ToList(),
+                requestedStartTangent = requestedStartTangent == null ? null : new[] { requestedStartTangent.X, requestedStartTangent.Y, requestedStartTangent.Z },
+                requestedEndTangent = requestedEndTangent == null ? null : new[] { requestedEndTangent.X, requestedEndTangent.Y, requestedEndTangent.Z },
+                controlPolylineLengthFt = controlPolylineLength,
+                nativePoints,
+                nativeStartTangent,
+                nativeEndTangent,
+                nativeDiameterFt,
+                createdConnectorCount,
+                startConnected,
+                openEndVerified,
+                openConnectorId,
+                openConnectorOrigin,
+                verify,
+                warnings = Array.Empty<string>()
+            };
+        }
+
+        private static Connector ResolveGuardedOpenConnector(
+            Element element,
+            long? requestedConnectorId,
+            double[]? expectedOriginXyz,
+            double originToleranceFt,
+            string label)
+        {
+            var connector = ResolveGuardedConnector(element, requestedConnectorId, expectedOriginXyz, originToleranceFt, label);
+            if (HasPhysicalConnection(connector))
+                throw new InvalidOperationException($"The guarded {label} connector is already physically connected.");
+            return connector;
+        }
+
+        private static Connector ResolveGuardedConnector(
+            Element element,
+            long? requestedConnectorId,
+            double[]? expectedOriginXyz,
+            double originToleranceFt,
+            string label)
+        {
+            var connectors = GetElementConnectors(element);
+            if (connectors.Count == 0)
+                throw new InvalidOperationException($"Element {ElementIdCompat.GetValue(element.Id)} exposes no connectors.");
+
+            Connector? connector = null;
+            if (requestedConnectorId.HasValue)
+            {
+                connector = connectors.FirstOrDefault(candidate =>
+                    TryGetNativeConnectorId(candidate, out var nativeId) &&
+                    nativeId == requestedConnectorId.Value);
+                if (connector == null)
+                {
+                    throw new InvalidOperationException(
+                        $"Native {label} connector {requestedConnectorId.Value} was not found on element {ElementIdCompat.GetValue(element.Id)}.");
+                }
+            }
+            else if (TryParsePoint(expectedOriginXyz, out var expectedOrigin))
+            {
+                connector = connectors
+                    .OrderBy(candidate => candidate.Origin.DistanceTo(expectedOrigin))
+                    .FirstOrDefault();
+            }
+            else
+            {
+                var physicallyOpen = connectors.Where(candidate => !HasPhysicalConnection(candidate)).ToList();
+                if (physicallyOpen.Count != 1)
+                {
+                    throw new InvalidOperationException(
+                        $"{label}ConnectorId or expected origin is required unless the element exposes exactly one physically open connector.");
+                }
+                connector = physicallyOpen[0];
+            }
+
+            if (connector == null)
+                throw new InvalidOperationException($"Unable to resolve the guarded {label} connector.");
+            if (TryParsePoint(expectedOriginXyz, out var guardedOrigin) &&
+                connector.Origin.DistanceTo(guardedOrigin) > originToleranceFt)
+            {
+                throw new InvalidOperationException(
+                    $"The guarded {label} connector origin differs from the expected origin by {connector.Origin.DistanceTo(guardedOrigin):G9}ft.");
+            }
+            return connector;
+        }
+
+        private static bool TryParsePoint(double[]? values, out XYZ point)
+        {
+            point = XYZ.Zero;
+            if (values == null || values.Length != 3 ||
+                values.Any(value => double.IsNaN(value) || double.IsInfinity(value)))
+                return false;
+            point = new XYZ(values[0], values[1], values[2]);
+            return true;
+        }
+
+        private static XYZ? ParseOptionalNonZeroVector(double[]? values, string fieldName)
+        {
+            if (values == null) return null;
+            if (!TryParsePoint(values, out var vector))
+                throw new InvalidOperationException($"{fieldName} must contain exactly three finite numbers.");
+            if (vector.GetLength() <= 1e-9)
+                throw new InvalidOperationException($"{fieldName} must be non-zero.");
+            return vector.Normalize();
+        }
+
+        private static bool DirectionsMatch(XYZ actual, XYZ expected) =>
+            actual.GetLength() > 1e-9 &&
+            expected.GetLength() > 1e-9 &&
+            actual.Normalize().DistanceTo(expected.Normalize()) <= 1e-6;
+
+        private static bool TryGetNativeConnectorId(Connector connector, out long connectorId)
+        {
+            connectorId = -1;
+            try
+            {
+                var property = connector.GetType().GetProperty("Id");
+                var value = property?.GetValue(connector);
+                if (value == null) return false;
+                connectorId = Convert.ToInt64(value);
+                return connectorId >= 0;
+            }
+            catch
+            {
+                connectorId = -1;
+                return false;
+            }
+        }
+
+        private static bool HasPhysicalConnection(Connector connector)
+        {
+            try
+            {
+                foreach (Connector reference in connector.AllRefs)
+                {
+                    if (reference?.Owner == null || reference.Owner is MEPSystem) continue;
+                    if (reference.Owner.Id != connector.Owner.Id)
+                        return true;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+            return false;
+        }
+
+        private static object DescribeConnector(Connector connector)
+        {
+            var connectorId = TryGetNativeConnectorId(connector, out var nativeId) ? nativeId : (long?)null;
+            return new
+            {
+                connectorId,
+                connectorIdBasis = connectorId.HasValue ? "revit_native_connector_id" : "origin_guard",
+                origin = new[] { connector.Origin.X, connector.Origin.Y, connector.Origin.Z },
+                domain = connector.Domain.ToString(),
+                shape = connector.Shape.ToString(),
+                diameterFt = connector.Shape == ConnectorProfileType.Round ? connector.Radius * 2.0 : (double?)null
+            };
+        }
+
         private static FlexDuctType? ResolveFlexDuctType(Document doc, long? requestedId, string? requestedName)
         {
             if (requestedId.GetValueOrDefault(0) > 0)
