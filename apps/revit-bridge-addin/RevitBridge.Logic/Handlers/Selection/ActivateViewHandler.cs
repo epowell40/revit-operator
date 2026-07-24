@@ -58,25 +58,62 @@ namespace RevitBridge.Logic.Handlers
             }
 
             var shown = new List<long>();
+            var notShown = new List<long>();
             if (p.showElementIds != null && p.showElementIds.Count > 0)
             {
-                var ids = new List<ElementId>();
-                foreach (var id in p.showElementIds)
+                var requestedIds = p.showElementIds
+                    .Where(id => id != 0)
+                    .Distinct()
+                    .ToList();
+                var existingIds = new List<ElementId>();
+                foreach (var id in requestedIds)
                 {
-                    if (id == 0) continue;
-                    ids.Add(RevitBridge.Common.ElementIdCompat.Create(id));
+                    var elementId = RevitBridge.Common.ElementIdCompat.Create(id);
+                    if (doc.GetElement(elementId) == null)
+                    {
+                        notShown.Add(id);
+                        warnings.Add($"ShowElements skipped missing element {id}.");
+                        continue;
+                    }
+                    existingIds.Add(elementId);
                 }
 
-                if (ids.Count > 0)
+                if (existingIds.Count > 0)
                 {
                     try
                     {
-                        uidoc.ShowElements(ids);
-                        shown.AddRange(ids.Select(i => RevitBridge.Common.ElementIdCompat.GetValue(i)));
+                        var visibleInRequestedView = new HashSet<long>(
+                            new FilteredElementCollector(doc, view.Id)
+                                .WhereElementIsNotElementType()
+                                .ToElementIds()
+                                .Select(RevitBridge.Common.ElementIdCompat.GetValue));
+                        var showableIds = existingIds
+                            .Where(id => visibleInRequestedView.Contains(RevitBridge.Common.ElementIdCompat.GetValue(id)))
+                            .ToList();
+                        var hiddenIds = existingIds
+                            .Where(id => !visibleInRequestedView.Contains(RevitBridge.Common.ElementIdCompat.GetValue(id)))
+                            .Select(RevitBridge.Common.ElementIdCompat.GetValue)
+                            .ToList();
+                        notShown.AddRange(hiddenIds);
+
+                        if (showableIds.Count == 0)
+                        {
+                            warnings.Add($"ShowElements skipped: none of the requested elements are visible in activated view {targetViewId} ('{view.Name}').");
+                        }
+                        else
+                        {
+                            uidoc.ShowElements(showableIds);
+                            shown.AddRange(showableIds.Select(RevitBridge.Common.ElementIdCompat.GetValue));
+                            if (hiddenIds.Count > 0)
+                                warnings.Add($"ShowElements omitted {hiddenIds.Count} element(s) not visible in activated view {targetViewId} ('{view.Name}'): {string.Join(",", hiddenIds)}.");
+                        }
                     }
                     catch (Exception ex)
                     {
-                        warnings.Add($"ShowElements failed: {ex.Message}");
+                        notShown.AddRange(existingIds
+                            .Select(RevitBridge.Common.ElementIdCompat.GetValue)
+                            .Where(id => !shown.Contains(id) && !notShown.Contains(id)));
+                        warnings.Add($"ShowElements preflight failed; interactive view search was not attempted: {ex.Message}");
                     }
                 }
             }
@@ -138,6 +175,7 @@ namespace RevitBridge.Logic.Handlers
                 activeViewName = view.Name,
                 requestedViewId = targetViewId,
                 shownElementIds = shown,
+                notShownElementIds = notShown.Distinct().ToList(),
                 didZoom,
                 warnings
             });
