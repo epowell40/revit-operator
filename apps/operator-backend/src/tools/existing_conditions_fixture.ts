@@ -156,6 +156,10 @@ import {
   type PlanTraceSeedSpineInputV1
 } from "../existing_conditions/plan_trace_seed_spine.js";
 import {
+  resolvePlanTraceContinuationAnchorV1,
+  type PlanTraceContinuationAnchorRepairInputV1
+} from "../existing_conditions/plan_trace_continuation_anchor_repair.js";
+import {
   normalizePlanTraceSeedSpinesV1,
   type PlanTraceSpineNormalizationInputV1
 } from "../existing_conditions/plan_trace_spine_normalization.js";
@@ -421,6 +425,7 @@ function usage(): never {
     "  npm run existing-conditions -- assess-registration-ambiguity --input <candidate-search.json> --out <ambiguity-receipt.json>",
     "  npm run existing-conditions -- compare-calibrated-crops --input <hash-bound-source-candidate-controls-and-features.json> --out-dir <evidence-dir> --out <comparison-receipt.json>",
     "  npm run existing-conditions -- extract-plan-traces --input <hash-bound-extraction-policy.json> --out <trace-receipt.json> [--preview-out <diagnostic-overlay.png>]",
+    "  npm run existing-conditions -- repair-plan-trace-continuation-anchor --input <trusted-anchor-policy.json> --receipt <trace-receipt.json> --out <attachment-receipt.json>",
     "  npm run existing-conditions -- compile-plan-trace-seed-spines --input <host-trusted-seed-spans.json> --receipt <trace-receipt.json> --out <spine-receipt.json>",
     "  npm run existing-conditions -- normalize-plan-trace-spines --input <bounded-normalization-policy.json> --receipt <spine-receipt.json> --out <normalized-spine-receipt.json>",
     "  npm run existing-conditions -- detect-repeated-mep-symbols --input <hash-bound-template-search.json> --out <candidate-receipt.json>",
@@ -1993,6 +1998,23 @@ async function main(): Promise<void> {
       outputPath,
       compilePlanTraceSeedSpinesV1(
         readJson(inputPath) as PlanTraceSeedSpineInputV1,
+        readJson(receiptPath) as PlanTraceExtractionReceipt
+      )
+    );
+    return;
+  }
+  if (command === "repair-plan-trace-continuation-anchor") {
+    const inputPath = requiredArgument("--input");
+    const receiptPath = requiredArgument("--receipt");
+    const outputPath = requiredArgument("--out");
+    assertFreshDistinctOutputPaths(
+      [{ flag: "--out", value: outputPath }],
+      [{ flag: "--input", value: inputPath }, { flag: "--receipt", value: receiptPath }]
+    );
+    writeJson(
+      outputPath,
+      resolvePlanTraceContinuationAnchorV1(
+        readJson(inputPath) as PlanTraceContinuationAnchorRepairInputV1,
         readJson(receiptPath) as PlanTraceExtractionReceipt
       )
     );
