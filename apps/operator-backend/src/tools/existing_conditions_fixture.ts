@@ -218,14 +218,7 @@ import {
   validateSheetPixelEvidenceV1,
   type SheetPixelEvidencePolicyV1
 } from "../existing_conditions/sheet_pixel_evidence.js";
-import {
-  extractSheetVectorTextV1,
-  type SheetVectorTextExtractionInputV1
-} from "../existing_conditions/sheet_vector_text.js";
-import {
-  extractSheetVectorElementTopologyV1,
-  type SheetVectorElementTopologyInputV1
-} from "../existing_conditions/sheet_vector_element_topology.js";
+import { handleExistingConditionsSheetVectorCommand } from "./existing_conditions_sheet_vector_cli.js";
 import {
   associateSheetVectorSymbolsV1,
   type SheetVectorSymbolAssociationInputV1
@@ -2062,32 +2055,9 @@ async function main(): Promise<void> {
     writeJson(requiredArgument("--out"), receipt);
     return;
   }
-  if (command === "extract-sheet-vector-text") {
-    const inputPath = requiredArgument("--input");
-    const outputPath = requiredArgument("--out");
-    assertFreshDistinctOutputPaths(
-      [{ flag: "--out", value: outputPath }],
-      [{ flag: "--input", value: inputPath }]
-    );
-    writeJson(
-      outputPath,
-      await extractSheetVectorTextV1(readJson(inputPath) as SheetVectorTextExtractionInputV1)
-    );
-    return;
-  }
-  if (command === "extract-sheet-vector-topology") {
-    const inputPath = requiredArgument("--input");
-    const outputPath = requiredArgument("--out");
-    assertFreshDistinctOutputPaths(
-      [{ flag: "--out", value: outputPath }],
-      [{ flag: "--input", value: inputPath }]
-    );
-    writeJson(
-      outputPath,
-      await extractSheetVectorElementTopologyV1(readJson(inputPath) as SheetVectorElementTopologyInputV1)
-    );
-    return;
-  }
+  if (await handleExistingConditionsSheetVectorCommand(command, {
+    requiredArgument, readJson, writeJson, assertFreshDistinctOutputPaths
+  })) return;
   if (command === "associate-sheet-vector-symbols") {
     const inputPath = requiredArgument("--input");
     const outputPath = requiredArgument("--out");
