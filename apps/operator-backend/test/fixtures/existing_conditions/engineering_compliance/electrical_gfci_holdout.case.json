@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "case_id": "holdout-electrical-gfci-sink-breaker-v1",
+  "task_class": "standards_compliance_repair",
+  "discipline": "electrical",
+  "standards_profile_sha256": "e28ae52a495eaeec357987854c75d5f1cfec1b455a71c6612f74b5a235ef373e",
+  "checks": [
+    {
+      "check_id": "sink-protection",
+      "type": "gfci_protection",
+      "rule": {
+        "rule_id": "nec-2020-210.8-a7",
+        "source": {
+          "authority": "NFPA",
+          "title": "NFPA 70 National Electrical Code public access",
+          "edition": "2020",
+          "section": "210.8(A)(7)",
+          "url": "https://link.nfpa.org/all-publications/70/2020",
+          "sha256": "2a9043f36534f1ca7d774d24920f45d7be46041fc1946341ac33deded0c84227"
+        },
+        "sink_distance_limit_ft": 6,
+        "distance_measurement": "shortest path declared by the frozen benchmark profile",
+        "applicable_location_classes": ["dwelling_sink"],
+        "applicable_voltage_to_ground_max": 150,
+        "applicable_receptacle_amp_max": 50,
+        "allowed_exception_ids": []
+      }
+    }
+  ]
+}

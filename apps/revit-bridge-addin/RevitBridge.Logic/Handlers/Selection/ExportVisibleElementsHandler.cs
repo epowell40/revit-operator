@@ -49,6 +49,7 @@ namespace RevitBridge.Logic.Handlers
             public List<string>? excludeCategories { get; set; }
             public bool includeGeometry { get; set; } = true;
             public bool includeLinked { get; set; } = true;
+            public List<double>? modelBounds { get; set; }
             public int? limit { get; set; } = 500;
         }
 
@@ -85,7 +86,19 @@ namespace RevitBridge.Logic.Handlers
                 var stem = $"Revit_{ElementIdCompat.GetValue(view.Id)}_{frameId}_inventory";
                 var path = SelectionUtil.ExportViewImage(doc, view, p.imageSize, folder, stem);
                 var (widthPx, heightPx) = SelectionUtil.ReadImageSize(path);
-                var frame = SelectionUtil.BuildRasterAffineFrame(view, widthPx, heightPx);
+                RasterAffineFrame frame;
+                try
+                {
+                    frame = SelectionUtil.BuildRasterAffineFrameFromViewOutline(view, widthPx, heightPx);
+                    if (frame.CropAspect <= 1e-9 || frame.FrameAspect <= 1e-9)
+                        throw new InvalidOperationException("The view outline produced a degenerate exported-raster frame.");
+                    warnings.Add("export-visible-elements mapped the fit-to-page raster from View.Outline and view basis directions.");
+                }
+                catch (Exception ex)
+                {
+                    frame = SelectionUtil.BuildRasterAffineFrame(view, widthPx, heightPx);
+                    warnings.Add($"View.Outline raster mapping was unavailable; fell back to CropBox mapping ({ex.Message}).");
+                }
 
                 if (frame.AspectCorrectionApplied)
                 {
@@ -119,6 +132,7 @@ namespace RevitBridge.Logic.Handlers
                 var includeRaw = NormalizeCategoryList(p.categories);
                 var excludeRaw = NormalizeCategoryList(p.excludeCategories);
                 var limit = p.limit.HasValue ? Math.Max(1, Math.Min(2000, p.limit.Value)) : 500;
+                var modelBounds = ResolveModelBounds(p.modelBounds);
 
                 FilteredElementCollector collector;
                 try
@@ -135,6 +149,11 @@ namespace RevitBridge.Logic.Handlers
                 {
                     var bicIds = includeBics.Select(x => ElementIdCompat.Create((long)x)).ToList();
                     collector = collector.WherePasses(new ElementMulticategoryFilter(bicIds));
+                }
+                if (modelBounds != null)
+                {
+                    collector = collector.WherePasses(new BoundingBoxIntersectsFilter(modelBounds));
+                    warnings.Add("Visible-element inventory restricted to the requested host-model bounding box, with a bounded annotation-anchor recovery pass.");
                 }
 
                 var items = new List<object>();
@@ -156,6 +175,41 @@ namespace RevitBridge.Logic.Handlers
                     items.Add(BuildVisibleElementPayload(doc, view, e, null, p.includeGeometry, widthPx, heightPx, frame.TopLeft, frame.TopRight, frame.BottomLeft));
 
                     if (items.Count >= limit) break;
+                }
+
+                if (modelBounds != null && items.Count < limit)
+                {
+                    FilteredElementCollector anchorCollector;
+                    try
+                    {
+                        anchorCollector = new FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType();
+                    }
+                    catch
+                    {
+                        anchorCollector = new FilteredElementCollector(doc).WhereElementIsNotElementType().WherePasses(new ElementOwnerViewFilter(view.Id));
+                    }
+                    if (includeBics.Count > 0)
+                    {
+                        var bicIds = includeBics.Select(x => ElementIdCompat.Create((long)x)).ToList();
+                        anchorCollector = anchorCollector.WherePasses(new ElementMulticategoryFilter(bicIds));
+                    }
+
+                    foreach (var e in anchorCollector)
+                    {
+                        if (e == null || e is RevitLinkInstance) continue;
+                        var scopedId = DatasetExportUtil.CreateSourceScopedId(e, null);
+                        if (seenScopedIds.Contains(scopedId)) continue;
+                        if (excludeBics.Count > 0 && IsInCategories(e, excludeBics)) continue;
+                        if (includeRaw.Count > 0 && !MatchesCategoryFilter(e, includeRaw)) continue;
+                        if (excludeRaw.Count > 0 && MatchesCategoryFilter(e, excludeRaw)) continue;
+
+                        var anchor = ResolveAnchorPointInHostCoordinates(e, null, null);
+                        if (!PointInsideModelBounds(anchor, modelBounds)) continue;
+                        scanned++;
+                        if (!seenScopedIds.Add(scopedId)) continue;
+                        items.Add(BuildVisibleElementPayload(doc, view, e, null, p.includeGeometry, widthPx, heightPx, frame.TopLeft, frame.TopRight, frame.BottomLeft));
+                        if (items.Count >= limit) break;
+                    }
                 }
 
                 if (p.includeLinked && items.Count < limit)
@@ -191,6 +245,7 @@ namespace RevitBridge.Logic.Handlers
                             if (excludeBics.Count > 0 && IsInCategories(linkedElement, excludeBics)) continue;
                             if (includeRaw.Count > 0 && !MatchesCategoryFilter(linkedElement, includeRaw)) continue;
                             if (excludeRaw.Count > 0 && MatchesCategoryFilter(linkedElement, excludeRaw)) continue;
+                            if (modelBounds != null && !LinkedElementIntersectsModelBounds(linkedElement, link, modelBounds)) continue;
                             if (!ShouldIncludeLinkedElement(linkedElement, link, widthPx, heightPx, frame.TopLeft, frame.TopRight, frame.BottomLeft)) continue;
 
                             var scopedId = DatasetExportUtil.CreateSourceScopedId(linkedElement, link);
@@ -212,7 +267,9 @@ namespace RevitBridge.Logic.Handlers
                 {
                     mapping = SelectionUtil.BuildRasterAffineMappingPayload(
                         frame,
-                        "Per-element pixel/image coordinates are derived from the same exported-raster affine mapping used for the saved frame.");
+                        frame.SourceFrameKind == "view_outline"
+                            ? "Per-element pixel/image coordinates are derived from View.Outline, view Origin/RightDirection/UpDirection, and the same fit-to-page raster used for the saved frame."
+                            : "Per-element pixel/image coordinates use the CropBox fallback because View.Outline mapping was unavailable.");
                 }
 
                 return Task.FromResult<object>(new
@@ -224,10 +281,17 @@ namespace RevitBridge.Logic.Handlers
                     path,
                     widthPx,
                     heightPx,
+                    targetLevel = SelectionUtil.BuildTargetLevelPayload(view),
                     mapping,
                     count = items.Count,
                     scanned,
                     truncated,
+                    modelBoundsApplied = modelBounds != null,
+                    modelBoundsFt = modelBounds == null ? null : new
+                    {
+                        min = new { x = modelBounds.MinimumPoint.X, y = modelBounds.MinimumPoint.Y, z = modelBounds.MinimumPoint.Z },
+                        max = new { x = modelBounds.MaximumPoint.X, y = modelBounds.MaximumPoint.Y, z = modelBounds.MaximumPoint.Z }
+                    },
                     items,
                     warnings = warnings.Count > 0 ? warnings : null
                 });
@@ -257,9 +321,7 @@ namespace RevitBridge.Logic.Handlers
                 ? TryGetBoundingBox(element, view)
                 : DatasetExportUtil.TryGetBoundingBoxInHostCoordinates(element, null, linkInstance);
             var bboxCenter = DatasetExportUtil.GetBoundingBoxCenter(bbox);
-            var anchorPoint = linkInstance == null
-                ? ResolveAnchorPoint(element, bboxCenter)
-                : DatasetExportUtil.TryGetElementPointInHostCoordinates(element, linkInstance) ?? bboxCenter;
+            var anchorPoint = ResolveAnchorPointInHostCoordinates(element, linkInstance, bboxCenter);
             var anchor = anchorPoint == null ? null : BuildProjectedPoint(anchorPoint, widthPx, heightPx, topLeft, topRight, bottomLeft);
             object? bboxModel = bbox == null ? null : new
             {
@@ -285,13 +347,16 @@ namespace RevitBridge.Logic.Handlers
             payload["geometry"] = geometry;
             payload["categoryToken"] = SelectionUtil.GetCategoryToken(element);
             payload["orientation"] = BuildOrientationPayload(element, linkInstance);
-            ApplyReadableAnnotationPayload(payload, element);
+            ApplyReadableAnnotationPayload(payload, element, linkInstance);
             ApplyHostProvenance(payload);
 
             return payload;
         }
 
-        private static void ApplyReadableAnnotationPayload(Dictionary<string, object?> payload, Element element)
+        private static void ApplyReadableAnnotationPayload(
+            Dictionary<string, object?> payload,
+            Element element,
+            RevitLinkInstance? linkInstance)
         {
             try
             {
@@ -339,19 +404,19 @@ namespace RevitBridge.Logic.Handlers
             }
             catch { }
 
-            var tagAnnotation = BuildTagAnnotationPayload(element);
+            var tagAnnotation = BuildTagAnnotationPayload(element, linkInstance);
             if (tagAnnotation != null)
                 payload["tagAnnotation"] = tagAnnotation;
         }
 
-        private static object? BuildTagAnnotationPayload(Element element)
+        private static object? BuildTagAnnotationPayload(Element element, RevitLinkInstance? linkInstance)
         {
             if (element is not IndependentTag && element is not RoomTag && element is not SpaceTag)
                 return null;
 
-            var head = TryReadXyzProperty(element, "TagHeadPosition");
-            var leaderElbow = TryReadXyzProperty(element, "LeaderElbow");
-            var leaderEnd = TryReadXyzProperty(element, "LeaderEnd");
+            var head = TransformNullablePointToHost(linkInstance, TryReadXyzProperty(element, "TagHeadPosition"));
+            var leaderElbow = TransformNullablePointToHost(linkInstance, TryReadXyzProperty(element, "LeaderElbow"));
+            var leaderEnd = TransformNullablePointToHost(linkInstance, TryReadXyzProperty(element, "LeaderEnd"));
             var hasLeader = TryReadBoolProperty(element, "HasLeader");
             var leaderEndCondition = TryReadProperty(element, "LeaderEndCondition")?.ToString();
 
@@ -420,7 +485,7 @@ namespace RevitBridge.Logic.Handlers
             XYZ topRight,
             XYZ bottomLeft)
         {
-            var anchorPoint = DatasetExportUtil.TryGetElementPointInHostCoordinates(element, linkInstance);
+            var anchorPoint = ResolveAnchorPointInHostCoordinates(element, linkInstance, null);
             var anchorProjection = anchorPoint == null
                 ? null
                 : TryProjectPointToImage(anchorPoint, widthPx, heightPx, topLeft, topRight, bottomLeft);
@@ -429,6 +494,51 @@ namespace RevitBridge.Logic.Handlers
             var bbox = DatasetExportUtil.TryGetBoundingBoxInHostCoordinates(element, null, linkInstance);
             if (bbox == null) return false;
             return BoundingBoxIntersectsFrame(bbox, widthPx, heightPx, topLeft, topRight, bottomLeft);
+        }
+
+        private static Outline? ResolveModelBounds(List<double>? values)
+        {
+            if (values == null || values.Count == 0) return null;
+            if (values.Count != 6 || values.Any(value => !IsFinite(value)))
+                throw new ArgumentException("modelBounds must contain exactly six finite numbers: minX,minY,minZ,maxX,maxY,maxZ.");
+
+            var min = new XYZ(values[0], values[1], values[2]);
+            var max = new XYZ(values[3], values[4], values[5]);
+            if (min.X >= max.X || min.Y >= max.Y || min.Z >= max.Z)
+                throw new ArgumentException("modelBounds minimum coordinates must be strictly below maximum coordinates.");
+            return new Outline(min, max);
+        }
+
+        private static bool PointInsideModelBounds(XYZ? point, Outline modelBounds)
+        {
+            return point != null
+                && point.X >= modelBounds.MinimumPoint.X && point.X <= modelBounds.MaximumPoint.X
+                && point.Y >= modelBounds.MinimumPoint.Y && point.Y <= modelBounds.MaximumPoint.Y
+                && point.Z >= modelBounds.MinimumPoint.Z && point.Z <= modelBounds.MaximumPoint.Z;
+        }
+
+        private static bool LinkedElementIntersectsModelBounds(
+            Element element,
+            RevitLinkInstance linkInstance,
+            Outline modelBounds)
+        {
+            var bbox = DatasetExportUtil.TryGetBoundingBoxInHostCoordinates(element, null, linkInstance);
+            if (bbox == null)
+                return PointInsideModelBounds(
+                    ResolveAnchorPointInHostCoordinates(element, linkInstance, null),
+                    modelBounds);
+
+            var corners = GetBoundingBoxWorldCorners(bbox).ToList();
+            if (corners.Count == 0) return false;
+            var minX = corners.Min(point => point.X);
+            var minY = corners.Min(point => point.Y);
+            var minZ = corners.Min(point => point.Z);
+            var maxX = corners.Max(point => point.X);
+            var maxY = corners.Max(point => point.Y);
+            var maxZ = corners.Max(point => point.Z);
+            return maxX >= modelBounds.MinimumPoint.X && minX <= modelBounds.MaximumPoint.X
+                && maxY >= modelBounds.MinimumPoint.Y && minY <= modelBounds.MaximumPoint.Y
+                && maxZ >= modelBounds.MinimumPoint.Z && minZ <= modelBounds.MaximumPoint.Z;
         }
 
         private static List<string> NormalizeCategoryList(List<string>? categories)
@@ -487,6 +597,9 @@ namespace RevitBridge.Logic.Handlers
 
         private static XYZ? ResolveAnchorPoint(Element e, XYZ? bboxCenter)
         {
+            var annotationPoint = TryGetAnnotationAnchorPoint(e);
+            if (annotationPoint != null) return annotationPoint;
+
             try
             {
                 if (e.Location is LocationPoint lp && lp.Point != null) return lp.Point;
@@ -505,6 +618,29 @@ namespace RevitBridge.Logic.Handlers
             return bboxCenter;
         }
 
+        private static XYZ? ResolveAnchorPointInHostCoordinates(
+            Element element,
+            RevitLinkInstance? linkInstance,
+            XYZ? hostBoundingBoxCenter)
+        {
+            var sourcePoint = ResolveAnchorPoint(element, null);
+            if (sourcePoint != null) return TransformPointToHost(linkInstance, sourcePoint);
+            return hostBoundingBoxCenter;
+        }
+
+        private static XYZ? TryGetAnnotationAnchorPoint(Element element)
+        {
+            if (element is IndependentTag || element is RoomTag || element is SpaceTag)
+                return TryReadXyzProperty(element, "TagHeadPosition");
+
+            if (element is TextNote textNote)
+            {
+                try { return textNote.Coord; } catch { return null; }
+            }
+
+            return null;
+        }
+
         private static object? BuildGeometryPayload(
             Element e,
             RevitLinkInstance? linkInstance,
@@ -516,6 +652,17 @@ namespace RevitBridge.Logic.Handlers
         {
             try
             {
+                var annotationPoint = TryGetAnnotationAnchorPoint(e);
+                if (annotationPoint != null)
+                {
+                    var point = TransformPointToHost(linkInstance, annotationPoint);
+                    return new
+                    {
+                        kind = "annotation-point",
+                        point = BuildProjectedPoint(point, widthPx, heightPx, topLeft, topRight, bottomLeft)
+                    };
+                }
+
                 if (e.Location is LocationPoint lp && lp.Point != null)
                 {
                     var point = DatasetExportUtil.TransformPointToHost(linkInstance, lp.Point);
@@ -808,6 +955,11 @@ namespace RevitBridge.Logic.Handlers
             var transform = TryGetLinkTransform(linkInstance);
             if (transform == null) return point;
             try { return transform.OfPoint(point); } catch { return point; }
+        }
+
+        private static XYZ? TransformNullablePointToHost(RevitLinkInstance? linkInstance, XYZ? point)
+        {
+            return point == null ? null : TransformPointToHost(linkInstance, point);
         }
 
         private static XYZ TransformVectorToHost(RevitLinkInstance? linkInstance, XYZ vector)

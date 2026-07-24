@@ -119,3 +119,55 @@ test("redline blockers and final answers remain visible", () => {
   assert.match(blocker.assistant_message, /audit failed/i);
   assert.match(final.assistant_message, /Placed and verified/i);
 });
+
+test("identical completed read actions cannot replay within one user turn", () => {
+  const sessionId = "read-replay-guard-session";
+  const first = __testOnlyFinalizeOpenAiResponseForRequest(
+    {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "user-turn",
+      user_text: "Draft existing conditions from this crop.",
+      tool_results: []
+    },
+    {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message: "I will inventory the bounded crop.",
+      actions: [{
+        action_id: "inventory-1",
+        method: "POST",
+        path: "/revit/export-visible-elements",
+        body: { viewId: 12345678, modelBounds: [10, 20, 0, 30, 40, 20] }
+      }]
+    }
+  );
+  assert.equal(first.actions.length, 1);
+
+  const replay = __testOnlyFinalizeOpenAiResponseForRequest(
+    {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "user-turn:assistant:2",
+      user_text: "Draft existing conditions from this crop.",
+      tool_results: [{
+        action_id: "inventory-1",
+        method: "POST",
+        path: "/revit/export-visible-elements",
+        status: "done",
+        result_json: { ok: true, count: 40 }
+      }]
+    },
+    {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message: "I will inventory the bounded crop again.",
+      actions: [{
+        action_id: "inventory-renamed",
+        method: "POST",
+        path: "/revit/export-visible-elements",
+        body: { viewId: 12345678, modelBounds: [10, 20, 0, 30, 40, 20] }
+      }]
+    }
+  );
+  assert.deepEqual(replay.actions, []);
+  assert.match(replay.assistant_message, /identical read-only action/i);
+});

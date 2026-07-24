@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "description": "Identity-agnostic source-grounding challenges for occlusion, material ambiguity, and mixed-discipline false positives.",
+  "cases": [
+    {
+      "case_id": "occluded-mechanical-size-elevation",
+      "allowed_categories": ["OST_DuctCurves"],
+      "source_observations": [
+        {
+          "observation_id": "observation-alpha",
+          "evidence_role": "source_pdf",
+          "discipline": "mechanical",
+          "category": "OST_DuctCurves",
+          "role": "supply duct",
+          "visibility": "partial",
+          "confidence": 0.56,
+          "supported_attributes": ["location", "system"]
+        }
+      ],
+      "plan": [
+        {
+          "plan_key": "candidate-alpha",
+          "discipline": "mechanical",
+          "category": "OST_DuctCurves",
+          "role": "supply duct",
+          "action": "create",
+          "confidence": 0.91,
+          "assumptions": [],
+          "source_observation_ids": ["observation-alpha"],
+          "required_source_attributes": ["location", "system", "size", "elevation"]
+        }
+      ],
+      "expected": { "phase": "clarify", "ambiguity_count": 1, "question_contains": ["size", "elevation"] }
+    },
+    {
+      "case_id": "electrical-type-elevation-host-ambiguity",
+      "allowed_categories": ["OST_ElectricalFixtures"],
+      "source_observations": [
+        {
+          "observation_id": "observation-beta",
+          "evidence_role": "source_pdf",
+          "discipline": "electrical",
+          "category": "OST_ElectricalFixtures",
+          "role": "wall device",
+          "visibility": "partial",
+          "confidence": 0.86,
+          "supported_attributes": ["location"]
+        }
+      ],
+      "plan": [
+        {
+          "plan_key": "candidate-beta",
+          "discipline": "electrical",
+          "category": "OST_ElectricalFixtures",
+          "role": "wall device",
+          "action": "create",
+          "confidence": 0.9,
+          "assumptions": [],
+          "source_observation_ids": ["observation-beta"],
+          "required_source_attributes": ["location", "type", "mounting elevation", "host"]
+        }
+      ],
+      "expected": { "phase": "clarify", "ambiguity_count": 3, "question_contains": ["type", "mounting elevation", "host"] }
+    },
+    {
+      "case_id": "mixed-discipline-plumbing-clutter",
+      "allowed_categories": ["OST_ElectricalFixtures", "OST_PipeCurves"],
+      "source_observations": [
+        {
+          "observation_id": "observation-gamma",
+          "evidence_role": "source_pdf",
+          "discipline": "plumbing",
+          "category": "OST_PipeCurves",
+          "role": "domestic water pipe",
+          "visibility": "clear",
+          "confidence": 0.96,
+          "supported_attributes": ["location", "system", "size", "elevation"]
+        }
+      ],
+      "plan": [
+        {
+          "plan_key": "candidate-gamma",
+          "discipline": "electrical",
+          "category": "OST_ElectricalFixtures",
+          "role": "receptacle",
+          "action": "create",
+          "confidence": 0.93,
+          "assumptions": [],
+          "source_observation_ids": ["observation-gamma"],
+          "required_source_attributes": ["location", "type", "host"]
+        }
+      ],
+      "expected": { "error_contains": "plan_source_observation_category_mismatch" }
+    }
+  ]
+}

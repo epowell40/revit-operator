@@ -15,6 +15,12 @@ namespace RevitBridge.Handlers
             new RevitBridge.Logic.Handlers.Drafting.DrawDetailCurvesHandler().Handle(app, jsonData);
     }
 
+    public sealed class AnnotationSymbolLeadersHandler : IRequestHandler
+    {
+        public Task<object> Handle(UIApplication app, string jsonData) =>
+            new RevitBridge.Logic.Handlers.Drafting.AnnotationSymbolLeadersHandler().Handle(app, jsonData);
+    }
+
     public sealed class CreateFilledRegionHandler : IRequestHandler
     {
         public Task<object> Handle(UIApplication app, string jsonData) =>

@@ -123,6 +123,7 @@ namespace RevitBridge
 
         private static bool IsDialogComputerUseEnabled()
         {
+            if (IsTruthy(ReadSetting("OPERATOR_ENABLE_DIALOG_COMPUTER_USE"))) return true;
             if (IsTruthy(ReadSetting("OPERATOR_DISABLE_DIALOG_COMPUTER_USE"))) return false;
             if (IsTruthy(ReadSetting("OPERATOR_DIALOG_COMPUTER_USE_DISABLED"))) return false;
 

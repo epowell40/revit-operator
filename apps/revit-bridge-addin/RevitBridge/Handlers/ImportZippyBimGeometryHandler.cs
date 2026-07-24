@@ -20,6 +20,9 @@ namespace RevitBridge.Handlers
         private const double MergeGapToleranceFeet = 0.25;
         private const double CornerExtendToleranceFeet = 0.50;
         private const double WallJoinEndpointToleranceFeet = 0.20;
+        private const double StrictLevelElevationToleranceFeet = 1.0 / (16.0 * InchesPerFoot);
+        private const double StrictOpeningChainageToleranceFeet = 1.0 / (8.0 * InchesPerFoot);
+        private const double StrictOpeningDimensionToleranceFeet = 1.0 / (16.0 * InchesPerFoot);
         private const string ImportedWallsWorksetName = "Operator Import - Walls";
         private const string ImportedVectorsWorksetName = "Operator Import - Vectors";
         private const string VectorUnderlayLineStyleName = "Operator - Floor Plan Underlay";
@@ -41,6 +44,11 @@ namespace RevitBridge.Handlers
             public double? height { get; set; }
             public List<double>? position { get; set; }
             public double? width { get; set; }
+            public string? typeName { get; set; }
+            public string? familyName { get; set; }
+            public string? hostWallId { get; set; }
+            public double? sillHeight { get; set; }
+            public double? chainageFt { get; set; }
         }
 
         public sealed class GeometryData
@@ -64,6 +72,15 @@ namespace RevitBridge.Handlers
             public bool? importVectorUnderlay { get; set; }
             public bool? disableWallJoins { get; set; }
             public bool? importDoors { get; set; }
+            public bool? importWindows { get; set; }
+            public bool? normalizeWallGeometry { get; set; }
+            public bool? requireExactWallTypes { get; set; }
+            public bool? requireExactOpeningTypes { get; set; }
+            public bool? requireSourceWallHosts { get; set; }
+            public bool? requireAllElements { get; set; }
+            public int? maximumCreatedElements { get; set; }
+            public double? maximumOpeningHostDistanceFeet { get; set; }
+            public double? levelElevationFt { get; set; }
             public bool? dryRun { get; set; }
             public Dictionary<string, string>? wallTypeOverrides { get; set; }
         }
@@ -73,6 +90,7 @@ namespace RevitBridge.Handlers
             public Wall Wall { get; set; } = null!;
             public XYZ Start { get; set; } = XYZ.Zero;
             public XYZ End { get; set; } = XYZ.Zero;
+            public string SourceObservationId { get; set; } = "";
         }
 
         private sealed class PreparedWallSegment
@@ -140,13 +158,37 @@ namespace RevitBridge.Handlers
                 throw new InvalidOperationException("import-zippybim-geometry requires geometry.elements.");
             var importWalls = p.importWalls ?? true;
             var importVectorUnderlay = p.importVectorUnderlay ?? false;
+            var importDoors = p.importDoors ?? false;
+            var importWindows = p.importWindows ?? false;
+            var requireAllElements = p.requireAllElements ?? false;
+            var maximumCreatedElements = p.maximumCreatedElements.GetValueOrDefault(10000);
+            if (maximumCreatedElements <= 0)
+                throw new InvalidOperationException("maximumCreatedElements must be a positive integer.");
             if (!importWalls && !importVectorUnderlay)
                 throw new InvalidOperationException("import-zippybim-geometry requires importWalls or importVectorUnderlay.");
 
+            var requestedModelElements = elements.Count(e =>
+                (importWalls && IsElementKind(e, "wall")) ||
+                (importDoors && IsElementKind(e, "door")) ||
+                (importWindows && IsElementKind(e, "window")) ||
+                (importVectorUnderlay && IsElementKind(e, "raw_segment")));
+            if (requestedModelElements > maximumCreatedElements)
+                throw new InvalidOperationException($"Requested {requestedModelElements} created elements exceeds maximumCreatedElements {maximumCreatedElements}.");
+
             var cleanupSummary = new CleanupSummary();
             var normalizedWallElements = importWalls
-                ? NormalizeWallElements(elements, out cleanupSummary)
+                ? ((p.normalizeWallGeometry ?? true)
+                    ? NormalizeWallElements(elements, out cleanupSummary)
+                    : PreserveWallElements(elements, out cleanupSummary))
                 : new List<ElementDefinition>();
+            if (p.requireSourceWallHosts ?? false)
+            {
+                var sourceWallIds = normalizedWallElements.Select(e => (e.id ?? "").Trim()).ToList();
+                if (sourceWallIds.Any(string.IsNullOrWhiteSpace))
+                    throw new InvalidOperationException("requireSourceWallHosts requires a non-empty id on every wall.");
+                if (sourceWallIds.Distinct(StringComparer.OrdinalIgnoreCase).Count() != sourceWallIds.Count)
+                    throw new InvalidOperationException("requireSourceWallHosts requires unique wall ids.");
+            }
 
             var uidoc = app.ActiveUIDocument ?? throw new InvalidOperationException("No active Revit document.");
             var doc = uidoc.Document;
@@ -158,6 +200,9 @@ namespace RevitBridge.Handlers
 
             var level = ResolveLevel(doc, uidoc.ActiveView, p.levelId, p.levelName)
                 ?? throw new InvalidOperationException("Unable to resolve a target level for wall creation.");
+            if (p.levelElevationFt.HasValue && Math.Abs(level.Elevation - p.levelElevationFt.Value) > StrictLevelElevationToleranceFeet)
+                throw new InvalidOperationException(
+                    $"Resolved level '{level.Name}' elevation {level.Elevation:0.######} ft does not match requested levelElevationFt {p.levelElevationFt.Value:0.######} ft.");
 
             var wallTypes = new FilteredElementCollector(doc)
                 .OfClass(typeof(WallType))
@@ -178,9 +223,11 @@ namespace RevitBridge.Handlers
             var createdWalls = new List<CreatedWallInfo>();
             var createdWallRows = new List<object>();
             var createdDoorRows = new List<object>();
+            var createdWindowRows = new List<object>();
             var createdUnderlayRows = new List<object>();
             var skippedWalls = 0;
             var skippedDoors = 0;
+            var skippedWindows = 0;
             var skippedUnderlay = 0;
             if (cleanupSummary.WallsMerged > 0 || cleanupSummary.EndpointsExtended > 0 || cleanupSummary.GridSnaps > 0)
             {
@@ -212,14 +259,16 @@ namespace RevitBridge.Handlers
                         continue;
                     }
 
-                    var wallType = ResolveWallTypeForThickness(
-                        wallTypes,
-                        defaultWallType,
-                        p.wallTypeOverrides,
-                        element.thickness,
-                        warnings,
-                        overrideWarnings,
-                        typeWarnings);
+                    var wallType = (p.requireExactWallTypes ?? false)
+                        ? ResolveExactWallType(wallTypes, element)
+                        : ResolveWallTypeForThickness(
+                            wallTypes,
+                            defaultWallType,
+                            p.wallTypeOverrides,
+                            element.thickness,
+                            warnings,
+                            overrideWarnings,
+                            typeWarnings);
 
                     var height = element.height.HasValue && element.height.Value > 0 ? element.height.Value : defaultHeight;
                     var wall = Wall.Create(doc, Line.CreateBound(start, end), wallType.Id, level.Id, height, 0.0, false, false);
@@ -230,10 +279,17 @@ namespace RevitBridge.Handlers
                         TryDisableJoin(wall, 1);
                     }
 
-                    createdWalls.Add(new CreatedWallInfo { Wall = wall, Start = start, End = end });
+                    createdWalls.Add(new CreatedWallInfo
+                    {
+                        Wall = wall,
+                        Start = start,
+                        End = end,
+                        SourceObservationId = (element.id ?? "").Trim()
+                    });
                     createdWallRows.Add(new
                     {
                         id = ElementIdCompat.GetValue(wall.Id),
+                        sourceObservationId = (element.id ?? "").Trim(),
                         start = new[] { start.X, start.Y, start.Z },
                         end = new[] { end.X, end.Y, end.Z },
                         wallType = wallType.Name,
@@ -263,19 +319,61 @@ namespace RevitBridge.Handlers
                     createdUnderlayRows.AddRange(underlayResult.CreatedRows);
                 }
 
-                if ((p.importDoors ?? false) && createdWalls.Count > 0)
+                if (importDoors && createdWalls.Count > 0)
                 {
-                    var doorResult = ImportDoors(doc, level, createdWalls, elements, warnings);
+                    var doorResult = ImportOpenings(
+                        doc, level, createdWalls, elements, warnings, "door", BuiltInCategory.OST_Doors,
+                        p.requireExactOpeningTypes ?? false,
+                        p.requireSourceWallHosts ?? false,
+                        p.maximumOpeningHostDistanceFeet.GetValueOrDefault(
+                            (p.requireSourceWallHosts ?? false) ? 0.5 : DefaultDoorHostDistanceFeet));
                     skippedDoors = doorResult.Skipped;
                     createdDoorRows.AddRange(doorResult.CreatedRows);
                 }
-                else if ((p.importDoors ?? false) && createdWalls.Count == 0)
+                else if (importDoors && createdWalls.Count == 0)
                 {
+                    if (requireAllElements) throw new InvalidOperationException("Door import requested but no host walls were created.");
                     warnings.Add("Door import requested but no host walls were created.");
                 }
 
-                if (dryRun) tx.RollBack();
-                else tx.Commit();
+                if (importWindows && createdWalls.Count > 0)
+                {
+                    var windowResult = ImportOpenings(
+                        doc, level, createdWalls, elements, warnings, "window", BuiltInCategory.OST_Windows,
+                        p.requireExactOpeningTypes ?? false,
+                        p.requireSourceWallHosts ?? false,
+                        p.maximumOpeningHostDistanceFeet.GetValueOrDefault(
+                            (p.requireSourceWallHosts ?? false) ? 0.5 : DefaultDoorHostDistanceFeet));
+                    skippedWindows = windowResult.Skipped;
+                    createdWindowRows.AddRange(windowResult.CreatedRows);
+                }
+                else if (importWindows && createdWalls.Count == 0)
+                {
+                    if (requireAllElements) throw new InvalidOperationException("Window import requested but no host walls were created.");
+                    warnings.Add("Window import requested but no host walls were created.");
+                }
+
+                var totalCreated = createdWallRows.Count + createdDoorRows.Count + createdWindowRows.Count + createdUnderlayRows.Count;
+                if (totalCreated > maximumCreatedElements)
+                    throw new InvalidOperationException($"Created {totalCreated} elements exceeds maximumCreatedElements {maximumCreatedElements}.");
+                if (requireAllElements &&
+                    (skippedWalls > 0 || skippedDoors > 0 || skippedWindows > 0 || skippedUnderlay > 0 || totalCreated != requestedModelElements))
+                {
+                    throw new InvalidOperationException(
+                        $"requireAllElements failed: requested={requestedModelElements}, created={totalCreated}, skippedWalls={skippedWalls}, skippedDoors={skippedDoors}, skippedWindows={skippedWindows}, skippedUnderlay={skippedUnderlay}.");
+                }
+
+                if (dryRun)
+                {
+                    tx.RollBack();
+                }
+                else
+                {
+                    var commitStatus = tx.Commit();
+                    if (commitStatus != TransactionStatus.Committed)
+                        throw new InvalidOperationException(
+                            $"Geometry import transaction did not commit (status: {commitStatus}). No applied receipt was emitted.");
+                }
             }
 
             return Task.FromResult<object>(new
@@ -292,13 +390,16 @@ namespace RevitBridge.Handlers
                     vectorUnderlaySkipped = skippedUnderlay,
                     doorsCreated = createdDoorRows.Count,
                     doorsSkipped = skippedDoors,
+                    windowsCreated = createdWindowRows.Count,
+                    windowsSkipped = skippedWindows,
                     cleanup = cleanupSummary
                 },
                 wallTypeAssignments,
                 warnings,
                 walls = createdWallRows,
                 vectorUnderlay = createdUnderlayRows,
-                doors = createdDoorRows
+                doors = createdDoorRows,
+                windows = createdWindowRows
             });
         }
 
@@ -383,20 +484,25 @@ namespace RevitBridge.Handlers
             return (skipped, createdRows);
         }
 
-        private static (int Skipped, List<object> CreatedRows) ImportDoors(
+        private static (int Skipped, List<object> CreatedRows) ImportOpenings(
             Document doc,
             Level level,
             List<CreatedWallInfo> createdWalls,
             List<ElementDefinition> elements,
-            List<string> warnings)
+            List<string> warnings,
+            string openingKind,
+            BuiltInCategory category,
+            bool requireExactType,
+            bool requireSourceWallHost,
+            double maximumHostDistanceFeet)
         {
-            var doorElements = elements
-                .Where(e => string.Equals((e.element ?? "").Trim(), "door", StringComparison.OrdinalIgnoreCase) && e.position != null && e.position.Count >= 2)
+            var openingElements = elements
+                .Where(e => IsElementKind(e, openingKind) && e.position != null && e.position.Count >= 2)
                 .ToList();
-            if (doorElements.Count == 0) return (0, new List<object>());
+            if (openingElements.Count == 0) return (0, new List<object>());
 
             var symbols = new FilteredElementCollector(doc)
-                .OfCategory(BuiltInCategory.OST_Doors)
+                .OfCategory(category)
                 .OfClass(typeof(FamilySymbol))
                 .Cast<FamilySymbol>()
                 .OrderBy(s => s.Family.Name)
@@ -404,31 +510,70 @@ namespace RevitBridge.Handlers
                 .ToList();
             if (symbols.Count == 0)
             {
-                warnings.Add("No door family symbols were found in the active document.");
-                return (doorElements.Count, new List<object>());
+                var message = $"No {openingKind} family symbols were found in the active document.";
+                if (requireExactType) throw new InvalidOperationException(message);
+                warnings.Add(message);
+                return (openingElements.Count, new List<object>());
             }
 
             var createdRows = new List<object>();
             var skipped = 0;
             var activated = new HashSet<long>();
 
-            foreach (var element in doorElements)
+            foreach (var element in openingElements)
             {
                 if (!TryReadPosition(element.position, out var position2d))
                 {
+                    if (requireExactType || requireSourceWallHost)
+                        throw new InvalidOperationException($"{openingKind} '{element.id}' has an invalid position.");
                     skipped++;
                     continue;
                 }
 
                 var requestedWidth = element.width;
                 var rawPoint = new XYZ(position2d.U, position2d.V, level.Elevation);
-                if (!TryFindNearestWallHost(createdWalls, rawPoint, DefaultDoorHostDistanceFeet, out var hostWall, out var hostPoint))
+                Wall hostWall;
+                XYZ hostPoint;
+                double chainageFeet;
+                if (requireSourceWallHost)
+                {
+                    var sourceHostId = (element.hostWallId ?? "").Trim();
+                    if (string.IsNullOrWhiteSpace(sourceHostId))
+                        throw new InvalidOperationException($"{openingKind} '{element.id}' requires hostWallId.");
+                    var sourceHost = createdWalls.SingleOrDefault(info =>
+                        string.Equals(info.SourceObservationId, sourceHostId, StringComparison.OrdinalIgnoreCase));
+                    if (sourceHost == null)
+                        throw new InvalidOperationException($"{openingKind} '{element.id}' references unknown created source wall '{sourceHostId}'.");
+                    if (!TryProjectToWallHost(sourceHost, rawPoint, maximumHostDistanceFeet, out hostWall, out hostPoint, out chainageFeet))
+                        throw new InvalidOperationException($"{openingKind} '{element.id}' is not on source wall '{sourceHostId}' within {maximumHostDistanceFeet:0.###} ft.");
+                }
+                else if (!TryFindNearestWallHost(createdWalls, rawPoint, maximumHostDistanceFeet, out hostWall, out hostPoint, out chainageFeet))
                 {
                     skipped++;
                     continue;
                 }
 
-                var symbol = ResolveDoorSymbolForWidth(symbols, requestedWidth) ?? symbols.First();
+                var hostCurve = (hostWall.Location as LocationCurve)?.Curve
+                    ?? throw new InvalidOperationException($"Host wall for {openingKind} '{element.id}' has no location curve.");
+                var hostLength = hostCurve.Length;
+                if (requestedWidth.HasValue && requestedWidth.Value > 0 &&
+                    (chainageFeet < requestedWidth.Value / 2.0 - 1e-6 || chainageFeet > hostLength - requestedWidth.Value / 2.0 + 1e-6))
+                {
+                    if (requireSourceWallHost)
+                        throw new InvalidOperationException($"{openingKind} '{element.id}' does not fit within source wall '{element.hostWallId}'.");
+                    skipped++;
+                    continue;
+                }
+                if (requireSourceWallHost && element.chainageFt.HasValue &&
+                    Math.Abs(chainageFeet - element.chainageFt.Value) > StrictOpeningChainageToleranceFeet)
+                {
+                    throw new InvalidOperationException(
+                        $"{openingKind} '{element.id}' chainage {chainageFeet:0.######} ft does not match requested chainageFt {element.chainageFt.Value:0.######} ft.");
+                }
+
+                var symbol = requireExactType
+                    ? ResolveExactOpeningSymbol(symbols, element, openingKind)
+                    : (ResolveDoorSymbolForWidth(symbols, requestedWidth) ?? symbols.First());
                 if (!symbol.IsActive && !activated.Contains(ElementIdCompat.GetValue(symbol.Id)))
                 {
                     symbol.Activate();
@@ -436,14 +581,40 @@ namespace RevitBridge.Handlers
                     doc.Regenerate();
                 }
 
-                var door = doc.Create.NewFamilyInstance(hostPoint, symbol, hostWall, level, StructuralType.NonStructural);
+                var instance = doc.Create.NewFamilyInstance(hostPoint, symbol, hostWall, level, StructuralType.NonStructural);
+                double? actualWidthFeet = null;
+                double? actualHeightFeet = null;
+                if (requireExactType)
+                {
+                    actualWidthFeet = EnsureExactOpeningInstanceDimension(
+                        instance, element.width, "Width", openingKind, element.id, warnings);
+                    actualHeightFeet = EnsureExactOpeningInstanceDimension(
+                        instance, element.height, "Height", openingKind, element.id, warnings);
+                }
+                if (string.Equals(openingKind, "window", StringComparison.OrdinalIgnoreCase) && element.sillHeight.HasValue)
+                {
+                    var sill = instance.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM);
+                    if (sill == null || sill.IsReadOnly || !sill.Set(element.sillHeight.Value))
+                        throw new InvalidOperationException($"Window '{element.id}' sill height could not be set to {element.sillHeight.Value:0.###} ft.");
+                }
+                if (requireSourceWallHost && (instance.Host == null || instance.Host.Id != hostWall.Id))
+                    throw new InvalidOperationException($"{openingKind} '{element.id}' was not created on the required source wall.");
+                if (requireExactType && instance.Symbol.Id != symbol.Id)
+                    throw new InvalidOperationException($"{openingKind} '{element.id}' was not created with the required exact symbol.");
                 createdRows.Add(new
                 {
-                    id = ElementIdCompat.GetValue(door.Id),
+                    id = ElementIdCompat.GetValue(instance.Id),
+                    sourceObservationId = (element.id ?? "").Trim(),
+                    kind = openingKind,
                     hostWallId = ElementIdCompat.GetValue(hostWall.Id),
+                    sourceHostWallId = (element.hostWallId ?? "").Trim(),
                     symbol = $"{symbol.Family.Name} : {symbol.Name}",
                     position = new[] { hostPoint.X, hostPoint.Y, hostPoint.Z },
-                    requestedWidth
+                    requestedWidth,
+                    actualWidthFeet,
+                    actualHeightFeet,
+                    chainageFt = chainageFeet,
+                    sillHeightFt = string.Equals(openingKind, "window", StringComparison.OrdinalIgnoreCase) ? element.sillHeight : null
                 });
             }
 
@@ -455,10 +626,12 @@ namespace RevitBridge.Handlers
             XYZ rawPoint,
             double maxDistanceFeet,
             out Wall hostWall,
-            out XYZ hostPoint)
+            out XYZ hostPoint,
+            out double chainageFeet)
         {
             hostWall = null!;
             hostPoint = XYZ.Zero;
+            chainageFeet = 0.0;
             var bestDistance = double.MaxValue;
 
             foreach (var info in createdWalls)
@@ -476,9 +649,150 @@ namespace RevitBridge.Handlers
                 bestDistance = distance;
                 hostWall = info.Wall;
                 hostPoint = projection.XYZPoint;
+                chainageFeet = curve.GetEndPoint(0).DistanceTo(hostPoint);
             }
 
             return hostWall != null;
+        }
+
+        private static bool TryProjectToWallHost(
+            CreatedWallInfo info,
+            XYZ rawPoint,
+            double maxDistanceFeet,
+            out Wall hostWall,
+            out XYZ hostPoint,
+            out double chainageFeet)
+        {
+            hostWall = info.Wall;
+            hostPoint = XYZ.Zero;
+            chainageFeet = 0.0;
+            var curve = (info.Wall.Location as LocationCurve)?.Curve;
+            if (curve == null) return false;
+            IntersectionResult? projection = null;
+            try { projection = curve.Project(rawPoint); } catch { projection = null; }
+            if (projection == null || projection.Distance > maxDistanceFeet) return false;
+            hostPoint = projection.XYZPoint;
+            chainageFeet = curve.GetEndPoint(0).DistanceTo(hostPoint);
+            return true;
+        }
+
+        private static FamilySymbol ResolveExactOpeningSymbol(
+            IEnumerable<FamilySymbol> symbols,
+            ElementDefinition element,
+            string openingKind)
+        {
+            var familyName = (element.familyName ?? "").Trim();
+            var typeName = (element.typeName ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(familyName) || string.IsNullOrWhiteSpace(typeName))
+                throw new InvalidOperationException($"{openingKind} '{element.id}' requires exact familyName and typeName.");
+            var symbol = symbols.FirstOrDefault(candidate =>
+                string.Equals(candidate.Family.Name, familyName, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(candidate.Name, typeName, StringComparison.OrdinalIgnoreCase));
+            if (symbol == null)
+                throw new InvalidOperationException($"Exact {openingKind} type '{familyName} : {typeName}' was not found.");
+            ValidateExactOpeningTypeDimension(symbol, element.width, "Width", openingKind, element.id);
+            ValidateExactOpeningTypeDimension(symbol, element.height, "Height", openingKind, element.id);
+            return symbol;
+        }
+
+        private static void ValidateExactOpeningTypeDimension(
+            FamilySymbol symbol,
+            double? requestedFeet,
+            string parameterName,
+            string openingKind,
+            string? sourceId)
+        {
+            if (!requestedFeet.HasValue || requestedFeet.Value <= 0)
+                throw new InvalidOperationException($"{openingKind} '{sourceId}' requires a positive {parameterName.ToLowerInvariant()}.");
+            BuiltInParameter builtIn;
+            if (string.Equals(openingKind, "window", StringComparison.OrdinalIgnoreCase))
+                builtIn = string.Equals(parameterName, "Width", StringComparison.OrdinalIgnoreCase)
+                    ? BuiltInParameter.WINDOW_WIDTH
+                    : BuiltInParameter.WINDOW_HEIGHT;
+            else
+                builtIn = string.Equals(parameterName, "Width", StringComparison.OrdinalIgnoreCase)
+                    ? BuiltInParameter.DOOR_WIDTH
+                    : BuiltInParameter.DOOR_HEIGHT;
+            var parameter = symbol.get_Parameter(builtIn) ?? symbol.LookupParameter(parameterName);
+            if (parameter == null || parameter.StorageType != StorageType.Double) return;
+            var actualFeet = parameter.AsDouble();
+            // Some hosted opening families expose zero-valued type parameters and
+            // drive their real dimensions from writable instance parameters. Those
+            // are validated and set immediately after instance creation below.
+            if (actualFeet <= StrictOpeningDimensionToleranceFeet) return;
+            if (Math.Abs(actualFeet - requestedFeet.Value) > StrictOpeningDimensionToleranceFeet)
+                throw new InvalidOperationException(
+                    $"Exact {openingKind} type '{symbol.Family.Name} : {symbol.Name}' {parameterName.ToLowerInvariant()} {actualFeet:0.######} ft does not match requested {requestedFeet.Value:0.######} ft.");
+        }
+
+        private static double EnsureExactOpeningInstanceDimension(
+            FamilyInstance instance,
+            double? requestedFeet,
+            string parameterName,
+            string openingKind,
+            string? sourceId,
+            List<string> warnings)
+        {
+            if (!requestedFeet.HasValue || requestedFeet.Value <= 0)
+                throw new InvalidOperationException($"{openingKind} '{sourceId}' requires a positive {parameterName.ToLowerInvariant()}.");
+
+            BuiltInParameter builtIn;
+            if (string.Equals(openingKind, "window", StringComparison.OrdinalIgnoreCase))
+                builtIn = string.Equals(parameterName, "Width", StringComparison.OrdinalIgnoreCase)
+                    ? BuiltInParameter.WINDOW_WIDTH
+                    : BuiltInParameter.WINDOW_HEIGHT;
+            else
+                builtIn = string.Equals(parameterName, "Width", StringComparison.OrdinalIgnoreCase)
+                    ? BuiltInParameter.DOOR_WIDTH
+                    : BuiltInParameter.DOOR_HEIGHT;
+
+            var candidates = new[]
+            {
+                instance.get_Parameter(builtIn),
+                instance.LookupParameter(parameterName)
+            }
+            .Where(parameter => parameter != null && parameter.StorageType == StorageType.Double)
+            .Cast<Parameter>()
+            .ToList();
+            if (candidates.Count == 0)
+                throw new InvalidOperationException(
+                    $"Exact {openingKind} instance '{sourceId}' has no readable {parameterName} parameter.");
+
+            var matching = candidates.FirstOrDefault(parameter =>
+                Math.Abs(parameter.AsDouble() - requestedFeet.Value) <= StrictOpeningDimensionToleranceFeet);
+            if (matching != null) return matching.AsDouble();
+
+            var writable = candidates.FirstOrDefault(parameter => !parameter.IsReadOnly);
+            if (writable == null)
+            {
+                var actualFeet = candidates[0].AsDouble();
+                if (candidates.All(parameter => Math.Abs(parameter.AsDouble()) <= StrictOpeningDimensionToleranceFeet))
+                {
+                    warnings.Add(
+                        $"Exact {openingKind} type '{instance.Symbol.Family.Name} : {instance.Symbol.Name}' exposes no non-zero or writable {parameterName} parameter; accepted the exact requested family/type and could not independently measure its numeric {parameterName.ToLowerInvariant()}.");
+                    return requestedFeet.Value;
+                }
+                throw new InvalidOperationException(
+                    $"Exact {openingKind} instance '{sourceId}' {parameterName.ToLowerInvariant()} {actualFeet:0.######} ft does not match requested {requestedFeet.Value:0.######} ft and cannot be set.");
+            }
+            if (!writable.Set(requestedFeet.Value))
+            {
+                if (candidates.All(parameter => Math.Abs(parameter.AsDouble()) <= StrictOpeningDimensionToleranceFeet))
+                {
+                    warnings.Add(
+                        $"Exact {openingKind} type '{instance.Symbol.Family.Name} : {instance.Symbol.Name}' exposes only zero-valued {parameterName} parameters and rejected an instance set; accepted the exact requested family/type and could not independently measure its numeric {parameterName.ToLowerInvariant()}.");
+                    return requestedFeet.Value;
+                }
+                throw new InvalidOperationException(
+                    $"Exact {openingKind} instance '{sourceId}' {parameterName.ToLowerInvariant()} could not be set to requested {requestedFeet.Value:0.######} ft.");
+            }
+
+            instance.Document.Regenerate();
+            var appliedFeet = writable.AsDouble();
+            if (Math.Abs(appliedFeet - requestedFeet.Value) > StrictOpeningDimensionToleranceFeet)
+                throw new InvalidOperationException(
+                    $"Exact {openingKind} instance '{sourceId}' {parameterName.ToLowerInvariant()} {appliedFeet:0.######} ft does not match requested {requestedFeet.Value:0.######} ft after setting.");
+            return appliedFeet;
         }
 
         private static FamilySymbol? ResolveDoorSymbolForWidth(IEnumerable<FamilySymbol> symbols, double? widthFeet)
@@ -572,6 +886,24 @@ namespace RevitBridge.Handlers
             }
 
             return closest;
+        }
+
+        private static WallType ResolveExactWallType(List<WallType> wallTypes, ElementDefinition element)
+        {
+            var requestedName = (element.typeName ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(requestedName))
+                throw new InvalidOperationException($"Wall '{element.id}' requires exact typeName.");
+            var wallType = wallTypes.FirstOrDefault(candidate =>
+                string.Equals(candidate.Name, requestedName, StringComparison.OrdinalIgnoreCase));
+            if (wallType == null)
+                throw new InvalidOperationException($"Exact wall type '{requestedName}' was not found.");
+            if (element.thickness.HasValue && element.thickness.Value > 0 &&
+                Math.Abs(wallType.Width - element.thickness.Value) > WallTypeToleranceFeet)
+            {
+                throw new InvalidOperationException(
+                    $"Exact wall type '{requestedName}' width {wallType.Width:0.######} ft does not match requested thickness {element.thickness.Value:0.######} ft.");
+            }
+            return wallType;
         }
 
         private static Level? ResolveLevel(Document doc, View activeView, long? levelId, string? levelName)
@@ -807,6 +1139,25 @@ namespace RevitBridge.Handlers
         private static bool IsFinite(double value)
         {
             return !(double.IsNaN(value) || double.IsInfinity(value));
+        }
+
+        private static bool IsElementKind(ElementDefinition element, string kind)
+        {
+            return string.Equals((element.element ?? "").Trim(), kind, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static List<ElementDefinition> PreserveWallElements(List<ElementDefinition> elements, out CleanupSummary summary)
+        {
+            var walls = elements.Where(e => IsElementKind(e, "wall")).ToList();
+            summary = new CleanupSummary
+            {
+                InputWallCount = walls.Count,
+                OutputWallCount = walls.Count,
+                WallsMerged = 0,
+                EndpointsExtended = 0,
+                GridSnaps = 0
+            };
+            return walls;
         }
 
         private static List<ElementDefinition> NormalizeWallElements(List<ElementDefinition> elements, out CleanupSummary summary)

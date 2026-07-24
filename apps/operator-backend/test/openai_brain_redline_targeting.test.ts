@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -14,6 +15,7 @@ import {
   __testOnlyBuildMepRedlineRouteRecoveryResponse,
   __testOnlyBuildPlacementRunState,
   __testOnlyBuildPlacementWorkItem,
+  __testOnlyBuildRegisteredMepWorkflowHandoffResponse,
   __testOnlyBuildSpatialRedlineRefinementBridge,
   __testOnlyBuildSpatialPlacementPreviewPlan,
   __testOnlyExtractResponsesApiOutputText,
@@ -25,17 +27,578 @@ import {
   __testOnlyInferRedlineTargetingProfile,
   __testOnlyIsFastElectricalPlacementRedline,
   __testOnlyNormalizeNativeRevitActionBodiesForRouting,
+  __testOnlyNoteRegisteredMepWorkflow,
+  __testOnlyRecordCandidateVisibleCompileResults,
   __testOnlyRefineAlignmentMarksWithImageMarkCrop,
+  __testOnlyResolveRedlineAlignmentImagePath,
   __testOnlySeedRedlineFrameAlignedHint,
   __testOnlySeedRedlineRawImageMarkHint,
+  __testOnlySetCandidateVisibleCompileContext,
+  __testOnlySeedRedlineViewAlignment,
   __testOnlyShouldPrioritizeHostedPlacementBridge
 } from "../src/brains/openai_brain.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ActionCall, type ChatRequest, type ToolResult } from "../src/contracts.js";
 import { compactIncomingToolResult } from "../src/tool_result_compaction.js";
-import { __testOnlyExtractViewAlignmentResponseText } from "../src/redline/view_alignment.js";
+import {
+  alignRedlineToView,
+  __testOnlyBuildViewAlignmentPrompt,
+  __testOnlyExtractViewAlignmentResponseText
+} from "../src/redline/view_alignment.js";
+import { ensureWorkspaceLayout } from "../src/workspace.js";
 
 const RED_MARK_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAGQAAAAyCAIAAAAlV+npAAAAjklEQVR4nO3QgQmAQAwEwfRfo71oCf6C+CgzpIDLzsmy2T3gS8QKxArECsQKxArECsQKxArECsQKxArECsQKxArECsQKxArECm5iHTPr99bmbcQKxArECsQKxArECsQKxArECsQKxArECsQKxAr+/+GDxArECsQKxArECsQKxArECsQKxArECsQKxArECi60AYGwUqdYywAAAABJRU5ErkJggg==";
+
+test("existing-conditions native handoff restores the exact persisted compiler workflow", () => {
+  const sessionId = `registered-mep-handoff-${Date.now()}`;
+  const fingerprint = "a".repeat(64);
+  const workflow = {
+    inputFingerprintSha256: fingerprint,
+    provisionalObservationIds: ["route-1"],
+    operations: [
+      {
+        action_key: "route:route-1",
+        observation_ids: ["route-1"],
+        path: "/revit/mep-route-workflow",
+        depends_on: [],
+        expected_created_min: 1,
+        expected_created_max: 2,
+        apply_body: { kind: "pipe", apply: true }
+      }
+    ],
+    dryRun: true,
+    verify: true,
+    maximumCreatedElements: 2,
+    benchmarkCredit: false,
+    authorizationBasis: "explicit_unscored_user_direction"
+  } as any;
+  __testOnlyNoteRegisteredMepWorkflow(sessionId, "frame-1", 3960410, workflow);
+  const req = {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    session_id: sessionId,
+    message_id: `${sessionId}:message`,
+    user_text: "Draft the existing conditions from this record drawing."
+  } as ChatRequest;
+
+  const [dryRun] = __testOnlyNormalizeNativeRevitActionBodiesForRouting(
+    [{
+      action_id: "bad-envelope",
+      method: "POST",
+      path: "/revit/existing-conditions-mep-draft-workflow",
+      body: {
+        schema_version: 1,
+        source_frame_id: "frame-1",
+        compiled_plan: {},
+        dryRun: true
+      }
+    }],
+    [],
+    req
+  );
+  assert.equal((dryRun?.body as any)?.stageKey, "operation:route:route-1");
+  assert.equal((dryRun?.body as any)?.operations.length, 1);
+  assert.deepEqual((dryRun?.body as any)?.priorActionOutputs, []);
+
+  const [apply] = __testOnlyNormalizeNativeRevitActionBodiesForRouting(
+    [{
+      action_id: "bad-envelope-apply",
+      method: "POST",
+      path: "/revit/existing-conditions-mep-draft-workflow",
+      body: {
+        compiled_plan: {},
+        dryRun: false
+      }
+    }],
+    [{
+      action_id: "verified-dry-run",
+      method: "POST",
+      path: "/revit/existing-conditions-mep-draft-workflow",
+      status: "done",
+      result_json: {
+        inputFingerprintSha256: fingerprint,
+        stageKey: "operation:route:route-1",
+        status: "DryRunReady",
+        dryRun: true,
+        rollbackVerified: true,
+        residualCreatedElementIds: [],
+        error: null,
+        operationOutputs: [{
+          action_key: "route:route-1",
+          created_element_ids: [101]
+        }]
+      }
+    }],
+    req
+  );
+  assert.equal((apply?.body as any)?.dryRun, false);
+  assert.deepEqual((apply?.body as any)?.operations, workflow.operations);
+});
+
+test("registered existing-conditions compiler hands off exact dry-run then exact apply without another model decision", () => {
+  const sessionId = `registered-mep-direct-handoff-${Date.now()}`;
+  const fingerprint = "b".repeat(64);
+  const workflow = {
+    inputFingerprintSha256: fingerprint,
+    provisionalObservationIds: ["route-1"],
+    operations: [
+      {
+        action_key: "route:route-1",
+        observation_ids: ["route-1"],
+        path: "/revit/mep-route-workflow",
+        depends_on: [],
+        expected_created_min: 1,
+        expected_created_max: 1,
+        apply_body: { kind: "pipe", apply: true }
+      }
+    ],
+    dryRun: true,
+    verify: true,
+    maximumCreatedElements: 1,
+    benchmarkCredit: false,
+    authorizationBasis: "explicit_unscored_user_direction"
+  } as any;
+  __testOnlyNoteRegisteredMepWorkflow(sessionId, "frame-direct", 3960410, workflow);
+
+  const dryRun = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, []);
+  assert.ok(dryRun);
+  assert.equal(dryRun.actions[0]?.path, "/revit/existing-conditions-mep-draft-workflow");
+  assert.equal((dryRun.actions[0]?.body as any)?.stageKey, "operation:route:route-1");
+  assert.equal((dryRun.actions[0]?.body as any)?.operations.length, 1);
+  assert.deepEqual((dryRun.actions[0]?.body as any)?.priorActionOutputs, []);
+
+  const apply = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, [
+    {
+      action_id: "verified-dry-run",
+      method: "POST",
+      path: "/revit/existing-conditions-mep-draft-workflow",
+      status: "done",
+      result_json: {
+        inputFingerprintSha256: fingerprint,
+        stageKey: "operation:route:route-1",
+        status: "DryRunReady",
+        dryRun: true,
+        rollbackVerified: true,
+        residualCreatedElementIds: [],
+        error: null,
+        operationOutputs: [{
+          action_key: "route:route-1",
+          created_element_ids: [101]
+        }]
+      }
+    }
+  ]);
+  assert.ok(apply);
+  assert.equal((apply.actions[0]?.body as any)?.dryRun, false);
+  assert.deepEqual((apply.actions[0]?.body as any)?.operations, workflow.operations);
+
+  const readback = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, [
+    {
+      action_id: "verified-apply",
+      method: "POST",
+      path: "/revit/existing-conditions-mep-draft-workflow",
+      status: "done",
+      result_json: {
+        inputFingerprintSha256: fingerprint,
+        stageKey: "operation:route:route-1",
+        status: "Applied",
+        dryRun: false,
+        atomic: true,
+        error: null,
+        createdElementIds: [201],
+        operationOutputs: [{
+          action_key: "route:route-1",
+          created_element_ids: [201]
+        }]
+      }
+    }
+  ]);
+  assert.ok(readback);
+  assert.equal(readback.actions[0]?.path, "/revit/get-element-summary");
+  assert.deepEqual((readback.actions[0]?.body as any)?.elementIds, [201]);
+
+  const visual = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, [{
+    action_id: "verified-readback",
+    method: "POST",
+    path: "/revit/get-element-summary",
+    status: "done",
+    result_json: {
+      status: "ok",
+      items: [{ id: 201, category: "Pipes" }]
+    }
+  }]);
+  assert.ok(visual);
+  assert.equal(visual.actions[0]?.path, "/revit/highlight-and-export");
+  assert.deepEqual((visual.actions[0]?.body as any)?.elementIds, [201]);
+
+  const checkpoint = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, [{
+    action_id: "verified-visual",
+    method: "POST",
+    path: "/revit/highlight-and-export",
+    status: "done",
+    result_json: {
+      status: "ok",
+      path: "C:\\evidence\\route.png"
+    }
+  }]);
+  assert.ok(checkpoint);
+  assert.equal(checkpoint.actions[0]?.path, "/revit/save-as");
+  assert.match(String((checkpoint.actions[0]?.body as any)?.filePath), /existing_conditions_checkpoints/);
+
+  const complete = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, [{
+    action_id: "verified-checkpoint",
+    method: "POST",
+    path: "/revit/save-as",
+    status: "done",
+    result_json: {
+      status: "Success",
+      path: (checkpoint.actions[0]?.body as any)?.filePath
+    }
+  }]);
+  assert.ok(complete);
+  assert.deepEqual(complete.actions, []);
+  assert.match(complete.assistant_message, /accepted and persisted/i);
+  assert.doesNotMatch(complete.assistant_message, /will not compile or apply a second geometry set/i);
+});
+
+test("registered existing-conditions dry-run-only request stops before apply with a receipt", () => {
+  const sessionId = `registered-mep-dry-run-only-${Date.now()}-${Math.random()}`;
+  const fingerprint = "d".repeat(64);
+  const workflow = {
+    inputFingerprintSha256: fingerprint,
+    provisionalObservationIds: ["route-1"],
+    operations: [{
+      action_key: "registered-route:route-1",
+      observation_ids: ["route-1"],
+      path: "/revit/create-mep-route",
+      depends_on: [],
+      expected_created_min: 1,
+      expected_created_max: 1,
+      apply_body: { kind: "pipe", pipeTypeId: 246810 }
+    }],
+    dryRun: true,
+    verify: true,
+    maximumCreatedElements: 1,
+    benchmarkCredit: false,
+    authorizationBasis: "explicit_unscored_user_direction"
+  } as any;
+  __testOnlyNoteRegisteredMepWorkflow(sessionId, "frame-dry-run-only", 303, workflow);
+
+  const response = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(
+    sessionId,
+    [{
+      action_id: "verified-dry-run-only",
+      method: "POST",
+      path: "/revit/existing-conditions-mep-draft-workflow",
+      status: "done",
+      result_json: {
+        inputFingerprintSha256: fingerprint,
+        stageKey: "operation:registered-route:route-1",
+        status: "DryRunReady",
+        dryRun: true,
+        rollbackVerified: true,
+        residualCreatedElementIds: [],
+        transientCreatedElementIds: [901],
+        error: null,
+        operationOutputs: [{
+          action_key: "registered-route:route-1",
+          created_element_ids: [901]
+        }]
+      }
+    }],
+    "dry-run-only:assistant:3",
+    [],
+    "Permit only the generated staged dry-run; do not apply or save any new element. Stop after reporting the dry-run rollback receipt."
+  );
+
+  assert.ok(response);
+  assert.deepEqual(response.actions, []);
+  assert.match(response.assistant_message, /operator\.existing_conditions_dry_run_receipt\.v1/);
+  assert.match(response.assistant_message, /dry_run_verified_no_apply/);
+  assert.match(response.assistant_message, /901/);
+  assert.match(response.assistant_message, /apply_requires_new_authorization/);
+});
+
+test("registered existing-conditions compile-only request returns a persisted plan receipt without Revit actions", () => {
+  const sessionId = `registered-mep-compile-only-${Date.now()}`;
+  const fingerprint = "9".repeat(64);
+  const workflow = {
+    inputFingerprintSha256: fingerprint,
+    provisionalObservationIds: ["backbone-1", "backbone-2"],
+    operations: [
+      {
+        action_key: "route:backbone-1",
+        observation_ids: ["backbone-1"],
+        path: "/revit/mep-route-workflow",
+        depends_on: [],
+        expected_created_min: 1,
+        expected_created_max: 1,
+        execution_mode: "provisional_backbone_batch",
+        provisional_batch_key: "orthogonal-main",
+        apply_body: { kind: "pipe", apply: true }
+      },
+      {
+        action_key: "route:backbone-2",
+        observation_ids: ["backbone-2"],
+        path: "/revit/mep-route-workflow",
+        depends_on: [],
+        expected_created_min: 1,
+        expected_created_max: 1,
+        execution_mode: "provisional_backbone_batch",
+        provisional_batch_key: "orthogonal-main",
+        apply_body: { kind: "pipe", apply: true }
+      }
+    ],
+    dryRun: true,
+    verify: true,
+    maximumCreatedElements: 2,
+    benchmarkCredit: false,
+    authorizationBasis: "explicit_unscored_user_direction"
+  } as any;
+  __testOnlyNoteRegisteredMepWorkflow(sessionId, "frame-compile-only", 424242, workflow);
+
+  const response = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(
+    sessionId,
+    [],
+    "compile-only-message",
+    [],
+    "Compile the source-supported existing-conditions provisional backbone and one-action repair queue. Do not dry-run, apply, or write. Stop after the compilation plan receipt."
+  );
+
+  assert.ok(response);
+  assert.deepEqual(response.actions, []);
+  assert.match(response.assistant_message, /operator\.existing_conditions_compilation_receipt\.v1/);
+  assert.match(response.assistant_message, /compiled_read_only/);
+  assert.match(response.assistant_message, /provisional_backbone_batch_count":1/);
+  assert.match(response.assistant_message, /dry_runs_performed":0/);
+  assert.match(response.assistant_message, /writes_performed":0/);
+});
+
+test("registered compile boundary survives an empty tool continuation and suppresses staged dry-run", () => {
+  const sessionId = `registered-mep-compile-boundary-${Date.now()}`;
+  const workflow = {
+    inputFingerprintSha256: "8".repeat(64),
+    provisionalObservationIds: ["backbone-1"],
+    operations: [{
+      action_key: "route:backbone-1",
+      observation_ids: ["backbone-1"],
+      path: "/revit/mep-route-workflow",
+      depends_on: [],
+      expected_created_min: 1,
+      expected_created_max: 1,
+      execution_mode: "provisional_backbone_batch",
+      provisional_batch_key: "orthogonal-main",
+      apply_body: { kind: "pipe", apply: true }
+    }],
+    dryRun: true,
+    verify: true,
+    maximumCreatedElements: 1,
+    benchmarkCredit: false,
+    authorizationBasis: "explicit_unscored_user_direction"
+  } as any;
+  __testOnlyNoteRegisteredMepWorkflow(
+    sessionId,
+    "frame-compile-boundary",
+    424242,
+    workflow,
+    "registration-compile-boundary",
+    "compile_only"
+  );
+
+  const response = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(
+    sessionId,
+    [],
+    "compile-boundary:assistant:9",
+    [],
+    ""
+  );
+
+  assert.ok(response);
+  assert.deepEqual(response.actions, []);
+  assert.match(response.assistant_message, /compiled_read_only/);
+  assert.match(response.assistant_message, /dry_runs_performed":0/);
+  assert.doesNotMatch(response.assistant_message, /dry-run only/i);
+
+  const finalized = __testOnlyFinalizeOpenAiResponseForRequest({
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    session_id: sessionId,
+    message_id: "compile-boundary:assistant:10",
+    user_text: ""
+  }, {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    assistant_message: "Dry-running the next stage.",
+    actions: [{
+      action_id: "must-be-suppressed",
+      method: "POST",
+      path: "/revit/existing-conditions-mep-draft-workflow",
+      body: { dryRun: true }
+    }]
+  });
+  assert.deepEqual(finalized.actions, []);
+  assert.match(finalized.assistant_message, /compiled_read_only/);
+  assert.doesNotMatch(finalized.assistant_message, /Dry-running the next stage/i);
+});
+
+test("registered existing-conditions apply guard is scoped to one user message", () => {
+  const sessionId = `registered-mep-message-scope-${Date.now()}`;
+  const firstFingerprint = "d".repeat(64);
+  const secondFingerprint = "e".repeat(64);
+  const workflowFor = (fingerprint: string) => ({
+    inputFingerprintSha256: fingerprint,
+    provisionalObservationIds: ["route-1"],
+    operations: [
+      {
+        action_key: "route:route-1",
+        observation_ids: ["route-1"],
+        path: "/revit/mep-route-workflow",
+        depends_on: [],
+        expected_created_min: 1,
+        expected_created_max: 1,
+        apply_body: { kind: "pipe", apply: true }
+      }
+    ],
+    dryRun: true,
+    verify: true,
+    maximumCreatedElements: 1,
+    benchmarkCredit: false,
+    authorizationBasis: "explicit_unscored_user_direction"
+  } as any);
+  __testOnlyNoteRegisteredMepWorkflow(
+    sessionId,
+    "frame-first",
+    3960410,
+    workflowFor(firstFingerprint)
+  );
+  const firstApplyReceipt = {
+    action_id: "verified-first-apply",
+    method: "POST" as const,
+    path: "/revit/existing-conditions-mep-draft-workflow",
+    status: "done" as const,
+    result_json: {
+      inputFingerprintSha256: firstFingerprint,
+      stageKey: "operation:route:route-1",
+      status: "Applied",
+      dryRun: false,
+      atomic: true,
+      error: null,
+      createdElementIds: [301],
+      operationOutputs: [{
+        action_key: "route:route-1",
+        created_element_ids: [301]
+      }]
+    }
+  };
+  const firstReadback = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(
+    sessionId,
+    [firstApplyReceipt],
+    "message-first",
+    [firstApplyReceipt]
+  );
+  assert.ok(firstReadback);
+  assert.equal(firstReadback.actions[0]?.path, "/revit/get-element-summary");
+
+  __testOnlyNoteRegisteredMepWorkflow(
+    sessionId,
+    "frame-second",
+    3960410,
+    workflowFor(secondFingerprint)
+  );
+  const secondDryRun = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(
+    sessionId,
+    [firstApplyReceipt],
+    "message-second",
+    []
+  );
+  assert.ok(secondDryRun);
+  assert.equal(secondDryRun.actions[0]?.path, "/revit/existing-conditions-mep-draft-workflow");
+  assert.equal((secondDryRun.actions[0]?.body as any)?.inputFingerprintSha256, secondFingerprint);
+  assert.equal((secondDryRun.actions[0]?.body as any)?.dryRun, true);
+});
+
+test("registered existing-conditions compiler does not replay a failed matching dry-run", () => {
+  const sessionId = `registered-mep-failed-handoff-${Date.now()}`;
+  const fingerprint = "c".repeat(64);
+  __testOnlyNoteRegisteredMepWorkflow(sessionId, "frame-failed", 3960410, {
+    inputFingerprintSha256: fingerprint,
+    provisionalObservationIds: ["route-1"],
+    operations: [
+      {
+        action_key: "route:route-1",
+        observation_ids: ["route-1"],
+        path: "/revit/mep-route-workflow",
+        depends_on: [],
+        expected_created_min: 1,
+        expected_created_max: 1,
+        apply_body: { kind: "pipe", apply: true }
+      }
+    ],
+    dryRun: true,
+    verify: true,
+    maximumCreatedElements: 1,
+    benchmarkCredit: false,
+    authorizationBasis: "explicit_unscored_user_direction"
+  } as any);
+
+  const response = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, [
+    {
+      action_id: "blocked-dry-run",
+      method: "POST",
+      path: "/revit/existing-conditions-mep-draft-workflow",
+      status: "done",
+      result_json: {
+        inputFingerprintSha256: fingerprint,
+        stageKey: "operation:route:route-1",
+        status: "Blocked",
+        dryRun: true,
+        rollbackVerified: true,
+        residualCreatedElementIds: [],
+        error: "route_failed"
+      }
+    }
+  ]);
+  assert.ok(response);
+  assert.deepEqual(response.actions, []);
+  assert.match(response.assistant_message, /preserved as rejected/i);
+  assert.match(response.assistant_message, /route_failed/i);
+});
+
+test("registered existing-conditions compiler never hands off a stale workflow after a newer compile guard failure", () => {
+  const sessionId = `registered-mep-stale-after-guard-${Date.now()}`;
+  __testOnlySetCandidateVisibleCompileContext(sessionId, "source.pdf", "registration-context-a");
+  __testOnlyNoteRegisteredMepWorkflow(
+    sessionId,
+    "frame-stale",
+    3960410,
+    {
+      inputFingerprintSha256: "f".repeat(64),
+      provisionalObservationIds: ["stale-route"],
+      operations: [{
+        action_key: "route:stale-route",
+        observation_ids: ["stale-route"],
+        path: "/revit/mep-route-workflow",
+        depends_on: [],
+        expected_created_min: 1,
+        expected_created_max: 1,
+        apply_body: { kind: "pipe", apply: true }
+      }],
+      dryRun: true,
+      verify: true,
+      maximumCreatedElements: 1,
+      benchmarkCredit: false,
+      authorizationBasis: "explicit_unscored_user_direction"
+    } as any,
+    "registration-context-a"
+  );
+  assert.ok(__testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, []));
+
+  __testOnlyRecordCandidateVisibleCompileResults(sessionId, [{
+    index: 1,
+    type: "compile_registered_mep_reconstruction",
+    ok: false,
+    summary: "candidate_visible_route_outside_spatial_scope:new-route"
+  }]);
+
+  assert.equal(__testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, []), null);
+});
 
 test("redline view alignment extracts structured Responses API output", () => {
   const text = __testOnlyExtractViewAlignmentResponseText({
@@ -80,6 +643,574 @@ test("redline alignment crop projection corrects drifting view mark", () => {
   assert.equal(marks[0]?.normalized_x, 0.461995);
   assert.ok(Math.abs((marks[0]?.normalized_y ?? 0) - 0.77312) < 0.00001);
   assert.match(marks[0]?.label ?? "", /projected through matched view crop/);
+});
+
+test("view alignment treats room data and markup as optional and prioritizes durable common landmarks", () => {
+  const prompt = __testOnlyBuildViewAlignmentPrompt(
+    "Draft the visible existing plumbing from this old black-and-white record plan."
+  );
+
+  assert.match(prompt, /black-and-white/i);
+  assert.match(prompt, /room tags, room names, or space names/i);
+  assert.match(prompt, /exterior envelope and corners; stairs and elevator cores; shafts; grids and columns/i);
+  assert.match(prompt, /clean record drawing can be a valid match with marks=\[\]/i);
+  assert.match(prompt, /do not classify colored lines, symbols, or fixtures as markups/i);
+  assert.match(prompt, /interior partitions that changed/i);
+  assert.match(prompt, /registration_controls/i);
+  assert.match(prompt, /at least two spatially separated controls/i);
+  assert.match(prompt, /source_room_labels/i);
+  assert.match(prompt, /semantic source evidence, not a registration control/i);
+});
+
+test("view alignment tries Gemini structured image output before OpenAI fallback", { concurrency: false }, async () => {
+  const workspace = ensureWorkspaceLayout();
+  const sourcePath = path.join(workspace.artifacts, "test-gemini-alignment-source.png");
+  const viewPath = path.join(workspace.artifacts, "test-gemini-alignment-view.png");
+  const png = Buffer.from(RED_MARK_PNG_BASE64, "base64");
+  fs.writeFileSync(sourcePath, png);
+  fs.writeFileSync(viewPath, png);
+  const receivedBodies: Array<Record<string, any>> = [];
+  const server = http.createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    request.on("end", () => {
+      receivedBodies.push(
+        JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, any>
+      );
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        candidates: [{
+          content: {
+            parts: [{
+              text: JSON.stringify({
+              matched: true,
+              confidence: 0.91,
+              analysis: "Matched exterior corner and stair.",
+              crop: { min_u: 0.1, min_v: 0.2, max_u: 0.9, max_v: 0.8 },
+               registration_controls: [
+                {
+                  kind: "exterior_corner",
+                  source_normalized_x: 0.1,
+                  source_normalized_y: 0.1,
+                  view_normalized_x: 0.18,
+                  view_normalized_y: 0.26,
+                  score: 0.93,
+                  label: "northwest exterior corner"
+                },
+                {
+                  kind: "stair",
+                  source_normalized_x: 0.8,
+                  source_normalized_y: 0.8,
+                  view_normalized_x: 0.74,
+                  view_normalized_y: 0.68,
+                  score: 0.9,
+                  label: "stair core"
+                 }
+               ],
+               source_room_labels: [{
+                 text: "TRAINING ROOM 120",
+                 normalized_x: 0.52,
+                 normalized_y: 0.17,
+                 min_u: 0.50,
+                 min_v: 0.15,
+                 max_u: 0.54,
+                 max_v: 0.19,
+                 score: 0.96
+               }],
+               marks: []
+              })
+            }]
+          }
+        }]
+      }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const prior = {
+    key: process.env.OPERATOR_GEMINI_API_KEY,
+    baseUrl: process.env.OPERATOR_GEMINI_BASE_URL,
+    model: process.env.OPERATOR_GEMINI_ALIGNMENT_MODEL,
+    enabled: process.env.OPERATOR_GEMINI_ALIGNMENT_ENABLED
+  };
+  try {
+    process.env.OPERATOR_GEMINI_API_KEY = "test-key";
+    process.env.OPERATOR_GEMINI_BASE_URL = `http://127.0.0.1:${address.port}`;
+    process.env.OPERATOR_GEMINI_ALIGNMENT_MODEL = "gemini-3-image-test";
+    process.env.OPERATOR_GEMINI_ALIGNMENT_ENABLED = "1";
+    const result = await alignRedlineToView({
+      redline_file_path: sourcePath,
+      view_image_relative_path: viewPath,
+      objective: "Register old existing-conditions plan to current Revit view."
+    });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.provider, "gemini");
+    assert.equal(result.model, "gemini-3-image-test");
+    assert.deepEqual(result.attempted_models, ["gemini-3-image-test"]);
+    assert.equal(result.registration_controls.length, 2);
+    assert.deepEqual(result.source_room_labels, [{
+      text: "TRAINING ROOM 120",
+      normalized_x: 0.52,
+      normalized_y: 0.17,
+      min_u: 0.5,
+      min_v: 0.15,
+      max_u: 0.54,
+      max_v: 0.19,
+      score: 0.96
+    }]);
+    const receivedBody = receivedBodies[0];
+    assert.ok(receivedBody);
+    assert.equal(
+      receivedBody?.generationConfig?.responseMimeType,
+      "application/json"
+    );
+    assert.deepEqual(
+      receivedBody?.generationConfig?.responseJsonSchema?.required,
+      ["matched", "confidence", "analysis", "crop", "registration_controls", "source_room_labels", "marks"]
+    );
+    assert.ok(
+      receivedBody?.generationConfig?.responseJsonSchema?.properties?.registration_controls,
+      "Gemini must receive the strict registration-control response schema"
+    );
+    assert.ok(
+      receivedBody?.generationConfig?.responseJsonSchema?.properties?.source_room_labels,
+      "Gemini must receive the strict source-room-label response schema"
+    );
+  } finally {
+    for (const [key, value] of Object.entries({
+      OPERATOR_GEMINI_API_KEY: prior.key,
+      OPERATOR_GEMINI_BASE_URL: prior.baseUrl,
+      OPERATOR_GEMINI_ALIGNMENT_MODEL: prior.model,
+      OPERATOR_GEMINI_ALIGNMENT_ENABLED: prior.enabled
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => error ? reject(error) : resolve())
+    );
+  }
+});
+
+test("view alignment preserves failed Gemini provenance through OpenAI fallback and no-key failure", { concurrency: false }, async () => {
+  const workspace = ensureWorkspaceLayout();
+  const sourcePath = path.join(
+    workspace.artifacts,
+    "test-gemini-failure-provenance-source.png"
+  );
+  const viewPath = path.join(
+    workspace.artifacts,
+    "test-gemini-failure-provenance-view.png"
+  );
+  const png = Buffer.from(RED_MARK_PNG_BASE64, "base64");
+  fs.writeFileSync(sourcePath, png);
+  fs.writeFileSync(viewPath, png);
+  const requestPaths: string[] = [];
+  const server = http.createServer((request, response) => {
+    requestPaths.push(request.url ?? "");
+    if ((request.url ?? "").startsWith("/models/")) {
+      response.writeHead(500, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "provider unavailable" } }));
+      return;
+    }
+    if (request.url === "/responses") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        id: "resp_after_gemini_failure",
+        object: "response",
+        status: "completed",
+        model: "gpt-5.6-sol",
+        output: [{
+          id: "msg_after_gemini_failure",
+          type: "message",
+          status: "completed",
+          role: "assistant",
+          content: [{
+            type: "output_text",
+            text: JSON.stringify({
+              matched: true,
+              confidence: 0.97,
+              analysis: "Matched by durable geometry.",
+              crop: {
+                min_u: 0.1,
+                min_v: 0.1,
+                max_u: 0.9,
+                max_v: 0.9
+              },
+              registration_controls: [
+                {
+                  kind: "stair",
+                  source_normalized_x: 0.1,
+                  source_normalized_y: 0.1,
+                  view_normalized_x: 0.18,
+                  view_normalized_y: 0.18,
+                  score: 0.95,
+                  label: "north stair"
+                },
+                {
+                  kind: "stair",
+                  source_normalized_x: 0.8,
+                  source_normalized_y: 0.8,
+                  view_normalized_x: 0.74,
+                  view_normalized_y: 0.74,
+                  score: 0.95,
+                  label: "south stair"
+                }
+              ],
+              marks: []
+            }),
+            annotations: []
+          }]
+        }]
+      }));
+      return;
+    }
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: { message: "unexpected request" } }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const prior = {
+    operatorOpenAiKey: process.env.OPERATOR_OPENAI_API_KEY,
+    openAiKey: process.env.OPENAI_API_KEY,
+    openAiBaseUrl: process.env.OPERATOR_OPENAI_BASE_URL,
+    geminiKey: process.env.OPERATOR_GEMINI_API_KEY,
+    geminiBaseUrl: process.env.OPERATOR_GEMINI_BASE_URL,
+    geminiModel: process.env.OPERATOR_GEMINI_ALIGNMENT_MODEL,
+    geminiEnabled: process.env.OPERATOR_GEMINI_ALIGNMENT_ENABLED
+  };
+  try {
+    process.env.OPERATOR_OPENAI_API_KEY = "test-openai-key";
+    process.env.OPENAI_API_KEY = "";
+    process.env.OPERATOR_OPENAI_BASE_URL =
+      `http://127.0.0.1:${address.port}`;
+    process.env.OPERATOR_GEMINI_API_KEY = "test-gemini-key";
+    process.env.OPERATOR_GEMINI_BASE_URL =
+      `http://127.0.0.1:${address.port}`;
+    process.env.OPERATOR_GEMINI_ALIGNMENT_MODEL =
+      "gemini-3-image-provenance-test";
+    process.env.OPERATOR_GEMINI_ALIGNMENT_ENABLED = "1";
+
+    const fallback = await alignRedlineToView({
+      redline_file_path: sourcePath,
+      view_image_relative_path: viewPath,
+      model: "gpt-5.6-sol"
+    });
+    assert.equal(fallback.ok, true, JSON.stringify(fallback));
+    assert.equal(fallback.provider, "openai");
+    assert.deepEqual(fallback.attempted_models, [
+      "gemini-3-image-provenance-test",
+      "gpt-5.6-sol"
+    ]);
+    assert.match(
+      fallback.fallback_reason ?? "",
+      /Gemini gemini-3-image-provenance-test returned HTTP 500/
+    );
+
+    process.env.OPERATOR_OPENAI_API_KEY = "";
+    const noOpenAiKey = await alignRedlineToView({
+      redline_file_path: sourcePath,
+      view_image_relative_path: viewPath
+    });
+    assert.equal(noOpenAiKey.ok, false);
+    assert.deepEqual(noOpenAiKey.attempted_models, [
+      "gemini-3-image-provenance-test"
+    ]);
+    assert.match(
+      noOpenAiKey.fallback_reason ?? "",
+      /Gemini gemini-3-image-provenance-test returned HTTP 500/
+    );
+    assert.equal(
+      requestPaths.filter((requestPath) =>
+        requestPath.startsWith("/models/")
+      ).length,
+      2
+    );
+    assert.equal(
+      requestPaths.filter((requestPath) => requestPath === "/responses").length,
+      1
+    );
+  } finally {
+    for (const [key, value] of Object.entries({
+      OPERATOR_OPENAI_API_KEY: prior.operatorOpenAiKey,
+      OPENAI_API_KEY: prior.openAiKey,
+      OPERATOR_OPENAI_BASE_URL: prior.openAiBaseUrl,
+      OPERATOR_GEMINI_API_KEY: prior.geminiKey,
+      OPERATOR_GEMINI_BASE_URL: prior.geminiBaseUrl,
+      OPERATOR_GEMINI_ALIGNMENT_MODEL: prior.geminiModel,
+      OPERATOR_GEMINI_ALIGNMENT_ENABLED: prior.geminiEnabled
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => error ? reject(error) : resolve())
+    );
+  }
+});
+
+test("view alignment gives pre-provider image failures terminal provenance", async () => {
+  const result = await alignRedlineToView({
+    redline_file_path: "artifacts/missing-existing-conditions-source.png",
+    view_image_relative_path: "artifacts/missing-revit-frame.png"
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.matched, false);
+  assert.deepEqual(result.attempted_models, []);
+  assert.equal(
+    result.fallback_reason,
+    "Alignment input unavailable before provider invocation: source image and Revit view preview."
+  );
+});
+
+test("view alignment can skip Gemini for a native-rejected OpenAI geometry retry", { concurrency: false }, async () => {
+  const workspace = ensureWorkspaceLayout();
+  const sourcePath = path.join(workspace.artifacts, "test-openai-only-alignment-source.png");
+  const viewPath = path.join(workspace.artifacts, "test-openai-only-alignment-view.png");
+  const png = Buffer.from(RED_MARK_PNG_BASE64, "base64");
+  fs.writeFileSync(sourcePath, png);
+  fs.writeFileSync(viewPath, png);
+  const requestPaths: string[] = [];
+  const server = http.createServer((request, response) => {
+    requestPaths.push(request.url ?? "");
+    if (request.method !== "POST" || request.url !== "/responses") {
+      response.writeHead(500, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "unexpected provider request" } }));
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/json" });
+    const alignmentJson = JSON.stringify({
+      matched: true,
+      confidence: 0.98,
+      analysis: "Matched exterior envelope and stair geometry.",
+      crop: { min_u: 0.05, min_v: 0.06, max_u: 0.84, max_v: 0.88 },
+      registration_controls: [
+        {
+          kind: "exterior_corner",
+          source_normalized_x: 0.1,
+          source_normalized_y: 0.1,
+          view_normalized_x: 0.13,
+          view_normalized_y: 0.14,
+          score: 0.96,
+          label: "northwest exterior corner"
+        },
+        {
+          kind: "stair",
+          source_normalized_x: 0.8,
+          source_normalized_y: 0.8,
+          view_normalized_x: 0.68,
+          view_normalized_y: 0.72,
+          score: 0.94,
+          label: "south stair"
+        }
+      ],
+      marks: []
+    });
+    response.end(JSON.stringify({
+      id: "resp_geometry_retry",
+      object: "response",
+      status: "completed",
+      model: "gpt-5.6-sol",
+      output: [{
+        id: "msg_geometry_retry",
+        type: "message",
+        status: "completed",
+        role: "assistant",
+        content: [{
+          type: "output_text",
+          text: alignmentJson,
+          annotations: []
+        }]
+      }]
+    }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const prior = {
+    openAiKey: process.env.OPERATOR_OPENAI_API_KEY,
+    openAiBaseUrl: process.env.OPERATOR_OPENAI_BASE_URL,
+    geminiKey: process.env.OPERATOR_GEMINI_API_KEY,
+    geminiBaseUrl: process.env.OPERATOR_GEMINI_BASE_URL,
+    geminiEnabled: process.env.OPERATOR_GEMINI_ALIGNMENT_ENABLED
+  };
+  try {
+    process.env.OPERATOR_OPENAI_API_KEY = "test-openai-key";
+    process.env.OPERATOR_OPENAI_BASE_URL = `http://127.0.0.1:${address.port}`;
+    process.env.OPERATOR_GEMINI_API_KEY = "test-gemini-key";
+    process.env.OPERATOR_GEMINI_BASE_URL = `http://127.0.0.1:${address.port}`;
+    process.env.OPERATOR_GEMINI_ALIGNMENT_ENABLED = "1";
+    const result = await alignRedlineToView({
+      redline_file_path: sourcePath,
+      view_image_relative_path: viewPath,
+      objective: "Retry geometry after native rejection.",
+      provider_preference: "openai_only",
+      prior_attempted_models: ["gemini-3-flash-preview"],
+      openai_fallback_reason:
+        "Gemini structured alignment was rejected by native Revit landmark verification for this exact frame.",
+      model: "gpt-5.6-sol"
+    });
+    assert.deepEqual(requestPaths, ["/responses"]);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.provider, "openai");
+    assert.equal(result.model, "gpt-5.6-sol");
+    assert.deepEqual(result.attempted_models, [
+      "gemini-3-flash-preview",
+      "gpt-5.6-sol"
+    ]);
+    assert.match(result.fallback_reason ?? "", /native Revit landmark verification/i);
+  } finally {
+    for (const [key, value] of Object.entries({
+      OPERATOR_OPENAI_API_KEY: prior.openAiKey,
+      OPERATOR_OPENAI_BASE_URL: prior.openAiBaseUrl,
+      OPERATOR_GEMINI_API_KEY: prior.geminiKey,
+      OPERATOR_GEMINI_BASE_URL: prior.geminiBaseUrl,
+      OPERATOR_GEMINI_ALIGNMENT_ENABLED: prior.geminiEnabled
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => error ? reject(error) : resolve())
+    );
+  }
+});
+
+test("view alignment accepts a full-sheet source above the legacy 1.5 MB image cap when budgeted", { concurrency: false }, async () => {
+  const workspace = ensureWorkspaceLayout();
+  const sourcePath = path.join(workspace.artifacts, "test-gemini-full-sheet-source.png");
+  const viewPath = path.join(workspace.artifacts, "test-gemini-full-sheet-view.png");
+  fs.writeFileSync(sourcePath, Buffer.alloc(1_600_000, 7));
+  fs.writeFileSync(viewPath, Buffer.from(RED_MARK_PNG_BASE64, "base64"));
+  let requestCount = 0;
+  const server = http.createServer((_request, response) => {
+    requestCount += 1;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      candidates: [{
+        content: {
+          parts: [{
+            text: JSON.stringify({
+              matched: false,
+              confidence: 0.2,
+              analysis: "Full sheet reached Gemini but controls were insufficient.",
+              crop: null,
+              registration_controls: [],
+              marks: []
+            })
+          }]
+        }
+      }]
+    }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const prior = {
+    key: process.env.OPERATOR_GEMINI_API_KEY,
+    baseUrl: process.env.OPERATOR_GEMINI_BASE_URL,
+    model: process.env.OPERATOR_GEMINI_ALIGNMENT_MODEL,
+    enabled: process.env.OPERATOR_GEMINI_ALIGNMENT_ENABLED
+  };
+  try {
+    process.env.OPERATOR_GEMINI_API_KEY = "test-key";
+    process.env.OPERATOR_GEMINI_BASE_URL = `http://127.0.0.1:${address.port}`;
+    process.env.OPERATOR_GEMINI_ALIGNMENT_MODEL = "gemini-3-image-test";
+    process.env.OPERATOR_GEMINI_ALIGNMENT_ENABLED = "1";
+    const result = await alignRedlineToView({
+      redline_file_path: sourcePath,
+      view_image_relative_path: viewPath,
+      objective: "Register a full existing-conditions sheet.",
+      max_image_bytes: 8_388_608
+    });
+    assert.equal(requestCount, 1);
+    assert.equal(result.ok, true);
+    assert.equal(result.provider, "gemini");
+    assert.equal(result.model, "gemini-3-image-test");
+    assert.equal(result.matched, false);
+  } finally {
+    for (const [key, value] of Object.entries({
+      OPERATOR_GEMINI_API_KEY: prior.key,
+      OPERATOR_GEMINI_BASE_URL: prior.baseUrl,
+      OPERATOR_GEMINI_ALIGNMENT_MODEL: prior.model,
+      OPERATOR_GEMINI_ALIGNMENT_ENABLED: prior.enabled
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => error ? reject(error) : resolve())
+    );
+  }
+});
+
+test("redline auto-align uses the analyzed page preview for a PDF seed", () => {
+  const resolved = __testOnlyResolveRedlineAlignmentImagePath({
+    seedFilePath: "uploads/existing-conditions/P1.01.pdf",
+    workbenchResults: [
+      {
+        index: 0,
+        type: "analyze_redline",
+        ok: true,
+        summary: "analyzed",
+        details: {
+          file_path: "uploads/existing-conditions/P1.01.pdf",
+          vision_artifacts: {
+            annotated_image_path: "artifacts/redline/P1.01_annotated.png",
+            preview_image_path: "artifacts/redline/page_0001.png",
+            crop_image_paths: ["artifacts/redline/P1.01_crop_01.png"]
+          }
+        }
+      }
+    ] as any
+  });
+
+  assert.equal(resolved, "artifacts/redline/page_0001.png");
+});
+
+test("redline auto-align retains the analyzed PDF preview across continuation turns", () => {
+  const sessionId = "persisted-pdf-preview";
+  __testOnlyResolveRedlineAlignmentImagePath({
+    sessionId,
+    seedFilePath: "uploads/existing-conditions/P1.01.pdf",
+    persistedImagePaths: [
+      "artifacts/redline/P1.01_annotated.png",
+      "artifacts/redline/page_0001.png"
+    ]
+  });
+
+  const resolved = __testOnlyResolveRedlineAlignmentImagePath({
+    sessionId,
+    seedFilePath: "uploads/existing-conditions/P1.01.pdf",
+    workbenchResults: []
+  });
+
+  assert.equal(resolved, "artifacts/redline/page_0001.png");
+});
+
+test("redline auto-align keeps a directly attached image instead of an analyzed derivative", () => {
+  const resolved = __testOnlyResolveRedlineAlignmentImagePath({
+    seedFilePath: "uploads/redline.png",
+    workbenchResults: [
+      {
+        index: 0,
+        type: "analyze_redline",
+        ok: true,
+        summary: "analyzed",
+        details: {
+          file_path: "uploads/redline.png",
+          vision_artifacts: {
+            preview_image_path: "artifacts/redline/page_0001.png"
+          }
+        }
+      }
+    ] as any
+  });
+
+  assert.equal(resolved, "uploads/redline.png");
 });
 
 test("redline auto-align can read export-view-frame result path without attachment wrapper", () => {
@@ -720,6 +1851,180 @@ test("native Revit routing repairs common discovery action body aliases", () => 
   assert.equal((normalized[3]?.body as any)?.max, 20);
 });
 
+test("existing-conditions reconstruction stays on the explicit sheet placed view", () => {
+  const actions = __testOnlyNormalizeNativeRevitActionBodiesForRouting(
+    [
+      {
+        action_id: "room-view",
+        method: "POST",
+        path: "/revit/resolve-room-plan-view",
+        body: {
+          roomNumber: "100",
+          preferViewNameContains: "lighting"
+        }
+      },
+      {
+        action_id: "wrong-frame",
+        method: "POST",
+        path: "/revit/export-view-frame",
+        body: {
+          viewId: 6472944,
+          includeMapping: true
+        }
+      },
+      {
+        action_id: "view-list",
+        method: "GET",
+        path: "/revit/views"
+      },
+      {
+        action_id: "sheet-examples",
+        method: "POST",
+        path: "/revit/tool-examples",
+        body: {
+          path: "/revit/sheets",
+          method: "POST"
+        }
+      }
+    ],
+    [
+      {
+        action_id: "sheet-detail",
+        method: "POST",
+        path: "/revit/sheets",
+        status: "done",
+        result_json: {
+          sheetNumber: "P1.01",
+          placedViews: [
+            {
+              viewId: 3960410,
+              name: "LEVEL 01 - BUILDING 200 - NEW WORK - PLUMBING",
+              viewType: "FloorPlan"
+            }
+          ]
+        }
+      }
+    ],
+    {
+      session_id: "existing-conditions-sheet-anchor",
+      user_text:
+        "Using only P1.01_existing_conditions.pdf, recreate the visible plumbing existing conditions in room 100."
+    }
+  );
+
+  assert.deepEqual(
+    actions.map((action) => [action.path, action.body]),
+    [
+      ["/revit/export-view-frame", { viewId: 3960410, imageSize: 2200, includeMapping: true }],
+      ["/revit/export-view-frame", { viewId: 3960410, imageSize: 2200, includeMapping: true }],
+      ["/revit/export-view-frame", { viewId: 3960410, imageSize: 2200, includeMapping: true }],
+      ["/revit/export-view-frame", { viewId: 3960410, imageSize: 2200, includeMapping: true }]
+    ]
+  );
+});
+
+test("verified existing-conditions room scope is not replaced by another identical room-boundary read", () => {
+  const roomResult = {
+    action_id: "room-scope",
+    method: "POST",
+    path: "/revit/linked-room-boundaries",
+    status: "done",
+    result_json: {
+      ok: true,
+      rooms: [{
+        number: "100",
+        sourceScopedId: "ARCH-LINK:100",
+        area: 100,
+        boundaryLoops: [[
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+          { x: 10, y: 10 },
+          { x: 0, y: 10 }
+        ]]
+      }]
+    }
+  } as ToolResult;
+  const [action] = __testOnlyNormalizeNativeRevitActionBodiesForRouting(
+    [{
+      action_id: "generic-fallback",
+      method: "POST",
+      path: "/revit/rank-similar-devices-on-wall",
+      body: { roomNumber: "100" }
+    }],
+    [roomResult],
+    {
+      session_id: "existing-conditions-room-scope-loop-guard",
+      user_text: "Draft existing conditions in room 100 from the attached P1.01 source PDF."
+    }
+  );
+
+  assert.equal(action?.path, "/revit/rank-similar-devices-on-wall");
+});
+
+test("verified existing-conditions alignment advances placed-view discovery to visible inventory", () => {
+  const sessionId = "existing-conditions-aligned-inventory";
+  __testOnlySeedRedlineViewAlignment({
+    sessionId,
+    frameId: "frame-p210",
+    viewId: 3960410,
+    confidence: 0.82,
+    crop: { min_u: 0.2, min_v: 0.15, max_u: 0.8, max_v: 0.85 }
+  });
+
+  const actions = __testOnlyNormalizeNativeRevitActionBodiesForRouting(
+    [
+      {
+        action_id: "generic-view-list",
+        method: "GET",
+        path: "/revit/views"
+      }
+    ],
+    [
+      {
+        action_id: "sheet-detail",
+        method: "POST",
+        path: "/revit/sheets",
+        status: "done",
+        result_json: {
+          sheetNumber: "P1.01",
+          placedViews: [
+            {
+              viewId: 3960410,
+              name: "LEVEL 01 - BUILDING 200 - NEW WORK - PLUMBING",
+              viewType: "FloorPlan"
+            }
+          ]
+        }
+      }
+    ],
+    {
+      session_id: sessionId,
+      user_text:
+        "Using only P1.01_existing_conditions.pdf, recreate the visible plumbing existing conditions in room 100."
+    }
+  );
+
+  assert.equal(actions[0]?.path, "/revit/export-visible-elements");
+  assert.equal(actions[0]?.method, "POST");
+  assert.deepEqual(actions[0]?.body, {
+    viewId: 3960410,
+    imageSize: 2200,
+    includeMapping: true,
+    includeLinked: true,
+    categories: [
+      "OST_Walls",
+      "OST_Doors",
+      "OST_Windows",
+      "OST_Rooms",
+      "OST_MEPSpaces",
+      "OST_RoomTags",
+      "OST_Casework",
+      "OST_PlumbingFixtures"
+    ],
+    limit: 500
+  });
+});
+
 test("redline targeting infers electrical mutation requests as resolve-only model targeting", () => {
   const profile = __testOnlyInferRedlineTargetingProfile({
     userText: "change the indicated receptacles to gfci type"
@@ -1278,6 +2583,24 @@ test("initial redline preflight schedules analyze_redline before the first model
   assert.equal(action?.type, "analyze_redline");
   assert.equal(action?.file_path, "artifacts/uploads/E2.1_room-403_markup.png");
   assert.equal(action?.expected_sheet, "E2.1");
+});
+
+test("existing-conditions reconstruction noun phrase schedules source analysis before Revit discovery", () => {
+  const action = __testOnlyBuildInitialRedlinePreflightAction({
+    userText:
+      "Start a staged Room 210 existing-conditions reconstruction from the attached M2.00 source in this disposable clean model. For this turn do source observation and registration only. Do not write to Revit yet.",
+    userAttachments: [
+      {
+        id: "att-1",
+        filename: "room210_M2.00_source.pdf",
+        relative_path: "artifacts/uploads/room210_M2.00_source.pdf"
+      }
+    ] as any
+  });
+
+  assert.ok(action);
+  assert.equal(action?.type, "analyze_redline");
+  assert.equal(action?.file_path, "artifacts/uploads/room210_M2.00_source.pdf");
 });
 
 test("fast electrical image-only redlines still run image preflight so room/sheet text is available", () => {

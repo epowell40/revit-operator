@@ -1,17 +1,25 @@
 {
   "default_max_lines": 1200,
   "exceptions": [
-    { "path": "brains/openai_brain.ts", "max_lines": 17625, "reason": "Legacy model orchestration monolith; durable requirements behavior is extracted to requirements_response_policy.ts, leaving five reviewed prompt/response wiring lines while provider and tool-loop seams continue to be extracted incrementally." },
-    { "path": "benchmark/revit_workflows.ts", "max_lines": 10838, "reason": "Legacy benchmark workflow dispatcher; extract one independently tested workflow family per batch." },
+    { "path": "brains/openai_brain.ts", "max_lines": 23758, "reason": "Legacy model orchestration monolith plus the reviewed staged existing-conditions and native-registration loop; provider, redline, and reconstruction seams remain candidates for incremental extraction." },
+    { "path": "benchmark/revit_workflows.ts", "max_lines": 10842, "reason": "Legacy benchmark workflow dispatcher; the reviewed existing-conditions workflow registration adds four bounded lines while workflow families continue to be extracted incrementally." },
     { "path": "benchmark/redline_routing_readiness.ts", "max_lines": 6285, "reason": "Legacy readiness report aggregator awaiting report-section extraction." },
-    { "path": "index.ts", "max_lines": 4155, "reason": "Backend composition root; private hosted routes make the integration variant larger than public. Durable requirements routes are extracted to requirements_http_routes.ts, leaving nine reviewed authentication, adapter, and audit wiring lines alongside bounded large-PDF page-range forwarding." },
+    { "path": "existing_conditions/candidate_visible_registration.ts", "max_lines": 4878, "reason": "Reviewed fail-closed source-to-native registration and grading module; split raster, durable-landmark, and native-projection policies in later bounded batches." },
+    { "path": "index.ts", "max_lines": 4170, "reason": "Backend composition root; the private integration variant is larger than public. Reviewed existing-conditions and merged-main route wiring adds fifteen bounded lines while route families continue to move into dedicated modules." },
     { "path": "redline/redline_analyzer.ts", "max_lines": 3238, "reason": "Sheet classification and pure PDF annotation geometry are extracted; page analysis and image rendering remain coupled pending later bounded splits." },
+    { "path": "existing_conditions/mep_draft_plan.ts", "max_lines": 3515, "reason": "Reviewed source-grounded MEP draft compiler; discipline-specific planning and adapter normalization remain coupled pending bounded extraction." },
     { "path": "deterministic/mep_route_redline.ts", "max_lines": 2920, "reason": "Deterministic MEP route resolver awaiting parsing and scoring extraction; the reviewed sheet-inventory continuation guard adds six bounded lines." },
+    { "path": "tools/existing_conditions_fixture.ts", "max_lines": 2710, "reason": "Reviewed offline existing-conditions CLI dispatcher; command families should move to dedicated entrypoints in later bounded batches." },
     { "path": "redline/corpus_classifier.ts", "max_lines": 2876, "reason": "Corpus classification and promotion preparation remain coupled pending a focused split." },
+    { "path": "existing_conditions/architectural_wall_line_candidates.ts", "max_lines": 2121, "reason": "Reviewed architectural raster candidate extractor; preprocessing, scoring, and overlay rendering remain coupled pending bounded extraction." },
+    { "path": "benchmark/existing_conditions_reconstruction.ts", "max_lines": 1949, "reason": "Reviewed existing-conditions benchmark harness; case loading, scoring, and reporting remain coupled pending bounded extraction." },
     { "path": "tools/seed_redline_review_promotions.ts", "max_lines": 1903, "reason": "Offline migration tool; lower runtime risk but still size-ratcheted." },
     { "path": "tools/promote_redline_review_rows.ts", "max_lines": 1821, "reason": "Offline migration tool; lower runtime risk but still size-ratcheted." },
     { "path": "benchmark/environment.ts", "max_lines": 1720, "reason": "Benchmark environment discovery and reporting await platform-adapter extraction." },
-    { "path": "vision/gemini_agentic_vision.ts", "max_lines": 1668, "reason": "Vision provider adapter awaits transport and response-normalization extraction. Page-range rasterization, Node-native Windows fallback, and page-provenance output support bounded large-PDF batches." },
+    { "path": "vision/gemini_agentic_vision.ts", "max_lines": 1687, "reason": "Vision provider adapter awaits transport and response-normalization extraction. Reviewed existing-conditions structured-image fields add bounded source-grounding support." },
+    { "path": "existing_conditions/staged_repair_ledger.ts", "max_lines": 1526, "reason": "Reviewed monotonic repair-ledger state machine; validation and transition policies remain together to preserve the fail-closed contract." },
+    { "path": "existing_conditions/one_action_execution_ledger.ts", "max_lines": 1487, "reason": "Reviewed one-action execution ledger; receipt validation and state transitions remain together to preserve repair semantics." },
+    { "path": "existing_conditions/plan_trace_extraction.ts", "max_lines": 1217, "reason": "Reviewed bounded plan-trace extractor; thresholding and topology diagnostics remain coupled pending a focused split." },
     { "path": "admin_codex_jobs.ts", "max_lines": 1344, "reason": "Private-only admin job orchestration; retained here so the shared ratchet also validates integration layout." }
   ]
 }

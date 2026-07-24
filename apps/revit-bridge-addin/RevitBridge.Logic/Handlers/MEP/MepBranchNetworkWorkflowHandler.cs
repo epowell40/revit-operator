@@ -52,6 +52,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             public string? name { get; set; }
             public int mainSegmentIndex { get; set; } = 0;
             public string? connectionMode { get; set; } = "tee";
+            public long? existingBranchAnchorElementId { get; set; }
             public string? branchSize { get; set; }
             public List<string>? branchSegmentSizes { get; set; }
             public MepRoutingUtil.RoutePoint? connectionPoint { get; set; }
@@ -427,6 +428,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     name = branch.name,
                     mainSegmentIndex = branch.mainSegmentIndex,
                     connectionMode = string.IsNullOrWhiteSpace(branch.connectionMode) ? "tee" : branch.connectionMode,
+                    existingBranchAnchorElementId = branch.existingBranchAnchorElementId,
                     requestedSize = branch.branchSize,
                     segmentSizes = BuildBranchSegmentSizeTexts(branch, Math.Max(0, branchPoints.Count - 1)),
                     jointPlan = MepRouteJointPlanner.PlanJoints(BuildBranchSegmentSizeTexts(branch, Math.Max(0, branchPoints.Count - 1))).Select(j => new
@@ -1260,6 +1262,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             branchSize = branch.branchSize,
             branchSegmentSizes = branch.branchSegmentSizes,
             connectionMode = branch.connectionMode,
+            existingBranchAnchorElementId = branch.existingBranchAnchorElementId,
             frameId = p.frameId,
             viewId = p.viewId,
             roomNumber = p.roomNumber,

@@ -12,6 +12,7 @@ using Autodesk.Revit.UI;
 using RevitBridge.Common;
 using RevitBridge.Common.Electrical;
 using RevitBridge.Logic.Handlers.Core;
+using RevitBridge.Logic.Handlers.MEP;
 
 namespace RevitBridge.Logic.Handlers
 {
@@ -484,12 +485,45 @@ namespace RevitBridge.Logic.Handlers
 
     public sealed class AssignElectricalCircuitHandler : IRequestHandler
     {
+        private sealed class NativePowerCircuitReadback
+        {
+            public long SystemElementId { get; set; }
+            public string SystemType { get; set; } = string.Empty;
+            public List<long> MemberElementIds { get; set; } = new List<long>();
+            public long? PanelElementId { get; set; }
+            public string PanelName { get; set; } = string.Empty;
+            public string CircuitNumber { get; set; } = string.Empty;
+            public double? TrueLoadInternal { get; set; }
+            public double? ApparentLoadInternal { get; set; }
+            public double? VoltageInternal { get; set; }
+            public int? Poles { get; set; }
+        }
+
+        private sealed class PanelScheduleSlotReadback
+        {
+            public long ScheduleElementId { get; set; }
+            public bool ScheduleCreated { get; set; }
+            public int TargetSlotNumber { get; set; }
+            public int SourceRow { get; set; }
+            public int SourceColumn { get; set; }
+            public int TargetRow { get; set; }
+            public int TargetColumn { get; set; }
+            public bool TargetContainsExactSystem { get; set; }
+            public string ActualCircuitNumber { get; set; } = string.Empty;
+        }
+
         public sealed class Params
         {
             public long[]? elementIds { get; set; }
             public string? panelName { get; set; }
             public string? circuitNumber { get; set; }
             public long? sourceElementId { get; set; }
+            public string? createSystemType { get; set; }
+            public long? electricalConnectorId { get; set; }
+            public long? electricalSystemId { get; set; }
+            public long? panelElementId { get; set; }
+            public int? targetPanelSlotNumber { get; set; }
+            public string? expectedCircuitNumber { get; set; }
             public bool dryRun { get; set; } = true;
             public bool confirm { get; set; } = false;
             public bool parameterOnlyFallback { get; set; } = false;
@@ -507,6 +541,22 @@ namespace RevitBridge.Logic.Handlers
             var source = p.sourceElementId.HasValue && p.sourceElementId.Value > 0
                 ? doc.GetElement(ElementIdCompat.Create(p.sourceElementId.Value))
                 : null;
+            if (p.electricalSystemId.HasValue)
+            {
+                if (p.electricalSystemId.Value <= 0)
+                    throw new InvalidOperationException("electrical_system_id_must_be_positive");
+                if (source != null || !string.IsNullOrWhiteSpace(p.createSystemType))
+                    throw new InvalidOperationException("existing_power_circuit_move_cannot_create_or_match_source_system");
+                return Task.FromResult(MoveExistingPowerCircuit(doc, p, ids));
+            }
+            var createNewPowerCircuit = string.Equals(p.createSystemType, "PowerCircuit", StringComparison.OrdinalIgnoreCase);
+            if (createNewPowerCircuit)
+            {
+                if (source != null) throw new InvalidOperationException("create_new_power_circuit_cannot_use_source_element");
+                return Task.FromResult(CreateNewPowerCircuit(doc, p, ids));
+            }
+            if (!string.IsNullOrWhiteSpace(p.createSystemType))
+                throw new InvalidOperationException("createSystemType must be PowerCircuit when supplied.");
             var results = new List<object>();
             var warnings = new List<string>();
             var apply = !p.dryRun && p.confirm;
@@ -598,6 +648,655 @@ namespace RevitBridge.Logic.Handlers
                 results,
                 warnings
             });
+        }
+
+        private static object MoveExistingPowerCircuit(Document doc, Params p, List<long> expectedMemberIds)
+        {
+            if (!p.panelElementId.HasValue || p.panelElementId.Value <= 0)
+                throw new InvalidOperationException("existing_power_circuit_move_requires_panel_element_id");
+            if (!p.targetPanelSlotNumber.HasValue || p.targetPanelSlotNumber.Value <= 0)
+                throw new InvalidOperationException("existing_power_circuit_move_requires_positive_target_panel_slot_number");
+
+            var systemId = p.electricalSystemId!.Value;
+            var system = doc.GetElement(ElementIdCompat.Create(systemId)) as ElectricalSystem
+                ?? throw new InvalidOperationException($"electrical_system_not_found:{systemId}");
+            var panel = doc.GetElement(ElementIdCompat.Create(p.panelElementId.Value)) as FamilyInstance
+                ?? throw new InvalidOperationException($"panel_element_not_family_instance:{p.panelElementId.Value}");
+            var expectedMembers = expectedMemberIds.Distinct().OrderBy(id => id).ToList();
+            var beforeReadback = ReadNativePowerCircuit(system);
+            VerifyNativePowerCircuitReadback(beforeReadback, expectedMembers, p.panelElementId);
+
+            var apply = !p.dryRun && p.confirm;
+            if (!p.dryRun && !p.confirm)
+                throw new InvalidOperationException("existing_power_circuit_move_requires_confirm_true");
+
+            using (var group = new TransactionGroup(doc, "Move and Verify Existing Electrical Circuit"))
+            {
+                var groupStartStatus = group.Start();
+                if (groupStartStatus != TransactionStatus.Started)
+                    throw new InvalidOperationException($"existing_power_circuit_move_group_not_started:{groupStartStatus}");
+
+                try
+                {
+                    PanelScheduleSlotReadback panelScheduleSlot;
+                    using (var tx = new Transaction(doc, "Move Existing Electrical Circuit"))
+                    {
+                        var transactionStartStatus = tx.Start();
+                        if (transactionStartStatus != TransactionStatus.Started)
+                            throw new InvalidOperationException($"existing_power_circuit_move_transaction_not_started:{transactionStartStatus}");
+
+                        panelScheduleSlot = MoveCircuitToPanelScheduleSlot(
+                            doc,
+                            panel,
+                            system,
+                            p.targetPanelSlotNumber.Value,
+                            p.expectedCircuitNumber);
+                        doc.Regenerate();
+                        VerifyNativePowerCircuitReadback(ReadNativePowerCircuit(system), expectedMembers, p.panelElementId);
+
+                        var commitStatus = tx.Commit();
+                        if (commitStatus != TransactionStatus.Committed)
+                            throw new InvalidOperationException($"existing_power_circuit_move_transaction_not_committed:{commitStatus}");
+                    }
+
+                    var committedSystem = doc.GetElement(ElementIdCompat.Create(systemId)) as ElectricalSystem
+                        ?? throw new InvalidOperationException($"existing_power_circuit_postcommit_system_missing:{systemId}");
+                    var finalReadback = ReadNativePowerCircuit(committedSystem);
+                    VerifyNativePowerCircuitReadback(finalReadback, expectedMembers, p.panelElementId);
+                    VerifyPanelScheduleSlotReadback(panelScheduleSlot, finalReadback, p.targetPanelSlotNumber, p.expectedCircuitNumber);
+
+                    var rolledBack = false;
+                    var rollbackVerified = false;
+                    if (p.dryRun)
+                    {
+                        var rollbackStatus = group.RollBack();
+                        if (rollbackStatus != TransactionStatus.RolledBack)
+                            throw new InvalidOperationException($"existing_power_circuit_move_group_not_rolled_back:{rollbackStatus}");
+                        rolledBack = true;
+                        var restoredSystem = doc.GetElement(ElementIdCompat.Create(systemId)) as ElectricalSystem
+                            ?? throw new InvalidOperationException($"existing_power_circuit_missing_after_rollback:{systemId}");
+                        var restoredReadback = ReadNativePowerCircuit(restoredSystem);
+                        VerifyNativePowerCircuitReadback(restoredReadback, expectedMembers, p.panelElementId);
+                        rollbackVerified = string.Equals(
+                            restoredReadback.CircuitNumber,
+                            beforeReadback.CircuitNumber,
+                            StringComparison.OrdinalIgnoreCase);
+                        if (!rollbackVerified)
+                            throw new InvalidOperationException($"existing_power_circuit_move_rollback_verification_failed:{systemId}");
+                    }
+                    else
+                    {
+                        var groupStatus = group.Assimilate();
+                        if (groupStatus != TransactionStatus.Committed)
+                            throw new InvalidOperationException($"existing_power_circuit_move_group_not_committed:{groupStatus}");
+                    }
+
+                    return new
+                    {
+                        schema = "operator.assign_electrical_circuit.v5",
+                        status = p.dryRun ? "Planned" : "Applied",
+                        applied = apply,
+                        dryRun = p.dryRun,
+                        transactionGroupRolledBack = rolledBack,
+                        rollbackVerified,
+                        mode = "move_existing_power_circuit",
+                        electricalSystemId = systemId,
+                        panelElementId = p.panelElementId,
+                        targetPanelSlotNumber = p.targetPanelSlotNumber,
+                        expectedCircuitNumber = string.IsNullOrWhiteSpace(p.expectedCircuitNumber) ? null : p.expectedCircuitNumber!.Trim(),
+                        verifiedMemberElementIds = expectedMembers,
+                        nativeCircuitReadback = NativePowerCircuitReadbackPayload(finalReadback),
+                        panelScheduleSlot = PanelScheduleSlotReadbackPayload(panelScheduleSlot),
+                        verification = new
+                        {
+                            nativePowerCircuit = true,
+                            exactMemberSet = true,
+                            exactPanelIdentity = true,
+                            exactPanelScheduleSlot = panelScheduleSlot.TargetContainsExactSystem,
+                            expectedCircuitNumberMatched = string.IsNullOrWhiteSpace(p.expectedCircuitNumber) || string.Equals(finalReadback.CircuitNumber, p.expectedCircuitNumber!.Trim(), StringComparison.OrdinalIgnoreCase),
+                            membershipPreserved = true,
+                            rollbackVerified = p.dryRun ? rollbackVerified : (bool?)null,
+                            complianceEvaluated = false
+                        },
+                        limitation = "Moves and verifies one existing native PowerCircuit in the exact panel schedule without recreating members. Breaker sizing, conductor ampacity, panel capacity, and code compliance require separate evidence and checks."
+                    };
+                }
+                catch
+                {
+                    if (group.GetStatus() == TransactionStatus.Started) group.RollBack();
+                    throw;
+                }
+            }
+        }
+
+        private static object CreateNewPowerCircuit(Document doc, Params p, List<long> ids)
+        {
+            var apply = !p.dryRun && p.confirm;
+            var transactionalDryRun = p.dryRun && p.targetPanelSlotNumber.HasValue;
+            var members = new List<FamilyInstance>();
+            var preflightResults = new List<object>();
+            foreach (var id in ids)
+            {
+                var instance = doc.GetElement(ElementIdCompat.Create(id)) as FamilyInstance;
+                var existingPowerSystemIds = HostedPlacementUtil.GetPowerElectricalSystemIds(instance);
+                var ok = instance != null && existingPowerSystemIds.Count == 0;
+                preflightResults.Add(new
+                {
+                    elementId = id,
+                    ok,
+                    action = apply ? "create_new_power_circuit" : "preflight_create_new_power_circuit",
+                    detail = instance == null
+                        ? "Element is not a family instance."
+                        : existingPowerSystemIds.Count > 0
+                            ? $"Member already belongs to power system(s): {string.Join(",", existingPowerSystemIds)}."
+                            : "Member is available for a new native PowerCircuit.",
+                    before = HostedPlacementUtil.BuildElectricalCircuitAuditPayload(instance),
+                    dryRun = !apply
+                });
+                if (instance != null) members.Add(instance);
+            }
+
+            if (preflightResults.Any(result => !(bool)(result.GetType().GetProperty("ok")?.GetValue(result) ?? false)))
+            {
+                return new
+                {
+                    schema = "operator.assign_electrical_circuit.v3",
+                    status = "Blocked",
+                    applied = false,
+                    mode = "create_new_power_circuit",
+                    createdElectricalSystemId = (long?)null,
+                    panelElementId = p.panelElementId,
+                    results = preflightResults,
+                    warnings = new List<string>(),
+                    limitation = "New-circuit mode creates a real native PowerCircuit only from uncircuitized family instances; it does not infer membership, breaker size, load allocation, or panel capacity."
+                };
+            }
+
+            FamilyInstance? panel = null;
+            if (p.panelElementId.HasValue)
+            {
+                panel = doc.GetElement(ElementIdCompat.Create(p.panelElementId.Value)) as FamilyInstance;
+                if (panel == null) throw new InvalidOperationException($"panel_element_not_family_instance:{p.panelElementId.Value}");
+            }
+
+            if (p.targetPanelSlotNumber.HasValue)
+            {
+                if (p.targetPanelSlotNumber.Value <= 0)
+                    throw new InvalidOperationException("target_panel_slot_number_must_be_positive");
+                if (panel == null)
+                    throw new InvalidOperationException("target_panel_slot_number_requires_panel_element_id");
+            }
+            else if (!string.IsNullOrWhiteSpace(p.expectedCircuitNumber))
+            {
+                throw new InvalidOperationException("expected_circuit_number_requires_target_panel_slot_number");
+            }
+
+            if (!apply && !transactionalDryRun)
+            {
+                return new
+                {
+                    schema = "operator.assign_electrical_circuit.v3",
+                    status = "Ready",
+                    applied = false,
+                    mode = "create_new_power_circuit",
+                    requestedSystemType = "PowerCircuit",
+                    createdElectricalSystemId = (long?)null,
+                    panelElementId = p.panelElementId,
+                    results = preflightResults,
+                    warnings = new List<string>(),
+                    limitation = "New-circuit mode creates a real native PowerCircuit only from uncircuitized family instances. Supply targetPanelSlotNumber to exercise real create/select-panel/schedule-slot behavior inside a rollback-verified dry-run; it does not infer breaker size, load allocation, or panel capacity."
+                };
+            }
+
+            using (var group = new TransactionGroup(doc, "Create and Verify Electrical Circuit"))
+            {
+                var nativeFailures = new List<CapturedFailure>();
+                var groupStartStatus = group.Start();
+                if (groupStartStatus != TransactionStatus.Started)
+                    throw new InvalidOperationException($"new_power_circuit_group_not_started:{groupStartStatus}");
+                try
+                {
+                    var expectedMemberIds = members
+                        .Select(instance => ElementIdCompat.GetValue(instance.Id))
+                        .OrderBy(id => id)
+                        .ToList();
+                    long systemId;
+                    PanelScheduleSlotReadback? panelScheduleSlot = null;
+                    using (var tx = new Transaction(doc, "Create Electrical Circuit"))
+                    {
+                        var transactionStartStatus = tx.Start();
+                        if (transactionStartStatus != TransactionStatus.Started)
+                            throw new InvalidOperationException($"new_power_circuit_transaction_not_started:{transactionStartStatus}");
+                        tx.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(
+                            tx,
+                            nativeFailures,
+                            rollbackOnErrors: true,
+                            deleteWarnings: true));
+                        ElectricalSystem? system;
+                        if (p.electricalConnectorId.HasValue)
+                        {
+                            if (members.Count != 1)
+                                throw new InvalidOperationException("electrical_connector_id_requires_exactly_one_member");
+                            var connector = ResolveUnusedPowerConnector(members[0], p.electricalConnectorId.Value);
+                            system = ElectricalSystem.Create(connector, ElectricalSystemType.PowerCircuit);
+                        }
+                        else
+                        {
+                            system = ElectricalSystem.Create(
+                                doc,
+                                members.Select(instance => instance.Id).ToList(),
+                                ElectricalSystemType.PowerCircuit);
+                        }
+                        if (system == null)
+                            throw new InvalidOperationException(p.electricalConnectorId.HasValue
+                                ? $"revit_did_not_create_electrical_system_from_connector:{p.electricalConnectorId.Value}"
+                                : "revit_did_not_create_electrical_system");
+                        if (panel != null) system.SelectPanel(panel);
+                        doc.Regenerate();
+
+                        if (p.targetPanelSlotNumber.HasValue)
+                        {
+                            panelScheduleSlot = MoveCircuitToPanelScheduleSlot(
+                                doc,
+                                panel!,
+                                system,
+                                p.targetPanelSlotNumber.Value,
+                                p.expectedCircuitNumber);
+                            doc.Regenerate();
+                        }
+
+                        systemId = ElementIdCompat.GetValue(system.Id);
+                        VerifyNativePowerCircuitReadback(
+                            ReadNativePowerCircuit(system),
+                            expectedMemberIds,
+                            p.panelElementId);
+
+                        var commitStatus = tx.Commit();
+                        if (commitStatus != TransactionStatus.Committed)
+                            throw new InvalidOperationException($"new_power_circuit_transaction_not_committed:{commitStatus}");
+                        if (FailureHandlingUtil.HasErrors(nativeFailures))
+                            throw new InvalidOperationException("new_power_circuit_native_failure");
+                    }
+
+                    var committedSystem = doc.GetElement(ElementIdCompat.Create(systemId)) as ElectricalSystem
+                        ?? throw new InvalidOperationException($"new_power_circuit_postcommit_system_missing:{systemId}");
+                    var finalReadback = ReadNativePowerCircuit(committedSystem);
+                    VerifyNativePowerCircuitReadback(finalReadback, expectedMemberIds, p.panelElementId);
+                    VerifyPanelScheduleSlotReadback(panelScheduleSlot, finalReadback, p.targetPanelSlotNumber, p.expectedCircuitNumber);
+
+                    var verifiedResults = members.Select(instance =>
+                    {
+                        var powerSystemIds = HostedPlacementUtil.GetPowerElectricalSystemIds(instance);
+                        var memberVerified = CircuitMatchPolicy.HasExactMembership(systemId, powerSystemIds);
+                        return (object)new
+                        {
+                            elementId = ElementIdCompat.GetValue(instance.Id),
+                            ok = memberVerified,
+                            action = "create_new_power_circuit",
+                            detail = memberVerified
+                                ? $"Member joined newly created native power system {systemId}."
+                                : $"Expected only new power system {systemId}; actual power systems: {string.Join(",", powerSystemIds)}.",
+                            before = (object?)null,
+                            after = HostedPlacementUtil.BuildElectricalCircuitAuditPayload(instance),
+                            dryRun = transactionalDryRun
+                        };
+                    }).ToList();
+                    if (verifiedResults.Any(result => !(bool)(result.GetType().GetProperty("ok")?.GetValue(result) ?? false)))
+                        throw new InvalidOperationException($"new_power_circuit_membership_verification_failed:{systemId}");
+
+                    var warningMessages = nativeFailures
+                        .Where(failure => string.Equals(failure.severity, "warning", StringComparison.OrdinalIgnoreCase))
+                        .Select(failure => failure.message)
+                        .Where(message => !string.IsNullOrWhiteSpace(message))
+                        .Distinct()
+                        .ToList();
+
+                    var rolledBack = false;
+                    var rollbackVerified = false;
+                    if (transactionalDryRun)
+                    {
+                        var rollbackStatus = group.RollBack();
+                        if (rollbackStatus != TransactionStatus.RolledBack)
+                            throw new InvalidOperationException($"new_power_circuit_group_not_rolled_back:{rollbackStatus}");
+                        rolledBack = true;
+                        rollbackVerified = doc.GetElement(ElementIdCompat.Create(systemId)) == null;
+                        if (!rollbackVerified)
+                            throw new InvalidOperationException($"new_power_circuit_rollback_verification_failed:{systemId}");
+                    }
+                    else
+                    {
+                        var groupStatus = group.Assimilate();
+                        if (groupStatus != TransactionStatus.Committed)
+                            throw new InvalidOperationException($"new_power_circuit_group_not_committed:{groupStatus}");
+                    }
+
+                    return new
+                    {
+                        schema = "operator.assign_electrical_circuit.v4",
+                        status = transactionalDryRun ? "Planned" : "Applied",
+                        applied = apply,
+                        dryRun = transactionalDryRun,
+                        transactionGroupRolledBack = rolledBack,
+                        rollbackVerified,
+                        mode = "create_new_power_circuit",
+                        requestedSystemType = "PowerCircuit",
+                        electricalConnectorId = p.electricalConnectorId,
+                        createdElectricalSystemId = systemId,
+                        panelElementId = p.panelElementId,
+                        targetPanelSlotNumber = p.targetPanelSlotNumber,
+                        expectedCircuitNumber = string.IsNullOrWhiteSpace(p.expectedCircuitNumber) ? null : p.expectedCircuitNumber!.Trim(),
+                        verifiedMemberElementIds = expectedMemberIds,
+                        nativeCircuitReadback = NativePowerCircuitReadbackPayload(finalReadback),
+                        panelScheduleSlot = PanelScheduleSlotReadbackPayload(panelScheduleSlot),
+                        verification = new
+                        {
+                            nativePowerCircuit = true,
+                            exactMemberSet = true,
+                            exactPanelIdentity = true,
+                            exactPanelScheduleSlot = !p.targetPanelSlotNumber.HasValue || panelScheduleSlot?.TargetContainsExactSystem == true,
+                            expectedCircuitNumberMatched = string.IsNullOrWhiteSpace(p.expectedCircuitNumber) || string.Equals(finalReadback.CircuitNumber, p.expectedCircuitNumber!.Trim(), StringComparison.OrdinalIgnoreCase),
+                            factualLoadReadback = true,
+                            rollbackVerified = transactionalDryRun ? rollbackVerified : (bool?)null,
+                            complianceEvaluated = false
+                        },
+                        results = verifiedResults,
+                        warnings = warningMessages,
+                        nativeFailures,
+                        limitation = "New-circuit mode creates and verifies native PowerCircuit membership and an explicitly requested panel schedule slot. Breaker size, load allocation, panel capacity, and code compliance require separate evidence and checks."
+                    };
+                }
+                catch
+                {
+                    if (group.GetStatus() == TransactionStatus.Started) group.RollBack();
+                    throw;
+                }
+            }
+        }
+
+        private static Connector ResolveUnusedPowerConnector(FamilyInstance member, long connectorId)
+        {
+            var matches = MepSystemUtil.GetConnectors(member)
+                .Where(connector => MepSystemUtil.TryGetNativeConnectorId(connector, out var nativeId) && nativeId == connectorId)
+                .ToList();
+            if (matches.Count != 1)
+                throw new InvalidOperationException($"electrical_connector_id_not_unique:{connectorId}:found={matches.Count}");
+
+            var connector = matches[0];
+            string domain;
+            try { domain = connector.Domain.ToString(); }
+            catch { domain = string.Empty; }
+            if (!string.Equals(domain, "DomainElectrical", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"connector_is_not_electrical:{connectorId}:domain={domain}");
+
+            string systemType;
+            try { systemType = connector.ElectricalSystemType.ToString(); }
+            catch { systemType = string.Empty; }
+            if (!string.Equals(systemType, ElectricalSystemType.PowerCircuit.ToString(), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"connector_is_not_power_circuit:{connectorId}:systemType={systemType}");
+
+            var existingSystemIds = new HashSet<long>();
+            try
+            {
+                foreach (Connector reference in connector.AllRefs)
+                {
+                    if (reference?.Owner is ElectricalSystem existing)
+                        existingSystemIds.Add(ElementIdCompat.GetValue(existing.Id));
+                }
+            }
+            catch
+            {
+                // ElectricalSystem.Create remains the final native unused-connector guard.
+            }
+            if (existingSystemIds.Count > 0)
+                throw new InvalidOperationException($"connector_already_has_electrical_system:{connectorId}:{string.Join(",", existingSystemIds.OrderBy(id => id))}");
+            return connector;
+        }
+
+        private static PanelScheduleSlotReadback MoveCircuitToPanelScheduleSlot(
+            Document doc,
+            FamilyInstance panel,
+            ElectricalSystem system,
+            int targetSlotNumber,
+            string? expectedCircuitNumber)
+        {
+            var panelId = ElementIdCompat.GetValue(panel.Id);
+            var schedule = new FilteredElementCollector(doc)
+                .OfClass(typeof(PanelScheduleView))
+                .Cast<PanelScheduleView>()
+                .FirstOrDefault(view =>
+                {
+                    try
+                    {
+                        return !view.IsPanelScheduleTemplate() && ElementIdCompat.GetValue(view.GetPanel()) == panelId;
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                });
+            var scheduleCreated = false;
+            if (schedule == null)
+            {
+                schedule = PanelScheduleView.CreateInstanceView(doc, panel.Id)
+                    ?? throw new InvalidOperationException($"panel_schedule_create_failed:{panelId}");
+                scheduleCreated = true;
+                doc.Regenerate();
+            }
+
+            var sourceCell = FindCircuitCell(schedule, system.Id)
+                ?? throw new InvalidOperationException($"panel_schedule_source_cell_not_found:{ElementIdCompat.GetValue(system.Id)}");
+            IList<int> targetRows;
+            IList<int> targetColumns;
+            schedule.GetCellsBySlotNumber(targetSlotNumber, out targetRows, out targetColumns);
+            if (targetRows == null || targetColumns == null || targetRows.Count == 0 || targetRows.Count != targetColumns.Count)
+                throw new InvalidOperationException($"panel_schedule_target_slot_not_found:{targetSlotNumber}");
+
+            var targetCell = (row: -1, column: -1);
+            for (var i = 0; i < targetRows.Count; i++)
+            {
+                var row = targetRows[i];
+                var column = targetColumns[i];
+                if (row == sourceCell.row && column == sourceCell.column)
+                {
+                    targetCell = (row, column);
+                    break;
+                }
+                try
+                {
+                    if (schedule.CanMoveSlotTo(sourceCell.row, sourceCell.column, row, column))
+                    {
+                        targetCell = (row, column);
+                        break;
+                    }
+                }
+                catch
+                {
+                    // Continue through every cell representing the requested slot.
+                }
+            }
+            if (targetCell.row < 0)
+                throw new InvalidOperationException($"panel_schedule_target_slot_unavailable:{targetSlotNumber}");
+
+            if (targetCell.row != sourceCell.row || targetCell.column != sourceCell.column)
+            {
+                schedule.MoveSlotTo(sourceCell.row, sourceCell.column, targetCell.row, targetCell.column);
+                doc.Regenerate();
+            }
+
+            var exactSystemId = ElementIdCompat.GetValue(system.Id);
+            var targetContainsExactSystem = false;
+            for (var i = 0; i < targetRows.Count; i++)
+            {
+                try
+                {
+                    var circuitId = schedule.GetCircuitIdByCell(targetRows[i], targetColumns[i]);
+                    if (circuitId != null && ElementIdCompat.GetValue(circuitId) == exactSystemId)
+                    {
+                        targetContainsExactSystem = true;
+                        targetCell = (targetRows[i], targetColumns[i]);
+                        break;
+                    }
+                }
+                catch
+                {
+                    // Verification below fails closed when the exact system is absent.
+                }
+            }
+
+            var actualCircuitNumber = SafeCircuitString(() => system.CircuitNumber);
+            if (!targetContainsExactSystem)
+                throw new InvalidOperationException($"panel_schedule_exact_system_not_in_target_slot:{exactSystemId}:{targetSlotNumber}");
+            if (!string.IsNullOrWhiteSpace(expectedCircuitNumber) &&
+                !string.Equals(actualCircuitNumber, expectedCircuitNumber.Trim(), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"panel_schedule_circuit_number_mismatch:expected={expectedCircuitNumber.Trim()}:actual={actualCircuitNumber}");
+
+            return new PanelScheduleSlotReadback
+            {
+                ScheduleElementId = ElementIdCompat.GetValue(schedule.Id),
+                ScheduleCreated = scheduleCreated,
+                TargetSlotNumber = targetSlotNumber,
+                SourceRow = sourceCell.row,
+                SourceColumn = sourceCell.column,
+                TargetRow = targetCell.row,
+                TargetColumn = targetCell.column,
+                TargetContainsExactSystem = targetContainsExactSystem,
+                ActualCircuitNumber = actualCircuitNumber
+            };
+        }
+
+        private static (int row, int column)? FindCircuitCell(PanelScheduleView schedule, ElementId systemId)
+        {
+            var expectedId = ElementIdCompat.GetValue(systemId);
+            var body = schedule.GetTableData().GetSectionData(SectionType.Body);
+            for (var row = body.FirstRowNumber; row <= body.LastRowNumber; row++)
+            {
+                for (var column = body.FirstColumnNumber; column <= body.LastColumnNumber; column++)
+                {
+                    try
+                    {
+                        var circuitId = schedule.GetCircuitIdByCell(row, column);
+                        if (circuitId != null && ElementIdCompat.GetValue(circuitId) == expectedId)
+                            return (row, column);
+                    }
+                    catch
+                    {
+                        // Header/load-summary cells are not circuit cells.
+                    }
+                }
+            }
+            return null;
+        }
+
+        private static void VerifyPanelScheduleSlotReadback(
+            PanelScheduleSlotReadback? slot,
+            NativePowerCircuitReadback circuit,
+            int? expectedSlot,
+            string? expectedCircuitNumber)
+        {
+            if (!expectedSlot.HasValue) return;
+            if (slot == null || slot.TargetSlotNumber != expectedSlot.Value || !slot.TargetContainsExactSystem)
+                throw new InvalidOperationException($"panel_schedule_slot_verification_failed:{expectedSlot.Value}");
+            if (!string.IsNullOrWhiteSpace(expectedCircuitNumber) &&
+                !string.Equals(circuit.CircuitNumber, expectedCircuitNumber.Trim(), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"panel_schedule_circuit_number_verification_failed:expected={expectedCircuitNumber.Trim()}:actual={circuit.CircuitNumber}");
+        }
+
+        private static object? PanelScheduleSlotReadbackPayload(PanelScheduleSlotReadback? slot)
+        {
+            if (slot == null) return null;
+            return new
+            {
+                scheduleElementId = slot.ScheduleElementId,
+                scheduleCreated = slot.ScheduleCreated,
+                targetSlotNumber = slot.TargetSlotNumber,
+                sourceCell = new { row = slot.SourceRow, column = slot.SourceColumn },
+                targetCell = new { row = slot.TargetRow, column = slot.TargetColumn },
+                targetContainsExactSystem = slot.TargetContainsExactSystem,
+                actualCircuitNumber = string.IsNullOrWhiteSpace(slot.ActualCircuitNumber) ? null : slot.ActualCircuitNumber
+            };
+        }
+
+        private static NativePowerCircuitReadback ReadNativePowerCircuit(ElectricalSystem system)
+        {
+            var memberElementIds = new List<long>();
+            foreach (Element member in system.Elements)
+            {
+                if (member?.Id != null) memberElementIds.Add(ElementIdCompat.GetValue(member.Id));
+            }
+
+            return new NativePowerCircuitReadback
+            {
+                SystemElementId = ElementIdCompat.GetValue(system.Id),
+                SystemType = system.SystemType.ToString(),
+                MemberElementIds = memberElementIds.Distinct().OrderBy(id => id).ToList(),
+                PanelElementId = system.BaseEquipment == null ? (long?)null : ElementIdCompat.GetValue(system.BaseEquipment.Id),
+                PanelName = SafeCircuitString(() => system.PanelName),
+                CircuitNumber = SafeCircuitString(() => system.CircuitNumber),
+                TrueLoadInternal = SafeCircuitDouble(() => system.TrueLoad),
+                ApparentLoadInternal = SafeCircuitDouble(() => system.ApparentLoad),
+                VoltageInternal = SafeCircuitDouble(() => system.Voltage),
+                Poles = SafeCircuitInt(() => system.PolesNumber)
+            };
+        }
+
+        private static void VerifyNativePowerCircuitReadback(
+            NativePowerCircuitReadback readback,
+            IReadOnlyList<long> expectedMemberElementIds,
+            long? expectedPanelElementId)
+        {
+            if (readback.SystemElementId <= 0 || !CircuitMatchPolicy.IsExactPowerCircuitType(readback.SystemType))
+                throw new InvalidOperationException($"new_power_circuit_type_verification_failed:{readback.SystemElementId}:{readback.SystemType}");
+            if (!CircuitMatchPolicy.HasExactElementSet(expectedMemberElementIds, readback.MemberElementIds))
+                throw new InvalidOperationException(
+                    $"new_power_circuit_exact_member_set_failed:{readback.SystemElementId}:expected={string.Join(",", expectedMemberElementIds)}:actual={string.Join(",", readback.MemberElementIds)}");
+            if (!CircuitMatchPolicy.HasExactOptionalElementIdentity(expectedPanelElementId, readback.PanelElementId))
+                throw new InvalidOperationException(
+                    $"new_power_circuit_exact_panel_failed:{readback.SystemElementId}:expected={expectedPanelElementId?.ToString(CultureInfo.InvariantCulture) ?? "unassigned"}:actual={readback.PanelElementId?.ToString(CultureInfo.InvariantCulture) ?? "unassigned"}");
+            if (!CircuitMatchPolicy.HasFactualLoadReadback(readback.TrueLoadInternal, readback.ApparentLoadInternal))
+                throw new InvalidOperationException($"new_power_circuit_factual_load_readback_unavailable:{readback.SystemElementId}");
+        }
+
+        private static object NativePowerCircuitReadbackPayload(NativePowerCircuitReadback readback)
+        {
+            return new
+            {
+                systemElementId = readback.SystemElementId,
+                systemType = readback.SystemType,
+                memberElementIds = readback.MemberElementIds,
+                panelElementId = readback.PanelElementId,
+                panelName = string.IsNullOrWhiteSpace(readback.PanelName) ? null : readback.PanelName,
+                circuitNumber = string.IsNullOrWhiteSpace(readback.CircuitNumber) ? null : readback.CircuitNumber,
+                trueLoadInternal = readback.TrueLoadInternal,
+                apparentLoadInternal = readback.ApparentLoadInternal,
+                voltageInternal = readback.VoltageInternal,
+                poles = readback.Poles,
+                limitation = "Native Revit factual readback only. Values do not by themselves prove breaker sizing, conductor ampacity, panel capacity, continuous-load treatment, or code compliance."
+            };
+        }
+
+        private static string SafeCircuitString(Func<string> read)
+        {
+            try { return (read() ?? string.Empty).Trim(); }
+            catch { return string.Empty; }
+        }
+
+        private static double? SafeCircuitDouble(Func<double> read)
+        {
+            try
+            {
+                var value = read();
+                return double.IsNaN(value) || double.IsInfinity(value) ? (double?)null : value;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static int? SafeCircuitInt(Func<int> read)
+        {
+            try { return read(); }
+            catch { return null; }
         }
 
         private static bool TrySetStringParameter(Element element, string name, string? value, bool apply, out string detail)

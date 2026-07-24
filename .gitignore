@@ -32,6 +32,7 @@ local-work/
 apps/operator-backend/tmp_marked_*
 
 apps/operator-backend/local-work/
+apps/operator-backend/artifacts/
 apps/mcp-server/eval/
 apps/mcp-server/work/
 apps/mcp-server/dimension_model*.json

@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "case_id": "holdout-plumbing-lavatory-water-closet-services-v1",
+  "task_class": "standards_compliance_repair",
+  "discipline": "plumbing",
+  "standards_profile_sha256": "e28ae52a495eaeec357987854c75d5f1cfec1b455a71c6612f74b5a235ef373e",
+  "checks": [
+    {
+      "check_id": "fixture-service-topology",
+      "type": "plumbing_fixture_services",
+      "rules": [
+        {
+          "rule_id": "ipc-lavatory-service-baseline",
+          "fixture_class": "lavatory",
+          "source": {
+            "authority": "ICC",
+            "title": "2024 International Plumbing Code Chapter 3",
+            "edition": "2024",
+            "section": "301.3 and 301.4",
+            "url": "https://codes.iccsafe.org/content/IPC2024P1/chapter-3-general-regulations",
+            "sha256": "e296a8e9b45ba9935a2d61d7374f9d203718db427f63e87cbcfa94f7e4baa2c6"
+          },
+          "required_services": ["domestic_cold_water", "domestic_hot_water", "sanitary", "vented_drainage"],
+          "prohibited_services": [],
+          "expected_system_classifications": {
+            "domestic_cold_water": ["Domestic Cold Water"],
+            "domestic_hot_water": ["Domestic Hot Water"],
+            "sanitary": ["Sanitary"],
+            "vented_drainage": ["Vent"]
+          },
+          "required_connection_mode": {
+            "domestic_cold_water": "direct",
+            "domestic_hot_water": "direct",
+            "sanitary": "direct",
+            "vented_drainage": "network"
+          }
+        },
+        {
+          "rule_id": "ipc-conventional-flush-tank-water-closet-baseline",
+          "fixture_class": "water_closet",
+          "fixture_subtype": "flush_tank",
+          "source": {
+            "authority": "ICC",
+            "title": "2024 International Plumbing Code Chapters 3 and 9",
+            "edition": "2024",
+            "section": "301.3, 301.4, and 901",
+            "url": "https://codes.iccsafe.org/content/IPC2024P1/chapter-9-vents",
+            "sha256": "95e5a5fe4a68fdb2aa5ea43011444e2096c56e0ec09dec16713e9520ed006f09"
+          },
+          "required_services": ["domestic_cold_water", "sanitary", "vented_drainage"],
+          "prohibited_services": ["domestic_hot_water"],
+          "expected_system_classifications": {
+            "domestic_cold_water": ["Domestic Cold Water"],
+            "sanitary": ["Sanitary"],
+            "vented_drainage": ["Vent"]
+          },
+          "required_connection_mode": {
+            "domestic_cold_water": "direct",
+            "sanitary": "direct",
+            "vented_drainage": "network"
+          }
+        }
+      ]
+    }
+  ]
+}

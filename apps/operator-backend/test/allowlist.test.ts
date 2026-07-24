@@ -76,3 +76,20 @@ test("revit model link endpoint is allowlisted as POST", () => {
   assert.equal(isAllowlisted("POST", "/revit/link-revit"), true);
   assert.equal(isAllowlisted("GET", "/revit/link-revit"), false);
 });
+
+test("read-only electrical circuit loading audit endpoint is allowlisted as POST", () => {
+  assert.equal(isAllowlisted("POST", "/revit/audit-electrical-circuit-loading"), true);
+  assert.equal(isAllowlisted("GET", "/revit/audit-electrical-circuit-loading"), false);
+});
+
+test("staged MEP repair endpoints are allowlisted as POST", () => {
+  for (const path of [
+    "/revit/connect-existing-mep-branch",
+    "/revit/resize-ductwork-by-scope",
+    "/revit/repair-duct-continuity-by-scope",
+    "/revit/repair-mep-connectors"
+  ]) {
+    assert.equal(isAllowlisted("POST", path), true);
+    assert.equal(isAllowlisted("GET", path), false);
+  }
+});

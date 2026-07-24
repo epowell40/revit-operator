@@ -81,6 +81,12 @@ namespace RevitBridge.Handlers
             new RevitBridge.Logic.Handlers.MEP.ConnectMepBranchHandler().Handle(app, jsonData);
     }
 
+    public class ConnectExistingMepBranchHandler : IRequestHandler
+    {
+        public Task<object> Handle(UIApplication app, string jsonData) =>
+            new RevitBridge.Logic.Handlers.MEP.ConnectExistingMepBranchHandler().Handle(app, jsonData);
+    }
+
     public class MepRouteWorkflowHandler : IRequestHandler
     {
         public Task<object> Handle(UIApplication app, string jsonData) =>
@@ -91,5 +97,11 @@ namespace RevitBridge.Handlers
     {
         public Task<object> Handle(UIApplication app, string jsonData) =>
             new RevitBridge.Logic.Handlers.MEP.RepairDuctContinuityByScopeHandler().Handle(app, jsonData);
+    }
+
+    public class RepairMepConnectorsHandler : IRequestHandler
+    {
+        public Task<object> Handle(UIApplication app, string jsonData) =>
+            new RevitBridge.Logic.Handlers.MEP.RepairMepConnectorsHandler().Handle(app, jsonData);
     }
 }

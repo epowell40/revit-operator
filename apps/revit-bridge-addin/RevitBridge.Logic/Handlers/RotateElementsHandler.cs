@@ -19,11 +19,15 @@ namespace RevitBridge.Logic.Handlers
 
         public sealed class Axis
         {
-            // v1: zThroughPoint
+            // zThroughPoint uses pointX/Y/Z and an implicit +Z direction.
+            // throughPoints uses pointX/Y/Z plus endPointX/Y/Z.
             public string mode { get; set; } = "zThroughPoint";
             public double pointX { get; set; }
             public double pointY { get; set; }
             public double pointZ { get; set; }
+            public double endPointX { get; set; }
+            public double endPointY { get; set; }
+            public double endPointZ { get; set; }
         }
 
         public sealed class Params
@@ -51,13 +55,27 @@ namespace RevitBridge.Logic.Handlers
 
             var axisMode = (p.axis.mode ?? "").Trim();
             if (string.IsNullOrWhiteSpace(axisMode)) axisMode = "zThroughPoint";
-            if (!string.Equals(axisMode, "zThroughPoint", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new ArgumentException($"Unsupported axis.mode '{p.axis.mode}'. Supported: zThroughPoint");
-            }
 
             var axisPoint = new XYZ(p.axis.pointX, p.axis.pointY, p.axis.pointZ);
-            var axisLine = Line.CreateBound(axisPoint, axisPoint + XYZ.BasisZ);
+            XYZ axisEndPoint;
+            if (string.Equals(axisMode, "zThroughPoint", StringComparison.OrdinalIgnoreCase))
+            {
+                axisEndPoint = axisPoint + XYZ.BasisZ;
+            }
+            else if (string.Equals(axisMode, "throughPoints", StringComparison.OrdinalIgnoreCase))
+            {
+                axisEndPoint = new XYZ(p.axis.endPointX, p.axis.endPointY, p.axis.endPointZ);
+                if (axisPoint.DistanceTo(axisEndPoint) < 1e-9)
+                {
+                    throw new ArgumentException("axis throughPoints requires two distinct points.");
+                }
+            }
+            else
+            {
+                throw new ArgumentException($"Unsupported axis.mode '{p.axis.mode}'. Supported: zThroughPoint, throughPoints");
+            }
+
+            var axisLine = Line.CreateBound(axisPoint, axisEndPoint);
             var angleRadians = p.angleDegrees * (Math.PI / 180.0);
 
             var warnings = new List<string>();

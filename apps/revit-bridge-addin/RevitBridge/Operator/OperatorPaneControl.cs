@@ -50,6 +50,7 @@ namespace RevitBridge.Operator
         private bool _proactivityStarted;
         private OperatorApprovalMode _approvalMode = OperatorApprovalMode.Yolo;
         private string _reasoningEffort = "medium";
+        private string _brainRoute = "auto";
         private JsonNode? _speedSettings = DefaultSpeedSettingsNode();
         private readonly System.Collections.Generic.Dictionary<string, OperatorActionCall> _pendingApprovals =
             new System.Collections.Generic.Dictionary<string, OperatorActionCall>(StringComparer.OrdinalIgnoreCase);
@@ -104,6 +105,10 @@ namespace RevitBridge.Operator
             public string LastActionPlanSignature { get; set; } = "";
             public int RepeatedActionPlanCount { get; set; }
             public int VisibleAssistantProgressCount { get; set; }
+            public bool DryRunOnly { get; set; }
+            public bool DryRunMutationAttempted { get; set; }
+            public bool DryRunOnlyBlockedAction { get; set; }
+            public bool DryRunOnlyStopped { get; set; }
         }
 
         private Grid? _rootGrid;
@@ -396,7 +401,8 @@ namespace RevitBridge.Operator
                     // Fall back below, but surface the reason.
                     _webViewReady = false;
                     _fallback = new OperatorFallbackControl();
-                    _fallback.ChatSend += (_, e) => OnChatSend(e.MessageId, e.Text, attachments: null, shareWithAgent: true, autoOpenLatestAttachment: false, _reasoningEffort);
+                    _fallback.ChatSend += (_, e) => OnChatSend(e.MessageId, e.Text, e.Attachments, shareWithAgent: true, autoOpenLatestAttachment: false, _reasoningEffort);
+                    _fallback.AttachmentRequested += (_, __) => _ = HandleFilePickAsync();
                     _fallback.NewChatRequested += (_, __) => _ = ResetChatAsync();
                     _fallback.CancelRequested += (_, __) => _ = CancelActiveTurnAsync("USER_CANCELLED");
                     SetMainSurface(_fallback);
@@ -408,7 +414,8 @@ namespace RevitBridge.Operator
             }
 
             _fallback = new OperatorFallbackControl();
-            _fallback.ChatSend += (_, e) => OnChatSend(e.MessageId, e.Text, attachments: null, shareWithAgent: true, autoOpenLatestAttachment: false, _reasoningEffort);
+            _fallback.ChatSend += (_, e) => OnChatSend(e.MessageId, e.Text, e.Attachments, shareWithAgent: true, autoOpenLatestAttachment: false, _reasoningEffort);
+            _fallback.AttachmentRequested += (_, __) => _ = HandleFilePickAsync();
             _fallback.NewChatRequested += (_, __) => _ = ResetChatAsync();
             _fallback.CancelRequested += (_, __) => _ = CancelActiveTurnAsync("USER_CANCELLED");
             SetMainSurface(_fallback);
@@ -547,6 +554,17 @@ namespace RevitBridge.Operator
                         }
                     }
                     catch { }
+
+                    try
+                    {
+                        if (env.Payload.TryGetProperty("brain_route", out var br) && br.ValueKind == JsonValueKind.String)
+                        {
+                            _brainRoute = string.Equals(br.GetString(), "direct", StringComparison.OrdinalIgnoreCase)
+                                ? "direct"
+                                : "auto";
+                        }
+                    }
+                    catch { _brainRoute = "auto"; }
 
                     if (!string.IsNullOrWhiteSpace(messageId) && (attachments != null && attachments.Count > 0 || !string.IsNullOrWhiteSpace(text)))
                     {
@@ -1855,6 +1873,7 @@ namespace RevitBridge.Operator
             sb.AppendLine("[Open uploads folder](op://open-folder?path=artifacts/uploads)");
 
             Ui(() => AppendChat("system", sb.ToString().Trim(), null));
+            Ui(() => _fallback?.AddAttachments(ToUserAttachments(saved)));
 
             // Populate the attachments strip (first-class inputs). These remain "pending" until the user hits Send.
             try
@@ -2483,6 +2502,7 @@ namespace RevitBridge.Operator
 
                 var context = new
                 {
+                    operator_brain_route = string.Equals(_brainRoute, "direct", StringComparison.Ordinal) ? "direct" : null,
                     revit = baseContext,
                     ui = new
                     {
@@ -2521,7 +2541,8 @@ namespace RevitBridge.Operator
                     RootMessageId = messageId,
                     Context = context,
                     Step = 0,
-                    UserAttachments = outgoingAttachments
+                    UserAttachments = outgoingAttachments,
+                    DryRunOnly = OperatorDryRunTurnPolicy.IsDryRunOnlyRequest(text)
                 };
                 _activeTurn = turn;
 
@@ -2691,6 +2712,12 @@ namespace RevitBridge.Operator
                     try { await _backendClient.NotifyLoopStopAsync(turn.SessionId, assistantMessageId, "AWAITING_APPROVAL", CancellationToken.None).ConfigureAwait(false); } catch { }
                     return;
                 }
+
+                if (turn.DryRunOnly && (turn.DryRunMutationAttempted || turn.DryRunOnlyBlockedAction))
+                {
+                    await StopDryRunOnlyTurnAsync(turn, assistantMessageId).ConfigureAwait(false);
+                    return;
+                }
             }
 
             Ui(() => AppendChat("system", $"Stopped after max tool-loop steps ({maxSteps}).", null));
@@ -2707,6 +2734,35 @@ namespace RevitBridge.Operator
                 _activeTurnCts = null;
                 Ui(() => { if (_webView?.CoreWebView2 != null) PostToUi("loop.state", new { running = false }); });
             }
+        }
+
+        private async Task StopDryRunOnlyTurnAsync(OperatorTurnState turn, string assistantMessageId)
+        {
+            if (turn.DryRunOnlyStopped) return;
+            turn.DryRunOnlyStopped = true;
+
+            var message = turn.DryRunOnlyBlockedAction
+                ? "Stopped: the model returned an applying action for a dry-run-only request, so Operator blocked it."
+                : "Dry-run-only request complete. Operator stopped after the first bounded dry-run mutation attempt.";
+            Ui(() => AppendChat("system", message, null));
+
+            if (_logger != null)
+            {
+                await _logger.LogAsync("loop.guard.dry_run_only", new
+                {
+                    backend_session_id = turn.SessionId,
+                    root_message_id = turn.RootMessageId,
+                    message_id = assistantMessageId,
+                    mutation_attempted = turn.DryRunMutationAttempted,
+                    blocked_applying_action = turn.DryRunOnlyBlockedAction
+                }, CancellationToken.None).ConfigureAwait(false);
+            }
+
+            _activeTurn = null;
+            try { _activeTurnCts?.Dispose(); } catch { }
+            _activeTurnCts = null;
+            Ui(() => { if (_webView?.CoreWebView2 != null) PostToUi("loop.state", new { running = false }); });
+            try { await _backendClient.NotifyLoopStopAsync(turn.SessionId, assistantMessageId, "DRY_RUN_ONLY_COMPLETE", CancellationToken.None).ConfigureAwait(false); } catch { }
         }
 
         private bool TryConsumeInterject(OperatorTurnState turn, out string interjectMessageId, out string interjectText)
@@ -3073,10 +3129,14 @@ namespace RevitBridge.Operator
                     turn.RepeatedActionPlanCount = 1;
                 }
 
-                // Stop deterministic no-progress loops: same plan repeated after all-failed prior step.
-                if (turn.RepeatedActionPlanCount >= 3 && ToolResultsAllFailed(toolResults))
+                // Stop deterministic no-progress loops: an identical plan repeated after either
+                // all-failed or all-successful prior results cannot advance without new evidence.
+                if (turn.RepeatedActionPlanCount >= 3 &&
+                    (ToolResultsAllFailed(toolResults) || ToolResultsAllSucceeded(toolResults)))
                 {
-                    var loopMsg = "Stopped repeated failing action loop (same plan returned multiple times after failed results).";
+                    var loopMsg = ToolResultsAllFailed(toolResults)
+                        ? "Stopped repeated failing action loop (same plan returned multiple times after failed results)."
+                        : "Stopped repeated successful action loop (same plan returned multiple times without advancing).";
                     Ui(() => AppendChat("system", loopMsg, null));
                     await _logger!.LogAsync("loop.guard.repeat_plan", new
                     {
@@ -3112,6 +3172,38 @@ namespace RevitBridge.Operator
                 var risk = OperatorApprovalPolicy.GetRisk(action.Method, action.Path);
                 var needsApproval = OperatorApprovalPolicy.RequiresApproval(_approvalMode, risk);
                 Ui(() => AddAction(actionId, title, action.Path, action.Body, needsApproval, risk));
+
+                if (turn.DryRunOnly && risk != OperatorActionRisk.Low)
+                {
+                    var bodyJson = action.Body is JsonElement dryRunBody
+                        ? dryRunBody.GetRawText()
+                        : JsonSerializer.Serialize(action.Body, OperatorUiProtocol.JsonOptions);
+                    var explicitlyDryRun = OperatorDryRunTurnPolicy.BodyRequestsDryRun(bodyJson);
+                    if (!explicitlyDryRun || turn.DryRunMutationAttempted)
+                    {
+                        turn.DryRunOnlyBlockedAction = true;
+                        var guardError = !explicitlyDryRun
+                            ? "Blocked by the user's dry-run-only instruction: this action could apply changes."
+                            : "Blocked by the user's dry-run-only instruction: only one bounded dry-run mutation attempt is allowed.";
+                        Ui(() => UpdateActionStatus(actionId, "blocked", guardError));
+                        var guardException = new InvalidOperationException(guardError);
+                        toolResultsForThisStep.Add(await BuildToolResultAsync(action, DateTime.UtcNow, result: null, guardException).ConfigureAwait(false));
+                        await _logger!.LogAsync("loop.guard.dry_run_action_blocked", new
+                        {
+                            backend_session_id = turn.SessionId,
+                            root_message_id = turn.RootMessageId,
+                            message_id = assistantMessageId,
+                            action_id = actionId,
+                            method = action.Method,
+                            path = action.Path,
+                            explicitly_dry_run = explicitlyDryRun,
+                            prior_dry_run_attempt = turn.DryRunMutationAttempted
+                        }, CancellationToken.None).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    turn.DryRunMutationAttempted = true;
+                }
 
                 if (needsApproval)
                 {
@@ -3644,12 +3736,15 @@ namespace RevitBridge.Operator
                         repeatedPlanCount = 1;
                     }
 
-                    if (repeatedPlanCount >= 3 && ToolResultsAllFailed(toolResults))
+                    if (repeatedPlanCount >= 3 &&
+                        (ToolResultsAllFailed(toolResults) || ToolResultsAllSucceeded(toolResults)))
                     {
                         return new
                         {
                             ok = false,
-                            error = "Stopped repeated failing batch action loop.",
+                            error = ToolResultsAllFailed(toolResults)
+                                ? "Stopped repeated failing batch action loop."
+                                : "Stopped repeated successful batch action loop without advancing.",
                             assistant_message = lastAssistantMessage,
                             rounds
                         };
@@ -4516,6 +4611,11 @@ namespace RevitBridge.Operator
                 var json = existing is JsonElement je ? je.GetRawText() : JsonSerializer.Serialize(existing, OperatorUiProtocol.JsonOptions);
                 var root = (JsonNode.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json) as JsonObject) ?? new JsonObject();
 
+                if (string.Equals(_brainRoute, "direct", StringComparison.Ordinal))
+                    root["operator_brain_route"] = "direct";
+                else
+                    root.Remove("operator_brain_route");
+
                 var ui = root["ui"] as JsonObject ?? new JsonObject();
                 ui["approval_mode"] = UiModeString(_approvalMode);
                 ui["reasoning_effort"] = NormalizeReasoningEffort(_reasoningEffort);
@@ -4620,6 +4720,20 @@ namespace RevitBridge.Operator
             {
                 if (tr == null) continue;
                 if (!string.Equals((tr.Status ?? "").Trim(), "failed", StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool ToolResultsAllSucceeded(System.Collections.Generic.List<OperatorToolResult>? toolResults)
+        {
+            if (toolResults == null || toolResults.Count == 0) return false;
+            foreach (var tr in toolResults)
+            {
+                if (tr == null) continue;
+                if (!string.Equals((tr.Status ?? "").Trim(), "done", StringComparison.OrdinalIgnoreCase))
                 {
                     return false;
                 }
@@ -4884,8 +4998,10 @@ namespace RevitBridge.Operator
                 Method = (action.Method ?? "").Trim().ToUpperInvariant(),
                 Path = (action.Path ?? "").Trim(),
                 Status = error == null ? "done" : "failed",
-                ResultJson = error == null ? result : null,
+                ResultJson = error is OperatorRecoveredDialogException recovered ? recovered.Receipt : (error == null ? result : null),
                 Error = error == null ? null : FormatException(error),
+                FailureKind = error is OperatorRecoveredDialogException ? "runtime_recovery" : null,
+                FailureCode = error is OperatorRecoveredDialogException ? "retryable_revit_dialog_recovered" : null,
                 DurationMs = durationMs
             };
 
@@ -5720,7 +5836,10 @@ namespace RevitBridge.Operator
                         turn.AwaitingApproval = false;
                         // Deterministic verification: execute any deferred capture/verify actions only after all approvals are applied.
                         await TryRunDeferredVerificationAsync(turn, $"{turn.RootMessageId}:assistant:{Math.Max(1, turn.Step)}", turn.PendingToolResults).ConfigureAwait(false);
-                        _ = ContinueTurnAsync(turn);
+                        if (turn.DryRunOnly && (turn.DryRunMutationAttempted || turn.DryRunOnlyBlockedAction))
+                            await StopDryRunOnlyTurnAsync(turn, $"{turn.RootMessageId}:assistant:{Math.Max(1, turn.Step)}").ConfigureAwait(false);
+                        else
+                            _ = ContinueTurnAsync(turn);
                     }
                 }
             }
@@ -5755,7 +5874,10 @@ namespace RevitBridge.Operator
                     {
                         turn.AwaitingApproval = false;
                         await TryRunDeferredVerificationAsync(turn, $"{turn.RootMessageId}:assistant:{Math.Max(1, turn.Step)}", turn.PendingToolResults).ConfigureAwait(false);
-                        _ = ContinueTurnAsync(turn);
+                        if (turn.DryRunOnly && (turn.DryRunMutationAttempted || turn.DryRunOnlyBlockedAction))
+                            await StopDryRunOnlyTurnAsync(turn, $"{turn.RootMessageId}:assistant:{Math.Max(1, turn.Step)}").ConfigureAwait(false);
+                        else
+                            _ = ContinueTurnAsync(turn);
                     }
                 }
             }
