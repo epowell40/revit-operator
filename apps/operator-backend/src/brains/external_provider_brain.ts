@@ -57,7 +57,8 @@ const EXISTING_CONDITIONS_WORKBENCH_SCHEMA = {
       "supersedes_stage_key",
       "repair_stage_key",
       "operation_json",
-      "reason"
+      "reason",
+      "source_disposition_json"
     ],
     properties: {
       type: {
@@ -68,7 +69,8 @@ const EXISTING_CONDITIONS_WORKBENCH_SCHEMA = {
           "compile_registered_mep_reconstruction",
           "register_existing_conditions_route_frontier",
           "register_existing_conditions_route_snap",
-          "register_existing_conditions_mep_repair"
+          "register_existing_conditions_mep_repair",
+          "register_existing_conditions_source_disposition"
         ]
       },
       input_file_path: { type: ["string", "null"] },
@@ -85,7 +87,8 @@ const EXISTING_CONDITIONS_WORKBENCH_SCHEMA = {
       supersedes_stage_key: { type: ["string", "null"] },
       repair_stage_key: { type: ["string", "null"] },
       operation_json: { type: ["string", "null"] },
-      reason: { type: ["string", "null"] }
+      reason: { type: ["string", "null"] },
+      source_disposition_json: { type: ["string", "null"] }
     }
   }
 } as const;
@@ -413,10 +416,11 @@ function buildPrompt(req: ChatRequest, provider: ExternalProvider): string {
     "",
     `You are running as the Operator ${provider} brain. You do not call MCP directly in this process.`,
     "Return native Revit bridge calls in actions, or deterministic backend steps in workbench_actions. The host executes them and returns receipts on the next turn.",
-    "A workbench action is a structured output value, never a /revit/* or /workbench/* HTTP endpoint. Do not search for or invent an endpoint for detect_sheet_chromatic_components, compile_existing_conditions_sheet_interpretation, compile_registered_mep_reconstruction, register_existing_conditions_route_frontier, register_existing_conditions_route_snap, or register_existing_conditions_mep_repair.",
+    "A workbench action is a structured output value, never a /revit/* or /workbench/* HTTP endpoint. Do not search for or invent an endpoint for detect_sheet_chromatic_components, compile_existing_conditions_sheet_interpretation, compile_registered_mep_reconstruction, register_existing_conditions_route_frontier, register_existing_conditions_route_snap, register_existing_conditions_mep_repair, or register_existing_conditions_source_disposition.",
     "When a source-only sheet crop has a trusted hue but repeated anti-aliased point glyphs are not exact template matches, emit exactly one detect_sheet_chromatic_components action with input_file_path plus optional overlay_output_path and receipt_output_path. Keep native actions empty. Every detected component remains native_write_allowed=false and must not be assigned family, type, host, circuit, system, or topology meaning in the same turn.",
     "When the user supplies Workspace paths for a structured sheet interpretation, trusted context, and source image, emit exactly one compile_existing_conditions_sheet_interpretation action with those three paths plus optional source_view_key, overlay_output_path, and receipt_output_path. Keep native actions empty. Do not substitute compile_registered_mep_reconstruction or shell.",
     "When registered source XY needs native route resolution after /revit/get-connectors, emit exactly one workbench_actions item with type=register_existing_conditions_route_frontier, candidate_json as the verbatim JSON string, and connector_tool_action_id as the exact completed connector action id; keep actions empty.",
+    "After a registered source-only topology check, use exactly one register_existing_conditions_source_disposition action to persist accepted evidence or an explicit abstention plus next repair. It never authorizes a Revit write; keep actions empty.",
     "Use /revit/search-tools, /revit/tool-doc, and /revit/tool-examples when an exact contract is unknown.",
     "Prefer bounded predicate queries over unfiltered collection reads. A tool result marked _compacted, result_clipped, truncated, or containing a truncation marker is incomplete: never infer absence from it; immediately take the next smallest bounded read-only query that can resolve the target.",
     "For Revit writes: observe first, emit only the next smallest reversible action or tightly coupled action group, dry-run it, then apply and verify on later turns.",
