@@ -156,6 +156,10 @@ import {
   type PlanTraceSeedSpineInputV1
 } from "../existing_conditions/plan_trace_seed_spine.js";
 import {
+  normalizePlanTraceSeedSpinesV1,
+  type PlanTraceSpineNormalizationInputV1
+} from "../existing_conditions/plan_trace_spine_normalization.js";
+import {
   validateBoundedMepRegionCoverage,
   type BoundedMepRegionCoverageContext,
   type BoundedMepRegionCoverageV1,
@@ -418,6 +422,7 @@ function usage(): never {
     "  npm run existing-conditions -- compare-calibrated-crops --input <hash-bound-source-candidate-controls-and-features.json> --out-dir <evidence-dir> --out <comparison-receipt.json>",
     "  npm run existing-conditions -- extract-plan-traces --input <hash-bound-extraction-policy.json> --out <trace-receipt.json> [--preview-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- compile-plan-trace-seed-spines --input <host-trusted-seed-spans.json> --receipt <trace-receipt.json> --out <spine-receipt.json>",
+    "  npm run existing-conditions -- normalize-plan-trace-spines --input <bounded-normalization-policy.json> --receipt <spine-receipt.json> --out <normalized-spine-receipt.json>",
     "  npm run existing-conditions -- detect-repeated-mep-symbols --input <hash-bound-template-search.json> --out <candidate-receipt.json>",
     "  npm run existing-conditions -- detect-sheet-chromatic-components --input <hash-bound-hue-component-search.json> --out <candidate-receipt.json> [--overlay-out <diagnostic-overlay.png>]",
     "  npm run existing-conditions -- validate-sheet-route-chromatic-coverage --input <hash-bound-source-policy.json> [--candidate <sheet-interpretation-or-provider-receipt.json>] --out <coverage-receipt.json> [--overlay-out <diagnostic-overlay.png>]",
@@ -1989,6 +1994,23 @@ async function main(): Promise<void> {
       compilePlanTraceSeedSpinesV1(
         readJson(inputPath) as PlanTraceSeedSpineInputV1,
         readJson(receiptPath) as PlanTraceExtractionReceipt
+      )
+    );
+    return;
+  }
+  if (command === "normalize-plan-trace-spines") {
+    const inputPath = requiredArgument("--input");
+    const receiptPath = requiredArgument("--receipt");
+    const outputPath = requiredArgument("--out");
+    assertFreshDistinctOutputPaths(
+      [{ flag: "--out", value: outputPath }],
+      [{ flag: "--input", value: inputPath }, { flag: "--receipt", value: receiptPath }]
+    );
+    writeJson(
+      outputPath,
+      normalizePlanTraceSeedSpinesV1(
+        readJson(inputPath) as PlanTraceSpineNormalizationInputV1,
+        readJson(receiptPath) as ReturnType<typeof compilePlanTraceSeedSpinesV1>
       )
     );
     return;
