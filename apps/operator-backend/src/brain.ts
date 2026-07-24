@@ -13,6 +13,7 @@ import { maybeRunDeterministicMepRouteRedline } from "./deterministic/mep_route_
 import { maybeRunDeterministicRoomReceptacleAnalog } from "./deterministic/room_receptacle_analog.js";
 import { maybeRunSemanticAecWorkflow } from "./deterministic/aec_workflow_registry.js";
 import type { AecTaskIntentInterpreter } from "./aec_task_intent_interpreter.js";
+import { maybeRunDeterministicScheduleCellUpdate } from "./deterministic/schedule_cell_update_runtime.js";
 
 function maybeBuildZippyBimToolOpenedAck(req: ChatRequest): ChatResponse | null {
   const text = (req.user_text ?? "").trim();
@@ -101,6 +102,7 @@ export function __testOnlyFinalizeDecision(req: ChatRequest, decision: ChatRespo
 
 export type BrainDecisionDependencies = {
   mepRouteRedline?: typeof maybeRunDeterministicMepRouteRedline;
+  scheduleCellUpdate?: typeof maybeRunDeterministicScheduleCellUpdate;
   semanticAecWorkflow?: typeof maybeRunSemanticAecWorkflow;
   openAiBrain?: typeof decideOpenAi;
   openAiStreamingBrain?: typeof decideOpenAiStreaming;
@@ -134,6 +136,11 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
   const mepRouteRedlineDecision = await maybeRunTopLevelMepRouteRedline(req, dependencies.mepRouteRedline);
   if (mepRouteRedlineDecision) {
     return finalizeDecision(req, mepRouteRedlineDecision);
+  }
+
+  const scheduleCellUpdateDecision = await (dependencies.scheduleCellUpdate ?? maybeRunDeterministicScheduleCellUpdate)(req);
+  if (scheduleCellUpdateDecision) {
+    return finalizeDecision(req, scheduleCellUpdateDecision);
   }
 
   const semanticAecDecision = await maybeRunTopLevelSemanticAecWorkflow(req, dependencies.semanticAecWorkflow);
@@ -220,6 +227,14 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dep
     }
     cb.onDone?.(text);
     return finalizeDecision(req, mepRouteRedlineDecision);
+  }
+
+  const scheduleCellUpdateDecision = await (dependencies.scheduleCellUpdate ?? maybeRunDeterministicScheduleCellUpdate)(req);
+  if (scheduleCellUpdateDecision) {
+    const text = scheduleCellUpdateDecision.assistant_message || "";
+    cb.onDelta?.(text);
+    cb.onDone?.(text);
+    return finalizeDecision(req, scheduleCellUpdateDecision);
   }
 
   const semanticAecDecision = await maybeRunTopLevelSemanticAecWorkflow(req, dependencies.semanticAecWorkflow);

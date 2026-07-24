@@ -76,6 +76,13 @@ export type ChatResponse = {
     bounded: true;
     broadened: false;
   };
+  schedule_update_receipt?: {
+    schema: "revit-operator.schedule-update-receipt.v1";
+    terminal: true;
+    status: "complete" | "blocked" | "failed";
+    bounded: true;
+    verified: boolean;
+  };
   requirements_receipt?: {
     schema: "revit-operator.requirements-receipt.v1";
     generated_at: string;

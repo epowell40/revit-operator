@@ -205,6 +205,7 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/apply-revision-to-sheets", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/create-schedule", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/configure-schedule", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/update-schedule-cell", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
 
                 // External references placed on sheets are always model-modifying and should be approval-gated.
                 if (string.Equals(p, "/revit/link-cad", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;

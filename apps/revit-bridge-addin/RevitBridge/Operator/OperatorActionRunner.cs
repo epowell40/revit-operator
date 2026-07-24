@@ -113,6 +113,7 @@ namespace RevitBridge.Operator
                 { "/revit/quantify-visualize", new QuantifyVisualizeHandler() },
                 { "/revit/sheets", new ListSheetsHandler() },
                 { "/revit/schedules", new SchedulesHandler() },
+                { "/revit/update-schedule-cell", new UpdateScheduleCellHandler() },
                 { "/revit/configure-schedule", new ConfigureScheduleHandler() },
                 { "/revit/export-schedule-csv", new ExportScheduleCsvHandler() },
                 { "/revit/export-warnings-report", new ExportWarningsReportHandler() },
