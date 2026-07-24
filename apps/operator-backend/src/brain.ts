@@ -29,7 +29,10 @@ import { maybeRunSemanticAecWorkflow } from "./deterministic/aec_workflow_regist
 import type { AecTaskIntentInterpreter } from "./aec_task_intent_interpreter.js";
 import { maybeRunDeterministicScheduleCellUpdate } from "./deterministic/schedule_cell_update_runtime.js";
 import { maybeRunDeterministicScheduleValueReplacement } from "./deterministic/schedule_value_replacement_runtime.js";
-import { withLatestExistingConditionsSourceDispositionContext } from "./existing_conditions/source_disposition_replay_context.js";
+import {
+  maybeBuildExistingConditionsSourceDispositionInspection,
+  withLatestExistingConditionsSourceDispositionContext
+} from "./existing_conditions/source_disposition_replay_context.js";
 import { getRecentMessages } from "./memory/sqlite_store.js";
 import {
   enforceExistingConditionsOneActionLoop,
@@ -372,6 +375,8 @@ async function decideWithSelectedBrainStreaming(
 
 export async function decide(req: ChatRequest, dependencies: BrainDecisionDependencies = {}): Promise<ChatResponse> {
   req = withLatestExistingConditionsSourceDispositionContext(req);
+  const sourceDispositionInspection = maybeBuildExistingConditionsSourceDispositionInspection(req);
+  if (sourceDispositionInspection) return finalizeDecision(req, sourceDispositionInspection);
   const explicitAction = maybeBuildExplicitExistingConditionsAction(req);
   if (explicitAction) return finalizeDecision(req, explicitAction);
   if (__testOnlyIsExistingConditionsReconstructionRequest(req)) {
@@ -465,6 +470,14 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
 
 export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dependencies: BrainDecisionDependencies = {}): Promise<ChatResponse> {
   req = withLatestExistingConditionsSourceDispositionContext(req);
+  const sourceDispositionInspection = maybeBuildExistingConditionsSourceDispositionInspection(req);
+  if (sourceDispositionInspection) {
+    const decision = finalizeDecision(req, sourceDispositionInspection);
+    const text = decision.assistant_message || "";
+    cb.onDelta?.(text);
+    cb.onDone?.(text);
+    return decision;
+  }
   const explicitAction = maybeBuildExplicitExistingConditionsAction(req);
   if (explicitAction) {
     const decision = finalizeDecision(req, explicitAction);
