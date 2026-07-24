@@ -57,17 +57,33 @@ function frontierTarget(state: ExistingConditionsSourceDispositionStateV1): Reco
   };
 }
 
+function dispositionForManifestTarget(
+  target: ExistingConditionsSourceTargetV1,
+  dispositionByTarget: Map<string, ExistingConditionsSourceDispositionStateV1>
+): { state: ExistingConditionsSourceDispositionStateV1; migratedFromTargetKey?: string } | null {
+  const direct = dispositionByTarget.get(target.target_key.toLowerCase());
+  if (direct) return { state: direct };
+  const supersededTargetKey = target.supersedes_target_keys?.[0];
+  if (!supersededTargetKey) return null;
+  const migrated = dispositionByTarget.get(supersededTargetKey.toLowerCase());
+  return migrated ? { state: migrated, migratedFromTargetKey: supersededTargetKey } : null;
+}
+
 function manifestTarget(
   target: ExistingConditionsSourceTargetV1,
   dispositionByTarget: Map<string, ExistingConditionsSourceDispositionStateV1>
 ): Record<string, unknown> {
-  const disposition = dispositionByTarget.get(target.target_key.toLowerCase());
+  const match = dispositionForManifestTarget(target, dispositionByTarget);
+  const disposition = match?.state;
   return {
     ...target,
     source_progress: target.source_status === "approved_exclusion"
       ? "approved_exclusion"
       : disposition?.disposition.disposition ?? "unregistered",
-    ...(disposition ? { source_disposition_event_key: disposition.event_key } : {})
+    ...(disposition ? { source_disposition_event_key: disposition.event_key } : {}),
+    ...(match?.migratedFromTargetKey
+      ? { source_progress_migrated_from_target_key: match.migratedFromTargetKey }
+      : {})
   };
 }
 
@@ -91,7 +107,7 @@ function sourceTargetManifestContext(
     return leftTerminal - rightTerminal || left.target_key.localeCompare(right.target_key);
   });
   const bounded = ordered.slice(0, MAX_REPLAY_FRONTIER_TARGETS);
-  const registered = ordered.filter(target => dispositionByTarget.has(target.target_key.toLowerCase())).length;
+  const registered = ordered.filter(target => dispositionForManifestTarget(target, dispositionByTarget) !== null).length;
   return {
     schema: "operator.existing_conditions.source_target_manifest_context.v1",
     status: "available",
@@ -101,13 +117,15 @@ function sourceTargetManifestContext(
     package_fingerprint_sha256: state.manifest.package_fingerprint_sha256,
     source_receipt_sha256: state.manifest.source_receipt_sha256,
     source_accounting_closure: state.manifest.source_accounting_closure,
+    source_mark_count: state.manifest.source_mark_count ?? state.manifest.target_count,
     total_targets: ordered.length,
     included_targets: bounded.length,
     truncated: bounded.length < ordered.length,
     counts: state.manifest.counts,
+    source_mark_counts: state.manifest.source_mark_counts ?? state.manifest.counts,
     registered_source_dispositions: registered,
     unregistered_source_targets: ordered.filter(target =>
-      target.source_status !== "approved_exclusion" && !dispositionByTarget.has(target.target_key.toLowerCase())
+      target.source_status !== "approved_exclusion" && dispositionForManifestTarget(target, dispositionByTarget) === null
     ).length,
     targets: bounded.map(target => manifestTarget(target, dispositionByTarget)),
     native_write_allowed: false,
@@ -132,7 +150,7 @@ export function maybeBuildExistingConditionsSourceDispositionInspection(
     });
     const bounded = ordered.slice(0, MAX_REPLAY_FRONTIER_TARGETS);
     const lines = bounded.map((target, index) => {
-      const disposition = dispositionByTarget.get(target.target_key.toLowerCase());
+      const disposition = dispositionForManifestTarget(target, dispositionByTarget)?.state;
       const progress = target.source_status === "approved_exclusion"
         ? "approved_exclusion"
         : disposition?.disposition.disposition ?? "unregistered";
@@ -141,7 +159,8 @@ export function maybeBuildExistingConditionsSourceDispositionInspection(
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
       assistant_message:
-        `Persisted sheet source manifest: closure=1, ${ordered.length} target(s); ` +
+        `Persisted sheet source manifest: closure=1, ${ordered.length} one-action target(s) from ` +
+        `${manifestState.manifest.source_mark_count ?? ordered.length} source mark(s); ` +
         `candidate=${manifestState.manifest.counts.candidate}, unresolved=${manifestState.manifest.counts.unresolved}, ` +
         `approved_exclusion=${manifestState.manifest.counts.approved_exclusion}. ${lines.join(" ")} ` +
         "Select exactly one non-excluded target and perform only its exact next repair. This source-accounting report did not dispatch a native Revit action.",

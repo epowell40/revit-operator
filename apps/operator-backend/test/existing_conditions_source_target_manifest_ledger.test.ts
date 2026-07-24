@@ -6,6 +6,7 @@ import path from "node:path";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
 import { decide } from "../src/brain.js";
 import {
+  buildExistingConditionsSourceTargetManifestV1,
   latestExistingConditionsSourceTargetManifestV1,
   recordExistingConditionsSourceTargetManifestV1,
   validateExistingConditionsSourceTargetManifestV1,
@@ -15,6 +16,124 @@ import {
 import { recordExistingConditionsSourceDispositionV1 } from "../src/existing_conditions/source_disposition_ledger.js";
 import { withLatestExistingConditionsSourceDispositionContext } from "../src/existing_conditions/source_disposition_replay_context.js";
 import { readExistingConditionsRepairLedger } from "../src/existing_conditions/repair_ledger_store.js";
+
+test("one source mark with multiple primitives compiles into stable one-action targets", () => {
+  const built = buildExistingConditionsSourceTargetManifestV1({
+    interpretation: {
+      schema_version: 1,
+      package_id: "multi-primitive-source-mark",
+      coordinate_space: "normalized_uv_top_left",
+      view_keys: ["view-a"],
+      source_marks: [{
+        source_mark_id: "mark-a",
+        source_view_key: "view-a",
+        disposition: { status: "candidate", primitive_ids: ["route-a", "note-a"] }
+      }, {
+        source_mark_id: "mark-c",
+        source_view_key: "view-a",
+        disposition: { status: "candidate", primitive_ids: ["route-a"] }
+      }, {
+        source_mark_id: "mark-b",
+        source_view_key: "view-a",
+        disposition: { status: "unresolved", reason: "needs focused crop" }
+      }, {
+        source_mark_id: "mark-d",
+        source_view_key: "view-a",
+        disposition: { status: "candidate", primitive_ids: ["point-d"] }
+      }],
+      primitives: [{
+        primitive_id: "route-a",
+        source_view_key: "view-a",
+        source_mark_ids: ["mark-a", "mark-c"],
+        kind: "route_segment",
+        points: [{ u: 0.1, v: 0.2 }, { u: 0.8, v: 0.2 }],
+        confidence: { geometry: 0.99, classification: 0.9, topology: 0.9, visibility: 1 }
+      }, {
+        primitive_id: "note-a",
+        source_view_key: "view-a",
+        source_mark_ids: ["mark-a"],
+        kind: "annotation",
+        points: [{ u: 0.4, v: 0.3 }],
+        confidence: { geometry: 0.99, classification: 0.9, topology: 0.9, visibility: 1 }
+      }, {
+        primitive_id: "point-d",
+        source_view_key: "view-a",
+        source_mark_ids: ["mark-d"],
+        kind: "point_symbol",
+        points: [{ u: 0.6, v: 0.4 }],
+        confidence: { geometry: 0.99, classification: 0.9, topology: 0.9, visibility: 1 }
+      }]
+    } as any,
+    context: {
+      trusted_views: [{
+        source_view: {
+          view_key: "view-a",
+          sheet_key: "M-100",
+          source_sha256: "1".repeat(64),
+          registration_sha256: "2".repeat(64),
+          discipline: "mechanical",
+          level_key: "L1",
+          phase_key: "existing",
+          role: "main_plan",
+          resolution_rank: 1,
+          registration: { verified: true, rms_residual_ft: 0, maximum_residual_ft: 0, confidence: 1 }
+        },
+        frame: {
+          frame_id: "frame-a",
+          view_id: 1,
+          width_px: 100,
+          height_px: 100,
+          top_left_xyz: [0, 100, 0],
+          top_right_xyz: [100, 100, 0],
+          bottom_left_xyz: [0, 0, 0],
+          target_level_elevation_ft: 0
+        }
+      }],
+      calibration_profile: {} as any
+    },
+    compiled: {
+      schema_version: 1,
+      pixel_interpretation_sha256: "3".repeat(64),
+      trusted_context_sha256: "4".repeat(64),
+      compiled_topology: {
+        input_fingerprint_sha256: "5".repeat(64),
+        source_accounting_closure: 1,
+        decisions: [{ primitive_id: "route-a", decision: "single_action", reasons: [] }, {
+          primitive_id: "note-a",
+          decision: "deferred",
+          reasons: ["primitive_not_independently_reversible"]
+        }, {
+          primitive_id: "point-d",
+          decision: "deferred",
+          reasons: ["material_claims_unresolved:family,type"]
+        }]
+      } as any,
+      candidate_identity_groups: [],
+      source_route_junction_repairs: []
+    },
+    sourceReceipt: { schema_version: 1, fixture: "multi-primitive" }
+  });
+  assert.equal(built.source_mark_count, 4);
+  assert.deepEqual(built.source_mark_counts, { candidate: 3, unresolved: 1, approved_exclusion: 0 });
+  assert.equal(built.target_count, 4);
+  assert.deepEqual(built.counts, { candidate: 3, unresolved: 1, approved_exclusion: 0 });
+  const candidateTargets = built.targets.filter(value => value.source_status === "candidate");
+  assert.equal(candidateTargets.length, 3);
+  assert.equal(new Set(candidateTargets.map(value => value.target_key)).size, 3);
+  assert.ok(candidateTargets.every(value => value.target_scope === "primitive" && value.primitive_keys.length === 1));
+  const routeTarget = candidateTargets.find(value => value.primitive_kinds.includes("route_segment"));
+  assert.equal(routeTarget?.source_mark_keys?.length, 2);
+  assert.equal(routeTarget?.supersedes_target_keys, undefined);
+  assert.equal(candidateTargets.find(value => value.primitive_kinds.includes("annotation"))?.supersedes_target_keys, undefined);
+  assert.equal(candidateTargets.find(value => value.primitive_kinds.includes("point_symbol"))?.supersedes_target_keys?.length, 1);
+  assert.match(
+    candidateTargets.find(value => value.primitive_kinds.includes("annotation"))?.next_repair ?? "",
+    /Bind this source annotation's legible claim to exactly one source-supported geometry or symbol target/
+  );
+  const unresolved = built.targets.find(value => value.source_status === "unresolved");
+  assert.equal(unresolved?.target_scope, "source_mark");
+  assert.equal(unresolved?.primitive_keys.length, 0);
+});
 
 function key(prefix: string, character: string): string {
   return `${prefix}_${character.repeat(24)}`;
@@ -130,7 +249,7 @@ test("source target manifest is idempotent, hash chained, and restart safe", { c
       user_text: "Do not modify Revit. Report all existing-conditions sheet target manifest coverage and exact next repairs."
     });
     assert.deepEqual(response.actions, []);
-    assert.match(response.assistant_message, /closure=1, 3 target\(s\)/);
+    assert.match(response.assistant_message, /closure=1, 3 one-action target\(s\) from 3 source mark\(s\)/);
     assert.match(response.assistant_message, /candidate=1, unresolved=1, approved_exclusion=1/);
     assert.match(response.assistant_message, /Select exactly one non-excluded target/i);
     assert.match(response.assistant_message, /did not dispatch a native Revit action/i);
@@ -178,6 +297,75 @@ test("source disposition progress augments but never replaces the complete targe
     assert.equal(replay?.unregistered_source_targets, 1);
     assert.equal(replay?.targets[0]?.source_progress, "accepted_source_observation");
     assert.equal(readExistingConditionsRepairLedger(sessionId).length, 2);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+});
+
+test("one-primitive target migration preserves legacy progress but aggregate marks fail closed", { concurrency: false }, () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-source-target-migration-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const sessionId = "source-target-migration-session";
+    const legacyTargetKey = key("target", "e");
+    const migrated = target({
+      target_key: key("target", "f"),
+      source_mark_keys: [key("mark", "5")],
+      supersedes_target_keys: [legacyTargetKey],
+      target_scope: "primitive",
+      source_mark_primitive_count: 1
+    });
+    const current = manifest({
+      targets: [migrated],
+      target_count: 1,
+      counts: { candidate: 1, unresolved: 0, approved_exclusion: 0 },
+      source_mark_count: 1,
+      source_mark_counts: { candidate: 1, unresolved: 0, approved_exclusion: 0 }
+    });
+    recordExistingConditionsSourceDispositionV1({
+      sessionId,
+      disposition: {
+        schema_version: 1,
+        package_fingerprint_sha256: current.package_fingerprint_sha256,
+        source_receipt_sha256: current.source_receipt_sha256,
+        source_receipt_schema: current.source_receipt_schema,
+        source_frame_id: key("frame", "3"),
+        registration_context_id: key("registration", "4"),
+        target_key: legacyTargetKey,
+        disposition: "accepted_source_observation",
+        reason_code: "source_supported",
+        evidence_group_ids: [key("group", "d")],
+        next_repair: "Verify one native primitive and dry-run only that action.",
+        native_write_allowed: false
+      }
+    });
+    recordExistingConditionsSourceTargetManifestV1({ sessionId, manifest: current });
+    const replay = (withLatestExistingConditionsSourceDispositionContext({
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "manifest-migration",
+      user_text: "Continue existing-conditions work from all saved targets."
+    }).context as any)?.__server?.existing_conditions_source_target_manifest;
+    assert.equal(replay?.registered_source_dispositions, 1);
+    assert.equal(replay?.unregistered_source_targets, 0);
+    assert.equal(replay?.targets[0]?.source_progress, "accepted_source_observation");
+    assert.equal(replay?.targets[0]?.source_progress_migrated_from_target_key, legacyTargetKey);
+
+    assert.throws(() => validateExistingConditionsSourceTargetManifestV1(manifest({
+      targets: [target({
+        source_mark_keys: [key("mark", "5"), key("mark", "6")],
+        supersedes_target_keys: [legacyTargetKey],
+        target_scope: "primitive",
+        source_mark_primitive_count: 1
+      })],
+      target_count: 1,
+      counts: { candidate: 1, unresolved: 0, approved_exclusion: 0 },
+      source_mark_count: 2,
+      source_mark_counts: { candidate: 2, unresolved: 0, approved_exclusion: 0 }
+    })), /supersedes_target_keys_invalid/);
   } finally {
     if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;

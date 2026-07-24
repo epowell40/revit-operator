@@ -149,6 +149,7 @@ test("sheet workbench rechecks chromatic routes and compiles junctions as one te
     assert.match(out[0]?.summary ?? "", /accepted_routes=4, rejected_routes=1, accepted_points=0, rejected_points=0, existing_points=0, source_targets=5, identity_groups=0, junctions=2/);
     const details = out[0]?.details as any;
     assert.equal(details.source_target_manifest.source_accounting_closure, 1);
+    assert.equal(details.source_target_manifest.source_mark_count, 5);
     assert.equal(details.source_target_manifest.target_count, 5);
     assert.equal(details.source_target_manifest.native_write_allowed, false);
     assert.equal(JSON.stringify(details.source_target_manifest).includes("mark-top"), false);
@@ -202,6 +203,7 @@ test("sheet workbench rechecks chromatic routes and compiles junctions as one te
     assert.match(providerResponse.assistant_message, /source_targets=5/);
     const persistedManifest = latestExistingConditionsSourceTargetManifestV1(sessionId);
     assert.equal(persistedManifest?.manifest.target_count, 5);
+    assert.equal(persistedManifest?.manifest.source_mark_count, 5);
     assert.equal(persistedManifest?.manifest.source_accounting_closure, 1);
     assert.equal(persistedManifest?.manifest.native_write_allowed, false);
   } finally {
