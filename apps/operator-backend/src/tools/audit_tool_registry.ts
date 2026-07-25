@@ -29,10 +29,39 @@ type ManifestTool = {
 
 type HandlerMap = Map<string, string[]>;
 
+type ReconciliationReference = {
+  source: string;
+  key: string;
+};
+
+export type ToolRegistryReconciliation = {
+  source_counts: Record<string, number>;
+  orphan_references: ReconciliationReference[];
+  duplicate_manifest_keys: Array<{ key: ToolKey; occurrences: number }>;
+  method_variant_paths: Array<{ path: string; keys: ToolKey[]; risks: string[] }>;
+  shared_handler_aliases: Array<{ handler: string; paths: string[]; keys: ToolKey[]; risks: string[] }>;
+  control_plane_external_event_routes: ToolKey[];
+  private_only_manifest_keys: ToolKey[];
+  public_only_manifest_keys: ToolKey[];
+};
+
 const PANE_BACKEND_PATHS = new Set([
   "/revit/batch-control",
   "/revit/batch-job",
   "/revit/capture-screenshare"
+]);
+
+const CONTROL_PLANE_PATHS = new Set([
+  "/revit/capabilities",
+  "/revit/native-api-catalog",
+  "/revit/native-api-policy",
+  "/revit/native-api-search",
+  "/revit/ping",
+  "/revit/tool-doc",
+  "/revit/tool-examples",
+  "/revit/tool-registry",
+  "/revit/tool-search",
+  "/revit/write-grant-status"
 ]);
 
 export type ToolAuditRow = {
@@ -92,6 +121,7 @@ export type ToolRegistryAudit = {
   live_probe_generated_at: string | null;
   summary: Record<string, number>;
   public_summary: Record<string, number> | null;
+  reconciliation: ToolRegistryReconciliation;
   tools: ToolAuditRow[];
 };
 
@@ -104,6 +134,7 @@ type Layout = {
 
 type Catalog = {
   manifest: Map<ToolKey, ManifestTool>;
+  manifestOccurrences: Map<ToolKey, number>;
   backendAllowlist: Set<ToolKey>;
   addinAllowlist: Set<ToolKey>;
   examples: Map<ToolKey, number>;
@@ -169,13 +200,15 @@ function parseAllowlist(filePath: string): Set<ToolKey> {
   return result;
 }
 
-function parseManifest(filePath: string): Map<ToolKey, ManifestTool> {
+function parseManifest(filePath: string): { tools: Map<ToolKey, ManifestTool>; occurrences: Map<ToolKey, number> } {
   const result = new Map<ToolKey, ManifestTool>();
+  const occurrences = new Map<ToolKey, number>();
   const text = read(filePath);
   const pattern = /new OperatorToolInfo\(\s*"([^"]+)"\s*,\s*"(GET|POST)"\s*,\s*"([^"]+)"\s*,\s*"([^"]*)"\s*,\s*OperatorActionRisk\.([A-Za-z]+)/g;
   for (const match of text.matchAll(pattern)) {
     const key = toolKey(match[2] ?? "", match[3] ?? "");
     if (!key) continue;
+    occurrences.set(key, (occurrences.get(key) ?? 0) + 1);
     result.set(key, {
       key,
       group: match[1] ?? "",
@@ -185,7 +218,7 @@ function parseManifest(filePath: string): Map<ToolKey, ManifestTool> {
       risk: (match[5] ?? "").toLowerCase()
     });
   }
-  return result;
+  return { tools: result, occurrences };
 }
 
 function parseExamples(filePath: string): Map<ToolKey, number> {
@@ -253,8 +286,10 @@ function loadCatalog(layout: Layout): Catalog {
   const addinOperator = path.join(layout.addinRoot, "RevitBridge", "Operator");
   const mcp = parseMcpWrappers(path.join(layout.mcpRoot, "src", "server.ts"));
   const schemas = parseSchemaPaths(path.join(addinOperator, "OperatorToolIntrospection.cs"));
+  const manifest = parseManifest(path.join(addinOperator, "OperatorToolManifest.cs"));
   return {
-    manifest: parseManifest(path.join(addinOperator, "OperatorToolManifest.cs")),
+    manifest: manifest.tools,
+    manifestOccurrences: manifest.occurrences,
     backendAllowlist: parseAllowlist(path.join(layout.backendRoot, "src", "allowlist.ts")),
     addinAllowlist: parseAllowlist(path.join(addinOperator, "OperatorActionAllowlist.cs")),
     examples: parseExamples(path.join(layout.addinRoot, "RevitBridge", "Tooling", "tool_examples.json")),
@@ -268,6 +303,117 @@ function loadCatalog(layout: Layout): Catalog {
     schemaValidatorPaths: new Set([...read(path.join(addinOperator, "OperatorActionSchemaValidator.cs")).matchAll(/"(\/revit\/[^"\s]+)"/g)].map(match => match[1] ?? "")),
     mcpWrappersByPath: mcp.byPath,
     mcpGenericAvailable: mcp.genericAvailable
+  };
+}
+
+function sortedUnique(values: Iterable<string>): string[] {
+  return [...new Set(values)].sort((a, b) => a.localeCompare(b));
+}
+
+function buildReconciliation(
+  catalog: Catalog,
+  live: Map<ToolKey, Record<string, unknown>> | null,
+  compareCatalog: Catalog | null
+): ToolRegistryReconciliation {
+  const manifestKeys = new Set(catalog.manifest.keys());
+  const manifestPaths = new Set([...catalog.manifest.values()].map(tool => tool.path));
+  const orphanReferences: ReconciliationReference[] = [];
+  const addKeyReferences = (source: string, keys: Iterable<ToolKey>) => {
+    for (const key of keys) if (!manifestKeys.has(key)) orphanReferences.push({ source, key });
+  };
+  const addPathReferences = (source: string, paths: Iterable<string>) => {
+    for (const toolPath of paths) if (!manifestPaths.has(toolPath)) orphanReferences.push({ source, key: toolPath });
+  };
+
+  addKeyReferences("backend_allowlist", catalog.backendAllowlist);
+  addKeyReferences("addin_allowlist", catalog.addinAllowlist);
+  addKeyReferences("examples", catalog.examples.keys());
+  addPathReferences("operator_action_runner", catalog.actionHandlers.keys());
+  addPathReferences("direct_http", catalog.httpHandlers.keys());
+  addPathReferences("operator_action_direct_path", catalog.directRunnerPaths);
+  addPathReferences("direct_http_path", catalog.directHttpPaths);
+  addPathReferences("pane_intercept", catalog.panePaths);
+  addPathReferences("explicit_request_schema", catalog.explicitSchemaPaths);
+  addPathReferences("reflected_request_schema", catalog.reflectedSchemaPaths);
+  addPathReferences("schema_validator", catalog.schemaValidatorPaths);
+  addPathReferences("typed_mcp_wrapper", catalog.mcpWrappersByPath.keys());
+  if (live) addKeyReferences("live_advertisement", live.keys());
+
+  const byPath = new Map<string, ManifestTool[]>();
+  for (const tool of catalog.manifest.values()) byPath.set(tool.path, [...(byPath.get(tool.path) ?? []), tool]);
+  const methodVariantPaths = [...byPath.entries()]
+    .filter(([, tools]) => tools.length > 1)
+    .map(([toolPath, tools]) => ({
+      path: toolPath,
+      keys: tools.map(tool => tool.key).sort((a, b) => a.localeCompare(b)),
+      risks: sortedUnique(tools.map(tool => tool.risk))
+    }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+
+  const handlerPaths = new Map<string, Set<string>>();
+  for (const [toolPath, handlers] of catalog.actionHandlers) {
+    for (const handler of handlers) {
+      const paths = handlerPaths.get(handler) ?? new Set<string>();
+      paths.add(toolPath);
+      handlerPaths.set(handler, paths);
+    }
+  }
+  const sharedHandlerAliases = [...handlerPaths.entries()]
+    .filter(([, paths]) => paths.size > 1)
+    .map(([handler, paths]) => {
+      const aliasPaths = sortedUnique(paths);
+      const tools = aliasPaths.flatMap(toolPath => byPath.get(toolPath) ?? []);
+      return {
+        handler,
+        paths: aliasPaths,
+        keys: tools.map(tool => tool.key).sort((a, b) => a.localeCompare(b)),
+        risks: sortedUnique(tools.map(tool => tool.risk))
+      };
+    })
+    .sort((a, b) => a.handler.localeCompare(b.handler));
+
+  const controlPlaneExternalEventRoutes = [...catalog.manifest.values()]
+    .filter(tool => CONTROL_PLANE_PATHS.has(tool.path))
+    .filter(tool => {
+      const actionRuntime = (catalog.actionHandlers.get(tool.path) ?? []).length > 0;
+      return actionRuntime && !catalog.directRunnerPaths.has(tool.path);
+    })
+    .map(tool => tool.key)
+    .sort((a, b) => a.localeCompare(b));
+
+  const compareKeys = new Set(compareCatalog?.manifest.keys() ?? []);
+  const privateOnly = compareCatalog ? [...manifestKeys].filter(key => !compareKeys.has(key)).sort((a, b) => a.localeCompare(b)) : [];
+  const publicOnly = compareCatalog ? [...compareKeys].filter(key => !manifestKeys.has(key)).sort((a, b) => a.localeCompare(b)) : [];
+  const duplicateManifestKeys = [...catalog.manifestOccurrences.entries()]
+    .filter(([, occurrences]) => occurrences > 1)
+    .map(([key, occurrences]) => ({ key, occurrences }))
+    .sort((a, b) => a.key.localeCompare(b.key));
+  const operatorActionPaths = new Set([...catalog.actionHandlers.keys(), ...catalog.directRunnerPaths]);
+  const directHttpPaths = new Set([...catalog.httpHandlers.keys(), ...catalog.directHttpPaths]);
+
+  orphanReferences.sort((a, b) => a.source.localeCompare(b.source) || a.key.localeCompare(b.key));
+  return {
+    source_counts: {
+      manifest: catalog.manifest.size,
+      backend_allowlist: catalog.backendAllowlist.size,
+      addin_allowlist: catalog.addinAllowlist.size,
+      examples: catalog.examples.size,
+      operator_action_paths: operatorActionPaths.size,
+      direct_http_paths: directHttpPaths.size,
+      explicit_request_schema_paths: catalog.explicitSchemaPaths.size,
+      reflected_request_schema_paths: catalog.reflectedSchemaPaths.size,
+      schema_validator_paths: catalog.schemaValidatorPaths.size,
+      typed_mcp_paths: catalog.mcpWrappersByPath.size,
+      live_advertisements: live?.size ?? 0,
+      compare_manifest: compareCatalog?.manifest.size ?? 0
+    },
+    orphan_references: orphanReferences,
+    duplicate_manifest_keys: duplicateManifestKeys,
+    method_variant_paths: methodVariantPaths,
+    shared_handler_aliases: sharedHandlerAliases,
+    control_plane_external_event_routes: controlPlaneExternalEventRoutes,
+    private_only_manifest_keys: privateOnly,
+    public_only_manifest_keys: publicOnly
   };
 }
 
@@ -341,6 +487,7 @@ export function buildRegistryAudit(options: { repoRoot: string; liveCapabilities
   const probesByKey = new Map<ToolKey, LiveProbeReceipt[]>();
   for (const receipt of probeEvidence.receipts) probesByKey.set(receipt.key, [...(probesByKey.get(receipt.key) ?? []), receipt]);
   const compareCatalog = options.compareRepoRoot ? loadCatalog(resolveLayout(options.compareRepoRoot)) : null;
+  const reconciliation = buildReconciliation(catalog, live, compareCatalog);
 
   const rows: ToolAuditRow[] = [];
   for (const manifest of [...catalog.manifest.values()].sort((a, b) => a.key.localeCompare(b.key))) {
@@ -429,6 +576,7 @@ export function buildRegistryAudit(options: { repoRoot: string; liveCapabilities
     live_probe_generated_at: probeEvidence.generated_at,
     summary: summary(rows),
     public_summary: publicRows ? { manifest_entries: publicRows.length, missing_from_private: publicRows.filter(tool => !catalog.manifest.has(tool.key)).length } : null,
+    reconciliation,
     tools: rows
   };
 }
@@ -456,6 +604,9 @@ export function renderAuditMarkdown(audit: ToolRegistryAudit): string {
   const issueCounts = new Map<string, number>();
   for (const row of audit.tools) for (const issue of row.issues) issueCounts.set(issue, (issueCounts.get(issue) ?? 0) + 1);
   const issueLines = [...issueCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([issue, count]) => `- ${issue}: ${count}`);
+  const aliasLines = audit.reconciliation.shared_handler_aliases.map(alias => `- ${alias.handler}: ${alias.keys.join(" | ")}${alias.risks.length > 1 ? ` (risk variance: ${alias.risks.join(", ")})` : ""}`);
+  const methodVariantLines = audit.reconciliation.method_variant_paths.map(alias => `- ${alias.path}: ${alias.keys.join(" | ")}${alias.risks.length > 1 ? ` (risk variance: ${alias.risks.join(", ")})` : ""}`);
+  const orphanLines = audit.reconciliation.orphan_references.map(item => `- ${item.source}: ${item.key}`);
   return [
     "# Revit Operator tool-registry audit",
     "",
@@ -471,6 +622,26 @@ export function renderAuditMarkdown(audit: ToolRegistryAudit): string {
     "## Issue counts",
     "",
     ...(issueLines.length > 0 ? issueLines : ["- none"]),
+    "",
+    "## Cross-surface reconciliation",
+    "",
+    `- orphan source references: ${audit.reconciliation.orphan_references.length}`,
+    `- duplicate manifest keys: ${audit.reconciliation.duplicate_manifest_keys.length}`,
+    `- private-only manifest keys: ${audit.reconciliation.private_only_manifest_keys.length}`,
+    `- public-only manifest keys: ${audit.reconciliation.public_only_manifest_keys.length}`,
+    `- control-plane routes still using ExternalEvent: ${audit.reconciliation.control_plane_external_event_routes.length}`,
+    "",
+    "### Method variants",
+    "",
+    ...(methodVariantLines.length > 0 ? methodVariantLines : ["- none"]),
+    "",
+    "### Shared-handler aliases",
+    "",
+    ...(aliasLines.length > 0 ? aliasLines : ["- none"]),
+    "",
+    "### Orphan references",
+    "",
+    ...(orphanLines.length > 0 ? orphanLines : ["- none"]),
     "",
     "## Evidence warning",
     "",
