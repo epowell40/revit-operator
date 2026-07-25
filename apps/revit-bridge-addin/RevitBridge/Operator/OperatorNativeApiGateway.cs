@@ -797,21 +797,29 @@ namespace RevitBridge.Operator
                 throw new InvalidOperationException($"native-api-mutation-ops operation '{operationId}' cannot manage its own transaction.");
             if (operationOwner == null)
                 throw new InvalidOperationException($"native-api-mutation-ops operation '{operationId}' could not prove active-document ownership for {descriptor.MemberId}.");
-            if (!ReferenceEquals(operationOwner, activeDocument))
+            if (!SameDocument(operationOwner, activeDocument))
                 throw new InvalidOperationException($"native-api-mutation-ops operation '{operationId}' targets a document other than the active transaction document.");
             foreach (var arg in args)
             {
                 var argumentOwner = ResolveOwningDocument(arg);
-                if (argumentOwner != null && !ReferenceEquals(argumentOwner, activeDocument))
+                if (argumentOwner != null && !SameDocument(argumentOwner, activeDocument))
                     throw new InvalidOperationException($"native-api-mutation-ops operation '{operationId}' contains an argument owned by another document.");
             }
+        }
+
+        private static bool SameDocument(Document? left, Document? right)
+        {
+            if (left == null || right == null) return false;
+            if (ReferenceEquals(left, right)) return true;
+            try { return left.Equals(right) || right.Equals(left); }
+            catch { return false; }
         }
 
         private static void CaptureDocumentChanges(DocumentChangedEventArgs args, Document activeDocument, HashSet<long> addedIds, HashSet<long> modifiedIds, HashSet<long> deletedIds)
         {
             Document? changedDocument = null;
             try { changedDocument = args.GetDocument(); } catch { }
-            if (!ReferenceEquals(changedDocument, activeDocument)) return;
+            if (!SameDocument(changedDocument, activeDocument)) return;
             try { foreach (var id in args.GetAddedElementIds()) { var value = ElementIdCompat.GetValue(id); if (value > 0) addedIds.Add(value); } } catch { }
             try { foreach (var id in args.GetModifiedElementIds()) { var value = ElementIdCompat.GetValue(id); if (value > 0) modifiedIds.Add(value); } } catch { }
             try { foreach (var id in args.GetDeletedElementIds()) { var value = ElementIdCompat.GetValue(id); if (value > 0) deletedIds.Add(value); } } catch { }
