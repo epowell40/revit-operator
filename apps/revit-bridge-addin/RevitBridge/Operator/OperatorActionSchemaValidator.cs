@@ -402,13 +402,18 @@ namespace RevitBridge.Operator
                     }
                     if (!ValidateRequiredString(operation, "id", maxLen: 64, out error)) return false;
                     if (!ValidateRequiredString(operation, "op", maxLen: 16, out error)) return false;
-                    if (!ValidateRequiredString(operation, "memberId", maxLen: 400, out error)) return false;
                     var op = operation.GetProperty("op").GetString() ?? "";
-                    if (!string.Equals(op, "construct", StringComparison.OrdinalIgnoreCase) && !string.Equals(op, "call", StringComparison.OrdinalIgnoreCase))
+                    var isProperty = string.Equals(op, "get_property", StringComparison.OrdinalIgnoreCase);
+                    if (!string.Equals(op, "construct", StringComparison.OrdinalIgnoreCase) && !string.Equals(op, "call", StringComparison.OrdinalIgnoreCase) && !isProperty)
                     {
-                        error = "native-api-ops operation.op must be construct or call.";
+                        error = "native-api-ops operation.op must be construct, call, or get_property.";
                         return false;
                     }
+                    if (isProperty)
+                    {
+                        if (!ValidateRequiredString(operation, "property", maxLen: 128, out error)) return false;
+                    }
+                    else if (!ValidateRequiredString(operation, "memberId", maxLen: 400, out error)) return false;
                     if (!ValidateOptionalString(operation, "target", maxLen: 72, out error)) return false;
                     if (operation.TryGetProperty("args", out var operationArgs) && operationArgs.ValueKind != JsonValueKind.Null && operationArgs.ValueKind != JsonValueKind.Array)
                     {
@@ -431,6 +436,25 @@ namespace RevitBridge.Operator
                             return false;
                         }
                     }
+                }
+                if (!ValidateOptionalInt(obj.Value, "maxTotalMs", out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "maxOperationMs", out error)) return false;
+                if (obj.Value.TryGetProperty("maxTotalMs", out var maxTotal) && maxTotal.ValueKind != JsonValueKind.Null && (!maxTotal.TryGetInt32(out var totalMs) || totalMs < 250 || totalMs > 10000))
+                {
+                    error = "native-api-ops.maxTotalMs must be between 250 and 10000.";
+                    return false;
+                }
+                if (obj.Value.TryGetProperty("maxOperationMs", out var maxOperation) && maxOperation.ValueKind != JsonValueKind.Null && (!maxOperation.TryGetInt32(out var operationMs) || operationMs < 100 || operationMs > 10000))
+                {
+                    error = "native-api-ops.maxOperationMs must be between 100 and 10000.";
+                    return false;
+                }
+                if (obj.Value.TryGetProperty("maxTotalMs", out maxTotal) && maxTotal.ValueKind == JsonValueKind.Number && maxTotal.TryGetInt32(out var boundedTotalMs) &&
+                    obj.Value.TryGetProperty("maxOperationMs", out maxOperation) && maxOperation.ValueKind == JsonValueKind.Number && maxOperation.TryGetInt32(out var boundedOperationMs) &&
+                    boundedOperationMs > boundedTotalMs)
+                {
+                    error = "native-api-ops.maxOperationMs must be less than or equal to maxTotalMs.";
+                    return false;
                 }
                 return true;
             }
