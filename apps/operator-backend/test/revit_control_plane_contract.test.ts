@@ -110,6 +110,10 @@ test("native API mutation graph uses a separate write-gated transaction envelope
   assert.match(gateway, /transactionGroup!\.Assimilate\(\)/);
   assert.match(gateway, /transactionMode == "commit"[\s\S]{0,180}groupStatus != TransactionStatus\.Committed/);
   assert.match(gateway, /ValidateMutationOwnership/);
+  assert.match(gateway, /if \(!SameDocument\(operationOwner, activeDocument\)\)/);
+  assert.match(gateway, /if \(!SameDocument\(changedDocument, activeDocument\)\) return/);
+  assert.match(gateway, /private static bool SameDocument[\s\S]{0,280}left\.Equals\(right\) \|\| right\.Equals\(left\)/);
+  assert.doesNotMatch(gateway, /ReferenceEquals\((?:operationOwner|changedDocument), activeDocument\)/);
   assert.match(gateway, /ValidateMutationScope/);
   assert.match(gateway, /maxAffectedElements < 1 \|\| maxAffectedElements > 64/);
   assert.match(gateway, /OperatorNativeMutationScopePolicy\.Evaluate/);
