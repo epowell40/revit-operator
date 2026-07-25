@@ -76,7 +76,22 @@ namespace RevitBridge.Handlers
     {
         public Task<object> Handle(UIApplication app, string jsonData)
         {
-            return Task.FromResult(OperatorNativeApiGateway.InvokeReadOnlyOperations(app, jsonData));
+            try
+            {
+                return Task.FromResult(OperatorNativeApiGateway.InvokeReadOnlyOperations(app, jsonData));
+            }
+            catch (JsonException ex)
+            {
+                throw new ArgumentException("native-api-ops request JSON is invalid: " + ex.Message, ex);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // Operation-graph policy, schema, target, and reflection-composition
+                // failures are bounded caller errors. Keep them out of the HTTP 500
+                // path so an agent can repair the request without treating Revit as
+                // unhealthy or retrying the same invalid composition.
+                throw new ArgumentException(ex.Message, ex);
+            }
         }
     }
 

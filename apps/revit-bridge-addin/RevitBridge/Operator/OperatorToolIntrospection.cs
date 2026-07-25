@@ -584,18 +584,21 @@ namespace RevitBridge.Operator
                         props: new Dictionary<string, object>
                         {
                             { "id", Str() },
-                            { "op", Str(new[] { "construct", "call" }) },
+                            { "op", Str(new[] { "construct", "call", "get_property" }) },
                             { "memberId", Str() },
                             { "target", Str() },
-                            { "args", Arr(new Dictionary<string, object>()) }
+                            { "args", Arr(new Dictionary<string, object>()) },
+                            { "property", Str() }
                         },
-                        required: new[] { "id", "op", "memberId" },
+                        required: new[] { "id", "op" },
                         additionalProps: false);
                     return Obj(
                         props: new Dictionary<string, object>
                         {
                             { "operations", Arr(operation) },
-                            { "returns", Arr(Str()) }
+                            { "returns", Arr(Str()) },
+                            { "maxTotalMs", Int() },
+                            { "maxOperationMs", Int() }
                         },
                         required: new[] { "operations" },
                         additionalProps: false);

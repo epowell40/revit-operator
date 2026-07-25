@@ -57,13 +57,32 @@ test("high-value spatial query contracts reject stale payloads before handler ex
   assert.equal(zoneQuery?.levelName, "Level 1");
 });
 
-test("native API operation graph retains only ephemeral per-request references", () => {
+test("native API operation graph stays bounded, read-only, and request-ephemeral while supporting typed chaining", () => {
   const gateway = addinFile(path.join("RevitBridge", "Operator", "OperatorNativeApiGateway.cs"));
+  const approval = addinFile(path.join("RevitBridge", "Operator", "OperatorApprovalPolicy.cs"));
+  const manifest = addinFile(path.join("RevitBridge", "Operator", "OperatorToolManifest.cs"));
   assert.match(gateway, /InvokeReadOnlyOperations/);
   assert.match(gateway, /operations\.Count > 16/);
-  assert.match(gateway, /target must reference a prior result/);
+  assert.match(gateway, /get_property/);
+  assert.match(gateway, /ResolveOperationTarget/);
+  assert.match(gateway, /ResolveReadableProperty/);
+  assert.match(gateway, /argument \$ref/);
+  assert.match(gateway, /result_preview = OperationPreview\(raw\)/);
+  assert.match(gateway, /deferred_enumeration = true/);
+  assert.match(gateway, /maxOperationMs/);
+  assert.match(gateway, /maxOperationMs must be less than or equal to maxTotalMs/);
+  assert.match(gateway, /Math\.Min\(2000, maxTotalMs\)/);
+  assert.doesNotMatch(gateway, /ClampBudget/);
+  assert.match(
+    addinFile(path.join("RevitBridge", "Handlers", "NativeApiHandlers.cs")),
+    /catch \(InvalidOperationException ex\)[\s\S]{0,600}throw new ArgumentException\(ex\.Message, ex\)/,
+  );
+  assert.match(gateway, /static_calls = true/);
   assert.match(gateway, /descriptor\.RiskLevel != OperatorActionRisk\.Low/);
   assert.match(gateway, /ephemeral_handles = true/);
+  assert.match(gateway, /read_only = true/);
+  assert.match(approval, /\/revit\/native-api-ops["\s,]+StringComparison\.OrdinalIgnoreCase\)\) return OperatorActionRisk\.Low/);
+  assert.match(manifest, /\/revit\/native-api-ops[\s\S]{0,160}OperatorActionRisk\.Low/);
   assert.doesNotMatch(gateway, /static\s+readonly\s+Dictionary<[^>]+>\s+_handles/i);
 });
 

@@ -157,6 +157,7 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/tool-examples", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/native-api-catalog", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/native-api-search", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/native-api-ops", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/native-api-policy", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
                 if (string.Equals(p, "/revit/native-api-call", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
                 if (string.Equals(p, "/revit/self-test", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;

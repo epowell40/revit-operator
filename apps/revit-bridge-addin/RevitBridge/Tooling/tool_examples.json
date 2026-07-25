@@ -525,14 +525,44 @@
                 "args": []
               }
             ],
-            "returns": ["count"]
+            "returns": ["count"],
+            "maxTotalMs": 5000,
+            "maxOperationMs": 2000
           },
           "expected_response_shape": {
-            "version": "operator.native_api_ops.v1",
+            "version": "operator.native_api_ops.v2",
             "ok": true,
             "read_only": true,
             "results": {
               "count": 1
+            }
+          }
+        },
+        {
+          "name": "Read the active view name through direct context and property handles",
+          "request": {
+            "operations": [
+              {
+                "id": "active_view",
+                "op": "get_property",
+                "target": "doc",
+                "property": "ActiveView"
+              },
+              {
+                "id": "view_name",
+                "op": "get_property",
+                "target": "$active_view",
+                "property": "Name"
+              }
+            ],
+            "returns": ["view_name"]
+          },
+          "expected_response_shape": {
+            "version": "operator.native_api_ops.v2",
+            "ok": true,
+            "property_access": true,
+            "results": {
+              "view_name": "Level 1"
             }
           }
         }
