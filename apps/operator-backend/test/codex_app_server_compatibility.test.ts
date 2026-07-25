@@ -64,6 +64,40 @@ test("MCP results adapt to app-server dynamic tool responses without losing erro
   });
 });
 
+test("app-server dynamic Revit parameter reads are compacted before returning to Codex", () => {
+  const items = Array.from({ length: 500 }, (_, index) => ({
+    id: 4000 + index,
+    name: `Panel ${index}`,
+    category: "Electrical Equipment",
+    parameterDetails: [{ name: "Panel Name", value: `B2-G-${index}`, storageType: "String", isReadOnly: false }]
+  }));
+  const response = adaptMcpToolCallResultToDynamicResponse(
+    { content: [{ type: "text", text: JSON.stringify({
+      selector: "allModelInstances",
+      valueContains: "-G-",
+      caseSensitive: true,
+      totalScanned: 368985,
+      totalMatched: 1734,
+      returnedCount: 500,
+      offset: 0,
+      hasMore: true,
+      nextOffset: 500,
+      items
+    }) }] },
+    { tool: "revit_call_tool", arguments: { method: "POST", path: "/revit/get-parameters", body: { valueContains: "-G-" } } }
+  );
+  const compacted = JSON.parse((response.contentItems[0] as { text: string }).text);
+  assert.equal(compacted._compacted, true);
+  assert.equal(compacted.compaction, "parameter-evidence-summary");
+  assert.equal(compacted.totalMatched, 1734);
+  assert.equal(compacted.hasMore, true);
+  assert.equal(compacted.nextOffset, 500);
+  assert.equal(compacted.matchingElementIds.length, 64);
+  assert.equal(compacted.matchingElementIdsOmitted, 436);
+  assert.equal(compacted.evidenceSample.length, 16);
+  assert.equal((response.contentItems[0] as { text: string }).text.includes("Panel 499"), false);
+});
+
 test("completed dynamic tool items retain exact tool arguments, output, and failures for journaling", () => {
   assert.deepEqual(adaptDynamicToolCompletedItem({
     type: "dynamicToolCall",

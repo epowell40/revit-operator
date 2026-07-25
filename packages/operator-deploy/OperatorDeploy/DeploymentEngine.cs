@@ -102,40 +102,65 @@ public sealed class DeploymentEngine
         var finalReleaseRoot = Path.Combine(_context.ReleasesRoot, manifest.ReleaseVersion);
         var stagingRoot = Path.Combine(_context.ReleasesRoot, $".{manifest.ReleaseVersion}.staging-{Guid.NewGuid():N}");
         var displacedRoot = Path.Combine(_context.ReleasesRoot, $".{manifest.ReleaseVersion}.replaced-{_context.UtcNow():yyyyMMddHHmmss}");
-        var controlSnapshot = CaptureControlFiles(manifest);
+        var installedManifest = CopyManifestWithComponents(manifest, applicable);
+        var controlSnapshot = CaptureControlFiles(installedManifest);
         var movedExisting = false;
 
         try
         {
-            StageRelease(bundleRoot, stagingRoot, manifest, applicable);
-            VerifyInstalledTree(stagingRoot, manifest, applicable);
+            StageRelease(bundleRoot, stagingRoot, installedManifest, applicable);
+            VerifyInstalledTree(stagingRoot, installedManifest, applicable);
 
             if (Directory.Exists(finalReleaseRoot))
             {
+                var existingManifest = ReleaseManifest.Load(Path.Combine(finalReleaseRoot, "manifest.json"));
+                EnsureCompatibleSameVersionManifest(existingManifest, installedManifest);
+                var incomingIds = applicable.Select(component => component.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var preserved = existingManifest.Components.Where(component => !incomingIds.Contains(component.Id)).ToList();
+                VerifyInstalledTree(finalReleaseRoot, existingManifest, preserved);
+
+                DeploymentException? existingValidationFailure = null;
                 try
                 {
-                    VerifyInstalledTree(finalReleaseRoot, manifest, applicable);
-                    if (!forceReplace)
-                    {
-                        Directory.Delete(stagingRoot, recursive: true);
-                        ActivateRelease(finalReleaseRoot, manifest, applicable);
-                        SaveSuccessfulState(manifest.ReleaseVersion);
-                        result.Message = "The requested release was already present and valid; activation was refreshed.";
-                        return result;
-                    }
+                    VerifyInstalledTree(finalReleaseRoot, installedManifest, applicable);
                 }
-                catch (DeploymentException) when (forceReplace)
+                catch (DeploymentException ex)
                 {
-                    // Repair replaces the damaged release after staging has already passed verification.
+                    existingValidationFailure = ex;
                 }
+
+                var existingIds = existingManifest.Components.Select(component => component.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var hasEveryIncomingComponent = incomingIds.All(existingIds.Contains);
+                if (existingValidationFailure == null && hasEveryIncomingComponent && !forceReplace)
+                {
+                    Directory.Delete(stagingRoot, recursive: true);
+                    ActivateRelease(finalReleaseRoot, existingManifest, applicable);
+                    SaveSuccessfulState(manifest.ReleaseVersion);
+                    result.Message = "The requested release was already present and valid; activation was refreshed.";
+                    return result;
+                }
+
+                var addsComponent = incomingIds.Any(id => !existingIds.Contains(id));
+                if (existingValidationFailure != null && !forceReplace && !addsComponent)
+                {
+                    throw existingValidationFailure;
+                }
+
+                foreach (var component in preserved)
+                {
+                    CopyInstalledComponent(finalReleaseRoot, stagingRoot, component);
+                }
+                installedManifest = CopyManifestWithComponents(manifest, preserved.Concat(applicable));
+                File.WriteAllText(Path.Combine(stagingRoot, "manifest.json"), JsonSerializer.Serialize(installedManifest, ReleaseManifest.JsonOptions));
+                VerifyInstalledTree(stagingRoot, installedManifest, installedManifest.Components);
 
                 Directory.Move(finalReleaseRoot, displacedRoot);
                 movedExisting = true;
             }
 
             Directory.Move(stagingRoot, finalReleaseRoot);
-            ActivateRelease(finalReleaseRoot, manifest, applicable);
-            var validation = ValidateInstalledRelease(finalReleaseRoot, manifest, applicable, includeNetwork: false);
+            ActivateRelease(finalReleaseRoot, installedManifest, applicable);
+            var validation = ValidateInstalledRelease(finalReleaseRoot, installedManifest, installedManifest.Components, includeNetwork: false);
             if (!validation.Ok) throw new DeploymentException(ExitCodes.ValidationFailed, validation.Message);
             SaveSuccessfulState(manifest.ReleaseVersion);
             if (movedExisting) result.Warnings.Add($"The replaced release was retained for recovery at {displacedRoot}.");
@@ -331,6 +356,50 @@ public sealed class DeploymentEngine
         }
         File.WriteAllText(Path.Combine(stagingRoot, "manifest.json"), JsonSerializer.Serialize(manifest, ReleaseManifest.JsonOptions));
         Log($"Staged release {manifest.ReleaseVersion} at {stagingRoot}.");
+    }
+
+    private static ReleaseManifest CopyManifestWithComponents(ReleaseManifest source, IEnumerable<ReleaseComponent> components)
+    {
+        var copy = new ReleaseManifest
+        {
+            SchemaVersion = source.SchemaVersion,
+            ReleaseVersion = source.ReleaseVersion,
+            GeneratedAtUtc = source.GeneratedAtUtc,
+            SourceRevision = source.SourceRevision,
+            MinimumWindowsVersion = source.MinimumWindowsVersion,
+            BackendUrl = source.BackendUrl,
+            MinimumBackendApiVersion = source.MinimumBackendApiVersion,
+            MaximumBackendApiVersion = source.MaximumBackendApiVersion,
+            Components = components.ToList()
+        };
+        copy.Validate();
+        return copy;
+    }
+
+    private static void EnsureCompatibleSameVersionManifest(ReleaseManifest existing, ReleaseManifest incoming)
+    {
+        if (!existing.ReleaseVersion.Equals(incoming.ReleaseVersion, StringComparison.OrdinalIgnoreCase))
+            throw new DeploymentException(ExitCodes.ManifestInvalid, $"Installed release '{existing.ReleaseVersion}' does not match incoming release '{incoming.ReleaseVersion}'.");
+        if (!string.IsNullOrWhiteSpace(existing.SourceRevision) &&
+            !string.IsNullOrWhiteSpace(incoming.SourceRevision) &&
+            !existing.SourceRevision.Equals(incoming.SourceRevision, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new DeploymentException(ExitCodes.ManifestInvalid,
+                $"Release {incoming.ReleaseVersion} already exists with a different source revision. Build a new release version instead of mixing payloads.");
+        }
+    }
+
+    private static void CopyInstalledComponent(string sourceReleaseRoot, string stagingRoot, ReleaseComponent component)
+    {
+        var sourceRoot = Path.Combine(sourceReleaseRoot, component.Id);
+        var destinationRoot = Path.Combine(stagingRoot, component.Id);
+        foreach (var file in component.Files)
+        {
+            var source = FileIntegrity.ResolveUnder(sourceRoot, file.Path, ExitCodes.ValidationFailed);
+            var destination = FileIntegrity.ResolveUnder(destinationRoot, file.Path, ExitCodes.ValidationFailed);
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.Copy(source, destination, overwrite: false);
+        }
     }
 
     private static void VerifyInstalledTree(string releaseRoot, ReleaseManifest manifest, IEnumerable<ReleaseComponent> components)

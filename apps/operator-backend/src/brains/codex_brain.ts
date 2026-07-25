@@ -21,7 +21,7 @@ import {
   type RequirementsReceipt
 } from "../memory/requirements_store.js";
 import { getPinnedGoal } from "../session_store.js";
-import { compactIncomingToolResult } from "../tool_result_compaction.js";
+import { compactIncomingToolResult, compactParameterReadResultForPrompt } from "../tool_result_compaction.js";
 import { formatActiveGoalContext, getActiveGoalForSession } from "../goals/service.js";
 import { formatEnvironmentSummaryForPrompt } from "../environment_profile.js";
 import { AGENT_RESPONSE_STYLE_LINES } from "../agent_response_policy.js";
@@ -401,12 +401,28 @@ export function isSuccessfulFreshRevitEvidence(
   return false;
 }
 
-export function adaptMcpToolCallResultToDynamicResponse(result: any): { contentItems: Array<{ type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string }>; success: boolean } {
+function compactDynamicMcpTextForCodex(tool: unknown, rawArguments: unknown, text: string): string {
+  if (typeof tool !== "string" || tool.trim() !== "revit_call_tool") return text;
+  const args = parseToolArguments(rawArguments);
+  const path = typeof args.path === "string" ? args.path.trim().toLowerCase() : "";
+  if (path !== "/revit/get-parameters") return text;
+  try {
+    const parsed = JSON.parse(text);
+    return JSON.stringify(compactParameterReadResultForPrompt(parsed, { maxEvidence: 16, maxElementIds: 64 }), null, 2);
+  } catch {
+    return text;
+  }
+}
+
+export function adaptMcpToolCallResultToDynamicResponse(
+  result: any,
+  context?: { tool?: unknown; arguments?: unknown }
+): { contentItems: Array<{ type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string }>; success: boolean } {
   const contentItems: Array<{ type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string }> = [];
   const content = Array.isArray(result?.content) ? result.content : [];
   for (const item of content) {
     if (item?.type === "text" && typeof item.text === "string") {
-      contentItems.push({ type: "inputText", text: item.text });
+      contentItems.push({ type: "inputText", text: compactDynamicMcpTextForCodex(context?.tool, context?.arguments, item.text) });
       continue;
     }
     if (item?.type === "image" && typeof item.data === "string" && typeof item.mimeType === "string") {
@@ -420,7 +436,8 @@ export function adaptMcpToolCallResultToDynamicResponse(result: any): { contentI
     }
   }
   if (contentItems.length === 0 && result?.structuredContent !== undefined) {
-    contentItems.push({ type: "inputText", text: JSON.stringify(result.structuredContent) });
+    const text = JSON.stringify(result.structuredContent);
+    contentItems.push({ type: "inputText", text: compactDynamicMcpTextForCodex(context?.tool, context?.arguments, text) });
   }
   if (contentItems.length === 0) contentItems.push({ type: "inputText", text: result?.isError ? "MCP tool failed without an error body." : "MCP tool completed without output." });
   return { contentItems, success: result?.isError !== true };
@@ -470,7 +487,7 @@ async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, request: C
     }
     try {
       const result = await runtime.callTool(params.tool, params.arguments ?? {});
-      return adaptMcpToolCallResultToDynamicResponse(result);
+      return adaptMcpToolCallResultToDynamicResponse(result, { tool: params.tool, arguments: params.arguments });
     } catch (error) {
       return {
         contentItems: [{ type: "inputText", text: error instanceof Error ? error.message : String(error) }],

@@ -65,6 +65,32 @@ public sealed class DeploymentEngineTests : IDisposable
     }
 
     [Fact]
+    public void Same_release_year_specific_update_merges_components_without_removing_prior_year()
+    {
+        var release2023 = CreateBundle("1.0.0", "2023");
+        Assert.True(Run("update", release2023, revitVersion: "2023").Ok);
+
+        var release2024 = CreateBundle("1.0.0", "2024");
+        var update = Run("update", release2024, revitVersion: "2024");
+        Assert.True(update.Ok, update.Message);
+
+        var context = Context();
+        var releaseRoot = Path.Combine(context.ReleasesRoot, "1.0.0");
+        Assert.True(File.Exists(Path.Combine(releaseRoot, "revit-operator-2023", "RevitBridge.dll")));
+        Assert.True(File.Exists(Path.Combine(releaseRoot, "revit-operator-2024", "RevitBridge.dll")));
+
+        var manifest = ReleaseManifest.Load(Path.Combine(releaseRoot, "manifest.json"));
+        Assert.Contains(manifest.Components, component => component.Id == "revit-operator-2023");
+        Assert.Contains(manifest.Components, component => component.Id == "revit-operator-2024");
+
+        var addin2023 = File.ReadAllText(Path.Combine(context.AppData, "Autodesk", "Revit", "Addins", "2023", "RevitBridge.addin"));
+        var addin2024 = File.ReadAllText(Path.Combine(context.AppData, "Autodesk", "Revit", "Addins", "2024", "RevitBridge.addin"));
+        Assert.Contains(releaseRoot, addin2023, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(releaseRoot, addin2024, StringComparison.OrdinalIgnoreCase);
+        Assert.True(Run("validate").Ok);
+    }
+
+    [Fact]
     public void Update_preserves_existing_machine_configuration()
     {
         var context = Context();
@@ -160,19 +186,20 @@ public sealed class DeploymentEngineTests : IDisposable
         Assert.Equal(ExitCodes.Unsupported, result.ExitCode);
     }
 
-    private OperationResult Run(string operation, string? bundle = null, bool bundleOnly = false, bool revitRunning = false)
+    private OperationResult Run(string operation, string? bundle = null, bool bundleOnly = false, bool revitRunning = false, string? revitVersion = null)
     {
-        var options = Options(operation, bundle, bundleOnly);
+        var options = Options(operation, bundle, bundleOnly, revitVersion);
         var context = Context(revitRunning);
         return new DeploymentEngine(context, options, TextWriter.Null).Execute();
     }
 
-    private DeploymentOptions Options(string operation, string? bundle, bool bundleOnly = false)
+    private DeploymentOptions Options(string operation, string? bundle, bool bundleOnly = false, string? revitVersion = null)
         => new()
         {
             Operation = operation,
             ManifestPath = bundle == null ? null : Path.Combine(bundle, "manifest.json"),
             BundleOnly = bundleOnly,
+            RevitVersion = revitVersion,
             Quiet = true
         };
 
@@ -189,9 +216,9 @@ public sealed class DeploymentEngineTests : IDisposable
             UtcNow = () => new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero)
         };
 
-    private string CreateBundle(string version)
+    private string CreateBundle(string version, string revitYear = "2023")
     {
-        var bundle = Path.Combine(_root, "bundles", version);
+        var bundle = Path.Combine(_root, "bundles", $"{version}-{revitYear}");
         var revit = Path.Combine(bundle, "revit");
         var desktop = Path.Combine(bundle, "desktop");
         var config = Path.Combine(bundle, "config");
@@ -199,7 +226,7 @@ public sealed class DeploymentEngineTests : IDisposable
         Directory.CreateDirectory(Path.Combine(desktop, "scripts"));
         Directory.CreateDirectory(Path.Combine(desktop, "runtime"));
         Directory.CreateDirectory(config);
-        File.WriteAllText(Path.Combine(revit, "RevitBridge.dll"), $"bridge-{version}");
+        File.WriteAllText(Path.Combine(revit, "RevitBridge.dll"), $"bridge-{version}-{revitYear}");
         File.WriteAllText(Path.Combine(desktop, "server.js"), $"server-{version}");
         File.WriteAllText(Path.Combine(desktop, "scripts", "launch_operator_desktop.ps1"), "Write-Host start");
         File.WriteAllText(Path.Combine(desktop, "runtime", "node.exe"), "node");
@@ -214,7 +241,7 @@ public sealed class DeploymentEngineTests : IDisposable
             BackendUrl = "",
             Components =
             {
-                Component("revit-operator-2023", "revit-addin", "revit", revit, required: true, revitYear: "2023"),
+                Component($"revit-operator-{revitYear}", "revit-addin", "revit", revit, required: true, revitYear: revitYear),
                 Component("operator-desktop", "operator-desktop", "desktop", desktop, required: true),
                 Component("client-config-default", "config-default", "config", config, required: false, preserveExisting: true)
             }
