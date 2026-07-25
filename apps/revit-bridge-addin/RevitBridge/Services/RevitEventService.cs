@@ -245,6 +245,9 @@ namespace RevitBridge.Services
                 return;
             }
 
+            object? result = null;
+            Exception? error = null;
+            var canceled = false;
             try
             {
                 if (Interlocked.CompareExchange(
@@ -252,26 +255,42 @@ namespace RevitBridge.Services
                         QueueItem.Started,
                         QueueItem.Pending) != QueueItem.Pending)
                 {
-                    item.Completion.TrySetCanceled();
-                    return;
+                    canceled = true;
                 }
-
-                if (item.CancellationToken.IsCancellationRequested || item.Completion.Task.IsCompleted)
+                else if (item.CancellationToken.IsCancellationRequested || item.Completion.Task.IsCompleted)
                 {
-                    item.Completion.TrySetCanceled();
-                    return;
+                    canceled = true;
                 }
-
-                var result = item.Action(app);
-                item.Completion.TrySetResult(result);
+                else
+                {
+                    result = item.Action(app);
+                }
             }
             catch (Exception ex)
             {
-                item.Completion.TrySetException(ex);
+                error = ex;
             }
             finally
             {
+                // Release the single-flight slot before completing the task. Completing it
+                // first can wake the next hosted courier request while _inFlight is still 1,
+                // producing a false revit_external_event_busy response between sequential
+                // Revit actions. A Raise made before this handler returns is safely handled
+                // by ExternalEventRequest.Pending and RetryPendingRaiseAsync.
                 Interlocked.Exchange(ref _inFlight, 0);
+            }
+
+            if (canceled)
+            {
+                item.Completion.TrySetCanceled();
+            }
+            else if (error != null)
+            {
+                item.Completion.TrySetException(error);
+            }
+            else
+            {
+                item.Completion.TrySetResult(result!);
             }
         }
 
