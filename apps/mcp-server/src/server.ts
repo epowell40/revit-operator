@@ -149,6 +149,15 @@ function tryMakeWorkspaceRelative(p: unknown): string | null {
   }
 }
 
+function canonicalWriteMode(applyInput: unknown, dryRunInput: unknown): { apply: boolean; dryRun: boolean } {
+  const apply = applyInput === true;
+  const dryRun = typeof dryRunInput === "boolean" ? dryRunInput : !apply;
+  if (apply === dryRun) {
+    throw new Error("Write tools require a canonical mode: preview with apply=false,dryRun=true or write with apply=true,dryRun=false.");
+  }
+  return { apply, dryRun };
+}
+
 function addWorkspaceLinks<T extends Record<string, any>>(data: T): T {
   try {
     const encodeOpPath = (p: string) => encodeURIComponent(p).replace(/%2F/gi, "/");
@@ -289,7 +298,8 @@ const EXTRA_DISCOVERY_PATHS = new Set<string>([
   "/revit/native-api-policy",
   "/revit/native-api-catalog",
   "/revit/native-api-search",
-  "/revit/native-api-call"
+  "/revit/native-api-call",
+  "/revit/native-api-ops"
 ]);
 let cachedToolRegistry: { fetchedAt: number; payload: ToolRegistryPayload | null } = { fetchedAt: 0, payload: null };
 
@@ -435,6 +445,19 @@ async function getToolRegistry(forceRefresh = false): Promise<ToolRegistryPayloa
   cachedToolRegistry = { fetchedAt: now, payload };
   return payload;
 }
+
+server.tool("operator_runtime_probe", "Check that the Revit Operator MCP runtime itself is responsive without contacting Revit.", {}, async () => {
+  return {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        status: "ok",
+        protocol: "operator.mcp.runtime.v1",
+        revitTransport: (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase()
+      }, null, 2)
+    }]
+  };
+});
 
 server.tool("revit_ping", "Check connection to Revit Add-in.", {}, async () => {
   try {
@@ -583,6 +606,27 @@ server.tool("revit_native_api_call", "Invoke a reflected Revit native API member
       const out =
         data && typeof data === "object" && !Array.isArray(data) ? addWorkspaceLinks(data as Record<string, any>) : data;
       return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
+    } catch (e) {
+      return { isError: true, content: [{ type: "text", text: String(e) }] };
+    }
+  }
+);
+
+server.tool("revit_native_api_ops", "Compose a bounded read-only native Revit API constructor/instance-call chain with ephemeral per-request result references.",
+  {
+    operations: z.array(z.object({
+      id: z.string().min(1).max(64),
+      op: z.enum(["construct", "call"]),
+      memberId: z.string().min(1).max(400),
+      target: z.string().max(72).optional().describe("For call operations, a prior result reference such as $collector."),
+      args: z.array(z.unknown()).optional().default([])
+    })).min(1).max(16),
+    returns: z.array(z.string().min(1).max(65)).max(16).optional()
+  },
+  async (args) => {
+    try {
+      const data = await callRevit("/revit/native-api-ops", "POST", args);
+      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) {
       return { isError: true, content: [{ type: "text", text: String(e) }] };
     }
@@ -828,8 +872,10 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
   }
 );
 
-server.tool("revit_list_sheets", "List sheets (sorted by Sheet Number). Supports prefix filtering and paging.",
+server.tool("revit_list_sheets", "List or count sheets (sorted by Sheet Number). Use action=count for an exact total without fetching rows; supports prefix filtering and paging.",
   {
+    action: z.enum(["list", "count"]).optional().default("list").describe("Use count for totals only or list for sheet rows."),
+    countOnly: z.boolean().optional().describe("Legacy alias for action=count."),
     sheetNumberPrefix: z.string().optional().describe("Filter by Sheet Number prefix (e.g. M1)."),
     query: z.string().optional().describe("Fallback filter (contains match on sheet number/name). Supports trailing * as prefix."),
     exact: z.boolean().optional().default(false),
@@ -841,6 +887,85 @@ server.tool("revit_list_sheets", "List sheets (sorted by Sheet Number). Supports
   async (args) => {
     try {
       const data = await callRevit("/revit/sheets", "POST", args);
+      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
+  }
+);
+
+server.tool("revit_list_schedules", "List schedules or read one schedule's bounded fields and visible table cells.",
+  {
+    action: z.enum(["list", "detail"]).optional().default("list"),
+    scheduleId: z.number().int().optional(),
+    query: z.string().optional(),
+    exact: z.boolean().optional().default(false),
+    max: z.number().int().min(1).max(500).optional(),
+    includeFields: z.boolean().optional(),
+    includeData: z.boolean().optional(),
+    rowOffset: z.number().int().min(0).optional(),
+    columnOffset: z.number().int().min(0).optional(),
+    maxRows: z.number().int().min(1).optional(),
+    maxColumns: z.number().int().min(1).optional()
+  },
+  async (args) => {
+    try {
+      if (args.action === "detail" && args.scheduleId === undefined && !String(args.query ?? "").trim()) {
+        throw new Error("revit_list_schedules detail requires scheduleId or query.");
+      }
+      const data = await callRevit("/revit/schedules", "POST", args);
+      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
+  }
+);
+
+server.tool("revit_update_schedule_cell", "Resolve one schedule row to one backing parameter. Dry-run by default; apply only with apply=true,dryRun=false. Grouped schedules proceed only for one unique editable backing target; ambiguity, shared types, read-only cells, and expected-value mismatches fail closed.",
+  {
+    scheduleId: z.number().int().positive().optional(),
+    scheduleQuery: z.string().optional(),
+    scheduleExact: z.boolean().optional(),
+    rowKey: z.string().min(1),
+    rowField: z.string().optional().describe("Optional identifier field. Omit to try Mark, Number, Name, Designation, and DESIG."),
+    targetField: z.string().min(1),
+    expectedValue: z.string().optional(),
+    value: z.string().min(1),
+    apply: z.boolean().optional(),
+    dryRun: z.boolean().optional(),
+    maxSchedules: z.number().int().min(1).max(500).optional()
+  },
+  async (args) => {
+    try {
+      const mode = canonicalWriteMode(args.apply, args.dryRun);
+      const data = await callRevit("/revit/update-schedule-cell", "POST", { ...args, ...mode });
+      return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
+  }
+);
+
+server.tool("revit_replace_schedule_values", "Plan or apply bounded literal replacements in exact fields of schedules placed on explicit sheets. Dry-run first; apply requires the returned expectedPlanHash.",
+  {
+    sheetNumbers: z.array(z.string()).max(50).optional(),
+    scheduleIds: z.array(z.number().int().positive()).max(200).optional(),
+    fieldNames: z.array(z.string()).max(20).optional(),
+    valueContains: z.string().min(1),
+    expectedValue: z.string().optional(),
+    replaceFrom: z.string().min(1),
+    replaceTo: z.string(),
+    expectedPlanHash: z.string().optional(),
+    apply: z.boolean().optional(),
+    dryRun: z.boolean().optional(),
+    maxSchedules: z.number().int().min(1).max(500).optional(),
+    maxCandidates: z.number().int().min(1).max(10000).optional(),
+    maxChanges: z.number().int().min(1).max(10000).optional()
+  },
+  async (args) => {
+    try {
+      if ((!args.sheetNumbers || args.sheetNumbers.length === 0) && (!args.scheduleIds || args.scheduleIds.length === 0)) {
+        throw new Error("revit_replace_schedule_values requires sheetNumbers or scheduleIds.");
+      }
+      const mode = canonicalWriteMode(args.apply, args.dryRun);
+      if (mode.apply && !String(args.expectedPlanHash ?? "").trim()) {
+        throw new Error("Applying schedule replacements requires expectedPlanHash from the matching dry run.");
+      }
+      const data = await callRevit("/revit/replace-schedule-values", "POST", { ...args, ...mode });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -1478,14 +1603,25 @@ server.tool("revit_delete_elements", "Delete elements.",
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
 
-server.tool("revit_set_parameters", "Update element parameters.", 
-  { 
-    changes: z.array(z.object({ elementId: z.number(), parameterName: z.string(), value: z.string() })),
-    apply: z.boolean().default(true)
-  }, 
-  async ({ changes, apply }) => {
+server.tool("revit_set_parameters", "Preview or update element parameters with optional expected-old-value preconditions and committed readback. Dry-run by default.",
+  {
+    changes: z.array(z.object({
+      elementId: z.number().int().positive(),
+      parameterName: z.string().min(1),
+      value: z.string(),
+      expectedOldValue: z.string().optional(),
+      preserveTextCase: z.boolean().optional()
+    })).min(1).max(100),
+    apply: z.boolean().optional(),
+    dryRun: z.boolean().optional(),
+    confirm: z.string().optional(),
+    excludeElementIds: z.array(z.number().int().positive()).max(200).optional(),
+    preserveTextCase: z.boolean().optional()
+  },
+  async (args) => {
     try {
-      const data = await callRevit("/revit/set-parameter", "POST", { changes, apply });
+      const mode = canonicalWriteMode(args.apply, args.dryRun);
+      const data = await callRevit("/revit/set-parameter", "POST", { ...args, ...mode });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });

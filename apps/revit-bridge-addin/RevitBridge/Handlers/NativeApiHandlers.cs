@@ -72,6 +72,14 @@ namespace RevitBridge.Handlers
         }
     }
 
+    public sealed class NativeApiOpsHandler : IRequestHandler
+    {
+        public Task<object> Handle(UIApplication app, string jsonData)
+        {
+            return Task.FromResult(OperatorNativeApiGateway.InvokeReadOnlyOperations(app, jsonData));
+        }
+    }
+
     public sealed class NativeApiPolicyHandler : IRequestHandler
     {
         private sealed class Params

@@ -491,6 +491,55 @@
     },
     {
       "method": "POST",
+      "path": "/revit/native-api-ops",
+      "examples": [
+        {
+          "name": "Count sheets with an ephemeral collector chain",
+          "request": {
+            "operations": [
+              {
+                "id": "collector",
+                "op": "construct",
+                "memberId": "ctor:Autodesk.Revit.DB.FilteredElementCollector(Autodesk.Revit.DB.Document)",
+                "args": []
+              },
+              {
+                "id": "sheets",
+                "op": "call",
+                "memberId": "method:Autodesk.Revit.DB.FilteredElementCollector.OfCategory(Autodesk.Revit.DB.BuiltInCategory)",
+                "target": "$collector",
+                "args": ["OST_Sheets"]
+              },
+              {
+                "id": "instances",
+                "op": "call",
+                "memberId": "method:Autodesk.Revit.DB.FilteredElementCollector.WhereElementIsNotElementType()",
+                "target": "$sheets",
+                "args": []
+              },
+              {
+                "id": "count",
+                "op": "call",
+                "memberId": "method:Autodesk.Revit.DB.FilteredElementCollector.GetElementCount()",
+                "target": "$instances",
+                "args": []
+              }
+            ],
+            "returns": ["count"]
+          },
+          "expected_response_shape": {
+            "version": "operator.native_api_ops.v1",
+            "ok": true,
+            "read_only": true,
+            "results": {
+              "count": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/tool-doc",
       "examples": [
         {
@@ -4418,11 +4467,16 @@
         {
           "name": "Resolve a room plan view",
           "request": {
-            "levelName": "Level 1"
+            "roomNumber": "403",
+            "preferViewNameContains": "Power",
+            "maxCandidates": 10
           },
           "expected_response_shape": {
-            "viewId": 123,
-            "viewName": "Level 1"
+            "roomNumber": "403",
+            "levelName": "Level 1",
+            "bestViewId": 123,
+            "bestViewName": "Level 1 - Power",
+            "candidates": []
           }
         }
       ]
@@ -9155,10 +9209,17 @@
       "examples": [
         {
           "name": "Query zone data",
-          "request": {},
-          "expected_response_shape": {
-            "zones": []
-          }
+          "request": {
+            "levelName": "Level 1"
+          },
+          "expected_response_shape": [
+            {
+              "zoneId": "TZ-01",
+              "zoneName": "North",
+              "spaces": [],
+              "existingVavIds": []
+            }
+          ]
         }
       ]
     },

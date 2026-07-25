@@ -179,6 +179,48 @@ namespace RevitBridge.Operator
                 if (ContainsBannedPathOverride(body.Value, out error)) return false;
             }
 
+            if (string.Equals(path, "/revit/resolve-room-plan-view", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
+                {
+                    error = "resolve-room-plan-view body must be an object.";
+                    return false;
+                }
+                if (!ValidateRequiredString(obj.Value, "roomNumber", maxLen: 64, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "preferViewNameContains", maxLen: 200, out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "maxCandidates", out error)) return false;
+                return true;
+            }
+
+            if (string.Equals(path, "/revit/query-zone-data", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
+                {
+                    error = "query-zone-data body must be an object.";
+                    return false;
+                }
+                if (!ValidateRequiredString(obj.Value, "levelName", maxLen: 200, out error)) return false;
+                return true;
+            }
+
+            if (string.Equals(path, "/revit/room_mep_intersect", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
+                {
+                    error = "room_mep_intersect body must be an object.";
+                    return false;
+                }
+                if (!ValidateRequiredString(obj.Value, "roomNumber", maxLen: 64, out error)) return false;
+                if (!ValidateRequiredString(obj.Value, "plenumTopLevelName", maxLen: 200, out error)) return false;
+                if (!ValidateOptionalStringArray(obj.Value, "categories", maxCount: 64, maxLen: 120, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "systemClassification", maxLen: 120, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "sizeEquals", maxLen: 64, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "intersectMode", maxLen: 32, out error)) return false;
+                if (!ValidateOptionalNumber(obj.Value, "verticalTolerance", out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "limit", out error)) return false;
+                return true;
+            }
+
             if (string.Equals(path, "/revit/export-image", StringComparison.OrdinalIgnoreCase))
             {
                 // Allow: null or { viewId?: number, imageSize?: number }
@@ -329,6 +371,66 @@ namespace RevitBridge.Operator
                 {
                     error = "native-api-call.args must be an array.";
                     return false;
+                }
+                return true;
+            }
+
+            if (string.Equals(path, "/revit/native-api-ops", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
+                {
+                    error = "native-api-ops body must be an object.";
+                    return false;
+                }
+                if (!obj.Value.TryGetProperty("operations", out var operations) || operations.ValueKind != JsonValueKind.Array)
+                {
+                    error = "native-api-ops.operations must be an array.";
+                    return false;
+                }
+                var count = operations.GetArrayLength();
+                if (count < 1 || count > 16)
+                {
+                    error = "native-api-ops.operations must contain 1 to 16 operations.";
+                    return false;
+                }
+                foreach (var operation in operations.EnumerateArray())
+                {
+                    if (operation.ValueKind != JsonValueKind.Object)
+                    {
+                        error = "Each native-api-ops operation must be an object.";
+                        return false;
+                    }
+                    if (!ValidateRequiredString(operation, "id", maxLen: 64, out error)) return false;
+                    if (!ValidateRequiredString(operation, "op", maxLen: 16, out error)) return false;
+                    if (!ValidateRequiredString(operation, "memberId", maxLen: 400, out error)) return false;
+                    var op = operation.GetProperty("op").GetString() ?? "";
+                    if (!string.Equals(op, "construct", StringComparison.OrdinalIgnoreCase) && !string.Equals(op, "call", StringComparison.OrdinalIgnoreCase))
+                    {
+                        error = "native-api-ops operation.op must be construct or call.";
+                        return false;
+                    }
+                    if (!ValidateOptionalString(operation, "target", maxLen: 72, out error)) return false;
+                    if (operation.TryGetProperty("args", out var operationArgs) && operationArgs.ValueKind != JsonValueKind.Null && operationArgs.ValueKind != JsonValueKind.Array)
+                    {
+                        error = "native-api-ops operation.args must be an array.";
+                        return false;
+                    }
+                }
+                if (obj.Value.TryGetProperty("returns", out var returns) && returns.ValueKind != JsonValueKind.Null)
+                {
+                    if (returns.ValueKind != JsonValueKind.Array || returns.GetArrayLength() > 16)
+                    {
+                        error = "native-api-ops.returns must be an array with at most 16 ids.";
+                        return false;
+                    }
+                    foreach (var item in returns.EnumerateArray())
+                    {
+                        if (item.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(item.GetString()))
+                        {
+                            error = "native-api-ops.returns entries must be non-empty strings.";
+                            return false;
+                        }
+                    }
                 }
                 return true;
             }

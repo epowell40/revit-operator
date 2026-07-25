@@ -1,11 +1,14 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
+import { evaluateCodexCliVersion, resolveCodexExecutable, type CodexVersionCompatibility } from "./app_server_compatibility.js";
 
+type JsonRpcId = number | string;
 type JsonRpcRequest = { id: number; method: string; params: unknown };
 type JsonRpcResponse =
   | { id: number; result: any }
   | { id: number; error: { code: number; message: string; data?: unknown } };
 type JsonRpcNotification = { method: string; params?: any };
+export type CodexServerRequest = { id: JsonRpcId; method: string; params?: any };
 
 export type CodexNotificationEnvelope = {
   method: string;
@@ -15,13 +18,48 @@ export type CodexNotificationEnvelope = {
 
 type Pending = { resolve: (v: any) => void; reject: (e: Error) => void };
 
+async function probeCodexVersion(command: string, cwd: string, env: NodeJS.ProcessEnv): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    const proc = spawn(command, ["--version"], {
+      cwd,
+      env,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let settled = false;
+    let output = "";
+    const finish = (error: Error | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(output.trim());
+    };
+    const append = (chunk: Buffer | string) => {
+      if (output.length < 16_384) output += chunk.toString();
+    };
+    proc.stdout?.on("data", append);
+    proc.stderr?.on("data", append);
+    proc.on("error", error => finish(error));
+    proc.on("exit", code => finish(code === 0 ? null : new Error(`Codex version probe exited with code ${code ?? "null"}: ${output.trim()}`)));
+    const timer = setTimeout(() => {
+      try { proc.kill(); } catch {}
+      finish(new Error("Timed out probing the Codex CLI version."));
+    }, 5_000);
+  });
+}
+
 export class CodexAppServer {
   private proc: ChildProcessWithoutNullStreams | null = null;
   private rl: readline.Interface | null = null;
   private nextId = 1;
   private pending = new Map<number, Pending>();
   private notificationHandlers = new Set<(n: CodexNotificationEnvelope) => void>();
+  private serverRequestHandler: ((request: CodexServerRequest) => Promise<unknown>) | null = null;
   private starting: Promise<void> | null = null;
+  private versionCompatibility: CodexVersionCompatibility | null = null;
+  private initializeResponse: unknown = null;
+  private stderrTail = "";
 
   constructor(
     private readonly opts: {
@@ -34,6 +72,22 @@ export class CodexAppServer {
   onNotification(handler: (n: CodexNotificationEnvelope) => void): () => void {
     this.notificationHandlers.add(handler);
     return () => this.notificationHandlers.delete(handler);
+  }
+
+  setServerRequestHandler(handler: ((request: CodexServerRequest) => Promise<unknown>) | null): void {
+    this.serverRequestHandler = handler;
+  }
+
+  getCompatibilityReceipt(): { version: CodexVersionCompatibility | null; initialize_response: unknown; stderr_tail: string | null } {
+    return { version: this.versionCompatibility, initialize_response: this.initializeResponse, stderr_tail: this.stderrTail || null };
+  }
+
+  stop(): void {
+    const proc = this.proc;
+    this.proc = null;
+    try { this.rl?.close(); } catch {}
+    this.rl = null;
+    try { proc?.kill(); } catch {}
   }
 
   async ensureStarted(): Promise<void> {
@@ -53,17 +107,26 @@ export class CodexAppServer {
       CODEX_HOME: this.opts.codexHome
     };
 
-    // On Windows, `codex` is typically a .cmd shim. Using `shell: true` keeps this robust.
-    const proc = spawn("codex", ["app-server"], {
+    const codexBin = resolveCodexExecutable(env.OPERATOR_CODEX_BIN, process.platform, env);
+    const versionOutput = await probeCodexVersion(codexBin, this.opts.cwd, env);
+    this.versionCompatibility = evaluateCodexCliVersion(versionOutput, env);
+
+    // Resolve the Windows npm shim to the packaged native executable so arguments are never shell-concatenated.
+    const proc = spawn(codexBin, ["app-server", "--strict-config"], {
       cwd: this.opts.cwd,
       env,
-      shell: true,
+      shell: false,
       stdio: "pipe"
     });
     this.proc = proc;
+    this.stderrTail = "";
+    proc.stderr.on("data", chunk => {
+      this.stderrTail = `${this.stderrTail}${chunk.toString()}`.slice(-16_384);
+    });
 
     proc.on("exit", (code, signal) => {
-      const err = new Error(`Codex app-server exited (code=${code ?? "null"} signal=${signal ?? "null"}).`);
+      const detail = this.stderrTail.trim();
+      const err = new Error(`Codex app-server exited (code=${code ?? "null"} signal=${signal ?? "null"}).${detail ? ` stderr: ${detail}` : ""}`);
       for (const [id, p] of this.pending.entries()) {
         this.pending.delete(id);
         p.reject(err);
@@ -76,6 +139,12 @@ export class CodexAppServer {
       }
       this.rl = null;
     });
+    proc.on("error", error => {
+      for (const [id, pending] of this.pending.entries()) {
+        this.pending.delete(id);
+        pending.reject(error);
+      }
+    });
 
     const rl = readline.createInterface({ input: proc.stdout });
     this.rl = rl;
@@ -87,6 +156,11 @@ export class CodexAppServer {
       try {
         msg = JSON.parse(trimmed);
       } catch {
+        return;
+      }
+
+      if (msg && typeof msg === "object" && msg.id !== undefined && typeof msg.method === "string") {
+        void this.handleServerRequest({ id: msg.id as JsonRpcId, method: msg.method, params: msg.params });
         return;
       }
 
@@ -131,10 +205,49 @@ export class CodexAppServer {
     });
 
     // Initialize JSON-RPC session.
-    await this.request("initialize", {
+    this.initializeResponse = await this.request("initialize", {
       clientInfo: { name: "revit-operator-backend", title: "Revit Operator Backend", version: "0.0.0" },
-      capabilities: null
+      capabilities: { experimentalApi: true }
     });
+    this.notify("initialized", {});
+  }
+
+  private writeMessage(message: unknown): void {
+    const proc = this.proc;
+    if (!proc) throw new Error("Codex app-server is not running.");
+    proc.stdin.write(JSON.stringify(message) + "\n", "utf8");
+  }
+
+  private async handleServerRequest(request: CodexServerRequest): Promise<void> {
+    try {
+      let result: unknown;
+      if (this.serverRequestHandler) {
+        result = await this.serverRequestHandler(request);
+      } else if (request.method === "item/commandExecution/requestApproval" || request.method === "item/fileChange/requestApproval") {
+        result = { decision: "decline" };
+      } else if (request.method === "mcpServer/elicitation/request") {
+        result = { action: "decline", content: null, _meta: null };
+      } else if (request.method === "item/tool/requestUserInput") {
+        result = { answers: {} };
+      } else if (request.method === "currentTime/read") {
+        result = { currentTimeAt: Math.floor(Date.now() / 1000) };
+      } else {
+        throw new Error(`Unsupported Codex server request: ${request.method}`);
+      }
+      this.writeMessage({ id: request.id, result });
+    } catch (error) {
+      this.writeMessage({
+        id: request.id,
+        error: {
+          code: -32601,
+          message: error instanceof Error ? error.message : String(error)
+        }
+      });
+    }
+  }
+
+  notify(method: string, params: unknown): void {
+    this.writeMessage({ method, params });
   }
 
   request(method: string, params: unknown): Promise<any> {
@@ -143,12 +256,10 @@ export class CodexAppServer {
 
     const id = this.nextId++;
     const req: JsonRpcRequest = { id, method, params };
-    const payload = JSON.stringify(req);
-
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       try {
-        proc.stdin.write(payload + "\n", "utf8");
+        this.writeMessage(req);
       } catch (e) {
         this.pending.delete(id);
         reject(e instanceof Error ? e : new Error(String(e)));

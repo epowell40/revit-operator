@@ -42,10 +42,15 @@ function renderMcpServerBlock(opts: { repoRoot: string; workspaceRoot: string; c
   const serverCwd = normalizePathForTomlArg(path.dirname(path.dirname(serverJs)));
   const workspaceRoot = normalizePathForTomlArg(opts.workspaceRoot);
   const codexHome = normalizePathForTomlArg(opts.codexHome);
-  const envInline = `env = { OPERATOR_WORKSPACE_ROOT = ${JSON.stringify(workspaceRoot)}, CODEX_HOME = ${JSON.stringify(codexHome)} }`;
+  const requestedTransport = (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase();
+  const transport = requestedTransport === "courier" ? "courier" : "direct";
+  const envInline = `env = { OPERATOR_WORKSPACE_ROOT = ${JSON.stringify(workspaceRoot)}, CODEX_HOME = ${JSON.stringify(codexHome)}, OPERATOR_REVIT_TRANSPORT = ${JSON.stringify(transport)} }`;
   return [
     "# BEGIN RevitOperator (managed)",
+    "# The embedded app-server receives Operator tools through thread/start.dynamicTools.",
+    "# Keep this definition disabled so Codex does not add a second approval layer around the same MCP runtime.",
     "[mcp_servers.revit_operator]",
+    "enabled = false",
     "command = \"node\"",
     `args = [${JSON.stringify(serverJs)}]`,
     `cwd = ${JSON.stringify(serverCwd)}`,

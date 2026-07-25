@@ -11,8 +11,9 @@ namespace RevitBridge.Handlers
 {
     /// <summary>
     /// Resolves a user-visible schedule row and field to one backing Revit parameter,
-    /// then optionally updates it. This intentionally fails closed instead of guessing
-    /// across grouped rows, duplicate identifiers, calculated fields, or read-only data.
+    /// then optionally updates it. Grouped schedules are resolved through their backing
+    /// elements and remain writable only when the row key yields one unique editable
+    /// parameter; duplicate identifiers, calculated fields, and read-only data fail closed.
     /// </summary>
     public sealed class UpdateScheduleCellHandler : IRequestHandler
     {
@@ -267,11 +268,8 @@ namespace RevitBridge.Handlers
             List<Candidate> candidates,
             List<object> issues)
         {
-            if (!schedule.Definition.IsItemized)
-            {
-                issues.Add(new { code = "grouped_schedule_blocked", scheduleId = ElementIdCompat.GetValue(schedule.Id), scheduleName = schedule.Name, message = "Non-itemized schedules can combine multiple backing elements in one visible row." });
-                return;
-            }
+            var isGroupedSchedule = !schedule.Definition.IsItemized;
+            var candidateCountBeforeSchedule = candidates.Count;
 
             var fields = ScheduleSelectionHelper.GetFields(schedule).Select(field => new FieldRef
             {
@@ -340,6 +338,19 @@ namespace RevitBridge.Handlers
                         TargetParameter = targetParameter
                     });
                 }
+            }
+
+            if (isGroupedSchedule)
+            {
+                var resolvedCount = candidates.Count - candidateCountBeforeSchedule;
+                issues.Add(new
+                {
+                    code = "grouped_schedule_backing_elements_evaluated",
+                    scheduleId = ElementIdCompat.GetValue(schedule.Id),
+                    scheduleName = schedule.Name,
+                    resolvedCandidateCount = resolvedCount,
+                    message = "The schedule is non-itemized, so the visible row may combine elements. The update remains allowed only if the requested row key resolves to one unique editable backing parameter; otherwise the handler fails closed."
+                });
             }
         }
 

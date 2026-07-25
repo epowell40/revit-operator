@@ -1,0 +1,98 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import test from "node:test";
+import { beginRevitCourierTurnContext, endRevitCourierTurnContext } from "../src/courier/revit_courier_context.js";
+import {
+  REVIT_COURIER_JOB_VERSION,
+  claimNextRevitToolJob,
+  completeRevitToolJob,
+  failRevitToolJob
+} from "../src/courier/revit_tool_jobs.js";
+
+function writeJob(root: string, overrides: Record<string, unknown> = {}): string {
+  const id = randomUUID().replace(/-/g, "");
+  const dir = path.join(root, "artifacts", "revit-courier", "jobs", id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "job.json"), JSON.stringify({
+    version: REVIT_COURIER_JOB_VERSION,
+    id,
+    session_id: "session-a",
+    message_id: "message-a",
+    correlation_id: id,
+    idempotency_key: "a".repeat(64),
+    method: "GET",
+    path: "/revit/ping",
+    created_at: new Date().toISOString(),
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+    status: "pending",
+    claim: null,
+    ...overrides
+  }), "utf8");
+  return id;
+}
+
+test("courier claims only the bound session and writes a durable terminal result", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-store-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const id = writeJob(root);
+  assert.equal(claimNextRevitToolJob({ session_id: "session-b", executor_id: "worker-1" }).job, null);
+  const claimed = claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job;
+  assert.equal(claimed?.id, id);
+  assert.equal(claimed?.status, "running");
+  assert.throws(() => completeRevitToolJob({ session_id: "session-a", job_id: id, executor_id: "worker-2", result: {} }), /not claimed/i);
+  completeRevitToolJob({ session_id: "session-a", job_id: id, executor_id: "worker-1", result: { status: "ok" } });
+  const receipt = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", id, "result.json"), "utf8"));
+  assert.equal(receipt.status, "succeeded");
+  assert.deepEqual(receipt.result, { status: "ok" });
+});
+
+test("courier can claim an accessible job across Native and Sidecar session boundaries", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-cross-surface-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const nativeId = writeJob(root, { session_id: "native-session", created_at: "2026-01-01T00:00:00.000Z" });
+  const sidecarId = writeJob(root, { session_id: "sidecar-session", created_at: "2026-01-01T00:00:01.000Z" });
+  const claimed = claimNextRevitToolJob({
+    executor_id: "workstation-1",
+    session_allowed: sessionId => sessionId === "sidecar-session"
+  }).job;
+  assert.equal(claimed?.id, sidecarId);
+  assert.equal(claimed?.session_id, "sidecar-session");
+  assert.equal(claimNextRevitToolJob({ session_id: "native-session", executor_id: "workstation-2" }).job?.id, nativeId);
+});
+
+test("courier never automatically replays a job whose execution lease expired", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-lease-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const id = writeJob(root, {
+    status: "running",
+    claim: {
+      executor_id: "dead-worker",
+      claimed_at: new Date(Date.now() - 120_000).toISOString(),
+      lease_expires_at: new Date(Date.now() - 60_000).toISOString()
+    }
+  });
+  assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-2" }).job, null);
+  const receipt = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", id, "result.json"), "utf8"));
+  assert.equal(receipt.status, "failed");
+  assert.equal(receipt.code, "execution_lease_expired_outcome_unknown");
+  assert.equal(receipt.retryable, false);
+});
+
+test("courier context is explicit, exclusive per workspace, and closed without deleting its receipt", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-context-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.OPERATOR_REVIT_TRANSPORT = "courier";
+  const lease = beginRevitCourierTurnContext({ session_id: "session-a", message_id: "message-a", ttl_ms: 60_000 });
+  assert.ok(lease);
+  assert.throws(
+    () => beginRevitCourierTurnContext({ session_id: "session-b", message_id: "message-b", ttl_ms: 60_000 }),
+    /busy/i
+  );
+  endRevitCourierTurnContext(lease);
+  const context = JSON.parse(fs.readFileSync(path.join(root, "config", "revit-courier-context.json"), "utf8"));
+  assert.equal(context.active, false);
+  delete process.env.OPERATOR_REVIT_TRANSPORT;
+});

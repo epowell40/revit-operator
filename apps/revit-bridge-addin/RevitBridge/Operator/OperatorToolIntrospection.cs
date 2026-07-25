@@ -518,6 +518,89 @@ namespace RevitBridge.Operator
                         required: new[] { "method", "path" });
                 }
 
+                if (string.Equals(p, "/revit/native-api-policy", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "profile", Str(new[] { "balanced", "broad", "unrestricted" }) },
+                            { "maxRisk", Str(new[] { "low", "medium", "high" }) },
+                            { "allowMutating", Bool() },
+                            { "blockFreezeRisk", Bool() },
+                            { "maxResults", Int() },
+                            { "maxInvocationParams", Int() }
+                        },
+                        required: Array.Empty<string>(),
+                        additionalProps: false);
+                }
+
+                if (string.Equals(p, "/revit/native-api-catalog", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "query", Str() },
+                            { "namespacePrefix", Str() },
+                            { "typeContains", Str() },
+                            { "risk", Str(new[] { "low", "medium", "high" }) },
+                            { "offset", Int() },
+                            { "limit", Int() }
+                        },
+                        required: Array.Empty<string>(),
+                        additionalProps: false);
+                }
+
+                if (string.Equals(p, "/revit/native-api-search", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "query", Str() },
+                            { "namespacePrefix", Str() },
+                            { "risk", Str(new[] { "low", "medium", "high" }) },
+                            { "max", Int() }
+                        },
+                        required: new[] { "query" },
+                        additionalProps: false);
+                }
+
+                if (string.Equals(p, "/revit/native-api-call", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "memberId", Str() },
+                            { "target", Str(new[] { "uiapp", "uidoc", "doc", "view" }) },
+                            { "args", Arr(new Dictionary<string, object>()) },
+                            { "dryRun", Bool() }
+                        },
+                        required: new[] { "memberId" },
+                        additionalProps: false);
+                }
+
+                if (string.Equals(p, "/revit/native-api-ops", StringComparison.OrdinalIgnoreCase))
+                {
+                    var operation = Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "id", Str() },
+                            { "op", Str(new[] { "construct", "call" }) },
+                            { "memberId", Str() },
+                            { "target", Str() },
+                            { "args", Arr(new Dictionary<string, object>()) }
+                        },
+                        required: new[] { "id", "op", "memberId" },
+                        additionalProps: false);
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "operations", Arr(operation) },
+                            { "returns", Arr(Str()) }
+                        },
+                        required: new[] { "operations" },
+                        additionalProps: false);
+                }
+
                 if (string.Equals(p, "/revit/self-test", StringComparison.OrdinalIgnoreCase))
                 {
                     return Obj(
@@ -527,6 +610,48 @@ namespace RevitBridge.Operator
                             { "include_rooms", Bool() }
                         },
                         required: Array.Empty<string>());
+                }
+
+                if (string.Equals(p, "/revit/resolve-room-plan-view", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "roomNumber", Str() },
+                            { "preferViewNameContains", Str() },
+                            { "maxCandidates", Int() }
+                        },
+                        required: new[] { "roomNumber" },
+                        additionalProps: false);
+                }
+
+                if (string.Equals(p, "/revit/query-zone-data", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "levelName", Str() }
+                        },
+                        required: new[] { "levelName" },
+                        additionalProps: false);
+                }
+
+                if (string.Equals(p, "/revit/room_mep_intersect", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "roomNumber", Str() },
+                            { "plenumTopLevelName", Str() },
+                            { "categories", Arr(Str()) },
+                            { "systemClassification", Str() },
+                            { "sizeEquals", Str() },
+                            { "intersectMode", Str(new[] { "bbox", "centerline" }) },
+                            { "verticalTolerance", Num() },
+                            { "limit", Int() }
+                        },
+                        required: new[] { "roomNumber", "plenumTopLevelName" },
+                        additionalProps: false);
                 }
 
                 if (string.Equals(p, "/revit/state-snapshot", StringComparison.OrdinalIgnoreCase))
@@ -604,6 +729,134 @@ namespace RevitBridge.Operator
                             { "includeViewportGeometry", Bool() }, // detail
                             { "includeSheetOutline", Bool() }, // detail
                             { "includeSchedules", Bool() } // detail
+                        },
+                        required: Array.Empty<string>(),
+                        additionalProps: false);
+                }
+
+                // Schedule reads have two conditional shapes. Listing needs no
+                // selector; detail requires either scheduleId or query. Do not use
+                // reflection here because nullable-reference metadata is not
+                // available in the net48 build and would make action/query appear
+                // universally required.
+                if (string.Equals(p, "/revit/schedules", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "action", Str(new[] { "list", "detail" }) },
+                            { "scheduleId", Int() },
+                            { "query", Str() },
+                            { "exact", Bool() },
+                            { "max", Int() },
+                            { "includeFields", Bool() },
+                            { "includeData", Bool() },
+                            { "rowOffset", Int() },
+                            { "columnOffset", Int() },
+                            { "maxRows", Int() },
+                            { "maxColumns", Int() }
+                        },
+                        required: Array.Empty<string>(),
+                        additionalProps: false);
+                }
+
+                // Schedule-backed writes are intentionally fail-closed and have
+                // conditional selectors. Reflection cannot recover nullable
+                // reference metadata in the net48 build, so advertise only the
+                // fields the handlers actually require unconditionally.
+                if (string.Equals(p, "/revit/update-schedule-cell", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "scheduleId", Int() },
+                            { "scheduleQuery", Str() },
+                            { "scheduleExact", Bool() },
+                            { "rowKey", Str() },
+                            { "rowField", Str() },
+                            { "targetField", Str() },
+                            { "expectedValue", Str() },
+                            { "value", Str() },
+                            { "apply", Bool() },
+                            { "dryRun", Bool() },
+                            { "maxSchedules", Int() }
+                        },
+                        required: new[] { "rowKey", "targetField", "value" },
+                        additionalProps: false);
+                }
+
+                if (string.Equals(p, "/revit/replace-schedule-values", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "sheetNumbers", Arr(Str()) },
+                            { "scheduleIds", Arr(Int()) },
+                            { "fieldNames", Arr(Str()) },
+                            { "valueContains", Str() },
+                            { "expectedValue", Str() },
+                            { "replaceFrom", Str() },
+                            { "replaceTo", Str() },
+                            { "expectedPlanHash", Str() },
+                            { "apply", Bool() },
+                            { "dryRun", Bool() },
+                            { "maxSchedules", Int() },
+                            { "maxCandidates", Int() },
+                            { "maxChanges", Int() }
+                        },
+                        required: new[] { "valueContains", "replaceFrom", "replaceTo" },
+                        additionalProps: false);
+                }
+
+                if (string.Equals(p, "/revit/set-parameter", StringComparison.OrdinalIgnoreCase))
+                {
+                    var changeSchema = Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "elementId", Int() },
+                            { "parameterName", Str() },
+                            { "value", Str() },
+                            { "expectedOldValue", Str() },
+                            { "preserveTextCase", Bool() }
+                        },
+                        required: new[] { "elementId", "parameterName", "value" },
+                        additionalProps: false);
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "changes", Arr(changeSchema) },
+                            { "apply", Bool() },
+                            { "dryRun", Bool() },
+                            { "confirm", Str() },
+                            { "excludeElementIds", Arr(Int()) },
+                            { "preserveTextCase", Bool() }
+                        },
+                        required: new[] { "changes" },
+                        additionalProps: false);
+                }
+
+                // Parameter reads accept exactly one selector family: element IDs,
+                // categories, or a guarded all-model scan. The validator enforces
+                // the conditional requirements for allModelInstances; every field
+                // must remain optional in this top-level JSON schema.
+                if (string.Equals(p, "/revit/get-parameters", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "elementId", Int() },
+                            { "elementIds", Arr(Int()) },
+                            { "category", Str() },
+                            { "categories", Arr(Str()) },
+                            { "allModelInstances", Bool() },
+                            { "names", Arr(Str()) },
+                            { "includeStringParameters", Bool() },
+                            { "valueContains", Str() },
+                            { "caseSensitive", Bool() },
+                            { "writableOnly", Bool() },
+                            { "includeEmpty", Bool() },
+                            { "offset", Int() },
+                            { "limit", Int() }
                         },
                         required: Array.Empty<string>(),
                         additionalProps: false);
