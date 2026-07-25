@@ -604,6 +604,44 @@ namespace RevitBridge.Operator
                         additionalProps: false);
                 }
 
+                if (string.Equals(p, "/revit/native-api-mutation-ops", StringComparison.OrdinalIgnoreCase))
+                {
+                    var operation = Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "id", Str() },
+                            { "op", Str(new[] { "construct", "call", "get_property" }) },
+                            { "memberId", Str() },
+                            { "target", Str() },
+                            { "args", Arr(new Dictionary<string, object>()) },
+                            { "property", Str() }
+                        },
+                        required: new[] { "id", "op" },
+                        additionalProps: false);
+                    var transaction = Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "mode", Str(new[] { "rollback", "commit" }) },
+                            { "name", Str() },
+                            { "maxAffectedElements", Int() },
+                            { "allowCreate", Bool() },
+                            { "allowedExistingElementIds", Arr(Int()) }
+                        },
+                        required: new[] { "mode", "maxAffectedElements" },
+                        additionalProps: false);
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "operations", Arr(operation) },
+                            { "returns", Arr(Str()) },
+                            { "transaction", transaction },
+                            { "maxTotalMs", Int() },
+                            { "maxOperationMs", Int() }
+                        },
+                        required: new[] { "operations", "transaction" },
+                        additionalProps: false);
+                }
+
                 if (string.Equals(p, "/revit/self-test", StringComparison.OrdinalIgnoreCase))
                 {
                     return Obj(

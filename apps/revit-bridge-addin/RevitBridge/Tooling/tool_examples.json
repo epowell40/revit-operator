@@ -570,6 +570,68 @@
     },
     {
       "method": "POST",
+      "path": "/revit/native-api-mutation-ops",
+      "examples": [
+        {
+          "name": "Rollback-test one exact active-view name mutation",
+          "request": {
+            "operations": [
+              {
+                "id": "active_view",
+                "op": "get_property",
+                "target": "doc",
+                "property": "ActiveView"
+              },
+              {
+                "id": "name_parameter",
+                "op": "call",
+                "memberId": "method:Autodesk.Revit.DB.Element.LookupParameter(System.String)",
+                "target": "$active_view",
+                "args": ["View Name"]
+              },
+              {
+                "id": "set_name",
+                "op": "call",
+                "memberId": "method:Autodesk.Revit.DB.Parameter.Set(System.String)",
+                "target": "$name_parameter",
+                "args": ["Operator rollback preview"]
+              },
+              {
+                "id": "readback",
+                "op": "get_property",
+                "target": "$active_view",
+                "property": "Name"
+              }
+            ],
+            "returns": ["set_name", "readback"],
+            "transaction": {
+              "mode": "rollback",
+              "name": "Operator view-name rollback preview",
+              "maxAffectedElements": 1,
+              "allowCreate": false,
+              "allowedExistingElementIds": [12345]
+            },
+            "maxTotalMs": 5000,
+            "maxOperationMs": 2000
+          },
+          "expected_response_shape": {
+            "version": "operator.native_api_mutation_ops.v1",
+            "ok": true,
+            "transaction": {
+              "status": "rolled_back",
+              "committed": false,
+              "affected_element_count": 1
+            },
+            "results": {
+              "set_name": true,
+              "readback": "Operator rollback preview"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/tool-doc",
       "examples": [
         {

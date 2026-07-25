@@ -54,6 +54,7 @@ namespace RevitBridge.Server
                 { "/revit/native-api-search", new NativeApiSearchHandler() },
                 { "/revit/native-api-call", new NativeApiCallHandler() },
                 { "/revit/native-api-ops", new NativeApiOpsHandler() },
+                { "/revit/native-api-mutation-ops", new NativeApiMutationOpsHandler() },
                 { "/revit/self-test", new SelfTestHandler() },
                 { "/revit/regenerate", new RegenerateHandler() },
                 { "/revit/computer-use-observe", new ComputerUseObserveHandler() },

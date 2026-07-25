@@ -11,6 +11,7 @@ namespace RevitBridge.Common.Tests
         [InlineData("POST", "/revit/sheets", "low", "bounded_read", 60000)]
         [InlineData("POST", "/revit/create-text", "medium", "interactive_or_export", 75000)]
         [InlineData("POST", "/revit/update-parameter-by-query", "high", "model_mutation", 85000)]
+        [InlineData("POST", "/revit/native-api-mutation-ops", "high", "model_mutation", 85000)]
         [InlineData("POST", "/revit/export-ifc", "low", "extended", 210000)]
         public void Resolves_stable_per_class_deadlines(string method, string path, string risk, string expectedClass, int expectedMs)
         {

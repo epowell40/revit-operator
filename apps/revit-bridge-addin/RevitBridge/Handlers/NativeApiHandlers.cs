@@ -95,6 +95,25 @@ namespace RevitBridge.Handlers
         }
     }
 
+    public sealed class NativeApiMutationOpsHandler : IRequestHandler
+    {
+        public Task<object> Handle(UIApplication app, string jsonData)
+        {
+            try
+            {
+                return Task.FromResult(OperatorNativeApiGateway.InvokeMutationOperations(app, jsonData));
+            }
+            catch (JsonException ex)
+            {
+                throw new ArgumentException("native-api-mutation-ops request JSON is invalid: " + ex.Message, ex);
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw new ArgumentException(ex.Message, ex);
+            }
+        }
+    }
+
     public sealed class NativeApiPolicyHandler : IRequestHandler
     {
         private sealed class Params
