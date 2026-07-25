@@ -46,6 +46,11 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   const backendPort = await listen(backend);
   const bridgeRequests: Array<{ method: string; path: string; token: string; grant: string }> = [];
   const connectorRepairBodies: any[] = [];
+  const sheetBodies: any[] = [];
+  const scheduleBodies: any[] = [];
+  const scheduleCellBodies: any[] = [];
+  const scheduleReplacementBodies: any[] = [];
+  const setParameterBodies: any[] = [];
   const bridge = http.createServer(async (req, res) => {
     const requestBody = await new Promise<string>((resolve, reject) => {
       const chunks: Buffer[] = [];
@@ -79,6 +84,31 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     }
     if (requestUrl.pathname === "/revit/context") {
       res.end(JSON.stringify({ document: "Snowdon", view: "L4 - Power" }));
+      return;
+    }
+    if (requestUrl.pathname === "/revit/sheets") {
+      sheetBodies.push(JSON.parse(requestBody || "{}"));
+      res.end(JSON.stringify({ action: "count", totalSheets: 345, total: 345 }));
+      return;
+    }
+    if (requestUrl.pathname === "/revit/schedules") {
+      scheduleBodies.push(JSON.parse(requestBody || "{}"));
+      res.end(JSON.stringify({ items: [{ id: 4101, name: "Mechanical Equipment Schedule" }] }));
+      return;
+    }
+    if (requestUrl.pathname === "/revit/update-schedule-cell") {
+      scheduleCellBodies.push(JSON.parse(requestBody || "{}"));
+      res.end(JSON.stringify({ status: "Dry Run", dryRun: true, applied: false, candidateCount: 1 }));
+      return;
+    }
+    if (requestUrl.pathname === "/revit/replace-schedule-values") {
+      scheduleReplacementBodies.push(JSON.parse(requestBody || "{}"));
+      res.end(JSON.stringify({ status: "Dry Run", dryRun: true, applied: false, planHash: "abc" }));
+      return;
+    }
+    if (requestUrl.pathname === "/revit/set-parameter") {
+      setParameterBodies.push(JSON.parse(requestBody || "{}"));
+      res.end(JSON.stringify({ status: "Dry Run", dryRun: true, applied: false, changedCount: 1 }));
       return;
     }
     if (requestUrl.pathname === "/revit/repair-mep-connectors") {
@@ -146,18 +176,25 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   const tools = await withTimeout(client.listTools(), "listing MCP tools");
   const names = new Set(tools.tools.map((tool) => tool.name));
   for (const name of [
+    "operator_runtime_probe",
     "operator_plan_semantic_mep_route",
     "fire_damper_audit",
     "validate_ies_files",
     "check_photometrics",
     "audit_lpd",
     "revit_repair_mep_connectors",
-    "revit_dry_run_repair_mep_connectors"
+    "revit_dry_run_repair_mep_connectors",
+    "revit_list_schedules",
+    "revit_update_schedule_cell",
+    "revit_replace_schedule_values",
+    "revit_set_parameters"
   ]) {
     assert.equal(names.has(name), true, `Missing MCP tool: ${name}`);
   }
   const connectorRepairTool = tools.tools.find(tool => tool.name === "revit_repair_mep_connectors");
   const dryConnectorRepairTool = tools.tools.find(tool => tool.name === "revit_dry_run_repair_mep_connectors");
+  const sheetTool = tools.tools.find(tool => tool.name === "revit_list_sheets");
+  assert.deepEqual((sheetTool?.inputSchema as any)?.properties?.action?.enum, ["list", "count"]);
   for (const tool of [connectorRepairTool, dryConnectorRepairTool]) {
     const connectorRepairSchema = JSON.stringify(tool?.inputSchema ?? {});
     assert.doesNotMatch(connectorRepairSchema, /"\$ref"/);
@@ -167,6 +204,8 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.equal(dryConnectorRepairTool?.annotations?.readOnlyHint, true);
   assert.equal(dryConnectorRepairTool?.annotations?.destructiveHint, false);
   assert.equal(connectorRepairTool?.annotations?.destructiveHint, true);
+  const runtimeProbe = await withTimeout(client.callTool({ name: "operator_runtime_probe", arguments: {} }), "probing MCP runtime");
+  assert.match((runtimeProbe as any).content[0].text, /operator\.mcp\.runtime\.v1/);
   const connectorRepair = await withTimeout(client.callTool({
     name: "revit_dry_run_repair_mep_connectors",
     arguments: {
@@ -199,6 +238,46 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     arguments: { method: "GET", path: "/revit/context", requireKnownPath: true }
   }), "calling a generic bridge read over stdio");
   assert.match((context as any).content[0].text, /L4 - Power/);
+
+  const sheetCount = await withTimeout(client.callTool({
+    name: "revit_list_sheets",
+    arguments: { action: "count" }
+  }), "counting sheets over stdio");
+  assert.match((sheetCount as any).content[0].text, /"totalSheets": 345/);
+  assert.deepEqual(sheetBodies[0], { action: "count", exact: false });
+
+  const schedules = await withTimeout(client.callTool({
+    name: "revit_list_schedules",
+    arguments: { action: "list", max: 10 }
+  }), "listing schedules over stdio");
+  assert.match((schedules as any).content[0].text, /Mechanical Equipment Schedule/);
+  assert.deepEqual(scheduleBodies[0], { action: "list", exact: false, max: 10 });
+
+  const scheduleCell = await withTimeout(client.callTool({
+    name: "revit_update_schedule_cell",
+    arguments: { rowKey: "AHU-1", targetField: "Supply Air", expectedValue: "10,000", value: "20,000 CFM" }
+  }), "dry-running a schedule cell update over stdio");
+  assert.match((scheduleCell as any).content[0].text, /Dry Run/);
+  assert.equal(scheduleCellBodies[0].apply, false);
+  assert.equal(scheduleCellBodies[0].dryRun, true);
+  assert.equal(scheduleCellBodies[0].rowField, undefined);
+
+  const scheduleReplacement = await withTimeout(client.callTool({
+    name: "revit_replace_schedule_values",
+    arguments: { sheetNumbers: ["P6.01"], fieldNames: ["DESIG"], valueContains: "-G-", replaceFrom: "-G-", replaceTo: "-0-" }
+  }), "dry-running a schedule value replacement over stdio");
+  assert.match((scheduleReplacement as any).content[0].text, /planHash/);
+  assert.equal(scheduleReplacementBodies[0].apply, false);
+  assert.equal(scheduleReplacementBodies[0].dryRun, true);
+
+  const setParameter = await withTimeout(client.callTool({
+    name: "revit_set_parameters",
+    arguments: { changes: [{ elementId: 4978484, parameterName: "Sheet Name", value: "Preview", expectedOldValue: "Original" }] }
+  }), "dry-running a parameter update over stdio");
+  assert.match((setParameter as any).content[0].text, /Dry Run/);
+  assert.equal(setParameterBodies[0].apply, false);
+  assert.equal(setParameterBodies[0].dryRun, true);
+  assert.equal(setParameterBodies[0].changes[0].expectedOldValue, "Original");
 
   const write = await withTimeout(client.callTool({
     name: "revit_call_tool",

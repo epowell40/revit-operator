@@ -674,9 +674,9 @@ namespace RevitBridge.Operator
               </div>
               <div class=""policy"">
                 <span>Brain:</span>
-                <select id=""brainRoute"" title=""Auto keeps deterministic routing; Configured direct sends the turn to OPERATOR_BRAIN (Codex, Claude, Gemini, OpenAI, or rule)."">
-                  <option value=""auto"" selected>Auto pipeline</option>
-                  <option value=""direct"">Configured direct</option>
+                <select id=""brainRoute"" title=""Configured direct uses the hosted agent harness; Auto pipeline keeps the legacy deterministic router available as a fallback."">
+                  <option value=""auto"">Auto pipeline</option>
+                  <option value=""direct"" selected>Configured direct</option>
                 </select>
               </div>
             </div>

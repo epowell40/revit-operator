@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using RevitBridge.Common;
 using RevitBridge.Handlers;
 using RevitBridge.Services;
 using HandlerRequest = RevitBridge.Common.IRequestHandler;
@@ -42,6 +43,7 @@ namespace RevitBridge.Operator
                 { "/revit/native-api-catalog", new NativeApiCatalogHandler() },
                 { "/revit/native-api-search", new NativeApiSearchHandler() },
                 { "/revit/native-api-call", new NativeApiCallHandler() },
+                { "/revit/native-api-ops", new NativeApiOpsHandler() },
                 { "/revit/self-test", new SelfTestHandler() },
                 { "/revit/regenerate", new RegenerateHandler() },
                 { "/revit/computer-use-observe", new ComputerUseObserveHandler() },
@@ -274,6 +276,21 @@ namespace RevitBridge.Operator
                 return OperatorCapabilities.Get();
             }
 
+            if (string.Equals(path, "/revit/write-grant-status", StringComparison.OrdinalIgnoreCase))
+            {
+                var status = OperatorWriteGrant.ReadStatus();
+                return new
+                {
+                    status = "ok",
+                    active = status.Active,
+                    mode = status.Mode,
+                    expires_at_utc = status.ExpiresAtUtc?.ToString("o"),
+                    uses_remaining = status.UsesRemaining,
+                    error = status.Error,
+                    write_ready = status.Active
+                };
+            }
+
             if (!_handlers.TryGetValue(path, out var handler))
             {
                 throw new InvalidOperationException($"No handler mapped for: {path}");
@@ -293,6 +310,14 @@ namespace RevitBridge.Operator
             }
 
             if (IsDirectDialogComputerUsePath(path))
+            {
+                return await handler.Handle(null!, jsonBody).ConfigureAwait(false);
+            }
+
+            // Catalog, documentation, and policy operations do not touch the Revit API.
+            // Keep them off Revit's single-threaded ExternalEvent queue so discovery and
+            // payload repair remain responsive while a model operation is pending.
+            if (IsDirectControlPlanePath(path))
             {
                 return await handler.Handle(null!, jsonBody).ConfigureAwait(false);
             }
@@ -317,7 +342,7 @@ namespace RevitBridge.Operator
                     }
 
                     return handlerResult;
-                }).ConfigureAwait(false);
+                }, cancellationToken).ConfigureAwait(false);
             }
             finally
             {
@@ -343,6 +368,17 @@ namespace RevitBridge.Operator
             }
 
             return result;
+        }
+
+        private static bool IsDirectControlPlanePath(string path)
+        {
+            return string.Equals(path, "/revit/tool-registry", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(path, "/revit/tool-search", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(path, "/revit/tool-doc", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(path, "/revit/tool-examples", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(path, "/revit/native-api-policy", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(path, "/revit/native-api-catalog", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(path, "/revit/native-api-search", StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool ShouldAutoArmRetryableDialogGuard(string method, string path, string jsonBody)

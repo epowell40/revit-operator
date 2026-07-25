@@ -485,6 +485,10 @@ export function recordToolResultsEnvironmentMemory(results: ToolResult[]): void 
     const toolName = `${result.method || ""} ${result.path || ""}`.trim();
     const targetPath = inferPathFromToolResult(result);
     if (result.status === "done") {
+      if (`${result.path || ""}`.trim().toLowerCase().startsWith("/revit/")) {
+        profile.capabilities.can_use_revit_api = true;
+        setTool(profile, "revit_api", true);
+      }
       if (targetPath) profile = recordPathSuccess(targetPath, result.path || "tool", profile);
       profile.known_good_operations = upsertByKey(
         profile.known_good_operations,

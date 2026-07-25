@@ -53,6 +53,7 @@ namespace RevitBridge.Server
                 { "/revit/native-api-catalog", new NativeApiCatalogHandler() },
                 { "/revit/native-api-search", new NativeApiSearchHandler() },
                 { "/revit/native-api-call", new NativeApiCallHandler() },
+                { "/revit/native-api-ops", new NativeApiOpsHandler() },
                 { "/revit/self-test", new SelfTestHandler() },
                 { "/revit/regenerate", new RegenerateHandler() },
                 { "/revit/computer-use-observe", new ComputerUseObserveHandler() },
@@ -502,7 +503,7 @@ namespace RevitBridge.Server
                     }
 
                     object result;
-                    if (IsDirectDialogComputerUsePath(path))
+                    if (IsDirectDialogComputerUsePath(path) || IsDirectControlPlanePath(path))
                     {
                         result = await handler.Handle(null!, body);
                     }
@@ -544,6 +545,42 @@ namespace RevitBridge.Server
                         hint = uex.Hint
                     });
                 }
+                else if (root is RevitEventQueueException qex)
+                {
+                    statusCode = string.Equals(qex.Code, "revit_external_event_busy", StringComparison.OrdinalIgnoreCase) ? 409 : 503;
+                    responseText = JsonSerializer.Serialize(new
+                    {
+                        ok = false,
+                        error = qex.Message,
+                        code = qex.Code,
+                        retryable = qex.Retryable,
+                        phase = "revit_external_event"
+                    });
+                }
+                else if (root is OperationCanceledException)
+                {
+                    statusCode = 408;
+                    responseText = JsonSerializer.Serialize(new
+                    {
+                        ok = false,
+                        error = "The Revit action was canceled or exceeded its local deadline.",
+                        code = "revit_action_canceled",
+                        retryable = true,
+                        phase = "revit_external_event"
+                    });
+                }
+                else if (root is ArgumentException)
+                {
+                    statusCode = 400;
+                    responseText = JsonSerializer.Serialize(new
+                    {
+                        ok = false,
+                        error = root.Message,
+                        code = "invalid_revit_tool_request",
+                        retryable = false,
+                        phase = "request_validation"
+                    });
+                }
                 else
                 {
                     statusCode = 500;
@@ -562,6 +599,17 @@ namespace RevitBridge.Server
             resp.StatusCode = statusCode;
             await resp.OutputStream.WriteAsync(data, 0, data.Length);
             resp.Close();
+        }
+
+        private static bool IsDirectControlPlanePath(string path)
+        {
+            return string.Equals(path, "/revit/tool-registry", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(path, "/revit/tool-search", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(path, "/revit/tool-doc", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(path, "/revit/tool-examples", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(path, "/revit/native-api-policy", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(path, "/revit/native-api-catalog", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(path, "/revit/native-api-search", StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsDirectDialogComputerUsePath(string path)

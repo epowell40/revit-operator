@@ -22,9 +22,11 @@ test("codex config writer upserts managed MCP block", () => {
   const configPath = path.join(codexHome, "config.toml");
   const txt = fs.readFileSync(configPath, "utf8");
   assert.match(txt, /\[mcp_servers\.revit_operator\]/);
+  assert.match(txt, /\[mcp_servers\.revit_operator\]\nenabled = false/);
   assert.equal((txt.match(/\[mcp_servers\./g) || []).length, 1);
   assert.match(txt, /env = \{ OPERATOR_WORKSPACE_ROOT = /);
   assert.match(txt, /CODEX_HOME = /);
+  assert.match(txt, /OPERATOR_REVIT_TRANSPORT = "direct"/);
   assert.match(txt, /startup_timeout_sec = 20/);
   assert.doesNotMatch(txt, /cwd = .*dist/);
   assert.match(txt, /BEGIN RevitOperator/);

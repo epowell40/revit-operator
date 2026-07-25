@@ -13,6 +13,7 @@ import {
   appendEvent,
   appendNotification,
   attachToolResultToPlannedStep,
+  getSessionOwner,
   getNotificationsAfter,
   setStepStopReason,
   upsertStepPlanned
@@ -20,7 +21,7 @@ import {
 import { maybeHandleMacroSkill } from "./skills/macro_skill_commands.js";
 import { ensureDefaultMacroSkills } from "./skills/default_macro_skills.js";
 import { writeIssueBundle } from "./telemetry/issue_bundles.js";
-import { cancelCodexBrainTurn, warmCodexAppServer } from "./brains/codex_brain.js";
+import { cancelCodexBrainTurn, getCodexAppServerCompatibility, warmCodexAppServer } from "./brains/codex_brain.js";
 import { persistence } from "./persistence/persistence_manager.js";
 import { appendFeedbackAndMaybePromote } from "./feedback/feedback_store.js";
 import { startFeedbackDevAutofix } from "./feedback/dev_autofix.js";
@@ -84,6 +85,7 @@ import {
   resumeRevitBatchJob,
   pauseRevitBatchJob
 } from "./revit_batch/service.js";
+import { claimNextRevitToolJob, completeRevitToolJob, failRevitToolJob } from "./courier/revit_tool_jobs.js";
 import {
   getOperatorTask,
   listOperatorTasks,
@@ -640,6 +642,8 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname === "/api/revit-batch/jobs" ||
     pathname === "/api/revit-batch/claim-next" ||
     pathname.startsWith("/api/revit-batch/jobs/") ||
+    pathname === "/api/revit-courier/claim-next" ||
+    pathname.startsWith("/api/revit-courier/jobs/") ||
     pathname === "/api/kb/documents/upload" ||
     pathname === "/api/kb/documents" ||
     pathname.startsWith("/api/kb/documents/") ||
@@ -1121,6 +1125,74 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/api/revit-batch/templates") {
       return writeJson(res, 200, { ok: true, defaults: listRevitBatchTemplates() });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/revit-courier/claim-next") {
+      const body = await readJson(req, 1_000_000);
+      const sessionId = trimText((body as any)?.session_id ?? (body as any)?.sessionId, 200);
+      const executorId = trimText((body as any)?.executor_id ?? (body as any)?.executorId, 200);
+      const waitMs = Math.max(0, Math.min(15_000, Number.parseInt(`${(body as any)?.wait_ms ?? 10_000}`, 10) || 0));
+      if (!executorId) return writeJson(res, 400, { error: "executor_id is required." });
+      if (sessionId && !sessionAccessAllowed(res, sessionId, auth.principal)) return;
+      const owner = sessionOwnerForPrincipal(auth.principal);
+      const sessionAllowed = sessionId || !owner
+        ? undefined
+        : (candidateSessionId: string) => {
+            const candidateOwner = getSessionOwner(candidateSessionId);
+            return candidateOwner?.owner_user_id === owner.owner_user_id &&
+              candidateOwner.owner_license_id === owner.owner_license_id;
+          };
+      try {
+        const deadline = Date.now() + waitMs;
+        let claim = claimNextRevitToolJob({ session_id: sessionId || null, executor_id: executorId, session_allowed: sessionAllowed });
+        while (!claim.job && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, Math.min(250, Math.max(1, deadline - Date.now()))));
+          claim = claimNextRevitToolJob({ session_id: sessionId || null, executor_id: executorId, session_allowed: sessionAllowed });
+        }
+        return writeJson(res, 200, { ok: true, ...claim });
+      } catch (error) {
+        return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+
+    {
+      const courierFinishMatch = url.pathname.match(/^\/api\/revit-courier\/jobs\/([^/]+)\/(complete|fail)$/);
+      if (req.method === "POST" && courierFinishMatch) {
+        const body = await readJson(req, 5_000_000);
+        const sessionId = trimText((body as any)?.session_id ?? (body as any)?.sessionId, 200);
+        const executorId = trimText((body as any)?.executor_id ?? (body as any)?.executorId, 200);
+        const jobId = decodeURIComponent(courierFinishMatch[1] || "");
+        const action = courierFinishMatch[2] || "";
+        if (!sessionId || !executorId) return writeJson(res, 400, { error: "session_id and executor_id are required." });
+        if (!sessionAccessAllowed(res, sessionId, auth.principal)) return;
+        try {
+          const job = action === "complete"
+            ? completeRevitToolJob({ session_id: sessionId, job_id: jobId, executor_id: executorId, result: (body as any)?.result })
+            : failRevitToolJob({
+                session_id: sessionId,
+                job_id: jobId,
+                executor_id: executorId,
+                result: (body as any)?.result,
+                error: trimText((body as any)?.error, 4000),
+                retryable: (body as any)?.retryable === true
+              });
+          try {
+            recordToolResultsEnvironmentMemory([{
+              action_id: job.id,
+              method: job.method,
+              path: job.path,
+              status: action === "complete" ? "done" : "failed",
+              ...(action === "complete" ? { result_json: (body as any)?.result } : {}),
+              ...(action === "fail" ? { error: trimText((body as any)?.error, 4000) || job.error || "Revit courier job failed." } : {})
+            }]);
+          } catch {
+            // Environment memory is advisory and must not break courier completion.
+          }
+          return writeJson(res, 200, { ok: true, job });
+        } catch (error) {
+          return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+        }
+      }
     }
 
     if (req.method === "GET" && url.pathname === "/api/tasks") {
@@ -3493,6 +3565,9 @@ const server = http.createServer(async (req, res) => {
             }
           : null,
         workspace_root: ws.root,
+        revit_transport: (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase(),
+        revit_courier_enabled: (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase() === "courier",
+        codex_app_server: getCodexAppServerCompatibility(),
         memory_path: ws.memory,
         local_skills_path: ws.skills,
         zippybim: getZippyBimConfig()

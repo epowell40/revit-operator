@@ -257,6 +257,21 @@ namespace RevitBridge.Operator
 
     internal static class OperatorNativeApiGateway
     {
+        private sealed class NativeApiOpsRequest
+        {
+            public List<NativeApiOp>? operations { get; set; }
+            public List<string>? returns { get; set; }
+        }
+
+        private sealed class NativeApiOp
+        {
+            public string? id { get; set; }
+            public string? op { get; set; }
+            public string? memberId { get; set; }
+            public string? target { get; set; }
+            public JsonElement? args { get; set; }
+        }
+
         private static readonly object _lock = new object();
         private static List<NativeApiMemberDescriptor>? _catalog;
         private static Dictionary<string, NativeApiMemberDescriptor>? _byId;
@@ -376,14 +391,12 @@ namespace RevitBridge.Operator
                 return new { ok = true, dry_run = true, blocked_execution = true, member_id = descriptor.MemberId, signature = descriptor.Signature };
             }
 
-            var invokeTarget = ResolveTarget(descriptor, app, target);
             var sw = Stopwatch.StartNew();
-            object? raw = null;
+            object? raw;
             try
             {
-                if (method is MethodInfo mi) raw = mi.Invoke(mi.IsStatic ? null : invokeTarget, values);
-                else if (method is ConstructorInfo ci) raw = ci.Invoke(values);
-                else throw new InvalidOperationException("Unsupported member type.");
+                var invokeTarget = ResolveTarget(descriptor, app, target);
+                raw = InvokeReflectedMember(descriptor, invokeTarget, values);
             }
             catch (TargetInvocationException tie)
             {
@@ -404,6 +417,126 @@ namespace RevitBridge.Operator
                 duration_ms = sw.ElapsedMilliseconds,
                 result = ReturnShape(raw, 0)
             };
+        }
+
+        public static object InvokeReadOnlyOperations(UIApplication app, string jsonData)
+        {
+            EnsureCatalog();
+            var request = string.IsNullOrWhiteSpace(jsonData)
+                ? new NativeApiOpsRequest()
+                : (JsonSerializer.Deserialize<NativeApiOpsRequest>(jsonData, OperatorUiProtocol.JsonOptions) ?? new NativeApiOpsRequest());
+            var operations = request.operations ?? new List<NativeApiOp>();
+            if (operations.Count == 0) throw new InvalidOperationException("native-api-ops.operations must contain at least one operation.");
+            if (operations.Count > 16) throw new InvalidOperationException("native-api-ops.operations is limited to 16 operations per request.");
+
+            var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            var receipts = new List<object>();
+            var total = Stopwatch.StartNew();
+            foreach (var operation in operations)
+            {
+                if (total.ElapsedMilliseconds > 5000) throw new InvalidOperationException("native-api-ops exceeded its 5000 ms between-operation budget.");
+                var id = (operation.id ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(id) || id.Length > 64 || id.Any(ch => !(char.IsLetterOrDigit(ch) || ch == '_' || ch == '-')))
+                    throw new InvalidOperationException("Each native-api-ops operation requires a unique alphanumeric id (plus '_' or '-', max 64 characters).");
+                if (values.ContainsKey(id)) throw new InvalidOperationException($"Duplicate native-api-ops id: {id}");
+
+                var op = (operation.op ?? "").Trim().ToLowerInvariant();
+                if (op != "construct" && op != "call") throw new InvalidOperationException($"native-api-ops operation '{id}' has unsupported op '{operation.op}'. Use construct|call.");
+                var memberId = (operation.memberId ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(memberId)) throw new InvalidOperationException($"native-api-ops operation '{id}' requires memberId.");
+                if (!_byId!.TryGetValue(memberId, out var descriptor) || descriptor.Method == null) throw new InvalidOperationException($"Unknown memberId: {memberId}");
+                if (!OperatorNativeApiPolicy.IsAllowed(descriptor, out var reason)) throw new InvalidOperationException($"Native API operation blocked: {reason}");
+                if (descriptor.RiskLevel != OperatorActionRisk.Low || descriptor.MutatingHint || descriptor.FreezeRiskHint)
+                    throw new InvalidOperationException($"native-api-ops v1 is read-only; member is not low-risk: {descriptor.MemberId}");
+
+                object? targetObject = null;
+                if (op == "construct")
+                {
+                    if (!(descriptor.Method is ConstructorInfo)) throw new InvalidOperationException($"Operation '{id}' uses construct with a non-constructor member.");
+                    if (!string.IsNullOrWhiteSpace(operation.target)) throw new InvalidOperationException($"Construct operation '{id}' must not specify target.");
+                }
+                else
+                {
+                    if (!(descriptor.Method is MethodInfo methodInfo) || methodInfo.IsStatic)
+                        throw new InvalidOperationException($"native-api-ops v1 call '{id}' must be an instance method on a prior ephemeral result.");
+                    var targetRef = (operation.target ?? "").Trim();
+                    if (!targetRef.StartsWith("$", StringComparison.Ordinal) || targetRef.Length < 2)
+                        throw new InvalidOperationException($"Call operation '{id}' target must reference a prior result as '$operationId'.");
+                    if (!values.TryGetValue(targetRef.Substring(1), out targetObject) || targetObject == null)
+                        throw new InvalidOperationException($"Call operation '{id}' target was not found: {targetRef}");
+                    if (descriptor.DeclaringType != null && !descriptor.DeclaringType.IsInstanceOfType(targetObject))
+                        throw new InvalidOperationException($"Call operation '{id}' target {targetRef} is incompatible with {descriptor.DeclaringType.FullName}.");
+                }
+
+                var ps = descriptor.Method.GetParameters();
+                var provided = ReadArgs(operation.args);
+                var args = new object?[ps.Length];
+                for (var i = 0; i < ps.Length; i++)
+                {
+                    var parameter = ps[i];
+                    if (parameter.IsOut || parameter.ParameterType.IsByRef) throw new InvalidOperationException($"Unsupported by-ref parameter: {parameter.Name}");
+                    if (i < provided.Count) args[i] = ConvertValue(provided[i], parameter.ParameterType);
+                    else if (TryResolveContextObject(parameter.ParameterType, app, out var context)) args[i] = context;
+                    else if (parameter.HasDefaultValue) args[i] = parameter.DefaultValue;
+                    else throw new InvalidOperationException($"Missing argument for parameter '{parameter.Name}' ({parameter.ParameterType.Name}) in operation '{id}'.");
+                }
+
+                var step = Stopwatch.StartNew();
+                object? raw;
+                try
+                {
+                    raw = InvokeReflectedMember(descriptor, targetObject, args);
+                }
+                catch (TargetInvocationException tie)
+                {
+                    var root = tie.InnerException ?? tie;
+                    throw new InvalidOperationException($"Native API operation '{id}' failed: {root.Message}", root);
+                }
+                finally
+                {
+                    step.Stop();
+                }
+
+                values[id] = raw;
+                receipts.Add(new
+                {
+                    id,
+                    op,
+                    member_id = descriptor.MemberId,
+                    signature = descriptor.Signature,
+                    duration_ms = step.ElapsedMilliseconds,
+                    result_preview = ReturnShape(raw, 0)
+                });
+            }
+
+            var returnIds = request.returns != null && request.returns.Count > 0
+                ? request.returns.Select(x => (x ?? "").Trim().TrimStart('$')).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+                : new List<string> { (operations[operations.Count - 1].id ?? "").Trim() };
+            var returned = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var id in returnIds)
+            {
+                if (!values.TryGetValue(id, out var value)) throw new InvalidOperationException($"native-api-ops return id was not found: {id}");
+                returned[id] = ReturnShape(value, 0);
+            }
+            total.Stop();
+            return new
+            {
+                version = "operator.native_api_ops.v1",
+                ok = true,
+                read_only = true,
+                ephemeral_handles = true,
+                operation_count = operations.Count,
+                duration_ms = total.ElapsedMilliseconds,
+                operations = receipts,
+                results = returned
+            };
+        }
+
+        private static object? InvokeReflectedMember(NativeApiMemberDescriptor descriptor, object? target, object?[] args)
+        {
+            if (descriptor.Method is MethodInfo methodInfo) return methodInfo.Invoke(methodInfo.IsStatic ? null : target, args);
+            if (descriptor.Method is ConstructorInfo constructorInfo) return constructorInfo.Invoke(args);
+            throw new InvalidOperationException("Unsupported member type.");
         }
 
         private static object ToPublicItem(NativeApiMemberDescriptor d)
@@ -521,7 +654,7 @@ namespace RevitBridge.Operator
 
         private static object? ResolveTarget(NativeApiMemberDescriptor d, UIApplication app, string? target)
         {
-            if (d.Method == null || d.Method.IsStatic) return null;
+            if (d.Method == null || d.Method.IsStatic || d.Method is ConstructorInfo) return null;
             if (!string.IsNullOrWhiteSpace(target))
             {
                 var tok = target.Trim().ToLowerInvariant();

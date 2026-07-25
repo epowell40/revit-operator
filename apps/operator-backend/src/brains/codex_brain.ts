@@ -5,8 +5,10 @@ import { ensureWorkspaceLayout } from "../workspace.js";
 import { appendEvent } from "../memory/sqlite_store.js";
 import { appendNotification } from "../memory/sqlite_store.js";
 import { getCodexThreadId, setCodexThreadId } from "../memory/sqlite_store.js";
-import { CodexAppServer } from "../codex/app_server.js";
+import { CodexAppServer, type CodexServerRequest } from "../codex/app_server.js";
 import { ensureCodexHomeAuth, ensureCodexHomeConfig } from "../codex/config.js";
+import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
+import { beginRevitCourierTurnContext, endRevitCourierTurnContext } from "../courier/revit_courier_context.js";
 import { getSkillLibraryText } from "../skills/skill_library.js";
 import { persistence } from "../persistence/persistence_manager.js";
 import { retrieveMemoryContext } from "../memory/jsonl_memory_store.js";
@@ -30,7 +32,17 @@ export type StreamCallbacks = {
   abortSignal?: AbortSignal;
 };
 
-let client: CodexAppServer | null = null;
+export type FreshRevitEvidenceRequirement = {
+  required: boolean;
+  kind: "none" | "sheet_count" | "revit_tool";
+  prompt: string;
+};
+
+const FRESH_REVIT_EVIDENCE_FAILURE =
+  "I could not verify this against live Revit because the required Revit tool did not complete successfully in this turn. No result was guessed.";
+
+const clientsByWorkspace = new Map<string, CodexAppServer>();
+const mcpRuntimesByWorkspace = new Map<string, CodexMcpToolRuntime>();
 const lastPermissionSignatureBySession = new Map<string, string>();
 const activeCodexTurnAborts = new Map<string, AbortController>();
 
@@ -153,6 +165,8 @@ export function getOperatorAgentBaseInstructions(): string {
     "Private KB policy: for standards/codes/specification questions, call `search_private_knowledge_base` first when available, answer from retrieved chunks only, and cite title + page range + heading + confidence. Prefer paraphrase over long verbatim quotes.",
     "Memory: read/write files under Workspace/memory/**. Treat Workspace/memory/daily/*.jsonl and Workspace/memory/longterm.jsonl as read-only memory stores unless the user explicitly asks to save a preference.",
     "For sheets/PDFs: prefer `print_sheets` (defaults to dryRun=true), or `revit_list_sheets` + `revit_export_pdf`. Always resolve what will be printed BEFORE exporting. For combined PDF deliverables, use `revit_export_pdf` with combine=true and verify the returned `verification.exists`, `sizeBytes`, and exact `path` before saying the export succeeded.",
+    "Sheet-count rule: for requests asking how many sheets exist, call `revit_list_sheets` with `action:\"count\"` (and `exact:true` when an exact total is requested). Do not infer sheet totals by counting DrawingSheet rows from `/revit/views` unless the sheet counter is genuinely unavailable, and state the fallback if that happens.",
+    "Schedule-row edit rule: inspect the bounded schedule with `revit_list_schedules` first, then call `revit_update_schedule_cell` in its default dry-run mode. Resolve by a unique row key plus target field, include `expectedValue` when the user supplied the old value, and apply only with `apply:true,dryRun:false` after the dry-run candidate is unambiguous. Do not pretend a visible schedule cell is independent from its backing instance/type parameter.",
     "For new sheet/view placement work, completion requires a presentation QC pass: run `/revit/sheets` detail with viewport geometry, keep viewports inside the drawable sheet area, align related views left/right when they fit, use consistent viewport title types, tighten model/annotation crops so stray annotations do not dominate the viewport box, then export/capture the sheet before reporting success.",
     "Tool discovery at scale: prefer `revit_search_tools` / `revit_tool_registry` to find primitives by intent, then inspect exact contracts with `revit_tool_doc` and runnable payloads with `revit_tool_examples`.",
     "If a needed Revit primitive exists but has no dedicated MCP wrapper yet, call it with `revit_call_tool` (method + path + body).",
@@ -323,20 +337,186 @@ function developerInstructions(): string {
   return ["Reference docs (read-only; may be truncated):", lib].join("\n\n");
 }
 
-async function getClient(): Promise<CodexAppServer> {
-  if (client) return client;
+export function getFreshRevitEvidenceRequirement(userText: string): FreshRevitEvidenceRequirement {
+  const text = (userText ?? "").toString().trim().toLowerCase();
+  if (!text) return { required: false, kind: "none", prompt: "" };
 
-  const workspaceRoot = getWorkspaceRoot();
+  const sheetCount =
+    /\b(?:how\s+many|count|number\s+of|total)\b[^?\n]{0,80}\bsheets?\b/.test(text) ||
+    /\bsheets?\b[^?\n]{0,80}\b(?:how\s+many|count|number|total)\b/.test(text);
+  if (sheetCount) {
+    return {
+      required: true,
+      kind: "sheet_count",
+      prompt:
+        "FRESH REVIT EVIDENCE REQUIRED: this turn must successfully call `revit_list_sheets` with `action:\"count\"` and `exact:true` (or call `/revit/sheets` with the same count request). Do not answer from memory, prior turns, a registry lookup, or `/revit/views`."
+    };
+  }
+
+  const entity = /\b(?:revit|model|project|document|sheet|view|schedule|element|equipment|family|type|instance|room|space|wall|door|window|duct|pipe|tag|parameter|connector|selection)\b/.test(text);
+  const liveIntent = /\b(?:how\s+many|count|list|find|show|which|where|inspect|check|verify|change|update|set|create|add|delete|remove|move|rename|print|export|capture|place|route|connect|resize|edit|select|open|current|active)\b/.test(text);
+  if (entity && liveIntent) {
+    return {
+      required: true,
+      kind: "revit_tool",
+      prompt:
+        "FRESH REVIT EVIDENCE REQUIRED: use at least one relevant `revit_operator` tool successfully in this turn before reporting a live-model fact or completion. Do not answer from memory or prior turns."
+    };
+  }
+
+  return { required: false, kind: "none", prompt: "" };
+}
+
+function parseToolArguments(value: unknown): any {
+  if (typeof value !== "string") return value && typeof value === "object" ? value : {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function isSuccessfulFreshRevitEvidence(
+  requirement: FreshRevitEvidenceRequirement,
+  call: { server?: unknown; tool?: unknown; arguments?: unknown; success?: unknown; status?: unknown; error?: unknown }
+): boolean {
+  if (!requirement.required) return true;
+  const server = typeof call.server === "string" ? call.server.trim().toLowerCase().replace(/-/g, "_") : "";
+  if (server && server !== "revit_operator") return false;
+  const status = typeof call.status === "string" ? call.status.trim().toLowerCase() : "";
+  const succeeded = call.success === true || (call.success !== false && !call.error && ["success", "ok", "done", "completed"].includes(status));
+  if (!succeeded) return false;
+  if (requirement.kind === "revit_tool") return true;
+
+  const tool = typeof call.tool === "string" ? call.tool.trim() : "";
+  const args = parseToolArguments(call.arguments);
+  if (tool === "revit_list_sheets") {
+    return String(args.action ?? "").toLowerCase() === "count" || args.countOnly === true;
+  }
+  if (tool === "revit_call_tool") {
+    const body = parseToolArguments(args.body);
+    return String(args.path ?? "").toLowerCase() === "/revit/sheets" && String(body.action ?? "").toLowerCase() === "count";
+  }
+  return false;
+}
+
+export function adaptMcpToolCallResultToDynamicResponse(result: any): { contentItems: Array<{ type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string }>; success: boolean } {
+  const contentItems: Array<{ type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string }> = [];
+  const content = Array.isArray(result?.content) ? result.content : [];
+  for (const item of content) {
+    if (item?.type === "text" && typeof item.text === "string") {
+      contentItems.push({ type: "inputText", text: item.text });
+      continue;
+    }
+    if (item?.type === "image" && typeof item.data === "string" && typeof item.mimeType === "string") {
+      contentItems.push({ type: "inputImage", imageUrl: `data:${item.mimeType};base64,${item.data}` });
+      continue;
+    }
+    try {
+      contentItems.push({ type: "inputText", text: JSON.stringify(item) });
+    } catch {
+      contentItems.push({ type: "inputText", text: String(item) });
+    }
+  }
+  if (contentItems.length === 0 && result?.structuredContent !== undefined) {
+    contentItems.push({ type: "inputText", text: JSON.stringify(result.structuredContent) });
+  }
+  if (contentItems.length === 0) contentItems.push({ type: "inputText", text: result?.isError ? "MCP tool failed without an error body." : "MCP tool completed without output." });
+  return { contentItems, success: result?.isError !== true };
+}
+
+export function adaptDynamicToolCompletedItem(item: any): {
+  server: string | null;
+  tool: string;
+  status: string | null;
+  arguments: unknown;
+  duration_ms: number | null;
+  result: unknown;
+  error: string | null;
+  success: boolean | null;
+} | null {
+  if (item?.type !== "dynamicToolCall" || typeof item.tool !== "string") return null;
+  const contentItems = Array.isArray(item.contentItems) ? item.contentItems : null;
+  const failureText = item.success === false && contentItems
+    ? contentItems
+        .filter((entry: any) => entry?.type === "inputText" && typeof entry.text === "string")
+        .map((entry: any) => entry.text.trim())
+        .filter(Boolean)
+        .join("\n")
+    : "";
+  return {
+    server: typeof item.namespace === "string" ? item.namespace : null,
+    tool: item.tool,
+    status: typeof item.status === "string" ? item.status : null,
+    arguments: item.arguments ?? null,
+    duration_ms: typeof item.durationMs === "number" ? item.durationMs : null,
+    result: contentItems,
+    error: failureText || (item.success === false ? "Dynamic tool call failed without an error body." : null),
+    success: typeof item.success === "boolean" ? item.success : null
+  };
+}
+
+async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, request: CodexServerRequest): Promise<unknown> {
+  if (request.method === "item/tool/call") {
+    const params = request.params ?? {};
+    const namespace = typeof params.namespace === "string" ? params.namespace : "";
+    if (namespace !== "revit_operator" && !namespace.startsWith("mcp__")) {
+      return { contentItems: [{ type: "inputText", text: `Unsupported dynamic tool namespace: ${namespace || "(none)"}` }], success: false };
+    }
+    const server = namespace === "revit_operator" ? namespace : namespace.slice("mcp__".length);
+    if (server !== "revit_operator") {
+      return { contentItems: [{ type: "inputText", text: `Unsupported MCP server namespace: ${namespace}` }], success: false };
+    }
+    try {
+      const result = await runtime.callTool(params.tool, params.arguments ?? {});
+      return adaptMcpToolCallResultToDynamicResponse(result);
+    } catch (error) {
+      return {
+        contentItems: [{ type: "inputText", text: error instanceof Error ? error.message : String(error) }],
+        success: false
+      };
+    }
+  }
+  if (request.method === "item/commandExecution/requestApproval" || request.method === "item/fileChange/requestApproval") return { decision: "decline" };
+  if (request.method === "mcpServer/elicitation/request") return { action: "decline", content: null, _meta: null };
+  if (request.method === "item/tool/requestUserInput") return { answers: {} };
+  if (request.method === "currentTime/read") return { currentTimeAt: Math.floor(Date.now() / 1000) };
+  throw new Error(`Unsupported Codex server request: ${request.method}`);
+}
+
+async function getClient(workspaceRoot = getWorkspaceRoot()): Promise<CodexAppServer> {
+  const existing = clientsByWorkspace.get(workspaceRoot);
+  if (existing) return existing;
   const codexHome = getCodexHome(workspaceRoot);
   ensureCodexHomeAuth({ codexHome });
   ensureCodexHomeConfig({ codexHome });
+  const spawnEnv = buildCodexSpawnEnv(workspaceRoot);
+  let mcpRuntime = mcpRuntimesByWorkspace.get(workspaceRoot);
+  if (!mcpRuntime) {
+    mcpRuntime = new CodexMcpToolRuntime({
+      backendCwd: process.cwd(),
+      workspaceRoot,
+      codexHome,
+      spawnEnv
+    });
+    mcpRuntimesByWorkspace.set(workspaceRoot, mcpRuntime);
+  }
 
-  client = new CodexAppServer({
+  const client = new CodexAppServer({
     cwd: workspaceRoot,
     codexHome,
-    spawnEnv: buildCodexSpawnEnv(workspaceRoot)
+    spawnEnv
   });
-  await client.ensureStarted();
+  client.setServerRequestHandler(async request => await handleCodexServerRequest(mcpRuntime, request));
+  clientsByWorkspace.set(workspaceRoot, client);
+  try {
+    await client.ensureStarted();
+  } catch (error) {
+    if (clientsByWorkspace.get(workspaceRoot) === client) clientsByWorkspace.delete(workspaceRoot);
+    client.stop();
+    throw error;
+  }
 
   // Ensure MCP server config is reloaded at least once on startup.
   try {
@@ -353,45 +533,53 @@ function isTransportClosedError(err: unknown): boolean {
   return /transport closed/i.test(msg) || /app-server exited/i.test(msg) || /ECONNRESET/i.test(msg);
 }
 
-async function withTransportRetry<T>(fn: () => Promise<T>): Promise<T> {
+async function withTransportRetry<T>(workspaceRoot: string, fn: (client: CodexAppServer) => Promise<T>): Promise<T> {
+  let client = await getClient(workspaceRoot);
   try {
-    return await fn();
+    return await fn(client);
   } catch (err) {
     if (!isTransportClosedError(err)) throw err;
     // Best-effort: restart the app-server connection once and retry.
-    client = null;
-    const c = await getClient();
+    if (clientsByWorkspace.get(workspaceRoot) === client) clientsByWorkspace.delete(workspaceRoot);
+    client.stop();
+    client = await getClient(workspaceRoot);
     // Touch the connection to ensure it's alive.
     try {
-      await c.request("initialize", {
+      await client.request("initialize", {
         clientInfo: { name: "revit-operator-backend", title: "Revit Operator Backend", version: "0.0.0" },
-        capabilities: null
+        capabilities: { experimentalApi: true }
       });
     } catch {
       // ignore; getClient already initialized once in most cases
     }
-    return await fn();
+    return await fn(client);
   }
 }
 
 export async function warmCodexAppServer(): Promise<void> {
-  await getClient();
+  await getClient(getWorkspaceRoot());
 }
 
-async function getOrCreateThreadId(sessionId: string): Promise<string> {
+export function getCodexAppServerCompatibility(): { version: ReturnType<CodexAppServer["getCompatibilityReceipt"]>["version"]; initialized: boolean } | null {
+  const receipt = clientsByWorkspace.get(getWorkspaceRoot())?.getCompatibilityReceipt();
+  return receipt ? { version: receipt.version, initialized: receipt.initialize_response !== null } : null;
+}
+
+async function getOrCreateThreadId(sessionId: string, client: CodexAppServer, workspaceRoot: string): Promise<string> {
   const existing = getCodexThreadId(sessionId);
   if (existing) return existing;
 
-  const c = await getClient();
-  const workspaceRoot = getWorkspaceRoot();
-
-  const resp = (await c.request("thread/start", {
+  const runtime = mcpRuntimesByWorkspace.get(workspaceRoot);
+  if (!runtime) throw new Error("Revit Operator MCP runtime is not configured for this workspace.");
+  const dynamicTools = [await runtime.getDynamicToolNamespace()];
+  const resp = (await client.request("thread/start", {
     cwd: workspaceRoot,
     sandbox: "workspace-write",
     approvalPolicy: "never",
     model: getDefaultModel(),
     baseInstructions: getOperatorAgentBaseInstructions(),
     developerInstructions: developerInstructions(),
+    dynamicTools,
     experimentalRawEvents: false
   })) as any;
 
@@ -400,7 +588,7 @@ async function getOrCreateThreadId(sessionId: string): Promise<string> {
 
   try {
     // Subscribe to this thread's notifications (required for streaming on some app-server builds).
-    await c.request("addConversationListener", { conversationId: threadId, experimentalRawEvents: false });
+    await client.request("addConversationListener", { conversationId: threadId, experimentalRawEvents: false });
   } catch {
     // ignore; not required on all builds
   }
@@ -421,8 +609,12 @@ export async function decideCodex(req: ChatRequest): Promise<ChatResponse> {
 }
 
 export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks): Promise<ChatResponse> {
-  const c = await getClient();
-  const threadId = await withTransportRetry(() => getOrCreateThreadId(req.session_id));
+  const workspaceRoot = getWorkspaceRoot();
+  let c = await getClient(workspaceRoot);
+  const threadId = await withTransportRetry(workspaceRoot, async activeClient => {
+    c = activeClient;
+    return await getOrCreateThreadId(req.session_id, activeClient, workspaceRoot);
+  });
 
   // Some app-server builds require a conversation listener for streaming notifications;
   // re-assert it each turn (best-effort) to avoid "Transport closed" / silent streams.
@@ -433,6 +625,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
 
   const text = (req.user_text ?? "").toString();
+  const freshEvidenceRequirement = getFreshRevitEvidenceRequirement(text);
   let memBlock = "";
   let projectProfileBlock = "";
   let requirementsBlock = "";
@@ -463,7 +656,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
   try {
     const query = text.trim() || (getPinnedGoal(req.session_id) ?? "") || "";
-    const mem = query ? retrieveMemoryContext({ queryText: query, maxEntries: 6 }) : [];
+    const mem = !freshEvidenceRequirement.required && query ? retrieveMemoryContext({ queryText: query, maxEntries: 6 }) : [];
     if (mem.length > 0) {
       const lines: string[] = [];
       let i = 0;
@@ -494,6 +687,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
             try {
               blocks.push(formatEnvironmentSummaryForPrompt());
             } catch {}
+            if (freshEvidenceRequirement.prompt) blocks.push(freshEvidenceRequirement.prompt);
             if (memBlock) blocks.push(`MEMORY CONTEXT (read-only):\n${memBlock}`);
             try {
               const perms = formatPermissionSummaryFromContext(req.context);
@@ -541,21 +735,32 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [], requirements_receipt: requirementsReceipt };
     }
   }
+  let courierContext: ReturnType<typeof beginRevitCourierTurnContext> = null;
   let start: any;
   try {
-    start = (await withTransportRetry(() =>
-      c.request("turn/start", {
+    courierContext = beginRevitCourierTurnContext({
+      session_id: req.session_id,
+      message_id: req.message_id,
+      ttl_ms: codexTurnTimeoutMs() + 60_000
+    });
+    start = (await withTransportRetry(workspaceRoot, async activeClient => {
+      c = activeClient;
+      return await activeClient.request("turn/start", {
         threadId,
         input
-      })
-    )) as any;
+      });
+    })) as any;
   } catch (error) {
+    endRevitCourierTurnContext(courierContext);
+    courierContext = null;
     endRequirementsPlanningLease(requirementsLease);
     throw error;
   }
 
   const turnId = typeof start?.turn?.id === "string" ? start.turn.id : "";
   if (!turnId) {
+    endRevitCourierTurnContext(courierContext);
+    courierContext = null;
     endRequirementsPlanningLease(requirementsLease);
     throw new Error("Codex turn/start did not return a turn id.");
   }
@@ -566,6 +771,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
 
   let assistantText = "";
+  let assistantDeltas = "";
+  let hasFreshRevitEvidence = !freshEvidenceRequirement.required;
 
   const unsubscribe = c.onNotification(n => {
     try {
@@ -574,7 +781,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         if (n.params?.turnId !== turnId) return;
         const delta = typeof n.params?.delta === "string" ? n.params.delta : "";
         if (delta) {
-          cb.onDelta?.(delta);
+          assistantDeltas += delta;
+          if (!freshEvidenceRequirement.required) cb.onDelta?.(delta);
         }
       }
 
@@ -585,7 +793,77 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
           const full = typeof item.text === "string" ? item.text : "";
           if (full) assistantText = full;
         }
+        const dynamicTool = adaptDynamicToolCompletedItem(item);
+        if (dynamicTool) {
+          if (isSuccessfulFreshRevitEvidence(freshEvidenceRequirement, dynamicTool)) hasFreshRevitEvidence = true;
+          try {
+            appendEvent(req.session_id, "tool", "codex.dynamicToolCall", {
+              thread_id: threadId,
+              turn_id: turnId,
+              ...dynamicTool
+            });
+          } catch {
+            // ignore
+          }
+          try {
+            const ts = new Date().toISOString();
+            persistence.appendToolCall(req.session_id, {
+              ts,
+              kind: "mcp.tool_call",
+              session_id: req.session_id,
+              tool: dynamicTool.tool,
+              server: dynamicTool.server,
+              arguments: dynamicTool.arguments,
+              status: dynamicTool.status,
+              duration_ms: dynamicTool.duration_ms,
+              thread_id: threadId,
+              turn_id: turnId
+            });
+            persistence.appendToolOutput(req.session_id, {
+              ts,
+              kind: "mcp.tool_result",
+              session_id: req.session_id,
+              tool: dynamicTool.tool,
+              server: dynamicTool.server,
+              status: dynamicTool.status,
+              duration_ms: dynamicTool.duration_ms,
+              result: dynamicTool.result,
+              error: dynamicTool.error,
+              thread_id: threadId,
+              turn_id: turnId
+            });
+          } catch {
+            // ignore
+          }
+          if (shouldNotifyCodexToolCalls()) {
+            try {
+              const slow = dynamicTool.duration_ms !== null && dynamicTool.duration_ms >= toolNotifyThresholdMs();
+              const summary = dynamicTool.error
+                ? `Tool ${dynamicTool.tool}: ${dynamicTool.error}`
+                : `Tool ${dynamicTool.tool} completed${dynamicTool.duration_ms !== null ? ` (ms=${Math.round(dynamicTool.duration_ms)}${slow ? ", slow=true" : ""})` : ""}.`;
+              appendNotification(req.session_id, "codex.tool_call", summary, {
+                server: dynamicTool.server,
+                tool: dynamicTool.tool,
+                status: dynamicTool.status,
+                duration_ms: dynamicTool.duration_ms,
+                error: dynamicTool.error,
+                arguments: dynamicTool.arguments,
+                result: dynamicTool.result,
+                slow: slow || null
+              });
+            } catch {
+              // ignore
+            }
+          }
+        }
         if (item?.type === "mcpToolCall") {
+          if (isSuccessfulFreshRevitEvidence(freshEvidenceRequirement, {
+            server: item.server,
+            tool: item.tool,
+            arguments: item.arguments,
+            status: item.status,
+            error: item.error
+          })) hasFreshRevitEvidence = true;
           try {
             appendEvent(req.session_id, "tool", "codex.mcpToolCall", {
               thread_id: threadId,
@@ -698,14 +976,15 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   cb.abortSignal?.addEventListener("abort", forwardExternalAbort, { once: true });
   let turnCancelled = false;
   try {
-    await withTransportRetry(() =>
-      c.waitForTurnCompleted({
+    await withTransportRetry(workspaceRoot, async activeClient => {
+      c = activeClient;
+      return await activeClient.waitForTurnCompleted({
         threadId,
         turnId,
         timeoutMs: codexTurnTimeoutMs(),
         abortSignal: activeTurnAbort.signal
-      })
-    );
+      });
+    });
   } catch (error) {
     if (!activeTurnAbort.signal.aborted) throw error;
     turnCancelled = true;
@@ -716,6 +995,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       activeCodexTurnAborts.delete(activeTurnKey);
     }
     endRequirementsPlanningLease(requirementsLease);
+    endRevitCourierTurnContext(courierContext);
+    courierContext = null;
   }
 
   if (turnCancelled) {
@@ -726,6 +1007,30 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     };
   }
 
+  assistantText = assistantText || assistantDeltas;
+  if (freshEvidenceRequirement.required && !hasFreshRevitEvidence) {
+    assistantText = FRESH_REVIT_EVIDENCE_FAILURE;
+    try {
+      appendEvent(req.session_id, "assistant", "codex.fresh_revit_evidence.missing", {
+        thread_id: threadId,
+        turn_id: turnId,
+        requirement: freshEvidenceRequirement.kind
+      });
+    } catch {
+      // ignore
+    }
+  } else if (freshEvidenceRequirement.required) {
+    try {
+      appendEvent(req.session_id, "assistant", "codex.fresh_revit_evidence.satisfied", {
+        thread_id: threadId,
+        turn_id: turnId,
+        requirement: freshEvidenceRequirement.kind
+      });
+    } catch {
+      // ignore
+    }
+  }
+  if (freshEvidenceRequirement.required && assistantText) cb.onDelta?.(assistantText);
   cb.onDone?.(assistantText);
   try {
     appendEvent(req.session_id, "assistant", "codex.turn.completed", {

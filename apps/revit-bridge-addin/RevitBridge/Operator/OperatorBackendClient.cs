@@ -556,6 +556,67 @@ namespace RevitBridge.Operator
             return json ?? "";
         }
 
+        public async Task<string> ClaimNextRevitCourierJobJsonAsync(string? sessionId, string executorId, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(executorId)) throw new ArgumentException("executorId is required.");
+            var body = JsonSerializer.Serialize(new
+            {
+                session_id = string.IsNullOrWhiteSpace(sessionId) ? null : sessionId,
+                executor_id = executorId,
+                wait_ms = 10000
+            }, OperatorUiProtocol.JsonOptions);
+            using var resp = await SendWithAuthAsync(
+                () => new HttpRequestMessage(HttpMethod.Post, "api/revit-courier/claim-next")
+                {
+                    Content = new StringContent(body, Encoding.UTF8, "application/json")
+                },
+                cancellationToken).ConfigureAwait(false);
+            var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+            EnsureSuccessOrThrow(resp, json, "Backend /api/revit-courier/claim-next");
+            return json ?? "";
+        }
+
+        public async Task<string> CompleteRevitCourierJobJsonAsync(string sessionId, string jobId, string executorId, object? result, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(sessionId)) throw new ArgumentException("sessionId is required.");
+            if (string.IsNullOrWhiteSpace(jobId)) throw new ArgumentException("jobId is required.");
+            if (string.IsNullOrWhiteSpace(executorId)) throw new ArgumentException("executorId is required.");
+            var body = JsonSerializer.Serialize(new { session_id = sessionId, executor_id = executorId, result }, OperatorUiProtocol.JsonOptions);
+            using var resp = await SendWithAuthAsync(
+                () => new HttpRequestMessage(HttpMethod.Post, $"api/revit-courier/jobs/{Uri.EscapeDataString(jobId)}/complete")
+                {
+                    Content = new StringContent(body, Encoding.UTF8, "application/json")
+                },
+                cancellationToken).ConfigureAwait(false);
+            var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+            EnsureSuccessOrThrow(resp, json, "Backend /api/revit-courier/jobs/:id/complete");
+            return json ?? "";
+        }
+
+        public async Task<string> FailRevitCourierJobJsonAsync(string sessionId, string jobId, string executorId, string error, object? result, bool retryable, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(sessionId)) throw new ArgumentException("sessionId is required.");
+            if (string.IsNullOrWhiteSpace(jobId)) throw new ArgumentException("jobId is required.");
+            if (string.IsNullOrWhiteSpace(executorId)) throw new ArgumentException("executorId is required.");
+            var body = JsonSerializer.Serialize(new
+            {
+                session_id = sessionId,
+                executor_id = executorId,
+                error = string.IsNullOrWhiteSpace(error) ? "Revit courier execution failed." : error,
+                result,
+                retryable
+            }, OperatorUiProtocol.JsonOptions);
+            using var resp = await SendWithAuthAsync(
+                () => new HttpRequestMessage(HttpMethod.Post, $"api/revit-courier/jobs/{Uri.EscapeDataString(jobId)}/fail")
+                {
+                    Content = new StringContent(body, Encoding.UTF8, "application/json")
+                },
+                cancellationToken).ConfigureAwait(false);
+            var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+            EnsureSuccessOrThrow(resp, json, "Backend /api/revit-courier/jobs/:id/fail");
+            return json ?? "";
+        }
+
         public async Task<string> CompleteRevitBatchItemJsonAsync(string jobId, string itemId, string executorId, object? result, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(jobId)) throw new ArgumentException("jobId is required.");

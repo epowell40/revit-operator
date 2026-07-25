@@ -35,6 +35,7 @@ namespace RevitBridge.Operator
                     "/revit/native-api-catalog",
                     "/revit/native-api-search",
                     "/revit/native-api-call",
+                    "/revit/native-api-ops",
                     "/revit/self-test",
                     "/revit/state-snapshot",
                     "/revit/views",

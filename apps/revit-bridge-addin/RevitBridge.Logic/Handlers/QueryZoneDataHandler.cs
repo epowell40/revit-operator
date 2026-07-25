@@ -38,8 +38,11 @@ namespace RevitBridge.Logic.Handlers
 
         public Task<object> Handle(UIApplication app, string jsonData)
         {
-            var p = JsonSerializer.Deserialize<Params>(jsonData);
+            var p = string.IsNullOrWhiteSpace(jsonData) ? new Params() : JsonSerializer.Deserialize<Params>(jsonData) ?? new Params();
             var doc = app.ActiveUIDocument.Document;
+
+            if (string.IsNullOrWhiteSpace(p.levelName))
+                throw new ArgumentException("levelName is required.");
 
             // 1. Get Level
             Level level = null;
@@ -51,7 +54,7 @@ namespace RevitBridge.Logic.Handlers
                     .FirstOrDefault(l => l.Name.Equals(p.levelName, StringComparison.OrdinalIgnoreCase));
             }
 
-            if (level == null) return Task.FromResult<object>(new { error = "Level not found" });
+            if (level == null) throw new ArgumentException($"Level '{p.levelName}' not found.");
 
             // 2. Get Spaces
             var spaces = new FilteredElementCollector(doc)

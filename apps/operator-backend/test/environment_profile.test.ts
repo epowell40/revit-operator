@@ -54,3 +54,18 @@ test("environment memory records failed tool results and capability manifest", a
   const manifest = buildCapabilityManifest(profile);
   assert.ok(Array.isArray(manifest.restrictions));
 });
+
+test("a successful live Revit result marks the Revit API available", () => {
+  process.env.OPERATOR_ENV_PROFILE_PATH = tempProfilePath("revit-success");
+  refreshEnvironmentProfile();
+  recordToolResultsEnvironmentMemory([{
+    action_id: "a1",
+    method: "POST",
+    path: "/revit/sheets",
+    status: "done",
+    result_json: { count: 345 }
+  }]);
+  const profile = ensureEnvironmentProfile();
+  assert.equal(profile.capabilities.can_use_revit_api, true);
+  assert.equal(profile.tools.revit_api?.available, true);
+});

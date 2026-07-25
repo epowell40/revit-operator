@@ -1,0 +1,148 @@
+import fs from "node:fs";
+import path from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
+function stringEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
+  return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+}
+
+function toolTimeoutMs(env: NodeJS.ProcessEnv): number {
+  const parsed = Number.parseInt(env.OPERATOR_MCP_TOOL_TIMEOUT_MS ?? "", 10);
+  if (!Number.isFinite(parsed)) return 240_000;
+  return Math.max(1_000, Math.min(30 * 60_000, parsed));
+}
+
+export function resolveOperatorMcpServerSpec(backendCwd: string): { serverJs: string; cwd: string } {
+  const candidates = [
+    path.resolve(backendCwd, "..", "mcp-server", "dist", "server.js"),
+    path.resolve(backendCwd, "..", "apps", "mcp-server", "dist", "server.js")
+  ];
+  const serverJs = candidates.find(candidate => fs.existsSync(candidate));
+  if (!serverJs) throw new Error(`Could not locate the Revit Operator MCP server. Checked: ${candidates.join(", ")}`);
+  return { serverJs, cwd: path.dirname(path.dirname(serverJs)) };
+}
+
+export class CodexMcpToolRuntime {
+  private client: Client | null = null;
+  private transport: StdioClientTransport | null = null;
+  private starting: Promise<void> | null = null;
+  private stderrTail = "";
+  private dynamicNamespace: unknown | null = null;
+
+  constructor(private readonly opts: {
+    backendCwd: string;
+    workspaceRoot: string;
+    codexHome: string;
+    spawnEnv: NodeJS.ProcessEnv;
+  }) {}
+
+  private async ensureStarted(): Promise<void> {
+    if (this.client) return;
+    if (this.starting) return await this.starting;
+    this.starting = this.start();
+    try {
+      await this.starting;
+    } finally {
+      this.starting = null;
+    }
+  }
+
+  private async start(): Promise<void> {
+    const spec = resolveOperatorMcpServerSpec(this.opts.backendCwd);
+    const env = stringEnvironment({
+      ...this.opts.spawnEnv,
+      OPERATOR_WORKSPACE_ROOT: this.opts.workspaceRoot,
+      CODEX_HOME: this.opts.codexHome
+    });
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [spec.serverJs],
+      cwd: spec.cwd,
+      env,
+      stderr: "pipe"
+    });
+    transport.stderr?.on("data", chunk => {
+      this.stderrTail = `${this.stderrTail}${chunk.toString()}`.slice(-16_384);
+    });
+    const client = new Client({ name: "revit-operator-backend-mcp-adapter", version: "1.0.0" }, { capabilities: {} });
+    try {
+      await client.connect(transport);
+      this.transport = transport;
+      this.client = client;
+    } catch (error) {
+      try { await transport.close(); } catch {}
+      const detail = this.stderrTail.trim();
+      throw new Error(`Could not start the Revit Operator MCP runtime.${detail ? ` stderr: ${detail}` : ""}`, { cause: error });
+    }
+  }
+
+  async callTool(tool: string, args: unknown): Promise<any> {
+    await this.ensureStarted();
+    const client = this.client;
+    if (!client) throw new Error("Revit Operator MCP runtime is not connected.");
+    const timeout = toolTimeoutMs(this.opts.spawnEnv);
+    try {
+      return await client.callTool(
+        { name: tool, arguments: args && typeof args === "object" ? args as Record<string, unknown> : {} },
+        undefined,
+        { timeout, maxTotalTimeout: timeout }
+      );
+    } catch (error) {
+      throw new Error(
+        `[operator_mcp_tool_error] ${tool} failed and was not automatically replayed because its outcome may be unknown: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error }
+      );
+    }
+  }
+
+  async getDynamicToolNamespace(): Promise<any> {
+    if (this.dynamicNamespace) return this.dynamicNamespace;
+    await this.ensureStarted();
+    const client = this.client;
+    if (!client) throw new Error("Revit Operator MCP runtime is not connected.");
+    const timeout = toolTimeoutMs(this.opts.spawnEnv);
+    const listed = await client.listTools(undefined, { timeout, maxTotalTimeout: timeout });
+    const eager = new Set([
+      "operator_runtime_probe",
+      "revit_ping",
+      "revit_get_context",
+      "revit_list_sheets",
+      "revit_list_schedules",
+      "revit_update_schedule_cell",
+      "revit_replace_schedule_values",
+      "revit_set_parameters",
+      "revit_write_grant_status",
+      "revit_search_tools",
+      "revit_tool_registry",
+      "revit_tool_doc",
+      "revit_tool_examples",
+      "revit_call_tool"
+    ]);
+    this.dynamicNamespace = {
+      type: "namespace",
+      name: "revit_operator",
+      description: "Revit Operator MCP tools. Search the registry first when the exact primitive is unknown; writes remain enforced by the Revit bridge grant.",
+      tools: listed.tools.map(tool => ({
+        type: "function",
+        name: tool.name,
+        description: tool.description ?? "Revit Operator tool",
+        inputSchema: tool.inputSchema,
+        deferLoading: !eager.has(tool.name)
+      }))
+    };
+    return this.dynamicNamespace;
+  }
+
+  stop(): void {
+    const client = this.client;
+    const transport = this.transport;
+    this.client = null;
+    this.transport = null;
+    this.dynamicNamespace = null;
+    void (async () => {
+      try { await client?.close(); } catch {}
+      try { await transport?.close(); } catch {}
+    })();
+  }
+}
