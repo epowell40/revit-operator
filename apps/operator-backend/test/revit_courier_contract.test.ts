@@ -44,9 +44,54 @@ test("courier claims only the bound session and writes a durable terminal result
   assert.equal(claimed?.status, "running");
   assert.throws(() => completeRevitToolJob({ session_id: "session-a", job_id: id, executor_id: "worker-2", result: {} }), /not claimed/i);
   completeRevitToolJob({ session_id: "session-a", job_id: id, executor_id: "worker-1", result: { status: "ok" } });
+  const replayed = completeRevitToolJob({ session_id: "session-a", job_id: id, executor_id: "worker-1", result: { status: "different" } });
+  assert.equal(replayed.status, "succeeded");
+  assert.throws(
+    () => failRevitToolJob({ session_id: "session-a", job_id: id, executor_id: "worker-1", error: "contradictory" }),
+    /contradictory failure/i
+  );
   const receipt = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", id, "result.json"), "utf8"));
   assert.equal(receipt.status, "succeeded");
   assert.deepEqual(receipt.result, { status: "ok" });
+});
+
+test("courier treats a durable result as authoritative and never reclaims its stale job summary", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-reconcile-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const id = writeJob(root);
+  const dir = path.join(root, "artifacts", "revit-courier", "jobs", id);
+  fs.writeFileSync(path.join(dir, "result.json"), JSON.stringify({
+    version: "revit-operator.revit-tool-result.v1",
+    id,
+    correlation_id: id,
+    status: "succeeded",
+    finished_at: "2026-07-25T12:00:00.000Z",
+    result: { status: "already-applied" },
+    retryable: false
+  }), "utf8");
+
+  assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-2" }).job, null);
+  const reconciled = JSON.parse(fs.readFileSync(path.join(dir, "job.json"), "utf8"));
+  assert.equal(reconciled.status, "succeeded");
+  assert.equal(reconciled.finished_at, "2026-07-25T12:00:00.000Z");
+});
+
+test("courier quarantines a mismatched durable result instead of replaying the job", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-corrupt-result-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const id = writeJob(root);
+  const dir = path.join(root, "artifacts", "revit-courier", "jobs", id);
+  fs.writeFileSync(path.join(dir, "result.json"), JSON.stringify({
+    version: "revit-operator.revit-tool-result.v1",
+    id: "different-job",
+    correlation_id: "different-job",
+    status: "succeeded"
+  }), "utf8");
+
+  assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-2" }).job, null);
+  const quarantined = JSON.parse(fs.readFileSync(path.join(dir, "job.json"), "utf8"));
+  assert.equal(quarantined.status, "failed");
+  assert.match(quarantined.error, /quarantined without replay/i);
 });
 
 test("courier can claim an accessible job across Native and Sidecar session boundaries", () => {

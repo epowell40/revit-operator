@@ -48,6 +48,37 @@ test("MCP courier publishes a correlated job and resolves its durable result", a
   assert.deepEqual(await pending, { status: "ok" });
 });
 
+test("MCP courier resumes one idempotent job when the same turn retries an identical call", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-idempotent-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+  fs.mkdirSync(path.join(root, "config"), { recursive: true });
+  fs.writeFileSync(path.join(root, "config", "revit-courier-context.json"), JSON.stringify({
+    version: "revit-operator.revit-courier-context.v1",
+    active: true,
+    session_id: "session-resume",
+    message_id: "message-resume",
+    expires_at: new Date(Date.now() + 60_000).toISOString()
+  }), "utf8");
+
+  const first = callRevitViaCourier<{ status: string }>("/revit/set-parameter", "POST", { changes: [{ elementId: 1, parameterName: "Mark", value: "A" }] });
+  const jobRef = await waitForJob(root);
+  const second = callRevitViaCourier<{ status: string }>("/revit/set-parameter", "POST", { changes: [{ elementId: 1, parameterName: "Mark", value: "A" }] });
+  const jobIds = fs.readdirSync(path.join(root, "artifacts", "revit-courier", "jobs"));
+  assert.deepEqual(jobIds, [jobRef.id]);
+  assert.equal(jobRef.id.length, 64);
+
+  fs.writeFileSync(path.join(jobRef.dir, "result.json"), JSON.stringify({
+    version: "revit-operator.revit-tool-result.v1",
+    id: jobRef.id,
+    correlation_id: jobRef.id,
+    status: "succeeded",
+    result: { status: "applied-once" },
+    retryable: false
+  }), "utf8");
+  assert.deepEqual(await Promise.all([first, second]), [{ status: "applied-once" }, { status: "applied-once" }]);
+});
+
 test("MCP courier terminalizes an unclaimed timeout before the outer turn stalls", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-timeout-"));
   process.env.OPERATOR_WORKSPACE_ROOT = root;

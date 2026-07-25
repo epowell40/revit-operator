@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { getWorkspaceRoot } from "./workspace.js";
@@ -9,6 +9,7 @@ const RESULT_VERSION = "revit-operator.revit-tool-result.v1";
 type CourierContext = {
   version?: string;
   active?: boolean;
+  token?: string;
   session_id?: string;
   message_id?: string;
   expires_at?: string;
@@ -27,7 +28,14 @@ type CourierResult = {
 type CourierJob = {
   version?: string;
   id?: string;
+  session_id?: string;
+  message_id?: string | null;
+  turn_token?: string | null;
   correlation_id?: string;
+  idempotency_key?: string;
+  method?: string;
+  path?: string;
+  expires_at?: string;
   status?: string;
   claim?: unknown;
   [key: string]: unknown;
@@ -68,12 +76,42 @@ function delay(ms: number): Promise<void> {
 function readResult(resultPath: string, id: string): CourierResult | null {
   try {
     const receipt = JSON.parse(fs.readFileSync(resultPath, "utf8")) as CourierResult;
-    if (receipt.version !== RESULT_VERSION || receipt.id !== id) throw new Error("Revit courier returned a mismatched result receipt.");
+    if (receipt.version !== RESULT_VERSION || receipt.id !== id || (receipt as { correlation_id?: string }).correlation_id !== id) {
+      throw new Error("Revit courier returned a mismatched result receipt.");
+    }
     return receipt;
   } catch (error) {
-    if (error instanceof Error && /ENOENT|cannot find the file/i.test(error.message)) return null;
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return null;
     throw error;
   }
+}
+
+function publishOrResumeJob(jobPath: string, candidate: CourierJob): CourierJob {
+  fs.mkdirSync(path.dirname(jobPath), { recursive: true });
+  try {
+    fs.writeFileSync(jobPath, `${JSON.stringify(candidate, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+    return candidate;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
+  }
+
+  let existing: CourierJob;
+  try {
+    existing = JSON.parse(fs.readFileSync(jobPath, "utf8")) as CourierJob;
+  } catch {
+    throw new Error("Revit courier found an unreadable existing idempotent job receipt.");
+  }
+  const matches = existing.version === JOB_VERSION &&
+    existing.id === candidate.id &&
+    existing.correlation_id === candidate.correlation_id &&
+    existing.idempotency_key === candidate.idempotency_key &&
+    existing.session_id === candidate.session_id &&
+    (existing.message_id ?? null) === (candidate.message_id ?? null) &&
+    (existing.turn_token ?? null) === (candidate.turn_token ?? null) &&
+    existing.method === candidate.method &&
+    existing.path === candidate.path;
+  if (!matches) throw new Error("Revit courier idempotency collision detected; refusing to broaden or replay the call.");
+  return existing;
 }
 
 function resolveResult<T>(receipt: CourierResult): T {
@@ -135,20 +173,22 @@ export async function callRevitViaCourier<T>(revitPath: string, method: string, 
 
   const durationMs = timeoutMs();
   const now = Date.now();
-  const id = randomUUID().replace(/-/g, "");
   const bodyJson = JSON.stringify(body) ?? "null";
   if (Buffer.byteLength(bodyJson, "utf8") > 2 * 1024 * 1024) throw new Error("Revit courier request body exceeds 2 MiB.");
   const idempotencyKey = createHash("sha256")
-    .update(`${context.session_id}\n${context.message_id ?? ""}\n${normalizedMethod}\n${revitPath}\n${bodyJson}`)
+    .update(`${context.session_id}\n${context.message_id ?? ""}\n${context.token ?? ""}\n${normalizedMethod}\n${revitPath}\n${bodyJson}`)
     .digest("hex");
+  // A stable job id makes a transport retry resume the same durable operation instead of publishing a duplicate write.
+  const id = idempotencyKey;
   const jobDir = path.join(getWorkspaceRoot(), "artifacts", "revit-courier", "jobs", id);
   const jobPath = path.join(jobDir, "job.json");
   const resultPath = path.join(jobDir, "result.json");
-  writeJsonAtomic(jobPath, {
+  const job = publishOrResumeJob(jobPath, {
     version: JOB_VERSION,
     id,
     session_id: context.session_id,
     message_id: context.message_id ?? null,
+    turn_token: context.token ?? null,
     correlation_id: id,
     idempotency_key: idempotencyKey,
     method: normalizedMethod,
@@ -160,7 +200,8 @@ export async function callRevitViaCourier<T>(revitPath: string, method: string, 
     claim: null
   });
 
-  const deadline = now + durationMs;
+  const persistedExpiry = Date.parse(job.expires_at ?? "");
+  const deadline = Number.isFinite(persistedExpiry) ? Math.min(now + durationMs, persistedExpiry) : now + durationMs;
   while (Date.now() < deadline) {
     const receipt = readResult(resultPath, id);
     if (receipt) return resolveResult<T>(receipt);
