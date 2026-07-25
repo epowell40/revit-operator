@@ -258,6 +258,8 @@ namespace RevitBridge.Operator
             var method = (action.Method ?? "").Trim().ToUpperInvariant();
             var path = (action.Path ?? "").Trim();
             var risk = OperatorApprovalPolicy.GetRisk(method, path);
+            var correlationId = OperatorCorrelationId.NormalizeOrCreate(action.CorrelationId, action.ActionId);
+            action.CorrelationId = correlationId;
 
             if (!OperatorActionAllowlist.IsAllowed(method, path))
             {
@@ -328,6 +330,9 @@ namespace RevitBridge.Operator
             var autoGuardId = autoGuardArmed ? dialogComputerUse!.ArmRetryableWarningCancelGuard() : null;
 
             object result;
+            var deadline = OperatorActionDeadlinePolicy.Resolve(method, path, risk.ToString());
+            using var localDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            localDeadline.CancelAfter(deadline.Budget);
             try
             {
                 result = await _eventService.Run(app =>
@@ -342,7 +347,11 @@ namespace RevitBridge.Operator
                     }
 
                     return handlerResult;
-                }, cancellationToken).ConfigureAwait(false);
+                }, localDeadline.Token, correlationId).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && localDeadline.IsCancellationRequested)
+            {
+                throw deadline.CreateTimeoutException(correlationId);
             }
             finally
             {

@@ -13,6 +13,9 @@ namespace RevitBridge.Operator
         [JsonPropertyName("action_id")]
         public string ActionId { get; set; } = "";
 
+        [JsonPropertyName("correlation_id")]
+        public string CorrelationId { get; set; } = "";
+
         [JsonPropertyName("method")]
         public string Method { get; set; } = "";
 

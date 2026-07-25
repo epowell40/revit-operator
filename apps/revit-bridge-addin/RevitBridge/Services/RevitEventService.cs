@@ -7,13 +7,14 @@ using RevitBridge.Common;
 
 namespace RevitBridge.Services
 {
-    public sealed class RevitEventQueueException : InvalidOperationException, IOperatorRevitFailureMetadata
+    public sealed class RevitEventQueueException : InvalidOperationException, IOperatorRevitFailureMetadata, IOperatorCorrelationMetadata
     {
-        public RevitEventQueueException(string code, string message, bool retryable)
+        public RevitEventQueueException(string code, string message, bool retryable, string? correlationId = null)
             : base(message)
         {
             Code = code;
             Retryable = retryable;
+            CorrelationId = OperatorCorrelationId.IsValid(correlationId) ? correlationId!.Trim() : null;
         }
 
         public string Code { get; }
@@ -24,22 +25,25 @@ namespace RevitBridge.Services
             : "unavailable";
         public bool OpensCircuit => !string.Equals(Code, "revit_external_event_busy", StringComparison.OrdinalIgnoreCase);
         public bool OutcomeUnknown => false;
+        public string? CorrelationId { get; }
     }
 
     public class RevitEventService : IExternalEventHandler
     {
         private sealed class QueueItem
         {
-            public QueueItem(Func<UIApplication, object> action, TaskCompletionSource<object> completion, CancellationToken cancellationToken)
+            public QueueItem(Func<UIApplication, object> action, TaskCompletionSource<object> completion, CancellationToken cancellationToken, string? correlationId)
             {
                 Action = action;
                 Completion = completion;
                 CancellationToken = cancellationToken;
+                CorrelationId = correlationId;
             }
 
             public Func<UIApplication, object> Action { get; }
             public TaskCompletionSource<object> Completion { get; }
             public CancellationToken CancellationToken { get; }
+            public string? CorrelationId { get; }
             public int Started;
         }
 
@@ -53,9 +57,12 @@ namespace RevitBridge.Services
         }
 
         public Task<T> Run<T>(Func<UIApplication, T> action)
-            => Run(action, CancellationToken.None);
+            => Run(action, CancellationToken.None, null);
 
         public Task<T> Run<T>(Func<UIApplication, T> action, CancellationToken cancellationToken)
+            => Run(action, cancellationToken, null);
+
+        public Task<T> Run<T>(Func<UIApplication, T> action, CancellationToken cancellationToken, string? correlationId)
         {
             var tcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
             if (cancellationToken.IsCancellationRequested)
@@ -71,7 +78,8 @@ namespace RevitBridge.Services
                 tcs.TrySetException(new RevitEventQueueException(
                     "revit_external_event_busy",
                     "Revit already has one Operator action in flight. Retry after that action completes.",
-                    retryable: true));
+                    retryable: true,
+                    correlationId));
                 return AwaitResult<T>(tcs.Task);
             }
 
@@ -80,7 +88,7 @@ namespace RevitBridge.Services
                 cancellationToken.Register(() => tcs.TrySetCanceled());
             }
 
-            var item = new QueueItem(app => action(app), tcs, cancellationToken);
+            var item = new QueueItem(app => action(app), tcs, cancellationToken, correlationId);
             _queue.Enqueue(item);
             ExternalEventRequest request;
             try
@@ -92,7 +100,8 @@ namespace RevitBridge.Services
                 FailQueuedItem(item, new RevitEventQueueException(
                     "revit_external_event_raise_failed",
                     $"Revit rejected the Operator action before execution: {ex.Message}",
-                    retryable: true));
+                    retryable: true,
+                    item.CorrelationId));
                 return AwaitResult<T>(tcs.Task);
             }
 
@@ -101,14 +110,16 @@ namespace RevitBridge.Services
                 FailQueuedItem(item, new RevitEventQueueException(
                     "revit_external_event_denied",
                     "Revit denied the Operator external event because the event handler is unavailable or failed.",
-                    retryable: false));
+                    retryable: false,
+                    item.CorrelationId));
             }
             else if (request == ExternalEventRequest.TimedOut)
             {
                 FailQueuedItem(item, new RevitEventQueueException(
                     "revit_external_event_raise_timed_out",
                     "Revit did not accept the Operator external event because host synchronization timed out.",
-                    retryable: true));
+                    retryable: true,
+                    item.CorrelationId));
             }
             else if (request == ExternalEventRequest.Pending)
             {
@@ -136,7 +147,8 @@ namespace RevitBridge.Services
                     FailQueuedItem(item, new RevitEventQueueException(
                         "revit_external_event_raise_failed",
                         $"Revit rejected the pending Operator action: {ex.Message}",
-                        retryable: true));
+                        retryable: true,
+                        item.CorrelationId));
                     return;
                 }
 
@@ -146,7 +158,8 @@ namespace RevitBridge.Services
                     FailQueuedItem(item, new RevitEventQueueException(
                         "revit_external_event_denied",
                         "Revit denied the pending Operator external event.",
-                        retryable: false));
+                        retryable: false,
+                        item.CorrelationId));
                     return;
                 }
                 if (request == ExternalEventRequest.TimedOut && attempt == 3)
@@ -154,7 +167,8 @@ namespace RevitBridge.Services
                     FailQueuedItem(item, new RevitEventQueueException(
                         "revit_external_event_raise_timed_out",
                         "Revit repeatedly failed to accept the pending Operator external event.",
-                        retryable: true));
+                        retryable: true,
+                        item.CorrelationId));
                     return;
                 }
             }
@@ -164,7 +178,8 @@ namespace RevitBridge.Services
                 FailQueuedItem(item, new RevitEventQueueException(
                     "revit_external_event_still_pending",
                     "Revit did not begin the pending Operator external event after bounded raise retries.",
-                    retryable: true));
+                    retryable: true,
+                    item.CorrelationId));
             }
         }
 
