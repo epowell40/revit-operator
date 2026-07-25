@@ -8,12 +8,12 @@ export const CODEX_APP_SERVER_COMPATIBILITY = Object.freeze({
   generated_typescript: {
     file_count: 671,
     byte_count: 377_094,
-    sha256: "4e86cf1ec3eeec58473a432d06e316b725e13326700d55127478b9eb9ad30585"
+    sha256: "6f6b715a249dae95a0363aee8f5a10f8a183ceb49339f9393d5d70c117525b7f"
   },
   generated_json_schema: {
     file_count: 337,
     byte_count: 3_159_797,
-    sha256: "011a76cf38b60a616aa269376d38a5f166fa27eb83eb8905ba4e27b0776ccc9c"
+    sha256: "24ec98d7a5dad407a3b5eaa2f42a62d366b3971ae7e3d7331c016720902d3f01"
   }
 });
 

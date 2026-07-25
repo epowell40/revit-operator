@@ -8,6 +8,25 @@ import { findRepoRoot } from "./audit_tool_registry.js";
 
 type DirectoryReceipt = { file_count: number; byte_count: number; sha256: string };
 
+export function sortProtocolFiles(root: string, files: string[]): string[] {
+  return [...files].sort((a, b) => {
+    const left = path.relative(root, a).replace(/\\/g, "/");
+    const right = path.relative(root, b).replace(/\\/g, "/");
+    return left < right ? -1 : left > right ? 1 : 0;
+  });
+}
+
+export function canonicalizeProtocolJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeProtocolJson);
+  if (!value || typeof value !== "object") return value;
+  const record = value as Record<string, unknown>;
+  const canonical: Record<string, unknown> = {};
+  for (const key of Object.keys(record).sort((a, b) => a < b ? -1 : a > b ? 1 : 0)) {
+    canonical[key] = canonicalizeProtocolJson(record[key]);
+  }
+  return canonical;
+}
+
 function hashDirectory(root: string): DirectoryReceipt {
   const files: string[] = [];
   const visit = (directory: string) => {
@@ -18,17 +37,21 @@ function hashDirectory(root: string): DirectoryReceipt {
     }
   };
   visit(root);
-  files.sort((a, b) => a.localeCompare(b));
+  const orderedFiles = sortProtocolFiles(root, files);
   const hash = createHash("sha256");
   let byteCount = 0;
-  for (const filePath of files) {
+  for (const filePath of orderedFiles) {
     const relativePath = path.relative(root, filePath).replace(/\\/g, "/");
     const data = fs.readFileSync(filePath);
     hash.update(`${relativePath}\n`, "utf8");
-    hash.update(data);
+    if (path.extname(filePath).toLowerCase() === ".json") {
+      hash.update(JSON.stringify(canonicalizeProtocolJson(JSON.parse(data.toString("utf8")))), "utf8");
+    } else {
+      hash.update(data);
+    }
     byteCount += data.length;
   }
-  return { file_count: files.length, byte_count: byteCount, sha256: hash.digest("hex") };
+  return { file_count: orderedFiles.length, byte_count: byteCount, sha256: hash.digest("hex") };
 }
 
 function runCodex(codexBin: string, args: string[]): string {
