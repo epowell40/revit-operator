@@ -1678,7 +1678,24 @@ namespace RevitBridge.Operator
           wrap.style.display = (wrap.classList.contains('assistant') && !wrap._fullText.trim()) ? 'none' : '';
           const bubble = wrap.querySelector('.bubble');
           renderMessage(bubble, wrap._fullText || '');
+          scrollMessagesToBottom(true);
         } catch {}
+      }
+
+      function scrollMessagesToBottom(afterLayout) {
+        const apply = () => {
+          try { scrollEl.scrollTop = scrollEl.scrollHeight; } catch {}
+        };
+        apply();
+        if (!afterLayout) return;
+        try {
+          window.requestAnimationFrame(() => {
+            apply();
+            window.requestAnimationFrame(apply);
+          });
+        } catch {
+          try { window.setTimeout(apply, 0); } catch {}
+        }
       }
 
       function appendChat(role, text) {
@@ -1701,7 +1718,7 @@ namespace RevitBridge.Operator
         wrap.appendChild(bubble);
         msgsEl.appendChild(wrap);
         setMessageText(wrap, text);
-        scrollEl.scrollTop = scrollEl.scrollHeight;
+        scrollMessagesToBottom();
       }
 
       const msgById = new Map();
@@ -1761,7 +1778,7 @@ namespace RevitBridge.Operator
         wrap.appendChild(roleEl);
         wrap.appendChild(bubble);
         msgsEl.appendChild(wrap);
-        scrollEl.scrollTop = scrollEl.scrollHeight;
+        scrollMessagesToBottom();
 
         if (messageId) msgById.set(messageId, wrap);
         return wrap;
@@ -1779,13 +1796,13 @@ namespace RevitBridge.Operator
         // If a late delta arrives after chat.done, keep markdown rendering intact.
         if (wrap._finalized) {
           setMessageText(wrap, next);
-          scrollEl.scrollTop = scrollEl.scrollHeight;
+          scrollMessagesToBottom();
           return;
         }
         // Streaming can emit many tiny deltas; re-rendering markdown each time can freeze WebView2.
         // Render plain text during streaming and do the richer markdown render once on chat.done.
         setMessageTextStreaming(wrap, next);
-        scrollEl.scrollTop = scrollEl.scrollHeight;
+        scrollMessagesToBottom();
       }
 
       let ttsAudio = null;
@@ -2603,7 +2620,10 @@ namespace RevitBridge.Operator
         cancelBtn.classList.toggle('micOn', loopRunning);
         try {
           if (feedbackBarEl) {
-            if (was && !loopRunning) feedbackBarEl.classList.add('on');
+            if (was && !loopRunning) {
+              feedbackBarEl.classList.add('on');
+              scrollMessagesToBottom(true);
+            }
             if (loopRunning) feedbackBarEl.classList.remove('on');
           }
         } catch {}
@@ -3184,7 +3204,7 @@ namespace RevitBridge.Operator
           if (p.messageId) {
             const wrap = appendOrGetMessage(role, p.messageId);
             setMessageText(wrap, p.text || '');
-            scrollEl.scrollTop = scrollEl.scrollHeight;
+            scrollMessagesToBottom();
           } else {
             appendChat(role, p.text || '');
           }
