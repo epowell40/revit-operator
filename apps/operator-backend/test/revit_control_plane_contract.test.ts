@@ -27,6 +27,10 @@ test("Revit ExternalEvent scheduler is single-flight and reports raise failures"
   assert.match(source, /ExternalEventRequest\.Denied/);
   assert.match(source, /ExternalEventRequest\.TimedOut/);
   assert.match(source, /revit_external_event_busy/);
+  assert.match(source, /cancellationToken\.Register\(\(\) => CancelQueuedItem\(item\)\)/);
+  assert.match(source, /QueueItem\.CancelledBeforeStart/);
+  assert.match(source, /CancelQueuedItem[\s\S]{0,1200}Interlocked\.Exchange\(ref _inFlight, 0\)/);
+  assert.doesNotMatch(source, /cancellationToken\.Register\(\(\) => tcs\.TrySetCanceled\(\)\)/);
 });
 
 test("metadata and native discovery bypass the Revit event queue while actions propagate cancellation", () => {

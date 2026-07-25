@@ -32,6 +32,10 @@ namespace RevitBridge.Services
     {
         private sealed class QueueItem
         {
+            public const int Pending = 0;
+            public const int Started = 1;
+            public const int CancelledBeforeStart = 2;
+
             public QueueItem(Func<UIApplication, object> action, TaskCompletionSource<object> completion, CancellationToken cancellationToken, string? correlationId)
             {
                 Action = action;
@@ -44,7 +48,7 @@ namespace RevitBridge.Services
             public TaskCompletionSource<object> Completion { get; }
             public CancellationToken CancellationToken { get; }
             public string? CorrelationId { get; }
-            public int Started;
+            public int ExecutionState;
         }
 
         private readonly ConcurrentQueue<QueueItem> _queue = new ConcurrentQueue<QueueItem>();
@@ -83,13 +87,15 @@ namespace RevitBridge.Services
                 return AwaitResult<T>(tcs.Task);
             }
 
-            if (cancellationToken.CanBeCanceled)
-            {
-                cancellationToken.Register(() => tcs.TrySetCanceled());
-            }
-
             var item = new QueueItem(app => action(app), tcs, cancellationToken, correlationId);
             _queue.Enqueue(item);
+            if (cancellationToken.CanBeCanceled)
+            {
+                // A cancellation that wins before Execute must remove the pending item and
+                // release the single-flight slot. Merely cancelling the Task leaves the item
+                // in the queue and can make every later Operator action report busy forever.
+                cancellationToken.Register(() => CancelQueuedItem(item));
+            }
             ExternalEventRequest request;
             try
             {
@@ -133,10 +139,10 @@ namespace RevitBridge.Services
 
         private async Task RetryPendingRaiseAsync(QueueItem item)
         {
-            for (var attempt = 0; attempt < 4 && !item.Completion.Task.IsCompleted && Volatile.Read(ref item.Started) == 0; attempt++)
+            for (var attempt = 0; attempt < 4 && !item.Completion.Task.IsCompleted && Volatile.Read(ref item.ExecutionState) == QueueItem.Pending; attempt++)
             {
                 await Task.Delay(25 * (attempt + 1)).ConfigureAwait(false);
-                if (item.Completion.Task.IsCompleted || Volatile.Read(ref item.Started) != 0) return;
+                if (item.Completion.Task.IsCompleted || Volatile.Read(ref item.ExecutionState) != QueueItem.Pending) return;
                 ExternalEventRequest request;
                 try
                 {
@@ -173,13 +179,42 @@ namespace RevitBridge.Services
                 }
             }
 
-            if (!item.Completion.Task.IsCompleted && Volatile.Read(ref item.Started) == 0)
+            if (!item.Completion.Task.IsCompleted && Volatile.Read(ref item.ExecutionState) == QueueItem.Pending)
             {
                 FailQueuedItem(item, new RevitEventQueueException(
                     "revit_external_event_still_pending",
                     "Revit did not begin the pending Operator external event after bounded raise retries.",
                     retryable: true,
                     item.CorrelationId));
+            }
+        }
+
+        private void CancelQueuedItem(QueueItem expected)
+        {
+            expected.Completion.TrySetCanceled();
+
+            // If Execute already started, it owns the slot until the Revit API callback
+            // returns. Releasing it here would permit overlapping access to Revit's API.
+            if (Interlocked.CompareExchange(
+                    ref expected.ExecutionState,
+                    QueueItem.CancelledBeforeStart,
+                    QueueItem.Pending) != QueueItem.Pending)
+            {
+                return;
+            }
+
+            // Only one item can be in flight, so the head is expected to be this item. If
+            // Execute won the dequeue race, it will observe CancelledBeforeStart and release
+            // the slot in its finally block.
+            if (_queue.TryDequeue(out var item))
+            {
+                if (ReferenceEquals(item, expected))
+                {
+                    Interlocked.Exchange(ref _inFlight, 0);
+                    return;
+                }
+
+                _queue.Enqueue(item);
             }
         }
 
@@ -210,10 +245,17 @@ namespace RevitBridge.Services
                 return;
             }
 
-            Interlocked.Exchange(ref item.Started, 1);
-
             try
             {
+                if (Interlocked.CompareExchange(
+                        ref item.ExecutionState,
+                        QueueItem.Started,
+                        QueueItem.Pending) != QueueItem.Pending)
+                {
+                    item.Completion.TrySetCanceled();
+                    return;
+                }
+
                 if (item.CancellationToken.IsCancellationRequested || item.Completion.Task.IsCompleted)
                 {
                     item.Completion.TrySetCanceled();
