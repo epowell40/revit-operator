@@ -141,7 +141,10 @@ test("courier promotes a bounded workstation failure code into the authoritative
       code: "revit_action_deadline_elapsed_outcome_unknown",
       phase: "revit_external_event",
       hostHealth: "unavailable",
-      outcomeUnknown: true
+      outcomeUnknown: true,
+      correlationId: id,
+      deadlineClass: "bounded_read",
+      deadlineMs: 60_000
     }
   });
   const receipt = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", id, "result.json"), "utf8"));
@@ -149,6 +152,9 @@ test("courier promotes a bounded workstation failure code into the authoritative
   assert.equal(receipt.retryable, false);
   assert.equal(receipt.result.hostHealth, "unavailable");
   assert.equal(receipt.result.outcomeUnknown, true);
+  assert.equal(receipt.result.correlationId, id);
+  assert.equal(receipt.result.deadlineClass, "bounded_read");
+  assert.equal(receipt.result.deadlineMs, 60_000);
 });
 
 test("courier context is explicit, exclusive per workspace, and closed without deleting its receipt", () => {

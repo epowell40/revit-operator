@@ -386,9 +386,12 @@ namespace RevitBridge.Server
             var resp = ctx.Response;
             string responseText = "{}";
             int statusCode = 200;
+            var correlationId = Guid.NewGuid().ToString("N");
 
             try
             {
+                correlationId = OperatorCorrelationId.NormalizeOrCreate(req.Headers["X-Operator-Correlation-Id"], correlationId);
+                resp.Headers["X-Operator-Correlation-Id"] = correlationId;
                 var token = req.Headers["X-Operator-Token"];
                 if (!OperatorSecurity.TokenMatches(token))
                 {
@@ -509,7 +512,20 @@ namespace RevitBridge.Server
                     }
                     else
                     {
-                        result = await _eventService.Run(app => handler.Handle(app, body).GetAwaiter().GetResult());
+                        var risk = GetRequestRisk(req.HttpMethod, path, body);
+                        var deadline = OperatorActionDeadlinePolicy.Resolve(req.HttpMethod, path, risk.ToString());
+                        using var localDeadline = new CancellationTokenSource(deadline.Budget);
+                        try
+                        {
+                            result = await _eventService.Run(
+                                app => handler.Handle(app, body).GetAwaiter().GetResult(),
+                                localDeadline.Token,
+                                correlationId);
+                        }
+                        catch (OperationCanceledException) when (localDeadline.IsCancellationRequested)
+                        {
+                            throw deadline.CreateTimeoutException(correlationId);
+                        }
                     }
                     responseText = JsonSerializer.Serialize(result);
                 }
@@ -542,7 +558,8 @@ namespace RevitBridge.Server
                         requiredConfirm = uex.RequiredConfirm,
                         confirmReceived = uex.ConfirmReceived,
                         maxChangesPerCall = uex.MaxChangesPerCall,
-                        hint = uex.Hint
+                        hint = uex.Hint,
+                        correlation_id = correlationId
                     });
                 }
                 else if (root is RevitEventQueueException qex)
@@ -556,7 +573,31 @@ namespace RevitBridge.Server
                         retryable = qex.Retryable,
                         phase = qex.Phase,
                         host_health = qex.HostHealth,
-                        outcome_unknown = qex.OutcomeUnknown
+                        outcome_unknown = qex.OutcomeUnknown,
+                        correlation_id = qex.CorrelationId ?? correlationId
+                    });
+                }
+                else if (root is IOperatorRevitFailureMetadata)
+                {
+                    var failure = OperatorCourierFailureClassifier.Classify(root, correlationId);
+                    statusCode = failure.OutcomeUnknown
+                        ? 408
+                        : string.Equals(failure.HostHealth, "unavailable", StringComparison.OrdinalIgnoreCase)
+                            ? 503
+                            : failure.Retryable ? 409 : 500;
+                    responseText = JsonSerializer.Serialize(new
+                    {
+                        ok = failure.Ok,
+                        error = failure.Error,
+                        code = failure.Code,
+                        retryable = failure.Retryable,
+                        phase = failure.Phase,
+                        host_health = failure.HostHealth,
+                        opens_circuit = failure.OpensCircuit,
+                        outcome_unknown = failure.OutcomeUnknown,
+                        correlation_id = failure.CorrelationId ?? correlationId,
+                        deadline_class = failure.DeadlineClass,
+                        deadline_ms = failure.DeadlineMs
                     });
                 }
                 else if (root is OperationCanceledException)
@@ -570,7 +611,8 @@ namespace RevitBridge.Server
                         retryable = false,
                         phase = "revit_external_event",
                         host_health = "degraded",
-                        outcome_unknown = true
+                        outcome_unknown = true,
+                        correlation_id = correlationId
                     });
                 }
                 else if (root is ArgumentException)
@@ -582,7 +624,8 @@ namespace RevitBridge.Server
                         error = root.Message,
                         code = "invalid_revit_tool_request",
                         retryable = false,
-                        phase = "request_validation"
+                        phase = "request_validation",
+                        correlation_id = correlationId
                     });
                 }
                 else
@@ -593,7 +636,8 @@ namespace RevitBridge.Server
                         error = root.Message,
                         type = root.GetType().FullName,
                         stack = root.StackTrace,
-                        inner = root.InnerException?.Message
+                        inner = root.InnerException?.Message,
+                        correlation_id = correlationId
                     });
                 }
             }

@@ -24,6 +24,8 @@ namespace RevitBridge.Common
         public bool OutcomeUnknown { get; set; }
         public string? CorrelationId { get; set; }
         public string? ExceptionType { get; set; }
+        public string? DeadlineClass { get; set; }
+        public int? DeadlineMs { get; set; }
     }
 
     public static class OperatorCourierFailureClassifier
@@ -31,6 +33,8 @@ namespace RevitBridge.Common
         public static OperatorCourierFailureReceipt Classify(Exception error, string? correlationId = null)
         {
             var root = Unwrap(error);
+            if (string.IsNullOrWhiteSpace(correlationId) && root is IOperatorCorrelationMetadata correlationMetadata)
+                correlationId = correlationMetadata.CorrelationId;
             if (root is IOperatorRevitFailureMetadata metadata)
             {
                 return Create(root, metadata.Code, metadata.Retryable, metadata.Phase,
@@ -81,7 +85,7 @@ namespace RevitBridge.Common
             bool outcomeUnknown,
             string? correlationId)
         {
-            return new OperatorCourierFailureReceipt
+            var receipt = new OperatorCourierFailureReceipt
             {
                 Ok = false,
                 Error = error.Message,
@@ -94,6 +98,12 @@ namespace RevitBridge.Common
                 CorrelationId = string.IsNullOrWhiteSpace(correlationId) ? null : correlationId,
                 ExceptionType = error.GetType().FullName
             };
+            if (error is IOperatorActionDeadlineMetadata deadlineMetadata)
+            {
+                receipt.DeadlineClass = deadlineMetadata.DeadlineClass;
+                receipt.DeadlineMs = deadlineMetadata.DeadlineMs;
+            }
+            return receipt;
         }
 
         private static Exception Unwrap(Exception error)

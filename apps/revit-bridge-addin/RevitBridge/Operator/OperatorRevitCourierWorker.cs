@@ -56,6 +56,7 @@ namespace RevitBridge.Operator
             if (!_runGate.Wait(0)) return;
             string? sessionId = null;
             string? jobId = null;
+            string? correlationId = null;
             var executionCompleted = false;
             try
             {
@@ -74,6 +75,9 @@ namespace RevitBridge.Operator
                     throw new InvalidOperationException("Unsupported Revit courier job version.");
                 var jobSessionId = ReadRequiredString(job, "session_id", 200);
                 sessionId = jobSessionId;
+                correlationId = ReadRequiredString(job, "correlation_id", 160);
+                if (!OperatorCorrelationId.IsValid(correlationId) || !string.Equals(correlationId, jobId, StringComparison.Ordinal))
+                    throw new InvalidOperationException("Revit courier job has an invalid or mismatched correlation_id.");
                 var method = ReadRequiredString(job, "method", 10).ToUpperInvariant();
                 var path = ReadRequiredString(job, "path", 300);
                 var expiresText = ReadRequiredString(job, "expires_at", 100);
@@ -86,6 +90,7 @@ namespace RevitBridge.Operator
                 var action = new OperatorActionCall
                 {
                     ActionId = jobId,
+                    CorrelationId = correlationId,
                     Method = method,
                     Path = path,
                     Body = body
@@ -105,8 +110,8 @@ namespace RevitBridge.Operator
                 using var actionTimeout = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
                 var remaining = expiresAt.ToUniversalTime() - DateTime.UtcNow - TimeSpan.FromSeconds(2);
                 if (remaining <= TimeSpan.Zero) throw new OperatorCourierJobExpiredException("The Revit courier job expired before local execution started.");
-                var localBudget = remaining < TimeSpan.FromSeconds(210) ? remaining : TimeSpan.FromSeconds(210);
-                actionTimeout.CancelAfter(localBudget);
+                var deadline = OperatorActionDeadlinePolicy.Resolve(method, path, risk.ToString()).ConstrainTo(remaining);
+                actionTimeout.CancelAfter(deadline.Budget);
                 var startedAt = DateTime.UtcNow;
                 object? result;
                 try
@@ -115,7 +120,7 @@ namespace RevitBridge.Operator
                 }
                 catch (OperationCanceledException) when (!_cts.IsCancellationRequested)
                 {
-                    throw new TimeoutException("The Revit action exceeded the courier job's local execution deadline.");
+                    throw deadline.CreateTimeoutException(correlationId);
                 }
                 executionCompleted = true;
                 _completionOutbox.Save(sessionId!, jobId, _executorId, result);
@@ -125,9 +130,12 @@ namespace RevitBridge.Operator
                 {
                     session_id = sessionId,
                     job_id = jobId,
+                    correlation_id = correlationId,
                     method,
                     path,
                     risk = risk.ToString(),
+                    deadline_class = deadline.DeadlineClass,
+                    deadline_ms = deadline.BudgetMilliseconds,
                     duration_ms = (int)Math.Max(0, (DateTime.UtcNow - startedAt).TotalMilliseconds)
                 }).ConfigureAwait(false);
             }
@@ -145,13 +153,14 @@ namespace RevitBridge.Operator
                     {
                         session_id = sessionId,
                         job_id = jobId,
+                        correlation_id = correlationId ?? jobId,
                         error = ex.Message,
                         type = ex.GetType().FullName
                     }).ConfigureAwait(false);
                 }
                 else if (!string.IsNullOrWhiteSpace(sessionId) && !string.IsNullOrWhiteSpace(jobId))
                 {
-                    var failure = OperatorCourierFailureClassifier.Classify(ex, jobId);
+                    var failure = OperatorCourierFailureClassifier.Classify(ex, correlationId ?? jobId);
                     if (failure.OpensCircuit)
                     {
                         _hostCircuit.Open(failure.Code, DateTimeOffset.UtcNow);
@@ -159,10 +168,13 @@ namespace RevitBridge.Operator
                         {
                             session_id = sessionId,
                             job_id = jobId,
+                            correlation_id = correlationId ?? jobId,
                             failure.Code,
                             failure.Phase,
                             failure.HostHealth,
                             failure.OutcomeUnknown,
+                            failure.DeadlineClass,
+                            failure.DeadlineMs,
                             circuit = _hostCircuit.Snapshot()
                         }).ConfigureAwait(false);
                     }
@@ -188,6 +200,7 @@ namespace RevitBridge.Operator
                     {
                         session_id = sessionId,
                         job_id = jobId,
+                        correlation_id = correlationId ?? jobId,
                         error = ex.Message,
                         type = ex.GetType().FullName
                     }).ConfigureAwait(false);

@@ -36,7 +36,10 @@ test("metadata and native discovery bypass the Revit event queue while actions p
     assert.match(runner, new RegExp(`/revit/${route}`));
     assert.match(server, new RegExp(`/revit/${route}`));
   }
-  assert.match(runner, /},\s*cancellationToken\)\.ConfigureAwait\(false\)/);
+  assert.match(runner, /OperatorActionDeadlinePolicy\.Resolve/);
+  assert.match(runner, /},\s*localDeadline\.Token,\s*correlationId\)\.ConfigureAwait\(false\)/);
+  assert.match(server, /X-Operator-Correlation-Id/);
+  assert.match(server, /deadline\.CreateTimeoutException\(correlationId\)/);
   assert.match(server, /root is RevitEventQueueException/);
 });
 
@@ -95,6 +98,8 @@ test("hosted MCP courier is session-bound, approval-gated, and never auto-replay
   assert.match(worker, /ClaimNextRevitCourierJobJsonAsync/);
   assert.match(worker, /OperatorApprovalPolicy\.RequiresApproval/);
   assert.match(worker, /_actionRunner\.ExecuteAsync/);
+  assert.match(worker, /ReadRequiredString\(job, "correlation_id", 160\)/);
+  assert.match(worker, /OperatorActionDeadlinePolicy\.Resolve[\s\S]{0,200}ConstrainTo\(remaining\)/);
   assert.doesNotMatch(worker, /_turnBusy/);
   assert.match(index, /\/api\/revit-courier\/claim-next/);
   assert.match(index, /pathname\.startsWith\("\/api\/revit-courier\/jobs\/"\)/);
