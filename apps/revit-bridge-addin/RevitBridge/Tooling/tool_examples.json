@@ -3103,6 +3103,43 @@
           "notes": [
             "The literal value filter is applied before paging, so totalMatched is the complete matching-element count rather than the source model size. Revit links and element types are excluded."
           ]
+        },
+        {
+          "name": "Find one exact identifier value without guessing category or parameter name",
+          "request": {
+            "allModelInstances": true,
+            "includeStringParameters": true,
+            "valueEquals": "AHU-1",
+            "caseSensitive": false,
+            "includeEmpty": false,
+            "offset": 0,
+            "limit": 500
+          },
+          "expected_response_shape": {
+            "selector": "allModelInstances",
+            "hostModelOnly": true,
+            "valueEquals": "AHU-1",
+            "totalScanned": 120000,
+            "totalMatched": 1,
+            "hasMore": false,
+            "items": [
+              {
+                "id": 123,
+                "category": "Mechanical Equipment",
+                "parameterDetails": [
+                  {
+                    "name": "Mark",
+                    "value": "AHU-1",
+                    "storageType": "String",
+                    "isReadOnly": false
+                  }
+                ]
+              }
+            ]
+          },
+          "notes": [
+            "valueEquals compares the entire stored string; values such as AHU-10 do not match. Revit links and element types are excluded."
+          ]
         }
       ]
     },
