@@ -47,3 +47,28 @@ test("MCP courier publishes a correlated job and resolves its durable result", a
   }), "utf8");
   assert.deepEqual(await pending, { status: "ok" });
 });
+
+test("MCP courier terminalizes an unclaimed timeout before the outer turn stalls", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-timeout-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+  fs.mkdirSync(path.join(root, "config"), { recursive: true });
+  fs.writeFileSync(path.join(root, "config", "revit-courier-context.json"), JSON.stringify({
+    version: "revit-operator.revit-courier-context.v1",
+    active: true,
+    session_id: "session-timeout",
+    message_id: "message-timeout",
+    expires_at: new Date(Date.now() + 60_000).toISOString()
+  }), "utf8");
+
+  const pending = callRevitViaCourier("/revit/ping", "GET");
+  const jobRef = await waitForJob(root);
+  await assert.rejects(pending, /courier_job_timed_out_before_claim/);
+
+  const job = JSON.parse(fs.readFileSync(path.join(jobRef.dir, "job.json"), "utf8"));
+  const result = JSON.parse(fs.readFileSync(path.join(jobRef.dir, "result.json"), "utf8"));
+  assert.equal(job.status, "failed");
+  assert.equal(result.status, "failed");
+  assert.equal(result.code, "courier_job_timed_out_before_claim");
+  assert.equal(result.retryable, true);
+});
