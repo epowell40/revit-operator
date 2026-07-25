@@ -375,7 +375,8 @@ namespace RevitBridge.Operator
                 return true;
             }
 
-            if (string.Equals(path, "/revit/native-api-ops", StringComparison.OrdinalIgnoreCase))
+            var isNativeApiMutationOps = string.Equals(path, "/revit/native-api-mutation-ops", StringComparison.OrdinalIgnoreCase);
+            if (string.Equals(path, "/revit/native-api-ops", StringComparison.OrdinalIgnoreCase) || isNativeApiMutationOps)
             {
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
@@ -455,6 +456,53 @@ namespace RevitBridge.Operator
                 {
                     error = "native-api-ops.maxOperationMs must be less than or equal to maxTotalMs.";
                     return false;
+                }
+                if (!isNativeApiMutationOps && obj.Value.TryGetProperty("transaction", out var readOnlyTransaction) && readOnlyTransaction.ValueKind != JsonValueKind.Null)
+                {
+                    error = "native-api-ops is permanently read-only and does not accept transaction.";
+                    return false;
+                }
+                if (isNativeApiMutationOps)
+                {
+                    if (!obj.Value.TryGetProperty("transaction", out var transaction) || transaction.ValueKind != JsonValueKind.Object)
+                    {
+                        error = "native-api-mutation-ops.transaction must be an object.";
+                        return false;
+                    }
+                    if (!ValidateRequiredString(transaction, "mode", maxLen: 16, out error)) return false;
+                    var mode = transaction.GetProperty("mode").GetString() ?? "";
+                    if (!string.Equals(mode, "rollback", StringComparison.OrdinalIgnoreCase) && !string.Equals(mode, "commit", StringComparison.OrdinalIgnoreCase))
+                    {
+                        error = "native-api-mutation-ops.transaction.mode must be rollback or commit.";
+                        return false;
+                    }
+                    if (!ValidateOptionalString(transaction, "name", maxLen: 96, out error)) return false;
+                    if (!transaction.TryGetProperty("maxAffectedElements", out var maxAffected) || maxAffected.ValueKind != JsonValueKind.Number || !maxAffected.TryGetInt32(out var maxAffectedCount) || maxAffectedCount < 1 || maxAffectedCount > 64)
+                    {
+                        error = "native-api-mutation-ops.transaction.maxAffectedElements must be an integer between 1 and 64.";
+                        return false;
+                    }
+                    if (transaction.TryGetProperty("allowCreate", out var allowCreate) && allowCreate.ValueKind != JsonValueKind.Null && allowCreate.ValueKind != JsonValueKind.True && allowCreate.ValueKind != JsonValueKind.False)
+                    {
+                        error = "native-api-mutation-ops.transaction.allowCreate must be a boolean.";
+                        return false;
+                    }
+                    if (transaction.TryGetProperty("allowedExistingElementIds", out var allowedIds) && allowedIds.ValueKind != JsonValueKind.Null)
+                    {
+                        if (allowedIds.ValueKind != JsonValueKind.Array || allowedIds.GetArrayLength() > 64)
+                        {
+                            error = "native-api-mutation-ops.transaction.allowedExistingElementIds must be an array with at most 64 ids.";
+                            return false;
+                        }
+                        foreach (var item in allowedIds.EnumerateArray())
+                        {
+                            if (item.ValueKind != JsonValueKind.Number || !item.TryGetInt64(out var elementId) || elementId <= 0)
+                            {
+                                error = "native-api-mutation-ops.transaction.allowedExistingElementIds entries must be positive integers.";
+                                return false;
+                            }
+                        }
+                    }
                 }
                 return true;
             }

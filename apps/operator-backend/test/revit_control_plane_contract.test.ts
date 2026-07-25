@@ -93,6 +93,42 @@ test("native API operation graph stays bounded, read-only, and request-ephemeral
   assert.doesNotMatch(gateway, /static\s+readonly\s+Dictionary<[^>]+>\s+_handles/i);
 });
 
+test("native API mutation graph uses a separate write-gated transaction envelope and rolls back out-of-scope effects", () => {
+  const gateway = addinFile(path.join("RevitBridge", "Operator", "OperatorNativeApiGateway.cs"));
+  const approval = addinFile(path.join("RevitBridge", "Operator", "OperatorApprovalPolicy.cs"));
+  const manifest = addinFile(path.join("RevitBridge", "Operator", "OperatorToolManifest.cs"));
+  const validator = addinFile(path.join("RevitBridge", "Operator", "OperatorActionSchemaValidator.cs"));
+  const handler = addinFile(path.join("RevitBridge", "Handlers", "NativeApiHandlers.cs"));
+  const runner = addinFile(path.join("RevitBridge", "Operator", "OperatorActionRunner.cs"));
+  const scopePolicy = addinFile(path.join("RevitBridge.Common", "OperatorNativeMutationScopePolicy.cs"));
+
+  assert.match(gateway, /InvokeMutationOperations/);
+  assert.match(gateway, /native-api-ops is permanently read-only and does not accept a transaction envelope/);
+  assert.match(gateway, /new TransactionGroup\(transactionDocument!, transactionName\)/);
+  assert.match(gateway, /app\.Application\.DocumentChanged \+= changeHandler/);
+  assert.match(gateway, /transactionMode == "rollback"[\s\S]{0,160}transactionGroup!\.RollBack\(\)/);
+  assert.match(gateway, /transactionGroup!\.Assimilate\(\)/);
+  assert.match(gateway, /transactionMode == "commit"[\s\S]{0,180}groupStatus != TransactionStatus\.Committed/);
+  assert.match(gateway, /ValidateMutationOwnership/);
+  assert.match(gateway, /ValidateMutationScope/);
+  assert.match(gateway, /maxAffectedElements < 1 \|\| maxAffectedElements > 64/);
+  assert.match(gateway, /OperatorNativeMutationScopePolicy\.Evaluate/);
+  assert.match(gateway, /ElementIdCompat\.GetValue/);
+  assert.match(gateway, /ElementIdCompat\.Create/);
+  assert.match(scopePolicy, /affected existing elements outside transaction\.allowedExistingElementIds/);
+  assert.match(scopePolicy, /affected_element_cap_exceeded/);
+  assert.match(scopePolicy, /creation_not_allowed/);
+  assert.match(gateway, /mutationOperationCount == 0/);
+  assert.match(gateway, /provided\.Count > ps\.Length/);
+  assert.match(gateway, /descriptor\.FreezeRiskHint/);
+  assert.match(gateway, /operator\.native_api_mutation_ops\.v1/);
+  assert.match(approval, /\/revit\/native-api-mutation-ops["\s,]+StringComparison\.OrdinalIgnoreCase\)\) return OperatorActionRisk\.High/);
+  assert.match(manifest, /\/revit\/native-api-mutation-ops[\s\S]{0,220}OperatorActionRisk\.High/);
+  assert.match(validator, /native-api-mutation-ops\.transaction\.maxAffectedElements must be an integer between 1 and 64/);
+  assert.match(handler, /class NativeApiMutationOpsHandler[\s\S]{0,500}InvokeMutationOperations/);
+  assert.match(runner, /\/revit\/native-api-mutation-ops["\s,]+new NativeApiMutationOpsHandler/);
+});
+
 test("hosted MCP courier is session-bound, approval-gated, and never auto-replays an uncertain write", () => {
   const worker = addinFile(path.join("RevitBridge", "Operator", "OperatorRevitCourierWorker.cs"));
   const index = repoFile(path.join("operator-backend", "src", "index.ts"), path.join("apps", "operator-backend", "src", "index.ts"));

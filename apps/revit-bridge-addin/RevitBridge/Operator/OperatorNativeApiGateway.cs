@@ -8,7 +8,9 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Events;
 using Autodesk.Revit.UI;
+using RevitBridge.Common;
 
 namespace RevitBridge.Operator
 {
@@ -263,6 +265,16 @@ namespace RevitBridge.Operator
             public List<string>? returns { get; set; }
             public int? maxTotalMs { get; set; }
             public int? maxOperationMs { get; set; }
+            public NativeApiTransactionEnvelope? transaction { get; set; }
+        }
+
+        private sealed class NativeApiTransactionEnvelope
+        {
+            public string? mode { get; set; }
+            public string? name { get; set; }
+            public int? maxAffectedElements { get; set; }
+            public bool? allowCreate { get; set; }
+            public List<long>? allowedExistingElementIds { get; set; }
         }
 
         private sealed class NativeApiOp
@@ -426,6 +438,16 @@ namespace RevitBridge.Operator
 
         public static object InvokeReadOnlyOperations(UIApplication app, string jsonData)
         {
+            return InvokeOperations(app, jsonData, mutationEnvelopeRequired: false);
+        }
+
+        public static object InvokeMutationOperations(UIApplication app, string jsonData)
+        {
+            return InvokeOperations(app, jsonData, mutationEnvelopeRequired: true);
+        }
+
+        private static object InvokeOperations(UIApplication app, string jsonData, bool mutationEnvelopeRequired)
+        {
             EnsureCatalog();
             var request = string.IsNullOrWhiteSpace(jsonData)
                 ? new NativeApiOpsRequest()
@@ -440,11 +462,68 @@ namespace RevitBridge.Operator
             if (maxOperationMs > maxTotalMs)
                 throw new InvalidOperationException("native-api-ops.maxOperationMs must be less than or equal to maxTotalMs.");
 
+            var envelope = request.transaction;
+            if (!mutationEnvelopeRequired && envelope != null)
+                throw new InvalidOperationException("native-api-ops is permanently read-only and does not accept a transaction envelope. Use native-api-mutation-ops.");
+
+            var transactionMode = "none";
+            var transactionName = "Operator Native API Mutation Graph";
+            var maxAffectedElements = 0;
+            var allowCreate = false;
+            var allowedExistingElementIds = new HashSet<long>();
+            Document? transactionDocument = null;
+            if (mutationEnvelopeRequired)
+            {
+                if (envelope == null) throw new InvalidOperationException("native-api-mutation-ops.transaction is required.");
+                transactionMode = (envelope.mode ?? "").Trim().ToLowerInvariant();
+                if (transactionMode != "rollback" && transactionMode != "commit")
+                    throw new InvalidOperationException("native-api-mutation-ops.transaction.mode must be rollback or commit.");
+                transactionName = string.IsNullOrWhiteSpace(envelope.name) ? transactionName : envelope.name!.Trim();
+                if (transactionName.Length > 96) throw new InvalidOperationException("native-api-mutation-ops.transaction.name is limited to 96 characters.");
+                maxAffectedElements = envelope.maxAffectedElements ?? 0;
+                if (maxAffectedElements < 1 || maxAffectedElements > 64)
+                    throw new InvalidOperationException("native-api-mutation-ops.transaction.maxAffectedElements must be between 1 and 64.");
+                allowCreate = envelope.allowCreate ?? false;
+                foreach (var id in envelope.allowedExistingElementIds ?? new List<long>())
+                {
+                    if (id <= 0) throw new InvalidOperationException("native-api-mutation-ops.transaction.allowedExistingElementIds must contain positive element ids.");
+                    allowedExistingElementIds.Add(id);
+                }
+                if (allowedExistingElementIds.Count > 64)
+                    throw new InvalidOperationException("native-api-mutation-ops.transaction.allowedExistingElementIds is limited to 64 unique ids.");
+
+                transactionDocument = app.ActiveUIDocument?.Document;
+                if (transactionDocument == null) throw new InvalidOperationException("native-api-mutation-ops requires an active Revit document.");
+                if (transactionDocument.IsReadOnly) throw new InvalidOperationException("native-api-mutation-ops cannot run against a read-only document.");
+                if (transactionDocument.IsModifiable) throw new InvalidOperationException("native-api-mutation-ops requires Revit to be outside another open transaction.");
+            }
+
             var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            var valueOwners = new Dictionary<string, Document?>(StringComparer.OrdinalIgnoreCase);
             var receipts = new List<object>();
             var total = Stopwatch.StartNew();
-            foreach (var operation in operations)
+            TransactionGroup? transactionGroup = null;
+            Transaction? transaction = null;
+            EventHandler<DocumentChangedEventArgs>? changeHandler = null;
+            var addedIds = new HashSet<long>();
+            var modifiedIds = new HashSet<long>();
+            var deletedIds = new HashSet<long>();
+            var mutationOperationCount = 0;
+            var transactionFinalized = false;
+            try
             {
+                if (mutationEnvelopeRequired)
+                {
+                    transactionGroup = new TransactionGroup(transactionDocument!, transactionName);
+                    if (transactionGroup.Start() != TransactionStatus.Started)
+                        throw new InvalidOperationException("native-api-mutation-ops could not start its transaction group.");
+                    transaction = new Transaction(transactionDocument!, transactionName);
+                    if (transaction.Start() != TransactionStatus.Started)
+                        throw new InvalidOperationException("native-api-mutation-ops could not start its transaction.");
+                }
+
+                foreach (var operation in operations)
+                {
                 if (total.ElapsedMilliseconds > maxTotalMs) throw new InvalidOperationException($"native-api-ops exceeded its {maxTotalMs} ms total budget before operation '{operation.id}'.");
                 var id = (operation.id ?? "").Trim();
                 if (string.IsNullOrWhiteSpace(id) || id.Length > 64 || id.Any(ch => !(char.IsLetterOrDigit(ch) || ch == '_' || ch == '-')))
@@ -460,8 +539,16 @@ namespace RevitBridge.Operator
                     if (string.IsNullOrWhiteSpace(memberId)) throw new InvalidOperationException($"native-api-ops operation '{id}' requires memberId.");
                     if (!_byId!.TryGetValue(memberId, out descriptor) || descriptor.Method == null) throw new InvalidOperationException($"Unknown memberId: {memberId}");
                     if (!OperatorNativeApiPolicy.IsAllowed(descriptor, out var reason)) throw new InvalidOperationException($"Native API operation blocked: {reason}");
-                    if (descriptor.RiskLevel != OperatorActionRisk.Low || descriptor.MutatingHint || descriptor.FreezeRiskHint)
+                    if (!mutationEnvelopeRequired && (descriptor.RiskLevel != OperatorActionRisk.Low || descriptor.MutatingHint || descriptor.FreezeRiskHint))
                         throw new InvalidOperationException($"native-api-ops v2 is read-only; member is not low-risk: {descriptor.MemberId}");
+                    if (mutationEnvelopeRequired)
+                    {
+                        if (descriptor.FreezeRiskHint)
+                            throw new InvalidOperationException($"native-api-mutation-ops blocks freeze-risk members: {descriptor.MemberId}");
+                        if (descriptor.RiskLevel != OperatorActionRisk.Low && !descriptor.MutatingHint)
+                            throw new InvalidOperationException($"native-api-mutation-ops blocks high-risk members that are not recognized model mutations: {descriptor.MemberId}");
+                        if (descriptor.MutatingHint) mutationOperationCount++;
+                    }
                 }
                 else if (!string.IsNullOrWhiteSpace(memberId))
                 {
@@ -500,6 +587,8 @@ namespace RevitBridge.Operator
 
                 var ps = descriptor?.Method?.GetParameters() ?? Array.Empty<ParameterInfo>();
                 var provided = descriptor == null ? new List<JsonElement>() : ReadArgs(operation.args);
+                if (provided.Count > ps.Length)
+                    throw new InvalidOperationException($"Native API operation '{id}' supplied {provided.Count} arguments for a member that accepts {ps.Length}.");
                 var args = new object?[ps.Length];
                 for (var i = 0; i < ps.Length; i++)
                 {
@@ -510,6 +599,10 @@ namespace RevitBridge.Operator
                     else if (parameter.HasDefaultValue) args[i] = parameter.DefaultValue;
                     else throw new InvalidOperationException($"Missing argument for parameter '{parameter.Name}' ({parameter.ParameterType.Name}) in operation '{id}'.");
                 }
+
+                var operationOwner = ResolveOperationOwner(operation.target, targetObject, args, valueOwners);
+                if (mutationEnvelopeRequired && descriptor?.MutatingHint == true)
+                    ValidateMutationOwnership(descriptor, operationOwner, args, transactionDocument!, id);
 
                 var step = Stopwatch.StartNew();
                 object? raw;
@@ -532,6 +625,7 @@ namespace RevitBridge.Operator
                     throw new InvalidOperationException($"native-api-ops exceeded its {maxTotalMs} ms total budget after operation '{id}'.");
 
                 values[id] = raw;
+                valueOwners[id] = ResolveOwningDocument(raw) ?? operationOwner;
                 receipts.Add(new
                 {
                     id,
@@ -543,34 +637,196 @@ namespace RevitBridge.Operator
                     duration_ms = step.ElapsedMilliseconds,
                     result_preview = OperationPreview(raw)
                 });
-            }
+                }
 
-            var returnIds = request.returns != null && request.returns.Count > 0
-                ? request.returns.Select(x => (x ?? "").Trim().TrimStart('$')).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
-                : new List<string> { (operations[operations.Count - 1].id ?? "").Trim() };
-            var returned = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
-            foreach (var id in returnIds)
-            {
-                if (!values.TryGetValue(id, out var value)) throw new InvalidOperationException($"native-api-ops return id was not found: {id}");
-                returned[id] = ReturnShape(value, 0);
+                if (mutationEnvelopeRequired && mutationOperationCount == 0)
+                    throw new InvalidOperationException("native-api-mutation-ops requires at least one recognized mutating call; use native-api-ops for a read-only graph.");
+
+                if (mutationEnvelopeRequired)
+                    transactionDocument!.Regenerate();
+
+                if (total.ElapsedMilliseconds > maxTotalMs)
+                    throw new InvalidOperationException($"native-api-ops exceeded its {maxTotalMs} ms total budget before transaction finalization.");
+
+                var returnIds = request.returns != null && request.returns.Count > 0
+                    ? request.returns.Select(x => (x ?? "").Trim().TrimStart('$')).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+                    : new List<string> { (operations[operations.Count - 1].id ?? "").Trim() };
+                var returned = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+                foreach (var id in returnIds)
+                {
+                    if (!values.TryGetValue(id, out var value)) throw new InvalidOperationException($"native-api-ops return id was not found: {id}");
+                    returned[id] = ReturnShape(value, 0);
+                }
+
+                if (!mutationEnvelopeRequired)
+                {
+                    total.Stop();
+                    return new
+                    {
+                        version = "operator.native_api_ops.v2",
+                        ok = true,
+                        read_only = true,
+                        ephemeral_handles = true,
+                        direct_context_targets = true,
+                        static_calls = true,
+                        property_access = true,
+                        argument_references = true,
+                        budgets = new { max_total_ms = maxTotalMs, max_operation_ms = maxOperationMs },
+                        operation_count = operations.Count,
+                        duration_ms = total.ElapsedMilliseconds,
+                        operations = receipts,
+                        results = returned
+                    };
+                }
+
+                changeHandler = (_, eventArgs) => CaptureDocumentChanges(eventArgs, transactionDocument!, addedIds, modifiedIds, deletedIds);
+                app.Application.DocumentChanged += changeHandler;
+                var commitStatus = transaction!.Commit();
+                transaction.Dispose();
+                transaction = null;
+                app.Application.DocumentChanged -= changeHandler;
+                changeHandler = null;
+                if (commitStatus != TransactionStatus.Committed)
+                    throw new InvalidOperationException($"native-api-mutation-ops transaction commit returned {commitStatus}.");
+
+                ValidateMutationScope(addedIds, modifiedIds, deletedIds, allowedExistingElementIds, allowCreate, maxAffectedElements);
+                if (total.ElapsedMilliseconds > maxTotalMs)
+                    throw new InvalidOperationException($"native-api-mutation-ops exceeded its {maxTotalMs} ms total budget during transaction finalization.");
+
+                TransactionStatus groupStatus;
+                if (transactionMode == "rollback")
+                    groupStatus = transactionGroup!.RollBack();
+                else
+                    groupStatus = transactionGroup!.Assimilate();
+                transactionFinalized = true;
+                if (transactionMode == "rollback" && groupStatus != TransactionStatus.RolledBack)
+                    throw new InvalidOperationException($"native-api-mutation-ops rollback returned {groupStatus}.");
+                if (transactionMode == "commit" && groupStatus != TransactionStatus.Committed)
+                    throw new InvalidOperationException($"native-api-mutation-ops assimilation returned {groupStatus}.");
+
+                total.Stop();
+                return new
+                {
+                    version = "operator.native_api_mutation_ops.v1",
+                    ok = true,
+                    read_only = false,
+                    ephemeral_handles = true,
+                    transaction = new
+                    {
+                        mode = transactionMode,
+                        status = transactionMode == "rollback" ? "rolled_back" : "committed",
+                        committed = transactionMode == "commit",
+                        dry_run = transactionMode == "rollback",
+                        readback_phase = "inside_transaction_after_regenerate",
+                        max_affected_elements = maxAffectedElements,
+                        allow_create = allowCreate,
+                        allowed_existing_element_ids = allowedExistingElementIds.OrderBy(x => x).ToArray(),
+                        added_element_ids = addedIds.OrderBy(x => x).ToArray(),
+                        modified_element_ids = modifiedIds.Except(addedIds).OrderBy(x => x).ToArray(),
+                        deleted_element_ids = deletedIds.OrderBy(x => x).ToArray(),
+                        affected_element_count = addedIds.Union(modifiedIds).Union(deletedIds).Count(),
+                        transient_created_ids = transactionMode == "rollback" ? addedIds.OrderBy(x => x).ToArray() : Array.Empty<long>()
+                    },
+                    budgets = new { max_total_ms = maxTotalMs, max_operation_ms = maxOperationMs },
+                    operation_count = operations.Count,
+                    mutation_operation_count = mutationOperationCount,
+                    duration_ms = total.ElapsedMilliseconds,
+                    operations = receipts,
+                    results = returned
+                };
             }
-            total.Stop();
-            return new
+            catch
             {
-                version = "operator.native_api_ops.v2",
-                ok = true,
-                read_only = true,
-                ephemeral_handles = true,
-                direct_context_targets = true,
-                static_calls = true,
-                property_access = true,
-                argument_references = true,
-                budgets = new { max_total_ms = maxTotalMs, max_operation_ms = maxOperationMs },
-                operation_count = operations.Count,
-                duration_ms = total.ElapsedMilliseconds,
-                operations = receipts,
-                results = returned
-            };
+                if (changeHandler != null)
+                {
+                    try { app.Application.DocumentChanged -= changeHandler; } catch { }
+                    changeHandler = null;
+                }
+                if (transaction != null)
+                {
+                    try { if (transaction.GetStatus() == TransactionStatus.Started) transaction.RollBack(); } catch { }
+                }
+                if (transactionGroup != null && !transactionFinalized)
+                {
+                    try { if (transactionGroup.GetStatus() == TransactionStatus.Started) transactionGroup.RollBack(); } catch { }
+                }
+                throw;
+            }
+            finally
+            {
+                transaction?.Dispose();
+                transactionGroup?.Dispose();
+            }
+        }
+
+        private static Document? ResolveOperationOwner(string? rawTarget, object? targetObject, object?[] args, Dictionary<string, Document?> valueOwners)
+        {
+            var target = (rawTarget ?? "").Trim();
+            if (target.StartsWith("$", StringComparison.Ordinal) && target.Length > 1 && valueOwners.TryGetValue(target.Substring(1), out var referencedOwner))
+                return referencedOwner;
+            var owner = ResolveOwningDocument(targetObject);
+            if (owner != null) return owner;
+            foreach (var arg in args)
+            {
+                owner = ResolveOwningDocument(arg);
+                if (owner != null) return owner;
+            }
+            return null;
+        }
+
+        private static Document? ResolveOwningDocument(object? value)
+        {
+            if (value is Document document) return document;
+            if (value is UIDocument uiDocument) return uiDocument.Document;
+            if (value is Element element) return element.Document;
+            if (value == null) return null;
+            try
+            {
+                var property = value.GetType().GetProperty("Document", BindingFlags.Public | BindingFlags.Instance);
+                if (property != null && property.GetIndexParameters().Length == 0 && property.GetValue(value, null) is Document owner) return owner;
+                var elementProperty = value.GetType().GetProperty("Element", BindingFlags.Public | BindingFlags.Instance);
+                if (elementProperty != null && elementProperty.GetIndexParameters().Length == 0 && elementProperty.GetValue(value, null) is Element ownerElement) return ownerElement.Document;
+            }
+            catch { }
+            return null;
+        }
+
+        private static void ValidateMutationOwnership(NativeApiMemberDescriptor descriptor, Document? operationOwner, object?[] args, Document activeDocument, string operationId)
+        {
+            if (descriptor.DeclaringType == typeof(Transaction) || descriptor.DeclaringType == typeof(TransactionGroup) || descriptor.DeclaringType == typeof(SubTransaction))
+                throw new InvalidOperationException($"native-api-mutation-ops operation '{operationId}' cannot manage its own transaction.");
+            if (operationOwner == null)
+                throw new InvalidOperationException($"native-api-mutation-ops operation '{operationId}' could not prove active-document ownership for {descriptor.MemberId}.");
+            if (!ReferenceEquals(operationOwner, activeDocument))
+                throw new InvalidOperationException($"native-api-mutation-ops operation '{operationId}' targets a document other than the active transaction document.");
+            foreach (var arg in args)
+            {
+                var argumentOwner = ResolveOwningDocument(arg);
+                if (argumentOwner != null && !ReferenceEquals(argumentOwner, activeDocument))
+                    throw new InvalidOperationException($"native-api-mutation-ops operation '{operationId}' contains an argument owned by another document.");
+            }
+        }
+
+        private static void CaptureDocumentChanges(DocumentChangedEventArgs args, Document activeDocument, HashSet<long> addedIds, HashSet<long> modifiedIds, HashSet<long> deletedIds)
+        {
+            Document? changedDocument = null;
+            try { changedDocument = args.GetDocument(); } catch { }
+            if (!ReferenceEquals(changedDocument, activeDocument)) return;
+            try { foreach (var id in args.GetAddedElementIds()) { var value = ElementIdCompat.GetValue(id); if (value > 0) addedIds.Add(value); } } catch { }
+            try { foreach (var id in args.GetModifiedElementIds()) { var value = ElementIdCompat.GetValue(id); if (value > 0) modifiedIds.Add(value); } } catch { }
+            try { foreach (var id in args.GetDeletedElementIds()) { var value = ElementIdCompat.GetValue(id); if (value > 0) deletedIds.Add(value); } } catch { }
+        }
+
+        private static void ValidateMutationScope(HashSet<long> addedIds, HashSet<long> modifiedIds, HashSet<long> deletedIds, HashSet<long> allowedExistingElementIds, bool allowCreate, int maxAffectedElements)
+        {
+            var decision = OperatorNativeMutationScopePolicy.Evaluate(
+                addedIds,
+                modifiedIds,
+                deletedIds,
+                allowedExistingElementIds,
+                allowCreate,
+                maxAffectedElements);
+            if (!decision.Allowed) throw new InvalidOperationException(decision.Error);
         }
 
         private static object? ResolveOperationTarget(string? rawTarget, Type? expectedType, UIApplication app, Dictionary<string, object?> values, string operationId)
@@ -852,7 +1108,7 @@ namespace RevitBridge.Operator
             if (targetType == typeof(float)) return value.ValueKind == JsonValueKind.Number && value.TryGetSingle(out var f) ? f : float.Parse(value.GetString() ?? "0", CultureInfo.InvariantCulture);
             if (targetType == typeof(decimal)) return value.ValueKind == JsonValueKind.Number && value.TryGetDecimal(out var dm) ? dm : decimal.Parse(value.GetString() ?? "0", CultureInfo.InvariantCulture);
             if (targetType.IsEnum) return value.ValueKind == JsonValueKind.String ? Enum.Parse(targetType, value.GetString() ?? "", true) : Enum.ToObject(targetType, value.GetInt32());
-            if (targetType == typeof(ElementId)) return new ElementId(value.ValueKind == JsonValueKind.Number ? value.GetInt32() : int.Parse(value.GetString() ?? "0", CultureInfo.InvariantCulture));
+            if (targetType == typeof(ElementId)) return ElementIdCompat.Create(value.ValueKind == JsonValueKind.Number ? value.GetInt64() : long.Parse(value.GetString() ?? "0", CultureInfo.InvariantCulture));
             if (targetType == typeof(XYZ))
             {
                 if (value.ValueKind == JsonValueKind.Array)
@@ -906,12 +1162,12 @@ namespace RevitBridge.Operator
             if (value == null) return null;
             if (value is string || value is bool || value is int || value is long || value is double || value is float || value is decimal) return value;
             if (value is Enum) return value.ToString();
-            if (value is ElementId eid) return new { id = eid.IntegerValue };
+            if (value is ElementId eid) return new { id = ElementIdCompat.GetValue(eid) };
             if (value is XYZ xyz) return new { x = xyz.X, y = xyz.Y, z = xyz.Z };
             if (value is UV uv) return new { u = uv.U, v = uv.V };
-            if (value is Element el) return new { id = el.Id?.IntegerValue, unique_id = Safe(() => el.UniqueId), name = Safe(() => el.Name), category = Safe(() => el.Category?.Name) };
+            if (value is Element el) return new { id = ElementIdCompat.GetValue(el.Id), unique_id = Safe(() => el.UniqueId), name = Safe(() => el.Name), category = Safe(() => el.Category?.Name) };
             if (value is Document doc) return new { title = Safe(() => doc.Title), path = Safe(() => doc.PathName), is_modifiable = SafeBool(() => doc.IsModifiable) };
-            if (value is View view) return new { id = view.Id?.IntegerValue, name = Safe(() => view.Name), view_type = view.ViewType.ToString() };
+            if (value is View view) return new { id = ElementIdCompat.GetValue(view.Id), name = Safe(() => view.Name), view_type = view.ViewType.ToString() };
             if (value is IEnumerable seq)
             {
                 var outItems = new List<object?>();

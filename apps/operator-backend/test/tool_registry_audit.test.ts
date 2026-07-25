@@ -28,6 +28,7 @@ test("tool registry audit inventories the complete source catalog without claimi
   assert.equal(audit.tools.find(tool => tool.path === "/revit/get-parameters")?.contracts.request_schema_source, "explicit");
   assert.ok(!audit.tools.find(tool => tool.path === "/revit/get-parameters")?.issues.includes("reflected_request_schema_unverified"));
   assert.equal(audit.tools.find(tool => tool.path === "/revit/native-api-ops")?.contracts.request_schema_source, "explicit");
+  assert.equal(audit.tools.find(tool => tool.path === "/revit/native-api-mutation-ops")?.contracts.request_schema_source, "explicit");
   for (const path of ["/revit/resolve-room-plan-view", "/revit/query-zone-data", "/revit/room_mep_intersect"]) {
     assert.equal(audit.tools.find(tool => tool.path === path)?.contracts.request_schema_source, "explicit");
     assert.ok(!audit.tools.find(tool => tool.path === path)?.issues.includes("reflected_request_schema_unverified"));
