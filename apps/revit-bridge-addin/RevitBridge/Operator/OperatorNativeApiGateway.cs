@@ -308,7 +308,8 @@ namespace RevitBridge.Operator
             var items = ordered.Skip(safeOffset).Take(safeLimit).Select(ToPublicItem).ToList();
             return new
             {
-                version = "operator.native_api_catalog.v1",
+                version = "operator.native_api_catalog.v2",
+                semantics = PublicSemantics(),
                 generated_at = _builtAtUtc.ToString("o"),
                 summary = new { total_types = _typeCount, total_members = _catalog!.Count },
                 policy = OperatorNativeApiPolicy.GetStatus(),
@@ -344,8 +345,9 @@ namespace RevitBridge.Operator
 
             return new
             {
-                version = "operator.native_api_search.v1",
+                version = "operator.native_api_search.v2",
                 generated_at = _builtAtUtc.ToString("o"),
+                semantics = PublicSemantics(),
                 query,
                 returned = ranked.Count,
                 items = ranked
@@ -542,6 +544,17 @@ namespace RevitBridge.Operator
         private static object ToPublicItem(NativeApiMemberDescriptor d)
         {
             var allowed = OperatorNativeApiPolicy.IsAllowed(d, out var reason);
+            var signatureSupported = d.Callable;
+            var isConstructor = d.Method is ConstructorInfo;
+            var targetReachable = signatureSupported && (d.IsStatic || isConstructor || (d.DeclaringType != null && CanResolveContextParameter(d.DeclaringType)));
+            var chainable = signatureSupported && !d.IsStatic && !isConstructor;
+            var reachability = !signatureSupported
+                ? "unsupported_signature"
+                : targetReachable
+                    ? "direct"
+                    : chainable
+                        ? "ephemeral_handle_required"
+                        : "unreachable";
             return new
             {
                 member_id = d.MemberId,
@@ -558,13 +571,29 @@ namespace RevitBridge.Operator
                 mutating_hint = d.MutatingHint,
                 freeze_risk_hint = d.FreezeRiskHint,
                 priority = d.Priority,
-                callable = d.Callable,
+                signature_supported = signatureSupported,
+                target_reachable = targetReachable,
+                target_reachability = reachability,
+                chainable,
+                terminally_useful = (bool?)null,
+                terminal_usefulness_evidence = "unverified",
+                callable = signatureSupported,
+                callable_deprecated = true,
                 unsupported_parameter_types = d.UnsupportedParameterTypes,
                 allowed,
                 blocked_reason = allowed ? null : reason,
                 docs_search_url = d.DocsSearchUrl
             };
         }
+
+        private static object PublicSemantics() => new
+        {
+            signature_supported = "The reflected parameter signature can be supplied by the gateway converter or Revit context.",
+            target_reachable = "The member can be invoked directly without first producing an instance handle.",
+            chainable = "The operation graph can invoke this instance member when a compatible prior ephemeral result is available.",
+            terminally_useful = "Null until a bounded live receipt proves a useful terminal result for the member.",
+            callable = "Deprecated compatibility alias of signature_supported."
+        };
 
         private static void EnsureCatalog()
         {

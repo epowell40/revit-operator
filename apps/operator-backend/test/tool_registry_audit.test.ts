@@ -14,6 +14,12 @@ test("tool registry audit inventories the complete source catalog without claimi
   assert.equal(audit.summary.generic_schema_only, audit.tools.filter(tool => tool.issues.includes("generic_request_schema_only")).length);
   assert.equal(audit.summary.missing_action_runtime, audit.tools.filter(tool => tool.issues.includes("missing_operator_action_runtime")).length);
   assert.equal(audit.summary.missing_http_runtime, audit.tools.filter(tool => tool.issues.includes("missing_direct_http_runtime")).length);
+  assert.equal(audit.reconciliation.duplicate_manifest_keys.length, 0);
+  assert.equal(audit.reconciliation.private_only_manifest_keys.length, 0);
+  assert.equal(audit.reconciliation.public_only_manifest_keys.length, 0);
+  assert.ok(audit.reconciliation.method_variant_paths.some(item => item.path === "/revit/views"));
+  assert.ok(audit.reconciliation.shared_handler_aliases.some(item => item.paths.includes("/revit/warnings") && item.paths.includes("/revit/export-warnings-report")));
+  assert.deepEqual(audit.reconciliation.control_plane_external_event_routes, []);
   assert.ok(audit.tools.filter(tool => tool.surface_kind === "ui_host").every(tool => !tool.issues.includes("generic_request_schema_only")));
   assert.ok(audit.tools.filter(tool => tool.surface_kind === "pane_backend").every(tool => !tool.mcp.generic_call_available));
   assert.equal(audit.tools.find(tool => tool.path === "/revit/capture-screenshare")?.surface_kind, "pane_backend");
@@ -27,7 +33,10 @@ test("tool registry audit inventories the complete source catalog without claimi
     assert.ok(!audit.tools.find(tool => tool.path === path)?.issues.includes("reflected_request_schema_unverified"));
   }
   assert.match(renderAuditCsv(audit), /^key,group,risk,/);
-  assert.match(renderAuditMarkdown(audit), /live_safe=true.*bounded read-only.*useful=true/i);
+  const markdown = renderAuditMarkdown(audit);
+  assert.match(markdown, /live_safe=true.*bounded read-only.*useful=true/i);
+  assert.match(markdown, /Cross-surface reconciliation/);
+  assert.match(markdown, /Shared-handler aliases/);
 });
 
 test("tool registry audit attaches bounded live receipts to the exact method and path", () => {

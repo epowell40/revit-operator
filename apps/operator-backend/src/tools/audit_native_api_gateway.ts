@@ -13,7 +13,14 @@ type NativeApiItem = {
   return_type?: string;
   is_static?: boolean;
   risk?: string;
+  signature_supported?: boolean;
+  target_reachable?: boolean;
+  target_reachability?: string;
+  chainable?: boolean;
+  terminally_useful?: boolean | null;
+  terminal_usefulness_evidence?: string;
   callable?: boolean;
+  callable_deprecated?: boolean;
   allowed?: boolean;
   mutating_hint?: boolean;
   freeze_risk_hint?: boolean;
@@ -29,6 +36,11 @@ export type NativeApiGatewaySummary = {
   direct_context_instance_signature_supported: number;
   always_directly_invocable_signature_upper_bound: number;
   other_instance_signature_supported_but_target_unproven: number;
+  target_reachable: number;
+  chainable: number;
+  terminally_useful_verified: number;
+  terminally_useful_unverified: number;
+  legacy_callable_fallback: number;
   mutating_hint: number;
   freeze_risk_hint: number;
   high_risk: number;
@@ -42,7 +54,7 @@ const DIRECT_CONTEXT_TYPES = new Set([
 ]);
 
 export function summarizeNativeApiCatalog(items: NativeApiItem[]): NativeApiGatewaySummary {
-  const supported = items.filter(item => item.callable === true);
+  const supported = items.filter(item => item.signature_supported === true || (item.signature_supported === undefined && item.callable === true));
   const staticSupported = supported.filter(item => item.is_static === true);
   const constructorSupported = supported.filter(item => item.kind === "ctor");
   const contextSupported = supported.filter(item => item.is_static !== true && item.kind !== "ctor" && DIRECT_CONTEXT_TYPES.has(item.type ?? ""));
@@ -57,6 +69,11 @@ export function summarizeNativeApiCatalog(items: NativeApiItem[]): NativeApiGate
     direct_context_instance_signature_supported: contextSupported.length,
     always_directly_invocable_signature_upper_bound: directlyInvocable.length,
     other_instance_signature_supported_but_target_unproven: otherInstanceSupported.length,
+    target_reachable: items.filter(item => item.target_reachable === true).length,
+    chainable: items.filter(item => item.chainable === true).length,
+    terminally_useful_verified: items.filter(item => item.terminally_useful === true).length,
+    terminally_useful_unverified: items.filter(item => item.terminally_useful === null || item.terminally_useful === undefined).length,
+    legacy_callable_fallback: items.filter(item => item.signature_supported === undefined && item.callable !== undefined).length,
     mutating_hint: items.filter(item => item.mutating_hint === true).length,
     freeze_risk_hint: items.filter(item => item.freeze_risk_hint === true).length,
     high_risk: items.filter(item => String(item.risk).toLowerCase() === "high").length
@@ -84,7 +101,7 @@ function csvEscape(value: unknown): string {
 }
 
 function renderCsv(items: NativeApiItem[]): string {
-  const fields: Array<keyof NativeApiItem> = ["member_id", "type", "name", "kind", "signature", "return_type", "is_static", "risk", "callable", "allowed", "mutating_hint", "freeze_risk_hint", "blocked_reason"];
+  const fields: Array<keyof NativeApiItem> = ["member_id", "type", "name", "kind", "signature", "return_type", "is_static", "risk", "signature_supported", "target_reachable", "target_reachability", "chainable", "terminally_useful", "terminal_usefulness_evidence", "callable", "callable_deprecated", "allowed", "mutating_hint", "freeze_risk_hint", "blocked_reason"];
   return `${[fields.join(","), ...items.map(item => fields.map(field => csvEscape(item[field])).join(","))].join("\n")}\n`;
 }
 
@@ -105,7 +122,9 @@ function renderMarkdown(report: Record<string, unknown>, summary: NativeApiGatew
     "",
     "## Interpretation",
     "",
-    "`callable` currently means the reflected signature uses argument types the converter recognizes. It does not prove that the gateway can supply the instance target, retain returned objects, chain another operation, or complete a useful Revit task.",
+    summary.legacy_callable_fallback > 0
+      ? "This live DLL still exposes legacy `callable`; the audit treats it only as a fallback for `signature_supported` and does not infer target reachability, chaining, or terminal usefulness."
+      : "The catalog now separates signature support, direct target reachability, operation-graph chaining, and independently verified terminal usefulness. `callable` is retained only as a deprecated compatibility alias.",
     ""
   ].join("\n");
 }
