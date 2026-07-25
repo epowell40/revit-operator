@@ -5,6 +5,7 @@ import test from "node:test";
 import { CODEX_APP_SERVER_COMPATIBILITY, evaluateCodexCliVersion, parseCodexCliVersion, resolveCodexExecutable } from "../src/codex/app_server_compatibility.js";
 import { adaptDynamicToolCompletedItem, adaptMcpToolCallResultToDynamicResponse, getFreshRevitEvidenceRequirement, getOperatorAgentBaseInstructions, isSuccessfulFreshRevitEvidence } from "../src/brains/codex_brain.js";
 import { resolveOperatorMcpServerSpec } from "../src/codex/mcp_tool_runtime.js";
+import { canonicalizeProtocolJson, sortProtocolFiles } from "../src/tools/verify_codex_app_server_protocol.js";
 
 test("Codex app-server compatibility pins the generated protocol version", () => {
   assert.equal(parseCodexCliVersion("codex-cli 0.144.5\n"), "0.144.5");
@@ -20,6 +21,21 @@ test("Codex app-server compatibility rejects drift unless explicitly overridden"
   const receipt = evaluateCodexCliVersion("codex-cli 0.145.0", { OPERATOR_CODEX_ALLOW_UNPINNED: "1" });
   assert.equal(receipt.compatible, false);
   assert.equal(receipt.override_used, true);
+});
+
+test("Codex protocol receipts use platform-independent ordinal path ordering", () => {
+  const root = path.resolve("protocol-root");
+  const files = [path.join(root, "a.json"), path.join(root, "B.json"), path.join(root, "nested", "c.json")];
+  assert.deepEqual(sortProtocolFiles(root, files).map(file => path.relative(root, file).replace(/\\/g, "/")), [
+    "B.json",
+    "a.json",
+    "nested/c.json"
+  ]);
+});
+
+test("Codex protocol receipts canonicalize JSON object order without changing array order", () => {
+  assert.equal(JSON.stringify(canonicalizeProtocolJson({ z: 1, a: { d: 2, b: 3 }, list: [{ y: 2, x: 1 }] })),
+    '{"a":{"b":3,"d":2},"list":[{"x":1,"y":2}],"z":1}');
 });
 
 test("Codex executable resolution preserves explicit non-shim binaries", () => {
