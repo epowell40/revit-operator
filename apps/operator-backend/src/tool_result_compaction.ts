@@ -691,8 +691,11 @@ export function compactParameterReadResultForPrompt(value: unknown, options?: { 
   const obj = asObject(value);
   if (!obj) return value;
   const items = Array.isArray(obj.items) ? obj.items : [];
-  const literal = pickString(obj.valueContains);
+  const exactLiteral = pickString(obj.valueEquals);
+  const containsLiteral = pickString(obj.valueContains);
+  const literal = exactLiteral ?? containsLiteral;
   const literalLower = literal?.toLowerCase() ?? "";
+  const caseSensitive = pickBool(obj.caseSensitive) === true;
   const maxEvidence = Math.max(1, Math.min(100, options?.maxEvidence ?? 16));
   const maxElementIds = Math.max(1, Math.min(500, options?.maxElementIds ?? 500));
   const evidence: Array<Record<string, unknown> & { _score: number; _order: number }> = [];
@@ -711,7 +714,11 @@ export function compactParameterReadResultForPrompt(value: unknown, options?: { 
       if (!parameterName || !parameterValue) continue;
       const nameLower = parameterName.toLowerCase();
       const valueLower = parameterValue.toLowerCase();
-      const literalMatch = literalLower ? valueLower.includes(literalLower) : false;
+      const literalMatch = literalLower
+        ? exactLiteral
+          ? caseSensitive ? parameterValue === literal : valueLower === literalLower
+          : caseSensitive ? parameterValue.includes(literal!) : valueLower.includes(literalLower)
+        : false;
       const designationMatch = /\bdesig(?:nation)?\.?\b/i.test(parameterName);
       const shockMatch = /shock\s*arrest|(?:^|[-_\s])sa(?:[-_\s]|$)/i.test(`${parameterName} ${parameterValue} ${pickString(item.name) ?? ""}`);
       const codeMatch = /-[a-z0-9]+-/i.test(parameterValue);
@@ -752,7 +759,9 @@ export function compactParameterReadResultForPrompt(value: unknown, options?: { 
     selector: obj.selector ?? null,
     hostModelOnly: obj.hostModelOnly ?? null,
     instanceOnly: obj.instanceOnly ?? null,
-    valueContains: literal,
+    valueContains: containsLiteral,
+    valueEquals: exactLiteral,
+    caseSensitive,
     writableOnly: obj.writableOnly ?? null,
     totalScanned: obj.totalScanned ?? null,
     totalMatched: obj.totalMatched ?? null,

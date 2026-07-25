@@ -893,6 +893,7 @@ namespace RevitBridge.Operator
                             { "names", Arr(Str()) },
                             { "includeStringParameters", Bool() },
                             { "valueContains", Str() },
+                            { "valueEquals", Str() },
                             { "caseSensitive", Bool() },
                             { "writableOnly", Bool() },
                             { "includeEmpty", Bool() },

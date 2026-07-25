@@ -42,6 +42,28 @@ test("compact parameter reads preserves late DESIG and shock-arrestor evidence",
   assert.equal(compacted.evidenceSample[0]?.isReadOnly, false);
 });
 
+test("compact exact parameter reads excludes substring neighbors", () => {
+  const compacted = compactParameterReadResultForPrompt({
+    selector: "allModelInstances",
+    hostModelOnly: true,
+    valueEquals: "1-2",
+    totalScanned: 17450,
+    totalMatched: 1,
+    returnedCount: 2,
+    hasMore: false,
+    items: [
+      { id: 386031, category: "Mechanical Equipment", parameterDetails: [{ name: "Mark", value: "1-2", storageType: "String", isReadOnly: false }] },
+      { id: 732320, category: "Pipe Fittings", parameterDetails: [{ name: "Mark", value: "1-22", storageType: "String", isReadOnly: false }] }
+    ]
+  }) as any;
+
+  assert.equal(compacted.valueEquals, "1-2");
+  assert.equal(compacted.valueContains, null);
+  assert.deepEqual(compacted.matchingElementIds, [386031]);
+  assert.equal(compacted.evidenceSample.length, 1);
+  assert.equal(compacted.evidenceSample[0]?.value, "1-2");
+});
+
 test("compact schedule reads preserves paging and bounded visible cells", () => {
   const rows = Array.from({ length: 45 }, (_, index) => ({ rowIndex: index, cells: [`SA-${index}`, `B3-G-SA-${index}`] }));
   const compacted = compactScheduleReadResultForPrompt({

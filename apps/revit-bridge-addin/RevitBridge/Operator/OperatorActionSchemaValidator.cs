@@ -6698,7 +6698,7 @@ namespace RevitBridge.Operator
             {
                 const string getParamsExample = "{\"elementIds\":[12345],\"names\":[\"Sheet Name\"]}";
                 const string getParamsCategoryExample = "{\"categories\":[\"OST_ElectricalEquipment\"],\"includeStringParameters\":true,\"offset\":0,\"limit\":500}";
-                const string getParamsModelExample = "{\"allModelInstances\":true,\"includeStringParameters\":true,\"valueContains\":\"-G-\",\"writableOnly\":true,\"offset\":0,\"limit\":500}";
+                const string getParamsModelExample = "{\"allModelInstances\":true,\"includeStringParameters\":true,\"valueEquals\":\"AHU-1\",\"offset\":0,\"limit\":500}";
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "get-parameters body must be an object at $. Examples: " + getParamsExample + " or " + getParamsCategoryExample;
@@ -6712,6 +6712,7 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalBool(obj.Value, "allModelInstances", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeStringParameters", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "valueContains", maxLen: 256, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "valueEquals", maxLen: 256, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "caseSensitive", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "writableOnly", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeEmpty", out error)) return false;
@@ -6726,6 +6727,18 @@ namespace RevitBridge.Operator
                 var hasIdSelector = hasElementId || hasElementIds;
                 var hasCategorySelector = hasCategory || hasCategories;
                 var hasAllModelSelector = obj.Value.TryGetProperty("allModelInstances", out var allModel) && allModel.ValueKind == JsonValueKind.True;
+                var hasContainsFilter = obj.Value.TryGetProperty("valueContains", out var containsFilter) &&
+                                        containsFilter.ValueKind == JsonValueKind.String &&
+                                        !string.IsNullOrEmpty(containsFilter.GetString());
+                var hasEqualsFilter = obj.Value.TryGetProperty("valueEquals", out var equalsFilter) &&
+                                      equalsFilter.ValueKind == JsonValueKind.String &&
+                                      !string.IsNullOrEmpty(equalsFilter.GetString());
+
+                if (hasContainsFilter && hasEqualsFilter)
+                {
+                    error = "get-parameters accepts $.valueContains or $.valueEquals, not both.";
+                    return false;
+                }
 
                 if (!hasIdSelector && !hasCategorySelector && !hasAllModelSelector)
                 {
@@ -6741,15 +6754,13 @@ namespace RevitBridge.Operator
 
                 if (hasAllModelSelector)
                 {
-                    var hasValueFilter = obj.Value.TryGetProperty("valueContains", out var valueFilter) &&
-                                         valueFilter.ValueKind == JsonValueKind.String &&
-                                         !string.IsNullOrEmpty(valueFilter.GetString());
+                    var hasValueFilter = hasContainsFilter || hasEqualsFilter;
                     var hasNameFilter = obj.Value.TryGetProperty("names", out var exactNames) &&
                                         exactNames.ValueKind == JsonValueKind.Array &&
                                         exactNames.GetArrayLength() > 0;
                     if (!hasValueFilter && !hasNameFilter)
                     {
-                        error = "get-parameters with allModelInstances:true requires a non-empty literal valueContains filter or at least one exact parameter name. Example: " + getParamsModelExample;
+                        error = "get-parameters with allModelInstances:true requires a non-empty valueContains/valueEquals filter or at least one exact parameter name. Example: " + getParamsModelExample;
                         return false;
                     }
                     var stringsOnly = obj.Value.TryGetProperty("includeStringParameters", out var stringFilter) && stringFilter.ValueKind == JsonValueKind.True;

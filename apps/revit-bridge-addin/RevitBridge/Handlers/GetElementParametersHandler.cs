@@ -22,6 +22,7 @@ namespace RevitBridge.Handlers
             public List<string>? names { get; set; }
             public bool? includeStringParameters { get; set; }
             public string? valueContains { get; set; }
+            public string? valueEquals { get; set; }
             public bool? caseSensitive { get; set; }
             public bool? writableOnly { get; set; }
             public bool? includeEmpty { get; set; }
@@ -48,13 +49,18 @@ namespace RevitBridge.Handlers
             var wantedNames = NormalizeNames(p.names);
             var stringsOnly = p.includeStringParameters ?? false;
             var valueContains = string.IsNullOrWhiteSpace(p.valueContains) ? null : p.valueContains;
+            var valueEquals = string.IsNullOrWhiteSpace(p.valueEquals) ? null : p.valueEquals;
             var caseSensitive = p.caseSensitive ?? false;
             var writableOnly = p.writableOnly ?? false;
             var includeEmpty = p.includeEmpty ?? true;
 
-            if (hasAllModelSelector && string.IsNullOrEmpty(valueContains) && wantedNames.Count == 0)
+            if (!string.IsNullOrEmpty(valueContains) && !string.IsNullOrEmpty(valueEquals))
             {
-                throw new InvalidOperationException("allModelInstances:true requires a non-empty literal valueContains filter or at least one exact parameter name so the active-host scan remains bounded.");
+                throw new InvalidOperationException("get-parameters accepts valueContains or valueEquals, not both.");
+            }
+            if (hasAllModelSelector && string.IsNullOrEmpty(valueContains) && string.IsNullOrEmpty(valueEquals) && wantedNames.Count == 0)
+            {
+                throw new InvalidOperationException("allModelInstances:true requires a non-empty valueContains/valueEquals filter or at least one exact parameter name so the active-host scan remains bounded.");
             }
             if (hasAllModelSelector && !stringsOnly)
             {
@@ -63,7 +69,7 @@ namespace RevitBridge.Handlers
 
             if (hasCategorySelector)
             {
-                return Task.FromResult(ReadCategoryPage(doc, requestedCategories, wantedNames, stringsOnly, valueContains, caseSensitive, writableOnly, includeEmpty, p.offset, p.limit));
+                return Task.FromResult(ReadCategoryPage(doc, requestedCategories, wantedNames, stringsOnly, valueContains, valueEquals, caseSensitive, writableOnly, includeEmpty, p.offset, p.limit));
             }
 
             if (hasAllModelSelector)
@@ -81,6 +87,7 @@ namespace RevitBridge.Handlers
                     wantedNames,
                     stringsOnly,
                     valueContains,
+                    valueEquals,
                     caseSensitive,
                     writableOnly,
                     includeEmpty,
@@ -96,7 +103,7 @@ namespace RevitBridge.Handlers
                     var elem = doc.GetElement(ElementIdCompat.Create(id));
                     items.Add(elem == null
                         ? new { id, error = "Element not found" }
-                        : BuildElementItem(elem, wantedNames, stringsOnly, valueContains, caseSensitive, writableOnly, includeEmpty));
+                        : BuildElementItem(elem, wantedNames, stringsOnly, valueContains, valueEquals, caseSensitive, writableOnly, includeEmpty));
                 }
 
                 return Task.FromResult<object>(new { items });
@@ -104,12 +111,12 @@ namespace RevitBridge.Handlers
 
             if (!p.elementId.HasValue)
             {
-                throw new InvalidOperationException("get-parameters requires elementId, elementIds, category, or categories.");
+                throw new InvalidOperationException("get-parameters requires elementId, elementIds, category, categories, or allModelInstances:true.");
             }
 
             var single = doc.GetElement(ElementIdCompat.Create(p.elementId.Value));
             if (single == null) throw new InvalidOperationException("Element not found");
-            return Task.FromResult(BuildElementItem(single, wantedNames, stringsOnly, valueContains, caseSensitive, writableOnly, includeEmpty));
+            return Task.FromResult(BuildElementItem(single, wantedNames, stringsOnly, valueContains, valueEquals, caseSensitive, writableOnly, includeEmpty));
         }
 
         private static object ReadCategoryPage(
@@ -118,6 +125,7 @@ namespace RevitBridge.Handlers
             HashSet<string> wantedNames,
             bool stringsOnly,
             string? valueContains,
+            string? valueEquals,
             bool caseSensitive,
             bool writableOnly,
             bool includeEmpty,
@@ -182,6 +190,7 @@ namespace RevitBridge.Handlers
                 wantedNames,
                 stringsOnly,
                 valueContains,
+                valueEquals,
                 caseSensitive,
                 writableOnly,
                 includeEmpty,
@@ -196,19 +205,20 @@ namespace RevitBridge.Handlers
             HashSet<string> wantedNames,
             bool stringsOnly,
             string? valueContains,
+            string? valueEquals,
             bool caseSensitive,
             bool writableOnly,
             bool includeEmpty,
             int? offset,
             int? limit)
         {
-            var narrowed = wantedNames.Count > 0 || !string.IsNullOrEmpty(valueContains) || writableOnly || !includeEmpty;
+            var narrowed = wantedNames.Count > 0 || !string.IsNullOrEmpty(valueContains) || !string.IsNullOrEmpty(valueEquals) || writableOnly || !includeEmpty;
             var elements = narrowed
-                ? sourceElements.Where(x => ElementHasMatchingParameter(x, wantedNames, stringsOnly, valueContains, caseSensitive, writableOnly, includeEmpty)).ToList()
+                ? sourceElements.Where(x => ElementHasMatchingParameter(x, wantedNames, stringsOnly, valueContains, valueEquals, caseSensitive, writableOnly, includeEmpty)).ToList()
                 : sourceElements.ToList();
             var page = ParameterReadPagingPolicy.Normalize(offset, limit);
             var selected = elements.Skip(page.Offset).Take(page.Limit).ToList();
-            var items = selected.Select(x => BuildElementItem(x, wantedNames, stringsOnly, valueContains, caseSensitive, writableOnly, includeEmpty)).ToList();
+            var items = selected.Select(x => BuildElementItem(x, wantedNames, stringsOnly, valueContains, valueEquals, caseSensitive, writableOnly, includeEmpty)).ToList();
             var nextOffset = ParameterReadPagingPolicy.NextOffset(elements.Count, page.Offset, selected.Count);
             var warnings = new List<string>();
             if (page.LimitWasClamped)
@@ -224,6 +234,7 @@ namespace RevitBridge.Handlers
                 categories,
                 includeStringParameters = stringsOnly,
                 valueContains,
+                valueEquals,
                 caseSensitive,
                 writableOnly,
                 includeEmpty,
@@ -245,6 +256,7 @@ namespace RevitBridge.Handlers
             HashSet<string> wantedNames,
             bool stringsOnly,
             string? valueContains,
+            string? valueEquals,
             bool caseSensitive,
             bool writableOnly,
             bool includeEmpty)
@@ -261,7 +273,7 @@ namespace RevitBridge.Handlers
 
                 var value = ReadParameterValue(parameter);
                 if (!includeEmpty && string.IsNullOrEmpty(value)) continue;
-                if (!string.IsNullOrEmpty(valueContains) && value.IndexOf(valueContains, caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase) < 0) continue;
+                if (!ParameterValueMatchPolicy.Matches(value, valueContains, valueEquals, caseSensitive)) continue;
                 if (!parameters.ContainsKey(name)) parameters.Add(name, value);
                 parameterDetails.Add(new
                 {
@@ -291,6 +303,7 @@ namespace RevitBridge.Handlers
             HashSet<string> wantedNames,
             bool stringsOnly,
             string? valueContains,
+            string? valueEquals,
             bool caseSensitive,
             bool writableOnly,
             bool includeEmpty)
@@ -304,7 +317,7 @@ namespace RevitBridge.Handlers
                 if (wantedNames.Count > 0 && !wantedNames.Contains(name)) continue;
                 var value = ReadParameterValue(parameter);
                 if (!includeEmpty && string.IsNullOrEmpty(value)) continue;
-                if (!string.IsNullOrEmpty(valueContains) && value.IndexOf(valueContains, caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase) < 0) continue;
+                if (!ParameterValueMatchPolicy.Matches(value, valueContains, valueEquals, caseSensitive)) continue;
                 return true;
             }
 
@@ -375,7 +388,7 @@ namespace RevitBridge.Handlers
                 var allowed = new HashSet<string>(new[]
                 {
                     "elementId", "elementIds", "category", "categories", "allModelInstances", "names",
-                    "includeStringParameters", "valueContains", "caseSensitive", "writableOnly", "includeEmpty",
+                    "includeStringParameters", "valueContains", "valueEquals", "caseSensitive", "writableOnly", "includeEmpty",
                     "offset", "limit"
                 }, StringComparer.OrdinalIgnoreCase);
                 foreach (var property in root.EnumerateObject())
@@ -402,6 +415,8 @@ namespace RevitBridge.Handlers
                     parsed.includeStringParameters = ParseBool(stringsProp, "includeStringParameters");
                 if (root.TryGetProperty("valueContains", out var valueContainsProp) && valueContainsProp.ValueKind != JsonValueKind.Null)
                     parsed.valueContains = ParseString(valueContainsProp, "valueContains");
+                if (root.TryGetProperty("valueEquals", out var valueEqualsProp) && valueEqualsProp.ValueKind != JsonValueKind.Null)
+                    parsed.valueEquals = ParseString(valueEqualsProp, "valueEquals");
                 if (root.TryGetProperty("caseSensitive", out var caseSensitiveProp) && caseSensitiveProp.ValueKind != JsonValueKind.Null)
                     parsed.caseSensitive = ParseBool(caseSensitiveProp, "caseSensitive");
                 if (root.TryGetProperty("writableOnly", out var writableOnlyProp) && writableOnlyProp.ValueKind != JsonValueKind.Null)
