@@ -3,10 +3,11 @@ using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
 using Autodesk.Revit.UI;
+using RevitBridge.Common;
 
 namespace RevitBridge.Services
 {
-    public sealed class RevitEventQueueException : InvalidOperationException
+    public sealed class RevitEventQueueException : InvalidOperationException, IOperatorRevitFailureMetadata
     {
         public RevitEventQueueException(string code, string message, bool retryable)
             : base(message)
@@ -17,6 +18,12 @@ namespace RevitBridge.Services
 
         public string Code { get; }
         public bool Retryable { get; }
+        public string Phase => "revit_external_event";
+        public string HostHealth => string.Equals(Code, "revit_external_event_busy", StringComparison.OrdinalIgnoreCase)
+            ? "degraded"
+            : "unavailable";
+        public bool OpensCircuit => !string.Equals(Code, "revit_external_event_busy", StringComparison.OrdinalIgnoreCase);
+        public bool OutcomeUnknown => false;
     }
 
     public class RevitEventService : IExternalEventHandler

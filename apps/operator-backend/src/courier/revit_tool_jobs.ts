@@ -245,5 +245,10 @@ export function failRevitToolJob(input: FinishInput): RevitToolJob {
   if (job.status === "succeeded") throw new Error("Revit courier job is already terminally succeeded; refusing a contradictory failure.");
   if (job.status === "failed" && readTerminalResult(job)) return job;
   const error = typeof input.error === "string" && input.error.trim() ? input.error.trim().slice(0, 4000) : "Revit courier execution failed.";
-  return writeTerminal(job, { status: "failed", result: input.result, error, retryable: input.retryable === true });
+  const resultRecord = input.result && typeof input.result === "object" && !Array.isArray(input.result)
+    ? input.result as Record<string, unknown>
+    : null;
+  const rawCode = typeof resultRecord?.code === "string" ? resultRecord.code.trim() : "";
+  const code = /^[a-z0-9._:-]{1,160}$/i.test(rawCode) ? rawCode : undefined;
+  return writeTerminal(job, { status: "failed", result: input.result, error, code, retryable: input.retryable === true });
 }

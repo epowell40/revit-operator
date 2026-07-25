@@ -16,6 +16,7 @@ namespace RevitBridge.Operator
         private readonly Func<OperatorWriteGrantStatus> _ensureWriteGrant;
         private readonly Func<OperatorJsonlLogger?> _getLogger;
         private readonly OperatorCourierCompletionOutbox _completionOutbox = new OperatorCourierCompletionOutbox();
+        private readonly OperatorRevitHostCircuit _hostCircuit = new OperatorRevitHostCircuit();
         private readonly string _executorId = Environment.MachineName + "-revit-courier-" + Process.GetCurrentProcess().Id;
         private readonly SemaphoreSlim _runGate = new SemaphoreSlim(1, 1);
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
@@ -61,6 +62,7 @@ namespace RevitBridge.Operator
                 // A completed Revit action must be acknowledged before this worker accepts more work.
                 // This replays durable completion evidence after a transient backend outage or pane/Revit restart.
                 if (await FlushOnePendingCompletionAsync().ConfigureAwait(false)) return;
+                if (await HoldForOpenHostCircuitAsync().ConfigureAwait(false)) return;
 
                 var claimJson = await _backendClient.ClaimNextRevitCourierJobJsonAsync(null, _executorId, _cts.Token).ConfigureAwait(false);
                 using var claimDocument = JsonDocument.Parse(string.IsNullOrWhiteSpace(claimJson) ? "{}" : claimJson);
@@ -102,7 +104,7 @@ namespace RevitBridge.Operator
 
                 using var actionTimeout = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
                 var remaining = expiresAt.ToUniversalTime() - DateTime.UtcNow - TimeSpan.FromSeconds(2);
-                if (remaining <= TimeSpan.Zero) throw new TimeoutException("The Revit courier job expired before local execution started.");
+                if (remaining <= TimeSpan.Zero) throw new OperatorCourierJobExpiredException("The Revit courier job expired before local execution started.");
                 var localBudget = remaining < TimeSpan.FromSeconds(210) ? remaining : TimeSpan.FromSeconds(210);
                 actionTimeout.CancelAfter(localBudget);
                 var startedAt = DateTime.UtcNow;
@@ -149,19 +151,30 @@ namespace RevitBridge.Operator
                 }
                 else if (!string.IsNullOrWhiteSpace(sessionId) && !string.IsNullOrWhiteSpace(jobId))
                 {
+                    var failure = OperatorCourierFailureClassifier.Classify(ex, jobId);
+                    if (failure.OpensCircuit)
+                    {
+                        _hostCircuit.Open(failure.Code, DateTimeOffset.UtcNow);
+                        await LogAsync("courier.host_circuit.open", new
+                        {
+                            session_id = sessionId,
+                            job_id = jobId,
+                            failure.Code,
+                            failure.Phase,
+                            failure.HostHealth,
+                            failure.OutcomeUnknown,
+                            circuit = _hostCircuit.Snapshot()
+                        }).ConfigureAwait(false);
+                    }
                     try
                     {
-                        var retryable = ex is OperatorCourierApprovalException ||
-                                        ex is TimeoutException ||
-                                        ex.Message.IndexOf("busy", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                        ex.Message.IndexOf("retry", StringComparison.OrdinalIgnoreCase) >= 0;
                         await _backendClient.FailRevitCourierJobJsonAsync(
                             sessionId!,
                             jobId!,
                             _executorId,
-                            ex.Message,
-                            new { error = ex.Message, type = ex.GetType().FullName },
-                            retryable,
+                            failure.Error,
+                            failure,
+                            failure.Retryable,
                             CancellationToken.None).ConfigureAwait(false);
                     }
                     catch
@@ -184,6 +197,42 @@ namespace RevitBridge.Operator
             {
                 try { _runGate.Release(); } catch { }
             }
+        }
+
+        private async Task<bool> HoldForOpenHostCircuitAsync()
+        {
+            var snapshot = _hostCircuit.Snapshot();
+            if (!snapshot.Open) return false;
+            if (!_hostCircuit.TryBeginProbe(DateTimeOffset.UtcNow)) return true;
+
+            try
+            {
+                using var probeTimeout = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+                probeTimeout.CancelAfter(TimeSpan.FromSeconds(3));
+                await _actionRunner.ProbeRevitHostAsync(probeTimeout.Token).ConfigureAwait(false);
+                _hostCircuit.RecordProbeSuccess();
+                await LogAsync("courier.host_circuit.closed", new
+                {
+                    previous = snapshot,
+                    host_health = "healthy"
+                }).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (!_cts.IsCancellationRequested)
+            {
+                var normalized = ex is OperationCanceledException
+                    ? new TimeoutException("The Revit host health probe exceeded its local deadline.", ex)
+                    : ex;
+                var failure = OperatorCourierFailureClassifier.Classify(normalized);
+                _hostCircuit.RecordProbeFailure(failure.Code, DateTimeOffset.UtcNow);
+                await LogAsync("courier.host_circuit.probe_failed", new
+                {
+                    failure.Code,
+                    failure.Phase,
+                    failure.HostHealth,
+                    circuit = _hostCircuit.Snapshot()
+                }).ConfigureAwait(false);
+            }
+            return true;
         }
 
         private async Task<bool> FlushOnePendingCompletionAsync()
@@ -251,9 +300,26 @@ namespace RevitBridge.Operator
             return text;
         }
 
-        private sealed class OperatorCourierApprovalException : InvalidOperationException
+        private sealed class OperatorCourierApprovalException : InvalidOperationException, IOperatorRevitFailureMetadata
         {
             public OperatorCourierApprovalException(string message) : base(message) { }
+            public string Code => "revit_courier_approval_required";
+            public bool Retryable => true;
+            public string Phase => "approval";
+            public string HostHealth => "healthy";
+            public bool OpensCircuit => false;
+            public bool OutcomeUnknown => false;
+        }
+
+        private sealed class OperatorCourierJobExpiredException : TimeoutException, IOperatorRevitFailureMetadata
+        {
+            public OperatorCourierJobExpiredException(string message) : base(message) { }
+            public string Code => "revit_courier_job_expired_before_execution";
+            public bool Retryable => true;
+            public string Phase => "courier_claim";
+            public string HostHealth => "healthy";
+            public bool OpensCircuit => false;
+            public bool OutcomeUnknown => false;
         }
     }
 }

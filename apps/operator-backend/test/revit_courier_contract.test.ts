@@ -126,6 +126,31 @@ test("courier never automatically replays a job whose execution lease expired", 
   assert.equal(receipt.retryable, false);
 });
 
+test("courier promotes a bounded workstation failure code into the authoritative result receipt", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-failure-code-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const id = writeJob(root);
+  claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" });
+  failRevitToolJob({
+    session_id: "session-a",
+    job_id: id,
+    executor_id: "worker-1",
+    error: "The Revit action deadline elapsed.",
+    retryable: false,
+    result: {
+      code: "revit_action_deadline_elapsed_outcome_unknown",
+      phase: "revit_external_event",
+      hostHealth: "unavailable",
+      outcomeUnknown: true
+    }
+  });
+  const receipt = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", id, "result.json"), "utf8"));
+  assert.equal(receipt.code, "revit_action_deadline_elapsed_outcome_unknown");
+  assert.equal(receipt.retryable, false);
+  assert.equal(receipt.result.hostHealth, "unavailable");
+  assert.equal(receipt.result.outcomeUnknown, true);
+});
+
 test("courier context is explicit, exclusive per workspace, and closed without deleting its receipt", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-context-"));
   process.env.OPERATOR_WORKSPACE_ROOT = root;

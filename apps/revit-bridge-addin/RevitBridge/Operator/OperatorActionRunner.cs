@@ -370,6 +370,11 @@ namespace RevitBridge.Operator
             return result;
         }
 
+        internal async Task ProbeRevitHostAsync(CancellationToken cancellationToken)
+        {
+            await _eventService.Run(_ => true, cancellationToken).ConfigureAwait(false);
+        }
+
         private static bool IsDirectControlPlanePath(string path)
         {
             return string.Equals(path, "/revit/tool-registry", StringComparison.OrdinalIgnoreCase) ||

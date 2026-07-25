@@ -554,7 +554,9 @@ namespace RevitBridge.Server
                         error = qex.Message,
                         code = qex.Code,
                         retryable = qex.Retryable,
-                        phase = "revit_external_event"
+                        phase = qex.Phase,
+                        host_health = qex.HostHealth,
+                        outcome_unknown = qex.OutcomeUnknown
                     });
                 }
                 else if (root is OperationCanceledException)
@@ -563,10 +565,12 @@ namespace RevitBridge.Server
                     responseText = JsonSerializer.Serialize(new
                     {
                         ok = false,
-                        error = "The Revit action was canceled or exceeded its local deadline.",
-                        code = "revit_action_canceled",
-                        retryable = true,
-                        phase = "revit_external_event"
+                        error = "The Revit action was canceled after submission; its outcome is unknown.",
+                        code = "revit_action_canceled_outcome_unknown",
+                        retryable = false,
+                        phase = "revit_external_event",
+                        host_health = "degraded",
+                        outcome_unknown = true
                     });
                 }
                 else if (root is ArgumentException)
