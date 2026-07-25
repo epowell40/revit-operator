@@ -31,6 +31,11 @@ test("Revit ExternalEvent scheduler is single-flight and reports raise failures"
   assert.match(source, /QueueItem\.CancelledBeforeStart/);
   assert.match(source, /CancelQueuedItem[\s\S]{0,1200}Interlocked\.Exchange\(ref _inFlight, 0\)/);
   assert.doesNotMatch(source, /cancellationToken\.Register\(\(\) => tcs\.TrySetCanceled\(\)\)/);
+  const execute = source.slice(source.indexOf("public void Execute"), source.indexOf("public string GetName"));
+  const releasesSingleFlight = execute.indexOf("Interlocked.Exchange(ref _inFlight, 0)");
+  assert.ok(releasesSingleFlight >= 0);
+  assert.ok(releasesSingleFlight < execute.indexOf("item.Completion.TrySetResult(result!)"));
+  assert.ok(releasesSingleFlight < execute.indexOf("item.Completion.TrySetException(error)"));
 });
 
 test("metadata and native discovery bypass the Revit event queue while actions propagate cancellation", () => {
