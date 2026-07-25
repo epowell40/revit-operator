@@ -8,6 +8,7 @@ import { getCodexThreadId, setCodexThreadId } from "../memory/sqlite_store.js";
 import { CodexAppServer, type CodexServerRequest } from "../codex/app_server.js";
 import { ensureCodexHomeAuth, ensureCodexHomeConfig } from "../codex/config.js";
 import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
+import { RevitToolParallelGuard } from "../codex/revit_tool_parallel_guard.js";
 import { beginRevitCourierTurnContext, endRevitCourierTurnContext } from "../courier/revit_courier_context.js";
 import { getSkillLibraryText } from "../skills/skill_library.js";
 import { persistence } from "../persistence/persistence_manager.js";
@@ -43,6 +44,7 @@ const FRESH_REVIT_EVIDENCE_FAILURE =
 
 const clientsByWorkspace = new Map<string, CodexAppServer>();
 const mcpRuntimesByWorkspace = new Map<string, CodexMcpToolRuntime>();
+const revitToolParallelGuard = new RevitToolParallelGuard();
 const lastPermissionSignatureBySession = new Map<string, string>();
 const activeCodexTurnAborts = new Map<string, AbortController>();
 
@@ -333,8 +335,10 @@ function developerInstructions(): string {
   // Inject repo-shipped docs + runbooks (best-effort, size-limited by getSkillLibraryText()) so Codex can benefit
   // even when sandboxed to Workspace-write (cannot read the repo checkout directly).
   const lib = (getSkillLibraryText() || "").trim();
-  if (!lib) return "";
-  return ["Reference docs (read-only; may be truncated):", lib].join("\n\n");
+  const executionRule =
+    "Revit execution rule: never issue multiple Revit model calls in one tool batch when a later call depends on an earlier result. Execute one call, inspect its result, then issue the next call only if still needed.";
+  if (!lib) return executionRule;
+  return [executionRule, "Reference docs (read-only; may be truncated):", lib].join("\n\n");
 }
 
 export function getFreshRevitEvidenceRequirement(userText: string): FreshRevitEvidenceRequirement {
@@ -474,7 +478,7 @@ export function adaptDynamicToolCompletedItem(item: any): {
   };
 }
 
-async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, request: CodexServerRequest): Promise<unknown> {
+export async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, request: CodexServerRequest): Promise<unknown> {
   if (request.method === "item/tool/call") {
     const params = request.params ?? {};
     const namespace = typeof params.namespace === "string" ? params.namespace : "";
@@ -485,6 +489,10 @@ async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, request: C
     if (server !== "revit_operator") {
       return { contentItems: [{ type: "inputText", text: `Unsupported MCP server namespace: ${namespace}` }], success: false };
     }
+    const lease = revitToolParallelGuard.tryAcquire(params);
+    if (!lease.accepted) {
+      return { contentItems: [{ type: "inputText", text: lease.message ?? "Concurrent dependent Revit call blocked." }], success: false };
+    }
     try {
       const result = await runtime.callTool(params.tool, params.arguments ?? {});
       return adaptMcpToolCallResultToDynamicResponse(result, { tool: params.tool, arguments: params.arguments });
@@ -493,6 +501,8 @@ async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, request: C
         contentItems: [{ type: "inputText", text: error instanceof Error ? error.message : String(error) }],
         success: false
       };
+    } finally {
+      lease.release();
     }
   }
   if (request.method === "item/commandExecution/requestApproval" || request.method === "item/fileChange/requestApproval") return { decision: "decline" };
