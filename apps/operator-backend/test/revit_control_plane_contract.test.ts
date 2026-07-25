@@ -41,6 +41,7 @@ test("Revit ExternalEvent scheduler is single-flight and reports raise failures"
 test("metadata and native discovery bypass the Revit event queue while actions propagate cancellation", () => {
   const runner = addinFile(path.join("RevitBridge", "Operator", "OperatorActionRunner.cs"));
   const server = addinFile(path.join("RevitBridge", "Server", "RevitHttpServer.cs"));
+  const courier = addinFile(path.join("RevitBridge", "Operator", "OperatorRevitCourierWorker.cs"));
   for (const route of ["tool-registry", "tool-search", "tool-doc", "tool-examples", "native-api-policy", "native-api-catalog", "native-api-search"]) {
     assert.match(runner, new RegExp(`/revit/${route}`));
     assert.match(server, new RegExp(`/revit/${route}`));
@@ -50,6 +51,10 @@ test("metadata and native discovery bypass the Revit event queue while actions p
   assert.match(server, /X-Operator-Correlation-Id/);
   assert.match(server, /deadline\.CreateTimeoutException\(correlationId\)/);
   assert.match(server, /root is RevitEventQueueException/);
+  assert.match(courier, /ExecuteWithBusyRetryAsync/);
+  assert.match(courier, /failure\.Code, "revit_external_event_busy"/);
+  assert.match(courier, /failure\.Retryable[\s\S]{0,120}!failure\.OutcomeUnknown/);
+  assert.match(courier, /Task\.Delay\(delayMs, cancellationToken\)/);
 });
 
 test("high-value spatial query contracts reject stale payloads before handler execution", () => {
@@ -127,6 +132,11 @@ test("native API mutation graph uses a separate write-gated transaction envelope
   assert.match(scopePolicy, /affected existing elements outside transaction\.allowedExistingElementIds/);
   assert.match(scopePolicy, /affected_element_cap_exceeded/);
   assert.match(scopePolicy, /creation_not_allowed/);
+  assert.match(scopePolicy, /allowUnexpectedExistingForRollback/);
+  assert.match(scopePolicy, /rollback_scope_discovered/);
+  assert.match(gateway, /allowUnexpectedExistingForRollback: transactionMode == "rollback"/);
+  assert.match(gateway, /scope_discovery_only = transactionMode == "rollback" && !scopeDecision\.ExistingScopeMatched/);
+  assert.match(gateway, /commit_allowed_existing_element_ids/);
   assert.match(gateway, /mutationOperationCount == 0/);
   assert.match(gateway, /provided\.Count > ps\.Length/);
   assert.match(gateway, /descriptor\.FreezeRiskHint/);

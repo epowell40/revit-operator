@@ -14,6 +14,7 @@ namespace RevitBridge.Common
         public long[] DeletedElementIds { get; set; } = Array.Empty<long>();
         public long[] UnexpectedExistingElementIds { get; set; } = Array.Empty<long>();
         public int AffectedElementCount { get; set; }
+        public bool ExistingScopeMatched { get; set; }
     }
 
     public static class OperatorNativeMutationScopePolicy
@@ -24,7 +25,8 @@ namespace RevitBridge.Common
             IEnumerable<long>? deletedElementIds,
             IEnumerable<long>? allowedExistingElementIds,
             bool allowCreate,
-            int maxAffectedElements)
+            int maxAffectedElements,
+            bool allowUnexpectedExistingForRollback = false)
         {
             if (maxAffectedElements < 1 || maxAffectedElements > 64)
                 throw new ArgumentOutOfRangeException(nameof(maxAffectedElements), "maxAffectedElements must be between 1 and 64.");
@@ -50,7 +52,8 @@ namespace RevitBridge.Common
                 ModifiedElementIds = modified.Where(id => !addedSet.Contains(id)).ToArray(),
                 DeletedElementIds = deleted,
                 UnexpectedExistingElementIds = unexpectedExisting,
-                AffectedElementCount = affected.Count
+                AffectedElementCount = affected.Count,
+                ExistingScopeMatched = unexpectedExisting.Length == 0
             };
 
             if (affected.Count > maxAffectedElements)
@@ -67,6 +70,12 @@ namespace RevitBridge.Common
             }
             if (unexpectedExisting.Length > 0)
             {
+                if (allowUnexpectedExistingForRollback)
+                {
+                    decision.Allowed = true;
+                    decision.Code = "rollback_scope_discovered";
+                    return decision;
+                }
                 decision.Code = "existing_element_out_of_scope";
                 decision.Error = $"native-api-mutation-ops affected existing elements outside transaction.allowedExistingElementIds: {string.Join(",", unexpectedExisting.Take(16))}; the transaction group was rolled back.";
                 return decision;

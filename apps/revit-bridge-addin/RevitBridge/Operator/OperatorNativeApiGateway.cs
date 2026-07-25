@@ -689,7 +689,14 @@ namespace RevitBridge.Operator
                 if (commitStatus != TransactionStatus.Committed)
                     throw new InvalidOperationException($"native-api-mutation-ops transaction commit returned {commitStatus}.");
 
-                ValidateMutationScope(addedIds, modifiedIds, deletedIds, allowedExistingElementIds, allowCreate, maxAffectedElements);
+                var scopeDecision = ValidateMutationScope(
+                    addedIds,
+                    modifiedIds,
+                    deletedIds,
+                    allowedExistingElementIds,
+                    allowCreate,
+                    maxAffectedElements,
+                    allowUnexpectedExistingForRollback: transactionMode == "rollback");
                 if (total.ElapsedMilliseconds > maxTotalMs)
                     throw new InvalidOperationException($"native-api-mutation-ops exceeded its {maxTotalMs} ms total budget during transaction finalization.");
 
@@ -721,6 +728,13 @@ namespace RevitBridge.Operator
                         max_affected_elements = maxAffectedElements,
                         allow_create = allowCreate,
                         allowed_existing_element_ids = allowedExistingElementIds.OrderBy(x => x).ToArray(),
+                        existing_scope_matched = scopeDecision.ExistingScopeMatched,
+                        scope_discovery_only = transactionMode == "rollback" && !scopeDecision.ExistingScopeMatched,
+                        unexpected_existing_element_ids = scopeDecision.UnexpectedExistingElementIds,
+                        commit_allowed_existing_element_ids = allowedExistingElementIds
+                            .Union(scopeDecision.UnexpectedExistingElementIds)
+                            .OrderBy(x => x)
+                            .ToArray(),
                         added_element_ids = addedIds.OrderBy(x => x).ToArray(),
                         modified_element_ids = modifiedIds.Except(addedIds).OrderBy(x => x).ToArray(),
                         deleted_element_ids = deletedIds.OrderBy(x => x).ToArray(),
@@ -825,7 +839,14 @@ namespace RevitBridge.Operator
             try { foreach (var id in args.GetDeletedElementIds()) { var value = ElementIdCompat.GetValue(id); if (value > 0) deletedIds.Add(value); } } catch { }
         }
 
-        private static void ValidateMutationScope(HashSet<long> addedIds, HashSet<long> modifiedIds, HashSet<long> deletedIds, HashSet<long> allowedExistingElementIds, bool allowCreate, int maxAffectedElements)
+        private static OperatorNativeMutationScopeDecision ValidateMutationScope(
+            HashSet<long> addedIds,
+            HashSet<long> modifiedIds,
+            HashSet<long> deletedIds,
+            HashSet<long> allowedExistingElementIds,
+            bool allowCreate,
+            int maxAffectedElements,
+            bool allowUnexpectedExistingForRollback)
         {
             var decision = OperatorNativeMutationScopePolicy.Evaluate(
                 addedIds,
@@ -833,8 +854,10 @@ namespace RevitBridge.Operator
                 deletedIds,
                 allowedExistingElementIds,
                 allowCreate,
-                maxAffectedElements);
+                maxAffectedElements,
+                allowUnexpectedExistingForRollback);
             if (!decision.Allowed) throw new InvalidOperationException(decision.Error);
+            return decision;
         }
 
         private static object? ResolveOperationTarget(string? rawTarget, Type? expectedType, UIApplication app, Dictionary<string, object?> values, string operationId)
