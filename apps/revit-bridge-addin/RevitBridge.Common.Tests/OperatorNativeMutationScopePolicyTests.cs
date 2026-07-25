@@ -37,6 +37,24 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void Rollback_can_discover_unexpected_existing_scope_without_weakening_commit_policy()
+        {
+            var decision = OperatorNativeMutationScopePolicy.Evaluate(
+                addedElementIds: new long[0],
+                modifiedElementIds: new long[] { 42, 43 },
+                deletedElementIds: new long[0],
+                allowedExistingElementIds: new long[] { 42 },
+                allowCreate: false,
+                maxAffectedElements: 2,
+                allowUnexpectedExistingForRollback: true);
+
+            Assert.True(decision.Allowed);
+            Assert.False(decision.ExistingScopeMatched);
+            Assert.Equal("rollback_scope_discovered", decision.Code);
+            Assert.Equal(new long[] { 43 }, decision.UnexpectedExistingElementIds);
+        }
+
+        [Fact]
         public void Creation_requires_explicit_permission()
         {
             var decision = OperatorNativeMutationScopePolicy.Evaluate(

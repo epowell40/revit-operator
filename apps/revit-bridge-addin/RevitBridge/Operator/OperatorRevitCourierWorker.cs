@@ -20,6 +20,7 @@ namespace RevitBridge.Operator
         private readonly string _executorId = Environment.MachineName + "-revit-courier-" + Process.GetCurrentProcess().Id;
         private readonly SemaphoreSlim _runGate = new SemaphoreSlim(1, 1);
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
+        private static readonly int[] ExternalEventBusyRetryDelaysMs = { 100, 200, 400, 800, 1600, 2000, 2000, 2000 };
         private Timer? _timer;
 
         public OperatorRevitCourierWorker(
@@ -116,7 +117,12 @@ namespace RevitBridge.Operator
                 object? result;
                 try
                 {
-                    result = await _actionRunner.ExecuteAsync(action, actionTimeout.Token).ConfigureAwait(false);
+                    result = await ExecuteWithBusyRetryAsync(
+                        action,
+                        actionTimeout.Token,
+                        sessionId!,
+                        jobId,
+                        correlationId).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (!_cts.IsCancellationRequested)
                 {
@@ -209,6 +215,43 @@ namespace RevitBridge.Operator
             finally
             {
                 try { _runGate.Release(); } catch { }
+            }
+        }
+
+        private async Task<object?> ExecuteWithBusyRetryAsync(
+            OperatorActionCall action,
+            CancellationToken cancellationToken,
+            string sessionId,
+            string jobId,
+            string correlationId)
+        {
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    return await _actionRunner.ExecuteAsync(action, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    var failure = OperatorCourierFailureClassifier.Classify(ex, correlationId);
+                    var safeBusyRetry = string.Equals(failure.Code, "revit_external_event_busy", StringComparison.OrdinalIgnoreCase)
+                        && failure.Retryable
+                        && !failure.OutcomeUnknown
+                        && attempt < ExternalEventBusyRetryDelaysMs.Length;
+                    if (!safeBusyRetry) throw;
+
+                    var delayMs = ExternalEventBusyRetryDelaysMs[attempt];
+                    await LogAsync("courier.action.retry", new
+                    {
+                        session_id = sessionId,
+                        job_id = jobId,
+                        correlation_id = correlationId,
+                        code = failure.Code,
+                        attempt = attempt + 1,
+                        delay_ms = delayMs
+                    }).ConfigureAwait(false);
+                    await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
+                }
             }
         }
 
