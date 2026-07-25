@@ -10,6 +10,7 @@ export type RevitToolJob = {
   id: string;
   session_id: string;
   message_id?: string | null;
+  turn_token?: string | null;
   correlation_id: string;
   idempotency_key: string;
   method: "GET" | "POST";
@@ -25,6 +26,18 @@ export type RevitToolJob = {
   } | null;
   finished_at?: string | null;
   error?: string | null;
+};
+
+type RevitToolResult = {
+  version: typeof REVIT_COURIER_RESULT_VERSION;
+  id: string;
+  correlation_id: string;
+  status: "succeeded" | "failed";
+  finished_at: string;
+  result?: unknown;
+  error?: string | null;
+  code?: string | null;
+  retryable?: boolean;
 };
 
 type ClaimInput = {
@@ -85,14 +98,26 @@ function saveJob(job: RevitToolJob): RevitToolJob {
   return job;
 }
 
+function readTerminalResult(job: RevitToolJob): RevitToolResult | null {
+  const result = readJson<RevitToolResult>(resultPath(job.id));
+  if (!result || result.version !== REVIT_COURIER_RESULT_VERSION || result.id !== job.id || result.correlation_id !== job.correlation_id) return null;
+  if (result.status !== "succeeded" && result.status !== "failed") return null;
+  return result;
+}
+
+function reconcileJobWithResult(job: RevitToolJob, result: RevitToolResult): RevitToolJob {
+  if (job.status === result.status && job.finished_at === result.finished_at && (job.error ?? null) === (result.error ?? null)) return job;
+  return saveJob({
+    ...job,
+    status: result.status,
+    finished_at: result.finished_at,
+    error: result.error ?? null
+  });
+}
+
 function writeTerminal(job: RevitToolJob, terminal: { status: "succeeded" | "failed"; result?: unknown; error?: string; retryable?: boolean; code?: string }): RevitToolJob {
   const finishedAt = new Date().toISOString();
-  const next = saveJob({
-    ...job,
-    status: terminal.status,
-    finished_at: finishedAt,
-    error: terminal.error ?? null
-  });
+  // The durable result is authoritative. Write it before the job summary so a crash can never expose a terminal job without its receipt.
   writeJsonAtomic(resultPath(job.id), {
     version: REVIT_COURIER_RESULT_VERSION,
     id: job.id,
@@ -104,7 +129,12 @@ function writeTerminal(job: RevitToolJob, terminal: { status: "succeeded" | "fai
     code: terminal.code ?? null,
     retryable: terminal.retryable ?? false
   });
-  return next;
+  return saveJob({
+    ...job,
+    status: terminal.status,
+    finished_at: finishedAt,
+    error: terminal.error ?? null
+  });
 }
 
 function leaseDurationMs(): number {
@@ -136,6 +166,20 @@ export function claimNextRevitToolJob(input: ClaimInput): { job: RevitToolJob | 
     .sort((a, b) => `${a.created_at}|${a.id}`.localeCompare(`${b.created_at}|${b.id}`));
 
   for (const job of candidates) {
+    const terminalResult = readTerminalResult(job);
+    if (terminalResult) {
+      reconcileJobWithResult(job, terminalResult);
+      continue;
+    }
+    if (fs.existsSync(resultPath(job.id))) {
+      saveJob({
+        ...job,
+        status: "failed",
+        finished_at: new Date().toISOString(),
+        error: "The durable Revit courier result receipt is invalid or mismatched; the job was quarantined without replay."
+      });
+      continue;
+    }
     if (job.status === "running") {
       const leaseExpires = Date.parse(job.claim?.lease_expires_at ?? "");
       if (Number.isFinite(leaseExpires) && leaseExpires <= now && !fs.existsSync(resultPath(job.id))) {
@@ -180,20 +224,26 @@ function requireClaimedJob(input: FinishInput): RevitToolJob {
   const job = readJob(jobId);
   if (!job) throw new Error("Revit courier job was not found.");
   if (job.session_id !== sessionId) throw new Error("Revit courier session mismatch.");
+  if (job.claim?.executor_id !== executorId) throw new Error("Revit courier job is not claimed by this executor.");
+  const terminalResult = readTerminalResult(job);
+  if (terminalResult) return reconcileJobWithResult(job, terminalResult);
+  if (fs.existsSync(resultPath(job.id))) throw new Error("Revit courier result receipt is invalid or mismatched; refusing to overwrite or replay it.");
   if (job.status === "succeeded" || job.status === "failed") return job;
-  if (job.status !== "running" || job.claim?.executor_id !== executorId) throw new Error("Revit courier job is not claimed by this executor.");
+  if (job.status !== "running") throw new Error("Revit courier job is not claimed by this executor.");
   return job;
 }
 
 export function completeRevitToolJob(input: FinishInput): RevitToolJob {
   const job = requireClaimedJob(input);
-  if (job.status === "succeeded" || job.status === "failed") return job;
+  if (job.status === "failed") throw new Error("Revit courier job is already terminally failed; refusing a contradictory completion.");
+  if (job.status === "succeeded" && readTerminalResult(job)) return job;
   return writeTerminal(job, { status: "succeeded", result: input.result, retryable: false });
 }
 
 export function failRevitToolJob(input: FinishInput): RevitToolJob {
   const job = requireClaimedJob(input);
-  if (job.status === "succeeded" || job.status === "failed") return job;
+  if (job.status === "succeeded") throw new Error("Revit courier job is already terminally succeeded; refusing a contradictory failure.");
+  if (job.status === "failed" && readTerminalResult(job)) return job;
   const error = typeof input.error === "string" && input.error.trim() ? input.error.trim().slice(0, 4000) : "Revit courier execution failed.";
   return writeTerminal(job, { status: "failed", result: input.result, error, retryable: input.retryable === true });
 }
