@@ -17,6 +17,10 @@ test("agent response policy requires natural acknowledgement instead of routine 
 
   assert.match(policy, /short natural acknowledgement/i);
   assert.match(policy, /Ask one focused clarifying question/i);
+  assert.match(policy, /conversational Revit\/BIM expert, not a tool dispatcher/i);
+  assert.match(policy, /Ground model-specific answers with the live model/i);
+  assert.match(policy, /state the most likely interpretation/i);
+  assert.match(policy, /identify the likely requested schedule and where it is placed/i);
   assert.match(policy, /Progress updates should be sparse and useful/i);
   assert.match(policy, /Goal mode should use a natural acknowledgement/i);
   assert.match(policy, /Do not say "Plan:" unless/i);

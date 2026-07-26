@@ -159,6 +159,8 @@ test("native API mutation graph uses a separate write-gated transaction envelope
 });
 
 test("hosted MCP courier is session-bound, approval-gated, and never auto-replays an uncertain write", () => {
+  const app = addinFile(path.join("RevitBridge", "App.cs"));
+  const pane = addinFile(path.join("RevitBridge", "Operator", "OperatorPaneControl.cs"));
   const worker = addinFile(path.join("RevitBridge", "Operator", "OperatorRevitCourierWorker.cs"));
   const index = repoFile(path.join("operator-backend", "src", "index.ts"), path.join("apps", "operator-backend", "src", "index.ts"));
   const queue = repoFile(path.join("operator-backend", "src", "courier", "revit_tool_jobs.ts"), path.join("apps", "operator-backend", "src", "courier", "revit_tool_jobs.ts"));
@@ -170,6 +172,11 @@ test("hosted MCP courier is session-bound, approval-gated, and never auto-replay
   assert.match(worker, /ReadRequiredString\(job, "correlation_id", 160\)/);
   assert.match(worker, /OperatorActionDeadlinePolicy\.Resolve[\s\S]{0,200}ConstrainTo\(remaining\)/);
   assert.doesNotMatch(worker, /_turnBusy/);
+  assert.match(app, /_revitCourierWorker = new OperatorRevitCourierWorker\(/);
+  assert.match(app, /Application-lifetime Revit courier worker started/);
+  assert.match(app, /_revitCourierWorker\?\.Dispose\(\)/);
+  assert.match(app, /GetCourierApprovalMode[\s\S]{0,500}OperatorWriteGrant\.ReadStatus\(\)/);
+  assert.doesNotMatch(pane, /new OperatorRevitCourierWorker\(/);
   assert.match(index, /\/api\/revit-courier\/claim-next/);
   assert.match(index, /pathname\.startsWith\("\/api\/revit-courier\/jobs\/"\)/);
   assert.match(queue, /execution_lease_expired_outcome_unknown/);

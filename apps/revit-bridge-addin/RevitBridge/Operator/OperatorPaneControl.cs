@@ -49,7 +49,6 @@ namespace RevitBridge.Operator
         private string? _sessionId;
         private OperatorJsonlLogger? _logger;
         private OperatorProactivityService? _proactivity;
-        private OperatorRevitCourierWorker? _revitCourierWorker;
         private bool _proactivityStarted;
         private OperatorApprovalMode _approvalMode = OperatorApprovalMode.Yolo;
         private string _reasoningEffort = "medium";
@@ -139,7 +138,6 @@ namespace RevitBridge.Operator
             Unloaded += (_, __) =>
             {
                 try { _proactivity?.Dispose(); } catch { }
-                try { _revitCourierWorker?.Dispose(); } catch { }
                 try { _revitBatchWorkerTimer?.Dispose(); } catch { }
                 try { _toolPopupWindow?.Close(); } catch { }
             };
@@ -255,13 +253,6 @@ namespace RevitBridge.Operator
                 appendChat: (role, text, messageId) => Ui(() => AppendChat(role, text, messageId)),
                 handleNotification: HandleProactiveNotification);
             _proactivity.Start();
-            _revitCourierWorker = new OperatorRevitCourierWorker(
-                _backendClient,
-                _actionRunner,
-                getApprovalMode: () => _approvalMode,
-                ensureWriteGrant: () => EnsureWriteGrantForApprovalMode(forceIssue: false),
-                getLogger: () => _logger);
-            _revitCourierWorker.Start();
             EnsureRevitBatchWorkerStarted();
         }
 
