@@ -70,3 +70,20 @@ test("Sidecar authoritative user text overrides model-authored delegate expansio
   const task = await interpretAecSemanticTask({ version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: "authoritative", message_id: "m", user_text: delegated, context: { ui: { authoritative_user_text: original } } }, interpreter);
   assert.equal(seen.user_text, original); assert.equal(seen.delegated_task_text, delegated); assert.equal(task?.evidence.user_text, original); assert.deepEqual(task?.scope.levels, ["Level 4"]);
 });
+
+test("explicit schedule inventory bypasses the provider interpreter", async () => {
+  let calls = 0;
+  const task = await interpretAecSemanticTask({ version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: "schedule-fast-path", message_id: "m", user_text: "open the best matching view", context: { ui: { authoritative_user_text: "Show me the schedules and the one for the air handlers." } } }, { async interpret() { calls++; return null; } });
+  assert.equal(calls, 0);
+  assert.equal(task?.operation, "list");
+  assert.equal(task?.subject.semantic_class, "view");
+  assert.deepEqual(task?.subject.terms, ["schedule", "air handlers"]);
+  assert.equal(task?.scope.kind, "document");
+  assert.equal(task?.mutation.requested, false);
+});
+
+test("schedule mutations do not enter the read-only fast path", async () => {
+  let calls = 0;
+  await interpretAecSemanticTask({ version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: "schedule-mutation", message_id: "m", user_text: "Change the air handler schedule value." }, { async interpret(input) { calls++; return semanticTask(input.user_text); } });
+  assert.equal(calls, 1);
+});
