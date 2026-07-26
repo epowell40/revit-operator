@@ -59,13 +59,13 @@ namespace RevitBridge.Common
             if (affected.Count > maxAffectedElements)
             {
                 decision.Code = "affected_element_cap_exceeded";
-                decision.Error = $"native-api-mutation-ops affected {affected.Count} elements, exceeding transaction.maxAffectedElements={maxAffectedElements}; the transaction group was rolled back.";
+                decision.Error = $"native-api-mutation-ops affected {affected.Count} elements, exceeding transaction.maxAffectedElements={maxAffectedElements}; this rejection requires verified transaction-group rollback.";
                 return decision;
             }
             if (!allowCreate && added.Length > 0)
             {
                 decision.Code = "creation_not_allowed";
-                decision.Error = $"native-api-mutation-ops created {added.Length} elements while transaction.allowCreate=false; the transaction group was rolled back.";
+                decision.Error = $"native-api-mutation-ops created {added.Length} elements while transaction.allowCreate=false; this rejection requires verified transaction-group rollback.";
                 return decision;
             }
             if (unexpectedExisting.Length > 0)
@@ -77,7 +77,7 @@ namespace RevitBridge.Common
                     return decision;
                 }
                 decision.Code = "existing_element_out_of_scope";
-                decision.Error = $"native-api-mutation-ops affected existing elements outside transaction.allowedExistingElementIds: {string.Join(",", unexpectedExisting.Take(16))}; the transaction group was rolled back.";
+                decision.Error = $"native-api-mutation-ops affected existing elements outside transaction.allowedExistingElementIds: {string.Join(",", unexpectedExisting.Take(16))}; this rejection requires verified transaction-group rollback.";
                 return decision;
             }
 

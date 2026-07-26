@@ -31,4 +31,4 @@ Dry-run or preview success is not committed-write usefulness. A committed-write 
 
 High risk does not automatically mean "model write." Application-state routes such as open, close, sync, and computer-use action remain human-supervised and use their own acceptance receipts. Restorable policy/guard state uses capture-change-restore evidence. Controlled import, export, family, link, print, and save routes require a real operation against an isolated fixture and verification of the resulting model or output artifact.
 
-Every failure needs a classified receipt. A tool is quarantined only for a reproducible defect or unacceptable safety behavior, not because it lacks live evidence or depends on a model-specific fixture.
+Every failure needs a classified receipt. A tool is quarantined only for a reproducible defect or unacceptable safety behavior, not because it lacks live evidence or depends on a model-specific fixture. Active quarantines remain in the generated matrix with their reason, but autonomous probe eligibility is forced off until the quarantine is explicitly cleared after a verified repair.

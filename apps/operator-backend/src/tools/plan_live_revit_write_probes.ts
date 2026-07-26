@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { findActiveToolQuarantine } from "../codex/revit_tool_contract_memory.js";
 import { findRepoRoot } from "./audit_tool_registry.js";
 
 type JsonObject = Record<string, unknown>;
@@ -33,6 +34,8 @@ export type WriteProbePlanRow = {
   path: string;
   title: string;
   risk: string;
+  quarantined: boolean;
+  quarantine_reason: string | null;
   strategy: WriteProbeStrategy;
   model_requirement: "current_read_only" | "disposable_detached" | "controlled_external_fixture" | "human_supervised";
   autonomous_probe_allowed: boolean;
@@ -44,6 +47,8 @@ export type WriteProbePlanRow = {
   failure_receipt_required: boolean;
   instructions: string[];
 };
+
+export type WriteProbeQuarantineEvidence = { reason: string };
 
 export type WriteProbePlan = {
   version: "revit-operator.write-probe-plan.v1";
@@ -175,7 +180,7 @@ function commitAcceptanceRequired(key: string, risk: string, strategy: WriteProb
   return risk === "high" || MEDIUM_MODEL_WRITES.has(key);
 }
 
-export function planToolProbe(tool: ToolDocument): WriteProbePlanRow {
+export function planToolProbe(tool: ToolDocument, quarantine: WriteProbeQuarantineEvidence | null = null): WriteProbePlanRow {
   const method = normalizeMethod(tool.method);
   const routePath = normalizePath(tool.path);
   const key = `${method} ${routePath}`.trim();
@@ -204,7 +209,8 @@ export function planToolProbe(tool: ToolDocument): WriteProbePlanRow {
       : strategy === "human_supervised"
         ? "human_supervised"
         : "disposable_detached";
-  const autonomousProbeAllowed = ["read_only", "plan_only", "safe_read_action", "dry_run_or_preview", "rollback_transaction"].includes(strategy);
+  const quarantined = Boolean(quarantine);
+  const autonomousProbeAllowed = !quarantined && ["read_only", "plan_only", "safe_read_action", "dry_run_or_preview", "rollback_transaction"].includes(strategy);
   const instructions: string[] = [];
 
   if (strategy === "read_only") instructions.push("Run a bounded read with an explicit item/time cap; retain structural result and timing receipts.");
@@ -218,6 +224,7 @@ export function planToolProbe(tool: ToolDocument): WriteProbePlanRow {
   if (strategy === "contract_only") instructions.push("Do not invoke autonomously. Validate schema/docs only until a route-specific safe fixture or rollback contract exists.");
   if (requiresCommit && strategy === "controlled_external_fixture") instructions.push("Planning success is not operational usefulness: perform one bounded real operation against the controlled fixture, then verify the resulting model or output artifact and restore or discard the fixture.");
   else if (requiresCommit) instructions.push("Dry-run or rollback success is not write usefulness: perform one bounded committed probe in a disposable detached copy, then independently read back and restore or discard the copy.");
+  if (quarantined) instructions.push(`Active quarantine blocks autonomous execution: ${quarantine!.reason}`);
 
   return {
     key,
@@ -225,6 +232,8 @@ export function planToolProbe(tool: ToolDocument): WriteProbePlanRow {
     path: routePath,
     title,
     risk,
+    quarantined,
+    quarantine_reason: quarantine?.reason ?? null,
     strategy,
     model_requirement: modelRequirement,
     autonomous_probe_allowed: autonomousProbeAllowed,
@@ -238,10 +247,14 @@ export function planToolProbe(tool: ToolDocument): WriteProbePlanRow {
   };
 }
 
-export function buildWriteProbePlan(registry: unknown, registrySource = "unknown"): WriteProbePlan {
+export function buildWriteProbePlan(registry: unknown, registrySource = "unknown", quarantines: ReadonlyMap<string, WriteProbeQuarantineEvidence> = new Map()): WriteProbePlan {
   const root = objectAt(registry);
   const rawTools = Array.isArray(root.tools) ? root.tools : [];
-  const tools = rawTools.map(item => planToolProbe(objectAt(item))).sort((a, b) => a.key.localeCompare(b.key));
+  const tools = rawTools.map(item => {
+    const tool = objectAt(item) as ToolDocument;
+    const key = `${normalizeMethod(tool.method)} ${normalizePath(tool.path)}`.trim();
+    return planToolProbe(tool, quarantines.get(key) ?? null);
+  }).sort((a, b) => a.key.localeCompare(b.key));
   const duplicateKeys = tools.length - new Set(tools.map(item => item.key)).size;
   if (duplicateKeys > 0) throw new Error(`Write-probe plan contains ${duplicateKeys} duplicate tool keys.`);
   if (tools.some(item => !item.method || !item.path.startsWith("/"))) throw new Error("Write-probe plan contains an invalid tool identity.");
@@ -253,6 +266,7 @@ export function buildWriteProbePlan(registry: unknown, registrySource = "unknown
     high_risk: tools.filter(item => item.risk === "high").length,
     non_low_tools: mutating.length,
     non_low_autonomous_probe_allowed: mutating.filter(item => item.autonomous_probe_allowed).length,
+    active_quarantines: tools.filter(item => item.quarantined).length,
     commit_acceptance_required: tools.filter(item => item.commit_acceptance_required).length
   };
   for (const strategy of [...new Set(tools.map(item => item.strategy))].sort()) {
@@ -274,11 +288,11 @@ export function renderWriteProbePlanMarkdown(plan: WriteProbePlan): string {
     "",
     "## Non-low-risk matrix",
     "",
-    "| Tool | Risk | Strategy | Autonomous | Dry run | Safe action | Commit proof | Model lane |",
-    "|---|---|---|---|---|---|---|---|"
+    "| Tool | Risk | Strategy | Autonomous | Quarantined | Dry run | Safe action | Commit proof | Model lane |",
+    "|---|---|---|---|---|---|---|---|---|"
   ];
   for (const item of plan.tools.filter(tool => tool.risk !== "low")) {
-    lines.push(`| ${item.key} | ${item.risk} | ${item.strategy} | ${item.autonomous_probe_allowed} | ${item.supports_dry_run || item.supports_preview_only} | ${item.safe_action ?? ""} | ${item.commit_acceptance_required} | ${item.model_requirement} |`);
+    lines.push(`| ${item.key} | ${item.risk} | ${item.strategy} | ${item.autonomous_probe_allowed} | ${item.quarantined} | ${item.supports_dry_run || item.supports_preview_only} | ${item.safe_action ?? ""} | ${item.commit_acceptance_required} | ${item.model_requirement} |`);
   }
   lines.push(
     "",
@@ -311,7 +325,15 @@ async function runCli(): Promise<void> {
   const repoRoot = findRepoRoot(process.cwd());
   const outputDir = path.resolve(outputIndex >= 0 && process.argv[outputIndex + 1] ? process.argv[outputIndex + 1]! : path.join(repoRoot, "local-work", "tool-registry-audit"));
   const registry = await loadRegistry(registryPath);
-  const plan = buildWriteProbePlan(registry.raw, registry.source);
+  const quarantines = new Map<string, WriteProbeQuarantineEvidence>();
+  for (const item of (Array.isArray(objectAt(registry.raw).tools) ? objectAt(registry.raw).tools as unknown[] : [])) {
+    const tool = objectAt(item) as ToolDocument;
+    const method = normalizeMethod(tool.method);
+    const routePath = normalizePath(tool.path);
+    const active = findActiveToolQuarantine("revit_call_tool", { method, path: routePath });
+    if (active) quarantines.set(`${method} ${routePath}`, { reason: active.reason });
+  }
+  const plan = buildWriteProbePlan(registry.raw, registry.source, quarantines);
   fs.mkdirSync(outputDir, { recursive: true });
   fs.writeFileSync(path.join(outputDir, "write_probe_plan.json"), `${JSON.stringify(plan, null, 2)}\n`, "utf8");
   fs.writeFileSync(path.join(outputDir, "write_probe_plan.md"), renderWriteProbePlanMarkdown(plan), "utf8");
