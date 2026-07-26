@@ -8,12 +8,49 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Autodesk.Revit.DB;
-using Autodesk.Revit.DB.Events;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
 
 namespace RevitBridge.Operator
 {
+    internal static class OperatorNativeMutationFailureRegistry
+    {
+        private static readonly object Sync = new object();
+        private static readonly FailureDefinitionId ScopeCheckpointIdValue =
+            new FailureDefinitionId(new Guid("94F1CF1B-8F8B-4C2E-9BC8-1B9C6D9D57A1"));
+        private static bool _registered;
+
+        internal static FailureDefinitionId ScopeCheckpointId => ScopeCheckpointIdValue;
+        internal static bool IsRegistered
+        {
+            get
+            {
+                lock (Sync) return _registered;
+            }
+        }
+
+        internal static void Register(UIControlledApplication application)
+        {
+            if (application == null) throw new ArgumentNullException(nameof(application));
+            lock (Sync)
+            {
+                var registry = Autodesk.Revit.ApplicationServices.ControlledApplication.GetFailureDefinitionRegistry();
+                if (registry.FindFailureDefinition(ScopeCheckpointIdValue) == null)
+                {
+                    using (FailureDefinition.CreateFailureDefinition(
+                        ScopeCheckpointIdValue,
+                        FailureSeverity.Warning,
+                        "RevitOperator internal native mutation scope checkpoint."))
+                    {
+                    }
+                }
+                _registered = registry.FindFailureDefinition(ScopeCheckpointIdValue) != null;
+                if (!_registered)
+                    throw new InvalidOperationException("RevitOperator could not register its native mutation scope checkpoint failure definition.");
+            }
+        }
+    }
+
     internal enum OperatorNativeApiProfile
     {
         Balanced = 0,
@@ -259,6 +296,104 @@ namespace RevitBridge.Operator
 
     internal static class OperatorNativeApiGateway
     {
+        private sealed class NativeMutationScopeUpdater : IUpdater
+        {
+            private readonly UpdaterId _updaterId;
+
+            public NativeMutationScopeUpdater(AddInId addInId)
+            {
+                _updaterId = new UpdaterId(addInId, Guid.NewGuid());
+            }
+
+            public HashSet<long> AddedIds { get; } = new HashSet<long>();
+            public HashSet<long> ModifiedIds { get; } = new HashSet<long>();
+            public HashSet<long> DeletedIds { get; } = new HashSet<long>();
+            public int ExecutionCount { get; private set; }
+
+            public void Execute(UpdaterData data)
+            {
+                ExecutionCount++;
+                CaptureIds(data.GetAddedElementIds(), AddedIds);
+                CaptureIds(data.GetModifiedElementIds(), ModifiedIds);
+                CaptureIds(data.GetDeletedElementIds(), DeletedIds);
+            }
+
+            public UpdaterId GetUpdaterId() => _updaterId;
+            public ChangePriority GetChangePriority() => ChangePriority.Annotations;
+            public string GetUpdaterName() => "RevitOperator native mutation scope observer";
+            public string GetAdditionalInformation() => "Observes affected element ids before the enclosing Operator transaction is finalized.";
+
+            private static void CaptureIds(IEnumerable<ElementId> ids, HashSet<long> destination)
+            {
+                foreach (var id in ids)
+                {
+                    var value = ElementIdCompat.GetValue(id);
+                    if (value > 0) destination.Add(value);
+                }
+            }
+        }
+
+        private sealed class NativeMutationScopeFailuresPreprocessor : IFailuresPreprocessor
+        {
+            private readonly NativeMutationScopeUpdater _updater;
+            private readonly string _transactionMode;
+            private readonly HashSet<long> _allowedExistingElementIds;
+            private readonly bool _allowCreate;
+            private readonly int _maxAffectedElements;
+
+            public NativeMutationScopeFailuresPreprocessor(
+                NativeMutationScopeUpdater updater,
+                string transactionMode,
+                HashSet<long> allowedExistingElementIds,
+                bool allowCreate,
+                int maxAffectedElements)
+            {
+                _updater = updater ?? throw new ArgumentNullException(nameof(updater));
+                _transactionMode = transactionMode;
+                _allowedExistingElementIds = new HashSet<long>(allowedExistingElementIds ?? new HashSet<long>());
+                _allowCreate = allowCreate;
+                _maxAffectedElements = maxAffectedElements;
+            }
+
+            public bool Executed { get; private set; }
+            public OperatorNativeMutationScopeDecision? ScopeDecision { get; private set; }
+
+            public FailureProcessingResult PreprocessFailures(FailuresAccessor failuresAccessor)
+            {
+                Executed = true;
+                foreach (var failure in failuresAccessor.GetFailureMessages())
+                {
+                    if (failure.GetFailureDefinitionId().Equals(OperatorNativeMutationFailureRegistry.ScopeCheckpointId))
+                        failuresAccessor.DeleteWarning(failure);
+                }
+
+                if (_updater.ExecutionCount == 0)
+                {
+                    ScopeDecision = new OperatorNativeMutationScopeDecision
+                    {
+                        Allowed = false,
+                        Code = "scope_observer_not_executed",
+                        Error = "native-api-mutation-ops could not observe affected-element scope at the transaction boundary; failure processing must force verified rollback."
+                    };
+                }
+                else
+                {
+                    ScopeDecision = OperatorNativeMutationScopePolicy.Evaluate(
+                        _updater.AddedIds,
+                        _updater.ModifiedIds,
+                        _updater.DeletedIds,
+                        _allowedExistingElementIds,
+                        _allowCreate,
+                        _maxAffectedElements,
+                        allowUnexpectedExistingForRollback: _transactionMode == "rollback");
+                }
+
+                if (_transactionMode == "rollback" || !ScopeDecision.Allowed)
+                    return FailureProcessingResult.ProceedWithRollBack;
+                return FailureProcessingResult.Continue;
+            }
+        }
+
         private sealed class NativeApiOpsRequest
         {
             public List<NativeApiOp>? operations { get; set; }
@@ -502,21 +637,22 @@ namespace RevitBridge.Operator
             var valueOwners = new Dictionary<string, Document?>(StringComparer.OrdinalIgnoreCase);
             var receipts = new List<object>();
             var total = Stopwatch.StartNew();
-            TransactionGroup? transactionGroup = null;
             Transaction? transaction = null;
-            EventHandler<DocumentChangedEventArgs>? changeHandler = null;
+            NativeMutationScopeUpdater? mutationScopeUpdater = null;
+            NativeMutationScopeFailuresPreprocessor? mutationScopePreprocessor = null;
+            var mutationScopeUpdaterRegistered = false;
             var addedIds = new HashSet<long>();
             var modifiedIds = new HashSet<long>();
             var deletedIds = new HashSet<long>();
             var mutationOperationCount = 0;
-            var transactionFinalized = false;
             try
             {
                 if (mutationEnvelopeRequired)
                 {
-                    transactionGroup = new TransactionGroup(transactionDocument!, transactionName);
-                    if (transactionGroup.Start() != TransactionStatus.Started)
-                        throw new InvalidOperationException("native-api-mutation-ops could not start its transaction group.");
+                    if (!OperatorNativeMutationFailureRegistry.IsRegistered)
+                        throw new InvalidOperationException("native-api-mutation-ops is unavailable because its transaction checkpoint was not registered during Revit startup.");
+                    mutationScopeUpdater = RegisterMutationScopeUpdater(app, transactionDocument!);
+                    mutationScopeUpdaterRegistered = true;
                     transaction = new Transaction(transactionDocument!, transactionName);
                     if (transaction.Start() != TransactionStatus.Started)
                         throw new InvalidOperationException("native-api-mutation-ops could not start its transaction.");
@@ -679,47 +815,45 @@ namespace RevitBridge.Operator
                     };
                 }
 
-                changeHandler = (_, eventArgs) => CaptureDocumentChanges(eventArgs, transactionDocument!, addedIds, modifiedIds, deletedIds);
-                app.Application.DocumentChanged += changeHandler;
-                var commitStatus = transaction!.Commit();
-                transaction.Dispose();
-                transaction = null;
-                app.Application.DocumentChanged -= changeHandler;
-                changeHandler = null;
-                if (commitStatus != TransactionStatus.Committed)
-                    throw new InvalidOperationException($"native-api-mutation-ops transaction commit returned {commitStatus}.");
-
-                var scopeDecision = OperatorNativeMutationScopePolicy.Evaluate(
-                    addedIds,
-                    modifiedIds,
-                    deletedIds,
+                mutationScopePreprocessor = new NativeMutationScopeFailuresPreprocessor(
+                    mutationScopeUpdater!,
+                    transactionMode,
                     allowedExistingElementIds,
                     allowCreate,
-                    maxAffectedElements,
-                    allowUnexpectedExistingForRollback: transactionMode == "rollback");
-                if (!scopeDecision.Allowed)
+                    maxAffectedElements);
+                var failureHandlingOptions = transaction!.GetFailureHandlingOptions();
+                failureHandlingOptions.SetFailuresPreprocessor(mutationScopePreprocessor);
+                failureHandlingOptions.SetClearAfterRollback(true);
+                transaction.SetFailureHandlingOptions(failureHandlingOptions);
+                using (var checkpoint = new FailureMessage(OperatorNativeMutationFailureRegistry.ScopeCheckpointId))
                 {
-                    var scopeRollbackStatus = transactionGroup!.RollBack();
-                    transactionFinalized = scopeRollbackStatus == TransactionStatus.RolledBack;
-                    if (scopeRollbackStatus != TransactionStatus.RolledBack)
-                        throw new InvalidOperationException($"{scopeDecision.Error} Rollback could not be verified: TransactionGroup.RollBack returned {scopeRollbackStatus}.");
-                    throw new InvalidOperationException($"{scopeDecision.Error} Verified transaction-group rollback status: {scopeRollbackStatus}.");
+                    transactionDocument!.PostFailure(checkpoint);
                 }
                 if (total.ElapsedMilliseconds > maxTotalMs)
                     throw new InvalidOperationException($"native-api-mutation-ops exceeded its {maxTotalMs} ms total budget during transaction finalization.");
 
-                TransactionStatus groupStatus;
-                if (transactionMode == "rollback")
-                    groupStatus = transactionGroup!.RollBack();
-                else
-                    groupStatus = transactionGroup!.Assimilate();
-                transactionFinalized = transactionMode == "rollback"
-                    ? groupStatus == TransactionStatus.RolledBack
-                    : groupStatus == TransactionStatus.Committed;
-                if (transactionMode == "rollback" && groupStatus != TransactionStatus.RolledBack)
-                    throw new InvalidOperationException($"native-api-mutation-ops rollback returned {groupStatus}.");
-                if (transactionMode == "commit" && groupStatus != TransactionStatus.Committed)
-                    throw new InvalidOperationException($"native-api-mutation-ops assimilation returned {groupStatus}.");
+                var transactionStatus = transaction.Commit();
+                if (!mutationScopePreprocessor.Executed || mutationScopePreprocessor.ScopeDecision == null)
+                    throw new InvalidOperationException($"native-api-mutation-ops transaction checkpoint did not execute. Transaction.Commit returned {transactionStatus}; mutation safety could not be verified.");
+
+                var scopeDecision = mutationScopePreprocessor.ScopeDecision;
+                addedIds.UnionWith(mutationScopeUpdater!.AddedIds);
+                modifiedIds.UnionWith(mutationScopeUpdater.ModifiedIds);
+                deletedIds.UnionWith(mutationScopeUpdater.DeletedIds);
+                if (!scopeDecision.Allowed)
+                {
+                    if (transactionStatus != TransactionStatus.RolledBack)
+                        throw new InvalidOperationException($"{scopeDecision.Error} Failure processing did not roll back the transaction: Transaction.Commit returned {transactionStatus}.");
+                    transaction.Dispose();
+                    transaction = null;
+                    throw new InvalidOperationException($"{scopeDecision.Error} Verified failure-processing rollback status: {transactionStatus}.");
+                }
+                if (transactionMode == "rollback" && transactionStatus != TransactionStatus.RolledBack)
+                    throw new InvalidOperationException($"native-api-mutation-ops dry-run failure processing returned {transactionStatus} instead of RolledBack.");
+                if (transactionMode == "commit" && transactionStatus != TransactionStatus.Committed)
+                    throw new InvalidOperationException($"native-api-mutation-ops commit returned {transactionStatus}.");
+                transaction.Dispose();
+                transaction = null;
 
                 total.Stop();
                 return new
@@ -735,6 +869,9 @@ namespace RevitBridge.Operator
                         committed = transactionMode == "commit",
                         dry_run = transactionMode == "rollback",
                         readback_phase = "inside_transaction_after_regenerate",
+                        scope_observation = "dynamic_model_updater_then_failure_preprocessor_at_transaction_boundary",
+                        scope_enforcement = transactionMode == "rollback" ? "failure_processing_forced_rollback" : "failure_processing_allowed_commit",
+                        scope_observer_executions = mutationScopeUpdater.ExecutionCount,
                         max_affected_elements = maxAffectedElements,
                         allow_create = allowCreate,
                         allowed_existing_element_ids = allowedExistingElementIds.OrderBy(x => x).ToArray(),
@@ -762,11 +899,6 @@ namespace RevitBridge.Operator
             catch (Exception originalError)
             {
                 var cleanupFailures = new List<string>();
-                if (changeHandler != null)
-                {
-                    try { app.Application.DocumentChanged -= changeHandler; } catch { }
-                    changeHandler = null;
-                }
                 if (transaction != null)
                 {
                     try
@@ -781,20 +913,6 @@ namespace RevitBridge.Operator
                         cleanupFailures.Add($"Transaction cleanup threw: {cleanupError.Message}");
                     }
                 }
-                if (transactionGroup != null && !transactionFinalized)
-                {
-                    try
-                    {
-                        var groupStatus = transactionGroup.GetStatus();
-                        if (groupStatus == TransactionStatus.Started) groupStatus = transactionGroup.RollBack();
-                        if (groupStatus != TransactionStatus.RolledBack && groupStatus != TransactionStatus.Uninitialized)
-                            cleanupFailures.Add($"TransactionGroup cleanup returned {groupStatus}.");
-                    }
-                    catch (Exception cleanupError)
-                    {
-                        cleanupFailures.Add($"TransactionGroup cleanup threw: {cleanupError.Message}");
-                    }
-                }
                 if (cleanupFailures.Count > 0)
                     throw new InvalidOperationException($"{originalError.Message} Native mutation transaction cleanup could not be verified: {string.Join(" ", cleanupFailures)}", originalError);
                 throw;
@@ -802,7 +920,32 @@ namespace RevitBridge.Operator
             finally
             {
                 transaction?.Dispose();
-                transactionGroup?.Dispose();
+                if (mutationScopeUpdaterRegistered && mutationScopeUpdater != null)
+                {
+                    try { UpdaterRegistry.UnregisterUpdater(mutationScopeUpdater.GetUpdaterId(), transactionDocument!); }
+                    catch { }
+                }
+            }
+        }
+
+        private static NativeMutationScopeUpdater RegisterMutationScopeUpdater(UIApplication app, Document document)
+        {
+            var updater = new NativeMutationScopeUpdater(app.ActiveAddInId);
+            UpdaterRegistry.RegisterUpdater(updater, document);
+            try
+            {
+                var allElements = new LogicalOrFilter(
+                    new ElementIsElementTypeFilter(false),
+                    new ElementIsElementTypeFilter(true));
+                UpdaterRegistry.AddTrigger(updater.GetUpdaterId(), document, allElements, Element.GetChangeTypeAny());
+                UpdaterRegistry.AddTrigger(updater.GetUpdaterId(), document, allElements, Element.GetChangeTypeElementAddition());
+                UpdaterRegistry.AddTrigger(updater.GetUpdaterId(), document, allElements, Element.GetChangeTypeElementDeletion());
+                return updater;
+            }
+            catch
+            {
+                try { UpdaterRegistry.UnregisterUpdater(updater.GetUpdaterId(), document); } catch { }
+                throw;
             }
         }
 
@@ -860,16 +1003,6 @@ namespace RevitBridge.Operator
             if (ReferenceEquals(left, right)) return true;
             try { return left.Equals(right) || right.Equals(left); }
             catch { return false; }
-        }
-
-        private static void CaptureDocumentChanges(DocumentChangedEventArgs args, Document activeDocument, HashSet<long> addedIds, HashSet<long> modifiedIds, HashSet<long> deletedIds)
-        {
-            Document? changedDocument = null;
-            try { changedDocument = args.GetDocument(); } catch { }
-            if (!SameDocument(changedDocument, activeDocument)) return;
-            try { foreach (var id in args.GetAddedElementIds()) { var value = ElementIdCompat.GetValue(id); if (value > 0) addedIds.Add(value); } } catch { }
-            try { foreach (var id in args.GetModifiedElementIds()) { var value = ElementIdCompat.GetValue(id); if (value > 0) modifiedIds.Add(value); } } catch { }
-            try { foreach (var id in args.GetDeletedElementIds()) { var value = ElementIdCompat.GetValue(id); if (value > 0) deletedIds.Add(value); } } catch { }
         }
 
         private static object? ResolveOperationTarget(string? rawTarget, Type? expectedType, UIApplication app, Dictionary<string, object?> values, string operationId)

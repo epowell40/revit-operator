@@ -31,6 +31,8 @@ namespace RevitBridge.Operator
 {
     public sealed class OperatorPaneControl : UserControl
     {
+        private static readonly TimeSpan WebView2InitializationTimeout = TimeSpan.FromSeconds(15);
+
         private sealed class UiEnvelope
         {
             public string? Version { get; set; }
@@ -361,7 +363,17 @@ namespace RevitBridge.Operator
                         UserDataFolder = userDataFolder
                     };
 
-                    await _webView!.EnsureCoreWebView2Async();
+                    var webViewInitialization = _webView!.EnsureCoreWebView2Async();
+                    var completed = await Task.WhenAny(
+                        webViewInitialization,
+                        Task.Delay(WebView2InitializationTimeout));
+                    if (!ReferenceEquals(completed, webViewInitialization))
+                    {
+                        throw new TimeoutException(
+                            $"WebView2 initialization did not complete within {WebView2InitializationTimeout.TotalSeconds:0} seconds.");
+                    }
+
+                    await webViewInitialization;
                     _webViewReady = true;
                     _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
                     _webView.CoreWebView2.PermissionRequested += (_, args) =>
@@ -407,20 +419,21 @@ namespace RevitBridge.Operator
                 }
                 catch (Exception ex)
                 {
-                    // Fall back below, but surface the reason.
-                    _webViewReady = false;
-                    _fallback = new OperatorFallbackControl();
-                    _fallback.ChatSend += (_, e) => OnChatSend(e.MessageId, e.Text, e.Attachments, shareWithAgent: true, autoOpenLatestAttachment: false, _reasoningEffort);
-                    _fallback.AttachmentRequested += (_, __) => _ = HandleFilePickAsync();
-                    _fallback.NewChatRequested += (_, __) => _ = ResetChatAsync();
-                    _fallback.CancelRequested += (_, __) => _ = CancelActiveTurnAsync("USER_CANCELLED");
-                    SetMainSurface(_fallback);
-                    _fallback.AppendChat("system", $"WebView2 init failed: {ex.GetType().Name}: {ex.Message}");
-                    _fallback.AppendChat("system", "If you want WebView2 UI, verify Microsoft Edge WebView2 Runtime is installed and allowed by policy.");
-                    _fallback.AppendChat("system", $"Backend: {_backendBaseUri}");
+                    ShowFallbackUi($"WebView2 init failed: {ex.GetType().Name}: {ex.Message}");
                     return;
                 }
             }
+
+            ShowFallbackUi(disableWebView2
+                ? "WebView2 is disabled by OPERATOR_DISABLE_WEBVIEW2; using the native WPF fallback UI."
+                : "WebView2 could not be created; using the native WPF fallback UI.");
+        }
+
+        private void ShowFallbackUi(string reason)
+        {
+            _webViewReady = false;
+            try { _webView?.Dispose(); } catch { }
+            _webView = null;
 
             _fallback = new OperatorFallbackControl();
             _fallback.ChatSend += (_, e) => OnChatSend(e.MessageId, e.Text, e.Attachments, shareWithAgent: true, autoOpenLatestAttachment: false, _reasoningEffort);
@@ -428,8 +441,32 @@ namespace RevitBridge.Operator
             _fallback.NewChatRequested += (_, __) => _ = ResetChatAsync();
             _fallback.CancelRequested += (_, __) => _ = CancelActiveTurnAsync("USER_CANCELLED");
             SetMainSurface(_fallback);
-            _webViewReady = false;
+            _fallback.AppendChat("system", reason);
+            _fallback.AppendChat("system", "The fallback remains fully usable for chat and Revit actions. Verify Microsoft Edge WebView2 Runtime and policy before the next launch.");
             _fallback.AppendChat("system", $"Backend: {_backendBaseUri}");
+
+            TryLogPaneInitialization(reason);
+        }
+
+        private static void TryLogPaneInitialization(string message)
+        {
+            try
+            {
+                var logDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "RevitOperator",
+                    "Logs");
+                Directory.CreateDirectory(logDir);
+                var logPath = Path.Combine(logDir, "operator-pane-initialization.log");
+                File.AppendAllText(
+                    logPath,
+                    $"[{DateTimeOffset.Now:O}] {message}{Environment.NewLine}",
+                    Encoding.UTF8);
+            }
+            catch
+            {
+                // Pane diagnostics must never prevent the fallback UI from loading.
+            }
         }
 
         private bool TryCreateWebView()

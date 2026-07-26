@@ -21,6 +21,17 @@ namespace RevitBridge
         {
             Instance = this;
             WriteStartupLog("OnStartup begin.");
+
+            try
+            {
+                WriteStartupLog("Native mutation transaction checkpoint registration begin.");
+                OperatorNativeMutationFailureRegistry.Register(application);
+                WriteStartupLog("Native mutation transaction checkpoint registration complete.");
+            }
+            catch (Exception ex)
+            {
+                WriteStartupLog($"Native mutation transaction checkpoint registration failed: {ex.GetType().FullName}: {ex.Message}");
+            }
             
             // Init Service & Server
             _eventService = new RevitEventService();
