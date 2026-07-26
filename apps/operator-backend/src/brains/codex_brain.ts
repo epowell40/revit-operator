@@ -9,6 +9,12 @@ import { CodexAppServer, type CodexServerRequest } from "../codex/app_server.js"
 import { ensureCodexHomeAuth, ensureCodexHomeConfig } from "../codex/config.js";
 import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
 import { RevitToolParallelGuard } from "../codex/revit_tool_parallel_guard.js";
+import {
+  filterQuarantinedToolSearchResult,
+  findActiveToolQuarantine,
+  formatRevitToolContractMemoryForPrompt,
+  recordRevitToolOutcome
+} from "../codex/revit_tool_contract_memory.js";
 import { beginRevitCourierTurnContext, endRevitCourierTurnContext } from "../courier/revit_courier_context.js";
 import { getSkillLibraryText } from "../skills/skill_library.js";
 import { persistence } from "../persistence/persistence_manager.js";
@@ -489,12 +495,24 @@ export async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, req
     if (server !== "revit_operator") {
       return { contentItems: [{ type: "inputText", text: `Unsupported MCP server namespace: ${namespace}` }], success: false };
     }
+    const quarantine = findActiveToolQuarantine(params.tool, params.arguments);
+    if (quarantine) {
+      const label = quarantine.method && quarantine.path ? `${quarantine.method} ${quarantine.path}` : quarantine.tool ?? "tool";
+      return {
+        contentItems: [{
+          type: "inputText",
+          text: `[revit_tool_quarantined] ${label} is retained but unavailable for autonomous execution: ${quarantine.reason}. Inspect current tool docs/evidence and use another primitive or clear the quarantine after a regression-tested repair.`
+        }],
+        success: false
+      };
+    }
     const lease = revitToolParallelGuard.tryAcquire(params);
     if (!lease.accepted) {
       return { contentItems: [{ type: "inputText", text: lease.message ?? "Concurrent dependent Revit call blocked." }], success: false };
     }
     try {
-      const result = await runtime.callTool(params.tool, params.arguments ?? {});
+      const rawResult = await runtime.callTool(params.tool, params.arguments ?? {});
+      const result = params.tool === "revit_search_tools" ? filterQuarantinedToolSearchResult(rawResult) : rawResult;
       return adaptMcpToolCallResultToDynamicResponse(result, { tool: params.tool, arguments: params.arguments });
     } catch (error) {
       return {
@@ -714,6 +732,10 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
             try {
               blocks.push(formatEnvironmentSummaryForPrompt());
             } catch {}
+            try {
+              const contractMemory = formatRevitToolContractMemoryForPrompt();
+              if (contractMemory) blocks.push(contractMemory);
+            } catch {}
             if (freshEvidenceRequirement.prompt) blocks.push(freshEvidenceRequirement.prompt);
             if (memBlock) blocks.push(`MEMORY CONTEXT (read-only):\n${memBlock}`);
             try {
@@ -824,6 +846,19 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         if (dynamicTool) {
           if (isSuccessfulFreshRevitEvidence(freshEvidenceRequirement, dynamicTool)) hasFreshRevitEvidence = true;
           try {
+            recordRevitToolOutcome({
+              sessionId: req.session_id,
+              threadId,
+              turnId,
+              tool: dynamicTool.tool,
+              arguments: dynamicTool.arguments,
+              success: dynamicTool.success,
+              error: dynamicTool.error
+            });
+          } catch {
+            // contract memory is best-effort and must never interrupt the active turn
+          }
+          try {
             appendEvent(req.session_id, "tool", "codex.dynamicToolCall", {
               thread_id: threadId,
               turn_id: turnId,
@@ -891,6 +926,26 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
             status: item.status,
             error: item.error
           })) hasFreshRevitEvidence = true;
+          try {
+            const status = typeof item.status === "string" ? item.status.trim().toLowerCase() : "";
+            const error = typeof item.error === "string" ? item.error : null;
+            const success = error
+              ? false
+              : status
+                ? ["success", "ok", "done", "completed"].includes(status)
+                : undefined;
+            recordRevitToolOutcome({
+              sessionId: req.session_id,
+              threadId,
+              turnId,
+              tool: item.tool,
+              arguments: item.arguments,
+              success,
+              error
+            });
+          } catch {
+            // contract memory is best-effort and must never interrupt the active turn
+          }
           try {
             appendEvent(req.session_id, "tool", "codex.mcpToolCall", {
               thread_id: threadId,

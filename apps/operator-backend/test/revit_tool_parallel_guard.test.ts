@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { handleCodexServerRequest } from "../src/brains/codex_brain.js";
 import { RevitToolParallelGuard } from "../src/codex/revit_tool_parallel_guard.js";
+import { setRevitToolQuarantine } from "../src/codex/revit_tool_contract_memory.js";
 
 const call = (overrides: Record<string, unknown> = {}) => ({
   threadId: "thread-1",
@@ -69,4 +73,32 @@ test("app-server handler rejects a duplicate before dispatching it to the MCP ru
   resolveFirst({ content: [{ type: "text", text: "{\"plannedToTag\":1}" }] });
   const completed = await first as any;
   assert.equal(completed.success, true);
+});
+
+test("app-server handler blocks an active exact-route quarantine before MCP dispatch", { concurrency: false }, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-tool-quarantine-handler-"));
+  const previous = process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH;
+  process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH = path.join(root, "memory.json");
+  try {
+    setRevitToolQuarantine({
+      method: "POST",
+      path: "/revit/tag-elements",
+      active: true,
+      reason: "confirmed test defect"
+    });
+    let runtimeCalls = 0;
+    const runtime = { callTool: async () => { runtimeCalls += 1; return { content: [] }; } };
+    const result = await handleCodexServerRequest(runtime as any, {
+      method: "item/tool/call",
+      params: { namespace: "revit_operator", ...call() }
+    } as any) as any;
+
+    assert.equal(runtimeCalls, 0);
+    assert.equal(result.success, false);
+    assert.match(result.contentItems[0].text, /revit_tool_quarantined/);
+  } finally {
+    if (previous === undefined) delete process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH;
+    else process.env.OPERATOR_REVIT_TOOL_CONTRACT_MEMORY_PATH = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
