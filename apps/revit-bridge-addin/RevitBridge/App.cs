@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Reflection;
 using Autodesk.Revit.UI;
+using RevitBridge.Common;
 using RevitBridge.Operator;
 using RevitBridge.Server;
 using RevitBridge.Services;
@@ -15,6 +16,7 @@ namespace RevitBridge
         
         private RevitHttpServer _server;
         private RevitEventService _eventService;
+        private OperatorRevitCourierWorker? _revitCourierWorker;
         internal OperatorDialogComputerUse? DialogComputerUse { get; private set; }
 
         public Result OnStartup(UIControlledApplication application)
@@ -41,6 +43,27 @@ namespace RevitBridge
 
             // Ensure Operator backend is up (separate process)
             OperatorBackendAutoStart.TryStartInBackground();
+
+            // The hosted Codex harness publishes Revit calls through a durable
+            // courier. Keep its workstation claimant alive for the lifetime of
+            // the add-in; the Sidecar-only UI no longer constructs the legacy pane.
+            try
+            {
+                var courierAuth = new OperatorAuthSession();
+                var courierBackend = new OperatorBackendClient(OperatorBackendConfig.GetBaseUri(), courierAuth);
+                _revitCourierWorker = new OperatorRevitCourierWorker(
+                    courierBackend,
+                    new OperatorActionRunner(_eventService),
+                    getApprovalMode: GetCourierApprovalMode,
+                    ensureWriteGrant: OperatorWriteGrant.ReadStatus,
+                    getLogger: () => null);
+                _revitCourierWorker.Start();
+                WriteStartupLog("Application-lifetime Revit courier worker started.");
+            }
+            catch (Exception ex)
+            {
+                WriteStartupLog($"Application-lifetime Revit courier worker failed to start: {ex.GetType().FullName}: {ex.Message}");
+            }
 
             if (IsDialogComputerUseEnabled())
             {
@@ -122,6 +145,17 @@ namespace RevitBridge
             WriteStartupLog("OnShutdown begin.");
             try
             {
+                WriteStartupLog("Application-lifetime Revit courier worker dispose begin.");
+                _revitCourierWorker?.Dispose();
+                _revitCourierWorker = null;
+                WriteStartupLog("Application-lifetime Revit courier worker dispose complete.");
+            }
+            catch (Exception ex)
+            {
+                WriteStartupLog($"Application-lifetime Revit courier worker dispose failed: {ex.GetType().FullName}: {ex.Message}");
+            }
+            try
+            {
                 WriteStartupLog("Dialog computer-use dispose begin.");
                 DialogComputerUse?.Dispose();
                 WriteStartupLog("Dialog computer-use dispose complete.");
@@ -142,6 +176,15 @@ namespace RevitBridge
             }
             WriteStartupLog("OnShutdown complete.");
             return Result.Succeeded;
+        }
+
+        private static OperatorApprovalMode GetCourierApprovalMode()
+        {
+            var status = OperatorWriteGrant.ReadStatus();
+            if (!status.Active) return OperatorApprovalMode.Safe;
+            return string.Equals((status.Mode ?? "").Trim(), "yolo", StringComparison.OrdinalIgnoreCase)
+                ? OperatorApprovalMode.Yolo
+                : OperatorApprovalMode.AllowWritesThisSession;
         }
 
         private static bool IsDialogComputerUseEnabled()
