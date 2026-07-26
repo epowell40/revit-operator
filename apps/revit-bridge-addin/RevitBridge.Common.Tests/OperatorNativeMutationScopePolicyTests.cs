@@ -34,7 +34,7 @@ namespace RevitBridge.Common.Tests
             Assert.False(decision.Allowed);
             Assert.Equal("existing_element_out_of_scope", decision.Code);
             Assert.Equal(new long[] { 43 }, decision.UnexpectedExistingElementIds);
-            Assert.Contains("requires verified transaction-group rollback", decision.Error);
+            Assert.Contains("requires verified failure-processing rollback", decision.Error);
             Assert.DoesNotContain("was rolled back", decision.Error);
         }
 
@@ -70,7 +70,7 @@ namespace RevitBridge.Common.Tests
             Assert.False(decision.Allowed);
             Assert.Equal("creation_not_allowed", decision.Code);
             Assert.Empty(decision.ModifiedElementIds);
-            Assert.Contains("requires verified transaction-group rollback", decision.Error);
+            Assert.Contains("requires verified failure-processing rollback", decision.Error);
         }
 
         [Fact]
@@ -87,7 +87,7 @@ namespace RevitBridge.Common.Tests
             Assert.False(decision.Allowed);
             Assert.Equal("affected_element_cap_exceeded", decision.Code);
             Assert.Equal(3, decision.AffectedElementCount);
-            Assert.Contains("requires verified transaction-group rollback", decision.Error);
+            Assert.Contains("requires verified failure-processing rollback", decision.Error);
         }
 
         [Fact]
