@@ -60,15 +60,27 @@ namespace RevitBridge
                 WriteStartupLog("Dialog computer-use registration skipped by local setting.");
             }
 
-            // Register DockablePane (don't hard-fail if already registered)
-            try
+            // The desktop sidecar is the primary UI. Register the legacy pane only
+            // when an explicit rollback mode was selected before Revit startup.
+            if (OperatorDesktopLauncher.UseLegacyPane())
             {
-                application.RegisterDockablePane(
-                    OperatorPaneIds.PaneId,
-                    OperatorPaneIds.PaneTitle,
-                    new OperatorDockablePaneProvider(_eventService));
+                try
+                {
+                    application.RegisterDockablePane(
+                        OperatorPaneIds.PaneId,
+                        OperatorPaneIds.PaneTitle,
+                        new OperatorDockablePaneProvider(_eventService));
+                    WriteStartupLog("Legacy Operator dockable pane registered.");
+                }
+                catch (Exception ex)
+                {
+                    WriteStartupLog($"Legacy Operator dockable pane registration failed: {ex.GetType().FullName}: {ex.Message}");
+                }
             }
-            catch { }
+            else
+            {
+                WriteStartupLog("Legacy Operator dockable pane registration skipped; Operator Desktop is primary.");
+            }
 
             // Create Ribbon (don't hard-fail if tab already exists)
             string tabName = "RevitOperator";
@@ -93,11 +105,11 @@ namespace RevitBridge
             {
                 PushButtonData operatorBtnData = new PushButtonData(
                     "cmdRevitOperatorPane",
-                    "Operator",
+                    "Operator\nDesktop",
                     _assemblyPath,
                     "RevitBridge.Operator.ShowOperatorPaneCommand"
                 );
-                operatorBtnData.ToolTip = "Open the Operator dockable pane";
+                operatorBtnData.ToolTip = "Launch or focus Operator Desktop. Set OPERATOR_UI_MODE=pane to use the legacy dockable pane.";
                 panel.AddItem(operatorBtnData);
             }
             catch { }
