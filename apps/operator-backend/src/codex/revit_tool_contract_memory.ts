@@ -10,6 +10,8 @@ const MAX_FAILURE_RECEIPTS = 256;
 const MAX_PENDING_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
 const CONTRACT_FAILURE_PATTERN = /\b(schema|validat(?:e|ion)|invalid\s+(?:request|field|property|parameter|argument|payload|body|value)|required\s+(?:field|property|parameter|argument)|missing\s+(?:field|property|parameter|argument)|unknown\s+(?:field|property|parameter|argument)|unexpected\s+(?:field|property|parameter|argument)|enum|deserialize|request\s+body)\b/i;
 const CONTRACT_VALUE_EXPECTATION_PATTERN = /\b(?:body|payload|field|property|parameter|argument|[A-Za-z_][A-Za-z0-9_.-]*)\s+must\s+be\s+(?:an?\s+)?(?:object|array|string|number|integer|boolean|null|one\s+of|'[^']+'|\"[^\"]+\")/i;
+const CONTRACT_BOUNDARY_PATTERN = /(?:\bout\s+of\s+range\b|\bexceeding\s+transaction\.maxAffectedElements\b|\boutside\s+transaction\.allowedExistingElementIds\b|\boverriding\s+['\"][^'\"]+['\"]\s+is\s+not\s+allowed\b)/i;
+const ENVIRONMENT_TRANSPORT_PATTERN = /\b(?:502\s+bad\s+gateway|an\s+error\s+occurred\s+while\s+sending\s+the\s+request|httprequestexception|econnrefused|connection\s+refused|network\s+request\s+failed)\b/i;
 const SENSITIVE_KEY_PATTERN = /(authorization|cookie|password|passwd|secret|token|api[_-]?key|private[_-]?key|credential)/i;
 const CONTRACT_LITERAL_KEY_PATTERN = /^(action|apply|caseSensitive|combine|dryRun|exact|includeAllRefs|includeCoordinateSystem|method|mode|onlyUntagged|path|placementMode|profile|risk|scope|target|type)$/i;
 
@@ -217,7 +219,9 @@ function correctionId(route: RevitToolRoute, failedArguments: unknown, acceptedA
 
 export function isContractShapedFailure(error: unknown): boolean {
   const diagnostic = cleanString(error, 2_000);
-  return CONTRACT_FAILURE_PATTERN.test(diagnostic) || CONTRACT_VALUE_EXPECTATION_PATTERN.test(diagnostic);
+  return CONTRACT_FAILURE_PATTERN.test(diagnostic)
+    || CONTRACT_VALUE_EXPECTATION_PATTERN.test(diagnostic)
+    || CONTRACT_BOUNDARY_PATTERN.test(diagnostic);
 }
 
 export function classifyRevitToolFailure(errorValue: unknown): RevitToolFailureClass {
@@ -225,10 +229,11 @@ export function classifyRevitToolFailure(errorValue: unknown): RevitToolFailureC
   if (isContractShapedFailure(error)) return "contract";
   if (/\b(404|unknown\s+(?:route|tool)|no\s+handler|route\s+not\s+found|unsupported\s+dynamic\s+tool\s+namespace)\b/i.test(error)) return "routing";
   if (/\b(external[_ -]?event[_ -]?busy|queue|circuit|deadline|timed?\s*out|host\s+unavailable|cancel(?:led|ed)|outcome\s+unknown)\b/i.test(error)) return "scheduler";
-  if (/\b(no\s+active\s+(?:document|view)|document\s+(?:is\s+)?not\s+open|active\s+model\s+required|element\s+not\s+found|view\s+not\s+found|stale\s+element)\b/i.test(error)) return "revit_context";
-  if (/\b(unsupported|not\s+supported|blocked\s+by\s+policy|signature[_ -]?unsupported|target[_ -]?unreachable|not\s+implemented)\b/i.test(error)) return "unsupported_api";
+  if (/\b(no\s+active\s+(?:document|view)|document\s+(?:is\s+)?not\s+open|active\s+model\s+required|element\s+not\s+found|view\s+not\s+found|stale\s+element|targets\s+a\s+document\s+other\s+than\s+the\s+active\s+transaction\s+document)\b/i.test(error)) return "revit_context";
+  if (/\b(unsupported|not\s+supported|blocked\s+by\s+policy|signature[_ -]?unsupported|target[_ -]?unreachable|not\s+implemented|unknown\s+memberid)\b/i.test(error)) return "unsupported_api";
   if (/\b(nullreference|invalidoperationexception|unhandled|internal\s+(?:error|exception)|invariant\s+(?:failed|violation)|implementation\s+defect)\b/i.test(error)) return "implementation_defect";
-  if (/\b(printer|family|file|directory|network|dns|permission|access\s+denied|authentication|unauthorized|dependency)\b.*\b(missing|not\s+found|unavailable|denied|failed|required)\b/i.test(error)) return "environment_dependency";
+  if (ENVIRONMENT_TRANSPORT_PATTERN.test(error)
+    || /\b(printer|family|file|directory|network|dns|permission|access\s+denied|authentication|unauthorized|dependency)\b.*\b(missing|not\s+found|unavailable|denied|failed|required)\b/i.test(error)) return "environment_dependency";
   return "unknown";
 }
 
