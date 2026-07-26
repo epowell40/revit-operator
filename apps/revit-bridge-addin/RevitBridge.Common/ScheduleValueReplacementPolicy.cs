@@ -22,6 +22,18 @@ namespace RevitBridge.Common
                 candidate.Length > 0 && requested.Contains(candidate, StringComparer.Ordinal));
         }
 
+        public static string? FirstMatchingRequestedName(
+            IEnumerable<string>? requestedNames,
+            IEnumerable<(string? ParameterName, string? Heading)>? availableFields)
+        {
+            var fields = (availableFields ?? Array.Empty<(string?, string?)>()).ToList();
+            return (requestedNames ?? Array.Empty<string>())
+                .Select(value => (value ?? "").Trim())
+                .Where(value => value.Length > 0)
+                .FirstOrDefault(requested => fields.Any(field =>
+                    FieldNameMatchesAny(field.ParameterName, field.Heading, new[] { requested })));
+        }
+
         public static bool TryBuildLiteralReplacement(string? currentValue, string? find, string? replace, out string nextValue)
         {
             var current = currentValue ?? "";

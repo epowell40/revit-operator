@@ -13,8 +13,9 @@ namespace RevitBridge.Handlers
 {
     /// <summary>
     /// Plans and applies literal replacements to host-model instance string parameters
-    /// that back exact fields in schedules placed on explicit sheets. Apply is bound to
-    /// the complete preflight plan hash and rolls back if any planned readback fails.
+    /// that back exact fields in schedules selected by explicit sheets or schedule ids.
+    /// Apply is bound to the complete preflight plan hash and rolls back if any planned
+    /// readback fails.
     /// </summary>
     public sealed class ReplaceScheduleValuesHandler : IRequestHandler
     {
@@ -40,6 +41,7 @@ namespace RevitBridge.Handlers
             public long ScheduleId { get; set; }
             public string ScheduleName { get; set; } = "";
             public string? SheetNumber { get; set; }
+            public string? SheetName { get; set; }
             public long? InstanceId { get; set; }
         }
 
@@ -78,7 +80,7 @@ namespace RevitBridge.Handlers
             var sheetNumbers = NormalizeStrings(p.sheetNumbers, 50);
             var scheduleIds = (p.scheduleIds ?? new List<long>()).Where(id => id > 0).Distinct().Take(200).ToList();
             var fieldNames = NormalizeStrings(p.fieldNames, 20);
-            if (fieldNames.Count == 0) fieldNames.AddRange(new[] { "DESIG", "Designation" });
+            if (fieldNames.Count == 0) fieldNames.AddRange(new[] { "DESIG.", "DESIG", "Designation" });
             var find = (p.replaceFrom ?? p.valueContains ?? "").Trim();
             var contains = (p.valueContains ?? find).Trim();
             var expectedValue = string.IsNullOrWhiteSpace(p.expectedValue) ? null : p.expectedValue;
@@ -94,7 +96,7 @@ namespace RevitBridge.Handlers
             var maxCandidates = Math.Max(1, Math.Min(10000, p.maxCandidates ?? 5000));
             var maxChanges = Math.Max(1, Math.Min(10000, p.maxChanges ?? maxCandidates));
             var discovery = Discover(doc, sheetNumbers, scheduleIds, fieldNames, contains, expectedValue, find, replace, maxSchedules, maxCandidates);
-            var planHash = BuildPlanHash(sheetNumbers, fieldNames, contains, expectedValue, find, replace, discovery.Candidates);
+            var planHash = BuildPlanHash(sheetNumbers, scheduleIds, fieldNames, contains, expectedValue, find, replace, discovery.Candidates);
             var writable = discovery.Candidates.Where(candidate => candidate.Writable).ToList();
             var blocked = discovery.Candidates.Where(candidate => !candidate.Writable).ToList();
 
@@ -359,7 +361,7 @@ namespace RevitBridge.Handlers
                         var scheduleId = ElementIdCompat.GetValue(schedule.Id);
                         schedules[scheduleId] = schedule;
                         if (!refsBySchedule.TryGetValue(scheduleId, out var refs)) refsBySchedule[scheduleId] = refs = new List<ScheduleRef>();
-                        refs.Add(new ScheduleRef { ScheduleId = scheduleId, ScheduleName = schedule.Name ?? "", SheetNumber = sheet.SheetNumber, InstanceId = ElementIdCompat.GetValue(instance.Id) });
+                        AddScheduleRef(refs, schedule, sheet, instance);
                     }
                 }
             }
@@ -373,6 +375,7 @@ namespace RevitBridge.Handlers
                 }
                 schedules[id] = schedule;
                 if (!refsBySchedule.TryGetValue(id, out var refs)) refsBySchedule[id] = refs = new List<ScheduleRef>();
+                AddPlacementRefs(doc, sheets, schedule, refs);
                 if (refs.Count == 0) refs.Add(new ScheduleRef { ScheduleId = id, ScheduleName = schedule.Name ?? "" });
             }
 
@@ -388,7 +391,7 @@ namespace RevitBridge.Handlers
             var candidates = new Dictionary<string, Candidate>(StringComparer.Ordinal);
             foreach (var schedule in selectedSchedules)
             {
-                var fields = ScheduleSelectionHelper.GetFields(schedule)
+                var availableFields = ScheduleSelectionHelper.GetFields(schedule)
                     .Where(field => !SafeIsHidden(field))
                     .Select(field => new
                     {
@@ -397,8 +400,16 @@ namespace RevitBridge.Handlers
                         Heading = SafeHeading(field),
                         ParameterId = SafeParameterId(field)
                     })
-                    .Where(field => field.ParameterId != ElementId.InvalidElementId && ScheduleValueReplacementPolicy.FieldNameMatchesAny(field.Name, field.Heading, fieldNames))
+                    .Where(field => field.ParameterId != ElementId.InvalidElementId)
                     .ToList();
+                var selectedFieldName = ScheduleValueReplacementPolicy.FirstMatchingRequestedName(
+                    fieldNames,
+                    availableFields.Select(field => ((string?)field.Name, (string?)field.Heading)));
+                var fields = selectedFieldName == null
+                    ? availableFields.Take(0).ToList()
+                    : availableFields
+                        .Where(field => ScheduleValueReplacementPolicy.FieldNameMatchesAny(field.Name, field.Heading, new[] { selectedFieldName }))
+                        .ToList();
                 if (fields.Count == 0) continue;
 
                 ICollection<Element> visibleElements;
@@ -473,6 +484,7 @@ namespace RevitBridge.Handlers
 
         private static string BuildPlanHash(
             IReadOnlyCollection<string> sheets,
+            IReadOnlyCollection<long> scheduleIds,
             IReadOnlyCollection<string> fields,
             string contains,
             string? expectedValue,
@@ -483,6 +495,7 @@ namespace RevitBridge.Handlers
             var lines = new List<string>
             {
                 "sheets=" + string.Join(",", sheets.OrderBy(value => value, StringComparer.OrdinalIgnoreCase)),
+                "scheduleIds=" + string.Join(",", scheduleIds.OrderBy(value => value)),
                 "fields=" + string.Join(",", fields.Select(ScheduleCellUpdatePolicy.NormalizeFieldName).OrderBy(value => value, StringComparer.Ordinal)),
                 "contains=" + contains,
                 "expected=" + (expectedValue ?? ""),
@@ -516,6 +529,8 @@ namespace RevitBridge.Handlers
                 ownerElementId = ElementIdCompat.GetValue(candidate.Owner.Id),
                 ownerKind = candidate.OwnerKind,
                 category = candidate.SourceElement.Category?.Name,
+                familyName = ReadFamilyName(candidate.SourceElement),
+                typeName = ReadTypeName(candidate.SourceElement),
                 parameterId = ElementIdCompat.GetValue(candidate.Parameter.Id),
                 parameterName = candidate.ParameterName,
                 fieldName = candidate.FieldName,
@@ -534,6 +549,8 @@ namespace RevitBridge.Handlers
             {
                 elementId = ElementIdCompat.GetValue(candidate.SourceElement.Id),
                 category = candidate.SourceElement.Category?.Name,
+                familyName = ReadFamilyName(candidate.SourceElement),
+                typeName = ReadTypeName(candidate.SourceElement),
                 parameterName = candidate.ParameterName,
                 before = candidate.Before,
                 after = candidate.After,
@@ -547,8 +564,51 @@ namespace RevitBridge.Handlers
                 .OrderBy(reference => reference.SheetNumber, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(reference => reference.ScheduleName, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(reference => reference.InstanceId ?? 0)
-                .Select(reference => (object)new { sheetNumber = reference.SheetNumber, scheduleId = reference.ScheduleId, scheduleName = reference.ScheduleName, instanceId = reference.InstanceId })
+                .Select(reference => (object)new { sheetNumber = reference.SheetNumber, sheetName = reference.SheetName, scheduleId = reference.ScheduleId, scheduleName = reference.ScheduleName, instanceId = reference.InstanceId })
                 .ToList();
+        }
+
+        private static void AddPlacementRefs(Document doc, IEnumerable<ViewSheet> sheets, ViewSchedule schedule, List<ScheduleRef> refs)
+        {
+            foreach (var sheet in sheets)
+            {
+                foreach (var instance in new FilteredElementCollector(doc, sheet.Id).OfClass(typeof(ScheduleSheetInstance)).Cast<ScheduleSheetInstance>())
+                {
+                    if (instance.ScheduleId != schedule.Id) continue;
+                    AddScheduleRef(refs, schedule, sheet, instance);
+                }
+            }
+        }
+
+        private static void AddScheduleRef(List<ScheduleRef> refs, ViewSchedule schedule, ViewSheet sheet, ScheduleSheetInstance instance)
+        {
+            var scheduleId = ElementIdCompat.GetValue(schedule.Id);
+            var instanceId = ElementIdCompat.GetValue(instance.Id);
+            if (refs.Any(existing => existing.ScheduleId == scheduleId && existing.InstanceId == instanceId)) return;
+            refs.Add(new ScheduleRef
+            {
+                ScheduleId = scheduleId,
+                ScheduleName = schedule.Name ?? "",
+                SheetNumber = sheet.SheetNumber,
+                SheetName = sheet.Name,
+                InstanceId = instanceId
+            });
+        }
+
+        private static string? ReadFamilyName(Element element)
+        {
+            try
+            {
+                if (element is FamilyInstance familyInstance) return familyInstance.Symbol?.Family?.Name;
+                return (element.Document.GetElement(element.GetTypeId()) as ElementType)?.FamilyName;
+            }
+            catch { return null; }
+        }
+
+        private static string? ReadTypeName(Element element)
+        {
+            try { return (element.Document.GetElement(element.GetTypeId()) as ElementType)?.Name; }
+            catch { return null; }
         }
 
         private static List<string> NormalizeStrings(IEnumerable<string>? values, int max)
