@@ -50,7 +50,7 @@ function isSheetInventory(task: AecSemanticTaskV1): boolean {
 
 function isScheduleInventory(task: AecSemanticTaskV1): boolean {
   const text = [...task.subject.terms, task.evidence.user_text].join(" ");
-  return /\bschedules?\b/i.test(text) && task.subject.categories.length === 0;
+  return /\bschedules?\b/i.test(text);
 }
 
 function planBoundedComparison(task: AecSemanticTaskV1): AecQueryPlanV1 {
