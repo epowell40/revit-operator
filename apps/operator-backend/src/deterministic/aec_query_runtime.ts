@@ -63,10 +63,10 @@ function scopeLabel(task: AecSemanticTaskV1): string {
   return "the requested scope";
 }
 
-function resultItems(payload: Record<string, unknown> | null): Array<Record<string, unknown>> {
+function resultItems(payload: Record<string, unknown> | null, limit = 20): Array<Record<string, unknown>> {
   for (const key of ["elements", "items", "results"]) {
     const value = payload?.[key];
-    if (Array.isArray(value)) return value.filter(item => item && typeof item === "object" && !Array.isArray(item)).slice(0, 20) as Array<Record<string, unknown>>;
+    if (Array.isArray(value)) return value.filter(item => item && typeof item === "object" && !Array.isArray(item)).slice(0, Math.max(1, Math.min(500, limit))) as Array<Record<string, unknown>>;
   }
   return [];
 }
@@ -106,7 +106,7 @@ function wantsCountOnly(task: AecSemanticTaskV1): boolean {
 function completeScheduleInventory(task: AecSemanticTaskV1, workflow: AecQueryWorkflowId, result: ToolResult): ChatResponse {
   if (result.status !== "done") return response(`I could not complete the bounded schedule query: ${result.error || "the Revit read action failed"}. No model changes were made.`, [], { workflow_id: workflow, status: "failed" });
   const payload = resultPayload(result);
-  const items = resultItems(payload);
+  const items = resultItems(payload, 500);
   const returned = payload?.returned;
   const count = Number.isSafeInteger(returned) ? returned as number : items.length;
   const wantsAirHandlers = /\b(?:ahu|air\s+handlers?|air[- ]handling\s+units?)\b/i.test(task.evidence.user_text);

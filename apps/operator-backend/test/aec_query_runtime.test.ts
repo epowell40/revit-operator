@@ -109,8 +109,9 @@ test("air-handler schedule discovery returns grounded candidates instead of exac
   initial.user_text = value.evidence.user_text;
   const first = await maybeRunAecSemanticQuery(initial, interpreter);
   assert.deepEqual(first.response?.actions, [{ action_id: "aec-query-document-schedules", method: "POST", path: "/revit/schedules", body: { action: "list", query: "", max: 500 } }]);
-  const done = await maybeRunAecSemanticQuery(request("schedule-discovery", [{ action_id: "aec-query-document-schedules", method: "POST", path: "/revit/schedules", status: "done", result_json: { returned: 3, items: [{ id: 741436, name: "AHU AIR BALANCE SCHEDULE" }, { id: 741504, name: "AIR HANDLING UNIT SCHEDULE" }, { id: 1495907, name: "MAKE-UP AIR HANDLING UNIT SCHEDULE" }] } }]), interpreter);
-  assert.match(done.response?.assistant_message ?? "", /3 schedules/);
+  const earlierSchedules = Array.from({ length: 25 }, (_, index) => ({ id: index + 1, name: `EARLIER SCHEDULE ${index + 1}` }));
+  const done = await maybeRunAecSemanticQuery(request("schedule-discovery", [{ action_id: "aec-query-document-schedules", method: "POST", path: "/revit/schedules", status: "done", result_json: { returned: 28, items: [...earlierSchedules, { id: 741436, name: "AHU AIR BALANCE SCHEDULE" }, { id: 741504, name: "AIR HANDLING UNIT SCHEDULE" }, { id: 1495907, name: "MAKE-UP AIR HANDLING UNIT SCHEDULE" }] } }]), interpreter);
+  assert.match(done.response?.assistant_message ?? "", /28 schedules/);
   assert.match(done.response?.assistant_message ?? "", /strongest direct match is AIR HANDLING UNIT SCHEDULE \(id 741504\)/);
   assert.match(done.response?.assistant_message ?? "", /AHU AIR BALANCE SCHEDULE/);
   assert.equal(done.response?.aec_query_receipt?.workflow_id, "query.document_schedules");
