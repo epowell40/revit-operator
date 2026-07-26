@@ -17,6 +17,7 @@
     "check:tool-contracts": "tsx src/tools/check_tool_contracts.ts",
     "check:repo": "npm run check:skills-manifest && npm run check:tool-contracts",
     "audit:tool-registry": "tsx src/tools/audit_tool_registry.ts",
+    "plan:live-revit-write-probes": "tsx src/tools/plan_live_revit_write_probes.ts",
     "audit:native-api-gateway": "tsx src/tools/audit_native_api_gateway.ts",
     "probe:live-revit-tools": "tsx src/tools/probe_live_revit_tools.ts",
     "check:codex-app-server": "tsx src/tools/verify_codex_app_server_protocol.ts",
