@@ -86,6 +86,22 @@ test("failure classifier preserves the required operational categories", () => {
   assert.equal(classifyRevitToolFailure("Tag position must be professionally clear"), "unknown");
 });
 
+test("failure classifier covers exact observed courier and bridge diagnostics", () => {
+  const cases = [
+    ["<html><head><title>502 Bad Gateway</title></head></html>", "environment_dependency"],
+    ["An error occurred while sending the request.", "environment_dependency"],
+    ["export-visible-elements.limit out of range.", "contract"],
+    ["native-api-mutation-ops affected 4 elements, exceeding transaction.maxAffectedElements=1; the transaction group was rolled back.", "contract"],
+    ["native-api-mutation-ops affected existing elements outside transaction.allowedExistingElementIds: 711263; the transaction group was rolled back.", "contract"],
+    ["native-api-mutation-ops operation 'setName' targets a document other than the active transaction document.", "revit_context"],
+    ["Overriding 'folder' is not allowed.", "contract"],
+    ["Unknown memberId: method:System.Object.GetType()", "unsupported_api"]
+  ] as const;
+  for (const [diagnostic, expected] of cases) {
+    assert.equal(classifyRevitToolFailure(diagnostic), expected, diagnostic);
+  }
+});
+
 test("pending contract failures are paired within their thread instead of across sessions", { concurrency: false }, () => {
   withStore(() => {
     recordRevitToolOutcome({ sessionId: "session-a", threadId: "thread-a", tool: "revit_call_tool", arguments: { method: "POST", path: "/revit/sheets", body: { action: "bad-a" } }, success: false, error: "A action must be 'list'" });
