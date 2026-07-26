@@ -115,6 +115,13 @@ function completeScheduleInventory(task: AecSemanticTaskV1, workflow: AecQueryWo
     const primary = candidates.find(item => /^AIR HANDLING UNIT SCHEDULE$/i.test(textValue(item.name) ?? ""));
     const ordered = primary ? [primary, ...candidates.filter(item => item !== primary)] : candidates;
     if (ordered.length === 0) return response(`I found ${count} schedule${count === 1 ? "" : "s"}, but none had an air-handler or AHU name, so I did not guess. No model changes were made.`, [], { workflow_id: workflow, status: "not_found" });
+    const asksForInventory =
+      /\b(?:list|inventory)\b/i.test(task.evidence.user_text) ||
+      /\ball\b[^.?!]*\bschedules\b/i.test(task.evidence.user_text) ||
+      /\b(?:what|which)\b[^.?!]*\bschedules\b/i.test(task.evidence.user_text);
+    if (primary && !asksForInventory) {
+      return response(`I found AIR HANDLING UNIT SCHEDULE (id ${textValue(primary.id) ?? "unknown"}). I think that's the schedule you mean. Would you like me to open it? No view was activated and no model changes were made.`, [], { workflow_id: workflow, status: "found" });
+    }
     const labels = ordered.slice(0, 12).map(item => `${textValue(item.name) ?? "unnamed schedule"} (id ${textValue(item.id) ?? "unknown"})`);
     const strongest = primary ? ` The strongest direct match is ${labels[0]}.` : "";
     const related = primary && labels.length > 1 ? ` Related AHU schedules: ${labels.slice(1).join("; ")}.` : !primary ? ` Matching schedules: ${labels.join("; ")}.` : "";
