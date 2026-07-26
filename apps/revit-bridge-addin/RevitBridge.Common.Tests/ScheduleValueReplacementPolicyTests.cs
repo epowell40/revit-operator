@@ -16,6 +16,37 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void Field_precedence_uses_designation_before_mark_fallback()
+        {
+            var available = new[]
+            {
+                (ParameterName: (string?)"Mark", Heading: (string?)"TAG"),
+                (ParameterName: (string?)"DESIG.", Heading: (string?)"Designation")
+            };
+
+            Assert.Equal(
+                "DESIG",
+                ScheduleValueReplacementPolicy.FirstMatchingRequestedName(
+                    new[] { "DESIG", "Designation", "Mark" },
+                    available));
+        }
+
+        [Fact]
+        public void Field_precedence_uses_mark_only_when_designation_is_absent()
+        {
+            var available = new[]
+            {
+                (ParameterName: (string?)"Mark", Heading: (string?)"TAG")
+            };
+
+            Assert.Equal(
+                "Mark",
+                ScheduleValueReplacementPolicy.FirstMatchingRequestedName(
+                    new[] { "DESIG", "Designation", "Mark" },
+                    available));
+        }
+
+        [Fact]
         public void Literal_replacement_changes_every_exact_occurrence_only()
         {
             Assert.True(ScheduleValueReplacementPolicy.TryBuildLiteralReplacement("B3-G-IA-01-G-A", "-G-", "-0-", out var next));

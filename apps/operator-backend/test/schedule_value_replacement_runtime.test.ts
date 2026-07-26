@@ -6,6 +6,7 @@ import { parseDirectScheduleValueReplacement } from "../src/schedule_value_repla
 
 const bulkText = `please rename any equipment that includes "-G-" in it's designation so that it instead reads "-0-", so, for example, "B3-G-IA-01" needs to be renamed "B3-0-IA-01". please review all the plumbing schedules on P6.01, P6.02, P6.03, thanks.`;
 const singleText = `Attempt a single safe test edit using the active Revit model: On sheet P6.03, identify one equipment/schedule source item whose displayed designation contains '-G-' (prefer the Pump Schedule row MWV-G-RP-1 if editable), change only that designation token to '-0-' (MWV-0-RP-1), then read back the value.`;
+const fireDamperText = `Update all fire damper elements whose designation (or tag/mark identification field used in the fire damper schedule) contains the exact token '-G-' by replacing that token with '-0-'. Example: B2-G-F.D.-20 must become B2-0-F.D.-20. Scope only fire dampers, not other equipment. Determine the relevant category/family and writable parameter from the model/schedule. Report the number updated, a concise list of old → new designation values, affected schedule sheet number(s), and verify no fire damper designations still contain '-G-'.`;
 
 function request(session: string, userText: string, tool_results?: ChatRequest["tool_results"]): ChatRequest {
   return { version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: session, message_id: `${session}-${tool_results?.length ?? 0}`, user_text: tool_results ? "" : userText, tool_results };
@@ -24,6 +25,84 @@ test("issues 391 and 392 parse into bounded bulk and one-item schedule replaceme
   assert.deepEqual(single?.sheet_numbers, ["P6.03"]);
   assert.equal(single?.expected_value, "MWV-G-RP-1");
   assert.equal(single?.max_changes, 1);
+});
+
+test("issue 432 parses into a bounded fire-damper schedule discovery intent", () => {
+  const intent = parseDirectScheduleValueReplacement(fireDamperText);
+  assert.deepEqual(intent?.sheet_numbers, []);
+  assert.equal(intent?.schedule_query, "damper");
+  assert.deepEqual(intent?.schedule_name_all_terms, ["fire", "damper"]);
+  assert.deepEqual(intent?.field_names, ["DESIG", "Designation", "Mark"]);
+  assert.equal(intent?.find, "-G-");
+  assert.equal(intent?.replace, "-0-");
+  assert.equal(intent?.confidence.ambiguity, "none");
+});
+
+test("issue 432 discovers only fire-damper schedules, hash-binds apply, and reports scope evidence", async () => {
+  __testOnlyClearScheduleValueReplacementStates();
+  const first = await maybeRunDeterministicScheduleValueReplacement(request("fire-damper", fireDamperText));
+  assert.deepEqual(first?.actions, [{
+    action_id: "schedule-value-replacement-schedule-discovery",
+    method: "POST",
+    path: "/revit/schedules",
+    body: { action: "list", query: "damper", exact: false, max: 201 }
+  }]);
+
+  const second = await maybeRunDeterministicScheduleValueReplacement(request("fire-damper", fireDamperText, [{
+    action_id: "schedule-value-replacement-schedule-discovery", method: "POST", path: "/revit/schedules", status: "done",
+    result_json: {
+      status: "Ok",
+      items: [
+        { id: 701, name: "FIRE DAMPER SCHEDULE", categoryName: "Duct Accessories" },
+        { id: 702, name: "SMOKE DAMPER SCHEDULE", categoryName: "Duct Accessories" },
+        { id: 703, name: "FIRE/SMOKE DAMPER SCHEDULE", categoryName: "Duct Accessories" }
+      ]
+    }
+  }]));
+  assert.deepEqual(second?.actions, [{
+    action_id: "schedule-value-replacement-preflight",
+    method: "POST",
+    path: "/revit/replace-schedule-values",
+    body: {
+      scheduleIds: [701, 703], fieldNames: ["DESIG", "Designation", "Mark"], valueContains: "-G-",
+      replaceFrom: "-G-", replaceTo: "-0-", apply: false, dryRun: true, maxSchedules: 200, maxCandidates: 5000
+    }
+  }]);
+
+  const hash = "d".repeat(64);
+  const third = await maybeRunDeterministicScheduleValueReplacement(request("fire-damper", fireDamperText, [{
+    action_id: "schedule-value-replacement-preflight", method: "POST", path: "/revit/replace-schedule-values", status: "done",
+    result_json: { status: "Dry Run", applied: false, planHash: hash, writableCandidateCount: 1 }
+  }]));
+  assert.deepEqual(third?.actions[0]?.body, {
+    scheduleIds: [701, 703], fieldNames: ["DESIG", "Designation", "Mark"], valueContains: "-G-",
+    replaceFrom: "-G-", replaceTo: "-0-", expectedPlanHash: hash, apply: true, dryRun: false, maxSchedules: 200, maxCandidates: 5000
+  });
+
+  const done = await maybeRunDeterministicScheduleValueReplacement(request("fire-damper", fireDamperText, [{
+    action_id: "schedule-value-replacement-apply", method: "POST", path: "/revit/replace-schedule-values", status: "done",
+    result_json: {
+      status: "Applied and Verified", applied: true, verified: true, complete: true,
+      changedCount: 1, remainingMatchCount: 0, verificationFailedCount: 0,
+      changed: [{
+        elementId: 4320,
+        category: "Duct Accessories",
+        familyName: "FIRE DAMPER",
+        typeName: "14x14",
+        parameterName: "DESIG.",
+        before: "B2-G-F.D.-20",
+        after: "B2-0-F.D.-20",
+        schedules: [{ sheetNumber: "M6.01", sheetName: "FIRE DAMPER SCHEDULES", scheduleId: 701, scheduleName: "FIRE DAMPER SCHEDULE" }]
+      }]
+    }
+  }]));
+  assert.equal(done?.schedule_update_receipt?.status, "complete");
+  assert.match(done?.assistant_message ?? "", /Category: Duct Accessories/);
+  assert.match(done?.assistant_message ?? "", /Family: FIRE DAMPER/);
+  assert.match(done?.assistant_message ?? "", /Parameter: DESIG\./);
+  assert.match(done?.assistant_message ?? "", /Affected schedule sheets: M6\.01/);
+  assert.match(done?.assistant_message ?? "", /B2-G-F\.D\.-20 -> B2-0-F\.D\.-20/);
+  assert.match(done?.assistant_message ?? "", /Remaining '-G-' matches: 0/);
 });
 
 test("sheet-scoped replacement preflights, hash-binds apply, and reports exact verified changes", async () => {
