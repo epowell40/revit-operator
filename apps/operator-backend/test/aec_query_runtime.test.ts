@@ -94,7 +94,7 @@ test("whole-document sheet count honors an explicit count-only response", async 
   assert.equal(done.response?.assistant_message, "345");
 });
 
-test("air-handler schedule discovery returns grounded candidates instead of exact-focus blocking", async () => {
+test("singular air-handler schedule request offers the strongest grounded match conversationally", async () => {
   __testOnlyClearAecQueryStates();
   const value = ahu();
   value.operation = "focus";
@@ -103,7 +103,7 @@ test("air-handler schedule discovery returns grounded candidates instead of exac
   value.outputs = ["summary"];
   value.execution.max_primary_actions = 1;
   value.execution.allow_document_fallback = true;
-  value.evidence.user_text = "Show me the schedules and the one for the air handlers.";
+  value.evidence.user_text = "Can you show me the air handling unit schedule?";
   const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
   const initial = request("schedule-discovery");
   initial.user_text = value.evidence.user_text;
@@ -111,10 +111,31 @@ test("air-handler schedule discovery returns grounded candidates instead of exac
   assert.deepEqual(first.response?.actions, [{ action_id: "aec-query-document-schedules", method: "POST", path: "/revit/schedules", body: { action: "list", query: "", max: 500 } }]);
   const earlierSchedules = Array.from({ length: 25 }, (_, index) => ({ id: index + 1, name: `EARLIER SCHEDULE ${index + 1}` }));
   const done = await maybeRunAecSemanticQuery(request("schedule-discovery", [{ action_id: "aec-query-document-schedules", method: "POST", path: "/revit/schedules", status: "done", result_json: { returned: 28, items: [...earlierSchedules, { id: 741436, name: "AHU AIR BALANCE SCHEDULE" }, { id: 741504, name: "AIR HANDLING UNIT SCHEDULE" }, { id: 1495907, name: "MAKE-UP AIR HANDLING UNIT SCHEDULE" }] } }]), interpreter);
-  assert.match(done.response?.assistant_message ?? "", /28 schedules/);
+  assert.match(done.response?.assistant_message ?? "", /I found AIR HANDLING UNIT SCHEDULE \(id 741504\)/);
+  assert.match(done.response?.assistant_message ?? "", /I think that's the schedule you mean/);
+  assert.match(done.response?.assistant_message ?? "", /Would you like me to open it\?/);
+  assert.doesNotMatch(done.response?.assistant_message ?? "", /AHU AIR BALANCE SCHEDULE/);
+  assert.equal(done.response?.aec_query_receipt?.workflow_id, "query.document_schedules");
+  assert.equal(done.response?.aec_query_receipt?.status, "found");
+});
+
+test("explicit AHU schedule inventory still returns the grounded alternatives", async () => {
+  __testOnlyClearAecQueryStates();
+  const value = ahu();
+  value.operation = "list";
+  value.subject = { kind: "generic", semantic_class: "view", terms: ["schedules", "air handlers"], categories: [], family_name: null, type_name: null, system_name: null, identifiers: [] };
+  value.scope = { ...value.scope, kind: "document", document: "the current model" };
+  value.outputs = ["summary"];
+  value.execution.max_primary_actions = 1;
+  value.execution.allow_document_fallback = true;
+  value.evidence.user_text = "List all AHU schedules in this model.";
+  const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+  const initial = request("schedule-inventory");
+  initial.user_text = value.evidence.user_text;
+  await maybeRunAecSemanticQuery(initial, interpreter);
+  const done = await maybeRunAecSemanticQuery(request("schedule-inventory", [{ action_id: "aec-query-document-schedules", method: "POST", path: "/revit/schedules", status: "done", result_json: { returned: 3, items: [{ id: 741436, name: "AHU AIR BALANCE SCHEDULE" }, { id: 741504, name: "AIR HANDLING UNIT SCHEDULE" }, { id: 1495907, name: "MAKE-UP AIR HANDLING UNIT SCHEDULE" }] } }]), interpreter);
   assert.match(done.response?.assistant_message ?? "", /strongest direct match is AIR HANDLING UNIT SCHEDULE \(id 741504\)/);
   assert.match(done.response?.assistant_message ?? "", /AHU AIR BALANCE SCHEDULE/);
-  assert.equal(done.response?.aec_query_receipt?.workflow_id, "query.document_schedules");
   assert.equal(done.response?.aec_query_receipt?.status, "ambiguous");
 });
 
