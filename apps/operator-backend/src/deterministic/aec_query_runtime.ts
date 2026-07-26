@@ -99,10 +99,40 @@ function itemSummary(item: Record<string, unknown>): string {
   return location ? `${identity} (${location})` : identity;
 }
 
+function wantsCountOnly(task: AecSemanticTaskV1): boolean {
+  return /(?:return|respond(?: with)?|give me)?\s*(?:just|only)\s+(?:the\s+)?count\b|\bcount\s+only\b/i.test(task.evidence.user_text);
+}
+
+function completeScheduleInventory(task: AecSemanticTaskV1, workflow: AecQueryWorkflowId, result: ToolResult): ChatResponse {
+  if (result.status !== "done") return response(`I could not complete the bounded schedule query: ${result.error || "the Revit read action failed"}. No model changes were made.`, [], { workflow_id: workflow, status: "failed" });
+  const payload = resultPayload(result);
+  const items = resultItems(payload);
+  const returned = payload?.returned;
+  const count = Number.isSafeInteger(returned) ? returned as number : items.length;
+  const wantsAirHandlers = /\b(?:ahu|air\s+handlers?|air[- ]handling\s+units?)\b/i.test(task.evidence.user_text);
+  if (wantsAirHandlers) {
+    const candidates = items.filter(item => /\bAHU\b|AIR HANDLING UNIT/i.test(textValue(item.name) ?? ""));
+    const primary = candidates.find(item => /^AIR HANDLING UNIT SCHEDULE$/i.test(textValue(item.name) ?? ""));
+    const ordered = primary ? [primary, ...candidates.filter(item => item !== primary)] : candidates;
+    if (ordered.length === 0) return response(`I found ${count} schedule${count === 1 ? "" : "s"}, but none had an air-handler or AHU name, so I did not guess. No model changes were made.`, [], { workflow_id: workflow, status: "not_found" });
+    const labels = ordered.slice(0, 12).map(item => `${textValue(item.name) ?? "unnamed schedule"} (id ${textValue(item.id) ?? "unknown"})`);
+    const strongest = primary ? ` The strongest direct match is ${labels[0]}.` : "";
+    const related = primary && labels.length > 1 ? ` Related AHU schedules: ${labels.slice(1).join("; ")}.` : !primary ? ` Matching schedules: ${labels.join("; ")}.` : "";
+    return response(`I found ${count} schedule${count === 1 ? "" : "s"}.${strongest}${related} No view was activated and no model changes were made.`, [], { workflow_id: workflow, status: ordered.length === 1 ? "found" : "ambiguous" });
+  }
+  const labels = items.slice(0, 12).map(item => `${textValue(item.name) ?? "unnamed schedule"} (id ${textValue(item.id) ?? "unknown"})`);
+  const detail = labels.length ? ` First ${labels.length}: ${labels.join("; ")}.` : "";
+  const truncation = count > labels.length ? " Additional schedules were not expanded into the response." : "";
+  return response(`I found ${count} schedule${count === 1 ? "" : "s"}.${detail}${truncation} No model changes were made.`, [], { workflow_id: workflow, status: "complete" });
+}
+
 function completeSingleAction(task: AecSemanticTaskV1, workflow: AecQueryWorkflowId, result: ToolResult): ChatResponse {
   if (result.status !== "done") return response(`I could not complete the bounded ${task.operation} query: ${result.error || "the Revit read action failed"}.`, [], { workflow_id: workflow, status: "failed" });
   const payload = resultPayload(result);
   const count = countFromPayload(payload);
+  if (workflow === "query.document_sheets" && task.operation === "count" && count !== null && wantsCountOnly(task)) {
+    return response(String(count), [], { workflow_id: workflow, status: "complete" });
+  }
   const scope = scopeLabel(task);
   const countText = count === null ? "The bounded query completed" : `${count} ${subjectLabel(task)}${count === 1 ? "" : "s"} matched`;
   if (["list", "inspect", "locate"].includes(task.operation)) {
@@ -229,6 +259,7 @@ function continueRun(req: ChatRequest, state: QueryState): ChatResponse | null {
   const actionIds: Partial<Record<AecQueryWorkflowId, string>> = {
     "query.room_contents": "aec-query-room-contents",
     "query.level_elements": "aec-query-level-elements",
+    "query.document_schedules": "aec-query-document-schedules",
     "query.document_sheets": "aec-query-document-sheets",
     "query.view_elements": "aec-query-view-elements",
     "query.sheet_elements": "aec-query-sheet-elements",
@@ -238,6 +269,10 @@ function continueRun(req: ChatRequest, state: QueryState): ChatResponse | null {
   if (!actionId) return null;
   const result = matchingResult(req, actionId);
   if (!result) return null;
+  if (state.workflow_id === "query.document_schedules") {
+    states.delete(key(req));
+    return completeScheduleInventory(state.task, state.workflow_id, result);
+  }
   if (result.status === "done" && ["list", "inspect", "locate"].includes(state.task.operation) && state.task.execution.max_primary_actions >= 2) {
     const payload = resultPayload(result);
     const ids = boundedElementIds(payload, state.task.execution.max_results);

@@ -77,6 +77,46 @@ test("whole-document sheet count completes from its exact result after volatile 
   assert.deepEqual(done.response?.aec_query_receipt, { schema: "revit-operator.aec-query-receipt.v1", terminal: true, status: "complete", workflow_id: "query.document_sheets", bounded: true, broadened: false });
 });
 
+test("whole-document sheet count honors an explicit count-only response", async () => {
+  __testOnlyClearAecQueryStates();
+  const value = ahu();
+  value.operation = "count";
+  value.subject = { kind: "category", semantic_class: "sheet", terms: ["sheets"], categories: ["OST_Sheets"], family_name: null, type_name: null, system_name: null, identifiers: [] };
+  value.scope = { ...value.scope, kind: "document", document: "the current model" };
+  value.outputs = ["count"];
+  value.execution.allow_document_fallback = true;
+  value.evidence.user_text = "How many sheets are in this model? Return only the count.";
+  const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+  const initial = request("sheet-count-only");
+  initial.user_text = value.evidence.user_text;
+  await maybeRunAecSemanticQuery(initial, interpreter);
+  const done = await maybeRunAecSemanticQuery(request("sheet-count-only", [{ action_id: "aec-query-document-sheets", method: "POST", path: "/revit/sheets", status: "done", result_json: { totalSheets: 345, items: [] } }]), interpreter);
+  assert.equal(done.response?.assistant_message, "345");
+});
+
+test("air-handler schedule discovery returns grounded candidates instead of exact-focus blocking", async () => {
+  __testOnlyClearAecQueryStates();
+  const value = ahu();
+  value.operation = "focus";
+  value.subject = { kind: "generic", semantic_class: "view", terms: ["schedules", "air handlers"], categories: [], family_name: null, type_name: null, system_name: null, identifiers: [] };
+  value.scope = { ...value.scope, kind: "document", document: "the current model" };
+  value.outputs = ["summary"];
+  value.execution.max_primary_actions = 1;
+  value.execution.allow_document_fallback = true;
+  value.evidence.user_text = "Show me the schedules and the one for the air handlers.";
+  const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+  const initial = request("schedule-discovery");
+  initial.user_text = value.evidence.user_text;
+  const first = await maybeRunAecSemanticQuery(initial, interpreter);
+  assert.deepEqual(first.response?.actions, [{ action_id: "aec-query-document-schedules", method: "POST", path: "/revit/schedules", body: { action: "list", query: "", max: 500 } }]);
+  const done = await maybeRunAecSemanticQuery(request("schedule-discovery", [{ action_id: "aec-query-document-schedules", method: "POST", path: "/revit/schedules", status: "done", result_json: { returned: 3, items: [{ id: 741436, name: "AHU AIR BALANCE SCHEDULE" }, { id: 741504, name: "AIR HANDLING UNIT SCHEDULE" }, { id: 1495907, name: "MAKE-UP AIR HANDLING UNIT SCHEDULE" }] } }]), interpreter);
+  assert.match(done.response?.assistant_message ?? "", /3 schedules/);
+  assert.match(done.response?.assistant_message ?? "", /strongest direct match is AIR HANDLING UNIT SCHEDULE \(id 741504\)/);
+  assert.match(done.response?.assistant_message ?? "", /AHU AIR BALANCE SCHEDULE/);
+  assert.equal(done.response?.aec_query_receipt?.workflow_id, "query.document_schedules");
+  assert.equal(done.response?.aec_query_receipt?.status, "ambiguous");
+});
+
 test("orphaned results with the sheet action id but a different endpoint still fail closed", async () => {
   __testOnlyClearAecQueryStates();
   const done = await maybeRunAecSemanticQuery(request("sheet-count-spoofed", [{ action_id: "aec-query-document-sheets", method: "POST", path: "/revit/find-elements", status: "done", result_json: { count: 42 } }]));

@@ -7,6 +7,7 @@ export type AecQueryWorkflowId =
   | "query.exact_identifier"
   | "query.room_contents"
   | "query.level_elements"
+  | "query.document_schedules"
   | "query.document_sheets"
   | "query.view_elements"
   | "query.sheet_elements"
@@ -45,6 +46,11 @@ function isSheetInventory(task: AecSemanticTaskV1): boolean {
   return task.subject.semantic_class === "sheet"
     || task.subject.categories.some(category => category.toLocaleUpperCase() === "OST_SHEETS")
     || task.subject.terms.some(term => /(?:^|\s)sheets?(?:\s|$)/i.test(term));
+}
+
+function isScheduleInventory(task: AecSemanticTaskV1): boolean {
+  const text = [...task.subject.terms, task.evidence.user_text].join(" ");
+  return /\bschedules?\b/i.test(text) && task.subject.categories.length === 0;
 }
 
 function planBoundedComparison(task: AecSemanticTaskV1): AecQueryPlanV1 {
@@ -87,6 +93,15 @@ export function planAecQueryTask(value: unknown): AecQueryPlanV1 {
   if (!READ_OPERATIONS.has(task.operation)) return blocked(`Operation '${task.operation}' is not a read query.`);
   if (task.confidence.ambiguity === "material" || task.confidence.value < 0.75) return blocked("Material task ambiguity must be resolved before deterministic query execution.");
   if (task.operation === "compare") return planBoundedComparison(task);
+  if (isScheduleInventory(task)) {
+    return {
+      status: "ready",
+      workflow_id: "query.document_schedules",
+      actions: [action("aec-query-document-schedules", "/revit/schedules", { action: "list", query: "", max: 500 })],
+      blockers: [],
+      evidence: { predicate_pushed: true, document_payload_requested: true, bounded_schedule_inventory: true }
+    };
+  }
   if (task.operation === "focus" && task.subject.kind !== "exact_identifier") return blocked("Focus currently requires one exact identifier so the target view and element can be resolved without guessing.");
   if (task.operation === "focus" && task.execution.max_primary_actions < 3) return blocked("Exact-element focus requires three bounded actions: identity lookup, placement context, and view activation.");
 
