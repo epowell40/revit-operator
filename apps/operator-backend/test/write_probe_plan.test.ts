@@ -74,3 +74,15 @@ test("write-probe plan rejects duplicate method/path identities", () => {
     tool("/revit/tag-elements", "medium")
   ] }), /duplicate tool keys/);
 });
+
+test("active quarantine remains visible but removes autonomous probe eligibility", () => {
+  const quarantines = new Map([["POST /revit/native-api-mutation-ops", { reason: "live rollback was not verified" }]]);
+  const plan = buildWriteProbePlan({ tools: [
+    tool("/revit/native-api-mutation-ops", "high", { transaction: { type: "object" } })
+  ] }, "fixture", quarantines);
+  assert.equal(plan.summary.active_quarantines, 1);
+  assert.equal(plan.summary.non_low_autonomous_probe_allowed, 0);
+  assert.equal(plan.tools[0].quarantined, true);
+  assert.equal(plan.tools[0].autonomous_probe_allowed, false);
+  assert.match(plan.tools[0].instructions.join(" "), /Active quarantine blocks autonomous execution/);
+});

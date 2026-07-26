@@ -689,7 +689,7 @@ namespace RevitBridge.Operator
                 if (commitStatus != TransactionStatus.Committed)
                     throw new InvalidOperationException($"native-api-mutation-ops transaction commit returned {commitStatus}.");
 
-                var scopeDecision = ValidateMutationScope(
+                var scopeDecision = OperatorNativeMutationScopePolicy.Evaluate(
                     addedIds,
                     modifiedIds,
                     deletedIds,
@@ -697,6 +697,14 @@ namespace RevitBridge.Operator
                     allowCreate,
                     maxAffectedElements,
                     allowUnexpectedExistingForRollback: transactionMode == "rollback");
+                if (!scopeDecision.Allowed)
+                {
+                    var scopeRollbackStatus = transactionGroup!.RollBack();
+                    transactionFinalized = scopeRollbackStatus == TransactionStatus.RolledBack;
+                    if (scopeRollbackStatus != TransactionStatus.RolledBack)
+                        throw new InvalidOperationException($"{scopeDecision.Error} Rollback could not be verified: TransactionGroup.RollBack returned {scopeRollbackStatus}.");
+                    throw new InvalidOperationException($"{scopeDecision.Error} Verified transaction-group rollback status: {scopeRollbackStatus}.");
+                }
                 if (total.ElapsedMilliseconds > maxTotalMs)
                     throw new InvalidOperationException($"native-api-mutation-ops exceeded its {maxTotalMs} ms total budget during transaction finalization.");
 
@@ -705,7 +713,9 @@ namespace RevitBridge.Operator
                     groupStatus = transactionGroup!.RollBack();
                 else
                     groupStatus = transactionGroup!.Assimilate();
-                transactionFinalized = true;
+                transactionFinalized = transactionMode == "rollback"
+                    ? groupStatus == TransactionStatus.RolledBack
+                    : groupStatus == TransactionStatus.Committed;
                 if (transactionMode == "rollback" && groupStatus != TransactionStatus.RolledBack)
                     throw new InvalidOperationException($"native-api-mutation-ops rollback returned {groupStatus}.");
                 if (transactionMode == "commit" && groupStatus != TransactionStatus.Committed)
@@ -749,8 +759,9 @@ namespace RevitBridge.Operator
                     results = returned
                 };
             }
-            catch
+            catch (Exception originalError)
             {
+                var cleanupFailures = new List<string>();
                 if (changeHandler != null)
                 {
                     try { app.Application.DocumentChanged -= changeHandler; } catch { }
@@ -758,12 +769,34 @@ namespace RevitBridge.Operator
                 }
                 if (transaction != null)
                 {
-                    try { if (transaction.GetStatus() == TransactionStatus.Started) transaction.RollBack(); } catch { }
+                    try
+                    {
+                        var transactionStatus = transaction.GetStatus();
+                        if (transactionStatus == TransactionStatus.Started) transactionStatus = transaction.RollBack();
+                        if (transactionStatus != TransactionStatus.RolledBack && transactionStatus != TransactionStatus.Committed && transactionStatus != TransactionStatus.Uninitialized)
+                            cleanupFailures.Add($"Transaction cleanup returned {transactionStatus}.");
+                    }
+                    catch (Exception cleanupError)
+                    {
+                        cleanupFailures.Add($"Transaction cleanup threw: {cleanupError.Message}");
+                    }
                 }
                 if (transactionGroup != null && !transactionFinalized)
                 {
-                    try { if (transactionGroup.GetStatus() == TransactionStatus.Started) transactionGroup.RollBack(); } catch { }
+                    try
+                    {
+                        var groupStatus = transactionGroup.GetStatus();
+                        if (groupStatus == TransactionStatus.Started) groupStatus = transactionGroup.RollBack();
+                        if (groupStatus != TransactionStatus.RolledBack && groupStatus != TransactionStatus.Uninitialized)
+                            cleanupFailures.Add($"TransactionGroup cleanup returned {groupStatus}.");
+                    }
+                    catch (Exception cleanupError)
+                    {
+                        cleanupFailures.Add($"TransactionGroup cleanup threw: {cleanupError.Message}");
+                    }
                 }
+                if (cleanupFailures.Count > 0)
+                    throw new InvalidOperationException($"{originalError.Message} Native mutation transaction cleanup could not be verified: {string.Join(" ", cleanupFailures)}", originalError);
                 throw;
             }
             finally
@@ -837,27 +870,6 @@ namespace RevitBridge.Operator
             try { foreach (var id in args.GetAddedElementIds()) { var value = ElementIdCompat.GetValue(id); if (value > 0) addedIds.Add(value); } } catch { }
             try { foreach (var id in args.GetModifiedElementIds()) { var value = ElementIdCompat.GetValue(id); if (value > 0) modifiedIds.Add(value); } } catch { }
             try { foreach (var id in args.GetDeletedElementIds()) { var value = ElementIdCompat.GetValue(id); if (value > 0) deletedIds.Add(value); } } catch { }
-        }
-
-        private static OperatorNativeMutationScopeDecision ValidateMutationScope(
-            HashSet<long> addedIds,
-            HashSet<long> modifiedIds,
-            HashSet<long> deletedIds,
-            HashSet<long> allowedExistingElementIds,
-            bool allowCreate,
-            int maxAffectedElements,
-            bool allowUnexpectedExistingForRollback)
-        {
-            var decision = OperatorNativeMutationScopePolicy.Evaluate(
-                addedIds,
-                modifiedIds,
-                deletedIds,
-                allowedExistingElementIds,
-                allowCreate,
-                maxAffectedElements,
-                allowUnexpectedExistingForRollback);
-            if (!decision.Allowed) throw new InvalidOperationException(decision.Error);
-            return decision;
         }
 
         private static object? ResolveOperationTarget(string? rawTarget, Type? expectedType, UIApplication app, Dictionary<string, object?> values, string operationId)
