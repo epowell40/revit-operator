@@ -96,6 +96,26 @@ function canonicalizeProviderScopeDiscriminant(value: unknown): unknown {
   return selected.length === 1 ? { ...root, scope: { ...scope, kind: selected[0] } } : value;
 }
 
+function deterministicScheduleInventoryTask(userText: string): AecSemanticTaskV1 | null {
+  if (!/\bschedules?\b/i.test(userText)) return null;
+  if (!/\b(?:show|list|find|identify|inspect|display|what|which)\b/i.test(userText)) return null;
+  if (/\b(?:edit|change|update|replace|set|delete|remove|create|add|rename|configure|move|place|resize|reorder)\b/i.test(userText)) return null;
+  const terms = ["schedule"];
+  if (/\b(?:ahu|air\s+handlers?|air[- ]handling\s+units?)\b/i.test(userText)) terms.push("air handlers");
+  return {
+    schema: AEC_SEMANTIC_TASK_V1_SCHEMA,
+    operation: "list",
+    subject: { kind: "generic", semantic_class: "view", terms, categories: [], family_name: null, type_name: null, system_name: null, identifiers: [] },
+    scope: { kind: "document", document: "current model", levels: [], rooms: [], spaces: [], areas: [], views: [], sheets: [], systems: [], element_ids: [], region: null },
+    reference: { strategy: "none", source_description: null, source_room: null },
+    mutation: { kind: "none", requested: false },
+    outputs: ["summary"],
+    execution: { max_results: 500, max_primary_actions: 1, allow_document_fallback: true, requires_visual_verification: false },
+    confidence: { value: 0.99, ambiguity: "none", reasons: ["Explicit read-only schedule inventory request."] },
+    evidence: { user_text: userText }
+  };
+}
+
 export class OpenAiAecSemanticTaskInterpreter implements AecSemanticTaskInterpreter {
   async interpret(input: AecSemanticTaskInterpretationInput): Promise<unknown | null> {
     const apiKey = resolveOpenAiApiKey();
@@ -114,6 +134,11 @@ export async function interpretAecSemanticTask(req: ChatRequest, interpreter: Ae
   const authoritativeText = typeof ui?.authoritative_user_text === "string" ? ui.authoritative_user_text.trim() : "";
   const userText = authoritativeText || delegatedText;
   if (!userText || userText.length > AEC_SEMANTIC_TASK_MAX_TEXT_CHARS || (req.tool_results?.length ?? 0) > 0) return null;
+  const deterministicScheduleTask = deterministicScheduleInventoryTask(userText);
+  if (deterministicScheduleTask) {
+    try { appendEvent(req.session_id, "assistant", "aec.semantic_task", { message_id: req.message_id, interpreter: "deterministic.schedule_inventory", task: deterministicScheduleTask }); } catch { }
+    return deterministicScheduleTask;
+  }
   const recent = getRecentMessages(req.session_id, 8).filter(message => message.text.trim() && message.text.trim() !== userText && message.text.trim() !== delegatedText).slice(-6).map(message => ({ role: message.role, text: message.text.slice(0, AEC_SEMANTIC_TASK_MAX_TEXT_CHARS) }));
   try {
     const value = await interpreter.interpret({ user_text: userText, ...(delegatedText && delegatedText !== userText ? { delegated_task_text: delegatedText } : {}), recent_messages: recent });
