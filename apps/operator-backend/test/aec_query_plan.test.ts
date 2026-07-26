@@ -116,6 +116,18 @@ test("schedule discovery stays a bounded document read even when show was interp
   assert.deepEqual(plan.actions, [{ action_id: "aec-query-document-schedules", method: "POST", path: "/revit/schedules", body: { action: "list", query: "", max: 500 } }]);
 });
 
+test("schedule discovery ignores an over-inferred equipment category", () => {
+  const value = task();
+  value.operation = "focus";
+  value.subject = { kind: "category", semantic_class: "mechanical_equipment", terms: ["schedules", "air handlers"], categories: ["OST_MechanicalEquipment"], family_name: null, type_name: null, system_name: null, identifiers: [] };
+  value.scope = { ...value.scope, kind: "document", document: "the current model" };
+  value.execution.allow_document_fallback = true;
+  value.evidence.user_text = "Show me the schedules and the one for the air handlers.";
+  const plan = planAecQueryTask(value);
+  assert.equal(plan.workflow_id, "query.document_schedules");
+  assert.deepEqual(plan.actions, [{ action_id: "aec-query-document-schedules", method: "POST", path: "/revit/schedules", body: { action: "list", query: "", max: 500 } }]);
+});
+
 test("two-room inventory comparison emits two bounded predicate-pushed reads", () => {
   const value = task();
   value.operation = "compare";
