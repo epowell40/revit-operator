@@ -22,6 +22,8 @@ To use the Revit bridge from Codex, Claude Code, or another MCP-compatible agent
 
 The backend harness also persists bounded failed-then-successful schema repairs and supports evidence-based tool quarantine without deleting registry history; see [docs/TOOL_CONTRACT_MEMORY_AND_QUARANTINE.md](docs/TOOL_CONTRACT_MEMORY_AND_QUARANTINE.md).
 
+For a complete non-destructive validation-lane matrix across the live tool registry, see [docs/WRITE_PROBE_PLANNING.md](docs/WRITE_PROBE_PLANNING.md).
+
 ## Validation
 
 From the repository root, run the backend build and test suite with:
