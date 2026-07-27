@@ -340,7 +340,6 @@ namespace RevitBridge.Handlers
                 Heading = SafeHeading(field),
                 ParameterId = SafeParameterId(field)
             }).ToList();
-            diagnostic.DisplayedRowMatchCount = AddVisibleRowMatches(schedule, rowKey, visibleRowMatches);
             var targetFields = fields.Where(field => ScheduleCellUpdatePolicy.FieldNameMatches(requestedTargetField, field.Name, field.Heading)).ToList();
             if (targetFields.Count != 1)
             {
@@ -348,11 +347,20 @@ namespace RevitBridge.Handlers
                     ? SuggestTargetFields(requestedTargetField, fields)
                     : targetFields;
                 targetFieldSuggestions.AddRange(suggestions.Select(DisplayFieldName));
+                // Reading every displayed cell in every schedule is expensive in large
+                // production models. Only inspect table rows when this schedule has a
+                // plausible target column; unrelated schedules cannot answer the user's
+                // requested field and must not consume the mutation deadline.
+                if (suggestions.Count > 0)
+                {
+                    diagnostic.DisplayedRowMatchCount = AddVisibleRowMatches(schedule, rowKey, visibleRowMatches);
+                }
                 diagnostic.BackingOwnerUnproven = diagnostic.DisplayedRowMatchCount > 0;
                 issues.Add(new { code = targetFields.Count == 0 ? "target_field_not_found" : "target_field_ambiguous", scheduleId = ElementIdCompat.GetValue(schedule.Id), scheduleName = schedule.Name, targetField = requestedTargetField, matches = targetFields.Select(FieldEvidence).ToList(), suggestions = suggestions.Select(FieldEvidence).ToList() });
                 return;
             }
             var targetField = targetFields[0];
+            diagnostic.DisplayedRowMatchCount = AddVisibleRowMatches(schedule, rowKey, visibleRowMatches);
             if (targetField.ParameterId == ElementId.InvalidElementId)
             {
                 issues.Add(new { code = "non_parameter_target_field", scheduleId = ElementIdCompat.GetValue(schedule.Id), scheduleName = schedule.Name, targetField = FieldEvidence(targetField), message = "Calculated, combined, count, and other non-parameter fields cannot be edited as backing parameters." });
