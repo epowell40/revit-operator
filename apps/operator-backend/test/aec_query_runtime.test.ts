@@ -329,14 +329,15 @@ test("where query follows exact discovered ids with geometry-aware room resoluti
     path: "/revit/find-elements",
     status: "done",
     result_json: {
-      count: 5,
-      elementIds: [101, 102, 103, 104, 105],
+      count: 6,
+      elementIds: [101, 102, 103, 104, 105, 106],
       items: [
         { elementId: 101, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings", identityMatch: { matchedFields: ["familyName"] } },
         { elementId: 102, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings", identityMatch: { matchedFields: ["familyName"] } },
         { elementId: 103, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings", identityMatch: { matchedFields: ["familyName"] } },
         { elementId: 104, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings", identityMatch: { matchedFields: ["familyName"] } },
-        { elementId: 105, familyName: "Elbow-Standard_LW", typeName: "Small Radius .75 R", category: "Pipe Fittings", identityMatch: { matchedFields: ["parameter:DESIG."] }, identityParameterEvidence: { parameterName: "DESIG.", text: "B2-2-SA-99" } }
+        { elementId: 105, familyName: "Elbow-Standard_LW", typeName: "Small Radius .75 R", category: "Pipe Fittings", identityMatch: { matchedFields: ["parameter:DESIG."] }, identityParameterEvidence: { parameterName: "DESIG.", text: "B2-2-SA-99" } },
+        { elementId: 106, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings", identityMatch: { matchedFields: ["familyName"] } }
       ],
       identityExpansionCount: 1,
       truncated: false,
@@ -348,8 +349,8 @@ test("where query follows exact discovered ids with geometry-aware room resoluti
     method: "POST",
     path: "/revit/locate-elements",
     body: {
-      elementIds: [101, 102, 103, 104],
-      limit: 5,
+      elementIds: [101, 102, 103, 104, 106],
+      limit: 6,
       spatialResolution: "geometry_with_nearest",
       spatialVerticalScope: "same_level",
       spatialKindPreference: "room",
@@ -365,25 +366,30 @@ test("where query follows exact discovered ids with geometry-aware room resoluti
     path: "/revit/locate-elements",
     status: "done",
     result_json: {
-      count: 3,
+      count: 4,
       spatialResolution: "geometry_with_nearest",
       spatialVerticalScope: "same_level",
       truncated: false,
-      requestedElementCount: 4,
+      requestedElementCount: 5,
       requestedElementIdsMissing: [104],
       requestedElementIdsMissingCount: 1,
       itemsComplete: false,
       items: [
         { elementId: 101, levelName: "LEVEL 02", roomNumber: "214", roomName: "PATIENT", spatialKind: "Room", isNested: false, spatialContext: { status: "resolved", spatialVerticalScope: "same_level", selected: { sourceScope: "linked", linkInstanceName: "A_DUKE B200.rvt" } } },
         { elementId: 102, levelName: "LEVEL 02", roomNumber: null, roomName: null, isNested: false, spatialContext: { status: "ambiguous", spatialVerticalScope: "same_level", matches: [{ spatialKind: "Room", number: "215", name: "CORRIDOR" }, { spatialKind: "Room", number: "216", name: "STORAGE" }] } },
-        { elementId: 103, levelName: "LEVEL 01", roomNumber: null, roomName: null, isNested: false, spatialContext: { status: "unresolved", spatialVerticalScope: "same_level", nearestCandidates: [{ spatialKind: "Room", number: "117", name: "MECHANICAL" }] } }
+        { elementId: 103, levelName: "LEVEL 01", roomNumber: null, roomName: null, isNested: false, spatialContext: { status: "unresolved", spatialVerticalScope: "same_level", nearestCandidates: [{ spatialKind: "Room", number: "117", name: "MECHANICAL" }] } },
+        { elementId: 106, levelName: "LEVEL 02", roomNumber: "214", roomName: "PATIENT", spatialKind: "Room", isNested: false, spatialContext: { status: "resolved", spatialVerticalScope: "same_level", selected: { sourceScope: "linked", linkInstanceName: "A_DUKE B200.rvt" } } }
       ]
     }
   }]), interpreter);
-  assert.match(done.response?.assistant_message ?? "", /Room results: 1 resolved, 1 ambiguous, 2 unresolved/);
-  assert.match(done.response?.assistant_message ?? "", /4 Pipe Fittings, family LW_Shock Absorber, type Standard/);
+  assert.match(done.response?.assistant_message ?? "", /Room results: 2 resolved, 1 ambiguous, 2 unresolved/);
+  assert.match(done.response?.assistant_message ?? "", /5 Pipe Fittings, family LW_Shock Absorber, type Standard/);
   assert.match(done.response?.assistant_message ?? "", /excluded 1 candidate that matched only an abbreviated parameter value/);
-  assert.match(done.response?.assistant_message ?? "", /element 101: Room 214 — PATIENT, LEVEL 02 via linked model A_DUKE B200\.rvt/);
+  assert.match(done.response?.assistant_message ?? "", /I found 5 top-level physical model instances matching shock arrestors/);
+  assert.match(done.response?.assistant_message ?? "", /Resolved locations \(2 devices across 1 room\):/);
+  assert.match(done.response?.assistant_message ?? "", /Room 214 — PATIENT, LEVEL 02 via linked model A_DUKE B200\.rvt: element 101, element 106/);
+  assert.match(done.response?.assistant_message ?? "", /Ambiguous assignments \(1\):/);
+  assert.match(done.response?.assistant_message ?? "", /Unresolved devices \(2\):/);
   assert.match(done.response?.assistant_message ?? "", /element 102: room assignment is ambiguous among Room 215 — CORRIDOR, Room 216 — STORAGE/);
   assert.match(done.response?.assistant_message ?? "", /element 103: room unresolved, LEVEL 01; nearest candidates \(not assignments\): Room 117 — MECHANICAL/);
   assert.match(done.response?.assistant_message ?? "", /element 104: room unresolved; Revit did not return a spatial row for this requested element/);
