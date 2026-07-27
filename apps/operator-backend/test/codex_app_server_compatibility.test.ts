@@ -137,6 +137,16 @@ test("Codex instructions route exact sheet totals through the typed sheet counte
   assert.match(instructions, /revit_update_schedule_cell/);
 });
 
+test("Codex instructions keep negative searches scoped and require physical MEP serving connections", () => {
+  const instructions = getOperatorAgentBaseInstructions();
+  assert.match(instructions, /Negative-result scope rule/);
+  assert.match(instructions, /category-agnostic identity discovery/);
+  assert.match(instructions, /no `category`\/`categories`/);
+  assert.match(instructions, /MEP serving-connection precondition/);
+  assert.match(instructions, /nearest pipe\/duct is not the serving system/);
+  assert.match(instructions, /Do not request a write grant until connectivity/);
+});
+
 test("fresh Revit evidence contracts reject stale or unrelated sheet-count claims", () => {
   const requirement = getFreshRevitEvidenceRequirement("How many sheets are in the model?");
   assert.equal(requirement.kind, "sheet_count");
