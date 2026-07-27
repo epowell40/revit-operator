@@ -555,6 +555,12 @@ namespace RevitBridge.Logic.Handlers
         private static bool IsPhysicalModelElement(Element e)
         {
             if (e?.Category == null || e.Category.CategoryType != CategoryType.Model) return false;
+            try
+            {
+                if (e.ViewSpecific) return false;
+            }
+            catch { }
+            if (e.Category.BuiltInCategory == BuiltInCategory.OST_PreviewLegendComponents) return false;
             if (TryGetElementIdValue(e.OwnerViewId).HasValue) return false;
             try
             {

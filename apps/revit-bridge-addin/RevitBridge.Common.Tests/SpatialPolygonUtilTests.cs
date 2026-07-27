@@ -100,6 +100,19 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void Phase_Fallback_Requires_One_Shared_Created_Phase_For_All_Targets()
+        {
+            Assert.Equal(21885, SpatialEffectivePhaseFallbackUtil.ResolveSharedCreatedPhaseId(
+                new long?[] { 21885, 21885, 21885 }));
+            Assert.Null(SpatialEffectivePhaseFallbackUtil.ResolveSharedCreatedPhaseId(
+                new long?[] { 21885, 21900 }));
+            Assert.Null(SpatialEffectivePhaseFallbackUtil.ResolveSharedCreatedPhaseId(
+                new long?[] { 21885, null }));
+            Assert.Null(SpatialEffectivePhaseFallbackUtil.ResolveSharedCreatedPhaseId(
+                Array.Empty<long?>()));
+        }
+
+        [Fact]
         public void Vertical_Range_Fails_Closed_For_Stacked_Or_Unknown_Context()
         {
             Assert.True(SpatialVerticalRangeUtil.Contains(9, 0, 10));
