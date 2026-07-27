@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace RevitBridge.Common
 {
@@ -156,6 +157,18 @@ namespace RevitBridge.Common
                 if (pair.Key == hostPhaseId) return pair.Value;
             }
             return null;
+        }
+    }
+
+    public static class SpatialEffectivePhaseFallbackUtil
+    {
+        public static long? ResolveSharedCreatedPhaseId(IEnumerable<long?> createdPhaseIds)
+        {
+            if (createdPhaseIds == null) return null;
+            var values = createdPhaseIds.ToList();
+            if (values.Count == 0 || values.Any(value => !value.HasValue || value.Value <= 0)) return null;
+            var distinct = values.Select(value => value!.Value).Distinct().Take(2).ToList();
+            return distinct.Count == 1 ? distinct[0] : null;
         }
     }
 
