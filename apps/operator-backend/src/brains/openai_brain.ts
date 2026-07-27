@@ -28,6 +28,7 @@ import { executeWorkbenchActions, maxWorkbenchActions, type WorkbenchAction, typ
 import { createArtifactShare } from "../artifacts/artifact_bus.js";
 import {
   compactIncomingToolResult,
+  compactLocateElementsResultForPrompt,
   compactParameterReadResultForPrompt,
   compactScheduleReadResultForPrompt,
   compactVisibleElementsResult,
@@ -18035,6 +18036,7 @@ function defaultSystemPrompt(): string {
     "- For POST /revit/sheets with action:\"detail\", selectors are singular fields only: sheetNumber OR sheetId OR viewId OR query (not arrays like sheetIds).",
     "- Redline fallback: if /revit/sheets action=detail by sheetNumber returns NotFound, immediately retry action=detail using context.revit.document.activeView.id as viewId when the active view is a sheet.",
     "- For room lookup by room number, use POST /revit/rooms with body like: {\"action\":\"list\",\"roomNumber\":\"0981\",\"max\":50}. Then use {\"action\":\"detail\",\"roomIds\":[<roomId>]} to get doors in that room.",
+    "- When the user asks where discovered model elements are, asks for each device's room number, or follows an earlier discovery answer with wording like 'where are they?', keep every physical parent instance and call POST /revit/locate-elements with its discovered elementIds, spatialResolution:\"geometry_with_nearest\", spatialKindPreference:\"room\", includeLinkedRooms:true, and a bounded nearestCandidateLimit. Use superComponentId/topLevelParentId/isNested to exclude nested child geometry without collapsing distinct parents that share a designation. Report each spatialContext as resolved, ambiguous, or unresolved; retain linked-room provenance and never silently convert a Space number or nearest candidate into a Room assignment.",
     "- For /revit/quantify: the body is NOT nested. Example: {\"intent\":\"count\",\"categories\":[\"OST_Doors\"]}.",
     "- /revit/quantify returns resultSetId for follow-ups. To visualize, use POST /revit/quantify-visualize with {\"resultSetId\":\"...\",\"mode\":\"highlight\"|\"isolate\"|\"new_view\"|\"clear\"|\"forget\",\"viewId\"?:123}.",
     "- For /revit/get-element-summary: prefer body {\"elementIds\":[123,456]} (legacy {\"ids\":...} may exist).",
@@ -19163,7 +19165,23 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
     lines.push("Tool outputs are persisted in run bundles and SQLite; request specific follow-up reads instead of replaying full payloads.");
     lines.push("");
     lines.push("Tool results (reduced JSON; key IDs/fields only):");
-    lines.push(truncateJson(projectToolResultsForPrompt(toolResults), speedSettings.context_diet && !speedSettings.verbose_tool_results ? 2200 : 4500));
+    const projectedToolResults = projectToolResultsForPrompt(toolResults) as any[];
+    const spatialLocateResults = projectedToolResults.filter(entry =>
+      entry?.path === "/revit/locate-elements" &&
+      (entry?.result?.spatialResolution === "geometry" || entry?.result?.spatialResolution === "geometry_with_nearest")
+    );
+    const ordinaryToolResults = projectedToolResults.filter(entry => !spatialLocateResults.includes(entry));
+    if (ordinaryToolResults.length > 0) {
+      lines.push(truncateJson(ordinaryToolResults, speedSettings.context_diet && !speedSettings.verbose_tool_results ? 2200 : 4500));
+    }
+    if (spatialLocateResults.length > 0) {
+      const spatialBlock = buildBoundedSpatialLocatePromptBlock(spatialLocateResults, 250000);
+      lines.push("");
+      lines.push(spatialBlock.complete
+        ? "Spatial locate results (complete bounded per-instance JSON; do not drop tail devices):"
+        : "Spatial locate results (explicitly incomplete bounded JSON; honor omission metadata and issue focused follow-up batches before claiming completeness):");
+      lines.push(spatialBlock.json);
+    }
     const hints = buildToolLoopHints(toolResults);
     if (hints.length > 0) {
       lines.push("");
@@ -19325,6 +19343,11 @@ function projectToolResultsForPrompt(toolResults: ToolResult[]): unknown {
       base.scheduleEvidence = compactScheduleReadResultForPrompt(res);
     } else if (r.path === "/revit/export-visible-elements" && res && typeof res === "object") {
       base.inventory = compactVisibleElementsResult(res, { maxItems: 16, maxCountEntries: 6 });
+    } else if (r.path === "/revit/locate-elements" && res && typeof res === "object") {
+      // Spatial inventory questions commonly need dozens of per-instance room
+      // results. Keep the bounded compact form intact instead of clipping the
+      // tail and silently losing devices from the answer.
+      base.result = compactLocateElementsResultForPrompt(res);
     } else if (r.path === "/revit/spatial-context" && res && typeof res === "object") {
       base.result = truncateValue(res, 5000);
     } else if (r.path === "/revit/rank-similar-devices-on-wall" && res && typeof res === "object") {
@@ -19339,6 +19362,117 @@ function projectToolResultsForPrompt(toolResults: ToolResult[]): unknown {
     out.push(base);
   }
   return out;
+}
+
+function buildBoundedSpatialLocatePromptBlock(
+  spatialLocateResults: any[],
+  maxChars: number
+): { json: string; complete: boolean } {
+  const budget = Math.max(2000, Math.floor(maxChars));
+  const sourceItemsOmitted = spatialLocateResults.reduce((sum, entry) => {
+    const result = entry?.result && typeof entry.result === "object" ? entry.result : {};
+    return sum + Math.max(0, Number(result.itemsOmitted) || 0);
+  }, 0);
+  const sourceTruncatedResults = spatialLocateResults.filter(entry => entry?.result?.truncated === true).length;
+  const sourceIncompleteResults = spatialLocateResults.filter(entry => entry?.result?.itemsComplete === false).length;
+  const spatialCandidateOmissions = (candidate: any): number =>
+    candidate && typeof candidate === "object"
+      ? Math.max(0, Number(candidate.equivalentSourceIdsOmitted) || 0)
+      : 0;
+  const candidateEntriesOmitted = spatialLocateResults.reduce((sum, entry) => {
+    const items = Array.isArray(entry?.result?.items) ? entry.result.items : [];
+    return sum + items.reduce((itemSum: number, item: any) => {
+      const context = item?.spatialContext && typeof item.spatialContext === "object" ? item.spatialContext : {};
+      const matches = Array.isArray(context.matches) ? context.matches : [];
+      const nearestCandidates = Array.isArray(context.nearestCandidates) ? context.nearestCandidates : [];
+      return itemSum
+        + Math.max(0, Number(context.matchesOmitted) || 0)
+        + Math.max(0, Number(context.nearestCandidatesOmitted) || 0)
+        + spatialCandidateOmissions(context.selected)
+        + matches.reduce((candidateSum: number, candidate: any) => candidateSum + spatialCandidateOmissions(candidate), 0)
+        + nearestCandidates.reduce((candidateSum: number, candidate: any) => candidateSum + spatialCandidateOmissions(candidate), 0);
+    }, 0);
+  }, 0);
+  const totalPromptItems = spatialLocateResults.reduce(
+    (sum, entry) => sum + (Array.isArray(entry?.result?.items) ? entry.result.items.length : 0),
+    0
+  );
+
+  const project = (keepTotal: number) => {
+    let remaining = Math.max(0, keepTotal);
+    const results = spatialLocateResults.map(entry => {
+      const result = entry?.result && typeof entry.result === "object" ? entry.result : {};
+      const sourceItems = Array.isArray(result.items) ? result.items : [];
+      const take = Math.min(sourceItems.length, remaining);
+      remaining -= take;
+      const promptItemsOmitted = sourceItems.length - take;
+      return {
+        ...entry,
+        result: {
+          ...result,
+          items: sourceItems.slice(0, take),
+          promptItemsReturned: take,
+          promptItemsOmitted,
+          promptItemsComplete: promptItemsOmitted === 0
+        }
+      };
+    });
+    const promptItemsReturned = totalPromptItems - Math.max(0, totalPromptItems - keepTotal);
+    const promptItemsOmitted = Math.max(0, totalPromptItems - promptItemsReturned);
+    const complete = promptItemsOmitted === 0
+      && sourceItemsOmitted === 0
+      && sourceTruncatedResults === 0
+      && sourceIncompleteResults === 0
+      && candidateEntriesOmitted === 0;
+    return {
+      promptComplete: complete,
+      promptItemsReturned,
+      promptItemsOmitted,
+      sourceItemsOmitted,
+      sourceTruncatedResults,
+      sourceIncompleteResults,
+      candidateEntriesOmitted,
+      followUpRequired: !complete,
+      results
+    };
+  };
+
+  const full = project(totalPromptItems);
+  let json = JSON.stringify(full);
+  if (json.length <= budget) return { json, complete: full.promptComplete };
+
+  let low = 0;
+  let high = totalPromptItems;
+  let best = project(0);
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const candidate = project(middle);
+    const serialized = JSON.stringify(candidate);
+    if (serialized.length <= budget) {
+      best = candidate;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+
+  json = JSON.stringify(best);
+  if (json.length > budget) {
+    const minimal = {
+      promptComplete: false,
+      promptItemsReturned: 0,
+      promptItemsOmitted: totalPromptItems,
+      sourceItemsOmitted,
+      sourceTruncatedResults,
+      sourceIncompleteResults,
+      candidateEntriesOmitted,
+      followUpRequired: true,
+      resultsOmitted: spatialLocateResults.length,
+      reason: "spatial_prompt_budget_exhausted"
+    };
+    json = JSON.stringify(minimal);
+  }
+  return { json, complete: false };
 }
 
 function buildToolLoopHints(toolResults: ToolResult[]): string[] {
@@ -19424,6 +19558,13 @@ function truncateValue(value: unknown, maxChars: number): unknown {
   } catch {
     return null;
   }
+}
+
+export async function __testOnlyBuildPromptForRequest(
+  req: ChatRequest,
+  lane?: { route: SpeedRouteKind; reason: string }
+): Promise<string> {
+  return buildPrompt(req, lane);
 }
 
 function truncateJson(obj: unknown, maxChars: number): string {

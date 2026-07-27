@@ -1105,6 +1105,17 @@ namespace RevitBridge.Operator
                     notes.Add("detail with roomNumber + spatialKindPreference resolves deterministically without a separate /revit/spaces endpoint.");
                 }
 
+                if (p == "/revit/locate-elements")
+                {
+                    enumMap["spatialResolution"] = new[] { "association", "geometry", "geometry_with_nearest" };
+                    enumMap["spatialKindPreference"] = new[] { "auto", "room", "space", "all" };
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "maxDistanceFt", "items[*].spatialContext.matches[*].boundaryDistanceFt", "items[*].spatialContext.nearestCandidates[*].boundaryDistanceFt" } });
+                    notes.Add("association preserves the fast existing FamilyInstance Room/Space lookup. geometry adds phase-aware 3D Room/Space containment against host and transformed linked spatial elements. geometry_with_nearest also returns ranked same-volume candidates for unresolved elements.");
+                    notes.Add("Geometry mode defaults to the active-view phase; pass phaseId or exact phaseName when the view has no phase. Unloaded links, missing phase maps, unavailable transforms, unavailable element representative points, missing vertical extents, and boundary-only evidence fail closed instead of becoming Room assignments.");
+                    notes.Add("Use spatialKindPreference=room when the user explicitly asks for room numbers. Linked architectural Rooms retain link instance, source document, source-scoped id, phase, containment method, and ambiguity. Distinct spatial ids remain distinct even when their labels match.");
+                    notes.Add("superComponentId/topLevelParentId/isNested identify nested FamilyInstance records so child geometry is not silently counted as another physical device.");
+                }
+
                 if (p == "/revit/ducts-by-spatial-scope")
                 {
                     enumMap["roomMode"] = new[] { "auto", "roomAware", "geometry" };

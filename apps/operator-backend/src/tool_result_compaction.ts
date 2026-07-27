@@ -817,12 +817,118 @@ export function compactIncomingToolResult(result: ToolResult): ToolResult {
     resultJson = compactVisibleElementsResult(result.result_json, { maxItems: 24, maxCountEntries: 8 });
   } else if (pathName === "/revit/views") {
     resultJson = compactViewsResult(result.result_json);
+  } else if (pathName === "/revit/locate-elements") {
+    resultJson = compactLocateElementsResultForPrompt(result.result_json);
   }
 
   return {
     ...result,
     ...(attachments ? { attachments } : {}),
     ...(resultJson !== undefined ? { result_json: resultJson } : {})
+  };
+}
+
+export function compactLocateElementsResultForPrompt(
+  value: unknown,
+  options: { maxItems?: number } = {}
+): unknown {
+  const root = asObject(value);
+  if (!root || !Array.isArray(root.items)) return value;
+
+  const maxItems = Math.max(1, Math.min(2000, options.maxItems ?? 500));
+  const inheritedOmitted = (record: Record<string, unknown> | null, key: string): number => {
+    const numeric = Number(record?.[key]);
+    return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : 0;
+  };
+  const compactSpatialCandidate = (value: unknown): Record<string, unknown> | null => {
+    const candidate = asObject(value);
+    if (!candidate) return null;
+    const equivalentSourceIds = Array.isArray(candidate.equivalentSourceIds)
+      ? candidate.equivalentSourceIds
+      : [];
+    return {
+      spatialKind: candidate.spatialKind ?? null,
+      number: candidate.number ?? null,
+      name: candidate.name ?? null,
+      levelName: candidate.levelName ?? null,
+      spatialId: candidate.spatialId ?? null,
+      sourceScopedId: candidate.sourceScopedId ?? null,
+      sourceScope: candidate.sourceScope ?? null,
+      linkInstanceId: candidate.linkInstanceId ?? null,
+      linkInstanceName: candidate.linkInstanceName ?? null,
+      sourceDocumentTitle: candidate.sourceDocumentTitle ?? null,
+      phaseId: candidate.phaseId ?? null,
+      phaseName: candidate.phaseName ?? null,
+      method: candidate.method ?? null,
+      boundaryDistanceFt: candidate.boundaryDistanceFt ?? null,
+      levelDeltaFt: candidate.levelDeltaFt ?? null,
+      equivalentSourceIds: equivalentSourceIds.slice(0, 20),
+      equivalentSourceIdsOmitted:
+        inheritedOmitted(candidate, "equivalentSourceIdsOmitted") +
+        Math.max(0, equivalentSourceIds.length - 20)
+    };
+  };
+  const compactSpatialContext = (value: unknown): Record<string, unknown> | null => {
+    const context = asObject(value);
+    if (!context) return null;
+    const matches = Array.isArray(context.matches) ? context.matches : [];
+    const nearestCandidates = Array.isArray(context.nearestCandidates) ? context.nearestCandidates : [];
+    const compactMatches = context.status === "resolved"
+      ? []
+      : matches.slice(0, 20).map(compactSpatialCandidate).filter(Boolean);
+    const compactNearest = nearestCandidates.slice(0, 20).map(compactSpatialCandidate).filter(Boolean);
+    return {
+      status: context.status ?? null,
+      spatialKindPreference: context.spatialKindPreference ?? null,
+      method: context.method ?? null,
+      unresolvedReason: context.unresolvedReason ?? context.unresolved_reason ?? null,
+      representativePoint: context.representativePoint ?? context.representative_point ?? null,
+      selected: compactSpatialCandidate(context.selected),
+      matches: compactMatches,
+      matchesOmitted:
+        inheritedOmitted(context, "matchesOmitted") +
+        (context.status === "resolved" ? 0 : Math.max(0, matches.length - compactMatches.length)),
+      nearestCandidates: compactNearest,
+      nearestCandidatesOmitted:
+        inheritedOmitted(context, "nearestCandidatesOmitted") +
+        Math.max(0, nearestCandidates.length - compactNearest.length)
+    };
+  };
+
+  const items = root.items.slice(0, maxItems).map((value) => {
+    const item = asObject(value) ?? {};
+    return {
+      elementId: item.elementId ?? item.element_id ?? item.id ?? null,
+      category: item.category ?? null,
+      builtInCategory: item.builtInCategory ?? item.built_in_category ?? null,
+      name: item.name ?? null,
+      levelName: item.levelName ?? item.level_name ?? null,
+      roomNumber: item.roomNumber ?? item.room_number ?? null,
+      roomName: item.roomName ?? item.room_name ?? null,
+      spatialKind: item.spatialKind ?? item.spatial_kind ?? null,
+      spatialId: item.spatialId ?? item.spatial_id ?? null,
+      hostId: item.hostId ?? item.host_id ?? null,
+      superComponentId: item.superComponentId ?? item.super_component_id ?? null,
+      topLevelParentId: item.topLevelParentId ?? item.top_level_parent_id ?? null,
+      isNested: item.isNested ?? item.is_nested ?? false,
+      nearDistanceFt: item.nearDistanceFt ?? item.near_distance_ft ?? null,
+      center: item.center ?? null,
+      spatialContext: compactSpatialContext(item.spatialContext ?? item.spatial_context)
+    };
+  });
+
+  const itemsOmitted = inheritedOmitted(root, "itemsOmitted") + Math.max(0, root.items.length - items.length);
+  return {
+    _compacted: true,
+    compaction: "locate-elements-spatial-context",
+    status: root.status ?? null,
+    count: root.count ?? root.items.length,
+    truncated: root.truncated === true,
+    spatialResolution: root.spatialResolution ?? null,
+    items,
+    itemsOmitted,
+    itemsComplete: root.itemsComplete !== false && itemsOmitted === 0,
+    warnings: Array.isArray(root.warnings) ? root.warnings.slice(0, 20) : []
   };
 }
 

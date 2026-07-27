@@ -15,11 +15,16 @@ namespace RevitBridge.Logic.Handlers
 {
     internal static class SpatialIntentUtils
     {
-        internal static XYZ GetElementCenter(Element e)
+        internal static XYZ? TryGetElementCenter(Element e)
         {
-            var bb = e.get_BoundingBox(null);
-            if (bb == null) return XYZ.Zero;
-            return (bb.Min + bb.Max) * 0.5;
+            try
+            {
+                if (e.Location is LocationPoint point) return point.Point;
+                if (e.Location is LocationCurve curve) return curve.Curve?.Evaluate(0.5, true);
+                var bb = e.get_BoundingBox(null);
+                return bb == null ? null : (bb.Min + bb.Max) * 0.5;
+            }
+            catch { return null; }
         }
 
         internal static long? GetId(ElementId id)
@@ -113,9 +118,13 @@ namespace RevitBridge.Logic.Handlers
             };
         }
 
-        internal static double DistanceFt(Element a, Element b)
+        internal static double? DistanceFt(Element a, Element b)
         {
-            return GetElementCenter(a).DistanceTo(GetElementCenter(b));
+            var aPoint = TryGetElementCenter(a);
+            var bPoint = TryGetElementCenter(b);
+            return SpatialLocationEvidenceUtil.CanEvaluateProximity(aPoint != null, bPoint != null)
+                ? aPoint!.DistanceTo(bPoint!)
+                : (double?)null;
         }
     }
 
@@ -131,6 +140,15 @@ namespace RevitBridge.Logic.Handlers
             public long? nearElementId { get; set; }
             public double? maxDistanceFt { get; set; }
             public int? limit { get; set; } = 200;
+            public string spatialResolution { get; set; } = "association";
+            public string spatialKindPreference { get; set; } = "auto";
+            public bool? includeHostRooms { get; set; }
+            public bool? includeHostSpaces { get; set; }
+            public bool? includeLinkedRooms { get; set; }
+            public string linkedModelNameContains { get; set; }
+            public long? phaseId { get; set; }
+            public string phaseName { get; set; }
+            public int? nearestCandidateLimit { get; set; }
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -212,7 +230,39 @@ namespace RevitBridge.Logic.Handlers
             if (p?.nearElementId.HasValue == true)
             {
                 nearElement = doc.GetElement(ElementIdCompat.Create(p.nearElementId.Value));
-                if (nearElement == null) warnings.Add($"nearElementId {p.nearElementId.Value} not found; proximity filter skipped.");
+                if (nearElement == null)
+                {
+                    warnings.Add($"nearElementId {p.nearElementId.Value} not found; the bounded proximity query failed closed.");
+                    return Task.FromResult<object>(new { status = "Ok", count = 0, truncated = false, items = new List<object>(), warnings });
+                }
+            }
+            var proximityUnavailableCount = 0;
+
+            var spatialResolutionMode = (p?.spatialResolution ?? "association").Trim().ToLowerInvariant();
+            var resolveGeometry = spatialResolutionMode == "geometry" ||
+                                  spatialResolutionMode == "geometry_with_nearest";
+            if (!resolveGeometry && spatialResolutionMode != "association")
+            {
+                warnings.Add($"Unknown spatialResolution '{p?.spatialResolution}'; using association-only behavior.");
+                spatialResolutionMode = "association";
+            }
+
+            ElementSpatialContextResolver spatialResolver = null;
+            if (resolveGeometry)
+            {
+                var effectivePhase = ResolveEffectivePhase(doc, app.ActiveUIDocument?.ActiveView, p, warnings);
+                spatialResolver = new ElementSpatialContextResolver(
+                    doc,
+                    effectivePhase,
+                    p?.spatialKindPreference,
+                    p?.includeHostRooms ?? true,
+                    p?.includeHostSpaces ?? true,
+                    p?.includeLinkedRooms ?? true,
+                    p?.linkedModelNameContains,
+                    spatialResolutionMode == "geometry_with_nearest"
+                        ? p?.nearestCandidateLimit
+                        : 0);
+                warnings.AddRange(spatialResolver.Warnings);
             }
 
             var items = new List<object>();
@@ -231,18 +281,42 @@ namespace RevitBridge.Logic.Handlers
                 var spatial = SpatialIntentUtils.GetSpatialElement(doc, e);
                 var spatialNumber = SpatialIntentUtils.GetSpatialNumber(spatial);
                 var spatialName = SpatialIntentUtils.GetSpatialName(spatial);
-                if (!string.IsNullOrWhiteSpace(p?.roomNumber) && !string.Equals(spatialNumber ?? string.Empty, p.roomNumber, StringComparison.OrdinalIgnoreCase)) continue;
-                if (!string.IsNullOrWhiteSpace(p?.roomNameContains) && (spatialName ?? string.Empty).IndexOf(p.roomNameContains, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                if (!resolveGeometry)
+                {
+                    if (!string.IsNullOrWhiteSpace(p?.roomNumber) && !string.Equals(spatialNumber ?? string.Empty, p.roomNumber, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!string.IsNullOrWhiteSpace(p?.roomNameContains) && (spatialName ?? string.Empty).IndexOf(p.roomNameContains, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                }
 
                 double? nearDistance = null;
                 if (nearElement != null)
                 {
                     nearDistance = SpatialIntentUtils.DistanceFt(e, nearElement);
+                    if (!nearDistance.HasValue)
+                    {
+                        proximityUnavailableCount++;
+                        continue;
+                    }
                     if (p?.maxDistanceFt.HasValue == true && nearDistance.Value > p.maxDistanceFt.Value) continue;
                 }
 
-                var hostId = SpatialIntentUtils.GetId((e as FamilyInstance)?.Host?.Id);
-                var center = SpatialIntentUtils.GetElementCenter(e);
+                var spatialContext = spatialResolver?.Resolve(e);
+                if (resolveGeometry && spatialContext != null &&
+                    !spatialResolver.MatchesRequestedSpatial(spatialContext, p?.roomNumber, p?.roomNameContains))
+                    continue;
+
+                var outputSpatialNumber = resolveGeometry ? spatialContext?.selected?.number : spatialNumber;
+                var outputSpatialName = resolveGeometry ? spatialContext?.selected?.name : spatialName;
+                var outputSpatialKind = resolveGeometry ? spatialContext?.selected?.spatialKind : SpatialIntentUtils.GetSpatialKind(spatial);
+                long? outputSpatialId = resolveGeometry ? spatialContext?.selected?.spatialId : SpatialIntentUtils.GetId(spatial?.Id);
+
+                var familyInstance = e as FamilyInstance;
+                var hostId = SpatialIntentUtils.GetId(familyInstance?.Host?.Id);
+                var superComponentId = SpatialIntentUtils.GetId(familyInstance?.SuperComponent?.Id);
+                var topLevelParent = familyInstance?.SuperComponent;
+                while (topLevelParent is FamilyInstance parentFamily && parentFamily.SuperComponent != null)
+                    topLevelParent = parentFamily.SuperComponent;
+                var topLevelParentId = SpatialIntentUtils.GetId(topLevelParent?.Id);
+                var center = SpatialIntentUtils.TryGetElementCenter(e);
                 items.Add(new
                 {
                     elementId = ElementIdCompat.GetValue(e.Id),
@@ -250,26 +324,80 @@ namespace RevitBridge.Logic.Handlers
                     builtInCategory = e.Category?.BuiltInCategory.ToString(),
                     name = e.Name,
                     levelName,
-                    roomNumber = spatialNumber,
-                    roomName = spatialName,
-                    spatialKind = SpatialIntentUtils.GetSpatialKind(spatial),
-                    spatialId = SpatialIntentUtils.GetId(spatial?.Id),
+                    roomNumber = outputSpatialNumber,
+                    roomName = outputSpatialName,
+                    spatialKind = outputSpatialKind,
+                    spatialId = outputSpatialId,
                     hostId,
+                    superComponentId,
+                    topLevelParentId,
+                    isNested = superComponentId.HasValue,
                     nearDistanceFt = nearDistance,
-                    center = new { x = center.X, y = center.Y, z = center.Z }
+                    center = center == null ? null : new { x = center.X, y = center.Y, z = center.Z },
+                    spatialContext
                 });
 
                 if (items.Count >= limit) break;
             }
+
+            if (proximityUnavailableCount > 0)
+                warnings.Add($"Skipped {proximityUnavailableCount} candidate(s) because proximity could not be evaluated without factual location evidence.");
 
             return Task.FromResult<object>(new
             {
                 status = "Ok",
                 count = items.Count,
                 truncated = items.Count >= limit,
+                spatialResolution = spatialResolutionMode,
                 items,
                 warnings
             });
+        }
+
+        private static Phase ResolveEffectivePhase(
+            Document doc,
+            View activeView,
+            Params p,
+            List<string> warnings)
+        {
+            Phase byId = null;
+            Phase byName = null;
+            if (p?.phaseId.HasValue == true && p.phaseId.Value > 0)
+                byId = doc.GetElement(ElementIdCompat.Create(p.phaseId.Value)) as Phase;
+            if (!string.IsNullOrWhiteSpace(p?.phaseName))
+                byName = doc.Phases.Cast<Phase>()
+                    .FirstOrDefault(phase => string.Equals(phase.Name, p.phaseName.Trim(), StringComparison.OrdinalIgnoreCase));
+
+            if (p?.phaseId.HasValue == true && byId == null)
+            {
+                warnings.Add($"Explicit phaseId {p.phaseId.Value} was not found; geometric spatial assignment was left unresolved.");
+                return null;
+            }
+            if (!string.IsNullOrWhiteSpace(p?.phaseName) && byName == null)
+            {
+                warnings.Add($"Explicit phaseName '{p.phaseName}' was not found; geometric spatial assignment was left unresolved.");
+                return null;
+            }
+            if (byId != null && byName != null && byId.Id != byName.Id)
+            {
+                warnings.Add("Explicit phaseId and phaseName resolved to different phases; geometric spatial assignment was left unresolved.");
+                return null;
+            }
+            if (byId != null || byName != null) return byId ?? byName;
+
+            try
+            {
+                var viewPhaseId = activeView?.get_Parameter(BuiltInParameter.VIEW_PHASE)?.AsElementId();
+                if (viewPhaseId != null && viewPhaseId != ElementId.InvalidElementId)
+                {
+                    var viewPhase = doc.GetElement(viewPhaseId) as Phase;
+                    if (viewPhase != null) return viewPhase;
+                }
+            }
+            catch { }
+
+            warnings.Add("The active view has no resolvable phase. Provide phaseId or exact phaseName for geometric spatial assignment.");
+            return null;
         }
     }
 
@@ -295,7 +423,7 @@ namespace RevitBridge.Logic.Handlers
             var e = doc.GetElement(ElementIdCompat.Create(p.elementId));
             if (e == null) throw new InvalidOperationException($"Element {p.elementId} not found.");
 
-            var center = HostedPlacementUtil.TryGetElementPoint(e) ?? SpatialIntentUtils.GetElementCenter(e);
+            var center = HostedPlacementUtil.TryGetElementPoint(e) ?? SpatialIntentUtils.TryGetElementCenter(e);
             var levelName = SpatialIntentUtils.GetLevelName(doc, e);
             var room = SpatialIntentUtils.GetSpatialElement(doc, e);
             var familyInstance = e as FamilyInstance;
@@ -342,16 +470,18 @@ namespace RevitBridge.Logic.Handlers
             var hostCatSet = new HashSet<string>((p.hostCategories ?? new List<string>()).Where(x => !string.IsNullOrWhiteSpace(x)), StringComparer.OrdinalIgnoreCase);
             var view = app.ActiveUIDocument?.ActiveView;
             var requestedRoom = HostedPlacementUtil.FindSpatialElement(doc, null, p.roomNumber)?.element ?? room;
-            var nearbyHostRows = HostedPlacementUtil.FindNearbyHosts(
-                doc,
-                view ?? doc.ActiveView,
-                searchPoint,
-                hostCatSet.Count > 0 ? hostCatSet : new HashSet<string>(new[] { "OST_Walls" }, StringComparer.OrdinalIgnoreCase),
-                radiusFt,
-                requestedRoom,
-                p.roomSide,
-                maxHosts
-            );
+            var nearbyHostRows = searchPoint == null
+                ? new List<NearbyHostCandidate>()
+                : HostedPlacementUtil.FindNearbyHosts(
+                    doc,
+                    view ?? doc.ActiveView,
+                    searchPoint,
+                    hostCatSet.Count > 0 ? hostCatSet : new HashSet<string>(new[] { "OST_Walls" }, StringComparer.OrdinalIgnoreCase),
+                    radiusFt,
+                    requestedRoom,
+                    p.roomSide,
+                    maxHosts
+                );
 
             HostedPlacementUtil.TryGetTypeInfo(doc, e, out var typeId, out var typeName, out var familyName);
             var insertionPoint = HostedPlacementUtil.TryGetElementPoint(e);
@@ -390,7 +520,7 @@ namespace RevitBridge.Logic.Handlers
             else if (placementHost is RevitLinkInstance linkHost && matchedRoomWall != null)
             {
                 var projectionSeed = insertionPoint ?? searchPoint;
-                if (HostedPlacementUtil.TryProjectPointToRoomWall(matchedRoomWall, projectionSeed, out var projectedBoundary, out var boundaryTangent, out var boundaryCurveLengthFt, out var boundaryOffsetFt))
+                if (projectionSeed != null && HostedPlacementUtil.TryProjectPointToRoomWall(matchedRoomWall, projectionSeed, out var projectedBoundary, out var boundaryTangent, out var boundaryCurveLengthFt, out var boundaryOffsetFt))
                 {
                     wallPlacement = new
                     {
@@ -433,6 +563,10 @@ namespace RevitBridge.Logic.Handlers
             var onRequestedWall = requestedWallHostIds.Count == 0 || (placementHostId > 0 && requestedWallHostIds.Contains(placementHostId));
             var suggestedChainageFt = placementFrame?.chainageFt;
             var suggestedNormalizedChainage = placementFrame?.normalizedChainage;
+            var placementSeed = insertionPoint ?? searchPoint;
+            var canSuggestPlacement = SpatialLocationEvidenceUtil.CanSuggestPlacement(
+                placementHostSupported,
+                placementSeed != null);
 
             return Task.FromResult<object>(new
             {
@@ -442,7 +576,7 @@ namespace RevitBridge.Logic.Handlers
                 category = e.Category?.Name,
                 builtInCategory = e.Category?.BuiltInCategory.ToString(),
                 name = e.Name,
-                center = new { x = center.X, y = center.Y, z = center.Z },
+                center = center == null ? null : new { x = center.X, y = center.Y, z = center.Z },
                 insertionPoint = insertionPoint == null ? null : new { x = insertionPoint.X, y = insertionPoint.Y, z = insertionPoint.Z },
                 levelName,
                 typeId,
@@ -469,8 +603,8 @@ namespace RevitBridge.Logic.Handlers
                 diagnostics = new
                 {
                     isHosted = host != null,
-                    elevationFt = center.Z,
-                    requestedPoint = new { x = searchPoint.X, y = searchPoint.Y, z = searchPoint.Z },
+                    elevationFt = center?.Z,
+                    requestedPoint = searchPoint == null ? null : new { x = searchPoint.X, y = searchPoint.Y, z = searchPoint.Z },
                     requestedRoomSide = HostedPlacementUtil.NormalizeWallSide(p.roomSide),
                     placementAudit = new
                     {
@@ -516,7 +650,7 @@ namespace RevitBridge.Logic.Handlers
                     interiorDirection = HostedPlacementUtil.BuildVector(w.interiorDirection),
                     supportsPlacement = w.supportsPlacement
                 }).ToList(),
-                suggestedPlacement = !placementHostSupported ? null : new
+                suggestedPlacement = !canSuggestPlacement ? null : new
                 {
                     placeOnHost = new
                     {
@@ -532,7 +666,7 @@ namespace RevitBridge.Logic.Handlers
                             orientationSourceElementId = p.elementId,
                             targetChainageFt = suggestedChainageFt,
                             targetNormalizedChainage = suggestedNormalizedChainage,
-                            elevationFt = insertionPoint?.Z ?? center.Z,
+                            elevationFt = placementSeed!.Z,
                             dryRun = true,
                             includePreviewImage = true
                         }
@@ -691,7 +825,7 @@ namespace RevitBridge.Logic.Handlers
             var e = doc.GetElement(ElementIdCompat.Create(p.elementId));
             if (e == null) throw new InvalidOperationException($"Element {p.elementId} not found.");
 
-            var center = SpatialIntentUtils.GetElementCenter(e);
+            var center = SpatialIntentUtils.TryGetElementCenter(e);
             var host = (e as FamilyInstance)?.Host;
             var tolerance = Math.Max(0.01, p.toleranceFt ?? 0.25);
             var suggestions = new List<object>();
@@ -715,21 +849,28 @@ namespace RevitBridge.Logic.Handlers
 
             if (p.expectedElevationFt.HasValue)
             {
-                var delta = center.Z - p.expectedElevationFt.Value;
-                var pass = Math.Abs(delta) <= tolerance;
-                diagnostics.Add(new { check = "elevation", pass, actual = center.Z, expected = p.expectedElevationFt.Value, deltaFt = delta, toleranceFt = tolerance });
-                if (!pass)
+                if (center == null)
                 {
-                    suggestions.Add(new
+                    diagnostics.Add(new { check = "elevation", pass = false, actual = (double?)null, expected = p.expectedElevationFt.Value, deltaFt = (double?)null, toleranceFt = tolerance, reason = "location_evidence_unavailable" });
+                }
+                else
+                {
+                    var delta = center.Z - p.expectedElevationFt.Value;
+                    var pass = Math.Abs(delta) <= tolerance;
+                    diagnostics.Add(new { check = "elevation", pass, actual = (double?)center.Z, expected = p.expectedElevationFt.Value, deltaFt = (double?)delta, toleranceFt = tolerance, reason = (string)null });
+                    if (!pass)
                     {
-                        action = "/revit/move-elements",
-                        reason = "Adjust element elevation to expected target.",
-                        proposedBody = new
+                        suggestions.Add(new
                         {
-                            elementIds = new[] { p.elementId },
-                            translation = new { dz = -delta }
-                        }
-                    });
+                            action = "/revit/move-elements",
+                            reason = "Adjust element elevation to expected target.",
+                            proposedBody = new
+                            {
+                                elementIds = new[] { p.elementId },
+                                translation = new { dz = -delta }
+                            }
+                        });
+                    }
                 }
             }
 

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   compactIncomingToolResult,
+  compactLocateElementsResultForPrompt,
   compactParameterReadResultForPrompt,
   compactScheduleReadResultForPrompt,
   compactViewsResult,
@@ -10,7 +11,136 @@ import {
   getChatRequestLimitBytes
 } from "../src/tool_result_compaction.js";
 
-test("compact parameter reads preserves late DESIG and shock-arrestor evidence", () => {
+test("compact locate-elements preserves every physical and nested spatial result plus unresolved provenance", () => {
+  const items = Array.from({ length: 132 }, (_, index) => ({
+    elementId: 1000 + index,
+    category: index >= 66 ? "Center line" : "Pipe Fittings",
+    builtInCategory: "OST_PipeFitting",
+    levelName: "LEVEL 02",
+    superComponentId: index >= 66 ? 1000 + (index - 66) : null,
+    topLevelParentId: index >= 66 ? 1000 + (index - 66) : null,
+    isNested: index >= 66,
+    spatialContext: index === 64
+      ? {
+          status: "unresolved",
+          method: "none",
+          selected: null,
+          matches: [],
+          nearestCandidates: [{
+            spatialKind: "Room",
+            number: "2911",
+            name: "LOCKERS",
+            sourceScope: "linked",
+            sourceScopedId: "99:42",
+            sourceDocumentTitle: "Architectural",
+            method: "point_in_boundary",
+            boundaryDistanceFt: 2.65
+          }]
+        }
+      : {
+          status: "resolved",
+          method: "point_in_boundary",
+          selected: {
+            spatialKind: "Room",
+            number: `R-${index % 66}`,
+            sourceScope: "linked",
+            sourceScopedId: `99:${index % 66}`,
+            method: "point_in_boundary"
+          },
+          matches: [],
+          nearestCandidates: []
+        }
+  }));
+
+  const compacted = compactLocateElementsResultForPrompt({
+    status: "Ok",
+    count: 132,
+    spatialResolution: "geometry_with_nearest",
+    items,
+    warnings: []
+  }) as any;
+
+  assert.equal(compacted.items.length, 132);
+  assert.equal(compacted.items[64].spatialContext.status, "unresolved");
+  assert.equal(compacted.items[64].spatialContext.nearestCandidates[0].number, "2911");
+  assert.equal(compacted.items[64].spatialContext.nearestCandidates[0].sourceScope, "linked");
+  assert.equal(compacted.items[131].isNested, true);
+  assert.equal(compacted.items[131].superComponentId, 1065);
+  assert.equal(compacted.itemsOmitted, 0);
+  assert.equal(compacted.itemsComplete, true);
+});
+
+test("compact locate-elements retains row 201 and all twenty requested nearest candidates", () => {
+  const nearestCandidates = Array.from({ length: 20 }, (_, index) => ({
+    spatialKind: "Room",
+    number: `N-${index + 1}`,
+    spatialId: 9000 + index,
+    sourceScope: "linked",
+    sourceScopedId: `77:${9000 + index}`,
+    boundaryDistanceFt: index + 0.25
+  }));
+  const items = Array.from({ length: 201 }, (_, index) => ({
+    elementId: 3000 + index,
+    spatialContext: {
+      status: "unresolved",
+      method: "none",
+      matches: [],
+      nearestCandidates
+    }
+  }));
+
+  const compacted = compactLocateElementsResultForPrompt({
+    status: "Ok",
+    count: items.length,
+    spatialResolution: "geometry_with_nearest",
+    items
+  }) as any;
+
+  assert.equal(compacted.items.length, 201);
+  assert.equal(compacted.items[200].elementId, 3200);
+  assert.equal(compacted.items[200].spatialContext.nearestCandidates.length, 20);
+  assert.equal(compacted.items[200].spatialContext.nearestCandidates[19].number, "N-20");
+  assert.equal(compacted.items[200].spatialContext.nearestCandidatesOmitted, 0);
+  assert.equal(compacted.itemsOmitted, 0);
+  assert.equal(compacted.itemsComplete, true);
+});
+
+test("compact locate-elements preserves inherited row and candidate omissions across repeated compaction", () => {
+  const items = Array.from({ length: 600 }, (_, index) => ({
+    elementId: 4000 + index,
+    spatialContext: index === 0 ? {
+      status: "unresolved",
+      selected: {
+        spatialKind: "Room",
+        number: "401",
+        equivalentSourceIds: Array.from({ length: 21 }, (_, sourceIndex) => `source-${sourceIndex}`)
+      },
+      matches: [],
+      nearestCandidates: Array.from({ length: 21 }, (_, candidateIndex) => ({
+        spatialKind: "Room",
+        number: `N-${candidateIndex}`,
+        equivalentSourceIds: Array.from({ length: 21 }, (_, sourceIndex) => `nearest-${candidateIndex}-${sourceIndex}`)
+      }))
+    } : null
+  }));
+
+  const first = compactLocateElementsResultForPrompt({
+    status: "Ok",
+    count: items.length,
+    spatialResolution: "geometry_with_nearest",
+    items
+  }) as any;
+  const second = compactLocateElementsResultForPrompt(first) as any;
+
+  assert.equal(first.itemsOmitted, 100);
+  assert.equal(second.itemsOmitted, 100);
+  assert.equal(second.itemsComplete, false);
+  assert.equal(second.items[0].spatialContext.nearestCandidatesOmitted, 1);
+  assert.equal(second.items[0].spatialContext.selected.equivalentSourceIdsOmitted, 1);
+  assert.equal(second.items[0].spatialContext.nearestCandidates[0].equivalentSourceIdsOmitted, 1);
+});
+
+test("compact parameter reads preserves late project-identifier evidence", () => {
   const clutter = Array.from({ length: 120 }, (_, index) => ({
     name: `Parameter ${index}`,
     value: `ordinary-${index}`,
@@ -29,7 +159,7 @@ test("compact parameter reads preserves late DESIG and shock-arrestor evidence",
     returnedCount: 2,
     hasMore: false,
     items: [
-      { id: 42, name: "Shock Arrestor SA-1", category: "Pipe Accessories", parameterDetails: [...clutter, { name: "DESIG.", value: "B3-G-SA-01", storageType: "String", isReadOnly: false, parameterId: 700064 }] },
+      { id: 42, name: "Accessory A", category: "Pipe Accessories", parameterDetails: [...clutter, { name: "DESIG.", value: "EQ-G-ALPHA-01", storageType: "String", isReadOnly: false, parameterId: 700064 }] },
       { id: 43, name: "Sump Pump", category: "Mechanical Equipment", parameterDetails: [{ name: "DESIG.", value: "H-G-SP-03", storageType: "String", isReadOnly: false, parameterId: 700064 }] }
     ]
   }) as any;
@@ -38,7 +168,7 @@ test("compact parameter reads preserves late DESIG and shock-arrestor evidence",
   assert.equal(compacted.totalMatched, 2);
   assert.equal(compacted.parameterCounts[0]?.name, "DESIG.");
   assert.equal(compacted.parameterCounts[0]?.count, 2);
-  assert.equal(compacted.evidenceSample[0]?.value, "B3-G-SA-01");
+  assert.equal(compacted.evidenceSample[0]?.value, "EQ-G-ALPHA-01");
   assert.equal(compacted.evidenceSample[0]?.isReadOnly, false);
 });
 
@@ -69,12 +199,12 @@ test("compact schedule reads preserves paging and bounded visible cells", () => 
   const compacted = compactScheduleReadResultForPrompt({
     action: "detail",
     status: "Ok",
-    schedule: { id: 100, name: "Shock Arrestor Schedule" },
+    schedule: { id: 100, name: "Equipment Schedule" },
     fields: [{ name: "DESIG." }],
     table: { body: { totalRows: 100, totalColumns: 2, rowOffset: 0, returnedRows: 45, hasMoreRows: true, nextRowOffset: 45, rows } }
   }) as any;
 
-  assert.equal(compacted.schedule.name, "Shock Arrestor Schedule");
+  assert.equal(compacted.schedule.name, "Equipment Schedule");
   assert.equal(compacted.table.body.rows.length, 30);
   assert.equal(compacted.table.body.nextRowOffset, 45);
   assert.equal(compacted.table.body.rows[0].cells[1], "B3-G-SA-0");
