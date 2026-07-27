@@ -366,7 +366,14 @@ function candidateLabel(candidate: Record<string, unknown>): string | null {
   return `${kind} ${[number, name].filter(Boolean).join(" — ")}`;
 }
 
-function spatialItemLabel(item: Record<string, unknown>): { label: string; status: "resolved" | "ambiguous" | "unresolved" } {
+type SpatialItemSummary = {
+  label: string;
+  status: "resolved" | "ambiguous" | "unresolved";
+  device: string;
+  resolvedLocation?: string;
+};
+
+function spatialItemLabel(item: Record<string, unknown>): SpatialItemSummary {
   const id = textValue(item.elementId) ?? textValue(item.id) ?? "unknown";
   const mark = textValue(item.mark);
   const device = mark ? `${mark} (element ${id})` : `element ${id}`;
@@ -381,14 +388,39 @@ function spatialItemLabel(item: Record<string, unknown>): { label: string; statu
     const sourceScope = textValue(selected?.sourceScope);
     const linkName = textValue(selected?.linkInstanceName);
     const provenance = sourceScope === "linked" || sourceScope === "link" ? ` via linked model${linkName ? ` ${linkName}` : ""}` : "";
-    return { label: `${device}: ${spatialKind} ${[roomNumber, roomName].filter(Boolean).join(" — ")}${level ? `, ${level}` : ""}${provenance}`, status: "resolved" };
+    const resolvedLocation = `${spatialKind} ${[roomNumber, roomName].filter(Boolean).join(" — ")}${level ? `, ${level}` : ""}${provenance}`;
+    return { label: `${device}: ${resolvedLocation}`, status: "resolved", device, resolvedLocation };
   }
   if (status === "ambiguous") {
     const matches = resultArray(spatial?.matches, 8).map(candidateLabel).filter((value): value is string => Boolean(value));
-    return { label: `${device}: room assignment is ambiguous${matches.length ? ` among ${matches.join(", ")}` : ""}${level ? `, ${level}` : ""}`, status: "ambiguous" };
+    return { label: `${device}: room assignment is ambiguous${matches.length ? ` among ${matches.join(", ")}` : ""}${level ? `, ${level}` : ""}`, status: "ambiguous", device };
   }
   const nearest = resultArray(spatial?.nearestCandidates, 3).map(candidateLabel).filter((value): value is string => Boolean(value));
-  return { label: `${device}: room unresolved${level ? `, ${level}` : ""}${nearest.length ? `; nearest candidates (not assignments): ${nearest.join(", ")}` : ""}`, status: "unresolved" };
+  return { label: `${device}: room unresolved${level ? `, ${level}` : ""}${nearest.length ? `; nearest candidates (not assignments): ${nearest.join(", ")}` : ""}`, status: "unresolved", device };
+}
+
+function spatialAnswerSections(labels: SpatialItemSummary[]): string {
+  const resolvedGroups = new Map<string, string[]>();
+  for (const item of labels) {
+    if (item.status !== "resolved" || !item.resolvedLocation) continue;
+    const devices = resolvedGroups.get(item.resolvedLocation) ?? [];
+    devices.push(item.device);
+    resolvedGroups.set(item.resolvedLocation, devices);
+  }
+  const resolvedCount = labels.filter(item => item.status === "resolved").length;
+  const ambiguous = labels.filter(item => item.status === "ambiguous");
+  const unresolved = labels.filter(item => item.status === "unresolved");
+  const roomWord = resolvedGroups.size === 1 ? "room" : "rooms";
+  const lines = [`Resolved locations (${resolvedCount} devices across ${resolvedGroups.size} ${roomWord}):`];
+  if (resolvedGroups.size === 0) lines.push("- None.");
+  for (const [location, devices] of [...resolvedGroups.entries()].sort(([left], [right]) => left.localeCompare(right, undefined, { numeric: true }))) {
+    lines.push(`- ${location}: ${devices.sort((left, right) => left.localeCompare(right, undefined, { numeric: true })).join(", ")}`);
+  }
+  lines.push(`Ambiguous assignments (${ambiguous.length}):`);
+  lines.push(...(ambiguous.length ? ambiguous.map(item => `- ${item.label}`) : ["- None."]));
+  lines.push(`Unresolved devices (${unresolved.length}):`);
+  lines.push(...(unresolved.length ? unresolved.map(item => `- ${item.label}`) : ["- None."]));
+  return lines.join("\n");
 }
 
 function completeDocumentSpatial(task: AecSemanticTaskV1, state: QueryState, result: ToolResult): ChatResponse {
@@ -417,7 +449,7 @@ function completeDocumentSpatial(task: AecSemanticTaskV1, state: QueryState, res
   }
   const labels = [
     ...rows.map(spatialItemLabel),
-    ...missingIds.map(id => ({ label: `element ${id}: room unresolved; Revit did not return a spatial row for this requested element`, status: "unresolved" as const }))
+    ...missingIds.map(id => ({ label: `element ${id}: room unresolved; Revit did not return a spatial row for this requested element`, status: "unresolved" as const, device: `element ${id}` }))
   ];
   const resolved = labels.filter(item => item.status === "resolved").length;
   const ambiguous = labels.filter(item => item.status === "ambiguous").length;
@@ -430,7 +462,8 @@ function completeDocumentSpatial(task: AecSemanticTaskV1, state: QueryState, res
   const incomplete = discoveryIncomplete || spatialIncomplete
     ? " The discovery or spatial result was bounded/incomplete, so additional matching devices may exist."
     : "";
-  return response(`I found ${labels.length} top-level physical ${subjectLabel(task)} instance${labels.length === 1 ? "" : "s"}.${identityText}${excludedText} Room results: ${resolved} resolved, ${ambiguous} ambiguous, ${unresolved} unresolved. ${labels.map(item => item.label).join("; ")}.${incomplete} No model changes were made.`, [], { workflow_id: "query.document_elements", status: ambiguous > 0 || unresolved > 0 || discoveryIncomplete || spatialIncomplete ? "ambiguous" : "complete" });
+  const sections = spatialAnswerSections(labels);
+  return response(`I found ${labels.length} top-level physical model instance${labels.length === 1 ? "" : "s"} matching ${subjectLabel(task)}.${identityText}${excludedText} Room results: ${resolved} resolved, ${ambiguous} ambiguous, ${unresolved} unresolved.\n\n${sections}${incomplete}\n\nNo model changes were made.`, [], { workflow_id: "query.document_elements", status: ambiguous > 0 || unresolved > 0 || discoveryIncomplete || spatialIncomplete ? "ambiguous" : "complete" });
 }
 
 function exactCompletion(task: AecSemanticTaskV1, state: QueryState, result: ToolResult): ChatResponse {
