@@ -6,7 +6,7 @@ import { issueAecTaskIntentToken } from "./aec_task_intent_cache.js";
 import { deterministicNamedObjectTopologyTask } from "./aec_semantic_task_interpreter.js";
 import { planAecQueryTask } from "./deterministic/aec_query_plan.js";
 import { MEP_SERVICE_ACCESSORY_WORKFLOW_ID, parseMepServiceAccessoryTask } from "./deterministic/mep_service_accessory_runtime.js";
-import { parseDirectScheduleCellUpdate, parseScheduleCellUpdateFromConversation } from "./schedule_cell_update_intent.js";
+import { parseDirectScheduleCellUpdate, parseGroupedScheduleBulkClarification, parseScheduleCellUpdateFromConversation } from "./schedule_cell_update_intent.js";
 
 export type AecTaskIntentHttpResult = {
   status: number;
@@ -39,6 +39,23 @@ export async function resolveAecTaskIntentHttp(body: unknown, interpreter?: AecT
         workflow_id: "schedule.cell_update",
         intent_token: null,
         intent: scheduleCellUpdate
+      }
+    };
+  }
+  const groupedScheduleBulk = parseGroupedScheduleBulkClarification(userText);
+  if (groupedScheduleBulk) {
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        handled: true,
+        workflow_id: "schedule.grouped_bulk_clarification",
+        intent_token: null,
+        intent: {
+          schema: "revit-operator.schedule-grouped-bulk-clarification.v1",
+          ...groupedScheduleBulk,
+          evidence: { user_text: userText }
+        }
       }
     };
   }
