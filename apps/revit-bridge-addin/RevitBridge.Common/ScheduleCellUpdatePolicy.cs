@@ -59,6 +59,15 @@ namespace RevitBridge.Common
             return false;
         }
 
+        public static string FieldChoiceLabel(string? parameterName, string? heading, bool duplicateHeading)
+        {
+            var cleanName = CollapseWhitespace(parameterName);
+            var cleanHeading = CollapseWhitespace(heading);
+            if (duplicateHeading && cleanName.Length > 0) return cleanName;
+            if (NormalizeFieldName(cleanHeading).Length >= 4) return cleanHeading;
+            return cleanName.Length > 0 ? cleanName : cleanHeading;
+        }
+
         public static bool IsLikelyIdentifierField(string? parameterName, string? heading)
         {
             return IdentifierFieldNames.Contains(NormalizeFieldName(parameterName)) ||

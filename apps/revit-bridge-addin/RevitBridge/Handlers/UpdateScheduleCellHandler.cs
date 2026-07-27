@@ -346,7 +346,7 @@ namespace RevitBridge.Handlers
                 var suggestions = targetFields.Count == 0
                     ? SuggestTargetFields(requestedTargetField, fields)
                     : targetFields;
-                targetFieldSuggestions.AddRange(suggestions.Select(DisplayFieldName));
+                targetFieldSuggestions.AddRange(DisplayFieldChoices(suggestions));
                 // Reading every displayed cell in every schedule is expensive in large
                 // production models. Only inspect table rows when this schedule has a
                 // plausible target column; unrelated schedules cannot answer the user's
@@ -577,18 +577,32 @@ namespace RevitBridge.Handlers
                     if (airflowRequested && (candidate.IndexOf("airflow", StringComparison.Ordinal) >= 0 || candidate.IndexOf("cfm", StringComparison.Ordinal) >= 0)) return true;
                     return normalized.Length >= 4 && (candidate.Contains(normalized) || normalized.Contains(candidate));
                 })
-                .GroupBy(DisplayFieldName, StringComparer.OrdinalIgnoreCase)
-                .Select(group => group.First())
                 .Take(6)
                 .ToList();
             return suggestions;
         }
 
+        private static IEnumerable<string> DisplayFieldChoices(List<FieldRef> fields)
+        {
+            var duplicateHeadings = fields
+                .Select(field => ScheduleCellUpdatePolicy.NormalizeFieldName(field.Heading))
+                .Where(value => value.Length > 0)
+                .GroupBy(value => value, StringComparer.Ordinal)
+                .Where(group => group.Count() > 1)
+                .Select(group => group.Key)
+                .ToHashSet(StringComparer.Ordinal);
+            return fields
+                .Select(field => ScheduleCellUpdatePolicy.FieldChoiceLabel(
+                    field.Name,
+                    field.Heading,
+                    duplicateHeadings.Contains(ScheduleCellUpdatePolicy.NormalizeFieldName(field.Heading))))
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+        }
+
         private static string DisplayFieldName(FieldRef field)
         {
-            if (string.IsNullOrWhiteSpace(field.Heading)) return field.Name;
-            if (ScheduleCellUpdatePolicy.NormalizeFieldName(field.Heading).Length < 4 && !string.IsNullOrWhiteSpace(field.Name)) return field.Name;
-            return field.Heading;
+            return ScheduleCellUpdatePolicy.FieldChoiceLabel(field.Name, field.Heading, false);
         }
 
         private static string FormatAlternatives(List<string> values)
