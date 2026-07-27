@@ -57,8 +57,9 @@ const activeCodexTurnAborts = new Map<string, AbortController>();
 
 function boundedContextString(value: unknown, maxLength: number): string | undefined {
   if (typeof value !== "string") return undefined;
+  if (value.length > maxLength || /[\u0000-\u001f\u007f]/.test(value)) return undefined;
   const trimmed = value.trim();
-  if (!trimmed || trimmed.length > maxLength || /[\u0000-\u001f\u007f]/.test(trimmed)) return undefined;
+  if (!trimmed) return undefined;
   return trimmed;
 }
 
@@ -70,7 +71,7 @@ function declaredBoundedContextString(
 ): string | undefined {
   if (!Object.prototype.hasOwnProperty.call(record, key)) return undefined;
   const rawValue = record[key];
-  if (typeof rawValue === "string" && rawValue.trim() === "") return undefined;
+  if (typeof rawValue === "string" && /^ *$/.test(rawValue)) return undefined;
   const value = boundedContextString(rawValue, maxLength);
   if (!value) throw new Error(`Revit context integrity error: ${label} is malformed.`);
   return value;

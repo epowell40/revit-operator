@@ -276,7 +276,10 @@ test("malformed declared courier fields return no actions before any courier lea
   process.env.OPERATOR_REVIT_TRANSPORT = "courier";
   const contexts = [
     { revit: { courier_executor_id: "worker\nother", document: { title: "Duke B200", path: "C:\\models\\Duke B200.rvt" } } },
+    { revit: { courier_executor_id: "worker-1\n", document: { title: "Duke B200", path: "C:\\models\\Duke B200.rvt" } } },
+    { revit: { courier_executor_id: "\n", document: { title: "Duke B200", path: "C:\\models\\Duke B200.rvt" } } },
     { revit: { courier_executor_id: "worker-1", document: { title: "x".repeat(513), path: "C:\\models\\Duke B200.rvt" } } },
+    { revit: { courier_executor_id: "worker-1", document: { title: ` ${"x".repeat(512)} `, path: "C:\\models\\Duke B200.rvt" } } },
     { revit: { courier_executor_id: "worker-1", document: { title: "Duke B200", path: 42 } } }
   ];
   try {
