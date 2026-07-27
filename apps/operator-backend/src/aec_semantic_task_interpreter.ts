@@ -117,6 +117,48 @@ function deterministicScheduleInventoryTask(userText: string): AecSemanticTaskV1
   };
 }
 
+export function deterministicNamedObjectTopologyTask(userText: string): AecSemanticTaskV1 | null {
+  const text = userText.trim();
+  if (!text || text.length > AEC_SEMANTIC_TASK_MAX_TEXT_CHARS) return null;
+
+  // Negative write constraints are common in read-only requests and must not be
+  // mistaken for requested mutations. Any remaining write verb fails closed.
+  const mutationCheck = text.replace(
+    /\b(?:do\s+not|don't|dont|without)\s+(?:change|modify|edit|update|delete|remove|create|add|move|write)(?:\s+(?:anything|the\s+model|the\s+revit\s+model))?/gi,
+    ""
+  );
+  if (/\b(?:please\s+)?(?:change|modify|edit|update|delete|remove|create|add|move|replace|resize|reroute|write)\b/i.test(mutationCheck)) return null;
+  if (/^\s*(?:please\s+)?(?:connect|disconnect)\b/i.test(mutationCheck) || /\b(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:connect|disconnect)\b/i.test(mutationCheck)) return null;
+
+  const patterns = [
+    /\bwhat\s+(?:is|are)\s+(?:the\s+)?(.{2,128}?)\s+connected\s+to\b/i,
+    /\bwhat\s+(?:does|do)\s+(?:the\s+)?(.{2,128}?)\s+connect\s+to\b/i,
+    /\b(?:which|what)\s+(?:pipe\s+|duct\s+|mep\s+|electrical\s+|mechanical\s+)?systems?\s+(?:is|are)\s+(?:the\s+)?(.{2,128}?)\s+connected\s+to\b/i,
+    /\b(?:show|summarize|inspect|trace)\s+(?:the\s+)?(.{2,128}?)\s+(?:connectors?|connections?|topology)\b/i,
+    /\b(?:are|is)\s+(?:any\s+)?(?:the\s+)?(.{2,128}?)\s+(?:unconnected|disconnected)\b/i
+  ];
+  const match = patterns.map(pattern => pattern.exec(text)).find((candidate): candidate is RegExpExecArray => candidate !== null);
+  if (!match) return null;
+  const identity = (match[1] ?? "")
+    .replace(/^\s*(?:all|each|every|any)\s+/i, "")
+    .replace(/[\s,;:.!?]+$/g, "")
+    .trim();
+  if (identity.length < 2 || identity.length > 128 || /^(?:it|they|them|these|those|this|that|anything|everything|something)$/i.test(identity)) return null;
+
+  return {
+    schema: AEC_SEMANTIC_TASK_V1_SCHEMA,
+    operation: "inspect",
+    subject: { kind: "class", semantic_class: "other", terms: [identity.toLocaleLowerCase()], categories: [], family_name: null, type_name: null, system_name: null, identifiers: [] },
+    scope: { kind: "active_context", document: null, levels: [], rooms: [], spaces: [], areas: [], views: [], sheets: [], systems: [], element_ids: [], region: null },
+    reference: { strategy: "none", source_description: null, source_room: null },
+    mutation: { kind: "none", requested: false },
+    outputs: ["summary", "count", "element_ids", "parameters"],
+    execution: { max_results: 500, max_primary_actions: 2, allow_document_fallback: false, requires_visual_verification: false },
+    confidence: { value: 0.99, ambiguity: "none", reasons: ["Explicit read-only named-object connector topology question."] },
+    evidence: { user_text: text }
+  };
+}
+
 function deterministicShockArrestorTask(userText: string): AecSemanticTaskV1 | null {
   const identityMatch = userText.match(/\bshock\s+(?:arrest(?:e|o)?rs?|absorbers?)\b/i);
   if (!identityMatch) return null;
@@ -159,9 +201,14 @@ export async function interpretAecSemanticTask(req: ChatRequest, interpreter: Ae
   if (!userText || userText.length > AEC_SEMANTIC_TASK_MAX_TEXT_CHARS || (req.tool_results?.length ?? 0) > 0) return null;
   const deterministicShockTask = deterministicShockArrestorTask(userText);
   const deterministicScheduleTask = deterministicScheduleInventoryTask(userText);
+  const deterministicTopologyTask = deterministicNamedObjectTopologyTask(userText);
   if (deterministicScheduleTask) {
     try { appendEvent(req.session_id, "assistant", "aec.semantic_task", { message_id: req.message_id, interpreter: "deterministic.schedule_inventory", task: deterministicScheduleTask }); } catch { }
     return deterministicScheduleTask;
+  }
+  if (deterministicTopologyTask) {
+    try { appendEvent(req.session_id, "assistant", "aec.semantic_task", { message_id: req.message_id, interpreter: "deterministic.named_object_topology", task: deterministicTopologyTask }); } catch { }
+    return deterministicTopologyTask;
   }
   const recent = getRecentMessages(req.session_id, 8).filter(message => message.text.trim() && message.text.trim() !== userText && message.text.trim() !== delegatedText).slice(-6).map(message => ({ role: message.role, text: message.text.slice(0, AEC_SEMANTIC_TASK_MAX_TEXT_CHARS) }));
   try {

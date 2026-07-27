@@ -3,6 +3,8 @@ import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest } from "./contracts
 import { interpretAecTaskIntent, type AecTaskIntentInterpreter } from "./aec_task_intent_interpreter.js";
 import { resolveAecWorkflow } from "./deterministic/aec_workflow_registry.js";
 import { issueAecTaskIntentToken } from "./aec_task_intent_cache.js";
+import { deterministicNamedObjectTopologyTask } from "./aec_semantic_task_interpreter.js";
+import { planAecQueryTask } from "./deterministic/aec_query_plan.js";
 
 export type AecTaskIntentHttpResult = {
   status: number;
@@ -25,6 +27,22 @@ export async function resolveAecTaskIntentHttp(body: unknown, interpreter?: AecT
   const parsed = body as Record<string, unknown>;
   const userText = typeof parsed.user_text === "string" ? parsed.user_text : typeof parsed.userText === "string" ? parsed.userText : typeof parsed.request === "string" ? parsed.request : "";
   if (!userText.trim()) return { status: 400, body: { ok: false, error: "user_text is required" } };
+  const topologyTask = deterministicNamedObjectTopologyTask(userText);
+  if (topologyTask) {
+    const topologyPlan = planAecQueryTask(topologyTask);
+    if (topologyPlan.status === "ready" && topologyPlan.workflow_id === "query.document_elements") {
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          handled: true,
+          workflow_id: topologyPlan.workflow_id,
+          intent_token: null,
+          intent: topologyTask
+        }
+      };
+    }
+  }
   const request: ChatRequest = {
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
     session_id: safeId(parsed.session_id ?? parsed.sessionId, `semantic-preflight-${randomUUID()}`),

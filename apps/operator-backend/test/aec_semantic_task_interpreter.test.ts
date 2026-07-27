@@ -82,6 +82,40 @@ test("explicit schedule inventory bypasses the provider interpreter", async () =
   assert.equal(task?.mutation.requested, false);
 });
 
+test("named-object topology questions bypass the provider without treating negative write constraints as mutations", async () => {
+  const prompts = [
+    "What are the shock arrestors connected to? Summarize the pipe system and flag any that aren't connected. Don't change anything.",
+    "What do the VAV boxes connect to?",
+    "Which duct system are the supply diffusers connected to?",
+    "Inspect the pump connectors.",
+    "Are any expansion tanks disconnected?"
+  ];
+  for (const prompt of prompts) {
+    let calls = 0;
+    const task = await interpretAecSemanticTask(
+      { version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: "topology-fast-path", message_id: "m", user_text: prompt },
+      { async interpret() { calls++; return null; } }
+    );
+    assert.equal(calls, 0, prompt);
+    assert.equal(task?.operation, "inspect", prompt);
+    assert.equal(task?.subject.kind, "class", prompt);
+    assert.equal(task?.scope.kind, "active_context", prompt);
+    assert.equal(task?.mutation.requested, false, prompt);
+    assert.equal(task?.execution.max_primary_actions, 2, prompt);
+  }
+});
+
+test("named-object topology fast path fails closed for mutation and pronoun-only requests", async () => {
+  for (const prompt of ["Connect the shock arrestors to CW 5.", "What is it connected to?", "Disconnect the expansion tanks."]) {
+    let calls = 0;
+    await interpretAecSemanticTask(
+      { version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: "topology-guard", message_id: "m", user_text: prompt },
+      { async interpret() { calls++; return null; } }
+    );
+    assert.equal(calls, 1, prompt);
+  }
+});
+
 test("explicit shock-arrestor inventory preserves literal identity instead of a guessed plumbing category", async () => {
   let calls = 0;
   const prompt = "Can you find the shock arrestors in this project and tell me what they are?";
