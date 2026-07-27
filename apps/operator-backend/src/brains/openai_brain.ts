@@ -103,7 +103,6 @@ import {
   discoverRegisteredRouteFrontierV1,
   type RegisteredRouteFrontierCandidateV1
 } from "../existing_conditions/registered_route_frontier_discovery.js";
-
 type OpenAiDecision = {
   assistant_message: string;
   actions: Array<{
