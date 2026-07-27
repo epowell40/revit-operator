@@ -141,6 +141,7 @@ namespace RevitBridge.Logic.Handlers
             public double? maxDistanceFt { get; set; }
             public int? limit { get; set; } = 200;
             public string spatialResolution { get; set; } = "association";
+            public string spatialVerticalScope { get; set; } = "volume";
             public string spatialKindPreference { get; set; } = "auto";
             public bool? includeHostRooms { get; set; }
             public bool? includeHostSpaces { get; set; }
@@ -246,6 +247,18 @@ namespace RevitBridge.Logic.Handlers
                 warnings.Add($"Unknown spatialResolution '{p?.spatialResolution}'; using association-only behavior.");
                 spatialResolutionMode = "association";
             }
+            var spatialVerticalScope = (p?.spatialVerticalScope ?? "volume").Trim().ToLowerInvariant();
+            if (spatialVerticalScope != "volume" && spatialVerticalScope != "same_level")
+            {
+                warnings.Add($"Unknown spatialVerticalScope '{p?.spatialVerticalScope}'; using volume behavior.");
+                spatialVerticalScope = "volume";
+            }
+            if (SpatialVerticalScopeUtil.RequiresGeometry(spatialVerticalScope) && !resolveGeometry)
+            {
+                warnings.Add("spatialVerticalScope=same_level requires factual geometry; spatialResolution was promoted from association to geometry.");
+                spatialResolutionMode = "geometry";
+                resolveGeometry = true;
+            }
 
             ElementSpatialContextResolver spatialResolver = null;
             if (resolveGeometry)
@@ -264,7 +277,8 @@ namespace RevitBridge.Logic.Handlers
                     p?.linkedModelNameContains,
                     spatialResolutionMode == "geometry_with_nearest"
                         ? p?.nearestCandidateLimit
-                        : 0);
+                        : 0,
+                    spatialVerticalScope);
                 warnings.AddRange(spatialResolver.Warnings);
             }
 
@@ -370,6 +384,7 @@ namespace RevitBridge.Logic.Handlers
                 truncated,
                 itemsComplete = !truncated && requestedElementIdsMissing.Count == 0,
                 spatialResolution = spatialResolutionMode,
+                spatialVerticalScope,
                 items,
                 warnings
             });

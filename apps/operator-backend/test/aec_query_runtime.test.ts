@@ -338,6 +338,7 @@ test("where query follows exact discovered ids with geometry-aware room resoluti
       elementIds: [101, 102, 103, 104],
       limit: 5,
       spatialResolution: "geometry_with_nearest",
+      spatialVerticalScope: "same_level",
       spatialKindPreference: "room",
       includeHostRooms: true,
       includeHostSpaces: false,
@@ -352,15 +353,17 @@ test("where query follows exact discovered ids with geometry-aware room resoluti
     status: "done",
     result_json: {
       count: 3,
+      spatialResolution: "geometry_with_nearest",
+      spatialVerticalScope: "same_level",
       truncated: false,
       requestedElementCount: 4,
       requestedElementIdsMissing: [104],
       requestedElementIdsMissingCount: 1,
       itemsComplete: false,
       items: [
-        { elementId: 101, levelName: "LEVEL 02", roomNumber: "214", roomName: "PATIENT", spatialKind: "Room", isNested: false, spatialContext: { status: "resolved", selected: { sourceScope: "linked", linkInstanceName: "A_DUKE B200.rvt" } } },
-        { elementId: 102, levelName: "LEVEL 02", roomNumber: null, roomName: null, isNested: false, spatialContext: { status: "ambiguous", matches: [{ spatialKind: "Room", number: "215", name: "CORRIDOR" }, { spatialKind: "Room", number: "216", name: "STORAGE" }] } },
-        { elementId: 103, levelName: "LEVEL 01", roomNumber: null, roomName: null, isNested: false, spatialContext: { status: "unresolved", nearestCandidates: [{ spatialKind: "Room", number: "117", name: "MECHANICAL" }] } }
+        { elementId: 101, levelName: "LEVEL 02", roomNumber: "214", roomName: "PATIENT", spatialKind: "Room", isNested: false, spatialContext: { status: "resolved", spatialVerticalScope: "same_level", selected: { sourceScope: "linked", linkInstanceName: "A_DUKE B200.rvt" } } },
+        { elementId: 102, levelName: "LEVEL 02", roomNumber: null, roomName: null, isNested: false, spatialContext: { status: "ambiguous", spatialVerticalScope: "same_level", matches: [{ spatialKind: "Room", number: "215", name: "CORRIDOR" }, { spatialKind: "Room", number: "216", name: "STORAGE" }] } },
+        { elementId: 103, levelName: "LEVEL 01", roomNumber: null, roomName: null, isNested: false, spatialContext: { status: "unresolved", spatialVerticalScope: "same_level", nearestCandidates: [{ spatialKind: "Room", number: "117", name: "MECHANICAL" }] } }
       ]
     }
   }]), interpreter);
@@ -371,6 +374,77 @@ test("where query follows exact discovered ids with geometry-aware room resoluti
   assert.match(done.response?.assistant_message ?? "", /element 103: room unresolved, LEVEL 01; nearest candidates \(not assignments\): Room 117 — MECHANICAL/);
   assert.match(done.response?.assistant_message ?? "", /element 104: room unresolved; Revit did not return a spatial row for this requested element/);
   assert.equal(done.response?.aec_query_receipt?.status, "ambiguous");
+});
+
+test("where completion rejects stale, missing, and mixed same-level provenance", async () => {
+  const scenarios = [
+    {
+      name: "stale-volume",
+      root: { spatialResolution: "geometry_with_nearest", spatialVerticalScope: "volume" },
+      rowScopes: ["volume", "volume"]
+    },
+    {
+      name: "missing-receipt",
+      root: {},
+      rowScopes: [undefined, undefined]
+    },
+    {
+      name: "mixed-row",
+      root: { spatialResolution: "geometry_with_nearest", spatialVerticalScope: "same_level" },
+      rowScopes: ["same_level", "volume"]
+    }
+  ] as const;
+
+  for (const scenario of scenarios) {
+    __testOnlyClearAecQueryStates();
+    const value = shockArrestors(true);
+    const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+    const session = `shock-provenance-${scenario.name}`;
+    const initial = request(session);
+    initial.user_text = value.evidence.user_text;
+    await maybeRunAecSemanticQuery(initial, interpreter);
+    await maybeRunAecSemanticQuery(request(session, [{
+      action_id: "aec-query-document-elements",
+      method: "POST",
+      path: "/revit/find-elements",
+      status: "done",
+      result_json: {
+        count: 2,
+        elementIds: [301, 302],
+        itemsComplete: true,
+        items: [
+          { elementId: 301, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings" },
+          { elementId: 302, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings" }
+        ]
+      }
+    }]), interpreter);
+
+    const done = await maybeRunAecSemanticQuery(request(session, [{
+      action_id: "aec-query-document-element-locations",
+      method: "POST",
+      path: "/revit/locate-elements",
+      status: "done",
+      result_json: {
+        count: 2,
+        ...scenario.root,
+        items: scenario.rowScopes.map((spatialVerticalScope, index) => ({
+          elementId: 301 + index,
+          levelName: "LEVEL 02",
+          roomNumber: String(214 + index),
+          roomName: "PATIENT",
+          spatialContext: {
+            status: "resolved",
+            ...(spatialVerticalScope ? { spatialVerticalScope } : {}),
+            selected: { sourceScope: "linked" }
+          }
+        }))
+      }
+    }]), interpreter);
+
+    assert.match(done.response?.assistant_message ?? "", /did not return consistent geometry_with_nearest\/same_level provenance/);
+    assert.doesNotMatch(done.response?.assistant_message ?? "", /Room 214/);
+    assert.equal(done.response?.aec_query_receipt?.status, "failed");
+  }
 });
 
 test("whole-document discovery reports explicit incompleteness rather than claiming exhaustive inventory", async () => {
@@ -421,12 +495,14 @@ test("spatial completion remains non-complete when Revit omits any requested ele
     status: "done",
     result_json: {
       count: 1,
+      spatialResolution: "geometry_with_nearest",
+      spatialVerticalScope: "same_level",
       requestedElementCount: 2,
       requestedElementIdsMissing: [202],
       requestedElementIdsMissingCount: 1,
       itemsComplete: false,
       items: [
-        { elementId: 201, levelName: "LEVEL 02", roomNumber: "214", roomName: "PATIENT", isNested: false, spatialContext: { status: "resolved", selected: { sourceScope: "host" } } }
+        { elementId: 201, levelName: "LEVEL 02", roomNumber: "214", roomName: "PATIENT", isNested: false, spatialContext: { status: "resolved", spatialVerticalScope: "same_level", selected: { sourceScope: "host" } } }
       ]
     }
   }]), interpreter);

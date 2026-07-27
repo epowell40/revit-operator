@@ -136,6 +136,29 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void Same_Level_Matches_Transformed_Elevations_And_Canonical_Numbered_Names()
+        {
+            Assert.True(SpatialLevelMatchUtil.IsSameLevel("LEVEL 02", 118.0, "Architectural Level 2", 118.25));
+            Assert.True(SpatialLevelMatchUtil.IsSameLevel("LEVEL 02 (118'-0\")", 118.0, "Architectural Level 2", 118.25));
+            Assert.False(SpatialLevelMatchUtil.IsSameLevel("LEVEL 02", 118.0, "LEVEL 03", 119.0));
+            Assert.False(SpatialLevelMatchUtil.IsSameLevel("LEVEL 02", 118.0, "LEVEL 03", 130.0));
+            Assert.True(SpatialLevelMatchUtil.IsSameLevel("LEVEL 02", null, "Level 2", null));
+            Assert.True(SpatialLevelMatchUtil.IsSameLevel("L-003", null, "L 3", null));
+            Assert.False(SpatialLevelMatchUtil.IsSameLevel("LEVEL 02", null, "LEVEL 20", null));
+            Assert.False(SpatialLevelMatchUtil.IsSameLevel(null, null, "LEVEL 02", null));
+        }
+
+        [Fact]
+        public void Same_Level_Scope_Requires_Factual_Footprint_Evidence_Not_Native_Association()
+        {
+            Assert.False(SpatialVerticalScopeUtil.AllowsAssociationEvidence("same_level"));
+            Assert.True(SpatialVerticalScopeUtil.RequiresGeometry("same_level"));
+            Assert.False(SpatialVerticalScopeUtil.RequiresGeometry("volume"));
+            Assert.True(SpatialVerticalScopeUtil.AllowsAssociationEvidence("volume"));
+            Assert.True(SpatialVerticalScopeUtil.AllowsAssociationEvidence(null));
+        }
+
+        [Fact]
         public void Candidate_Source_Flags_And_Geometric_Room_Filter_Are_Enforced()
         {
             Assert.False(SpatialCandidateFilterUtil.SourceIsEnabled("Room", "host", false, true, true));

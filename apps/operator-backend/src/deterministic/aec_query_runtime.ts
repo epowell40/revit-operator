@@ -342,7 +342,18 @@ function completeDocumentSpatial(task: AecSemanticTaskV1, state: QueryState, res
     return response(`I found matching model instances but could not resolve their room locations: ${result.error || "the spatial action failed"}. No model changes were made.`, [], { workflow_id: "query.document_elements", status: "failed" });
   }
   const payload = resultPayload(result);
-  const rows = resultItems(payload, 500).filter(item => item.isNested !== true);
+  const allRows = resultItems(payload, 500);
+  const rootResolution = textValue(payload?.spatialResolution);
+  const rootVerticalScope = textValue(payload?.spatialVerticalScope);
+  const rowsHaveSameLevelReceipt = allRows.every(row =>
+    textValue(objectValue(row.spatialContext)?.spatialVerticalScope) === "same_level"
+  );
+  if (rootResolution !== "geometry_with_nearest" ||
+      rootVerticalScope !== "same_level" ||
+      !rowsHaveSameLevelReceipt) {
+    return response("I found matching model instances, but Revit did not return consistent geometry_with_nearest/same_level provenance for every spatial row, so I cannot state their room numbers. No model changes were made.", [], { workflow_id: "query.document_elements", status: "failed" });
+  }
+  const rows = allRows.filter(item => item.isNested !== true);
   const rowIds = new Set(rows.map(item => Number(item.elementId ?? item.id)).filter(id => Number.isSafeInteger(id) && id > 0));
   const missingIds = (Array.isArray(payload?.requestedElementIdsMissing) ? payload.requestedElementIdsMissing : [])
     .filter(id => Number.isSafeInteger(id) && (id as number) > 0 && !rowIds.has(id as number))
@@ -454,6 +465,7 @@ function continueRun(req: ChatRequest, state: QueryState): ChatResponse | null {
           elementIds: ids,
           limit: Math.min(500, ids.length + 1),
           spatialResolution: "geometry_with_nearest",
+          spatialVerticalScope: "same_level",
           spatialKindPreference: "room",
           includeHostRooms: true,
           includeHostSpaces: false,

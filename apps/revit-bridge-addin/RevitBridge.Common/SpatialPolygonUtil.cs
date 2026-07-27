@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Text.RegularExpressions;
 
 namespace RevitBridge.Common
 {
@@ -227,6 +229,85 @@ namespace RevitBridge.Common
             var max = Math.Max(baseElevation.Value, topElevation.Value);
             var tol = Math.Max(0, tolerance);
             return z >= min - tol && z <= max + tol;
+        }
+    }
+
+    public static class SpatialLevelMatchUtil
+    {
+        public static bool IsSameLevel(
+            string? elementLevelName,
+            double? elementLevelElevation,
+            string? candidateLevelName,
+            double? candidateLevelElevation,
+            double elevationToleranceFt = 2.0)
+        {
+            if (TryGetOrdinal(elementLevelName, out var elementOrdinal) &&
+                TryGetOrdinal(candidateLevelName, out var candidateOrdinal) &&
+                elementOrdinal != candidateOrdinal)
+                return false;
+
+            if (elementLevelElevation.HasValue && candidateLevelElevation.HasValue)
+            {
+                var tolerance = Math.Max(0, elevationToleranceFt);
+                return Math.Abs(elementLevelElevation.Value - candidateLevelElevation.Value) <= tolerance;
+            }
+
+            var elementKey = NormalizeName(elementLevelName);
+            var candidateKey = NormalizeName(candidateLevelName);
+            return elementKey.Length > 0 && string.Equals(elementKey, candidateKey, StringComparison.Ordinal);
+        }
+
+        private static bool TryGetOrdinal(string? levelName, out long ordinal)
+        {
+            ordinal = 0;
+            if (string.IsNullOrWhiteSpace(levelName)) return false;
+            var labeledMatches = Regex.Matches(
+                levelName!,
+                @"(?:LEVEL|LVL|FLOOR|FL)\s*[-_ ]*0*(\d+)",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (labeledMatches.Count > 0)
+            {
+                return long.TryParse(
+                    labeledMatches[labeledMatches.Count - 1].Groups[1].Value,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out ordinal);
+            }
+
+            var matches = Regex.Matches(levelName!, @"\d+");
+            if (matches.Count != 1) return false;
+            return long.TryParse(
+                matches[0].Value,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out ordinal);
+        }
+
+        public static string NormalizeName(string? levelName)
+        {
+            if (string.IsNullOrWhiteSpace(levelName)) return string.Empty;
+            var upper = levelName!.Trim().ToUpperInvariant();
+            var numericCanonical = Regex.Replace(upper, @"\d+", match =>
+            {
+                if (long.TryParse(match.Value, NumberStyles.None, CultureInfo.InvariantCulture, out var value))
+                    return value.ToString(CultureInfo.InvariantCulture);
+                var trimmed = match.Value.TrimStart('0');
+                return trimmed.Length > 0 ? trimmed : "0";
+            });
+            return Regex.Replace(numericCanonical, @"[^A-Z0-9]+", string.Empty);
+        }
+    }
+
+    public static class SpatialVerticalScopeUtil
+    {
+        public static bool RequiresGeometry(string? spatialVerticalScope)
+        {
+            return string.Equals(spatialVerticalScope, "same_level", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static bool AllowsAssociationEvidence(string? spatialVerticalScope)
+        {
+            return !RequiresGeometry(spatialVerticalScope);
         }
     }
 
