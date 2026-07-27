@@ -87,11 +87,20 @@ export function revitCourierTargetFromContext(context: unknown): {
   const legacyTitle = boundedContextString(legacyDocument.title, 512);
   const canonicalPath = boundedContextString(canonicalDocument.path, 2048);
   const legacyPath = boundedContextString(legacyDocument.path, 2048);
-  if (canonicalExecutor && legacyExecutor && canonicalExecutor !== legacyExecutor) return {};
-  if (canonicalTitle && legacyTitle && canonicalTitle.toLowerCase() !== legacyTitle.toLowerCase()) return {};
-  if (canonicalPath && legacyPath && canonicalPath.replace(/\\/g, "/").toLowerCase() !== legacyPath.replace(/\\/g, "/").toLowerCase()) return {};
+  if (canonicalExecutor && legacyExecutor && canonicalExecutor !== legacyExecutor) {
+    throw new Error("Revit context integrity error: canonical and compatibility courier executors disagree.");
+  }
+  if (canonicalTitle && legacyTitle && canonicalTitle.toLowerCase() !== legacyTitle.toLowerCase()) {
+    throw new Error("Revit context integrity error: canonical and compatibility document titles disagree.");
+  }
+  if (canonicalPath && legacyPath && canonicalPath.replace(/\\/g, "/").toLowerCase() !== legacyPath.replace(/\\/g, "/").toLowerCase()) {
+    throw new Error("Revit context integrity error: canonical and compatibility document paths disagree.");
+  }
   const executorId = canonicalExecutor || legacyExecutor;
   const targetExecutorId = executorId && /^[A-Za-z0-9._:-]+$/.test(executorId) ? executorId : undefined;
+  if (executorId && !targetExecutorId) {
+    throw new Error("Revit context integrity error: courier executor is malformed.");
+  }
   if (!targetExecutorId) return {};
   const documentTitle = canonicalTitle || legacyTitle;
   const documentPath = canonicalPath || legacyPath;
@@ -838,13 +847,28 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     }
   }
   let courierContext: ReturnType<typeof beginRevitCourierTurnContext> = null;
+  let courierTarget: ReturnType<typeof revitCourierTargetFromContext>;
+  try {
+    courierTarget = revitCourierTargetFromContext(req.context);
+  } catch (error) {
+    endRequirementsPlanningLease(requirementsLease);
+    requirementsLease = null;
+    const message = `${error instanceof Error ? error.message : String(error)} I stopped before planning or Revit tool actions.`;
+    cb.onDone?.(message);
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message: message,
+      actions: [],
+      ...(requirementsReceipt ? { requirements_receipt: requirementsReceipt } : {})
+    };
+  }
   let start: any;
   try {
     courierContext = beginRevitCourierTurnContext({
       session_id: req.session_id,
       message_id: req.message_id,
       ttl_ms: codexTurnTimeoutMs() + 60_000,
-      ...revitCourierTargetFromContext(req.context)
+      ...courierTarget
     });
     start = (await withTransportRetry(workspaceRoot, async activeClient => {
       c = activeClient;

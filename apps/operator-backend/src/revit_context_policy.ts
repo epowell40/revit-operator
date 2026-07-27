@@ -6,10 +6,9 @@ function contextObject(value: unknown): Record<string, unknown> {
 
 export function hasRevitTurnContext(contextValue: unknown): boolean {
   const context = contextObject(contextValue);
-  const revit = contextObject(context.revit);
   const ui = contextObject(context.ui);
-  const compatibilityDocument = contextObject(ui.revit_document);
-  return Object.keys(revit).length > 0 || Object.keys(compatibilityDocument).length > 0;
+  return Object.prototype.hasOwnProperty.call(context, "revit")
+    || Object.prototype.hasOwnProperty.call(ui, "revit_document");
 }
 
 export function mayInjectUnscopedLegacyMemory(contextValue: unknown): boolean {
