@@ -18827,14 +18827,8 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
   }
 
   try {
-    const profileBlock = [
-      mayInjectUnscopedLegacyMemory(req.context) ? formatProjectProfileForPrompt() : "",
-      formatRequirementsPromptBlockSafely(req)
-    ].filter(Boolean).join("\n\n");
-    if (profileBlock) {
-      lines.push(profileBlock);
-      lines.push("");
-    }
+    const profileBlock = [mayInjectUnscopedLegacyMemory(req.context) ? formatProjectProfileForPrompt() : "", formatRequirementsPromptBlockSafely(req)].filter(Boolean).join("\n\n");
+    if (profileBlock) lines.push(profileBlock, "");
   } catch {
     // ignore
   }
