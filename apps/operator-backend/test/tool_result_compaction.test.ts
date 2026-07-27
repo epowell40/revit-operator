@@ -183,13 +183,15 @@ test("compact locate-elements preserves inherited row and candidate omissions ac
       selected: {
         spatialKind: "Room",
         number: "401",
-        equivalentSourceIds: Array.from({ length: 21 }, (_, sourceIndex) => `source-${sourceIndex}`)
+        equivalentSourceIds: Array.from({ length: 21 }, (_, sourceIndex) => `source-${sourceIndex}`),
+        equivalentPhaseNames: Array.from({ length: 21 }, (_, phaseIndex) => `phase-${phaseIndex}`)
       },
       matches: [],
       nearestCandidates: Array.from({ length: 21 }, (_, candidateIndex) => ({
         spatialKind: "Room",
         number: `N-${candidateIndex}`,
-        equivalentSourceIds: Array.from({ length: 21 }, (_, sourceIndex) => `nearest-${candidateIndex}-${sourceIndex}`)
+        equivalentSourceIds: Array.from({ length: 21 }, (_, sourceIndex) => `nearest-${candidateIndex}-${sourceIndex}`),
+        equivalentPhaseNames: Array.from({ length: 21 }, (_, phaseIndex) => `nearest-phase-${candidateIndex}-${phaseIndex}`)
       }))
     } : null
   }));
@@ -207,7 +209,9 @@ test("compact locate-elements preserves inherited row and candidate omissions ac
   assert.equal(second.itemsComplete, false);
   assert.equal(second.items[0].spatialContext.nearestCandidatesOmitted, 1);
   assert.equal(second.items[0].spatialContext.selected.equivalentSourceIdsOmitted, 1);
+  assert.equal(second.items[0].spatialContext.selected.equivalentPhaseNamesOmitted, 1);
   assert.equal(second.items[0].spatialContext.nearestCandidates[0].equivalentSourceIdsOmitted, 1);
+  assert.equal(second.items[0].spatialContext.nearestCandidates[0].equivalentPhaseNamesOmitted, 1);
 });
 
 test("compact parameter reads preserves late project-identifier evidence", () => {

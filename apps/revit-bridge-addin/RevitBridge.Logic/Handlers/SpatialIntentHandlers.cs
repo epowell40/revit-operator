@@ -250,10 +250,13 @@ namespace RevitBridge.Logic.Handlers
             ElementSpatialContextResolver spatialResolver = null;
             if (resolveGeometry)
             {
-                var effectivePhase = ResolveEffectivePhase(doc, app.ActiveUIDocument?.ActiveView, p, candidates, warnings);
+                var explicitPhaseRequested = p?.phaseId.HasValue == true || !string.IsNullOrWhiteSpace(p?.phaseName);
+                var effectivePhase = ResolveEffectivePhase(doc, app.ActiveUIDocument?.ActiveView, p, warnings);
+                var allowPhaseAgnostic = effectivePhase == null && !explicitPhaseRequested;
                 spatialResolver = new ElementSpatialContextResolver(
                     doc,
                     effectivePhase,
+                    allowPhaseAgnostic,
                     p?.spatialKindPreference,
                     p?.includeHostRooms ?? true,
                     p?.includeHostSpaces ?? true,
@@ -376,7 +379,6 @@ namespace RevitBridge.Logic.Handlers
             Document doc,
             View activeView,
             Params p,
-            IReadOnlyCollection<Element> candidates,
             List<string> warnings)
         {
             Phase byId = null;
@@ -415,33 +417,8 @@ namespace RevitBridge.Logic.Handlers
             }
             catch { }
 
-            var sharedCreatedPhaseId = SpatialEffectivePhaseFallbackUtil.ResolveSharedCreatedPhaseId(
-                (candidates ?? Array.Empty<Element>()).Select(TryGetCreatedPhaseId));
-            if (sharedCreatedPhaseId.HasValue)
-            {
-                var sharedCreatedPhase = doc.GetElement(ElementIdCompat.Create(sharedCreatedPhaseId.Value)) as Phase;
-                if (sharedCreatedPhase != null)
-                {
-                    warnings.Add($"The active view has no phase; geometric spatial assignment used the one Created Phase shared by all requested elements: '{sharedCreatedPhase.Name}' ({sharedCreatedPhaseId.Value}).");
-                    return sharedCreatedPhase;
-                }
-            }
-
-            warnings.Add("The active view has no resolvable phase and the requested elements do not share one valid Created Phase. Provide phaseId or exact phaseName for geometric spatial assignment.");
+            warnings.Add("The active view has no resolvable phase; geometric spatial assignment will evaluate factual Room/Space variants across phases and resolve only a unique, phase-consistent identity.");
             return null;
-        }
-
-        private static long? TryGetCreatedPhaseId(Element element)
-        {
-            try
-            {
-                var value = ElementIdCompat.GetValue(element?.CreatedPhaseId);
-                return value > 0 ? value : (long?)null;
-            }
-            catch
-            {
-                return null;
-            }
         }
     }
 

@@ -937,6 +937,9 @@ export function compactLocateElementsResultForPrompt(
     const equivalentSourceIds = Array.isArray(candidate.equivalentSourceIds)
       ? candidate.equivalentSourceIds
       : [];
+    const equivalentPhaseNames = Array.isArray(candidate.equivalentPhaseNames)
+      ? candidate.equivalentPhaseNames
+      : [];
     return {
       spatialKind: candidate.spatialKind ?? null,
       number: candidate.number ?? null,
@@ -956,7 +959,11 @@ export function compactLocateElementsResultForPrompt(
       equivalentSourceIds: equivalentSourceIds.slice(0, 20),
       equivalentSourceIdsOmitted:
         inheritedOmitted(candidate, "equivalentSourceIdsOmitted") +
-        Math.max(0, equivalentSourceIds.length - 20)
+        Math.max(0, equivalentSourceIds.length - 20),
+      equivalentPhaseNames: equivalentPhaseNames.slice(0, 20),
+      equivalentPhaseNamesOmitted:
+        inheritedOmitted(candidate, "equivalentPhaseNamesOmitted") +
+        Math.max(0, equivalentPhaseNames.length - 20)
     };
   };
   const compactSpatialContext = (value: unknown): Record<string, unknown> | null => {

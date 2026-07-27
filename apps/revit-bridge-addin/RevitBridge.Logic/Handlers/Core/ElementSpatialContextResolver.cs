@@ -28,6 +28,7 @@ namespace RevitBridge.Logic.Handlers.Core
         public double? boundaryDistanceFt { get; set; }
         public double? levelDeltaFt { get; set; }
         public List<string> equivalentSourceIds { get; set; } = new List<string>();
+        public List<string> equivalentPhaseNames { get; set; } = new List<string>();
     }
 
     internal sealed class ElementSpatialResolutionResult
@@ -62,6 +63,7 @@ namespace RevitBridge.Logic.Handlers.Core
             public double? LevelElevationFt { get; set; }
             public long? PhaseId { get; set; }
             public string? PhaseName { get; set; }
+            public List<long> ApplicableHostPhaseIds { get; set; } = new List<long>();
             public string Method { get; set; } = "point_in_boundary";
             public List<IReadOnlyList<SpatialPoint2>> BoundaryLoops { get; set; } = new List<IReadOnlyList<SpatialPoint2>>();
             public Transform SourceToHost { get; set; } = Transform.Identity;
@@ -83,10 +85,12 @@ namespace RevitBridge.Logic.Handlers.Core
         {
             public SpatialCandidate Primary { get; set; } = null!;
             public List<string> EquivalentSourceIds { get; set; } = new List<string>();
+            public List<string> EquivalentPhaseNames { get; set; } = new List<string>();
         }
 
         private readonly Document _doc;
         private readonly Phase? _hostPhase;
+        private readonly bool _phaseAgnostic;
         private readonly string _preference;
         private readonly bool _includeHostRooms;
         private readonly bool _includeHostSpaces;
@@ -100,6 +104,7 @@ namespace RevitBridge.Logic.Handlers.Core
         public ElementSpatialContextResolver(
             Document doc,
             Phase? hostPhase,
+            bool allowPhaseAgnostic,
             string? spatialKindPreference,
             bool includeHostRooms,
             bool includeHostSpaces,
@@ -109,6 +114,7 @@ namespace RevitBridge.Logic.Handlers.Core
         {
             _doc = doc;
             _hostPhase = hostPhase;
+            _phaseAgnostic = hostPhase == null && allowPhaseAgnostic;
             _preference = NormalizePreference(spatialKindPreference);
             _includeHostRooms = includeHostRooms;
             _includeHostSpaces = includeHostSpaces;
@@ -116,10 +122,12 @@ namespace RevitBridge.Logic.Handlers.Core
             _linkedModelNameContains = linkedModelNameContains;
             _nearestLimit = Math.Max(0, Math.Min(20, nearestCandidateLimit ?? 3));
             _warnings = new List<string>();
-            _geometryCandidates = _hostPhase == null
-                ? new List<SpatialCandidate>()
-                : BuildGeometryCandidates();
-            if (_hostPhase == null)
+            _geometryCandidates = _hostPhase != null || _phaseAgnostic
+                ? BuildGeometryCandidates()
+                : new List<SpatialCandidate>();
+            if (_phaseAgnostic)
+                _warnings.Add("No explicit or active-view phase was available. Evaluated factual Room/Space variants across phases; a result resolves only when containing variants agree on one numbered spatial identity.");
+            else if (_hostPhase == null)
                 _warnings.Add("No effective host phase was resolved; geometric spatial assignments were left unresolved.");
         }
 
@@ -129,6 +137,7 @@ namespace RevitBridge.Logic.Handlers.Core
         {
             var elementLevelName = SpatialIntentUtils.GetLevelName(_doc, element);
             var elementLevelElevation = ResolveElementLevelElevation(_doc, element);
+            var lifecyclePresenceByHostPhase = BuildElementLifecyclePresence(element);
             if (_hostPhase != null)
             {
                 string? phaseStatus;
@@ -154,7 +163,7 @@ namespace RevitBridge.Logic.Handlers.Core
                 }
             }
             var association = BuildAssociationCandidates(element)
-                .Where(AcceptsCandidate)
+                .Where(candidate => AcceptsCandidate(candidate) && CandidateAppliesToElementLifecycle(candidate, lifecyclePresenceByHostPhase))
                 .ToList();
 
             if (!TryGetRepresentativePoint(element, out var point))
@@ -186,6 +195,7 @@ namespace RevitBridge.Logic.Handlers.Core
             foreach (var candidate in _geometryCandidates)
             {
                 if (!AcceptsCandidate(candidate)) continue;
+                if (!CandidateAppliesToElementLifecycle(candidate, lifecyclePresenceByHostPhase)) continue;
                 if (!VerticalRangeMatches(point.Z, candidate)) continue;
 
                 candidate.LevelDeltaFt = Delta(elementLevelElevation, candidate.LevelElevationFt);
@@ -288,7 +298,7 @@ namespace RevitBridge.Logic.Handlers.Core
                     .WhereElementIsNotElementType()
                     .Cast<Room>())
                 {
-                    if (!SpatialPhaseMatches(room, _hostPhase))
+                    if (!_phaseAgnostic && !SpatialPhaseMatches(room, _hostPhase))
                     {
                         skippedHostPhase++;
                         continue;
@@ -304,7 +314,7 @@ namespace RevitBridge.Logic.Handlers.Core
                     .WhereElementIsNotElementType()
                     .Cast<Space>())
                 {
-                    if (!SpatialPhaseMatches(space, _hostPhase))
+                    if (!_phaseAgnostic && !SpatialPhaseMatches(space, _hostPhase))
                     {
                         skippedHostPhase++;
                         continue;
@@ -314,7 +324,7 @@ namespace RevitBridge.Logic.Handlers.Core
             }
 
             if (_includeLinkedRooms) AddLinkedRoomCandidates(result);
-            if (skippedHostPhase > 0)
+            if (!_phaseAgnostic && skippedHostPhase > 0)
                 _warnings.Add($"Skipped {skippedHostPhase} host Room/Space records outside effective phase '{_hostPhase?.Name}'.");
             if (result.Count == 0)
                 _warnings.Add("No eligible Room or Space boundaries were available for geometric spatial resolution.");
@@ -333,6 +343,7 @@ namespace RevitBridge.Logic.Handlers.Core
                 _warnings.Add($"Skipped {kind} {ElementIdCompat.GetValue(spatial.Id)} because its vertical extent was unavailable.");
                 return;
             }
+            var phaseId = GetSpatialPhaseId(spatial);
             result.Add(new SpatialCandidate
             {
                 Element = spatial,
@@ -345,8 +356,11 @@ namespace RevitBridge.Logic.Handlers.Core
                 Name = GetName(spatial),
                 LevelName = GetLevelName(_doc, spatial),
                 LevelElevationFt = GetLevelElevation(_doc, spatial.LevelId, Transform.Identity),
-                PhaseId = GetSpatialPhaseId(spatial),
-                PhaseName = _hostPhase?.Name,
+                PhaseId = phaseId,
+                PhaseName = GetSpatialPhaseName(_doc, spatial) ?? _hostPhase?.Name,
+                ApplicableHostPhaseIds = phaseId.HasValue && phaseId.Value > 0
+                    ? new List<long> { phaseId.Value }
+                    : new List<long>(),
                 SourceToHost = Transform.Identity,
                 HostToSource = Transform.Identity,
                 BaseElevationFt = baseZ,
@@ -382,10 +396,18 @@ namespace RevitBridge.Logic.Handlers.Core
                     continue;
                 }
 
-                var linkedPhase = TryResolveLinkedPhase(link, linkDoc, _hostPhase);
-                if (linkedPhase == null)
+                var linkedPhase = _phaseAgnostic ? null : TryResolveLinkedPhase(link, linkDoc, _hostPhase);
+                if (!_phaseAgnostic && linkedPhase == null)
                 {
                     _warnings.Add($"Skipped Revit link '{linkName}' ({linkId}) because phase '{_hostPhase?.Name}' had no reliable linked phase mapping.");
+                    continue;
+                }
+                var hostPhaseIdsByLinkedPhase = _phaseAgnostic
+                    ? BuildHostPhaseIdsByLinkedPhase(link)
+                    : new Dictionary<long, List<long>>();
+                if (_phaseAgnostic && hostPhaseIdsByLinkedPhase.Count == 0)
+                {
+                    _warnings.Add($"Skipped Revit link '{linkName}' ({linkId}) because its Room phases had no reliable host phase mapping for lifecycle checks.");
                     continue;
                 }
 
@@ -395,7 +417,7 @@ namespace RevitBridge.Logic.Handlers.Core
                     .WhereElementIsNotElementType()
                     .Cast<Room>())
                 {
-                    if (!SpatialPhaseMatches(room, linkedPhase))
+                    if (!_phaseAgnostic && !SpatialPhaseMatches(room, linkedPhase))
                     {
                         skippedLinkedPhase++;
                         continue;
@@ -408,6 +430,14 @@ namespace RevitBridge.Logic.Handlers.Core
                         continue;
                     }
                     var roomId = ElementIdCompat.GetValue(room.Id);
+                    var roomPhaseId = _phaseAgnostic
+                        ? GetSpatialPhaseId(room)
+                        : ElementIdCompat.GetValue(linkedPhase.Id);
+                    var applicableHostPhaseIds = new List<long>();
+                    if (_phaseAgnostic && roomPhaseId.HasValue)
+                        hostPhaseIdsByLinkedPhase.TryGetValue(roomPhaseId.Value, out applicableHostPhaseIds);
+                    else if (!_phaseAgnostic && _hostPhase != null)
+                        applicableHostPhaseIds.Add(ElementIdCompat.GetValue(_hostPhase.Id));
                     result.Add(new SpatialCandidate
                     {
                         Element = room,
@@ -422,8 +452,9 @@ namespace RevitBridge.Logic.Handlers.Core
                         Name = room.Name,
                         LevelName = GetLevelName(linkDoc, room),
                         LevelElevationFt = GetLevelElevation(linkDoc, room.LevelId, transform),
-                        PhaseId = ElementIdCompat.GetValue(linkedPhase.Id),
-                        PhaseName = linkedPhase.Name,
+                        PhaseId = roomPhaseId,
+                        PhaseName = _phaseAgnostic ? GetSpatialPhaseName(linkDoc, room) : linkedPhase.Name,
+                        ApplicableHostPhaseIds = applicableHostPhaseIds ?? new List<long>(),
                         SourceToHost = transform,
                         HostToSource = inverse,
                         BaseElevationFt = baseZ,
@@ -431,7 +462,7 @@ namespace RevitBridge.Logic.Handlers.Core
                         BoundaryLoops = loops
                     });
                 }
-                if (skippedLinkedPhase > 0)
+                if (!_phaseAgnostic && skippedLinkedPhase > 0)
                     _warnings.Add($"Skipped {skippedLinkedPhase} Room records in link '{linkName}' outside mapped phase '{linkedPhase.Name}'.");
             }
         }
@@ -469,6 +500,9 @@ namespace RevitBridge.Logic.Handlers.Core
                         LevelElevationFt = GetLevelElevation(_doc, value.LevelId, Transform.Identity),
                         PhaseId = GetSpatialPhaseId(value),
                         PhaseName = _hostPhase?.Name,
+                        ApplicableHostPhaseIds = _hostPhase != null
+                            ? new List<long> { ElementIdCompat.GetValue(_hostPhase.Id) }
+                            : new List<long>(),
                         Method = "association",
                         BoundaryDistanceFt = 0,
                         LevelDeltaFt = 0
@@ -549,9 +583,45 @@ namespace RevitBridge.Logic.Handlers.Core
             return candidate.SpatialKind == "Room" || candidate.SpatialKind == "Space";
         }
 
+        private Dictionary<long, bool> BuildElementLifecyclePresence(Element element)
+        {
+            var result = new Dictionary<long, bool>();
+            if (!_phaseAgnostic) return result;
+            foreach (var hostPhaseId in _geometryCandidates
+                .SelectMany(candidate => candidate.ApplicableHostPhaseIds)
+                .Where(value => value > 0)
+                .Distinct())
+            {
+                var isPresent = false;
+                try
+                {
+                    var phase = _doc.GetElement(ElementIdCompat.Create(hostPhaseId)) as Phase;
+                    if (phase != null)
+                        isPresent = SpatialElementLifecycleUtil.IsPresentInEffectivePhase(
+                            element.GetPhaseStatus(phase.Id).ToString());
+                }
+                catch { }
+                result[hostPhaseId] = isPresent;
+            }
+            return result;
+        }
+
+        private bool CandidateAppliesToElementLifecycle(
+            SpatialCandidate candidate,
+            IReadOnlyDictionary<long, bool> lifecyclePresenceByHostPhase)
+        {
+            if (!_phaseAgnostic) return true;
+            if (!SpatialPhaseVariantProvenanceUtil.IsValid(candidate.PhaseId, candidate.ApplicableHostPhaseIds))
+                return false;
+            return SpatialElementLifecycleUtil.HasAnyApplicablePresentPhase(
+                candidate.ApplicableHostPhaseIds
+                    .Distinct()
+                    .Select(hostPhaseId => lifecyclePresenceByHostPhase.TryGetValue(hostPhaseId, out var isPresent) && isPresent));
+        }
+
         private List<CollapsedCandidate> Collapse(List<SpatialCandidate> values)
         {
-            return values
+            var exact = values
                 .GroupBy(x => x.IdentityKey)
                 .Select(group => new CollapsedCandidate
                 {
@@ -565,12 +635,69 @@ namespace RevitBridge.Logic.Handlers.Core
                         .Cast<string>()
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .OrderBy(x => x)
+                        .ToList(),
+                    EquivalentPhaseNames = group
+                        .Select(x => x.PhaseName)
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Cast<string>()
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(x => x)
                         .ToList()
                 })
+                .ToList();
+
+            if (!_phaseAgnostic) return OrderCollapsed(exact);
+
+            var merged = new List<CollapsedCandidate>();
+            foreach (var group in exact.GroupBy(value => PhaseVariantKey(value.Primary)))
+            {
+                if (string.IsNullOrWhiteSpace(group.Key) ||
+                    !SpatialPhaseVariantProvenanceUtil.CanMerge(group.Select(value => value.Primary.PhaseId)))
+                {
+                    merged.AddRange(group);
+                    continue;
+                }
+
+                var variants = group.ToList();
+                merged.Add(new CollapsedCandidate
+                {
+                    Primary = variants
+                        .OrderBy(value => value.Primary.BoundaryDistanceFt ?? double.PositiveInfinity)
+                        .ThenBy(value => value.Primary.PhaseName)
+                        .Select(value => value.Primary)
+                        .First(),
+                    EquivalentSourceIds = variants
+                        .SelectMany(value => value.EquivalentSourceIds)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(value => value)
+                        .ToList(),
+                    EquivalentPhaseNames = variants
+                        .SelectMany(value => value.EquivalentPhaseNames)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(value => value)
+                        .ToList()
+                });
+            }
+            return OrderCollapsed(merged);
+        }
+
+        private static List<CollapsedCandidate> OrderCollapsed(IEnumerable<CollapsedCandidate> values)
+        {
+            return values
                 .OrderBy(x => x.Primary.Number)
                 .ThenBy(x => x.Primary.Name)
                 .ToList();
         }
+
+        private static string PhaseVariantKey(SpatialCandidate candidate) =>
+            SpatialPhaseVariantIdentityUtil.Build(
+                candidate.SpatialKind,
+                candidate.SourceScope,
+                candidate.LinkInstanceId,
+                candidate.SourceDocumentTitle ?? string.Empty,
+                candidate.Number ?? string.Empty,
+                candidate.Name ?? string.Empty,
+                candidate.LevelName ?? string.Empty);
 
         private static SpatialCandidatePayload ToPayload(CollapsedCandidate collapsed)
         {
@@ -592,7 +719,8 @@ namespace RevitBridge.Logic.Handlers.Core
                 method = candidate.Method,
                 boundaryDistanceFt = candidate.BoundaryDistanceFt,
                 levelDeltaFt = candidate.LevelDeltaFt,
-                equivalentSourceIds = collapsed.EquivalentSourceIds
+                equivalentSourceIds = collapsed.EquivalentSourceIds,
+                equivalentPhaseNames = collapsed.EquivalentPhaseNames
             };
         }
 
@@ -614,6 +742,7 @@ namespace RevitBridge.Logic.Handlers.Core
                 LevelElevationFt = source.LevelElevationFt,
                 PhaseId = source.PhaseId,
                 PhaseName = source.PhaseName,
+                ApplicableHostPhaseIds = source.ApplicableHostPhaseIds.ToList(),
                 Method = source.Method,
                 BoundaryLoops = source.BoundaryLoops,
                 SourceToHost = source.SourceToHost,
@@ -842,6 +971,14 @@ namespace RevitBridge.Logic.Handlers.Core
             return null;
         }
 
+        private static string? GetSpatialPhaseName(Document doc, SpatialElement spatial)
+        {
+            var phaseId = GetSpatialPhaseId(spatial);
+            if (!phaseId.HasValue) return null;
+            try { return (doc.GetElement(ElementIdCompat.Create(phaseId.Value)) as Phase)?.Name; }
+            catch { return null; }
+        }
+
         private static bool SpatialPhaseMatches(SpatialElement spatial, Phase? phase)
         {
             if (phase == null) return false;
@@ -911,16 +1048,36 @@ namespace RevitBridge.Logic.Handlers.Core
             catch { return false; }
         }
 
+        private Dictionary<long, List<long>> BuildHostPhaseIdsByLinkedPhase(RevitLinkInstance link)
+        {
+            return TryReadLinkedPhasePairs(link)
+                .Where(pair => pair.Key > 0 && pair.Value > 0 &&
+                    _doc.GetElement(ElementIdCompat.Create(pair.Key)) is Phase)
+                .GroupBy(pair => pair.Value)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Select(pair => pair.Key).Distinct().OrderBy(value => value).ToList());
+        }
+
         private Phase? TryResolveLinkedPhase(
             RevitLinkInstance link,
             Document linkDoc,
             Phase? hostPhase)
         {
             if (hostPhase == null) return null;
+            var hostId = ElementIdCompat.GetValue(hostPhase.Id);
+            var linkedId = SpatialPhaseMapUtil.ResolveLinkedPhaseId(hostId, TryReadLinkedPhasePairs(link));
+            return linkedId.HasValue
+                ? linkDoc.GetElement(ElementIdCompat.Create(linkedId.Value)) as Phase
+                : null;
+        }
+
+        private List<KeyValuePair<long, long>> TryReadLinkedPhasePairs(RevitLinkInstance link)
+        {
             RevitLinkType? linkType = null;
             try { linkType = _doc.GetElement(link.GetTypeId()) as RevitLinkType; }
             catch { }
-            if (linkType == null) return null;
+            if (linkType == null) return new List<KeyValuePair<long, long>>();
 
             try
             {
@@ -931,9 +1088,8 @@ namespace RevitBridge.Logic.Handlers.Core
                     Type.EmptyTypes,
                     null);
                 if (method == null || !(method.Invoke(linkType, null) is IEnumerable map))
-                    return null;
+                    return new List<KeyValuePair<long, long>>();
 
-                var hostId = ElementIdCompat.GetValue(hostPhase.Id);
                 var pairs = new List<KeyValuePair<long, long>>();
                 foreach (var entry in map)
                 {
@@ -944,13 +1100,10 @@ namespace RevitBridge.Logic.Handlers.Core
                             ElementIdCompat.GetValue(key),
                             ElementIdCompat.GetValue(value)));
                 }
-                var linkedId = SpatialPhaseMapUtil.ResolveLinkedPhaseId(hostId, pairs);
-                return linkedId.HasValue
-                    ? linkDoc.GetElement(ElementIdCompat.Create(linkedId.Value)) as Phase
-                    : null;
+                return pairs;
             }
             catch { }
-            return null;
+            return new List<KeyValuePair<long, long>>();
         }
 
         private static ElementId? TryReadElementIdProperty(object target, string propertyName)

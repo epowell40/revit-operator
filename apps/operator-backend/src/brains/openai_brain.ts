@@ -19379,6 +19379,7 @@ function buildBoundedSpatialLocatePromptBlock(
   const spatialCandidateOmissions = (candidate: any): number =>
     candidate && typeof candidate === "object"
       ? Math.max(0, Number(candidate.equivalentSourceIdsOmitted) || 0)
+        + Math.max(0, Number(candidate.equivalentPhaseNamesOmitted) || 0)
       : 0;
   const candidateEntriesOmitted = spatialLocateResults.reduce((sum, entry) => {
     const items = Array.isArray(entry?.result?.items) ? entry.result.items : [];
