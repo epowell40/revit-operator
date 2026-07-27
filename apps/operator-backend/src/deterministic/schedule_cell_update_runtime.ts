@@ -34,7 +34,11 @@ function action(id: string, intent: ScheduleCellUpdateIntentV1, apply: boolean, 
   return { action_id: id, method: "POST", path: "/revit/update-schedule-cell", body: body(intent, apply, expectedGuard) };
 }
 function blockedReason(value: Record<string, unknown> | null, fallback: string): string {
-  return typeof value?.blockedReason === "string" && value.blockedReason.trim() ? value.blockedReason.trim() : fallback;
+  const reason = typeof value?.blockedReason === "string" && value.blockedReason.trim() ? value.blockedReason.trim() : fallback;
+  const question = typeof value?.clarificationQuestion === "string" && value.clarificationQuestion.trim()
+    ? value.clarificationQuestion.trim()
+    : "";
+  return question ? `${reason} ${question}` : reason;
 }
 function displayValue(value: unknown): string | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;

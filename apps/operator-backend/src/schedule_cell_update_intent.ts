@@ -91,7 +91,7 @@ export function looksLikeScheduleCellUpdateRequest(userText: string): boolean {
   const text = (userText ?? "").trim();
   if (!text) return false;
   return /\b(?:schedule|scheduled|schedule\s+row|schedule\s+cell)\b/i.test(text) &&
-    /\b(?:change|set|update|revise|correct|edit)\b/i.test(text);
+    /\b(?:change|set|update|revise|correct|edit|make)\b/i.test(text);
 }
 
 export function parseDirectScheduleCellUpdate(userText: string): ScheduleCellUpdateIntentV1 | null {
@@ -109,6 +109,27 @@ export function parseDirectScheduleCellUpdate(userText: string): ScheduleCellUpd
       expected_value: labelCorrection[2].trim().replace(/[.?!]+$/, ""),
       value: labelCorrection[3].trim().replace(/[.?!]+$/, ""),
       confidence: { value: 0.99, ambiguity: "none", reasons: ["Declarative schedule label correction grammar matched."] },
+      evidence: { user_text: source }
+    };
+  }
+  // Teammates commonly state the observed problem first, then give an
+  // anaphoric action such as "AHU-1 looks undersized in the schedule. Make
+  // its supply airflow 20,000 CFM." Keep descriptive schedule wording out of
+  // schedule_name: it is not an exact Revit view name and exact-matching it
+  // would turn a good row/field/value parse into a false Not Found.
+  const problemThenMake = source.match(
+    /\b([A-Za-z][A-Za-z0-9._\/-]*\d[A-Za-z0-9._\/-]*)\b[^.?!]*\b(?:schedule|scheduled)\b[^.?!]*[.?!]\s*(?:please\s+)?(?:make|set|change|update)\s+its\s+(.+?)\s+(?:to\s+)?([-+]?\d[\d,]*(?:\.\d+)?(?:\s+[A-Za-z][A-Za-z0-9./%_-]*)?)(?=\s+and\b|\s+then\b|$)/i
+  );
+  if (problemThenMake) {
+    return {
+      schema: SCHEDULE_CELL_UPDATE_INTENT_SCHEMA,
+      schedule_name: null,
+      row_key: problemThenMake[1].trim(),
+      row_field: null,
+      target_field: problemThenMake[2].trim(),
+      expected_value: null,
+      value: problemThenMake[3].trim(),
+      confidence: { value: 0.99, ambiguity: "none", reasons: ["Problem-then-action schedule grammar matched."] },
       evidence: { user_text: source }
     };
   }
