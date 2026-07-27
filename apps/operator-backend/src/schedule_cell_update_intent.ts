@@ -103,7 +103,10 @@ export function parseDirectScheduleCellUpdate(userText: string): ScheduleCellUpd
   const authoritativeUserText = (userText ?? "").trim();
   const source = authoritativeUserText.replace(/[.?!]+$/, "");
   if (!looksLikeScheduleCellUpdateRequest(source)) return null;
-  const namedSchedule = source.match(/\b(?:in|on)\s+(?:the\s+)?([A-Za-z0-9][A-Za-z0-9 &/._-]*?\s+Schedule)\b/i)?.[1]?.trim() ?? null;
+  const namedScheduleCandidate = source.match(/\b(?:in|on)\s+(?:the\s+)?([A-Za-z0-9][A-Za-z0-9 &/._-]*?\s+Schedule)\b/i)?.[1]?.trim() ?? null;
+  const namedSchedule = namedScheduleCandidate && !/^(?:the|a|an)?\s*schedule$/i.test(namedScheduleCandidate)
+    ? namedScheduleCandidate
+    : null;
   const labelCorrection = source.match(/\b(?:space|room|item|equipment|device)\s+([A-Za-z0-9][A-Za-z0-9._\/-]*)\s+is\s+(?:currently\s+)?(?:labeled|labelled|named)\s+[“"']([^”"']+)[”"'].*?\bbut\s+(?:it\s+)?should\s+(?:read|say|be)\s+[“"']([^”"']+)[”"']/i);
   if (labelCorrection) {
     return {
@@ -153,7 +156,7 @@ export function parseDirectScheduleCellUpdate(userText: string): ScheduleCellUpd
   if (!rowKey || !targetField || !nextValue) return null;
   return {
     schema: SCHEDULE_CELL_UPDATE_INTENT_SCHEMA,
-    schedule_name: null,
+    schedule_name: namedSchedule,
     row_key: rowKey,
     row_field: null,
     target_field: targetField,

@@ -25,6 +25,16 @@ test("direct schedule update grammar preserves identifier, field, old value, and
   assert.equal(parsed?.schedule_name, null);
 });
 
+test("direct schedule update grammar preserves an explicitly named schedule", () => {
+  const prompt = "Set AHU-1 MAX CFM to 0 in the AHU AIR BALANCE SCHEDULE.";
+  const parsed = parseDirectScheduleCellUpdate(prompt);
+  assert.equal(parsed?.row_key, "AHU-1");
+  assert.equal(parsed?.target_field, "MAX CFM");
+  assert.equal(parsed?.value, "0");
+  assert.equal(parsed?.schedule_name, "AHU AIR BALANCE SCHEDULE");
+  assert.equal(parsed?.evidence.user_text, prompt);
+});
+
 test("teammate-style schedule label correction resolves without API-shaped wording", () => {
   const parsed = parseDirectScheduleCellUpdate('Space 101 is labeled “Cafe” in the Space Schedule, but it should read “Cafe - Verified.” Update it and make sure the model and schedule agree.');
   assert.equal(parsed?.row_key, "101");
