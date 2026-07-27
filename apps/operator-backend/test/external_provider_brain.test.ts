@@ -811,6 +811,27 @@ test("explicit direct route bypasses deterministic prehandlers in both chat mode
   }
 });
 
+test("the serving-target preflight is the only narrow deterministic hook retained by direct routes", async () => {
+  const previous = { OPERATOR_BRAIN: process.env.OPERATOR_BRAIN };
+  process.env.OPERATOR_BRAIN = "gemini";
+  const prompt = "Add a shock arrestor to the domestic water piping serving the toilet in room 2968T.";
+  let providerCalls = 0;
+  const dependencies = {
+    geminiBrain: async () => { providerCalls += 1; throw new Error("serving-target direct preflight must not call the provider"); },
+    geminiStreamingBrain: async () => { providerCalls += 1; throw new Error("serving-target direct preflight must not call the provider"); }
+  };
+  try {
+    const nonStreaming = await decide({ ...request(prompt), context: { operator_brain_route: "direct" } }, dependencies);
+    const streaming = await decideStreaming({ ...request(prompt), context: { operator_brain_route: "direct" } }, {}, dependencies);
+    assert.equal(providerCalls, 0);
+    assert.equal(nonStreaming.actions[0]?.path, "/revit/find-elements");
+    assert.equal(streaming.actions[0]?.path, "/revit/find-elements");
+    assert.deepEqual((nonStreaming.actions[0]?.body as Record<string, unknown>).identityTerms, ["toilet", "water closet", "wc"]);
+  } finally {
+    restoreEnvironment(previous);
+  }
+});
+
 test("explicit direct existing-conditions routes retain the provider-neutral registration gate", { concurrency: false }, async () => {
   const previous = { OPERATOR_BRAIN: process.env.OPERATOR_BRAIN };
   process.env.OPERATOR_BRAIN = "gemini";

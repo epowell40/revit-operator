@@ -128,6 +128,23 @@ test("semantic HTTP adapter resolves named-object topology without a provider or
   assert.deepEqual((result.body.intent as AecSemanticTaskV1).subject.terms, ["shock arrestors"]);
 });
 
+test("semantic HTTP adapter routes service-accessory action requests without an outer model", async () => {
+  let calls = 0;
+  const prompt = "Add a shock arrestor to the domestic water piping serving the toilet in room 2968T.";
+  const result = await resolveAecTaskIntentHttp(
+    { user_text: prompt, session_id: "service-accessory-preflight", message_id: "m" },
+    { async interpret() { calls++; return null; } }
+  );
+  assert.equal(calls, 0);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.handled, true);
+  assert.equal(result.body.workflow_id, "mep.service_accessory_preflight");
+  assert.equal(result.body.intent_token, null);
+  assert.equal((result.body.intent as any).room_number, "2968T");
+  assert.equal((result.body.intent as any).target.text, "toilet");
+  assert.equal((result.body.intent as any).evidence.user_text, prompt);
+});
+
 test("backend-issued semantic intent token survives one session boundary and cannot be replayed", async () => {
   __testOnlyClearAecTaskIntentTokens();
   const prompt = "Do the same thing in Room 409.";

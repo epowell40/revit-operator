@@ -26,6 +26,7 @@ import { maybeRunDeterministicEnlargedPlanSheet } from "./deterministic/enlarged
 import { maybeRunDeterministicMepRouteRedline } from "./deterministic/mep_route_redline.js";
 import { maybeRunDeterministicRoomReceptacleAnalog } from "./deterministic/room_receptacle_analog.js";
 import { maybeRunSemanticAecWorkflow } from "./deterministic/aec_workflow_registry.js";
+import { maybeRunMepServiceAccessoryPreflight } from "./deterministic/mep_service_accessory_runtime.js";
 import type { AecTaskIntentInterpreter } from "./aec_task_intent_interpreter.js";
 import { maybeRunDeterministicScheduleCellUpdate } from "./deterministic/schedule_cell_update_runtime.js";
 import { maybeRunDeterministicScheduleValueReplacement } from "./deterministic/schedule_value_replacement_runtime.js";
@@ -307,6 +308,7 @@ export type BrainDecisionDependencies = {
   scheduleValueReplacement?: typeof maybeRunDeterministicScheduleValueReplacement;
   scheduleRead?: typeof maybeRunDeterministicScheduleRead;
   semanticAecWorkflow?: typeof maybeRunSemanticAecWorkflow;
+  mepServiceAccessoryPreflight?: typeof maybeRunMepServiceAccessoryPreflight;
   ruleBrain?: typeof decideRule;
   openAiBrain?: typeof decideOpenAi;
   openAiStreamingBrain?: typeof decideOpenAiStreaming;
@@ -387,6 +389,8 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
   }
 
   if (isDirectBrainRouteRequest(req)) {
+    const serviceAccessoryDecision = (dependencies.mepServiceAccessoryPreflight ?? maybeRunMepServiceAccessoryPreflight)(req);
+    if (serviceAccessoryDecision) return finalizeDecision(req, serviceAccessoryDecision);
     const route = resolveOperatorBrainRoute();
     if (__testOnlyIsExistingConditionsReconstructionRequest(req)) {
       const routedReq = await (
@@ -505,6 +509,13 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dep
   }
 
   if (isDirectBrainRouteRequest(req)) {
+    const serviceAccessoryDecision = (dependencies.mepServiceAccessoryPreflight ?? maybeRunMepServiceAccessoryPreflight)(req);
+    if (serviceAccessoryDecision) {
+      const text = serviceAccessoryDecision.assistant_message || "";
+      cb.onDelta?.(text);
+      cb.onDone?.(text);
+      return finalizeDecision(req, serviceAccessoryDecision);
+    }
     const route = resolveOperatorBrainRoute();
     if (__testOnlyIsExistingConditionsReconstructionRequest(req)) {
       const routedReq = await (

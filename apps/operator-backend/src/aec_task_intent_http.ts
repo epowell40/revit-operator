@@ -5,6 +5,7 @@ import { resolveAecWorkflow } from "./deterministic/aec_workflow_registry.js";
 import { issueAecTaskIntentToken } from "./aec_task_intent_cache.js";
 import { deterministicNamedObjectTopologyTask } from "./aec_semantic_task_interpreter.js";
 import { planAecQueryTask } from "./deterministic/aec_query_plan.js";
+import { MEP_SERVICE_ACCESSORY_WORKFLOW_ID, parseMepServiceAccessoryTask } from "./deterministic/mep_service_accessory_runtime.js";
 
 export type AecTaskIntentHttpResult = {
   status: number;
@@ -27,6 +28,19 @@ export async function resolveAecTaskIntentHttp(body: unknown, interpreter?: AecT
   const parsed = body as Record<string, unknown>;
   const userText = typeof parsed.user_text === "string" ? parsed.user_text : typeof parsed.userText === "string" ? parsed.userText : typeof parsed.request === "string" ? parsed.request : "";
   if (!userText.trim()) return { status: 400, body: { ok: false, error: "user_text is required" } };
+  const serviceAccessoryTask = parseMepServiceAccessoryTask(userText);
+  if (serviceAccessoryTask) {
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        handled: true,
+        workflow_id: MEP_SERVICE_ACCESSORY_WORKFLOW_ID,
+        intent_token: null,
+        intent: serviceAccessoryTask
+      }
+    };
+  }
   const topologyTask = deterministicNamedObjectTopologyTask(userText);
   if (topologyTask) {
     const topologyPlan = planAecQueryTask(topologyTask);
