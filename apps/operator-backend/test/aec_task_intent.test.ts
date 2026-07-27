@@ -155,6 +155,7 @@ test("semantic HTTP adapter routes a schedule update and its bounded clarificati
   assert.equal(direct.body.workflow_id, "schedule.cell_update");
   assert.equal((direct.body.intent as any).row_key, "AHU-1");
   assert.equal((direct.body.intent as any).value, "20,000 CFM");
+  assert.equal((direct.body.intent as any).evidence.user_text, original);
 
   const followUp = "Use TOTAL AIRFLOW (CFM) in the AHU AIR BALANCE SCHEDULE.";
   const clarified = await resolveAecTaskIntentHttp(

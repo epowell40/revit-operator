@@ -37,7 +37,8 @@ test("teammate-style schedule label correction resolves without API-shaped wordi
 });
 
 test("problem-then-action schedule wording resolves the teammate's row, field, and value", () => {
-  const parsed = parseDirectScheduleCellUpdate("AHU-1 looks undersized in the air-handler schedule. Make its supply airflow 20,000 CFM and make sure the model and schedule agree.");
+  const prompt = "AHU-1 looks undersized in the air-handler schedule. Make its supply airflow 20,000 CFM and make sure the model and schedule agree.";
+  const parsed = parseDirectScheduleCellUpdate(prompt);
   assert.equal(parsed?.row_key, "AHU-1");
   assert.equal(parsed?.row_field, null);
   assert.equal(parsed?.target_field, "supply airflow");
@@ -45,6 +46,7 @@ test("problem-then-action schedule wording resolves the teammate's row, field, a
   assert.equal(parsed?.expected_value, null);
   assert.equal(parsed?.schedule_name, null);
   assert.equal(parsed?.confidence.ambiguity, "none");
+  assert.equal(parsed?.evidence.user_text, prompt);
 });
 
 test("schedule clarification follow-up carries forward only the prior row and value while accepting an offered field", () => {
