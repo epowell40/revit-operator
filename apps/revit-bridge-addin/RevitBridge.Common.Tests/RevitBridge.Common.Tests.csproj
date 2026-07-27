@@ -21,4 +21,8 @@
     <ProjectReference Include="..\RevitBridge.Logic\RevitBridge.Logic.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\RevitBridge\Operator\OperatorApprovalPolicy.cs" Link="Operator\OperatorApprovalPolicy.cs" />
+  </ItemGroup>
+
 </Project>
