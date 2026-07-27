@@ -35,6 +35,18 @@ test("direct schedule update grammar preserves an explicitly named schedule", ()
   assert.equal(parsed?.evidence.user_text, prompt);
 });
 
+test("teammate correction grammar preserves a schedule name suffix and old-value guard", () => {
+  const prompt = "The manufacturer is wrong for shock arrestor B2-G-SA-1 in the SHOCK ARRESTOR SCHEDULE - BUILDING 200. Change it from JOSAM to WATTS and keep the model and schedule consistent.";
+  const parsed = parseDirectScheduleCellUpdate(prompt);
+  assert.equal(parsed?.row_key, "B2-G-SA-1");
+  assert.equal(parsed?.target_field, "manufacturer");
+  assert.equal(parsed?.expected_value, "JOSAM");
+  assert.equal(parsed?.value, "WATTS");
+  assert.equal(parsed?.schedule_name, "SHOCK ARRESTOR SCHEDULE - BUILDING 200");
+  assert.equal(parsed?.confidence.ambiguity, "none");
+  assert.equal(parsed?.evidence.user_text, prompt);
+});
+
 test("teammate-style schedule label correction resolves without API-shaped wording", () => {
   const parsed = parseDirectScheduleCellUpdate('Space 101 is labeled “Cafe” in the Space Schedule, but it should read “Cafe - Verified.” Update it and make sure the model and schedule agree.');
   assert.equal(parsed?.row_key, "101");
