@@ -24,6 +24,12 @@ export type AuthoritativeConversationMessage = {
   text: string;
 };
 
+export type GroupedScheduleBulkClarification = {
+  schedule_name: string;
+  target_field: string;
+  value: string;
+};
+
 const schema = {
   type: "object",
   additionalProperties: false,
@@ -107,6 +113,20 @@ function explicitScheduleName(source: string): string | null {
   return candidate && !/^(?:the|a|an)?\s*schedule$/i.test(candidate) ? candidate : null;
 }
 
+export function parseGroupedScheduleBulkClarification(userText: string): GroupedScheduleBulkClarification | null {
+  const source = (userText ?? "").trim().replace(/[.?!]+$/, "");
+  if (!looksLikeScheduleCellUpdateRequest(source)) return null;
+  const match = source.match(
+    /^the\s+([A-Za-z0-9][A-Za-z0-9 &/._()#-]*?\s+schedule(?:\s*-\s*[A-Za-z0-9][A-Za-z0-9 &/._()#-]*?)?)\s+is\s+showing\s+(?:mixed|varying)\s+([A-Za-z][A-Za-z0-9 &/._()#-]*?)[.?!]\s*(?:please\s+)?(?:make|set|change|update)\s+(?:them|those)\s+(?:to\s+)?(.+?)(?=\s+and\b|\s+then\b|$)/i
+  );
+  if (!match) return null;
+  return {
+    schedule_name: match[1].trim(),
+    target_field: match[2].trim(),
+    value: match[3].trim().replace(/[.?!]+$/, "")
+  };
+}
+
 export function parseDirectScheduleCellUpdate(userText: string): ScheduleCellUpdateIntentV1 | null {
   const authoritativeUserText = (userText ?? "").trim();
   const source = authoritativeUserText.replace(/[.?!]+$/, "");
@@ -123,6 +143,22 @@ export function parseDirectScheduleCellUpdate(userText: string): ScheduleCellUpd
       expected_value: labelCorrection[2].trim().replace(/[.?!]+$/, ""),
       value: labelCorrection[3].trim().replace(/[.?!]+$/, ""),
       confidence: { value: 0.99, ambiguity: "none", reasons: ["Declarative schedule label correction grammar matched."] },
+      evidence: { user_text: authoritativeUserText }
+    };
+  }
+  const possessiveWrongThenSet = source.match(
+    /^(?:space|room|item|equipment|device)\s+([A-Za-z0-9][A-Za-z0-9._\/-]*)[’']s\s+(.+?)\s+is\s+(?:wrong|incorrect)\s+(?:in|on)\b[^.?!]*[.?!]\s*(?:please\s+)?(?:change|update|set|make)\s+it\s+(?:to\s+)?(.+?)(?=\s+and\b|\s+then\b|$)/i
+  );
+  if (possessiveWrongThenSet) {
+    return {
+      schema: SCHEDULE_CELL_UPDATE_INTENT_SCHEMA,
+      schedule_name: namedSchedule,
+      row_key: possessiveWrongThenSet[1].trim(),
+      row_field: null,
+      target_field: possessiveWrongThenSet[2].trim(),
+      expected_value: null,
+      value: possessiveWrongThenSet[3].trim().replace(/[.?!]+$/, ""),
+      confidence: { value: 0.99, ambiguity: "none", reasons: ["Possessive row schedule correction grammar matched."] },
       evidence: { user_text: authoritativeUserText }
     };
   }

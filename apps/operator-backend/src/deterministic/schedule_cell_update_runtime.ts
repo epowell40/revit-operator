@@ -1,5 +1,5 @@
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "../contracts.js";
-import { interpretScheduleCellUpdateIntent, type ScheduleCellUpdateIntentInterpreter, type ScheduleCellUpdateIntentV1 } from "../schedule_cell_update_intent.js";
+import { interpretScheduleCellUpdateIntent, parseGroupedScheduleBulkClarification, type ScheduleCellUpdateIntentInterpreter, type ScheduleCellUpdateIntentV1 } from "../schedule_cell_update_intent.js";
 
 type State = { intent: ScheduleCellUpdateIntentV1; stage: "preflight" | "apply"; expected_guard?: string; expires_at: number };
 const states = new Map<string, State>();
@@ -97,6 +97,21 @@ export async function maybeRunDeterministicScheduleCellUpdate(req: ChatRequest, 
     return orphaned
       ? response("The bounded schedule-update continuation state expired or was lost, so I stopped instead of replaying or guessing. Submit the original request again to run a fresh preflight. No additional model changes were made.", [], "failed")
       : null;
+  }
+  const authoritativeText = (() => {
+    const context = req.context && typeof req.context === "object" && !Array.isArray(req.context) ? req.context as Record<string, unknown> : null;
+    const ui = context?.ui && typeof context.ui === "object" && !Array.isArray(context.ui) ? context.ui as Record<string, unknown> : null;
+    return typeof ui?.authoritative_user_text === "string" && ui.authoritative_user_text.trim()
+      ? ui.authoritative_user_text.trim()
+      : (req.user_text ?? "").trim();
+  })();
+  const grouped = parseGroupedScheduleBulkClarification(authoritativeText);
+  if (grouped) {
+    return response(
+      `The ${grouped.schedule_name} request sounds like a grouped-row bulk edit: change mixed ${grouped.target_field} to ${grouped.value}. That could update many backing model elements. Which scope do you want—one exact device or room, a selected set, or every device in the schedule? No model changes were made.`,
+      [],
+      "blocked"
+    );
   }
   const intent = await interpretScheduleCellUpdateIntent(req, interpreter);
   if (!intent) return null;
