@@ -165,6 +165,41 @@ function resultIsIncomplete(payload: Record<string, unknown> | null): boolean {
   return payload?.truncated === true || payload?.scanCapReached === true || payload?.itemsComplete === false;
 }
 
+function requestsSecondaryIdentityMatches(task: AecSemanticTaskV1): boolean {
+  return /\b(?:acronyms?|abbreviations?|abbreviated|designations?|designators?|codes?|coded|tags?|tagged|labels?|labeled|labelled|related\s+components?|associated\s+fittings?)\b/i.test(task.evidence.user_text);
+}
+
+function selectPrimaryDocumentIdentityMatches(task: AecSemanticTaskV1, payload: Record<string, unknown> | null): {
+  items: Array<Record<string, unknown>>;
+  elementIds: number[] | null;
+  excludedSecondaryCount: number;
+} {
+  const items = resultItems(payload, 500);
+  const expansionCount = Number(payload?.identityExpansionCount);
+  if (
+    requestsSecondaryIdentityMatches(task) ||
+    !Number.isFinite(expansionCount) ||
+    expansionCount <= 0 ||
+    payload?.itemsComplete !== true ||
+    resultIsIncomplete(payload)
+  ) return { items, elementIds: null, excludedSecondaryCount: 0 };
+
+  const direct = items.filter(item => objectValue(item.identityMatch) !== null);
+  const elementIds = direct
+    .map(item => Number(item.elementId ?? item.id))
+    .filter(id => Number.isSafeInteger(id) && id > 0);
+  if (direct.length === 0 || direct.length === items.length || elementIds.length !== direct.length) {
+    return { items, elementIds: null, excludedSecondaryCount: 0 };
+  }
+  return { items: direct, elementIds, excludedSecondaryCount: items.length - direct.length };
+}
+
+function secondaryIdentityExclusionText(count: number): string {
+  return count > 0
+    ? ` I excluded ${count} candidate${count === 1 ? "" : "s"} that matched only an abbreviated parameter value rather than the requested identity.`
+    : "";
+}
+
 function documentIdentityGroups(items: Array<Record<string, unknown>>): string[] {
   const groups = new Map<string, { count: number; family: string | null; type: string | null; category: string | null }>();
   for (const item of items) {
@@ -287,8 +322,9 @@ function completeDocumentIdentity(task: AecSemanticTaskV1, result: ToolResult, s
     return response(`I could not complete the bounded whole-document identity search: ${result.error || "the Revit discovery action failed"}. No model changes were made.`, [], { workflow_id: "query.document_elements", status: "failed" });
   }
   const payload = resultPayload(result);
-  const items = resultItems(payload, 500);
-  const count = countFromPayload(payload) ?? items.length;
+  const selected = selectPrimaryDocumentIdentityMatches(task, payload);
+  const items = selected.items;
+  const count = selected.elementIds ? selected.elementIds.length : countFromPayload(payload) ?? items.length;
   if (count === 0) {
     if (resultIsIncomplete(payload)) {
       return response(`The bounded whole-document identity search reached a result or scan limit before finding a match, so I cannot honestly say that no ${subjectLabel(task)} exist. Narrow the identity or provide a grounded category and I can continue. No model changes were made.`, [], { workflow_id: "query.document_elements", status: "failed" });
@@ -298,10 +334,11 @@ function completeDocumentIdentity(task: AecSemanticTaskV1, result: ToolResult, s
   const groups = documentIdentityGroups(items);
   const identityText = groups.length ? ` They are ${groups.join("; ")}.` : " Their identity details were not returned, so I did not guess what they are.";
   const scheduleText = summarizeMatchingSchedule(scheduleResult, items, !resultIsIncomplete(payload));
+  const excludedText = secondaryIdentityExclusionText(selected.excludedSecondaryCount);
   const incomplete = resultIsIncomplete(payload)
     ? " The bounded result limit or scan cap was reached, so this is a partial inventory rather than a claim that no additional matches exist."
     : "";
-  return response(`I found ${count} physical model instance${count === 1 ? "" : "s"} matching ${subjectLabel(task)}.${identityText}${scheduleText}${incomplete} No model changes were made.`, [], { workflow_id: "query.document_elements", status: resultIsIncomplete(payload) ? "ambiguous" : "complete" });
+  return response(`I found ${count} physical model instance${count === 1 ? "" : "s"} matching ${subjectLabel(task)}.${identityText}${excludedText}${scheduleText}${incomplete} No model changes were made.`, [], { workflow_id: "query.document_elements", status: resultIsIncomplete(payload) ? "ambiguous" : "complete" });
 }
 
 function candidateLabel(candidate: Record<string, unknown>): string | null {
@@ -370,12 +407,13 @@ function completeDocumentSpatial(task: AecSemanticTaskV1, state: QueryState, res
   const unresolved = labels.length - resolved - ambiguous;
   const identityGroups = documentIdentityGroups(resultArray(state.evidence.discovery_items, 500));
   const identityText = identityGroups.length ? ` They are ${identityGroups.join("; ")}.` : "";
+  const excludedText = secondaryIdentityExclusionText(Number(state.evidence.secondary_identity_matches_excluded) || 0);
   const discoveryIncomplete = state.evidence.discovery_incomplete === true;
   const spatialIncomplete = resultIsIncomplete(payload) || missingIds.length > 0;
   const incomplete = discoveryIncomplete || spatialIncomplete
     ? " The discovery or spatial result was bounded/incomplete, so additional matching devices may exist."
     : "";
-  return response(`I found ${labels.length} top-level physical ${subjectLabel(task)} instance${labels.length === 1 ? "" : "s"}.${identityText} Room results: ${resolved} resolved, ${ambiguous} ambiguous, ${unresolved} unresolved. ${labels.map(item => item.label).join("; ")}.${incomplete} No model changes were made.`, [], { workflow_id: "query.document_elements", status: ambiguous > 0 || unresolved > 0 || discoveryIncomplete || spatialIncomplete ? "ambiguous" : "complete" });
+  return response(`I found ${labels.length} top-level physical ${subjectLabel(task)} instance${labels.length === 1 ? "" : "s"}.${identityText}${excludedText} Room results: ${resolved} resolved, ${ambiguous} ambiguous, ${unresolved} unresolved. ${labels.map(item => item.label).join("; ")}.${incomplete} No model changes were made.`, [], { workflow_id: "query.document_elements", status: ambiguous > 0 || unresolved > 0 || discoveryIncomplete || spatialIncomplete ? "ambiguous" : "complete" });
 }
 
 function exactCompletion(task: AecSemanticTaskV1, state: QueryState, result: ToolResult): ChatResponse {
@@ -437,11 +475,12 @@ function continueRun(req: ChatRequest, state: QueryState): ChatResponse | null {
     const scheduleResult = matchingResult(req, "aec-query-document-element-schedule");
     if (state.evidence.schedule_detail_requested === true && !scheduleResult) return null;
     const payload = resultPayload(result);
-    const count = countFromPayload(payload) ?? 0;
+    const selected = selectPrimaryDocumentIdentityMatches(state.task, payload);
+    const count = selected.elementIds ? selected.elementIds.length : countFromPayload(payload) ?? 0;
     const wantsSpatial = state.evidence.needs_spatial === true;
     if (result.status === "done" && result.method === "POST" && result.path === "/revit/find-elements" && count > 0 && wantsSpatial) {
       const resultLimit = Number.isSafeInteger(state.evidence.result_limit) ? state.evidence.result_limit as number : state.task.execution.max_results;
-      const ids = boundedElementIds(payload, resultLimit, 500);
+      const ids = (selected.elementIds ?? boundedElementIds(payload, resultLimit, 500)).slice(0, Math.max(1, Math.min(500, resultLimit)));
       if (ids.length === 0) {
         states.delete(key(req));
         return response("The bounded identity search reported matches but returned no valid element IDs, so I could not guess which devices to locate. No model changes were made.", [], { workflow_id: state.workflow_id, status: "failed" });
@@ -453,7 +492,8 @@ function continueRun(req: ChatRequest, state: QueryState): ChatResponse | null {
           ...state.evidence,
           discovery_count: count,
           discovery_incomplete: resultIsIncomplete(payload),
-          discovery_items: resultItems(payload, 500)
+          discovery_items: selected.items,
+          secondary_identity_matches_excluded: selected.excludedSecondaryCount
         },
         expires_at: Date.now() + TTL_MS
       });

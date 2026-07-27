@@ -318,14 +318,16 @@ test("where query follows exact discovered ids with geometry-aware room resoluti
     path: "/revit/find-elements",
     status: "done",
     result_json: {
-      count: 4,
-      elementIds: [101, 102, 103, 104],
+      count: 5,
+      elementIds: [101, 102, 103, 104, 105],
       items: [
-        { elementId: 101, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings" },
-        { elementId: 102, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings" },
-        { elementId: 103, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings" },
-        { elementId: 104, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings" }
+        { elementId: 101, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings", identityMatch: { matchedFields: ["familyName"] } },
+        { elementId: 102, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings", identityMatch: { matchedFields: ["familyName"] } },
+        { elementId: 103, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings", identityMatch: { matchedFields: ["familyName"] } },
+        { elementId: 104, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings", identityMatch: { matchedFields: ["familyName"] } },
+        { elementId: 105, familyName: "Elbow-Standard_LW", typeName: "Small Radius .75 R", category: "Pipe Fittings", identityMatch: null, identityParameterEvidence: { parameterName: "DESIG.", text: "B2-2-SA-99" } }
       ],
+      identityExpansionCount: 1,
       truncated: false,
       itemsComplete: true
     }
@@ -369,6 +371,7 @@ test("where query follows exact discovered ids with geometry-aware room resoluti
   }]), interpreter);
   assert.match(done.response?.assistant_message ?? "", /Room results: 1 resolved, 1 ambiguous, 2 unresolved/);
   assert.match(done.response?.assistant_message ?? "", /4 Pipe Fittings, family LW_Shock Absorber, type Standard/);
+  assert.match(done.response?.assistant_message ?? "", /excluded 1 candidate that matched only an abbreviated parameter value/);
   assert.match(done.response?.assistant_message ?? "", /element 101: Room 214 — PATIENT, LEVEL 02 via linked model A_DUKE B200\.rvt/);
   assert.match(done.response?.assistant_message ?? "", /element 102: room assignment is ambiguous among Room 215 — CORRIDOR, Room 216 — STORAGE/);
   assert.match(done.response?.assistant_message ?? "", /element 103: room unresolved, LEVEL 01; nearest candidates \(not assignments\): Room 117 — MECHANICAL/);
