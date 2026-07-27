@@ -255,20 +255,31 @@ function summarizeMatchingSchedule(scheduleResult: ToolResult | undefined, model
   const schedule = objectValue(payload?.schedule);
   const scheduleName = textValue(schedule?.name) ?? "matching schedule";
   const scheduleId = textValue(schedule?.id);
+  const fields = Array.isArray(payload?.fields) ? payload.fields.map(objectValue).filter(Boolean) as Array<Record<string, unknown>> : [];
   const table = objectValue(payload?.table);
   const header = objectValue(table?.header);
   const body = objectValue(table?.body);
   const headerRows = Array.isArray(header?.rows) ? header.rows.map(rowCells).filter(cells => cells.some(Boolean)) : [];
-  const dataRows = Array.isArray(body?.rows) ? body.rows.map(rowCells).filter(cells => cells.some(Boolean)) : [];
-  if (dataRows.length === 0) return ` The project also has ${scheduleName}${scheduleId ? ` (id ${scheduleId})` : ""}, but its bounded preview returned no data rows.`;
-  const expectedColumns = Math.max(0, ...dataRows.map(row => row.length));
-  const headers = headerRows
+  const bodyRows = Array.isArray(body?.rows) ? body.rows.map(rowCells).filter(cells => cells.some(Boolean)) : [];
+  if (bodyRows.length === 0) return ` The project also has ${scheduleName}${scheduleId ? ` (id ${scheduleId})` : ""}, but its bounded preview returned no data rows.`;
+  const expectedColumns = Math.max(0, ...bodyRows.map(row => row.length));
+  const fieldHeaders = fields
+    .filter(field => field.isHidden !== true)
+    .sort((left, right) => Number(left.index ?? 0) - Number(right.index ?? 0))
+    .map(field => textValue(field.heading) ?? textValue(field.name) ?? "")
+    .slice(0, expectedColumns);
+  const sectionHeaders = headerRows
     .map((cells, index) => ({ cells, index, nonEmpty: cells.filter(Boolean).length }))
     .filter(candidate => candidate.nonEmpty > 0 && candidate.cells.length >= expectedColumns)
     .sort((left, right) => right.nonEmpty - left.nonEmpty || right.index - left.index)[0]?.cells.slice(0, expectedColumns) ?? [];
+  const headers = fieldHeaders.length === expectedColumns && fieldHeaders.some(Boolean) ? fieldHeaders : sectionHeaders;
   if (headers.length === 0) {
-    return ` The project also has ${scheduleName}${scheduleId ? ` (id ${scheduleId})` : ""}, with ${dataRows.length} visible data rows, but the bounded preview did not include usable column headers, so I am not inferring schedule facts or discrepancies.`;
+    return ` The project also has ${scheduleName}${scheduleId ? ` (id ${scheduleId})` : ""}, with ${bodyRows.length} visible data rows, but the bounded preview did not include usable column headers, so I am not inferring schedule facts or discrepancies.`;
   }
+  const firstBodyRowIsHeader = bodyRows[0]?.length >= headers.length
+    && headers.every((value, index) => normalizeScheduleHeader(value) === normalizeScheduleHeader(bodyRows[0][index] ?? ""));
+  const dataRows = firstBodyRowIsHeader ? bodyRows.slice(1) : bodyRows;
+  if (dataRows.length === 0) return ` The project also has ${scheduleName}${scheduleId ? ` (id ${scheduleId})` : ""}, but its bounded preview returned no data rows.`;
   const constantFacts: string[] = [];
   for (let column = 0; column < headers.length; column++) {
     const header = headers[column] || `column ${column + 1}`;
