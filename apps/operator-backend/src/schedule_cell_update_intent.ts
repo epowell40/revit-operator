@@ -99,14 +99,19 @@ export function looksLikeScheduleCellUpdateRequest(userText: string): boolean {
     /\b(?:change|set|update|revise|correct|edit|make)\b/i.test(text);
 }
 
+function explicitScheduleName(source: string): string | null {
+  const matches = Array.from(source.matchAll(
+    /\b(?:in|on)\s+(?:the\s+)?([A-Za-z0-9][A-Za-z0-9 &/._()#-]*?\s+Schedule(?:\s*-\s*[A-Za-z0-9][A-Za-z0-9 &/._()#-]*?)?)(?=\s*(?:[,;:.?!]|$))/gi
+  ));
+  const candidate = matches.at(-1)?.[1]?.trim() ?? null;
+  return candidate && !/^(?:the|a|an)?\s*schedule$/i.test(candidate) ? candidate : null;
+}
+
 export function parseDirectScheduleCellUpdate(userText: string): ScheduleCellUpdateIntentV1 | null {
   const authoritativeUserText = (userText ?? "").trim();
   const source = authoritativeUserText.replace(/[.?!]+$/, "");
   if (!looksLikeScheduleCellUpdateRequest(source)) return null;
-  const namedScheduleCandidate = source.match(/\b(?:in|on)\s+(?:the\s+)?([A-Za-z0-9][A-Za-z0-9 &/._-]*?\s+Schedule)\b/i)?.[1]?.trim() ?? null;
-  const namedSchedule = namedScheduleCandidate && !/^(?:the|a|an)?\s*schedule$/i.test(namedScheduleCandidate)
-    ? namedScheduleCandidate
-    : null;
+  const namedSchedule = explicitScheduleName(source);
   const labelCorrection = source.match(/\b(?:space|room|item|equipment|device)\s+([A-Za-z0-9][A-Za-z0-9._\/-]*)\s+is\s+(?:currently\s+)?(?:labeled|labelled|named)\s+[“"']([^”"']+)[”"'].*?\bbut\s+(?:it\s+)?should\s+(?:read|say|be)\s+[“"']([^”"']+)[”"']/i);
   if (labelCorrection) {
     return {
@@ -118,6 +123,22 @@ export function parseDirectScheduleCellUpdate(userText: string): ScheduleCellUpd
       expected_value: labelCorrection[2].trim().replace(/[.?!]+$/, ""),
       value: labelCorrection[3].trim().replace(/[.?!]+$/, ""),
       confidence: { value: 0.99, ambiguity: "none", reasons: ["Declarative schedule label correction grammar matched."] },
+      evidence: { user_text: authoritativeUserText }
+    };
+  }
+  const wrongThenChange = source.match(
+    /^(?:the\s+)?([A-Za-z][A-Za-z0-9 &/._()#-]*?)\s+is\s+(?:wrong|incorrect)\s+for\s+(?:the\s+)?(?:[A-Za-z][A-Za-z -]*?\s+)?([A-Za-z][A-Za-z0-9._\/-]*\d[A-Za-z0-9._\/-]*)\s+(?:in|on)\b[^.?!]*[.?!]\s*(?:please\s+)?(?:change|update|set)\s+it\s+from\s+(.+?)\s+to\s+(.+?)(?=\s+and\b|\s+then\b|$)/i
+  );
+  if (wrongThenChange) {
+    return {
+      schema: SCHEDULE_CELL_UPDATE_INTENT_SCHEMA,
+      schedule_name: namedSchedule,
+      row_key: wrongThenChange[2].trim(),
+      row_field: null,
+      target_field: wrongThenChange[1].trim(),
+      expected_value: wrongThenChange[3].trim(),
+      value: wrongThenChange[4].trim().replace(/[.?!]+$/, ""),
+      confidence: { value: 0.99, ambiguity: "none", reasons: ["Problem-then-correction schedule grammar matched."] },
       evidence: { user_text: authoritativeUserText }
     };
   }
