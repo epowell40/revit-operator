@@ -145,6 +145,36 @@ test("semantic HTTP adapter routes service-accessory action requests without an 
   assert.equal((result.body.intent as any).evidence.user_text, prompt);
 });
 
+test("semantic HTTP adapter routes a schedule update and its bounded clarification follow-up without a provider", async () => {
+  let calls = 0;
+  const original = "AHU-1 looks undersized in the air-handler schedule. Make its supply airflow 20,000 CFM and make sure the model and schedule agree.";
+  const direct = await resolveAecTaskIntentHttp(
+    { user_text: original },
+    { async interpret() { calls++; return null; } }
+  );
+  assert.equal(direct.body.workflow_id, "schedule.cell_update");
+  assert.equal((direct.body.intent as any).row_key, "AHU-1");
+  assert.equal((direct.body.intent as any).value, "20,000 CFM");
+
+  const followUp = "Use TOTAL AIRFLOW (CFM) in the AHU AIR BALANCE SCHEDULE.";
+  const clarified = await resolveAecTaskIntentHttp(
+    {
+      user_text: followUp,
+      conversation: [
+        { role: "user", text: original },
+        { role: "assistant", text: "I could not find a column named supply airflow. Did you mean TOTAL AIRFLOW (CFM), SUPPLY FAN AIRFLOW, or MAX CFM?" },
+        { role: "user", text: followUp }
+      ]
+    },
+    { async interpret() { calls++; return null; } }
+  );
+  assert.equal(calls, 0);
+  assert.equal(clarified.body.workflow_id, "schedule.cell_update");
+  assert.equal((clarified.body.intent as any).schedule_name, "AHU AIR BALANCE SCHEDULE");
+  assert.equal((clarified.body.intent as any).target_field, "TOTAL AIRFLOW (CFM)");
+  assert.equal((clarified.body.intent as any).value, "20,000 CFM");
+});
+
 test("backend-issued semantic intent token survives one session boundary and cannot be replayed", async () => {
   __testOnlyClearAecTaskIntentTokens();
   const prompt = "Do the same thing in Room 409.";

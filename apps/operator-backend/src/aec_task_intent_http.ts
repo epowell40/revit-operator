@@ -6,6 +6,7 @@ import { issueAecTaskIntentToken } from "./aec_task_intent_cache.js";
 import { deterministicNamedObjectTopologyTask } from "./aec_semantic_task_interpreter.js";
 import { planAecQueryTask } from "./deterministic/aec_query_plan.js";
 import { MEP_SERVICE_ACCESSORY_WORKFLOW_ID, parseMepServiceAccessoryTask } from "./deterministic/mep_service_accessory_runtime.js";
+import { parseDirectScheduleCellUpdate, parseScheduleCellUpdateFromConversation } from "./schedule_cell_update_intent.js";
 
 export type AecTaskIntentHttpResult = {
   status: number;
@@ -28,6 +29,19 @@ export async function resolveAecTaskIntentHttp(body: unknown, interpreter?: AecT
   const parsed = body as Record<string, unknown>;
   const userText = typeof parsed.user_text === "string" ? parsed.user_text : typeof parsed.userText === "string" ? parsed.userText : typeof parsed.request === "string" ? parsed.request : "";
   if (!userText.trim()) return { status: 400, body: { ok: false, error: "user_text is required" } };
+  const scheduleCellUpdate = parseScheduleCellUpdateFromConversation(userText, parsed.conversation) ?? parseDirectScheduleCellUpdate(userText);
+  if (scheduleCellUpdate) {
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        handled: true,
+        workflow_id: "schedule.cell_update",
+        intent_token: null,
+        intent: scheduleCellUpdate
+      }
+    };
+  }
   const serviceAccessoryTask = parseMepServiceAccessoryTask(userText);
   if (serviceAccessoryTask) {
     return {

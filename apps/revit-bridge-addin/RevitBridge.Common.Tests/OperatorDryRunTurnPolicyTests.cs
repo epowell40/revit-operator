@@ -45,5 +45,16 @@ namespace RevitBridge.Common.Tests
         {
             Assert.False(OperatorDryRunTurnPolicy.BodyRequestsDryRun(body));
         }
+
+        [Theory]
+        [InlineData("POST", "/revit/update-schedule-cell", "{\"dryRun\":true}", true)]
+        [InlineData("post", "/REVIT/UPDATE-SCHEDULE-CELL", "{\"apply\":false}", true)]
+        [InlineData("POST", "/revit/update-schedule-cell", "{\"apply\":true,\"dryRun\":false}", false)]
+        [InlineData("POST", "/revit/delete-elements", "{\"dryRun\":true}", false)]
+        [InlineData("GET", "/revit/update-schedule-cell", "{\"dryRun\":true}", false)]
+        public void ScheduleCellPreviewOverrideIsNarrow(string method, string path, string body, bool expected)
+        {
+            Assert.Equal(expected, OperatorDryRunTurnPolicy.IsScheduleCellUpdatePreview(method, path, body));
+        }
     }
 }

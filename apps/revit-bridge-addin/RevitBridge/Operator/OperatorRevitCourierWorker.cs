@@ -105,7 +105,12 @@ namespace RevitBridge.Operator
                     ExpectedDocumentTitle = expectedDocumentTitle,
                     ExpectedDocumentPath = expectedDocumentPath
                 };
-                var risk = OperatorApprovalPolicy.GetRisk(method, path);
+                var bodyJson = body is JsonElement bodyJsonElement
+                    ? bodyJsonElement.GetRawText()
+                    : body == null ? null : JsonSerializer.Serialize(body);
+                var risk = OperatorDryRunTurnPolicy.IsScheduleCellUpdatePreview(method, path, bodyJson)
+                    ? OperatorActionRisk.Low
+                    : OperatorApprovalPolicy.GetRisk(method, path);
                 var approvalMode = _getApprovalMode();
                 if (OperatorApprovalPolicy.RequiresApproval(approvalMode, risk))
                 {
