@@ -22,6 +22,7 @@ import { appendEvent, appendNotification, getRecentStepToolResults } from "../me
 import { persistence } from "../persistence/persistence_manager.js";
 import { retrieveMemoryContext } from "../memory/jsonl_memory_store.js";
 import { formatProjectProfileForPrompt } from "../memory/project_profile.js";
+import { mayInjectUnscopedLegacyMemory } from "../revit_context_policy.js";
 import { captureRequirementsResponseGuard, enforceRequirementsResponseGuard, formatRequirementsPromptBlockSafely } from "../memory/requirements_response_policy.js";
 import { createOpenAiClient, resolveOpenAiApiKey } from "../openai_client.js";
 import { executeWorkbenchActions, maxWorkbenchActions, type WorkbenchAction, type WorkbenchActionResult } from "../workbench/workbench_runner.js";
@@ -18826,11 +18827,8 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
   }
 
   try {
-    const profileBlock = [formatProjectProfileForPrompt(), formatRequirementsPromptBlockSafely(req)].filter(Boolean).join("\n\n");
-    if (profileBlock) {
-      lines.push(profileBlock);
-      lines.push("");
-    }
+    const profileBlock = [mayInjectUnscopedLegacyMemory(req.context) ? formatProjectProfileForPrompt() : "", formatRequirementsPromptBlockSafely(req)].filter(Boolean).join("\n\n");
+    if (profileBlock) lines.push(profileBlock, "");
   } catch {
     // ignore
   }
@@ -18856,7 +18854,7 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
   // Phase 2 (initial): retrieve relevant memory from JSONL daily/longterm stores.
   try {
     const query = ((req.user_text ?? "").toString().trim() || pinnedGoal || "").trim();
-    if (query && !isRedlineFocusedTurn(req)) {
+    if (query && !isRedlineFocusedTurn(req) && mayInjectUnscopedLegacyMemory(req.context)) {
       const mem = retrieveMemoryContext({ queryText: query, maxEntries: 8 });
       if (mem.length > 0) {
         lines.push("MEMORY CONTEXT (read-only; cite by [M#]):");

@@ -16,6 +16,7 @@ import {
   recordRevitToolOutcome
 } from "../codex/revit_tool_contract_memory.js";
 import { beginRevitCourierTurnContext, endRevitCourierTurnContext } from "../courier/revit_courier_context.js";
+import { revitCourierTargetFromContext } from "../courier/revit_courier_target.js";
 import { getSkillLibraryText } from "../skills/skill_library.js";
 import { persistence } from "../persistence/persistence_manager.js";
 import { retrieveMemoryContext } from "../memory/jsonl_memory_store.js";
@@ -32,6 +33,7 @@ import { compactIncomingToolResult, compactParameterReadResultForPrompt } from "
 import { formatActiveGoalContext, getActiveGoalForSession } from "../goals/service.js";
 import { formatEnvironmentSummaryForPrompt } from "../environment_profile.js";
 import { AGENT_RESPONSE_STYLE_LINES } from "../agent_response_policy.js";
+import { mayInjectUnscopedLegacyMemory } from "../revit_context_policy.js";
 
 export type StreamCallbacks = {
   onDelta?: (textDelta: string) => void;
@@ -54,35 +56,7 @@ const revitToolParallelGuard = new RevitToolParallelGuard();
 const lastPermissionSignatureBySession = new Map<string, string>();
 const activeCodexTurnAborts = new Map<string, AbortController>();
 
-function boundedContextString(value: unknown, maxLength: number): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  if (!trimmed || trimmed.length > maxLength || /[\u0000-\u001f\u007f]/.test(trimmed)) return undefined;
-  return trimmed;
-}
-
-export function revitCourierTargetFromContext(context: unknown): {
-  target_executor_id?: string;
-  target_document_title?: string;
-  target_document_path?: string;
-} {
-  if (!context || typeof context !== "object" || Array.isArray(context)) return {};
-  const ui = (context as { ui?: unknown }).ui;
-  if (!ui || typeof ui !== "object" || Array.isArray(ui)) return {};
-  const document = (ui as { revit_document?: unknown }).revit_document;
-  if (!document || typeof document !== "object" || Array.isArray(document)) return {};
-  const raw = document as Record<string, unknown>;
-  const executorId = boundedContextString(raw.courier_executor_id, 200);
-  const targetExecutorId = executorId && /^[A-Za-z0-9._:-]+$/.test(executorId) ? executorId : undefined;
-  if (!targetExecutorId) return {};
-  const documentTitle = boundedContextString(raw.title, 512);
-  const documentPath = boundedContextString(raw.path, 2048);
-  return {
-    target_executor_id: targetExecutorId,
-    ...(documentTitle ? { target_document_title: documentTitle } : {}),
-    ...(documentPath ? { target_document_path: documentPath } : {})
-  };
-}
+export { revitCourierTargetFromContext } from "../courier/revit_courier_target.js";
 
 function clipPromptBlock(value: string, maxChars: number): string {
   return value.length <= maxChars ? value : `${value.slice(0, maxChars)}\n…(truncated)`;
@@ -686,6 +660,14 @@ export async function decideCodex(req: ChatRequest): Promise<ChatResponse> {
 }
 
 export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks): Promise<ChatResponse> {
+  let courierTarget: ReturnType<typeof revitCourierTargetFromContext>;
+  try {
+    courierTarget = revitCourierTargetFromContext(req.context);
+  } catch (error) {
+    const message = `${error instanceof Error ? error.message : String(error)} I stopped before planning or Revit tool actions.`;
+    cb.onDone?.(message);
+    return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [] };
+  }
   const workspaceRoot = getWorkspaceRoot();
   let c = await getClient(workspaceRoot);
   const threadId = await withTransportRetry(workspaceRoot, async activeClient => {
@@ -708,8 +690,9 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   let requirementsBlock = "";
   let requirementsReceipt: RequirementsReceipt | null = null;
   let requirementsError = "";
+  const allowUnscopedLegacyMemory = mayInjectUnscopedLegacyMemory(req.context);
   try {
-    projectProfileBlock = formatProjectProfileForPrompt();
+    projectProfileBlock = allowUnscopedLegacyMemory ? formatProjectProfileForPrompt() : "";
   } catch {
     projectProfileBlock = "";
   }
@@ -733,7 +716,9 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
   try {
     const query = text.trim() || (getPinnedGoal(req.session_id) ?? "") || "";
-    const mem = !freshEvidenceRequirement.required && query ? retrieveMemoryContext({ queryText: query, maxEntries: 6 }) : [];
+    const mem = allowUnscopedLegacyMemory && !freshEvidenceRequirement.required && query
+      ? retrieveMemoryContext({ queryText: query, maxEntries: 6 })
+      : [];
     if (mem.length > 0) {
       const lines: string[] = [];
       let i = 0;
@@ -823,7 +808,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       session_id: req.session_id,
       message_id: req.message_id,
       ttl_ms: codexTurnTimeoutMs() + 60_000,
-      ...revitCourierTargetFromContext(req.context)
+      ...courierTarget
     });
     start = (await withTransportRetry(workspaceRoot, async activeClient => {
       c = activeClient;
