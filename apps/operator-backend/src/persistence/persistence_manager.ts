@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { OPERATOR_BACKEND_CONTRACT_VERSION, type ActionCall, type ToolResult, type UserAttachment } from "../contracts.js";
+import { randomUUID } from "node:crypto";
+import { OPERATOR_BACKEND_CONTRACT_VERSION, type ActionCall, type ChatResponse, type ToolResult, type UserAttachment } from "../contracts.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
 import { atomicAppendJsonlLine } from "./jsonl.js";
 
@@ -144,6 +145,73 @@ export type ToolOutputRecord =
       paywall?: boolean;
     };
 
+export type ChatResultRecord =
+  | {
+      schema_version: 1;
+      status: "complete";
+      session_id: string;
+      message_id: string;
+      completed_at: string;
+      response: ChatResponse;
+    }
+  | {
+      schema_version: 1;
+      status: "error";
+      session_id: string;
+      message_id: string;
+      completed_at: string;
+      error: string;
+    };
+
+function chatResultPath(sessionId: string, messageId: string): string {
+  const p = runBundlePaths(sessionId);
+  return path.join(p.sessionDir, "chat_results", `${safeDirName(messageId)}.json`);
+}
+
+function writeAllSync(fd: number, buf: Buffer): void {
+  let offset = 0;
+  while (offset < buf.length) {
+    const wrote = fs.writeSync(fd, buf, offset, buf.length - offset);
+    if (!Number.isFinite(wrote) || wrote <= 0) throw new Error("Failed to write chat result.");
+    offset += wrote;
+  }
+}
+
+function atomicWriteJson(filePath: string, value: unknown): void {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  const buf = Buffer.from(JSON.stringify(value), "utf8");
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(tempPath, "wx", 0o600);
+    writeAllSync(fd, buf);
+    try {
+      fs.fsyncSync(fd);
+    } catch {
+      // Best-effort on filesystems without fsync support.
+    }
+    fs.closeSync(fd);
+    fd = null;
+    fs.renameSync(tempPath, filePath);
+  } finally {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // ignore
+      }
+    }
+    if (fs.existsSync(tempPath)) {
+      try {
+        fs.rmSync(tempPath, { force: true });
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
 export class PersistenceManager {
   private ensured = new Set<string>();
 
@@ -213,6 +281,59 @@ export class PersistenceManager {
   appendToolOutput(sessionId: string, record: ToolOutputRecord): void {
     const p = this.ensureSession(sessionId);
     atomicAppendJsonlLine(p.toolOutputsPath, record);
+  }
+
+  persistChatResponse(args: { sessionId: string; messageId: string; response: ChatResponse }): void {
+    const sessionId = (args.sessionId ?? "").toString().trim();
+    const messageId = (args.messageId ?? "").toString().trim();
+    if (!sessionId) throw new Error("sessionId is required.");
+    if (!messageId) throw new Error("messageId is required.");
+    this.ensureSession(sessionId);
+    const record: ChatResultRecord = {
+      schema_version: 1,
+      status: "complete",
+      session_id: sessionId,
+      message_id: messageId,
+      completed_at: nowIso(),
+      response: args.response
+    };
+    atomicWriteJson(chatResultPath(sessionId, messageId), record);
+  }
+
+  persistChatError(args: { sessionId: string; messageId: string; error: string }): void {
+    const sessionId = (args.sessionId ?? "").toString().trim();
+    const messageId = (args.messageId ?? "").toString().trim();
+    if (!sessionId) throw new Error("sessionId is required.");
+    if (!messageId) throw new Error("messageId is required.");
+    this.ensureSession(sessionId);
+    const record: ChatResultRecord = {
+      schema_version: 1,
+      status: "error",
+      session_id: sessionId,
+      message_id: messageId,
+      completed_at: nowIso(),
+      error: (args.error ?? "Unknown error").toString()
+    };
+    atomicWriteJson(chatResultPath(sessionId, messageId), record);
+  }
+
+  readChatResult(args: { sessionId: string; messageId: string }): ChatResultRecord | null {
+    const sessionId = (args.sessionId ?? "").toString().trim();
+    const messageId = (args.messageId ?? "").toString().trim();
+    if (!sessionId) throw new Error("sessionId is required.");
+    if (!messageId) throw new Error("messageId is required.");
+    const filePath = chatResultPath(sessionId, messageId);
+    if (!fs.existsSync(filePath)) return null;
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as Partial<ChatResultRecord>;
+    if (
+      parsed.schema_version !== 1 ||
+      parsed.session_id !== sessionId ||
+      parsed.message_id !== messageId ||
+      (parsed.status !== "complete" && parsed.status !== "error")
+    ) {
+      throw new Error("Invalid persisted chat result.");
+    }
+    return parsed as ChatResultRecord;
   }
 }
 
