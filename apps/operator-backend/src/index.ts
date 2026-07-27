@@ -620,6 +620,7 @@ function requiresOperatorToken(pathname: string): boolean {
   // Intentionally include /health to avoid drive-by localhost probing of backend state.
   return (
     pathname === "/chat" ||
+    pathname === "/chat/result" ||
     pathname === "/chat/stream" ||
     pathname === "/event" ||
     pathname === "/feedback" ||
@@ -2082,6 +2083,23 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/chat/result") {
+      const session_id = (url.searchParams.get("session_id") ?? "").trim();
+      const message_id = (url.searchParams.get("message_id") ?? "").trim();
+      if (!session_id || !message_id) return writeJson(res, 400, { error: "session_id and message_id are required." });
+      if (!sessionAccessAllowed(res, session_id, auth.principal)) return;
+      try {
+        const record = persistence.readChatResult({ sessionId: session_id, messageId: message_id });
+        res.setHeader("cache-control", "no-store");
+        if (!record) return writeJson(res, 202, { status: "pending", session_id, message_id });
+        if (record.status === "complete") return writeJson(res, 200, record.response);
+        return writeJson(res, 200, { status: "error", session_id, message_id, error: record.error });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Unable to read persisted chat result.";
+        return writeJson(res, 500, { error: message });
+      }
+    }
+
     if (req.method === "POST" && url.pathname === "/chat") {
       const body = await readJson(req, chatRequestLimitBytes);
       const parsed = body as Partial<ChatRequest> | null;
@@ -2213,6 +2231,7 @@ const server = http.createServer(async (req, res) => {
           actions: macroResp.actions.map(a => ({ action_id: a.action_id, method: a.method, path: a.path })),
           macro: true
         });
+        persistence.persistChatResponse({ sessionId: parsed.session_id, messageId: parsed.message_id, response: macroResp });
         return writeJson(res, 200, macroResp);
       }
       log("chat.request", {
@@ -2315,6 +2334,7 @@ const server = http.createServer(async (req, res) => {
           message_id: parsed.message_id,
           actions: decision.actions.map(a => ({ action_id: a.action_id, method: a.method, path: a.path }))
         });
+        persistence.persistChatResponse({ sessionId: parsed.session_id, messageId: parsed.message_id, response: decision });
         const resp = writeJson(res, 200, decision);
         // If dev agent requested a restart (dev-only), schedule it after the response is sent.
         if (consumeRestartRequested()) setTimeout(() => scheduleBackendRestart(), 250);
@@ -2338,6 +2358,11 @@ const server = http.createServer(async (req, res) => {
         try {
           upsertStepPlanned(parsed.session_id, parsed.message_id, userTextWithAttachments || null, []);
           setStepStopReason(parsed.session_id, parsed.message_id, "ERROR");
+        } catch {
+          // ignore
+        }
+        try {
+          persistence.persistChatError({ sessionId: parsed.session_id, messageId: parsed.message_id, error: message });
         } catch {
           // ignore
         }
