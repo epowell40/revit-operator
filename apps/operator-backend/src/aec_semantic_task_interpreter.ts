@@ -117,6 +117,14 @@ function deterministicScheduleInventoryTask(userText: string): AecSemanticTaskV1
   };
 }
 
+function isMutationImpactPreflightRequest(userText: string): boolean {
+  const text = userText.trim();
+  if (!/\b(?:delete|deleting|deleted|remove|removing|removed|removal|demolish|demolition|take\s+out)\b/i.test(text)) return false;
+  return /\b(?:deletion|delete|removal|remove)\s*[- ]?(?:impact|preflight|preview|dry\s*[- ]?run)\b/i.test(text)
+    || /\b(?:show|tell|list|preview|check|confirm|explain)\b[^.!?]{0,160}\b(?:what|which|everything)\b[^.!?]{0,80}\b(?:would\s+be\s+)?(?:affected|impacted|deleted|disconnected)\b/i.test(text)
+    || /\b(?:what|which|everything)\b[^.!?]{0,120}\b(?:would\s+be\s+)?(?:affected|impacted|deleted|disconnected)\b[^.!?]{0,80}\bbefore\s+(?:deleting|removing)\b/i.test(text);
+}
+
 export function deterministicNamedObjectTopologyTask(userText: string): AecSemanticTaskV1 | null {
   const text = userText.trim();
   if (!text || text.length > AEC_SEMANTIC_TASK_MAX_TEXT_CHARS) return null;
@@ -199,6 +207,14 @@ export async function interpretAecSemanticTask(req: ChatRequest, interpreter: Ae
   const authoritativeText = typeof ui?.authoritative_user_text === "string" ? ui.authoritative_user_text.trim() : "";
   const userText = authoritativeText || delegatedText;
   if (!userText || userText.length > AEC_SEMANTIC_TASK_MAX_TEXT_CHARS || (req.tool_results?.length ?? 0) > 0) return null;
+  // A deletion-impact preview is mutation-adjacent work even when the user
+  // explicitly forbids the eventual write. Keep it out of the read-only query
+  // shortcut so the normal agent can ground the active view/selection and run
+  // an exact /revit/delete dry-run instead of widening to document inventory.
+  if (isMutationImpactPreflightRequest(userText)) {
+    try { appendEvent(req.session_id, "assistant", "aec.semantic_task.skipped_mutation_preflight", { message_id: req.message_id, user_text: userText }); } catch { }
+    return null;
+  }
   const deterministicShockTask = deterministicShockArrestorTask(userText);
   const deterministicScheduleTask = deterministicScheduleInventoryTask(userText);
   const deterministicTopologyTask = deterministicNamedObjectTopologyTask(userText);

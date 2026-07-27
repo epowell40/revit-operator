@@ -151,3 +151,14 @@ test("schedule mutations do not enter the read-only fast path", async () => {
   await interpretAecSemanticTask({ version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: "schedule-mutation", message_id: "m", user_text: "Change the air handler schedule value." }, { async interpret(input) { calls++; return semanticTask(input.user_text); } });
   assert.equal(calls, 1);
 });
+
+test("deletion-impact previews cannot be collapsed into read-only document inventory", async () => {
+  let calls = 0;
+  const prompt = "These two pressure-reducing valves next to each other in this view look duplicated. Show me exactly what would be affected before deleting anything.";
+  const task = await interpretAecSemanticTask(
+    { version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: "delete-impact", message_id: "m", user_text: prompt },
+    { async interpret(input) { calls++; return semanticTask(input.user_text); } }
+  );
+  assert.equal(task, null);
+  assert.equal(calls, 0);
+});
