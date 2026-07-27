@@ -205,6 +205,80 @@ test("ordinary whole-document class query discovers physical instances and expla
   assert.equal(done.response?.aec_query_receipt?.status, "complete");
 });
 
+test("named-object topology query composes identity discovery with exact connector readback", async () => {
+  __testOnlyClearAecQueryStates();
+  const value = shockArrestors(false);
+  value.scope = { ...value.scope, kind: "active_context", document: null };
+  value.evidence.user_text = "What are the shock arrestors connected to? Summarize the pipe system and flag any that aren't connected. Don't change anything.";
+  const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+  const initial = request("shock-topology");
+  initial.user_text = value.evidence.user_text;
+  const first = await maybeRunAecSemanticQuery(initial, interpreter);
+  assert.deepEqual(first.response?.actions.map(action => action.path), ["/revit/find-elements"]);
+
+  const found = await maybeRunAecSemanticQuery(request("shock-topology", [{
+    action_id: "aec-query-document-elements",
+    method: "POST",
+    path: "/revit/find-elements",
+    status: "done",
+    result_json: {
+      count: 4,
+      elementIds: [101, 102, 103, 199],
+      items: [
+        { elementId: 101, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings", identityMatch: { matchedFields: ["familyName"] } },
+        { elementId: 102, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings", identityMatch: { matchedFields: ["familyName"] } },
+        { elementId: 103, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings", identityMatch: { matchedFields: ["familyName"] } },
+        { elementId: 199, familyName: "Elbow", typeName: "Standard", category: "Pipe Fittings", identityMatch: { matchedFields: ["parameter:DESIG."] } }
+      ],
+      identityExpansionCount: 1,
+      truncated: false,
+      itemsComplete: true
+    }
+  }]), interpreter);
+  assert.deepEqual(found.response?.actions, [{
+    action_id: "aec-query-document-element-connectors",
+    method: "POST",
+    path: "/revit/get-connectors",
+    body: { elementIds: [101, 102, 103], includeAllRefs: true, includeCoordinateSystem: false }
+  }]);
+
+  const connectedConnector = (ownerId: number) => ({
+    isPhysicallyConnected: true,
+    physicalConnectionCount: 1,
+    systemClassification: "DomesticColdWater",
+    size: { diameterFt: 1 / 12 },
+    physicalConnectedTo: [{ ownerId, ownerCategory: "OST_PipeCurves", isPhysicalElement: true }]
+  });
+  const openConnector = { isPhysicallyConnected: false, physicalConnectionCount: 0, systemClassification: "DomesticColdWater", size: { diameterFt: 1 / 12 }, physicalConnectedTo: [] };
+  const done = await maybeRunAecSemanticQuery(request("shock-topology", [{
+    action_id: "aec-query-document-element-connectors",
+    method: "POST",
+    path: "/revit/get-connectors",
+    status: "done",
+    result_json: {
+      status: "Ok",
+      requestedCount: 3,
+      results: [
+        { id: 101, ok: true, systemName: "CW 5", connectors: [connectedConnector(201), connectedConnector(202)] },
+        { id: 102, ok: true, systemName: "CW 5", connectors: [connectedConnector(203), connectedConnector(204)] },
+        { id: 103, ok: true, systemName: "CW 7", connectors: [openConnector, openConnector] }
+      ],
+      warnings: []
+    }
+  }]), interpreter);
+  assert.equal(done.response?.actions.length, 0);
+  assert.match(done.response?.assistant_message ?? "", /3 top-level physical model instances matching shock arrestors/);
+  assert.match(done.response?.assistant_message ?? "", /excluded 1 candidate that matched only an abbreviated parameter value/);
+  assert.match(done.response?.assistant_message ?? "", /6 connectors: 4 physically connected and 2 open/);
+  assert.match(done.response?.assistant_message ?? "", /Completely unconnected: element 103/);
+  assert.match(done.response?.assistant_message ?? "", /System classification: DomesticColdWater/);
+  assert.match(done.response?.assistant_message ?? "", /Revit system names: CW 5, CW 7/);
+  assert.match(done.response?.assistant_message ?? "", /Direct physical connections lead to Pipe Curves/);
+  assert.match(done.response?.assistant_message ?? "", /Connector diameters: 1 in/);
+  assert.match(done.response?.assistant_message ?? "", /No model changes were made/);
+  assert.equal(done.response?.aec_query_receipt?.status, "ambiguous");
+});
+
 test("schedule correlation fails closed when the separate bridge header section is unusable", async () => {
   __testOnlyClearAecQueryStates();
   const value = shockArrestors(false);

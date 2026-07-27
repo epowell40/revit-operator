@@ -124,6 +124,37 @@ test("explicit all-each follow-ups promote active context to bounded document di
   assert.match(implicit.blockers[0], /explicit document opt-in/);
 });
 
+test("named-object connector questions promote active context to bounded discovery plus topology readback", () => {
+  const value = task();
+  value.operation = "inspect";
+  value.subject = { kind: "class", semantic_class: "other", terms: ["shock arrestors"], categories: ["OST_PipeFitting"], family_name: null, type_name: null, system_name: null, identifiers: [] };
+  value.scope = { ...value.scope, kind: "active_context", document: null };
+  value.outputs = ["summary", "element_ids", "parameters"];
+  value.execution.max_primary_actions = 2;
+  value.evidence.user_text = "What are the shock arrestors connected to? Summarize the pipe system and flag any that aren't connected.";
+  const plan = planAecQueryTask(value);
+  assert.equal(plan.status, "ready");
+  assert.equal(plan.workflow_id, "query.document_elements");
+  assert.equal(plan.evidence.scope_promoted_from_active_context, true);
+  assert.equal(plan.evidence.needs_topology, true);
+  assert.equal(plan.evidence.schedule_detail_requested, false);
+  assert.deepEqual(plan.actions, [{
+    action_id: "aec-query-document-elements",
+    method: "POST",
+    path: "/revit/find-elements",
+    body: {
+      identityTerms: ["shock arrestors"],
+      expandIdentityAcronymsInParameters: true,
+      physicalElementsOnly: true,
+      topLevelInstancesOnly: true,
+      limit: 500
+    }
+  }]);
+
+  value.execution.max_primary_actions = 1;
+  assert.match(planAecQueryTask(value).blockers[0], /connector queries require two bounded actions/);
+});
+
 test("planner pushes canonical level/category predicates and fails closed when native pushdown is impossible", () => {
   const namedView = task();
   namedView.scope = { ...namedView.scope, kind: "view", views: [{ id: null, name: "L4 - POWER" }] };
