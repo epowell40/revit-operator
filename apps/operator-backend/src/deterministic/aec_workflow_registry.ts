@@ -8,6 +8,7 @@ import { maybeRunAecSemanticQuery } from "./aec_query_runtime.js";
 import type { AecSemanticTaskInterpreter } from "../aec_semantic_task_interpreter.js";
 import type { AecSemanticTaskV1 } from "../aec_semantic_task.js";
 import { maybeRunAecScopeWorkPackage } from "./aec_scope_work_package_runtime.js";
+import { maybeRunMepServiceAccessoryPreflight } from "./mep_service_accessory_runtime.js";
 
 export type AecWorkflowId = "electrical.receptacle_layout_from_analog";
 export type AecWorkflowResolution = { workflow_id: AecWorkflowId; intent: AecTaskIntentV1 };
@@ -48,6 +49,8 @@ export function adaptSemanticTaskToLegacyWorkflow(task: AecSemanticTaskV1): AecT
 }
 
 export async function maybeRunSemanticAecWorkflow(req: ChatRequest, interpreter?: AecTaskIntentInterpreter, semanticInterpreter?: AecSemanticTaskInterpreter): Promise<ChatResponse | null> {
+  const serviceAccessory = maybeRunMepServiceAccessoryPreflight(req);
+  if (serviceAccessory) return serviceAccessory;
   const scopeContinuation = maybeRunAecScopeWorkPackage(req);
   if (scopeContinuation) return scopeContinuation;
   const issuedIntent = consumeAecTaskIntentToken(req.context, (req.user_text ?? "").trim());
