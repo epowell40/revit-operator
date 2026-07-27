@@ -15,6 +15,14 @@ namespace RevitBridge.Common.Tests
             Assert.True(ScheduleCellUpdatePolicy.FieldNameMatches(requested, parameterName, heading));
         }
 
+        [Fact]
+        public void FieldChoiceLabel_UsesBackingNameForDuplicateVisibleHeadings()
+        {
+            Assert.Equal("TOTAL AIRFLOW (CFM)", ScheduleCellUpdatePolicy.FieldChoiceLabel("MAX CFM", "TOTAL AIRFLOW\r\n(CFM)", false));
+            Assert.Equal("MAX CFM", ScheduleCellUpdatePolicy.FieldChoiceLabel("MAX CFM", "TOTAL AIRFLOW\r\n(CFM)", true));
+            Assert.Equal("Ex - TOTAL AIRFLOW (CFM)", ScheduleCellUpdatePolicy.FieldChoiceLabel("Ex - TOTAL AIRFLOW (CFM)", "TOTAL AIRFLOW\r\n(CFM)", true));
+        }
+
         [Theory]
         [InlineData("Mark", "")]
         [InlineData("Designation", "DESIG")]
