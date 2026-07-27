@@ -263,7 +263,7 @@ namespace RevitBridge.Handlers
             var committed = ResolveParameter(doc, candidate.TargetParameter.Owner.Id, candidate.TargetParameter.Parameter.Id);
             var afterRaw = committed == null ? null : ReadRawValue(committed);
             var afterDisplay = committed == null ? null : ReadDisplayValue(committed);
-            var verified = committed != null && ScheduleCellUpdatePolicy.ValueMatches(requestedValue, afterRaw, afterDisplay);
+            var verified = committed != null && ScheduleCellUpdatePolicy.CommittedValueMatches(proposedRaw, proposedDisplay, afterRaw, afterDisplay);
             return Task.FromResult<object>(new
             {
                 status = verified ? "Applied and Verified" : "Applied With Verification Failure",
@@ -353,14 +353,13 @@ namespace RevitBridge.Handlers
                 // requested field and must not consume the mutation deadline.
                 if (suggestions.Count > 0)
                 {
-                    diagnostic.DisplayedRowMatchCount = AddVisibleRowMatches(schedule, rowKey, visibleRowMatches);
+                    diagnostic.DisplayedRowMatchCount = AddVisibleRowMatches(schedule, rowKey, visibleRowMatches, fields);
                 }
                 diagnostic.BackingOwnerUnproven = diagnostic.DisplayedRowMatchCount > 0;
                 issues.Add(new { code = targetFields.Count == 0 ? "target_field_not_found" : "target_field_ambiguous", scheduleId = ElementIdCompat.GetValue(schedule.Id), scheduleName = schedule.Name, targetField = requestedTargetField, matches = targetFields.Select(FieldEvidence).ToList(), suggestions = suggestions.Select(FieldEvidence).ToList() });
                 return;
             }
             var targetField = targetFields[0];
-            diagnostic.DisplayedRowMatchCount = AddVisibleRowMatches(schedule, rowKey, visibleRowMatches);
             if (targetField.ParameterId == ElementId.InvalidElementId)
             {
                 issues.Add(new { code = "non_parameter_target_field", scheduleId = ElementIdCompat.GetValue(schedule.Id), scheduleName = schedule.Name, targetField = FieldEvidence(targetField), message = "Calculated, combined, count, and other non-parameter fields cannot be edited as backing parameters." });
@@ -436,6 +435,7 @@ namespace RevitBridge.Handlers
 
             if (candidates.Count == candidateCountBeforeSchedule)
             {
+                diagnostic.DisplayedRowMatchCount = AddVisibleRowMatches(schedule, rowKey, visibleRowMatches, fields);
                 diagnostic.BackingOwnerUnproven = diagnostic.DisplayedRowMatchCount > 0;
                 issues.Add(new
                 {
@@ -529,7 +529,7 @@ namespace RevitBridge.Handlers
             catch { return false; }
         }
 
-        private static int AddVisibleRowMatches(ViewSchedule schedule, string rowKey, List<object> matches)
+        private static int AddVisibleRowMatches(ViewSchedule schedule, string rowKey, List<object> matches, List<FieldRef> fields)
         {
             var beforeCount = matches.Count;
             try
@@ -537,9 +537,24 @@ namespace RevitBridge.Handlers
                 var body = schedule.GetTableData().GetSectionData(SectionType.Body);
                 var maxRows = Math.Min(body.LastRowNumber, body.FirstRowNumber + 499);
                 var maxColumns = Math.Min(body.LastColumnNumber, body.FirstColumnNumber + 199);
+                var identifierColumns = new List<int>();
+                var visibleColumnOffset = 0;
+                foreach (var field in fields)
+                {
+                    if (SafeBool(() => field.Field.IsHidden)) continue;
+                    if (ScheduleCellUpdatePolicy.IsLikelyIdentifierField(field.Name, field.Heading))
+                    {
+                        var column = body.FirstColumnNumber + visibleColumnOffset;
+                        if (column <= maxColumns) identifierColumns.Add(column);
+                    }
+                    visibleColumnOffset++;
+                }
+                var columns = identifierColumns.Count > 0
+                    ? identifierColumns
+                    : Enumerable.Range(body.FirstColumnNumber, Math.Max(0, maxColumns - body.FirstColumnNumber + 1)).ToList();
                 for (var row = body.FirstRowNumber; row <= maxRows && matches.Count < 25; row++)
                 {
-                    for (var column = body.FirstColumnNumber; column <= maxColumns && matches.Count < 25; column++)
+                    foreach (var column in columns)
                     {
                         string text;
                         try { text = body.GetCellText(row, column) ?? ""; }
