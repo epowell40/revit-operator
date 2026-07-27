@@ -466,6 +466,69 @@ function completeDocumentSpatial(task: AecSemanticTaskV1, state: QueryState, res
   return response(`I found ${labels.length} top-level physical model instance${labels.length === 1 ? "" : "s"} matching ${subjectLabel(task)}.${identityText}${excludedText} Room results: ${resolved} resolved, ${ambiguous} ambiguous, ${unresolved} unresolved.\n\n${sections}${incomplete}\n\nNo model changes were made.`, [], { workflow_id: "query.document_elements", status: ambiguous > 0 || unresolved > 0 || discoveryIncomplete || spatialIncomplete ? "ambiguous" : "complete" });
 }
 
+function topologyCategoryLabel(value: string): string {
+  return value.replace(/^OST_/i, "").replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ");
+}
+
+function topologyInches(value: unknown): string | null {
+  const feet = Number(value);
+  if (!Number.isFinite(feet) || feet <= 0) return null;
+  const inches = feet * 12;
+  return `${inches.toFixed(3).replace(/\.?0+$/, "")} in`;
+}
+
+function completeDocumentTopology(task: AecSemanticTaskV1, state: QueryState, result: ToolResult): ChatResponse {
+  if (result.status !== "done" || result.method !== "POST" || result.path !== "/revit/get-connectors") {
+    return response(`I found matching model instances but could not read their connector topology: ${result.error || "the connector action failed"}. No model changes were made.`, [], { workflow_id: "query.document_elements", status: "failed" });
+  }
+  const payload = resultPayload(result);
+  const rows = resultItems(payload, 500);
+  const requestedIds = (Array.isArray(state.evidence.topology_element_ids) ? state.evidence.topology_element_ids : [])
+    .map(Number)
+    .filter(id => Number.isSafeInteger(id) && id > 0);
+  const returnedIds = new Set(rows.map(row => Number(row.id ?? row.elementId)).filter(id => Number.isSafeInteger(id) && id > 0));
+  const missingIds = requestedIds.filter(id => !returnedIds.has(id));
+  const failedRows = rows.filter(row => row.ok === false);
+  const connectors = rows.flatMap(row => resultArray(row.connectors, 500).map(connector => ({ row, connector })));
+  const connected = connectors.filter(({ connector }) => connector.isPhysicallyConnected === true || Number(connector.physicalConnectionCount) > 0);
+  const open = connectors.filter(({ connector }) => connector.isPhysicallyConnected === false && Number(connector.physicalConnectionCount ?? 0) === 0);
+  const unknown = connectors.filter(({ connector }) => connector.isPhysicallyConnected !== true && connector.isPhysicallyConnected !== false && !Number.isFinite(Number(connector.physicalConnectionCount)));
+  const disconnectedElements = rows.filter(row => {
+    const rowConnectors = resultArray(row.connectors, 500);
+    return rowConnectors.length > 0 && rowConnectors.every(connector => connector.isPhysicallyConnected === false && Number(connector.physicalConnectionCount ?? 0) === 0);
+  });
+  const partiallyConnectedElements = rows.filter(row => {
+    const rowConnectors = resultArray(row.connectors, 500);
+    const physical = rowConnectors.map(connector => connector.isPhysicallyConnected === true || Number(connector.physicalConnectionCount) > 0);
+    return physical.some(Boolean) && physical.some(value => !value);
+  });
+  const connectorlessElements = rows.filter(row => resultArray(row.connectors, 500).length === 0);
+  const systemNames = [...new Set(rows.map(row => textValue(row.systemName)).filter((value): value is string => !!value))].sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+  const classifications = [...new Set(connectors.map(({ connector }) => textValue(connector.systemClassification)).filter((value): value is string => !!value))].sort();
+  const neighborCategories = [...new Set(connected.flatMap(({ connector }) => resultArray(connector.physicalConnectedTo, 500).map(reference => textValue(reference.ownerCategory))).filter((value): value is string => !!value))].sort();
+  const diameters = [...new Set(connectors.map(({ connector }) => topologyInches(objectValue(connector.size)?.diameterFt)).filter((value): value is string => !!value))].sort((left, right) => Number.parseFloat(left) - Number.parseFloat(right));
+  const rowLabel = (row: Record<string, unknown>): string => `element ${textValue(row.id) ?? textValue(row.elementId) ?? "unknown"}`;
+  const identityGroups = documentIdentityGroups(resultArray(state.evidence.discovery_items, 500));
+  const identityText = identityGroups.length ? ` They are ${identityGroups.join("; ")}.` : "";
+  const excludedText = secondaryIdentityExclusionText(Number(state.evidence.secondary_identity_matches_excluded) || 0);
+  const topologyIncomplete = state.evidence.discovery_incomplete === true || resultIsIncomplete(payload) || missingIds.length > 0 || failedRows.length > 0 || unknown.length > 0 || rows.length !== requestedIds.length;
+  const deviceStatus = [
+    disconnectedElements.length ? `Completely unconnected: ${disconnectedElements.map(rowLabel).join(", ")}.` : "No completely unconnected devices were returned.",
+    partiallyConnectedElements.length ? `Partially connected: ${partiallyConnectedElements.map(rowLabel).join(", ")}.` : "",
+    connectorlessElements.length ? `No connectors returned: ${connectorlessElements.map(rowLabel).join(", ")}.` : ""
+  ].filter(Boolean).join(" ");
+  const systems = [
+    classifications.length ? `System classification${classifications.length === 1 ? "" : "s"}: ${classifications.join(", ")}.` : "",
+    systemNames.length ? `Revit system names: ${systemNames.join(", ")}.` : "",
+    neighborCategories.length ? `Direct physical connections lead to ${neighborCategories.map(topologyCategoryLabel).join(", ")}.` : "",
+    diameters.length ? `Connector diameters: ${diameters.join(", ")}.` : ""
+  ].filter(Boolean).join(" ");
+  const incomplete = topologyIncomplete
+    ? ` Connector readback was incomplete (${missingIds.length} missing element rows, ${failedRows.length} failed rows, ${unknown.length} connectors without explicit physical status), so this is not an exhaustive topology claim.`
+    : "";
+  return response(`I found ${rows.length} top-level physical model instance${rows.length === 1 ? "" : "s"} matching ${subjectLabel(task)}.${identityText}${excludedText} They expose ${connectors.length} connector${connectors.length === 1 ? "" : "s"}: ${connected.length} physically connected and ${open.length} open. ${deviceStatus} ${systems}${incomplete} No model changes were made.`, [], { workflow_id: "query.document_elements", status: topologyIncomplete || disconnectedElements.length > 0 || partiallyConnectedElements.length > 0 || connectorlessElements.length > 0 ? "ambiguous" : "complete" });
+}
+
 function exactCompletion(task: AecSemanticTaskV1, state: QueryState, result: ToolResult): ChatResponse {
   if (result.status !== "done") return response(`I found the exact identifier but could not read its placement context: ${result.error || "the context query failed"}. No model changes were made.`, [], { workflow_id: state.workflow_id, status: "failed" });
   const context = resultPayload(result) ?? {};
@@ -528,6 +591,7 @@ function continueRun(req: ChatRequest, state: QueryState): ChatResponse | null {
     const selected = selectPrimaryDocumentIdentityMatches(state.task, payload);
     const count = selected.elementIds ? selected.elementIds.length : countFromPayload(payload) ?? 0;
     const wantsSpatial = state.evidence.needs_spatial === true;
+    const wantsTopology = state.evidence.needs_topology === true;
     if (result.status === "done" && result.method === "POST" && result.path === "/revit/find-elements" && count > 0 && wantsSpatial) {
       const resultLimit = Number.isSafeInteger(state.evidence.result_limit) ? state.evidence.result_limit as number : state.task.execution.max_results;
       const ids = (selected.elementIds ?? boundedElementIds(payload, resultLimit, 500)).slice(0, Math.max(1, Math.min(500, resultLimit)));
@@ -564,10 +628,43 @@ function continueRun(req: ChatRequest, state: QueryState): ChatResponse | null {
         }
       }]);
     }
+    if (result.status === "done" && result.method === "POST" && result.path === "/revit/find-elements" && count > 0 && wantsTopology) {
+      const resultLimit = Number.isSafeInteger(state.evidence.result_limit) ? state.evidence.result_limit as number : state.task.execution.max_results;
+      const ids = (selected.elementIds ?? boundedElementIds(payload, resultLimit, 500)).slice(0, Math.max(1, Math.min(500, resultLimit)));
+      if (ids.length === 0) {
+        states.delete(key(req));
+        return response("The bounded identity search reported matches but returned no valid element IDs, so I could not guess which connectors to inspect. No model changes were made.", [], { workflow_id: state.workflow_id, status: "failed" });
+      }
+      states.set(key(req), {
+        ...state,
+        stage: 1,
+        evidence: {
+          ...state.evidence,
+          discovery_count: count,
+          discovery_incomplete: resultIsIncomplete(payload),
+          discovery_items: selected.items,
+          secondary_identity_matches_excluded: selected.excludedSecondaryCount,
+          topology_element_ids: ids
+        },
+        expires_at: Date.now() + TTL_MS
+      });
+      return response("I found the physical instances and am reading their exact MEP connectors and direct physical references.", [{
+        action_id: "aec-query-document-element-connectors",
+        method: "POST",
+        path: "/revit/get-connectors",
+        body: { elementIds: ids, includeAllRefs: true, includeCoordinateSystem: false }
+      }]);
+    }
     states.delete(key(req));
     return completeDocumentIdentity(state.task, result, scheduleResult);
   }
   if (state.workflow_id === "query.document_elements" && state.stage === 1) {
+    if (state.evidence.needs_topology === true) {
+      const result = matchingResult(req, "aec-query-document-element-connectors");
+      if (!result) return null;
+      states.delete(key(req));
+      return completeDocumentTopology(state.task, state, result);
+    }
     const result = matchingResult(req, "aec-query-document-element-locations");
     if (!result) return null;
     states.delete(key(req));

@@ -66,6 +66,10 @@ function isSpatialDocumentQuestion(task: AecSemanticTaskV1): boolean {
   return /\b(?:where|located?|locations?|rooms?|spaces?|positions?|coordinates?|levels?|floors?|zones?)\b/i.test(task.evidence.user_text);
 }
 
+function isConnectorTopologyQuestion(task: AecSemanticTaskV1): boolean {
+  return /\b(?:connect(?:ed|ion|ions|or|ors)?\s+to|connected|connections?|connectors?|unconnected|disconnected|open\s+connectors?|pipe\s+systems?|duct\s+systems?|mep\s+systems?)\b/i.test(task.evidence.user_text);
+}
+
 function hasExplicitDocumentClassScope(task: AecSemanticTaskV1): boolean {
   if (task.scope.kind !== "active_context") return false;
   if (!["category", "class", "family", "type", "elements", "generic"].includes(task.subject.kind)) return false;
@@ -75,7 +79,8 @@ function hasExplicitDocumentClassScope(task: AecSemanticTaskV1): boolean {
   const text = task.evidence.user_text;
   return /\b(?:all|each|every)\b/i.test(text) ||
     /\b(?:this|current|whole|entire)\s+(?:project|model|document)\b/i.test(text) ||
-    /\bthroughout\s+(?:the\s+)?(?:project|model|document)\b/i.test(text);
+    /\bthroughout\s+(?:the\s+)?(?:project|model|document)\b/i.test(text) ||
+    (isConnectorTopologyQuestion(task) && documentIdentityTerms(task).length > 0);
 }
 
 function naturalScheduleQuery(identityTerms: string[]): string | null {
@@ -203,8 +208,12 @@ export function planAecQueryTask(value: unknown): AecQueryPlanV1 {
       return blocked("Whole-document element discovery requires an identity term or an explicit canonical category; an unfiltered document scan is not allowed.");
     }
     const needsSpatial = isSpatialDocumentQuestion(task);
+    const needsTopology = isConnectorTopologyQuestion(task);
     if (needsSpatial && task.execution.max_primary_actions < 2) {
       return blocked("Whole-document location queries require two bounded actions: identity discovery and geometry-aware spatial resolution.");
+    }
+    if (needsTopology && task.execution.max_primary_actions < 2) {
+      return blocked("Whole-document connector queries require two bounded actions: identity discovery and connector topology readback.");
     }
     const limit = 500;
     const actions = [action("aec-query-document-elements", "/revit/find-elements", {
@@ -216,7 +225,7 @@ export function planAecQueryTask(value: unknown): AecQueryPlanV1 {
       topLevelInstancesOnly: true,
       limit
     })];
-    const scheduleQuery = !needsSpatial && task.execution.max_primary_actions >= 2 ? naturalScheduleQuery(identityTerms) : null;
+    const scheduleQuery = !needsSpatial && !needsTopology && task.execution.max_primary_actions >= 2 ? naturalScheduleQuery(identityTerms) : null;
     if (scheduleQuery) {
       actions.push(action("aec-query-document-element-schedule", "/revit/schedules", {
         action: "detail",
@@ -244,6 +253,7 @@ export function planAecQueryTask(value: unknown): AecQueryPlanV1 {
         max_primary_actions: task.execution.max_primary_actions,
         result_limit: limit,
         needs_spatial: needsSpatial,
+        needs_topology: needsTopology,
         schedule_detail_requested: Boolean(scheduleQuery),
         schedule_query: scheduleQuery,
         scope_promoted_from_active_context: explicitDocumentClassScope
