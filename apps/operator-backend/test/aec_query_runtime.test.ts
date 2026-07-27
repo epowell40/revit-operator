@@ -17,10 +17,10 @@ test("schedule identity headers use exact tokens rather than id substrings", () 
 
 function shockArrestors(where: boolean): AecSemanticTaskV1 {
   const value = ahu();
-  value.operation = where ? "locate" : "inspect";
+  value.operation = "locate";
   value.subject = { kind: "class", semantic_class: "other", terms: ["shock arrestors"], categories: ["OST_MechanicalEquipment"], family_name: null, type_name: null, system_name: null, identifiers: [] };
   value.scope = { ...value.scope, kind: "document", document: "this project" };
-  value.outputs = where ? ["summary", "element_ids", "spatial_context"] : ["summary", "element_ids"];
+  value.outputs = where ? ["summary", "element_ids", "spatial_context"] : ["summary", "element_ids", "parameters", "spatial_context"];
   value.execution = { ...value.execution, max_results: 25, max_primary_actions: 2, allow_document_fallback: true };
   value.evidence.user_text = where
     ? "Where are the shock arrestors? Provide the room number for each device location."

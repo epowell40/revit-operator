@@ -83,10 +83,14 @@ test("whole-document sheet count stays on the legacy inventory while physical eq
 
   value.operation = "locate";
   value.outputs = ["summary", "element_ids", "spatial_context"];
-  value.evidence.user_text = "List the equipment.";
+  value.evidence.user_text = "Where is the equipment?";
   const spatialEquipment = planAecQueryTask(value);
   assert.equal(spatialEquipment.workflow_id, "query.document_elements");
   assert.equal(spatialEquipment.evidence.needs_spatial, true);
+
+  value.evidence.user_text = "Can you find the equipment in this project and tell me what it is?";
+  const identityEquipment = planAecQueryTask(value);
+  assert.equal(identityEquipment.evidence.needs_spatial, false, "provider-added locate/spatial outputs must not broaden a non-spatial find request");
 });
 
 test("explicit all-each follow-ups promote active context to bounded document discovery", () => {
