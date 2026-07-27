@@ -59,6 +59,7 @@ Understand paraphrases by meaning. Do not require trigger words. Preserve exact 
 For a uniquely named or marked element, preserve the exact identifier supplied by the user and use operation=locate or inspect, subject.kind=exact_identifier, the most likely Revit semantic_class and category, and exact Mark and/or Name identifiers. Do not invent an example identifier when the request does not contain one. Alternative exact predicates are allowed and are evaluated as a bounded OR. Request compact identity, parameter, spatial-context, and best-view outputs, and set max_primary_actions=2 when spatial_context or best_view is requested. If the user explicitly asks to show, focus, or take them to that exact element, use operation=focus and max_primary_actions=3 so the runtime can resolve identity, resolve the best view, and activate/focus it without guessing.
 Use document scope and allow_document_fallback=true only when the user explicitly requests the whole project/model. Otherwise represent the smallest explicit scope or active_context and keep fallback false.
 For count/list questions, identify the requested category/class and room, level, view, sheet, system, selection, or region scope. Never invent scope values. Count normally uses one primary action. List/inspect/locate normally use max_primary_actions=2 so a compact ID-only native result can be enriched with bounded element summaries without scanning again.
+When the user names a concrete object identity that is not itself a canonical Revit category, preserve that literal noun phrase in subject.terms and use subject.kind=class with semantic_class=other unless stronger project evidence grounds a family/type. Do not replace a concrete identity such as "shock arrestors" with a guessed discipline or broad category such as plumbing_fixture; a guessed discipline may be context, but it is not an identity predicate.
 Schedule discovery is a document read, not element focus. Requests such as "show me the schedules" or "show me the one for the air handlers" use operation=list, subject.kind=generic, semantic_class=view, terms that preserve "schedule" plus the requested discipline/equipment wording, document scope, no mutation, and one primary action. Do not reinterpret ordinary "show me" schedule discovery as focus or view activation unless the user supplies one exact schedule name or id and explicitly asks to open it.
 For discipline-scoped view or sheet work, preserve the discipline in subject.semantic_class even though the objects being arranged are views/sheets: mechanical or HVAC uses mechanical_equipment; electrical power uses electrical_equipment; lighting uses light_fixture; plumbing uses plumbing_fixture; fire alarm uses electrical_equipment with an explicit fire-alarm term. Use semantic_class=view or sheet only when the user supplied no discipline. This structured classification drives bounded view predicates and must not be inferred later from prompt trigger words.
 For an inventory comparison between exactly two rooms, levels, views, or sheets, use operation=compare, one category/class subject with canonical categories, the single scope kind containing exactly two resolved values, outputs limited to summary/count/element_ids/comparison, and max_primary_actions=2. Do not use this shape for parameter, geometry, or qualitative design comparisons.
@@ -116,6 +117,28 @@ function deterministicScheduleInventoryTask(userText: string): AecSemanticTaskV1
   };
 }
 
+function deterministicShockArrestorTask(userText: string): AecSemanticTaskV1 | null {
+  const identityMatch = userText.match(/\bshock\s+(?:arrest(?:e|o)?rs?|absorbers?)\b/i);
+  if (!identityMatch) return null;
+  if (/\b(?:edit|change|update|replace|set|delete|remove|create|add|rename|configure|move|place|resize)\b/i.test(userText)) return null;
+  if (!/\b(?:find|identify|inspect|list|locate|where|what|tell|show)\b/i.test(userText)) return null;
+  const wantsSpatial = /\b(?:where|located?|locations?|rooms?|spaces?|positions?|coordinates?|levels?|floors?|zones?)\b/i.test(userText);
+  const explicitDocument = /\b(?:all|each|every)\b/i.test(userText) || /\b(?:this|current|whole|entire)\s+(?:project|model|document)\b/i.test(userText);
+  const identity = identityMatch[0].trim().toLocaleLowerCase();
+  return {
+    schema: AEC_SEMANTIC_TASK_V1_SCHEMA,
+    operation: wantsSpatial ? "locate" : "inspect",
+    subject: { kind: "class", semantic_class: "other", terms: [identity], categories: [], family_name: null, type_name: null, system_name: null, identifiers: [] },
+    scope: { kind: explicitDocument ? "document" : "active_context", document: explicitDocument ? "current model" : null, levels: [], rooms: [], spaces: [], areas: [], views: [], sheets: [], systems: [], element_ids: [], region: null },
+    reference: { strategy: "none", source_description: null, source_room: null },
+    mutation: { kind: "none", requested: false },
+    outputs: wantsSpatial ? ["summary", "count", "element_ids", "spatial_context"] : ["summary", "count", "element_ids", "parameters"],
+    execution: { max_results: 500, max_primary_actions: 2, allow_document_fallback: explicitDocument, requires_visual_verification: false },
+    confidence: { value: 0.99, ambiguity: "none", reasons: ["Explicit named-object read request; literal identity preserved."] },
+    evidence: { user_text: userText }
+  };
+}
+
 export class OpenAiAecSemanticTaskInterpreter implements AecSemanticTaskInterpreter {
   async interpret(input: AecSemanticTaskInterpretationInput): Promise<unknown | null> {
     const apiKey = resolveOpenAiApiKey();
@@ -134,6 +157,7 @@ export async function interpretAecSemanticTask(req: ChatRequest, interpreter: Ae
   const authoritativeText = typeof ui?.authoritative_user_text === "string" ? ui.authoritative_user_text.trim() : "";
   const userText = authoritativeText || delegatedText;
   if (!userText || userText.length > AEC_SEMANTIC_TASK_MAX_TEXT_CHARS || (req.tool_results?.length ?? 0) > 0) return null;
+  const deterministicShockTask = deterministicShockArrestorTask(userText);
   const deterministicScheduleTask = deterministicScheduleInventoryTask(userText);
   if (deterministicScheduleTask) {
     try { appendEvent(req.session_id, "assistant", "aec.semantic_task", { message_id: req.message_id, interpreter: "deterministic.schedule_inventory", task: deterministicScheduleTask }); } catch { }
@@ -142,9 +166,13 @@ export async function interpretAecSemanticTask(req: ChatRequest, interpreter: Ae
   const recent = getRecentMessages(req.session_id, 8).filter(message => message.text.trim() && message.text.trim() !== userText && message.text.trim() !== delegatedText).slice(-6).map(message => ({ role: message.role, text: message.text.slice(0, AEC_SEMANTIC_TASK_MAX_TEXT_CHARS) }));
   try {
     const value = await interpreter.interpret({ user_text: userText, ...(delegatedText && delegatedText !== userText ? { delegated_task_text: delegatedText } : {}), recent_messages: recent });
-    if (value === null) return null;
-    const task = normalizeAecSemanticTaskV1(canonicalizeProviderScopeDiscriminant(value), userText);
-    try { appendEvent(req.session_id, "assistant", "aec.semantic_task", { message_id: req.message_id, interpreter: interpreter.constructor?.name || "unknown", task }); } catch { }
+    if (value === null && !deterministicShockTask) return null;
+    const interpretedTask = value === null ? null : normalizeAecSemanticTaskV1(canonicalizeProviderScopeDiscriminant(value), userText);
+    const preservesShockIdentity = interpretedTask !== null && interpretedTask.subject.kind !== "category" && interpretedTask.subject.terms.some(term => /\bshock\s+(?:arrest(?:e|o)?rs?|absorbers?)\b/i.test(term));
+    const task = deterministicShockTask && !preservesShockIdentity ? deterministicShockTask : interpretedTask;
+    if (!task) return null;
+    const interpreterName = task === deterministicShockTask ? "deterministic.named_object_guard" : interpreter.constructor?.name || "unknown";
+    try { appendEvent(req.session_id, "assistant", "aec.semantic_task", { message_id: req.message_id, interpreter: interpreterName, task }); } catch { }
     return task;
   } catch (error) {
     try { appendEvent(req.session_id, "assistant", "aec.semantic_task.rejected", { message_id: req.message_id, interpreter: interpreter.constructor?.name || "unknown", error: error instanceof Error ? error.message.slice(0, 500) : "semantic_task_interpretation_failed" }); } catch { }
