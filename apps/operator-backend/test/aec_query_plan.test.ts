@@ -59,7 +59,7 @@ test("room count uses room-contents rather than a document-wide element query", 
   assert.deepEqual(plan.actions[0], { action_id: "aec-query-room-contents", method: "POST", path: "/revit/room-contents", body: { roomNumber: "403", mode: "auto", verticalScope: "room", limit: 10, categories: ["OST_ElectricalFixtures"], includeKeywords: ["receptacle"] } });
 });
 
-test("whole-document sheet count uses the legacy-compatible bounded sheet inventory", () => {
+test("whole-document sheet count stays on the legacy inventory while physical equipment uses bounded identity discovery", () => {
   const value = task();
   value.operation = "count";
   value.subject = { kind: "category", semantic_class: "sheet", terms: ["sheets"], categories: ["OST_Sheets"], family_name: null, type_name: null, system_name: null, identifiers: [] };
@@ -72,7 +72,21 @@ test("whole-document sheet count uses the legacy-compatible bounded sheet invent
   assert.equal(plan.evidence.exact_document_inventory, true);
 
   value.subject = { ...value.subject, semantic_class: "mechanical_equipment", terms: ["equipment"], categories: ["OST_MechanicalEquipment"] };
-  assert.match(planAecQueryTask(value).blockers[0], /No bounded query workflow/);
+  const equipment = planAecQueryTask(value);
+  assert.equal(equipment.workflow_id, "query.document_elements");
+  assert.deepEqual(equipment.actions, [{
+    action_id: "aec-query-document-elements",
+    method: "POST",
+    path: "/revit/find-elements",
+    body: { category: "OST_MechanicalEquipment", physicalElementsOnly: true, topLevelInstancesOnly: true, limit: 500 }
+  }]);
+
+  value.operation = "locate";
+  value.outputs = ["summary", "element_ids", "spatial_context"];
+  value.evidence.user_text = "List the equipment.";
+  const spatialEquipment = planAecQueryTask(value);
+  assert.equal(spatialEquipment.workflow_id, "query.document_elements");
+  assert.equal(spatialEquipment.evidence.needs_spatial, true);
 });
 
 test("planner pushes canonical level/category predicates and fails closed when native pushdown is impossible", () => {

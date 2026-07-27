@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   compactIncomingToolResult,
+  compactFindElementsResultForPrompt,
   compactLocateElementsResultForPrompt,
   compactParameterReadResultForPrompt,
   compactScheduleReadResultForPrompt,
@@ -11,11 +12,73 @@ import {
   getChatRequestLimitBytes
 } from "../src/tool_result_compaction.js";
 
+test("compact find-elements preserves bounded identity evidence and explicit completeness", () => {
+  const items = Array.from({ length: 25 }, (_, index) => ({
+    elementId: 1000 + index,
+    category: "Pipe Fittings",
+    builtInCategory: "OST_PipeFitting",
+    name: "Standard",
+    familyName: "LW_Shock Absorber",
+    typeName: "Standard",
+    mark: `SA-${index + 1}`,
+    isNested: false,
+    identityMatch: { score: 0.5, matchedTerm: "shock arrestors", matchedTokens: ["shock"], matchedFields: ["familyName"] },
+    matchedText: "coordination note",
+    matchedParameterName: "Comments",
+    identityParameterEvidence: { text: `SA-${index + 1}`, textNormalized: `sa ${index + 1}`, source: "identityParameterAcronym", parameterName: "DESIG." }
+  }));
+
+  const compacted = compactFindElementsResultForPrompt({
+    status: "Ok",
+    count: 25,
+    elementIds: items.map(item => item.elementId),
+    identityFilterApplied: true,
+    identityTerms: ["shock arrestors"],
+    physicalElementsOnlyApplied: true,
+    topLevelInstancesOnlyApplied: true,
+    identityAcronymExpansionApplied: true,
+    identityAcronyms: ["sa"],
+    identitySeedCategoryIds: [-2008049],
+    identityExpansionCount: 41,
+    items,
+    truncated: false,
+    scanCapReached: false,
+    itemsComplete: true
+  }) as any;
+
+  assert.equal(compacted.items.length, 25);
+  assert.equal(compacted.items[24].familyName, "LW_Shock Absorber");
+  assert.equal(compacted.items[24].identityMatch.matchedTokens[0], "shock");
+  assert.equal(compacted.items[24].matchedParameterName, "Comments");
+  assert.equal(compacted.items[24].identityParameterEvidence.parameterName, "DESIG.");
+  assert.equal(compacted.items[24].identityParameterEvidence.text, "SA-25");
+  assert.equal(compacted.elementIds.length, 25);
+  assert.deepEqual(compacted.identityAcronyms, ["sa"]);
+  assert.equal(compacted.identityExpansionCount, 41);
+  assert.equal(compacted.itemsComplete, true);
+});
+
+test("compact find-elements accumulates omissions and cannot restore completeness", () => {
+  const items = Array.from({ length: 501 }, (_, index) => ({ elementId: index + 1, familyName: "Example" }));
+  const first = compactFindElementsResultForPrompt({ status: "Ok", count: 501, elementIds: items.map(item => item.elementId), items, itemsComplete: true }) as any;
+  const second = compactFindElementsResultForPrompt(first) as any;
+
+  assert.equal(first.items.length, 500);
+  assert.equal(first.itemsOmitted, 1);
+  assert.equal(first.elementIdsOmitted, 1);
+  assert.equal(first.itemsComplete, false);
+  assert.equal(second.itemsOmitted, 1);
+  assert.equal(second.elementIdsOmitted, 1);
+  assert.equal(second.itemsComplete, false);
+});
+
 test("compact locate-elements preserves every physical and nested spatial result plus unresolved provenance", () => {
   const items = Array.from({ length: 132 }, (_, index) => ({
     elementId: 1000 + index,
     category: index >= 66 ? "Center line" : "Pipe Fittings",
     builtInCategory: "OST_PipeFitting",
+    familyName: "LW_Shock Absorber",
+    typeName: "Standard",
     levelName: "LEVEL 02",
     superComponentId: index >= 66 ? 1000 + (index - 66) : null,
     topLevelParentId: index >= 66 ? 1000 + (index - 66) : null,
@@ -55,6 +118,10 @@ test("compact locate-elements preserves every physical and nested spatial result
   const compacted = compactLocateElementsResultForPrompt({
     status: "Ok",
     count: 132,
+    requestedElementCount: 133,
+    requestedElementIdsMissing: [999999],
+    requestedElementIdsMissingCount: 1,
+    itemsComplete: false,
     spatialResolution: "geometry_with_nearest",
     items,
     warnings: []
@@ -62,12 +129,15 @@ test("compact locate-elements preserves every physical and nested spatial result
 
   assert.equal(compacted.items.length, 132);
   assert.equal(compacted.items[64].spatialContext.status, "unresolved");
+  assert.equal(compacted.items[64].familyName, "LW_Shock Absorber");
   assert.equal(compacted.items[64].spatialContext.nearestCandidates[0].number, "2911");
   assert.equal(compacted.items[64].spatialContext.nearestCandidates[0].sourceScope, "linked");
   assert.equal(compacted.items[131].isNested, true);
   assert.equal(compacted.items[131].superComponentId, 1065);
   assert.equal(compacted.itemsOmitted, 0);
-  assert.equal(compacted.itemsComplete, true);
+  assert.equal(compacted.requestedElementIdsMissing[0], 999999);
+  assert.equal(compacted.requestedElementIdsMissingCount, 1);
+  assert.equal(compacted.itemsComplete, false);
 });
 
 test("compact locate-elements retains row 201 and all twenty requested nearest candidates", () => {
@@ -194,19 +264,27 @@ test("compact exact parameter reads excludes substring neighbors", () => {
   assert.equal(compacted.evidenceSample[0]?.value, "1-2");
 });
 
-test("compact schedule reads preserves paging and bounded visible cells", () => {
+test("compact schedule reads preserves all bridge-bounded rows and explicit paging incompleteness", () => {
   const rows = Array.from({ length: 45 }, (_, index) => ({ rowIndex: index, cells: [`SA-${index}`, `B3-G-SA-${index}`] }));
   const compacted = compactScheduleReadResultForPrompt({
     action: "detail",
     status: "Ok",
     schedule: { id: 100, name: "Equipment Schedule" },
     fields: [{ name: "DESIG." }],
-    table: { body: { totalRows: 100, totalColumns: 2, rowOffset: 0, returnedRows: 45, hasMoreRows: true, nextRowOffset: 45, rows } }
+    table: {
+      header: { totalRows: 2, totalColumns: 2, rowOffset: 0, returnedRows: 2, hasMoreRows: false, rows: [{ cells: ["Equipment Schedule", ""] }, { cells: ["DESIG.", "MODEL"] }] },
+      body: { totalRows: 100, totalColumns: 4, rowOffset: 0, columnOffset: 0, returnedRows: 45, returnedColumns: 2, hasMoreRows: true, nextRowOffset: 45, hasMoreColumns: true, nextColumnOffset: 2, rows }
+    }
   }) as any;
 
   assert.equal(compacted.schedule.name, "Equipment Schedule");
-  assert.equal(compacted.table.body.rows.length, 30);
+  assert.equal(compacted.table.header.rows.length, 2);
+  assert.equal(compacted.table.body.rows.length, 45);
+  assert.equal(compacted.table.body.rowsOmitted, 0);
+  assert.equal(compacted.table.body.rowsComplete, false);
   assert.equal(compacted.table.body.nextRowOffset, 45);
+  assert.equal(compacted.table.body.nextColumnOffset, 2);
+  assert.equal(compacted.table.body.hasMoreColumns, true);
   assert.equal(compacted.table.body.rows[0].cells[1], "B3-G-SA-0");
 });
 

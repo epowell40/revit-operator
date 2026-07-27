@@ -2,11 +2,31 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { AEC_SEMANTIC_TASK_V1_SCHEMA, type AecSemanticTaskV1 } from "../src/aec_semantic_task.js";
 import type { AecSemanticTaskInterpreter } from "../src/aec_semantic_task_interpreter.js";
-import { __testOnlyClearAecQueryStates, maybeRunAecSemanticQuery } from "../src/deterministic/aec_query_runtime.js";
+import { __testOnlyClearAecQueryStates, __testOnlyIdentityScheduleKeyColumn, maybeRunAecSemanticQuery } from "../src/deterministic/aec_query_runtime.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest } from "../src/contracts.js";
 
 function ahu(): AecSemanticTaskV1 { return { schema: AEC_SEMANTIC_TASK_V1_SCHEMA, operation: "locate", subject: { kind: "exact_identifier", semantic_class: "mechanical_equipment", terms: ["AHU"], categories: ["OST_MechanicalEquipment"], family_name: null, type_name: null, system_name: null, identifiers: [{ parameter: "Mark", value: "AHU-1", match: "case_insensitive_exact" }] }, scope: { kind: "active_context", document: null, levels: [], rooms: [], spaces: [], areas: [], views: [], sheets: [], systems: [], element_ids: [], region: null }, reference: { strategy: "none", source_description: null, source_room: null }, mutation: { kind: "none", requested: false }, outputs: ["summary", "element_ids", "parameters", "spatial_context", "best_view"], execution: { max_results: 10, max_primary_actions: 2, allow_document_fallback: false, requires_visual_verification: false }, confidence: { value: 0.98, ambiguity: "none", reasons: ["exact mark"] }, evidence: { user_text: "Where is AHU-1?" } }; }
 function request(session: string, tool_results?: ChatRequest["tool_results"]): ChatRequest { return { version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: session, message_id: `m-${tool_results?.length ?? 0}`, user_text: tool_results ? "" : "Where is AHU-1?", tool_results }; }
+
+test("schedule identity headers use exact tokens rather than id substrings", () => {
+  assert.equal(__testOnlyIdentityScheduleKeyColumn(["Width", "Fluid", "Mark", "Model"], ["Mark"]), 2);
+  assert.equal(__testOnlyIdentityScheduleKeyColumn(["Element ID", "DESIG.", "Model"], ["DESIG."]), 1);
+  assert.equal(__testOnlyIdentityScheduleKeyColumn(["Element ID", "DESIG.", "Model"], ["Comments"]), -1);
+  assert.equal(__testOnlyIdentityScheduleKeyColumn(["Number", "Model"], ["Number"]), 0);
+});
+
+function shockArrestors(where: boolean): AecSemanticTaskV1 {
+  const value = ahu();
+  value.operation = where ? "locate" : "inspect";
+  value.subject = { kind: "class", semantic_class: "other", terms: ["shock arrestors"], categories: ["OST_MechanicalEquipment"], family_name: null, type_name: null, system_name: null, identifiers: [] };
+  value.scope = { ...value.scope, kind: "document", document: "this project" };
+  value.outputs = where ? ["summary", "element_ids", "spatial_context"] : ["summary", "element_ids"];
+  value.execution = { ...value.execution, max_results: 25, max_primary_actions: 2, allow_document_fallback: true };
+  value.evidence.user_text = where
+    ? "Where are the shock arrestors? Provide the room number for each device location."
+    : "Can you find the shock arrestors in this project and tell me what they are?";
+  return value;
+}
 
 test("exact identifier runtime completes in two primary actions without broad payload", async () => {
   __testOnlyClearAecQueryStates();
@@ -92,6 +112,358 @@ test("whole-document sheet count honors an explicit count-only response", async 
   await maybeRunAecSemanticQuery(initial, interpreter);
   const done = await maybeRunAecSemanticQuery(request("sheet-count-only", [{ action_id: "aec-query-document-sheets", method: "POST", path: "/revit/sheets", status: "done", result_json: { totalSheets: 345, items: [] } }]), interpreter);
   assert.equal(done.response?.assistant_message, "345");
+});
+
+test("ordinary whole-document class query discovers physical instances and explains what they are", async () => {
+  __testOnlyClearAecQueryStates();
+  const value = shockArrestors(false);
+  const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+  const initial = request("shock-identity");
+  initial.user_text = value.evidence.user_text;
+  const first = await maybeRunAecSemanticQuery(initial, interpreter);
+  assert.deepEqual(first.response?.actions, [
+    {
+      action_id: "aec-query-document-elements",
+      method: "POST",
+      path: "/revit/find-elements",
+      body: {
+        identityTerms: ["shock arrestors"],
+        expandIdentityAcronymsInParameters: true,
+        physicalElementsOnly: true,
+        topLevelInstancesOnly: true,
+        limit: 500
+      }
+    },
+    {
+      action_id: "aec-query-document-element-schedule",
+      method: "POST",
+      path: "/revit/schedules",
+      body: { action: "detail", query: "shock arrestor", exact: false, requireUniqueQuery: true, includeFields: true, includeData: true, rowOffset: 0, columnOffset: 0, maxRows: 500, maxColumns: 40 }
+    }
+  ]);
+  assert.equal((first.response?.actions[0]?.body as Record<string, unknown>).categories, undefined, "an inferred category must not over-filter a class-name discovery");
+  const modelKeys = Array.from({ length: 49 }, (_, index) => `B2-SA-${index + 1}`);
+  const items = Array.from({ length: 66 }, (_, index) => ({
+    elementId: 1000 + index,
+    name: "Standard",
+    familyName: "LW_Shock Absorber",
+    typeName: "Standard",
+    category: "Pipe Fittings",
+    matchedParameterName: "Comments",
+    matchedText: "shock arrestor coordination note",
+    identityParameterEvidence: { parameterName: "DESIG.", text: modelKeys[index % modelKeys.length], textNormalized: modelKeys[index % modelKeys.length].toLocaleLowerCase(), source: "identityParameterAcronym" },
+    isNested: false
+  }));
+  const scheduleKeys = modelKeys.slice(0, 41);
+  const done = await maybeRunAecSemanticQuery(request("shock-identity", [
+    {
+      action_id: "aec-query-document-elements",
+      method: "POST",
+      path: "/revit/find-elements",
+      status: "done",
+      result_json: { count: 66, elementIds: items.map(item => item.elementId), items, identityExpansionCount: 41, truncated: false, itemsComplete: true }
+    },
+    {
+      action_id: "aec-query-document-element-schedule",
+      method: "POST",
+      path: "/revit/schedules",
+      status: "done",
+      result_json: {
+        status: "Ok",
+        action: "detail",
+        schedule: { id: 9975292, name: "SHOCK ARRESTOR SCHEDULE - BUILDING 200" },
+        table: {
+          header: { rows: [
+            { cells: ["SHOCK ARRESTOR SCHEDULE - BUILDING 200", "", "", "", "", "", "", "", ""] },
+            { cells: ["FLUID", "WIDTH", "ELEMENT ID", "DESIG.", "FLOOR", "PDI SIZE", "MANUFACTURER", "MODEL", "REMARKS"] }
+          ] },
+          body: { hasMoreRows: false, rowsComplete: true, rows: scheduleKeys.map((key, index) => ({ cells: ["CW", "1/2 in", String(5000 + index), key, "LEVEL 02", "A", "JOSAM", "75001A", ""] })) }
+        }
+      }
+    }
+  ]), interpreter);
+  assert.equal(done.response?.actions.length, 0);
+  assert.match(done.response?.assistant_message ?? "", /found 66 physical model instances/i);
+  assert.match(done.response?.assistant_message ?? "", /66 Pipe Fittings, family LW_Shock Absorber, type Standard/);
+  assert.match(done.response?.assistant_message ?? "", /SHOCK ARRESTOR SCHEDULE - BUILDING 200 \(id 9975292\), with 41 visible data rows and 41 unique DESIG\. values/);
+  assert.match(done.response?.assistant_message ?? "", /PDI SIZE A, MANUFACTURER JOSAM, MODEL 75001A/);
+  assert.match(done.response?.assistant_message ?? "", /physical instances carry 49 unique DESIG\. values/);
+  assert.match(done.response?.assistant_message ?? "", /Schedule\/model discrepancy: 8 model-only values/);
+  assert.match(done.response?.assistant_message ?? "", /No model changes were made/);
+  assert.equal(done.response?.aec_query_receipt?.workflow_id, "query.document_elements");
+  assert.equal(done.response?.aec_query_receipt?.status, "complete");
+});
+
+test("schedule correlation fails closed when the separate bridge header section is unusable", async () => {
+  __testOnlyClearAecQueryStates();
+  const value = shockArrestors(false);
+  const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+  const initial = request("shock-schedule-no-header");
+  initial.user_text = value.evidence.user_text;
+  await maybeRunAecSemanticQuery(initial, interpreter);
+  const done = await maybeRunAecSemanticQuery(request("shock-schedule-no-header", [
+    {
+      action_id: "aec-query-document-elements",
+      method: "POST",
+      path: "/revit/find-elements",
+      status: "done",
+      result_json: {
+        count: 1,
+        elementIds: [101],
+        items: [{ elementId: 101, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings", matchedParameterName: "DESIG.", matchedText: "B2-1-SA-1" }],
+        itemsComplete: true
+      }
+    },
+    {
+      action_id: "aec-query-document-element-schedule",
+      method: "POST",
+      path: "/revit/schedules",
+      status: "done",
+      result_json: {
+        status: "Ok",
+        action: "detail",
+        schedule: { id: 9975292, name: "SHOCK ARRESTOR SCHEDULE - BUILDING 200" },
+        table: {
+          header: { rows: [{ cells: ["", "", ""] }] },
+          body: { hasMoreRows: false, rows: [{ cells: ["B2-1-SA-1", "A", "75001A"] }] }
+        }
+      }
+    }
+  ]), interpreter);
+  assert.match(done.response?.assistant_message ?? "", /did not include usable column headers, so I am not inferring schedule facts or discrepancies/);
+  assert.doesNotMatch(done.response?.assistant_message ?? "", /MODEL 75001A/);
+});
+
+test("schedule correlation never splices partial identity evidence with conflicting legacy text evidence", async () => {
+  __testOnlyClearAecQueryStates();
+  const value = shockArrestors(false);
+  const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+  const initial = request("shock-schedule-no-comparable-key");
+  initial.user_text = value.evidence.user_text;
+  await maybeRunAecSemanticQuery(initial, interpreter);
+  const done = await maybeRunAecSemanticQuery(request("shock-schedule-no-comparable-key", [
+    {
+      action_id: "aec-query-document-elements",
+      method: "POST",
+      path: "/revit/find-elements",
+      status: "done",
+      result_json: {
+        count: 2,
+        elementIds: [101, 102],
+        items: [
+          { elementId: 101, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings", matchedParameterName: "Comments", matchedText: "coordination note", identityParameterEvidence: { parameterName: "DESIG." } },
+          { elementId: 102, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings", matchedParameterName: "Comments", matchedText: "coordination note", identityParameterEvidence: { text: "B2-2-SA-1" } }
+        ],
+        itemsComplete: true
+      }
+    },
+    {
+      action_id: "aec-query-document-element-schedule",
+      method: "POST",
+      path: "/revit/schedules",
+      status: "done",
+      result_json: {
+        status: "Ok",
+        action: "detail",
+        schedule: { id: 9975292, name: "SHOCK ARRESTOR SCHEDULE - BUILDING 200" },
+        table: {
+          header: { rows: [{ cells: ["DESIG.", "MODEL"] }] },
+          body: { hasMoreRows: false, rows: [{ cells: ["B2-1-SA-1", "75001A"] }, { cells: ["B2-2-SA-1", "75001A"] }] }
+        }
+      }
+    }
+  ]), interpreter);
+  assert.match(done.response?.assistant_message ?? "", /could not identify one unique schedule key column matching the returned model identity-parameter evidence/);
+  assert.doesNotMatch(done.response?.assistant_message ?? "", /Schedule\/model discrepancy:/);
+});
+
+test("incomplete model discovery never produces an exhaustive schedule discrepancy", async () => {
+  __testOnlyClearAecQueryStates();
+  const value = shockArrestors(false);
+  const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+  const initial = request("shock-schedule-partial-model");
+  initial.user_text = value.evidence.user_text;
+  await maybeRunAecSemanticQuery(initial, interpreter);
+  const done = await maybeRunAecSemanticQuery(request("shock-schedule-partial-model", [
+    {
+      action_id: "aec-query-document-elements", method: "POST", path: "/revit/find-elements", status: "done",
+      result_json: {
+        count: 1, elementIds: [101], scanCapReached: true, itemsComplete: false,
+        items: [{ elementId: 101, category: "Pipe Fittings", identityParameterEvidence: { parameterName: "DESIG.", text: "B2-1-SA-1" } }]
+      }
+    },
+    {
+      action_id: "aec-query-document-element-schedule", method: "POST", path: "/revit/schedules", status: "done",
+      result_json: {
+        status: "Ok", action: "detail", schedule: { id: 9975292, name: "SHOCK ARRESTOR SCHEDULE - BUILDING 200" },
+        table: { header: { rows: [{ cells: ["DESIG.", "MODEL"] }] }, body: { hasMoreRows: false, rows: [{ cells: ["B2-1-SA-1", "75001A"] }] } }
+      }
+    }
+  ]), interpreter);
+  assert.match(done.response?.assistant_message ?? "", /model discovery result is incomplete, so I am not claiming an exhaustive model\/schedule discrepancy/);
+  assert.doesNotMatch(done.response?.assistant_message ?? "", /Schedule\/model discrepancy:/);
+  assert.equal(done.response?.aec_query_receipt?.status, "ambiguous");
+});
+
+test("where query follows exact discovered ids with geometry-aware room resolution and preserves uncertainty", async () => {
+  __testOnlyClearAecQueryStates();
+  const value = shockArrestors(true);
+  const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+  const initial = request("shock-rooms");
+  initial.user_text = value.evidence.user_text;
+  await maybeRunAecSemanticQuery(initial, interpreter);
+  const found = await maybeRunAecSemanticQuery(request("shock-rooms", [{
+    action_id: "aec-query-document-elements",
+    method: "POST",
+    path: "/revit/find-elements",
+    status: "done",
+    result_json: {
+      count: 4,
+      elementIds: [101, 102, 103, 104],
+      items: [
+        { elementId: 101, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings" },
+        { elementId: 102, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings" },
+        { elementId: 103, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings" },
+        { elementId: 104, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings" }
+      ],
+      truncated: false,
+      itemsComplete: true
+    }
+  }]), interpreter);
+  assert.deepEqual(found.response?.actions, [{
+    action_id: "aec-query-document-element-locations",
+    method: "POST",
+    path: "/revit/locate-elements",
+    body: {
+      elementIds: [101, 102, 103, 104],
+      limit: 5,
+      spatialResolution: "geometry_with_nearest",
+      spatialKindPreference: "room",
+      includeHostRooms: true,
+      includeHostSpaces: false,
+      includeLinkedRooms: true,
+      nearestCandidateLimit: 5
+    }
+  }]);
+  const done = await maybeRunAecSemanticQuery(request("shock-rooms", [{
+    action_id: "aec-query-document-element-locations",
+    method: "POST",
+    path: "/revit/locate-elements",
+    status: "done",
+    result_json: {
+      count: 3,
+      truncated: false,
+      requestedElementCount: 4,
+      requestedElementIdsMissing: [104],
+      requestedElementIdsMissingCount: 1,
+      itemsComplete: false,
+      items: [
+        { elementId: 101, levelName: "LEVEL 02", roomNumber: "214", roomName: "PATIENT", spatialKind: "Room", isNested: false, spatialContext: { status: "resolved", selected: { sourceScope: "linked", linkInstanceName: "A_DUKE B200.rvt" } } },
+        { elementId: 102, levelName: "LEVEL 02", roomNumber: null, roomName: null, isNested: false, spatialContext: { status: "ambiguous", matches: [{ spatialKind: "Room", number: "215", name: "CORRIDOR" }, { spatialKind: "Room", number: "216", name: "STORAGE" }] } },
+        { elementId: 103, levelName: "LEVEL 01", roomNumber: null, roomName: null, isNested: false, spatialContext: { status: "unresolved", nearestCandidates: [{ spatialKind: "Room", number: "117", name: "MECHANICAL" }] } }
+      ]
+    }
+  }]), interpreter);
+  assert.match(done.response?.assistant_message ?? "", /Room results: 1 resolved, 1 ambiguous, 2 unresolved/);
+  assert.match(done.response?.assistant_message ?? "", /4 Pipe Fittings, family LW_Shock Absorber, type Standard/);
+  assert.match(done.response?.assistant_message ?? "", /element 101: Room 214 — PATIENT, LEVEL 02 via linked model A_DUKE B200\.rvt/);
+  assert.match(done.response?.assistant_message ?? "", /element 102: room assignment is ambiguous among Room 215 — CORRIDOR, Room 216 — STORAGE/);
+  assert.match(done.response?.assistant_message ?? "", /element 103: room unresolved, LEVEL 01; nearest candidates \(not assignments\): Room 117 — MECHANICAL/);
+  assert.match(done.response?.assistant_message ?? "", /element 104: room unresolved; Revit did not return a spatial row for this requested element/);
+  assert.equal(done.response?.aec_query_receipt?.status, "ambiguous");
+});
+
+test("whole-document discovery reports explicit incompleteness rather than claiming exhaustive inventory", async () => {
+  __testOnlyClearAecQueryStates();
+  const value = shockArrestors(false);
+  value.execution.max_primary_actions = 1;
+  const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+  const initial = request("shock-partial");
+  initial.user_text = value.evidence.user_text;
+  await maybeRunAecSemanticQuery(initial, interpreter);
+  const done = await maybeRunAecSemanticQuery(request("shock-partial", [{
+    action_id: "aec-query-document-elements",
+    method: "POST",
+    path: "/revit/find-elements",
+    status: "done",
+    result_json: { count: 1, elementIds: [101], items: [{ elementId: 101, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings" }], truncated: false, scanCapReached: true, itemsComplete: false }
+  }]), interpreter);
+  assert.match(done.response?.assistant_message ?? "", /partial inventory rather than a claim that no additional matches exist/);
+  assert.equal(done.response?.aec_query_receipt?.status, "ambiguous");
+});
+
+test("spatial completion remains non-complete when Revit omits any requested element id", async () => {
+  __testOnlyClearAecQueryStates();
+  const value = shockArrestors(true);
+  const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+  const initial = request("shock-rooms-missing");
+  initial.user_text = value.evidence.user_text;
+  await maybeRunAecSemanticQuery(initial, interpreter);
+  await maybeRunAecSemanticQuery(request("shock-rooms-missing", [{
+    action_id: "aec-query-document-elements",
+    method: "POST",
+    path: "/revit/find-elements",
+    status: "done",
+    result_json: {
+      count: 2,
+      elementIds: [201, 202],
+      items: [
+        { elementId: 201, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings" },
+        { elementId: 202, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings" }
+      ],
+      itemsComplete: true
+    }
+  }]), interpreter);
+  const done = await maybeRunAecSemanticQuery(request("shock-rooms-missing", [{
+    action_id: "aec-query-document-element-locations",
+    method: "POST",
+    path: "/revit/locate-elements",
+    status: "done",
+    result_json: {
+      count: 1,
+      requestedElementCount: 2,
+      requestedElementIdsMissing: [202],
+      requestedElementIdsMissingCount: 1,
+      itemsComplete: false,
+      items: [
+        { elementId: 201, levelName: "LEVEL 02", roomNumber: "214", roomName: "PATIENT", isNested: false, spatialContext: { status: "resolved", selected: { sourceScope: "host" } } }
+      ]
+    }
+  }]), interpreter);
+  assert.match(done.response?.assistant_message ?? "", /Room results: 1 resolved, 0 ambiguous, 1 unresolved/);
+  assert.match(done.response?.assistant_message ?? "", /element 202: room unresolved; Revit did not return a spatial row for this requested element/);
+  assert.equal(done.response?.aec_query_receipt?.status, "ambiguous");
+});
+
+test("zero matches from an incomplete document scan never becomes an authoritative not-found claim", async () => {
+  __testOnlyClearAecQueryStates();
+  const value = shockArrestors(false);
+  value.execution.max_primary_actions = 1;
+  const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+  const initial = request("shock-zero-incomplete");
+  initial.user_text = value.evidence.user_text;
+  await maybeRunAecSemanticQuery(initial, interpreter);
+  const done = await maybeRunAecSemanticQuery(request("shock-zero-incomplete", [{
+    action_id: "aec-query-document-elements",
+    method: "POST",
+    path: "/revit/find-elements",
+    status: "done",
+    result_json: { count: 0, elementIds: [], items: [], truncated: false, scanCapReached: true, itemsComplete: false }
+  }]), interpreter);
+  assert.match(done.response?.assistant_message ?? "", /cannot honestly say that no shock arrestors exist/);
+  assert.equal(done.response?.aec_query_receipt?.status, "failed");
+});
+
+test("whole-document element discovery refuses an unfiltered scan", async () => {
+  __testOnlyClearAecQueryStates();
+  const value = shockArrestors(false);
+  value.subject.terms = [];
+  value.subject.categories = [];
+  const interpreter: AecSemanticTaskInterpreter = { async interpret() { return value; } };
+  const done = await maybeRunAecSemanticQuery(request("document-unfiltered"), interpreter);
+  assert.equal(done.response?.actions.length, 0);
+  assert.match(done.response?.assistant_message ?? "", /unfiltered document scan is not allowed/);
+  assert.equal(done.response?.aec_query_receipt?.status, "failed");
 });
 
 test("singular air-handler schedule request offers the strongest grounded match conversationally", async () => {

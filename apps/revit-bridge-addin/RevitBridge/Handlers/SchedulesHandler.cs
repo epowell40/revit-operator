@@ -17,6 +17,7 @@ namespace RevitBridge.Handlers
             public long? scheduleId { get; set; }
             public string? query { get; set; }
             public bool? exact { get; set; }
+            public bool? requireUniqueQuery { get; set; }
             public int? max { get; set; }
             public bool? includeFields { get; set; }
             public bool? includeData { get; set; }
@@ -85,6 +86,42 @@ namespace RevitBridge.Handlers
         {
             var exact = p.exact ?? false;
             var q = (p.query ?? "").Trim();
+
+            if (p.scheduleId.HasValue && p.scheduleId.Value <= 0)
+            {
+                return new
+                {
+                    status = "InvalidRequest",
+                    action = "detail",
+                    message = "scheduleId must be a positive integer when provided."
+                };
+            }
+
+            if (!p.scheduleId.HasValue && p.requireUniqueQuery == true && !string.IsNullOrWhiteSpace(q))
+            {
+                var matches = CollectSchedules(doc)
+                    .Where(schedule => exact
+                        ? (schedule.Name ?? "").Trim().Equals(q, StringComparison.OrdinalIgnoreCase)
+                        : (schedule.Name ?? "").IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0)
+                    .OrderBy(schedule => schedule.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                if (matches.Count != 1)
+                {
+                    return new
+                    {
+                        status = matches.Count == 0 ? "NotFound" : "Ambiguous",
+                        action = "detail",
+                        query = q,
+                        exact,
+                        matchCount = matches.Count,
+                        candidates = matches.Take(20).Select(schedule => BuildScheduleSummary(doc, schedule)).ToList(),
+                        message = matches.Count == 0
+                            ? "Schedule not found. Refine the query or provide scheduleId."
+                            : "Schedule query is ambiguous. Refine the query or provide scheduleId."
+                    };
+                }
+                p.scheduleId = RevitBridge.Common.ElementIdCompat.GetValue(matches[0].Id);
+            }
 
             var schedule = ResolveSchedule(doc, p.scheduleId, q, exact);
             if (schedule == null)

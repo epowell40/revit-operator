@@ -9,6 +9,7 @@ export type AecQueryWorkflowId =
   | "query.level_elements"
   | "query.document_schedules"
   | "query.document_sheets"
+  | "query.document_elements"
   | "query.view_elements"
   | "query.sheet_elements"
   | "query.selection";
@@ -51,6 +52,31 @@ function isSheetInventory(task: AecSemanticTaskV1): boolean {
 function isScheduleInventory(task: AecSemanticTaskV1): boolean {
   const text = [...task.subject.terms, task.evidence.user_text].join(" ");
   return /\bschedules?\b/i.test(text);
+}
+
+function documentIdentityTerms(task: AecSemanticTaskV1): string[] {
+  const values = [task.subject.family_name, task.subject.type_name, ...task.subject.terms];
+  return [...new Set(values
+    .filter((value): value is string => typeof value === "string" && value.trim().length >= 2)
+    .map(value => value.trim().slice(0, 128).toLocaleLowerCase()))]
+    .slice(0, 8);
+}
+
+function isSpatialDocumentQuestion(task: AecSemanticTaskV1): boolean {
+  return task.operation === "locate"
+    || task.outputs.includes("spatial_context")
+    || /\b(?:where|located?|locations?|rooms?|spaces?|positions?|coordinates?)\b/i.test(task.evidence.user_text);
+}
+
+function naturalScheduleQuery(identityTerms: string[]): string | null {
+  const source = identityTerms.find(term => term.split(/\s+/).filter(Boolean).length >= 2) ?? identityTerms[0];
+  if (!source) return null;
+  return source
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(word => word.length > 3 && /s$/i.test(word) && !/ss$/i.test(word) ? word.slice(0, -1) : word)
+    .join(" ")
+    .slice(0, 128) || null;
 }
 
 function planBoundedComparison(task: AecSemanticTaskV1): AecQueryPlanV1 {
@@ -155,6 +181,58 @@ export function planAecQueryTask(value: unknown): AecQueryPlanV1 {
         : { action: "list", offset: 0, limit: task.execution.max_results })],
       blockers: [],
       evidence: { predicate_pushed: true, document_payload_requested: false, exact_document_inventory: true }
+    };
+  }
+
+  if (task.scope.kind === "document" && ["category", "class", "family", "type", "elements", "generic"].includes(task.subject.kind)) {
+    const groundedCategoryBody = task.subject.kind === "category" ? categoryBody(task) : {};
+    const identityTerms = Object.keys(groundedCategoryBody).length > 0 ? [] : documentIdentityTerms(task);
+    if (identityTerms.length === 0 && Object.keys(groundedCategoryBody).length === 0) {
+      return blocked("Whole-document element discovery requires an identity term or an explicit canonical category; an unfiltered document scan is not allowed.");
+    }
+    const needsSpatial = isSpatialDocumentQuestion(task);
+    if (needsSpatial && task.execution.max_primary_actions < 2) {
+      return blocked("Whole-document location queries require two bounded actions: identity discovery and geometry-aware spatial resolution.");
+    }
+    const limit = 500;
+    const actions = [action("aec-query-document-elements", "/revit/find-elements", {
+      ...groundedCategoryBody,
+      ...(identityTerms.length ? { identityTerms, expandIdentityAcronymsInParameters: true } : {}),
+      physicalElementsOnly: true,
+      topLevelInstancesOnly: true,
+      limit
+    })];
+    const scheduleQuery = !needsSpatial && task.execution.max_primary_actions >= 2 ? naturalScheduleQuery(identityTerms) : null;
+    if (scheduleQuery) {
+      actions.push(action("aec-query-document-element-schedule", "/revit/schedules", {
+        action: "detail",
+        query: scheduleQuery,
+        exact: false,
+        requireUniqueQuery: true,
+        includeFields: true,
+        includeData: true,
+        rowOffset: 0,
+        columnOffset: 0,
+        maxRows: 500,
+        maxColumns: 40
+      }));
+    }
+    return {
+      status: "ready",
+      workflow_id: "query.document_elements",
+      actions,
+      blockers: [],
+      evidence: {
+        predicate_pushed: true,
+        document_payload_requested: false,
+        identity_terms: identityTerms,
+        inferred_categories_ignored: task.subject.kind !== "category" && task.subject.categories.length > 0,
+        max_primary_actions: task.execution.max_primary_actions,
+        result_limit: limit,
+        needs_spatial: needsSpatial,
+        schedule_detail_requested: Boolean(scheduleQuery),
+        schedule_query: scheduleQuery
+      }
     };
   }
 

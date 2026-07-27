@@ -256,3 +256,20 @@ test("explicit source incompleteness requires follow-up even without numeric omi
   assert.equal(receipt.promptComplete, false);
   assert.equal(receipt.followUpRequired, true);
 });
+
+test("base prompt teaches generic physical identity discovery before room resolution", async () => {
+  const req: ChatRequest = {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    session_id: "document-identity-guidance",
+    message_id: "first",
+    user_text: "Where are the shock arrestors? Provide the room number for each device location.",
+    tool_results: []
+  };
+
+  const prompt = await __testOnlyBuildPromptForRequest(req);
+  assert.match(prompt, /find-elements with bounded identityTerms plus physicalElementsOnly:true and topLevelInstancesOnly:true/);
+  assert.match(prompt, /expandIdentityAcronymsInParameters:true/);
+  assert.match(prompt, /matching schedule detail with fields\/data and reconcile schedule rows\/keys against physical instances/);
+  assert.match(prompt, /Do not add an inferred category as a hard filter/);
+  assert.match(prompt, /locate-elements with its discovered elementIds, spatialResolution:"geometry_with_nearest"/);
+});

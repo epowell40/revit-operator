@@ -38,6 +38,10 @@ namespace RevitBridge.Logic.Handlers
             public string? nameContains { get; set; }
             public string? markContains { get; set; }
             public string? textContains { get; set; }
+            public List<string>? identityTerms { get; set; }
+            public bool physicalElementsOnly { get; set; } = false;
+            public bool topLevelInstancesOnly { get; set; } = false;
+            public bool expandIdentityAcronymsInParameters { get; set; } = false;
 
             public int? limit { get; set; } = 500;
         }
@@ -145,6 +149,8 @@ namespace RevitBridge.Logic.Handlers
 
             var resolvedCategories = ResolveRequestedCategories(doc, requestedCats);
             var categoryIds = resolvedCategories.Select(x => x.Id).ToHashSet();
+            if (requestedCats.Count > 0 && categoryIds.Count == 0)
+                throw new ArgumentException("No requested category resolved to a native Revit category; refusing an unfiltered collector.");
 
             var nameContains = (p?.nameContains ?? "").Trim();
             var typeNameContains = (p?.typeNameContains ?? "").Trim();
@@ -152,9 +158,28 @@ namespace RevitBridge.Logic.Handlers
             var markContains = (p?.markContains ?? "").Trim();
             var textContains = (p?.textContains ?? "").Trim();
             var textContainsNorm = NormalizeForSearch(textContains);
+            var identityTerms = (p?.identityTerms ?? new List<string>())
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(8)
+                .ToList();
+            var includeIdentityMatches = identityTerms.Count > 0;
+            if (includeIdentityMatches && identityTerms.All(term => ElementIdentitySearchUtil.Tokenize(term).Count == 0))
+                throw new ArgumentException("identityTerms did not contain a searchable identity token.");
+            var identityAcronyms = p?.expandIdentityAcronymsInParameters == true
+                ? ElementIdentitySearchUtil.BuildAcronyms(identityTerms).ToList()
+                : new List<string>();
+            if (scopeKind == "Document" && !ElementIdentitySearchUtil.HasBoundedDocumentPredicate(
+                categoryIds.Count,
+                new[] { nameContains, typeNameContains, familyNameContains, markContains, textContains }.Concat(identityTerms)))
+                throw new ArgumentException("Document-scope find-elements requires a resolved category or a bounded name, family, type, Mark, text, or identity predicate.");
 
             var cap = p?.limit.HasValue == true && p.limit.Value > 0 ? Math.Min(p.limit.Value, 5000) : 500;
             var includeTextMatches = !string.IsNullOrWhiteSpace(textContainsNorm);
+            var includeResultItems = includeTextMatches || includeIdentityMatches || categoryIds.Count > 0
+                || !string.IsNullOrWhiteSpace(nameContains) || !string.IsNullOrWhiteSpace(markContains)
+                || !string.IsNullOrWhiteSpace(typeNameContains) || !string.IsNullOrWhiteSpace(familyNameContains);
             var items = new List<object>();
 
             if (includeTextMatches && scopeKind == "Document")
@@ -176,7 +201,12 @@ namespace RevitBridge.Logic.Handlers
             }
 
             var ids = new List<long>();
+            var seenIds = new HashSet<long>();
+            var seedCategoryIds = new HashSet<long>();
             var scanned = 0;
+            var scanCapReached = false;
+            var identityExpansionCount = 0;
+            var identityExpansionScanCapReached = false;
 
             foreach (var candidate in EnumerateCandidates(
                 doc,
@@ -189,55 +219,79 @@ namespace RevitBridge.Logic.Handlers
             {
                 var e = candidate.Element;
                 scanned++;
-                if (scanned > 250000)
+                if (scanned > 500000)
                 {
-                    warnings.Add("Scan cap reached (250000); results may be incomplete. Provide scope and/or category filters.");
+                    warnings.Add("Scan cap reached (500000); results may be incomplete. Provide scope and/or category filters.");
+                    scanCapReached = true;
                     break;
                 }
 
-                if (useSheetRegionFilter &&
-                    !ElementMatchesAnySheetRegion(doc, e, candidate.SourceViewId, sheetScope!, sheetRegions, viewportMapByViewId))
+                if (!TryApplyIndependentFilters(
+                    doc, candidate, p, categoryIds,
+                    useSheetRegionFilter, sheetScope, sheetRegions, viewportMapByViewId,
+                    includeTextMatches, textContainsNorm,
+                    nameContains, markContains, typeNameContains, familyNameContains,
+                    out var resolvedTypeName, out var resolvedFamilyName, out var resolvedMark, out var textMatch)) continue;
+                ElementIdentityMatch? identityMatch = null;
+                SearchableTextMatch? identityParameterMatch = null;
+                if (includeIdentityMatches)
                 {
-                    continue;
+                    identityMatch = ElementIdentitySearchUtil.Match(
+                        new[]
+                        {
+                            new ElementIdentityField { Name = "name", Value = e.Name },
+                            new ElementIdentityField { Name = "familyName", Value = resolvedFamilyName },
+                            new ElementIdentityField { Name = "typeName", Value = resolvedTypeName },
+                            new ElementIdentityField { Name = "category", Value = e.Category?.Name },
+                            new ElementIdentityField { Name = "mark", Value = resolvedMark }
+                        },
+                        identityTerms);
+                    if (!identityMatch.IsMatch) continue;
+                    if (identityAcronyms.Count > 0)
+                        identityParameterMatch = FindIdentityParameterAcronymMatch(e, identityAcronyms);
                 }
-
-                SearchableTextMatch? textMatch = null;
-                if (includeTextMatches)
+                if (includeIdentityMatches)
                 {
-                    textMatch = FindSearchableTextMatch(e, textContainsNorm);
-                    if (textMatch == null) continue;
-                }
-
-                if (categoryIds.Count > 0 && !categoryIds.Contains(ElementIdCompat.GetValue(e.Category?.Id))) continue;
-                if (!string.IsNullOrWhiteSpace(nameContains) && (e.Name ?? "").IndexOf(nameContains, StringComparison.OrdinalIgnoreCase) < 0) continue;
-
-                if (!string.IsNullOrWhiteSpace(markContains))
-                {
-                    var mark = TryGetMark(e);
-                    if ((mark ?? "").IndexOf(markContains, StringComparison.OrdinalIgnoreCase) < 0) continue;
-                }
-
-                if (!string.IsNullOrWhiteSpace(typeNameContains) || !string.IsNullOrWhiteSpace(familyNameContains))
-                {
-                    if (!TryGetTypeInfo(doc, e, out var typeName, out var familyName)) continue;
-                    if (!string.IsNullOrWhiteSpace(typeNameContains) && (typeName ?? "").IndexOf(typeNameContains, StringComparison.OrdinalIgnoreCase) < 0) continue;
-                    if (!string.IsNullOrWhiteSpace(familyNameContains) && (familyName ?? "").IndexOf(familyNameContains, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    var seedCategoryId = ElementIdCompat.GetValue(e.Category?.Id);
+                    if (seedCategoryId != 0) seedCategoryIds.Add(seedCategoryId);
                 }
 
                 var elementId = RevitBridge.Common.ElementIdCompat.GetValue(e.Id);
                 ids.Add(elementId);
+                seenIds.Add(elementId);
 
-                if (textMatch != null)
+                if (includeResultItems)
                 {
+                    var nested = e as FamilyInstance;
                     items.Add(new
                     {
                         elementId,
                         category = e.Category?.Name,
+                        builtInCategory = e.Category?.BuiltInCategory.ToString(),
                         name = e.Name,
-                        matchedText = textMatch.Text,
-                        matchedTextNormalized = textMatch.TextNormalized,
-                        matchedTextSource = textMatch.Source,
-                        matchedParameterName = textMatch.ParameterName,
+                        familyName = resolvedFamilyName,
+                        typeName = resolvedTypeName,
+                        mark = resolvedMark,
+                        superComponentId = TryGetElementIdValue(nested?.SuperComponent?.Id),
+                        isNested = nested?.SuperComponent != null,
+                        identityMatch = identityMatch == null ? null : new
+                        {
+                            score = identityMatch.Score,
+                            matchedTerm = identityMatch.MatchedTerm,
+                            matchedTokens = identityMatch.MatchedTokens,
+                            matchedFields = identityMatch.MatchedFields
+                        },
+                        identityParameterEvidence = identityParameterMatch == null ? null : new
+                        {
+                            text = identityParameterMatch.Text,
+                            textNormalized = identityParameterMatch.TextNormalized,
+                            source = identityParameterMatch.Source,
+                            parameterName = identityParameterMatch.ParameterName
+                        },
+                        matchedText = textMatch?.Text ?? identityParameterMatch?.Text,
+                        matchedTextNormalized = textMatch?.TextNormalized ?? identityParameterMatch?.TextNormalized,
+                        matchedTextSource = textMatch?.Source ?? identityParameterMatch?.Source,
+                        matchedParameterName = textMatch?.ParameterName ?? identityParameterMatch?.ParameterName,
                         ownerViewId = TryGetElementIdValue(e.OwnerViewId),
                         sourceViewId = TryGetElementIdValue(candidate.SourceViewId)
                     });
@@ -246,8 +300,83 @@ namespace RevitBridge.Logic.Handlers
                 if (ids.Count >= cap) break;
             }
 
+            if (ids.Count < cap && identityAcronyms.Count > 0 && seedCategoryIds.Count > 0)
+            {
+                var expansionScanned = 0;
+                foreach (var candidate in EnumerateCandidates(
+                    doc,
+                    viewIds,
+                    sheetId,
+                    includeSheetElements: p?.includeSheetElements == true,
+                    includeViewportElements: includeViewportElements,
+                    scopeKind,
+                    categoryIds: seedCategoryIds))
+                {
+                    var e = candidate.Element;
+                    expansionScanned++;
+                    if (expansionScanned > 500000)
+                    {
+                        identityExpansionScanCapReached = true;
+                        warnings.Add("Identity acronym expansion scan cap reached (500000); expanded results may be incomplete.");
+                        break;
+                    }
+                    var elementId = ElementIdCompat.GetValue(e.Id);
+                    if (seenIds.Contains(elementId)) continue;
+                    if (!TryApplyIndependentFilters(
+                        doc, candidate, p, seedCategoryIds,
+                        useSheetRegionFilter, sheetScope, sheetRegions, viewportMapByViewId,
+                        includeTextMatches, textContainsNorm,
+                        nameContains, markContains, typeNameContains, familyNameContains,
+                        out var resolvedTypeName, out var resolvedFamilyName, out var resolvedMark, out var textMatch)) continue;
+
+                    var parameterMatch = FindIdentityParameterAcronymMatch(e, identityAcronyms);
+                    if (parameterMatch == null) continue;
+                    var nested = e as FamilyInstance;
+                    var acronym = ElementIdentitySearchUtil.Tokenize(parameterMatch.Text)
+                        .FirstOrDefault(token => identityAcronyms.Contains(token, StringComparer.OrdinalIgnoreCase));
+
+                    ids.Add(elementId);
+                    seenIds.Add(elementId);
+                    identityExpansionCount++;
+                    items.Add(new
+                    {
+                        elementId,
+                        category = e.Category?.Name,
+                        builtInCategory = e.Category?.BuiltInCategory.ToString(),
+                        name = e.Name,
+                        familyName = resolvedFamilyName,
+                        typeName = resolvedTypeName,
+                        mark = resolvedMark,
+                        superComponentId = TryGetElementIdValue(nested?.SuperComponent?.Id),
+                        isNested = nested?.SuperComponent != null,
+                        identityMatch = new
+                        {
+                            score = 0.45,
+                            matchedTerm = acronym,
+                            matchedTokens = acronym == null ? new List<string>() : new List<string> { acronym },
+                            matchedFields = new List<string> { $"parameter:{parameterMatch.ParameterName ?? "unknown"}" }
+                        },
+                        identityParameterEvidence = new
+                        {
+                            text = parameterMatch.Text,
+                            textNormalized = parameterMatch.TextNormalized,
+                            source = parameterMatch.Source,
+                            parameterName = parameterMatch.ParameterName
+                        },
+                        matchedText = textMatch?.Text ?? parameterMatch.Text,
+                        matchedTextNormalized = textMatch?.TextNormalized ?? parameterMatch.TextNormalized,
+                        matchedTextSource = textMatch?.Source ?? parameterMatch.Source,
+                        matchedParameterName = textMatch?.ParameterName ?? parameterMatch.ParameterName,
+                        ownerViewId = TryGetElementIdValue(e.OwnerViewId),
+                        sourceViewId = TryGetElementIdValue(candidate.SourceViewId)
+                    });
+                    if (ids.Count >= cap) break;
+                }
+            }
+
             var truncated = ids.Count >= cap;
             if (truncated) warnings.Add($"Results truncated to limit={cap}.");
+            var distinctIds = ids.Distinct().OrderBy(x => x).ToList();
 
             return Task.FromResult<object>(new
             {
@@ -258,7 +387,8 @@ namespace RevitBridge.Logic.Handlers
                     viewIds = viewIds.Select(x => RevitBridge.Common.ElementIdCompat.GetValue(x)).OrderBy(x => x).ToList(),
                     sheetId
                 },
-                elementIds = ids.Distinct().OrderBy(x => x).ToList(),
+                count = distinctIds.Count,
+                elementIds = distinctIds,
                 categoryFilterApplied = categoryIds.Count > 0,
                 resolvedCategories = resolvedCategories.Select(x => new
                 {
@@ -269,12 +399,66 @@ namespace RevitBridge.Logic.Handlers
                 }).ToList(),
                 textFilterApplied = includeTextMatches,
                 textSearch = includeTextMatches ? new { textContains, normalized = textContainsNorm } : null,
+                identityFilterApplied = includeIdentityMatches,
+                identityTerms,
+                physicalElementsOnlyApplied = p?.physicalElementsOnly == true,
+                topLevelInstancesOnlyApplied = p?.topLevelInstancesOnly == true,
+                identityAcronymExpansionApplied = identityAcronyms.Count > 0 && seedCategoryIds.Count > 0,
+                identityAcronyms,
+                identitySeedCategoryIds = seedCategoryIds.OrderBy(id => id).ToList(),
+                identityExpansionCount,
                 items,
                 sheetRegionFilterApplied = useSheetRegionFilter,
                 sheetRegionCount = useSheetRegionFilter ? sheetRegions.Count : 0,
                 truncated,
+                scanCapReached,
+                identityExpansionScanCapReached,
+                itemsComplete = !truncated && !scanCapReached && !identityExpansionScanCapReached,
                 warnings
             });
+        }
+
+        private static bool TryApplyIndependentFilters(
+            Document doc,
+            CandidateElement candidate,
+            Params? p,
+            IReadOnlyCollection<long> categoryIds,
+            bool useSheetRegionFilter,
+            ViewSheet? sheetScope,
+            List<UvRect> sheetRegions,
+            Dictionary<long, List<ViewportSheetMap>> viewportMapByViewId,
+            bool includeTextMatches,
+            string textContainsNorm,
+            string nameContains,
+            string markContains,
+            string typeNameContains,
+            string familyNameContains,
+            out string? resolvedTypeName,
+            out string? resolvedFamilyName,
+            out string? resolvedMark,
+            out SearchableTextMatch? textMatch)
+        {
+            var e = candidate.Element;
+            resolvedTypeName = null;
+            resolvedFamilyName = null;
+            resolvedMark = null;
+            textMatch = null;
+
+            if (useSheetRegionFilter &&
+                (sheetScope == null || !ElementMatchesAnySheetRegion(doc, e, candidate.SourceViewId, sheetScope, sheetRegions, viewportMapByViewId))) return false;
+            if (includeTextMatches)
+            {
+                textMatch = FindSearchableTextMatch(e, textContainsNorm);
+                if (textMatch == null) return false;
+            }
+            if (categoryIds.Count > 0 && !categoryIds.Contains(ElementIdCompat.GetValue(e.Category?.Id))) return false;
+            if (p?.physicalElementsOnly == true && !IsPhysicalModelElement(e)) return false;
+            if (p?.topLevelInstancesOnly == true && e is FamilyInstance nestedInstance && nestedInstance.SuperComponent != null) return false;
+            TryGetTypeInfo(doc, e, out resolvedTypeName, out resolvedFamilyName);
+            resolvedMark = TryGetMark(e);
+            return ElementIdentitySearchUtil.MatchesIndependentIdentityFilters(
+                e.Name, resolvedMark, resolvedTypeName, resolvedFamilyName,
+                nameContains, markContains, typeNameContains, familyNameContains);
         }
 
         private static IEnumerable<CandidateElement> EnumerateCandidates(
@@ -366,6 +550,54 @@ namespace RevitBridge.Logic.Handlers
             {
                 return null;
             }
+        }
+
+        private static bool IsPhysicalModelElement(Element e)
+        {
+            if (e?.Category == null || e.Category.CategoryType != CategoryType.Model) return false;
+            if (TryGetElementIdValue(e.OwnerViewId).HasValue) return false;
+            try
+            {
+                if (e.Location != null) return true;
+            }
+            catch { }
+            try
+            {
+                return e.get_BoundingBox(null) != null;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static SearchableTextMatch? FindIdentityParameterAcronymMatch(Element e, IReadOnlyCollection<string> acronyms)
+        {
+            if (e == null || acronyms == null || acronyms.Count == 0) return null;
+            try
+            {
+                var parameterCount = 0;
+                foreach (Parameter parameter in e.Parameters)
+                {
+                    if (parameter == null || parameter.StorageType != StorageType.String) continue;
+                    if (!ElementIdentitySearchUtil.IsIdentityBearingParameterName(parameter.Definition?.Name)) continue;
+                    parameterCount++;
+                    if (parameterCount > 80) break;
+                    var raw = (parameter.AsString() ?? "").Trim();
+                    if (raw.Length == 0) continue;
+                    var tokens = ElementIdentitySearchUtil.Tokenize(raw);
+                    if (!tokens.Any(token => acronyms.Contains(token, StringComparer.OrdinalIgnoreCase))) continue;
+                    return new SearchableTextMatch
+                    {
+                        Text = raw,
+                        TextNormalized = ElementIdentitySearchUtil.Normalize(raw),
+                        Source = "identityParameterAcronym",
+                        ParameterName = parameter.Definition?.Name
+                    };
+                }
+            }
+            catch { }
+            return null;
         }
 
         private static bool TryGetTypeInfo(Document doc, Element e, out string? typeName, out string? familyName)

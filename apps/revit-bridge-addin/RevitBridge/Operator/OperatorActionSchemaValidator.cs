@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using RevitBridge.Common;
 
@@ -2376,7 +2377,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/find-elements", StringComparison.OrdinalIgnoreCase))
             {
-                // { viewId?:number, sheetNumber?:string, includeSheetElements?:bool, includeViewportElements?:bool, sheetRegions?:[{minU,minV,maxU,maxV}], regionPaddingFt?:number, category?:string, categories?:string[], typeNameContains?:string, familyNameContains?:string, nameContains?:string, markContains?:string, limit?:int }
+                // { viewId?:number, sheetNumber?:string, includeSheetElements?:bool, includeViewportElements?:bool, sheetRegions?:[{minU,minV,maxU,maxV}], regionPaddingFt?:number, category?:string, categories?:string[], typeNameContains?:string, familyNameContains?:string, nameContains?:string, markContains?:string, identityTerms?:string[], physicalElementsOnly?:bool, topLevelInstancesOnly?:bool, expandIdentityAcronymsInParameters?:bool, limit?:int }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "find-elements body must be an object.";
@@ -2393,6 +2394,11 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalString(obj.Value, "familyNameContains", maxLen: 128, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "nameContains", maxLen: 128, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "markContains", maxLen: 128, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "textContains", maxLen: 256, out error)) return false;
+                if (!ValidateOptionalStringArray(obj.Value, "identityTerms", maxCount: 8, maxLen: 128, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "physicalElementsOnly", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "topLevelInstancesOnly", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "expandIdentityAcronymsInParameters", out error)) return false;
 
                 if (obj.Value.TryGetProperty("sheetRegions", out var regions) && regions.ValueKind != JsonValueKind.Null)
                 {
@@ -2434,6 +2440,18 @@ namespace RevitBridge.Operator
                         error = "find-elements.limit out of range.";
                         return false;
                     }
+                }
+
+                var hasViewScope = obj.Value.TryGetProperty("viewId", out var findViewId) && findViewId.ValueKind == JsonValueKind.Number && findViewId.TryGetInt64(out var findViewIdValue) && findViewIdValue > 0;
+                var hasSheetScope = obj.Value.TryGetProperty("sheetNumber", out var findSheetNumber) && findSheetNumber.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(findSheetNumber.GetString());
+                var hasStringPredicate = new[] { "category", "typeNameContains", "familyNameContains", "nameContains", "markContains", "textContains" }
+                    .Any(name => obj.Value.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String && ElementIdentitySearchUtil.Normalize(value.GetString()).Length > 0);
+                var hasArrayPredicate = new[] { "categories", "identityTerms" }
+                    .Any(name => obj.Value.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Array && value.EnumerateArray().Any(item => item.ValueKind == JsonValueKind.String && ElementIdentitySearchUtil.Normalize(item.GetString()).Length > 0));
+                if (!hasViewScope && !hasSheetScope && !hasStringPredicate && !hasArrayPredicate)
+                {
+                    error = "find-elements document scope requires a category or bounded search predicate.";
+                    return false;
                 }
 
                 return true;
@@ -8109,7 +8127,7 @@ namespace RevitBridge.Operator
             if (string.Equals(path, "/revit/schedules", StringComparison.OrdinalIgnoreCase))
             {
                 // list:   { action?: "list", query?: string, exact?: bool, max?: int }
-                // detail: { action: "detail", scheduleId?|query?, exact?, includeFields? }
+                // detail: { action: "detail", scheduleId?|query?, exact?, requireUniqueQuery?, includeFields? }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "schedules body must be an object.";
@@ -8118,8 +8136,14 @@ namespace RevitBridge.Operator
 
                 if (!ValidateOptionalString(obj.Value, "action", maxLen: 16, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "scheduleId", out error)) return false;
+                if (obj.Value.TryGetProperty("scheduleId", out var scheduleId) && scheduleId.ValueKind == JsonValueKind.Number && scheduleId.GetInt64() <= 0)
+                {
+                    error = "schedules.scheduleId must be a positive integer.";
+                    return false;
+                }
                 if (!ValidateOptionalString(obj.Value, "query", maxLen: 128, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "exact", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "requireUniqueQuery", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeFields", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeData", out error)) return false;
                 if (!ValidateOptionalInt(obj.Value, "rowOffset", out error)) return false;
