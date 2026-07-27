@@ -1168,6 +1168,8 @@ namespace RevitBridge.Operator
                     notes.Add("Scope precedence: if viewId is provided it is used; otherwise sheetNumber scopes to views placed on that sheet (viewports).");
                     notes.Add("For redline workflows, provide sheetRegions (sheet UV boxes) to return only elements overlapping mapped markup areas.");
                     notes.Add("Categories are BuiltInCategory tokens like OST_Doors, OST_TitleBlocks, OST_GenericModel.");
+                    notes.Add("For ordinary whole-document object discovery, identityTerms searches instance name, family, type, category, and Mark while preserving matched-term/field evidence; combine physicalElementsOnly and topLevelInstancesOnly to exclude schedules, legends, annotations, and nested child components.");
+                    notes.Add("expandIdentityAcronymsInParameters is seed-gated: only categories with a physical first-pass identity match are scanned for delimiter-bounded phrase acronyms in string parameters, and exact parameter-name/value evidence is returned.");
                 }
 
                 if (p == "/revit/export-visible-elements")

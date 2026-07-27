@@ -266,6 +266,7 @@ namespace RevitBridge.Logic.Handlers
             }
 
             var items = new List<object>();
+            var returnedElementIds = new List<long>();
             foreach (var e in candidates)
             {
                 if (categorySet.Count > 0)
@@ -317,12 +318,16 @@ namespace RevitBridge.Logic.Handlers
                     topLevelParent = parentFamily.SuperComponent;
                 var topLevelParentId = SpatialIntentUtils.GetId(topLevelParent?.Id);
                 var center = SpatialIntentUtils.TryGetElementCenter(e);
+                HostedPlacementUtil.TryGetTypeInfo(doc, e, out var typeId, out var typeName, out var familyName);
                 items.Add(new
                 {
                     elementId = ElementIdCompat.GetValue(e.Id),
                     category = e.Category?.Name,
                     builtInCategory = e.Category?.BuiltInCategory.ToString(),
                     name = e.Name,
+                    typeId,
+                    typeName,
+                    familyName,
                     levelName,
                     roomNumber = outputSpatialNumber,
                     roomName = outputSpatialName,
@@ -336,6 +341,7 @@ namespace RevitBridge.Logic.Handlers
                     center = center == null ? null : new { x = center.X, y = center.Y, z = center.Z },
                     spatialContext
                 });
+                returnedElementIds.Add(ElementIdCompat.GetValue(e.Id));
 
                 if (items.Count >= limit) break;
             }
@@ -343,11 +349,23 @@ namespace RevitBridge.Logic.Handlers
             if (proximityUnavailableCount > 0)
                 warnings.Add($"Skipped {proximityUnavailableCount} candidate(s) because proximity could not be evaluated without factual location evidence.");
 
+            var requestedElementIdsMissing = candidateIds
+                .Except(returnedElementIds)
+                .OrderBy(id => id)
+                .ToList();
+            var truncated = items.Count >= limit && candidates.Count > items.Count;
+            if (requestedElementIdsMissing.Count > 0)
+                warnings.Add($"{requestedElementIdsMissing.Count} requested element id(s) did not produce a spatial row.");
+
             return Task.FromResult<object>(new
             {
                 status = "Ok",
                 count = items.Count,
-                truncated = items.Count >= limit,
+                requestedElementCount = candidateIds.Count,
+                requestedElementIdsMissing,
+                requestedElementIdsMissingCount = requestedElementIdsMissing.Count,
+                truncated,
+                itemsComplete = !truncated && requestedElementIdsMissing.Count == 0,
                 spatialResolution = spatialResolutionMode,
                 items,
                 warnings

@@ -71,15 +71,19 @@ function resultItems(payload: Record<string, unknown> | null, limit = 20): Array
   return [];
 }
 
-function boundedElementIds(payload: Record<string, unknown> | null, limit: number): number[] {
+function boundedElementIds(payload: Record<string, unknown> | null, limit: number, hardCap = 20): number[] {
   const raw = Array.isArray(payload?.elementIds) ? payload.elementIds : [];
-  return raw.filter(id => Number.isSafeInteger(id) && (id as number) > 0).slice(0, Math.max(1, Math.min(20, limit))) as number[];
+  return raw.filter(id => Number.isSafeInteger(id) && (id as number) > 0).slice(0, Math.max(1, Math.min(hardCap, limit))) as number[];
 }
 
-function resultArray(value: unknown): Array<Record<string, unknown>> {
+function resultArray(value: unknown, limit = 20): Array<Record<string, unknown>> {
   return Array.isArray(value)
-    ? value.filter(item => item && typeof item === "object" && !Array.isArray(item)).slice(0, 20) as Array<Record<string, unknown>>
+    ? value.filter(item => item && typeof item === "object" && !Array.isArray(item)).slice(0, Math.max(1, Math.min(500, limit))) as Array<Record<string, unknown>>
     : [];
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
 function textValue(value: unknown): string | null {
@@ -90,11 +94,14 @@ function textValue(value: unknown): string | null {
 
 function itemSummary(item: Record<string, unknown>): string {
   const id = textValue(item.elementId) ?? textValue(item.id);
-  const name = textValue(item.name) ?? textValue(item.typeName) ?? textValue(item.familyName);
+  const name = textValue(item.name);
+  const family = textValue(item.familyName);
+  const type = textValue(item.typeName);
   const category = textValue(item.category) ?? textValue(item.builtInCategory);
   const level = textValue(item.levelName);
   const room = textValue(item.roomNumber);
-  const identity = [id ? `id ${id}` : null, name, category].filter(Boolean).join(" — ") || "bounded result";
+  const familyType = [family, type && type !== family ? type : null].filter(Boolean).join(" / ");
+  const identity = [id ? `id ${id}` : null, familyType || name, category].filter(Boolean).join(" — ") || "bounded result";
   const location = [level, room ? `Room ${room}` : null].filter(Boolean).join(", ");
   return location ? `${identity} (${location})` : identity;
 }
@@ -154,6 +161,212 @@ function completeSingleAction(task: AecSemanticTaskV1, workflow: AecQueryWorkflo
   return response(`${countText} in ${scope}. The result came from the scoped ${workflow.replace("query.", "").replaceAll("_", " ")} workflow; no model changes were made.`, [], { workflow_id: workflow, status: "complete" });
 }
 
+function resultIsIncomplete(payload: Record<string, unknown> | null): boolean {
+  return payload?.truncated === true || payload?.scanCapReached === true || payload?.itemsComplete === false;
+}
+
+function documentIdentityGroups(items: Array<Record<string, unknown>>): string[] {
+  const groups = new Map<string, { count: number; family: string | null; type: string | null; category: string | null }>();
+  for (const item of items) {
+    const family = textValue(item.familyName);
+    const type = textValue(item.typeName) ?? textValue(item.name);
+    const category = textValue(item.category) ?? textValue(item.builtInCategory);
+    const key = `${family ?? ""}\u0000${type ?? ""}\u0000${category ?? ""}`;
+    const existing = groups.get(key);
+    if (existing) existing.count++;
+    else groups.set(key, { count: 1, family, type, category });
+  }
+  return [...groups.values()].slice(0, 12).map(group => {
+    const identity = [group.category, group.family ? `family ${group.family}` : null, group.type ? `type ${group.type}` : null].filter(Boolean).join(", ") || "unclassified model elements";
+    return `${group.count} ${identity}`;
+  });
+}
+
+function rowCells(value: unknown): string[] {
+  const row = objectValue(value);
+  return Array.isArray(row?.cells) ? row.cells.map(cell => typeof cell === "string" ? cell.trim() : "") : [];
+}
+
+function isIdentityScheduleHeader(value: string): boolean {
+  const tokens = value.toLocaleLowerCase().match(/[a-z0-9]+/g) ?? [];
+  return tokens.some(token => ["desig", "designation", "mark", "tag", "identifier", "id", "number"].includes(token));
+}
+
+function normalizeScheduleHeader(value: string): string {
+  return (value.toLocaleLowerCase().match(/[a-z0-9]+/g) ?? []).join(" ");
+}
+
+export function __testOnlyIdentityScheduleKeyColumn(headers: string[], modelParameterNames: string[]): number {
+  const modelNames = new Set(modelParameterNames.map(normalizeScheduleHeader).filter(Boolean));
+  const candidates = headers
+    .map((header, index) => ({ header, index }))
+    .filter(candidate => isIdentityScheduleHeader(candidate.header) && modelNames.has(normalizeScheduleHeader(candidate.header)));
+  return candidates.length === 1 ? candidates[0].index : -1;
+}
+
+function summarizeMatchingSchedule(scheduleResult: ToolResult | undefined, modelItems: Array<Record<string, unknown>> = [], modelItemsComplete = true): string {
+  if (!scheduleResult) return "";
+  if (scheduleResult.status !== "done" || scheduleResult.method !== "POST" || scheduleResult.path !== "/revit/schedules") {
+    return " The matching schedule preview could not be read, so I am not inferring scheduled manufacturer/model facts.";
+  }
+  const payload = resultPayload(scheduleResult);
+  if (textValue(payload?.status) !== "Ok" || textValue(payload?.action) !== "detail") return "";
+  const schedule = objectValue(payload?.schedule);
+  const scheduleName = textValue(schedule?.name) ?? "matching schedule";
+  const scheduleId = textValue(schedule?.id);
+  const table = objectValue(payload?.table);
+  const header = objectValue(table?.header);
+  const body = objectValue(table?.body);
+  const headerRows = Array.isArray(header?.rows) ? header.rows.map(rowCells).filter(cells => cells.some(Boolean)) : [];
+  const dataRows = Array.isArray(body?.rows) ? body.rows.map(rowCells).filter(cells => cells.some(Boolean)) : [];
+  if (dataRows.length === 0) return ` The project also has ${scheduleName}${scheduleId ? ` (id ${scheduleId})` : ""}, but its bounded preview returned no data rows.`;
+  const expectedColumns = Math.max(0, ...dataRows.map(row => row.length));
+  const headers = headerRows
+    .map((cells, index) => ({ cells, index, nonEmpty: cells.filter(Boolean).length }))
+    .filter(candidate => candidate.nonEmpty > 0 && candidate.cells.length >= expectedColumns)
+    .sort((left, right) => right.nonEmpty - left.nonEmpty || right.index - left.index)[0]?.cells.slice(0, expectedColumns) ?? [];
+  if (headers.length === 0) {
+    return ` The project also has ${scheduleName}${scheduleId ? ` (id ${scheduleId})` : ""}, with ${dataRows.length} visible data rows, but the bounded preview did not include usable column headers, so I am not inferring schedule facts or discrepancies.`;
+  }
+  const constantFacts: string[] = [];
+  for (let column = 0; column < headers.length; column++) {
+    const header = headers[column] || `column ${column + 1}`;
+    const values = [...new Set(dataRows.map(row => row[column] ?? "").filter(Boolean))];
+    if (values.length === 1 && !/^(?:comments?|remarks?)$/i.test(header)) constantFacts.push(`${header} ${values[0]}`);
+  }
+  const modelParameterEvidence = modelItems
+    .map(item => {
+      const identityParameter = objectValue(item.identityParameterEvidence);
+      if (identityParameter) {
+        return {
+          parameterName: textValue(identityParameter.parameterName),
+          text: textValue(identityParameter.text)
+        };
+      }
+      return {
+        parameterName: textValue(item.matchedParameterName),
+        text: textValue(item.matchedText)
+      };
+    })
+    .filter((item): item is { parameterName: string; text: string } => Boolean(item.parameterName && item.text));
+  const modelParameterEvidenceComplete = modelItemsComplete && modelItems.length > 0 && modelParameterEvidence.length === modelItems.length;
+  const keyColumn = modelParameterEvidenceComplete
+    ? __testOnlyIdentityScheduleKeyColumn(headers, modelParameterEvidence.map(item => item.parameterName))
+    : -1;
+  const scheduleKeys = keyColumn >= 0
+    ? [...new Set(dataRows.map(row => row[keyColumn] ?? "").filter(Boolean))]
+    : [];
+  const matchingParameterName = keyColumn >= 0 ? headers[keyColumn] : null;
+  const modelKeys = matchingParameterName
+    ? [...new Set(modelParameterEvidence
+      .filter(item => normalizeScheduleHeader(item.parameterName) === normalizeScheduleHeader(matchingParameterName))
+      .map(item => item.text))]
+    : [];
+  const modelOnly = modelKeys.filter(value => !scheduleKeys.some(key => key.toLocaleLowerCase() === value.toLocaleLowerCase())).sort();
+  const scheduleOnly = scheduleKeys.filter(value => !modelKeys.some(key => key.toLocaleLowerCase() === value.toLocaleLowerCase())).sort();
+  const rowsOmitted = Number.isFinite(Number(body?.rowsOmitted)) ? Math.max(0, Math.floor(Number(body?.rowsOmitted))) : 0;
+  const rowsComplete = body?.rowsComplete !== false && body?.hasMoreRows !== true && rowsOmitted === 0;
+  const rowWord = rowsComplete ? String(dataRows.length) : `at least ${dataRows.length}`;
+  const keyText = scheduleKeys.length > 0 ? ` and ${scheduleKeys.length} unique ${matchingParameterName} values` : "";
+  const factText = constantFacts.length > 0 ? ` Every returned row reports ${constantFacts.join(", ")}.` : "";
+  const modelKeyText = modelKeys.length > 0 ? ` The physical instances carry ${modelKeys.length} unique ${matchingParameterName} values.` : "";
+  const discrepancy = !modelItemsComplete
+    ? " The model discovery result is incomplete, so I am not claiming an exhaustive model/schedule discrepancy."
+    : keyColumn < 0 && modelItems.length > 0
+    ? " I could not identify one unique schedule key column matching the returned model identity-parameter evidence, so I am not claiming a model/schedule discrepancy."
+    : !rowsComplete
+    ? " The schedule preview is incomplete, so I am not claiming an exhaustive model/schedule discrepancy."
+    : modelOnly.length || scheduleOnly.length
+    ? ` Schedule/model discrepancy: ${modelOnly.length} model-only value${modelOnly.length === 1 ? "" : "s"}${modelOnly.length ? ` (${modelOnly.join(", ")})` : ""}; ${scheduleOnly.length} schedule-only value${scheduleOnly.length === 1 ? "" : "s"}${scheduleOnly.length ? ` (${scheduleOnly.join(", ")})` : ""}.`
+    : modelKeys.length > 0 ? " The model and schedule key sets agree." : "";
+  return ` The project also has ${scheduleName}${scheduleId ? ` (id ${scheduleId})` : ""}, with ${rowWord} visible data rows${keyText}.${factText}${modelKeyText}${discrepancy}`;
+}
+
+function completeDocumentIdentity(task: AecSemanticTaskV1, result: ToolResult, scheduleResult?: ToolResult): ChatResponse {
+  if (result.status !== "done" || result.method !== "POST" || result.path !== "/revit/find-elements") {
+    return response(`I could not complete the bounded whole-document identity search: ${result.error || "the Revit discovery action failed"}. No model changes were made.`, [], { workflow_id: "query.document_elements", status: "failed" });
+  }
+  const payload = resultPayload(result);
+  const items = resultItems(payload, 500);
+  const count = countFromPayload(payload) ?? items.length;
+  if (count === 0) {
+    if (resultIsIncomplete(payload)) {
+      return response(`The bounded whole-document identity search reached a result or scan limit before finding a match, so I cannot honestly say that no ${subjectLabel(task)} exist. Narrow the identity or provide a grounded category and I can continue. No model changes were made.`, [], { workflow_id: "query.document_elements", status: "failed" });
+    }
+    return response(`I did not find a physical model instance matching ${subjectLabel(task)} across instance name, family, type, category, or Mark. No model changes were made.`, [], { workflow_id: "query.document_elements", status: "not_found" });
+  }
+  const groups = documentIdentityGroups(items);
+  const identityText = groups.length ? ` They are ${groups.join("; ")}.` : " Their identity details were not returned, so I did not guess what they are.";
+  const scheduleText = summarizeMatchingSchedule(scheduleResult, items, !resultIsIncomplete(payload));
+  const incomplete = resultIsIncomplete(payload)
+    ? " The bounded result limit or scan cap was reached, so this is a partial inventory rather than a claim that no additional matches exist."
+    : "";
+  return response(`I found ${count} physical model instance${count === 1 ? "" : "s"} matching ${subjectLabel(task)}.${identityText}${scheduleText}${incomplete} No model changes were made.`, [], { workflow_id: "query.document_elements", status: resultIsIncomplete(payload) ? "ambiguous" : "complete" });
+}
+
+function candidateLabel(candidate: Record<string, unknown>): string | null {
+  const number = textValue(candidate.number);
+  const name = textValue(candidate.name);
+  const kind = textValue(candidate.spatialKind) ?? "Room";
+  if (!number && !name) return null;
+  return `${kind} ${[number, name].filter(Boolean).join(" — ")}`;
+}
+
+function spatialItemLabel(item: Record<string, unknown>): { label: string; status: "resolved" | "ambiguous" | "unresolved" } {
+  const id = textValue(item.elementId) ?? textValue(item.id) ?? "unknown";
+  const mark = textValue(item.mark);
+  const device = mark ? `${mark} (element ${id})` : `element ${id}`;
+  const spatial = objectValue(item.spatialContext);
+  const status = textValue(spatial?.status);
+  const roomNumber = textValue(item.roomNumber);
+  const roomName = textValue(item.roomName);
+  const spatialKind = textValue(item.spatialKind) ?? "Room";
+  const level = textValue(item.levelName);
+  if (status === "resolved" && (roomNumber || roomName)) {
+    const selected = objectValue(spatial?.selected);
+    const sourceScope = textValue(selected?.sourceScope);
+    const linkName = textValue(selected?.linkInstanceName);
+    const provenance = sourceScope === "linked" || sourceScope === "link" ? ` via linked model${linkName ? ` ${linkName}` : ""}` : "";
+    return { label: `${device}: ${spatialKind} ${[roomNumber, roomName].filter(Boolean).join(" — ")}${level ? `, ${level}` : ""}${provenance}`, status: "resolved" };
+  }
+  if (status === "ambiguous") {
+    const matches = resultArray(spatial?.matches, 8).map(candidateLabel).filter((value): value is string => Boolean(value));
+    return { label: `${device}: room assignment is ambiguous${matches.length ? ` among ${matches.join(", ")}` : ""}${level ? `, ${level}` : ""}`, status: "ambiguous" };
+  }
+  const nearest = resultArray(spatial?.nearestCandidates, 3).map(candidateLabel).filter((value): value is string => Boolean(value));
+  return { label: `${device}: room unresolved${level ? `, ${level}` : ""}${nearest.length ? `; nearest candidates (not assignments): ${nearest.join(", ")}` : ""}`, status: "unresolved" };
+}
+
+function completeDocumentSpatial(task: AecSemanticTaskV1, state: QueryState, result: ToolResult): ChatResponse {
+  if (result.status !== "done" || result.method !== "POST" || result.path !== "/revit/locate-elements") {
+    return response(`I found matching model instances but could not resolve their room locations: ${result.error || "the spatial action failed"}. No model changes were made.`, [], { workflow_id: "query.document_elements", status: "failed" });
+  }
+  const payload = resultPayload(result);
+  const rows = resultItems(payload, 500).filter(item => item.isNested !== true);
+  const rowIds = new Set(rows.map(item => Number(item.elementId ?? item.id)).filter(id => Number.isSafeInteger(id) && id > 0));
+  const missingIds = (Array.isArray(payload?.requestedElementIdsMissing) ? payload.requestedElementIdsMissing : [])
+    .filter(id => Number.isSafeInteger(id) && (id as number) > 0 && !rowIds.has(id as number))
+    .slice(0, 500) as number[];
+  if (rows.length === 0 && missingIds.length === 0) {
+    return response(`I found matching model instances, but Revit returned no top-level spatial rows, so I cannot state their room numbers. No model changes were made.`, [], { workflow_id: "query.document_elements", status: "failed" });
+  }
+  const labels = [
+    ...rows.map(spatialItemLabel),
+    ...missingIds.map(id => ({ label: `element ${id}: room unresolved; Revit did not return a spatial row for this requested element`, status: "unresolved" as const }))
+  ];
+  const resolved = labels.filter(item => item.status === "resolved").length;
+  const ambiguous = labels.filter(item => item.status === "ambiguous").length;
+  const unresolved = labels.length - resolved - ambiguous;
+  const identityGroups = documentIdentityGroups(resultArray(state.evidence.discovery_items, 500));
+  const identityText = identityGroups.length ? ` They are ${identityGroups.join("; ")}.` : "";
+  const discoveryIncomplete = state.evidence.discovery_incomplete === true;
+  const spatialIncomplete = resultIsIncomplete(payload) || missingIds.length > 0;
+  const incomplete = discoveryIncomplete || spatialIncomplete
+    ? " The discovery or spatial result was bounded/incomplete, so additional matching devices may exist."
+    : "";
+  return response(`I found ${labels.length} top-level physical ${subjectLabel(task)} instance${labels.length === 1 ? "" : "s"}.${identityText} Room results: ${resolved} resolved, ${ambiguous} ambiguous, ${unresolved} unresolved. ${labels.map(item => item.label).join("; ")}.${incomplete} No model changes were made.`, [], { workflow_id: "query.document_elements", status: ambiguous > 0 || unresolved > 0 || discoveryIncomplete || spatialIncomplete ? "ambiguous" : "complete" });
+}
+
 function exactCompletion(task: AecSemanticTaskV1, state: QueryState, result: ToolResult): ChatResponse {
   if (result.status !== "done") return response(`I found the exact identifier but could not read its placement context: ${result.error || "the context query failed"}. No model changes were made.`, [], { workflow_id: state.workflow_id, status: "failed" });
   const context = resultPayload(result) ?? {};
@@ -206,6 +419,57 @@ function continueRun(req: ChatRequest, state: QueryState): ChatResponse | null {
     const delta = secondCount - firstCount;
     const difference = delta === 0 ? "The counts are equal." : `${secondLabel} has ${Math.abs(delta)} ${subjectLabel(state.task)}${Math.abs(delta) === 1 ? "" : "s"} ${delta > 0 ? "more" : "fewer"} than ${firstLabel}.`;
     return response(`${firstLabel}: ${firstCount}. ${secondLabel}: ${secondCount}. ${difference} Both reads were scoped and predicate-pushed; no model changes were made.`, [], { workflow_id: state.workflow_id, status: "complete" });
+  }
+  if (state.workflow_id === "query.document_elements" && state.stage === 0) {
+    const result = matchingResult(req, "aec-query-document-elements");
+    if (!result) return null;
+    const scheduleResult = matchingResult(req, "aec-query-document-element-schedule");
+    if (state.evidence.schedule_detail_requested === true && !scheduleResult) return null;
+    const payload = resultPayload(result);
+    const count = countFromPayload(payload) ?? 0;
+    const wantsSpatial = state.evidence.needs_spatial === true;
+    if (result.status === "done" && result.method === "POST" && result.path === "/revit/find-elements" && count > 0 && wantsSpatial) {
+      const resultLimit = Number.isSafeInteger(state.evidence.result_limit) ? state.evidence.result_limit as number : state.task.execution.max_results;
+      const ids = boundedElementIds(payload, resultLimit, 500);
+      if (ids.length === 0) {
+        states.delete(key(req));
+        return response("The bounded identity search reported matches but returned no valid element IDs, so I could not guess which devices to locate. No model changes were made.", [], { workflow_id: state.workflow_id, status: "failed" });
+      }
+      states.set(key(req), {
+        ...state,
+        stage: 1,
+        evidence: {
+          ...state.evidence,
+          discovery_count: count,
+          discovery_incomplete: resultIsIncomplete(payload),
+          discovery_items: resultItems(payload, 500)
+        },
+        expires_at: Date.now() + TTL_MS
+      });
+      return response("I found the physical instances and am resolving each one against phase-matched host and linked Rooms without treating nearest candidates as assignments.", [{
+        action_id: "aec-query-document-element-locations",
+        method: "POST",
+        path: "/revit/locate-elements",
+        body: {
+          elementIds: ids,
+          limit: Math.min(500, ids.length + 1),
+          spatialResolution: "geometry_with_nearest",
+          spatialKindPreference: "room",
+          includeHostRooms: true,
+          includeHostSpaces: false,
+          includeLinkedRooms: true,
+          nearestCandidateLimit: 5
+        }
+      }]);
+    }
+    states.delete(key(req));
+    return completeDocumentIdentity(state.task, result, scheduleResult);
+  }
+  if (state.workflow_id === "query.document_elements" && state.stage === 1) {
+    const result = matchingResult(req, "aec-query-document-element-locations");
+    if (!result) return null;
+    states.delete(key(req));
+    return completeDocumentSpatial(state.task, state, result);
   }
   if (state.workflow_id === "query.exact_identifier" && state.stage === 0) {
     const result = matchingResult(req, "aec-query-exact-identifier");
