@@ -62,6 +62,20 @@ function boundedContextString(value: unknown, maxLength: number): string | undef
   return trimmed;
 }
 
+function declaredBoundedContextString(
+  record: Record<string, unknown>,
+  key: string,
+  maxLength: number,
+  label: string
+): string | undefined {
+  if (!Object.prototype.hasOwnProperty.call(record, key)) return undefined;
+  const rawValue = record[key];
+  if (typeof rawValue === "string" && rawValue.trim() === "") return undefined;
+  const value = boundedContextString(rawValue, maxLength);
+  if (!value) throw new Error(`Revit context integrity error: ${label} is malformed.`);
+  return value;
+}
+
 export function revitCourierTargetFromContext(context: unknown): {
   target_executor_id?: string;
   target_document_title?: string;
@@ -81,12 +95,12 @@ export function revitCourierTargetFromContext(context: unknown): {
   const canonicalDocument = revit.document && typeof revit.document === "object" && !Array.isArray(revit.document)
     ? revit.document as Record<string, unknown>
     : {};
-  const canonicalExecutor = boundedContextString(revit.courier_executor_id, 200);
-  const legacyExecutor = boundedContextString(legacyDocument.courier_executor_id, 200);
-  const canonicalTitle = boundedContextString(canonicalDocument.title, 512);
-  const legacyTitle = boundedContextString(legacyDocument.title, 512);
-  const canonicalPath = boundedContextString(canonicalDocument.path, 2048);
-  const legacyPath = boundedContextString(legacyDocument.path, 2048);
+  const canonicalExecutor = declaredBoundedContextString(revit, "courier_executor_id", 200, "canonical courier executor");
+  const legacyExecutor = declaredBoundedContextString(legacyDocument, "courier_executor_id", 200, "compatibility courier executor");
+  const canonicalTitle = declaredBoundedContextString(canonicalDocument, "title", 512, "canonical document title");
+  const legacyTitle = declaredBoundedContextString(legacyDocument, "title", 512, "compatibility document title");
+  const canonicalPath = declaredBoundedContextString(canonicalDocument, "path", 2048, "canonical document path");
+  const legacyPath = declaredBoundedContextString(legacyDocument, "path", 2048, "compatibility document path");
   if (canonicalExecutor && legacyExecutor && canonicalExecutor !== legacyExecutor) {
     throw new Error("Revit context integrity error: canonical and compatibility courier executors disagree.");
   }
@@ -713,6 +727,14 @@ export async function decideCodex(req: ChatRequest): Promise<ChatResponse> {
 }
 
 export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks): Promise<ChatResponse> {
+  let courierTarget: ReturnType<typeof revitCourierTargetFromContext>;
+  try {
+    courierTarget = revitCourierTargetFromContext(req.context);
+  } catch (error) {
+    const message = `${error instanceof Error ? error.message : String(error)} I stopped before planning or Revit tool actions.`;
+    cb.onDone?.(message);
+    return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [] };
+  }
   const workspaceRoot = getWorkspaceRoot();
   let c = await getClient(workspaceRoot);
   const threadId = await withTransportRetry(workspaceRoot, async activeClient => {
@@ -847,21 +869,6 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     }
   }
   let courierContext: ReturnType<typeof beginRevitCourierTurnContext> = null;
-  let courierTarget: ReturnType<typeof revitCourierTargetFromContext>;
-  try {
-    courierTarget = revitCourierTargetFromContext(req.context);
-  } catch (error) {
-    endRequirementsPlanningLease(requirementsLease);
-    requirementsLease = null;
-    const message = `${error instanceof Error ? error.message : String(error)} I stopped before planning or Revit tool actions.`;
-    cb.onDone?.(message);
-    return {
-      version: OPERATOR_BACKEND_CONTRACT_VERSION,
-      assistant_message: message,
-      actions: [],
-      ...(requirementsReceipt ? { requirements_receipt: requirementsReceipt } : {})
-    };
-  }
   let start: any;
   try {
     courierContext = beginRevitCourierTurnContext({

@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
-import { revitCourierTargetFromContext } from "../src/brains/codex_brain.js";
+import { decideCodexStreaming, revitCourierTargetFromContext } from "../src/brains/codex_brain.js";
+import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
 import { beginRevitCourierTurnContext, endRevitCourierTurnContext } from "../src/courier/revit_courier_context.js";
 import {
   REVIT_COURIER_JOB_VERSION,
@@ -263,6 +264,33 @@ test("conflicting Sidecar identity cannot open an unbound courier lease", () => 
         }
       })
     }), /context integrity.*executors disagree/i);
+    assert.equal(fs.existsSync(path.join(root, "config", "revit-courier-context.json")), false);
+  } finally {
+    delete process.env.OPERATOR_REVIT_TRANSPORT;
+  }
+});
+
+test("malformed declared courier fields return no actions before any courier lease", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-malformed-context-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.OPERATOR_REVIT_TRANSPORT = "courier";
+  const contexts = [
+    { revit: { courier_executor_id: "worker\nother", document: { title: "Duke B200", path: "C:\\models\\Duke B200.rvt" } } },
+    { revit: { courier_executor_id: "worker-1", document: { title: "x".repeat(513), path: "C:\\models\\Duke B200.rvt" } } },
+    { revit: { courier_executor_id: "worker-1", document: { title: "Duke B200", path: 42 } } }
+  ];
+  try {
+    for (const [index, context] of contexts.entries()) {
+      const response = await decideCodexStreaming({
+        version: OPERATOR_BACKEND_CONTRACT_VERSION,
+        session_id: `malformed-session-${index}`,
+        message_id: `malformed-message-${index}`,
+        user_text: "Inspect this model.",
+        context
+      }, {});
+      assert.deepEqual(response.actions, []);
+      assert.match(response.assistant_message, /context integrity.*malformed.*stopped before planning/i);
+    }
     assert.equal(fs.existsSync(path.join(root, "config", "revit-courier-context.json")), false);
   } finally {
     delete process.env.OPERATOR_REVIT_TRANSPORT;
