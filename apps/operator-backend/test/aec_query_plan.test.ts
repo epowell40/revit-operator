@@ -89,6 +89,35 @@ test("whole-document sheet count stays on the legacy inventory while physical eq
   assert.equal(spatialEquipment.evidence.needs_spatial, true);
 });
 
+test("explicit all-each follow-ups promote active context to bounded document discovery", () => {
+  const value = task();
+  value.subject = { kind: "class", semantic_class: "other", terms: ["shock arrestors"], categories: ["OST_MechanicalEquipment"], family_name: "LW_Shock Absorber", type_name: "Standard", system_name: null, identifiers: [] };
+  value.scope = { ...value.scope, kind: "active_context", document: null };
+  value.outputs = ["summary", "element_ids", "spatial_context"];
+  value.evidence.user_text = "Where are the shock arrestors? Provide the room number for each device location.";
+  const plan = planAecQueryTask(value);
+  assert.equal(plan.status, "ready");
+  assert.equal(plan.workflow_id, "query.document_elements");
+  assert.equal(plan.evidence.scope_promoted_from_active_context, true);
+  assert.deepEqual(plan.actions[0], {
+    action_id: "aec-query-document-elements",
+    method: "POST",
+    path: "/revit/find-elements",
+    body: {
+      identityTerms: ["lw_shock absorber", "standard", "shock arrestors"],
+      expandIdentityAcronymsInParameters: true,
+      physicalElementsOnly: true,
+      topLevelInstancesOnly: true,
+      limit: 500
+    }
+  });
+
+  value.evidence.user_text = "Where are the shock arrestors?";
+  const implicit = planAecQueryTask(value);
+  assert.equal(implicit.status, "blocked");
+  assert.match(implicit.blockers[0], /explicit document opt-in/);
+});
+
 test("planner pushes canonical level/category predicates and fails closed when native pushdown is impossible", () => {
   const namedView = task();
   namedView.scope = { ...namedView.scope, kind: "view", views: [{ id: null, name: "L4 - POWER" }] };

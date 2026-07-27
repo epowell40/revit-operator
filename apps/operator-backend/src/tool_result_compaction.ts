@@ -980,6 +980,7 @@ export function compactLocateElementsResultForPrompt(
       spatialKindPreference: context.spatialKindPreference ?? null,
       spatialVerticalScope: context.spatialVerticalScope ?? context.spatial_vertical_scope ?? null,
       method: context.method ?? null,
+      phaseFallbackUsed: context.phaseFallbackUsed ?? context.phase_fallback_used ?? false,
       unresolvedReason: context.unresolvedReason ?? context.unresolved_reason ?? null,
       representativePoint: context.representativePoint ?? context.representative_point ?? null,
       selected: compactSpatialCandidate(context.selected),

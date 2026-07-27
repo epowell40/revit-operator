@@ -88,6 +88,7 @@ test("compact locate-elements preserves every physical and nested spatial result
           status: "unresolved",
           spatialVerticalScope: "same_level",
           method: "none",
+          phaseFallbackUsed: true,
           selected: null,
           matches: [],
           nearestCandidates: [{
@@ -132,6 +133,7 @@ test("compact locate-elements preserves every physical and nested spatial result
   assert.equal(compacted.items.length, 132);
   assert.equal(compacted.items[64].spatialContext.status, "unresolved");
   assert.equal(compacted.items[64].spatialContext.spatialVerticalScope, "same_level");
+  assert.equal(compacted.items[64].spatialContext.phaseFallbackUsed, true);
   assert.equal(compacted.spatialVerticalScope, "same_level");
   assert.equal(compacted.items[64].familyName, "LW_Shock Absorber");
   assert.equal(compacted.items[64].spatialContext.nearestCandidates[0].number, "2911");

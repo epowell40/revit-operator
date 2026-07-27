@@ -432,7 +432,7 @@ namespace RevitBridge.Logic.Handlers
             }
             catch { }
 
-            warnings.Add("The active view has no resolvable phase; geometric spatial assignment will evaluate factual Room/Space variants across phases and resolve only a unique, phase-consistent identity.");
+            warnings.Add("The active view has no resolvable phase; geometric spatial assignment will prefer mapped phases where the target exists and may fall back to all mapped variants only for one unique, phase-consistent identity.");
             return null;
         }
     }

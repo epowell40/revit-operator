@@ -319,6 +319,16 @@ namespace RevitBridge.Common
             if (associationCandidateCount > 1) return "ambiguous";
             return "unresolved";
         }
+
+        public static bool ShouldEvaluateAllPhaseVariants(
+            bool phaseAgnostic,
+            int lifecycleContainingCount,
+            int lifecycleBoundaryCount)
+        {
+            return phaseAgnostic &&
+                   lifecycleContainingCount == 0 &&
+                   lifecycleBoundaryCount == 0;
+        }
     }
 
     public static class SpatialElementLifecycleUtil

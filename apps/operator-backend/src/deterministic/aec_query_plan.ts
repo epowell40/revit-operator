@@ -68,6 +68,18 @@ function isSpatialDocumentQuestion(task: AecSemanticTaskV1): boolean {
     || /\b(?:where|located?|locations?|rooms?|spaces?|positions?|coordinates?)\b/i.test(task.evidence.user_text);
 }
 
+function hasExplicitDocumentClassScope(task: AecSemanticTaskV1): boolean {
+  if (task.scope.kind !== "active_context") return false;
+  if (!["category", "class", "family", "type", "elements", "generic"].includes(task.subject.kind)) return false;
+  if (task.scope.levels.length || task.scope.rooms.length || task.scope.spaces.length || task.scope.areas.length ||
+      task.scope.views.length || task.scope.sheets.length || task.scope.systems.length || task.scope.element_ids.length ||
+      task.scope.region !== null) return false;
+  const text = task.evidence.user_text;
+  return /\b(?:all|each|every)\b/i.test(text) ||
+    /\b(?:this|current|whole|entire)\s+(?:project|model|document)\b/i.test(text) ||
+    /\bthroughout\s+(?:the\s+)?(?:project|model|document)\b/i.test(text);
+}
+
 function naturalScheduleQuery(identityTerms: string[]): string | null {
   const source = identityTerms.find(term => term.split(/\s+/).filter(Boolean).length >= 2) ?? identityTerms[0];
   if (!source) return null;
@@ -130,6 +142,8 @@ export function planAecQueryTask(value: unknown): AecQueryPlanV1 {
   }
   if (task.operation === "focus" && task.subject.kind !== "exact_identifier") return blocked("Focus currently requires one exact identifier so the target view and element can be resolved without guessing.");
   if (task.operation === "focus" && task.execution.max_primary_actions < 3) return blocked("Exact-element focus requires three bounded actions: identity lookup, placement context, and view activation.");
+  const explicitDocumentClassScope = hasExplicitDocumentClassScope(task);
+  const documentScope = task.scope.kind === "document" || explicitDocumentClassScope;
 
   if (task.subject.kind === "exact_identifier") {
     if (task.subject.identifiers.length === 0 || task.subject.identifiers.length > 8) return blocked("Exact-identifier queries require 1 to 8 bounded identifier predicates.");
@@ -171,7 +185,7 @@ export function planAecQueryTask(value: unknown): AecQueryPlanV1 {
     return { status: "ready", workflow_id: "query.room_contents", actions: [action("aec-query-room-contents", "/revit/room-contents", body)], blockers: [], evidence: { predicate_pushed: true, document_payload_requested: false } };
   }
 
-  if (task.scope.kind === "document" && isSheetInventory(task)) {
+  if (documentScope && isSheetInventory(task)) {
     const countOnly = task.operation === "count";
     return {
       status: "ready",
@@ -184,7 +198,7 @@ export function planAecQueryTask(value: unknown): AecQueryPlanV1 {
     };
   }
 
-  if (task.scope.kind === "document" && ["category", "class", "family", "type", "elements", "generic"].includes(task.subject.kind)) {
+  if (documentScope && ["category", "class", "family", "type", "elements", "generic"].includes(task.subject.kind)) {
     const groundedCategoryBody = task.subject.kind === "category" ? categoryBody(task) : {};
     const identityTerms = Object.keys(groundedCategoryBody).length > 0 ? [] : documentIdentityTerms(task);
     if (identityTerms.length === 0 && Object.keys(groundedCategoryBody).length === 0) {
@@ -231,7 +245,8 @@ export function planAecQueryTask(value: unknown): AecQueryPlanV1 {
         result_limit: limit,
         needs_spatial: needsSpatial,
         schedule_detail_requested: Boolean(scheduleQuery),
-        schedule_query: scheduleQuery
+        schedule_query: scheduleQuery,
+        scope_promoted_from_active_context: explicitDocumentClassScope
       }
     };
   }

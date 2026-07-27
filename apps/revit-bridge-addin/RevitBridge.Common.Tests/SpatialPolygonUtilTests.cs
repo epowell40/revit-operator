@@ -176,6 +176,15 @@ namespace RevitBridge.Common.Tests
             Assert.Equal("ambiguous", SpatialResolutionDecisionUtil.WithoutGeometryStatus(2));
         }
 
+        [Fact]
+        public void All_Phase_Fallback_Requires_No_Lifecycle_Footprint()
+        {
+            Assert.True(SpatialResolutionDecisionUtil.ShouldEvaluateAllPhaseVariants(true, 0, 0));
+            Assert.False(SpatialResolutionDecisionUtil.ShouldEvaluateAllPhaseVariants(false, 0, 0));
+            Assert.False(SpatialResolutionDecisionUtil.ShouldEvaluateAllPhaseVariants(true, 1, 0));
+            Assert.False(SpatialResolutionDecisionUtil.ShouldEvaluateAllPhaseVariants(true, 0, 1));
+        }
+
         [Theory]
         [InlineData("Existing", true)]
         [InlineData("New", true)]
