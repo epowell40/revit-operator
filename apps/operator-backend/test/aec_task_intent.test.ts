@@ -176,6 +176,26 @@ test("semantic HTTP adapter routes a schedule update and its bounded clarificati
   assert.equal((clarified.body.intent as any).value, "20,000 CFM");
 });
 
+test("semantic HTTP adapter routes grouped schedule bulk wording to clarification without a provider", async () => {
+  let calls = 0;
+  const prompt = "The receptacle schedule is showing mixed ampacities. Make them 20 amps and keep the model and schedule consistent.";
+  const result = await resolveAecTaskIntentHttp(
+    { user_text: prompt },
+    { async interpret() { calls++; return null; } }
+  );
+  assert.equal(calls, 0);
+  assert.equal(result.body.handled, true);
+  assert.equal(result.body.workflow_id, "schedule.grouped_bulk_clarification");
+  assert.equal(result.body.intent_token, null);
+  assert.deepEqual(result.body.intent, {
+    schema: "revit-operator.schedule-grouped-bulk-clarification.v1",
+    schedule_name: "receptacle schedule",
+    target_field: "ampacities",
+    value: "20 amps",
+    evidence: { user_text: prompt }
+  });
+});
+
 test("backend-issued semantic intent token survives one session boundary and cannot be replayed", async () => {
   __testOnlyClearAecTaskIntentTokens();
   const prompt = "Do the same thing in Room 409.";
