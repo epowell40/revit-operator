@@ -42,6 +42,7 @@ namespace RevitBridge.Logic.Handlers.Core
         public object? representativePoint { get; set; }
         public string? elementLevelName { get; set; }
         public double? elementLevelElevationFt { get; set; }
+        public bool phaseFallbackUsed { get; set; }
         public string? unresolvedReason { get; set; }
         public string method { get; set; } = "none";
     }
@@ -132,7 +133,7 @@ namespace RevitBridge.Logic.Handlers.Core
                 ? BuildGeometryCandidates()
                 : new List<SpatialCandidate>();
             if (_phaseAgnostic)
-                _warnings.Add("No explicit or active-view phase was available. Evaluated factual Room/Space variants across phases; a result resolves only when containing variants agree on one numbered spatial identity.");
+                _warnings.Add("No explicit or active-view phase was available. Evaluated factual Room/Space variants across mapped phases. Target-present phases are preferred; when they contain no spatial footprint, all mapped containing variants may resolve only if they agree on one numbered spatial identity.");
             else if (_hostPhase == null)
                 _warnings.Add("No effective host phase was resolved; geometric spatial assignments were left unresolved.");
         }
@@ -202,10 +203,16 @@ namespace RevitBridge.Logic.Handlers.Core
             var containing = new List<SpatialCandidate>();
             var boundary = new List<SpatialCandidate>();
             var nearest = new List<SpatialCandidate>();
+            var allPhaseContaining = new List<SpatialCandidate>();
+            var allPhaseBoundary = new List<SpatialCandidate>();
+            var allPhaseNearest = new List<SpatialCandidate>();
             foreach (var candidate in _geometryCandidates)
             {
                 if (!AcceptsCandidate(candidate)) continue;
-                if (!CandidateAppliesToElementLifecycle(candidate, lifecyclePresenceByHostPhase)) continue;
+                if (_phaseAgnostic &&
+                    !SpatialPhaseVariantProvenanceUtil.IsValid(candidate.PhaseId, candidate.ApplicableHostPhaseIds))
+                    continue;
+                var lifecycleApplies = CandidateAppliesToElementLifecycle(candidate, lifecyclePresenceByHostPhase);
                 candidate.LevelDeltaFt = Delta(elementLevelElevation, candidate.LevelElevationFt);
                 if (!CandidateMatchesVerticalScope(
                     point.Z,
@@ -226,17 +233,31 @@ namespace RevitBridge.Logic.Handlers.Core
                 {
                     var boundaryCandidate = Clone(candidate);
                     boundaryCandidate.Method = "boundary";
-                    boundary.Add(boundaryCandidate);
+                    allPhaseBoundary.Add(boundaryCandidate);
+                    if (lifecycleApplies) boundary.Add(Clone(boundaryCandidate));
                 }
                 else if (relation == SpatialPointRelation.Inside &&
                          (_verticalScope == "same_level" || IsPointInsideSpatialVolume(candidate, point)))
                 {
-                    containing.Add(Clone(candidate));
+                    allPhaseContaining.Add(Clone(candidate));
+                    if (lifecycleApplies) containing.Add(Clone(candidate));
                 }
                 else
                 {
-                    nearest.Add(Clone(candidate));
+                    allPhaseNearest.Add(Clone(candidate));
+                    if (lifecycleApplies) nearest.Add(Clone(candidate));
                 }
+            }
+
+            var phaseFallbackUsed = SpatialResolutionDecisionUtil.ShouldEvaluateAllPhaseVariants(
+                _phaseAgnostic,
+                containing.Count,
+                boundary.Count);
+            if (phaseFallbackUsed)
+            {
+                containing = allPhaseContaining;
+                boundary = allPhaseBoundary;
+                nearest = allPhaseNearest;
             }
 
             var considered = ChoosePreferredCandidates(association, containing);
@@ -276,6 +297,7 @@ namespace RevitBridge.Logic.Handlers.Core
                 representativePoint = new { x = point.X, y = point.Y, z = point.Z },
                 elementLevelName = elementLevelName,
                 elementLevelElevationFt = elementLevelElevation,
+                phaseFallbackUsed = phaseFallbackUsed,
                 unresolvedReason = status == "unresolved" ? "no_containing_spatial_element" : null,
                 method = association.Count > 0 && considered.Any(x => x.Method == "association")
                     ? "association"
