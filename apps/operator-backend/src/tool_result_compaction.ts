@@ -978,6 +978,7 @@ export function compactLocateElementsResultForPrompt(
     return {
       status: context.status ?? null,
       spatialKindPreference: context.spatialKindPreference ?? null,
+      spatialVerticalScope: context.spatialVerticalScope ?? context.spatial_vertical_scope ?? null,
       method: context.method ?? null,
       unresolvedReason: context.unresolvedReason ?? context.unresolved_reason ?? null,
       representativePoint: context.representativePoint ?? context.representative_point ?? null,
@@ -1030,6 +1031,7 @@ export function compactLocateElementsResultForPrompt(
     requestedElementIdsMissingCount: root.requestedElementIdsMissingCount ?? 0,
     truncated: root.truncated === true,
     spatialResolution: root.spatialResolution ?? null,
+    spatialVerticalScope: root.spatialVerticalScope ?? root.spatial_vertical_scope ?? null,
     items,
     itemsOmitted,
     itemsComplete: root.itemsComplete !== false && itemsOmitted === 0,

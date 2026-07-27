@@ -35,6 +35,7 @@ namespace RevitBridge.Logic.Handlers.Core
     {
         public string status { get; set; } = "unresolved";
         public string spatialKindPreference { get; set; } = "auto";
+        public string spatialVerticalScope { get; set; } = "volume";
         public SpatialCandidatePayload? selected { get; set; }
         public List<SpatialCandidatePayload> matches { get; set; } = new List<SpatialCandidatePayload>();
         public List<SpatialCandidatePayload> nearestCandidates { get; set; } = new List<SpatialCandidatePayload>();
@@ -92,6 +93,7 @@ namespace RevitBridge.Logic.Handlers.Core
         private readonly Phase? _hostPhase;
         private readonly bool _phaseAgnostic;
         private readonly string _preference;
+        private readonly string _verticalScope;
         private readonly bool _includeHostRooms;
         private readonly bool _includeHostSpaces;
         private readonly bool _includeLinkedRooms;
@@ -110,12 +112,16 @@ namespace RevitBridge.Logic.Handlers.Core
             bool includeHostSpaces,
             bool includeLinkedRooms,
             string? linkedModelNameContains,
-            int? nearestCandidateLimit)
+            int? nearestCandidateLimit,
+            string? spatialVerticalScope)
         {
             _doc = doc;
             _hostPhase = hostPhase;
             _phaseAgnostic = hostPhase == null && allowPhaseAgnostic;
             _preference = NormalizePreference(spatialKindPreference);
+            _verticalScope = string.Equals(spatialVerticalScope, "same_level", StringComparison.OrdinalIgnoreCase)
+                ? "same_level"
+                : "volume";
             _includeHostRooms = includeHostRooms;
             _includeHostSpaces = includeHostSpaces;
             _includeLinkedRooms = includeLinkedRooms;
@@ -149,6 +155,7 @@ namespace RevitBridge.Logic.Handlers.Core
                     {
                         status = "unresolved",
                         spatialKindPreference = _preference,
+                        spatialVerticalScope = _verticalScope,
                         selected = null,
                         matches = new List<SpatialCandidatePayload>(),
                         nearestCandidates = new List<SpatialCandidatePayload>(),
@@ -162,9 +169,11 @@ namespace RevitBridge.Logic.Handlers.Core
                     };
                 }
             }
-            var association = BuildAssociationCandidates(element)
-                .Where(candidate => AcceptsCandidate(candidate) && CandidateAppliesToElementLifecycle(candidate, lifecyclePresenceByHostPhase))
-                .ToList();
+            var association = SpatialVerticalScopeUtil.AllowsAssociationEvidence(_verticalScope)
+                ? BuildAssociationCandidates(element)
+                    .Where(candidate => AcceptsCandidate(candidate) && CandidateAppliesToElementLifecycle(candidate, lifecyclePresenceByHostPhase))
+                    .ToList()
+                : new List<SpatialCandidate>();
 
             if (!TryGetRepresentativePoint(element, out var point))
             {
@@ -176,6 +185,7 @@ namespace RevitBridge.Logic.Handlers.Core
                 {
                     status = associationStatus,
                     spatialKindPreference = _preference,
+                    spatialVerticalScope = _verticalScope,
                     selected = associationStatus == "resolved" ? ToPayload(associationOnly[0]) : null,
                     matches = associationOnly.Select(ToPayload).ToList(),
                     nearestCandidates = new List<SpatialCandidatePayload>(),
@@ -196,9 +206,13 @@ namespace RevitBridge.Logic.Handlers.Core
             {
                 if (!AcceptsCandidate(candidate)) continue;
                 if (!CandidateAppliesToElementLifecycle(candidate, lifecyclePresenceByHostPhase)) continue;
-                if (!VerticalRangeMatches(point.Z, candidate)) continue;
-
                 candidate.LevelDeltaFt = Delta(elementLevelElevation, candidate.LevelElevationFt);
+                if (!CandidateMatchesVerticalScope(
+                    point.Z,
+                    elementLevelName,
+                    elementLevelElevation,
+                    candidate)) continue;
+
                 candidate.BoundaryDistanceFt = SpatialPolygonUtil.DistanceToBoundary(
                     point.X,
                     point.Y,
@@ -214,7 +228,8 @@ namespace RevitBridge.Logic.Handlers.Core
                     boundaryCandidate.Method = "boundary";
                     boundary.Add(boundaryCandidate);
                 }
-                else if (relation == SpatialPointRelation.Inside && IsPointInsideSpatialVolume(candidate, point))
+                else if (relation == SpatialPointRelation.Inside &&
+                         (_verticalScope == "same_level" || IsPointInsideSpatialVolume(candidate, point)))
                 {
                     containing.Add(Clone(candidate));
                 }
@@ -254,6 +269,7 @@ namespace RevitBridge.Logic.Handlers.Core
             {
                 status = status,
                 spatialKindPreference = _preference,
+                spatialVerticalScope = _verticalScope,
                 selected = selected,
                 matches = collapsed.Select(ToPayload).ToList(),
                 nearestCandidates = nearestPayload,
@@ -887,6 +903,23 @@ namespace RevitBridge.Logic.Handlers.Core
                 candidate.BaseElevationFt,
                 candidate.TopElevationFt,
                 BoundaryToleranceFt);
+        }
+
+        private bool CandidateMatchesVerticalScope(
+            double z,
+            string? elementLevelName,
+            double? elementLevelElevation,
+            SpatialCandidate candidate)
+        {
+            if (_verticalScope == "same_level")
+            {
+                return SpatialLevelMatchUtil.IsSameLevel(
+                    elementLevelName,
+                    elementLevelElevation,
+                    candidate.LevelName,
+                    candidate.LevelElevationFt);
+            }
+            return VerticalRangeMatches(z, candidate);
         }
 
         private static bool IsPointInsideSpatialVolume(SpatialCandidate candidate, XYZ hostPoint)

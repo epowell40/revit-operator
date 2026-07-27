@@ -86,6 +86,7 @@ test("compact locate-elements preserves every physical and nested spatial result
     spatialContext: index === 64
       ? {
           status: "unresolved",
+          spatialVerticalScope: "same_level",
           method: "none",
           selected: null,
           matches: [],
@@ -123,12 +124,15 @@ test("compact locate-elements preserves every physical and nested spatial result
     requestedElementIdsMissingCount: 1,
     itemsComplete: false,
     spatialResolution: "geometry_with_nearest",
+    spatialVerticalScope: "same_level",
     items,
     warnings: []
   }) as any;
 
   assert.equal(compacted.items.length, 132);
   assert.equal(compacted.items[64].spatialContext.status, "unresolved");
+  assert.equal(compacted.items[64].spatialContext.spatialVerticalScope, "same_level");
+  assert.equal(compacted.spatialVerticalScope, "same_level");
   assert.equal(compacted.items[64].familyName, "LW_Shock Absorber");
   assert.equal(compacted.items[64].spatialContext.nearestCandidates[0].number, "2911");
   assert.equal(compacted.items[64].spatialContext.nearestCandidates[0].sourceScope, "linked");
