@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json;
 
 namespace RevitBridge.Operator
 {
@@ -238,6 +239,55 @@ namespace RevitBridge.Operator
             }
 
             return OperatorActionRisk.High;
+        }
+
+        public static OperatorActionRisk GetRisk(string method, string path, string? body)
+        {
+            var m = (method ?? "").Trim().ToUpperInvariant();
+            var p = (path ?? "").Trim();
+
+            // Delete previews are safe only for the exact legacy apply:false contract.
+            // Do not treat generic dryRun payloads or property-name variants as equivalent.
+            if (m == "POST" &&
+                string.Equals(p, "/revit/delete", StringComparison.OrdinalIgnoreCase) &&
+                HasExactDeletePreviewContract(body))
+            {
+                return OperatorActionRisk.Low;
+            }
+
+            return GetRisk(m, p);
+        }
+
+        private static bool HasExactDeletePreviewContract(string? body)
+        {
+            if (string.IsNullOrWhiteSpace(body)) return false;
+
+            try
+            {
+                using var document = JsonDocument.Parse(body!);
+                if (document.RootElement.ValueKind != JsonValueKind.Object) return false;
+
+                var foundApply = false;
+                foreach (var property in document.RootElement.EnumerateObject())
+                {
+                    if (string.Equals(property.Name, "apply", StringComparison.Ordinal))
+                    {
+                        if (foundApply || property.Value.ValueKind != JsonValueKind.False) return false;
+                        foundApply = true;
+                    }
+                    else if (string.Equals(property.Name, "apply", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Reject casing variants rather than relying on serializer behavior.
+                        return false;
+                    }
+                }
+
+                return foundApply;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         public static bool RequiresApproval(OperatorApprovalMode mode, OperatorActionRisk risk)

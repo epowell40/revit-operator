@@ -675,7 +675,7 @@ namespace RevitBridge.Server
 
         private static OperatorActionRisk GetRequestRisk(string method, string path, string body)
         {
-            var risk = OperatorApprovalPolicy.GetRisk(method, path);
+            var risk = OperatorApprovalPolicy.GetRisk(method, path, body);
             if (risk < OperatorActionRisk.Medium) return risk;
 
             if (!string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)) return risk;

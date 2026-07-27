@@ -110,7 +110,7 @@ namespace RevitBridge.Operator
                     : body == null ? null : JsonSerializer.Serialize(body);
                 var risk = OperatorDryRunTurnPolicy.IsScheduleCellUpdatePreview(method, path, bodyJson)
                     ? OperatorActionRisk.Low
-                    : OperatorApprovalPolicy.GetRisk(method, path);
+                    : OperatorApprovalPolicy.GetRisk(method, path, bodyJson);
                 var approvalMode = _getApprovalMode();
                 if (OperatorApprovalPolicy.RequiresApproval(approvalMode, risk))
                 {
