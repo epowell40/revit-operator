@@ -8,6 +8,9 @@ export type RevitCourierTurnContextLease = {
   workspace_root: string;
   session_id: string;
   message_id: string;
+  target_executor_id?: string;
+  target_document_title?: string;
+  target_document_path?: string;
 };
 
 const activeByWorkspace = new Map<string, RevitCourierTurnContextLease>();
@@ -28,7 +31,7 @@ function writeContext(workspaceRoot: string, value: unknown): void {
   fs.renameSync(temp, filePath);
 }
 
-export function beginRevitCourierTurnContext(input: { session_id: string; message_id: string; ttl_ms: number }): RevitCourierTurnContextLease | null {
+export function beginRevitCourierTurnContext(input: { session_id: string; message_id: string; ttl_ms: number; target_executor_id?: string; target_document_title?: string; target_document_path?: string }): RevitCourierTurnContextLease | null {
   if (!enabled()) return null;
   const sessionId = (input.session_id || "").trim();
   const messageId = (input.message_id || "").trim();
@@ -42,7 +45,10 @@ export function beginRevitCourierTurnContext(input: { session_id: string; messag
     token: randomUUID(),
     workspace_root: workspaceRoot,
     session_id: sessionId,
-    message_id: messageId
+    message_id: messageId,
+    target_executor_id: (input.target_executor_id || "").trim() || undefined,
+    target_document_title: (input.target_document_title || "").trim() || undefined,
+    target_document_path: (input.target_document_path || "").trim() || undefined
   };
   activeByWorkspace.set(workspaceRoot, lease);
   const ttlMs = Math.max(30_000, Math.min(60 * 60_000, input.ttl_ms || 20 * 60_000));
@@ -52,6 +58,9 @@ export function beginRevitCourierTurnContext(input: { session_id: string; messag
     token: lease.token,
     session_id: sessionId,
     message_id: messageId,
+    target_executor_id: lease.target_executor_id,
+    target_document_title: lease.target_document_title,
+    target_document_path: lease.target_document_path,
     created_at: new Date().toISOString(),
     expires_at: new Date(Date.now() + ttlMs).toISOString()
   });
@@ -69,6 +78,9 @@ export function endRevitCourierTurnContext(lease: RevitCourierTurnContextLease |
     token: lease.token,
     session_id: lease.session_id,
     message_id: lease.message_id,
+    target_executor_id: lease.target_executor_id,
+    target_document_title: lease.target_document_title,
+    target_document_path: lease.target_document_path,
     finished_at: new Date().toISOString(),
     expires_at: new Date().toISOString()
   });

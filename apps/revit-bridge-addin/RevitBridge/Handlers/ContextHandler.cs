@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
@@ -20,6 +21,8 @@ namespace RevitBridge.Handlers
             {
                 version = app.Application.VersionName,
                 username = app.Application.Username,
+                process_id = Process.GetCurrentProcess().Id,
+                courier_executor_id = RevitBridge.Operator.OperatorRevitCourierWorker.ExecutorIdForCurrentProcess(),
                 readiness = new
                 {
                     revit_launched = true,

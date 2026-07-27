@@ -15,6 +15,9 @@ export type RevitToolJob = {
   idempotency_key: string;
   method: "GET" | "POST";
   path: string;
+  target_executor_id?: string | null;
+  target_document_title?: string | null;
+  target_document_path?: string | null;
   body?: unknown;
   created_at: string;
   expires_at: string;
@@ -162,6 +165,7 @@ export function claimNextRevitToolJob(input: ClaimInput): { job: RevitToolJob | 
     .map(id => readJob(id))
     .filter((job): job is RevitToolJob => !!job &&
       (sessionId === null || job.session_id === sessionId) &&
+      (!job.target_executor_id || job.target_executor_id === executorId) &&
       (input.session_allowed?.(job.session_id) ?? true))
     .sort((a, b) => `${a.created_at}|${a.id}`.localeCompare(`${b.created_at}|${b.id}`));
 
