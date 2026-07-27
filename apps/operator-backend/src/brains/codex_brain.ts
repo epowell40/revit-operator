@@ -32,6 +32,7 @@ import { compactIncomingToolResult, compactParameterReadResultForPrompt } from "
 import { formatActiveGoalContext, getActiveGoalForSession } from "../goals/service.js";
 import { formatEnvironmentSummaryForPrompt } from "../environment_profile.js";
 import { AGENT_RESPONSE_STYLE_LINES } from "../agent_response_policy.js";
+import { mayInjectUnscopedLegacyMemory } from "../revit_context_policy.js";
 
 export type StreamCallbacks = {
   onDelta?: (textDelta: string) => void;
@@ -67,16 +68,33 @@ export function revitCourierTargetFromContext(context: unknown): {
   target_document_path?: string;
 } {
   if (!context || typeof context !== "object" || Array.isArray(context)) return {};
-  const ui = (context as { ui?: unknown }).ui;
-  if (!ui || typeof ui !== "object" || Array.isArray(ui)) return {};
-  const document = (ui as { revit_document?: unknown }).revit_document;
-  if (!document || typeof document !== "object" || Array.isArray(document)) return {};
-  const raw = document as Record<string, unknown>;
-  const executorId = boundedContextString(raw.courier_executor_id, 200);
+  const rawContext = context as Record<string, unknown>;
+  const ui = rawContext.ui && typeof rawContext.ui === "object" && !Array.isArray(rawContext.ui)
+    ? rawContext.ui as Record<string, unknown>
+    : {};
+  const legacyDocument = ui.revit_document && typeof ui.revit_document === "object" && !Array.isArray(ui.revit_document)
+    ? ui.revit_document as Record<string, unknown>
+    : {};
+  const revit = rawContext.revit && typeof rawContext.revit === "object" && !Array.isArray(rawContext.revit)
+    ? rawContext.revit as Record<string, unknown>
+    : {};
+  const canonicalDocument = revit.document && typeof revit.document === "object" && !Array.isArray(revit.document)
+    ? revit.document as Record<string, unknown>
+    : {};
+  const canonicalExecutor = boundedContextString(revit.courier_executor_id, 200);
+  const legacyExecutor = boundedContextString(legacyDocument.courier_executor_id, 200);
+  const canonicalTitle = boundedContextString(canonicalDocument.title, 512);
+  const legacyTitle = boundedContextString(legacyDocument.title, 512);
+  const canonicalPath = boundedContextString(canonicalDocument.path, 2048);
+  const legacyPath = boundedContextString(legacyDocument.path, 2048);
+  if (canonicalExecutor && legacyExecutor && canonicalExecutor !== legacyExecutor) return {};
+  if (canonicalTitle && legacyTitle && canonicalTitle.toLowerCase() !== legacyTitle.toLowerCase()) return {};
+  if (canonicalPath && legacyPath && canonicalPath.replace(/\\/g, "/").toLowerCase() !== legacyPath.replace(/\\/g, "/").toLowerCase()) return {};
+  const executorId = canonicalExecutor || legacyExecutor;
   const targetExecutorId = executorId && /^[A-Za-z0-9._:-]+$/.test(executorId) ? executorId : undefined;
   if (!targetExecutorId) return {};
-  const documentTitle = boundedContextString(raw.title, 512);
-  const documentPath = boundedContextString(raw.path, 2048);
+  const documentTitle = canonicalTitle || legacyTitle;
+  const documentPath = canonicalPath || legacyPath;
   return {
     target_executor_id: targetExecutorId,
     ...(documentTitle ? { target_document_title: documentTitle } : {}),
@@ -708,8 +726,9 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   let requirementsBlock = "";
   let requirementsReceipt: RequirementsReceipt | null = null;
   let requirementsError = "";
+  const allowUnscopedLegacyMemory = mayInjectUnscopedLegacyMemory(req.context);
   try {
-    projectProfileBlock = formatProjectProfileForPrompt();
+    projectProfileBlock = allowUnscopedLegacyMemory ? formatProjectProfileForPrompt() : "";
   } catch {
     projectProfileBlock = "";
   }
@@ -733,7 +752,9 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
   try {
     const query = text.trim() || (getPinnedGoal(req.session_id) ?? "") || "";
-    const mem = !freshEvidenceRequirement.required && query ? retrieveMemoryContext({ queryText: query, maxEntries: 6 }) : [];
+    const mem = allowUnscopedLegacyMemory && !freshEvidenceRequirement.required && query
+      ? retrieveMemoryContext({ queryText: query, maxEntries: 6 })
+      : [];
     if (mem.length > 0) {
       const lines: string[] = [];
       let i = 0;

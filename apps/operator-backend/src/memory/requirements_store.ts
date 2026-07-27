@@ -596,6 +596,38 @@ function contextObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? value as Record<string, unknown> : {};
 }
 
+type RevitDocumentIdentity = {
+  path: string;
+  title: string;
+};
+
+function revitDocumentIdentity(documentValue: unknown, readinessValue?: unknown): RevitDocumentIdentity {
+  const document = contextObject(documentValue);
+  const readiness = contextObject(readinessValue);
+  return {
+    path: String(document.path ?? readiness.active_document_path ?? "").trim(),
+    title: String(document.title ?? readiness.active_document_name ?? "").trim()
+  };
+}
+
+function normalizedDocumentPath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/\/+$/g, "").toLowerCase();
+}
+
+function normalizedDocumentTitle(value: string): string {
+  return value.replace(/\.rvt$/i, "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function documentIdentitiesConflict(canonical: RevitDocumentIdentity, legacy: RevitDocumentIdentity): boolean {
+  if (canonical.path && legacy.path && normalizedDocumentPath(canonical.path) !== normalizedDocumentPath(legacy.path)) {
+    return true;
+  }
+  if (canonical.title && legacy.title && normalizedDocumentTitle(canonical.title) !== normalizedDocumentTitle(legacy.title)) {
+    return true;
+  }
+  return false;
+}
+
 export function deriveRequirementScopesForChat(req: Pick<ChatRequest, "context">): RequirementScopeRef[] {
   const context = contextObject(req.context);
   const requirements = contextObject(context.requirements);
@@ -609,14 +641,26 @@ export function deriveRequirementScopesForChat(req: Pick<ChatRequest, "context">
   scopes.push({ kind: "engineer", id: normalizeId(principal?.user_id || "local", "engineer scope") });
 
   const revit = contextObject(context.revit);
-  const document = contextObject(revit.document);
-  const readiness = contextObject(revit.readiness);
-  const documentPath = String(document.path ?? readiness.active_document_path ?? "").trim();
-  const documentTitle = String(document.title ?? readiness.active_document_name ?? "").trim();
-  const projectBasis = documentPath || documentTitle;
+  const canonicalIdentity = revitDocumentIdentity(revit.document, revit.readiness);
+  const ui = contextObject(context.ui);
+  const legacyIdentity = revitDocumentIdentity(ui.revit_document);
+  const identitiesConflict = documentIdentitiesConflict(canonicalIdentity, legacyIdentity);
+  if (identitiesConflict) {
+    throw new Error("Canonical and Sidecar Revit document identities disagree; refresh live context before project-scoped planning.");
+  }
+  const hasRevitContext = Object.keys(revit).length > 0 || Object.keys(contextObject(ui.revit_document)).length > 0;
+  const projectBasis = canonicalIdentity.path || legacyIdentity.path;
+  const explicitProjectScopes = scopes.filter(scope => scope.kind === "project");
+  if (hasRevitContext && !projectBasis && explicitProjectScopes.length > 0) {
+    throw new Error("The live Revit document has no saved path; project-scoped requirements are unavailable until the model has a strong identity.");
+  }
   if (projectBasis) {
-    const normalized = projectBasis.replace(/\\/g, "/").toLowerCase();
-    scopes.push({ kind: "project", id: `revit_${stableHash(normalized).slice(0, 16)}` });
+    const normalized = normalizedDocumentPath(projectBasis);
+    const derivedProjectScope: RequirementScopeRef = { kind: "project", id: `revit_${stableHash(normalized).slice(0, 16)}` };
+    if (explicitProjectScopes.some(scope => scope.id !== derivedProjectScope.id)) {
+      throw new Error("Explicit and live Revit project scopes disagree; refresh context before project-scoped planning.");
+    }
+    scopes.push(derivedProjectScope);
   }
   for (const kind of ["office", "client"] as const) {
     const id = String(requirements[`${kind}_id`] ?? "").trim();

@@ -214,3 +214,25 @@ test("Codex courier target extraction accepts bounded Sidecar identity and rejec
   });
   assert.deepEqual(revitCourierTargetFromContext({ ui: { revit_document: { courier_executor_id: "wrong executor", title: "must-not-bind" } } }), {});
 });
+
+test("Codex courier target extraction accepts canonical context and rejects identity disagreement", () => {
+  const canonical = {
+    revit: {
+      courier_executor_id: "workstation-revit-courier-24024",
+      document: { title: "Duke B200", path: "C:\\models\\Duke B200.rvt" }
+    }
+  };
+  assert.deepEqual(revitCourierTargetFromContext(canonical), {
+    target_executor_id: "workstation-revit-courier-24024",
+    target_document_title: "Duke B200",
+    target_document_path: "C:\\models\\Duke B200.rvt"
+  });
+  assert.deepEqual(revitCourierTargetFromContext({
+    ...canonical,
+    ui: { revit_document: { courier_executor_id: "other-revit-courier-99", title: "Duke B200", path: "C:\\models\\Duke B200.rvt" } }
+  }), {});
+  assert.deepEqual(revitCourierTargetFromContext({
+    ...canonical,
+    ui: { revit_document: { courier_executor_id: "workstation-revit-courier-24024", title: "Snowdon", path: "C:\\models\\Snowdon.rvt" } }
+  }), {});
+});

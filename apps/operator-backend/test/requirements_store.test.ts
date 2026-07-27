@@ -172,6 +172,56 @@ test("chat scope derivation uses engineer identity and stable active-project ide
   assert.ok(a.some(row => row.kind === "project" && /^revit_[a-f0-9]{16}$/.test(row.id)));
 });
 
+test("chat scope derivation accepts the Sidecar compatibility document identity", () => {
+  mkWorkspace();
+  const canonical = deriveRequirementScopesForChat({
+    context: { revit: { document: { title: "Snowdon Towers HVAC", path: "C:\\Models\\Snowdon.rvt" } } }
+  });
+  const sidecar = deriveRequirementScopesForChat({
+    context: { ui: { revit_document: { title: "Snowdon Towers HVAC", path: "C:\\Models\\Snowdon.rvt" } } }
+  });
+  assert.deepEqual(
+    sidecar.find(row => row.kind === "project"),
+    canonical.find(row => row.kind === "project")
+  );
+});
+
+test("chat scope derivation fails closed when canonical and compatibility documents disagree", () => {
+  mkWorkspace();
+  assert.throws(
+    () => deriveRequirementScopesForChat({
+      context: {
+        revit: { document: { title: "Duke B200", path: "C:\\Models\\Duke B200.rvt" } },
+        ui: { revit_document: { title: "Snowdon Towers HVAC", path: "C:\\Models\\Snowdon.rvt" } }
+      }
+    }),
+    /document identities disagree/
+  );
+});
+
+test("title-only Revit context is too weak to derive project memory scope", () => {
+  mkWorkspace();
+  const scopes = deriveRequirementScopesForChat({
+    context: { revit: { document: { title: "Untitled Project" } } }
+  });
+  assert.equal(scopes.some(row => row.kind === "project"), false);
+  assert.equal(scopes.some(row => row.kind === "engineer"), true);
+});
+
+test("explicit and live Revit project scopes must agree", () => {
+  mkWorkspace();
+  const context = { revit: { document: { title: "Duke B200", path: "C:\\Models\\Duke B200.rvt" } } };
+  const derived = deriveRequirementScopesForChat({ context }).find(row => row.kind === "project")!;
+  assert.deepEqual(
+    deriveRequirementScopesForChat({ context: { ...context, requirements: { scopes: [derived] } } }).filter(row => row.kind === "project"),
+    [derived]
+  );
+  assert.throws(
+    () => deriveRequirementScopesForChat({ context: { ...context, requirements: { scopes: [{ kind: "project", id: "other-project" }] } } }),
+    /project scopes disagree/
+  );
+});
+
 test("prompt block includes exact ids, revisions, hash, and conflict guard", () => {
   mkWorkspace();
   const ref = scope("project", "snowdon");
