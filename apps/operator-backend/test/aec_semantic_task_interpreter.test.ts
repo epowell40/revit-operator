@@ -82,6 +82,36 @@ test("explicit schedule inventory bypasses the provider interpreter", async () =
   assert.equal(task?.mutation.requested, false);
 });
 
+test("explicit shock-arrestor inventory preserves literal identity instead of a guessed plumbing category", async () => {
+  let calls = 0;
+  const prompt = "Can you find the shock arrestors in this project and tell me what they are?";
+  const misclassified = semanticTask(prompt) as any;
+  misclassified.operation = "inspect";
+  misclassified.subject = { kind: "category", semantic_class: "plumbing_fixture", terms: ["plumbing fixtures"], categories: ["OST_PlumbingFixtures"], family_name: null, type_name: null, system_name: null, identifiers: [] };
+  misclassified.scope = { ...misclassified.scope, kind: "document", document: "current model" };
+  misclassified.execution = { ...misclassified.execution, allow_document_fallback: true };
+  const task = await interpretAecSemanticTask({ version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: "shock-fast-path", message_id: "m", user_text: prompt }, { async interpret() { calls++; return misclassified; } });
+  assert.equal(calls, 1);
+  assert.equal(task?.operation, "inspect");
+  assert.equal(task?.subject.kind, "class");
+  assert.equal(task?.subject.semantic_class, "other");
+  assert.deepEqual(task?.subject.terms, ["shock arrestors"]);
+  assert.deepEqual(task?.subject.categories, []);
+  assert.equal(task?.scope.kind, "document");
+  assert.equal(task?.execution.max_primary_actions, 2);
+});
+
+test("explicit shock-arrestor location request keeps the literal device identity and spatial output", async () => {
+  const prompt = "Where are the shock arrestors? Provide the room numbers for each device location.";
+  const misclassified = semanticTask(prompt) as any;
+  misclassified.subject = { kind: "category", semantic_class: "plumbing_fixture", terms: ["plumbing fixtures"], categories: ["OST_PlumbingFixtures"], family_name: null, type_name: null, system_name: null, identifiers: [] };
+  const task = await interpretAecSemanticTask({ version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: "shock-location-fast-path", message_id: "m", user_text: prompt }, { async interpret() { return misclassified; } });
+  assert.equal(task?.operation, "locate");
+  assert.deepEqual(task?.subject.terms, ["shock arrestors"]);
+  assert.equal(task?.outputs.includes("spatial_context"), true);
+  assert.equal(task?.execution.max_primary_actions, 2);
+});
+
 test("schedule mutations do not enter the read-only fast path", async () => {
   let calls = 0;
   await interpretAecSemanticTask({ version: OPERATOR_BACKEND_CONTRACT_VERSION, session_id: "schedule-mutation", message_id: "m", user_text: "Change the air handler schedule value." }, { async interpret(input) { calls++; return semanticTask(input.user_text); } });
