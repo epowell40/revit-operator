@@ -57,6 +57,28 @@ namespace RevitBridge.Handlers
             public ParameterRef TargetParameter { get; set; } = null!;
         }
 
+        private sealed class ScheduleDiagnostic
+        {
+            public long ScheduleId { get; set; }
+            public string ScheduleName { get; set; } = "";
+            public long RawCategoryId { get; set; }
+            public bool InferredMultiCategory { get; set; }
+            public bool IsItemized { get; set; }
+            public bool IsKeySchedule { get; set; }
+            public bool IsMaterialTakeoff { get; set; }
+            public bool HasEmbeddedSchedule { get; set; }
+            public bool IsEmbedded { get; set; }
+            public bool IncludeLinkedFiles { get; set; }
+            public bool IsFilteredBySheet { get; set; }
+            public int DisplayedRowMatchCount { get; set; }
+            public int? ScheduleFilteredElementCount { get; set; }
+            public int RowParameterResolvedCount { get; set; }
+            public int RowValueMatchCount { get; set; }
+            public int TargetParameterResolvedCount { get; set; }
+            public int TargetParameterMissingCount { get; set; }
+            public bool BackingOwnerUnproven { get; set; }
+        }
+
         public Task<object> Handle(UIApplication app, string jsonData)
         {
             var p = string.IsNullOrWhiteSpace(jsonData)
@@ -75,9 +97,12 @@ namespace RevitBridge.Handlers
             var issues = new List<object>();
             var schedules = ResolveSchedules(doc, p, issues);
             var candidates = new List<Candidate>();
+            var visibleRowMatches = new List<object>();
+            var targetFieldSuggestions = new List<string>();
+            var scheduleDiagnostics = new List<ScheduleDiagnostic>();
             foreach (var schedule in schedules)
             {
-                ResolveCandidates(doc, schedule, p, rowKey, targetField, candidates, issues);
+                ResolveCandidates(doc, schedule, p, rowKey, targetField, candidates, issues, visibleRowMatches, targetFieldSuggestions, scheduleDiagnostics);
             }
 
             candidates = candidates
@@ -92,14 +117,32 @@ namespace RevitBridge.Handlers
             var evidence = candidates.Select(BuildCandidateEvidence).ToList();
             if (candidates.Count == 0)
             {
+                var visibleRowFound = visibleRowMatches.Count > 0;
+                var suggestions = targetFieldSuggestions
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(6)
+                    .ToList();
+                var blockedReason = visibleRowFound
+                    ? $"The schedule visibly contains row '{rowKey}', but Revit did not expose one editable backing parameter for '{targetField}'; no write was attempted."
+                    : "No unique editable schedule-backed cell matched the requested row and field.";
+                var clarificationQuestion = suggestions.Count > 0
+                    ? $"I could not find a column named '{targetField}'. Did you mean {FormatAlternatives(suggestions)}?"
+                    : visibleRowFound
+                        ? $"Which exact model element and backing parameter should I use for '{rowKey}', or should I update a different schedule column?"
+                        : $"Which exact schedule row and column should I update for '{rowKey}'?";
                 return Task.FromResult<object>(new
                 {
-                    status = "Not Found",
+                    status = visibleRowFound ? "Blocked" : "Not Found",
                     applied = false,
-                    blockedReason = "No unique editable schedule-backed cell matched the requested row and field.",
+                    blockedReason,
+                    clarificationQuestion,
                     schedulesScanned = schedules.Count,
                     candidateCount = 0,
                     candidates = evidence,
+                    visibleRowMatches,
+                    targetFieldSuggestions = suggestions,
+                    scheduleDiagnostics,
                     issues
                 });
             }
@@ -266,10 +309,29 @@ namespace RevitBridge.Handlers
             string rowKey,
             string requestedTargetField,
             List<Candidate> candidates,
-            List<object> issues)
+            List<object> issues,
+            List<object> visibleRowMatches,
+            List<string> targetFieldSuggestions,
+            List<ScheduleDiagnostic> scheduleDiagnostics)
         {
             var isGroupedSchedule = !schedule.Definition.IsItemized;
             var candidateCountBeforeSchedule = candidates.Count;
+            var categoryId = SafeCategoryId(schedule.Definition);
+            var diagnostic = new ScheduleDiagnostic
+            {
+                ScheduleId = ElementIdCompat.GetValue(schedule.Id),
+                ScheduleName = schedule.Name ?? "",
+                RawCategoryId = ElementIdCompat.GetValue(categoryId),
+                InferredMultiCategory = categoryId == ElementId.InvalidElementId,
+                IsItemized = schedule.Definition.IsItemized,
+                IsKeySchedule = SafeBool(() => schedule.Definition.IsKeySchedule),
+                IsMaterialTakeoff = SafeBool(() => schedule.Definition.IsMaterialTakeoff),
+                HasEmbeddedSchedule = SafeBool(() => schedule.Definition.HasEmbeddedSchedule),
+                IsEmbedded = SafeBool(() => schedule.Definition.IsEmbedded),
+                IncludeLinkedFiles = SafeBool(() => schedule.Definition.IncludeLinkedFiles),
+                IsFilteredBySheet = SafeBool(() => schedule.Definition.IsFilteredBySheet)
+            };
+            scheduleDiagnostics.Add(diagnostic);
 
             var fields = ScheduleSelectionHelper.GetFields(schedule).Select(field => new FieldRef
             {
@@ -278,10 +340,16 @@ namespace RevitBridge.Handlers
                 Heading = SafeHeading(field),
                 ParameterId = SafeParameterId(field)
             }).ToList();
+            diagnostic.DisplayedRowMatchCount = AddVisibleRowMatches(schedule, rowKey, visibleRowMatches);
             var targetFields = fields.Where(field => ScheduleCellUpdatePolicy.FieldNameMatches(requestedTargetField, field.Name, field.Heading)).ToList();
             if (targetFields.Count != 1)
             {
-                issues.Add(new { code = targetFields.Count == 0 ? "target_field_not_found" : "target_field_ambiguous", scheduleId = ElementIdCompat.GetValue(schedule.Id), scheduleName = schedule.Name, targetField = requestedTargetField, matches = targetFields.Select(FieldEvidence).ToList() });
+                var suggestions = targetFields.Count == 0
+                    ? SuggestTargetFields(requestedTargetField, fields)
+                    : targetFields;
+                targetFieldSuggestions.AddRange(suggestions.Select(DisplayFieldName));
+                diagnostic.BackingOwnerUnproven = diagnostic.DisplayedRowMatchCount > 0;
+                issues.Add(new { code = targetFields.Count == 0 ? "target_field_not_found" : "target_field_ambiguous", scheduleId = ElementIdCompat.GetValue(schedule.Id), scheduleName = schedule.Name, targetField = requestedTargetField, matches = targetFields.Select(FieldEvidence).ToList(), suggestions = suggestions.Select(FieldEvidence).ToList() });
                 return;
             }
             var targetField = targetFields[0];
@@ -312,22 +380,40 @@ namespace RevitBridge.Handlers
                 issues.Add(new { code = "schedule_elements_unavailable", scheduleId = ElementIdCompat.GetValue(schedule.Id), scheduleName = schedule.Name, message = ex.Message });
                 return;
             }
+            diagnostic.ScheduleFilteredElementCount = visibleElements.Count;
 
+            var observedRowValues = new List<object>();
             foreach (var element in visibleElements)
             {
                 foreach (var rowField in rowFields)
                 {
                     var rowParameter = ResolveParameter(doc, element, rowField.ParameterId);
                     if (rowParameter == null) continue;
+                    diagnostic.RowParameterResolvedCount++;
                     var rowRaw = ReadRawValue(rowParameter.Parameter);
                     var rowDisplay = ReadDisplayValue(rowParameter.Parameter);
+                    if (observedRowValues.Count < 25)
+                    {
+                        observedRowValues.Add(new
+                        {
+                            elementId = ElementIdCompat.GetValue(element.Id),
+                            field = DisplayFieldName(rowField),
+                            raw = rowRaw,
+                            display = rowDisplay,
+                            ownerElementId = ElementIdCompat.GetValue(rowParameter.Owner.Id),
+                            ownerKind = rowParameter.OwnerKind
+                        });
+                    }
                     if (!ScheduleCellUpdatePolicy.ValueMatches(rowKey, rowRaw, rowDisplay)) continue;
+                    diagnostic.RowValueMatchCount++;
                     var targetParameter = ResolveParameter(doc, element, targetField.ParameterId);
                     if (targetParameter == null)
                     {
+                        diagnostic.TargetParameterMissingCount++;
                         issues.Add(new { code = "target_parameter_missing", scheduleId = ElementIdCompat.GetValue(schedule.Id), scheduleName = schedule.Name, elementId = ElementIdCompat.GetValue(element.Id), targetField = FieldEvidence(targetField) });
                         continue;
                     }
+                    diagnostic.TargetParameterResolvedCount++;
                     candidates.Add(new Candidate
                     {
                         Schedule = schedule,
@@ -338,6 +424,21 @@ namespace RevitBridge.Handlers
                         TargetParameter = targetParameter
                     });
                 }
+            }
+
+            if (candidates.Count == candidateCountBeforeSchedule)
+            {
+                diagnostic.BackingOwnerUnproven = diagnostic.DisplayedRowMatchCount > 0;
+                issues.Add(new
+                {
+                    code = "backing_row_key_not_found",
+                    scheduleId = ElementIdCompat.GetValue(schedule.Id),
+                    scheduleName = schedule.Name,
+                    rowKey,
+                    visibleElementCount = visibleElements.Count,
+                    rowFields = rowFields.Select(FieldEvidence).ToList(),
+                    observedRowValues
+                });
             }
 
             if (isGroupedSchedule)
@@ -406,6 +507,89 @@ namespace RevitBridge.Handlers
         {
             try { return field.ParameterId ?? ElementId.InvalidElementId; }
             catch { return ElementId.InvalidElementId; }
+        }
+
+        private static ElementId SafeCategoryId(ScheduleDefinition definition)
+        {
+            try { return definition.CategoryId ?? ElementId.InvalidElementId; }
+            catch { return ElementId.InvalidElementId; }
+        }
+
+        private static bool SafeBool(Func<bool> read)
+        {
+            try { return read(); }
+            catch { return false; }
+        }
+
+        private static int AddVisibleRowMatches(ViewSchedule schedule, string rowKey, List<object> matches)
+        {
+            var beforeCount = matches.Count;
+            try
+            {
+                var body = schedule.GetTableData().GetSectionData(SectionType.Body);
+                var maxRows = Math.Min(body.LastRowNumber, body.FirstRowNumber + 499);
+                var maxColumns = Math.Min(body.LastColumnNumber, body.FirstColumnNumber + 199);
+                for (var row = body.FirstRowNumber; row <= maxRows && matches.Count < 25; row++)
+                {
+                    for (var column = body.FirstColumnNumber; column <= maxColumns && matches.Count < 25; column++)
+                    {
+                        string text;
+                        try { text = body.GetCellText(row, column) ?? ""; }
+                        catch { continue; }
+                        if (!ScheduleCellUpdatePolicy.ValueMatches(rowKey, null, text)) continue;
+                        matches.Add(new
+                        {
+                            scheduleId = ElementIdCompat.GetValue(schedule.Id),
+                            scheduleName = schedule.Name,
+                            rowIndex = row,
+                            columnIndex = column,
+                            displayedValue = text
+                        });
+                    }
+                }
+            }
+            catch
+            {
+                // Visible-cell evidence is diagnostic only. Failure to read table data
+                // must never broaden resolution or make a write look safe.
+            }
+            return matches.Count - beforeCount;
+        }
+
+        private static List<FieldRef> SuggestTargetFields(string requested, List<FieldRef> fields)
+        {
+            var normalized = ScheduleCellUpdatePolicy.NormalizeFieldName(requested);
+            var airflowRequested = normalized.IndexOf("airflow", StringComparison.Ordinal) >= 0 ||
+                                   normalized.IndexOf("cfm", StringComparison.Ordinal) >= 0;
+            var suggestions = fields
+                .Where(field =>
+                {
+                    var candidate = ScheduleCellUpdatePolicy.NormalizeFieldName(field.Name + " " + field.Heading);
+                    if (candidate.Length == 0) return false;
+                    if (airflowRequested && (candidate.IndexOf("airflow", StringComparison.Ordinal) >= 0 || candidate.IndexOf("cfm", StringComparison.Ordinal) >= 0)) return true;
+                    return normalized.Length >= 4 && (candidate.Contains(normalized) || normalized.Contains(candidate));
+                })
+                .GroupBy(DisplayFieldName, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .Take(6)
+                .ToList();
+            return suggestions;
+        }
+
+        private static string DisplayFieldName(FieldRef field)
+        {
+            if (string.IsNullOrWhiteSpace(field.Heading)) return field.Name;
+            if (ScheduleCellUpdatePolicy.NormalizeFieldName(field.Heading).Length < 4 && !string.IsNullOrWhiteSpace(field.Name)) return field.Name;
+            return field.Heading;
+        }
+
+        private static string FormatAlternatives(List<string> values)
+        {
+            var quoted = values.Select(value => $"'{value}'").ToList();
+            if (quoted.Count == 0) return "one of the available schedule columns";
+            if (quoted.Count == 1) return quoted[0];
+            if (quoted.Count == 2) return quoted[0] + " or " + quoted[1];
+            return string.Join(", ", quoted.Take(quoted.Count - 1)) + ", or " + quoted.Last();
         }
 
         private static string SafeHeading(ScheduleField field)

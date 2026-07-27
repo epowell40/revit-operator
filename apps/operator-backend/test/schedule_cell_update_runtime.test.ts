@@ -36,6 +36,17 @@ test("teammate-style schedule label correction resolves without API-shaped wordi
   assert.equal(parsed?.confidence.ambiguity, "none");
 });
 
+test("problem-then-action schedule wording resolves the teammate's row, field, and value", () => {
+  const parsed = parseDirectScheduleCellUpdate("AHU-1 looks undersized in the air-handler schedule. Make its supply airflow 20,000 CFM and make sure the model and schedule agree.");
+  assert.equal(parsed?.row_key, "AHU-1");
+  assert.equal(parsed?.row_field, null);
+  assert.equal(parsed?.target_field, "supply airflow");
+  assert.equal(parsed?.value, "20,000 CFM");
+  assert.equal(parsed?.expected_value, null);
+  assert.equal(parsed?.schedule_name, null);
+  assert.equal(parsed?.confidence.ambiguity, "none");
+});
+
 test("authoritative teammate wording drives a bounded schedule action despite a delegated paraphrase", async () => {
   __testOnlyClearScheduleCellUpdateStates();
   const req = request("schedule-authoritative");
@@ -100,6 +111,27 @@ test("ambiguous native resolution terminates without emitting an apply action", 
   assert.match(done?.assistant_message ?? "", /occurs in two schedules/);
   assert.match(done?.assistant_message ?? "", /No model changes were made/);
   assert.equal(done?.schedule_update_receipt?.status, "blocked");
+});
+
+test("native provenance blockers relay a targeted clarification question", async () => {
+  __testOnlyClearScheduleCellUpdateStates();
+  await maybeRunDeterministicScheduleCellUpdate(request("schedule-provenance"));
+  const done = await maybeRunDeterministicScheduleCellUpdate(request("schedule-provenance", [{
+    action_id: "schedule-cell-update-preflight",
+    method: "POST",
+    path: "/revit/update-schedule-cell",
+    status: "done",
+    result_json: {
+      status: "Blocked",
+      applied: false,
+      blockedReason: "The visible row is not bound to one editable parameter.",
+      clarificationQuestion: "Which backing model element should I update?"
+    }
+  }]));
+  assert.equal(done?.actions.length, 0);
+  assert.match(done?.assistant_message ?? "", /visible row is not bound/i);
+  assert.match(done?.assistant_message ?? "", /Which backing model element should I update\?/);
+  assert.match(done?.assistant_message ?? "", /No model changes were made/);
 });
 
 test("a stale expected value blocks before apply", async () => {
