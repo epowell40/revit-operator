@@ -47,6 +47,31 @@ test("teammate correction grammar preserves a schedule name suffix and old-value
   assert.equal(parsed?.evidence.user_text, prompt);
 });
 
+test("possessive schedule correction accepts a numeric room row and calculated field", () => {
+  const prompt = "Space 104's actual supply airflow is wrong in the Space Schedule. Set it to 500 CFM and keep the model and schedule consistent.";
+  const parsed = parseDirectScheduleCellUpdate(prompt);
+  assert.equal(parsed?.row_key, "104");
+  assert.equal(parsed?.target_field, "actual supply airflow");
+  assert.equal(parsed?.expected_value, null);
+  assert.equal(parsed?.value, "500 CFM");
+  assert.equal(parsed?.schedule_name, "Space Schedule");
+  assert.equal(parsed?.confidence.ambiguity, "none");
+  assert.equal(parsed?.evidence.user_text, prompt);
+});
+
+test("grouped schedule bulk wording asks for backing-element scope without launching tools", async () => {
+  __testOnlyClearScheduleCellUpdateStates();
+  const req = request("schedule-grouped");
+  req.user_text = "The receptacle schedule is showing mixed ampacities. Make them 20 amps and keep the model and schedule consistent.";
+  const done = await maybeRunDeterministicScheduleCellUpdate(req, { async interpret() { throw new Error("grouped ambiguity should avoid model interpretation"); } });
+  assert.equal(done?.actions.length, 0);
+  assert.equal(done?.schedule_update_receipt?.status, "blocked");
+  assert.match(done?.assistant_message ?? "", /receptacle schedule/i);
+  assert.match(done?.assistant_message ?? "", /mixed ampacities to 20 amps/i);
+  assert.match(done?.assistant_message ?? "", /one exact device or room, a selected set, or every device/i);
+  assert.match(done?.assistant_message ?? "", /No model changes were made/i);
+});
+
 test("teammate-style schedule label correction resolves without API-shaped wording", () => {
   const parsed = parseDirectScheduleCellUpdate('Space 101 is labeled “Cafe” in the Space Schedule, but it should read “Cafe - Verified.” Update it and make sure the model and schedule agree.');
   assert.equal(parsed?.row_key, "101");
