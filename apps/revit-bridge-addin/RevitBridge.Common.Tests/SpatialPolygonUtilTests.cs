@@ -109,7 +109,7 @@ namespace RevitBridge.Common.Tests
             Assert.Null(SpatialEffectivePhaseFallbackUtil.ResolveSharedCreatedPhaseId(
                 new long?[] { 21885, null }));
             Assert.Null(SpatialEffectivePhaseFallbackUtil.ResolveSharedCreatedPhaseId(
-                Array.Empty<long?>()));
+                System.Array.Empty<long?>()));
         }
 
         [Fact]
