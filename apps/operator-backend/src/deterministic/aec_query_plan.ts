@@ -211,6 +211,8 @@ export function planAecQueryTask(value: unknown): AecQueryPlanV1 {
     const limit = 500;
     const actions = [action("aec-query-document-elements", "/revit/find-elements", {
       ...groundedCategoryBody,
+      ...(task.subject.family_name ? { familyNameContains: task.subject.family_name } : {}),
+      ...(task.subject.type_name ? { typeNameContains: task.subject.type_name } : {}),
       ...(identityTerms.length ? { identityTerms, expandIdentityAcronymsInParameters: true } : {}),
       physicalElementsOnly: true,
       topLevelInstancesOnly: true,
