@@ -184,7 +184,13 @@ function selectPrimaryDocumentIdentityMatches(task: AecSemanticTaskV1, payload: 
     resultIsIncomplete(payload)
   ) return { items, elementIds: null, excludedSecondaryCount: 0 };
 
-  const direct = items.filter(item => objectValue(item.identityMatch) !== null);
+  const direct = items.filter(item => {
+    const match = objectValue(item.identityMatch);
+    const fields = Array.isArray(match?.matchedFields)
+      ? match.matchedFields.filter(field => typeof field === "string") as string[]
+      : [];
+    return fields.some(field => !field.toLocaleLowerCase().startsWith("parameter:"));
+  });
   const elementIds = direct
     .map(item => Number(item.elementId ?? item.id))
     .filter(id => Number.isSafeInteger(id) && id > 0);
