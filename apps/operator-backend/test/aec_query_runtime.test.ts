@@ -325,7 +325,7 @@ test("where query follows exact discovered ids with geometry-aware room resoluti
         { elementId: 102, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings", identityMatch: { matchedFields: ["familyName"] } },
         { elementId: 103, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings", identityMatch: { matchedFields: ["familyName"] } },
         { elementId: 104, familyName: "LW_Shock Absorber", typeName: "Standard", category: "Pipe Fittings", identityMatch: { matchedFields: ["familyName"] } },
-        { elementId: 105, familyName: "Elbow-Standard_LW", typeName: "Small Radius .75 R", category: "Pipe Fittings", identityMatch: null, identityParameterEvidence: { parameterName: "DESIG.", text: "B2-2-SA-99" } }
+        { elementId: 105, familyName: "Elbow-Standard_LW", typeName: "Small Radius .75 R", category: "Pipe Fittings", identityMatch: { matchedFields: ["parameter:DESIG."] }, identityParameterEvidence: { parameterName: "DESIG.", text: "B2-2-SA-99" } }
       ],
       identityExpansionCount: 1,
       truncated: false,
