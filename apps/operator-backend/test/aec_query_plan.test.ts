@@ -104,6 +104,8 @@ test("explicit all-each follow-ups promote active context to bounded document di
     method: "POST",
     path: "/revit/find-elements",
     body: {
+      familyNameContains: "LW_Shock Absorber",
+      typeNameContains: "Standard",
       identityTerms: ["lw_shock absorber", "standard", "shock arrestors"],
       expandIdentityAcronymsInParameters: true,
       physicalElementsOnly: true,
