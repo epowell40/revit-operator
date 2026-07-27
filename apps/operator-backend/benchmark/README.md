@@ -186,7 +186,7 @@ When `OPERATOR_BENCHMARK_USE_MOCKS=0`, `run` and `default-plan` fail fast if Rev
 
 After a live batch, run `demo-readiness` against the batch artifact directory. It regenerates the report and exits nonzero unless all eight demo readiness gates pass. Each gate reports `live_sample_size` and `min_live_sample_size`, and the gate cannot pass unless at least 5 live Revit runs are present for that workflow.
 
-The Revit add-in writes the active bridge URL to `%LOCALAPPDATA%\RevitOperator\bridge_url.txt` after it starts. The benchmark CLI checks `REVIT_BRIDGE_URL`, then `OPERATOR_REVIT_BRIDGE_URL`, then that file, then `http://localhost:5000`. If port `5000` is occupied, the add-in tries fallback ports `5010-5014`; customize with `OPERATOR_REVIT_BRIDGE_FALLBACK_PORTS`.
+The Revit add-in writes the active bridge URL to `%LOCALAPPDATA%\RevitOperator\bridge_url.txt` after it starts. The benchmark CLI checks `REVIT_BRIDGE_URL`, then `OPERATOR_REVIT_BRIDGE_URL`, then that file, then `http://localhost:5000`. If port `5000` is occupied, the add-in tries fallback ports `5010-5030`; customize with `OPERATOR_REVIT_BRIDGE_FALLBACK_PORTS`.
 
 `preflight-revit` also probes the fallback URLs when no explicit healthy URL is found. Its JSON output includes `checked_bridge_urls`, so a blocked setup shows whether the add-in is absent from every expected port or just hidden behind a stale URL.
 
