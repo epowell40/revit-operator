@@ -599,14 +599,25 @@ function contextObject(value: unknown): Record<string, unknown> {
 type RevitDocumentIdentity = {
   path: string;
   title: string;
+  fingerprint: string;
 };
 
 function revitDocumentIdentity(documentValue: unknown, readinessValue?: unknown): RevitDocumentIdentity {
   const document = contextObject(documentValue);
   const readiness = contextObject(readinessValue);
+  const projectIdentity = contextObject(document.projectIdentity ?? document.project_identity);
+  const declaredFingerprint = projectIdentity.fingerprint ?? document.project_fingerprint;
+  if (declaredFingerprint !== undefined && declaredFingerprint !== null && typeof declaredFingerprint !== "string") {
+    throw new Error("Live Revit project fingerprint must be a string; refresh context before project-scoped planning.");
+  }
+  const rawFingerprint = (declaredFingerprint ?? "").trim().toLowerCase();
+  if (rawFingerprint && !/^[a-f0-9]{64}$/.test(rawFingerprint)) {
+    throw new Error("Live Revit project fingerprint is malformed; refresh context before project-scoped planning.");
+  }
   return {
     path: String(document.path ?? readiness.active_document_path ?? "").trim(),
-    title: String(document.title ?? readiness.active_document_name ?? "").trim()
+    title: String(document.title ?? readiness.active_document_name ?? "").trim(),
+    fingerprint: rawFingerprint
   };
 }
 
@@ -619,6 +630,9 @@ function normalizedDocumentTitle(value: string): string {
 }
 
 function documentIdentitiesConflict(canonical: RevitDocumentIdentity, legacy: RevitDocumentIdentity): boolean {
+  if (canonical.fingerprint && legacy.fingerprint && canonical.fingerprint !== legacy.fingerprint) {
+    return true;
+  }
   if (canonical.path && legacy.path && normalizedDocumentPath(canonical.path) !== normalizedDocumentPath(legacy.path)) {
     return true;
   }
@@ -649,14 +663,14 @@ export function deriveRequirementScopesForChat(req: Pick<ChatRequest, "context">
     throw new Error("Canonical and Sidecar Revit document identities disagree; refresh live context before project-scoped planning.");
   }
   const hasRevitContext = Object.keys(revit).length > 0 || Object.keys(contextObject(ui.revit_document)).length > 0;
-  const projectBasis = canonicalIdentity.path || legacyIdentity.path;
+  const projectPath = canonicalIdentity.path || legacyIdentity.path;
+  const projectBasis = projectPath ? normalizedDocumentPath(projectPath) : "";
   const explicitProjectScopes = scopes.filter(scope => scope.kind === "project");
   if (hasRevitContext && !projectBasis && explicitProjectScopes.length > 0) {
-    throw new Error("The live Revit document has no saved path; project-scoped requirements are unavailable until the model has a strong identity.");
+    throw new Error("The live Revit document has no saved path; project-scoped requirements are unavailable until an explicit fingerprint migration binding exists.");
   }
   if (projectBasis) {
-    const normalized = normalizedDocumentPath(projectBasis);
-    const derivedProjectScope: RequirementScopeRef = { kind: "project", id: `revit_${stableHash(normalized).slice(0, 16)}` };
+    const derivedProjectScope: RequirementScopeRef = { kind: "project", id: `revit_${stableHash(projectBasis).slice(0, 16)}` };
     if (explicitProjectScopes.some(scope => scope.id !== derivedProjectScope.id)) {
       throw new Error("Explicit and live Revit project scopes disagree; refresh context before project-scoped planning.");
     }

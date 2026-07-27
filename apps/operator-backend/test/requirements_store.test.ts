@@ -186,6 +186,47 @@ test("chat scope derivation accepts the Sidecar compatibility document identity"
   );
 });
 
+test("chat scope derivation does not bypass the saved-path boundary before fingerprint migration is bound", () => {
+  mkWorkspace();
+  const fingerprint = "a".repeat(64);
+  const before = deriveRequirementScopesForChat({
+    context: { revit: { document: { title: "Duke B200", path: "C:\\Models\\Duke B200.rvt", projectIdentity: { fingerprint } } } }
+  });
+  const after = deriveRequirementScopesForChat({
+    context: { revit: { document: { title: "Duke B200 Archive", path: "D:\\Archive\\Duke B200 Archive.rvt", projectIdentity: { fingerprint } } } }
+  });
+
+  assert.notDeepEqual(after.find(row => row.kind === "project"), before.find(row => row.kind === "project"));
+});
+
+test("fingerprint rollout keeps exact legacy path-scoped requirements active", () => {
+  mkWorkspace();
+  const pathOnlyContext = { revit: { document: { title: "Duke B200", path: "C:\\Models\\Duke B200.rvt" } } };
+  const legacyProjectScope = deriveRequirementScopesForChat({ context: pathOnlyContext }).find(row => row.kind === "project")!;
+  const saved = createRequirement({ scope: legacyProjectScope, key: "owner.valves", text: "Use the owner valve tagging standard." });
+  const currentScopes = deriveRequirementScopesForChat({
+    context: { revit: { document: { ...pathOnlyContext.revit.document, projectIdentity: { fingerprint: "c".repeat(64) } } } }
+  });
+  const receipt = resolveRequirements({ scope_refs: currentScopes, query: "owner valve tagging" });
+
+  assert.equal(currentScopes.filter(row => row.kind === "project").length, 1);
+  assert.deepEqual(receipt.applied.map(row => row.requirement_id), [saved.requirement.requirement_id]);
+});
+
+test("chat scope derivation accepts the compatibility project fingerprint", () => {
+  mkWorkspace();
+  const fingerprint = "b".repeat(64);
+  const canonical = deriveRequirementScopesForChat({
+    context: { revit: { document: { title: "Duke B200", projectIdentity: { fingerprint } } } }
+  });
+  const sidecar = deriveRequirementScopesForChat({
+    context: { ui: { revit_document: { title: "Duke B200", project_fingerprint: fingerprint } } }
+  });
+
+  assert.equal(canonical.some(row => row.kind === "project"), false);
+  assert.equal(sidecar.some(row => row.kind === "project"), false);
+});
+
 test("chat scope derivation fails closed when canonical and compatibility documents disagree", () => {
   mkWorkspace();
   assert.throws(
@@ -199,6 +240,41 @@ test("chat scope derivation fails closed when canonical and compatibility docume
   );
 });
 
+test("chat scope derivation fails closed when canonical and compatibility project fingerprints disagree", () => {
+  mkWorkspace();
+  assert.throws(
+    () => deriveRequirementScopesForChat({
+      context: {
+        revit: { document: { title: "Duke B200", projectIdentity: { fingerprint: "a".repeat(64) } } },
+        ui: { revit_document: { title: "Duke B200", project_fingerprint: "b".repeat(64) } }
+      }
+    }),
+    /document identities disagree/
+  );
+});
+
+test("chat scope derivation rejects a malformed declared project fingerprint", () => {
+  mkWorkspace();
+  assert.throws(
+    () => deriveRequirementScopesForChat({
+      context: { revit: { document: { title: "Duke B200", path: "C:\\Models\\Duke B200.rvt", projectIdentity: { fingerprint: "not-a-sha256" } } } }
+    }),
+    /project fingerprint is malformed/
+  );
+});
+
+test("chat scope derivation rejects non-string declared project fingerprints without coercion", () => {
+  mkWorkspace();
+  for (const fingerprint of [["a".repeat(64)], { value: "a".repeat(64) }]) {
+    assert.throws(
+      () => deriveRequirementScopesForChat({
+        context: { revit: { document: { title: "Duke B200", path: "C:\\Models\\Duke B200.rvt", projectIdentity: { fingerprint } } } }
+      }),
+      /project fingerprint must be a string/
+    );
+  }
+});
+
 test("title-only Revit context is too weak to derive project memory scope", () => {
   mkWorkspace();
   const scopes = deriveRequirementScopesForChat({
@@ -210,11 +286,11 @@ test("title-only Revit context is too weak to derive project memory scope", () =
 
 test("explicit and live Revit project scopes must agree", () => {
   mkWorkspace();
-  const context = { revit: { document: { title: "Duke B200", path: "C:\\Models\\Duke B200.rvt" } } };
-  const derived = deriveRequirementScopesForChat({ context }).find(row => row.kind === "project")!;
+  const context = { revit: { document: { title: "Duke B200", path: "C:\\Models\\Duke B200.rvt", projectIdentity: { fingerprint: "d".repeat(64) } } } };
+  const derived = deriveRequirementScopesForChat({ context }).filter(row => row.kind === "project");
   assert.deepEqual(
-    deriveRequirementScopesForChat({ context: { ...context, requirements: { scopes: [derived] } } }).filter(row => row.kind === "project"),
-    [derived]
+    deriveRequirementScopesForChat({ context: { ...context, requirements: { scopes: [derived[0]!] } } }).filter(row => row.kind === "project"),
+    derived
   );
   assert.throws(
     () => deriveRequirementScopesForChat({ context: { ...context, requirements: { scopes: [{ kind: "project", id: "other-project" }] } } }),
