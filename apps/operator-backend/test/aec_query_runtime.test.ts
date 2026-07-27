@@ -172,12 +172,23 @@ test("ordinary whole-document class query discovers physical instances and expla
         status: "Ok",
         action: "detail",
         schedule: { id: 9975292, name: "SHOCK ARRESTOR SCHEDULE - BUILDING 200" },
+        fields: [
+          { index: 0, name: "DESIG.", heading: "DESIG.", isHidden: false },
+          { index: 1, name: "Level", heading: "FLOOR", isHidden: false },
+          { index: 2, name: "TEXT01", heading: "PDI SIZE", isHidden: false },
+          { index: 3, name: "Manufacturer", heading: "MANUFACTURER", isHidden: false },
+          { index: 4, name: "Model", heading: "MODEL", isHidden: false },
+          { index: 5, name: "DESCRIPTION", heading: "REMARKS", isHidden: false },
+          { index: 6, name: "Comments", heading: "Comments", isHidden: true }
+        ],
         table: {
           header: { rows: [
-            { cells: ["SHOCK ARRESTOR SCHEDULE - BUILDING 200", "", "", "", "", "", "", "", ""] },
-            { cells: ["FLUID", "WIDTH", "ELEMENT ID", "DESIG.", "FLOOR", "PDI SIZE", "MANUFACTURER", "MODEL", "REMARKS"] }
+            { cells: ["SHOCK ARRESTOR SCHEDULE - BUILDING 200", "", "", "", "", "", "", "", ""] }
           ] },
-          body: { hasMoreRows: false, rowsComplete: true, rows: scheduleKeys.map((key, index) => ({ cells: ["CW", "1/2 in", String(5000 + index), key, "LEVEL 02", "A", "JOSAM", "75001A", ""] })) }
+          body: { hasMoreRows: false, rowsComplete: true, rows: [
+            { cells: ["DESIG.", "FLOOR", "PDI SIZE", "MANUFACTURER", "MODEL", "REMARKS"] },
+            ...scheduleKeys.map(key => ({ cells: [key, "LEVEL 02", "A", "JOSAM", "75001A", ""] }))
+          ] }
         }
       }
     }
