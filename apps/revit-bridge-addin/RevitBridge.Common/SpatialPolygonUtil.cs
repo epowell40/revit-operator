@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace RevitBridge.Common
 {
@@ -160,15 +159,58 @@ namespace RevitBridge.Common
         }
     }
 
-    public static class SpatialEffectivePhaseFallbackUtil
+    public static class SpatialPhaseVariantIdentityUtil
     {
-        public static long? ResolveSharedCreatedPhaseId(IEnumerable<long?> createdPhaseIds)
+        public static string Build(
+            string spatialKind,
+            string sourceScope,
+            long? linkInstanceId,
+            string sourceDocumentTitle,
+            string number,
+            string name,
+            string levelName)
         {
-            if (createdPhaseIds == null) return null;
-            var values = createdPhaseIds.ToList();
-            if (values.Count == 0 || values.Any(value => !value.HasValue || value.Value <= 0)) return null;
-            var distinct = values.Select(value => value!.Value).Distinct().Take(2).ToList();
-            return distinct.Count == 1 ? distinct[0] : null;
+            if (string.IsNullOrWhiteSpace(number)) return string.Empty;
+            return string.Join("|", new[]
+            {
+                Normalize(spatialKind),
+                Normalize(sourceScope),
+                linkInstanceId?.ToString() ?? string.Empty,
+                Normalize(sourceDocumentTitle),
+                Normalize(number),
+                Normalize(name),
+                Normalize(levelName)
+            });
+        }
+
+        private static string Normalize(string value) => (value ?? string.Empty).Trim().ToLowerInvariant();
+    }
+
+    public static class SpatialPhaseVariantProvenanceUtil
+    {
+        public static bool IsValid(long? sourcePhaseId, IEnumerable<long> applicableHostPhaseIds)
+        {
+            if (!sourcePhaseId.HasValue || sourcePhaseId.Value <= 0 || applicableHostPhaseIds == null)
+                return false;
+            foreach (var hostPhaseId in applicableHostPhaseIds)
+            {
+                if (hostPhaseId > 0) return true;
+            }
+            return false;
+        }
+
+        public static bool CanMerge(IEnumerable<long?> sourcePhaseIds)
+        {
+            if (sourcePhaseIds == null) return false;
+            var seen = new HashSet<long>();
+            var count = 0;
+            foreach (var sourcePhaseId in sourcePhaseIds)
+            {
+                if (!sourcePhaseId.HasValue || sourcePhaseId.Value <= 0 || !seen.Add(sourcePhaseId.Value))
+                    return false;
+                count++;
+            }
+            return count > 0;
         }
     }
 
@@ -204,6 +246,16 @@ namespace RevitBridge.Common
         {
             return string.Equals(phaseStatus, "Existing", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(phaseStatus, "New", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static bool HasAnyApplicablePresentPhase(IEnumerable<bool> applicablePhasePresence)
+        {
+            if (applicablePhasePresence == null) return false;
+            foreach (var isPresent in applicablePhasePresence)
+            {
+                if (isPresent) return true;
+            }
+            return false;
         }
     }
 

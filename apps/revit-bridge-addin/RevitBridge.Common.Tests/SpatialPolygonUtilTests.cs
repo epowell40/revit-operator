@@ -100,16 +100,30 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
-        public void Phase_Fallback_Requires_One_Shared_Created_Phase_For_All_Targets()
+        public void Phase_Variant_Identity_Collapses_Only_Stable_Numbered_Room_Labels()
         {
-            Assert.Equal(21885, SpatialEffectivePhaseFallbackUtil.ResolveSharedCreatedPhaseId(
-                new long?[] { 21885, 21885, 21885 }));
-            Assert.Null(SpatialEffectivePhaseFallbackUtil.ResolveSharedCreatedPhaseId(
-                new long?[] { 21885, 21900 }));
-            Assert.Null(SpatialEffectivePhaseFallbackUtil.ResolveSharedCreatedPhaseId(
-                new long?[] { 21885, null }));
-            Assert.Null(SpatialEffectivePhaseFallbackUtil.ResolveSharedCreatedPhaseId(
-                System.Array.Empty<long?>()));
+            var first = SpatialPhaseVariantIdentityUtil.Build(
+                "Room", "linked", 19, "Architecture", "2911", "MECHANICAL", "LEVEL 02");
+            var second = SpatialPhaseVariantIdentityUtil.Build(
+                "room", "LINKED", 19, " architecture ", " 2911 ", "mechanical", "level 02");
+            var differentRoom = SpatialPhaseVariantIdentityUtil.Build(
+                "Room", "linked", 19, "Architecture", "2911T", "MECHANICAL", "LEVEL 02");
+
+            Assert.Equal(first, second);
+            Assert.NotEqual(first, differentRoom);
+            Assert.Equal(string.Empty, SpatialPhaseVariantIdentityUtil.Build(
+                "Room", "linked", 19, "Architecture", "", "MECHANICAL", "LEVEL 02"));
+        }
+
+        [Fact]
+        public void Phase_Variant_Provenance_Rejects_Unknown_And_Duplicate_Phases()
+        {
+            Assert.False(SpatialPhaseVariantProvenanceUtil.IsValid(null, new long[] { 1 }));
+            Assert.False(SpatialPhaseVariantProvenanceUtil.IsValid(101, System.Array.Empty<long>()));
+            Assert.True(SpatialPhaseVariantProvenanceUtil.IsValid(101, new long[] { 1 }));
+            Assert.False(SpatialPhaseVariantProvenanceUtil.CanMerge(new long?[] { null, 101 }));
+            Assert.False(SpatialPhaseVariantProvenanceUtil.CanMerge(new long?[] { 101, 101 }));
+            Assert.True(SpatialPhaseVariantProvenanceUtil.CanMerge(new long?[] { 101, 202 }));
         }
 
         [Fact]
@@ -154,6 +168,14 @@ namespace RevitBridge.Common.Tests
             // The target lifecycle gate is identical whether the containing
             // room evidence is host-native or transformed from a linked model.
             Assert.Equal(expected, SpatialElementLifecycleUtil.IsPresentInEffectivePhase(phaseStatus));
+        }
+
+        [Fact]
+        public void Target_Element_Must_Be_Present_In_At_Least_One_Applicable_Host_Phase()
+        {
+            Assert.False(SpatialElementLifecycleUtil.HasAnyApplicablePresentPhase(new[] { false, false }));
+            Assert.True(SpatialElementLifecycleUtil.HasAnyApplicablePresentPhase(new[] { false, true }));
+            Assert.True(SpatialElementLifecycleUtil.HasAnyApplicablePresentPhase(new[] { true }));
         }
 
         [Fact]
