@@ -100,7 +100,8 @@ export function looksLikeScheduleCellUpdateRequest(userText: string): boolean {
 }
 
 export function parseDirectScheduleCellUpdate(userText: string): ScheduleCellUpdateIntentV1 | null {
-  const source = (userText ?? "").trim().replace(/[.?!]+$/, "");
+  const authoritativeUserText = (userText ?? "").trim();
+  const source = authoritativeUserText.replace(/[.?!]+$/, "");
   if (!looksLikeScheduleCellUpdateRequest(source)) return null;
   const namedSchedule = source.match(/\b(?:in|on)\s+(?:the\s+)?([A-Za-z0-9][A-Za-z0-9 &/._-]*?\s+Schedule)\b/i)?.[1]?.trim() ?? null;
   const labelCorrection = source.match(/\b(?:space|room|item|equipment|device)\s+([A-Za-z0-9][A-Za-z0-9._\/-]*)\s+is\s+(?:currently\s+)?(?:labeled|labelled|named)\s+[“"']([^”"']+)[”"'].*?\bbut\s+(?:it\s+)?should\s+(?:read|say|be)\s+[“"']([^”"']+)[”"']/i);
@@ -114,7 +115,7 @@ export function parseDirectScheduleCellUpdate(userText: string): ScheduleCellUpd
       expected_value: labelCorrection[2].trim().replace(/[.?!]+$/, ""),
       value: labelCorrection[3].trim().replace(/[.?!]+$/, ""),
       confidence: { value: 0.99, ambiguity: "none", reasons: ["Declarative schedule label correction grammar matched."] },
-      evidence: { user_text: source }
+      evidence: { user_text: authoritativeUserText }
     };
   }
   // Teammates commonly state the observed problem first, then give an
@@ -135,7 +136,7 @@ export function parseDirectScheduleCellUpdate(userText: string): ScheduleCellUpd
       expected_value: null,
       value: problemThenMake[3].trim(),
       confidence: { value: 0.99, ambiguity: "none", reasons: ["Problem-then-action schedule grammar matched."] },
-      evidence: { user_text: source }
+      evidence: { user_text: authoritativeUserText }
     };
   }
   const withoutSuffix = source.replace(/\s+(?:on|in)\s+(?:the\s+)?(?:[\w &/.-]+\s+)?schedule\s*$/i, "").trim();
@@ -159,7 +160,7 @@ export function parseDirectScheduleCellUpdate(userText: string): ScheduleCellUpd
     expected_value: expectedValue,
     value: nextValue,
     confidence: { value: 0.99, ambiguity: "none", reasons: ["Direct bounded schedule update grammar matched."] },
-    evidence: { user_text: source }
+    evidence: { user_text: authoritativeUserText }
   };
 }
 
