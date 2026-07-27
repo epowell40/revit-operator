@@ -63,9 +63,7 @@ function documentIdentityTerms(task: AecSemanticTaskV1): string[] {
 }
 
 function isSpatialDocumentQuestion(task: AecSemanticTaskV1): boolean {
-  return task.operation === "locate"
-    || task.outputs.includes("spatial_context")
-    || /\b(?:where|located?|locations?|rooms?|spaces?|positions?|coordinates?)\b/i.test(task.evidence.user_text);
+  return /\b(?:where|located?|locations?|rooms?|spaces?|positions?|coordinates?|levels?|floors?|zones?)\b/i.test(task.evidence.user_text);
 }
 
 function hasExplicitDocumentClassScope(task: AecSemanticTaskV1): boolean {
