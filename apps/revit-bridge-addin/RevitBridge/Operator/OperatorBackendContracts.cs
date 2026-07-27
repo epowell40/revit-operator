@@ -24,6 +24,12 @@ namespace RevitBridge.Operator
 
         [JsonPropertyName("body")]
         public object? Body { get; set; }
+
+        [JsonIgnore]
+        public string ExpectedDocumentTitle { get; set; } = "";
+
+        [JsonIgnore]
+        public string ExpectedDocumentPath { get; set; } = "";
     }
 
     public sealed class OperatorChatRequest

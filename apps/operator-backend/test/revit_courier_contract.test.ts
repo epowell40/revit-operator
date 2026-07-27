@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
+import { revitCourierTargetFromContext } from "../src/brains/codex_brain.js";
 import { beginRevitCourierTurnContext, endRevitCourierTurnContext } from "../src/courier/revit_courier_context.js";
 import {
   REVIT_COURIER_JOB_VERSION,
@@ -108,6 +109,20 @@ test("courier can claim an accessible job across Native and Sidecar session boun
   assert.equal(claimNextRevitToolJob({ session_id: "native-session", executor_id: "workstation-2" }).job?.id, nativeId);
 });
 
+test("courier pins a targeted job to the exact Revit executor", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-target-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const id = writeJob(root, {
+    target_executor_id: "workstation-revit-courier-24024",
+    target_document_title: "phase_fallback_room_location_test",
+    target_document_path: "C:\\models\\phase_fallback_room_location_test.rvt"
+  });
+  assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "workstation-revit-courier-24025" }).job, null);
+  const claimed = claimNextRevitToolJob({ session_id: "session-a", executor_id: "workstation-revit-courier-24024" }).job;
+  assert.equal(claimed?.id, id);
+  assert.equal(claimed?.target_document_title, "phase_fallback_room_location_test");
+});
+
 test("courier never automatically replays a job whose execution lease expired", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-lease-"));
   process.env.OPERATOR_WORKSPACE_ROOT = root;
@@ -157,11 +172,18 @@ test("courier promotes a bounded workstation failure code into the authoritative
   assert.equal(receipt.result.deadlineMs, 60_000);
 });
 
-test("courier context is explicit, exclusive per workspace, and closed without deleting its receipt", () => {
+test("courier context is explicit, target-pinned, exclusive per workspace, and closed without deleting its receipt", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-context-"));
   process.env.OPERATOR_WORKSPACE_ROOT = root;
   process.env.OPERATOR_REVIT_TRANSPORT = "courier";
-  const lease = beginRevitCourierTurnContext({ session_id: "session-a", message_id: "message-a", ttl_ms: 60_000 });
+  const lease = beginRevitCourierTurnContext({
+    session_id: "session-a",
+    message_id: "message-a",
+    ttl_ms: 60_000,
+    target_executor_id: "workstation-revit-courier-24024",
+    target_document_title: "phase_fallback_room_location_test",
+    target_document_path: "C:\\models\\phase_fallback_room_location_test.rvt"
+  });
   assert.ok(lease);
   assert.throws(
     () => beginRevitCourierTurnContext({ session_id: "session-b", message_id: "message-b", ttl_ms: 60_000 }),
@@ -170,5 +192,25 @@ test("courier context is explicit, exclusive per workspace, and closed without d
   endRevitCourierTurnContext(lease);
   const context = JSON.parse(fs.readFileSync(path.join(root, "config", "revit-courier-context.json"), "utf8"));
   assert.equal(context.active, false);
+  assert.equal(context.target_executor_id, "workstation-revit-courier-24024");
+  assert.equal(context.target_document_title, "phase_fallback_room_location_test");
+  assert.equal(context.target_document_path, "C:\\models\\phase_fallback_room_location_test.rvt");
   delete process.env.OPERATOR_REVIT_TRANSPORT;
+});
+
+test("Codex courier target extraction accepts bounded Sidecar identity and rejects malformed executors", () => {
+  assert.deepEqual(revitCourierTargetFromContext({
+    ui: {
+      revit_document: {
+        courier_executor_id: "workstation-revit-courier-24024",
+        title: "phase_fallback_room_location_test",
+        path: "C:\\models\\phase_fallback_room_location_test.rvt"
+      }
+    }
+  }), {
+    target_executor_id: "workstation-revit-courier-24024",
+    target_document_title: "phase_fallback_room_location_test",
+    target_document_path: "C:\\models\\phase_fallback_room_location_test.rvt"
+  });
+  assert.deepEqual(revitCourierTargetFromContext({ ui: { revit_document: { courier_executor_id: "wrong executor", title: "must-not-bind" } } }), {});
 });

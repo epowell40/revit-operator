@@ -338,6 +338,7 @@ namespace RevitBridge.Operator
             {
                 result = await _eventService.Run(app =>
                 {
+                    ValidateExpectedDocument(app, action);
                     var handlerResult = handler.Handle(app, jsonBody).GetAwaiter().GetResult();
 
                     // Best-effort UI refresh after actions that likely modified the model. This reduces "it worked but I can't see it"
@@ -378,6 +379,36 @@ namespace RevitBridge.Operator
             }
 
             return result;
+        }
+
+        private static void ValidateExpectedDocument(Autodesk.Revit.UI.UIApplication app, OperatorActionCall action)
+        {
+            var expectedTitle = (action.ExpectedDocumentTitle ?? "").Trim();
+            var expectedPath = (action.ExpectedDocumentPath ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(expectedTitle) && string.IsNullOrWhiteSpace(expectedPath)) return;
+
+            var document = app?.ActiveUIDocument?.Document;
+            var actualTitle = (document?.Title ?? "").Trim();
+            var actualPath = (document?.PathName ?? "").Trim();
+            var pathMatches = string.IsNullOrWhiteSpace(expectedPath) ||
+                string.Equals(expectedPath, actualPath, StringComparison.OrdinalIgnoreCase);
+            var titleMatches = string.IsNullOrWhiteSpace(expectedTitle) ||
+                string.Equals(expectedTitle, actualTitle, StringComparison.OrdinalIgnoreCase);
+            if (pathMatches && titleMatches) return;
+
+            throw new OperatorTargetDocumentMismatchException(
+                $"The courier job is bound to document '{expectedTitle}' ({expectedPath}), but this Revit process currently has '{actualTitle}' ({actualPath}) active. No action was executed.");
+        }
+
+        private sealed class OperatorTargetDocumentMismatchException : InvalidOperationException, IOperatorRevitFailureMetadata
+        {
+            public OperatorTargetDocumentMismatchException(string message) : base(message) { }
+            public string Code => "revit_courier_target_document_mismatch";
+            public bool Retryable => false;
+            public string Phase => "courier_target_validation";
+            public string HostHealth => "healthy";
+            public bool OpensCircuit => false;
+            public bool OutcomeUnknown => false;
         }
 
         internal async Task ProbeRevitHostAsync(CancellationToken cancellationToken)

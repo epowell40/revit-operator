@@ -13,6 +13,9 @@ type CourierContext = {
   session_id?: string;
   message_id?: string;
   expires_at?: string;
+  target_executor_id?: string;
+  target_document_title?: string;
+  target_document_path?: string;
 };
 
 type CourierResult = {
@@ -38,6 +41,9 @@ type CourierJob = {
   expires_at?: string;
   status?: string;
   claim?: unknown;
+  target_executor_id?: string | null;
+  target_document_title?: string | null;
+  target_document_path?: string | null;
   [key: string]: unknown;
 };
 
@@ -110,7 +116,11 @@ function publishOrResumeJob(jobPath: string, candidate: CourierJob): CourierJob 
     (existing.turn_token ?? null) === (candidate.turn_token ?? null) &&
     existing.method === candidate.method &&
     existing.path === candidate.path;
-  if (!matches) throw new Error("Revit courier idempotency collision detected; refusing to broaden or replay the call.");
+  const sameTarget =
+    (existing.target_executor_id ?? null) === (candidate.target_executor_id ?? null) &&
+    (existing.target_document_title ?? null) === (candidate.target_document_title ?? null) &&
+    (existing.target_document_path ?? null) === (candidate.target_document_path ?? null);
+  if (!matches || !sameTarget) throw new Error("Revit courier idempotency collision detected; refusing to broaden or replay the call.");
   return existing;
 }
 
@@ -176,7 +186,7 @@ export async function callRevitViaCourier<T>(revitPath: string, method: string, 
   const bodyJson = JSON.stringify(body) ?? "null";
   if (Buffer.byteLength(bodyJson, "utf8") > 2 * 1024 * 1024) throw new Error("Revit courier request body exceeds 2 MiB.");
   const idempotencyKey = createHash("sha256")
-    .update(`${context.session_id}\n${context.message_id ?? ""}\n${context.token ?? ""}\n${normalizedMethod}\n${revitPath}\n${bodyJson}`)
+    .update(`${context.session_id}\n${context.message_id ?? ""}\n${context.token ?? ""}\n${context.target_executor_id ?? ""}\n${context.target_document_title ?? ""}\n${context.target_document_path ?? ""}\n${normalizedMethod}\n${revitPath}\n${bodyJson}`)
     .digest("hex");
   // A stable job id makes a transport retry resume the same durable operation instead of publishing a duplicate write.
   const id = idempotencyKey;
@@ -193,6 +203,9 @@ export async function callRevitViaCourier<T>(revitPath: string, method: string, 
     idempotency_key: idempotencyKey,
     method: normalizedMethod,
     path: revitPath,
+    target_executor_id: context.target_executor_id ?? null,
+    target_document_title: context.target_document_title ?? null,
+    target_document_path: context.target_document_path ?? null,
     ...(body === undefined ? {} : { body }),
     created_at: new Date(now).toISOString(),
     expires_at: new Date(now + durationMs).toISOString(),

@@ -28,6 +28,9 @@ test("MCP courier publishes a correlated job and resolves its durable result", a
     active: true,
     session_id: "session-a",
     message_id: "message-a",
+    target_executor_id: "workstation-revit-courier-24024",
+    target_document_title: "phase_fallback_room_location_test",
+    target_document_path: "C:\\models\\phase_fallback_room_location_test.rvt",
     expires_at: new Date(Date.now() + 60_000).toISOString()
   }), "utf8");
 
@@ -37,6 +40,9 @@ test("MCP courier publishes a correlated job and resolves its durable result", a
   assert.equal(job.session_id, "session-a");
   assert.equal(job.path, "/revit/ping");
   assert.equal(job.method, "GET");
+  assert.equal(job.target_executor_id, "workstation-revit-courier-24024");
+  assert.equal(job.target_document_title, "phase_fallback_room_location_test");
+  assert.equal(job.target_document_path, "C:\\models\\phase_fallback_room_location_test.rvt");
   fs.writeFileSync(path.join(jobRef.dir, "result.json"), JSON.stringify({
     version: "revit-operator.revit-tool-result.v1",
     id: jobRef.id,

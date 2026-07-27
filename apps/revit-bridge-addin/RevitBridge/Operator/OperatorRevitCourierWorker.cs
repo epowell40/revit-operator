@@ -17,7 +17,7 @@ namespace RevitBridge.Operator
         private readonly Func<OperatorJsonlLogger?> _getLogger;
         private readonly OperatorCourierCompletionOutbox _completionOutbox = new OperatorCourierCompletionOutbox();
         private readonly OperatorRevitHostCircuit _hostCircuit = new OperatorRevitHostCircuit();
-        private readonly string _executorId = Environment.MachineName + "-revit-courier-" + Process.GetCurrentProcess().Id;
+        private readonly string _executorId = ExecutorIdForCurrentProcess();
         private readonly SemaphoreSlim _runGate = new SemaphoreSlim(1, 1);
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
         private static readonly int[] ExternalEventBusyRetryDelaysMs = { 100, 200, 400, 800, 1600, 2000, 2000, 2000 };
@@ -41,6 +41,11 @@ namespace RevitBridge.Operator
         {
             if (_timer != null) return;
             _timer = new Timer(_ => _ = RunOnceAsync(), null, TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(2));
+        }
+
+        internal static string ExecutorIdForCurrentProcess()
+        {
+            return Environment.MachineName + "-revit-courier-" + Process.GetCurrentProcess().Id;
         }
 
         public void Dispose()
@@ -81,6 +86,8 @@ namespace RevitBridge.Operator
                     throw new InvalidOperationException("Revit courier job has an invalid or mismatched correlation_id.");
                 var method = ReadRequiredString(job, "method", 10).ToUpperInvariant();
                 var path = ReadRequiredString(job, "path", 300);
+                var expectedDocumentTitle = ReadOptionalString(job, "target_document_title", 500);
+                var expectedDocumentPath = ReadOptionalString(job, "target_document_path", 2000);
                 var expiresText = ReadRequiredString(job, "expires_at", 100);
                 if (!DateTime.TryParse(expiresText, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var expiresAt))
                     throw new InvalidOperationException("Revit courier job has invalid expires_at.");
@@ -94,7 +101,9 @@ namespace RevitBridge.Operator
                     CorrelationId = correlationId,
                     Method = method,
                     Path = path,
-                    Body = body
+                    Body = body,
+                    ExpectedDocumentTitle = expectedDocumentTitle,
+                    ExpectedDocumentPath = expectedDocumentPath
                 };
                 var risk = OperatorApprovalPolicy.GetRisk(method, path);
                 var approvalMode = _getApprovalMode();
@@ -353,6 +362,15 @@ namespace RevitBridge.Operator
             var text = (value.GetString() ?? "").Trim();
             if (string.IsNullOrWhiteSpace(text) || text.Length > maxLength)
                 throw new InvalidOperationException("Revit courier job has invalid " + name + ".");
+            return text;
+        }
+
+        private static string ReadOptionalString(JsonElement obj, string name, int maxLength)
+        {
+            if (!obj.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null) return "";
+            if (value.ValueKind != JsonValueKind.String) throw new InvalidOperationException("Revit courier job has invalid " + name + ".");
+            var text = (value.GetString() ?? "").Trim();
+            if (text.Length > maxLength) throw new InvalidOperationException("Revit courier job has invalid " + name + ".");
             return text;
         }
 
