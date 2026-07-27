@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AEC_TASK_INTENT_V1_SCHEMA, isAecTaskIntentV1, normalizeAecTaskIntentV1, type AecTaskIntentV1 } from "../src/aec_task_intent.js";
+import type { AecSemanticTaskV1 } from "../src/aec_semantic_task.js";
 import { interpretAecTaskIntent, type AecTaskIntentInterpreter } from "../src/aec_task_intent_interpreter.js";
 import { resolveAecTaskIntentHttp } from "../src/aec_task_intent_http.js";
 import { maybeRunSemanticAecWorkflow, resolveAecWorkflow } from "../src/deterministic/aec_workflow_registry.js";
@@ -108,6 +109,23 @@ test("read-only semantic HTTP adapter returns only validated intent and registry
   assert.equal((result.body.intent as AecTaskIntentV1).reference.room_number, "405");
   assert.deepEqual(await resolveAecTaskIntentHttp(null, interpreter), { status: 400, body: { ok: false, error: "Invalid JSON body" } });
   assert.deepEqual(await resolveAecTaskIntentHttp({}, interpreter), { status: 400, body: { ok: false, error: "user_text is required" } });
+});
+
+test("semantic HTTP adapter resolves named-object topology without a provider or intent token", async () => {
+  let calls = 0;
+  const prompt = "What are the shock arrestors connected to? Summarize the pipe system and flag any that aren't connected. Don't change anything.";
+  const result = await resolveAecTaskIntentHttp(
+    { user_text: prompt, session_id: "topology-preflight", message_id: "m" },
+    { async interpret() { calls++; return null; } }
+  );
+  assert.equal(calls, 0);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.ok, true);
+  assert.equal(result.body.handled, true);
+  assert.equal(result.body.workflow_id, "query.document_elements");
+  assert.equal(result.body.intent_token, null);
+  assert.equal((result.body.intent as AecSemanticTaskV1).evidence.user_text, prompt);
+  assert.deepEqual((result.body.intent as AecSemanticTaskV1).subject.terms, ["shock arrestors"]);
 });
 
 test("backend-issued semantic intent token survives one session boundary and cannot be replayed", async () => {
