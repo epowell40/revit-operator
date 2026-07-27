@@ -221,12 +221,14 @@ function normalizeBridgeUrl(value: string): string {
 }
 
 function fallbackBridgePorts(): number[] {
-  const raw = (process.env.OPERATOR_REVIT_BRIDGE_FALLBACK_PORTS ?? "5010,5011,5012,5013,5014").trim();
+  const defaults = Array.from({ length: 21 }, (_, index) => 5010 + index);
+  const raw = (process.env.OPERATOR_REVIT_BRIDGE_FALLBACK_PORTS ?? "").trim();
+  if (!raw) return defaults;
   const ports = raw
     .split(",")
     .map((entry) => Number(entry.trim()))
     .filter((entry) => Number.isInteger(entry) && entry > 0 && entry <= 65535);
-  return ports.length > 0 ? ports : [5010, 5011, 5012, 5013, 5014];
+  return ports.length > 0 ? ports : defaults;
 }
 
 export function resolveRevitBridgeUrlCandidates(): string[] {

@@ -3581,6 +3581,14 @@ test("bridge URL candidates include default and configured fallback ports", () =
     delete process.env.REVIT_BRIDGE_URL;
     delete process.env.OPERATOR_REVIT_BRIDGE_URL;
     delete process.env.LOCALAPPDATA;
+    delete process.env.OPERATOR_REVIT_BRIDGE_FALLBACK_PORTS;
+
+    const defaults = resolveRevitBridgeUrlCandidates();
+    assert.equal(defaults.length, 22);
+    assert.equal(defaults[0], "http://localhost:5000");
+    assert.equal(defaults[1], "http://localhost:5010");
+    assert.equal(defaults.at(-1), "http://localhost:5030");
+
     process.env.OPERATOR_REVIT_BRIDGE_FALLBACK_PORTS = "5020,5021";
 
     assert.deepEqual(resolveRevitBridgeUrlCandidates(), [

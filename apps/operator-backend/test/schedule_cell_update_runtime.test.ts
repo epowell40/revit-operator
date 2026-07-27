@@ -25,6 +25,31 @@ test("direct schedule update grammar preserves identifier, field, old value, and
   assert.equal(parsed?.schedule_name, null);
 });
 
+test("teammate-style schedule label correction resolves without API-shaped wording", () => {
+  const parsed = parseDirectScheduleCellUpdate('Space 101 is labeled “Cafe” in the Space Schedule, but it should read “Cafe - Verified.” Update it and make sure the model and schedule agree.');
+  assert.equal(parsed?.row_key, "101");
+  assert.equal(parsed?.row_field, null);
+  assert.equal(parsed?.target_field, "Name");
+  assert.equal(parsed?.expected_value, "Cafe");
+  assert.equal(parsed?.value, "Cafe - Verified");
+  assert.equal(parsed?.schedule_name, "Space Schedule");
+  assert.equal(parsed?.confidence.ambiguity, "none");
+});
+
+test("authoritative teammate wording drives a bounded schedule action despite a delegated paraphrase", async () => {
+  __testOnlyClearScheduleCellUpdateStates();
+  const req = request("schedule-authoritative");
+  req.user_text = 'Find Space 101 and update its space name/label from "Cafe" to exactly "Cafe - Verified."';
+  req.context = { ui: { authoritative_user_text: 'Space 101 is labeled “Cafe” in the Space Schedule, but it should read “Cafe - Verified.” Update it and make sure the model and schedule agree.' } };
+  const first = await maybeRunDeterministicScheduleCellUpdate(req, { async interpret() { throw new Error("direct grammar should avoid model interpretation"); } });
+  assert.deepEqual(first?.actions, [{
+    action_id: "schedule-cell-update-preflight",
+    method: "POST",
+    path: "/revit/update-schedule-cell",
+    body: { scheduleQuery: "Space Schedule", scheduleExact: true, rowKey: "101", targetField: "Name", expectedValue: "Cafe", value: "Cafe - Verified", apply: false, dryRun: true }
+  }]);
+});
+
 test("schedule update runtime preflights, applies, and requires committed readback", async () => {
   __testOnlyClearScheduleCellUpdateStates();
   const first = await maybeRunDeterministicScheduleCellUpdate(request("schedule-success"));

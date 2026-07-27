@@ -97,6 +97,21 @@ export function looksLikeScheduleCellUpdateRequest(userText: string): boolean {
 export function parseDirectScheduleCellUpdate(userText: string): ScheduleCellUpdateIntentV1 | null {
   const source = (userText ?? "").trim().replace(/[.?!]+$/, "");
   if (!looksLikeScheduleCellUpdateRequest(source)) return null;
+  const namedSchedule = source.match(/\b(?:in|on)\s+(?:the\s+)?([A-Za-z0-9][A-Za-z0-9 &/._-]*?\s+Schedule)\b/i)?.[1]?.trim() ?? null;
+  const labelCorrection = source.match(/\b(?:space|room|item|equipment|device)\s+([A-Za-z0-9][A-Za-z0-9._\/-]*)\s+is\s+(?:currently\s+)?(?:labeled|labelled|named)\s+[“"']([^”"']+)[”"'].*?\bbut\s+(?:it\s+)?should\s+(?:read|say|be)\s+[“"']([^”"']+)[”"']/i);
+  if (labelCorrection) {
+    return {
+      schema: SCHEDULE_CELL_UPDATE_INTENT_SCHEMA,
+      schedule_name: namedSchedule,
+      row_key: labelCorrection[1].trim(),
+      row_field: null,
+      target_field: "Name",
+      expected_value: labelCorrection[2].trim().replace(/[.?!]+$/, ""),
+      value: labelCorrection[3].trim().replace(/[.?!]+$/, ""),
+      confidence: { value: 0.99, ambiguity: "none", reasons: ["Declarative schedule label correction grammar matched."] },
+      evidence: { user_text: source }
+    };
+  }
   const withoutSuffix = source.replace(/\s+(?:on|in)\s+(?:the\s+)?(?:[\w &/.-]+\s+)?schedule\s*$/i, "").trim();
   const fromPattern = /^(?:please\s+)?(?:change|update|revise|correct|edit)\s+([A-Za-z0-9][A-Za-z0-9._\/-]*\d[A-Za-z0-9._\/-]*)\s+(.+?)\s+from\s+(.+?)\s+to\s+(.+)$/i;
   const setPattern = /^(?:please\s+)?set\s+([A-Za-z0-9][A-Za-z0-9._\/-]*\d[A-Za-z0-9._\/-]*)\s+(.+?)\s+to\s+(.+)$/i;

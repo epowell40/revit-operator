@@ -318,7 +318,12 @@ namespace RevitBridge.Server
             AddCandidate(candidates, Environment.GetEnvironmentVariable("REVIT_BRIDGE_URL"));
             AddCandidate(candidates, DefaultUrl);
 
-            var portsRaw = (Environment.GetEnvironmentVariable("OPERATOR_REVIT_BRIDGE_FALLBACK_PORTS") ?? "5010,5011,5012,5013,5014").Trim();
+            var portsRaw = (Environment.GetEnvironmentVariable("OPERATOR_REVIT_BRIDGE_FALLBACK_PORTS") ?? "").Trim();
+            if (portsRaw.Length == 0)
+            {
+                for (var port = 5010; port <= 5030; port++) AddCandidate(candidates, $"http://localhost:{port}/");
+                return candidates;
+            }
             foreach (var part in portsRaw.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
             {
                 if (int.TryParse(part.Trim(), out var port) && port > 0 && port <= 65535)
