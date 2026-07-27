@@ -68,6 +68,19 @@ namespace RevitBridge.Common
             return cleanName.Length > 0 ? cleanName : cleanHeading;
         }
 
+        public static bool CommittedValueMatches(string? proposedRaw, string? proposedDisplay, string? committedRaw, string? committedDisplay)
+        {
+            var expectedRaw = (proposedRaw ?? "").Trim();
+            var actualRaw = (committedRaw ?? "").Trim();
+            if (expectedRaw.Length > 0 || actualRaw.Length > 0)
+            {
+                return expectedRaw.Length > 0 && string.Equals(expectedRaw, actualRaw, StringComparison.Ordinal);
+            }
+            var expectedDisplay = CollapseWhitespace(proposedDisplay);
+            var actualDisplay = CollapseWhitespace(committedDisplay);
+            return expectedDisplay.Length > 0 && string.Equals(expectedDisplay, actualDisplay, StringComparison.OrdinalIgnoreCase);
+        }
+
         public static bool IsLikelyIdentifierField(string? parameterName, string? heading)
         {
             return IdentifierFieldNames.Contains(NormalizeFieldName(parameterName)) ||

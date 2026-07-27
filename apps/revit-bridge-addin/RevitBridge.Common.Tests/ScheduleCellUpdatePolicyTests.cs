@@ -23,6 +23,13 @@ namespace RevitBridge.Common.Tests
             Assert.Equal("Ex - TOTAL AIRFLOW (CFM)", ScheduleCellUpdatePolicy.FieldChoiceLabel("Ex - TOTAL AIRFLOW (CFM)", "TOTAL AIRFLOW\r\n(CFM)", true));
         }
 
+        [Fact]
+        public void CommittedValueMatches_UsesRevitsProvisionalRawValueAcrossUnitlessScheduleFormatting()
+        {
+            Assert.True(ScheduleCellUpdatePolicy.CommittedValueMatches("333.33333333333331", "20000", "333.33333333333331", "20000"));
+            Assert.False(ScheduleCellUpdatePolicy.CommittedValueMatches("333.33333333333331", "20000", "166.66666666666666", "10000"));
+        }
+
         [Theory]
         [InlineData("Mark", "")]
         [InlineData("Designation", "DESIG")]
