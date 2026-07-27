@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest } from "../src/contracts.js";
 import { __testOnlyClearScheduleCellUpdateStates, maybeRunDeterministicScheduleCellUpdate } from "../src/deterministic/schedule_cell_update_runtime.js";
-import { parseDirectScheduleCellUpdate } from "../src/schedule_cell_update_intent.js";
+import { parseDirectScheduleCellUpdate, parseScheduleCellUpdateFromConversation } from "../src/schedule_cell_update_intent.js";
 
 const userText = "change AHU-1 supply air from 10,000 to 20,000 on the schedule";
 
@@ -45,6 +45,38 @@ test("problem-then-action schedule wording resolves the teammate's row, field, a
   assert.equal(parsed?.expected_value, null);
   assert.equal(parsed?.schedule_name, null);
   assert.equal(parsed?.confidence.ambiguity, "none");
+});
+
+test("schedule clarification follow-up carries forward only the prior row and value while accepting an offered field", () => {
+  const original = "AHU-1 looks undersized in the air-handler schedule. Make its supply airflow 20,000 CFM and make sure the model and schedule agree.";
+  const clarification = "The schedule visibly contains row 'AHU-1', but I could not find a column named 'supply airflow'. Did you mean TOTAL AIRFLOW (CFM), SUPPLY FAN AIRFLOW, or MAX CFM? No model changes were made.";
+  const followUp = "Use TOTAL AIRFLOW (CFM) in the AHU AIR BALANCE SCHEDULE.";
+  const parsed = parseScheduleCellUpdateFromConversation(followUp, [
+    { role: "user", text: original },
+    { role: "assistant", text: clarification },
+    { role: "user", text: followUp }
+  ]);
+  assert.equal(parsed?.row_key, "AHU-1");
+  assert.equal(parsed?.target_field, "TOTAL AIRFLOW (CFM)");
+  assert.equal(parsed?.schedule_name, "AHU AIR BALANCE SCHEDULE");
+  assert.equal(parsed?.value, "20,000 CFM");
+  assert.equal(parsed?.evidence.user_text, followUp);
+
+  assert.equal(parseScheduleCellUpdateFromConversation("Use COOLING CAPACITY.", [
+    { role: "user", text: original },
+    { role: "assistant", text: clarification },
+    { role: "user", text: "Use COOLING CAPACITY." }
+  ]), null);
+  assert.equal(parseScheduleCellUpdateFromConversation("Use AIR.", [
+    { role: "user", text: original },
+    { role: "assistant", text: clarification },
+    { role: "user", text: "Use AIR." }
+  ]), null);
+  assert.equal(parseScheduleCellUpdateFromConversation(followUp, [
+    { role: "user", text: "Tell me about AHU-1." },
+    { role: "assistant", text: clarification },
+    { role: "user", text: followUp }
+  ]), null);
 });
 
 test("authoritative teammate wording drives a bounded schedule action despite a delegated paraphrase", async () => {

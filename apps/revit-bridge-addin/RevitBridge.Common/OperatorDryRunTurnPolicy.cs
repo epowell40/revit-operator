@@ -78,6 +78,13 @@ namespace RevitBridge.Common
             }
         }
 
+        public static bool IsScheduleCellUpdatePreview(string? method, string? path, string? bodyJson)
+        {
+            return string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(path, "/revit/update-schedule-cell", StringComparison.OrdinalIgnoreCase) &&
+                BodyRequestsDryRun(bodyJson);
+        }
+
         private static bool TryReadBoolean(JsonElement root, string propertyName, out bool value)
         {
             value = false;

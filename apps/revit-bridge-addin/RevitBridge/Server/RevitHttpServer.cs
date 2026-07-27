@@ -680,6 +680,11 @@ namespace RevitBridge.Server
 
             if (!string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)) return risk;
 
+            if (OperatorDryRunTurnPolicy.IsScheduleCellUpdatePreview(method, path, body))
+            {
+                return OperatorActionRisk.Low;
+            }
+
             // These MEP endpoints are safe to run without a write grant only when the
             // request is explicitly a preview. Actual route creation remains gated.
             if ((string.Equals(path, "/revit/mep-route-workflow", StringComparison.OrdinalIgnoreCase) ||

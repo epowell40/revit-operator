@@ -19,6 +19,11 @@ export interface ScheduleCellUpdateIntentInterpreter {
   interpret(input: { user_text: string }): Promise<unknown | null>;
 }
 
+export type AuthoritativeConversationMessage = {
+  role: "user" | "assistant";
+  text: string;
+};
+
 const schema = {
   type: "object",
   additionalProperties: false,
@@ -158,6 +163,71 @@ export function parseDirectScheduleCellUpdate(userText: string): ScheduleCellUpd
   };
 }
 
+function normalizedSelectionText(value: string): string {
+  return value.trim().replace(/^[“"']|[”"']$/g, "").replace(/\s+/g, " ").toLowerCase();
+}
+
+function boundedConversation(value: unknown): AuthoritativeConversationMessage[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(-8).flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const role = (item as Record<string, unknown>).role;
+    const text = (item as Record<string, unknown>).text;
+    if ((role !== "user" && role !== "assistant") || typeof text !== "string") return [];
+    const trimmed = text.trim();
+    return trimmed && trimmed.length <= 4000 ? [{ role, text: trimmed }] : [];
+  });
+}
+
+/**
+ * Resume only the narrow clarification contract emitted by the native schedule
+ * preflight: a prior fully parsed update, an assistant "Did you mean" field
+ * choice, and a current "Use <field> [in <schedule>]" selection. This does not
+ * infer a missing row or value and it will not accept a field that the assistant
+ * did not actually offer.
+ */
+export function parseScheduleCellUpdateFromConversation(
+  currentUserText: string,
+  conversationValue: unknown
+): ScheduleCellUpdateIntentV1 | null {
+  const current = currentUserText.trim().replace(/[.?!]+$/, "");
+  const selection = current.match(/^use\s+(.+?)(?:\s+in\s+(?:the\s+)?(.+?\s+schedule))?$/i);
+  if (!selection) return null;
+  const chosenField = selection[1]?.trim() ?? "";
+  const chosenSchedule = selection[2]?.trim() ?? null;
+  if (!chosenField || chosenField.length > 256 || (chosenSchedule?.length ?? 0) > 256) return null;
+
+  const conversation = boundedConversation(conversationValue);
+  let currentIndex = -1;
+  for (let index = conversation.length - 1; index >= 0; index -= 1) {
+    if (conversation[index].role === "user" && conversation[index].text.trim() === currentUserText.trim()) {
+      currentIndex = index;
+      break;
+    }
+  }
+  if (currentIndex < 2) return null;
+  const assistant = conversation[currentIndex - 1];
+  const priorUser = conversation[currentIndex - 2];
+  if (assistant.role !== "assistant" || priorUser.role !== "user" || !/\bdid you mean\b/i.test(assistant.text)) return null;
+  const offeredClause = assistant.text.match(/\bdid you mean\s+(.+?)(?:\?|$)/is)?.[1] ?? "";
+  const offeredFields = offeredClause.split(/\s*,\s*|\s+or\s+/i).map(normalizedSelectionText).filter(Boolean);
+  if (!offeredFields.includes(normalizedSelectionText(chosenField))) return null;
+
+  const prior = parseDirectScheduleCellUpdate(priorUser.text);
+  if (!prior || prior.confidence.ambiguity === "material" || prior.confidence.value < 0.8) return null;
+  return {
+    ...prior,
+    schedule_name: chosenSchedule,
+    target_field: chosenField,
+    confidence: {
+      value: Math.min(prior.confidence.value, 0.99),
+      ambiguity: "none",
+      reasons: [...prior.confidence.reasons.slice(0, 14), "User selected a field offered by the schedule clarification."].slice(0, 16)
+    },
+    evidence: { user_text: currentUserText.trim() }
+  };
+}
+
 function outputText(response: any): string {
   if (typeof response?.output_text === "string") return response.output_text;
   for (const item of Array.isArray(response?.output) ? response.output : []) for (const content of Array.isArray(item?.content) ? item.content : []) if (typeof content?.text === "string") return content.text;
@@ -181,7 +251,10 @@ export async function interpretScheduleCellUpdateIntent(req: ChatRequest, interp
   const ui = context?.ui && typeof context.ui === "object" && !Array.isArray(context.ui) ? context.ui as Record<string, unknown> : null;
   const authoritative = typeof ui?.authoritative_user_text === "string" ? ui.authoritative_user_text.trim() : "";
   const userText = authoritative || delegated;
-  if (!looksLikeScheduleCellUpdateRequest(userText) || (req.tool_results?.length ?? 0) > 0) return null;
+  if ((req.tool_results?.length ?? 0) > 0) return null;
+  const conversational = parseScheduleCellUpdateFromConversation(userText, ui?.authoritative_conversation);
+  if (conversational) return conversational;
+  if (!looksLikeScheduleCellUpdateRequest(userText)) return null;
   const direct = parseDirectScheduleCellUpdate(userText);
   if (direct) return direct;
   try {
