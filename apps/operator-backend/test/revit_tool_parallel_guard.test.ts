@@ -6,6 +6,8 @@ import test from "node:test";
 import { handleCodexServerRequest } from "../src/brains/codex_brain.js";
 import { RevitToolParallelGuard } from "../src/codex/revit_tool_parallel_guard.js";
 import { setRevitToolQuarantine } from "../src/codex/revit_tool_contract_memory.js";
+import { beginTeammateLoopOwner, endTeammateLoopOwner } from "../src/teammate_loop_runtime.js";
+import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
 
 const call = (overrides: Record<string, unknown> = {}) => ({
   threadId: "thread-1",
@@ -61,18 +63,28 @@ test("app-server handler rejects a duplicate before dispatching it to the MCP ru
     method: "item/tool/call",
     params: { namespace: "revit_operator", ...call() }
   };
+  const teammateLease = beginTeammateLoopOwner(runtime, {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    session_id: "session-1",
+    message_id: "message-1",
+    user_text: "Preview tags for element 1 before changing anything.",
+    context: { revit: { source: { live: true }, process_id: 42, document: { title: "Test", path: "C:\\test.rvt" } } }
+  });
+  try {
+    const first = handleCodexServerRequest(runtime as any, request as any);
+    await Promise.resolve();
+    const duplicate = await handleCodexServerRequest(runtime as any, request as any) as any;
 
-  const first = handleCodexServerRequest(runtime as any, request as any);
-  await Promise.resolve();
-  const duplicate = await handleCodexServerRequest(runtime as any, request as any) as any;
+    assert.equal(runtimeCalls, 1);
+    assert.equal(duplicate.success, false);
+    assert.match(duplicate.contentItems[0].text, /parallel_revit_call_blocked/);
 
-  assert.equal(runtimeCalls, 1);
-  assert.equal(duplicate.success, false);
-  assert.match(duplicate.contentItems[0].text, /parallel_revit_call_blocked/);
-
-  resolveFirst({ content: [{ type: "text", text: "{\"plannedToTag\":1}" }] });
-  const completed = await first as any;
-  assert.equal(completed.success, true);
+    resolveFirst({ content: [{ type: "text", text: "{\"plannedToTag\":1}" }] });
+    const completed = await first as any;
+    assert.equal(completed.success, true);
+  } finally {
+    endTeammateLoopOwner(teammateLease);
+  }
 });
 
 test("app-server handler blocks an active exact-route quarantine before MCP dispatch", { concurrency: false }, async () => {

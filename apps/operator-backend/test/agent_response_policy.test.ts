@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { AGENT_RESPONSE_STYLE_LINES } from "../src/agent_response_policy.js";
+import {
+  AGENT_RESPONSE_STYLE_LINES,
+  classifyAgentTurn,
+  formatAgentTurnContract
+} from "../src/agent_response_policy.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ChatResponse } from "../src/contracts.js";
 import { __testOnlyFinalizeOpenAiResponseForRequest } from "../src/brains/openai_brain.js";
 
@@ -35,6 +39,70 @@ test("backend prompts do not force Plan-prefixed action turns", () => {
   assert.doesNotMatch(codexBrain, /start with:\s*\\"Plan:/i);
   assert.match(openAiBrain, /AGENT_RESPONSE_STYLE_LINES/);
   assert.match(codexBrain, /AGENT_RESPONSE_STYLE_LINES/);
+});
+
+test("per-turn teammate contract classifies representative conversation, navigation, inspection, and mutation requests", () => {
+  assert.equal(classifyAgentTurn("Can you explain what a shock arrestor does?"), "conversation");
+  assert.equal(classifyAgentTurn("Show me the air handling unit schedule."), "navigation");
+  assert.equal(
+    classifyAgentTurn("Where are the shock arrestors? Provide the room number for each device location."),
+    "inspection"
+  );
+  assert.equal(
+    classifyAgentTurn("Add a shock arrestor to the domestic water piping serving the toilet in room 2968T."),
+    "mutation"
+  );
+  assert.equal(
+    classifyAgentTurn("Show me exactly what would be affected before deleting anything."),
+    "inspection"
+  );
+  assert.equal(
+    classifyAgentTurn("The manufacturer is wrong for shock arrestor B2-G-SA-1. Change it from JOSAM to WATTS."),
+    "mutation"
+  );
+  assert.equal(classifyAgentTurn("The expansion tank is the wrong size."), "mutation");
+  assert.equal(classifyAgentTurn("ping"), "inspection");
+  assert.equal(classifyAgentTurn("Can you explain how to change a parameter?"), "conversation");
+});
+
+test("per-turn teammate contract requires live grounding, focused clarification, tool discovery, and guarded verification", () => {
+  const navigation = formatAgentTurnContract("Show me the air handling unit schedule.", {
+    revit: {
+      schema: "revit-operator.context.v1",
+      source: { live: true },
+      process_id: 42,
+      document: { title: "Duke B200", path: "C:\\models\\duke.rvt" }
+    }
+  });
+  const mutation = formatAgentTurnContract(
+    "Add a shock arrestor to the domestic water piping serving the toilet in room 2968T.",
+    { ui: { revit_document: { title: "Duke B200", path: "C:\\models\\duke.rvt", process_id: 42 } } }
+  );
+  const preview = formatAgentTurnContract("Show me what would be affected before deleting anything.");
+
+  assert.match(navigation, /CURRENT TURN CONTRACT \(host-enforced\)/);
+  assert.match(navigation, /"turn_kind":"navigation"/);
+  assert.match(navigation, /"context_state":"live"/);
+  assert.match(navigation, /never mutate the model/i);
+  assert.match(mutation, /"turn_kind":"mutation"/);
+  assert.match(mutation, /"context_state":"live"/);
+  assert.match(mutation, /discover one exact contract/i);
+  assert.match(mutation, /apply once only/i);
+  assert.match(mutation, /verify by readback\/capture/i);
+  assert.match(preview, /"turn_kind":"inspection"/);
+  assert.match(preview, /"context_state":"missing"/);
+  assert.match(preview, /No-write wording is authoritative/i);
+  assert.ok(mutation.length <= 1200);
+});
+
+test("Codex, OpenAI, and external provider prompts all include the per-turn teammate contract", () => {
+  const openAiBrain = readRepoFile("operator-backend/src/brains/openai_brain.ts");
+  const codexBrain = readRepoFile("operator-backend/src/brains/codex_brain.ts");
+  const externalBrain = readRepoFile("operator-backend/src/brains/external_provider_brain.ts");
+
+  assert.match(openAiBrain, /formatAgentTurnContract\(req\.user_text, req\.context\)/);
+  assert.match(codexBrain, /formatAgentTurnContract\(req\.user_text, req\.context\)/);
+  assert.match(externalBrain, /formatAgentTurnContract\(currentUserRequest, req\.context\)/);
 });
 
 test("pre-model redline routing uses async recovery bridge", () => {

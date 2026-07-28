@@ -29,6 +29,7 @@ const READ_ONLY_DISCOVERY_PATHS = new Set([
   "/revit/sheets",
   "/revit/views",
   "/revit/rooms",
+  "/revit/linked-room-boundaries",
   "/revit/find-elements",
   "/revit/get-element-summary",
   "/revit/export-view-frame",

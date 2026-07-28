@@ -15,6 +15,7 @@ const READ_ONLY_PATHS = new Set<string>([
   "/revit/self-test",
   "/revit/rooms",
   "/revit/room-contents",
+  "/revit/linked-room-boundaries",
   "/revit/find-elements",
   "/revit/resolve-mep-routing-context",
   "/revit/trace-connected-network",
