@@ -8,7 +8,7 @@ import {
 test("safe workbench registers one connector-snapped route", { concurrency: false }, async () => {
   const previousAuth = process.env.OPERATOR_AUTH_MODE;
   const previousEnabled = process.env.OPERATOR_WORKBENCH_ENABLED;
-  process.env.OPERATOR_AUTH_MODE = "clashpilot_jwt";
+  process.env.OPERATOR_AUTH_MODE = "principal_jwt";
   delete process.env.OPERATOR_WORKBENCH_ENABLED;
   try {
     let received: WorkbenchAction | null = null;
@@ -39,7 +39,7 @@ test("safe workbench registers one connector-snapped route", { concurrency: fals
 test("safe workbench discovers a native frontier before registering one route", { concurrency: false }, async () => {
   const previousAuth = process.env.OPERATOR_AUTH_MODE;
   const previousEnabled = process.env.OPERATOR_WORKBENCH_ENABLED;
-  process.env.OPERATOR_AUTH_MODE = "clashpilot_jwt";
+  process.env.OPERATOR_AUTH_MODE = "principal_jwt";
   delete process.env.OPERATOR_WORKBENCH_ENABLED;
   try {
     let received: WorkbenchAction | null = null;

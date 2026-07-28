@@ -440,7 +440,7 @@ function safeListFiles(relDir: string | undefined, recursive: boolean, maxItems:
 
 export function workbenchEnabled(): boolean {
   const raw = process.env.OPERATOR_WORKBENCH_ENABLED;
-  const relayMode = (process.env.OPERATOR_AUTH_MODE ?? "").trim().toLowerCase() === "clashpilot_jwt";
+  const relayMode = (process.env.OPERATOR_AUTH_MODE ?? "").trim().toLowerCase() === "principal_jwt";
   return parseBool(raw, !relayMode);
 }
 
