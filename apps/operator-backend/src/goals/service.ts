@@ -316,30 +316,50 @@ function normalizeLogEntry(value: unknown, kind: GoalLogKind): GoalLogEntry {
 }
 
 function normalizeCriterionResults(value: unknown, criteria: string[], evidenceLog: GoalLogEntry[], validationLog: GoalLogEntry[]): GoalCriterionResult[] {
-  if (Array.isArray(value) && value.length > 0) {
-    return value.map((item, index) => {
-      const obj = item && typeof item === "object" ? (item as any) : {};
-      const criterion = clip(obj.criterion, 1000) || criteria[index] || `Criterion ${index + 1}`;
-      const rawStatus = clip(obj.status, 80).toLowerCase();
-      const status: GoalCriterionStatus = rawStatus === "pass" || rawStatus === "passed" ? "pass" : rawStatus === "fail" || rawStatus === "failed" ? "fail" : "unknown";
-      return {
-        criterion,
-        status,
-        evidence_refs: asStringList(obj.evidence_refs ?? obj.evidenceRefs, 40, 400),
-        ...(clip(obj.notes, 1000) ? { notes: clip(obj.notes, 1000) } : {})
-      };
+  const entries = [...evidenceLog, ...validationLog];
+  const requested = Array.isArray(value) ? value : [];
+  return criteria.map((criterion, index) => {
+    const exact = requested.find(item => {
+      const obj = item && typeof item === "object" && !Array.isArray(item) ? (item as any) : {};
+      return clip(obj.criterion, 1000).toLowerCase() === criterion.toLowerCase();
     });
-  }
-
-  const evidenceText = evidenceLog.map(e => e.summary.toLowerCase()).join("\n");
-  const validationText = validationLog.map(v => v.summary.toLowerCase()).join("\n");
-  return criteria.map(criterion => {
-    const c = criterion.toLowerCase();
-    const hasEvidence = c.length >= 5 && (evidenceText.includes(c) || validationText.includes(c));
+    const indexed = requested[index];
+    const item = exact ?? (indexed && typeof indexed === "object" && !Array.isArray(indexed) && !clip((indexed as any).criterion, 1000) ? indexed : undefined);
+    const obj = item && typeof item === "object" && !Array.isArray(item) ? (item as any) : {};
+    const rawStatus = clip(obj.status, 80).toLowerCase();
+    const requestedStatus: GoalCriterionStatus = rawStatus === "pass" || rawStatus === "passed" ? "pass" : rawStatus === "fail" || rawStatus === "failed" ? "fail" : "unknown";
+    const requestedRefs = asStringList(obj.evidence_refs ?? obj.evidenceRefs, 40, 400);
+    const criterionKey = criterion.toLowerCase();
+    const matchingEntries = entries.filter(entry => {
+      if (criterion.length >= 5 && entry.summary.toLowerCase().includes(criterionKey)) return true;
+      const linkedCriterion = clip(entry.details?.criterion, 1000).toLowerCase();
+      if (linkedCriterion === criterionKey) return true;
+      const linkedCriteria = asStringList(entry.details?.criteria, 80, 1200).map(value => value.toLowerCase());
+      return linkedCriteria.includes(criterionKey);
+    });
+    const criterionRefs = new Set<string>();
+    for (const entry of matchingEntries) {
+      criterionRefs.add(entry.id);
+      criterionRefs.add(`${entry.kind}:${entry.id}`);
+      for (const artifactPath of entry.artifact_paths ?? []) {
+        criterionRefs.add(artifactPath);
+        criterionRefs.add(`artifact:${artifactPath}`);
+      }
+    }
+    const resolvedRefs = requestedRefs.filter(ref => criterionRefs.has(ref));
+    const matchedEntry = matchingEntries[0];
+    const evidenceRefs = resolvedRefs.length > 0
+      ? resolvedRefs
+      : matchedEntry
+        ? [`${matchedEntry.kind}:${matchedEntry.id}`]
+        : [];
+    const status: GoalCriterionStatus = requestedStatus === "fail" ? "fail" : evidenceRefs.length > 0 ? "pass" : "unknown";
+    const notes = clip(obj.notes, 1000) || (requestedStatus === "pass" && evidenceRefs.length === 0 ? "Passing status was not accepted because no evidence reference resolved to persisted evidence or validation for this criterion." : "");
     return {
       criterion,
-      status: hasEvidence ? "pass" : "unknown",
-      evidence_refs: hasEvidence ? ["matched evidence/validation summary text"] : []
+      status,
+      evidence_refs: evidenceRefs,
+      ...(notes ? { notes } : {})
     };
   });
 }
@@ -575,7 +595,7 @@ export function completeGoalAfterAudit(goalId: string): GoalRecord {
 export function getActiveGoalForSession(sessionId?: string | null): GoalRecord | null {
   const sid = clip(sessionId, 180);
   const goals = listGoals(100);
-  const candidates = goals.filter(g => g.status === "active" && (!sid || !g.related_session_id || g.related_session_id === sid));
+  const candidates = goals.filter(g => g.status === "active" && (!sid || g.related_session_id === sid));
   return candidates[0] ?? null;
 }
 
@@ -612,7 +632,7 @@ export function clearAgentGoal(sessionId: string, reason?: unknown): GoalRecord 
   const goals = listGoals(100);
   const goal = goals.find(g =>
     (g.status === "active" || g.status === "blocked" || g.status === "paused") &&
-    (!sid || !g.related_session_id || g.related_session_id === sid)
+    (!sid || g.related_session_id === sid)
   ) ?? null;
   if (!goal) return null;
   return transitionGoal(goal.id, "canceled", reason ?? "Goal cleared.");
@@ -658,15 +678,7 @@ export function markAgentGoalComplete(sessionId: string, evidence?: unknown): Go
   const goal = getActiveGoalForSession(sessionId);
   if (!goal) throw new Error("No active goal for session.");
   if (evidence !== undefined) appendGoalEvidence(goal.id, { summary: "Completion evidence recorded.", details: asJsonMap(evidence) ?? { evidence } });
-  const audited = requestGoalCompletionAudit(goal.id, {
-    criteria_results: goal.acceptance_criteria.map((criterion) => ({
-      criterion,
-      status: "pass",
-      evidence_refs: evidence !== undefined ? ["completion evidence"] : ["agent completion request"]
-    })),
-    evidence_summary: evidence !== undefined ? "Completion evidence supplied by caller." : "Caller requested completion.",
-    blockers: []
-  });
+  const audited = requestGoalCompletionAudit(goal.id, evidence);
   return completeGoalAfterAudit(audited.id);
 }
 

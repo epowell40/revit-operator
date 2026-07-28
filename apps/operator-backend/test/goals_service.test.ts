@@ -129,11 +129,13 @@ test("completion audit refuses passing criteria while typed work items remain in
       status: "active",
       work_items: [{ id: "sheet-a", title: "Prepare sheet E401", status: "ready" }]
     });
-    const first = requestGoalCompletionAudit(goal.id, { criteria_results: [{ criterion: "Sheet evidence is recorded.", status: "pass", evidence_refs: ["e:1"] }] });
+    const evidence = appendGoalEvidence(goal.id, { summary: "Sheet evidence is recorded.", artifact_paths: ["artifacts/sheets/e401.json"] });
+    const evidenceId = evidence.evidence_log.at(-1)!.id;
+    const first = requestGoalCompletionAudit(goal.id, { criteria_results: [{ criterion: "Sheet evidence is recorded.", status: "pass", evidence_refs: [`evidence:${evidenceId}`] }] });
     assert.equal(first.completion_audit?.complete, false);
     assert.deepEqual(first.completion_audit?.remaining_work, ["Prepare sheet E401"]);
     updateGoal(goal.id, { work_items: [{ id: "sheet-a", title: "Prepare sheet E401", status: "complete", evidence_refs: ["e:1"] }] });
-    const second = requestGoalCompletionAudit(goal.id, { criteria_results: [{ criterion: "Sheet evidence is recorded.", status: "pass", evidence_refs: ["e:1"] }] });
+    const second = requestGoalCompletionAudit(goal.id, { criteria_results: [{ criterion: "Sheet evidence is recorded.", status: "pass", evidence_refs: [`evidence:${evidenceId}`] }] });
     assert.equal(second.completion_audit?.complete, true);
   });
 });
@@ -177,10 +179,14 @@ test("completion audit allows completion only when all criteria pass", () => {
       status: "active"
     });
 
+    const changeValidation = appendGoalValidation(goal.id, { summary: "Changes are validated.", details: { command: "npm test", exit_code: 0 } });
+    const changeValidationId = changeValidation.validation_log.at(-1)!.id;
+    const evidence = appendGoalEvidence(goal.id, { summary: "Evidence is attached.", artifact_paths: ["artifacts/audit/report.json"] });
+    const evidenceId = evidence.evidence_log.at(-1)!.id;
     const audited = requestGoalCompletionAudit(goal.id, {
       criteria_results: [
-        { criterion: "Changes are validated.", status: "pass", evidence_refs: ["validation:1"] },
-        { criterion: "Evidence is attached.", status: "pass", evidence_refs: ["evidence:1"] }
+        { criterion: "Changes are validated.", status: "pass", evidence_refs: [`validation:${changeValidationId}`] },
+        { criterion: "Evidence is attached.", status: "pass", evidence_refs: [`evidence:${evidenceId}`] }
       ]
     });
     assert.equal(audited.completion_audit?.complete, true);
@@ -214,14 +220,78 @@ test("agent goal facade supports set progress block clear lifecycle", () => {
   });
 });
 
-test("agent goal facade can complete with supplied evidence", () => {
+test("completion audit rejects caller-declared passes without persisted evidence", () => {
   withWorkspace(() => {
-    setAgentGoal("session-complete", {
+    const goal = setAgentGoal("session-fabricated-complete", {
+      objective: "Verify native capture and validation.",
+      success_criteria: ["Capture exists.", "Validation passes."]
+    });
+    const audited = requestGoalCompletionAudit(goal.id, {
+      criteria_results: goal.acceptance_criteria.map(criterion => ({
+        criterion,
+        status: "pass",
+        evidence_refs: ["caller says this passed"]
+      })),
+      evidence_summary: "Everything passed."
+    });
+    assert.equal(audited.completion_audit?.complete, false);
+    assert.deepEqual(audited.completion_audit?.criteria_results.map(result => result.status), ["unknown", "unknown"]);
+    assert.throws(() => completeGoalAfterAudit(goal.id), /completion audit passes/);
+  });
+});
+
+test("completion audit does not reuse unrelated evidence across criteria", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-unrelated-evidence", {
+      objective: "Verify capture and validation independently.",
+      success_criteria: ["Capture exists.", "Validation passes."]
+    });
+    const withCapture = appendGoalEvidence(goal.id, { summary: "Capture exists.", artifact_paths: ["artifacts/captures/a.png"] });
+    const evidenceId = withCapture.evidence_log.at(-1)!.id;
+    const audited = requestGoalCompletionAudit(goal.id, {
+      criteria_results: goal.acceptance_criteria.map(criterion => ({
+        criterion,
+        status: "pass",
+        evidence_refs: [`evidence:${evidenceId}`]
+      }))
+    });
+    assert.equal(audited.completion_audit?.complete, false);
+    assert.deepEqual(audited.completion_audit?.criteria_results.map(result => result.status), ["pass", "unknown"]);
+  });
+});
+
+test("agent goal facade completes only with criterion-linked persisted evidence", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-complete", {
       objective: "Verify native capture.",
       success_criteria: ["Capture exists."]
     });
-    const completed = markAgentGoalComplete("session-complete", { capturePath: "artifacts/captures/a.png" });
+    assert.throws(
+      () => markAgentGoalComplete("session-complete", { evidence_summary: "Capture exists because the caller says so." }),
+      /completion audit passes/
+    );
+    const withEvidence = appendGoalEvidence(goal.id, { summary: "Capture exists.", artifact_paths: ["artifacts/captures/a.png"] });
+    const evidenceId = withEvidence.evidence_log.at(-1)!.id;
+    const completed = markAgentGoalComplete("session-complete", {
+      criteria_results: [{ criterion: "Capture exists.", status: "pass", evidence_refs: [`evidence:${evidenceId}`] }],
+      evidence_summary: "Capture artifact is persisted."
+    });
     assert.equal(completed.status, "complete");
+  });
+});
+
+test("session-specific goal lookup never falls back to an unbound goal", () => {
+  withWorkspace(() => {
+    const unbound = createGoal({
+      title: "Unbound maintenance goal",
+      objective: "Remain outside agent sessions.",
+      acceptance_criteria: ["Maintenance is recorded."],
+      status: "active"
+    });
+    assert.equal(getActiveGoalForSession()?.id, unbound.id);
+    assert.equal(getActiveGoalForSession("different-session"), null);
+    assert.equal(clearAgentGoal("different-session"), null);
+    assert.equal(getActiveGoalForSession()?.id, unbound.id);
   });
 });
 

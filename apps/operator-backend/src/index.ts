@@ -632,6 +632,8 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname === "/desktop/computer/config" ||
     pathname === "/desktop/computer/respond" ||
     pathname === "/attachments/upload" ||
+    pathname === "/api/agent-goal" ||
+    pathname.startsWith("/api/agent-goal/") ||
     pathname === "/api/goals" ||
     pathname.startsWith("/api/goals/") ||
     pathname === "/api/tasks" ||
@@ -665,8 +667,9 @@ function requiresOperatorToken(pathname: string): boolean {
   );
 }
 
-function sessionOwnerForPrincipal(_principal: RequestPrincipal | undefined): { owner_user_id: string; owner_license_id: string } | null {
-  return null;
+function sessionOwnerForPrincipal(principal: RequestPrincipal | undefined): { owner_user_id: string; owner_license_id: string } | null {
+  if (authMode !== "clashpilot_jwt" || !principal) return null;
+  return { owner_user_id: principal.user_id, owner_license_id: principal.license_id };
 }
 
 function sessionAccessAllowed(res: http.ServerResponse, sessionId: string, principal: RequestPrincipal | undefined): boolean {
@@ -987,7 +990,7 @@ const server = http.createServer(async (req, res) => {
       const limit = Math.max(1, Math.min(100, Number.parseInt(url.searchParams.get("limit") || "50", 10) || 50));
       const sessionId = trimText(url.searchParams.get("session_id"), 160);
       if (sessionId && !sessionAccessAllowed(res, sessionId, auth.principal)) return;
-      const goals = listGoals(limit).filter(goal => !sessionId || !goal.related_session_id || goal.related_session_id === sessionId);
+      const goals = listGoals(limit).filter(goal => !sessionId || goal.related_session_id === sessionId);
       return writeJson(res, 200, { ok: true, goals });
     }
 
@@ -1004,7 +1007,11 @@ const server = http.createServer(async (req, res) => {
       if (!sessionId) return writeJson(res, 400, { error: "session_id is required." });
       if (!sessionAccessAllowed(res, sessionId, auth.principal)) return;
       try {
-        const goal = setAgentGoal(sessionId, body as any);
+        const owner = sessionOwnerForPrincipal(auth.principal);
+        const goal = setAgentGoal(sessionId, {
+          ...(body as any),
+          ...(owner ? { created_by: owner.owner_user_id } : {})
+        });
         appendNotification(sessionId, "goal.set", `Goal set: ${goal.title}`, { goal_id: goal.id, status: goal.status });
         return writeJson(res, 200, { ok: true, goal });
       } catch (error) {
@@ -1052,7 +1059,7 @@ const server = http.createServer(async (req, res) => {
         const goal = createGoal({
           ...(body as any),
           ...(sessionId ? { related_session_id: sessionId } : {}),
-          ...(owner && !(body as any)?.created_by && !(body as any)?.createdBy ? { created_by: owner.owner_user_id } : {})
+          ...(owner ? { created_by: owner.owner_user_id } : {})
         });
         if (goal.related_session_id) {
           appendNotification(goal.related_session_id, "goal.created", `Goal created: ${goal.title}`, { goal_id: goal.id, status: goal.status });
@@ -1074,6 +1081,8 @@ const server = http.createServer(async (req, res) => {
         if (req.method === "PATCH") {
           try {
             const body = await readJson(req, 1_000_000);
+            const requestedSession = trimText((body as any)?.related_session_id ?? (body as any)?.relatedSessionId, 160);
+            if (requestedSession && !sessionAccessAllowed(res, requestedSession, auth.principal)) return;
             const goal = updateGoal(goalId, body as any);
             return writeJson(res, 200, { ok: true, goal });
           } catch (error) {
