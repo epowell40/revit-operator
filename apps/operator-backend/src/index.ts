@@ -71,7 +71,7 @@ import {
   type RequestPrincipal
 } from "./request_context.js";
 import { createArtifactShare, listArtifacts, resolveArtifactShare } from "./artifacts/artifact_bus.js";
-import { compactIncomingToolResult, describeVisibleElementsInventory, getChatRequestLimitBytes } from "./tool_result_compaction.js";
+import { describeVisibleElementsInventory, getChatRequestLimitBytes } from "./tool_result_compaction.js";
 import {
   createZippyBimJob,
   getZippyBimConfig,
@@ -94,8 +94,10 @@ import {
   listRevitBatchTemplates,
   retryFailedRevitBatchItems,
   resumeRevitBatchJob,
-  pauseRevitBatchJob
+  pauseRevitBatchJob,
+  type RevitBatchAccessContext
 } from "./revit_batch/service.js";
+import { normalizeIncomingToolResults, registerServerPlannedActions } from "./revit_batch/tool_result_normalization.js";
 import { claimNextRevitToolJob, completeRevitToolJob, failRevitToolJob } from "./courier/revit_tool_jobs.js";
 import {
   getOperatorTask,
@@ -694,6 +696,90 @@ function sessionAccessAllowed(res: http.ServerResponse, sessionId: string, princ
   if (allowed.ok) return true;
   writeJson(res, 403, { error: "Forbidden (session belongs to another user)." });
   return false;
+}
+
+function objectRecord(value: unknown): Record<string, any> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
+}
+
+function consistentBatchBindingValue(label: string, values: unknown[], max: number, normalize = (value: string) => value): string {
+  const present = values.map(value => trimText(value, max)).filter(Boolean);
+  if (present.length === 0) return "";
+  const first = normalize(present[0]!);
+  if (present.some(value => normalize(value) !== first)) {
+    throw new Error(`Revit batch ${label} fields disagree.`);
+  }
+  return present[0]!;
+}
+
+function revitBatchAccessContext(
+  principal: RequestPrincipal | undefined,
+  input: unknown
+): RevitBatchAccessContext | undefined {
+  // Shared-token/local jobs intentionally retain the legacy single-user contract.
+  // In principal mode, every identity value passed to the service is assembled here;
+  // owner-like fields in the request body are never consulted.
+  if (!principal) return undefined;
+  const row = objectRecord(input);
+  const source = objectRecord(row.source);
+  const target = objectRecord(row.target_context ?? row.targetContext);
+  const context = objectRecord(row.context);
+  const revit = objectRecord(context.revit);
+  const canonicalDocument = objectRecord(revit.document);
+  const projectIdentity = objectRecord(canonicalDocument.projectIdentity ?? canonicalDocument.project_identity);
+  const ui = objectRecord(context.ui);
+  const legacyDocument = objectRecord(ui.revit_document);
+  const sessionId = consistentBatchBindingValue("session", [row.session_id, row.sessionId, source.session_id, source.sessionId], 200);
+  const executorId = consistentBatchBindingValue(
+    "target executor",
+    [target.executor_id, target.executorId, row.target_executor_id, row.targetExecutorId, row.executor_id, row.executorId, revit.courier_executor_id, legacyDocument.courier_executor_id],
+    160
+  );
+  const fingerprint = consistentBatchBindingValue(
+    "project fingerprint",
+    [target.project_fingerprint, target.projectFingerprint, row.project_fingerprint, row.projectFingerprint, projectIdentity.fingerprint, canonicalDocument.project_fingerprint, legacyDocument.project_fingerprint],
+    256,
+    value => value.toLowerCase()
+  ).toLowerCase();
+  if (!sessionId || !executorId || !fingerprint) {
+    throw new Error("Authenticated batch requests require session_id, target_executor_id, and project_fingerprint.");
+  }
+  if (!/^[a-f0-9]{64}$/.test(fingerprint)) {
+    throw new Error("Authenticated batch project_fingerprint must be a 64-character SHA-256 value.");
+  }
+  const documentTitle = consistentBatchBindingValue(
+    "document title",
+    [target.document_title, target.documentTitle, canonicalDocument.title, legacyDocument.title],
+    512,
+    value => value.toLowerCase()
+  );
+  const documentPath = consistentBatchBindingValue(
+    "document path",
+    [target.document_path, target.documentPath, canonicalDocument.path, legacyDocument.path],
+    2048,
+    value => value.replace(/\\/g, "/").toLowerCase()
+  );
+  return {
+    owner: {
+      user_id: principal.user_id,
+      tenant_id: principal.tenant_id || principal.license_id
+    },
+    session_id: sessionId,
+    target: {
+      executor_id: executorId,
+      project_fingerprint: fingerprint,
+      ...(documentTitle ? { document_title: documentTitle } : {}),
+      ...(documentPath ? { document_path: documentPath } : {})
+    }
+  };
+}
+
+function revitBatchQueryBinding(url: URL): Record<string, string> {
+  return {
+    session_id: trimText(url.searchParams.get("session_id") ?? url.searchParams.get("sessionId"), 200),
+    target_executor_id: trimText(url.searchParams.get("target_executor_id") ?? url.searchParams.get("executor_id"), 160),
+    project_fingerprint: trimText(url.searchParams.get("project_fingerprint"), 256)
+  };
 }
 
 function resolveKnowledgeBaseOwnerId(
@@ -1370,12 +1456,25 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/api/revit-batch/jobs") {
       const limit = Math.max(1, Math.min(50, Number.parseInt(url.searchParams.get("limit") || "12", 10) || 12));
-      return writeJson(res, 200, { ok: true, jobs: listRevitBatchJobs(limit) });
+      try {
+        const access = revitBatchAccessContext(auth.principal, revitBatchQueryBinding(url));
+        if (access?.session_id && !sessionAccessAllowed(res, access.session_id, auth.principal)) return;
+        return writeJson(res, 200, { ok: true, jobs: listRevitBatchJobs(limit, access) });
+      } catch (error) {
+        return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
     }
 
     if (req.method === "POST" && url.pathname === "/api/revit-batch/jobs") {
       const body = await readJson(req, 5_000_000);
-      const job = createRevitBatchJob(body as any);
+      let access: RevitBatchAccessContext | undefined;
+      try {
+        access = revitBatchAccessContext(auth.principal, body);
+      } catch (error) {
+        return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
+      if (access?.session_id && !sessionAccessAllowed(res, access.session_id, auth.principal)) return;
+      const job = createRevitBatchJob(body as any, access);
       const counts = getRevitBatchCounts(job);
       const title = trimText((job as any)?.title, 160) || "Revit batch job";
       const status = trimText((job as any)?.status, 80).toLowerCase();
@@ -1397,7 +1496,14 @@ const server = http.createServer(async (req, res) => {
     {
       const jobMatch = url.pathname.match(/^\/api\/revit-batch\/jobs\/([^/]+)$/);
       if (req.method === "GET" && jobMatch) {
-        const job = getRevitBatchJob(decodeURIComponent(jobMatch[1] || ""));
+        let access: RevitBatchAccessContext | undefined;
+        try {
+          access = revitBatchAccessContext(auth.principal, revitBatchQueryBinding(url));
+        } catch (error) {
+          return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+        }
+        if (access?.session_id && !sessionAccessAllowed(res, access.session_id, auth.principal)) return;
+        const job = getRevitBatchJob(decodeURIComponent(jobMatch[1] || ""), access);
         if (!job) return writeJson(res, 404, { error: "Batch job not found." });
         return writeJson(res, 200, { ok: true, job });
       }
@@ -1409,16 +1515,22 @@ const server = http.createServer(async (req, res) => {
         const jobId = decodeURIComponent(controlMatch[1] || "");
         const action = controlMatch[2] || "";
         try {
+          const controlBody = await readJson(req, 1_000_000).catch(() => ({}));
+          const access = revitBatchAccessContext(auth.principal, {
+            ...revitBatchQueryBinding(url),
+            ...objectRecord(controlBody)
+          });
+          if (access?.session_id && !sessionAccessAllowed(res, access.session_id, auth.principal)) return;
           const job =
             action === "approve"
-              ? approveRevitBatchJob(jobId)
+              ? approveRevitBatchJob(jobId, access)
               : action === "pause"
-                ? pauseRevitBatchJob(jobId)
+                ? pauseRevitBatchJob(jobId, access)
                 : action === "resume"
-                  ? resumeRevitBatchJob(jobId)
+                  ? resumeRevitBatchJob(jobId, access)
                   : action === "cancel"
-                    ? cancelRevitBatchJob(jobId)
-                    : retryFailedRevitBatchItems(jobId);
+                    ? cancelRevitBatchJob(jobId, access)
+                    : retryFailedRevitBatchItems(jobId, access);
           const counts = getRevitBatchCounts(job);
           const title = trimText((job as any)?.title, 160) || "Revit batch job";
           if (action === "approve") {
@@ -1442,10 +1554,13 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/revit-batch/claim-next") {
       const body = await readJson(req, 1_000_000);
       try {
+        const access = revitBatchAccessContext(auth.principal, body);
+        if (access?.session_id && !sessionAccessAllowed(res, access.session_id, auth.principal)) return;
         const claim = claimNextRevitBatchItem({
           job_id: trimText((body as any)?.job_id ?? (body as any)?.jobId, 120),
           executor_id: trimText((body as any)?.executor_id ?? (body as any)?.executorId, 160),
-          executor_kind: trimText((body as any)?.executor_kind ?? (body as any)?.executorKind, 120)
+          executor_kind: trimText((body as any)?.executor_kind ?? (body as any)?.executorKind, 120),
+          access
         });
         return writeJson(res, 200, claim);
       } catch (error) {
@@ -1463,6 +1578,8 @@ const server = http.createServer(async (req, res) => {
         const executorId = trimText((body as any)?.executor_id ?? (body as any)?.executorId, 160);
         const claimToken = trimText((body as any)?.claim_token ?? (body as any)?.claimToken, 160);
         try {
+          const access = revitBatchAccessContext(auth.principal, body);
+          if (access?.session_id && !sessionAccessAllowed(res, access.session_id, auth.principal)) return;
           const payload =
             action === "complete"
               ? completeRevitBatchItem({
@@ -1470,7 +1587,8 @@ const server = http.createServer(async (req, res) => {
                   item_id: itemId,
                   executor_id: executorId,
                   claim_token: claimToken,
-                  result: (body as any)?.result
+                  result: (body as any)?.result,
+                  access
                 })
               : failRevitBatchItem({
                   job_id: jobId,
@@ -1478,7 +1596,8 @@ const server = http.createServer(async (req, res) => {
                   executor_id: executorId,
                   claim_token: claimToken,
                   error: trimText((body as any)?.error, 500) || "Batch item failed.",
-                  result: (body as any)?.result
+                  result: (body as any)?.result,
+                  access
                 });
           const job = (payload as any)?.job;
           const item = (payload as any)?.item;
@@ -1794,7 +1913,7 @@ const server = http.createServer(async (req, res) => {
       if (!sessionAccessAllowed(res, parsed.session_id, auth.principal)) return;
 
       const userText = typeof parsed.user_text === "string" ? parsed.user_text : "";
-      const toolResults = normalizeToolResults(parsed.tool_results);
+      const toolResults = normalizeIncomingToolResults(parsed.tool_results, parsed.session_id);
       try {
         recordToolResultsEnvironmentMemory(toolResults);
       } catch {
@@ -1938,7 +2057,7 @@ const server = http.createServer(async (req, res) => {
         send("done", {});
 
           try {
-          upsertStepPlanned(parsed.session_id as any, parsed.message_id as any, userTextWithAttachments || null, macroResp.actions);
+          persistServerPlannedStep(parsed.session_id, parsed.message_id, userTextWithAttachments || null, macroResp.actions);
           if (macroResp.actions.length === 0) setStepStopReason(parsed.session_id as any, parsed.message_id as any, "NO_ACTIONS");
         } catch {
           // ignore
@@ -2060,7 +2179,7 @@ const server = http.createServer(async (req, res) => {
         send("done", {});
 
         try {
-          upsertStepPlanned(parsed.session_id as any, parsed.message_id as any, userTextWithAttachments || null, decision.actions);
+          persistServerPlannedStep(parsed.session_id, parsed.message_id, userTextWithAttachments || null, decision.actions);
           if (decision.actions.length === 0) setStepStopReason(parsed.session_id as any, parsed.message_id as any, "NO_ACTIONS");
         } catch {
           // ignore
@@ -2072,7 +2191,7 @@ const server = http.createServer(async (req, res) => {
         }
         if (streamAbort.signal.aborted || streamClosed) {
           try {
-            upsertStepPlanned(parsed.session_id as any, parsed.message_id as any, userTextWithAttachments || null, []);
+            persistServerPlannedStep(parsed.session_id, parsed.message_id, userTextWithAttachments || null, []);
             setStepStopReason(parsed.session_id as any, parsed.message_id as any, "USER_CANCELLED");
           } catch {
             // ignore
@@ -2102,7 +2221,7 @@ const server = http.createServer(async (req, res) => {
           // ignore
         }
         try {
-          upsertStepPlanned(parsed.session_id as any, parsed.message_id as any, userTextWithAttachments || null, []);
+          persistServerPlannedStep(parsed.session_id, parsed.message_id, userTextWithAttachments || null, []);
           setStepStopReason(parsed.session_id as any, parsed.message_id as any, "ERROR");
         } catch {
           // ignore
@@ -2165,7 +2284,7 @@ const server = http.createServer(async (req, res) => {
       if (!sessionAccessAllowed(res, parsed.session_id, auth.principal)) return;
 
       const userText = typeof parsed.user_text === "string" ? parsed.user_text : "";
-      const toolResults = normalizeToolResults(parsed.tool_results);
+      const toolResults = normalizeIncomingToolResults(parsed.tool_results, parsed.session_id);
       try {
         recordToolResultsEnvironmentMemory(toolResults);
       } catch {
@@ -2253,7 +2372,7 @@ const server = http.createServer(async (req, res) => {
           // ignore
         }
         try {
-          upsertStepPlanned(parsed.session_id, parsed.message_id as any, userTextWithAttachments || null, macroResp.actions);
+          persistServerPlannedStep(parsed.session_id, parsed.message_id, userTextWithAttachments || null, macroResp.actions);
           if (macroResp.actions.length === 0) setStepStopReason(parsed.session_id, parsed.message_id as any, "NO_ACTIONS");
         } catch {
           // ignore
@@ -2367,7 +2486,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         try {
-          upsertStepPlanned(parsed.session_id, parsed.message_id, userTextWithAttachments || null, decision.actions);
+          persistServerPlannedStep(parsed.session_id, parsed.message_id, userTextWithAttachments || null, decision.actions);
           if (decision.actions.length === 0) setStepStopReason(parsed.session_id, parsed.message_id, "NO_ACTIONS");
         } catch {
           // ignore
@@ -2399,7 +2518,7 @@ const server = http.createServer(async (req, res) => {
           // ignore
         }
         try {
-          upsertStepPlanned(parsed.session_id, parsed.message_id, userTextWithAttachments || null, []);
+          persistServerPlannedStep(parsed.session_id, parsed.message_id, userTextWithAttachments || null, []);
           setStepStopReason(parsed.session_id, parsed.message_id, "ERROR");
         } catch {
           // ignore
@@ -3655,32 +3774,9 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-function normalizeToolResults(input: unknown): ToolResult[] {
-  if (!Array.isArray(input)) return [];
-  const out: ToolResult[] = [];
-  for (const item of input) {
-    if (!item || typeof item !== "object") continue;
-    const r = item as any;
-    if (typeof r.action_id !== "string") continue;
-    if (r.method !== "GET" && r.method !== "POST") continue;
-    if (typeof r.path !== "string") continue;
-    if (r.status !== "done" && r.status !== "failed") continue;
-
-    out.push(compactIncomingToolResult({
-      action_id: r.action_id,
-      method: r.method,
-      path: r.path,
-      status: r.status,
-      ...(r.result_json !== undefined ? { result_json: r.result_json } : {}),
-      ...(typeof r.error === "string" ? { error: r.error } : {}),
-      ...(typeof r.failure_kind === "string" ? { failure_kind: r.failure_kind } : {}),
-      ...(typeof r.failure_code === "string" ? { failure_code: r.failure_code } : {}),
-      ...(typeof r.failure_hint === "string" ? { failure_hint: r.failure_hint } : {}),
-      ...(typeof r.duration_ms === "number" ? { duration_ms: r.duration_ms } : {}),
-      ...(Array.isArray(r.attachments) ? { attachments: r.attachments } : {})
-    }));
-  }
-  return out;
+function persistServerPlannedStep(sessionId: string, messageId: string, userText: string | null, actions: unknown[]): void {
+  registerServerPlannedActions(sessionId, actions);
+  upsertStepPlanned(sessionId, messageId, userText, actions);
 }
 
 function normalizeUserAttachments(input: unknown): NonNullable<ChatRequest["user_attachments"]> {

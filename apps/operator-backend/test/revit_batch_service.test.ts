@@ -7,11 +7,15 @@ import { spawn } from "node:child_process";
 
 import {
   claimNextRevitBatchItem,
+  cancelRevitBatchJob,
   completeRevitBatchItem,
   createRevitBatchJob,
   getRevitBatchJob,
+  listRevitBatchJobs,
+  pauseRevitBatchJob,
   resumeRevitBatchJob,
-  retryFailedRevitBatchItems
+  retryFailedRevitBatchItems,
+  type RevitBatchAccessContext
 } from "../src/revit_batch/service.js";
 
 type AnyMap = Record<string, any>;
@@ -36,6 +40,26 @@ function createJob(options: { readOnly?: boolean; maxClaimAttempts?: number; job
       ...(options.readOnly === undefined ? {} : { read_only: options.readOnly })
     }]
   }) as AnyMap;
+}
+
+const fingerprintA = "a".repeat(64);
+const fingerprintB = "b".repeat(64);
+
+function boundAccess(user: string, session: string, executor: string, fingerprint: string): RevitBatchAccessContext {
+  return {
+    owner: { user_id: user, tenant_id: "tenant-1" },
+    session_id: session,
+    target: { executor_id: executor, project_fingerprint: fingerprint }
+  };
+}
+
+function createBoundJob(access: RevitBatchAccessContext, itemIds = ["item-1"]): AnyMap {
+  return createRevitBatchJob({
+    job_type: "delegated_revit_task_batch",
+    title: `Bound batch for ${access.owner?.user_id}`,
+    approval: { required: false },
+    items: itemIds.map((id, index) => ({ id, index: index + 1, status: "pending", task_prompt: `Set parameter ${id}.` }))
+  }, access) as AnyMap;
 }
 
 function jobRecordPath(root: string, jobId: string): string {
@@ -265,4 +289,122 @@ test("a schema-v2 stored claim with a missing token fails closed", () => {
     () => completeRevitBatchItem({ job_id: job.id, item_id: "item-1", executor_id: "worker-a" }),
     /missing its stored token/
   );
+});
+
+test("bound jobs are isolated by authenticated principal, session, executor, and document", () => {
+  mkWorkspace();
+  const aliceA = boundAccess("alice", "session-alice-a", "executor-a", fingerprintA);
+  const aliceB = boundAccess("alice", "session-alice-b", "executor-b", fingerprintB);
+  const bobA = boundAccess("bob", "session-bob-a", "executor-a", fingerprintA);
+  const jobA = createBoundJob(aliceA);
+  const jobB = createBoundJob(aliceB);
+
+  assert.deepEqual((listRevitBatchJobs(20, aliceA) as AnyMap[]).map(job => job.id), [jobA.id]);
+  assert.deepEqual((listRevitBatchJobs(20, aliceB) as AnyMap[]).map(job => job.id), [jobB.id]);
+  assert.deepEqual(listRevitBatchJobs(20, bobA), []);
+  assert.equal(getRevitBatchJob(jobA.id, bobA), null);
+  assert.equal(getRevitBatchJob(jobA.id, aliceB), null);
+  assert.throws(() => pauseRevitBatchJob(jobA.id, bobA), /access context mismatch/);
+
+  const polled = claimNextRevitBatchItem({ executor_id: "executor-a", access: aliceA }) as AnyMap;
+  assert.equal(polled.job.id, jobA.id);
+  assert.equal(polled.item.claim.owner.user_id, "alice");
+  assert.equal(polled.item.claim.session_id, "session-alice-a");
+  assert.equal(polled.item.claim.target_context.project_fingerprint, fingerprintA);
+  assert.throws(
+    () => claimNextRevitBatchItem({ job_id: jobB.id, executor_id: "executor-a", access: aliceA }),
+    /access context mismatch/
+  );
+
+  const forgedInput = {
+    job_type: "delegated_revit_task_batch",
+    title: "Forged owner input",
+    approval: { required: false },
+    owner: { user_id: "mallory", tenant_id: "tenant-evil" },
+    session_id: "forged-session",
+    target_context: { executor_id: "executor-evil", project_fingerprint: fingerprintB },
+    items: [{ id: "forged-item", index: 1, status: "pending", task_prompt: "Set parameter." }]
+  };
+  const trusted = createRevitBatchJob(forgedInput as any, aliceA) as AnyMap;
+  assert.deepEqual(trusted.owner, aliceA.owner);
+  assert.equal(trusted.session_id, aliceA.session_id);
+  assert.deepEqual(trusted.target_context, aliceA.target);
+});
+
+test("claim and settlement reject wrong executor, principal, document, and claim context", () => {
+  const root = mkWorkspace();
+  const access = boundAccess("alice", "session-alice", "executor-a", fingerprintA);
+  const wrongPrincipal = boundAccess("bob", "session-alice", "executor-a", fingerprintA);
+  const wrongDocument = boundAccess("alice", "session-alice", "executor-a", fingerprintB);
+  const wrongExecutor = boundAccess("alice", "session-alice", "executor-b", fingerprintA);
+  const job = createBoundJob(access);
+
+  assert.throws(
+    () => claimNextRevitBatchItem({ job_id: job.id, executor_id: "executor-b", access }),
+    /trusted target executor/
+  );
+  assert.throws(
+    () => claimNextRevitBatchItem({ job_id: job.id, executor_id: "executor-b", access: wrongExecutor }),
+    /access context mismatch/
+  );
+
+  const claim = claimNextRevitBatchItem({ job_id: job.id, executor_id: "executor-a", access }) as AnyMap;
+  for (const invalid of [wrongPrincipal, wrongDocument, wrongExecutor]) {
+    assert.throws(
+      () => completeRevitBatchItem({
+        job_id: job.id,
+        item_id: "item-1",
+        executor_id: invalid.target!.executor_id,
+        claim_token: claim.claim_token,
+        access: invalid
+      }),
+      /access context mismatch|not claimed by this executor/
+    );
+  }
+
+  editStoredJob(root, job.id, (stored) => {
+    stored.items[0].claim.target_context.project_fingerprint = fingerprintB;
+  });
+  assert.throws(
+    () => completeRevitBatchItem({
+      job_id: job.id,
+      item_id: "item-1",
+      executor_id: "executor-a",
+      claim_token: claim.claim_token,
+      access
+    }),
+    /claim context no longer matches/
+  );
+});
+
+test("pause and cancel become stable after the last active item settles while pending items remain", () => {
+  mkWorkspace();
+  const pauseJob = createBoundJob(boundAccess("alice", "pause-session", "executor-a", fingerprintA), ["pause-active", "pause-pending"]);
+  const pauseAccess = boundAccess("alice", "pause-session", "executor-a", fingerprintA);
+  const pauseClaim = claimNextRevitBatchItem({ job_id: pauseJob.id, executor_id: "executor-a", access: pauseAccess }) as AnyMap;
+  assert.equal((pauseRevitBatchJob(pauseJob.id, pauseAccess) as AnyMap).status, "pausing");
+  const paused = completeRevitBatchItem({
+    job_id: pauseJob.id,
+    item_id: "pause-active",
+    executor_id: "executor-a",
+    claim_token: pauseClaim.claim_token,
+    access: pauseAccess
+  }) as AnyMap;
+  assert.equal(paused.job.status, "paused");
+  assert.equal(paused.job.items.find((item: AnyMap) => item.id === "pause-pending").status, "pending");
+
+  const cancelAccess = boundAccess("alice", "cancel-session", "executor-a", fingerprintA);
+  const cancelJob = createBoundJob(cancelAccess, ["cancel-active", "cancel-pending"]);
+  const cancelClaim = claimNextRevitBatchItem({ job_id: cancelJob.id, executor_id: "executor-a", access: cancelAccess }) as AnyMap;
+  assert.equal((cancelRevitBatchJob(cancelJob.id, cancelAccess) as AnyMap).status, "cancelling");
+  const cancelled = completeRevitBatchItem({
+    job_id: cancelJob.id,
+    item_id: "cancel-active",
+    executor_id: "executor-a",
+    claim_token: cancelClaim.claim_token,
+    access: cancelAccess
+  }) as AnyMap;
+  assert.equal(cancelled.job.status, "cancelled");
+  assert.equal(cancelled.job.items.find((item: AnyMap) => item.id === "cancel-pending").status, "skipped");
+  assert.equal(cancelled.job.item_summary.pending, 0);
 });
