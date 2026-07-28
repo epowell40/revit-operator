@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { conditionalActionPathEffect, pathLooksWrite } from "../action_path_mutability.js";
 import { syncTaskFromRevitBatchJob } from "../tasks/service.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
 
@@ -29,9 +28,9 @@ type JsonMap = Record<string, unknown>;
 
 type RevitBatchReplayContract = {
   schema: "operator.revit_batch.replay_effect.v1";
-  authority: "server_route_classification";
-  source: "structured_actions" | "server_known_executor";
-  classification: "read" | "mutating" | "unknown" | "conflicting";
+  authority: "server_route_classification" | "server_executor_classification";
+  source: "dynamic_delegated_executor" | "server_known_executor";
+  classification: "read" | "unknown";
   replayable: boolean;
   route_count: number;
   route_plan_sha256: string;
@@ -505,62 +504,24 @@ function listJobRecords(limit = 20): RevitBatchJobRecord[] {
     .slice(0, Math.max(1, limit));
 }
 
-function classifyStructuredActions(actions: unknown): {
-  classification: RevitBatchReplayContract["classification"];
-  route_count: number;
-  route_plan_sha256: string;
-} {
-  if (!Array.isArray(actions) || actions.length === 0) {
-    return { classification: "unknown", route_count: 0, route_plan_sha256: settlementSha256([]) };
-  }
-  const canonical: JsonMap[] = [];
-  let hasMutation = false;
-  let hasUnknown = false;
-  let hasConflict = false;
-  const actionIds = new Set<string>();
-  for (const action of actions) {
-    const row = asObject(action);
-    const actionId = clip(row.action_id, 200);
-    const method = clip(row.method, 20).toUpperCase();
-    const actionPath = clip(row.path, 2000);
-    if (!actionId || actionIds.has(actionId) || (method !== "GET" && method !== "POST") || !actionPath.toLowerCase().startsWith("/revit/")) {
-      hasUnknown = true;
-      canonical.push({ action_id: actionId, method, path: actionPath });
-      continue;
-    }
-    actionIds.add(actionId);
-    const body = Object.prototype.hasOwnProperty.call(row, "body") ? row.body : undefined;
-    const effect = method === "GET"
-      ? "read"
-      : conditionalActionPathEffect(actionPath, body) ?? (pathLooksWrite(actionPath, body) ? "apply" : "read");
-    const declared = clip(row.request_effect ?? row.effect, 40).toLowerCase();
-    if (declared && (!(["read", "preview", "apply"] as string[]).includes(declared) || declared !== effect)) {
-      hasConflict = true;
-    }
-    if (effect !== "read") hasMutation = true;
-    canonical.push({ action_id: actionId, method, path: actionPath, effect, ...(body === undefined ? {} : { body }) });
-  }
-  return {
-    classification: hasConflict ? "conflicting" : hasUnknown ? "unknown" : hasMutation ? "mutating" : "read",
-    route_count: canonical.length,
-    route_plan_sha256: settlementSha256(canonical)
-  };
-}
-
-function deriveReplayContract(jobType: RevitBatchJobType, item: RevitBatchJobItem): RevitBatchReplayContract {
-  const routes = classifyStructuredActions(item.actions);
-  const serverKnownRead = jobType === REVIT_BATCH_JOB_TYPE_ROOM_VIEW_CAPTURE && routes.route_count === 0;
-  const classification = serverKnownRead ? "read" : routes.classification;
+function deriveReplayContract(jobType: RevitBatchJobType): RevitBatchReplayContract {
+  // Delegated executors plan from task_prompt after dispatch and do not execute
+  // item.actions as an enforced route plan. Only the bounded room-capture
+  // executor therefore has a server-known non-mutating replay contract.
+  const serverKnownRead = jobType === REVIT_BATCH_JOB_TYPE_ROOM_VIEW_CAPTURE;
   return {
     schema: "operator.revit_batch.replay_effect.v1",
-    authority: "server_route_classification",
-    source: serverKnownRead ? "server_known_executor" : "structured_actions",
-    classification,
-    replayable: classification === "read",
-    route_count: routes.route_count,
+    authority: serverKnownRead ? "server_route_classification" : "server_executor_classification",
+    source: serverKnownRead ? "server_known_executor" : "dynamic_delegated_executor",
+    classification: serverKnownRead ? "read" : "unknown",
+    replayable: serverKnownRead,
+    route_count: 0,
     route_plan_sha256: serverKnownRead
       ? settlementSha256({ job_type: REVIT_BATCH_JOB_TYPE_ROOM_VIEW_CAPTURE })
-      : routes.route_plan_sha256
+      : settlementSha256({
+          job_type: REVIT_BATCH_JOB_TYPE_DELEGATED,
+          executor_contract: "dynamic_task_prompt_planning"
+        })
   };
 }
 
@@ -584,7 +545,7 @@ function sanitizeItem(raw: unknown, index: number, jobType: RevitBatchJobType): 
     ...base
   };
   if (taskPrompt) next.task_prompt = taskPrompt;
-  next.replay_contract = deriveReplayContract(jobType, next);
+  next.replay_contract = deriveReplayContract(jobType);
   return next;
 }
 
@@ -652,7 +613,7 @@ function leaseDurationMs(): number {
 
 function isReadOnlyItem(job: RevitBatchJobRecord, item: RevitBatchJobItem): boolean {
   const stored = asObject(item.replay_contract);
-  const derived = deriveReplayContract(job.job_type, item);
+  const derived = deriveReplayContract(job.job_type);
   return derived.replayable && settlementSha256(stored) === settlementSha256(derived);
 }
 
