@@ -10,6 +10,21 @@ import { createExistingConditionsEvaluatorVisualReceipt } from "../src/existing_
 
 const HASH = "a".repeat(64);
 
+function visualReceipt() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-scoring-policy-visual-"));
+  const capture = path.join(root, "post.png");
+  const pdf = path.join(root, "post.pdf");
+  fs.writeFileSync(capture, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]));
+  fs.writeFileSync(pdf, "%PDF-1.4\n%%EOF\n", "ascii");
+  return createExistingConditionsEvaluatorVisualReceipt({
+    post_change_capture_path: capture,
+    post_change_pdf_path: pdf,
+    artifact_scope_root: root,
+    review_status: "pass",
+    notes: ["generic test receipt"]
+  });
+}
+
 function writeJson(filePath: string, value: unknown): void {
   fs.writeFileSync(filePath, `${JSON.stringify(value)}\n`, "utf8");
 }
@@ -63,12 +78,7 @@ function candidate(): Record<string, unknown> {
       connections: [],
       open_connector_count: 0
     },
-    visual_receipt: createExistingConditionsEvaluatorVisualReceipt({
-      post_change_capture_sha256: HASH,
-      post_change_pdf_sha256: HASH,
-      review_status: "pass",
-      notes: ["generic test receipt"]
-    })
+    visual_receipt: visualReceipt()
   };
 }
 

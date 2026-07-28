@@ -354,13 +354,25 @@ function connectorSize(raw: JsonMap): JsonMap {
   return {};
 }
 
-function inferDiscipline(category: string): ExistingConditionsDiscipline {
+function inferDiscipline(
+  category: string,
+  evidence: { explicit?: unknown; systemClassification?: unknown; systemType?: unknown } = {}
+): ExistingConditionsDiscipline {
   const key = normalized(category);
+  const explicit = normalized(evidence.explicit);
+  if (["architectural", "mechanical", "plumbing", "electrical"].includes(explicit)) {
+    return explicit as ExistingConditionsDiscipline;
+  }
   if (/wall|door|window|room|floor|ceiling|roof|column/.test(key)) return "architectural";
   if (/electrical|lighting|fire alarm|data device|communication device/.test(key)) return "electrical";
   if (/plumbing fixture|sanitary|domestic|sprinkler/.test(key)) return "plumbing";
   if (/duct|mechanical equipment|air terminal/.test(key)) return "mechanical";
-  if (/pipe/.test(key)) return "mechanical";
+  if (/pipe/.test(key)) {
+    const systemEvidence = normalized(`${String(evidence.systemClassification ?? "")} ${String(evidence.systemType ?? "")}`);
+    const plumbing = /\b(sanitary|domestic|waste|vent|storm|sewer|plumbing|fire protection|sprinkler)\b/.test(systemEvidence);
+    const mechanical = /\b(hydronic|chilled water|heating hot water|steam|condensate|condenser water|refrigerant)\b/.test(systemEvidence);
+    return plumbing === mechanical ? "other" : plumbing ? "plumbing" : "mechanical";
+  }
   return "other";
 }
 
@@ -422,6 +434,8 @@ function normalizedElementFromVisible(raw: JsonMap): { id: number; element: Exis
   const parameters = primitiveParameters(raw.parameters);
   const sizeFromConnector = connectorSize(raw);
   const system = asObject(raw.system);
+  const systemClassification = firstText(raw.systemClassification, raw.system_classification, system.systemClassification, system.system_classification);
+  const systemType = firstText(system.systemType, system.system_type, parameters.systemType);
   const electricalCircuit = asObject(raw.electricalCircuit ?? raw.electrical_circuit);
   const systemIds = idKeys(electricalCircuit.systemIds ?? electricalCircuit.system_ids, "electrical-system");
   const powerSystemIds = idKeys(electricalCircuit.powerSystemIds ?? electricalCircuit.power_system_ids, "electrical-system");
@@ -432,13 +446,17 @@ function normalizedElementFromVisible(raw: JsonMap): { id: number; element: Exis
     element: {
       key: firstText(raw.sourceScopedId, raw.source_scoped_id, `host:${Math.trunc(id)}`)!,
       kind,
-      discipline: inferDiscipline(category),
+      discipline: inferDiscipline(category, {
+        explicit: raw.discipline,
+        systemClassification,
+        systemType
+      }),
       role: inferRole(category),
       category,
       family: firstText(raw.familyName, raw.family_name),
       type: firstText(raw.typeName, raw.type_name, raw.name),
-      system_classification: firstText(raw.systemClassification, raw.system_classification, system.systemClassification, system.system_classification),
-      system_type: firstText(system.systemType, system.system_type, parameters.systemType),
+      system_classification: systemClassification,
+      system_type: systemType,
       location,
       endpoints: start && end ? [start, end] : null,
       rotation_degrees: radians === null ? null : radians * 180 / Math.PI,

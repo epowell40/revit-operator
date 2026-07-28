@@ -1,4 +1,7 @@
+import crypto from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
+import { ensureWorkspaceLayout } from "../workspace.js";
 import type {
   AtomicMepDraftWorkflowRequest,
   MepDraftContinuationEndpointPlan
@@ -369,7 +372,8 @@ function stageVisualAccepted(
   return entries.some(entry =>
     entry.event === "visual_accepted" &&
     entry.status === "accepted" &&
-    entry.stage_key === stageKey
+    entry.stage_key === stageKey &&
+    recordedStageArtifactValid(entry, "visual")
   );
 }
 
@@ -408,7 +412,8 @@ function stageCheckpointSaved(
   return entries.some(entry =>
     entry.event === "checkpoint_saved" &&
     entry.status === "accepted" &&
-    entry.stage_key === stageKey
+    entry.stage_key === stageKey &&
+    recordedStageArtifactValid(entry, "checkpoint")
   );
 }
 
@@ -990,27 +995,121 @@ export function recordExistingConditionsStageResult(args: {
   return null;
 }
 
-function resultContainsVisualArtifact(result: Record<string, unknown>): boolean {
-  const resultJson = result.result_json;
+type VerifiedStageArtifact = {
+  path: string;
+  sha256: string;
+  byte_length: number;
+  scope_root: string;
+};
+
+function pathWithin(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function supportedVisualBytes(bytes: Buffer): boolean {
+  const png = bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  const jpeg = bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8 &&
+    bytes[bytes.length - 2] === 0xff && bytes[bytes.length - 1] === 0xd9;
+  return png || jpeg;
+}
+
+function claimedArtifactHash(value: Record<string, unknown>): string {
+  return clean(value.sha256 ?? value.file_sha256 ?? value.fileSha256).toLowerCase();
+}
+
+function verifiedStageArtifact(args: {
+  result: Record<string, unknown>;
+  sessionId: string;
+  kind: "visual" | "checkpoint";
+  expectedPath?: string;
+  expectedFileName?: string;
+}): VerifiedStageArtifact | null {
+  const resultJson = args.result.result_json;
   const row = resultJson && typeof resultJson === "object" && !Array.isArray(resultJson)
     ? resultJson as Record<string, unknown>
     : {};
-  const candidates = [
+  const candidates: Array<{ path: string; metadata: Record<string, unknown> }> = [
     row.path,
     row.filePath,
     row.file_path,
     row.imagePath,
     row.image_path,
     row.screenshot_path
-  ];
-  if (candidates.some(value => clean(value).length > 0)) return true;
-  const attachments = Array.isArray(result.attachments) ? result.attachments : [];
-  return attachments.some(value => {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  ].map(value => ({ path: clean(value), metadata: row })).filter(value => value.path.length > 0);
+  for (const value of Array.isArray(args.result.attachments) ? args.result.attachments : []) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
     const attachment = value as Record<string, unknown>;
-    return clean(attachment.local_path).length > 0 ||
-      clean(attachment.data_base64).length > 0;
-  });
+    const localPath = clean(attachment.local_path);
+    // Inline data is never an artifact authority. It may accompany a real file,
+    // but cannot replace a scoped filesystem artifact.
+    if (localPath) candidates.push({ path: localPath, metadata: attachment });
+  }
+  const workspaceRoot = fs.realpathSync(ensureWorkspaceLayout().root);
+  const checkpointRoot = fs.realpathSync(existingConditionsRepairLedgerSessionDir(args.sessionId));
+  const scopeRoot = args.kind === "checkpoint" ? checkpointRoot : workspaceRoot;
+  for (const candidate of candidates) {
+    try {
+      const candidatePath = path.isAbsolute(candidate.path)
+        ? candidate.path
+        : path.resolve(workspaceRoot, candidate.path);
+      const realPath = fs.realpathSync(candidatePath);
+      if (!pathWithin(scopeRoot, realPath)) continue;
+      if (args.expectedPath && realPath !== fs.realpathSync(path.resolve(args.expectedPath))) continue;
+      if (args.expectedFileName && path.basename(realPath) !== args.expectedFileName) continue;
+      const stat = fs.statSync(realPath);
+      if (!stat.isFile() || stat.size <= 0) continue;
+      const bytes = fs.readFileSync(realPath);
+      if (args.kind === "visual" && !supportedVisualBytes(bytes)) continue;
+      const actualHash = crypto.createHash("sha256").update(bytes).digest("hex");
+      const claimedHash = claimedArtifactHash(candidate.metadata);
+      if (claimedHash && (!/^[a-f0-9]{64}$/.test(claimedHash) || claimedHash !== actualHash)) continue;
+      const inline = clean(candidate.metadata.data_base64);
+      if (inline) {
+        let decoded: Buffer;
+        try {
+          decoded = Buffer.from(inline, "base64");
+        } catch {
+          continue;
+        }
+        if (decoded.length !== bytes.length || !decoded.equals(bytes)) continue;
+      }
+      return {
+        path: realPath,
+        sha256: actualHash,
+        byte_length: bytes.length,
+        scope_root: scopeRoot
+      };
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+function recordedStageArtifactValid(
+  entry: ExistingConditionsRepairLedgerEntry,
+  kind: "visual" | "checkpoint"
+): boolean {
+  const value = entry.payload[kind === "visual" ? "visual_artifact" : "checkpoint_artifact"];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const artifact = value as Record<string, unknown>;
+  try {
+    const expectedRoot = fs.realpathSync(kind === "visual"
+      ? ensureWorkspaceLayout().root
+      : existingConditionsRepairLedgerSessionDir(entry.session_id));
+    const scopeRoot = fs.realpathSync(clean(artifact.scope_root));
+    const artifactPath = fs.realpathSync(clean(artifact.path));
+    if (scopeRoot !== expectedRoot || !pathWithin(expectedRoot, artifactPath)) return false;
+    const bytes = fs.readFileSync(artifactPath);
+    if (bytes.length <= 0 || bytes.length !== Number(artifact.byte_length)) return false;
+    if (kind === "visual" && !supportedVisualBytes(bytes)) return false;
+    const actualHash = crypto.createHash("sha256").update(bytes).digest("hex");
+    return actualHash === clean(artifact.sha256).toLowerCase() &&
+      (kind !== "checkpoint" || clean(entry.payload.checkpoint_path) === artifactPath);
+  } catch {
+    return false;
+  }
 }
 
 function collectNativeElementIds(value: unknown): number[] {
@@ -1138,12 +1237,22 @@ export function recordExistingConditionsVerificationResult(args: {
   ) {
     return null;
   }
-  if (plan.state === "verify_visual" && !resultContainsVisualArtifact(args.result)) {
-    return null;
-  }
-  if (plan.state === "checkpoint" && !resultContainsVisualArtifact(args.result)) {
-    return null;
-  }
+  const verifiedArtifact = plan.state === "verify_visual"
+    ? verifiedStageArtifact({
+        result: args.result,
+        sessionId: args.sessionId,
+        kind: "visual",
+        expectedFileName: clean(plan.body?.fileName)
+      })
+    : plan.state === "checkpoint"
+      ? verifiedStageArtifact({
+          result: args.result,
+          sessionId: args.sessionId,
+          kind: "checkpoint",
+          expectedPath: clean(plan.body.filePath)
+        })
+      : null;
+  if ((plan.state === "verify_visual" || plan.state === "checkpoint") && !verifiedArtifact) return null;
   if (plan.state === "verify_readback") {
     const expectedIds = normalizeIds(plan.body?.elementIds);
     const returnedIds = new Set(collectNativeElementIds(resultJson));
@@ -1194,7 +1303,10 @@ export function recordExistingConditionsVerificationResult(args: {
       result_sha256: sha256(resultJson),
       verification_element_ids: normalizeIds(plan.body?.elementIds),
       ...(plan.state === "verify_visual"
-        ? { visual_artifact_present: true }
+        ? {
+            visual_artifact_present: true,
+            visual_artifact: verifiedArtifact
+          }
         : plan.state === "verify_continuation"
           ? {
               continuation_connector_readback_present: true,
@@ -1205,7 +1317,10 @@ export function recordExistingConditionsVerificationResult(args: {
             }
         : plan.state === "verify_readback"
           ? { native_readback_present: true }
-          : { checkpoint_path: clean(row.path ?? row.filePath ?? row.file_path) })
+          : {
+              checkpoint_path: verifiedArtifact!.path,
+              checkpoint_artifact: verifiedArtifact
+            })
     },
     nextRepair: plan.state === "verify_readback"
       ? (stageContinuationEndpoints(
@@ -1295,7 +1410,7 @@ export function registerExistingConditionsRepairAction(args: {
   });
 }
 
-export function appendExistingConditionsAcceptanceEvent(args: {
+function appendExistingConditionsAcceptanceEvent(args: {
   sessionId: string;
   workflow: AtomicMepDraftWorkflowRequest;
   event: Extract<

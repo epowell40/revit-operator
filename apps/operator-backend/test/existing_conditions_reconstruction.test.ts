@@ -14,6 +14,7 @@ import {
 
 import { MockBridgeTransport, runRevitDemoWorkflow } from "../src/benchmark/revit_workflows.js";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { createExistingConditionsEvaluatorVisualReceipt } from "../src/existing_conditions/evaluator_visual.js";
 
@@ -21,6 +22,20 @@ const SOURCE_HASH = "a".repeat(64);
 const RENDER_HASH = "b".repeat(64);
 const COVERAGE_HASH = "c".repeat(64);
 const REGION_HASH = "d".repeat(64);
+
+function visualReceipt() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-reconstruction-visual-"));
+  const capture = path.join(root, "post.png");
+  const pdf = path.join(root, "post.pdf");
+  fs.writeFileSync(capture, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]));
+  fs.writeFileSync(pdf, "%PDF-1.4\n%%EOF\n", "ascii");
+  return createExistingConditionsEvaluatorVisualReceipt({
+    post_change_capture_path: capture,
+    post_change_pdf_path: pdf,
+    artifact_scope_root: root,
+    review_status: "pass"
+  });
+}
 
 test("multi-view visible element exports merge without duplicating host ids", () => {
   const merged = mergeExistingConditionsVisibleElementPayloads([
@@ -343,11 +358,7 @@ function candidate(elements = [duct("new-901"), duct("new-902", 20)]): ExistingC
       connections: elements.length > 1 ? [{ a: elements[0]!.key, b: elements[1]!.key }] : [],
       open_connector_count: 2
     },
-    visual_receipt: createExistingConditionsEvaluatorVisualReceipt({
-      post_change_capture_sha256: "b".repeat(64),
-      post_change_pdf_sha256: "c".repeat(64),
-      review_status: "pass"
-    })
+    visual_receipt: visualReceipt()
   };
 }
 
@@ -561,6 +572,34 @@ test("normalizes visible-element and connector readback into a scoring snapshot"
   assert.equal(snapshot.elements[0]?.size?.width_ft, 1);
   assert.deepEqual(snapshot.connections, [{ a: "host:101", b: "host:90", kind: "physical" }]);
   assert.equal(snapshot.open_connector_count, 1);
+});
+
+test("normalizes generic Pipes from system evidence and leaves ambiguous or conflicting pipes unknown", () => {
+  const items = [
+    { id: 201, category: "Pipes", systemClassification: "Sanitary" },
+    { id: 202, category: "Pipes", system: { systemType: "Hydronic Supply" } },
+    { id: 203, category: "Pipes" },
+    { id: 204, category: "Pipes", systemClassification: "Sanitary Hydronic Supply" },
+    { id: 205, category: "Pipes", discipline: "plumbing" }
+  ].map((item) => ({
+    ...item,
+    geometry: {
+      start: { model: { x: item.id, y: 0, z: 0 } },
+      end: { model: { x: item.id + 1, y: 0, z: 0 } }
+    }
+  }));
+  const snapshot = normalizeExistingConditionsSnapshot(
+    { items },
+    { status: "Ok", results: items.map((item) => ({ id: item.id, ok: true, connectors: [] })) },
+    { selected_element_ids: items.map((item) => item.id) }
+  );
+  assert.deepEqual(snapshot.elements.map((element) => element.discipline), [
+    "plumbing",
+    "mechanical",
+    "other",
+    "other",
+    "plumbing"
+  ]);
 });
 
 test("scores preserved connections to stable surrounding-model anchors", () => {

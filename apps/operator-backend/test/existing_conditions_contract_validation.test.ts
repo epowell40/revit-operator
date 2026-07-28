@@ -884,8 +884,21 @@ test("candidate and withheld contracts bind bounded MEP coverage receipts", () =
     },
     snapshot,
     visual_receipt: {
+      artifact_scope_root: "C:\\evaluator\\artifacts",
       post_change_capture_sha256: "e".repeat(64),
       post_change_pdf_sha256: "f".repeat(64),
+      post_change_capture_artifact: {
+        path: "C:\\evaluator\\artifacts\\post.png",
+        sha256: "e".repeat(64),
+        byte_length: 128,
+        media_type: "image"
+      },
+      post_change_pdf_artifact: {
+        path: "C:\\evaluator\\artifacts\\post.pdf",
+        sha256: "f".repeat(64),
+        byte_length: 256,
+        media_type: "application/pdf"
+      },
       evaluator_review: {
         reviewer_role: "evaluator",
         review_status: "pass",

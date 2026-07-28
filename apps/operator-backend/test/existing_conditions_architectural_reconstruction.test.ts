@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   normalizeExistingConditionsSnapshot,
@@ -12,6 +15,20 @@ import { createExistingConditionsEvaluatorVisualReceipt } from "../src/existing_
 
 const SOURCE_HASH = "a".repeat(64);
 const MODEL_HASH = "b".repeat(64);
+
+function visualReceipt() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-architectural-visual-"));
+  const capture = path.join(root, "post.png");
+  const pdf = path.join(root, "post.pdf");
+  fs.writeFileSync(capture, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]));
+  fs.writeFileSync(pdf, "%PDF-1.4\n%%EOF\n", "ascii");
+  return createExistingConditionsEvaluatorVisualReceipt({
+    post_change_capture_path: capture,
+    post_change_pdf_path: pdf,
+    artifact_scope_root: root,
+    review_status: "pass"
+  });
+}
 
 function wall(key: string, start: [number, number], end: [number, number]): ExistingConditionsElement {
   return {
@@ -112,11 +129,7 @@ function architecturalCandidate(): ExistingConditionsCandidate {
       ],
       open_connector_count: 0
     },
-    visual_receipt: createExistingConditionsEvaluatorVisualReceipt({
-      post_change_capture_sha256: "d".repeat(64),
-      post_change_pdf_sha256: "e".repeat(64),
-      review_status: "pass"
-    })
+    visual_receipt: visualReceipt()
   };
 }
 

@@ -63,10 +63,13 @@
     "snapshot": { "$ref": "existing-conditions-ground-truth.v1.schema.json#/$defs/snapshot" },
     "visual_receipt": {
       "type": "object", "additionalProperties": false,
-      "required": ["post_change_capture_sha256", "post_change_pdf_sha256", "evaluator_review"],
+      "required": ["artifact_scope_root", "post_change_capture_sha256", "post_change_pdf_sha256", "post_change_capture_artifact", "post_change_pdf_artifact", "evaluator_review"],
       "properties": {
+        "artifact_scope_root": { "type": "string", "minLength": 1 },
         "post_change_capture_sha256": { "$ref": "#/$defs/sha256" },
         "post_change_pdf_sha256": { "$ref": "#/$defs/sha256" },
+        "post_change_capture_artifact": { "$ref": "#/$defs/visual_artifact" },
+        "post_change_pdf_artifact": { "$ref": "#/$defs/pdf_artifact" },
         "evaluator_review": {
           "type": "object", "additionalProperties": false,
           "required": ["reviewer_role", "review_status", "notes", "receipt_sha256"],
@@ -82,6 +85,26 @@
   },
   "$defs": {
     "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+    "visual_artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "byte_length", "media_type"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "byte_length": { "type": "integer", "minimum": 1 },
+        "media_type": { "const": "image" }
+      }
+    },
+    "pdf_artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "byte_length", "media_type"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "byte_length": { "type": "integer", "minimum": 1 },
+        "media_type": { "const": "application/pdf" }
+      }
+    },
     "strings": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
     "pixel_point": {
       "type": "object", "additionalProperties": false, "required": ["x", "y"],

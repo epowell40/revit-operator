@@ -16,6 +16,20 @@ import {
   registerExistingConditionsStagedWorkflow
 } from "../src/existing_conditions/staged_repair_ledger.js";
 
+function writeVisualArtifact(workspaceRoot: string, fileName: unknown): string {
+  const artifactPath = path.join(workspaceRoot, "artifacts", "captures", String(fileName));
+  fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+  fs.writeFileSync(artifactPath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]));
+  return artifactPath;
+}
+
+function writeCheckpointArtifact(filePath: unknown): string {
+  const artifactPath = String(filePath);
+  fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+  fs.writeFileSync(artifactPath, "RVT checkpoint bytes", "utf8");
+  return artifactPath;
+}
+
 function request(
   sessionId: string,
   toolResults: ChatRequest["tool_results"] = [],
@@ -876,6 +890,10 @@ test("provider-independent loop enforces staged repair readback visual and check
       (visual.actions[0]?.body as Record<string, unknown>)?.focusPaddingFt,
       18
     );
+    const visualPath = writeVisualArtifact(
+      root,
+      (visual.actions[0]?.body as Record<string, unknown>)?.fileName
+    );
 
     const checkpoint = enforceExistingConditionsOneActionLoop({
       req: request(sessionId, [{
@@ -883,11 +901,14 @@ test("provider-independent loop enforces staged repair readback visual and check
         method: "POST",
         path: "/revit/highlight-and-export",
         status: "done",
-        result_json: { status: "ok", path: "C:\\evidence\\repair.png" }
+        result_json: { status: "ok", path: visualPath }
       }]),
       decision: response([])
     });
     assert.equal(checkpoint.actions[0]?.path, "/revit/save-as");
+    const checkpointPath = writeCheckpointArtifact(
+      (checkpoint.actions[0]?.body as Record<string, unknown>)?.filePath
+    );
 
     const complete = enforceExistingConditionsOneActionLoop({
       req: request(sessionId, [{
@@ -897,7 +918,7 @@ test("provider-independent loop enforces staged repair readback visual and check
         status: "done",
         result_json: {
           status: "Success",
-          path: (checkpoint.actions[0]?.body as Record<string, unknown>)?.filePath
+          path: checkpointPath
         }
       }]),
       decision: response([{

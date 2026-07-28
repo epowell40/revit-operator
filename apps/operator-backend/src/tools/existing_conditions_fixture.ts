@@ -1394,8 +1394,11 @@ function sealCandidate(): void {
   const scopeId = requiredArgument("--scope-id");
   const snapshotPath = path.resolve(requiredArgument("--snapshot"));
   const sourcePdf = path.resolve(requiredArgument("--source-pdf"));
-  const visualReceipt = readJson(requiredArgument("--evaluator-visual-receipt")) as ExistingConditionsEvaluatorVisualReceipt;
-  if (!validateExistingConditionsEvaluatorVisualReceipt(visualReceipt)) {
+  const visualReceiptPath = path.resolve(requiredArgument("--evaluator-visual-receipt"));
+  const visualReceipt = readJson(visualReceiptPath) as ExistingConditionsEvaluatorVisualReceipt;
+  if (!validateExistingConditionsEvaluatorVisualReceipt(visualReceipt, {
+    allowed_artifact_root: path.dirname(visualReceiptPath)
+  })) {
     throw new Error("Evaluator visual receipt is invalid or has been modified.");
   }
   const discipline = optionalDiscipline();
@@ -1425,13 +1428,15 @@ function reviewVisualEvidence(): void {
   if (!fs.existsSync(postPdf)) throw new Error(`Post-change PDF does not exist: ${postPdf}`);
   if (!["pass", "needs_review", "fail"].includes(status)) throw new Error("--status must be pass, needs_review, or fail.");
   const notes = argument("--notes").split("|").map((note) => note.trim()).filter(Boolean);
+  const outPath = path.resolve(requiredArgument("--out"));
   const receipt = createExistingConditionsEvaluatorVisualReceipt({
-    post_change_capture_sha256: sha256(postCapture),
-    post_change_pdf_sha256: sha256(postPdf),
+    post_change_capture_path: postCapture,
+    post_change_pdf_path: postPdf,
+    artifact_scope_root: path.dirname(outPath),
     review_status: status as "pass" | "needs_review" | "fail",
     notes
   });
-  writeJson(requiredArgument("--out"), receipt);
+  writeJson(outPath, receipt);
 }
 
 function validateContractFile(): void {
