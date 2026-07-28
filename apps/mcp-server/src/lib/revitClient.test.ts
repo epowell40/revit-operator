@@ -71,7 +71,7 @@ test("callRevit marks a timed-out mutating request as non-retryable with an unkn
   const started = Date.now();
   try {
     await assert.rejects(
-      callRevit("/revit/sheets", "POST", { action: "list" }),
+      callRevit("/revit/walls", "POST", { action: "create" }),
       (error: unknown) => {
         assert.ok(error instanceof RevitBridgeCallError);
         assert.equal(error.code, "revit_bridge_timeout");
@@ -79,7 +79,7 @@ test("callRevit marks a timed-out mutating request as non-retryable with an unkn
         assert.equal(error.retryable, false);
         assert.equal(error.outcome_unknown, true);
         assert.equal(error.outcomeUnknown, true);
-        assert.match(error.message, /POST \/revit\/sheets exceeded 250 ms/);
+        assert.match(error.message, /POST \/revit\/walls exceeded 250 ms/);
         assert.match(error.message, /may already have started/);
         return true;
       },
@@ -158,6 +158,206 @@ test("callRevit keeps legacy unstructured HTTP errors compatible", async () => {
         assert.equal(error.outcome_unknown, false);
         assert.equal(error.bridgeDetails, undefined);
         assert.match(error.message, /bridge unavailable/);
+        return true;
+      },
+    );
+  } finally {
+    restore();
+    await close(server);
+  }
+});
+
+for (const status of [500, 502, 503]) {
+  test(`callRevit settles an unstructured mutation HTTP ${status} as outcome unknown`, async () => {
+    const server = http.createServer((_request, response) => {
+      response.statusCode = status;
+      response.end("legacy bridge failure");
+    });
+    const port = await listen(server);
+    const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
+    try {
+      await assert.rejects(
+        callRevit("/revit/walls", "POST", { action: "create" }),
+        (error: unknown) => {
+          assert.ok(error instanceof RevitBridgeCallError);
+          assert.equal(error.status, status);
+          assert.equal(error.retryable, false);
+          assert.equal(error.outcome_unknown, true);
+          assert.match(error.message, /legacy bridge failure/);
+          return true;
+        },
+      );
+    } finally {
+      restore();
+      await close(server);
+    }
+  });
+}
+
+test("callRevit does not replay an unstructured mutation rejection", async () => {
+  let requests = 0;
+  const server = http.createServer((_request, response) => {
+    requests += 1;
+    response.statusCode = 403;
+    response.end("write requires approval; X-Operator-Write-Grant missing");
+  });
+  const port = await listen(server);
+  const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
+  try {
+    await assert.rejects(
+      callRevit("/revit/walls", "POST", { action: "create" }),
+      (error: unknown) => {
+        assert.ok(error instanceof RevitBridgeCallError);
+        assert.equal(error.status, 403);
+        assert.equal(error.retryable, false);
+        assert.equal(error.outcome_unknown, true);
+        return true;
+      },
+    );
+    assert.equal(requests, 1);
+  } finally {
+    restore();
+    await close(server);
+  }
+});
+
+test("callRevit honors a structured pre-dispatch rejection for a mutation", async () => {
+  const bridgeError = {
+    ok: false,
+    code: "request_validation_failed",
+    phase: "pre_dispatch",
+    outcome_unknown: false,
+    retryable: true,
+  };
+  const server = http.createServer((_request, response) => {
+    response.statusCode = 422;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(bridgeError));
+  });
+  const port = await listen(server);
+  const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
+  try {
+    await assert.rejects(
+      callRevit("/revit/walls", "POST", { action: "create" }),
+      (error: unknown) => {
+        assert.ok(error instanceof RevitBridgeCallError);
+        assert.equal(error.status, 422);
+        assert.equal(error.retryable, true);
+        assert.equal(error.outcome_unknown, false);
+        assert.equal(error.phase, "pre_dispatch");
+        assert.deepEqual(error.bridgeDetails, bridgeError);
+        return true;
+      },
+    );
+  } finally {
+    restore();
+    await close(server);
+  }
+});
+
+test("callRevit settles a truncated mutation error body as outcome unknown", async () => {
+  const server = http.createServer((_request, response) => {
+    response.writeHead(503, {
+      "content-type": "application/json",
+      "content-length": "200",
+    });
+    response.write('{"ok":false,"code":');
+    setImmediate(() => response.socket?.destroy());
+  });
+  const port = await listen(server);
+  const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
+  try {
+    await assert.rejects(
+      callRevit("/revit/walls", "POST", { action: "create" }),
+      (error: unknown) => {
+        assert.ok(error instanceof RevitBridgeCallError);
+        assert.equal(error.code, "revit_bridge_http_error");
+        assert.equal(error.status, 503);
+        assert.equal(error.retryable, false);
+        assert.equal(error.outcome_unknown, true);
+        assert.match(error.message, /response body was unavailable or incomplete/);
+        return true;
+      },
+    );
+  } finally {
+    restore();
+    await close(server);
+  }
+});
+
+test("callRevit keeps a known read-only POST safely retryable", async () => {
+  const server = http.createServer((_request, response) => {
+    response.statusCode = 503;
+    response.end("bridge unavailable");
+  });
+  const port = await listen(server);
+  const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
+  try {
+    await assert.rejects(
+      callRevit("/revit/sheets", "POST", { action: "list" }),
+      (error: unknown) => {
+        assert.ok(error instanceof RevitBridgeCallError);
+        assert.equal(error.retryable, true);
+        assert.equal(error.outcome_unknown, false);
+        return true;
+      },
+    );
+  } finally {
+    restore();
+    await close(server);
+  }
+});
+
+test("callRevit classifies conditional POST bodies as read or apply", async () => {
+  const server = http.createServer((_request, response) => {
+    response.statusCode = 503;
+    response.end("bridge unavailable");
+  });
+  const port = await listen(server);
+  const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
+  try {
+    await assert.rejects(
+      callRevit("/revit/fire-damper-audit", "POST", { command: "audit" }),
+      (error: unknown) => {
+        assert.ok(error instanceof RevitBridgeCallError);
+        assert.equal(error.retryable, true);
+        assert.equal(error.outcome_unknown, false);
+        return true;
+      },
+    );
+    await assert.rejects(
+      callRevit("/revit/fire-damper-audit", "POST", { command: "fix", dryRun: true }),
+      (error: unknown) => {
+        assert.ok(error instanceof RevitBridgeCallError);
+        assert.equal(error.retryable, false);
+        assert.equal(error.outcome_unknown, true);
+        return true;
+      },
+    );
+    await assert.rejects(
+      callRevit("/revit/list-element-types", "POST", JSON.stringify({ action: "list" })),
+      (error: unknown) => {
+        assert.ok(error instanceof RevitBridgeCallError);
+        assert.equal(error.retryable, true);
+        assert.equal(error.outcome_unknown, false);
+        return true;
+      },
+    );
+    await assert.rejects(
+      callRevit("/revit/list-element-types", "POST", { action: "rename_types", dryRun: true }),
+      (error: unknown) => {
+        assert.ok(error instanceof RevitBridgeCallError);
+        assert.equal(error.retryable, true);
+        assert.equal(error.outcome_unknown, false);
+        return true;
+      },
+    );
+    await assert.rejects(
+      callRevit("/revit/list-element-types", "POST", { action: "rename_types", dryRun: false }),
+      (error: unknown) => {
+        assert.ok(error instanceof RevitBridgeCallError);
+        assert.equal(error.retryable, false);
+        assert.equal(error.outcome_unknown, true);
         return true;
       },
     );
