@@ -7,10 +7,79 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Structure;
 using RevitBridge.Common;
 
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("RevitBridge.Common.Tests")]
+
 namespace RevitBridge.Logic.Handlers
 {
     internal static class TransactionActionRunner
     {
+        internal sealed class ActionOutcome
+        {
+            private readonly List<string> _errors = new List<string>();
+
+            internal ActionOutcome(int index, string kind)
+            {
+                Index = index;
+                Kind = kind;
+            }
+
+            internal int Index { get; }
+            internal string Kind { get; }
+            internal int AttemptedOperations { get; private set; }
+            internal int SucceededOperations { get; private set; }
+            internal IReadOnlyList<string> Errors => _errors;
+            internal bool Success => _errors.Count == 0 && AttemptedOperations > 0 && SucceededOperations == AttemptedOperations;
+
+            internal void Attempt() => AttemptedOperations++;
+            internal void Succeed() => SucceededOperations++;
+
+            internal void Fail(List<string> warnings, string message)
+            {
+                if (!_errors.Contains(message)) _errors.Add(message);
+                if (!warnings.Contains(message)) warnings.Add(message);
+            }
+
+            internal object ToWireObject() => new
+            {
+                index = Index,
+                kind = Kind,
+                success = Success,
+                attemptedOperations = AttemptedOperations,
+                succeededOperations = SucceededOperations,
+                failedOperations = Math.Max(0, AttemptedOperations - SucceededOperations),
+                errors = _errors.ToArray()
+            };
+        }
+
+        internal sealed class TransactionOperationReceipt
+        {
+            internal bool Attempted { get; set; }
+            internal bool Succeeded { get; set; }
+            internal bool Failed => !Succeeded && !VerifiedRolledBack && (Attempted || !string.IsNullOrWhiteSpace(Error));
+            internal string Status { get; set; } = "NotAttempted";
+            internal string? Error { get; set; }
+            internal bool VerifiedRolledBack { get; set; }
+
+            internal object ToWireObject() => new
+            {
+                attempted = Attempted,
+                succeeded = Succeeded,
+                failed = Failed,
+                status = Status,
+                error = Error,
+                verifiedRolledBack = VerifiedRolledBack
+            };
+        }
+
+        internal static string BuildFailureError(string primaryError, TransactionOperationReceipt rollbackReceipt)
+        {
+            if (!rollbackReceipt.Failed) return primaryError;
+            var rollbackError = string.IsNullOrWhiteSpace(rollbackReceipt.Error)
+                ? $"rollback ended with status '{rollbackReceipt.Status}'"
+                : rollbackReceipt.Error;
+            return $"{primaryError} Rollback failed: {rollbackError}";
+        }
+
         internal sealed class Impact
         {
             internal HashSet<long> Added { get; } = new HashSet<long>();
@@ -46,41 +115,106 @@ namespace RevitBridge.Logic.Handlers
             }
         }
 
-        internal static void ExecuteAction(Document doc, JsonElement action, Impact impact, List<string> warnings, int index)
+        internal static ActionOutcome ExecuteAction(Document doc, JsonElement action, Impact impact, List<string> warnings, int index)
         {
-            if (action.ValueKind != JsonValueKind.Object)
-            {
-                warnings.Add($"Action[{index}] is not an object.");
-                return;
-            }
-
-            if (!action.TryGetProperty("kind", out var kindProp) || kindProp.ValueKind != JsonValueKind.String)
-            {
-                warnings.Add($"Action[{index}] missing 'kind'.");
-                return;
-            }
-
-            var kind = kindProp.GetString();
-            if (string.IsNullOrWhiteSpace(kind))
-            {
-                warnings.Add($"Action[{index}] has empty 'kind'.");
-                return;
-            }
+            var outcome = ValidateAction(action, warnings, index);
+            if (outcome.Errors.Count > 0) return outcome;
+            var kind = GetActionKind(action);
 
             switch (kind)
             {
                 case "delete":
-                    ExecuteDelete(doc, action, impact, warnings, index);
+                    ExecuteDelete(doc, action, impact, warnings, outcome, index);
                     break;
                 case "setParameters":
-                    ExecuteSetParameters(doc, action, impact, warnings, index);
+                    ExecuteSetParameters(doc, action, impact, warnings, outcome, index);
                     break;
                 case "placeFamilies":
-                    ExecutePlaceFamilies(doc, action, impact, warnings, index);
+                    ExecutePlaceFamilies(doc, action, impact, warnings, outcome, index);
                     break;
                 default:
-                    warnings.Add($"Action[{index}] unknown kind '{kind}'.");
+                    outcome.Fail(warnings, $"Action[{index}] unknown kind '{kind}'.");
                     break;
+            }
+
+            return outcome;
+        }
+
+        internal static ActionOutcome ValidateAction(JsonElement action, List<string> warnings, int index)
+        {
+            var actionKind = GetActionKind(action);
+            var outcome = new ActionOutcome(index, actionKind);
+
+            if (action.ValueKind != JsonValueKind.Object)
+            {
+                outcome.Fail(warnings, $"Action[{index}] is not an object.");
+                return outcome;
+            }
+
+            if (!action.TryGetProperty("kind", out var kindProp) || kindProp.ValueKind != JsonValueKind.String)
+            {
+                outcome.Fail(warnings, $"Action[{index}] missing 'kind'.");
+                return outcome;
+            }
+
+            if (string.IsNullOrWhiteSpace(kindProp.GetString()))
+            {
+                outcome.Fail(warnings, $"Action[{index}] has empty 'kind'.");
+                return outcome;
+            }
+
+            switch (actionKind)
+            {
+                case "delete":
+                    ValidateRequiredNonEmptyArray(action, "ids", actionKind, warnings, outcome, index);
+                    break;
+                case "setParameters":
+                    ValidateRequiredNonEmptyArray(action, "changes", actionKind, warnings, outcome, index);
+                    break;
+                case "placeFamilies":
+                    ValidateRequiredString(action, "levelName", actionKind, warnings, outcome, index);
+                    ValidateRequiredString(action, "symbolName", actionKind, warnings, outcome, index);
+                    ValidateRequiredNonEmptyArray(action, "instances", actionKind, warnings, outcome, index);
+                    break;
+                default:
+                    outcome.Fail(warnings, $"Action[{index}] unknown kind '{actionKind}'.");
+                    break;
+            }
+
+            return outcome;
+        }
+
+        private static void ValidateRequiredNonEmptyArray(
+            JsonElement action,
+            string propertyName,
+            string actionKind,
+            List<string> warnings,
+            ActionOutcome outcome,
+            int index)
+        {
+            if (!action.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.Array)
+            {
+                outcome.Fail(warnings, $"Action[{index}] {actionKind} missing '{propertyName}' array.");
+                return;
+            }
+
+            if (property.GetArrayLength() == 0)
+                outcome.Fail(warnings, $"Action[{index}] {actionKind}: '{propertyName}' array is empty.");
+        }
+
+        private static void ValidateRequiredString(
+            JsonElement action,
+            string propertyName,
+            string actionKind,
+            List<string> warnings,
+            ActionOutcome outcome,
+            int index)
+        {
+            if (!action.TryGetProperty(propertyName, out var property) ||
+                property.ValueKind != JsonValueKind.String ||
+                string.IsNullOrWhiteSpace(property.GetString()))
+            {
+                outcome.Fail(warnings, $"Action[{index}] {actionKind} missing '{propertyName}'.");
             }
         }
 
@@ -177,24 +311,34 @@ namespace RevitBridge.Logic.Handlers
                    long.TryParse(s, NumberStyles.Integer, CultureInfo.CurrentCulture, out value);
         }
 
-        private static void ExecuteDelete(Document doc, JsonElement action, Impact impact, List<string> warnings, int index)
+        private static void ExecuteDelete(Document doc, JsonElement action, Impact impact, List<string> warnings, ActionOutcome outcome, int index)
         {
             if (!action.TryGetProperty("ids", out var idsProp) || idsProp.ValueKind != JsonValueKind.Array)
             {
-                warnings.Add($"Action[{index}] delete missing 'ids' array.");
+                outcome.Fail(warnings, $"Action[{index}] delete missing 'ids' array.");
+                return;
+            }
+
+            if (idsProp.GetArrayLength() == 0)
+            {
+                outcome.Fail(warnings, $"Action[{index}] delete: 'ids' array is empty.");
                 return;
             }
 
             var ids = new List<ElementId>();
             foreach (var el in idsProp.EnumerateArray())
             {
-                if (el.ValueKind != JsonValueKind.Number) continue;
-                if (!el.TryGetInt64(out var id)) continue;
+                outcome.Attempt();
+                if (el.ValueKind != JsonValueKind.Number || !el.TryGetInt64(out var id) || id <= 0)
+                {
+                    outcome.Fail(warnings, $"Action[{index}] delete: id must be a positive integer.");
+                    continue;
+                }
 
                 var elem = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(id));
                 if (elem == null)
                 {
-                    warnings.Add($"Action[{index}] delete: element {id} not found.");
+                    outcome.Fail(warnings, $"Action[{index}] delete: element {id} not found.");
                     continue;
                 }
 
@@ -212,7 +356,7 @@ namespace RevitBridge.Logic.Handlers
 
             if (ids.Count == 0)
             {
-                warnings.Add($"Action[{index}] delete: no valid existing ids.");
+                outcome.Fail(warnings, $"Action[{index}] delete: no valid existing ids.");
                 return;
             }
 
@@ -223,69 +367,96 @@ namespace RevitBridge.Logic.Handlers
             }
             catch (Exception ex)
             {
-                warnings.Add($"Action[{index}] delete failed: {ex.Message}");
+                outcome.Fail(warnings, $"Action[{index}] delete failed: {ex.Message}");
                 return;
             }
 
-            foreach (var did in deleted) impact.Deleted.Add(RevitBridge.Common.ElementIdCompat.GetValue(did));
+            var deletedIds = new HashSet<long>(deleted.Select(RevitBridge.Common.ElementIdCompat.GetValue));
+            foreach (var did in deletedIds) impact.Deleted.Add(did);
+            foreach (var requestedId in ids.Select(RevitBridge.Common.ElementIdCompat.GetValue))
+            {
+                if (deletedIds.Contains(requestedId))
+                    outcome.Succeed();
+                else
+                    outcome.Fail(warnings, $"Action[{index}] delete: Revit did not report element {requestedId} as deleted.");
+            }
         }
 
-        private static void ExecuteSetParameters(Document doc, JsonElement action, Impact impact, List<string> warnings, int index)
+        private static void ExecuteSetParameters(Document doc, JsonElement action, Impact impact, List<string> warnings, ActionOutcome outcome, int index)
         {
             if (!action.TryGetProperty("changes", out var changesProp) || changesProp.ValueKind != JsonValueKind.Array)
             {
-                warnings.Add($"Action[{index}] setParameters missing 'changes' array.");
+                outcome.Fail(warnings, $"Action[{index}] setParameters missing 'changes' array.");
+                return;
+            }
+
+            if (changesProp.GetArrayLength() == 0)
+            {
+                outcome.Fail(warnings, $"Action[{index}] setParameters: 'changes' array is empty.");
                 return;
             }
 
             foreach (var entry in changesProp.EnumerateArray())
             {
-                if (entry.ValueKind != JsonValueKind.Object) continue;
+                outcome.Attempt();
+                if (entry.ValueKind != JsonValueKind.Object)
+                {
+                    outcome.Fail(warnings, $"Action[{index}] setParameters: change must be an object.");
+                    continue;
+                }
                 if (!entry.TryGetProperty("elementId", out var elementIdProp) || !elementIdProp.TryGetInt64(out var elementId))
                 {
-                    warnings.Add($"Action[{index}] setParameters: missing 'elementId'.");
+                    outcome.Fail(warnings, $"Action[{index}] setParameters: missing 'elementId'.");
+                    continue;
+                }
+                if (elementId <= 0)
+                {
+                    outcome.Fail(warnings, $"Action[{index}] setParameters: 'elementId' must be a positive integer.");
                     continue;
                 }
                 if (!entry.TryGetProperty("parameterName", out var parameterNameProp) || parameterNameProp.ValueKind != JsonValueKind.String)
                 {
-                    warnings.Add($"Action[{index}] setParameters: missing 'parameterName' for element {elementId}.");
+                    outcome.Fail(warnings, $"Action[{index}] setParameters: missing 'parameterName' for element {elementId}.");
+                    continue;
+                }
+                if (!entry.TryGetProperty("value", out var valueProp) || valueProp.ValueKind != JsonValueKind.String)
+                {
+                    outcome.Fail(warnings, $"Action[{index}] setParameters: missing string 'value' for element {elementId}.");
                     continue;
                 }
 
                 var parameterName = parameterNameProp.GetString();
-                var value = entry.TryGetProperty("value", out var valueProp) && valueProp.ValueKind == JsonValueKind.String
-                    ? valueProp.GetString()
-                    : null;
+                var value = valueProp.GetString();
 
                 var elem = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(elementId));
                 if (elem == null)
                 {
-                    warnings.Add($"Action[{index}] setParameters: element {elementId} not found.");
+                    outcome.Fail(warnings, $"Action[{index}] setParameters: element {elementId} not found.");
                     continue;
                 }
 
                 if (string.IsNullOrWhiteSpace(parameterName))
                 {
-                    warnings.Add($"Action[{index}] setParameters: empty parameterName for element {elementId}.");
+                    outcome.Fail(warnings, $"Action[{index}] setParameters: empty parameterName for element {elementId}.");
                     continue;
                 }
 
                 var param = elem.LookupParameter(parameterName);
                 if (param == null)
                 {
-                    warnings.Add($"Action[{index}] setParameters: parameter '{parameterName}' not found on element {elementId}.");
+                    outcome.Fail(warnings, $"Action[{index}] setParameters: parameter '{parameterName}' not found on element {elementId}.");
                     continue;
                 }
                 if (param.IsReadOnly)
                 {
-                    warnings.Add($"Action[{index}] setParameters: parameter '{parameterName}' is read-only on element {elementId}.");
+                    outcome.Fail(warnings, $"Action[{index}] setParameters: parameter '{parameterName}' is read-only on element {elementId}.");
                     continue;
                 }
 
                 var before = ParameterValueUtil.SnapshotForWire(param);
                 if (!ParameterValueUtil.TrySetFromString(param, value, out var changed, out var message))
                 {
-                    warnings.Add($"Action[{index}] setParameters: element {elementId} '{parameterName}': {message}");
+                    outcome.Fail(warnings, $"Action[{index}] setParameters: element {elementId} '{parameterName}': {message}");
                     impact.ParameterDiffs.Add(new
                     {
                         elementId,
@@ -311,24 +482,30 @@ namespace RevitBridge.Logic.Handlers
                 });
 
                 if (changed) impact.Modified.Add(elementId);
+                outcome.Succeed();
             }
         }
 
-        private static void ExecutePlaceFamilies(Document doc, JsonElement action, Impact impact, List<string> warnings, int index)
+        private static void ExecutePlaceFamilies(Document doc, JsonElement action, Impact impact, List<string> warnings, ActionOutcome outcome, int index)
         {
             if (!action.TryGetProperty("levelName", out var levelNameProp) || levelNameProp.ValueKind != JsonValueKind.String)
             {
-                warnings.Add($"Action[{index}] placeFamilies missing 'levelName'.");
+                outcome.Fail(warnings, $"Action[{index}] placeFamilies missing 'levelName'.");
                 return;
             }
             if (!action.TryGetProperty("symbolName", out var symbolNameProp) || symbolNameProp.ValueKind != JsonValueKind.String)
             {
-                warnings.Add($"Action[{index}] placeFamilies missing 'symbolName'.");
+                outcome.Fail(warnings, $"Action[{index}] placeFamilies missing 'symbolName'.");
                 return;
             }
             if (!action.TryGetProperty("instances", out var instancesProp) || instancesProp.ValueKind != JsonValueKind.Array)
             {
-                warnings.Add($"Action[{index}] placeFamilies missing 'instances' array.");
+                outcome.Fail(warnings, $"Action[{index}] placeFamilies missing 'instances' array.");
+                return;
+            }
+            if (instancesProp.GetArrayLength() == 0)
+            {
+                outcome.Fail(warnings, $"Action[{index}] placeFamilies: 'instances' array is empty.");
                 return;
             }
 
@@ -338,18 +515,18 @@ namespace RevitBridge.Logic.Handlers
                 ? familyNameProp.GetString()
                 : null;
 
-            Level level = new FilteredElementCollector(doc)
+            Level? level = new FilteredElementCollector(doc)
                 .OfClass(typeof(Level))
                 .Cast<Level>()
                 .FirstOrDefault(l => l.Name.Equals(levelName, StringComparison.OrdinalIgnoreCase));
 
             if (level == null)
             {
-                warnings.Add($"Action[{index}] placeFamilies: level '{levelName}' not found.");
+                outcome.Fail(warnings, $"Action[{index}] placeFamilies: level '{levelName}' not found.");
                 return;
             }
 
-            FamilySymbol symbol = new FilteredElementCollector(doc)
+            FamilySymbol? symbol = new FilteredElementCollector(doc)
                 .OfClass(typeof(FamilySymbol))
                 .Cast<FamilySymbol>()
                 .FirstOrDefault(s =>
@@ -358,27 +535,37 @@ namespace RevitBridge.Logic.Handlers
 
             if (symbol == null)
             {
-                warnings.Add($"Action[{index}] placeFamilies: symbol '{symbolName}' not found.");
+                outcome.Fail(warnings, $"Action[{index}] placeFamilies: symbol '{symbolName}' not found.");
                 return;
             }
 
             if (!symbol.IsActive)
             {
                 try { symbol.Activate(); }
-                catch (Exception ex) { warnings.Add($"Action[{index}] placeFamilies: failed to activate symbol '{symbolName}': {ex.Message}"); }
+                catch (Exception ex)
+                {
+                    outcome.Fail(warnings, $"Action[{index}] placeFamilies: failed to activate symbol '{symbolName}': {ex.Message}");
+                    return;
+                }
             }
 
             foreach (var inst in instancesProp.EnumerateArray())
             {
-                if (inst.ValueKind != JsonValueKind.Object) continue;
-                if (!TryGetDouble(inst, "x", out var x) || !TryGetDouble(inst, "y", out var y) || !TryGetDouble(inst, "z", out var z))
+                outcome.Attempt();
+                var errorsBefore = outcome.Errors.Count;
+                if (inst.ValueKind != JsonValueKind.Object)
                 {
-                    warnings.Add($"Action[{index}] placeFamilies: instance missing x/y/z.");
+                    outcome.Fail(warnings, $"Action[{index}] placeFamilies: instance must be an object.");
+                    continue;
+                }
+                if (!TryGetFiniteDouble(inst, "x", out var x) || !TryGetFiniteDouble(inst, "y", out var y) || !TryGetFiniteDouble(inst, "z", out var z))
+                {
+                    outcome.Fail(warnings, $"Action[{index}] placeFamilies: instance requires finite x/y/z values.");
                     continue;
                 }
 
                 var point = new XYZ(x, y, z);
-                FamilyInstance fi = null;
+                FamilyInstance? fi = null;
                 try
                 {
                     fi = doc.Create.NewFamilyInstance(point, symbol, level, StructuralType.NonStructural);
@@ -388,29 +575,52 @@ namespace RevitBridge.Logic.Handlers
                     try { fi = doc.Create.NewFamilyInstance(point, symbol, StructuralType.NonStructural); }
                     catch (Exception ex)
                     {
-                        warnings.Add($"Action[{index}] placeFamilies: failed to place instance at ({x},{y},{z}): {ex.Message}");
+                        outcome.Fail(warnings, $"Action[{index}] placeFamilies: failed to place instance at ({x},{y},{z}): {ex.Message}");
                         continue;
                     }
                 }
 
-                if (fi == null) continue;
-
-                if (inst.TryGetProperty("parameters", out var parametersProp) && parametersProp.ValueKind == JsonValueKind.Object)
+                if (fi == null)
                 {
+                    outcome.Fail(warnings, $"Action[{index}] placeFamilies: Revit returned no instance at ({x},{y},{z}).");
+                    continue;
+                }
+
+                if (inst.TryGetProperty("parameters", out var parametersProp))
+                {
+                    if (parametersProp.ValueKind != JsonValueKind.Object)
+                    {
+                        outcome.Fail(warnings, $"Action[{index}] placeFamilies: 'parameters' must be an object.");
+                    }
+
+                    if (parametersProp.ValueKind == JsonValueKind.Object)
+                    {
                     foreach (var prop in parametersProp.EnumerateObject())
                     {
                         var param = fi.LookupParameter(prop.Name);
-                        if (param == null || param.IsReadOnly) continue;
+                        if (param == null)
+                        {
+                            outcome.Fail(warnings, $"Action[{index}] placeFamilies: parameter '{prop.Name}' not found on created element {RevitBridge.Common.ElementIdCompat.GetValue(fi.Id)}.");
+                            continue;
+                        }
+                        if (param.IsReadOnly)
+                        {
+                            outcome.Fail(warnings, $"Action[{index}] placeFamilies: parameter '{prop.Name}' is read-only on created element {RevitBridge.Common.ElementIdCompat.GetValue(fi.Id)}.");
+                            continue;
+                        }
 
                         var v = prop.Value.ValueKind == JsonValueKind.String ? prop.Value.GetString() : prop.Value.ToString();
-                        ParameterValueUtil.TrySetFromString(param, v, out _, out _);
+                        if (!ParameterValueUtil.TrySetFromString(param, v, out _, out var parameterError))
+                            outcome.Fail(warnings, $"Action[{index}] placeFamilies: element {RevitBridge.Common.ElementIdCompat.GetValue(fi.Id)} '{prop.Name}': {parameterError}");
+                    }
                     }
                 }
 
                 var autoParam = fi.LookupParameter("ROS_AutoGenerated");
                 if (autoParam != null && !autoParam.IsReadOnly)
                 {
-                    ParameterValueUtil.TrySetFromString(autoParam, "1", out _, out _);
+                    if (!ParameterValueUtil.TrySetFromString(autoParam, "1", out _, out var autoError))
+                        outcome.Fail(warnings, $"Action[{index}] placeFamilies: failed to set ROS_AutoGenerated on element {RevitBridge.Common.ElementIdCompat.GetValue(fi.Id)}: {autoError}");
                 }
 
                 impact.Added.Add(RevitBridge.Common.ElementIdCompat.GetValue(fi.Id));
@@ -424,7 +634,14 @@ namespace RevitBridge.Logic.Handlers
                     y = point.Y,
                     z = point.Z
                 });
+                if (outcome.Errors.Count == errorsBefore) outcome.Succeed();
             }
+        }
+
+        private static bool TryGetFiniteDouble(JsonElement obj, string prop, out double value)
+        {
+            if (!TryGetDouble(obj, prop, out value)) return false;
+            return !double.IsNaN(value) && !double.IsInfinity(value);
         }
 
         private static bool TryGetDouble(JsonElement obj, string prop, out double value)

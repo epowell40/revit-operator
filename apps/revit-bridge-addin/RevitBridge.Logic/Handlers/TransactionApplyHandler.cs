@@ -36,6 +36,36 @@ namespace RevitBridge.Logic.Handlers
             public int? maxWatchElementsPerScope { get; set; }
         }
 
+        private sealed class ActionReceipt
+        {
+            internal ActionReceipt(int index, string kind)
+            {
+                Index = index;
+                Kind = kind;
+            }
+
+            internal int Index { get; }
+            internal string Kind { get; }
+            internal TransactionActionRunner.TransactionOperationReceipt Start { get; } = new TransactionActionRunner.TransactionOperationReceipt();
+            internal TransactionActionRunner.TransactionOperationReceipt Commit { get; } = new TransactionActionRunner.TransactionOperationReceipt();
+            internal TransactionActionRunner.TransactionOperationReceipt Rollback { get; } = new TransactionActionRunner.TransactionOperationReceipt();
+            internal TransactionActionRunner.ActionOutcome? Outcome { get; set; }
+            internal string? Error { get; set; }
+            internal bool Success => Start.Succeeded && (Outcome?.Success ?? false) && Commit.Succeeded && Error == null;
+
+            internal object ToWireObject() => new
+            {
+                index = Index,
+                kind = Kind,
+                success = Success,
+                start = Start.ToWireObject(),
+                action = Outcome?.ToWireObject(),
+                commit = Commit.ToWireObject(),
+                rollback = Rollback.ToWireObject(),
+                error = Error
+            };
+        }
+
         public Task<object> Handle(UIApplication app, string jsonData)
         {
             var p = string.IsNullOrWhiteSpace(jsonData) ? new Params() : JsonSerializer.Deserialize<Params>(jsonData);
@@ -51,6 +81,10 @@ namespace RevitBridge.Logic.Handlers
             var stepDiffs = new List<TransactionDiffRecorder.TransactionDiffScopeResult>();
             TransactionDiffRecorder.TransactionDiffScopeResult? sessionDiff = null;
             object? artifact = null;
+            var groupStartReceipt = new TransactionActionRunner.TransactionOperationReceipt();
+            var assimilateReceipt = new TransactionActionRunner.TransactionOperationReceipt();
+            var rollbackReceipt = new TransactionActionRunner.TransactionOperationReceipt();
+            var actionReceipts = new List<ActionReceipt>();
 
             using (var recorder = new TransactionDiffRecorder(app, doc, diffOptions))
             using (var tg = new TransactionGroup(doc, $"Transaction Apply ({transactionId})"))
@@ -60,13 +94,23 @@ namespace RevitBridge.Logic.Handlers
                     scopeKind: "session",
                     watchElementIds: TransactionActionRunner.CollectWatchElementIds(actions, Math.Min(diffOptions.limits.MaxWatchElementsPerScope * 2, diffOptions.limits.MaxTrackedElementIds)));
 
-                tg.Start();
                 try
                 {
+                    RecordStart(tg, groupStartReceipt, "transaction group");
+
+                    if (actions.Count == 0)
+                    {
+                        const string noActionsError = "No actions provided.";
+                        warnings.Add(noActionsError);
+                        throw new InvalidOperationException(noActionsError);
+                    }
+
                     for (int i = 0; i < actions.Count; i++)
                     {
                         var action = actions[i];
                         var actionKind = TransactionActionRunner.GetActionKind(action);
+                        var actionReceipt = new ActionReceipt(i, actionKind);
+                        actionReceipts.Add(actionReceipt);
                         var stepScopeId = $"step:{i + 1}";
                         recorder.StartRecording(
                             scopeId: stepScopeId,
@@ -78,9 +122,26 @@ namespace RevitBridge.Logic.Handlers
                         {
                             using (var t = new Transaction(doc, $"Apply Action {i + 1}: {actionKind}"))
                             {
-                                t.Start();
-                                TransactionActionRunner.ExecuteAction(doc, action, impact, warnings, i);
-                                t.Commit();
+                                try
+                                {
+                                    RecordStart(t, actionReceipt.Start, $"action[{i}] transaction");
+                                    actionReceipt.Outcome = TransactionActionRunner.ExecuteAction(doc, action, impact, warnings, i);
+                                    if (!actionReceipt.Outcome.Success)
+                                    {
+                                        throw new InvalidOperationException(
+                                            actionReceipt.Outcome.Errors.Count == 0
+                                                ? $"Action[{i}] '{actionKind}' performed no successful operation."
+                                                : string.Join(" ", actionReceipt.Outcome.Errors));
+                                    }
+
+                                    RecordCommit(t, actionReceipt.Commit, $"action[{i}] transaction");
+                                }
+                                catch (Exception actionEx)
+                                {
+                                    actionReceipt.Error = actionEx.Message;
+                                    TryRollback(t, actionReceipt.Rollback);
+                                    throw;
+                                }
                             }
 
                             stepDiffs.Add(recorder.StopRecording(stepScopeId));
@@ -93,12 +154,20 @@ namespace RevitBridge.Logic.Handlers
                     }
 
                     sessionDiff = recorder.StopRecording(sessionScopeId);
-                    tg.Assimilate();
+                    RecordAssimilate(tg, assimilateReceipt);
+
+                    var transactionReceipt = BuildTransactionReceipt(
+                        groupStartReceipt,
+                        actionReceipts,
+                        assimilateReceipt,
+                        rollbackReceipt);
 
                     artifact = TryWriteDiffArtifact(
                         transactionId: transactionId,
                         success: true,
                         rolledBack: false,
+                        impactState: "committed",
+                        transactionReceipt: transactionReceipt,
                         options: diffOptions,
                         sessionDiff: sessionDiff,
                         stepDiffs: stepDiffs,
@@ -109,7 +178,9 @@ namespace RevitBridge.Logic.Handlers
                     {
                         success = true,
                         transactionId = transactionId,
+                        impactState = "committed",
                         impact = impact.ToWireObject(),
+                        transaction = transactionReceipt,
                         diff = new
                         {
                             rolledBack = false,
@@ -134,27 +205,41 @@ namespace RevitBridge.Logic.Handlers
                         // ignore scope stop failures on rollback paths
                     }
 
-                    try { tg.RollBack(); } catch { }
-                    warnings.Add(ex.Message);
+                    TryRollback(tg, rollbackReceipt);
+                    var failureError = TransactionActionRunner.BuildFailureError(ex.Message, rollbackReceipt);
+                    if (!warnings.Contains(ex.Message)) warnings.Add(ex.Message);
+                    if (!string.Equals(failureError, ex.Message, StringComparison.Ordinal) && !warnings.Contains(failureError))
+                        warnings.Add(failureError);
+
+                    var transactionReceipt = BuildTransactionReceipt(
+                        groupStartReceipt,
+                        actionReceipts,
+                        assimilateReceipt,
+                        rollbackReceipt);
+                    var impactState = rollbackReceipt.VerifiedRolledBack ? "rolledBack" : "notCommittedOrUnknown";
 
                     artifact = TryWriteDiffArtifact(
                         transactionId: transactionId,
                         success: false,
-                        rolledBack: true,
+                        rolledBack: rollbackReceipt.VerifiedRolledBack,
+                        impactState: impactState,
+                        transactionReceipt: transactionReceipt,
                         options: diffOptions,
                         sessionDiff: sessionDiff,
                         stepDiffs: stepDiffs,
                         warnings: warnings,
-                        error: ex.Message);
+                        error: failureError);
 
                     return Task.FromResult<object>(new
                     {
                         success = false,
                         transactionId = transactionId,
+                        impactState = impactState,
                         impact = impact.ToWireObject(),
+                        transaction = transactionReceipt,
                         diff = new
                         {
-                            rolledBack = true,
+                            rolledBack = rollbackReceipt.VerifiedRolledBack,
                             options = diffOptions.ToWireObject(),
                             session = sessionDiff,
                             steps = stepDiffs,
@@ -162,10 +247,213 @@ namespace RevitBridge.Logic.Handlers
                         },
                         warnings = warnings,
                         artifacts = artifact == null ? Array.Empty<object>() : new object[] { artifact },
-                        error = ex.Message
+                        error = failureError
                     });
                 }
             }
+        }
+
+        private static void RecordStart(TransactionGroup group, TransactionActionRunner.TransactionOperationReceipt receipt, string operationName)
+        {
+            receipt.Attempted = true;
+            try
+            {
+                var status = group.Start();
+                RecordExpectedStatus(receipt, status, TransactionStatus.Started);
+                if (!receipt.Succeeded)
+                    throw new InvalidOperationException($"{operationName} start returned status '{receipt.Status}', expected 'Started'.");
+            }
+            catch (Exception ex)
+            {
+                receipt.Error = ex.Message;
+                receipt.Status = SafeStatus(group, receipt.Status);
+                throw;
+            }
+        }
+
+        private static void RecordStart(Transaction transaction, TransactionActionRunner.TransactionOperationReceipt receipt, string operationName)
+        {
+            receipt.Attempted = true;
+            try
+            {
+                var status = transaction.Start();
+                RecordExpectedStatus(receipt, status, TransactionStatus.Started);
+                if (!receipt.Succeeded)
+                    throw new InvalidOperationException($"{operationName} start returned status '{receipt.Status}', expected 'Started'.");
+            }
+            catch (Exception ex)
+            {
+                receipt.Error = ex.Message;
+                receipt.Status = SafeStatus(transaction, receipt.Status);
+                throw;
+            }
+        }
+
+        private static void RecordCommit(Transaction transaction, TransactionActionRunner.TransactionOperationReceipt receipt, string operationName)
+        {
+            receipt.Attempted = true;
+            try
+            {
+                var status = transaction.Commit();
+                RecordExpectedStatus(receipt, status, TransactionStatus.Committed);
+                if (!receipt.Succeeded)
+                    throw new InvalidOperationException($"{operationName} commit returned status '{receipt.Status}', expected 'Committed'.");
+            }
+            catch (Exception ex)
+            {
+                receipt.Error = ex.Message;
+                receipt.Status = SafeStatus(transaction, receipt.Status);
+                throw;
+            }
+        }
+
+        private static void RecordAssimilate(TransactionGroup group, TransactionActionRunner.TransactionOperationReceipt receipt)
+        {
+            receipt.Attempted = true;
+            try
+            {
+                var status = group.Assimilate();
+                RecordExpectedStatus(receipt, status, TransactionStatus.Committed);
+                if (!receipt.Succeeded)
+                    throw new InvalidOperationException($"transaction group assimilate returned status '{receipt.Status}', expected 'Committed'.");
+            }
+            catch (Exception ex)
+            {
+                receipt.Error = ex.Message;
+                receipt.Status = SafeStatus(group, receipt.Status);
+                throw;
+            }
+        }
+
+        private static void TryRollback(TransactionGroup group, TransactionActionRunner.TransactionOperationReceipt receipt)
+        {
+            var currentStatus = SafeGetStatus(group, out var statusError);
+            receipt.Status = currentStatus?.ToString() ?? "StatusUnavailable";
+            receipt.VerifiedRolledBack = currentStatus == TransactionStatus.RolledBack;
+            if (receipt.VerifiedRolledBack) return;
+            if (currentStatus != TransactionStatus.Started)
+            {
+                receipt.Error = statusError ??
+                    (currentStatus == TransactionStatus.Uninitialized
+                        ? null
+                        : $"transaction group rollback was not attempted because current status is '{receipt.Status}'.");
+                return;
+            }
+
+            receipt.Attempted = true;
+            try
+            {
+                var status = group.RollBack();
+                RecordExpectedStatus(receipt, status, TransactionStatus.RolledBack);
+                receipt.VerifiedRolledBack = status == TransactionStatus.RolledBack;
+                if (!receipt.Succeeded)
+                    receipt.Error = $"transaction group rollback returned status '{receipt.Status}', expected 'RolledBack'.";
+            }
+            catch (Exception ex)
+            {
+                receipt.Error = ex.Message;
+                receipt.Status = SafeStatus(group, receipt.Status);
+                receipt.VerifiedRolledBack = string.Equals(receipt.Status, TransactionStatus.RolledBack.ToString(), StringComparison.Ordinal);
+                receipt.Succeeded = receipt.VerifiedRolledBack;
+            }
+        }
+
+        private static void TryRollback(Transaction transaction, TransactionActionRunner.TransactionOperationReceipt receipt)
+        {
+            var currentStatus = SafeGetStatus(transaction, out var statusError);
+            receipt.Status = currentStatus?.ToString() ?? "StatusUnavailable";
+            receipt.VerifiedRolledBack = currentStatus == TransactionStatus.RolledBack;
+            if (receipt.VerifiedRolledBack) return;
+            if (currentStatus != TransactionStatus.Started)
+            {
+                receipt.Error = statusError ??
+                    (currentStatus == TransactionStatus.Uninitialized
+                        ? null
+                        : $"action transaction rollback was not attempted because current status is '{receipt.Status}'.");
+                return;
+            }
+
+            receipt.Attempted = true;
+            try
+            {
+                var status = transaction.RollBack();
+                RecordExpectedStatus(receipt, status, TransactionStatus.RolledBack);
+                receipt.VerifiedRolledBack = status == TransactionStatus.RolledBack;
+                if (!receipt.Succeeded)
+                    receipt.Error = $"action transaction rollback returned status '{receipt.Status}', expected 'RolledBack'.";
+            }
+            catch (Exception ex)
+            {
+                receipt.Error = ex.Message;
+                receipt.Status = SafeStatus(transaction, receipt.Status);
+                receipt.VerifiedRolledBack = string.Equals(receipt.Status, TransactionStatus.RolledBack.ToString(), StringComparison.Ordinal);
+                receipt.Succeeded = receipt.VerifiedRolledBack;
+            }
+        }
+
+        private static void RecordExpectedStatus(TransactionActionRunner.TransactionOperationReceipt receipt, TransactionStatus actual, TransactionStatus expected)
+        {
+            receipt.Status = actual.ToString();
+            receipt.Succeeded = actual == expected;
+            receipt.VerifiedRolledBack = actual == TransactionStatus.RolledBack;
+        }
+
+        private static TransactionStatus? SafeGetStatus(TransactionGroup group, out string? error)
+        {
+            try
+            {
+                error = null;
+                return group.GetStatus();
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return null;
+            }
+        }
+
+        private static TransactionStatus? SafeGetStatus(Transaction transaction, out string? error)
+        {
+            try
+            {
+                error = null;
+                return transaction.GetStatus();
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return null;
+            }
+        }
+
+        private static string SafeStatus(TransactionGroup group, string fallback)
+        {
+            var status = SafeGetStatus(group, out _);
+            return status?.ToString() ?? fallback;
+        }
+
+        private static string SafeStatus(Transaction transaction, string fallback)
+        {
+            var status = SafeGetStatus(transaction, out _);
+            return status?.ToString() ?? fallback;
+        }
+
+        private static object BuildTransactionReceipt(
+            TransactionActionRunner.TransactionOperationReceipt groupStart,
+            IReadOnlyList<ActionReceipt> actions,
+            TransactionActionRunner.TransactionOperationReceipt assimilate,
+            TransactionActionRunner.TransactionOperationReceipt rollback)
+        {
+            var actionWire = new List<object>(actions.Count);
+            foreach (var action in actions) actionWire.Add(action.ToWireObject());
+
+            return new
+            {
+                start = groupStart.ToWireObject(),
+                actions = actionWire,
+                assimilate = assimilate.ToWireObject(),
+                rollback = rollback.ToWireObject()
+            };
         }
 
         private static TransactionDiffRecorder.CaptureOptions BuildDiffOptions(DiffOptions? diff)
@@ -195,6 +483,8 @@ namespace RevitBridge.Logic.Handlers
             string transactionId,
             bool success,
             bool rolledBack,
+            string impactState,
+            object transactionReceipt,
             TransactionDiffRecorder.CaptureOptions options,
             TransactionDiffRecorder.TransactionDiffScopeResult? sessionDiff,
             IReadOnlyList<TransactionDiffRecorder.TransactionDiffScopeResult> stepDiffs,
@@ -215,7 +505,9 @@ namespace RevitBridge.Logic.Handlers
                     generatedAtUtc = DateTime.UtcNow,
                     success,
                     rolledBack,
+                    impactState,
                     error,
+                    transaction = transactionReceipt,
                     options = options.ToWireObject(),
                     summary = new
                     {
