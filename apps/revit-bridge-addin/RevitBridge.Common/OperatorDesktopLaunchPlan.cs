@@ -7,6 +7,14 @@ namespace RevitBridge.Common
     public static class OperatorDesktopLaunchPlan
     {
         public const string DefaultUrl = "http://127.0.0.1:3907/";
+        public const string RuntimeIdentityUrl = "http://127.0.0.1:3907/api/runtime-identity";
+
+        public static string GetAssemblyDirectory(string? assemblyLocation)
+        {
+            if (string.IsNullOrWhiteSpace(assemblyLocation)) return "";
+            var normalized = assemblyLocation!.Trim().Trim('"');
+            return Path.GetDirectoryName(normalized) ?? "";
+        }
 
         public static IReadOnlyList<string> BuildCandidatePaths(
             string? configuredLauncherPath,

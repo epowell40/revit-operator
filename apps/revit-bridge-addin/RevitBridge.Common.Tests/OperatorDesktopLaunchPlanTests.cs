@@ -40,6 +40,17 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void GetAssemblyDirectory_UsesLoadedAddinLocationInsteadOfApplicationBase()
+        {
+            var directory = OperatorDesktopLaunchPlan.GetAssemblyDirectory(
+                @"C:\RevitOperator\releases\current\revit-operator-2024\RevitBridge.dll");
+
+            Assert.Equal(
+                @"C:\RevitOperator\releases\current\revit-operator-2024",
+                directory);
+        }
+
+        [Fact]
         public void ResolveExistingLauncher_UsesFirstExistingCandidate()
         {
             var candidates = new[] { @"C:\missing.cmd", @"C:\installed.cmd", @"C:\later.cmd" };
