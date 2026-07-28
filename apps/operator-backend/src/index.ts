@@ -1430,6 +1430,7 @@ const server = http.createServer(async (req, res) => {
         const itemId = decodeURIComponent(itemMatch[2] || "");
         const action = itemMatch[3] || "";
         const executorId = trimText((body as any)?.executor_id ?? (body as any)?.executorId, 160);
+        const claimToken = trimText((body as any)?.claim_token ?? (body as any)?.claimToken, 160);
         try {
           const payload =
             action === "complete"
@@ -1437,12 +1438,14 @@ const server = http.createServer(async (req, res) => {
                   job_id: jobId,
                   item_id: itemId,
                   executor_id: executorId,
+                  claim_token: claimToken,
                   result: (body as any)?.result
                 })
               : failRevitBatchItem({
                   job_id: jobId,
                   item_id: itemId,
                   executor_id: executorId,
+                  claim_token: claimToken,
                   error: trimText((body as any)?.error, 500) || "Batch item failed.",
                   result: (body as any)?.result
                 });

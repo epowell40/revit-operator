@@ -1095,6 +1095,14 @@ test("persisted existing-conditions stages advance without another provider call
     }]), dependencies);
     assert.equal(providerCalls, 1);
     assert.equal(visual.actions[0]?.path, "/revit/highlight-and-export");
+    const visualPath = path.join(
+      process.env.OPERATOR_WORKSPACE_ROOT!,
+      "artifacts",
+      "captures",
+      String((visual.actions[0]?.body as Record<string, unknown>)?.fileName)
+    );
+    fs.mkdirSync(path.dirname(visualPath), { recursive: true });
+    fs.writeFileSync(visualPath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]));
 
     const checkpoint = await decide(directRequest([{
       action_id: visual.actions[0]!.action_id,
@@ -1102,7 +1110,7 @@ test("persisted existing-conditions stages advance without another provider call
       path: "/revit/highlight-and-export",
       status: "done",
       result_json: {
-        path: "C:\\evidence\\focused-stage.jpg",
+        path: visualPath,
         focusCrop: { requested: true, applied: true },
         elementVisibility: {
           requestedElementIds: [901],

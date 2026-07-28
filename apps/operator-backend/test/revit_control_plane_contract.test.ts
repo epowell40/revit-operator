@@ -187,3 +187,17 @@ test("hosted MCP courier is session-bound, approval-gated, and never auto-replay
   assert.match(codexBrain, /fn:\s*\(client: CodexAppServer\)/);
   assert.doesNotMatch(codexBrain, /let client:\s*CodexAppServer\s*\|\s*null/);
 });
+
+test("Revit batch settlement forwards the exact fencing token", () => {
+  const index = repoFile(path.join("operator-backend", "src", "index.ts"), path.join("apps", "operator-backend", "src", "index.ts"));
+  const batch = repoFile(
+    path.join("operator-backend", "src", "revit_batch", "service.ts"),
+    path.join("apps", "operator-backend", "src", "revit_batch", "service.ts"),
+  );
+
+  assert.match(index, /claim_token\s*\?\?\s*\(body as any\)\?\.claimToken/);
+  assert.match(index, /completeRevitBatchItem\(\{[\s\S]{0,220}claim_token:\s*claimToken/);
+  assert.match(index, /failRevitBatchItem\(\{[\s\S]{0,260}claim_token:\s*claimToken/);
+  assert.match(batch, /claim_token is required to settle this fenced batch claim/);
+  assert.match(batch, /Stale or invalid batch claim_token/);
+});
