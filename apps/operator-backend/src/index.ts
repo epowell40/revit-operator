@@ -716,10 +716,10 @@ function revitBatchAccessContext(
   principal: RequestPrincipal | undefined,
   input: unknown
 ): RevitBatchAccessContext | undefined {
-  // Shared-token/local jobs intentionally retain the legacy single-user contract.
-  // In principal mode, every identity value passed to the service is assembled here;
-  // owner-like fields in the request body are never consulted.
-  if (!principal) return undefined;
+  // In principal mode, owner identity comes only from authenticated claims. Local and
+  // shared-token callers may still bind a job to their live session/executor/document;
+  // this prevents two Revit instances on the same workstation from cross-claiming.
+  // Legacy local callers that send no binding retain the unbound single-user contract.
   const row = objectRecord(input);
   const source = objectRecord(row.source);
   const target = objectRecord(row.target_context ?? row.targetContext);
@@ -741,8 +741,9 @@ function revitBatchAccessContext(
     256,
     value => value.toLowerCase()
   ).toLowerCase();
+  if (!principal && !sessionId && !executorId && !fingerprint) return undefined;
   if (!sessionId || !executorId || !fingerprint) {
-    throw new Error("Authenticated batch requests require session_id, target_executor_id, and project_fingerprint.");
+    throw new Error("Bound batch requests require session_id, target_executor_id, and project_fingerprint.");
   }
   if (!/^[a-f0-9]{64}$/.test(fingerprint)) {
     throw new Error("Authenticated batch project_fingerprint must be a 64-character SHA-256 value.");
@@ -760,10 +761,12 @@ function revitBatchAccessContext(
     value => value.replace(/\\/g, "/").toLowerCase()
   );
   return {
-    owner: {
-      user_id: principal.user_id,
-      tenant_id: principal.tenant_id || principal.license_id
-    },
+    ...(principal ? {
+      owner: {
+        user_id: principal.user_id,
+        tenant_id: principal.tenant_id || principal.license_id
+      }
+    } : {}),
     session_id: sessionId,
     target: {
       executor_id: executorId,
