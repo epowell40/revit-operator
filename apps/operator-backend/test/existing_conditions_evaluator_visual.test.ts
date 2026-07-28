@@ -31,10 +31,15 @@ function signedReceipt(fixture = artifacts(), signingKey = SIGNING_KEY, keyId = 
     post_change_capture_path: fixture.capture,
     post_change_pdf_path: fixture.pdf,
     artifact_scope_root: fixture.root,
+    fixture_id: "fixture-a",
+    scope_id: "scope-a",
     workflow_fingerprint_sha256: "a".repeat(64),
     action_id: "apply-existing-conditions-stage",
     attempt_id: crypto.randomUUID(),
     capture_nonce: crypto.randomBytes(18).toString("base64url"),
+    capture_name: path.basename(fixture.capture),
+    candidate_snapshot_sha256: "b".repeat(64),
+    change_digest_sha256: "c".repeat(64),
     post_apply_completed_at: fixture.postApplyCompletedAt,
     authority: { key_id: keyId, signing_key: signingKey },
     review_status: "pass",
@@ -49,12 +54,27 @@ function validation(root?: string) {
   };
 }
 
+function expectedRun(receipt: ReturnType<typeof signedReceipt>) {
+  return {
+    fixture_id: receipt.fixture_id,
+    scope_id: receipt.scope_id,
+    workflow_fingerprint_sha256: receipt.workflow_fingerprint_sha256,
+    action_id: receipt.action_id,
+    attempt_id: receipt.attempt_id,
+    capture_nonce: receipt.capture_nonce,
+    capture_name: receipt.capture_name,
+    artifact_scope_root: receipt.artifact_scope_root,
+    candidate_snapshot_sha256: receipt.candidate_snapshot_sha256,
+    change_digest_sha256: receipt.change_digest_sha256
+  };
+}
+
 test("accepts fresh evaluator-issued evidence bound to artifacts and apply identity", () => {
   const fixture = artifacts();
   const receipt = signedReceipt(fixture);
   assert.equal(validateExistingConditionsEvaluatorVisualReceipt(receipt, validation(fixture.root)), true);
   assert.equal(validateExistingConditionsEvaluatorVisualReceipt(receipt), false);
-  assert.equal(receipt.schema_version, 2);
+  assert.equal(receipt.schema_version, 3);
   assert.equal(receipt.evaluator_authority.key_id, KEY_ID);
   assert.equal(receipt.post_change_capture_artifact.byte_length, PNG.length);
   assert.equal(receipt.post_change_capture_artifact.file_name, "post.png");
@@ -108,9 +128,14 @@ test("rejects fabricated hashes, changed bytes, wrong media, and scope escape", 
     post_change_pdf_path: wrongMedia.capture,
     artifact_scope_root: wrongMedia.root,
     workflow_fingerprint_sha256: "b".repeat(64),
+    fixture_id: "fixture-a",
+    scope_id: "scope-a",
     action_id: "action",
     attempt_id: "attempt",
     capture_nonce: crypto.randomBytes(18).toString("base64url"),
+    capture_name: path.basename(wrongMedia.pdf),
+    candidate_snapshot_sha256: "b".repeat(64),
+    change_digest_sha256: "c".repeat(64),
     post_apply_completed_at: wrongMedia.postApplyCompletedAt,
     authority: { key_id: KEY_ID, signing_key: SIGNING_KEY },
     review_status: "pass"
@@ -122,16 +147,21 @@ test("rejects fabricated hashes, changed bytes, wrong media, and scope escape", 
     post_change_pdf_path: fixture.pdf,
     artifact_scope_root: fixture.root,
     workflow_fingerprint_sha256: "b".repeat(64),
+    fixture_id: "fixture-a",
+    scope_id: "scope-a",
     action_id: "action",
     attempt_id: "attempt",
     capture_nonce: crypto.randomBytes(18).toString("base64url"),
+    capture_name: path.basename(outside.capture),
+    candidate_snapshot_sha256: "b".repeat(64),
+    change_digest_sha256: "c".repeat(64),
     post_apply_completed_at: fixture.postApplyCompletedAt,
     authority: { key_id: KEY_ID, signing_key: SIGNING_KEY },
     review_status: "pass"
   }), /outside_allowed_scope/);
 });
 
-test("evaluator visual CLI uses runtime authority and emits a verifiable V2 receipt", () => {
+test("legacy evaluator visual CLI fails fast until it supplies the authenticated V3 binding", () => {
   const fixture = artifacts();
   const out = path.join(fixture.root, "visual-receipt.json");
   const cli = path.resolve("dist/src/tools/existing_conditions_fixture.js");
@@ -154,9 +184,8 @@ test("evaluator visual CLI uses runtime authority and emits a verifiable V2 rece
     OPERATOR_EXISTING_CONDITIONS_EVALUATOR_HMAC_KEY: SIGNING_KEY
   };
   const accepted = spawnSync(process.execPath, baseArgs, { encoding: "utf8", env });
-  assert.equal(accepted.status, 0, accepted.stderr);
-  const receipt = JSON.parse(fs.readFileSync(out, "utf8"));
-  assert.equal(validateExistingConditionsEvaluatorVisualReceipt(receipt, validation(fixture.root)), true);
+  assert.notEqual(accepted.status, 0);
+  assert.match(accepted.stderr, /evaluator_visual_fixture_id_invalid/);
 
   const outside = artifacts();
   const rejectedArgs = [...baseArgs];
@@ -164,5 +193,35 @@ test("evaluator visual CLI uses runtime authority and emits a verifiable V2 rece
   rejectedArgs[rejectedArgs.indexOf(fixture.pdf)] = outside.pdf;
   const rejected = spawnSync(process.execPath, rejectedArgs, { encoding: "utf8", env });
   assert.notEqual(rejected.status, 0);
-  assert.match(rejected.stderr, /outside_allowed_scope/);
+  assert.match(rejected.stderr, /evaluator_visual_fixture_id_invalid/);
+});
+
+test("rejects validly signed receipts replayed across fixture, workflow, or attempt", () => {
+  const fixture = artifacts();
+  const receipt = signedReceipt(fixture);
+  const expected = expectedRun(receipt);
+  for (const override of [
+    { fixture_id: "fixture-b" },
+    { workflow_fingerprint_sha256: "d".repeat(64) },
+    { attempt_id: "different-attempt" }
+  ]) {
+    assert.equal(validateExistingConditionsEvaluatorVisualReceipt(receipt, {
+      ...validation(fixture.root),
+      expected_run: { ...expected, ...override }
+    }), false);
+  }
+});
+
+test("rejects expired receipts and validation without evaluator authority", () => {
+  const fixture = artifacts();
+  const receipt = signedReceipt(fixture);
+  assert.equal(validateExistingConditionsEvaluatorVisualReceipt(receipt, {
+    allowed_artifact_root: fixture.root,
+    expected_run: expectedRun(receipt)
+  }), false);
+  assert.equal(validateExistingConditionsEvaluatorVisualReceipt(receipt, {
+    ...validation(fixture.root),
+    expected_run: expectedRun(receipt),
+    now_ms: Date.parse(receipt.expires_at) + 6_000
+  }), false);
 });

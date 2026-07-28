@@ -4,7 +4,7 @@
   "title": "Existing conditions reconstruction candidate V2",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "fixture_id", "scope_id", "visible_evidence", "accessed_artifact_roles", "out_of_scope_changed_element_keys", "snapshot", "visual_receipt"],
+  "required": ["schema_version", "fixture_id", "scope_id", "visible_evidence", "accessed_artifact_roles", "out_of_scope_changed_element_keys", "evaluator_change_receipt", "snapshot", "visual_receipt"],
   "properties": {
     "schema_version": { "const": 2 },
     "fixture_id": { "type": "string", "minLength": 1 },
@@ -14,14 +14,43 @@
     "accessed_artifact_roles": { "$ref": "#/$defs/strings" },
     "out_of_scope_changed_element_keys": { "$ref": "#/$defs/strings" },
     "evaluator_change_receipt": {
-      "type": ["object", "null"],
+      "type": "object",
       "additionalProperties": false,
-      "required": ["native_diff_readback", "changed_element_keys", "out_of_scope_changed_element_keys", "receipt_sha256"],
+      "required": ["schema_version", "fixture_id", "scope_id", "workflow_fingerprint_sha256", "action_id", "attempt_id", "capture_nonce", "capture_name", "artifact_scope_root", "candidate_snapshot_sha256", "before_visible_sha256", "after_visible_sha256", "agent_package_sha256", "canonical_byte_lengths", "native_diff_readback", "changed_element_keys", "out_of_scope_changed_element_keys", "change_digest_sha256", "issued_at", "expires_at", "freshness_rule", "replay_key_sha256", "receipt_sha256", "evaluator_authority"],
       "properties": {
+        "schema_version": { "const": 2 },
+        "fixture_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "scope_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "workflow_fingerprint_sha256": { "$ref": "#/$defs/sha256" },
+        "action_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "attempt_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "capture_nonce": { "type": "string", "pattern": "^[A-Za-z0-9_-]{16,128}$" },
+        "capture_name": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "artifact_scope_root": { "type": "string", "minLength": 1 },
+        "candidate_snapshot_sha256": { "$ref": "#/$defs/sha256" },
+        "before_visible_sha256": { "$ref": "#/$defs/sha256" },
+        "after_visible_sha256": { "$ref": "#/$defs/sha256" },
+        "agent_package_sha256": { "$ref": "#/$defs/sha256" },
+        "canonical_byte_lengths": {
+          "type": "object", "additionalProperties": false,
+          "required": ["candidate_snapshot", "before_visible", "after_visible", "agent_package"],
+          "properties": {
+            "candidate_snapshot": { "type": "integer", "minimum": 1 },
+            "before_visible": { "type": "integer", "minimum": 1 },
+            "after_visible": { "type": "integer", "minimum": 1 },
+            "agent_package": { "type": "integer", "minimum": 1 }
+          }
+        },
         "native_diff_readback": { "const": true },
         "changed_element_keys": { "$ref": "#/$defs/strings" },
         "out_of_scope_changed_element_keys": { "$ref": "#/$defs/strings" },
-        "receipt_sha256": { "$ref": "#/$defs/sha256" }
+        "change_digest_sha256": { "$ref": "#/$defs/sha256" },
+        "issued_at": { "type": "string", "minLength": 20 },
+        "expires_at": { "type": "string", "minLength": 20 },
+        "freshness_rule": { "const": "bounded_single_attempt_change_v1" },
+        "replay_key_sha256": { "$ref": "#/$defs/sha256" },
+        "receipt_sha256": { "$ref": "#/$defs/sha256" },
+        "evaluator_authority": { "$ref": "#/$defs/evaluator_authority" }
       }
     },
     "source_coverage_receipt": {
@@ -49,16 +78,24 @@
     "visual_receipt": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "artifact_scope_root", "workflow_fingerprint_sha256", "action_id", "attempt_id", "capture_nonce", "post_apply_completed_at", "issued_at", "post_change_capture_sha256", "post_change_pdf_sha256", "post_change_capture_artifact", "post_change_pdf_artifact", "evaluator_review", "evaluator_authority"],
+      "required": ["schema_version", "fixture_id", "scope_id", "artifact_scope_root", "workflow_fingerprint_sha256", "action_id", "attempt_id", "capture_nonce", "capture_name", "candidate_snapshot_sha256", "change_digest_sha256", "post_apply_completed_at", "issued_at", "expires_at", "freshness_rule", "replay_key_sha256", "post_change_capture_sha256", "post_change_pdf_sha256", "post_change_capture_artifact", "post_change_pdf_artifact", "evaluator_review", "evaluator_authority"],
       "properties": {
-        "schema_version": { "const": 2 },
+        "schema_version": { "const": 3 },
+        "fixture_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "scope_id": { "type": "string", "minLength": 1, "maxLength": 256 },
         "artifact_scope_root": { "type": "string", "minLength": 1 },
         "workflow_fingerprint_sha256": { "$ref": "#/$defs/sha256" },
         "action_id": { "type": "string", "minLength": 1, "maxLength": 256 },
         "attempt_id": { "type": "string", "minLength": 1, "maxLength": 256 },
         "capture_nonce": { "type": "string", "pattern": "^[A-Za-z0-9_-]{16,128}$" },
+        "capture_name": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "candidate_snapshot_sha256": { "$ref": "#/$defs/sha256" },
+        "change_digest_sha256": { "$ref": "#/$defs/sha256" },
         "post_apply_completed_at": { "type": "string", "minLength": 20 },
         "issued_at": { "type": "string", "minLength": 20 },
+        "expires_at": { "type": "string", "minLength": 20 },
+        "freshness_rule": { "const": "bounded_single_attempt_capture_v1" },
+        "replay_key_sha256": { "$ref": "#/$defs/sha256" },
         "post_change_capture_sha256": { "$ref": "#/$defs/sha256" },
         "post_change_pdf_sha256": { "$ref": "#/$defs/sha256" },
         "post_change_capture_artifact": { "$ref": "#/$defs/artifact" },
@@ -72,16 +109,7 @@
             "notes": { "$ref": "#/$defs/strings" }
           }
         },
-        "evaluator_authority": {
-          "type": "object", "additionalProperties": false,
-          "required": ["boundary", "algorithm", "key_id", "signature"],
-          "properties": {
-            "boundary": { "const": "trusted_hmac_verifier_v1" },
-            "algorithm": { "const": "hmac-sha256" },
-            "key_id": { "type": "string", "minLength": 1, "maxLength": 256 },
-            "signature": { "$ref": "#/$defs/sha256" }
-          }
-        }
+        "evaluator_authority": { "$ref": "#/$defs/evaluator_authority" }
       }
     }
   },
@@ -101,6 +129,16 @@
         "byte_length": { "type": "integer", "minimum": 1 },
         "media_type": { "enum": ["image", "application/pdf"] },
         "modified_at": { "type": "string", "minLength": 20 }
+      }
+    },
+    "evaluator_authority": {
+      "type": "object", "additionalProperties": false,
+      "required": ["boundary", "algorithm", "key_id", "signature"],
+      "properties": {
+        "boundary": { "const": "trusted_hmac_verifier_v1" },
+        "algorithm": { "const": "hmac-sha256" },
+        "key_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "signature": { "$ref": "#/$defs/sha256" }
       }
     }
   }

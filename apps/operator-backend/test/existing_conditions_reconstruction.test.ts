@@ -18,7 +18,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
-import { createExistingConditionsEvaluatorVisualReceipt } from "../src/existing_conditions/evaluator_visual.js";
+import {
+  createExistingConditionsEvaluatorVisualReceipt,
+  type ExistingConditionsEvaluatorExpectedRun
+} from "../src/existing_conditions/evaluator_visual.js";
+import {
+  createExistingConditionsEvaluatorChangeReceipt,
+  existingConditionsCandidateSnapshotSha256
+} from "../src/existing_conditions/evaluator_diff.js";
 
 const SOURCE_HASH = "a".repeat(64);
 const RENDER_HASH = "b".repeat(64);
@@ -26,38 +33,93 @@ const COVERAGE_HASH = "c".repeat(64);
 const REGION_HASH = "d".repeat(64);
 const EVALUATOR_KEY_ID = "existing-conditions-test-key";
 const EVALUATOR_KEY = "test-only-existing-conditions-evaluator-key-material-0001";
-const EVALUATION_AUTHORITY = {
-  visual_receipt_validation: {
-    trusted_key_resolver: (keyId: string) => keyId === EVALUATOR_KEY_ID ? EVALUATOR_KEY : null
-  }
-};
+const EXPECTED_RUNS = new WeakMap<ExistingConditionsCandidate, ExistingConditionsEvaluatorExpectedRun>();
+const trustedKeyResolver = (keyId: string) => keyId === EVALUATOR_KEY_ID ? EVALUATOR_KEY : null;
 
 function scoreExistingConditionsReconstruction(
   truthValue: ExistingConditionsGroundTruth,
   candidateValue: ExistingConditionsCandidate,
   policy: Partial<ExistingConditionsScoringPolicy> = {}
 ) {
-  return scoreExistingConditionsReconstructionWithoutAuthority(truthValue, candidateValue, policy, EVALUATION_AUTHORITY);
+  if (EXPECTED_RUNS.get(candidateValue)?.candidate_snapshot_sha256 !==
+      existingConditionsCandidateSnapshotSha256(candidateValue.snapshot)) {
+    attachEvaluatorEvidence(candidateValue);
+  }
+  return scoreExistingConditionsReconstructionWithoutAuthority(truthValue, candidateValue, policy, {
+    expected_run: EXPECTED_RUNS.get(candidateValue),
+    visual_receipt_validation: { trusted_key_resolver: trustedKeyResolver },
+    change_receipt_validation: { trusted_key_resolver: trustedKeyResolver }
+  });
 }
 
-function visualReceipt() {
+function attachEvaluatorEvidence(candidateValue: ExistingConditionsCandidate, authenticOutOfScopeChange = false): ExistingConditionsCandidate {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-reconstruction-visual-"));
   const capture = path.join(root, "post.png");
   const pdf = path.join(root, "post.pdf");
   fs.writeFileSync(capture, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]));
   fs.writeFileSync(pdf, "%PDF-1.4\n%%EOF\n", "ascii");
-  return createExistingConditionsEvaluatorVisualReceipt({
+  const workflowFingerprint = "e".repeat(64);
+  const actionId = "existing-conditions-test-action";
+  const attemptId = crypto.randomUUID();
+  const captureNonce = crypto.randomBytes(18).toString("base64url");
+  const captureName = path.basename(capture);
+  const outsideBefore = { id: "outside-wall", builtInCategory: "OST_Walls", point: { x: 2000, y: 2000, z: 0 }, typeName: "Wall A" };
+  const outsideAfter = { ...outsideBefore, typeName: "Wall B" };
+  const changeReceipt = createExistingConditionsEvaluatorChangeReceipt(
+    { viewId: 42, count: authenticOutOfScopeChange ? 1 : 0, truncated: false, items: authenticOutOfScopeChange ? [outsideBefore] : [] },
+    { viewId: 42, count: authenticOutOfScopeChange ? 1 : 0, truncated: false, items: authenticOutOfScopeChange ? [outsideAfter] : [] },
+    {
+      scope: { model_bounds_ft: { min: { x: -1000, y: -1000, z: -1000 }, max: { x: 1000, y: 1000, z: 1000 } } },
+      allowed_categories: ["OST_DuctCurves"]
+    },
+    {
+      run: {
+        fixture_id: candidateValue.fixture_id,
+        scope_id: candidateValue.scope_id,
+        workflow_fingerprint_sha256: workflowFingerprint,
+        action_id: actionId,
+        attempt_id: attemptId,
+        capture_nonce: captureNonce,
+        capture_name: captureName,
+        artifact_scope_root: root
+      },
+      candidate_snapshot: candidateValue.snapshot,
+      authority: { key_id: EVALUATOR_KEY_ID, signing_key: EVALUATOR_KEY }
+    }
+  );
+  const visualReceipt = createExistingConditionsEvaluatorVisualReceipt({
     post_change_capture_path: capture,
     post_change_pdf_path: pdf,
     artifact_scope_root: root,
-    workflow_fingerprint_sha256: "e".repeat(64),
-    action_id: "existing-conditions-test-action",
-    attempt_id: crypto.randomUUID(),
-    capture_nonce: crypto.randomBytes(18).toString("base64url"),
+    fixture_id: candidateValue.fixture_id,
+    scope_id: candidateValue.scope_id,
+    workflow_fingerprint_sha256: workflowFingerprint,
+    action_id: actionId,
+    attempt_id: attemptId,
+    capture_nonce: captureNonce,
+    capture_name: captureName,
+    candidate_snapshot_sha256: changeReceipt.candidate_snapshot_sha256,
+    change_digest_sha256: changeReceipt.change_digest_sha256,
     post_apply_completed_at: new Date(Date.now() - 1_000).toISOString(),
     authority: { key_id: EVALUATOR_KEY_ID, signing_key: EVALUATOR_KEY },
     review_status: "pass"
   });
+  candidateValue.evaluator_change_receipt = changeReceipt;
+  candidateValue.out_of_scope_changed_element_keys = [...changeReceipt.out_of_scope_changed_element_keys];
+  candidateValue.visual_receipt = visualReceipt;
+  EXPECTED_RUNS.set(candidateValue, {
+    fixture_id: candidateValue.fixture_id,
+    scope_id: candidateValue.scope_id,
+    workflow_fingerprint_sha256: workflowFingerprint,
+    action_id: actionId,
+    attempt_id: attemptId,
+    capture_nonce: captureNonce,
+    capture_name: captureName,
+    artifact_scope_root: root,
+    candidate_snapshot_sha256: changeReceipt.candidate_snapshot_sha256,
+    change_digest_sha256: changeReceipt.change_digest_sha256
+  });
+  return candidateValue;
 }
 
 test("multi-view visible element exports merge without duplicating host ids", () => {
@@ -368,7 +430,7 @@ function truth(elements = [duct("truth-a"), duct("truth-b", 20)]): ExistingCondi
 }
 
 function candidate(elements = [duct("new-901"), duct("new-902", 20)]): ExistingConditionsCandidate {
-  return {
+  return attachEvaluatorEvidence({
     schema_version: 2,
     fixture_id: "snowdon-m104-unit403-duct-v1",
     scope_id: "m104-unit403",
@@ -380,9 +442,8 @@ function candidate(elements = [duct("new-901"), duct("new-902", 20)]): ExistingC
       elements,
       connections: elements.length > 1 ? [{ a: elements[0]!.key, b: elements[1]!.key }] : [],
       open_connector_count: 2
-    },
-    visual_receipt: visualReceipt()
-  };
+    }
+  });
 }
 
 test("scores a semantically exact reconstruction with new Revit element ids", () => {
@@ -392,6 +453,41 @@ test("scores a semantically exact reconstruction with new Revit element ids", ()
   assert.equal(result.score, 100);
   assert.equal(result.counts.matched, 2);
   assert.deepEqual(result.failure_classifications, []);
+});
+
+test("scoring rejects evaluator receipts replayed from another fixture, workflow, or attempt", () => {
+  const actual = candidate();
+  const expected = EXPECTED_RUNS.get(actual)!;
+  for (const override of [
+    { fixture_id: "another-fixture" },
+    { workflow_fingerprint_sha256: "f".repeat(64) },
+    { attempt_id: "another-attempt" }
+  ]) {
+    const result = scoreExistingConditionsReconstructionWithoutAuthority(truth(), actual, {}, {
+      expected_run: { ...expected, ...override },
+      visual_receipt_validation: { trusted_key_resolver: trustedKeyResolver },
+      change_receipt_validation: { trusted_key_resolver: trustedKeyResolver }
+    });
+    assert.equal(result.valid_run, false);
+    assert.equal(result.score, 0);
+  }
+});
+
+test("candidate V1 is a precise fail-fast migration boundary", () => {
+  const actual = candidate();
+  (actual as unknown as { schema_version: number }).schema_version = 1;
+  const result = scoreExistingConditionsReconstructionWithoutAuthority(
+    truth(),
+    actual as unknown as ExistingConditionsCandidate,
+    {},
+    {
+      expected_run: EXPECTED_RUNS.get(actual),
+      visual_receipt_validation: { trusted_key_resolver: trustedKeyResolver },
+      change_receipt_validation: { trusted_key_resolver: trustedKeyResolver }
+    }
+  );
+  assert.equal(result.valid_run, false);
+  assert.equal(result.invalid_reasons.includes("candidate_v1_migration_required"), true);
 });
 
 test("matches MEP curve endpoints independent of draw direction", () => {
@@ -511,23 +607,32 @@ test("invalidates changed evidence and out-of-scope writes", () => {
   assert.equal(result.invalid_reasons.includes("out_of_scope_write"), true);
 });
 
-test("future fixtures can require an evaluator-owned native scope-diff receipt", () => {
+test("V2 scoring requires the evaluator-authenticated native scope-diff receipt", () => {
   const expected = truth();
   expected.evaluation_policy = { require_evaluator_change_receipt: true };
-  const missing = scoreExistingConditionsReconstruction(expected, candidate());
+  const missingCandidate = candidate();
+  missingCandidate.evaluator_change_receipt = null;
+  const missing = scoreExistingConditionsReconstruction(expected, missingCandidate);
   assert.equal(missing.valid_run, false);
   assert.equal(missing.invalid_reasons.includes("missing_evaluator_change_receipt"), true);
 
   const evaluated = candidate();
-  evaluated.evaluator_change_receipt = {
-    native_diff_readback: true,
-    changed_element_keys: ["new-901", "new-902"],
-    out_of_scope_changed_element_keys: [],
-    receipt_sha256: "d".repeat(64)
-  };
   const accepted = scoreExistingConditionsReconstruction(expected, evaluated);
   assert.equal(accepted.valid_run, true);
   assert.equal(accepted.passed, true);
+
+  evaluated.evaluator_change_receipt!.change_digest_sha256 = "d".repeat(64);
+  const forged = scoreExistingConditionsReconstruction(expected, evaluated);
+  assert.equal(forged.valid_run, false);
+  assert.equal(forged.invalid_reasons.includes("invalid_evaluator_change_receipt"), true);
+});
+
+test("an authentic evaluator diff still fails closed when it reports an out-of-scope change", () => {
+  const actual = attachEvaluatorEvidence(candidate(), true);
+  const result = scoreExistingConditionsReconstruction(truth(), actual);
+  assert.equal(result.valid_run, false);
+  assert.equal(result.invalid_reasons.includes("out_of_scope_write"), true);
+  assert.deepEqual(actual.evaluator_change_receipt?.out_of_scope_changed_element_keys, ["outside-wall"]);
 });
 
 test("reports missing native connector topology", () => {
@@ -548,10 +653,15 @@ test("runs through the existing revit_workflow benchmark adapter and writes scor
   process.env.OPERATOR_EXISTING_CONDITIONS_EVALUATOR_KEY_ID = EVALUATOR_KEY_ID;
   process.env.OPERATOR_EXISTING_CONDITIONS_EVALUATOR_HMAC_KEY = EVALUATOR_KEY;
   try {
+    const replayCandidate = candidate();
     const result = await runRevitDemoWorkflow(
       {
         workflow: "existing_conditions_reconstruction",
-        request: { groundTruth: truth(), candidate: candidate() }
+        request: {
+          groundTruth: truth(),
+          candidate: replayCandidate,
+          expectedEvaluatorRun: EXPECTED_RUNS.get(replayCandidate)
+        }
       },
       runDir,
       new MockBridgeTransport({})
@@ -567,6 +677,23 @@ test("runs through the existing revit_workflow benchmark adapter and writes scor
     if (previousKey === undefined) delete process.env.OPERATOR_EXISTING_CONDITIONS_EVALUATOR_HMAC_KEY;
     else process.env.OPERATOR_EXISTING_CONDITIONS_EVALUATOR_HMAC_KEY = previousKey;
   }
+});
+
+test("embedded canonical replay migrates explicitly to evaluator-bound V2 and remains green", () => {
+  const taskPath = path.resolve("benchmark/tasks/existing_conditions_reconstruction_exact_replay.json");
+  const task = JSON.parse(fs.readFileSync(taskPath, "utf8")) as {
+    adapter_config: { request: { groundTruth: ExistingConditionsGroundTruth; candidate: Record<string, unknown> } };
+  };
+  const legacy = task.adapter_config.request.candidate;
+  const migrated = attachEvaluatorEvidence({
+    ...legacy,
+    schema_version: 2,
+    evaluator_change_receipt: undefined,
+    visual_receipt: undefined
+  } as unknown as ExistingConditionsCandidate);
+  const result = scoreExistingConditionsReconstruction(task.adapter_config.request.groundTruth, migrated);
+  assert.equal(result.valid_run, true, JSON.stringify(result));
+  assert.equal(result.passed, true, JSON.stringify(result));
 });
 
 test("normalizes visible-element and connector readback into a scoring snapshot", () => {

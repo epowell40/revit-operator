@@ -6,31 +6,87 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY } from "../src/benchmark/existing_conditions_reconstruction.js";
-import { createExistingConditionsEvaluatorVisualReceipt } from "../src/existing_conditions/evaluator_visual.js";
+import {
+  createExistingConditionsEvaluatorVisualReceipt,
+  type ExistingConditionsEvaluatorExpectedRun
+} from "../src/existing_conditions/evaluator_visual.js";
+import { createExistingConditionsEvaluatorChangeReceipt } from "../src/existing_conditions/evaluator_diff.js";
 
 const HASH = "a".repeat(64);
 const EVALUATOR_KEY_ID = "existing-conditions-cli-test-key";
 const EVALUATOR_KEY = "test-only-existing-conditions-cli-evaluator-key-0001";
 
-function visualReceipt() {
+function evaluatorEvidence(snapshot: unknown): {
+  visualReceipt: ReturnType<typeof createExistingConditionsEvaluatorVisualReceipt>;
+  changeReceipt: ReturnType<typeof createExistingConditionsEvaluatorChangeReceipt>;
+  expectedRun: ExistingConditionsEvaluatorExpectedRun;
+} {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-scoring-policy-visual-"));
   const capture = path.join(root, "post.png");
   const pdf = path.join(root, "post.pdf");
   fs.writeFileSync(capture, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]));
   fs.writeFileSync(pdf, "%PDF-1.4\n%%EOF\n", "ascii");
-  return createExistingConditionsEvaluatorVisualReceipt({
+  const workflowFingerprint = "b".repeat(64);
+  const actionId = "scoring-policy-cli-action";
+  const attemptId = crypto.randomUUID();
+  const captureNonce = crypto.randomBytes(18).toString("base64url");
+  const captureName = path.basename(capture);
+  const changeReceipt = createExistingConditionsEvaluatorChangeReceipt(
+    { viewId: 42, count: 0, truncated: false, items: [] },
+    { viewId: 42, count: 0, truncated: false, items: [] },
+    {
+      scope: { model_bounds_ft: { min: { x: -1000, y: -1000, z: -1000 }, max: { x: 1000, y: 1000, z: 1000 } } },
+      allowed_categories: ["OST_DuctCurves"]
+    },
+    {
+      run: {
+        fixture_id: "generic-cli-policy-fixture",
+        scope_id: "generic-scope",
+        workflow_fingerprint_sha256: workflowFingerprint,
+        action_id: actionId,
+        attempt_id: attemptId,
+        capture_nonce: captureNonce,
+        capture_name: captureName,
+        artifact_scope_root: root
+      },
+      candidate_snapshot: snapshot,
+      authority: { key_id: EVALUATOR_KEY_ID, signing_key: EVALUATOR_KEY }
+    }
+  );
+  const visualReceipt = createExistingConditionsEvaluatorVisualReceipt({
     post_change_capture_path: capture,
     post_change_pdf_path: pdf,
     artifact_scope_root: root,
-    workflow_fingerprint_sha256: "b".repeat(64),
-    action_id: "scoring-policy-cli-action",
-    attempt_id: crypto.randomUUID(),
-    capture_nonce: crypto.randomBytes(18).toString("base64url"),
+    fixture_id: "generic-cli-policy-fixture",
+    scope_id: "generic-scope",
+    workflow_fingerprint_sha256: workflowFingerprint,
+    action_id: actionId,
+    attempt_id: attemptId,
+    capture_nonce: captureNonce,
+    capture_name: captureName,
+    candidate_snapshot_sha256: changeReceipt.candidate_snapshot_sha256,
+    change_digest_sha256: changeReceipt.change_digest_sha256,
     post_apply_completed_at: new Date(Date.now() - 1_000).toISOString(),
     authority: { key_id: EVALUATOR_KEY_ID, signing_key: EVALUATOR_KEY },
     review_status: "pass",
     notes: ["generic test receipt"]
   });
+  return {
+    visualReceipt,
+    changeReceipt,
+    expectedRun: {
+      fixture_id: "generic-cli-policy-fixture",
+      scope_id: "generic-scope",
+      workflow_fingerprint_sha256: workflowFingerprint,
+      action_id: actionId,
+      attempt_id: attemptId,
+      capture_nonce: captureNonce,
+      capture_name: captureName,
+      artifact_scope_root: root,
+      candidate_snapshot_sha256: changeReceipt.candidate_snapshot_sha256,
+      change_digest_sha256: changeReceipt.change_digest_sha256
+    }
+  };
 }
 
 function writeJson(filePath: string, value: unknown): void {
@@ -72,22 +128,25 @@ function truth(): Record<string, unknown> {
   };
 }
 
-function candidate(): Record<string, unknown> {
-  return {
+function candidate(): { value: Record<string, unknown>; expectedRun: ExistingConditionsEvaluatorExpectedRun } {
+  const snapshot = {
+    native_readback: true,
+    elements: [element("candidate-duct")],
+    connections: [],
+    open_connector_count: 0
+  };
+  const evidence = evaluatorEvidence(snapshot);
+  return { value: {
     schema_version: 2,
     fixture_id: "generic-cli-policy-fixture",
     scope_id: "generic-scope",
     visible_evidence: [{ role: "source_pdf", sha256: HASH }],
     accessed_artifact_roles: ["agent_visible_package", "source_pdf", "redacted_model"],
     out_of_scope_changed_element_keys: [],
-    snapshot: {
-      native_readback: true,
-      elements: [element("candidate-duct")],
-      connections: [],
-      open_connector_count: 0
-    },
-    visual_receipt: visualReceipt()
-  };
+    snapshot,
+    evaluator_change_receipt: evidence.changeReceipt,
+    visual_receipt: evidence.visualReceipt
+  }, expectedRun: evidence.expectedRun };
 }
 
 function canonicalJson(value: unknown): string {
@@ -106,7 +165,8 @@ function runScore(temp: string, policy: string | undefined, label: string) {
   const candidatePath = path.join(temp, `${label}-candidate.json`);
   const outDir = path.join(temp, `${label}-score`);
   writeJson(truthPath, truth());
-  writeJson(candidatePath, candidate());
+  const candidateFixture = candidate();
+  writeJson(candidatePath, candidateFixture.value);
   const cli = path.resolve(process.cwd(), "dist/src/tools/existing_conditions_fixture.js");
   const args = [cli, "score", "--truth", truthPath, "--candidate", candidatePath];
   if (policy !== undefined) args.push("--policy", policy);
@@ -118,7 +178,8 @@ function runScore(temp: string, policy: string | undefined, label: string) {
       env: {
         ...process.env,
         OPERATOR_EXISTING_CONDITIONS_EVALUATOR_KEY_ID: EVALUATOR_KEY_ID,
-        OPERATOR_EXISTING_CONDITIONS_EVALUATOR_HMAC_KEY: EVALUATOR_KEY
+        OPERATOR_EXISTING_CONDITIONS_EVALUATOR_HMAC_KEY: EVALUATOR_KEY,
+        OPERATOR_EXISTING_CONDITIONS_EVALUATOR_EXPECTED_RUN_JSON: JSON.stringify(candidateFixture.expectedRun)
       }
     }),
     outDir

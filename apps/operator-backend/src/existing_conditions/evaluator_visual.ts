@@ -16,15 +16,39 @@ export type ExistingConditionsEvaluatorSigningAuthority = {
   signing_key: string | Buffer;
 };
 
+export type ExistingConditionsEvaluatorRunIdentity = {
+  fixture_id: string;
+  scope_id: string;
+  workflow_fingerprint_sha256: string;
+  action_id: string;
+  attempt_id: string;
+  capture_nonce: string;
+  capture_name: string;
+  artifact_scope_root: string;
+  candidate_snapshot_sha256: string;
+};
+
+export type ExistingConditionsEvaluatorExpectedRun = ExistingConditionsEvaluatorRunIdentity & {
+  change_digest_sha256: string;
+};
+
 export type ExistingConditionsEvaluatorVisualReceipt = {
-  schema_version: 2;
+  schema_version: 3;
+  fixture_id: string;
+  scope_id: string;
   artifact_scope_root: string;
   workflow_fingerprint_sha256: string;
   action_id: string;
   attempt_id: string;
   capture_nonce: string;
+  capture_name: string;
+  candidate_snapshot_sha256: string;
+  change_digest_sha256: string;
   post_apply_completed_at: string;
   issued_at: string;
+  expires_at: string;
+  freshness_rule: "bounded_single_attempt_capture_v1";
+  replay_key_sha256: string;
   post_change_capture_sha256: string;
   post_change_pdf_sha256: string;
   post_change_capture_artifact: ExistingConditionsEvaluatorArtifactBinding;
@@ -46,6 +70,8 @@ export type ExistingConditionsEvaluatorVisualValidationOptions = {
   allowed_artifact_root?: string;
   trusted_key_resolver?: (keyId: string) => string | Buffer | null | undefined;
   maximum_clock_skew_ms?: number;
+  expected_run?: ExistingConditionsEvaluatorExpectedRun;
+  now_ms?: number;
 };
 
 type UnsignedVisualReceipt = Omit<ExistingConditionsEvaluatorVisualReceipt, "evaluator_authority"> & {
@@ -55,6 +81,8 @@ type UnsignedVisualReceipt = Omit<ExistingConditionsEvaluatorVisualReceipt, "eva
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
 const NONCE_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
 const DEFAULT_MAXIMUM_CLOCK_SKEW_MS = 5_000;
+const DEFAULT_RECEIPT_MAXIMUM_AGE_MS = 5 * 60_000;
+const MAXIMUM_RECEIPT_AGE_MS = 24 * 60 * 60_000;
 
 function canonicalJson(value: unknown): string {
   if (value === null) return "null";
@@ -71,6 +99,10 @@ function canonicalJson(value: unknown): string {
 
 function hashBytes(bytes: Buffer): string {
   return crypto.createHash("sha256").update(bytes).digest("hex");
+}
+
+function hashCanonical(value: unknown): string {
+  return hashBytes(Buffer.from(canonicalJson(value), "utf8"));
 }
 
 function signingKeyBytes(value: string | Buffer): Buffer {
@@ -104,6 +136,57 @@ function requiredIdentity(value: unknown, field: string): string {
   const normalized = String(value ?? "").trim();
   if (!normalized || normalized.length > 256) throw new Error(`evaluator_visual_${field}_invalid`);
   return normalized;
+}
+
+function requiredSha256(value: unknown, field: string): string {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!SHA256_PATTERN.test(normalized)) throw new Error(`evaluator_visual_${field}_invalid`);
+  return normalized;
+}
+
+function requiredNonce(value: unknown): string {
+  const normalized = String(value ?? "").trim();
+  if (!NONCE_PATTERN.test(normalized)) throw new Error("evaluator_visual_capture_nonce_invalid");
+  return normalized;
+}
+
+function receiptMaximumAgeMs(value: unknown): number {
+  const parsed = value === undefined ? DEFAULT_RECEIPT_MAXIMUM_AGE_MS : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > MAXIMUM_RECEIPT_AGE_MS) {
+    throw new Error("evaluator_visual_maximum_receipt_age_ms_invalid");
+  }
+  return parsed;
+}
+
+function replayKey(run: ExistingConditionsEvaluatorExpectedRun): string {
+  return hashCanonical({
+    fixture_id: run.fixture_id,
+    scope_id: run.scope_id,
+    workflow_fingerprint_sha256: run.workflow_fingerprint_sha256,
+    action_id: run.action_id,
+    attempt_id: run.attempt_id,
+    capture_nonce: run.capture_nonce,
+    capture_name: run.capture_name,
+    artifact_scope_root: run.artifact_scope_root,
+    candidate_snapshot_sha256: run.candidate_snapshot_sha256,
+    change_digest_sha256: run.change_digest_sha256
+  });
+}
+
+function normalizedExpectedRun(value: ExistingConditionsEvaluatorExpectedRun): ExistingConditionsEvaluatorExpectedRun {
+  const artifactScopeRoot = fs.realpathSync(path.resolve(value.artifact_scope_root));
+  return {
+    fixture_id: requiredIdentity(value.fixture_id, "fixture_id"),
+    scope_id: requiredIdentity(value.scope_id, "scope_id"),
+    workflow_fingerprint_sha256: requiredSha256(value.workflow_fingerprint_sha256, "workflow_fingerprint"),
+    action_id: requiredIdentity(value.action_id, "action_id"),
+    attempt_id: requiredIdentity(value.attempt_id, "attempt_id"),
+    capture_nonce: requiredNonce(value.capture_nonce),
+    capture_name: requiredIdentity(value.capture_name, "capture_name"),
+    artifact_scope_root: artifactScopeRoot,
+    candidate_snapshot_sha256: requiredSha256(value.candidate_snapshot_sha256, "candidate_snapshot_sha256"),
+    change_digest_sha256: requiredSha256(value.change_digest_sha256, "change_digest_sha256")
+  };
 }
 
 function timestampMs(value: unknown, field: string): number {
@@ -182,14 +265,22 @@ function validateArtifactBinding(args: {
 
 function unsignedReceipt(receipt: ExistingConditionsEvaluatorVisualReceipt): UnsignedVisualReceipt {
   return {
-    schema_version: 2,
+    schema_version: 3,
+    fixture_id: receipt.fixture_id,
+    scope_id: receipt.scope_id,
     artifact_scope_root: receipt.artifact_scope_root,
     workflow_fingerprint_sha256: receipt.workflow_fingerprint_sha256,
     action_id: receipt.action_id,
     attempt_id: receipt.attempt_id,
     capture_nonce: receipt.capture_nonce,
+    capture_name: receipt.capture_name,
+    candidate_snapshot_sha256: receipt.candidate_snapshot_sha256,
+    change_digest_sha256: receipt.change_digest_sha256,
     post_apply_completed_at: receipt.post_apply_completed_at,
     issued_at: receipt.issued_at,
+    expires_at: receipt.expires_at,
+    freshness_rule: receipt.freshness_rule,
+    replay_key_sha256: receipt.replay_key_sha256,
     post_change_capture_sha256: receipt.post_change_capture_sha256,
     post_change_pdf_sha256: receipt.post_change_pdf_sha256,
     post_change_capture_artifact: receipt.post_change_capture_artifact,
@@ -215,9 +306,19 @@ export function existingConditionsEvaluatorValidationOptionsFromEnvironment(
   allowedArtifactRoot?: string
 ): ExistingConditionsEvaluatorVisualValidationOptions {
   const authority = existingConditionsEvaluatorSigningAuthorityFromEnvironment();
+  const expectedRunJson = String(process.env.OPERATOR_EXISTING_CONDITIONS_EVALUATOR_EXPECTED_RUN_JSON ?? "").trim();
+  let expectedRun: ExistingConditionsEvaluatorExpectedRun | undefined;
+  if (expectedRunJson) {
+    try {
+      expectedRun = normalizedExpectedRun(JSON.parse(expectedRunJson) as ExistingConditionsEvaluatorExpectedRun);
+    } catch {
+      throw new Error("existing_conditions_evaluator_expected_run_invalid");
+    }
+  }
   return {
     ...(allowedArtifactRoot ? { allowed_artifact_root: allowedArtifactRoot } : {}),
-    trusted_key_resolver: keyId => keyId === authority.key_id ? authority.signing_key : null
+    trusted_key_resolver: keyId => keyId === authority.key_id ? authority.signing_key : null,
+    ...(expectedRun ? { expected_run: expectedRun } : {})
   };
 }
 
@@ -225,22 +326,32 @@ export function createExistingConditionsEvaluatorVisualReceipt(input: {
   post_change_capture_path: string;
   post_change_pdf_path: string;
   artifact_scope_root: string;
+  fixture_id?: string;
+  scope_id?: string;
   workflow_fingerprint_sha256: string;
   action_id: string;
   attempt_id: string;
   capture_nonce: string;
+  capture_name?: string;
+  candidate_snapshot_sha256?: string;
+  change_digest_sha256?: string;
   post_apply_completed_at: string;
   authority: ExistingConditionsEvaluatorSigningAuthority;
   review_status: "pass" | "needs_review" | "fail";
   notes?: string[];
+  maximum_receipt_age_ms?: number;
 }): ExistingConditionsEvaluatorVisualReceipt {
   const artifactScopeRoot = fs.realpathSync(path.resolve(input.artifact_scope_root));
-  const workflowFingerprint = String(input.workflow_fingerprint_sha256 ?? "").trim().toLowerCase();
-  if (!SHA256_PATTERN.test(workflowFingerprint)) throw new Error("evaluator_visual_workflow_fingerprint_invalid");
+  const fixtureId = requiredIdentity(input.fixture_id, "fixture_id");
+  const scopeId = requiredIdentity(input.scope_id, "scope_id");
+  const workflowFingerprint = requiredSha256(input.workflow_fingerprint_sha256, "workflow_fingerprint");
   const actionId = requiredIdentity(input.action_id, "action_id");
   const attemptId = requiredIdentity(input.attempt_id, "attempt_id");
-  const captureNonce = String(input.capture_nonce ?? "").trim();
-  if (!NONCE_PATTERN.test(captureNonce)) throw new Error("evaluator_visual_capture_nonce_invalid");
+  const captureNonce = requiredNonce(input.capture_nonce);
+  const captureName = requiredIdentity(input.capture_name, "capture_name");
+  const candidateSnapshotSha256 = requiredSha256(input.candidate_snapshot_sha256, "candidate_snapshot_sha256");
+  const changeDigestSha256 = requiredSha256(input.change_digest_sha256, "change_digest_sha256");
+  const maximumReceiptAgeMs = receiptMaximumAgeMs(input.maximum_receipt_age_ms);
   const postApplyCompletedAtMs = timestampMs(input.post_apply_completed_at, "post_apply_completed_at");
   const issuedAt = new Date().toISOString();
   const issuedAtMs = Date.parse(issuedAt);
@@ -264,17 +375,41 @@ export function createExistingConditionsEvaluatorVisualReceipt(input: {
     maximumClockSkewMs: DEFAULT_MAXIMUM_CLOCK_SKEW_MS
   });
   if (capture.path === pdf.path) throw new Error("evaluator_visual_artifacts_must_be_distinct");
+  if (capture.file_name !== captureName) throw new Error("evaluator_visual_capture_name_mismatch");
+  if (issuedAtMs - postApplyCompletedAtMs > maximumReceiptAgeMs + DEFAULT_MAXIMUM_CLOCK_SKEW_MS) {
+    throw new Error("evaluator_visual_post_apply_time_is_stale");
+  }
   const notes = [...new Set((input.notes ?? []).map(note => note.trim()).filter(Boolean))];
   const keyId = requiredIdentity(input.authority?.key_id, "authority_key_id");
+  const expectedRun: ExistingConditionsEvaluatorExpectedRun = {
+    fixture_id: fixtureId,
+    scope_id: scopeId,
+    workflow_fingerprint_sha256: workflowFingerprint,
+    action_id: actionId,
+    attempt_id: attemptId,
+    capture_nonce: captureNonce,
+    capture_name: captureName,
+    artifact_scope_root: artifactScopeRoot,
+    candidate_snapshot_sha256: candidateSnapshotSha256,
+    change_digest_sha256: changeDigestSha256
+  };
   const payload: UnsignedVisualReceipt = {
-    schema_version: 2,
+    schema_version: 3,
+    fixture_id: fixtureId,
+    scope_id: scopeId,
     artifact_scope_root: artifactScopeRoot,
     workflow_fingerprint_sha256: workflowFingerprint,
     action_id: actionId,
     attempt_id: attemptId,
     capture_nonce: captureNonce,
+    capture_name: captureName,
+    candidate_snapshot_sha256: candidateSnapshotSha256,
+    change_digest_sha256: changeDigestSha256,
     post_apply_completed_at: new Date(postApplyCompletedAtMs).toISOString(),
     issued_at: issuedAt,
+    expires_at: new Date(issuedAtMs + maximumReceiptAgeMs).toISOString(),
+    freshness_rule: "bounded_single_attempt_capture_v1",
+    replay_key_sha256: replayKey(expectedRun),
     post_change_capture_sha256: capture.sha256,
     post_change_pdf_sha256: pdf.sha256,
     post_change_capture_artifact: capture,
@@ -304,13 +439,20 @@ export function validateExistingConditionsEvaluatorVisualReceipt(
   options: ExistingConditionsEvaluatorVisualValidationOptions = {}
 ): boolean {
   try {
-    if (!receipt || receipt.schema_version !== 2 ||
+    if (!receipt || receipt.schema_version !== 3 ||
+        !requiredIdentity(receipt.fixture_id, "fixture_id") ||
+        !requiredIdentity(receipt.scope_id, "scope_id") ||
         !SHA256_PATTERN.test(receipt.workflow_fingerprint_sha256) ||
+        !SHA256_PATTERN.test(receipt.candidate_snapshot_sha256) ||
+        !SHA256_PATTERN.test(receipt.change_digest_sha256) ||
+        !SHA256_PATTERN.test(receipt.replay_key_sha256) ||
         !SHA256_PATTERN.test(receipt.post_change_capture_sha256) ||
         !SHA256_PATTERN.test(receipt.post_change_pdf_sha256) ||
         !NONCE_PATTERN.test(receipt.capture_nonce)) return false;
     requiredIdentity(receipt.action_id, "action_id");
     requiredIdentity(receipt.attempt_id, "attempt_id");
+    requiredIdentity(receipt.capture_name, "capture_name");
+    if (receipt.freshness_rule !== "bounded_single_attempt_capture_v1") return false;
     const review = receipt.evaluator_review;
     if (!review || review.reviewer_role !== "evaluator" || !["pass", "needs_review", "fail"].includes(review.review_status)) return false;
     if (!Array.isArray(review.notes) || review.notes.some(note => typeof note !== "string" || !note.trim())) return false;
@@ -328,10 +470,32 @@ export function validateExistingConditionsEvaluatorVisualReceipt(
     }
     const postApplyCompletedAtMs = timestampMs(receipt.post_apply_completed_at, "post_apply_completed_at");
     const issuedAtMs = timestampMs(receipt.issued_at, "issued_at");
+    const expiresAtMs = timestampMs(receipt.expires_at, "expires_at");
     const maximumClockSkewMs = Number.isFinite(options.maximum_clock_skew_ms)
       ? Math.max(0, Number(options.maximum_clock_skew_ms))
       : DEFAULT_MAXIMUM_CLOCK_SKEW_MS;
     if (postApplyCompletedAtMs > issuedAtMs + maximumClockSkewMs) return false;
+    if (expiresAtMs <= issuedAtMs || expiresAtMs - issuedAtMs > MAXIMUM_RECEIPT_AGE_MS) return false;
+    const nowMs = Number.isFinite(options.now_ms) ? Number(options.now_ms) : Date.now();
+    if (nowMs > expiresAtMs + maximumClockSkewMs || nowMs < issuedAtMs - maximumClockSkewMs) return false;
+    const receiptRun: ExistingConditionsEvaluatorExpectedRun = {
+      fixture_id: receipt.fixture_id,
+      scope_id: receipt.scope_id,
+      workflow_fingerprint_sha256: receipt.workflow_fingerprint_sha256.toLowerCase(),
+      action_id: receipt.action_id,
+      attempt_id: receipt.attempt_id,
+      capture_nonce: receipt.capture_nonce,
+      capture_name: receipt.capture_name,
+      artifact_scope_root: receipt.artifact_scope_root,
+      candidate_snapshot_sha256: receipt.candidate_snapshot_sha256.toLowerCase(),
+      change_digest_sha256: receipt.change_digest_sha256.toLowerCase()
+    };
+    if (replayKey(receiptRun) !== receipt.replay_key_sha256.toLowerCase()) return false;
+    if (receipt.post_change_capture_artifact.file_name !== receipt.capture_name) return false;
+    if (options.expected_run) {
+      const expected = normalizedExpectedRun(options.expected_run);
+      if (canonicalJson(receiptRun) !== canonicalJson(expected)) return false;
+    }
     if (!validateArtifactBinding({
       binding: receipt.post_change_capture_artifact,
       artifactScopeRoot,
