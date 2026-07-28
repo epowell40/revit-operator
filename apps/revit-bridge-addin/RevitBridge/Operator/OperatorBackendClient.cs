@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.IO;
 using System.Threading;
@@ -482,21 +483,21 @@ namespace RevitBridge.Operator
             return json ?? "";
         }
 
-        public async Task<string> ListRevitBatchJobsJsonAsync(int limit, CancellationToken cancellationToken)
+        public async Task<string> ListRevitBatchJobsJsonAsync(int limit, OperatorRevitBatchBinding binding, CancellationToken cancellationToken)
         {
             if (limit < 1) limit = 1;
             if (limit > 50) limit = 50;
             using var resp = await SendWithAuthAsync(
-                () => new HttpRequestMessage(HttpMethod.Get, $"api/revit-batch/jobs?limit={limit}"),
+                () => new HttpRequestMessage(HttpMethod.Get, $"api/revit-batch/jobs?limit={limit}&{BatchBindingQuery(binding)}"),
                 cancellationToken).ConfigureAwait(false);
             var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
             EnsureSuccessOrThrow(resp, json, "Backend /api/revit-batch/jobs");
             return json ?? "";
         }
 
-        public async Task<string> CreateRevitBatchJobJsonAsync(object payload, CancellationToken cancellationToken)
+        public async Task<string> CreateRevitBatchJobJsonAsync(object payload, OperatorRevitBatchBinding binding, CancellationToken cancellationToken)
         {
-            var body = JsonSerializer.Serialize(payload ?? new object(), OperatorUiProtocol.JsonOptions);
+            var body = SerializeBatchBoundPayload(payload, binding);
             using var resp = await SendWithAuthAsync(
                 () => new HttpRequestMessage(HttpMethod.Post, "api/revit-batch/jobs")
                 {
@@ -508,38 +509,42 @@ namespace RevitBridge.Operator
             return json ?? "";
         }
 
-        public async Task<string> GetRevitBatchJobJsonAsync(string jobId, CancellationToken cancellationToken)
+        public async Task<string> GetRevitBatchJobJsonAsync(string jobId, OperatorRevitBatchBinding binding, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(jobId)) throw new ArgumentException("jobId is required.");
             using var resp = await SendWithAuthAsync(
-                () => new HttpRequestMessage(HttpMethod.Get, $"api/revit-batch/jobs/{Uri.EscapeDataString(jobId)}"),
+                () => new HttpRequestMessage(HttpMethod.Get, $"api/revit-batch/jobs/{Uri.EscapeDataString(jobId)}?{BatchBindingQuery(binding)}"),
                 cancellationToken).ConfigureAwait(false);
             var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
             EnsureSuccessOrThrow(resp, json, "Backend /api/revit-batch/jobs/:id");
             return json ?? "";
         }
 
-        public async Task<string> ControlRevitBatchJobJsonAsync(string jobId, string operation, CancellationToken cancellationToken)
+        public async Task<string> ControlRevitBatchJobJsonAsync(string jobId, string operation, OperatorRevitBatchBinding binding, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(jobId)) throw new ArgumentException("jobId is required.");
             var normalized = (operation ?? "").Trim().ToLowerInvariant();
             if (normalized != "approve" && normalized != "pause" && normalized != "resume" && normalized != "cancel" && normalized != "retry-failed")
                 throw new ArgumentException("operation must be approve|pause|resume|cancel|retry-failed");
 
+            var body = SerializeBatchBoundPayload(new object(), binding);
             using var resp = await SendWithAuthAsync(
-                () => new HttpRequestMessage(HttpMethod.Post, $"api/revit-batch/jobs/{Uri.EscapeDataString(jobId)}/{normalized}"),
+                () => new HttpRequestMessage(HttpMethod.Post, $"api/revit-batch/jobs/{Uri.EscapeDataString(jobId)}/{normalized}")
+                {
+                    Content = new StringContent(body, Encoding.UTF8, "application/json")
+                },
                 cancellationToken).ConfigureAwait(false);
             var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
             EnsureSuccessOrThrow(resp, json, "Backend /api/revit-batch/jobs/:id/control");
             return json ?? "";
         }
 
-        public async Task<string> ClaimNextRevitBatchItemJsonAsync(string executorId, string executorKind, string? jobId, CancellationToken cancellationToken)
+        public async Task<string> ClaimNextRevitBatchItemJsonAsync(OperatorRevitBatchBinding binding, string executorKind, string? jobId, CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(executorId)) throw new ArgumentException("executorId is required.");
-            var payload = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            if (binding == null) throw new ArgumentNullException(nameof(binding));
+            var payload = new Dictionary<string, object?>(binding.ToWireValues(), StringComparer.OrdinalIgnoreCase)
             {
-                ["executor_id"] = executorId,
+                ["executor_id"] = binding.TargetExecutorId,
                 ["executor_kind"] = string.IsNullOrWhiteSpace(executorKind) ? "revit_delegate" : executorKind
             };
             if (!string.IsNullOrWhiteSpace(jobId)) payload["job_id"] = jobId;
@@ -617,19 +622,19 @@ namespace RevitBridge.Operator
             return json ?? "";
         }
 
-        public async Task<string> CompleteRevitBatchItemJsonAsync(string jobId, string itemId, string executorId, string claimToken, object? result, CancellationToken cancellationToken)
+        public async Task<string> CompleteRevitBatchItemJsonAsync(string jobId, string itemId, OperatorRevitBatchBinding binding, string claimToken, object? result, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(jobId)) throw new ArgumentException("jobId is required.");
             if (string.IsNullOrWhiteSpace(itemId)) throw new ArgumentException("itemId is required.");
-            if (string.IsNullOrWhiteSpace(executorId)) throw new ArgumentException("executorId is required.");
+            if (binding == null) throw new ArgumentNullException(nameof(binding));
             if (string.IsNullOrWhiteSpace(claimToken)) throw new ArgumentException("claimToken is required.");
 
-            var body = JsonSerializer.Serialize(new
+            var body = SerializeBatchBoundPayload(new
             {
-                executor_id = executorId,
+                executor_id = binding.TargetExecutorId,
                 claim_token = claimToken,
                 result = result
-            }, OperatorUiProtocol.JsonOptions);
+            }, binding);
             using var resp = await SendWithAuthAsync(
                 () => new HttpRequestMessage(HttpMethod.Post, $"api/revit-batch/jobs/{Uri.EscapeDataString(jobId)}/items/{Uri.EscapeDataString(itemId)}/complete")
                 {
@@ -641,20 +646,20 @@ namespace RevitBridge.Operator
             return json ?? "";
         }
 
-        public async Task<string> FailRevitBatchItemJsonAsync(string jobId, string itemId, string executorId, string claimToken, string error, object? result, CancellationToken cancellationToken)
+        public async Task<string> FailRevitBatchItemJsonAsync(string jobId, string itemId, OperatorRevitBatchBinding binding, string claimToken, string error, object? result, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(jobId)) throw new ArgumentException("jobId is required.");
             if (string.IsNullOrWhiteSpace(itemId)) throw new ArgumentException("itemId is required.");
-            if (string.IsNullOrWhiteSpace(executorId)) throw new ArgumentException("executorId is required.");
+            if (binding == null) throw new ArgumentNullException(nameof(binding));
             if (string.IsNullOrWhiteSpace(claimToken)) throw new ArgumentException("claimToken is required.");
 
-            var body = JsonSerializer.Serialize(new
+            var body = SerializeBatchBoundPayload(new
             {
-                executor_id = executorId,
+                executor_id = binding.TargetExecutorId,
                 claim_token = claimToken,
                 error = string.IsNullOrWhiteSpace(error) ? "Batch item failed." : error,
                 result = result
-            }, OperatorUiProtocol.JsonOptions);
+            }, binding);
             using var resp = await SendWithAuthAsync(
                 () => new HttpRequestMessage(HttpMethod.Post, $"api/revit-batch/jobs/{Uri.EscapeDataString(jobId)}/items/{Uri.EscapeDataString(itemId)}/fail")
                 {
@@ -664,6 +669,24 @@ namespace RevitBridge.Operator
             var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
             EnsureSuccessOrThrow(resp, json, "Backend /api/revit-batch/jobs/:id/items/:id/fail");
             return json ?? "";
+        }
+
+        private static string SerializeBatchBoundPayload(object? payload, OperatorRevitBatchBinding binding)
+        {
+            if (binding == null) throw new ArgumentNullException(nameof(binding));
+            var json = JsonSerializer.Serialize(payload ?? new object(), OperatorUiProtocol.JsonOptions);
+            var root = JsonNode.Parse(json) as JsonObject ?? new JsonObject();
+            foreach (var pair in binding.ToWireValues())
+                root[pair.Key] = JsonSerializer.SerializeToNode(pair.Value, OperatorUiProtocol.JsonOptions);
+            return root.ToJsonString(OperatorUiProtocol.JsonOptions);
+        }
+
+        private static string BatchBindingQuery(OperatorRevitBatchBinding binding)
+        {
+            if (binding == null) throw new ArgumentNullException(nameof(binding));
+            return "session_id=" + Uri.EscapeDataString(binding.SessionId) +
+                   "&target_executor_id=" + Uri.EscapeDataString(binding.TargetExecutorId) +
+                   "&project_fingerprint=" + Uri.EscapeDataString(binding.ProjectFingerprint);
         }
 
         public async Task<string> VoiceTranscribeAsync(string audioBase64, string format, CancellationToken cancellationToken)

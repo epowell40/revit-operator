@@ -54,16 +54,16 @@ namespace RevitBridge.Common.Tests
                 "return;",
                 "_revitBatchCompletionOutbox.Save(",
                 "PostAndValidateRevitBatchCompletionAsync(");
-            Assert.Matches(new Regex(@"FailRevitBatchItemJsonAsync\([\s\S]{0,220}_revitBatchExecutorId,\s*claimToken,", RegexOptions.IgnoreCase), pane);
+            Assert.Matches(new Regex(@"FailRevitBatchItemJsonAsync\([\s\S]{0,220}binding,\s*claimToken,", RegexOptions.IgnoreCase), pane);
             Assert.Contains("Never convert a possibly committed effect into /fail", pane);
             Assert.Contains("Batch completion response did not confirm the same item as succeeded.", pane);
             Assert.DoesNotMatch(new Regex(@"PostAndValidateRevitBatchCompletionAsync\([\s\S]{0,700}FailRevitBatchItemJsonAsync\(", RegexOptions.IgnoreCase), pane);
 
             AssertOrdered(
                 client,
-                "CompleteRevitBatchItemJsonAsync(string jobId, string itemId, string executorId, string claimToken",
+                "CompleteRevitBatchItemJsonAsync(string jobId, string itemId, OperatorRevitBatchBinding binding, string claimToken",
                 "claim_token = claimToken",
-                "FailRevitBatchItemJsonAsync(string jobId, string itemId, string executorId, string claimToken",
+                "FailRevitBatchItemJsonAsync(string jobId, string itemId, OperatorRevitBatchBinding binding, string claimToken",
                 "claim_token = claimToken");
         }
 
@@ -79,12 +79,23 @@ namespace RevitBridge.Common.Tests
             AssertOrdered(
                 pane,
                 "var completion = pending[0];",
-                "completion.ExecutorId,",
+                "var binding = BindingFromCompletionEnvelope(envelope);",
+                "binding,",
                 "claimToken,",
                 "_revitBatchCompletionOutbox.Acknowledge(completion.JobId)");
             Assert.Contains("BatchCompletionOutbox", pane);
             Assert.Contains("batch.completion.retry_pending", pane);
             Assert.Contains("outcome_unknown = true", pane);
+            AssertOrdered(
+                pane,
+                "AssertClaimedJobBinding(job, binding);",
+                "ProcessClaimedRevitBatchItemAsync(job, item, claimToken, binding",
+                "EnsureRevitBatchBindingStillLiveAsync(binding, cancellationToken)",
+                "ExecuteDelegatedRevitBatchItemAsync(job, item, cancellationToken)");
+            Assert.Contains("session_id = binding.SessionId", pane);
+            Assert.Contains("project_fingerprint = binding.ProjectFingerprint", pane);
+            Assert.Contains("BindingFromCompletionEnvelope(envelope)", pane);
+            Assert.Contains("SerializeBatchBoundPayload", ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorBackendClient.cs"));
         }
 
         [Fact]

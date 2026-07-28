@@ -16,6 +16,11 @@ namespace RevitBridge.Handlers
             var view = doc?.ActiveView;
             var documentLoaded = doc != null && !string.IsNullOrWhiteSpace(doc.Title);
             var activeViewReady = view != null && view.IsValidObject;
+            string? projectUniqueId = null;
+            try { projectUniqueId = doc?.ProjectInformation?.UniqueId; } catch { }
+            var projectFingerprint = doc == null
+                ? null
+                : RevitBridge.Common.OperatorRevitBatchBinding.ComputeProjectFingerprint(doc.Title, doc.PathName, projectUniqueId);
 
             return Task.FromResult<object>(new
             {
@@ -39,6 +44,15 @@ namespace RevitBridge.Handlers
                 {
                     title = doc.Title,
                     path = doc.PathName,
+                    projectIdentity = new
+                    {
+                        fingerprint = projectFingerprint,
+                        scheme = "revit-operator.project.v1",
+                        anchorKind = string.IsNullOrWhiteSpace(projectUniqueId)
+                            ? (string.IsNullOrWhiteSpace(doc.PathName) ? "document_title" : "document_path")
+                            : "project_information_unique_id",
+                        stableAcrossPathChanges = !string.IsNullOrWhiteSpace(projectUniqueId)
+                    },
                     isWorkshared = doc.IsWorkshared,
                     activeView = view == null ? null : new
                     {
