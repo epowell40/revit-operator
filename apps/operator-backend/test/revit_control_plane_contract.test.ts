@@ -204,6 +204,18 @@ test("hosted MCP courier is session-bound, approval-gated, and never auto-replay
   assert.doesNotMatch(codexBrain, /let client:\s*CodexAppServer\s*\|\s*null/);
 });
 
+test("geometry-aware tag placement excludes only section-box control volumes from annotation obstacles", () => {
+  const handler = addinFile(path.join("RevitBridge.Logic", "Handlers", "TagElementsHandler.cs"));
+
+  const annotationObstacleBranch = handler.match(
+    /if \((element\.Category\.CategoryType == CategoryType\.Annotation\s*&&\s*ElementIdCompat\.GetValue\(element\.Category\.Id\) != \(long\)BuiltInCategory\.OST_SectionBox)\)\s*\{([\s\S]*?)\r?\n\s*\}\r?\n\s*else if/,
+  );
+  assert.ok(annotationObstacleBranch);
+  assert.equal(annotationObstacleBranch[1].match(/BuiltInCategory\./g)?.length, 1);
+  assert.match(annotationObstacleBranch[2], /obstacles\.HeadObstacles\.Add\(rect\)/);
+  assert.match(annotationObstacleBranch[2], /obstacles\.LeaderProtectedObstacles\.Add\(rect\)/);
+});
+
 test("Revit batch settlement forwards the exact fencing token", () => {
   const index = repoFile(path.join("operator-backend", "src", "index.ts"), path.join("apps", "operator-backend", "src", "index.ts"));
   const batch = repoFile(

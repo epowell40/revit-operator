@@ -899,7 +899,11 @@ namespace RevitBridge.Logic.Handlers
             foreach (var element in new FilteredElementCollector(doc, view.Id).WhereElementIsNotElementType())
             {
                 if (element?.Category == null) continue;
-                if (element.Category.CategoryType == CategoryType.Annotation)
+                // Section boxes are view-control volumes, not visible paper-space
+                // annotation. Their model bounding boxes can span an entire building
+                // and otherwise make every tag candidate look obstructed.
+                if (element.Category.CategoryType == CategoryType.Annotation &&
+                    ElementIdCompat.GetValue(element.Category.Id) != (long)BuiltInCategory.OST_SectionBox)
                 {
                     TagRect2? rect;
                     if (element is IndependentTag existingTag)
