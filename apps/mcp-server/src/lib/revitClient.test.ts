@@ -62,7 +62,7 @@ test("callRevit returns JSON from a responsive bridge", async () => {
   }
 });
 
-test("callRevit aborts a non-responsive bridge with a typed retryable timeout", async () => {
+test("callRevit marks a timed-out mutating request as non-retryable with an unknown outcome", async () => {
   const server = http.createServer(() => {
     // Deliberately leave the response open until the client deadline aborts it.
   });
@@ -75,12 +75,92 @@ test("callRevit aborts a non-responsive bridge with a typed retryable timeout", 
       (error: unknown) => {
         assert.ok(error instanceof RevitBridgeCallError);
         assert.equal(error.code, "revit_bridge_timeout");
-        assert.equal(error.retryable, true);
+        assert.equal(error.transportCode, "revit_bridge_timeout");
+        assert.equal(error.retryable, false);
+        assert.equal(error.outcome_unknown, true);
+        assert.equal(error.outcomeUnknown, true);
         assert.match(error.message, /POST \/revit\/sheets exceeded 250 ms/);
+        assert.match(error.message, /may already have started/);
         return true;
       },
     );
     assert.ok(Date.now() - started < 2_000);
+  } finally {
+    restore();
+    await close(server);
+  }
+});
+
+test("callRevit preserves structured outcome-unknown bridge errors", async () => {
+  const bridgeError = {
+    ok: false,
+    error: "The Revit action deadline elapsed after execution may have started.",
+    code: "revit_action_deadline_elapsed_outcome_unknown",
+    retryable: false,
+    phase: "revit_external_event",
+    host_health: "degraded",
+    opens_circuit: true,
+    outcome_unknown: true,
+    correlation_id: "correlation-408",
+    deadline_class: "write",
+    deadline_ms: 30_000,
+  };
+  const server = http.createServer((_request, response) => {
+    response.statusCode = 408;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(bridgeError));
+  });
+  const port = await listen(server);
+  const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
+  try {
+    await assert.rejects(
+      callRevit("/revit/walls", "POST", { action: "create" }),
+      (error: unknown) => {
+        assert.ok(error instanceof RevitBridgeCallError);
+        assert.equal(error.code, "revit_bridge_http_error");
+        assert.equal(error.transportCode, "revit_bridge_http_error");
+        assert.equal(error.status, 408);
+        assert.equal(error.bridgeCode, bridgeError.code);
+        assert.equal(error.retryable, false);
+        assert.equal(error.outcome_unknown, true);
+        assert.equal(error.phase, bridgeError.phase);
+        assert.equal(error.host_health, bridgeError.host_health);
+        assert.equal(error.opens_circuit, bridgeError.opens_circuit);
+        assert.equal(error.correlation_id, bridgeError.correlation_id);
+        assert.equal(error.deadline_class, bridgeError.deadline_class);
+        assert.equal(error.deadline_ms, bridgeError.deadline_ms);
+        assert.deepEqual(error.bridgeDetails, bridgeError);
+        return true;
+      },
+    );
+  } finally {
+    restore();
+    await close(server);
+  }
+});
+
+test("callRevit keeps legacy unstructured HTTP errors compatible", async () => {
+  const server = http.createServer((_request, response) => {
+    response.statusCode = 503;
+    response.end("bridge unavailable");
+  });
+  const port = await listen(server);
+  const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
+  try {
+    await assert.rejects(
+      callRevit("/revit/ping"),
+      (error: unknown) => {
+        assert.ok(error instanceof RevitBridgeCallError);
+        assert.equal(error.code, "revit_bridge_http_error");
+        assert.equal(error.transportCode, "revit_bridge_http_error");
+        assert.equal(error.status, 503);
+        assert.equal(error.retryable, true);
+        assert.equal(error.outcome_unknown, false);
+        assert.equal(error.bridgeDetails, undefined);
+        assert.match(error.message, /bridge unavailable/);
+        return true;
+      },
+    );
   } finally {
     restore();
     await close(server);

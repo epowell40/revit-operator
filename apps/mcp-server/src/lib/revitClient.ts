@@ -4,33 +4,102 @@ import { callRevitViaCourier } from "./revitCourier.js";
 // Use localhost or environment variable
 export const REVIT_BRIDGE_URL = process.env.REVIT_BRIDGE_URL || "http://localhost:5000";
 
-export type RevitBridgeErrorCode =
+export type RevitBridgeTransportErrorCode =
   | "revit_bridge_timeout"
   | "revit_bridge_unavailable"
   | "revit_bridge_http_error"
   | "revit_bridge_invalid_response";
 
+export type RevitBridgeErrorCode = RevitBridgeTransportErrorCode;
+
+export type RevitBridgeErrorDetails = Readonly<Record<string, unknown>>;
+
 export class RevitBridgeCallError extends Error {
   readonly code: RevitBridgeErrorCode;
+  readonly transportCode: RevitBridgeTransportErrorCode;
   readonly retryable: boolean;
+  readonly outcome_unknown: boolean;
+  readonly outcomeUnknown: boolean;
   readonly method: string;
   readonly path: string;
+  readonly status?: number;
+  readonly bridgeCode?: string;
+  readonly phase?: string;
+  readonly host_health?: string;
+  readonly opens_circuit?: boolean;
+  readonly correlation_id?: string;
+  readonly deadline_class?: string;
+  readonly deadline_ms?: number;
+  readonly bridgeDetails?: RevitBridgeErrorDetails;
 
   constructor(input: {
     code: RevitBridgeErrorCode;
+    transportCode?: RevitBridgeTransportErrorCode;
     message: string;
     retryable: boolean;
+    outcomeUnknown?: boolean;
     method: string;
     path: string;
+    status?: number;
+    bridgeDetails?: RevitBridgeErrorDetails;
     cause?: unknown;
   }) {
-    super(`[${input.code}] ${input.message} retryable=${input.retryable}.`, { cause: input.cause });
+    const outcomeUnknown = input.outcomeUnknown === true;
+    const retryable = outcomeUnknown ? false : input.retryable;
+    const outcomeSuffix = outcomeUnknown ? " outcome_unknown=true" : "";
+    super(`[${input.code}] ${input.message} retryable=${retryable}${outcomeSuffix}.`, { cause: input.cause });
     this.name = "RevitBridgeCallError";
     this.code = input.code;
-    this.retryable = input.retryable;
+    this.transportCode = input.transportCode ?? input.code;
+    this.retryable = retryable;
+    this.outcome_unknown = outcomeUnknown;
+    this.outcomeUnknown = outcomeUnknown;
     this.method = input.method;
     this.path = input.path;
+    this.status = input.status;
+    this.bridgeDetails = input.bridgeDetails;
+
+    const details = input.bridgeDetails;
+    this.bridgeCode = stringField(details, "code");
+    this.phase = stringField(details, "phase");
+    this.host_health = stringField(details, "host_health");
+    this.opens_circuit = booleanField(details, "opens_circuit");
+    this.correlation_id = stringField(details, "correlation_id");
+    this.deadline_class = stringField(details, "deadline_class");
+    this.deadline_ms = numberField(details, "deadline_ms");
   }
+}
+
+function stringField(details: RevitBridgeErrorDetails | undefined, name: string): string | undefined {
+  const value = details?.[name];
+  return typeof value === "string" ? value : undefined;
+}
+
+function booleanField(details: RevitBridgeErrorDetails | undefined, name: string): boolean | undefined {
+  const value = details?.[name];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function numberField(details: RevitBridgeErrorDetails | undefined, name: string): number | undefined {
+  const value = details?.[name];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function parseBridgeErrorDetails(details: string): RevitBridgeErrorDetails | undefined {
+  if (!details.trim()) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(details);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Legacy bridge errors can be plain text.
+  }
+  return undefined;
+}
+
+function isMutatingMethod(method: string): boolean {
+  return method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
 }
 
 function requestTimeoutMs(): number {
@@ -83,10 +152,12 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
       return await fetch(url, options);
     } catch (error) {
       if (controller.signal.aborted) {
+        const outcomeUnknown = isMutatingMethod(upperMethod);
         throw new RevitBridgeCallError({
           code: "revit_bridge_timeout",
-          message: `${upperMethod} ${path} exceeded ${timeoutMs} ms while waiting for the Revit bridge. Revit may be busy; inspect its UI before retrying.`,
-          retryable: true,
+          message: `${upperMethod} ${path} exceeded ${timeoutMs} ms while waiting for the Revit bridge. ${outcomeUnknown ? "The request may already have started; reconcile its outcome in Revit before any retry." : "Revit may be busy; inspect its UI before retrying."}`,
+          retryable: !outcomeUnknown,
+          outcomeUnknown,
           method: upperMethod,
           path,
           cause: error,
@@ -123,12 +194,22 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
       try { details = await response.text(); } catch { /* ignore */ }
     }
 
+    const bridgeDetails = parseBridgeErrorDetails(details);
+    const bridgeOutcomeUnknown = booleanField(bridgeDetails, "outcome_unknown");
+    const outcomeUnknown = bridgeOutcomeUnknown ?? (response.status === 408 && isMutatingMethod(upperMethod));
+    const bridgeRetryable = booleanField(bridgeDetails, "retryable");
+    const statusRetryable = response.status === 408 || response.status === 409 || response.status === 423 || response.status === 429 || response.status >= 500;
+
     throw new RevitBridgeCallError({
       code: "revit_bridge_http_error",
+      transportCode: "revit_bridge_http_error",
       message: `${upperMethod} ${path} received HTTP ${response.status}${details ? `: ${details}` : ""}`,
-      retryable: response.status === 408 || response.status === 409 || response.status === 423 || response.status === 429 || response.status >= 500,
+      retryable: outcomeUnknown ? false : (bridgeRetryable ?? statusRetryable),
+      outcomeUnknown,
       method: upperMethod,
       path,
+      status: response.status,
+      bridgeDetails,
     });
   }
   try {
