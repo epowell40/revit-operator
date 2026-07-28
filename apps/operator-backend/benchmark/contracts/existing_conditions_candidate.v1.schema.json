@@ -1,7 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://bimtools.com/schemas/revit-operator/existing-conditions-candidate.v1.schema.json",
-  "title": "Existing conditions reconstruction candidate V1",
+  "title": "Existing conditions reconstruction candidate V1 (legacy transport only)",
+  "description": "Legacy parsing contract. V1 candidates are not scoreable and must be migrated to evaluator-authenticated V2.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "fixture_id", "scope_id", "visible_evidence", "accessed_artifact_roles", "out_of_scope_changed_element_keys", "snapshot", "visual_receipt"],

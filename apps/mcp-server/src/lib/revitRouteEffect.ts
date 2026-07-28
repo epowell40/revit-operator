@@ -1,4 +1,10 @@
-const READ_ONLY_PATHS = new Set<string>([
+export type RevitRouteEffect = "read" | "preview" | "apply";
+
+// The MCP server is packaged independently from operator-backend, so it cannot
+// import the sibling app's source at runtime. Keep this route metadata aligned
+// with apps/operator-backend/src/action_path_mutability.ts; consumers in this
+// package must use revitRouteEffect instead of maintaining their own lists.
+const READ_ONLY_POST_PATHS = new Set<string>([
   "/revit/ping",
   "/revit/context",
   "/revit/state-snapshot",
@@ -53,32 +59,31 @@ const READ_ONLY_PATHS = new Set<string>([
   "/revit/titleblock-label-map",
   "/revit/titleblock-date-candidates",
   "/revit/verify-parameter-on-sheet",
-  "/revit/capture-sheet-region"
+  "/revit/capture-sheet-region",
 ]);
 
 function bodyRecord(body: unknown): Record<string, unknown> {
   if (body && typeof body === "object" && !Array.isArray(body)) return body as Record<string, unknown>;
   if (typeof body !== "string" || !body.trim()) return {};
   try {
-    const parsed = JSON.parse(body);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+    const parsed: unknown = JSON.parse(body);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
   } catch {
     return {};
   }
 }
 
-export type ConditionalActionPathEffect = "read" | "preview" | "apply";
-
-export function conditionalActionPathEffect(pathname: string, body?: unknown): ConditionalActionPathEffect | undefined {
-  const normalized = (pathname || "").trim().toLowerCase();
+function conditionalPostEffect(path: string, body: unknown): RevitRouteEffect | undefined {
   const row = bodyRecord(body);
-  if (normalized === "/revit/fire-damper-audit") {
+  if (path === "/revit/fire-damper-audit") {
     return typeof row.command === "string" && row.command.trim().toLowerCase() === "fix" ? "apply" : "read";
   }
-  if (normalized === "/revit/lighting-audit") {
+  if (path === "/revit/lighting-audit") {
     return row.fix === true || row.visualize === true ? "apply" : "read";
   }
-  if (normalized === "/revit/list-element-types") {
+  if (path === "/revit/list-element-types") {
     const action = typeof row.action === "string" ? row.action.trim().toLowerCase() : "list";
     if (action !== "rename_types" && action !== "purge_unused_in_family") return "read";
     return row.dryRun === true ? "preview" : "apply";
@@ -86,9 +91,18 @@ export function conditionalActionPathEffect(pathname: string, body?: unknown): C
   return undefined;
 }
 
-export function pathLooksWrite(pathname: string, body?: unknown): boolean {
-  const normalized = (pathname || "").trim().toLowerCase();
-  const conditional = conditionalActionPathEffect(normalized, body);
-  if (conditional !== undefined) return conditional !== "read";
-  return normalized.startsWith("/revit/") && !READ_ONLY_PATHS.has(normalized);
+export function revitRouteEffect(pathname: string, method: string, body?: unknown): RevitRouteEffect {
+  const normalizedMethod = String(method || "GET").trim().toUpperCase();
+  if (normalizedMethod === "GET" || normalizedMethod === "HEAD" || normalizedMethod === "OPTIONS") return "read";
+
+  // Any unfamiliar non-read method is apply-capable unless route metadata
+  // proves otherwise. This is deliberately fail-closed for new endpoints.
+  if (normalizedMethod !== "POST") return "apply";
+
+  const normalizedPath = String(pathname || "").trim().toLowerCase();
+  const conditional = conditionalPostEffect(normalizedPath, body);
+  if (conditional !== undefined) return conditional;
+  if (normalizedPath === "/revit/transaction-plan") return "preview";
+  if (READ_ONLY_POST_PATHS.has(normalizedPath)) return "read";
+  return "apply";
 }

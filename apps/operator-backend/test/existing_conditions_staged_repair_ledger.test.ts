@@ -14,6 +14,20 @@ import {
   registerExistingConditionsStagedWorkflow
 } from "../src/existing_conditions/staged_repair_ledger.js";
 
+function writeVisualArtifact(workspaceRoot: string, fileName: unknown): string {
+  const artifactPath = path.join(workspaceRoot, "artifacts", "captures", String(fileName));
+  fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+  fs.writeFileSync(artifactPath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]));
+  return artifactPath;
+}
+
+function writeCheckpointArtifact(filePath: unknown): string {
+  const artifactPath = String(filePath);
+  fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
+  fs.writeFileSync(artifactPath, "RVT checkpoint bytes", "utf8");
+  return artifactPath;
+}
+
 function workflow(): AtomicMepDraftWorkflowRequest {
   return {
     inputFingerprintSha256: "a".repeat(64),
@@ -226,6 +240,38 @@ test("staged ledger batches explicit backbones, audits continuation connectors, 
     const visual = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
     assert.equal(visual.state, "verify_visual");
     if (visual.state !== "verify_visual") return;
+    assert.equal(recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "fabricated-backbone-visual",
+        method: "POST",
+        path: visual.path,
+        status: "done",
+        result_json: { status: "ok", path: path.join(root, "missing", String(visual.body?.fileName)), sha256: "a".repeat(64) },
+        attachments: [{ data_base64: Buffer.from("not evidence").toString("base64"), sha256: "a".repeat(64) }]
+      }
+    }), null);
+    assert.equal(buildNextExistingConditionsStagePlan({ sessionId, workflow: registered }).state, "verify_visual");
+    const staleVisualPath = writeVisualArtifact(root, visual.body?.fileName);
+    const appliedAt = readExistingConditionsRepairLedger(sessionId)
+      .find(entry => entry.event === "stage_applied" && entry.stage_key === visual.stage_key)?.ts;
+    assert.ok(appliedAt);
+    const staleTime = new Date(Date.parse(appliedAt!) - 60_000);
+    fs.utimesSync(staleVisualPath, staleTime, staleTime);
+    assert.equal(recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "stale-backbone-visual",
+        method: "POST",
+        path: visual.path,
+        status: "done",
+        result_json: { status: "ok", path: staleVisualPath }
+      }
+    }), null);
+    assert.equal(buildNextExistingConditionsStagePlan({ sessionId, workflow: registered }).state, "verify_visual");
+    const visualPath = writeVisualArtifact(root, visual.body?.fileName);
     recordExistingConditionsVerificationResult({
       sessionId,
       workflow: registered,
@@ -234,12 +280,25 @@ test("staged ledger batches explicit backbones, audits continuation connectors, 
         method: "POST",
         path: visual.path,
         status: "done",
-        result_json: { status: "ok", path: "C:\\evidence\\backbones.png" }
+        result_json: { status: "ok", path: visualPath }
       }
     });
     const checkpoint = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
     assert.equal(checkpoint.state, "checkpoint");
     if (checkpoint.state !== "checkpoint") return;
+    assert.equal(recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "fabricated-backbone-checkpoint",
+        method: "POST",
+        path: checkpoint.path,
+        status: "done",
+        result_json: { status: "Success", path: checkpoint.body.filePath, sha256: "b".repeat(64) }
+      }
+    }), null);
+    assert.equal(buildNextExistingConditionsStagePlan({ sessionId, workflow: registered }).state, "checkpoint");
+    const checkpointPath = writeCheckpointArtifact(checkpoint.body.filePath);
     recordExistingConditionsVerificationResult({
       sessionId,
       workflow: registered,
@@ -248,7 +307,7 @@ test("staged ledger batches explicit backbones, audits continuation connectors, 
         method: "POST",
         path: checkpoint.path,
         status: "done",
-        result_json: { status: "Success", path: checkpoint.body.filePath }
+        result_json: { status: "Success", path: checkpointPath }
       }
     });
     const localRepair = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
@@ -264,6 +323,13 @@ test("staged ledger batches explicit backbones, audits continuation connectors, 
     );
     const ledger = readExistingConditionsRepairLedger(sessionId);
     assert.ok(ledger.some(entry => entry.event === "continuation_accepted"));
+    const visualEntry = ledger.find(entry => entry.event === "visual_accepted");
+    const visualArtifact = visualEntry?.payload.visual_artifact as Record<string, unknown>;
+    assert.equal(visualArtifact.workflow_sha256, visualEntry?.workflow_sha256);
+    assert.equal(typeof visualArtifact.apply_attempt_id, "string");
+    assert.equal(typeof visualArtifact.capture_nonce, "string");
+    assert.equal(visualArtifact.capture_file_name, visual.body?.fileName);
+    assert.equal(Date.parse(String(visualArtifact.captured_at)) >= Date.parse(String(visualArtifact.apply_completed_at)), true);
   } finally {
     if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
@@ -400,6 +466,7 @@ test("failed backbone batch automatically shrinks to single-action stages after 
     const visual = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
     assert.equal(visual.state, "verify_visual");
     if (visual.state !== "verify_visual") return;
+    const visualPath = writeVisualArtifact(root, visual.body?.fileName);
     recordExistingConditionsVerificationResult({
       sessionId,
       workflow: registered,
@@ -408,12 +475,13 @@ test("failed backbone batch automatically shrinks to single-action stages after 
         method: "POST",
         path: visual.path,
         status: "done",
-        result_json: { status: "ok", path: "C:\\evidence\\split-1.png" }
+        result_json: { status: "ok", path: visualPath }
       }
     });
     const checkpoint = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
     assert.equal(checkpoint.state, "checkpoint");
     if (checkpoint.state !== "checkpoint") return;
+    const checkpointPath = writeCheckpointArtifact(checkpoint.body.filePath);
     recordExistingConditionsVerificationResult({
       sessionId,
       workflow: registered,
@@ -422,7 +490,7 @@ test("failed backbone batch automatically shrinks to single-action stages after 
         method: "POST",
         path: checkpoint.path,
         status: "done",
-        result_json: { status: "Success", path: checkpoint.body.filePath }
+        result_json: { status: "Success", path: checkpointPath }
       }
     });
 
@@ -552,6 +620,7 @@ test("staged repair ledger preserves accepted progress and resumes through a sma
     });
     assert.equal(routeVisual.state, "verify_visual");
     if (routeVisual.state !== "verify_visual") return;
+    const routeVisualPath = writeVisualArtifact(root, routeVisual.body?.fileName);
     recordExistingConditionsVerificationResult({
       sessionId,
       workflow: registered,
@@ -562,7 +631,7 @@ test("staged repair ledger preserves accepted progress and resumes through a sma
         status: "done",
         result_json: {
           status: "ok",
-          path: "C:\\evidence\\route.png"
+          path: routeVisualPath
         }
       }
     });
@@ -573,6 +642,7 @@ test("staged repair ledger preserves accepted progress and resumes through a sma
     assert.equal(routeCheckpoint.state, "checkpoint");
     if (routeCheckpoint.state !== "checkpoint") return;
     assert.match(String(routeCheckpoint.body.filePath), /existing_conditions_checkpoints/);
+    const routeCheckpointPath = writeCheckpointArtifact(routeCheckpoint.body.filePath);
     recordExistingConditionsVerificationResult({
       sessionId,
       workflow: registered,
@@ -583,7 +653,7 @@ test("staged repair ledger preserves accepted progress and resumes through a sma
         status: "done",
         result_json: {
           status: "Success",
-          path: routeCheckpoint.body.filePath
+          path: routeCheckpointPath
         }
       }
     });
@@ -727,6 +797,7 @@ test("staged repair ledger preserves accepted progress and resumes through a sma
     });
     assert.equal(repairVisual.state, "verify_visual");
     if (repairVisual.state !== "verify_visual") return;
+    const repairVisualPath = writeVisualArtifact(root, repairVisual.body?.fileName);
     recordExistingConditionsVerificationResult({
       sessionId,
       workflow: registered,
@@ -737,7 +808,7 @@ test("staged repair ledger preserves accepted progress and resumes through a sma
         status: "done",
         result_json: {
           status: "ok",
-          path: "C:\\evidence\\repair.png"
+          path: repairVisualPath
         }
       }
     });
@@ -747,6 +818,7 @@ test("staged repair ledger preserves accepted progress and resumes through a sma
     });
     assert.equal(repairCheckpoint.state, "checkpoint");
     if (repairCheckpoint.state !== "checkpoint") return;
+    const repairCheckpointPath = writeCheckpointArtifact(repairCheckpoint.body.filePath);
     recordExistingConditionsVerificationResult({
       sessionId,
       workflow: registered,
@@ -757,7 +829,7 @@ test("staged repair ledger preserves accepted progress and resumes through a sma
         status: "done",
         result_json: {
           status: "Success",
-          path: repairCheckpoint.body.filePath
+          path: repairCheckpointPath
         }
       }
     });
@@ -883,6 +955,7 @@ test("staged repair ledger persists affected existing ids through verification a
     const visual = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
     assert.equal(visual.state, "verify_visual");
     if (visual.state !== "verify_visual") return;
+    const visualPath = writeVisualArtifact(root, visual.body?.fileName);
     recordExistingConditionsVerificationResult({
       sessionId,
       workflow: registered,
@@ -891,12 +964,13 @@ test("staged repair ledger persists affected existing ids through verification a
         method: "POST",
         path: visual.path,
         status: "done",
-        result_json: { status: "ok", path: "C:\\evidence\\existing-repair.png" }
+        result_json: { status: "ok", path: visualPath }
       }
     });
     const checkpoint = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });
     assert.equal(checkpoint.state, "checkpoint");
     if (checkpoint.state !== "checkpoint") return;
+    const checkpointPath = writeCheckpointArtifact(checkpoint.body.filePath);
     recordExistingConditionsVerificationResult({
       sessionId,
       workflow: registered,
@@ -905,7 +979,7 @@ test("staged repair ledger persists affected existing ids through verification a
         method: "POST",
         path: checkpoint.path,
         status: "done",
-        result_json: { status: "Success", path: checkpoint.body.filePath }
+        result_json: { status: "Success", path: checkpointPath }
       }
     });
     const done = buildNextExistingConditionsStagePlan({ sessionId, workflow: registered });

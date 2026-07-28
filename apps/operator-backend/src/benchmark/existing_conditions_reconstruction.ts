@@ -3,9 +3,18 @@ import path from "node:path";
 import { ensureDir, writeJsonFile } from "./files.js";
 import type { BridgeTransport, RevitWorkflowResult, RevitWorkflowVerification } from "./revit_workflows.js";
 import {
+  existingConditionsEvaluatorValidationOptionsFromEnvironment,
   validateExistingConditionsEvaluatorVisualReceipt,
-  type ExistingConditionsEvaluatorVisualReceipt
+  type ExistingConditionsEvaluatorExpectedRun,
+  type ExistingConditionsEvaluatorVisualReceipt,
+  type ExistingConditionsEvaluatorVisualValidationOptions
 } from "../existing_conditions/evaluator_visual.js";
+import {
+  existingConditionsCandidateSnapshotSha256,
+  validateExistingConditionsEvaluatorChangeReceipt,
+  type ExistingConditionsEvaluatorChangeReceipt,
+  type ExistingConditionsEvaluatorChangeValidationOptions
+} from "../existing_conditions/evaluator_diff.js";
 import type { BoundedMepRegionCoverageReceiptV1 } from "../existing_conditions/mep_region_coverage.js";
 
 export type ExistingConditionsPoint3 = { x: number; y: number; z: number };
@@ -110,22 +119,23 @@ export type ExistingConditionsGroundTruth = {
 };
 
 export type ExistingConditionsCandidate = {
-  schema_version: 1;
+  schema_version: 2;
   fixture_id: string;
   scope_id: string;
   discipline?: ExistingConditionsDiscipline;
   visible_evidence: ExistingConditionsEvidenceReceipt[];
   accessed_artifact_roles: string[];
   out_of_scope_changed_element_keys: string[];
-  evaluator_change_receipt?: {
-    native_diff_readback: boolean;
-    changed_element_keys: string[];
-    out_of_scope_changed_element_keys: string[];
-    receipt_sha256: string;
-  } | null;
+  evaluator_change_receipt?: ExistingConditionsEvaluatorChangeReceipt | null;
   source_coverage_receipt?: BoundedMepRegionCoverageReceiptV1 | null;
   snapshot: ExistingConditionsSnapshot;
   visual_receipt?: ExistingConditionsEvaluatorVisualReceipt | null;
+};
+
+export type ExistingConditionsEvaluationAuthority = {
+  visual_receipt_validation?: ExistingConditionsEvaluatorVisualValidationOptions;
+  change_receipt_validation?: ExistingConditionsEvaluatorChangeValidationOptions;
+  expected_run?: ExistingConditionsEvaluatorExpectedRun;
 };
 
 export type ExistingConditionsScoringPolicy = {
@@ -354,13 +364,25 @@ function connectorSize(raw: JsonMap): JsonMap {
   return {};
 }
 
-function inferDiscipline(category: string): ExistingConditionsDiscipline {
+function inferDiscipline(
+  category: string,
+  evidence: { explicit?: unknown; systemClassification?: unknown; systemType?: unknown } = {}
+): ExistingConditionsDiscipline {
   const key = normalized(category);
+  const explicit = normalized(evidence.explicit);
+  if (["architectural", "mechanical", "plumbing", "electrical"].includes(explicit)) {
+    return explicit as ExistingConditionsDiscipline;
+  }
   if (/wall|door|window|room|floor|ceiling|roof|column/.test(key)) return "architectural";
   if (/electrical|lighting|fire alarm|data device|communication device/.test(key)) return "electrical";
   if (/plumbing fixture|sanitary|domestic|sprinkler/.test(key)) return "plumbing";
   if (/duct|mechanical equipment|air terminal/.test(key)) return "mechanical";
-  if (/pipe/.test(key)) return "mechanical";
+  if (/pipe/.test(key)) {
+    const systemEvidence = normalized(`${String(evidence.systemClassification ?? "")} ${String(evidence.systemType ?? "")}`);
+    const plumbing = /\b(sanitary|domestic|waste|vent|storm|sewer|plumbing|fire protection|sprinkler)\b/.test(systemEvidence);
+    const mechanical = /\b(hydronic|chilled water|heating hot water|steam|condensate|condenser water|refrigerant)\b/.test(systemEvidence);
+    return plumbing === mechanical ? "other" : plumbing ? "plumbing" : "mechanical";
+  }
   return "other";
 }
 
@@ -422,6 +444,8 @@ function normalizedElementFromVisible(raw: JsonMap): { id: number; element: Exis
   const parameters = primitiveParameters(raw.parameters);
   const sizeFromConnector = connectorSize(raw);
   const system = asObject(raw.system);
+  const systemClassification = firstText(raw.systemClassification, raw.system_classification, system.systemClassification, system.system_classification);
+  const systemType = firstText(system.systemType, system.system_type, parameters.systemType);
   const electricalCircuit = asObject(raw.electricalCircuit ?? raw.electrical_circuit);
   const systemIds = idKeys(electricalCircuit.systemIds ?? electricalCircuit.system_ids, "electrical-system");
   const powerSystemIds = idKeys(electricalCircuit.powerSystemIds ?? electricalCircuit.power_system_ids, "electrical-system");
@@ -432,13 +456,17 @@ function normalizedElementFromVisible(raw: JsonMap): { id: number; element: Exis
     element: {
       key: firstText(raw.sourceScopedId, raw.source_scoped_id, `host:${Math.trunc(id)}`)!,
       kind,
-      discipline: inferDiscipline(category),
+      discipline: inferDiscipline(category, {
+        explicit: raw.discipline,
+        systemClassification,
+        systemType
+      }),
       role: inferRole(category),
       category,
       family: firstText(raw.familyName, raw.family_name),
       type: firstText(raw.typeName, raw.type_name, raw.name),
-      system_classification: firstText(raw.systemClassification, raw.system_classification, system.systemClassification, system.system_classification),
-      system_type: firstText(system.systemType, system.system_type, parameters.systemType),
+      system_classification: systemClassification,
+      system_type: systemType,
       location,
       endpoints: start && end ? [start, end] : null,
       rotation_degrees: radians === null ? null : radians * 180 / Math.PI,
@@ -1411,9 +1439,18 @@ function snapshotCoreDisciplines(snapshot: ExistingConditionsSnapshot): Set<Core
       CORE_RECONSTRUCTION_DISCIPLINES.includes(discipline as CoreReconstructionDiscipline)));
 }
 
-function validateRun(truth: ExistingConditionsGroundTruth, candidate: ExistingConditionsCandidate): string[] {
+function validateRun(
+  truth: ExistingConditionsGroundTruth,
+  candidate: ExistingConditionsCandidate,
+  authority: ExistingConditionsEvaluationAuthority
+): string[] {
   const reasons: string[] = [];
-  if (truth.schema_version !== 1 || candidate.schema_version !== 1) reasons.push("unsupported_schema_version");
+  if (truth.schema_version !== 1) reasons.push("unsupported_ground_truth_schema_version");
+  if ((candidate as { schema_version?: unknown }).schema_version !== 2) {
+    reasons.push((candidate as { schema_version?: unknown }).schema_version === 1
+      ? "candidate_v1_migration_required"
+      : "unsupported_candidate_schema_version");
+  }
   if (truth.fixture_id !== candidate.fixture_id) reasons.push("fixture_id_mismatch");
   if (truth.scope_id !== candidate.scope_id) reasons.push("scope_id_mismatch");
   if (truth.discipline && candidate.discipline && normalized(truth.discipline) !== normalized(candidate.discipline)) reasons.push("discipline_mismatch");
@@ -1440,12 +1477,38 @@ function validateRun(truth: ExistingConditionsGroundTruth, candidate: ExistingCo
   if (!truth.snapshot.native_readback || !candidate.snapshot.native_readback) reasons.push("missing_native_readback");
   if (truth.snapshot.elements.length === 0) reasons.push("empty_ground_truth");
   if (candidate.out_of_scope_changed_element_keys.length > 0) reasons.push("out_of_scope_write");
-  if (truth.evaluation_policy?.require_evaluator_change_receipt) {
-    const receipt = candidate.evaluator_change_receipt;
-    if (!receipt || !receipt.native_diff_readback || !/^[a-f0-9]{64}$/i.test(receipt.receipt_sha256 ?? "")) {
-      reasons.push("missing_evaluator_change_receipt");
-    } else if (receipt.out_of_scope_changed_element_keys.length > 0) {
+  const expectedRun = authority.expected_run ?? authority.visual_receipt_validation?.expected_run;
+  if (!expectedRun) {
+    reasons.push("missing_expected_evaluator_run");
+  } else {
+    if (expectedRun.fixture_id !== truth.fixture_id) reasons.push("expected_evaluator_run_fixture_mismatch");
+    if (expectedRun.scope_id !== truth.scope_id) reasons.push("expected_evaluator_run_scope_mismatch");
+    if (expectedRun.candidate_snapshot_sha256.toLowerCase() !== existingConditionsCandidateSnapshotSha256(candidate.snapshot)) {
+      reasons.push("expected_evaluator_run_candidate_snapshot_mismatch");
+    }
+  }
+  const changeReceipt = candidate.evaluator_change_receipt;
+  if (!changeReceipt) {
+    reasons.push("missing_evaluator_change_receipt");
+  } else {
+    const changeValidation = {
+      trusted_key_resolver: authority.change_receipt_validation?.trusted_key_resolver ??
+        authority.visual_receipt_validation?.trusted_key_resolver,
+      maximum_clock_skew_ms: authority.change_receipt_validation?.maximum_clock_skew_ms ??
+        authority.visual_receipt_validation?.maximum_clock_skew_ms,
+      now_ms: authority.change_receipt_validation?.now_ms ?? authority.visual_receipt_validation?.now_ms,
+      expected_run: expectedRun
+    };
+    if (!expectedRun || !validateExistingConditionsEvaluatorChangeReceipt(changeReceipt, changeValidation)) {
+      reasons.push("invalid_evaluator_change_receipt");
+    }
+    if (changeReceipt.out_of_scope_changed_element_keys.length > 0 ||
+        candidate.out_of_scope_changed_element_keys.length > 0) {
       reasons.push("out_of_scope_write");
+    }
+    if (JSON.stringify([...changeReceipt.out_of_scope_changed_element_keys].sort()) !==
+        JSON.stringify([...candidate.out_of_scope_changed_element_keys].sort())) {
+      reasons.push("evaluator_change_receipt_scope_mismatch");
     }
   }
   const boundedCoverage = truth.evaluation_policy?.bounded_mep_region_coverage;
@@ -1493,7 +1556,10 @@ function validateRun(truth: ExistingConditionsGroundTruth, candidate: ExistingCo
       if (normalized(receipt.region_sha256) !== normalized(boundedCoverage.region_sha256)) reasons.push("bounded_mep_region_bounds_hash_mismatch");
     }
   }
-  if (!validateExistingConditionsEvaluatorVisualReceipt(candidate.visual_receipt)) {
+  if (!expectedRun || !validateExistingConditionsEvaluatorVisualReceipt(candidate.visual_receipt, {
+    ...authority.visual_receipt_validation,
+    expected_run: expectedRun
+  })) {
     reasons.push("missing_or_invalid_evaluator_visual_receipt");
   }
   if (candidate.accessed_artifact_roles.some((role) => FORBIDDEN_AGENT_ARTIFACT_ROLES.has(normalized(role)))) {
@@ -1510,10 +1576,11 @@ function validateRun(truth: ExistingConditionsGroundTruth, candidate: ExistingCo
 export function scoreExistingConditionsReconstruction(
   truth: ExistingConditionsGroundTruth,
   candidate: ExistingConditionsCandidate,
-  policyOverrides: Partial<ExistingConditionsScoringPolicy> = {}
+  policyOverrides: Partial<ExistingConditionsScoringPolicy> = {},
+  authority: ExistingConditionsEvaluationAuthority = {}
 ): ExistingConditionsScore {
   const policy = { ...DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY, ...policyOverrides };
-  const invalidReasons = validateRun(truth, candidate);
+  const invalidReasons = validateRun(truth, candidate, authority);
   const elevationEvidence = truth.evaluation_policy?.elevation_evidence ?? "plan_visible";
   const boundedCoverage = truth.evaluation_policy?.bounded_mep_region_coverage;
   const boundedRouteTruthKeys = new Set(boundedCoverage?.clear_plan_visible_mep_curve_keys ?? []);
@@ -1706,7 +1773,12 @@ export function scoreExistingConditionsReconstruction(
   const spatialApplicable = matchingTruthElements.some((element) => normalized(element.room_number) || normalized(element.space_number));
   const hostingApplicable = hasTruthRelationship(relationshipTruthSnapshot, "host") || hasTruthRelationship(relationshipCandidateSnapshot, "host");
   const electricalCircuitsApplicable = hasTruthRelationship(relationshipTruthSnapshot, "electrical_circuit") || hasTruthRelationship(relationshipCandidateSnapshot, "electrical_circuit");
-  const drawingEvidence = validateExistingConditionsEvaluatorVisualReceipt(candidate.visual_receipt) &&
+  const expectedDrawingRun = authority.expected_run ?? authority.visual_receipt_validation?.expected_run;
+  const drawingEvidence = expectedDrawingRun !== undefined &&
+    validateExistingConditionsEvaluatorVisualReceipt(candidate.visual_receipt, {
+      ...authority.visual_receipt_validation,
+      expected_run: expectedDrawingRun
+    }) &&
     candidate.visual_receipt?.evaluator_review.review_status === "pass" ? 1 : 0;
   const weightedComponents = [
     { weight: 0.15, value: elementF1, applicable: true },
@@ -1903,7 +1975,26 @@ export async function runExistingConditionsReconstructionEvaluation(
     "candidate"
   );
   const policy = asObject(request.policy) as Partial<ExistingConditionsScoringPolicy>;
-  const result = scoreExistingConditionsReconstruction(groundTruth, candidate, policy);
+  let authority: ExistingConditionsEvaluationAuthority = {};
+  try {
+    const validation = existingConditionsEvaluatorValidationOptionsFromEnvironment();
+    const expectedRunValue = request.expectedEvaluatorRun ?? request.expected_evaluator_run;
+    authority = {
+      visual_receipt_validation: validation,
+      change_receipt_validation: {
+        trusted_key_resolver: validation.trusted_key_resolver,
+        maximum_clock_skew_ms: validation.maximum_clock_skew_ms
+      },
+      ...(expectedRunValue && typeof expectedRunValue === "object" && !Array.isArray(expectedRunValue)
+        ? { expected_run: expectedRunValue as ExistingConditionsEvaluatorExpectedRun }
+        : validation.expected_run
+          ? { expected_run: validation.expected_run }
+        : {})
+    };
+  } catch {
+    // Fail closed below: without a trusted evaluator key, visual authority is invalid.
+  }
+  const result = scoreExistingConditionsReconstruction(groundTruth, candidate, policy, authority);
   ensureDir(runDir);
   const jsonPath = path.join(runDir, "existing_conditions_score.json");
   const markdownPath = path.join(runDir, "existing_conditions_score.md");

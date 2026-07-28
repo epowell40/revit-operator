@@ -3741,8 +3741,17 @@ function hasSheetSummaryAttempt(sessionId: string): boolean {
 function toolResultLooksReadOnly(r: ToolResult): boolean {
   if (!r || typeof r !== "object") return false;
   if (r.method === "GET") return true;
-  if (r.method === "POST") return !pathLooksWrite(r.path ?? "");
+  if (r.method === "POST") {
+    if (r.request_effect) return r.request_effect === "read";
+    return !pathLooksWrite(r.path ?? "");
+  }
   return false;
+}
+
+function toolResultLooksWrite(r: ToolResult): boolean {
+  if (!r || r.method !== "POST") return false;
+  if (r.request_effect) return r.request_effect !== "read";
+  return pathLooksWrite(r.path ?? "");
 }
 
 function normalizeReadSignature(toolResults: ToolResult[]): string {
@@ -3784,7 +3793,7 @@ function updateLoopPressure(req: ChatRequest): LoopPressureInfo | null {
     existing.updated_at_ms = now;
     loopPressureBySession.set(sessionId, existing);
   } else {
-    const hasWrite = toolResults.some((r) => r?.method === "POST" && pathLooksWrite(r.path ?? ""));
+    const hasWrite = toolResults.some(toolResultLooksWrite);
     const allReadOnly = toolResults.every(toolResultLooksReadOnly);
 
     if (hasWrite || !allReadOnly) {
@@ -3843,8 +3852,8 @@ function containsVerificationAction(actions: Array<{ method: "GET" | "POST"; pat
   return false;
 }
 
-function maybeAppendVerificationGuardMessage(base: string, actions: Array<{ method: "GET" | "POST"; path: string }>): string {
-  const hasWrite = actions.some(a => a.method === "POST" && pathLooksWrite(a.path));
+function maybeAppendVerificationGuardMessage(base: string, actions: Array<{ method: "GET" | "POST"; path: string; body?: unknown }>): string {
+  const hasWrite = actions.some(a => a.method === "POST" && pathLooksWrite(a.path, a.body));
   if (!hasWrite) return base;
   const hasVerify = containsVerificationAction(actions);
   if (hasVerify) {
@@ -3895,7 +3904,8 @@ function collectRecentPostWriteEvidence(toolResults: ToolResult[]): {
     const r = toolResults[i];
     if (!r || r.method !== "POST") continue;
     if ((r.status ?? "").trim().toLowerCase() !== "done") continue;
-    if (!pathLooksWrite(r.path ?? "")) continue;
+    if (r.request_effect === "read" || r.request_effect === "preview") continue;
+    if (!r.request_effect && !pathLooksWrite(r.path ?? "")) continue;
     if (resultLooksDryRun(r)) continue;
     lastWriteIndex = i;
     break;
@@ -3929,6 +3939,22 @@ function collectRecentPostWriteEvidence(toolResults: ToolResult[]): {
     has_post_write_verification: hasVerificationAction,
     evidence_paths: [...evidencePaths].slice(0, 6)
   };
+}
+
+export function __testOnlyClassifyActionAsWrite(action: ActionCall): boolean {
+  return action.method === "POST" && pathLooksWrite(action.path, action.body);
+}
+
+export function __testOnlyToolResultLooksReadOnly(result: ToolResult): boolean {
+  return toolResultLooksReadOnly(result);
+}
+
+export function __testOnlyCollectRecentPostWriteEvidence(toolResults: ToolResult[]): {
+  has_applied_write: boolean;
+  has_post_write_verification: boolean;
+  evidence_paths: string[];
+} {
+  return collectRecentPostWriteEvidence(toolResults);
 }
 
 function collectRecentStaleElementIds(toolResults: ToolResult[]): number[] {
@@ -4196,7 +4222,7 @@ function decisionLooksReadOnlyDiscovery(decision: OpenAiDecision): boolean {
     const method = a?.method === "POST" ? "POST" : "GET";
     const p = String(a?.path ?? "").trim().toLowerCase();
     if (method === "GET") return true;
-    if (method === "POST" && !pathLooksWrite(p)) {
+    if (method === "POST" && !pathLooksWrite(p, a.body_json)) {
       return p === "/revit/sheets" || p === "/revit/context" || p === "/revit/tool-search" || p === "/revit/tool-doc" || p === "/revit/tool-examples";
     }
     return false;
@@ -13199,7 +13225,7 @@ function buildMepRedlineActionGuardResponse(args: {
   if (!spec || spec.kind !== "duct") return null;
   const writes = args.actions.filter((action) => {
     if (action.method !== "POST") return false;
-    return pathLooksWrite(action.path) || isExistingMepModificationPath(action.path) || isMepRouteCreationPath(action.path);
+    return pathLooksWrite(action.path, action.body) || isExistingMepModificationPath(action.path) || isMepRouteCreationPath(action.path);
   });
   if (writes.length === 0) return null;
 
@@ -13443,7 +13469,7 @@ function buildMepRedlineRouteRecoveryResponse(args: {
   if (mepRedlineActionsAlreadyOnRoutePath(args.actions)) return null;
 
   const hasNoActions = args.actions.length === 0;
-  const allActionsReadOnly = args.actions.length > 0 && args.actions.every((action) => action.method !== "POST" || !pathLooksWrite(action.path));
+  const allActionsReadOnly = args.actions.length > 0 && args.actions.every((action) => action.method !== "POST" || !pathLooksWrite(action.path, action.body));
   const wrongExistingDuctSearch = args.actions.some(actionLooksLikeWrongMepExistingDuctSearch);
   const noExistingSupplyDuctsFound = latestDuctSpatialScopeHadNoMatches(args.toolResults);
   const message = (args.actions.length === 0 ? "" : args.actions.map((a) => a.path).join(" ")) + "\n" + getRecentUserTextForRedline(args.req);
@@ -22304,7 +22330,7 @@ function shouldSuppressRoutineRedlineProgressMessage(req: ChatRequest, response:
 }
 
 function readReplaySignature(action: { method: "GET" | "POST"; path: string; body?: unknown }): string | null {
-  if (action.method === "POST" && pathLooksWrite(action.path)) return null;
+  if (action.method === "POST" && pathLooksWrite(action.path, action.body)) return null;
   return canonicalJsonString({
     method: action.method,
     path: (action.path ?? "").trim().toLowerCase(),
@@ -23475,7 +23501,7 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     toolResults: toolResultsForRouting
   });
   if (explicitCircuitPlacementGuard) return finishResponse(explicitCircuitPlacementGuard);
-  const allReadOnlyActions = allowlisted.length > 0 && allowlisted.every((a) => a.method !== "POST" || !pathLooksWrite(a.path));
+  const allReadOnlyActions = allowlisted.length > 0 && allowlisted.every((a) => a.method !== "POST" || !pathLooksWrite(a.path, a.body));
   const allRedlineDiscoveryActions =
     allowlisted.length > 0 &&
     allowlisted.every((a) => {

@@ -97,6 +97,10 @@ namespace RevitBridge.Operator
         [JsonPropertyName("path")]
         public string Path { get; set; } = "";
 
+        [JsonPropertyName("request_effect")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? RequestEffect { get; set; }
+
         [JsonPropertyName("status")]
         public string Status { get; set; } = "";
 

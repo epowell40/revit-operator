@@ -39,14 +39,21 @@ test("attachment upload requires explicit session binding in shared-token mode",
   t.after(async () => stop(child));
 
   const base = `http://127.0.0.1:${port}`;
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  const headers = { "x-operator-token": token, "content-type": "application/json" };
+  let ready = false;
+  const readinessDeadline = Date.now() + 20_000;
+  while (Date.now() < readinessDeadline) {
     try {
-      if ((await fetch(`${base}/health`)).ok) break;
+      if ((await fetch(`${base}/health`, { headers })).ok) {
+        ready = true;
+        break;
+      }
     } catch { }
+    if (child.exitCode !== null) throw new Error(`Attachment test backend exited before readiness: ${child.exitCode}`);
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
+  assert.equal(ready, true, "Attachment test backend did not become ready within 20 seconds.");
 
-  const headers = { "x-operator-token": token, "content-type": "application/json" };
   const createdResponse = await fetch(`${base}/session/new`, { method: "POST", headers });
   assert.equal(createdResponse.status, 200);
   const created = await createdResponse.json() as { session_id: string };

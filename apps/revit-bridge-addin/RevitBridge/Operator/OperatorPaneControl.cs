@@ -6,6 +6,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -66,7 +67,12 @@ namespace RevitBridge.Operator
         private readonly SemaphoreSlim _revitBatchWorkerLock = new SemaphoreSlim(1, 1);
         private System.Threading.Timer? _revitBatchWorkerTimer;
         private volatile bool _revitBatchWorkerStarted;
-        private readonly string _revitBatchExecutorId = $"{Environment.MachineName}-revit-pane-{Process.GetCurrentProcess().Id}";
+        private readonly string _revitBatchExecutorId = OperatorRevitCourierWorker.ExecutorIdForCurrentProcess();
+        private readonly OperatorCourierCompletionOutbox _revitBatchCompletionOutbox = new OperatorCourierCompletionOutbox(
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "RevitOperator",
+                "BatchCompletionOutbox"));
 
         private readonly HashSet<string> _activeChatScreenshareFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static readonly TimeSpan ScreenshareTtl = TimeSpan.FromHours(1);
@@ -740,7 +746,7 @@ namespace RevitBridge.Operator
                     action.Body = body;
 
                     var title = $"{(action.Method ?? "").Trim().ToUpperInvariant()} {action.Path}";
-                    var risk = OperatorApprovalPolicy.GetRisk(action.Method, action.Path);
+                    var risk = GetActionRisk(action);
                     Ui(() => AddAction(actionId!, title, action.Path, action.Body, approvalRequired: true, risk: risk));
                     Ui(() => UpdateActionStatus(actionId!, "needs_approval", null));
                 }
@@ -3197,8 +3203,8 @@ namespace RevitBridge.Operator
 
             // Deterministic Plan→Apply→Verify: if this step contains any write (high risk) or any pending approvals,
             // defer capture/verify actions until after writes/approvals complete and the document is regenerated.
-            var stepHasWriteActions = actions.Any(a => OperatorApprovalPolicy.GetRisk(a.Method, a.Path) == OperatorActionRisk.High);
-            var stepHasApprovals = actions.Any(a => OperatorApprovalPolicy.RequiresApproval(_approvalMode, OperatorApprovalPolicy.GetRisk(a.Method, a.Path)));
+            var stepHasWriteActions = actions.Any(a => GetActionRisk(a) == OperatorActionRisk.High);
+            var stepHasApprovals = actions.Any(a => OperatorApprovalPolicy.RequiresApproval(_approvalMode, GetActionRisk(a)));
 
             foreach (var action in actions)
             {
@@ -3206,7 +3212,7 @@ namespace RevitBridge.Operator
                 var title = $"{(action.Method ?? "").Trim().ToUpperInvariant()} {action.Path}";
                 action.ActionId = actionId;
 
-                var risk = OperatorApprovalPolicy.GetRisk(action.Method, action.Path);
+                var risk = GetActionRisk(action);
                 var needsApproval = OperatorApprovalPolicy.RequiresApproval(_approvalMode, risk);
                 Ui(() => AddAction(actionId, title, action.Path, action.Body, needsApproval, risk));
 
@@ -3305,7 +3311,7 @@ namespace RevitBridge.Operator
                                 // Always defer these until after regenerate (even if there are no approvals).
                                 try
                                 {
-                                    var rid = OperatorApprovalPolicy.GetRisk(verify.Method, verify.Path);
+                                    var rid = GetActionRisk(verify);
                                     Ui(() => AddAction(verify.ActionId, "POST /revit/capture-sheet-region (verify titleblock)", verify.Path, verify.Body, false, rid));
                                     Ui(() => UpdateActionStatus(verify.ActionId, "deferred", "Will run after apply + regenerate."));
                                 }
@@ -3508,6 +3514,7 @@ namespace RevitBridge.Operator
 
             await EnsureBackendRunningAsync(cancellationToken).ConfigureAwait(false);
             var sourceSessionId = await EnsureSessionAsync().ConfigureAwait(false);
+            var binding = await CaptureLiveRevitBatchBindingAsync(sourceSessionId, cancellationToken).ConfigureAwait(false);
 
             var plannerPayload = new
             {
@@ -3538,7 +3545,7 @@ namespace RevitBridge.Operator
             createPayload["source"] = source;
             createPayload["executor_kind"] = "revit_delegate";
 
-            var createdJson = await _backendClient.CreateRevitBatchJobJsonAsync(JsonNodeToObject(createPayload), cancellationToken).ConfigureAwait(false);
+            var createdJson = await _backendClient.CreateRevitBatchJobJsonAsync(JsonNodeToObject(createPayload), binding, cancellationToken).ConfigureAwait(false);
             var created = ParseJsonObjectBestEffort(createdJson);
             var job = GetJsonObject(created, "job");
             var status = GetJsonString(job, "status", 64);
@@ -3571,7 +3578,8 @@ namespace RevitBridge.Operator
                 throw new InvalidOperationException("batch-control requires operation.");
 
             await EnsureBackendRunningAsync(cancellationToken).ConfigureAwait(false);
-            var controlledJson = await _backendClient.ControlRevitBatchJobJsonAsync(jobId, operation, cancellationToken).ConfigureAwait(false);
+            var binding = await CaptureLiveRevitBatchBindingAsync(await EnsureSessionAsync().ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
+            var controlledJson = await _backendClient.ControlRevitBatchJobJsonAsync(jobId, operation, binding, cancellationToken).ConfigureAwait(false);
             var controlled = ParseJsonObjectBestEffort(controlledJson);
             var job = GetJsonObject(controlled, "job");
             if (string.Equals(operation, "approve", StringComparison.OrdinalIgnoreCase) ||
@@ -3610,11 +3618,13 @@ namespace RevitBridge.Operator
                 if (_turnBusy || _activeTurn != null || _pendingApprovals.Count > 0) return;
                 await EnsureBackendRunningAsync(CancellationToken.None).ConfigureAwait(false);
                 EnsureRevitBatchWorkerStarted();
+                if (await FlushOnePendingRevitBatchCompletionAsync().ConfigureAwait(false)) return;
 
                 while (!_turnBusy && _activeTurn == null && _pendingApprovals.Count == 0)
                 {
+                    var binding = await CaptureLiveRevitBatchBindingAsync(await EnsureSessionAsync().ConfigureAwait(false), CancellationToken.None).ConfigureAwait(false);
                     var claimJson = await _backendClient.ClaimNextRevitBatchItemJsonAsync(
-                        _revitBatchExecutorId,
+                        binding,
                         "revit_delegate",
                         jobId: null,
                         CancellationToken.None).ConfigureAwait(false);
@@ -3622,7 +3632,15 @@ namespace RevitBridge.Operator
                     var job = GetJsonObject(claim, "job");
                     var item = GetJsonObject(claim, "item");
                     if (job.Count == 0 || item.Count == 0) break;
-                    await ProcessClaimedRevitBatchItemAsync(job, item, CancellationToken.None).ConfigureAwait(false);
+                    var claimToken = GetJsonString(claim, "claim_token", 160);
+                    if (string.IsNullOrWhiteSpace(claimToken))
+                        throw new InvalidOperationException("Batch claim response is missing claim_token; refusing to execute the claimed item.");
+                    var itemClaim = GetJsonObject(item, "claim");
+                    var fencingToken = GetJsonString(itemClaim, "fencing_token", 160);
+                    if (!string.IsNullOrWhiteSpace(fencingToken) && !string.Equals(fencingToken, claimToken, StringComparison.Ordinal))
+                        throw new InvalidOperationException("Batch claim response token does not match item.claim.fencing_token; refusing to execute the claimed item.");
+                    AssertClaimedJobBinding(job, binding);
+                    await ProcessClaimedRevitBatchItemAsync(job, item, claimToken, binding, CancellationToken.None).ConfigureAwait(false);
                 }
             }
             catch (Exception ex)
@@ -3643,15 +3661,18 @@ namespace RevitBridge.Operator
             }
         }
 
-        private async Task ProcessClaimedRevitBatchItemAsync(JsonObject job, JsonObject item, CancellationToken cancellationToken)
+        private async Task ProcessClaimedRevitBatchItemAsync(JsonObject job, JsonObject item, string claimToken, OperatorRevitBatchBinding binding, CancellationToken cancellationToken)
         {
             var jobId = GetJsonString(job, "id", 120);
             var itemId = GetJsonString(item, "id", 120);
             if (string.IsNullOrWhiteSpace(jobId) || string.IsNullOrWhiteSpace(itemId)) return;
+            if (string.IsNullOrWhiteSpace(claimToken))
+                throw new InvalidOperationException("Batch claim_token is required before item execution.");
 
+            object result;
             try
             {
-                object result;
+                await EnsureRevitBatchBindingStillLiveAsync(binding, cancellationToken).ConfigureAwait(false);
                 var jobType = GetJsonString(job, "job_type", 64);
                 if (string.Equals(jobType, "delegated_revit_task_batch", StringComparison.OrdinalIgnoreCase))
                 {
@@ -3661,19 +3682,229 @@ namespace RevitBridge.Operator
                 {
                     throw new InvalidOperationException($"Unsupported Revit batch job type for this executor: {jobType}");
                 }
-
-                await _backendClient.CompleteRevitBatchItemJsonAsync(jobId, itemId, _revitBatchExecutorId, result, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 await _backendClient.FailRevitBatchItemJsonAsync(
                     jobId,
                     itemId,
-                    _revitBatchExecutorId,
+                    binding,
+                    claimToken,
                     FormatException(ex),
                     new { error = FormatException(ex) },
                     cancellationToken).ConfigureAwait(false);
+                return;
             }
+
+            var outboxKey = BuildRevitBatchCompletionOutboxKey(jobId, itemId);
+            try
+            {
+                _revitBatchCompletionOutbox.Save(
+                    outboxKey,
+                    outboxKey,
+                    _revitBatchExecutorId,
+                    new
+                    {
+                        version = "revit-operator.batch-completion.v1",
+                        job_id = jobId,
+                        item_id = itemId,
+                        session_id = binding.SessionId,
+                        target_executor_id = binding.TargetExecutorId,
+                        project_fingerprint = binding.ProjectFingerprint,
+                        document_title = binding.DocumentTitle,
+                        document_path = binding.DocumentPath,
+                        claim_token = claimToken,
+                        result
+                    });
+                await PostAndValidateRevitBatchCompletionAsync(
+                    jobId,
+                    itemId,
+                    binding,
+                    claimToken,
+                    result,
+                    cancellationToken).ConfigureAwait(false);
+                _revitBatchCompletionOutbox.Acknowledge(outboxKey);
+            }
+            catch (Exception ex)
+            {
+                // Execution already returned successfully. Never convert a possibly committed effect into /fail.
+                // The durable outbox is reconciled before this worker claims another item or after a Revit restart.
+                try
+                {
+                    await (_logger?.LogAsync("batch.completion.pending", new
+                    {
+                        job_id = jobId,
+                        item_id = itemId,
+                        claim_token = claimToken,
+                        outcome_unknown = true,
+                        error = FormatException(ex)
+                    }, CancellationToken.None) ?? Task.CompletedTask).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Settlement telemetry must not create a failure transition.
+                }
+            }
+        }
+
+        private async Task<bool> FlushOnePendingRevitBatchCompletionAsync()
+        {
+            var pending = _revitBatchCompletionOutbox.ReadPending(1);
+            if (pending.Count == 0)
+            {
+                if (!_revitBatchCompletionOutbox.HasUnresolvedEntries) return false;
+                try
+                {
+                    await (_logger?.LogAsync("batch.completion.outbox_invalid", new
+                    {
+                        error = "A durable batch completion entry is unreadable; new batch execution is paused."
+                    }, CancellationToken.None) ?? Task.CompletedTask).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // ignore telemetry failure
+                }
+                return true;
+            }
+
+            var completion = pending[0];
+            try
+            {
+                var envelope = JsonNode.Parse(completion.Result.GetRawText()) as JsonObject
+                    ?? throw new InvalidDataException("Batch completion outbox envelope is malformed.");
+                if (!string.Equals(GetJsonString(envelope, "version", 80), "revit-operator.batch-completion.v1", StringComparison.Ordinal))
+                    throw new InvalidDataException("Batch completion outbox envelope version is unsupported.");
+                var jobId = GetJsonString(envelope, "job_id", 120);
+                var itemId = GetJsonString(envelope, "item_id", 120);
+                var claimToken = GetJsonString(envelope, "claim_token", 160);
+                var binding = BindingFromCompletionEnvelope(envelope);
+                if (string.IsNullOrWhiteSpace(jobId) || string.IsNullOrWhiteSpace(itemId) || string.IsNullOrWhiteSpace(claimToken))
+                    throw new InvalidDataException("Batch completion outbox envelope is missing identity, binding, or fencing data.");
+                envelope.TryGetPropertyValue("result", out var resultNode);
+                var result = JsonNodeToObject(resultNode);
+                await PostAndValidateRevitBatchCompletionAsync(
+                    jobId,
+                    itemId,
+                    binding,
+                    claimToken,
+                    result,
+                    CancellationToken.None).ConfigureAwait(false);
+                _revitBatchCompletionOutbox.Acknowledge(completion.JobId);
+                try
+                {
+                    await (_logger?.LogAsync("batch.completion.reconciled", new
+                    {
+                        job_id = jobId,
+                        item_id = itemId,
+                        executor_id = completion.ExecutorId,
+                        completed_at = completion.CompletedAt
+                    }, CancellationToken.None) ?? Task.CompletedTask).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // ignore telemetry failure
+                }
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    await (_logger?.LogAsync("batch.completion.retry_pending", new
+                    {
+                        record_id = completion.JobId,
+                        outcome_unknown = true,
+                        error = FormatException(ex)
+                    }, CancellationToken.None) ?? Task.CompletedTask).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // ignore telemetry failure
+                }
+            }
+            return true;
+        }
+
+        private async Task PostAndValidateRevitBatchCompletionAsync(
+            string jobId,
+            string itemId,
+            OperatorRevitBatchBinding binding,
+            string claimToken,
+            object? result,
+            CancellationToken cancellationToken)
+        {
+            var completionJson = await _backendClient.CompleteRevitBatchItemJsonAsync(
+                jobId,
+                itemId,
+                binding,
+                claimToken,
+                result,
+                cancellationToken).ConfigureAwait(false);
+            var response = ParseJsonObjectBestEffort(completionJson);
+            var settledItem = GetJsonObject(response, "item");
+            var settledItemId = GetJsonString(settledItem, "id", 120);
+            var settledStatus = GetJsonString(settledItem, "status", 40);
+            if (GetJsonBool(response, "ok") != true || settledItem.Count == 0 ||
+                (!string.IsNullOrWhiteSpace(settledItemId) && !string.Equals(settledItemId, itemId, StringComparison.Ordinal)) ||
+                !string.Equals(settledStatus, "succeeded", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException("Batch completion response did not confirm the same item as succeeded.");
+            }
+        }
+
+        private static string BuildRevitBatchCompletionOutboxKey(string jobId, string itemId)
+        {
+            using var sha256 = SHA256.Create();
+            var digest = sha256.ComputeHash(Encoding.UTF8.GetBytes((jobId ?? "") + "\n" + (itemId ?? "")));
+            return "batch_" + string.Concat(digest.Select(value => value.ToString("x2")));
+        }
+
+        private async Task<OperatorRevitBatchBinding> CaptureLiveRevitBatchBindingAsync(string sessionId, CancellationToken cancellationToken)
+        {
+            return await _eventService.Run(app =>
+            {
+                var document = app.ActiveUIDocument?.Document
+                    ?? throw new InvalidOperationException("A live Revit document is required for batch work.");
+                string? projectUniqueId = null;
+                try { projectUniqueId = document.ProjectInformation?.UniqueId; } catch { }
+                return OperatorRevitBatchBinding.FromLiveDocument(
+                    sessionId,
+                    _revitBatchExecutorId,
+                    document.Title,
+                    document.PathName,
+                    projectUniqueId);
+            }, cancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task EnsureRevitBatchBindingStillLiveAsync(OperatorRevitBatchBinding binding, CancellationToken cancellationToken)
+        {
+            if (!string.Equals(_sessionId, binding.SessionId, StringComparison.Ordinal))
+                throw new InvalidOperationException("The backend session changed after this batch item was claimed; refusing to execute it.");
+            var live = await CaptureLiveRevitBatchBindingAsync(binding.SessionId, cancellationToken).ConfigureAwait(false);
+            if (!binding.Matches(live))
+                throw new InvalidOperationException("The Revit executor or project changed after this batch item was claimed; refusing to execute it in the wrong document.");
+        }
+
+        private static void AssertClaimedJobBinding(JsonObject job, OperatorRevitBatchBinding binding)
+        {
+            var target = GetJsonObject(job, "target_context");
+            var stored = new OperatorRevitBatchBinding(
+                GetJsonString(job, "session_id", 200),
+                GetJsonString(target, "executor_id", 160),
+                GetJsonString(target, "project_fingerprint", 64),
+                GetJsonString(target, "document_title", 512),
+                GetJsonString(target, "document_path", 2048));
+            if (!binding.Matches(stored))
+                throw new InvalidOperationException("The claimed batch job binding does not match this Revit session, executor, and project.");
+        }
+
+        private static OperatorRevitBatchBinding BindingFromCompletionEnvelope(JsonObject envelope)
+        {
+            return new OperatorRevitBatchBinding(
+                GetJsonString(envelope, "session_id", 200),
+                GetJsonString(envelope, "target_executor_id", 160),
+                GetJsonString(envelope, "project_fingerprint", 64),
+                GetJsonString(envelope, "document_title", 512),
+                GetJsonString(envelope, "document_path", 2048));
         }
 
         private async Task<object> ExecuteDelegatedRevitBatchItemAsync(JsonObject job, JsonObject item, CancellationToken cancellationToken)
@@ -4554,13 +4785,13 @@ namespace RevitBridge.Operator
             if (path.StartsWith("/ui/", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Hosted UI actions cannot recursively execute /ui/* actions.");
 
-            var risk = OperatorApprovalPolicy.GetRisk(method, path);
-            if (OperatorApprovalPolicy.RequiresApproval(_approvalMode, risk))
-                throw new InvalidOperationException("This action requires approval. Switch Writes to Allow this session or YOLO in the Operator pane.");
-
             object? body = null;
             if (payload.TryGetProperty("body", out var bodyEl))
                 body = bodyEl.Clone();
+
+            var risk = GetActionRisk(method, path, body);
+            if (OperatorApprovalPolicy.RequiresApproval(_approvalMode, risk))
+                throw new InvalidOperationException("This action requires approval. Switch Writes to Allow this session or YOLO in the Operator pane.");
 
             var action = new OperatorActionCall
             {
@@ -5028,12 +5259,14 @@ namespace RevitBridge.Operator
         {
             var finishedAtUtc = DateTime.UtcNow;
             var durationMs = (finishedAtUtc - startedAtUtc).TotalMilliseconds;
+            var bodyJson = GetActionBodyJson(action.Body);
 
             var tr = new OperatorToolResult
             {
                 ActionId = action.ActionId ?? "",
                 Method = (action.Method ?? "").Trim().ToUpperInvariant(),
                 Path = (action.Path ?? "").Trim(),
+                RequestEffect = OperatorApprovalPolicy.GetEffectWireValue(action.Method, action.Path, bodyJson),
                 Status = error == null ? "done" : "failed",
                 ResultJson = error is OperatorRecoveredDialogException recovered ? recovered.Receipt : (error == null ? result : null),
                 Error = error == null ? null : FormatException(error),
@@ -5085,6 +5318,36 @@ namespace RevitBridge.Operator
             }
 
             return tr;
+        }
+
+        private static OperatorActionRisk GetActionRisk(OperatorActionCall action)
+        {
+            if (action == null) return OperatorActionRisk.High;
+            return GetActionRisk(action.Method, action.Path, action.Body);
+        }
+
+        private static OperatorActionRisk GetActionRisk(string method, string path, object? body)
+        {
+            return OperatorApprovalPolicy.GetRisk(method, path, GetActionBodyJson(body));
+        }
+
+        private static string? GetActionBodyJson(object? body)
+        {
+            if (body == null) return null;
+            try
+            {
+                if (body is JsonElement element)
+                {
+                    return element.ValueKind == JsonValueKind.Undefined ? null : element.GetRawText();
+                }
+
+                return JsonSerializer.Serialize(body, OperatorUiProtocol.JsonOptions);
+            }
+            catch
+            {
+                // Malformed/unserializable action bodies must never downgrade a path's base risk.
+                return null;
+            }
         }
 
         private async Task<object?> TryAugmentExportPdfResultForBackendAsync(object? result)
@@ -5839,7 +6102,7 @@ namespace RevitBridge.Operator
                     await TryAutoCaptureAfterAsync(turn, action, actionId, list).ConfigureAwait(false);
 
                     // Track writes so deferred verification can force regenerate.
-                    var risk = OperatorApprovalPolicy.GetRisk(action.Method, action.Path);
+                    var risk = GetActionRisk(action);
                     if (risk == OperatorActionRisk.High) turn.WriteAppliedInStep = true;
 
                     // If we just applied titleblock parameter updates, enqueue a sheet-aware verify capture.
@@ -5858,7 +6121,7 @@ namespace RevitBridge.Operator
                                 };
                                 try
                                 {
-                                    var rid = OperatorApprovalPolicy.GetRisk(verify.Method, verify.Path);
+                                    var rid = GetActionRisk(verify);
                                     Ui(() => AddAction(verify.ActionId, "POST /revit/capture-sheet-region (verify titleblock)", verify.Path, verify.Body, false, rid));
                                     Ui(() => UpdateActionStatus(verify.ActionId, "deferred", "Will run after apply + regenerate."));
                                 }
@@ -5953,7 +6216,7 @@ namespace RevitBridge.Operator
             foreach (var k in keys)
             {
                 if (!_pendingApprovals.TryGetValue(k, out var action)) continue;
-                var risk = OperatorApprovalPolicy.GetRisk(action.Method, action.Path);
+                var risk = GetActionRisk(action);
                 if (OperatorApprovalPolicy.RequiresApproval(_approvalMode, risk)) continue;
                 await ApproveAndRunAsync(k).ConfigureAwait(false);
             }

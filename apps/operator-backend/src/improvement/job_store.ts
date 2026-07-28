@@ -1,5 +1,6 @@
 import path from "node:path";
 import { createRequire } from "node:module";
+import { isHostedRuntime } from "../runtime_mode.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
 
 type SqliteDb = {
@@ -283,7 +284,11 @@ function isTruthy(raw: string | undefined | null): boolean {
 export function deriveImprovementOperatorProfile(environmentOverride?: string | null): ImprovementOperatorProfile {
   const environment =
     clip(environmentOverride, 120) ??
-    ((process.env.AWS_EXECUTION_ENV || process.env.EC2_HOME || process.env.OPERATOR_AUTH_MODE === "clashpilot_jwt") ? "ec2_production" : "dev_workstation");
+    (process.env.AWS_EXECUTION_ENV || process.env.EC2_HOME
+      ? "ec2_production"
+      : isHostedRuntime()
+        ? "hosted_production"
+        : "dev_workstation");
   const devMode = isTruthy(process.env.OPERATOR_DEV_MODE);
   const autofixRaw = (process.env.OPERATOR_FEEDBACK_DEV_AUTOFIX_ENABLED ?? "").trim();
   return {

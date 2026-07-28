@@ -1,17 +1,119 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   normalizeExistingConditionsSnapshot,
-  scoreExistingConditionsReconstruction,
+  scoreExistingConditionsReconstruction as scoreExistingConditionsReconstructionWithoutAuthority,
   type ExistingConditionsCandidate,
   type ExistingConditionsElement,
-  type ExistingConditionsGroundTruth
+  type ExistingConditionsGroundTruth,
+  type ExistingConditionsScoringPolicy
 } from "../src/benchmark/existing_conditions_reconstruction.js";
 import { assertExistingConditionsContract } from "../src/existing_conditions/contract_validation.js";
-import { createExistingConditionsEvaluatorVisualReceipt } from "../src/existing_conditions/evaluator_visual.js";
+import {
+  createExistingConditionsEvaluatorVisualReceipt,
+  type ExistingConditionsEvaluatorExpectedRun
+} from "../src/existing_conditions/evaluator_visual.js";
+import {
+  createExistingConditionsEvaluatorChangeReceipt,
+  existingConditionsCandidateSnapshotSha256
+} from "../src/existing_conditions/evaluator_diff.js";
+import crypto from "node:crypto";
 
 const SOURCE_HASH = "a".repeat(64);
 const MODEL_HASH = "b".repeat(64);
+const EVALUATOR_KEY_ID = "existing-conditions-architectural-test-key";
+const EVALUATOR_KEY = "test-only-architectural-evaluator-signing-material-0001";
+const EXPECTED_RUNS = new WeakMap<ExistingConditionsCandidate, ExistingConditionsEvaluatorExpectedRun>();
+
+function scoreExistingConditionsReconstruction(
+  truthValue: ExistingConditionsGroundTruth,
+  candidateValue: ExistingConditionsCandidate,
+  policy: Partial<ExistingConditionsScoringPolicy> = {}
+) {
+  if (EXPECTED_RUNS.get(candidateValue)?.candidate_snapshot_sha256 !==
+      existingConditionsCandidateSnapshotSha256(candidateValue.snapshot)) {
+    attachEvaluatorEvidence(candidateValue);
+  }
+  return scoreExistingConditionsReconstructionWithoutAuthority(truthValue, candidateValue, policy, {
+    expected_run: EXPECTED_RUNS.get(candidateValue),
+    visual_receipt_validation: {
+      trusted_key_resolver: keyId => keyId === EVALUATOR_KEY_ID ? EVALUATOR_KEY : null
+    },
+    change_receipt_validation: {
+      trusted_key_resolver: keyId => keyId === EVALUATOR_KEY_ID ? EVALUATOR_KEY : null
+    }
+  });
+}
+
+function attachEvaluatorEvidence(candidateValue: ExistingConditionsCandidate): ExistingConditionsCandidate {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-architectural-visual-"));
+  const capture = path.join(root, "post.png");
+  const pdf = path.join(root, "post.pdf");
+  fs.writeFileSync(capture, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1]));
+  fs.writeFileSync(pdf, "%PDF-1.4\n%%EOF\n", "ascii");
+  const workflowFingerprint = "c".repeat(64);
+  const actionId = "architectural-test-action";
+  const attemptId = crypto.randomUUID();
+  const captureNonce = crypto.randomBytes(18).toString("base64url");
+  const captureName = path.basename(capture);
+  const changeReceipt = createExistingConditionsEvaluatorChangeReceipt(
+    { viewId: 42, count: 0, truncated: false, items: [] },
+    { viewId: 42, count: 0, truncated: false, items: [] },
+    {
+      scope: { model_bounds_ft: { min: { x: -1000, y: -1000, z: -1000 }, max: { x: 1000, y: 1000, z: 1000 } } },
+      allowed_categories: ["OST_Walls"]
+    },
+    {
+      run: {
+        fixture_id: candidateValue.fixture_id,
+        scope_id: candidateValue.scope_id,
+        workflow_fingerprint_sha256: workflowFingerprint,
+        action_id: actionId,
+        attempt_id: attemptId,
+        capture_nonce: captureNonce,
+        capture_name: captureName,
+        artifact_scope_root: root
+      },
+      candidate_snapshot: candidateValue.snapshot,
+      authority: { key_id: EVALUATOR_KEY_ID, signing_key: EVALUATOR_KEY }
+    }
+  );
+  const visualReceipt = createExistingConditionsEvaluatorVisualReceipt({
+    post_change_capture_path: capture,
+    post_change_pdf_path: pdf,
+    artifact_scope_root: root,
+    fixture_id: candidateValue.fixture_id,
+    scope_id: candidateValue.scope_id,
+    workflow_fingerprint_sha256: workflowFingerprint,
+    action_id: actionId,
+    attempt_id: attemptId,
+    capture_nonce: captureNonce,
+    capture_name: captureName,
+    candidate_snapshot_sha256: changeReceipt.candidate_snapshot_sha256,
+    change_digest_sha256: changeReceipt.change_digest_sha256,
+    post_apply_completed_at: new Date(Date.now() - 1_000).toISOString(),
+    authority: { key_id: EVALUATOR_KEY_ID, signing_key: EVALUATOR_KEY },
+    review_status: "pass"
+  });
+  candidateValue.evaluator_change_receipt = changeReceipt;
+  candidateValue.visual_receipt = visualReceipt;
+  EXPECTED_RUNS.set(candidateValue, {
+    fixture_id: candidateValue.fixture_id,
+    scope_id: candidateValue.scope_id,
+    workflow_fingerprint_sha256: workflowFingerprint,
+    action_id: actionId,
+    attempt_id: attemptId,
+    capture_nonce: captureNonce,
+    capture_name: captureName,
+    artifact_scope_root: root,
+    candidate_snapshot_sha256: changeReceipt.candidate_snapshot_sha256,
+    change_digest_sha256: changeReceipt.change_digest_sha256
+  });
+  return candidateValue;
+}
 
 function wall(key: string, start: [number, number], end: [number, number]): ExistingConditionsElement {
   return {
@@ -94,8 +196,8 @@ function architecturalCandidate(): ExistingConditionsCandidate {
     opening("new-door-903", "door", [4, 0, 32.1666666667], "new-wall-901"),
     opening("new-window-904", "window", [0, 5, 35.1666666667], "new-wall-902")
   ];
-  return {
-    schema_version: 1,
+  return attachEvaluatorEvidence({
+    schema_version: 2,
     fixture_id: "architectural-shell-independent-v1",
     scope_id: "snowdon-l4-independent-shell",
     discipline: "architectural",
@@ -111,13 +213,8 @@ function architecturalCandidate(): ExistingConditionsCandidate {
         { a: "new-window-904", b: "new-wall-902", kind: "host" }
       ],
       open_connector_count: 0
-    },
-    visual_receipt: createExistingConditionsEvaluatorVisualReceipt({
-      post_change_capture_sha256: "d".repeat(64),
-      post_change_pdf_sha256: "e".repeat(64),
-      review_status: "pass"
-    })
-  };
+    }
+  });
 }
 
 test("architectural shell accepts identity-perturbed walls, hosted openings, and reversed wall endpoints", () => {

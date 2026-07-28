@@ -25,6 +25,8 @@ import {
 import { createExistingConditionsEvaluatorChangeReceipt } from "../existing_conditions/evaluator_diff.js";
 import {
   createExistingConditionsEvaluatorVisualReceipt,
+  existingConditionsEvaluatorSigningAuthorityFromEnvironment,
+  existingConditionsEvaluatorValidationOptionsFromEnvironment,
   validateExistingConditionsEvaluatorVisualReceipt,
   type ExistingConditionsEvaluatorVisualReceipt
 } from "../existing_conditions/evaluator_visual.js";
@@ -475,7 +477,7 @@ function usage(): never {
     "  npm run existing-conditions -- capture (--expected-model <model.rvt> | --expected-document-title <exact-title> --allow-title-only-development) (--view-id <id> | --view-ids <id,id,...>) (--ids <id,id,...> | --scope <scope.json>) --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "  npm run existing-conditions -- package --fixture-id <id> --scope-id <id> --discipline <mechanical|plumbing|electrical|architectural|mixed> --task-class <exact_reconstruction|standards_compliance_repair|generative_layout> [--standards-profile <json>] [--source-pdf-render <image> --surrounding-model-capture <image> --architectural-delta-receipt <json> [--architectural-measurement-receipt <json> [--architectural-wall-candidate-receipt <json>]]] --redacted-model <agent-redacted.rvt> --source-pdf <source.pdf> --view-id <id> --model-bounds <minX,minY,minZ,maxX,maxY,maxZ> --image-region <minX,minY,maxX,maxY> --allowed-categories <OST_...,OST_...> --out-dir <agent-dir> [--registration-artifact <verified-registration.json> (required for exact reconstruction)]",
     "  npm run existing-conditions -- seal-truth --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --ground-truth-model <source.rvt> --deletion-manifest <json> --delete-dry-run <json> --out <truth.json>",
-    "  npm run existing-conditions -- evaluator-review-visual --post-capture <image> --post-pdf <pdf> --status <pass|needs_review|fail> --out <receipt.json>",
+    "  npm run existing-conditions -- evaluator-review-visual --post-capture <image> --post-pdf <pdf> --fixture-id <id> --scope-id <id> --workflow-fingerprint-sha256 <sha256> --action-id <id> --attempt-id <id> --capture-name <file> --candidate-snapshot-sha256 <sha256> --change-digest-sha256 <sha256> --post-apply-completed-at <ISO-8601> [--capture-nonce <nonce>] --status <pass|needs_review|fail> --out <receipt.json>",
     "  npm run existing-conditions -- seal-candidate --fixture-id <id> --scope-id <id> --snapshot <snapshot.json> --source-pdf <source.pdf> --evaluator-visual-receipt <json> --out <candidate.json>",
     "  npm run existing-conditions -- score --package <agent_package.json> [--truth <truth.json> --candidate <candidate.json> --policy <json> | --evaluator-checks <json> --evaluator-change-receipt <json> --evaluator-access-provenance <json> --constructability <pass|fail> --drawing-legibility <pass|fail>] --out-dir <score-dir>",
     "  npm run existing-conditions -- seal-engineering-evidence --case <case-definition.json> --native-evidence <evaluator-native-evidence.json> --evaluator-key-file <secret> --out <provenance.json>",
@@ -489,7 +491,7 @@ function usage(): never {
     "  npm run existing-conditions -- capture-plumbing-fixture-services-native-evidence --adapter-config <json> --expected-model <model.rvt> --out-dir <capture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "  npm run existing-conditions -- evaluate-engineering-case --case <case-definition.json> --native-evidence <evaluator-native-evidence.json> --evaluator-provenance <provenance.json> --evaluator-key-file <secret> --out <checks.json>",
     "  npm run existing-conditions -- advance-controller --state <controller-state-or-receipt.json> --event <event.json> --out <next-receipt.json>",
-    "  npm run existing-conditions -- evaluator-diff --before-visible <json> --after-visible <json> --package <agent_package.json> --out <receipt.json>",
+    "  npm run existing-conditions -- evaluator-diff --before-visible <json> --after-visible <json> --package <agent_package.json> --candidate-snapshot <json> --fixture-id <id> --scope-id <id> --workflow-fingerprint-sha256 <sha256> --action-id <id> --attempt-id <id> --capture-nonce <nonce> --capture-name <file> --artifact-scope-root <dir> --out <receipt.json>",
     "  npm run existing-conditions -- validate-contract --kind <agent_package|ground_truth|candidate|architectural_preview|architectural_pixel_measurement|registered_mep_observations|mep_region_coverage|registration_ambiguity|architectural_wall_candidate_clarification|architectural_opening_classification|architectural_door_span_observation|architectural_opening_host_resolution> --file <json>",
     "  npm run existing-conditions -- redact --expected-source <source.rvt> --staging-model <withheld-staging.rvt> --redacted-model <agent-redacted.rvt> --view-id <id> --ids <id,id,...> --anchor-ids <id,id,...> --out-dir <fixture-dir> --token-file <operator_token.txt> --grant-file <write_grant.json>",
     "Options:",
@@ -1394,13 +1396,16 @@ function sealCandidate(): void {
   const scopeId = requiredArgument("--scope-id");
   const snapshotPath = path.resolve(requiredArgument("--snapshot"));
   const sourcePdf = path.resolve(requiredArgument("--source-pdf"));
-  const visualReceipt = readJson(requiredArgument("--evaluator-visual-receipt")) as ExistingConditionsEvaluatorVisualReceipt;
-  if (!validateExistingConditionsEvaluatorVisualReceipt(visualReceipt)) {
+  const visualReceiptPath = path.resolve(requiredArgument("--evaluator-visual-receipt"));
+  const visualReceipt = readJson(visualReceiptPath) as ExistingConditionsEvaluatorVisualReceipt;
+  if (!validateExistingConditionsEvaluatorVisualReceipt(visualReceipt, {
+    ...existingConditionsEvaluatorValidationOptionsFromEnvironment(path.dirname(visualReceiptPath))
+  })) {
     throw new Error("Evaluator visual receipt is invalid or has been modified.");
   }
   const discipline = optionalDiscipline();
   const candidate: ExistingConditionsCandidate = {
-    schema_version: 1,
+    schema_version: 2,
     fixture_id: fixtureId,
     scope_id: scopeId,
     ...(discipline ? { discipline } : {}),
@@ -1425,13 +1430,26 @@ function reviewVisualEvidence(): void {
   if (!fs.existsSync(postPdf)) throw new Error(`Post-change PDF does not exist: ${postPdf}`);
   if (!["pass", "needs_review", "fail"].includes(status)) throw new Error("--status must be pass, needs_review, or fail.");
   const notes = argument("--notes").split("|").map((note) => note.trim()).filter(Boolean);
+  const outPath = path.resolve(requiredArgument("--out"));
   const receipt = createExistingConditionsEvaluatorVisualReceipt({
-    post_change_capture_sha256: sha256(postCapture),
-    post_change_pdf_sha256: sha256(postPdf),
+    post_change_capture_path: postCapture,
+    post_change_pdf_path: postPdf,
+    artifact_scope_root: path.dirname(outPath),
+    fixture_id: requiredArgument("--fixture-id"),
+    scope_id: requiredArgument("--scope-id"),
+    workflow_fingerprint_sha256: requiredArgument("--workflow-fingerprint-sha256"),
+    action_id: requiredArgument("--action-id"),
+    attempt_id: requiredArgument("--attempt-id"),
+    capture_nonce: argument("--capture-nonce") || crypto.randomBytes(18).toString("base64url"),
+    capture_name: requiredArgument("--capture-name"),
+    candidate_snapshot_sha256: requiredArgument("--candidate-snapshot-sha256"),
+    change_digest_sha256: requiredArgument("--change-digest-sha256"),
+    post_apply_completed_at: requiredArgument("--post-apply-completed-at"),
+    authority: existingConditionsEvaluatorSigningAuthorityFromEnvironment(),
     review_status: status as "pass" | "needs_review" | "fail",
     notes
   });
-  writeJson(requiredArgument("--out"), receipt);
+  writeJson(outPath, receipt);
 }
 
 function validateContractFile(): void {
@@ -1521,7 +1539,9 @@ function scoreSealedCandidate(): void {
   const truth = truthValue as ExistingConditionsGroundTruth;
   const candidate = candidateValue as ExistingConditionsCandidate;
   const scoringPolicy = parseExistingConditionsScoringPolicy();
-  const result = scoreExistingConditionsReconstruction(truth, candidate, scoringPolicy);
+  const result = scoreExistingConditionsReconstruction(truth, candidate, scoringPolicy, {
+    visual_receipt_validation: existingConditionsEvaluatorValidationOptionsFromEnvironment()
+  });
   const scoreReceipt = {
     ...result,
     scoring_policy: scoringPolicy,
@@ -2710,7 +2730,21 @@ async function main(): Promise<void> {
     const receipt = createExistingConditionsEvaluatorChangeReceipt(
       readJson(requiredArgument("--before-visible")),
       readJson(requiredArgument("--after-visible")),
-      readJson(requiredArgument("--package"))
+      readJson(requiredArgument("--package")),
+      {
+        run: {
+          fixture_id: requiredArgument("--fixture-id"),
+          scope_id: requiredArgument("--scope-id"),
+          workflow_fingerprint_sha256: requiredArgument("--workflow-fingerprint-sha256"),
+          action_id: requiredArgument("--action-id"),
+          attempt_id: requiredArgument("--attempt-id"),
+          capture_nonce: requiredArgument("--capture-nonce"),
+          capture_name: requiredArgument("--capture-name"),
+          artifact_scope_root: path.resolve(requiredArgument("--artifact-scope-root"))
+        },
+        candidate_snapshot: readJson(requiredArgument("--candidate-snapshot")),
+        authority: existingConditionsEvaluatorSigningAuthorityFromEnvironment()
+      }
     );
     writeJson(requiredArgument("--out"), receipt);
     return;

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { pathLooksWrite } from "./action_path_mutability.js";
+import { conditionalActionPathEffect, pathLooksWrite } from "./action_path_mutability.js";
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "./contracts.js";
 
 export type AgentTurnKind = "conversation" | "inspection" | "navigation" | "mutation";
@@ -304,7 +304,9 @@ function classifyPathCall(method: unknown, pathValue: unknown, body: unknown): P
   if (methodName === "GET") return call("read");
   if (methodName === "POST" && path === "/revit/transaction-plan") return call("preview");
   if (methodName === "POST" && !path.startsWith("/revit/")) return call("unknown");
-  if (methodName === "POST" && !pathLooksWrite(path)) return call("read");
+  const conditionalEffect = methodName === "POST" ? conditionalActionPathEffect(path, body) : undefined;
+  if (conditionalEffect !== undefined) return call(conditionalEffect);
+  if (methodName === "POST" && !pathLooksWrite(path, body)) return call("read");
   if (methodName !== "POST" || !path.startsWith("/revit/")) return call("unknown");
   const flags = previewFlags(body);
   return call(flags.preview ? "preview" : "apply");

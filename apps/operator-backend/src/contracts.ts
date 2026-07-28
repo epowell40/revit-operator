@@ -28,6 +28,7 @@ export type ToolResult = {
   action_id: string;
   method: HttpMethod;
   path: string;
+  request_effect?: "read" | "preview" | "apply";
   status: "done" | "failed";
   result_json?: unknown;
   error?: string;

@@ -26,6 +26,8 @@ OPERATOR_TOKEN=
 
 If `OPERATOR_TOKEN` is not set, local scripts can generate a per-session token and share it with the add-in through the local workspace.
 
+The provider-neutral `principal_jwt` contract is also available for a private or self-hosted identity adapter. It uses generic `OPERATOR_JWT_*` settings and `tenant_id` / `user_id` claims; provider-specific verification and hosted product policy remain outside this public package. In `hosted` runtime mode the full shell-capable workbench is always disabled. Outside hosted mode, principal auth may enable it only with an explicit `OPERATOR_WORKBENCH_ENABLED=true` opt-in.
+
 ## Primary Agent Providers
 
 The local/self-host backend can use these primary planning brains:

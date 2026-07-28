@@ -229,6 +229,14 @@ test("registered existing-conditions compiler hands off exact dry-run then exact
   assert.ok(visual);
   assert.equal(visual.actions[0]?.path, "/revit/highlight-and-export");
   assert.deepEqual((visual.actions[0]?.body as any)?.elementIds, [201]);
+  const visualPath = path.join(
+    ensureWorkspaceLayout().artifacts,
+    "captures",
+    "selection",
+    String((visual.actions[0]?.body as any)?.fileName)
+  );
+  fs.mkdirSync(path.dirname(visualPath), { recursive: true });
+  fs.writeFileSync(visualPath, Buffer.from(RED_MARK_PNG_BASE64, "base64"));
 
   const checkpoint = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, [{
     action_id: "verified-visual",
@@ -237,12 +245,15 @@ test("registered existing-conditions compiler hands off exact dry-run then exact
     status: "done",
     result_json: {
       status: "ok",
-      path: "C:\\evidence\\route.png"
+      path: visualPath
     }
   }]);
   assert.ok(checkpoint);
   assert.equal(checkpoint.actions[0]?.path, "/revit/save-as");
   assert.match(String((checkpoint.actions[0]?.body as any)?.filePath), /existing_conditions_checkpoints/);
+  const checkpointPath = String((checkpoint.actions[0]?.body as any)?.filePath);
+  fs.mkdirSync(path.dirname(checkpointPath), { recursive: true });
+  fs.writeFileSync(checkpointPath, "RVT checkpoint bytes", "utf8");
 
   const complete = __testOnlyBuildRegisteredMepWorkflowHandoffResponse(sessionId, [{
     action_id: "verified-checkpoint",
@@ -251,7 +262,7 @@ test("registered existing-conditions compiler hands off exact dry-run then exact
     status: "done",
     result_json: {
       status: "Success",
-      path: (checkpoint.actions[0]?.body as any)?.filePath
+      path: checkpointPath
     }
   }]);
   assert.ok(complete);

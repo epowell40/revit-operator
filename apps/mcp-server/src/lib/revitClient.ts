@@ -1,36 +1,102 @@
 import { getOrCreateOperatorToken, getWriteGrantToken } from "./workspace.js";
 import { callRevitViaCourier } from "./revitCourier.js";
+import { revitRouteEffect } from "./revitRouteEffect.js";
 
 // Use localhost or environment variable
 export const REVIT_BRIDGE_URL = process.env.REVIT_BRIDGE_URL || "http://localhost:5000";
 
-export type RevitBridgeErrorCode =
+export type RevitBridgeTransportErrorCode =
   | "revit_bridge_timeout"
   | "revit_bridge_unavailable"
   | "revit_bridge_http_error"
   | "revit_bridge_invalid_response";
 
+export type RevitBridgeErrorCode = RevitBridgeTransportErrorCode;
+
+export type RevitBridgeErrorDetails = Readonly<Record<string, unknown>>;
+
 export class RevitBridgeCallError extends Error {
   readonly code: RevitBridgeErrorCode;
+  readonly transportCode: RevitBridgeTransportErrorCode;
   readonly retryable: boolean;
+  readonly outcome_unknown: boolean;
+  readonly outcomeUnknown: boolean;
   readonly method: string;
   readonly path: string;
+  readonly status?: number;
+  readonly bridgeCode?: string;
+  readonly phase?: string;
+  readonly host_health?: string;
+  readonly opens_circuit?: boolean;
+  readonly correlation_id?: string;
+  readonly deadline_class?: string;
+  readonly deadline_ms?: number;
+  readonly bridgeDetails?: RevitBridgeErrorDetails;
 
   constructor(input: {
     code: RevitBridgeErrorCode;
+    transportCode?: RevitBridgeTransportErrorCode;
     message: string;
     retryable: boolean;
+    outcomeUnknown?: boolean;
     method: string;
     path: string;
+    status?: number;
+    bridgeDetails?: RevitBridgeErrorDetails;
     cause?: unknown;
   }) {
-    super(`[${input.code}] ${input.message} retryable=${input.retryable}.`, { cause: input.cause });
+    const outcomeUnknown = input.outcomeUnknown === true;
+    const retryable = outcomeUnknown ? false : input.retryable;
+    const outcomeSuffix = outcomeUnknown ? " outcome_unknown=true" : "";
+    super(`[${input.code}] ${input.message} retryable=${retryable}${outcomeSuffix}.`, { cause: input.cause });
     this.name = "RevitBridgeCallError";
     this.code = input.code;
-    this.retryable = input.retryable;
+    this.transportCode = input.transportCode ?? input.code;
+    this.retryable = retryable;
+    this.outcome_unknown = outcomeUnknown;
+    this.outcomeUnknown = outcomeUnknown;
     this.method = input.method;
     this.path = input.path;
+    this.status = input.status;
+    this.bridgeDetails = input.bridgeDetails;
+
+    const details = input.bridgeDetails;
+    this.bridgeCode = stringField(details, "code");
+    this.phase = stringField(details, "phase");
+    this.host_health = stringField(details, "host_health");
+    this.opens_circuit = booleanField(details, "opens_circuit");
+    this.correlation_id = stringField(details, "correlation_id");
+    this.deadline_class = stringField(details, "deadline_class");
+    this.deadline_ms = numberField(details, "deadline_ms");
   }
+}
+
+function stringField(details: RevitBridgeErrorDetails | undefined, name: string): string | undefined {
+  const value = details?.[name];
+  return typeof value === "string" ? value : undefined;
+}
+
+function booleanField(details: RevitBridgeErrorDetails | undefined, name: string): boolean | undefined {
+  const value = details?.[name];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function numberField(details: RevitBridgeErrorDetails | undefined, name: string): number | undefined {
+  const value = details?.[name];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function parseBridgeErrorDetails(details: string): RevitBridgeErrorDetails | undefined {
+  if (!details.trim()) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(details);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Legacy bridge errors can be plain text.
+  }
+  return undefined;
 }
 
 function requestTimeoutMs(): number {
@@ -48,6 +114,55 @@ function errorDetail(error: unknown): string {
   return String(error || "unknown error");
 }
 
+const PROVEN_PRE_DISPATCH_ERROR_CODES = new Set([
+  "ECONNREFUSED",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "UND_ERR_CONNECT_TIMEOUT",
+]);
+
+function isProvenPreDispatchFailure(error: unknown): boolean {
+  const pending: unknown[] = [error];
+  const visited = new Set<unknown>();
+  const errorCodes: string[] = [];
+
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current || (typeof current !== "object" && typeof current !== "function") || visited.has(current)) {
+      continue;
+    }
+    visited.add(current);
+
+    const record = current as { code?: unknown; cause?: unknown; errors?: unknown };
+    if (typeof record.code === "string") errorCodes.push(record.code);
+    if (record.cause !== undefined) pending.push(record.cause);
+    if (Array.isArray(record.errors)) pending.push(...record.errors);
+  }
+
+  return errorCodes.length > 0 && errorCodes.every(code => PROVEN_PRE_DISPATCH_ERROR_CODES.has(code));
+}
+
+const PRE_DISPATCH_PHASES = new Set([
+  "pre_dispatch",
+  "request_validation",
+  "authentication",
+  "authorization",
+  "write_grant",
+  "admission",
+  "routing",
+]);
+
+function isStructuredPreDispatchRejection(details: RevitBridgeErrorDetails | undefined): boolean {
+  if (!details) return false;
+  if (booleanField(details, "pre_dispatch") === true) return true;
+  if (booleanField(details, "dispatched") === false) return true;
+  if (booleanField(details, "request_dispatched") === false) return true;
+  const phase = stringField(details, "phase")?.trim().toLowerCase();
+  return booleanField(details, "outcome_unknown") === false && !!phase && PRE_DISPATCH_PHASES.has(phase);
+}
+
 export async function callRevit<T = unknown>(path: string, method: string = "GET", body?: unknown): Promise<T> {
   const transport = (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase();
   if (transport === "courier") return await callRevitViaCourier<T>(path, method, body);
@@ -61,6 +176,8 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
         ? body
         : JSON.stringify(body);
   const upperMethod = String(method || "GET").trim().toUpperCase();
+  const requestEffect = revitRouteEffect(path, upperMethod, body);
+  const mutating = requestEffect === "apply";
 
   const doFetch = async (): Promise<Response> => {
     const url = `${bridgeUrl()}${path}`;
@@ -83,19 +200,26 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
       return await fetch(url, options);
     } catch (error) {
       if (controller.signal.aborted) {
+        const outcomeUnknown = mutating;
         throw new RevitBridgeCallError({
           code: "revit_bridge_timeout",
-          message: `${upperMethod} ${path} exceeded ${timeoutMs} ms while waiting for the Revit bridge. Revit may be busy; inspect its UI before retrying.`,
-          retryable: true,
+          message: `${upperMethod} ${path} exceeded ${timeoutMs} ms while waiting for the Revit bridge. ${outcomeUnknown ? "The request may already have started; reconcile its outcome in Revit before any retry." : "Revit may be busy; inspect its UI before retrying."}`,
+          retryable: !outcomeUnknown,
+          outcomeUnknown,
           method: upperMethod,
           path,
           cause: error,
         });
       }
+      const preDispatchFailure = isProvenPreDispatchFailure(error);
+      const outcomeUnknown = mutating && !preDispatchFailure;
       throw new RevitBridgeCallError({
         code: "revit_bridge_unavailable",
-        message: `${upperMethod} ${path} could not reach ${bridgeUrl()}. Revit may be closed or the bridge may not be listening. Cause: ${errorDetail(error)}`,
-        retryable: true,
+        message: outcomeUnknown
+          ? `${upperMethod} ${path} lost its connection to ${bridgeUrl()} after dispatch could not be ruled out. The request may already have started; reconcile its outcome in Revit before any retry. Cause: ${errorDetail(error)}`
+          : `${upperMethod} ${path} could not reach ${bridgeUrl()}. Revit may be closed or the bridge may not be listening. Cause: ${errorDetail(error)}`,
+        retryable: !mutating || preDispatchFailure,
+        outcomeUnknown,
         method: upperMethod,
         path,
         cause: error,
@@ -105,39 +229,45 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
     }
   };
 
-  let response = await doFetch();
+  const response = await doFetch();
   if (!response.ok) {
     let details = "";
-    try { details = await response.text(); } catch { /* ignore */ }
+    let detailsReadFailed = false;
+    try { details = await response.text(); } catch { detailsReadFailed = true; }
 
-    const isGrantError =
-      response.status === 403 &&
-      /write requires approval|x-operator-write-grant|write grant/i.test(details);
-
-    // Write grant files can refresh in the add-in moments before a write.
-    // Retry once so MCP calls recover without manual mode toggling.
-    if (isGrantError && upperMethod !== "GET" && path !== "/revit/write-grant-status") {
-      await new Promise(resolve => setTimeout(resolve, 150));
-      response = await doFetch();
-      if (response.ok) return (await response.json()) as T;
-      try { details = await response.text(); } catch { /* ignore */ }
-    }
+    const bridgeDetails = parseBridgeErrorDetails(details);
+    const bridgeOutcomeUnknown = booleanField(bridgeDetails, "outcome_unknown");
+    const preDispatchRejection = isStructuredPreDispatchRejection(bridgeDetails);
+    const outcomeUnknown = mutating && (bridgeOutcomeUnknown === true || !preDispatchRejection);
+    const bridgeRetryable = booleanField(bridgeDetails, "retryable");
+    const statusRetryable = response.status === 408 || response.status === 409 || response.status === 423 || response.status === 429 || response.status >= 500;
+    const detailSuffix = details
+      ? `: ${details}`
+      : detailsReadFailed
+        ? ": response body was unavailable or incomplete"
+        : "";
 
     throw new RevitBridgeCallError({
       code: "revit_bridge_http_error",
-      message: `${upperMethod} ${path} received HTTP ${response.status}${details ? `: ${details}` : ""}`,
-      retryable: response.status === 408 || response.status === 409 || response.status === 423 || response.status === 429 || response.status >= 500,
+      transportCode: "revit_bridge_http_error",
+      message: `${upperMethod} ${path} received HTTP ${response.status}${detailSuffix}`,
+      retryable: outcomeUnknown ? false : (bridgeRetryable ?? statusRetryable),
+      outcomeUnknown,
       method: upperMethod,
       path,
+      status: response.status,
+      bridgeDetails,
     });
   }
   try {
     return (await response.json()) as T;
   } catch (error) {
+    const outcomeUnknown = mutating;
     throw new RevitBridgeCallError({
       code: "revit_bridge_invalid_response",
-      message: `${upperMethod} ${path} returned a non-JSON response.`,
-      retryable: false,
+      message: `${upperMethod} ${path} returned an invalid or incomplete JSON response.${outcomeUnknown ? " The request may already have completed; reconcile its outcome in Revit before any retry." : ""}`,
+      retryable: !outcomeUnknown,
+      outcomeUnknown,
       method: upperMethod,
       path,
       cause: error,

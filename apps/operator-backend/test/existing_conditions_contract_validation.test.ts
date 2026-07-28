@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { assertExistingConditionsContract } from "../src/existing_conditions/contract_validation.js";
 
 function validAgentPackage(): Record<string, unknown> {
@@ -856,7 +858,7 @@ test("candidate and withheld contracts bind bounded MEP coverage receipts", () =
     open_connector_count: 0
   };
   const candidate = {
-    schema_version: 1,
+    schema_version: 2,
     fixture_id: "bounded-electrical-v1",
     scope_id: "bounded-office",
     discipline: "electrical",
@@ -866,6 +868,37 @@ test("candidate and withheld contracts bind bounded MEP coverage receipts", () =
     ],
     accessed_artifact_roles: ["source_pdf", "registered_source_render"],
     out_of_scope_changed_element_keys: [],
+    evaluator_change_receipt: {
+      schema_version: 2,
+      fixture_id: "bounded-electrical-v1",
+      scope_id: "bounded-office",
+      workflow_fingerprint_sha256: "2".repeat(64),
+      action_id: "apply-action",
+      attempt_id: "attempt-1",
+      capture_nonce: "0123456789abcdef01234567",
+      capture_name: "post.png",
+      artifact_scope_root: "C:\\evaluator\\artifacts",
+      candidate_snapshot_sha256: "3".repeat(64),
+      before_visible_sha256: "4".repeat(64),
+      after_visible_sha256: "5".repeat(64),
+      agent_package_sha256: "6".repeat(64),
+      canonical_byte_lengths: { candidate_snapshot: 128, before_visible: 64, after_visible: 96, agent_package: 256 },
+      native_diff_readback: true,
+      changed_element_keys: ["device-1"],
+      out_of_scope_changed_element_keys: [],
+      change_digest_sha256: "7".repeat(64),
+      issued_at: "2026-07-27T20:00:01.000Z",
+      expires_at: "2026-07-27T20:05:01.000Z",
+      freshness_rule: "bounded_single_attempt_change_v1",
+      replay_key_sha256: "8".repeat(64),
+      receipt_sha256: "9".repeat(64),
+      evaluator_authority: {
+        boundary: "trusted_hmac_verifier_v1",
+        algorithm: "hmac-sha256",
+        key_id: "evaluator-key-2026-07",
+        signature: "1".repeat(64)
+      }
+    },
     source_coverage_receipt: {
       schema_version: 1,
       scope_id: "bounded-office",
@@ -884,13 +917,50 @@ test("candidate and withheld contracts bind bounded MEP coverage receipts", () =
     },
     snapshot,
     visual_receipt: {
+      schema_version: 3,
+      fixture_id: "bounded-electrical-v1",
+      scope_id: "bounded-office",
+      artifact_scope_root: "C:\\evaluator\\artifacts",
+      workflow_fingerprint_sha256: "2".repeat(64),
+      action_id: "apply-action",
+      attempt_id: "attempt-1",
+      capture_nonce: "0123456789abcdef01234567",
+      capture_name: "post.png",
+      candidate_snapshot_sha256: "3".repeat(64),
+      change_digest_sha256: "7".repeat(64),
+      post_apply_completed_at: "2026-07-27T20:00:00.000Z",
+      issued_at: "2026-07-27T20:00:01.000Z",
+      expires_at: "2026-07-27T20:05:01.000Z",
+      freshness_rule: "bounded_single_attempt_capture_v1",
+      replay_key_sha256: "8".repeat(64),
       post_change_capture_sha256: "e".repeat(64),
       post_change_pdf_sha256: "f".repeat(64),
+      post_change_capture_artifact: {
+        path: "C:\\evaluator\\artifacts\\post.png",
+        file_name: "post.png",
+        sha256: "e".repeat(64),
+        byte_length: 128,
+        media_type: "image",
+        modified_at: "2026-07-27T20:00:00.500Z"
+      },
+      post_change_pdf_artifact: {
+        path: "C:\\evaluator\\artifacts\\post.pdf",
+        file_name: "post.pdf",
+        sha256: "f".repeat(64),
+        byte_length: 256,
+        media_type: "application/pdf",
+        modified_at: "2026-07-27T20:00:00.500Z"
+      },
       evaluator_review: {
         reviewer_role: "evaluator",
         review_status: "pass",
-        notes: [],
-        receipt_sha256: "1".repeat(64)
+        notes: []
+      },
+      evaluator_authority: {
+        boundary: "trusted_hmac_verifier_v1",
+        algorithm: "hmac-sha256",
+        key_id: "evaluator-key-2026-07",
+        signature: "1".repeat(64)
       }
     }
   };
@@ -934,4 +1004,28 @@ test("candidate and withheld contracts bind bounded MEP coverage receipts", () =
 
   routePolicy.route_trace_tolerance_ft = 0.26;
   assert.throws(() => assertExistingConditionsContract("ground_truth", routeGroundTruth), /invalid_existing_conditions_ground_truth_contract/);
+});
+
+test("every embedded existing-conditions benchmark task validates its routed contracts", () => {
+  const tasksDirectory = path.resolve("benchmark", "tasks");
+  const matchingTasks = fs.readdirSync(tasksDirectory)
+    .filter(fileName => fileName.endsWith(".json"))
+    .map(fileName => JSON.parse(fs.readFileSync(path.join(tasksDirectory, fileName), "utf8")) as Record<string, unknown>)
+    .filter(task => {
+      const adapter = task.adapter_config as Record<string, unknown> | undefined;
+      return adapter?.workflow === "existing_conditions_reconstruction";
+    });
+  assert.ok(matchingTasks.length > 0);
+  for (const task of matchingTasks) {
+    const adapter = task.adapter_config as Record<string, unknown>;
+    const request = adapter.request as Record<string, unknown>;
+    assert.doesNotThrow(
+      () => assertExistingConditionsContract("ground_truth", request.groundTruth),
+      String(task.task_id)
+    );
+    assert.doesNotThrow(
+      () => assertExistingConditionsContract("candidate", request.candidate),
+      String(task.task_id)
+    );
+  }
 });
