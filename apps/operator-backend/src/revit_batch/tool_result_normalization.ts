@@ -64,6 +64,16 @@ function plannedRequestEffect(action: ActionCall): NonNullable<ToolResult["reque
   return pathLooksWrite(action.path, action.body) ? "apply" : "read";
 }
 
+function unplannedRequestEffect(method: "GET" | "POST", actionPath: string): NonNullable<ToolResult["request_effect"]> {
+  if (method === "GET") return "read";
+  // Conditional POST routes need the server-owned request body to distinguish
+  // reads/previews from writes. If that plan was lost after a restart or cache
+  // eviction, classify conservatively instead of allowing a bodyless fallback
+  // (or client-supplied request_effect) to downgrade a possible mutation.
+  if (conditionalActionPathEffect(actionPath) !== undefined) return "apply";
+  return pathLooksWrite(actionPath) ? "apply" : "read";
+}
+
 export function normalizeIncomingToolResults(input: unknown, sessionIdValue: unknown): ToolResult[] {
   if (!Array.isArray(input)) return [];
   const sessionId = clipped(sessionIdValue, 200);
@@ -91,6 +101,11 @@ export function normalizeIncomingToolResults(input: unknown, sessionIdValue: unk
       requestEffect = plannedRequestEffect(serverAction);
       if (row.request_effect !== undefined && row.request_effect !== requestEffect) {
         throw new Error(`Tool result request_effect does not match server-planned action ${actionId}.`);
+      }
+    } else {
+      requestEffect = unplannedRequestEffect(method, actionPath);
+      if (row.request_effect !== undefined && row.request_effect !== requestEffect) {
+        throw new Error(`Tool result request_effect does not match server fail-closed policy for unplanned action ${actionId}.`);
       }
     }
 
