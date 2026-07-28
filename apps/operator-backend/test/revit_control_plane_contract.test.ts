@@ -162,6 +162,7 @@ test("hosted MCP courier is session-bound, approval-gated, and never auto-replay
   const app = addinFile(path.join("RevitBridge", "App.cs"));
   const pane = addinFile(path.join("RevitBridge", "Operator", "OperatorPaneControl.cs"));
   const worker = addinFile(path.join("RevitBridge", "Operator", "OperatorRevitCourierWorker.cs"));
+  const resultCompactor = addinFile(path.join("RevitBridge.Common", "OperatorCourierResultCompactor.cs"));
   const index = repoFile(path.join("operator-backend", "src", "index.ts"), path.join("apps", "operator-backend", "src", "index.ts"));
   const queue = repoFile(path.join("operator-backend", "src", "courier", "revit_tool_jobs.ts"), path.join("apps", "operator-backend", "src", "courier", "revit_tool_jobs.ts"));
   const mcpClient = repoFile(path.join("mcp-server", "src", "lib", "revitClient.ts"), path.join("apps", "mcp-server", "src", "lib", "revitClient.ts"));
@@ -171,6 +172,21 @@ test("hosted MCP courier is session-bound, approval-gated, and never auto-replay
   assert.match(worker, /_actionRunner\.ExecuteAsync/);
   assert.match(worker, /ReadRequiredString\(job, "correlation_id", 160\)/);
   assert.match(worker, /OperatorActionDeadlinePolicy\.Resolve[\s\S]{0,200}ConstrainTo\(remaining\)/);
+  assert.match(
+    worker,
+    /OperatorCourierResultCompactor\.Prepare\(result\)[\s\S]{0,240}_completionOutbox\.Save[\s\S]{0,240}CompleteRevitCourierJobJsonAsync/,
+  );
+  assert.match(
+    worker,
+    /OperatorCourierResultCompactor\.Prepare\(completion\.Result\)[\s\S]{0,500}_completionOutbox\.Save[\s\S]{0,500}CompleteRevitCourierJobJsonAsync/,
+  );
+  assert.match(worker, /catch \(OperatorCourierTerminalConflictException ex\)/);
+  assert.match(worker, /ResolveTerminalConflict\(completion\.JobId, ex\.Message\)/);
+  assert.match(worker, /courier\.completion\.reconciled_terminal/);
+  assert.match(resultCompactor, /MaxTransportResultBytes = 600_000/);
+  assert.match(resultCompactor, /requires_refinement_for_complete_rows/);
+  assert.match(resultCompactor, /result is string text/);
+  assert.match(resultCompactor, /JsonDocument\.Parse\(text\)/);
   assert.doesNotMatch(worker, /_turnBusy/);
   assert.match(app, /_revitCourierWorker = new OperatorRevitCourierWorker\(/);
   assert.match(app, /Application-lifetime Revit courier worker started/);

@@ -143,8 +143,9 @@ namespace RevitBridge.Operator
                     throw deadline.CreateTimeoutException(correlationId);
                 }
                 executionCompleted = true;
-                _completionOutbox.Save(sessionId!, jobId, _executorId, result);
-                await _backendClient.CompleteRevitCourierJobJsonAsync(sessionId!, jobId, _executorId, result, CancellationToken.None).ConfigureAwait(false);
+                var transportResult = OperatorCourierResultCompactor.Prepare(result);
+                _completionOutbox.Save(sessionId!, jobId, _executorId, transportResult.Result);
+                await _backendClient.CompleteRevitCourierJobJsonAsync(sessionId!, jobId, _executorId, transportResult.Result, CancellationToken.None).ConfigureAwait(false);
                 _completionOutbox.Acknowledge(jobId);
                 await LogAsync("courier.action.done", new
                 {
@@ -156,7 +157,10 @@ namespace RevitBridge.Operator
                     risk = risk.ToString(),
                     deadline_class = deadline.DeadlineClass,
                     deadline_ms = deadline.BudgetMilliseconds,
-                    duration_ms = (int)Math.Max(0, (DateTime.UtcNow - startedAt).TotalMilliseconds)
+                    duration_ms = (int)Math.Max(0, (DateTime.UtcNow - startedAt).TotalMilliseconds),
+                    result_compacted = transportResult.Compacted,
+                    original_result_bytes = transportResult.OriginalResultBytes,
+                    transport_result_bytes = transportResult.TransportResultBytes
                 }).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (_cts.IsCancellationRequested)
@@ -320,18 +324,47 @@ namespace RevitBridge.Operator
             var completion = pending[0];
             try
             {
+                var transportResult = OperatorCourierResultCompactor.Prepare(completion.Result);
+                if (transportResult.Compacted)
+                {
+                    // Persist the bounded form before replay so a process restart cannot
+                    // resurrect an impossible-to-post oversized completion.
+                    _completionOutbox.Save(
+                        completion.SessionId,
+                        completion.JobId,
+                        completion.ExecutorId,
+                        transportResult.Result);
+                }
                 await _backendClient.CompleteRevitCourierJobJsonAsync(
                     completion.SessionId,
                     completion.JobId,
                     completion.ExecutorId,
-                    completion.Result,
+                    transportResult.Result,
                     CancellationToken.None).ConfigureAwait(false);
                 _completionOutbox.Acknowledge(completion.JobId);
                 await LogAsync("courier.completion.replayed", new
                 {
                     session_id = completion.SessionId,
                     job_id = completion.JobId,
-                    completed_at = completion.CompletedAt
+                    completed_at = completion.CompletedAt,
+                    result_compacted = transportResult.Compacted,
+                    original_result_bytes = transportResult.OriginalResultBytes,
+                    transport_result_bytes = transportResult.TransportResultBytes
+                }).ConfigureAwait(false);
+            }
+            catch (OperatorCourierTerminalConflictException ex)
+            {
+                // The backend's durable terminal failure is authoritative. Preserve this
+                // late local success as resolved evidence, but do not let it starve every
+                // later courier job forever.
+                _completionOutbox.ResolveTerminalConflict(completion.JobId, ex.Message);
+                await LogAsync("courier.completion.reconciled_terminal", new
+                {
+                    session_id = completion.SessionId,
+                    job_id = completion.JobId,
+                    completed_at = completion.CompletedAt,
+                    resolution_code = "backend_terminal_failure_authoritative",
+                    error = ex.Message
                 }).ConfigureAwait(false);
             }
             catch (Exception ex)
