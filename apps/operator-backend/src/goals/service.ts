@@ -2,6 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { ensureWorkspaceLayout } from "../workspace.js";
+import {
+  createDefaultLocalGoalEvidenceAuthority,
+  type GoalAuthorityContext,
+  type GoalAuthorityEnvelope,
+  type GoalEvidenceAuthorityProvider
+} from "./authority.js";
 
 type JsonMap = Record<string, unknown>;
 
@@ -33,6 +39,13 @@ export type GoalEvidenceRecord =
         method: string;
         status: GoalValidatorStatus;
         verified_at: string;
+        authority: {
+          provider_id: string;
+          receipt_id: string;
+          assertion: unknown;
+          issued_at: string;
+          expires_at: string;
+        };
       };
     }
   | {
@@ -43,8 +56,26 @@ export type GoalEvidenceRecord =
         method: string;
         status: GoalHumanApprovalStatus;
         recorded_at: string;
+        approver_role: string;
+        authority: {
+          provider_id: string;
+          receipt_id: string;
+          assertion: unknown;
+          issued_at: string;
+          expires_at: string;
+        };
       };
     };
+
+let configuredGoalEvidenceAuthority: GoalEvidenceAuthorityProvider | null = null;
+
+export function configureGoalEvidenceAuthorityProvider(provider: GoalEvidenceAuthorityProvider | null): void {
+  configuredGoalEvidenceAuthority = provider;
+}
+
+function goalEvidenceAuthority(): GoalEvidenceAuthorityProvider {
+  return configuredGoalEvidenceAuthority ?? createDefaultLocalGoalEvidenceAuthority();
+}
 
 export type GoalLogEntry = {
   id: string;
@@ -402,47 +433,163 @@ function verifyArtifactEvidence(value: unknown, criteria: string[]): GoalEvidenc
   };
 }
 
-function normalizeTypedEvidence(value: unknown, criteria: string[]): GoalEvidenceRecord | null {
+function cloneAuthorityAssertion(value: unknown): unknown {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(value);
+  } catch {
+    throw new Error("Goal authority assertion must be JSON-serializable.");
+  }
+  if (serialized === undefined || serialized.length > 32_768) throw new Error("Goal authority assertion is missing or too large.");
+  return JSON.parse(serialized) as unknown;
+}
+
+function normalizeAuthorityEnvelope(value: unknown): GoalAuthorityEnvelope {
+  const obj = value && typeof value === "object" && !Array.isArray(value) ? value as any : {};
+  const providerId = clip(obj.provider_id ?? obj.providerId, 120);
+  if (!providerId) throw new Error("Trusted authority evidence requires authority.provider_id.");
+  if (obj.assertion === undefined) throw new Error("Trusted authority evidence requires authority.assertion.");
+  return { provider_id: providerId, assertion: cloneAuthorityAssertion(obj.assertion) };
+}
+
+function authorityContext(goal: GoalRecord, criterion: string): GoalAuthorityContext {
+  return {
+    goal_id: goal.id,
+    session_id: goal.related_session_id ?? null,
+    criterion,
+    goal_owner_principal_id: goal.created_by ?? null
+  };
+}
+
+function samePrincipalId(left: string | null | undefined, right: string | null | undefined): boolean {
+  return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
+}
+
+function normalizeTypedEvidence(value: unknown, goal: GoalRecord): GoalEvidenceRecord | null {
   if (value === undefined || value === null) return null;
   const obj = value && typeof value === "object" && !Array.isArray(value) ? value as any : {};
   const kind = clip(obj.kind, 80).toLowerCase();
-  if (kind === "artifact") return verifyArtifactEvidence(obj, criteria);
-  const criterion = canonicalCriterion(obj.criterion, criteria);
+  if (kind === "artifact") return verifyArtifactEvidence(obj, goal.acceptance_criteria);
+  const criterion = canonicalCriterion(obj.criterion, goal.acceptance_criteria);
+  const context = authorityContext(goal, criterion);
   if (kind === "validator") {
     const validator = obj.validator && typeof obj.validator === "object" && !Array.isArray(obj.validator) ? obj.validator as any : {};
-    const identity = clip(validator.identity, 240);
-    const method = clip(validator.method, 1000);
-    const status = clip(validator.status, 40).toLowerCase();
-    if (!identity) throw new Error("validator evidence requires validator.identity.");
-    if (!method) throw new Error("validator evidence requires validator.method.");
-    if (status !== "pass" && status !== "fail" && status !== "unknown") throw new Error("validator evidence status must be pass, fail, or unknown.");
+    if (validator.authority === undefined) {
+      throw new Error("Validator evidence requires a trusted server-issued execution receipt; caller-provided identity or status is not accepted.");
+    }
+    const authority = normalizeAuthorityEnvelope(validator.authority);
+    const verified = goalEvidenceAuthority().verifyValidatorExecutionReceipt(authority, context);
+    if (verified.provider_id !== authority.provider_id) throw new Error("Validator authority provider verification mismatch.");
+    if (!clip(verified.receipt_id, 160) || !clip(verified.validator_id, 240) || !clip(verified.method, 1000)) {
+      throw new Error("Trusted validator execution receipt is incomplete.");
+    }
+    if (verified.status !== "pass" && verified.status !== "fail" && verified.status !== "unknown") {
+      throw new Error("Trusted validator execution receipt has an invalid status.");
+    }
     return {
       kind: "validator",
       criterion,
-      validator: { identity, method, status, verified_at: nowIso() }
+      validator: {
+        identity: verified.validator_id,
+        method: verified.method,
+        status: verified.status,
+        verified_at: nowIso(),
+        authority: {
+          provider_id: verified.provider_id,
+          receipt_id: verified.receipt_id,
+          assertion: authority.assertion,
+          issued_at: verified.issued_at,
+          expires_at: verified.expires_at
+        }
+      }
     };
   }
   if (kind === "human_approval") {
     const approval = obj.approval && typeof obj.approval === "object" && !Array.isArray(obj.approval) ? obj.approval as any : {};
-    const approverIdentity = clip(approval.approver_identity ?? approval.approverIdentity, 240);
-    const method = clip(approval.method, 1000);
-    const status = clip(approval.status, 40).toLowerCase();
-    if (!approverIdentity) throw new Error("human approval evidence requires approval.approver_identity.");
-    if (!method) throw new Error("human approval evidence requires approval.method.");
-    if (status !== "approved" && status !== "rejected" && status !== "unknown") throw new Error("human approval evidence status must be approved, rejected, or unknown.");
+    if (approval.authority === undefined) {
+      throw new Error("Human approval evidence requires a trusted authenticated approval receipt; caller-provided identity or status is not accepted.");
+    }
+    const authority = normalizeAuthorityEnvelope(approval.authority);
+    const verified = goalEvidenceAuthority().verifyHumanApproval(authority, context);
+    if (verified.provider_id !== authority.provider_id) throw new Error("Human approval authority provider verification mismatch.");
+    if (!clip(verified.receipt_id, 160) || !clip(verified.approver_principal_id, 240) || !clip(verified.approver_role, 120) || !clip(verified.method, 1000)) {
+      throw new Error("Trusted human approval receipt is incomplete.");
+    }
+    if (samePrincipalId(verified.approver_principal_id, goal.created_by)) {
+      throw new Error("Goal owners cannot approve their own goal completion.");
+    }
+    if (verified.status !== "approved" && verified.status !== "rejected" && verified.status !== "unknown") {
+      throw new Error("Trusted human approval receipt has an invalid status.");
+    }
     return {
       kind: "human_approval",
       criterion,
-      approval: { approver_identity: approverIdentity, method, status, recorded_at: nowIso() }
+      approval: {
+        approver_identity: verified.approver_principal_id,
+        approver_role: verified.approver_role,
+        method: verified.method,
+        status: verified.status,
+        recorded_at: nowIso(),
+        authority: {
+          provider_id: verified.provider_id,
+          receipt_id: verified.receipt_id,
+          assertion: authority.assertion,
+          issued_at: verified.issued_at,
+          expires_at: verified.expires_at
+        }
+      }
     };
   }
   throw new Error("evidence.kind must be artifact, validator, or human_approval.");
 }
 
-function evaluatePersistedEvidence(evidence: GoalEvidenceRecord): GoalCriterionStatus {
-  if (evidence.kind === "validator") return evidence.validator.status;
+function authorityReceiptId(evidence: GoalEvidenceRecord): string | null {
+  if (evidence.kind === "validator") return evidence.validator.authority?.receipt_id ?? null;
+  if (evidence.kind === "human_approval") return evidence.approval.authority?.receipt_id ?? null;
+  return null;
+}
+
+function assertReceiptNotReplayed(goal: GoalRecord, evidence: GoalEvidenceRecord): void {
+  const receiptId = authorityReceiptId(evidence);
+  if (!receiptId) return;
+  const entries = [...goal.evidence_log, ...goal.validation_log];
+  if (entries.some(entry => entry.evidence && authorityReceiptId(entry.evidence) === receiptId)) {
+    throw new Error("Goal authority receipt replay was rejected.");
+  }
+}
+
+function evaluatePersistedEvidence(evidence: GoalEvidenceRecord, goal: GoalRecord, replayed: boolean): GoalCriterionStatus {
+  if (replayed) return "fail";
+  if (evidence.kind === "validator") {
+    try {
+      const verified = goalEvidenceAuthority().verifyValidatorExecutionReceipt({
+        provider_id: evidence.validator.authority.provider_id,
+        assertion: evidence.validator.authority.assertion
+      }, authorityContext(goal, evidence.criterion));
+      if (
+        verified.provider_id !== evidence.validator.authority.provider_id ||
+        verified.receipt_id !== evidence.validator.authority.receipt_id
+      ) return "fail";
+      return verified.status;
+    } catch {
+      return "fail";
+    }
+  }
   if (evidence.kind === "human_approval") {
-    return evidence.approval.status === "approved" ? "pass" : evidence.approval.status === "rejected" ? "fail" : "unknown";
+    try {
+      const verified = goalEvidenceAuthority().verifyHumanApproval({
+        provider_id: evidence.approval.authority.provider_id,
+        assertion: evidence.approval.authority.assertion
+      }, authorityContext(goal, evidence.criterion));
+      if (
+        verified.provider_id !== evidence.approval.authority.provider_id ||
+        verified.receipt_id !== evidence.approval.authority.receipt_id ||
+        samePrincipalId(verified.approver_principal_id, goal.created_by)
+      ) return "fail";
+      return verified.status === "approved" ? "pass" : verified.status === "rejected" ? "fail" : "unknown";
+    } catch {
+      return "fail";
+    }
   }
   try {
     verifyArtifactEvidence(evidence, [evidence.criterion]);
@@ -452,10 +599,15 @@ function evaluatePersistedEvidence(evidence: GoalEvidenceRecord): GoalCriterionS
   }
 }
 
-function normalizeCriterionResults(value: unknown, criteria: string[], evidenceLog: GoalLogEntry[], validationLog: GoalLogEntry[]): GoalCriterionResult[] {
-  const entries = [...evidenceLog, ...validationLog].filter(entry => entry.evidence);
+function normalizeCriterionResults(value: unknown, goal: GoalRecord): GoalCriterionResult[] {
+  const entries = [...goal.evidence_log, ...goal.validation_log].filter(entry => entry.evidence);
+  const receiptCounts = new Map<string, number>();
+  for (const entry of entries) {
+    const receiptId = entry.evidence ? authorityReceiptId(entry.evidence) : null;
+    if (receiptId) receiptCounts.set(receiptId, (receiptCounts.get(receiptId) ?? 0) + 1);
+  }
   const requested = Array.isArray(value) ? value : [];
-  return criteria.map(criterion => {
+  return goal.acceptance_criteria.map(criterion => {
     const exact = requested.find(item => {
       const obj = item && typeof item === "object" && !Array.isArray(item) ? (item as any) : {};
       return clip(obj.criterion, 1000).toLowerCase() === criterion.toLowerCase();
@@ -469,7 +621,10 @@ function normalizeCriterionResults(value: unknown, criteria: string[], evidenceL
       return entry?.evidence?.criterion === criterion ? [{ ref, evidence: entry.evidence }] : [];
     });
     const evidenceRefs = resolved.map(item => item.ref);
-    const evidenceStatuses = resolved.map(item => evaluatePersistedEvidence(item.evidence));
+    const evidenceStatuses = resolved.map(item => {
+      const receiptId = authorityReceiptId(item.evidence);
+      return evaluatePersistedEvidence(item.evidence, goal, Boolean(receiptId && (receiptCounts.get(receiptId) ?? 0) > 1));
+    });
     const status: GoalCriterionStatus = requestedStatus === "fail" || evidenceStatuses.includes("fail")
       ? "fail"
       : evidenceStatuses.includes("pass")
@@ -658,9 +813,10 @@ export function appendGoalEvidence(goalId: string, entry: unknown): GoalRecord {
   if (goal.status !== "active" && goal.status !== "blocked") throw new Error(`Cannot append evidence while goal is ${goal.status}.`);
   const log = normalizeLogEntry(entry, "evidence");
   const entryObject = entry && typeof entry === "object" && !Array.isArray(entry) ? entry as any : {};
-  const evidence = normalizeTypedEvidence(entryObject.evidence, goal.acceptance_criteria);
+  const evidence = normalizeTypedEvidence(entryObject.evidence, goal);
   if (evidence?.kind === "validator") throw new Error("validator evidence must be appended to the validation log.");
   if (evidence) {
+    assertReceiptNotReplayed(goal, evidence);
     log.evidence = evidence;
     log.artifact_paths = evidence.kind === "artifact" ? [evidence.artifact.path] : [];
   }
@@ -677,9 +833,12 @@ export function appendGoalValidation(goalId: string, entry: unknown): GoalRecord
   if (goal.status !== "active" && goal.status !== "blocked") throw new Error(`Cannot append validation while goal is ${goal.status}.`);
   const log = normalizeLogEntry(entry, "validation");
   const entryObject = entry && typeof entry === "object" && !Array.isArray(entry) ? entry as any : {};
-  const evidence = normalizeTypedEvidence(entryObject.evidence, goal.acceptance_criteria);
+  const evidence = normalizeTypedEvidence(entryObject.evidence, goal);
   if (evidence && evidence.kind !== "validator") throw new Error("validation log evidence must use kind 'validator'.");
-  if (evidence) log.evidence = evidence;
+  if (evidence) {
+    assertReceiptNotReplayed(goal, evidence);
+    log.evidence = evidence;
+  }
   return saveGoal({ ...goal, validation_log: [...goal.validation_log, log].slice(-500) });
 }
 
@@ -688,7 +847,7 @@ export function requestGoalCompletionAudit(goalId: string, input?: unknown): Goa
   if (!goal) throw new Error("Goal not found.");
   if (goal.status !== "active") throw new Error(`Completion audit requires an active goal, got ${goal.status}.`);
   const obj = input && typeof input === "object" && !Array.isArray(input) ? (input as any) : {};
-  const criteriaResults = normalizeCriterionResults(obj.criteria_results ?? obj.criteriaResults, goal.acceptance_criteria, goal.evidence_log, goal.validation_log);
+  const criteriaResults = normalizeCriterionResults(obj.criteria_results ?? obj.criteriaResults, goal);
   const blockers = asStringList(obj.blockers, 40, 1200);
   if (goal.blocker) blockers.unshift(goal.blocker);
   const remainingWork = asStringList(obj.remaining_work ?? obj.remainingWork, 80, 1200);

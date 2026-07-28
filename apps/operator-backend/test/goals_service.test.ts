@@ -12,6 +12,7 @@ import {
   appendGoalProgress,
   clearAgentGoal,
   completeGoalAfterAudit,
+  configureGoalEvidenceAuthorityProvider,
   createGoal,
   formatActiveGoalContext,
   getActiveGoalForSession,
@@ -20,21 +21,41 @@ import {
   requestGoalCompletionAudit,
   setAgentGoal,
   transitionGoal,
-  updateGoal
+  updateGoal,
+  type GoalRecord
 } from "../src/goals/service.js";
 import { classifyAutoGoalRequest } from "../src/goals/auto_goal.js";
+import {
+  createDefaultLocalGoalEvidenceAuthority,
+  createLocalGoalEvidenceAuthority,
+  type LocalGoalEvidenceAuthority
+} from "../src/goals/authority.js";
 
-function withWorkspace<T>(fn: () => T): T {
+const TEST_AUTHORITY_SECRET = "goal-authority-unit-test-secret-32-bytes-minimum";
+
+function withWorkspace<T>(fn: (authority: LocalGoalEvidenceAuthority) => T): T {
   const prev = process.env.OPERATOR_WORKSPACE_ROOT;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-goals-"));
   process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const authority = createLocalGoalEvidenceAuthority({ secret: TEST_AUTHORITY_SECRET });
+  configureGoalEvidenceAuthorityProvider(authority);
   try {
-    return fn();
+    return fn(authority);
   } finally {
+    configureGoalEvidenceAuthorityProvider(null);
     if (typeof prev === "string") process.env.OPERATOR_WORKSPACE_ROOT = prev;
     else delete process.env.OPERATOR_WORKSPACE_ROOT;
     fs.rmSync(root, { recursive: true, force: true });
   }
+}
+
+function authorityContext(goal: GoalRecord, criterion: string) {
+  return {
+    goal_id: goal.id,
+    session_id: goal.related_session_id ?? null,
+    criterion,
+    goal_owner_principal_id: goal.created_by ?? null
+  };
 }
 
 function createWorkspaceArtifact(relativePath: string, contents: string): { path: string; sha256: string; fullPath: string } {
@@ -192,11 +213,12 @@ test("completion audit refuses incomplete goals", () => {
 });
 
 test("completion audit allows completion only when every criterion has canonical typed evidence", () => {
-  withWorkspace(() => {
+  withWorkspace(authority => {
     const goal = createGoal({
       title: "Cleanup",
       objective: "Clean model safely.",
       acceptance_criteria: ["Changes are validated.", "Evidence is attached.", "Local review is approved."],
+      created_by: "goal-owner",
       status: "active"
     });
 
@@ -205,7 +227,14 @@ test("completion audit allows completion only when every criterion has canonical
       evidence: {
         kind: "validator",
         criterion: "Changes are validated.",
-        validator: { identity: "node:test", method: "node --test dist/test/goals_service.test.js", status: "pass" }
+        validator: {
+          authority: authority.issueValidatorExecutionReceipt({
+            ...authorityContext(goal, "Changes are validated."),
+            validator_id: "node:test",
+            method: "node --test dist/test/goals_service.test.js",
+            status: "pass"
+          })
+        }
       }
     });
     const changeValidationId = changeValidation.validation_log.at(-1)!.id;
@@ -224,7 +253,14 @@ test("completion audit allows completion only when every criterion has canonical
       evidence: {
         kind: "human_approval",
         criterion: "Local review is approved.",
-        approval: { approver_identity: "local-operator", method: "manual Sidecar review", status: "approved" }
+        approval: {
+          authority: authority.issueHumanApproval({
+            ...authorityContext(goal, "Local review is approved."),
+            authenticated_principal: { principal_id: "local-operator", roles: ["goal_approver"] },
+            method: "manual Sidecar review",
+            status: "approved"
+          })
+        }
       }
     });
     const approvalId = approval.evidence_log.at(-1)!.id;
@@ -389,29 +425,36 @@ test("artifact evidence requires workspace scope, existence, and a matching SHA-
   });
 });
 
-test("unknown or failed validators cannot complete and verifier identity and method are mandatory", () => {
-  withWorkspace(() => {
+test("unknown or failed trusted validator receipts cannot complete", () => {
+  withWorkspace(authority => {
     const goal = setAgentGoal("session-validator-results", {
       objective: "Require explicit validator outcomes.",
       success_criteria: ["Static validation passes.", "Runtime validation passes."]
     });
     assert.throws(
       () => appendGoalValidation(goal.id, {
-        summary: "Anonymous validator result.",
+        summary: "Caller-attested validator result.",
         evidence: {
           kind: "validator",
           criterion: "Static validation passes.",
           validator: { identity: "", method: "npm test", status: "pass" }
         }
       }),
-      /validator.identity/
+      /trusted server-issued execution receipt/
     );
     const unknown = appendGoalValidation(goal.id, {
       summary: "Static validator had no conclusive result.",
       evidence: {
         kind: "validator",
         criterion: "Static validation passes.",
-        validator: { identity: "typescript-compiler", method: "npm run build", status: "unknown" }
+        validator: {
+          authority: authority.issueValidatorExecutionReceipt({
+            ...authorityContext(goal, "Static validation passes."),
+            validator_id: "typescript-compiler",
+            method: "npm run build",
+            status: "unknown"
+          })
+        }
       }
     }).validation_log.at(-1)!;
     const failed = appendGoalValidation(goal.id, {
@@ -419,7 +462,14 @@ test("unknown or failed validators cannot complete and verifier identity and met
       evidence: {
         kind: "validator",
         criterion: "Runtime validation passes.",
-        validator: { identity: "node-test-runner", method: "node --test goals_service", status: "fail" }
+        validator: {
+          authority: authority.issueValidatorExecutionReceipt({
+            ...authorityContext(goal, "Runtime validation passes."),
+            validator_id: "node-test-runner",
+            method: "node --test goals_service",
+            status: "fail"
+          })
+        }
       }
     }).validation_log.at(-1)!;
     const audited = requestGoalCompletionAudit(goal.id, {
@@ -430,6 +480,248 @@ test("unknown or failed validators cannot complete and verifier identity and met
     });
     assert.equal(audited.completion_audit?.complete, false);
     assert.deepEqual(audited.completion_audit?.criteria_results.map(result => result.status), ["unknown", "fail"]);
+  });
+});
+
+test("caller-forged validator passes and human approvals are rejected", () => {
+  withWorkspace(authority => {
+    const goal = createGoal({
+      title: "Reject caller authority claims",
+      objective: "Accept only independently verified authority evidence.",
+      acceptance_criteria: ["Validation passes.", "Review is approved."],
+      created_by: "alice",
+      related_session_id: "session-forgery",
+      status: "active"
+    });
+    assert.throws(() => appendGoalValidation(goal.id, {
+      summary: "Caller claims the validator passed.",
+      evidence: {
+        kind: "validator",
+        criterion: "Validation passes.",
+        validator: { identity: "trusted-validator", method: "npm test", status: "pass" }
+      }
+    }), /caller-provided identity or status is not accepted/);
+    assert.throws(() => appendGoalEvidence(goal.id, {
+      summary: "Caller claims a human approved.",
+      evidence: {
+        kind: "human_approval",
+        criterion: "Review is approved.",
+        approval: { approver_identity: "admin", method: "manual review", status: "approved", approver_role: "administrator" }
+      }
+    }), /caller-provided identity or status is not accepted/);
+    assert.throws(() => authority.issueHumanApproval({
+      ...authorityContext(goal, "Review is approved."),
+      authenticated_principal: { principal_id: "bob", roles: ["user"] },
+      method: "manual review",
+      status: "approved"
+    }), /does not hold an authorized approval role/i);
+    assert.throws(() => authority.issueHumanApproval({
+      ...authorityContext(goal, "Review is approved."),
+      authenticated_principal: { principal_id: "alice", roles: ["goal_approver"] },
+      method: "manual review",
+      status: "approved"
+    }), /owners cannot approve their own goal completion/i);
+  });
+});
+
+test("signed approval from the goal owner is rejected even by a configured verifier callback", () => {
+  withWorkspace(() => {
+    const goal = createGoal({
+      title: "No self approval",
+      objective: "Require a distinct approval principal.",
+      acceptance_criteria: ["Review is approved."],
+      created_by: "alice",
+      related_session_id: "session-self-approval",
+      status: "active"
+    });
+    configureGoalEvidenceAuthorityProvider({
+      provider_id: "private-verifier-test",
+      verifyValidatorExecutionReceipt() {
+        throw new Error("not used");
+      },
+      verifyHumanApproval() {
+        return {
+          provider_id: "private-verifier-test",
+          receipt_id: "signed-self-approval",
+          approver_principal_id: "ALICE",
+          approver_role: "goal_approver",
+          method: "authenticated private approval",
+          status: "approved",
+          issued_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 60_000).toISOString()
+        };
+      }
+    });
+    assert.throws(() => appendGoalEvidence(goal.id, {
+      summary: "Owner attempted to approve their own goal.",
+      evidence: {
+        kind: "human_approval",
+        criterion: "Review is approved.",
+        approval: { authority: { provider_id: "private-verifier-test", assertion: "opaque-signed-assertion" } }
+      }
+    }), /owners cannot approve their own goal completion/i);
+  });
+});
+
+test("validator receipts reject replay, cross-goal use, and cross-session use", () => {
+  withWorkspace(authority => {
+    const first = createGoal({
+      title: "First receipt scope",
+      objective: "Bind the receipt to the first goal and session.",
+      acceptance_criteria: ["Validation passes."],
+      related_session_id: "session-a",
+      status: "active"
+    });
+    const receipt = authority.issueValidatorExecutionReceipt({
+      ...authorityContext(first, "Validation passes."),
+      validator_id: "node-test",
+      method: "node --test",
+      status: "pass"
+    });
+    appendGoalValidation(first.id, {
+      summary: "Trusted validation completed.",
+      evidence: { kind: "validator", criterion: "Validation passes.", validator: { authority: receipt } }
+    });
+    assert.throws(() => appendGoalValidation(first.id, {
+      summary: "Replay the same trusted receipt.",
+      evidence: { kind: "validator", criterion: "Validation passes.", validator: { authority: receipt } }
+    }), /receipt replay/i);
+
+    const otherGoal = createGoal({
+      title: "Other goal receipt scope",
+      objective: "Reject a receipt issued to another goal.",
+      acceptance_criteria: ["Validation passes."],
+      related_session_id: "session-a",
+      status: "active"
+    });
+    assert.throws(() => appendGoalValidation(otherGoal.id, {
+      summary: "Cross-goal receipt attempt.",
+      evidence: { kind: "validator", criterion: "Validation passes.", validator: { authority: receipt } }
+    }), /not valid for this goal, session, criterion, or owner/i);
+
+    const crossSessionReceipt = authority.issueValidatorExecutionReceipt({
+      ...authorityContext(otherGoal, "Validation passes."),
+      session_id: "different-session",
+      validator_id: "node-test",
+      method: "node --test",
+      status: "pass"
+    });
+    assert.throws(() => appendGoalValidation(otherGoal.id, {
+      summary: "Cross-session receipt attempt.",
+      evidence: { kind: "validator", criterion: "Validation passes.", validator: { authority: crossSessionReceipt } }
+    }), /not valid for this goal, session, criterion, or owner/i);
+  });
+});
+
+test("validator receipts reject expiry and invalid signatures", () => {
+  withWorkspace(() => {
+    let current = new Date("2026-07-27T12:00:00.000Z");
+    const authority = createLocalGoalEvidenceAuthority({ secret: TEST_AUTHORITY_SECRET, now: () => current });
+    configureGoalEvidenceAuthorityProvider(authority);
+    const goal = createGoal({
+      title: "Receipt cryptographic checks",
+      objective: "Reject stale or modified validator receipts.",
+      acceptance_criteria: ["Validation passes."],
+      related_session_id: "session-crypto",
+      status: "active"
+    });
+    const expiring = authority.issueValidatorExecutionReceipt({
+      ...authorityContext(goal, "Validation passes."),
+      validator_id: "node-test",
+      method: "node --test",
+      status: "pass",
+      ttl_seconds: 1
+    });
+    current = new Date(current.getTime() + 2_000);
+    assert.throws(() => appendGoalValidation(goal.id, {
+      summary: "Expired receipt attempt.",
+      evidence: { kind: "validator", criterion: "Validation passes.", validator: { authority: expiring } }
+    }), /expired/i);
+
+    current = new Date("2026-07-27T12:00:00.000Z");
+    const auditExpiryGoal = createGoal({
+      title: "Receipt expiry at completion",
+      objective: "Reverify receipt freshness before final completion.",
+      acceptance_criteria: ["Validation passes."],
+      related_session_id: "session-audit-expiry",
+      status: "active"
+    });
+    const shortLived = authority.issueValidatorExecutionReceipt({
+      ...authorityContext(auditExpiryGoal, "Validation passes."),
+      validator_id: "node-test",
+      method: "node --test",
+      status: "pass",
+      ttl_seconds: 1
+    });
+    const persisted = appendGoalValidation(auditExpiryGoal.id, {
+      summary: "Short-lived receipt persisted.",
+      evidence: { kind: "validator", criterion: "Validation passes.", validator: { authority: shortLived } }
+    });
+    const persistedId = persisted.validation_log.at(-1)!.id;
+    assert.equal(requestGoalCompletionAudit(auditExpiryGoal.id, {
+      criteria_results: [{ criterion: "Validation passes.", status: "pass", evidence_refs: [`validation:${persistedId}`] }]
+    }).completion_audit?.complete, true);
+    current = new Date(current.getTime() + 2_000);
+    assert.throws(() => completeGoalAfterAudit(auditExpiryGoal.id), /no longer passes verification/i);
+
+    current = new Date("2026-07-27T12:00:00.000Z");
+    const signed = authority.issueValidatorExecutionReceipt({
+      ...authorityContext(goal, "Validation passes."),
+      validator_id: "node-test",
+      method: "node --test",
+      status: "pass"
+    });
+    const token = String(signed.assertion);
+    const separator = token.indexOf(".");
+    const signature = token.slice(separator + 1);
+    const forged = `${token.slice(0, separator + 1)}${signature[0] === "A" ? "B" : "A"}${signature.slice(1)}`;
+    assert.throws(() => appendGoalValidation(goal.id, {
+      summary: "Modified signature attempt.",
+      evidence: {
+        kind: "validator",
+        criterion: "Validation passes.",
+        validator: { authority: { ...signed, assertion: forged } }
+      }
+    }), /signature is invalid/i);
+  });
+});
+
+test("local and self-hosted authority receipts provide a valid completion path", () => {
+  withWorkspace(configuredAuthority => {
+    const previousSecret = process.env.OPERATOR_GOAL_AUTHORITY_SECRET;
+    try {
+      process.env.OPERATOR_GOAL_AUTHORITY_SECRET = TEST_AUTHORITY_SECRET;
+      configureGoalEvidenceAuthorityProvider(null);
+      const localAuthority = createDefaultLocalGoalEvidenceAuthority();
+      const goal = createGoal({
+        title: "Local trusted validation",
+        objective: "Complete through a server-issued local validator receipt.",
+        acceptance_criteria: ["Validation passes."],
+        created_by: "local-agent",
+        related_session_id: "session-local-authority",
+        status: "active"
+      });
+      const receipt = localAuthority.issueValidatorExecutionReceipt({
+        ...authorityContext(goal, "Validation passes."),
+        validator_id: "local-node-test-runner",
+        method: "node --test dist/test/goals_service.test.js",
+        status: "pass"
+      });
+      const validated = appendGoalValidation(goal.id, {
+        summary: "Local trusted validation passed.",
+        evidence: { kind: "validator", criterion: "Validation passes.", validator: { authority: receipt } }
+      });
+      const validationId = validated.validation_log.at(-1)!.id;
+      const audited = requestGoalCompletionAudit(goal.id, {
+        criteria_results: [{ criterion: "Validation passes.", status: "pass", evidence_refs: [`validation:${validationId}`] }]
+      });
+      assert.equal(audited.completion_audit?.complete, true);
+      assert.equal(completeGoalAfterAudit(goal.id).status, "complete");
+    } finally {
+      if (previousSecret === undefined) delete process.env.OPERATOR_GOAL_AUTHORITY_SECRET;
+      else process.env.OPERATOR_GOAL_AUTHORITY_SECRET = previousSecret;
+      configureGoalEvidenceAuthorityProvider(configuredAuthority);
+    }
   });
 });
 

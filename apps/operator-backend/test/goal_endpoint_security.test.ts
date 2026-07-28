@@ -233,6 +233,34 @@ test("goal endpoints authenticate generic JWT callers and isolate principals, wo
     body: JSON.stringify({ session_id: aliceSession, summary: "Forged progress" })
   });
   assert.equal(bobMutatesAliceSession.status, 403);
+  const forgedValidator = await fetch(`${base}/api/goals/${encodeURIComponent(aliceGoal.id)}/validations`, {
+    method: "POST",
+    headers: headers(aliceAuth),
+    body: JSON.stringify({
+      summary: "Alice claims a trusted validator passed.",
+      evidence: {
+        kind: "validator",
+        criterion: "Alice evidence exists.",
+        validator: { identity: "trusted-validator", method: "npm test", status: "pass" }
+      }
+    })
+  });
+  assert.equal(forgedValidator.status, 400);
+  assert.match(await forgedValidator.text(), /caller-provided identity or status is not accepted/i);
+  const forgedApproval = await fetch(`${base}/api/goals/${encodeURIComponent(aliceGoal.id)}/evidence`, {
+    method: "POST",
+    headers: headers(aliceAuth),
+    body: JSON.stringify({
+      summary: "Alice claims an administrator approved.",
+      evidence: {
+        kind: "human_approval",
+        criterion: "Alice evidence exists.",
+        approval: { approver_identity: "administrator", approver_role: "administrator", method: "manual review", status: "approved" }
+      }
+    })
+  });
+  assert.equal(forgedApproval.status, 400);
+  assert.match(await forgedApproval.text(), /caller-provided identity or status is not accepted/i);
   const callerOnlyCompletion = await fetch(`${base}/api/agent-goal/complete`, {
     method: "POST",
     headers: headers(aliceAuth),
