@@ -10,6 +10,7 @@ import {
   cancelRevitBatchJob,
   completeRevitBatchItem,
   createRevitBatchJob,
+  failRevitBatchItem,
   getRevitBatchJob,
   listRevitBatchJobs,
   pauseRevitBatchJob,
@@ -374,6 +375,39 @@ test("claim and settlement reject wrong executor, principal, document, and claim
       access
     }),
     /claim context no longer matches/
+  );
+});
+
+test("identical completion settlement is idempotent while conflicting duplicates fail closed", () => {
+  mkWorkspace();
+  const access = boundAccess("alice", "settlement-session", "executor-a", fingerprintA);
+  const job = createBoundJob(access);
+  const claim = claimNextRevitBatchItem({ job_id: job.id, executor_id: "executor-a", access }) as AnyMap;
+  const input = {
+    job_id: job.id,
+    item_id: "item-1",
+    executor_id: "executor-a",
+    claim_token: claim.claim_token,
+    result: { result_summary: "effect committed", request_effect: "apply" },
+    access
+  };
+  const first = completeRevitBatchItem(input) as AnyMap;
+  assert.equal(first.item.status, "succeeded");
+  const repeated = completeRevitBatchItem(input) as AnyMap;
+  assert.equal(repeated.ok, true);
+  assert.equal(repeated.idempotent, true);
+  assert.equal(repeated.item.status, "succeeded");
+  assert.throws(
+    () => completeRevitBatchItem({ ...input, result: { result_summary: "different" } }),
+    /already settled with a different outcome or payload/
+  );
+  assert.throws(
+    () => failRevitBatchItem({ ...input, error: "late failure" }),
+    /already settled with a different outcome or payload/
+  );
+  assert.throws(
+    () => completeRevitBatchItem({ ...input, claim_token: "stolen-token" }),
+    /already settled with a different outcome or payload/
   );
 });
 

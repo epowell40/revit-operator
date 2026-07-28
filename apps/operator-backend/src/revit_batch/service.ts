@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { syncTaskFromRevitBatchJob } from "../tasks/service.js";
@@ -954,6 +954,21 @@ function settlementToken(explicitToken: unknown, result: unknown): string {
   return clip(explicitToken ?? resultMap.claim_token ?? resultMap.claimToken, 160);
 }
 
+function canonicalSettlementValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalSettlementValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as JsonMap)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, canonicalSettlementValue(entry)])
+  );
+}
+
+function settlementSha256(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(canonicalSettlementValue(value))).digest("hex");
+}
+
 function settleClaim(jobId: string, itemId: string, executorId: string, claimToken: string, failed: boolean, payload: { error?: string; result?: unknown }, access?: RevitBatchAccessContext): JsonMap {
   return withJobLock(jobId, () => {
     const current = readJob(jobId);
@@ -962,6 +977,24 @@ function settleClaim(jobId: string, itemId: string, executorId: string, claimTok
     const job = reconcileExpiredClaims(current);
     const target = job.items.find((item) => item.id === itemId);
     if (!target) throw new Error("Batch item not found.");
+    const settlementReceipt = asObject(target.settlement_receipt);
+    if ((target.status === "succeeded" || target.status === "failed") && Object.keys(settlementReceipt).length > 0) {
+      const expectedStatus = failed ? "failed" : "succeeded";
+      const tokenSha256 = settlementSha256(claimToken);
+      const payloadSha256 = settlementSha256({ failed, payload });
+      if (target.status !== expectedStatus ||
+        clip(settlementReceipt.executor_id, 200) !== executorId.trim() ||
+        clip(settlementReceipt.claim_token_sha256, 64) !== tokenSha256 ||
+        clip(settlementReceipt.payload_sha256, 64) !== payloadSha256) {
+        throw new Error("Batch item was already settled with a different outcome or payload.");
+      }
+      return {
+        ok: true,
+        idempotent: true,
+        job: toPublicJob(job),
+        item: target
+      };
+    }
     if (target.status !== "running" || !target.claim) {
       throw new Error(target.reconciliation_required === true
         ? "Batch item has an unknown mutation outcome and requires reconciliation; stale settlement is rejected."
@@ -993,6 +1026,12 @@ function settleClaim(jobId: string, itemId: string, executorId: string, claimTok
         status: (failed ? "failed" : "succeeded") as "failed" | "succeeded",
         finished_at: nowIso(),
         claim: null,
+        settlement_receipt: {
+          schema_version: 1,
+          executor_id: executorId.trim(),
+          claim_token_sha256: settlementSha256(claimToken),
+          payload_sha256: settlementSha256({ failed, payload })
+        },
         error: failed ? clip(payload.error, 500) || "Batch item failed." : ""
       };
     });
