@@ -9,7 +9,6 @@ const READ_ONLY_PATHS = new Set<string>([
   "/revit/tool-search",
   "/revit/tool-doc",
   "/revit/tool-examples",
-  "/revit/native-api-policy",
   "/revit/native-api-catalog",
   "/revit/native-api-search",
   "/revit/self-test",
@@ -86,7 +85,11 @@ export function conditionalActionPathEffect(pathname: string, body?: unknown): C
   return undefined;
 }
 
-export function pathLooksWrite(pathname: string, body?: unknown): boolean {
+export function pathLooksWrite(pathname: string, body?: unknown, method: string = "POST"): boolean {
+  const normalizedMethod = String(method || "POST").trim().toUpperCase();
+  if (normalizedMethod === "GET" || normalizedMethod === "HEAD" || normalizedMethod === "OPTIONS") return false;
+  if (normalizedMethod !== "POST") return true;
+
   const normalized = (pathname || "").trim().toLowerCase();
   const conditional = conditionalActionPathEffect(normalized, body);
   if (conditional !== undefined) return conditional !== "read";

@@ -308,6 +308,41 @@ test("callRevit keeps a known read-only POST safely retryable", async () => {
   }
 });
 
+test("callRevit treats native API policy GET as read and POST as mutating", async () => {
+  let requests = 0;
+  const server = http.createServer((_request, response) => {
+    requests += 1;
+    response.statusCode = 503;
+    response.end("bridge unavailable");
+  });
+  const port = await listen(server);
+  const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
+  try {
+    await assert.rejects(
+      callRevit("/revit/native-api-policy", "GET"),
+      (error: unknown) => {
+        assert.ok(error instanceof RevitBridgeCallError);
+        assert.equal(error.retryable, true);
+        assert.equal(error.outcome_unknown, false);
+        return true;
+      },
+    );
+    await assert.rejects(
+      callRevit("/revit/native-api-policy", "POST", { policy: "certified" }),
+      (error: unknown) => {
+        assert.ok(error instanceof RevitBridgeCallError);
+        assert.equal(error.retryable, false);
+        assert.equal(error.outcome_unknown, true);
+        return true;
+      },
+    );
+    assert.equal(requests, 2);
+  } finally {
+    restore();
+    await close(server);
+  }
+});
+
 test("callRevit classifies conditional POST bodies as read or apply", async () => {
   const server = http.createServer((_request, response) => {
     response.statusCode = 503;

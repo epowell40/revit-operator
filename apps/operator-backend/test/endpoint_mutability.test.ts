@@ -11,6 +11,11 @@ test("known read-only POST endpoints remain read-only", () => {
   assert.equal(pathLooksWrite("/revit/sheets"), false);
 });
 
+test("native API policy is read-only over GET but mutating over POST", () => {
+  assert.equal(pathLooksWrite("/revit/native-api-policy", undefined, "GET"), false);
+  assert.equal(pathLooksWrite("/revit/native-api-policy", { policy: "certified" }, "POST"), true);
+});
+
 test("conditional audit and type-maintenance routes inspect the request body", () => {
   assert.equal(pathLooksWrite("/revit/fire-damper-audit", { command: "audit" }), false);
   assert.equal(pathLooksWrite("/revit/fire-damper-audit", { command: "fix" }), true);
@@ -35,4 +40,10 @@ test("conditional effects follow handler semantics instead of generic preview fl
   assert.equal(conditionalActionPathEffect("/revit/lighting-audit", { visualize: true, apply: false }), "apply");
   assert.equal(conditionalActionPathEffect("/revit/list-element-types", { action: "rename_types", apply: false }), "apply");
   assert.equal(conditionalActionPathEffect("/revit/list-element-types", { action: "rename_types", dryRun: true }), "preview");
+});
+
+test("read methods stay read-only without weakening body-aware POST effects", () => {
+  assert.equal(pathLooksWrite("/revit/fire-damper-audit", { command: "fix" }, "GET"), false);
+  assert.equal(pathLooksWrite("/revit/fire-damper-audit", { command: "fix" }, "POST"), true);
+  assert.equal(pathLooksWrite("/revit/list-element-types", { action: "rename_types", dryRun: true }, "POST"), true);
 });
