@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -34,6 +35,18 @@ function withWorkspace<T>(fn: () => T): T {
     else delete process.env.OPERATOR_WORKSPACE_ROOT;
     fs.rmSync(root, { recursive: true, force: true });
   }
+}
+
+function createWorkspaceArtifact(relativePath: string, contents: string): { path: string; sha256: string; fullPath: string } {
+  const root = process.env.OPERATOR_WORKSPACE_ROOT!;
+  const fullPath = path.join(root, relativePath);
+  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+  fs.writeFileSync(fullPath, contents, "utf8");
+  return {
+    path: relativePath.replaceAll("\\", "/"),
+    sha256: createHash("sha256").update(contents).digest("hex"),
+    fullPath
+  };
 }
 
 test("goal creation persists typed core fields", () => {
@@ -129,7 +142,15 @@ test("completion audit refuses passing criteria while typed work items remain in
       status: "active",
       work_items: [{ id: "sheet-a", title: "Prepare sheet E401", status: "ready" }]
     });
-    const evidence = appendGoalEvidence(goal.id, { summary: "Sheet evidence is recorded.", artifact_paths: ["artifacts/sheets/e401.json"] });
+    const artifact = createWorkspaceArtifact("artifacts/sheets/e401.json", JSON.stringify({ sheet: "E401" }));
+    const evidence = appendGoalEvidence(goal.id, {
+      summary: "Persisted E401 sheet receipt.",
+      evidence: {
+        kind: "artifact",
+        criterion: "Sheet evidence is recorded.",
+        artifact: { path: artifact.path, sha256: artifact.sha256, scope: "workspace" }
+      }
+    });
     const evidenceId = evidence.evidence_log.at(-1)!.id;
     const first = requestGoalCompletionAudit(goal.id, { criteria_results: [{ criterion: "Sheet evidence is recorded.", status: "pass", evidence_refs: [`evidence:${evidenceId}`] }] });
     assert.equal(first.completion_audit?.complete, false);
@@ -170,23 +191,48 @@ test("completion audit refuses incomplete goals", () => {
   });
 });
 
-test("completion audit allows completion only when all criteria pass", () => {
+test("completion audit allows completion only when every criterion has canonical typed evidence", () => {
   withWorkspace(() => {
     const goal = createGoal({
       title: "Cleanup",
       objective: "Clean model safely.",
-      acceptance_criteria: ["Changes are validated.", "Evidence is attached."],
+      acceptance_criteria: ["Changes are validated.", "Evidence is attached.", "Local review is approved."],
       status: "active"
     });
 
-    const changeValidation = appendGoalValidation(goal.id, { summary: "Changes are validated.", details: { command: "npm test", exit_code: 0 } });
+    const changeValidation = appendGoalValidation(goal.id, {
+      summary: "Focused test run finished.",
+      evidence: {
+        kind: "validator",
+        criterion: "Changes are validated.",
+        validator: { identity: "node:test", method: "node --test dist/test/goals_service.test.js", status: "pass" }
+      }
+    });
     const changeValidationId = changeValidation.validation_log.at(-1)!.id;
-    const evidence = appendGoalEvidence(goal.id, { summary: "Evidence is attached.", artifact_paths: ["artifacts/audit/report.json"] });
+    const artifact = createWorkspaceArtifact("artifacts/audit/report.json", JSON.stringify({ result: "pass" }));
+    const evidence = appendGoalEvidence(goal.id, {
+      summary: "Audit report persisted.",
+      evidence: {
+        kind: "artifact",
+        criterion: "Evidence is attached.",
+        artifact: { path: artifact.path, sha256: artifact.sha256, scope: "workspace" }
+      }
+    });
     const evidenceId = evidence.evidence_log.at(-1)!.id;
+    const approval = appendGoalEvidence(goal.id, {
+      summary: "Local review decision persisted.",
+      evidence: {
+        kind: "human_approval",
+        criterion: "Local review is approved.",
+        approval: { approver_identity: "local-operator", method: "manual Sidecar review", status: "approved" }
+      }
+    });
+    const approvalId = approval.evidence_log.at(-1)!.id;
     const audited = requestGoalCompletionAudit(goal.id, {
       criteria_results: [
         { criterion: "Changes are validated.", status: "pass", evidence_refs: [`validation:${changeValidationId}`] },
-        { criterion: "Evidence is attached.", status: "pass", evidence_refs: [`evidence:${evidenceId}`] }
+        { criterion: "Evidence is attached.", status: "pass", evidence_refs: [`evidence:${evidenceId}`] },
+        { criterion: "Local review is approved.", status: "pass", evidence_refs: [`evidence:${approvalId}`] }
       ]
     });
     assert.equal(audited.completion_audit?.complete, true);
@@ -240,13 +286,168 @@ test("completion audit rejects caller-declared passes without persisted evidence
   });
 });
 
+test("generic update and transition paths cannot bypass the completion audit", () => {
+  withWorkspace(() => {
+    const goal = createGoal({
+      title: "No completion bypass",
+      objective: "Require the audited completion path.",
+      acceptance_criteria: ["Evidence is verified."],
+      status: "active"
+    });
+    assert.throws(() => updateGoal(goal.id, { status: "complete" }), /Invalid goal status transition/);
+    assert.throws(() => transitionGoal(goal.id, "complete"), /Invalid goal status transition/);
+  });
+});
+
+test("criterion text copied into prose or legacy details is never completion evidence", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-prose-evidence", {
+      objective: "Verify capture without trusting prose.",
+      success_criteria: ["Capture exists."]
+    });
+    const note = appendGoalEvidence(goal.id, {
+      summary: "Capture exists.",
+      details: { criterion: "Capture exists.", status: "pass" },
+      artifact_paths: ["artifacts/captures/nonexistent.png"]
+    });
+    const noteId = note.evidence_log.at(-1)!.id;
+    const audited = requestGoalCompletionAudit(goal.id, {
+      criteria_results: [{ criterion: "Capture exists.", status: "pass", evidence_refs: [`evidence:${noteId}`] }]
+    });
+    assert.equal(audited.completion_audit?.complete, false);
+    assert.equal(audited.completion_audit?.criteria_results[0].status, "unknown");
+  });
+});
+
+test("artifact evidence requires workspace scope, existence, and a matching SHA-256 at append and audit time", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-artifact-integrity", {
+      objective: "Verify a hash-bound report.",
+      success_criteria: ["Report artifact is verified."]
+    });
+    const missingHash = "0".repeat(64);
+    assert.throws(
+      () => appendGoalEvidence(goal.id, {
+        summary: "Missing report.",
+        evidence: {
+          kind: "artifact",
+          criterion: "Report artifact is verified.",
+          artifact: { path: "artifacts/reports/missing.json", sha256: missingHash, scope: "workspace" }
+        }
+      }),
+      /does not exist/
+    );
+
+    const artifact = createWorkspaceArtifact("artifacts/reports/report.json", JSON.stringify({ count: 3 }));
+    assert.throws(
+      () => appendGoalEvidence(goal.id, {
+        summary: "Hash-mismatched report.",
+        evidence: {
+          kind: "artifact",
+          criterion: "Report artifact is verified.",
+          artifact: { path: artifact.path, sha256: missingHash, scope: "workspace" }
+        }
+      }),
+      /SHA-256 mismatch/
+    );
+    assert.throws(
+      () => appendGoalEvidence(goal.id, {
+        summary: "Unscoped report.",
+        evidence: {
+          kind: "artifact",
+          criterion: "Report artifact is verified.",
+          artifact: { path: artifact.path, sha256: artifact.sha256, scope: "host" }
+        }
+      }),
+      /scope must be 'workspace'/
+    );
+
+    const persisted = appendGoalEvidence(goal.id, {
+      summary: "Hash-bound report persisted.",
+      evidence: {
+        kind: "artifact",
+        criterion: "Report artifact is verified.",
+        artifact: { path: artifact.path, sha256: artifact.sha256, scope: "workspace" }
+      }
+    });
+    const entry = persisted.evidence_log.at(-1)!;
+    assert.equal(entry.evidence?.kind, "artifact");
+    if (entry.evidence?.kind === "artifact") {
+      assert.equal(entry.evidence.artifact.sha256, artifact.sha256);
+      assert.equal(entry.evidence.artifact.scope, "workspace");
+      assert.ok(entry.evidence.artifact.size_bytes > 0);
+    }
+    const audited = requestGoalCompletionAudit(goal.id, {
+      criteria_results: [{ criterion: "Report artifact is verified.", status: "pass", evidence_refs: [`evidence:${entry.id}`] }]
+    });
+    assert.equal(audited.completion_audit?.complete, true);
+    fs.writeFileSync(artifact.fullPath, JSON.stringify({ count: 4 }), "utf8");
+    assert.throws(() => completeGoalAfterAudit(goal.id), /no longer passes verification/);
+    const refreshed = getActiveGoalForSession("session-artifact-integrity");
+    assert.equal(refreshed?.completion_audit?.complete, false);
+    assert.equal(refreshed?.completion_audit?.criteria_results[0].status, "fail");
+  });
+});
+
+test("unknown or failed validators cannot complete and verifier identity and method are mandatory", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-validator-results", {
+      objective: "Require explicit validator outcomes.",
+      success_criteria: ["Static validation passes.", "Runtime validation passes."]
+    });
+    assert.throws(
+      () => appendGoalValidation(goal.id, {
+        summary: "Anonymous validator result.",
+        evidence: {
+          kind: "validator",
+          criterion: "Static validation passes.",
+          validator: { identity: "", method: "npm test", status: "pass" }
+        }
+      }),
+      /validator.identity/
+    );
+    const unknown = appendGoalValidation(goal.id, {
+      summary: "Static validator had no conclusive result.",
+      evidence: {
+        kind: "validator",
+        criterion: "Static validation passes.",
+        validator: { identity: "typescript-compiler", method: "npm run build", status: "unknown" }
+      }
+    }).validation_log.at(-1)!;
+    const failed = appendGoalValidation(goal.id, {
+      summary: "Runtime validator failed.",
+      evidence: {
+        kind: "validator",
+        criterion: "Runtime validation passes.",
+        validator: { identity: "node-test-runner", method: "node --test goals_service", status: "fail" }
+      }
+    }).validation_log.at(-1)!;
+    const audited = requestGoalCompletionAudit(goal.id, {
+      criteria_results: [
+        { criterion: "Static validation passes.", status: "pass", evidence_refs: [`validation:${unknown.id}`] },
+        { criterion: "Runtime validation passes.", status: "pass", evidence_refs: [`validation:${failed.id}`] }
+      ]
+    });
+    assert.equal(audited.completion_audit?.complete, false);
+    assert.deepEqual(audited.completion_audit?.criteria_results.map(result => result.status), ["unknown", "fail"]);
+  });
+});
+
 test("completion audit does not reuse unrelated evidence across criteria", () => {
   withWorkspace(() => {
     const goal = setAgentGoal("session-unrelated-evidence", {
       objective: "Verify capture and validation independently.",
       success_criteria: ["Capture exists.", "Validation passes."]
     });
-    const withCapture = appendGoalEvidence(goal.id, { summary: "Capture exists.", artifact_paths: ["artifacts/captures/a.png"] });
+    const artifact = createWorkspaceArtifact("artifacts/captures/a.png", "png receipt");
+    const withCapture = appendGoalEvidence(goal.id, {
+      summary: "Capture receipt persisted.",
+      evidence: {
+        kind: "artifact",
+        criterion: "Capture exists.",
+        artifact: { path: artifact.path, sha256: artifact.sha256, scope: "workspace" }
+      }
+    });
     const evidenceId = withCapture.evidence_log.at(-1)!.id;
     const audited = requestGoalCompletionAudit(goal.id, {
       criteria_results: goal.acceptance_criteria.map(criterion => ({
@@ -270,7 +471,15 @@ test("agent goal facade completes only with criterion-linked persisted evidence"
       () => markAgentGoalComplete("session-complete", { evidence_summary: "Capture exists because the caller says so." }),
       /completion audit passes/
     );
-    const withEvidence = appendGoalEvidence(goal.id, { summary: "Capture exists.", artifact_paths: ["artifacts/captures/a.png"] });
+    const artifact = createWorkspaceArtifact("artifacts/captures/a.png", "verified capture bytes");
+    const withEvidence = appendGoalEvidence(goal.id, {
+      summary: "Capture receipt persisted.",
+      evidence: {
+        kind: "artifact",
+        criterion: "Capture exists.",
+        artifact: { path: artifact.path, sha256: artifact.sha256, scope: "workspace" }
+      }
+    });
     const evidenceId = withEvidence.evidence_log.at(-1)!.id;
     const completed = markAgentGoalComplete("session-complete", {
       criteria_results: [{ criterion: "Capture exists.", status: "pass", evidence_refs: [`evidence:${evidenceId}`] }],

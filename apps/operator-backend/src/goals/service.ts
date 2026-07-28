@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { ensureWorkspaceLayout } from "../workspace.js";
@@ -10,6 +10,41 @@ export type GoalLogKind = "action" | "evidence" | "validation";
 export type GoalCriterionStatus = "pass" | "fail" | "unknown";
 export type GoalWorkItemStatus = "pending" | "ready" | "in_progress" | "blocked" | "complete" | "failed" | "skipped";
 export type GoalAssumptionStatus = "proposed" | "accepted" | "rejected" | "superseded";
+export type GoalValidatorStatus = "pass" | "fail" | "unknown";
+export type GoalHumanApprovalStatus = "approved" | "rejected" | "unknown";
+
+export type GoalEvidenceRecord =
+  | {
+      kind: "artifact";
+      criterion: string;
+      artifact: {
+        path: string;
+        sha256: string;
+        size_bytes: number;
+        scope: "workspace";
+        verified_at: string;
+      };
+    }
+  | {
+      kind: "validator";
+      criterion: string;
+      validator: {
+        identity: string;
+        method: string;
+        status: GoalValidatorStatus;
+        verified_at: string;
+      };
+    }
+  | {
+      kind: "human_approval";
+      criterion: string;
+      approval: {
+        approver_identity: string;
+        method: string;
+        status: GoalHumanApprovalStatus;
+        recorded_at: string;
+      };
+    };
 
 export type GoalLogEntry = {
   id: string;
@@ -19,6 +54,7 @@ export type GoalLogEntry = {
   details?: JsonMap;
   actor?: string | null;
   artifact_paths?: string[];
+  evidence?: GoalEvidenceRecord;
 };
 
 export type GoalCriterionResult = {
@@ -315,46 +351,131 @@ function normalizeLogEntry(value: unknown, kind: GoalLogKind): GoalLogEntry {
   };
 }
 
+function canonicalCriterion(value: unknown, criteria: string[]): string {
+  const requested = clip(value, 1200);
+  if (!requested) throw new Error("evidence.criterion is required.");
+  const criterion = criteria.find(candidate => candidate.toLowerCase() === requested.toLowerCase());
+  if (!criterion) throw new Error("evidence.criterion must exactly match a goal acceptance criterion.");
+  return criterion;
+}
+
+function isWithinRoot(root: string, candidate: string): boolean {
+  if (candidate === root) return true;
+  const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  return process.platform === "win32"
+    ? candidate.toLowerCase().startsWith(prefix.toLowerCase())
+    : candidate.startsWith(prefix);
+}
+
+function verifyArtifactEvidence(value: unknown, criteria: string[]): GoalEvidenceRecord {
+  const obj = value && typeof value === "object" && !Array.isArray(value) ? value as any : {};
+  const criterion = canonicalCriterion(obj.criterion, criteria);
+  const artifact = obj.artifact && typeof obj.artifact === "object" && !Array.isArray(obj.artifact) ? obj.artifact as any : {};
+  const artifactPath = clip(artifact.path, 600);
+  const expectedHash = clip(artifact.sha256, 128).toLowerCase();
+  const scope = clip(artifact.scope, 40).toLowerCase();
+  if (!artifactPath) throw new Error("artifact evidence requires artifact.path.");
+  if (!/^[a-f0-9]{64}$/.test(expectedHash)) throw new Error("artifact evidence requires a SHA-256 hash.");
+  if (scope !== "workspace") throw new Error("artifact evidence scope must be 'workspace'.");
+
+  const workspaceRoot = path.resolve(ensureWorkspaceLayout().root);
+  const candidate = path.resolve(path.isAbsolute(artifactPath) ? artifactPath : path.join(workspaceRoot, artifactPath));
+  if (!isWithinRoot(workspaceRoot, candidate)) throw new Error("artifact evidence path must be under the workspace root.");
+  if (!fs.existsSync(candidate) || !fs.statSync(candidate).isFile()) throw new Error(`Artifact evidence file does not exist: ${artifactPath}`);
+  const realRoot = fs.realpathSync(workspaceRoot);
+  const realCandidate = fs.realpathSync(candidate);
+  if (!isWithinRoot(realRoot, realCandidate)) throw new Error("artifact evidence path resolves outside the workspace root.");
+  const contents = fs.readFileSync(realCandidate);
+  const actualHash = createHash("sha256").update(contents).digest("hex");
+  if (actualHash !== expectedHash) throw new Error(`Artifact evidence SHA-256 mismatch for ${artifactPath}.`);
+  const persistedPath = path.relative(workspaceRoot, candidate).split(path.sep).join("/");
+  return {
+    kind: "artifact",
+    criterion,
+    artifact: {
+      path: persistedPath,
+      sha256: actualHash,
+      size_bytes: contents.byteLength,
+      scope: "workspace",
+      verified_at: nowIso()
+    }
+  };
+}
+
+function normalizeTypedEvidence(value: unknown, criteria: string[]): GoalEvidenceRecord | null {
+  if (value === undefined || value === null) return null;
+  const obj = value && typeof value === "object" && !Array.isArray(value) ? value as any : {};
+  const kind = clip(obj.kind, 80).toLowerCase();
+  if (kind === "artifact") return verifyArtifactEvidence(obj, criteria);
+  const criterion = canonicalCriterion(obj.criterion, criteria);
+  if (kind === "validator") {
+    const validator = obj.validator && typeof obj.validator === "object" && !Array.isArray(obj.validator) ? obj.validator as any : {};
+    const identity = clip(validator.identity, 240);
+    const method = clip(validator.method, 1000);
+    const status = clip(validator.status, 40).toLowerCase();
+    if (!identity) throw new Error("validator evidence requires validator.identity.");
+    if (!method) throw new Error("validator evidence requires validator.method.");
+    if (status !== "pass" && status !== "fail" && status !== "unknown") throw new Error("validator evidence status must be pass, fail, or unknown.");
+    return {
+      kind: "validator",
+      criterion,
+      validator: { identity, method, status, verified_at: nowIso() }
+    };
+  }
+  if (kind === "human_approval") {
+    const approval = obj.approval && typeof obj.approval === "object" && !Array.isArray(obj.approval) ? obj.approval as any : {};
+    const approverIdentity = clip(approval.approver_identity ?? approval.approverIdentity, 240);
+    const method = clip(approval.method, 1000);
+    const status = clip(approval.status, 40).toLowerCase();
+    if (!approverIdentity) throw new Error("human approval evidence requires approval.approver_identity.");
+    if (!method) throw new Error("human approval evidence requires approval.method.");
+    if (status !== "approved" && status !== "rejected" && status !== "unknown") throw new Error("human approval evidence status must be approved, rejected, or unknown.");
+    return {
+      kind: "human_approval",
+      criterion,
+      approval: { approver_identity: approverIdentity, method, status, recorded_at: nowIso() }
+    };
+  }
+  throw new Error("evidence.kind must be artifact, validator, or human_approval.");
+}
+
+function evaluatePersistedEvidence(evidence: GoalEvidenceRecord): GoalCriterionStatus {
+  if (evidence.kind === "validator") return evidence.validator.status;
+  if (evidence.kind === "human_approval") {
+    return evidence.approval.status === "approved" ? "pass" : evidence.approval.status === "rejected" ? "fail" : "unknown";
+  }
+  try {
+    verifyArtifactEvidence(evidence, [evidence.criterion]);
+    return "pass";
+  } catch {
+    return "fail";
+  }
+}
+
 function normalizeCriterionResults(value: unknown, criteria: string[], evidenceLog: GoalLogEntry[], validationLog: GoalLogEntry[]): GoalCriterionResult[] {
-  const entries = [...evidenceLog, ...validationLog];
+  const entries = [...evidenceLog, ...validationLog].filter(entry => entry.evidence);
   const requested = Array.isArray(value) ? value : [];
-  return criteria.map((criterion, index) => {
+  return criteria.map(criterion => {
     const exact = requested.find(item => {
       const obj = item && typeof item === "object" && !Array.isArray(item) ? (item as any) : {};
       return clip(obj.criterion, 1000).toLowerCase() === criterion.toLowerCase();
     });
-    const indexed = requested[index];
-    const item = exact ?? (indexed && typeof indexed === "object" && !Array.isArray(indexed) && !clip((indexed as any).criterion, 1000) ? indexed : undefined);
-    const obj = item && typeof item === "object" && !Array.isArray(item) ? (item as any) : {};
+    const obj = exact && typeof exact === "object" && !Array.isArray(exact) ? (exact as any) : {};
     const rawStatus = clip(obj.status, 80).toLowerCase();
     const requestedStatus: GoalCriterionStatus = rawStatus === "pass" || rawStatus === "passed" ? "pass" : rawStatus === "fail" || rawStatus === "failed" ? "fail" : "unknown";
     const requestedRefs = asStringList(obj.evidence_refs ?? obj.evidenceRefs, 40, 400);
-    const criterionKey = criterion.toLowerCase();
-    const matchingEntries = entries.filter(entry => {
-      if (criterion.length >= 5 && entry.summary.toLowerCase().includes(criterionKey)) return true;
-      const linkedCriterion = clip(entry.details?.criterion, 1000).toLowerCase();
-      if (linkedCriterion === criterionKey) return true;
-      const linkedCriteria = asStringList(entry.details?.criteria, 80, 1200).map(value => value.toLowerCase());
-      return linkedCriteria.includes(criterionKey);
+    const resolved = requestedRefs.flatMap(ref => {
+      const entry = entries.find(candidate => `${candidate.kind}:${candidate.id}` === ref);
+      return entry?.evidence?.criterion === criterion ? [{ ref, evidence: entry.evidence }] : [];
     });
-    const criterionRefs = new Set<string>();
-    for (const entry of matchingEntries) {
-      criterionRefs.add(entry.id);
-      criterionRefs.add(`${entry.kind}:${entry.id}`);
-      for (const artifactPath of entry.artifact_paths ?? []) {
-        criterionRefs.add(artifactPath);
-        criterionRefs.add(`artifact:${artifactPath}`);
-      }
-    }
-    const resolvedRefs = requestedRefs.filter(ref => criterionRefs.has(ref));
-    const matchedEntry = matchingEntries[0];
-    const evidenceRefs = resolvedRefs.length > 0
-      ? resolvedRefs
-      : matchedEntry
-        ? [`${matchedEntry.kind}:${matchedEntry.id}`]
-        : [];
-    const status: GoalCriterionStatus = requestedStatus === "fail" ? "fail" : evidenceRefs.length > 0 ? "pass" : "unknown";
-    const notes = clip(obj.notes, 1000) || (requestedStatus === "pass" && evidenceRefs.length === 0 ? "Passing status was not accepted because no evidence reference resolved to persisted evidence or validation for this criterion." : "");
+    const evidenceRefs = resolved.map(item => item.ref);
+    const evidenceStatuses = resolved.map(item => evaluatePersistedEvidence(item.evidence));
+    const status: GoalCriterionStatus = requestedStatus === "fail" || evidenceStatuses.includes("fail")
+      ? "fail"
+      : evidenceStatuses.includes("pass")
+        ? "pass"
+        : "unknown";
+    const notes = clip(obj.notes, 1000) || (requestedStatus === "pass" && status !== "pass" ? "Passing status was not accepted because no valid typed persisted evidence resolved for this criterion." : "");
     return {
       criterion,
       status,
@@ -366,7 +487,7 @@ function normalizeCriterionResults(value: unknown, criteria: string[], evidenceL
 
 const allowedTransitions: Record<GoalStatus, GoalStatus[]> = {
   draft: ["active", "canceled"],
-  active: ["paused", "blocked", "complete", "canceled", "failed"],
+  active: ["paused", "blocked", "canceled", "failed"],
   paused: ["active", "canceled"],
   blocked: ["active", "canceled"],
   complete: [],
@@ -536,6 +657,13 @@ export function appendGoalEvidence(goalId: string, entry: unknown): GoalRecord {
   if (!goal) throw new Error("Goal not found.");
   if (goal.status !== "active" && goal.status !== "blocked") throw new Error(`Cannot append evidence while goal is ${goal.status}.`);
   const log = normalizeLogEntry(entry, "evidence");
+  const entryObject = entry && typeof entry === "object" && !Array.isArray(entry) ? entry as any : {};
+  const evidence = normalizeTypedEvidence(entryObject.evidence, goal.acceptance_criteria);
+  if (evidence?.kind === "validator") throw new Error("validator evidence must be appended to the validation log.");
+  if (evidence) {
+    log.evidence = evidence;
+    log.artifact_paths = evidence.kind === "artifact" ? [evidence.artifact.path] : [];
+  }
   const artifacts = [...goal.artifacts];
   for (const p of log.artifact_paths ?? []) {
     if (!artifacts.includes(p)) artifacts.push(p);
@@ -548,6 +676,10 @@ export function appendGoalValidation(goalId: string, entry: unknown): GoalRecord
   if (!goal) throw new Error("Goal not found.");
   if (goal.status !== "active" && goal.status !== "blocked") throw new Error(`Cannot append validation while goal is ${goal.status}.`);
   const log = normalizeLogEntry(entry, "validation");
+  const entryObject = entry && typeof entry === "object" && !Array.isArray(entry) ? entry as any : {};
+  const evidence = normalizeTypedEvidence(entryObject.evidence, goal.acceptance_criteria);
+  if (evidence && evidence.kind !== "validator") throw new Error("validation log evidence must use kind 'validator'.");
+  if (evidence) log.evidence = evidence;
   return saveGoal({ ...goal, validation_log: [...goal.validation_log, log].slice(-500) });
 }
 
@@ -589,7 +721,9 @@ export function completeGoalAfterAudit(goalId: string): GoalRecord {
   if (!goal) throw new Error("Goal not found.");
   if (goal.status !== "active") throw new Error(`Cannot complete a ${goal.status} goal.`);
   if (!goal.completion_audit?.complete) throw new Error("Goal cannot be marked complete until completion audit passes.");
-  return saveGoal({ ...goal, status: "complete", progress_summary: "Goal completed after passing completion audit." });
+  const refreshed = requestGoalCompletionAudit(goal.id, { criteria_results: goal.completion_audit.criteria_results });
+  if (!refreshed.completion_audit?.complete) throw new Error("Goal cannot be marked complete because its completion evidence no longer passes verification.");
+  return saveGoal({ ...refreshed, status: "complete", progress_summary: "Goal completed after passing completion audit." });
 }
 
 export function getActiveGoalForSession(sessionId?: string | null): GoalRecord | null {
