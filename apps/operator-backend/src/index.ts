@@ -1935,7 +1935,7 @@ const server = http.createServer(async (req, res) => {
         return res.end("Provide user_text or tool_results");
       }
 
-      maybeStartAutoGoal(parsed.session_id, userTextWithAttachments, toolResults.length, "stream");
+      maybeStartAutoGoal(parsed.session_id, userTextWithAttachments, toolResults.length, "stream", auth.principal);
 
       // Phase 1 journaling: user turn received (even if this is a tool-loop continuation).
       try {
@@ -2297,7 +2297,7 @@ const server = http.createServer(async (req, res) => {
         return writeJson(res, 400, { error: "Provide user_text or tool_results" });
       }
 
-      maybeStartAutoGoal(parsed.session_id, userTextWithAttachments, toolResults.length, "chat");
+      maybeStartAutoGoal(parsed.session_id, userTextWithAttachments, toolResults.length, "chat", auth.principal);
 
       // Phase 1 journaling: user turn received (even if this is a tool-loop continuation).
       try {
@@ -3842,12 +3842,19 @@ function appendAttachmentsToUserText(userText: string, attachments: NonNullable<
   return `${t}\n\n${block}`;
 }
 
-function maybeStartAutoGoal(sessionId: string, userText: string, toolResultCount: number, source: string): void {
+function maybeStartAutoGoal(
+  sessionId: string,
+  userText: string,
+  toolResultCount: number,
+  source: string,
+  principal?: RequestPrincipal
+): void {
   try {
     if (toolResultCount > 0) return;
     if (getActiveGoalForSession(sessionId)) return;
     const decision = classifyAutoGoalRequest(userText);
     if (!decision.shouldStart) return;
+    const owner = sessionOwnerForPrincipal(principal);
     const goal = setAgentGoal(sessionId, {
       title: decision.title,
       objective: decision.objective,
@@ -3857,11 +3864,12 @@ function maybeStartAutoGoal(sessionId: string, userText: string, toolResultCount
       progress_summary: `Auto-entered goal mode (${decision.signals.join("; ")}).`,
       work_budget: {
         mode: "auto_goal",
+        source,
         score: decision.score,
         signals: decision.signals,
         retry_policy: "bounded spatial/workflow retries; ask or block after no defensible next action"
       },
-      created_by: `auto_goal:${source}`
+      created_by: owner?.owner_user_id ?? `auto_goal:${source}`
     });
     appendNotification(sessionId, "goal.auto_started", `Goal mode started: ${goal.title}`, {
       goal_id: goal.id,

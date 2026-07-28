@@ -13,15 +13,16 @@ import {
   resolveAuthMode
 } from "../src/auth.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
+import { createLocalGoalEvidenceAuthority } from "../src/goals/authority.js";
 
-function signJwt(userId: string, secret: string, tenantId = "tenant-shared"): string {
+function signJwt(userId: string, secret: string, tenantId = "tenant-shared", roles = ["user"]): string {
   const now = Math.floor(Date.now() / 1000);
   const headerPart = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" }), "utf8").toString("base64url");
   const payloadPart = Buffer.from(JSON.stringify({
     sub: userId,
     user_id: userId,
     tenant_id: tenantId,
-    roles: ["user"],
+    roles,
     iat: now - 5,
     exp: now + 300
   }), "utf8").toString("base64url");
@@ -305,6 +306,89 @@ test("goal endpoints authenticate generic JWT callers and isolate principals, wo
   assert.equal(bindToBobSession.status, 403);
 });
 
+test("principal auto-goals bind ownership to the requester so approval authority rejects self-approval", async t => {
+  const port = await availablePort();
+  const jwtSecret = "auto-goal-owner-endpoint-secret";
+  const authoritySecret = "auto-goal-authority-secret-32-bytes-minimum";
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-auto-goal-owner-"));
+  const child = spawn(process.execPath, [path.join(process.cwd(), "dist", "src", "index.js")], {
+    env: {
+      ...process.env,
+      OPERATOR_BACKEND_PORT: String(port),
+      OPERATOR_AUTH_MODE: "principal_jwt",
+      OPERATOR_JWT_SECRET: jwtSecret,
+      OPERATOR_JWT_ISSUER: "",
+      OPERATOR_JWT_AUDIENCE: "",
+      OPERATOR_GOAL_AUTHORITY_SECRET: authoritySecret,
+      OPERATOR_WORKSPACE_ROOT: workspace,
+      OPERATOR_BRAIN: "rule"
+    },
+    stdio: "ignore"
+  });
+  t.after(async () => stop(child));
+
+  const base = `http://127.0.0.1:${port}`;
+  const aliceAuth = `Bearer ${signJwt("alice", jwtSecret, "tenant-shared", ["user", "goal_approver"])}`;
+  const headers = { authorization: aliceAuth, "content-type": "application/json" };
+  await waitForServer(base, { authorization: aliceAuth });
+
+  const sessionResponse = await fetch(`${base}/session/new`, { method: "POST", headers: { authorization: aliceAuth } });
+  assert.equal(sessionResponse.status, 200);
+  const sessionId = (await sessionResponse.json() as { session_id: string }).session_id;
+  const chatResponse = await fetch(`${base}/chat`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "auto-goal-owner-message",
+      user_text: "Update all marked receptacles and verify the completed model changes."
+    })
+  });
+  assert.equal(chatResponse.status, 200);
+
+  const goalResponse = await fetch(`${base}/api/agent-goal?session_id=${encodeURIComponent(sessionId)}`, {
+    headers: { authorization: aliceAuth }
+  });
+  assert.equal(goalResponse.status, 200);
+  const goal = (await goalResponse.json() as {
+    goal: {
+      id: string;
+      related_session_id: string;
+      created_by: string;
+      acceptance_criteria: string[];
+      work_budget: { mode: string; source: string };
+    };
+  }).goal;
+  assert.equal(goal.created_by, "alice");
+  assert.equal(goal.work_budget.mode, "auto_goal");
+  assert.equal(goal.work_budget.source, "chat");
+
+  const authority = createLocalGoalEvidenceAuthority({ secret: authoritySecret });
+  const context = {
+    goal_id: goal.id,
+    session_id: goal.related_session_id,
+    criterion: goal.acceptance_criteria[0]!,
+    goal_owner_principal_id: goal.created_by
+  };
+  assert.throws(() => authority.issueHumanApproval({
+    ...context,
+    authenticated_principal: { principal_id: "alice", roles: ["goal_approver"] },
+    method: "authenticated endpoint review",
+    status: "approved"
+  }), /owners cannot approve their own goal completion/i);
+
+  const distinctApproval = authority.issueHumanApproval({
+    ...context,
+    authenticated_principal: { principal_id: "bob", roles: ["goal_approver"] },
+    method: "authenticated endpoint review",
+    status: "approved"
+  });
+  const verified = authority.verifyHumanApproval(distinctApproval, context);
+  assert.equal(verified.approver_principal_id, "bob");
+  assert.equal(verified.status, "approved");
+});
+
 test("principal-bound session ids cannot be shadowed or claimed by another tenant after restart", async t => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-session-restart-"));
   const secret = "session-restart-isolation-secret";
@@ -383,4 +467,24 @@ test("shared-token local mode retains goal endpoint behavior without a multi-use
   const readResponse = await fetch(`${base}/api/agent-goal?session_id=${encodeURIComponent(sessionId)}`, { headers: tokenHeaders });
   assert.equal(readResponse.status, 200);
   assert.equal((await readResponse.json() as { goal: { related_session_id: string } }).goal.related_session_id, sessionId);
+
+  const autoSessionResponse = await fetch(`${base}/session/new`, { method: "POST", headers: tokenHeaders });
+  assert.equal(autoSessionResponse.status, 200);
+  const autoSessionId = (await autoSessionResponse.json() as { session_id: string }).session_id;
+  const autoChatResponse = await fetch(`${base}/chat`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: autoSessionId,
+      message_id: "local-auto-goal-message",
+      user_text: "Update all marked receptacles and verify the completed model changes."
+    })
+  });
+  assert.equal(autoChatResponse.status, 200);
+  const autoGoalResponse = await fetch(`${base}/api/agent-goal?session_id=${encodeURIComponent(autoSessionId)}`, { headers: tokenHeaders });
+  assert.equal(autoGoalResponse.status, 200);
+  const autoGoal = (await autoGoalResponse.json() as { goal: { created_by: string; work_budget: { source: string } } }).goal;
+  assert.equal(autoGoal.created_by, "auto_goal:chat");
+  assert.equal(autoGoal.work_budget.source, "chat");
 });
