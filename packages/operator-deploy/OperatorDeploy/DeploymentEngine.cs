@@ -84,6 +84,7 @@ public sealed class DeploymentEngine
             throw new DeploymentException(ExitCodes.Unsupported, $"Windows {_context.WindowsVersion} is older than this release's minimum supported version {minimumWindows}.");
         var applicable = ApplicableComponents(manifest).ToList();
         if (applicable.Count == 0) throw new DeploymentException(ExitCodes.ManifestInvalid, "No manifest components apply to this workstation or requested Revit version.");
+        if (applicable.Any(component => component.Kind == "operator-desktop")) EnsureManagedDesktopLauncherOverride();
         foreach (var component in applicable) FileIntegrity.VerifyComponent(bundleRoot, component);
 
         var result = new OperationResult
@@ -135,6 +136,7 @@ public sealed class DeploymentEngine
                 {
                     Directory.Delete(stagingRoot, recursive: true);
                     ActivateRelease(finalReleaseRoot, existingManifest, applicable);
+                    ValidateActivatedRelease(finalReleaseRoot, existingManifest, existingManifest.Components);
                     SaveSuccessfulState(manifest.ReleaseVersion);
                     result.Message = "The requested release was already present and valid; activation was refreshed.";
                     return result;
@@ -160,26 +162,34 @@ public sealed class DeploymentEngine
 
             Directory.Move(stagingRoot, finalReleaseRoot);
             ActivateRelease(finalReleaseRoot, installedManifest, applicable);
-            var validation = ValidateInstalledRelease(finalReleaseRoot, installedManifest, installedManifest.Components, includeNetwork: false);
-            if (!validation.Ok) throw new DeploymentException(ExitCodes.ValidationFailed, validation.Message);
+            ValidateActivatedRelease(finalReleaseRoot, installedManifest, installedManifest.Components);
             SaveSuccessfulState(manifest.ReleaseVersion);
             if (movedExisting) result.Warnings.Add($"The replaced release was retained for recovery at {displacedRoot}.");
             return result;
         }
-        catch
+        catch (Exception original)
         {
-            RestoreControlFiles(controlSnapshot);
-            if (Directory.Exists(stagingRoot)) Directory.Delete(stagingRoot, recursive: true);
+            var recoveryFailures = RestoreControlFiles(controlSnapshot);
+            try
+            {
+                if (Directory.Exists(stagingRoot)) Directory.Delete(stagingRoot, recursive: true);
+            }
+            catch (Exception ex) { recoveryFailures.Add(ex); }
             if (movedExisting && Directory.Exists(displacedRoot))
             {
-                if (Directory.Exists(finalReleaseRoot))
+                try
                 {
-                    var failedRoot = Path.Combine(_context.ReleasesRoot, $".{manifest.ReleaseVersion}.failed-{_context.UtcNow():yyyyMMddHHmmss}");
-                    Directory.Move(finalReleaseRoot, failedRoot);
+                    if (Directory.Exists(finalReleaseRoot))
+                    {
+                        var failedRoot = Path.Combine(_context.ReleasesRoot, $".{manifest.ReleaseVersion}.failed-{_context.UtcNow():yyyyMMddHHmmss}");
+                        Directory.Move(finalReleaseRoot, failedRoot);
+                    }
+                    Directory.Move(displacedRoot, finalReleaseRoot);
                 }
-                Directory.Move(displacedRoot, finalReleaseRoot);
+                catch (Exception ex) { recoveryFailures.Add(ex); }
             }
-            throw;
+            if (recoveryFailures.Count == 0) throw;
+            throw PreserveOriginalFailure(original, recoveryFailures);
         }
     }
 
@@ -232,6 +242,7 @@ public sealed class DeploymentEngine
                 var runtime = Path.Combine(releaseRoot, desktop.Id, "runtime", "node.exe");
                 if (!File.Exists(launcher) || !File.Exists(server) || !File.Exists(runtime))
                     throw new DeploymentException(ExitCodes.ValidationFailed, "Operator Desktop launcher, server, or bundled Node runtime is missing.");
+                ValidateDesktopControls(releaseRoot, desktop, result);
             }
 
             var configPath = Path.Combine(_context.ConfigRoot, "operator-client.json");
@@ -266,6 +277,7 @@ public sealed class DeploymentEngine
         var releaseRoot = Path.Combine(_context.ReleasesRoot, target);
         var manifest = ReleaseManifest.Load(Path.Combine(releaseRoot, "manifest.json"));
         var components = ApplicableComponents(manifest).ToList();
+        if (components.Any(component => component.Kind == "operator-desktop")) EnsureManagedDesktopLauncherOverride();
         VerifyInstalledTree(releaseRoot, manifest, components);
         if (_options.DryRun)
             return new OperationResult { Ok = true, Operation = "rollback", ExitCode = 0, ReleaseVersion = target, Message = $"Rollback target {target} is valid; no files were changed." };
@@ -274,14 +286,16 @@ public sealed class DeploymentEngine
         try
         {
             ActivateRelease(releaseRoot, manifest, components);
+            ValidateActivatedRelease(releaseRoot, manifest, components);
             state.CurrentRelease = target;
             state.UpdatedAtUtc = _context.UtcNow().ToString("O");
             SaveState(state);
         }
-        catch
+        catch (Exception original)
         {
-            RestoreControlFiles(snapshot);
-            throw;
+            var restoreFailures = RestoreControlFiles(snapshot);
+            if (restoreFailures.Count == 0) throw;
+            throw PreserveOriginalFailure(original, restoreFailures);
         }
         return new OperationResult { Ok = true, Operation = "rollback", ExitCode = 0, ReleaseVersion = target, Message = $"Rolled back to {target}." };
     }
@@ -298,6 +312,7 @@ public sealed class DeploymentEngine
 
     private OperationResult Diagnostics()
     {
+        var launcherOverrideStatus = DescribeLauncherOverride();
         Directory.CreateDirectory(_context.DeploymentRoot);
         var stamp = _context.UtcNow().ToString("yyyyMMdd-HHmmss");
         var zipPath = Path.Combine(_context.DeploymentRoot, $"OperatorDeploy-diagnostics-{stamp}.zip");
@@ -322,6 +337,18 @@ public sealed class DeploymentEngine
             writer.WriteLine($"Is64BitOS={Environment.Is64BitOperatingSystem}");
             writer.WriteLine($"RevitRunning={_context.IsRevitRunning()}");
             foreach (var year in new[] { "2023", "2024", "2025", "2026" }) writer.WriteLine($"Revit{year}Installed={_context.IsRevitInstalled(year)}");
+            WriteDesktopControlDiagnostics(writer, launcherOverrideStatus);
+        }
+        if (launcherOverrideStatus is "conflict" or "invalid")
+        {
+            return new OperationResult
+            {
+                Ok = false,
+                Operation = "diagnostics",
+                ExitCode = ExitCodes.ValidationFailed,
+                Message = $"Diagnostics created, but OPERATOR_DESKTOP_LAUNCHER_PATH is {launcherOverrideStatus}. Point it to the managed launcher or remove the override, then retry; OperatorDeploy did not change the environment.",
+                Details = { zipPath }
+            };
         }
         return new OperationResult { Ok = true, Operation = "diagnostics", ExitCode = 0, Message = $"Diagnostics created: {zipPath}", Details = { zipPath } };
     }
@@ -441,10 +468,20 @@ public sealed class DeploymentEngine
         var desktop = components.FirstOrDefault(c => c.Kind == "operator-desktop");
         if (desktop != null)
         {
+            EnsureManagedDesktopLauncherOverride();
             var script = Path.Combine(releaseRoot, desktop.Id, "scripts", "launch_operator_desktop.ps1");
-            var command = $"@echo off\r\n\"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File \"{script}\" %*\r\n";
-            WriteAtomic(Path.Combine(_context.ProductRoot, "Operator Desktop.cmd"), command);
-            if (!string.IsNullOrWhiteSpace(_context.Desktop)) WriteAtomic(Path.Combine(_context.Desktop, "Operator Desktop.cmd"), command);
+            var command = DesktopCommand(script);
+            WriteAtomic(_context.StableDesktopLauncherPath, command);
+            if (!string.IsNullOrWhiteSpace(_context.Desktop))
+            {
+                WriteAtomic(_context.DesktopCommandPath, command);
+                if (_context.DesktopShortcuts.IsSupported)
+                {
+                    _context.DesktopShortcuts.CreateOrUpdate(
+                        _context.DesktopShortcutPath,
+                        new DesktopShortcutInfo(_context.StableDesktopLauncherPath, "", _context.ProductRoot));
+                }
+            }
         }
 
         foreach (var config in components.Where(c => c.Kind == "config-default"))
@@ -490,24 +527,36 @@ public sealed class DeploymentEngine
     private Dictionary<string, byte[]?> CaptureControlFiles(ReleaseManifest manifest)
     {
         var paths = manifest.Components.Where(c => c.Kind == "revit-addin" && c.RevitYear != null).Select(c => AddinManifestPath(c.RevitYear!)).ToList();
-        paths.Add(Path.Combine(_context.ProductRoot, "Operator Desktop.cmd"));
-        if (!string.IsNullOrWhiteSpace(_context.Desktop)) paths.Add(Path.Combine(_context.Desktop, "Operator Desktop.cmd"));
+        paths.Add(_context.StableDesktopLauncherPath);
+        if (!string.IsNullOrWhiteSpace(_context.Desktop))
+        {
+            paths.Add(_context.DesktopCommandPath);
+            paths.Add(_context.DesktopShortcutPath);
+        }
         paths.Add(_context.StatePath);
         return paths.Distinct(StringComparer.OrdinalIgnoreCase).ToDictionary(path => path, path => File.Exists(path) ? File.ReadAllBytes(path) : null, StringComparer.OrdinalIgnoreCase);
     }
 
-    private static void RestoreControlFiles(Dictionary<string, byte[]?> snapshot)
+    private static List<Exception> RestoreControlFiles(Dictionary<string, byte[]?> snapshot)
     {
+        var failures = new List<Exception>();
         foreach (var pair in snapshot)
         {
-            if (pair.Value == null)
+            try
             {
-                if (File.Exists(pair.Key)) File.Delete(pair.Key);
-                continue;
+                if (pair.Value == null)
+                {
+                    if (File.Exists(pair.Key)) File.Delete(pair.Key);
+                    continue;
+                }
+                WriteAtomicBytes(pair.Key, pair.Value);
             }
-            Directory.CreateDirectory(Path.GetDirectoryName(pair.Key)!);
-            File.WriteAllBytes(pair.Key, pair.Value);
+            catch (Exception ex)
+            {
+                failures.Add(new IOException($"Failed to restore control file '{pair.Key}': {ex.Message}", ex));
+            }
         }
+        return failures;
     }
 
     private void SaveSuccessfulState(string releaseVersion)
@@ -539,11 +588,135 @@ public sealed class DeploymentEngine
         => WriteAtomic(_context.StatePath, JsonSerializer.Serialize(state, ReleaseManifest.JsonOptions));
 
     private static void WriteAtomic(string path, string contents)
+        => WriteAtomicBytes(path, new UTF8Encoding(false).GetBytes(contents));
+
+    private static void WriteAtomicBytes(string path, byte[] contents)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temp = path + $".tmp-{Guid.NewGuid():N}";
-        File.WriteAllText(temp, contents, new UTF8Encoding(false));
-        File.Move(temp, path, overwrite: true);
+        try
+        {
+            File.WriteAllBytes(temp, contents);
+            File.Move(temp, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temp)) File.Delete(temp);
+        }
+    }
+
+    private void ValidateActivatedRelease(string releaseRoot, ReleaseManifest manifest, IReadOnlyCollection<ReleaseComponent> components)
+    {
+        var validation = ValidateInstalledRelease(releaseRoot, manifest, components, includeNetwork: false);
+        if (!validation.Ok) throw new DeploymentException(ExitCodes.ValidationFailed, validation.Message);
+    }
+
+    private static Exception PreserveOriginalFailure(Exception original, IReadOnlyCollection<Exception> recoveryFailures)
+    {
+        if (recoveryFailures.Count == 0) return original;
+        var aggregate = new AggregateException(new[] { original }.Concat(recoveryFailures));
+        var message = $"{original.Message} Recovery also reported {recoveryFailures.Count} failure(s): {string.Join(" | ", recoveryFailures.Select(failure => failure.Message))}";
+        return original is DeploymentException deployment
+            ? new DeploymentException(deployment.ExitCode, message, aggregate)
+            : new DeploymentException(ExitCodes.InstallFailed, message, aggregate);
+    }
+
+    private static string DesktopCommand(string script)
+        => $"@echo off\r\n\"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File \"{script}\" %*\r\n";
+
+    private void ValidateDesktopControls(string releaseRoot, ReleaseComponent desktop, OperationResult result)
+    {
+        var expectedCommand = DesktopCommand(Path.Combine(releaseRoot, desktop.Id, "scripts", "launch_operator_desktop.ps1"));
+        ValidateCommandWrapper(_context.StableDesktopLauncherPath, expectedCommand, "stable Operator Desktop command wrapper");
+        if (string.IsNullOrWhiteSpace(_context.Desktop))
+        {
+            result.Warnings.Add("The Windows Desktop folder is unavailable; no desktop command or shortcut could be validated.");
+            return;
+        }
+
+        ValidateCommandWrapper(_context.DesktopCommandPath, expectedCommand, "desktop Operator Desktop command wrapper");
+        if (!_context.DesktopShortcuts.IsSupported)
+        {
+            result.Warnings.Add("Windows shortcut management is unavailable; Operator Desktop.lnk could not be validated.");
+            return;
+        }
+
+        var shortcut = _context.DesktopShortcuts.Read(_context.DesktopShortcutPath)
+            ?? throw new DeploymentException(ExitCodes.ValidationFailed, $"Operator Desktop shortcut is missing: {_context.DesktopShortcutPath}");
+        if (!PathsEqual(shortcut.TargetPath, _context.StableDesktopLauncherPath))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "Operator Desktop shortcut target is stale or unmanaged.");
+        if (!string.IsNullOrWhiteSpace(shortcut.Arguments))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "Operator Desktop shortcut contains unmanaged arguments.");
+        if (!PathsEqual(shortcut.WorkingDirectory, _context.ProductRoot))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "Operator Desktop shortcut working directory is stale or unmanaged.");
+        EnsureManagedDesktopLauncherOverride();
+    }
+
+    private static void ValidateCommandWrapper(string path, string expected, string label)
+    {
+        if (!File.Exists(path)) throw new DeploymentException(ExitCodes.ValidationFailed, $"The {label} is missing: {path}");
+        if (!File.ReadAllText(path).Equals(expected, StringComparison.Ordinal))
+            throw new DeploymentException(ExitCodes.ValidationFailed, $"The {label} is stale or unmanaged: {path}");
+    }
+
+    private void EnsureManagedDesktopLauncherOverride()
+    {
+        var status = DescribeLauncherOverride();
+        if (status == "unset" || status == "managed") return;
+        throw new DeploymentException(
+            ExitCodes.ValidationFailed,
+            $"OPERATOR_DESKTOP_LAUNCHER_PATH is {status} and would bypass the managed Operator Desktop launcher. Point it to %LOCALAPPDATA%\\RevitOperator\\Operator Desktop.cmd or remove the override, then retry; OperatorDeploy did not change the environment.");
+    }
+
+    private void WriteDesktopControlDiagnostics(TextWriter writer, string launcherOverrideStatus)
+    {
+        writer.WriteLine($"OperatorDesktopStableCommand={(File.Exists(_context.StableDesktopLauncherPath) ? "present" : "missing")}");
+        writer.WriteLine($"OperatorDesktopLauncherOverride={launcherOverrideStatus}");
+        if (string.IsNullOrWhiteSpace(_context.Desktop))
+        {
+            writer.WriteLine("OperatorDesktopShortcut=desktop-unavailable");
+            return;
+        }
+        if (!_context.DesktopShortcuts.IsSupported)
+        {
+            writer.WriteLine("OperatorDesktopShortcut=unsupported");
+            return;
+        }
+        try
+        {
+            var shortcut = _context.DesktopShortcuts.Read(_context.DesktopShortcutPath);
+            if (shortcut == null) writer.WriteLine("OperatorDesktopShortcut=missing");
+            else writer.WriteLine(
+                $"OperatorDesktopShortcut={(PathsEqual(shortcut.TargetPath, _context.StableDesktopLauncherPath) ? "managed" : "stale")};" +
+                $"Arguments={(string.IsNullOrWhiteSpace(shortcut.Arguments) ? "none" : "present")};" +
+                $"WorkingDirectory={(PathsEqual(shortcut.WorkingDirectory, _context.ProductRoot) ? "managed" : "stale")}");
+        }
+        catch (Exception ex)
+        {
+            writer.WriteLine($"OperatorDesktopShortcut=unreadable;Error={ex.GetType().Name}");
+        }
+    }
+
+    private string DescribeLauncherOverride()
+    {
+        var value = _context.GetEnvironmentVariable("OPERATOR_DESKTOP_LAUNCHER_PATH");
+        if (string.IsNullOrWhiteSpace(value)) return "unset";
+        try
+        {
+            var resolved = Path.GetFullPath(value.Trim().Trim('"'));
+            return PathsEqual(resolved, _context.StableDesktopLauncherPath) ? "managed" : "conflict";
+        }
+        catch { return "invalid"; }
+    }
+
+    private static bool PathsEqual(string left, string right)
+    {
+        try
+        {
+            return Path.GetFullPath(left).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                .Equals(Path.GetFullPath(right).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
     }
 
     private static void CheckBackend(string backendUrl, OperationResult result)

@@ -12,6 +12,8 @@ public sealed class DeploymentContext
     public Version WindowsVersion { get; init; } = Environment.OSVersion.Version;
     public Func<bool> IsRevitRunning { get; init; } = () => Process.GetProcessesByName("Revit").Length > 0;
     public Func<DateTimeOffset> UtcNow { get; init; } = () => DateTimeOffset.UtcNow;
+    public Func<string, string?> GetEnvironmentVariable { get; init; } = Environment.GetEnvironmentVariable;
+    public IDesktopShortcutManager DesktopShortcuts { get; init; } = DesktopShortcutManager.CreateDefault();
 
     public string ProductRoot => Path.Combine(LocalAppData, "RevitOperator");
     public string ReleasesRoot => Path.Combine(ProductRoot, "releases");
@@ -19,6 +21,9 @@ public sealed class DeploymentContext
     public string LogsRoot => Path.Combine(ProductRoot, "logs", "deployment");
     public string ConfigRoot => Path.Combine(ProductRoot, "config");
     public string StatePath => Path.Combine(DeploymentRoot, "state.json");
+    public string StableDesktopLauncherPath => Path.Combine(ProductRoot, "Operator Desktop.cmd");
+    public string DesktopCommandPath => Path.Combine(Desktop, "Operator Desktop.cmd");
+    public string DesktopShortcutPath => Path.Combine(Desktop, "Operator Desktop.lnk");
 
     public bool IsRevitInstalled(string year)
         => File.Exists(Path.Combine(ProgramFiles, "Autodesk", $"Revit {year}", "Revit.exe"));

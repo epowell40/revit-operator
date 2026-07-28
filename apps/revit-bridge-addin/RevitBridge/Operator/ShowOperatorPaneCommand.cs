@@ -22,6 +22,7 @@ namespace RevitBridge.Operator
                     "Revit Operator",
                     "Operator Desktop could not be launched.\n\n" + detail
                     + "\n\nRun Operator Desktop from the workstation package, or set OPERATOR_UI_MODE=pane and restart Revit to use the legacy pane.");
+                return Result.Cancelled;
             }
 
             return Result.Succeeded;
