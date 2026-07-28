@@ -18,7 +18,7 @@ import {
   retireRequirement,
   reviseRequirement
 } from "../src/memory/requirements_store.js";
-import { runWithRequestContext, type RequestPrincipal } from "../src/request_context.js";
+import { getScopedWorkspaceRoot, runWithRequestContext, type RequestPrincipal } from "../src/request_context.js";
 import { requiresMemoryAuthentication } from "../src/memory/requirements_route_policy.js";
 import { captureRequirementsResponseGuard, enforceRequirementsResponseGuard, formatRequirementsPromptBlockSafely } from "../src/memory/requirements_response_policy.js";
 import { handleRequirementsHttpRoute } from "../src/memory/requirements_http_routes.js";
@@ -39,7 +39,7 @@ function scope(kind: "office" | "engineer" | "project" | "client", id: string) {
 }
 
 function principal(user: string, tenant: string): RequestPrincipal {
-  return { sub: user, user_id: user, license_id: tenant, roles: ["user"], tier: "pro", claims: {} };
+  return { sub: user, user_id: user, tenant_id: tenant, license_id: tenant, roles: ["user"], tier: "pro", claims: {} };
 }
 
 test("create writes a stable requirement id and append-only first revision", () => {
@@ -153,13 +153,14 @@ test("scope ids isolate requirements even within the same scope kind", () => {
 
 test("hosted request context isolates ledgers by tenant and user", () => {
   const base = mkWorkspace();
-  runWithRequestContext({ principal: principal("alice", "tenant-a") }, () => createRequirement({ scope: scope("engineer", "alice"), key: "tags.case", text: "Alice" }));
+  const alicePrincipal = principal("alice", "tenant-a");
+  runWithRequestContext({ principal: alicePrincipal }, () => createRequirement({ scope: scope("engineer", "alice"), key: "tags.case", text: "Alice" }));
   runWithRequestContext({ principal: principal("bob", "tenant-b") }, () => createRequirement({ scope: scope("engineer", "bob"), key: "tags.case", text: "Bob" }));
   const alice = runWithRequestContext({ principal: principal("alice", "tenant-a") }, () => listRequirements());
   const bob = runWithRequestContext({ principal: principal("bob", "tenant-b") }, () => listRequirements());
   assert.deepEqual(alice.map(row => row.text), ["Alice"]);
   assert.deepEqual(bob.map(row => row.text), ["Bob"]);
-  assert.ok(fs.existsSync(path.join(base, "tenants", "tenant-a", "users", "alice", "Workspace", "memory", "requirements.v1.jsonl")));
+  assert.ok(fs.existsSync(path.join(getScopedWorkspaceRoot(base, alicePrincipal), "memory", "requirements.v1.jsonl")));
 });
 
 test("chat scope derivation uses engineer identity and stable active-project identity", () => {

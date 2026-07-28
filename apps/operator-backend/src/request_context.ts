@@ -20,16 +20,22 @@ export type RequestContext = {
 
 const requestContextStorage = new AsyncLocalStorage<RequestContext>();
 
-function sanitizePathSegment(value: string, fallback: string): string {
-  const t = (value ?? "").toString().trim();
-  const safe = t.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 120);
-  return safe || fallback;
+function identityPathSegment(value: string, fallback: string): string {
+  const raw = (value ?? "").toString();
+  const display = raw.trim();
+  const slug = display.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 48) || fallback;
+  // Principal claim identity is intentionally case-sensitive. Hash the exact
+  // UTF-8 claim bytes before slugging or truncation so Windows path folding
+  // and display-slug collisions cannot merge distinct principals.
+  const hashInput = raw || `\u0000missing:${fallback}`;
+  const digest = createHash("sha256").update("operator-principal-path-v1\u0000", "utf8").update(hashInput, "utf8").digest("hex");
+  return `${slug}--${digest}`;
 }
 
 export function getScopedWorkspaceRoot(baseRoot: string, principal?: RequestPrincipal): string {
   if (!principal) return baseRoot;
-  const tenantId = sanitizePathSegment(principal.tenant_id || principal.license_id, "unknown_tenant");
-  const userId = sanitizePathSegment(principal.user_id, "unknown_user");
+  const tenantId = identityPathSegment(principal.tenant_id || principal.license_id, "unknown_tenant");
+  const userId = identityPathSegment(principal.user_id, "unknown_user");
   return path.join(baseRoot, "tenants", tenantId, "users", userId, "Workspace");
 }
 

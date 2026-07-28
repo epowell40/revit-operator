@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type http from "node:http";
 import type { RequestPrincipal } from "./request_context.js";
+import { isHostedRuntime } from "./runtime_mode.js";
 
 export type OperatorAuthMode = "shared_token" | "principal_jwt";
 
@@ -169,14 +170,13 @@ export function requiresRequestAuthentication(opts: {
 }
 
 export function resolveAuthMode(): OperatorAuthMode {
+  const hostedRuntime = isHostedRuntime();
   const configured = (process.env.OPERATOR_AUTH_MODE || "").trim().toLowerCase();
   if (configured === "shared_token") return "shared_token";
   if (configured === "principal_jwt" || configured === "jwt" || configured === "bearer_jwt") return "principal_jwt";
   if (configured) throw new Error(`Unsupported OPERATOR_AUTH_MODE: ${configured}`);
 
-  const runtimeMode = (process.env.REVIT_OPERATOR_MODE || "").trim().toLowerCase();
-  const hostedEnabled = /^(1|true|yes|on)$/i.test((process.env.OPERATOR_HOSTED_ENABLED || "").trim());
-  if (runtimeMode === "hosted" || hostedEnabled) return "principal_jwt";
+  if (hostedRuntime) return "principal_jwt";
   return "shared_token";
 }
 
