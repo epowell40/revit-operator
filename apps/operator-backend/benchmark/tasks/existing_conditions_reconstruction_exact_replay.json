@@ -28,7 +28,14 @@
         "schema_version": 1,
         "fixture_id": "synthetic-duct-v1",
         "scope_id": "synthetic-scope",
+        "ground_truth_model": { "path": "withheld/synthetic-duct-v1.rvt", "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" },
         "visible_evidence": [{ "role": "source_pdf", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }],
+        "deletion_manifest": {
+          "requested_element_ids": [101],
+          "deleted_element_ids": [101],
+          "dependent_element_ids": [],
+          "dry_run_receipt_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        },
         "snapshot": {
           "native_readback": true,
           "elements": [{
@@ -62,7 +69,12 @@
         "visual_receipt": {
           "post_change_capture_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "post_change_pdf_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-          "review_status": "pass"
+          "evaluator_review": {
+            "reviewer_role": "evaluator",
+            "review_status": "pass",
+            "notes": ["Legacy deterministic replay contract fixture; not evaluator authority."],
+            "receipt_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
         }
       }
     }

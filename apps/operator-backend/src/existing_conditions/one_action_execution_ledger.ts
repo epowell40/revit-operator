@@ -961,7 +961,10 @@ function recordProviderIndependentStageResults(
       recordExistingConditionsStageResult({
         sessionId,
         workflow,
-        result: result.result_json as Record<string, unknown>
+        result: {
+          ...(result.result_json as Record<string, unknown>),
+          action_id: result.action_id
+        }
       });
     }
   }

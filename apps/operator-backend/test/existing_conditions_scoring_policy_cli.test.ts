@@ -9,6 +9,8 @@ import { DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY } from "../src/benchmark/exi
 import { createExistingConditionsEvaluatorVisualReceipt } from "../src/existing_conditions/evaluator_visual.js";
 
 const HASH = "a".repeat(64);
+const EVALUATOR_KEY_ID = "existing-conditions-cli-test-key";
+const EVALUATOR_KEY = "test-only-existing-conditions-cli-evaluator-key-0001";
 
 function visualReceipt() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-scoring-policy-visual-"));
@@ -20,6 +22,12 @@ function visualReceipt() {
     post_change_capture_path: capture,
     post_change_pdf_path: pdf,
     artifact_scope_root: root,
+    workflow_fingerprint_sha256: "b".repeat(64),
+    action_id: "scoring-policy-cli-action",
+    attempt_id: crypto.randomUUID(),
+    capture_nonce: crypto.randomBytes(18).toString("base64url"),
+    post_apply_completed_at: new Date(Date.now() - 1_000).toISOString(),
+    authority: { key_id: EVALUATOR_KEY_ID, signing_key: EVALUATOR_KEY },
     review_status: "pass",
     notes: ["generic test receipt"]
   });
@@ -66,7 +74,7 @@ function truth(): Record<string, unknown> {
 
 function candidate(): Record<string, unknown> {
   return {
-    schema_version: 1,
+    schema_version: 2,
     fixture_id: "generic-cli-policy-fixture",
     scope_id: "generic-scope",
     visible_evidence: [{ role: "source_pdf", sha256: HASH }],
@@ -103,7 +111,18 @@ function runScore(temp: string, policy: string | undefined, label: string) {
   const args = [cli, "score", "--truth", truthPath, "--candidate", candidatePath];
   if (policy !== undefined) args.push("--policy", policy);
   args.push("--out-dir", outDir);
-  return { result: spawnSync(process.execPath, args, { cwd: process.cwd(), encoding: "utf8" }), outDir };
+  return {
+    result: spawnSync(process.execPath, args, {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        OPERATOR_EXISTING_CONDITIONS_EVALUATOR_KEY_ID: EVALUATOR_KEY_ID,
+        OPERATOR_EXISTING_CONDITIONS_EVALUATOR_HMAC_KEY: EVALUATOR_KEY
+      }
+    }),
+    outDir
+  };
 }
 
 test("score CLI accepts a partial policy and emits a resolved hash-bound policy receipt", () => {

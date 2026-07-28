@@ -5,16 +5,32 @@ import path from "node:path";
 import test from "node:test";
 import {
   normalizeExistingConditionsSnapshot,
-  scoreExistingConditionsReconstruction,
+  scoreExistingConditionsReconstruction as scoreExistingConditionsReconstructionWithoutAuthority,
   type ExistingConditionsCandidate,
   type ExistingConditionsElement,
-  type ExistingConditionsGroundTruth
+  type ExistingConditionsGroundTruth,
+  type ExistingConditionsScoringPolicy
 } from "../src/benchmark/existing_conditions_reconstruction.js";
 import { assertExistingConditionsContract } from "../src/existing_conditions/contract_validation.js";
 import { createExistingConditionsEvaluatorVisualReceipt } from "../src/existing_conditions/evaluator_visual.js";
+import crypto from "node:crypto";
 
 const SOURCE_HASH = "a".repeat(64);
 const MODEL_HASH = "b".repeat(64);
+const EVALUATOR_KEY_ID = "existing-conditions-architectural-test-key";
+const EVALUATOR_KEY = "test-only-architectural-evaluator-signing-material-0001";
+
+function scoreExistingConditionsReconstruction(
+  truthValue: ExistingConditionsGroundTruth,
+  candidateValue: ExistingConditionsCandidate,
+  policy: Partial<ExistingConditionsScoringPolicy> = {}
+) {
+  return scoreExistingConditionsReconstructionWithoutAuthority(truthValue, candidateValue, policy, {
+    visual_receipt_validation: {
+      trusted_key_resolver: keyId => keyId === EVALUATOR_KEY_ID ? EVALUATOR_KEY : null
+    }
+  });
+}
 
 function visualReceipt() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-architectural-visual-"));
@@ -26,6 +42,12 @@ function visualReceipt() {
     post_change_capture_path: capture,
     post_change_pdf_path: pdf,
     artifact_scope_root: root,
+    workflow_fingerprint_sha256: "c".repeat(64),
+    action_id: "architectural-test-action",
+    attempt_id: crypto.randomUUID(),
+    capture_nonce: crypto.randomBytes(18).toString("base64url"),
+    post_apply_completed_at: new Date(Date.now() - 1_000).toISOString(),
+    authority: { key_id: EVALUATOR_KEY_ID, signing_key: EVALUATOR_KEY },
     review_status: "pass"
   });
 }
@@ -112,7 +134,7 @@ function architecturalCandidate(): ExistingConditionsCandidate {
     opening("new-window-904", "window", [0, 5, 35.1666666667], "new-wall-902")
   ];
   return {
-    schema_version: 1,
+    schema_version: 2,
     fixture_id: "architectural-shell-independent-v1",
     scope_id: "snowdon-l4-independent-shell",
     discipline: "architectural",

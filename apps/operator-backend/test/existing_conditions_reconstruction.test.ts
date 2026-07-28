@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  scoreExistingConditionsReconstruction,
+  scoreExistingConditionsReconstruction as scoreExistingConditionsReconstructionWithoutAuthority,
   normalizeExistingConditionsSnapshot,
   mergeExistingConditionsVisibleElementPayloads,
   mergeExistingConditionsSameViewVisibleElementPayloads,
@@ -9,19 +9,36 @@ import {
   validateExistingConditionsImageScopeAgainstVisibleInventory,
   type ExistingConditionsCandidate,
   type ExistingConditionsElement,
-  type ExistingConditionsGroundTruth
+  type ExistingConditionsGroundTruth,
+  type ExistingConditionsScoringPolicy
 } from "../src/benchmark/existing_conditions_reconstruction.js";
 
 import { MockBridgeTransport, runRevitDemoWorkflow } from "../src/benchmark/revit_workflows.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 import { createExistingConditionsEvaluatorVisualReceipt } from "../src/existing_conditions/evaluator_visual.js";
 
 const SOURCE_HASH = "a".repeat(64);
 const RENDER_HASH = "b".repeat(64);
 const COVERAGE_HASH = "c".repeat(64);
 const REGION_HASH = "d".repeat(64);
+const EVALUATOR_KEY_ID = "existing-conditions-test-key";
+const EVALUATOR_KEY = "test-only-existing-conditions-evaluator-key-material-0001";
+const EVALUATION_AUTHORITY = {
+  visual_receipt_validation: {
+    trusted_key_resolver: (keyId: string) => keyId === EVALUATOR_KEY_ID ? EVALUATOR_KEY : null
+  }
+};
+
+function scoreExistingConditionsReconstruction(
+  truthValue: ExistingConditionsGroundTruth,
+  candidateValue: ExistingConditionsCandidate,
+  policy: Partial<ExistingConditionsScoringPolicy> = {}
+) {
+  return scoreExistingConditionsReconstructionWithoutAuthority(truthValue, candidateValue, policy, EVALUATION_AUTHORITY);
+}
 
 function visualReceipt() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-reconstruction-visual-"));
@@ -33,6 +50,12 @@ function visualReceipt() {
     post_change_capture_path: capture,
     post_change_pdf_path: pdf,
     artifact_scope_root: root,
+    workflow_fingerprint_sha256: "e".repeat(64),
+    action_id: "existing-conditions-test-action",
+    attempt_id: crypto.randomUUID(),
+    capture_nonce: crypto.randomBytes(18).toString("base64url"),
+    post_apply_completed_at: new Date(Date.now() - 1_000).toISOString(),
+    authority: { key_id: EVALUATOR_KEY_ID, signing_key: EVALUATOR_KEY },
     review_status: "pass"
   });
 }
@@ -346,7 +369,7 @@ function truth(elements = [duct("truth-a"), duct("truth-b", 20)]): ExistingCondi
 
 function candidate(elements = [duct("new-901"), duct("new-902", 20)]): ExistingConditionsCandidate {
   return {
-    schema_version: 1,
+    schema_version: 2,
     fixture_id: "snowdon-m104-unit403-duct-v1",
     scope_id: "m104-unit403",
     visible_evidence: [{ role: "source_pdf", sha256: SOURCE_HASH }],
@@ -520,19 +543,30 @@ test("reports missing native connector topology", () => {
 test("runs through the existing revit_workflow benchmark adapter and writes scorecards", async () => {
   const runDir = path.join(process.cwd(), "local-work", "existing-conditions-tests", "exact-replay");
   fs.mkdirSync(runDir, { recursive: true });
-  const result = await runRevitDemoWorkflow(
-    {
-      workflow: "existing_conditions_reconstruction",
-      request: { groundTruth: truth(), candidate: candidate() }
-    },
-    runDir,
-    new MockBridgeTransport({})
-  );
-  assert.equal(result.success, true);
-  assert.equal(result.workflow, "existing_conditions_reconstruction");
-  assert.equal(result.verification_results.every((entry) => entry.ok), true);
-  assert.equal(fs.existsSync(path.join(runDir, "existing_conditions_score.json")), true);
-  assert.equal(fs.existsSync(path.join(runDir, "existing_conditions_score.md")), true);
+  const previousKeyId = process.env.OPERATOR_EXISTING_CONDITIONS_EVALUATOR_KEY_ID;
+  const previousKey = process.env.OPERATOR_EXISTING_CONDITIONS_EVALUATOR_HMAC_KEY;
+  process.env.OPERATOR_EXISTING_CONDITIONS_EVALUATOR_KEY_ID = EVALUATOR_KEY_ID;
+  process.env.OPERATOR_EXISTING_CONDITIONS_EVALUATOR_HMAC_KEY = EVALUATOR_KEY;
+  try {
+    const result = await runRevitDemoWorkflow(
+      {
+        workflow: "existing_conditions_reconstruction",
+        request: { groundTruth: truth(), candidate: candidate() }
+      },
+      runDir,
+      new MockBridgeTransport({})
+    );
+    assert.equal(result.success, true);
+    assert.equal(result.workflow, "existing_conditions_reconstruction");
+    assert.equal(result.verification_results.every((entry) => entry.ok), true);
+    assert.equal(fs.existsSync(path.join(runDir, "existing_conditions_score.json")), true);
+    assert.equal(fs.existsSync(path.join(runDir, "existing_conditions_score.md")), true);
+  } finally {
+    if (previousKeyId === undefined) delete process.env.OPERATOR_EXISTING_CONDITIONS_EVALUATOR_KEY_ID;
+    else process.env.OPERATOR_EXISTING_CONDITIONS_EVALUATOR_KEY_ID = previousKeyId;
+    if (previousKey === undefined) delete process.env.OPERATOR_EXISTING_CONDITIONS_EVALUATOR_HMAC_KEY;
+    else process.env.OPERATOR_EXISTING_CONDITIONS_EVALUATOR_HMAC_KEY = previousKey;
+  }
 });
 
 test("normalizes visible-element and connector readback into a scoring snapshot", () => {

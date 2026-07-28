@@ -253,6 +253,24 @@ test("staged ledger batches explicit backbones, audits continuation connectors, 
       }
     }), null);
     assert.equal(buildNextExistingConditionsStagePlan({ sessionId, workflow: registered }).state, "verify_visual");
+    const staleVisualPath = writeVisualArtifact(root, visual.body?.fileName);
+    const appliedAt = readExistingConditionsRepairLedger(sessionId)
+      .find(entry => entry.event === "stage_applied" && entry.stage_key === visual.stage_key)?.ts;
+    assert.ok(appliedAt);
+    const staleTime = new Date(Date.parse(appliedAt!) - 60_000);
+    fs.utimesSync(staleVisualPath, staleTime, staleTime);
+    assert.equal(recordExistingConditionsVerificationResult({
+      sessionId,
+      workflow: registered,
+      result: {
+        action_id: "stale-backbone-visual",
+        method: "POST",
+        path: visual.path,
+        status: "done",
+        result_json: { status: "ok", path: staleVisualPath }
+      }
+    }), null);
+    assert.equal(buildNextExistingConditionsStagePlan({ sessionId, workflow: registered }).state, "verify_visual");
     const visualPath = writeVisualArtifact(root, visual.body?.fileName);
     recordExistingConditionsVerificationResult({
       sessionId,
@@ -305,6 +323,13 @@ test("staged ledger batches explicit backbones, audits continuation connectors, 
     );
     const ledger = readExistingConditionsRepairLedger(sessionId);
     assert.ok(ledger.some(entry => entry.event === "continuation_accepted"));
+    const visualEntry = ledger.find(entry => entry.event === "visual_accepted");
+    const visualArtifact = visualEntry?.payload.visual_artifact as Record<string, unknown>;
+    assert.equal(visualArtifact.workflow_sha256, visualEntry?.workflow_sha256);
+    assert.equal(typeof visualArtifact.apply_attempt_id, "string");
+    assert.equal(typeof visualArtifact.capture_nonce, "string");
+    assert.equal(visualArtifact.capture_file_name, visual.body?.fileName);
+    assert.equal(Date.parse(String(visualArtifact.captured_at)) >= Date.parse(String(visualArtifact.apply_completed_at)), true);
   } finally {
     if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;

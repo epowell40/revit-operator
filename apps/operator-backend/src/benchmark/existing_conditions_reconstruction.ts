@@ -3,8 +3,10 @@ import path from "node:path";
 import { ensureDir, writeJsonFile } from "./files.js";
 import type { BridgeTransport, RevitWorkflowResult, RevitWorkflowVerification } from "./revit_workflows.js";
 import {
+  existingConditionsEvaluatorValidationOptionsFromEnvironment,
   validateExistingConditionsEvaluatorVisualReceipt,
-  type ExistingConditionsEvaluatorVisualReceipt
+  type ExistingConditionsEvaluatorVisualReceipt,
+  type ExistingConditionsEvaluatorVisualValidationOptions
 } from "../existing_conditions/evaluator_visual.js";
 import type { BoundedMepRegionCoverageReceiptV1 } from "../existing_conditions/mep_region_coverage.js";
 
@@ -110,7 +112,7 @@ export type ExistingConditionsGroundTruth = {
 };
 
 export type ExistingConditionsCandidate = {
-  schema_version: 1;
+  schema_version: 1 | 2;
   fixture_id: string;
   scope_id: string;
   discipline?: ExistingConditionsDiscipline;
@@ -126,6 +128,10 @@ export type ExistingConditionsCandidate = {
   source_coverage_receipt?: BoundedMepRegionCoverageReceiptV1 | null;
   snapshot: ExistingConditionsSnapshot;
   visual_receipt?: ExistingConditionsEvaluatorVisualReceipt | null;
+};
+
+export type ExistingConditionsEvaluationAuthority = {
+  visual_receipt_validation?: ExistingConditionsEvaluatorVisualValidationOptions;
 };
 
 export type ExistingConditionsScoringPolicy = {
@@ -1429,9 +1435,13 @@ function snapshotCoreDisciplines(snapshot: ExistingConditionsSnapshot): Set<Core
       CORE_RECONSTRUCTION_DISCIPLINES.includes(discipline as CoreReconstructionDiscipline)));
 }
 
-function validateRun(truth: ExistingConditionsGroundTruth, candidate: ExistingConditionsCandidate): string[] {
+function validateRun(
+  truth: ExistingConditionsGroundTruth,
+  candidate: ExistingConditionsCandidate,
+  authority: ExistingConditionsEvaluationAuthority
+): string[] {
   const reasons: string[] = [];
-  if (truth.schema_version !== 1 || candidate.schema_version !== 1) reasons.push("unsupported_schema_version");
+  if (truth.schema_version !== 1 || ![1, 2].includes(candidate.schema_version)) reasons.push("unsupported_schema_version");
   if (truth.fixture_id !== candidate.fixture_id) reasons.push("fixture_id_mismatch");
   if (truth.scope_id !== candidate.scope_id) reasons.push("scope_id_mismatch");
   if (truth.discipline && candidate.discipline && normalized(truth.discipline) !== normalized(candidate.discipline)) reasons.push("discipline_mismatch");
@@ -1511,7 +1521,7 @@ function validateRun(truth: ExistingConditionsGroundTruth, candidate: ExistingCo
       if (normalized(receipt.region_sha256) !== normalized(boundedCoverage.region_sha256)) reasons.push("bounded_mep_region_bounds_hash_mismatch");
     }
   }
-  if (!validateExistingConditionsEvaluatorVisualReceipt(candidate.visual_receipt)) {
+  if (!validateExistingConditionsEvaluatorVisualReceipt(candidate.visual_receipt, authority.visual_receipt_validation)) {
     reasons.push("missing_or_invalid_evaluator_visual_receipt");
   }
   if (candidate.accessed_artifact_roles.some((role) => FORBIDDEN_AGENT_ARTIFACT_ROLES.has(normalized(role)))) {
@@ -1528,10 +1538,11 @@ function validateRun(truth: ExistingConditionsGroundTruth, candidate: ExistingCo
 export function scoreExistingConditionsReconstruction(
   truth: ExistingConditionsGroundTruth,
   candidate: ExistingConditionsCandidate,
-  policyOverrides: Partial<ExistingConditionsScoringPolicy> = {}
+  policyOverrides: Partial<ExistingConditionsScoringPolicy> = {},
+  authority: ExistingConditionsEvaluationAuthority = {}
 ): ExistingConditionsScore {
   const policy = { ...DEFAULT_EXISTING_CONDITIONS_SCORING_POLICY, ...policyOverrides };
-  const invalidReasons = validateRun(truth, candidate);
+  const invalidReasons = validateRun(truth, candidate, authority);
   const elevationEvidence = truth.evaluation_policy?.elevation_evidence ?? "plan_visible";
   const boundedCoverage = truth.evaluation_policy?.bounded_mep_region_coverage;
   const boundedRouteTruthKeys = new Set(boundedCoverage?.clear_plan_visible_mep_curve_keys ?? []);
@@ -1724,7 +1735,7 @@ export function scoreExistingConditionsReconstruction(
   const spatialApplicable = matchingTruthElements.some((element) => normalized(element.room_number) || normalized(element.space_number));
   const hostingApplicable = hasTruthRelationship(relationshipTruthSnapshot, "host") || hasTruthRelationship(relationshipCandidateSnapshot, "host");
   const electricalCircuitsApplicable = hasTruthRelationship(relationshipTruthSnapshot, "electrical_circuit") || hasTruthRelationship(relationshipCandidateSnapshot, "electrical_circuit");
-  const drawingEvidence = validateExistingConditionsEvaluatorVisualReceipt(candidate.visual_receipt) &&
+  const drawingEvidence = validateExistingConditionsEvaluatorVisualReceipt(candidate.visual_receipt, authority.visual_receipt_validation) &&
     candidate.visual_receipt?.evaluator_review.review_status === "pass" ? 1 : 0;
   const weightedComponents = [
     { weight: 0.15, value: elementF1, applicable: true },
@@ -1921,7 +1932,13 @@ export async function runExistingConditionsReconstructionEvaluation(
     "candidate"
   );
   const policy = asObject(request.policy) as Partial<ExistingConditionsScoringPolicy>;
-  const result = scoreExistingConditionsReconstruction(groundTruth, candidate, policy);
+  let authority: ExistingConditionsEvaluationAuthority = {};
+  try {
+    authority = { visual_receipt_validation: existingConditionsEvaluatorValidationOptionsFromEnvironment() };
+  } catch {
+    // Fail closed below: without a trusted evaluator key, visual authority is invalid.
+  }
+  const result = scoreExistingConditionsReconstruction(groundTruth, candidate, policy, authority);
   ensureDir(runDir);
   const jsonPath = path.join(runDir, "existing_conditions_score.json");
   const markdownPath = path.join(runDir, "existing_conditions_score.md");

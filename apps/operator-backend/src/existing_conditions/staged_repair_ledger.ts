@@ -354,6 +354,27 @@ function stageApplied(
   );
 }
 
+function latestStageAppliedEntry(
+  entries: ExistingConditionsRepairLedgerEntry[],
+  stageKey: string
+): ExistingConditionsRepairLedgerEntry | null {
+  return entries.filter(entry =>
+    entry.event === "stage_applied" &&
+    entry.status === "provisional" &&
+    entry.stage_key === stageKey
+  ).at(-1) ?? null;
+}
+
+function stageCaptureNonce(entry: ExistingConditionsRepairLedgerEntry): string {
+  return sha256({
+    applied_entry_sha256: entry.entry_sha256,
+    workflow_sha256: entry.workflow_sha256,
+    stage_key: entry.stage_key,
+    action_keys: entry.action_keys,
+    apply_attempt_id: clean(entry.payload.apply_attempt_id)
+  }).slice(0, 24);
+}
+
 function stageReadbackAccepted(
   entries: ExistingConditionsRepairLedgerEntry[],
   stageKey: string
@@ -666,6 +687,17 @@ export function buildNextExistingConditionsStagePlan(args: {
       };
     }
     if (!stageVisualAccepted(entries, stageKey)) {
+      const appliedEntry = latestStageAppliedEntry(entries, stageKey);
+      if (!appliedEntry || !clean(appliedEntry.payload.apply_attempt_id)) {
+        return {
+          state: "blocked",
+          stage_key: stageKey,
+          action_key: actionKey,
+          reason: "Applied stage is missing a capture-bound attempt identity.",
+          accepted_action_outputs: outputs
+        };
+      }
+      const captureNonce = stageCaptureNonce(appliedEntry);
       return {
         state: "verify_visual",
         stage_key: stageKey,
@@ -687,7 +719,7 @@ export function buildNextExistingConditionsStagePlan(args: {
             g: 0,
             b: 255
           },
-          fileName: `existing_conditions_${stageKey.replace(/[^a-zA-Z0-9._-]/g, "_")}.png`
+          fileName: `existing_conditions_${stageKey.replace(/[^a-zA-Z0-9._-]/g, "_")}_${captureNonce}.png`
         },
         accepted_action_outputs: outputs
       };
@@ -962,6 +994,7 @@ export function recordExistingConditionsStageResult(args: {
       stageKey,
       actionKeys,
       payload: {
+        apply_attempt_id: clean(args.result.action_id ?? args.result.actionId) || crypto.randomUUID(),
         created_element_ids: normalizeIds(args.result.createdElementIds),
         action_outputs: normalizedOutputs.length > 0
           ? normalizedOutputs
@@ -1000,6 +1033,13 @@ type VerifiedStageArtifact = {
   sha256: string;
   byte_length: number;
   scope_root: string;
+  workflow_sha256?: string;
+  action_keys?: string[];
+  apply_attempt_id?: string;
+  apply_completed_at?: string;
+  capture_nonce?: string;
+  capture_file_name?: string;
+  captured_at?: string;
 };
 
 function pathWithin(root: string, candidate: string): boolean {
@@ -1024,6 +1064,7 @@ function verifiedStageArtifact(args: {
   kind: "visual" | "checkpoint";
   expectedPath?: string;
   expectedFileName?: string;
+  appliedEntry?: ExistingConditionsRepairLedgerEntry;
 }): VerifiedStageArtifact | null {
   const resultJson = args.result.result_json;
   const row = resultJson && typeof resultJson === "object" && !Array.isArray(resultJson)
@@ -1059,6 +1100,12 @@ function verifiedStageArtifact(args: {
       if (args.expectedFileName && path.basename(realPath) !== args.expectedFileName) continue;
       const stat = fs.statSync(realPath);
       if (!stat.isFile() || stat.size <= 0) continue;
+      const applyCompletedAtMs = args.appliedEntry ? Date.parse(args.appliedEntry.ts) : Number.NaN;
+      if (args.kind === "visual" && (
+        !args.appliedEntry ||
+        !Number.isFinite(applyCompletedAtMs) ||
+        stat.mtimeMs < applyCompletedAtMs
+      )) continue;
       const bytes = fs.readFileSync(realPath);
       if (args.kind === "visual" && !supportedVisualBytes(bytes)) continue;
       const actualHash = crypto.createHash("sha256").update(bytes).digest("hex");
@@ -1078,7 +1125,18 @@ function verifiedStageArtifact(args: {
         path: realPath,
         sha256: actualHash,
         byte_length: bytes.length,
-        scope_root: scopeRoot
+        scope_root: scopeRoot,
+        ...(args.kind === "visual" && args.appliedEntry
+          ? {
+              workflow_sha256: args.appliedEntry.workflow_sha256,
+              action_keys: [...args.appliedEntry.action_keys],
+              apply_attempt_id: clean(args.appliedEntry.payload.apply_attempt_id),
+              apply_completed_at: args.appliedEntry.ts,
+              capture_nonce: stageCaptureNonce(args.appliedEntry),
+              capture_file_name: path.basename(realPath),
+              captured_at: stat.mtime.toISOString()
+            }
+          : {})
       };
     } catch {
       continue;
@@ -1105,6 +1163,22 @@ function recordedStageArtifactValid(
     if (bytes.length <= 0 || bytes.length !== Number(artifact.byte_length)) return false;
     if (kind === "visual" && !supportedVisualBytes(bytes)) return false;
     const actualHash = crypto.createHash("sha256").update(bytes).digest("hex");
+    if (kind === "visual") {
+      const appliedEntry = readExistingConditionsRepairLedger(entry.session_id).find(candidate =>
+        candidate.event === "stage_applied" &&
+        candidate.status === "provisional" &&
+        candidate.stage_key === entry.stage_key &&
+        clean(candidate.payload.apply_attempt_id) === clean(artifact.apply_attempt_id)
+      );
+      if (!appliedEntry ||
+          artifact.workflow_sha256 !== appliedEntry.workflow_sha256 ||
+          canonicalJson(artifact.action_keys) !== canonicalJson(appliedEntry.action_keys) ||
+          artifact.apply_completed_at !== appliedEntry.ts ||
+          artifact.capture_nonce !== stageCaptureNonce(appliedEntry) ||
+          artifact.capture_file_name !== path.basename(artifactPath) ||
+          artifact.captured_at !== fs.statSync(artifactPath).mtime.toISOString() ||
+          fs.statSync(artifactPath).mtimeMs < Date.parse(appliedEntry.ts)) return false;
+    }
     return actualHash === clean(artifact.sha256).toLowerCase() &&
       (kind !== "checkpoint" || clean(entry.payload.checkpoint_path) === artifactPath);
   } catch {
@@ -1242,7 +1316,11 @@ export function recordExistingConditionsVerificationResult(args: {
         result: args.result,
         sessionId: args.sessionId,
         kind: "visual",
-        expectedFileName: clean(plan.body?.fileName)
+        expectedFileName: clean(plan.body?.fileName),
+        appliedEntry: latestStageAppliedEntry(
+          readExistingConditionsRepairLedger(args.sessionId),
+          plan.stage_key
+        ) ?? undefined
       })
     : plan.state === "checkpoint"
       ? verifiedStageArtifact({
