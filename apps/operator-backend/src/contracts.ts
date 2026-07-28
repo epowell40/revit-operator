@@ -68,6 +68,18 @@ export type ChatResponse = {
   version: typeof OPERATOR_BACKEND_CONTRACT_VERSION;
   assistant_message: string;
   actions: ActionCall[];
+  teammate_loop_receipt?: {
+    schema: "revit-operator.teammate-loop-receipt.v1";
+    turn_kind: "conversation" | "inspection" | "navigation" | "mutation";
+    context_state: "not_required" | "live" | "missing" | "invalid";
+    stage: "answer" | "clarify" | "ground" | "discover" | "preview" | "apply" | "verify" | "report" | "blocked";
+    preview_action_ids: string[];
+    apply_action_id: string | null;
+    verification_action_ids: string[];
+    apply_attempts: number;
+    verified: boolean;
+    blocked_reason: string | null;
+  };
   aec_query_receipt?: {
     schema: "revit-operator.aec-query-receipt.v1";
     terminal: true;

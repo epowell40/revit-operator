@@ -32,8 +32,16 @@ import { getPinnedGoal } from "../session_store.js";
 import { compactIncomingToolResult, compactParameterReadResultForPrompt } from "../tool_result_compaction.js";
 import { formatActiveGoalContext, getActiveGoalForSession } from "../goals/service.js";
 import { formatEnvironmentSummaryForPrompt } from "../environment_profile.js";
-import { AGENT_RESPONSE_STYLE_LINES } from "../agent_response_policy.js";
+import { AGENT_RESPONSE_STYLE_LINES, formatAgentTurnContract } from "../agent_response_policy.js";
 import { mayInjectUnscopedLegacyMemory } from "../revit_context_policy.js";
+import {
+  beginTeammateLoopOwner,
+  bindTeammateLoopOwnerTurn,
+  endTeammateLoopOwner,
+  guardTeammateMcpCall,
+  recordTeammateMcpResult,
+  teammateLoopReceiptForLease
+} from "../teammate_loop_runtime.js";
 
 export type StreamCallbacks = {
   onDelta?: (textDelta: string) => void;
@@ -64,6 +72,8 @@ function clipPromptBlock(value: string, maxChars: number): string {
 
 export function formatCodexRequestEnvelope(req: ChatRequest): string {
   const blocks: string[] = [];
+  const turnContract = formatAgentTurnContract(req.user_text, req.context);
+  if (turnContract) blocks.push(turnContract);
   if (req.context !== undefined) {
     try {
       blocks.push(
@@ -516,11 +526,18 @@ export async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, req
     if (!lease.accepted) {
       return { contentItems: [{ type: "inputText", text: lease.message ?? "Concurrent dependent Revit call blocked." }], success: false };
     }
+    const teammateGate = guardTeammateMcpCall(runtime, params);
+    if (!teammateGate.allowed) {
+      lease.release();
+      return { contentItems: [{ type: "inputText", text: teammateGate.message ?? "Host teammate-loop guard blocked this Revit call." }], success: false };
+    }
     try {
       const rawResult = await runtime.callTool(params.tool, params.arguments ?? {});
+      recordTeammateMcpResult(runtime, teammateGate, rawResult);
       const result = params.tool === "revit_search_tools" ? filterQuarantinedToolSearchResult(rawResult) : rawResult;
       return adaptMcpToolCallResultToDynamicResponse(result, { tool: params.tool, arguments: params.arguments });
     } catch (error) {
+      recordTeammateMcpResult(runtime, teammateGate, { isError: true });
       return {
         contentItems: [{ type: "inputText", text: error instanceof Error ? error.message : String(error) }],
         success: false
@@ -801,9 +818,14 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [], requirements_receipt: requirementsReceipt };
     }
   }
+  const mcpRuntime = mcpRuntimesByWorkspace.get(workspaceRoot);
+  if (!mcpRuntime) throw new Error("Revit Operator MCP runtime is not configured for this workspace.");
+  let teammateContext: ReturnType<typeof beginTeammateLoopOwner> | null = null;
+  let teammateReceipt: ReturnType<typeof teammateLoopReceiptForLease>;
   let courierContext: ReturnType<typeof beginRevitCourierTurnContext> = null;
   let start: any;
   try {
+    teammateContext = beginTeammateLoopOwner(mcpRuntime, req);
     courierContext = beginRevitCourierTurnContext({
       session_id: req.session_id,
       message_id: req.message_id,
@@ -818,6 +840,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       });
     })) as any;
   } catch (error) {
+    endTeammateLoopOwner(teammateContext);
+    teammateContext = null;
     endRevitCourierTurnContext(courierContext);
     courierContext = null;
     endRequirementsPlanningLease(requirementsLease);
@@ -826,11 +850,14 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
 
   const turnId = typeof start?.turn?.id === "string" ? start.turn.id : "";
   if (!turnId) {
+    endTeammateLoopOwner(teammateContext);
+    teammateContext = null;
     endRevitCourierTurnContext(courierContext);
     courierContext = null;
     endRequirementsPlanningLease(requirementsLease);
     throw new Error("Codex turn/start did not return a turn id.");
   }
+  if (teammateContext) bindTeammateLoopOwnerTurn(teammateContext, turnId);
   try {
     appendEvent(req.session_id, "assistant", "codex.turn.start", { thread_id: threadId, turn_id: turnId });
   } catch {
@@ -1095,6 +1122,9 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       activeCodexTurnAborts.delete(activeTurnKey);
     }
     endRequirementsPlanningLease(requirementsLease);
+    teammateReceipt = teammateLoopReceiptForLease(teammateContext);
+    endTeammateLoopOwner(teammateContext);
+    teammateContext = null;
     endRevitCourierTurnContext(courierContext);
     courierContext = null;
   }
@@ -1103,11 +1133,20 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
       assistant_message: "",
-      actions: []
+      actions: [],
+      ...(teammateReceipt ? { teammate_loop_receipt: teammateReceipt } : {})
     };
   }
 
   assistantText = assistantText || assistantDeltas;
+  if (teammateReceipt && teammateReceipt.apply_attempts > 0 && !teammateReceipt.verified) {
+    teammateReceipt = {
+      ...teammateReceipt,
+      stage: "blocked",
+      blocked_reason: teammateReceipt.blocked_reason || "post_apply_verification_required"
+    };
+    assistantText = `${assistantText}\n\nI cannot claim the Revit change is complete because the host did not receive a successful post-apply readback or focused capture. The apply was not retried.`.trim();
+  }
   if (freshEvidenceRequirement.required && !hasFreshRevitEvidence) {
     assistantText = FRESH_REVIT_EVIDENCE_FAILURE;
     try {
@@ -1146,6 +1185,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
     assistant_message: assistantText || "",
     actions: [],
+    ...(teammateReceipt ? { teammate_loop_receipt: teammateReceipt } : {}),
     ...(requirementsReceipt && (requirementsReceipt.status !== "resolved" || requirementsReceipt.applied.length > 0) ? { requirements_receipt: requirementsReceipt } : {})
   };
 }

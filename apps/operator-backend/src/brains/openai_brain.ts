@@ -53,7 +53,7 @@ import { getRequestPrincipal } from "../request_context.js";
 import { knowledgeBaseOwnerIdForPrincipal, listKnowledgeBaseDocuments, searchKnowledgeBase } from "../knowledge_base/service.js";
 import { formatActiveGoalContext, getActiveGoalForSession } from "../goals/service.js";
 import { formatEnvironmentSummaryForPrompt } from "../environment_profile.js";
-import { AGENT_RESPONSE_STYLE_LINES } from "../agent_response_policy.js";
+import { AGENT_RESPONSE_STYLE_LINES, formatAgentTurnContract } from "../agent_response_policy.js";
 import { approxPayloadChars, resolveSpeedSettings, selectSpeedRoute, type SpeedRouteKind } from "../speed_config.js";
 import {
   appendRedlineFastPathCandidateDiagnostic,
@@ -18769,6 +18769,8 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
 
   lines.push(process.env.OPERATOR_OPENAI_SYSTEM_PROMPT || defaultSystemPrompt());
   lines.push("");
+  const turnContract = formatAgentTurnContract(req.user_text, req.context);
+  if (turnContract) lines.push(turnContract, "");
   if (speedSettings.speed_mode) {
     lines.push(
       `Speed mode: enabled; planner=${speedSettings.planner_model}/${speedSettings.planner_reasoning_effort}; executor=${speedSettings.executor_model}/${speedSettings.executor_reasoning_effort}; context_diet=${speedSettings.context_diet ? "on" : "off"}.`

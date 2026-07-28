@@ -14,6 +14,7 @@ import { getHistory, getPinnedGoal } from "../session_store.js";
 import { ensureWorkspaceLayout, resolveExistingFileUnderWorkspace } from "../workspace.js";
 import type { StreamCallbacks } from "./codex_brain.js";
 import { getOperatorAgentBaseInstructions } from "./codex_brain.js";
+import { formatAgentTurnContract } from "../agent_response_policy.js";
 import { executeExistingConditionsProviderWorkbenchActions } from "./openai_brain.js";
 
 type ExternalProvider = "gemini" | "anthropic";
@@ -403,6 +404,7 @@ function loadPersistedToolResultCapsule(sessionId: string): ToolResult[] {
 
 function buildPrompt(req: ChatRequest, provider: ExternalProvider): string {
   const currentUserRequest = (req.user_text ?? "").trim();
+  const turnContract = formatAgentTurnContract(currentUserRequest, req.context);
   const lines: string[] = [
     ...(currentUserRequest
       ? [
@@ -414,6 +416,7 @@ function buildPrompt(req: ChatRequest, provider: ExternalProvider): string {
       : []),
     getOperatorAgentBaseInstructions(),
     "",
+    ...(turnContract ? [turnContract, ""] : []),
     `You are running as the Operator ${provider} brain. You do not call MCP directly in this process.`,
     "Return native Revit bridge calls in actions, or deterministic backend steps in workbench_actions. The host executes them and returns receipts on the next turn.",
     "A workbench action is a structured output value, never a /revit/* or /workbench/* HTTP endpoint. Do not search for or invent an endpoint for detect_sheet_chromatic_components, compile_existing_conditions_sheet_interpretation, compile_registered_mep_reconstruction, register_existing_conditions_route_frontier, register_existing_conditions_route_snap, register_existing_conditions_mep_repair, or register_existing_conditions_source_disposition.",

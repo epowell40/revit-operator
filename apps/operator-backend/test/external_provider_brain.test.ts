@@ -565,6 +565,19 @@ test("Claude existing-conditions route completes provider-neutral source preflig
     ...request(
       "Start a staged Room 210 existing-conditions reconstruction from the attached M2.00 source. For this turn do source observation and registration only. Do not write to Revit yet."
     ),
+    context: {
+      revit: {
+        schema: "revit-operator.context.v1",
+        source: { live: true },
+        process_id: 70412,
+        courier_executor_id: "executor-test",
+        document: {
+          title: "Duke B200",
+          path: "C:\\models\\duke-b200.rvt",
+          projectIdentity: { fingerprint: "external-provider-test" }
+        }
+      }
+    },
     user_attachments: [{
       id: "p210",
       relative_path: "artifacts/uploads/M2.00_room_210.pdf",

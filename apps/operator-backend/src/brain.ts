@@ -22,6 +22,7 @@ import { enforceVerificationDisclaimer } from "./verification/titleblock_verify_
 import { enforceModeledRedlineGuard } from "./verification/model_redline_guard.js";
 import { resolveOpenAiApiKey } from "./openai_client.js";
 import { applyEnvironmentPolicyToActions } from "./environment_profile.js";
+import { buildTeammateTurnContract, guardGenericTeammateDecision } from "./teammate_loop_runtime.js";
 import { maybeRunDeterministicEnlargedPlanSheet } from "./deterministic/enlarged_plan_sheet.js";
 import { maybeRunDeterministicMepRouteRedline } from "./deterministic/mep_route_redline.js";
 import { maybeRunDeterministicRoomReceptacleAnalog } from "./deterministic/room_receptacle_analog.js";
@@ -282,6 +283,21 @@ function finalizeDecision(req: ChatRequest, decision: ChatResponse): ChatRespons
     : guarded;
 }
 
+function finalizeGenericDecision(req: ChatRequest, decision: ChatResponse): ChatResponse {
+  return finalizeDecision(req, guardGenericTeammateDecision(req, decision));
+}
+
+function genericStreamGate(req: ChatRequest, cb: StreamCallbacks): { buffered: boolean; callbacks: StreamCallbacks } {
+  const buffered = buildTeammateTurnContract(req).turn_kind === "mutation";
+  return { buffered, callbacks: buffered ? { abortSignal: cb.abortSignal } : cb };
+}
+
+function emitBufferedGenericDecision(cb: StreamCallbacks, decision: ChatResponse): void {
+  const text = decision.assistant_message || "";
+  if (text) cb.onDelta?.(text);
+  cb.onDone?.(text);
+}
+
 async function maybeRunTopLevelMepRouteRedline(req: ChatRequest, resolver = maybeRunDeterministicMepRouteRedline): Promise<ChatResponse | null> {
   return isExplicitReadOnlyRedlineAnalysisRequest(req) || __testOnlyIsExistingConditionsReconstructionRequest(req)
     ? null
@@ -407,7 +423,7 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
         await decideWithSelectedBrain(route, routedReq, dependencies)
       );
     }
-    return finalizeDecision(req, await decideWithSelectedBrain(route, req, dependencies));
+    return finalizeGenericDecision(req, await decideWithSelectedBrain(route, req, dependencies));
   }
 
   const roomReceptacleDecision = maybeRunDeterministicRoomReceptacleAnalog(req);
@@ -476,7 +492,7 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
     )(routedReq);
     if (providerDecision) return finalizeDecision(routedReq, providerDecision);
   }
-  return finalizeDecision(routedReq, await decideWithSelectedBrain(route, routedReq, dependencies));
+  return finalizeGenericDecision(routedReq, await decideWithSelectedBrain(route, routedReq, dependencies));
 }
 
 export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dependencies: BrainDecisionDependencies = {}): Promise<ChatResponse> {
@@ -537,11 +553,13 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dep
         await decideWithSelectedBrainStreaming(route, routedReq, cb, dependencies)
       );
     }
-    const decision = finalizeDecision(
+    const streamGate = genericStreamGate(req, cb);
+    const decision = finalizeGenericDecision(
       req,
-      await decideWithSelectedBrainStreaming(route, req, cb, dependencies)
+      await decideWithSelectedBrainStreaming(route, req, streamGate.callbacks, dependencies)
     );
-    if (route === "rule") {
+    if (streamGate.buffered) emitBufferedGenericDecision(cb, decision);
+    else if (route === "rule") {
       const text = decision.assistant_message || "";
       cb.onDelta?.(text);
       cb.onDone?.(text);
@@ -674,11 +692,13 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dep
       return finalizeDecision(routedReq, providerDecision);
     }
   }
-  const decision = finalizeDecision(
+  const streamGate = genericStreamGate(routedReq, cb);
+  const decision = finalizeGenericDecision(
     routedReq,
-    await decideWithSelectedBrainStreaming(route, routedReq, cb, dependencies)
+    await decideWithSelectedBrainStreaming(route, routedReq, streamGate.callbacks, dependencies)
   );
-  if (route === "rule") {
+  if (streamGate.buffered) emitBufferedGenericDecision(cb, decision);
+  else if (route === "rule") {
     const text = decision.assistant_message || "";
     const chunkSize = 60;
     const delayMs = Math.max(0, Number.parseInt(process.env.OPERATOR_STREAM_DELAY_MS ?? "0", 10) || 0);
