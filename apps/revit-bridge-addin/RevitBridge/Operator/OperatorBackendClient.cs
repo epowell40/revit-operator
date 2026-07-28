@@ -594,6 +594,14 @@ namespace RevitBridge.Operator
                 },
                 cancellationToken).ConfigureAwait(false);
             var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+            var error = ExtractErrorMessage(json);
+            if (!resp.IsSuccessStatusCode && string.Equals(
+                    error,
+                    "Revit courier job is already terminally failed; refusing a contradictory completion.",
+                    StringComparison.Ordinal))
+            {
+                throw new OperatorCourierTerminalConflictException(error!);
+            }
             EnsureSuccessOrThrow(resp, json, "Backend /api/revit-courier/jobs/:id/complete");
             return json ?? "";
         }
@@ -926,5 +934,10 @@ namespace RevitBridge.Operator
             var parsed = JsonSerializer.Deserialize<OperatorNotificationsResponse>(json, OperatorUiProtocol.JsonOptions);
             return parsed ?? new OperatorNotificationsResponse { NextAfterId = afterId };
         }
+    }
+
+    internal sealed class OperatorCourierTerminalConflictException : InvalidOperationException
+    {
+        public OperatorCourierTerminalConflictException(string message) : base(message) { }
     }
 }

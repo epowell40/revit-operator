@@ -26,11 +26,25 @@ namespace RevitBridge.Common
 
         [JsonPropertyName("result")]
         public JsonElement Result { get; set; }
+
+        [JsonPropertyName("disposition")]
+        public string Disposition { get; set; } = OperatorCourierCompletionOutbox.PendingDisposition;
+
+        [JsonPropertyName("resolved_at")]
+        public string? ResolvedAt { get; set; }
+
+        [JsonPropertyName("resolution_code")]
+        public string? ResolutionCode { get; set; }
+
+        [JsonPropertyName("resolution_detail")]
+        public string? ResolutionDetail { get; set; }
     }
 
     public sealed class OperatorCourierCompletionOutbox
     {
         public const string RecordVersion = "revit-operator.courier-completion-outbox.v1";
+        public const string PendingDisposition = "pending";
+        public const string TerminalConflictDisposition = "terminal_conflict";
         private readonly string _root;
 
         public OperatorCourierCompletionOutbox(string? root = null)
@@ -75,6 +89,7 @@ namespace RevitBridge.Common
                     ValidateId(record.SessionId, nameof(record.SessionId));
                     ValidateId(record.JobId, nameof(record.JobId));
                     ValidateId(record.ExecutorId, nameof(record.ExecutorId));
+                    if (!string.Equals(record.Disposition, PendingDisposition, StringComparison.Ordinal)) continue;
                     records.Add(record);
                     if (records.Count >= maxCount) break;
                 }
@@ -86,7 +101,49 @@ namespace RevitBridge.Common
             return records;
         }
 
-        public bool HasUnresolvedEntries => Directory.Exists(_root) && Directory.EnumerateFiles(_root, "*.json").Any();
+        public bool HasUnresolvedEntries
+        {
+            get
+            {
+                if (!Directory.Exists(_root)) return false;
+                foreach (var file in Directory.GetFiles(_root, "*.json"))
+                {
+                    try
+                    {
+                        var record = JsonSerializer.Deserialize<OperatorCourierCompletionRecord>(File.ReadAllText(file));
+                        if (record == null || record.Version != RecordVersion) return true;
+                        ValidateId(record.SessionId, nameof(record.SessionId));
+                        ValidateId(record.JobId, nameof(record.JobId));
+                        ValidateId(record.ExecutorId, nameof(record.ExecutorId));
+                        if (string.Equals(record.Disposition, PendingDisposition, StringComparison.Ordinal)) return true;
+                        if (!string.Equals(record.Disposition, TerminalConflictDisposition, StringComparison.Ordinal)) return true;
+                    }
+                    catch
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
+
+        public void ResolveTerminalConflict(string jobId, string detail)
+        {
+            ValidateId(jobId, nameof(jobId));
+            var target = RecordPath(jobId);
+            if (!File.Exists(target)) return;
+            var record = JsonSerializer.Deserialize<OperatorCourierCompletionRecord>(File.ReadAllText(target))
+                ?? throw new InvalidOperationException("Courier completion outbox record is empty.");
+            if (record.Version != RecordVersion || !string.Equals(record.JobId, jobId, StringComparison.Ordinal))
+                throw new InvalidOperationException("Courier completion outbox record identity is invalid.");
+            record.Disposition = TerminalConflictDisposition;
+            record.ResolvedAt = DateTime.UtcNow.ToString("o");
+            record.ResolutionCode = "backend_terminal_failure_authoritative";
+            record.ResolutionDetail = string.IsNullOrWhiteSpace(detail)
+                ? "The backend already held an authoritative terminal failure receipt."
+                : detail.Trim().Substring(0, Math.Min(detail.Trim().Length, 1000));
+            WriteRecordAtomically(target, record);
+        }
 
         public void Acknowledge(string jobId)
         {
@@ -96,6 +153,14 @@ namespace RevitBridge.Common
         }
 
         private string RecordPath(string jobId) => Path.Combine(_root, jobId + ".json");
+
+        private static void WriteRecordAtomically(string target, OperatorCourierCompletionRecord record)
+        {
+            var temp = target + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            File.WriteAllText(temp, JsonSerializer.Serialize(record, new JsonSerializerOptions { WriteIndented = true }));
+            if (File.Exists(target)) File.Replace(temp, target, null);
+            else File.Move(temp, target);
+        }
 
         private static void ValidateId(string value, string field)
         {
