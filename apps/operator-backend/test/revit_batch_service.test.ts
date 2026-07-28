@@ -27,7 +27,15 @@ function mkWorkspace(): string {
   return root;
 }
 
-function createJob(options: { readOnly?: boolean; maxClaimAttempts?: number; jobType?: string } = {}): AnyMap {
+function createJob(options: {
+  readOnly?: boolean;
+  operationKind?: string;
+  maxClaimAttempts?: number;
+  jobType?: string;
+  taskPrompt?: string;
+  actions?: AnyMap[];
+  replayContract?: AnyMap;
+} = {}): AnyMap {
   return createRevitBatchJob({
     job_type: options.jobType || "delegated_revit_task_batch",
     title: "Fenced batch test",
@@ -37,11 +45,16 @@ function createJob(options: { readOnly?: boolean; maxClaimAttempts?: number; job
       id: "item-1",
       index: 1,
       status: "pending",
-      task_prompt: "Run the exact bounded item.",
-      ...(options.readOnly === undefined ? {} : { read_only: options.readOnly })
+      task_prompt: options.taskPrompt || "Run the exact bounded item.",
+      ...(options.readOnly === undefined ? {} : { read_only: options.readOnly }),
+      ...(options.operationKind === undefined ? {} : { operation_kind: options.operationKind }),
+      ...(options.actions === undefined ? {} : { actions: options.actions }),
+      ...(options.replayContract === undefined ? {} : { replay_contract: options.replayContract })
     }]
   }) as AnyMap;
 }
+
+const readOnlyActions = [{ action_id: "read-rooms", method: "POST", path: "/revit/rooms", body: { limit: 10 } }];
 
 const fingerprintA = "a".repeat(64);
 const fingerprintB = "b".repeat(64);
@@ -161,6 +174,93 @@ test("an expired mutating claim survives restart as reconciliation-required and 
   assert.throws(() => retryFailedRevitBatchItems(job.id), /requires mutation outcome reconciliation/);
 });
 
+test("server-classified structured routes are the only delegated source of replay authority", () => {
+  mkWorkspace();
+  const readJob = createJob({
+    readOnly: false,
+    operationKind: "mutating",
+    taskPrompt: "This display text is deliberately not an effect contract.",
+    actions: readOnlyActions,
+    replayContract: { replayable: false, classification: "mutating" }
+  });
+  assert.equal(readJob.items[0].replay_contract.authority, "server_route_classification");
+  assert.equal(readJob.items[0].replay_contract.classification, "read");
+  assert.equal(readJob.items[0].replay_contract.replayable, true);
+  assert.match(readJob.items[0].replay_contract.route_plan_sha256, /^[a-f0-9]{64}$/);
+
+  const missingPlan = createJob({
+    readOnly: true,
+    operationKind: "read",
+    replayContract: {
+      schema: "operator.revit_batch.replay_effect.v1",
+      authority: "server_route_classification",
+      classification: "read",
+      replayable: true
+    }
+  });
+  assert.equal(missingPlan.items[0].replay_contract.classification, "unknown");
+  assert.equal(missingPlan.items[0].replay_contract.replayable, false);
+
+  const roomCapture = createJob({ jobType: "room_view_capture", readOnly: false, operationKind: "mutating" });
+  assert.equal(roomCapture.items[0].replay_contract.source, "server_known_executor");
+  assert.equal(roomCapture.items[0].replay_contract.classification, "read");
+  assert.equal(roomCapture.items[0].replay_contract.replayable, true);
+});
+
+test("caller read-only metadata cannot replay rotate, mirror, duplicate, demolish, renumber, or unknown mutations", () => {
+  const mutations = [
+    ["Rotate the selected elements.", "/revit/rotate-elements"],
+    ["Mirror the selected elements.", "/revit/mirror-elements"],
+    ["Duplicate the selected view.", "/revit/duplicate-view"],
+    ["Demolish the selected walls.", "/revit/demolish-elements"],
+    ["Renumber the selected rooms.", "/revit/renumber-elements"],
+    ["Run this mutating action.", "/revit/mutating-action"]
+  ] as const;
+
+  for (const [index, [taskPrompt, route]] of mutations.entries()) {
+    const root = mkWorkspace();
+    const job = createJob({
+      readOnly: index % 2 === 0 ? true : undefined,
+      operationKind: index % 2 === 1 ? "read" : undefined,
+      taskPrompt,
+      actions: [{ action_id: `mutation-${index}`, method: "POST", path: route, request_effect: "read" }]
+    });
+    assert.equal(job.items[0].replay_contract.classification, "conflicting", taskPrompt);
+    assert.equal(job.items[0].replay_contract.replayable, false, taskPrompt);
+    claimNextRevitBatchItem({ job_id: job.id, executor_id: `worker-${index}` });
+    editStoredJob(root, job.id, (stored) => {
+      stored.items[0].claim.lease_expires_at = "2000-01-01T00:00:00.000Z";
+    });
+    const recovered = getRevitBatchJob(job.id) as AnyMap;
+    assert.equal(recovered.items[0].reconciliation_required, true, taskPrompt);
+    assert.equal(recovered.items[0].retryable, false, taskPrompt);
+    assert.equal(recovered.result.reason, "expired_mutating_claim", taskPrompt);
+  }
+});
+
+test("unknown, conflicting, and tampered route contracts fail closed", () => {
+  const failClosedCases: Array<Parameters<typeof createJob>[0]> = [
+    { readOnly: true, operationKind: "read" },
+    { actions: [{ action_id: "outside", method: "POST", path: "/not-revit/read", request_effect: "read" }] },
+    { actions: [{ action_id: "conflict", method: "POST", path: "/revit/rooms", request_effect: "apply" }] },
+    { actions: readOnlyActions }
+  ];
+  for (const options of failClosedCases) {
+    const root = mkWorkspace();
+    const job = createJob(options);
+    claimNextRevitBatchItem({ job_id: job.id, executor_id: "worker" });
+    editStoredJob(root, job.id, (stored) => {
+      stored.items[0].claim.lease_expires_at = "2000-01-01T00:00:00.000Z";
+      if (stored.items[0].replay_contract.classification === "read") {
+        stored.items[0].actions[0].path = "/revit/rotate-elements";
+      }
+    });
+    const recovered = getRevitBatchJob(job.id) as AnyMap;
+    assert.equal(recovered.items[0].reconciliation_required, true);
+    assert.equal(recovered.items[0].outcome, "unknown");
+  }
+});
+
 test("a mutating unknown outcome pauses a multi-item batch while an already-running sibling settles", () => {
   const root = mkWorkspace();
   const job = createRevitBatchJob({
@@ -196,7 +296,7 @@ test("a mutating unknown outcome pauses a multi-item batch while an already-runn
 
 test("a stale read-only lease cannot settle the newer claim even when the executor id is reused", () => {
   const root = mkWorkspace();
-  const job = createJob({ readOnly: true });
+  const job = createJob({ readOnly: true, actions: readOnlyActions });
   const first = claimNextRevitBatchItem({ job_id: job.id, executor_id: "stable-worker-id" }) as AnyMap;
   editStoredJob(root, job.id, (stored) => {
     stored.items[0].claim.lease_expires_at = "2000-01-01T00:00:00.000Z";
@@ -225,7 +325,7 @@ test("a stale read-only lease cannot settle the newer claim even when the execut
 
 test("read-only automatic retries are bounded", () => {
   const root = mkWorkspace();
-  const job = createJob({ readOnly: true, maxClaimAttempts: 2 });
+  const job = createJob({ readOnly: true, maxClaimAttempts: 2, actions: readOnlyActions });
   claimNextRevitBatchItem({ job_id: job.id, executor_id: "reader" });
   editStoredJob(root, job.id, (stored) => {
     stored.items[0].claim.lease_expires_at = "2000-01-01T00:00:00.000Z";
