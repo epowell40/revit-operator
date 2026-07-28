@@ -166,6 +166,75 @@ test("Codex MCP host guard enforces preview, one apply attempt, and readback", (
   }
 });
 
+test("Codex MCP host guard classifies conditional route bodies by their actual effect", () => {
+  __testOnlyResetTeammateLoopState();
+  const inspectionOwner = {};
+  const inspectionLease = beginTeammateLoopOwner(inspectionOwner, request("Inspect the current audit and type data."));
+  try {
+    for (const [path, body] of [
+      ["/revit/fire-damper-audit", { command: "audit" }],
+      ["/revit/lighting-audit", { command: "photometrics", visualize: false }],
+      ["/revit/list-element-types", { action: "list", category: "OST_Doors" }]
+    ] as const) {
+      const gate = guardTeammateMcpCall(inspectionOwner, {
+        tool: "revit_call_tool",
+        arguments: { method: "POST", path, body }
+      });
+      assert.equal(gate.allowed, true, `${path} read mode should be allowed`);
+      assert.equal(gate.call?.effect, "read");
+    }
+
+    for (const [path, body] of [
+      ["/revit/fire-damper-audit", { command: "fix", dryRun: true }],
+      ["/revit/lighting-audit", { command: "validate_ies", fix: true, dryRun: true }],
+      ["/revit/lighting-audit", { command: "photometrics", visualize: true, apply: false }],
+      ["/revit/list-element-types", { action: "purge_unused_in_family", familyName: "Air Device", apply: false }]
+    ] as const) {
+      const gate = guardTeammateMcpCall(inspectionOwner, {
+        tool: "revit_call_tool",
+        arguments: { method: "POST", path, body }
+      });
+      assert.equal(gate.allowed, false, `${path} mutation mode should be blocked on an inspection turn`);
+      assert.equal(gate.call?.effect, "apply");
+      assert.match(gate.message || "", /does not authorize model mutation/i);
+    }
+  } finally {
+    endTeammateLoopOwner(inspectionLease);
+  }
+
+  __testOnlyResetTeammateLoopState();
+  const mutationOwner = {};
+  const mutationLease = beginTeammateLoopOwner(mutationOwner, request("Rename the Air Device family types."));
+  try {
+    const preview = guardTeammateMcpCall(mutationOwner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/list-element-types",
+        body: { action: "rename_types", familyName: "Air Device", searchPattern: "^SUP-", dryRun: true }
+      }
+    });
+    assert.equal(preview.allowed, true);
+    assert.equal(preview.call?.effect, "preview");
+    recordTeammateMcpResult(mutationOwner, preview, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, action: "rename_types", dryRun: true, planned: [{ typeId: 42 }] }) }]
+    });
+
+    const apply = guardTeammateMcpCall(mutationOwner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/list-element-types",
+        body: { action: "rename_types", familyName: "Air Device", searchPattern: "^SUP-", dryRun: false }
+      }
+    });
+    assert.equal(apply.allowed, true);
+    assert.equal(apply.call?.effect, "apply");
+  } finally {
+    endTeammateLoopOwner(mutationLease);
+  }
+});
+
 test("empty-text continuation preserves the original turn and tool docs are bounded to one call", () => {
   __testOnlyResetTeammateLoopState();
   const text = "Set element 42 Manufacturer to WATTS.";

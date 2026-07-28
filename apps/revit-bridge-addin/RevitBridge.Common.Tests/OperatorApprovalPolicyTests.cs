@@ -57,6 +57,28 @@ namespace RevitBridge.Common.Tests
             AssertHigh(method, path, "{\"ids\":[101],\"apply\":false}");
         }
 
+        [Theory]
+        [InlineData("/revit/fire-damper-audit", "{\"command\":\"audit\"}")]
+        [InlineData("/revit/lighting-audit", "{\"command\":\"validate_ies\",\"fix\":false}")]
+        [InlineData("/revit/lighting-audit", "{\"command\":\"photometrics\",\"visualize\":false}")]
+        [InlineData("/revit/list-element-types", "{}")]
+        [InlineData("/revit/list-element-types", "{\"action\":\"list\"}")]
+        public void ConditionalRoutesRemainLowForReadOnlyBodies(string path, string body)
+        {
+            AssertLow("POST", path, body);
+        }
+
+        [Theory]
+        [InlineData("/revit/fire-damper-audit", "{\"command\":\"fix\"}")]
+        [InlineData("/revit/lighting-audit", "{\"command\":\"validate_ies\",\"fix\":true}")]
+        [InlineData("/revit/lighting-audit", "{\"command\":\"photometrics\",\"visualize\":true}")]
+        [InlineData("/revit/list-element-types", "{\"action\":\"rename_types\",\"dryRun\":true}")]
+        [InlineData("/revit/list-element-types", "{\"action\":\"purge_unused_in_family\"}")]
+        public void ConditionalRoutesAreHighForMutationIntentBodies(string path, string body)
+        {
+            AssertHigh("POST", path, body);
+        }
+
         private static void AssertLow(string method, string path, string body)
         {
             var risk = OperatorApprovalPolicy.GetRisk(method, path, body);

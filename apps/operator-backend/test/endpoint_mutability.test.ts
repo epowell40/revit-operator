@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pathLooksWrite } from "../src/action_path_mutability.js";
+import { conditionalActionPathEffect, pathLooksWrite } from "../src/action_path_mutability.js";
 
 test("scoped duct resize is classified as a write", () => {
   assert.equal(pathLooksWrite("/revit/resize-ductwork-by-scope"), true);
@@ -9,4 +9,30 @@ test("scoped duct resize is classified as a write", () => {
 test("known read-only POST endpoints remain read-only", () => {
   assert.equal(pathLooksWrite("/revit/context"), false);
   assert.equal(pathLooksWrite("/revit/sheets"), false);
+});
+
+test("conditional audit and type-maintenance routes inspect the request body", () => {
+  assert.equal(pathLooksWrite("/revit/fire-damper-audit", { command: "audit" }), false);
+  assert.equal(pathLooksWrite("/revit/fire-damper-audit", { command: "fix" }), true);
+
+  assert.equal(pathLooksWrite("/revit/lighting-audit", { command: "validate_ies" }), false);
+  assert.equal(pathLooksWrite("/revit/lighting-audit", { command: "validate_ies", fix: true }), true);
+  assert.equal(pathLooksWrite("/revit/lighting-audit", { command: "photometrics", visualize: true }), true);
+
+  assert.equal(pathLooksWrite("/revit/list-element-types", { action: "list" }), false);
+  assert.equal(pathLooksWrite("/revit/list-element-types", {}), false);
+  assert.equal(pathLooksWrite("/revit/list-element-types", { action: "rename_types", dryRun: true }), true);
+  assert.equal(pathLooksWrite("/revit/list-element-types", { action: "purge_unused_in_family" }), true);
+});
+
+test("conditional route bodies may be supplied as serialized JSON", () => {
+  assert.equal(pathLooksWrite(" /REVIT/FIRE-DAMPER-AUDIT ", '{"command":"fix"}'), true);
+  assert.equal(pathLooksWrite("/revit/list-element-types", '{"action":"list"}'), false);
+});
+
+test("conditional effects follow handler semantics instead of generic preview flags", () => {
+  assert.equal(conditionalActionPathEffect("/revit/fire-damper-audit", { command: "fix", dryRun: true }), "apply");
+  assert.equal(conditionalActionPathEffect("/revit/lighting-audit", { visualize: true, apply: false }), "apply");
+  assert.equal(conditionalActionPathEffect("/revit/list-element-types", { action: "rename_types", apply: false }), "apply");
+  assert.equal(conditionalActionPathEffect("/revit/list-element-types", { action: "rename_types", dryRun: true }), "preview");
 });

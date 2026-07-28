@@ -246,6 +246,11 @@ namespace RevitBridge.Operator
             var m = (method ?? "").Trim().ToUpperInvariant();
             var p = (path ?? "").Trim();
 
+            if (m == "POST" && HasMutatingBody(p, body))
+            {
+                return OperatorActionRisk.High;
+            }
+
             // Delete previews are safe only for the exact legacy apply:false contract.
             // Do not treat generic dryRun payloads or property-name variants as equivalent.
             if (m == "POST" &&
@@ -256,6 +261,52 @@ namespace RevitBridge.Operator
             }
 
             return GetRisk(m, p);
+        }
+
+        private static bool HasMutatingBody(string path, string? body)
+        {
+            if (string.IsNullOrWhiteSpace(body)) return false;
+
+            try
+            {
+                using var document = JsonDocument.Parse(body!);
+                if (document.RootElement.ValueKind != JsonValueKind.Object) return false;
+                var root = document.RootElement;
+
+                if (string.Equals(path, "/revit/fire-damper-audit", StringComparison.OrdinalIgnoreCase))
+                {
+                    return HasStringValue(root, "command", "fix");
+                }
+
+                if (string.Equals(path, "/revit/lighting-audit", StringComparison.OrdinalIgnoreCase))
+                {
+                    return HasTrueValue(root, "fix") || HasTrueValue(root, "visualize");
+                }
+
+                if (string.Equals(path, "/revit/list-element-types", StringComparison.OrdinalIgnoreCase))
+                {
+                    return HasStringValue(root, "action", "rename_types") ||
+                           HasStringValue(root, "action", "purge_unused_in_family");
+                }
+
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool HasStringValue(JsonElement root, string propertyName, string expectedValue)
+        {
+            return root.TryGetProperty(propertyName, out var property) &&
+                   property.ValueKind == JsonValueKind.String &&
+                   string.Equals(property.GetString()?.Trim(), expectedValue, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool HasTrueValue(JsonElement root, string propertyName)
+        {
+            return root.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.True;
         }
 
         private static bool HasExactDeletePreviewContract(string? body)
