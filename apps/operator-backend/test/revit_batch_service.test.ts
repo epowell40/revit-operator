@@ -378,6 +378,38 @@ test("claim and settlement reject wrong executor, principal, document, and claim
   );
 });
 
+test("local shared-token jobs bind session, executor, and document without a principal owner", () => {
+  mkWorkspace();
+  const access: RevitBatchAccessContext = {
+    session_id: "local-session-a",
+    target: { executor_id: "local-executor-a", project_fingerprint: fingerprintA }
+  };
+  const job = createRevitBatchJob({
+    job_type: "delegated_revit_task_batch",
+    title: "Local bound batch",
+    approval: { required: false },
+    items: [{ id: "local-item", index: 1, status: "pending", task_prompt: "Run locally." }]
+  }, access) as AnyMap;
+  assert.equal(job.owner, null);
+  assert.equal(job.session_id, "local-session-a");
+  assert.equal(job.target_context.executor_id, "local-executor-a");
+  assert.deepEqual(listRevitBatchJobs(20, access).map((row: AnyMap) => row.id), [job.id]);
+  assert.deepEqual(listRevitBatchJobs(20, {
+    session_id: "local-session-b",
+    target: { executor_id: "local-executor-b", project_fingerprint: fingerprintB }
+  }), []);
+  const claim = claimNextRevitBatchItem({ job_id: job.id, executor_id: "local-executor-a", access }) as AnyMap;
+  const completed = completeRevitBatchItem({
+    job_id: job.id,
+    item_id: "local-item",
+    executor_id: "local-executor-a",
+    claim_token: claim.claim_token,
+    result: { result_summary: "done" },
+    access
+  }) as AnyMap;
+  assert.equal(completed.item.status, "succeeded");
+});
+
 test("identical completion settlement is idempotent while conflicting duplicates fail closed", () => {
   mkWorkspace();
   const access = boundAccess("alice", "settlement-session", "executor-a", fingerprintA);

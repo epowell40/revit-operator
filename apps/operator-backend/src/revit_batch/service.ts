@@ -224,10 +224,14 @@ function bindingFromCreateAccess(value: RevitBatchAccessContext | null | undefin
 } {
   if (!value) return {};
   const access = normalizeAccessContext(value);
-  if (!access.owner || !access.session_id || !access.target) {
-    throw new Error("Bound batch creation requires an authenticated owner, session_id, intended executor, and project fingerprint.");
+  if (!access.session_id || !access.target) {
+    throw new Error("Bound batch creation requires session_id, intended executor, and project fingerprint.");
   }
-  return { owner: access.owner, session_id: access.session_id, target_context: access.target };
+  return {
+    ...(access.owner ? { owner: access.owner } : {}),
+    session_id: access.session_id,
+    target_context: access.target
+  };
 }
 
 function ownersMatch(a: RevitBatchOwner | null | undefined, b: RevitBatchOwner | null | undefined): boolean {
@@ -244,7 +248,7 @@ function jobAccessAllowed(job: RevitBatchJobRecord, value: RevitBatchAccessConte
   const isBound = !!job.owner || !!job.session_id || !!job.target_context;
   if (!isBound) return true;
   const access = normalizeAccessContext(value);
-  return ownersMatch(job.owner, access.owner) &&
+  return (!job.owner || ownersMatch(job.owner, access.owner)) &&
     !!job.session_id && job.session_id === access.session_id &&
     targetsMatch(job.target_context, access.target);
 }
@@ -1004,7 +1008,7 @@ function settleClaim(jobId: string, itemId: string, executorId: string, claimTok
       throw new Error("Batch item is not claimed by this executor.");
     }
     if (job.owner || job.session_id || job.target_context) {
-      const claimContextMatches = ownersMatch(target.claim.owner, job.owner) &&
+      const claimContextMatches = (!job.owner || ownersMatch(target.claim.owner, job.owner)) &&
         !!target.claim.session_id && target.claim.session_id === job.session_id &&
         targetsMatch(target.claim.target_context, job.target_context);
       if (!claimContextMatches) {
