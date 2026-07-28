@@ -36,7 +36,7 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
-        public void PaneFailsClosedBeforeBatchExecutionAndThreadsExactClaimTokenToBothSettlements()
+        public void PaneFencesExecutionAndSeparatesExecutionFailureFromPostEffectSettlement()
         {
             var pane = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorPaneControl.cs");
             var client = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorBackendClient.cs");
@@ -46,8 +46,18 @@ namespace RevitBridge.Common.Tests
                 "var claimToken = GetJsonString(claim, \"claim_token\", 160);",
                 "Batch claim response is missing claim_token; refusing to execute the claimed item.",
                 "ProcessClaimedRevitBatchItemAsync(job, item, claimToken");
-            Assert.Contains("CompleteRevitBatchItemJsonAsync(jobId, itemId, _revitBatchExecutorId, claimToken, result", pane);
+            AssertOrdered(
+                pane,
+                "object result;",
+                "result = await ExecuteDelegatedRevitBatchItemAsync(job, item, cancellationToken)",
+                "FailRevitBatchItemJsonAsync(",
+                "return;",
+                "_revitBatchCompletionOutbox.Save(",
+                "PostAndValidateRevitBatchCompletionAsync(");
             Assert.Matches(new Regex(@"FailRevitBatchItemJsonAsync\([\s\S]{0,220}_revitBatchExecutorId,\s*claimToken,", RegexOptions.IgnoreCase), pane);
+            Assert.Contains("Never convert a possibly committed effect into /fail", pane);
+            Assert.Contains("Batch completion response did not confirm the same item as succeeded.", pane);
+            Assert.DoesNotMatch(new Regex(@"PostAndValidateRevitBatchCompletionAsync\([\s\S]{0,700}FailRevitBatchItemJsonAsync\(", RegexOptions.IgnoreCase), pane);
 
             AssertOrdered(
                 client,
@@ -55,6 +65,26 @@ namespace RevitBridge.Common.Tests
                 "claim_token = claimToken",
                 "FailRevitBatchItemJsonAsync(string jobId, string itemId, string executorId, string claimToken",
                 "claim_token = claimToken");
+        }
+
+        [Fact]
+        public void PaneReconcilesDurableCompletionBeforeClaimingMoreWorkAndReusesOriginalFence()
+        {
+            var pane = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorPaneControl.cs");
+
+            AssertOrdered(
+                pane,
+                "FlushOnePendingRevitBatchCompletionAsync()",
+                "ClaimNextRevitBatchItemJsonAsync(");
+            AssertOrdered(
+                pane,
+                "var completion = pending[0];",
+                "completion.ExecutorId,",
+                "claimToken,",
+                "_revitBatchCompletionOutbox.Acknowledge(completion.JobId)");
+            Assert.Contains("BatchCompletionOutbox", pane);
+            Assert.Contains("batch.completion.retry_pending", pane);
+            Assert.Contains("outcome_unknown = true", pane);
         }
 
         [Fact]

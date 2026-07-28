@@ -6,6 +6,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -67,6 +68,11 @@ namespace RevitBridge.Operator
         private System.Threading.Timer? _revitBatchWorkerTimer;
         private volatile bool _revitBatchWorkerStarted;
         private readonly string _revitBatchExecutorId = $"{Environment.MachineName}-revit-pane-{Process.GetCurrentProcess().Id}";
+        private readonly OperatorCourierCompletionOutbox _revitBatchCompletionOutbox = new OperatorCourierCompletionOutbox(
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "RevitOperator",
+                "BatchCompletionOutbox"));
 
         private readonly HashSet<string> _activeChatScreenshareFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static readonly TimeSpan ScreenshareTtl = TimeSpan.FromHours(1);
@@ -3610,6 +3616,7 @@ namespace RevitBridge.Operator
                 if (_turnBusy || _activeTurn != null || _pendingApprovals.Count > 0) return;
                 await EnsureBackendRunningAsync(CancellationToken.None).ConfigureAwait(false);
                 EnsureRevitBatchWorkerStarted();
+                if (await FlushOnePendingRevitBatchCompletionAsync().ConfigureAwait(false)) return;
 
                 while (!_turnBusy && _activeTurn == null && _pendingApprovals.Count == 0)
                 {
@@ -3658,9 +3665,9 @@ namespace RevitBridge.Operator
             if (string.IsNullOrWhiteSpace(claimToken))
                 throw new InvalidOperationException("Batch claim_token is required before item execution.");
 
+            object result;
             try
             {
-                object result;
                 var jobType = GetJsonString(job, "job_type", 64);
                 if (string.Equals(jobType, "delegated_revit_task_batch", StringComparison.OrdinalIgnoreCase))
                 {
@@ -3670,8 +3677,6 @@ namespace RevitBridge.Operator
                 {
                     throw new InvalidOperationException($"Unsupported Revit batch job type for this executor: {jobType}");
                 }
-
-                await _backendClient.CompleteRevitBatchItemJsonAsync(jobId, itemId, _revitBatchExecutorId, claimToken, result, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -3683,7 +3688,163 @@ namespace RevitBridge.Operator
                     FormatException(ex),
                     new { error = FormatException(ex) },
                     cancellationToken).ConfigureAwait(false);
+                return;
             }
+
+            var outboxKey = BuildRevitBatchCompletionOutboxKey(jobId, itemId);
+            try
+            {
+                _revitBatchCompletionOutbox.Save(
+                    outboxKey,
+                    outboxKey,
+                    _revitBatchExecutorId,
+                    new
+                    {
+                        version = "revit-operator.batch-completion.v1",
+                        job_id = jobId,
+                        item_id = itemId,
+                        claim_token = claimToken,
+                        result
+                    });
+                await PostAndValidateRevitBatchCompletionAsync(
+                    jobId,
+                    itemId,
+                    _revitBatchExecutorId,
+                    claimToken,
+                    result,
+                    cancellationToken).ConfigureAwait(false);
+                _revitBatchCompletionOutbox.Acknowledge(outboxKey);
+            }
+            catch (Exception ex)
+            {
+                // Execution already returned successfully. Never convert a possibly committed effect into /fail.
+                // The durable outbox is reconciled before this worker claims another item or after a Revit restart.
+                try
+                {
+                    await (_logger?.LogAsync("batch.completion.pending", new
+                    {
+                        job_id = jobId,
+                        item_id = itemId,
+                        claim_token = claimToken,
+                        outcome_unknown = true,
+                        error = FormatException(ex)
+                    }, CancellationToken.None) ?? Task.CompletedTask).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Settlement telemetry must not create a failure transition.
+                }
+            }
+        }
+
+        private async Task<bool> FlushOnePendingRevitBatchCompletionAsync()
+        {
+            var pending = _revitBatchCompletionOutbox.ReadPending(1);
+            if (pending.Count == 0)
+            {
+                if (!_revitBatchCompletionOutbox.HasUnresolvedEntries) return false;
+                try
+                {
+                    await (_logger?.LogAsync("batch.completion.outbox_invalid", new
+                    {
+                        error = "A durable batch completion entry is unreadable; new batch execution is paused."
+                    }, CancellationToken.None) ?? Task.CompletedTask).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // ignore telemetry failure
+                }
+                return true;
+            }
+
+            var completion = pending[0];
+            try
+            {
+                var envelope = JsonNode.Parse(completion.Result.GetRawText()) as JsonObject
+                    ?? throw new InvalidDataException("Batch completion outbox envelope is malformed.");
+                if (!string.Equals(GetJsonString(envelope, "version", 80), "revit-operator.batch-completion.v1", StringComparison.Ordinal))
+                    throw new InvalidDataException("Batch completion outbox envelope version is unsupported.");
+                var jobId = GetJsonString(envelope, "job_id", 120);
+                var itemId = GetJsonString(envelope, "item_id", 120);
+                var claimToken = GetJsonString(envelope, "claim_token", 160);
+                if (string.IsNullOrWhiteSpace(jobId) || string.IsNullOrWhiteSpace(itemId) || string.IsNullOrWhiteSpace(claimToken))
+                    throw new InvalidDataException("Batch completion outbox envelope is missing identity or fencing data.");
+                envelope.TryGetPropertyValue("result", out var resultNode);
+                var result = JsonNodeToObject(resultNode);
+                await PostAndValidateRevitBatchCompletionAsync(
+                    jobId,
+                    itemId,
+                    completion.ExecutorId,
+                    claimToken,
+                    result,
+                    CancellationToken.None).ConfigureAwait(false);
+                _revitBatchCompletionOutbox.Acknowledge(completion.JobId);
+                try
+                {
+                    await (_logger?.LogAsync("batch.completion.reconciled", new
+                    {
+                        job_id = jobId,
+                        item_id = itemId,
+                        executor_id = completion.ExecutorId,
+                        completed_at = completion.CompletedAt
+                    }, CancellationToken.None) ?? Task.CompletedTask).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // ignore telemetry failure
+                }
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    await (_logger?.LogAsync("batch.completion.retry_pending", new
+                    {
+                        record_id = completion.JobId,
+                        outcome_unknown = true,
+                        error = FormatException(ex)
+                    }, CancellationToken.None) ?? Task.CompletedTask).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // ignore telemetry failure
+                }
+            }
+            return true;
+        }
+
+        private async Task PostAndValidateRevitBatchCompletionAsync(
+            string jobId,
+            string itemId,
+            string executorId,
+            string claimToken,
+            object? result,
+            CancellationToken cancellationToken)
+        {
+            var completionJson = await _backendClient.CompleteRevitBatchItemJsonAsync(
+                jobId,
+                itemId,
+                executorId,
+                claimToken,
+                result,
+                cancellationToken).ConfigureAwait(false);
+            var response = ParseJsonObjectBestEffort(completionJson);
+            var settledItem = GetJsonObject(response, "item");
+            var settledItemId = GetJsonString(settledItem, "id", 120);
+            var settledStatus = GetJsonString(settledItem, "status", 40);
+            if (GetJsonBool(response, "ok") != true || settledItem.Count == 0 ||
+                (!string.IsNullOrWhiteSpace(settledItemId) && !string.Equals(settledItemId, itemId, StringComparison.Ordinal)) ||
+                !string.Equals(settledStatus, "succeeded", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException("Batch completion response did not confirm the same item as succeeded.");
+            }
+        }
+
+        private static string BuildRevitBatchCompletionOutboxKey(string jobId, string itemId)
+        {
+            using var sha256 = SHA256.Create();
+            var digest = sha256.ComputeHash(Encoding.UTF8.GetBytes((jobId ?? "") + "\n" + (itemId ?? "")));
+            return "batch_" + string.Concat(digest.Select(value => value.ToString("x2")));
         }
 
         private async Task<object> ExecuteDelegatedRevitBatchItemAsync(JsonObject job, JsonObject item, CancellationToken cancellationToken)
