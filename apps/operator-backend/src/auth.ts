@@ -2,11 +2,13 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type http from "node:http";
 import type { RequestPrincipal } from "./request_context.js";
 
-export type OperatorAuthMode = "shared_token" | "clashpilot_jwt";
+export type OperatorAuthMode = "shared_token" | "principal_jwt";
 
 export type RequestAuthResult =
   | { ok: true; mode: OperatorAuthMode; principal?: RequestPrincipal }
   | { ok: false; mode: OperatorAuthMode; status: number; error: string };
+
+const UNAUTHENTICATED_PRINCIPAL_ROUTES = new Set(["GET /health"]);
 
 function getHeader(req: http.IncomingMessage, name: string): string {
   const key = name.toLowerCase();
@@ -18,6 +20,11 @@ function getHeader(req: http.IncomingMessage, name: string): string {
 
 function readStringClaim(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function configuredClaimName(envName: string, fallback: string): string {
+  const configured = (process.env[envName] ?? "").trim();
+  return configured || fallback;
 }
 
 function parseRolesClaim(value: unknown): string[] {
@@ -63,9 +70,9 @@ function parseNumericDate(value: unknown): number | null {
 }
 
 function verifyBearerJwtHs256(token: string): { ok: true; principal: RequestPrincipal } | { ok: false; status: number; error: string } {
-  const secret = (process.env.OPERATOR_CLASHPILOT_JWT_SECRET || "").trim();
+  const secret = (process.env.OPERATOR_JWT_SECRET || "").trim();
   if (!secret) {
-    return { ok: false, status: 500, error: "Server is missing OPERATOR_CLASHPILOT_JWT_SECRET configuration." };
+    return { ok: false, status: 500, error: "Server is missing OPERATOR_JWT_SECRET configuration." };
   }
 
   const parts = token.split(".");
@@ -90,7 +97,7 @@ function verifyBearerJwtHs256(token: string): { ok: true; principal: RequestPrin
   }
 
   const nowSeconds = Math.floor(Date.now() / 1000);
-  const configuredSkew = Number.parseInt(process.env.OPERATOR_CLASHPILOT_JWT_CLOCK_SKEW_SECONDS || "30", 10);
+  const configuredSkew = Number.parseInt(process.env.OPERATOR_JWT_CLOCK_SKEW_SECONDS || "30", 10);
   const skewSeconds = Math.max(0, Math.min(300, Number.isFinite(configuredSkew) ? configuredSkew : 30));
   const expiresAt = parseNumericDate(payload.exp);
   if (expiresAt === null) return { ok: false, status: 401, error: "Unauthorized (bearer token missing exp claim)." };
@@ -104,11 +111,11 @@ function verifyBearerJwtHs256(token: string): { ok: true; principal: RequestPrin
     return { ok: false, status: 401, error: "Unauthorized (bearer token issued in the future)." };
   }
 
-  const configuredIssuer = (process.env.OPERATOR_CLASHPILOT_JWT_ISSUER || "").trim();
+  const configuredIssuer = (process.env.OPERATOR_JWT_ISSUER || "").trim();
   if (configuredIssuer && readStringClaim(payload.iss) !== configuredIssuer) {
     return { ok: false, status: 401, error: "Unauthorized (bearer token issuer mismatch)." };
   }
-  const configuredAudience = (process.env.OPERATOR_CLASHPILOT_JWT_AUDIENCE || "").trim();
+  const configuredAudience = (process.env.OPERATOR_JWT_AUDIENCE || "").trim();
   if (configuredAudience) {
     const audience = payload.aud;
     const matches =
@@ -117,27 +124,59 @@ function verifyBearerJwtHs256(token: string): { ok: true; principal: RequestPrin
     if (!matches) return { ok: false, status: 401, error: "Unauthorized (bearer token audience mismatch)." };
   }
 
-  const sub = readStringClaim(payload.sub);
-  const userId = readStringClaim(payload.user_id) || sub;
-  const licenseId = readStringClaim(payload.license_id);
-  if (!userId) return { ok: false, status: 401, error: "Unauthorized (bearer token missing sub/user_id claim)." };
-  if (!licenseId) return { ok: false, status: 401, error: "Unauthorized (bearer token missing license_id claim)." };
+  const subject = readStringClaim(payload.sub);
+  const userClaim = configuredClaimName("OPERATOR_JWT_USER_ID_CLAIM", "user_id");
+  const tenantClaim = configuredClaimName("OPERATOR_JWT_TENANT_ID_CLAIM", "tenant_id");
+  const rolesClaim = configuredClaimName("OPERATOR_JWT_ROLES_CLAIM", "roles");
+  const userId = readStringClaim(payload[userClaim]) || subject;
+  const tenantId = readStringClaim(payload[tenantClaim]);
+  if (!userId) return { ok: false, status: 401, error: `Unauthorized (bearer token missing sub/${userClaim} claim).` };
+  if (!tenantId) return { ok: false, status: 401, error: `Unauthorized (bearer token missing ${tenantClaim} claim).` };
 
   return {
     ok: true,
     principal: {
-      sub: sub || userId,
+      sub: subject || userId,
       user_id: userId,
-      license_id: licenseId,
-      roles: parseRolesClaim(payload.roles),
-      tier: readStringClaim(payload.tier) || null,
-      claims: payload
+      tenant_id: tenantId,
+      roles: parseRolesClaim(payload[rolesClaim]),
+      claims: payload,
+      // Compatibility fields for public-core consumers while they migrate to tenant_id.
+      license_id: tenantId,
+      tier: null
     }
   };
 }
 
+export function isPrincipalAuthMode(mode: OperatorAuthMode): boolean {
+  return mode === "principal_jwt";
+}
+
+export function isUnauthenticatedPrincipalRoute(method: string | undefined, pathname: string): boolean {
+  return UNAUTHENTICATED_PRINCIPAL_ROUTES.has(`${(method || "GET").toUpperCase()} ${pathname}`);
+}
+
+export function requiresRequestAuthentication(opts: {
+  mode: OperatorAuthMode;
+  method: string | undefined;
+  pathname: string;
+  sharedTokenRouteProtected: boolean;
+}): boolean {
+  if (isPrincipalAuthMode(opts.mode)) {
+    return !isUnauthenticatedPrincipalRoute(opts.method, opts.pathname);
+  }
+  return opts.sharedTokenRouteProtected;
+}
+
 export function resolveAuthMode(): OperatorAuthMode {
-  if ((process.env.OPERATOR_AUTH_MODE || "").trim().toLowerCase() === "clashpilot_jwt") return "clashpilot_jwt";
+  const configured = (process.env.OPERATOR_AUTH_MODE || "").trim().toLowerCase();
+  if (configured === "shared_token") return "shared_token";
+  if (configured === "principal_jwt" || configured === "jwt" || configured === "bearer_jwt") return "principal_jwt";
+  if (configured) throw new Error(`Unsupported OPERATOR_AUTH_MODE: ${configured}`);
+
+  const runtimeMode = (process.env.REVIT_OPERATOR_MODE || "").trim().toLowerCase();
+  const hostedEnabled = /^(1|true|yes|on)$/i.test((process.env.OPERATOR_HOSTED_ENABLED || "").trim());
+  if (runtimeMode === "hosted" || hostedEnabled) return "principal_jwt";
   return "shared_token";
 }
 

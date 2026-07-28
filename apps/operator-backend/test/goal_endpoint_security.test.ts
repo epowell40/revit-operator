@@ -6,17 +6,22 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { authenticateRequest, resolveAuthMode } from "../src/auth.js";
+import {
+  authenticateRequest,
+  isUnauthenticatedPrincipalRoute,
+  requiresRequestAuthentication,
+  resolveAuthMode
+} from "../src/auth.js";
+import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
 
-function signJwt(userId: string, secret: string): string {
+function signJwt(userId: string, secret: string, tenantId = "tenant-shared"): string {
   const now = Math.floor(Date.now() / 1000);
   const headerPart = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" }), "utf8").toString("base64url");
   const payloadPart = Buffer.from(JSON.stringify({
     sub: userId,
     user_id: userId,
-    license_id: "license-shared",
+    tenant_id: tenantId,
     roles: ["user"],
-    tier: "pro",
     iat: now - 5,
     exp: now + 300
   }), "utf8").toString("base64url");
@@ -52,29 +57,29 @@ async function waitForServer(base: string, headers: Record<string, string>): Pro
   throw new Error("Backend did not become ready.");
 }
 
-test("JWT mode resolves a verified principal while shared-token no-principal behavior remains intact", () => {
+test("generic JWT mode resolves a tenant principal while shared-token no-principal behavior remains intact", () => {
   const previousMode = process.env.OPERATOR_AUTH_MODE;
-  const previousSecret = process.env.OPERATOR_CLASHPILOT_JWT_SECRET;
-  const previousIssuer = process.env.OPERATOR_CLASHPILOT_JWT_ISSUER;
-  const previousAudience = process.env.OPERATOR_CLASHPILOT_JWT_AUDIENCE;
+  const previousSecret = process.env.OPERATOR_JWT_SECRET;
+  const previousIssuer = process.env.OPERATOR_JWT_ISSUER;
+  const previousAudience = process.env.OPERATOR_JWT_AUDIENCE;
   try {
-    process.env.OPERATOR_AUTH_MODE = "clashpilot_jwt";
-    process.env.OPERATOR_CLASHPILOT_JWT_SECRET = "goal-auth-unit-secret";
-    delete process.env.OPERATOR_CLASHPILOT_JWT_ISSUER;
-    delete process.env.OPERATOR_CLASHPILOT_JWT_AUDIENCE;
-    assert.equal(resolveAuthMode(), "clashpilot_jwt");
-    const token = signJwt("alice", process.env.OPERATOR_CLASHPILOT_JWT_SECRET);
+    process.env.OPERATOR_AUTH_MODE = "principal_jwt";
+    process.env.OPERATOR_JWT_SECRET = "goal-auth-unit-secret";
+    delete process.env.OPERATOR_JWT_ISSUER;
+    delete process.env.OPERATOR_JWT_AUDIENCE;
+    assert.equal(resolveAuthMode(), "principal_jwt");
+    const token = signJwt("alice", process.env.OPERATOR_JWT_SECRET);
     const authenticated = authenticateRequest(
       { headers: { authorization: `Bearer ${token}` } } as any,
-      { mode: "clashpilot_jwt", requireAuth: true, sharedToken: "" }
+      { mode: "principal_jwt", requireAuth: true, sharedToken: "" }
     );
     assert.equal(authenticated.ok, true);
     if (authenticated.ok) {
       assert.equal(authenticated.principal?.user_id, "alice");
-      assert.equal(authenticated.principal?.license_id, "license-shared");
+      assert.equal(authenticated.principal?.tenant_id, "tenant-shared");
     }
 
-    const missing = authenticateRequest({ headers: {} } as any, { mode: "clashpilot_jwt", requireAuth: true, sharedToken: "" });
+    const missing = authenticateRequest({ headers: {} } as any, { mode: "principal_jwt", requireAuth: true, sharedToken: "" });
     assert.equal(missing.ok, false);
     if (!missing.ok) assert.equal(missing.status, 401);
 
@@ -84,16 +89,78 @@ test("JWT mode resolves a verified principal while shared-token no-principal beh
   } finally {
     if (previousMode === undefined) delete process.env.OPERATOR_AUTH_MODE;
     else process.env.OPERATOR_AUTH_MODE = previousMode;
-    if (previousSecret === undefined) delete process.env.OPERATOR_CLASHPILOT_JWT_SECRET;
-    else process.env.OPERATOR_CLASHPILOT_JWT_SECRET = previousSecret;
-    if (previousIssuer === undefined) delete process.env.OPERATOR_CLASHPILOT_JWT_ISSUER;
-    else process.env.OPERATOR_CLASHPILOT_JWT_ISSUER = previousIssuer;
-    if (previousAudience === undefined) delete process.env.OPERATOR_CLASHPILOT_JWT_AUDIENCE;
-    else process.env.OPERATOR_CLASHPILOT_JWT_AUDIENCE = previousAudience;
+    if (previousSecret === undefined) delete process.env.OPERATOR_JWT_SECRET;
+    else process.env.OPERATOR_JWT_SECRET = previousSecret;
+    if (previousIssuer === undefined) delete process.env.OPERATOR_JWT_ISSUER;
+    else process.env.OPERATOR_JWT_ISSUER = previousIssuer;
+    if (previousAudience === undefined) delete process.env.OPERATOR_JWT_AUDIENCE;
+    else process.env.OPERATOR_JWT_AUDIENCE = previousAudience;
   }
 });
 
-test("goal endpoints authenticate JWT callers and isolate principals, workspaces, and sessions", async t => {
+test("principal route inventory is default-deny with one explicit unauthenticated liveness route", () => {
+  assert.equal(isUnauthenticatedPrincipalRoute("GET", "/health"), true);
+  assert.equal(isUnauthenticatedPrincipalRoute("POST", "/health"), false);
+
+  for (const [method, pathname] of [
+    ["GET", "/"],
+    ["GET", "/environment/profile"],
+    ["GET", "/memory/project-profile"],
+    ["GET", "/ui/tool-host-demo"],
+    ["GET", "/artifacts/download-shared/example"],
+    ["GET", "/new-state-route-not-yet-in-an-inventory"],
+    ["POST", "/session/new"]
+  ]) {
+    assert.equal(requiresRequestAuthentication({
+      mode: "principal_jwt",
+      method,
+      pathname,
+      sharedTokenRouteProtected: false
+    }), true, `${method} ${pathname} must require a principal`);
+  }
+
+  assert.equal(requiresRequestAuthentication({
+    mode: "principal_jwt",
+    method: "GET",
+    pathname: "/health",
+    sharedTokenRouteProtected: true
+  }), false);
+  assert.equal(requiresRequestAuthentication({
+    mode: "shared_token",
+    method: "GET",
+    pathname: "/environment/profile",
+    sharedTokenRouteProtected: false
+  }), false);
+});
+
+test("hosted runtime defaults to principal auth while local and self-hosted runtimes keep shared-token behavior", () => {
+  const previousAuthMode = process.env.OPERATOR_AUTH_MODE;
+  const previousRuntimeMode = process.env.REVIT_OPERATOR_MODE;
+  const previousHostedEnabled = process.env.OPERATOR_HOSTED_ENABLED;
+  try {
+    delete process.env.OPERATOR_AUTH_MODE;
+    delete process.env.OPERATOR_HOSTED_ENABLED;
+    process.env.REVIT_OPERATOR_MODE = "hosted";
+    assert.equal(resolveAuthMode(), "principal_jwt");
+
+    process.env.REVIT_OPERATOR_MODE = "local";
+    assert.equal(resolveAuthMode(), "shared_token");
+    process.env.REVIT_OPERATOR_MODE = "self_hosted";
+    assert.equal(resolveAuthMode(), "shared_token");
+
+    process.env.OPERATOR_AUTH_MODE = "unexpected_mode";
+    assert.throws(() => resolveAuthMode(), /Unsupported OPERATOR_AUTH_MODE/);
+  } finally {
+    if (previousAuthMode === undefined) delete process.env.OPERATOR_AUTH_MODE;
+    else process.env.OPERATOR_AUTH_MODE = previousAuthMode;
+    if (previousRuntimeMode === undefined) delete process.env.REVIT_OPERATOR_MODE;
+    else process.env.REVIT_OPERATOR_MODE = previousRuntimeMode;
+    if (previousHostedEnabled === undefined) delete process.env.OPERATOR_HOSTED_ENABLED;
+    else process.env.OPERATOR_HOSTED_ENABLED = previousHostedEnabled;
+  }
+});
+
+test("goal endpoints authenticate generic JWT callers and isolate principals, workspaces, and sessions", async t => {
   const port = await availablePort();
   const secret = "goal-endpoint-security-secret";
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-goal-security-"));
@@ -101,10 +168,10 @@ test("goal endpoints authenticate JWT callers and isolate principals, workspaces
     env: {
       ...process.env,
       OPERATOR_BACKEND_PORT: String(port),
-      OPERATOR_AUTH_MODE: "clashpilot_jwt",
-      OPERATOR_CLASHPILOT_JWT_SECRET: secret,
-      OPERATOR_CLASHPILOT_JWT_ISSUER: "",
-      OPERATOR_CLASHPILOT_JWT_AUDIENCE: "",
+      OPERATOR_AUTH_MODE: "principal_jwt",
+      OPERATOR_JWT_SECRET: secret,
+      OPERATOR_JWT_ISSUER: "",
+      OPERATOR_JWT_AUDIENCE: "",
       OPERATOR_WORKSPACE_ROOT: workspace,
       OPERATOR_BRAIN: "rule"
     },
@@ -117,6 +184,26 @@ test("goal endpoints authenticate JWT callers and isolate principals, workspaces
   const bobAuth = `Bearer ${signJwt("bob", secret)}`;
   const headers = (authorization: string) => ({ authorization, "content-type": "application/json" });
   await waitForServer(base, { authorization: aliceAuth });
+
+  const publicHealth = await fetch(`${base}/health`);
+  assert.equal(publicHealth.status, 200);
+  assert.deepEqual(await publicHealth.json(), {
+    status: "ok",
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    auth_mode: "principal_jwt",
+    authentication_required: true
+  });
+
+  for (const [method, pathname] of [
+    ["GET", "/environment/profile"],
+    ["GET", "/memory/project-profile"],
+    ["GET", "/ui/tool-host-demo"],
+    ["GET", "/artifacts/download-shared/example"],
+    ["GET", "/unregistered-state-route"]
+  ]) {
+    const denied = await fetch(`${base}${pathname}`, { method });
+    assert.equal(denied.status, 401, `${method} ${pathname} must fail closed`);
+  }
 
   const unauthenticated = await fetch(`${base}/api/agent-goal?session_id=unknown`);
   assert.equal(unauthenticated.status, 401);
@@ -188,6 +275,52 @@ test("goal endpoints authenticate JWT callers and isolate principals, workspaces
     body: JSON.stringify({ related_session_id: bobSession })
   });
   assert.equal(bindToBobSession.status, 403);
+});
+
+test("principal-bound session ids cannot be shadowed or claimed by another tenant after restart", async t => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-session-restart-"));
+  const secret = "session-restart-isolation-secret";
+  const start = async (port: number): Promise<ChildProcess> => {
+    const child = spawn(process.execPath, [path.join(process.cwd(), "dist", "src", "index.js")], {
+      env: {
+        ...process.env,
+        OPERATOR_BACKEND_PORT: String(port),
+        OPERATOR_AUTH_MODE: "principal_jwt",
+        OPERATOR_JWT_SECRET: secret,
+        OPERATOR_WORKSPACE_ROOT: workspace,
+        OPERATOR_BRAIN: "rule"
+      },
+      stdio: "ignore"
+    });
+    await waitForServer(`http://127.0.0.1:${port}`, {});
+    return child;
+  };
+
+  const firstPort = await availablePort();
+  const first = await start(firstPort);
+  const aliceAuth = { authorization: `Bearer ${signJwt("alice", secret, "tenant-a")}` };
+  const createdResponse = await fetch(`http://127.0.0.1:${firstPort}/session/new`, { method: "POST", headers: aliceAuth });
+  assert.equal(createdResponse.status, 200);
+  const sessionId = (await createdResponse.json() as { session_id: string }).session_id;
+  assert.match(sessionId, /^ps1_[A-Za-z0-9_-]{20}_[0-9a-f-]{36}$/i);
+  await stop(first);
+
+  const secondPort = await availablePort();
+  const second = await start(secondPort);
+  t.after(async () => stop(second));
+  const base = `http://127.0.0.1:${secondPort}`;
+  const bobAuth = { authorization: `Bearer ${signJwt("bob", secret, "tenant-b")}` };
+
+  const bobShadowAttempt = await fetch(`${base}/api/agent-goal?session_id=${encodeURIComponent(sessionId)}`, { headers: bobAuth });
+  assert.equal(bobShadowAttempt.status, 403);
+  assert.match(await bobShadowAttempt.text(), /not bound to this principal/i);
+
+  const unboundLegacyId = "00000000-0000-4000-8000-000000000001";
+  const aliceLegacyClaim = await fetch(`${base}/api/agent-goal?session_id=${unboundLegacyId}`, { headers: aliceAuth });
+  assert.equal(aliceLegacyClaim.status, 403);
+
+  const aliceResume = await fetch(`${base}/api/agent-goal?session_id=${encodeURIComponent(sessionId)}`, { headers: aliceAuth });
+  assert.equal(aliceResume.status, 200);
 });
 
 test("shared-token local mode retains goal endpoint behavior without a multi-user principal", async t => {

@@ -57,8 +57,19 @@ import { handleRequirementsHttpRoute } from "./memory/requirements_http_routes.j
 import { requiresMemoryAuthentication } from "./memory/requirements_route_policy.js";
 import { createOpenAiClient, resolveOpenAiApiKey } from "./openai_client.js";
 import { getDesktopComputerConfig, relayDesktopComputerResponse } from "./desktop_computer.js";
-import { authenticateRequest, resolveAuthMode } from "./auth.js";
-import { runWithRequestContext, type RequestPrincipal } from "./request_context.js";
+import {
+  authenticateRequest,
+  isPrincipalAuthMode,
+  isUnauthenticatedPrincipalRoute,
+  requiresRequestAuthentication,
+  resolveAuthMode
+} from "./auth.js";
+import {
+  createPrincipalBoundSessionId,
+  isSessionIdBoundToPrincipal,
+  runWithRequestContext,
+  type RequestPrincipal
+} from "./request_context.js";
 import { createArtifactShare, listArtifacts, resolveArtifactShare } from "./artifacts/artifact_bus.js";
 import { compactIncomingToolResult, describeVisibleElementsInventory, getChatRequestLimitBytes } from "./tool_result_compaction.js";
 import {
@@ -668,13 +679,17 @@ function requiresOperatorToken(pathname: string): boolean {
 }
 
 function sessionOwnerForPrincipal(principal: RequestPrincipal | undefined): { owner_user_id: string; owner_license_id: string } | null {
-  if (authMode !== "clashpilot_jwt" || !principal) return null;
-  return { owner_user_id: principal.user_id, owner_license_id: principal.license_id };
+  if (!isPrincipalAuthMode(authMode) || !principal) return null;
+  return { owner_user_id: principal.user_id, owner_license_id: principal.tenant_id || principal.license_id };
 }
 
 function sessionAccessAllowed(res: http.ServerResponse, sessionId: string, principal: RequestPrincipal | undefined): boolean {
   const owner = sessionOwnerForPrincipal(principal);
   if (!owner) return true;
+  if (!principal || !isSessionIdBoundToPrincipal(sessionId, principal)) {
+    writeJson(res, 403, { error: "Forbidden (session is not bound to this principal)." });
+    return false;
+  }
   const allowed = assertSessionOwnership(sessionId, owner);
   if (allowed.ok) return true;
   writeJson(res, 403, { error: "Forbidden (session belongs to another user)." });
@@ -889,6 +904,29 @@ const server = http.createServer(async (req, res) => {
 
     applyCors(req, res, url.pathname);
 
+    const auth = authenticateRequest(req, {
+      mode: authMode,
+      requireAuth: requiresRequestAuthentication({
+        mode: authMode,
+        method: req.method,
+        pathname: url.pathname,
+        sharedTokenRouteProtected: requiresOperatorToken(url.pathname)
+      }),
+      sharedToken: operatorToken
+    });
+    if (!auth.ok) return writeJson(res, auth.status, { error: auth.error });
+
+    // Principal mode exposes only a deliberately minimal liveness receipt
+    // without authentication. Do not initialize or reveal a base workspace.
+    if (isPrincipalAuthMode(authMode) && !auth.principal && isUnauthenticatedPrincipalRoute(req.method, url.pathname)) {
+      return writeJson(res, 200, {
+        status: "ok",
+        version: OPERATOR_BACKEND_CONTRACT_VERSION,
+        auth_mode: authMode,
+        authentication_required: true
+      });
+    }
+
     if (req.method === "GET" && url.pathname === "/ui/tool-host-demo") {
       const html = toolHostDemoHtml();
       res.statusCode = 200;
@@ -908,21 +946,14 @@ const server = http.createServer(async (req, res) => {
       return res.end(html);
     }
 
-    const auth = authenticateRequest(req, {
-      mode: authMode,
-      requireAuth: requiresOperatorToken(url.pathname),
-      sharedToken: operatorToken
-    });
-    if (!auth.ok) return writeJson(res, auth.status, { error: auth.error });
-
     const requestContext = auth.principal ? { principal: auth.principal } : {};
     return await runWithRequestContext(requestContext, async () => {
-    // In JWT multi-user mode this initializes the request-scoped workspace root.
+    // Principal mode initializes only the authenticated request's scoped workspace root.
     ensureWorkspaceLayout();
     ensureDefaultMacroSkills();
 
     if (req.method === "POST" && url.pathname === "/session/new") {
-      const session_id = randomUUID();
+      const session_id = auth.principal ? createPrincipalBoundSessionId(auth.principal) : randomUUID();
       const sessionOwner = sessionOwnerForPrincipal(auth.principal) ?? undefined;
       ensureSession(session_id, sessionOwner);
       try {
@@ -1611,7 +1642,7 @@ const server = http.createServer(async (req, res) => {
       };
 
       try {
-        const safetyId = auth.principal?.user_id || auth.principal?.license_id || "revit-operator-local";
+        const safetyId = auth.principal?.user_id || auth.principal?.tenant_id || "revit-operator-local";
         const requestClientSecret = async (sessionConfig: unknown) => fetch("https://api.openai.com/v1/realtime/client_secrets", {
           method: "POST",
           headers: {
@@ -2748,7 +2779,7 @@ const server = http.createServer(async (req, res) => {
             principal: auth.principal
               ? {
                   user_id: auth.principal.user_id,
-                  license_id: auth.principal.license_id ?? null
+                  tenant_id: auth.principal.tenant_id || auth.principal.license_id || null
                 }
               : null
           });
@@ -3596,9 +3627,8 @@ const server = http.createServer(async (req, res) => {
         principal: auth.principal
           ? {
               user_id: auth.principal.user_id,
-              license_id: auth.principal.license_id,
-              roles: auth.principal.roles,
-              tier: auth.principal.tier
+              tenant_id: auth.principal.tenant_id || auth.principal.license_id,
+              roles: auth.principal.roles
             }
           : null,
         workspace_root: ws.root,
