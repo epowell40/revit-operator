@@ -17,6 +17,13 @@ namespace RevitBridge.Operator
         High = 2
     }
 
+    internal enum OperatorActionEffect
+    {
+        Read = 0,
+        Preview = 1,
+        Apply = 2
+    }
+
     internal static class OperatorApprovalPolicy
     {
         public static OperatorActionRisk GetRisk(string method, string path)
@@ -263,6 +270,50 @@ namespace RevitBridge.Operator
             return GetRisk(m, p);
         }
 
+        public static OperatorActionEffect GetEffect(string method, string path, string? body)
+        {
+            var m = (method ?? "").Trim().ToUpperInvariant();
+            var p = (path ?? "").Trim();
+
+            if (m == "GET") return OperatorActionEffect.Read;
+
+            if (m == "POST" && HasMutatingBody(p, body))
+            {
+                if (string.Equals(p, "/revit/list-element-types", StringComparison.OrdinalIgnoreCase) &&
+                    BodyHasTrueProperty(body, "dryRun"))
+                {
+                    return OperatorActionEffect.Preview;
+                }
+
+                return OperatorActionEffect.Apply;
+            }
+
+            if (m == "POST" &&
+                string.Equals(p, "/revit/delete", StringComparison.OrdinalIgnoreCase) &&
+                HasExactDeletePreviewContract(body))
+            {
+                return OperatorActionEffect.Preview;
+            }
+
+            var risk = GetRisk(m, p, body);
+            if (risk == OperatorActionRisk.Low) return OperatorActionEffect.Read;
+            if (m == "POST" && BodyRequestsPreview(body)) return OperatorActionEffect.Preview;
+            return OperatorActionEffect.Apply;
+        }
+
+        public static string GetEffectWireValue(string method, string path, string? body)
+        {
+            switch (GetEffect(method, path, body))
+            {
+                case OperatorActionEffect.Read:
+                    return "read";
+                case OperatorActionEffect.Preview:
+                    return "preview";
+                default:
+                    return "apply";
+            }
+        }
+
         private static bool HasMutatingBody(string path, string? body)
         {
             if (string.IsNullOrWhiteSpace(body)) return false;
@@ -307,6 +358,39 @@ namespace RevitBridge.Operator
         private static bool HasTrueValue(JsonElement root, string propertyName)
         {
             return root.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.True;
+        }
+
+        private static bool BodyHasTrueProperty(string? body, string propertyName)
+        {
+            if (string.IsNullOrWhiteSpace(body)) return false;
+            try
+            {
+                using var document = JsonDocument.Parse(body!);
+                return document.RootElement.ValueKind == JsonValueKind.Object &&
+                       HasTrueValue(document.RootElement, propertyName);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool BodyRequestsPreview(string? body)
+        {
+            if (string.IsNullOrWhiteSpace(body)) return false;
+            try
+            {
+                using var document = JsonDocument.Parse(body!);
+                if (document.RootElement.ValueKind != JsonValueKind.Object) return false;
+                var root = document.RootElement;
+                return HasTrueValue(root, "dryRun") ||
+                       HasTrueValue(root, "dry_run") ||
+                       (root.TryGetProperty("apply", out var apply) && apply.ValueKind == JsonValueKind.False);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static bool HasExactDeletePreviewContract(string? body)

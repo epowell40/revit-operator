@@ -617,15 +617,17 @@ namespace RevitBridge.Operator
             return json ?? "";
         }
 
-        public async Task<string> CompleteRevitBatchItemJsonAsync(string jobId, string itemId, string executorId, object? result, CancellationToken cancellationToken)
+        public async Task<string> CompleteRevitBatchItemJsonAsync(string jobId, string itemId, string executorId, string claimToken, object? result, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(jobId)) throw new ArgumentException("jobId is required.");
             if (string.IsNullOrWhiteSpace(itemId)) throw new ArgumentException("itemId is required.");
             if (string.IsNullOrWhiteSpace(executorId)) throw new ArgumentException("executorId is required.");
+            if (string.IsNullOrWhiteSpace(claimToken)) throw new ArgumentException("claimToken is required.");
 
             var body = JsonSerializer.Serialize(new
             {
                 executor_id = executorId,
+                claim_token = claimToken,
                 result = result
             }, OperatorUiProtocol.JsonOptions);
             using var resp = await SendWithAuthAsync(
@@ -639,15 +641,17 @@ namespace RevitBridge.Operator
             return json ?? "";
         }
 
-        public async Task<string> FailRevitBatchItemJsonAsync(string jobId, string itemId, string executorId, string error, object? result, CancellationToken cancellationToken)
+        public async Task<string> FailRevitBatchItemJsonAsync(string jobId, string itemId, string executorId, string claimToken, string error, object? result, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(jobId)) throw new ArgumentException("jobId is required.");
             if (string.IsNullOrWhiteSpace(itemId)) throw new ArgumentException("itemId is required.");
             if (string.IsNullOrWhiteSpace(executorId)) throw new ArgumentException("executorId is required.");
+            if (string.IsNullOrWhiteSpace(claimToken)) throw new ArgumentException("claimToken is required.");
 
             var body = JsonSerializer.Serialize(new
             {
                 executor_id = executorId,
+                claim_token = claimToken,
                 error = string.IsNullOrWhiteSpace(error) ? "Batch item failed." : error,
                 result = result
             }, OperatorUiProtocol.JsonOptions);

@@ -66,6 +66,8 @@ namespace RevitBridge.Common.Tests
         public void ConditionalRoutesRemainLowForReadOnlyBodies(string path, string body)
         {
             AssertLow("POST", path, body);
+            Assert.Equal(OperatorActionEffect.Read, OperatorApprovalPolicy.GetEffect("POST", path, body));
+            Assert.Equal("read", OperatorApprovalPolicy.GetEffectWireValue("POST", path, body));
         }
 
         [Theory]
@@ -77,6 +79,19 @@ namespace RevitBridge.Common.Tests
         public void ConditionalRoutesAreHighForMutationIntentBodies(string path, string body)
         {
             AssertHigh("POST", path, body);
+            var expectedEffect = path == "/revit/list-element-types" && body.Contains("\"dryRun\":true")
+                ? OperatorActionEffect.Preview
+                : OperatorActionEffect.Apply;
+            Assert.Equal(expectedEffect, OperatorApprovalPolicy.GetEffect("POST", path, body));
+        }
+
+        [Theory]
+        [InlineData("/revit/delete", "{\"ids\":[101],\"apply\":false}")]
+        [InlineData("/revit/set-parameters", "{\"elementIds\":[101],\"dryRun\":true}")]
+        public void PreviewBodiesRetainPreviewEffect(string path, string body)
+        {
+            Assert.Equal(OperatorActionEffect.Preview, OperatorApprovalPolicy.GetEffect("POST", path, body));
+            Assert.Equal("preview", OperatorApprovalPolicy.GetEffectWireValue("POST", path, body));
         }
 
         private static void AssertLow(string method, string path, string body)

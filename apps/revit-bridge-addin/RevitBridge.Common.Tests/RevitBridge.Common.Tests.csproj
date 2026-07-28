@@ -23,6 +23,7 @@
 
   <ItemGroup>
     <Compile Include="..\RevitBridge\Operator\OperatorApprovalPolicy.cs" Link="Operator\OperatorApprovalPolicy.cs" />
+    <Compile Include="..\RevitBridge\Operator\OperatorBackendContracts.cs" Link="Operator\OperatorBackendContracts.cs" />
   </ItemGroup>
 
 </Project>

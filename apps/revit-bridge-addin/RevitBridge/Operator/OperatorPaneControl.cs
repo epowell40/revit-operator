@@ -740,7 +740,7 @@ namespace RevitBridge.Operator
                     action.Body = body;
 
                     var title = $"{(action.Method ?? "").Trim().ToUpperInvariant()} {action.Path}";
-                    var risk = OperatorApprovalPolicy.GetRisk(action.Method, action.Path);
+                    var risk = GetActionRisk(action);
                     Ui(() => AddAction(actionId!, title, action.Path, action.Body, approvalRequired: true, risk: risk));
                     Ui(() => UpdateActionStatus(actionId!, "needs_approval", null));
                 }
@@ -3197,8 +3197,8 @@ namespace RevitBridge.Operator
 
             // Deterministic Plan→Apply→Verify: if this step contains any write (high risk) or any pending approvals,
             // defer capture/verify actions until after writes/approvals complete and the document is regenerated.
-            var stepHasWriteActions = actions.Any(a => OperatorApprovalPolicy.GetRisk(a.Method, a.Path) == OperatorActionRisk.High);
-            var stepHasApprovals = actions.Any(a => OperatorApprovalPolicy.RequiresApproval(_approvalMode, OperatorApprovalPolicy.GetRisk(a.Method, a.Path)));
+            var stepHasWriteActions = actions.Any(a => GetActionRisk(a) == OperatorActionRisk.High);
+            var stepHasApprovals = actions.Any(a => OperatorApprovalPolicy.RequiresApproval(_approvalMode, GetActionRisk(a)));
 
             foreach (var action in actions)
             {
@@ -3206,7 +3206,7 @@ namespace RevitBridge.Operator
                 var title = $"{(action.Method ?? "").Trim().ToUpperInvariant()} {action.Path}";
                 action.ActionId = actionId;
 
-                var risk = OperatorApprovalPolicy.GetRisk(action.Method, action.Path);
+                var risk = GetActionRisk(action);
                 var needsApproval = OperatorApprovalPolicy.RequiresApproval(_approvalMode, risk);
                 Ui(() => AddAction(actionId, title, action.Path, action.Body, needsApproval, risk));
 
@@ -3305,7 +3305,7 @@ namespace RevitBridge.Operator
                                 // Always defer these until after regenerate (even if there are no approvals).
                                 try
                                 {
-                                    var rid = OperatorApprovalPolicy.GetRisk(verify.Method, verify.Path);
+                                    var rid = GetActionRisk(verify);
                                     Ui(() => AddAction(verify.ActionId, "POST /revit/capture-sheet-region (verify titleblock)", verify.Path, verify.Body, false, rid));
                                     Ui(() => UpdateActionStatus(verify.ActionId, "deferred", "Will run after apply + regenerate."));
                                 }
@@ -3622,7 +3622,14 @@ namespace RevitBridge.Operator
                     var job = GetJsonObject(claim, "job");
                     var item = GetJsonObject(claim, "item");
                     if (job.Count == 0 || item.Count == 0) break;
-                    await ProcessClaimedRevitBatchItemAsync(job, item, CancellationToken.None).ConfigureAwait(false);
+                    var claimToken = GetJsonString(claim, "claim_token", 160);
+                    if (string.IsNullOrWhiteSpace(claimToken))
+                        throw new InvalidOperationException("Batch claim response is missing claim_token; refusing to execute the claimed item.");
+                    var itemClaim = GetJsonObject(item, "claim");
+                    var fencingToken = GetJsonString(itemClaim, "fencing_token", 160);
+                    if (!string.IsNullOrWhiteSpace(fencingToken) && !string.Equals(fencingToken, claimToken, StringComparison.Ordinal))
+                        throw new InvalidOperationException("Batch claim response token does not match item.claim.fencing_token; refusing to execute the claimed item.");
+                    await ProcessClaimedRevitBatchItemAsync(job, item, claimToken, CancellationToken.None).ConfigureAwait(false);
                 }
             }
             catch (Exception ex)
@@ -3643,11 +3650,13 @@ namespace RevitBridge.Operator
             }
         }
 
-        private async Task ProcessClaimedRevitBatchItemAsync(JsonObject job, JsonObject item, CancellationToken cancellationToken)
+        private async Task ProcessClaimedRevitBatchItemAsync(JsonObject job, JsonObject item, string claimToken, CancellationToken cancellationToken)
         {
             var jobId = GetJsonString(job, "id", 120);
             var itemId = GetJsonString(item, "id", 120);
             if (string.IsNullOrWhiteSpace(jobId) || string.IsNullOrWhiteSpace(itemId)) return;
+            if (string.IsNullOrWhiteSpace(claimToken))
+                throw new InvalidOperationException("Batch claim_token is required before item execution.");
 
             try
             {
@@ -3662,7 +3671,7 @@ namespace RevitBridge.Operator
                     throw new InvalidOperationException($"Unsupported Revit batch job type for this executor: {jobType}");
                 }
 
-                await _backendClient.CompleteRevitBatchItemJsonAsync(jobId, itemId, _revitBatchExecutorId, result, cancellationToken).ConfigureAwait(false);
+                await _backendClient.CompleteRevitBatchItemJsonAsync(jobId, itemId, _revitBatchExecutorId, claimToken, result, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -3670,6 +3679,7 @@ namespace RevitBridge.Operator
                     jobId,
                     itemId,
                     _revitBatchExecutorId,
+                    claimToken,
                     FormatException(ex),
                     new { error = FormatException(ex) },
                     cancellationToken).ConfigureAwait(false);
@@ -4554,13 +4564,13 @@ namespace RevitBridge.Operator
             if (path.StartsWith("/ui/", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Hosted UI actions cannot recursively execute /ui/* actions.");
 
-            var risk = OperatorApprovalPolicy.GetRisk(method, path);
-            if (OperatorApprovalPolicy.RequiresApproval(_approvalMode, risk))
-                throw new InvalidOperationException("This action requires approval. Switch Writes to Allow this session or YOLO in the Operator pane.");
-
             object? body = null;
             if (payload.TryGetProperty("body", out var bodyEl))
                 body = bodyEl.Clone();
+
+            var risk = GetActionRisk(method, path, body);
+            if (OperatorApprovalPolicy.RequiresApproval(_approvalMode, risk))
+                throw new InvalidOperationException("This action requires approval. Switch Writes to Allow this session or YOLO in the Operator pane.");
 
             var action = new OperatorActionCall
             {
@@ -5028,12 +5038,14 @@ namespace RevitBridge.Operator
         {
             var finishedAtUtc = DateTime.UtcNow;
             var durationMs = (finishedAtUtc - startedAtUtc).TotalMilliseconds;
+            var bodyJson = GetActionBodyJson(action.Body);
 
             var tr = new OperatorToolResult
             {
                 ActionId = action.ActionId ?? "",
                 Method = (action.Method ?? "").Trim().ToUpperInvariant(),
                 Path = (action.Path ?? "").Trim(),
+                RequestEffect = OperatorApprovalPolicy.GetEffectWireValue(action.Method, action.Path, bodyJson),
                 Status = error == null ? "done" : "failed",
                 ResultJson = error is OperatorRecoveredDialogException recovered ? recovered.Receipt : (error == null ? result : null),
                 Error = error == null ? null : FormatException(error),
@@ -5085,6 +5097,36 @@ namespace RevitBridge.Operator
             }
 
             return tr;
+        }
+
+        private static OperatorActionRisk GetActionRisk(OperatorActionCall action)
+        {
+            if (action == null) return OperatorActionRisk.High;
+            return GetActionRisk(action.Method, action.Path, action.Body);
+        }
+
+        private static OperatorActionRisk GetActionRisk(string method, string path, object? body)
+        {
+            return OperatorApprovalPolicy.GetRisk(method, path, GetActionBodyJson(body));
+        }
+
+        private static string? GetActionBodyJson(object? body)
+        {
+            if (body == null) return null;
+            try
+            {
+                if (body is JsonElement element)
+                {
+                    return element.ValueKind == JsonValueKind.Undefined ? null : element.GetRawText();
+                }
+
+                return JsonSerializer.Serialize(body, OperatorUiProtocol.JsonOptions);
+            }
+            catch
+            {
+                // Malformed/unserializable action bodies must never downgrade a path's base risk.
+                return null;
+            }
         }
 
         private async Task<object?> TryAugmentExportPdfResultForBackendAsync(object? result)
@@ -5839,7 +5881,7 @@ namespace RevitBridge.Operator
                     await TryAutoCaptureAfterAsync(turn, action, actionId, list).ConfigureAwait(false);
 
                     // Track writes so deferred verification can force regenerate.
-                    var risk = OperatorApprovalPolicy.GetRisk(action.Method, action.Path);
+                    var risk = GetActionRisk(action);
                     if (risk == OperatorActionRisk.High) turn.WriteAppliedInStep = true;
 
                     // If we just applied titleblock parameter updates, enqueue a sheet-aware verify capture.
@@ -5858,7 +5900,7 @@ namespace RevitBridge.Operator
                                 };
                                 try
                                 {
-                                    var rid = OperatorApprovalPolicy.GetRisk(verify.Method, verify.Path);
+                                    var rid = GetActionRisk(verify);
                                     Ui(() => AddAction(verify.ActionId, "POST /revit/capture-sheet-region (verify titleblock)", verify.Path, verify.Body, false, rid));
                                     Ui(() => UpdateActionStatus(verify.ActionId, "deferred", "Will run after apply + regenerate."));
                                 }
@@ -5953,7 +5995,7 @@ namespace RevitBridge.Operator
             foreach (var k in keys)
             {
                 if (!_pendingApprovals.TryGetValue(k, out var action)) continue;
-                var risk = OperatorApprovalPolicy.GetRisk(action.Method, action.Path);
+                var risk = GetActionRisk(action);
                 if (OperatorApprovalPolicy.RequiresApproval(_approvalMode, risk)) continue;
                 await ApproveAndRunAsync(k).ConfigureAwait(false);
             }
