@@ -37,6 +37,9 @@ export type RevitBatchJobItem = {
     executor_kind: string;
     claimed_at: string;
     lease_expires_at: string;
+    fencing_token?: string;
+    attempt?: number;
+    schema_version?: 2;
   } | null;
   error?: string;
   [key: string]: unknown;
@@ -90,6 +93,7 @@ export type CompleteRevitBatchItemInput = {
   job_id: string;
   item_id: string;
   executor_id: string;
+  claim_token?: string;
   result?: unknown;
 };
 
@@ -97,6 +101,7 @@ export type FailRevitBatchItemInput = {
   job_id: string;
   item_id: string;
   executor_id: string;
+  claim_token?: string;
   error: string;
   result?: unknown;
 };
@@ -107,7 +112,10 @@ const TERMINAL_JOB_STATUSES = new Set<RevitBatchJobStatus>([
   "succeeded",
   "succeeded_with_failures"
 ]);
-const CLAIMABLE_JOB_STATUSES = new Set<RevitBatchJobStatus>(["queued", "running", "pausing", "cancelling"]);
+const CLAIMABLE_JOB_STATUSES = new Set<RevitBatchJobStatus>(["queued", "running"]);
+const JOB_LOCK_WAIT_MS = 5_000;
+const JOB_LOCK_STALE_MS = 60_000;
+const LOCK_WAIT_ARRAY = new Int32Array(new SharedArrayBuffer(4));
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -165,6 +173,81 @@ function jobManifestPath(jobId: string): string {
   return path.join(jobDir(jobId), "manifest.csv");
 }
 
+function jobLockPath(jobId: string): string {
+  return path.join(jobDir(jobId), ".job.lock");
+}
+
+function processIsAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function archiveStaleJobLock(lockPath: string): boolean {
+  try {
+    const stat = fs.statSync(lockPath);
+    if (Date.now() - stat.mtimeMs < JOB_LOCK_STALE_MS) return false;
+    const metadata = readJsonFile<{ pid?: number }>(lockPath);
+    if (metadata?.pid && processIsAlive(metadata.pid)) return false;
+    fs.renameSync(lockPath, `${lockPath}.stale-${Date.now()}-${randomUUID().replace(/-/g, "")}`);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return true;
+    return false;
+  }
+}
+
+function withJobLock<T>(jobId: string, action: () => T): T {
+  const lockPath = jobLockPath(jobId);
+  ensureDir(path.dirname(lockPath));
+  const token = randomUUID().replace(/-/g, "");
+  const deadline = Date.now() + JOB_LOCK_WAIT_MS;
+  let fd: number | null = null;
+  while (fd === null) {
+    try {
+      fd = fs.openSync(lockPath, "wx");
+      try {
+        fs.writeFileSync(fd, JSON.stringify({ token, pid: process.pid, created_at: nowIso() }) + "\n", "utf8");
+      } catch (error) {
+        fs.closeSync(fd);
+        fd = null;
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {
+          // Preserve the lock-write error.
+        }
+        throw error;
+      }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST") throw error;
+      if (archiveStaleJobLock(lockPath)) continue;
+      if (Date.now() >= deadline) throw new Error(`Timed out waiting for the batch job lock for ${jobId}.`);
+      Atomics.wait(LOCK_WAIT_ARRAY, 0, 0, 10);
+    }
+  }
+  try {
+    return action();
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch {
+      // The lock file is still fenced by its random token if close already occurred.
+    }
+    try {
+      const metadata = readJsonFile<{ token?: string }>(lockPath);
+      if (metadata?.token === token) fs.unlinkSync(lockPath);
+    } catch {
+      // A missing lock after the action is harmless; another token is never removed.
+    }
+  }
+}
+
 function toPublicJob(job: RevitBatchJobRecord, includeItems = true): JsonMap {
   return {
     id: job.id,
@@ -205,9 +288,24 @@ function summarizeItems(items: RevitBatchJobItem[]): Record<string, number> {
   return summary;
 }
 
-function writeJsonFile(filePath: string, value: unknown): void {
+function writeTextFileAtomic(filePath: string, contents: string): void {
   ensureDir(path.dirname(filePath));
-  fs.writeFileSync(filePath, JSON.stringify(value, null, 2) + "\n", "utf8");
+  const tempPath = `${filePath}.tmp-${process.pid}-${randomUUID().replace(/-/g, "")}`;
+  fs.writeFileSync(tempPath, contents, "utf8");
+  try {
+    fs.renameSync(tempPath, filePath);
+  } catch (error) {
+    try {
+      fs.unlinkSync(tempPath);
+    } catch {
+      // Preserve the original rename error.
+    }
+    throw error;
+  }
+}
+
+function writeJsonFile(filePath: string, value: unknown): void {
+  writeTextFileAtomic(filePath, JSON.stringify(value, null, 2) + "\n");
 }
 
 function readJsonFile<T>(filePath: string): T | null {
@@ -250,7 +348,7 @@ function writeManifest(job: RevitBatchJobRecord): void {
           ];
     rows.push(values.map((value) => `"${`${value ?? ""}`.replace(/"/g, "\"\"")}"`).join(","));
   }
-  fs.writeFileSync(jobManifestPath(job.id), rows.join("\n") + "\n", "utf8");
+  writeTextFileAtomic(jobManifestPath(job.id), rows.join("\n") + "\n");
 }
 
 function saveJob(job: RevitBatchJobRecord): RevitBatchJobRecord {
@@ -346,27 +444,99 @@ function leaseDurationMs(): number {
   return Math.max(60_000, Math.min(4 * 60 * 60 * 1000, raw));
 }
 
-function requeueExpiredClaims(job: RevitBatchJobRecord): RevitBatchJobRecord {
+function isReadOnlyItem(job: RevitBatchJobRecord, item: RevitBatchJobItem): boolean {
+  const taskText = `${item.task_prompt || ""} ${job.params?.task_prompt || ""}`.trim();
+  if (/\b(?:add|apply|change|connect|create|delete|disconnect|edit|modify|move|place|remove|rename|replace|resize|route|set|update|write)\b/i.test(taskText)) {
+    return false;
+  }
+  if (typeof item.read_only === "boolean") return item.read_only;
+  const operationKind = clip(item.operation_kind ?? item.execution_mode, 80).toLowerCase().replace(/[ -]+/g, "_");
+  if (["read", "readonly", "read_only", "non_mutating"].includes(operationKind)) return true;
+  if (["write", "mutation", "mutating"].includes(operationKind)) return false;
+  return job.job_type === REVIT_BATCH_JOB_TYPE_ROOM_VIEW_CAPTURE;
+}
+
+function maxClaimAttempts(job: RevitBatchJobRecord, item: RevitBatchJobItem): number {
+  return asPositiveInt(item.max_claim_attempts ?? job.params?.max_claim_attempts, 3, 1, 10);
+}
+
+function reconcileExpiredClaims(job: RevitBatchJobRecord): RevitBatchJobRecord {
   const now = Date.now();
   let changed = false;
+  const mutationUnknownIds: string[] = [];
+  let readOnlyRequeued = 0;
+  let readOnlyExhausted = 0;
   const items = job.items.map((item) => {
     const leaseExpiresAt = `${item.claim?.lease_expires_at || ""}`.trim();
     const expiresAt = leaseExpiresAt ? Date.parse(leaseExpiresAt) : NaN;
-    if (item.status !== "running" || !Number.isFinite(expiresAt) || expiresAt > now) return item;
+    if (item.status !== "running" || (Number.isFinite(expiresAt) && expiresAt > now)) return item;
     changed = true;
+    const attempt = asPositiveInt(item.claim?.attempt ?? item.claim_attempts, 1, 1, 10_000);
+    if (isReadOnlyItem(job, item) && attempt < maxClaimAttempts(job, item)) {
+      readOnlyRequeued += 1;
+      return {
+        ...item,
+        status: "pending" as const,
+        claim: null,
+        claim_attempts: attempt,
+        error: "The previous read-only claim expired before settlement and was safely re-queued."
+      };
+    }
+    const readOnly = isReadOnlyItem(job, item);
+    if (readOnly) readOnlyExhausted += 1;
+    else mutationUnknownIds.push(item.id);
     return {
       ...item,
-      status: "pending" as const,
+      status: "failed" as const,
+      finished_at: nowIso(),
       claim: null,
-      error: clip(item.error || "Previous claim expired and the item was re-queued.", 500)
+      claim_attempts: attempt,
+      outcome: "unknown",
+      retryable: false,
+      reconciliation_required: !readOnly,
+      error: readOnly
+        ? `The read-only claim expired without settlement after ${attempt} attempt${attempt === 1 ? "" : "s"}; automatic retries are exhausted.`
+        : "The mutating claim expired after execution may have started. Its outcome is unknown and must be reconciled before any retry."
     };
   });
   if (!changed) return job;
-  return saveJob({
+  const events = [...(Array.isArray(job.events) ? job.events : [])];
+  if (readOnlyRequeued > 0) {
+    events.push({ ts: nowIso(), kind: "read_only_claim_requeued", text: `Safely re-queued ${readOnlyRequeued} expired read-only batch claim${readOnlyRequeued === 1 ? "" : "s"}.` });
+  }
+  if (readOnlyExhausted > 0) {
+    events.push({ ts: nowIso(), kind: "read_only_retry_exhausted", text: `${readOnlyExhausted} read-only batch claim${readOnlyExhausted === 1 ? "" : "s"} exhausted the automatic retry limit.` });
+  }
+  if (mutationUnknownIds.length > 0) {
+    events.push({ ts: nowIso(), kind: "mutation_outcome_unknown", text: `${mutationUnknownIds.length} expired mutating batch claim${mutationUnknownIds.length === 1 ? "" : "s"} require reconciliation and will not be replayed.` });
+  }
+  const activeAfterRecovery = items.some((item) => item.status === "pending" || item.status === "running");
+  const status: RevitBatchJobStatus = mutationUnknownIds.length > 0
+    ? (activeAfterRecovery ? "paused" : "failed")
+    : (job.status === "running" && readOnlyRequeued > 0 ? "queued" : job.status);
+  let saved = saveJob({
     ...job,
-    status: job.status === "running" ? "queued" : job.status,
-    items
+    status,
+    pause_requested: mutationUnknownIds.length > 0 && activeAfterRecovery ? true : job.pause_requested,
+    finished_at: mutationUnknownIds.length > 0 && !activeAfterRecovery ? nowIso() : job.finished_at,
+    error: mutationUnknownIds.length > 0
+      ? "One or more mutating items have an unknown outcome and require reconciliation before the batch can continue."
+      : job.error,
+    items,
+    events: events.slice(-200),
+    result: mutationUnknownIds.length > 0
+      ? {
+          ...(job.result || {}),
+          reconciliation_required: true,
+          unknown_outcome_item_ids: mutationUnknownIds,
+          reason: "expired_mutating_claim"
+        }
+      : job.result
   });
+  if (mutationUnknownIds.length === 0 && !saved.items.some((item) => item.status === "pending" || item.status === "running")) {
+    saved = finalizeJobIfComplete(saved);
+  }
+  return saved;
 }
 
 function defaultTemplates(): JsonMap[] {
@@ -446,19 +616,26 @@ export function createRevitBatchJob(input: CreateRevitBatchJobInput): JsonMap {
 }
 
 export function listRevitBatchJobs(limit = 20): JsonMap[] {
-  return listJobRecords(limit).map((job) => toPublicJob(requeueExpiredClaims(job), false));
+  return listJobRecords(limit).map((job) => withJobLock(job.id, () => {
+    const current = readJob(job.id);
+    return toPublicJob(current ? reconcileExpiredClaims(current) : job, false);
+  }));
 }
 
 export function getRevitBatchJob(jobId: string): JsonMap | null {
-  const job = readJob(jobId);
-  if (!job) return null;
-  return toPublicJob(requeueExpiredClaims(job), true);
+  if (!readJob(jobId)) return null;
+  return withJobLock(jobId, () => {
+    const job = readJob(jobId);
+    return job ? toPublicJob(reconcileExpiredClaims(job), true) : null;
+  });
 }
 
 function mutateJob(jobId: string, mutator: (current: RevitBatchJobRecord) => RevitBatchJobRecord): RevitBatchJobRecord {
-  const current = readJob(jobId);
-  if (!current) throw new Error("Batch job not found.");
-  return mutator(requeueExpiredClaims(current));
+  return withJobLock(jobId, () => {
+    const current = readJob(jobId);
+    if (!current) throw new Error("Batch job not found.");
+    return mutator(reconcileExpiredClaims(current));
+  });
 }
 
 export function approveRevitBatchJob(jobId: string): JsonMap {
@@ -492,6 +669,9 @@ export function pauseRevitBatchJob(jobId: string): JsonMap {
 export function resumeRevitBatchJob(jobId: string): JsonMap {
   const saved = mutateJob(jobId, (current) => {
     if (current.status !== "paused") throw new Error("Only paused jobs can be resumed.");
+    if (current.result?.reconciliation_required === true || current.items.some((item) => item.reconciliation_required === true)) {
+      throw new Error("This batch job requires mutation outcome reconciliation before it can be resumed.");
+    }
     return appendEvent(saveJob({
       ...current,
       status: "queued",
@@ -516,10 +696,13 @@ export function cancelRevitBatchJob(jobId: string): JsonMap {
 
 export function retryFailedRevitBatchItems(jobId: string): JsonMap {
   const saved = mutateJob(jobId, (current) => {
-    const failedCount = current.items.filter((item) => item.status === "failed").length;
-    if (failedCount <= 0) throw new Error("This batch job has no failed items to retry.");
+    if (current.result?.reconciliation_required === true || current.items.some((item) => item.reconciliation_required === true)) {
+      throw new Error("This batch job requires mutation outcome reconciliation before failed items can be retried.");
+    }
+    const failedCount = current.items.filter((item) => item.status === "failed" && item.reconciliation_required !== true && item.retryable !== false).length;
+    if (failedCount <= 0) throw new Error("This batch job has no safely retryable failed items.");
     const reset = current.items.map((item) =>
-      item.status === "failed"
+      item.status === "failed" && item.reconciliation_required !== true && item.retryable !== false
         ? {
             ...item,
             status: "pending" as const,
@@ -549,49 +732,60 @@ export function claimNextRevitBatchItem(input: ClaimNextRevitBatchItemInput): Js
   const requestedJobId = clip(input.job_id, 120);
   if (!executorId) throw new Error("executor_id is required.");
 
-  const jobRecords = requestedJobId ? [readJob(requestedJobId)].filter((job): job is RevitBatchJobRecord => !!job) : listJobRecords(200);
-  for (const rawJob of jobRecords) {
-    let job = requeueExpiredClaims(rawJob);
-    if (!CLAIMABLE_JOB_STATUSES.has(job.status)) continue;
-    if (job.executor_kind && job.executor_kind !== executorKind) continue;
-    const nextItem = job.items.find((item) => item.status === "pending");
-    if (!nextItem) {
-      job = finalizeJobIfComplete(job);
-      continue;
-    }
-    const claim = {
-      executor_id: executorId,
-      executor_kind: executorKind,
-      claimed_at: nowIso(),
-      lease_expires_at: new Date(Date.now() + leaseDurationMs()).toISOString()
-    };
-    const status = job.status === "queued" ? "running" : job.status;
-    const claimedJob = appendEvent(
-      saveJob({
-        ...job,
-        status,
-        started_at: job.started_at || nowIso(),
-        items: job.items.map((item) =>
-          item.id === nextItem.id
-            ? {
-                ...item,
-                status: "running",
-                started_at: item.started_at || nowIso(),
-                error: "",
-                claim
-              }
-            : item
-        )
-      }),
-      "claim",
-      `Claimed item ${nextItem.index} in '${job.title}' for ${executorId}.`
-    );
-    const claimedItem = claimedJob.items.find((item) => item.id === nextItem.id) || nextItem;
-    return {
-      ok: true,
-      job: toPublicJob(claimedJob),
-      item: claimedItem
-    };
+  const jobIds = requestedJobId ? [requestedJobId] : listJobRecords(200).map((job) => job.id);
+  for (const jobId of jobIds) {
+    const claimed = withJobLock<JsonMap | null>(jobId, () => {
+      const current = readJob(jobId);
+      if (!current) return null;
+      let job = reconcileExpiredClaims(current);
+      if (!CLAIMABLE_JOB_STATUSES.has(job.status)) return null;
+      if (job.executor_kind && job.executor_kind !== executorKind) return null;
+      const nextItem = job.items.find((item) => item.status === "pending");
+      if (!nextItem) {
+        finalizeJobIfComplete(job);
+        return null;
+      }
+      const attempt = asPositiveInt(nextItem.claim_attempts, 0, 0, 10_000) + 1;
+      const claim = {
+        executor_id: executorId,
+        executor_kind: executorKind,
+        claimed_at: nowIso(),
+        lease_expires_at: new Date(Date.now() + leaseDurationMs()).toISOString(),
+        fencing_token: randomUUID().replace(/-/g, ""),
+        attempt,
+        schema_version: 2 as const
+      };
+      const status = job.status === "queued" ? "running" : job.status;
+      const claimedJob = appendEvent(
+        saveJob({
+          ...job,
+          status,
+          started_at: job.started_at || nowIso(),
+          items: job.items.map((item) =>
+            item.id === nextItem.id
+              ? {
+                  ...item,
+                  status: "running",
+                  started_at: item.started_at || nowIso(),
+                  claim_attempts: attempt,
+                  error: "",
+                  claim
+                }
+              : item
+          )
+        }),
+        "claim",
+        `Claimed item ${nextItem.index} in '${job.title}' for ${executorId} with fenced attempt ${attempt}.`
+      );
+      const claimedItem = claimedJob.items.find((item) => item.id === nextItem.id) || nextItem;
+      return {
+        ok: true,
+        job: toPublicJob(claimedJob),
+        item: claimedItem,
+        claim_token: claim.fencing_token
+      };
+    });
+    if (claimed) return claimed;
   }
   return { ok: true, job: null, item: null };
 }
@@ -601,54 +795,73 @@ function applyResultPatch(item: RevitBatchJobItem, result: unknown): RevitBatchJ
   const source = result as JsonMap;
   const patched: RevitBatchJobItem = { ...item };
   for (const [key, value] of Object.entries(source)) {
-    if (key === "status" || key === "claim") continue;
+    if (key === "status" || key === "claim" || key === "claim_token" || key === "claimToken") continue;
     patched[key] = value;
   }
   return patched;
 }
 
-function settleClaim(jobId: string, itemId: string, executorId: string, failed: boolean, payload: { error?: string; result?: unknown }): JsonMap {
-  const current = readJob(jobId);
-  if (!current) throw new Error("Batch job not found.");
-  const job = requeueExpiredClaims(current);
-  const target = job.items.find((item) => item.id === itemId);
-  if (!target) throw new Error("Batch item not found.");
-  if (`${target.claim?.executor_id || ""}`.trim() !== executorId.trim()) {
-    throw new Error("Batch item is not claimed by this executor.");
-  }
-  const nextItems = job.items.map((item) => {
-    if (item.id !== itemId) return item;
-    const patched = applyResultPatch(item, payload.result);
+function settlementToken(explicitToken: unknown, result: unknown): string {
+  const resultMap = asObject(result);
+  return clip(explicitToken ?? resultMap.claim_token ?? resultMap.claimToken, 160);
+}
+
+function settleClaim(jobId: string, itemId: string, executorId: string, claimToken: string, failed: boolean, payload: { error?: string; result?: unknown }): JsonMap {
+  return withJobLock(jobId, () => {
+    const current = readJob(jobId);
+    if (!current) throw new Error("Batch job not found.");
+    const job = reconcileExpiredClaims(current);
+    const target = job.items.find((item) => item.id === itemId);
+    if (!target) throw new Error("Batch item not found.");
+    if (target.status !== "running" || !target.claim) {
+      throw new Error(target.reconciliation_required === true
+        ? "Batch item has an unknown mutation outcome and requires reconciliation; stale settlement is rejected."
+        : "Batch item is not actively claimed.");
+    }
+    if (`${target.claim.executor_id || ""}`.trim() !== executorId.trim()) {
+      throw new Error("Batch item is not claimed by this executor.");
+    }
+    const storedToken = clip(target.claim.fencing_token, 160);
+    if (storedToken) {
+      if (!claimToken) throw new Error("claim_token is required to settle this fenced batch claim.");
+      if (storedToken !== claimToken) throw new Error("Stale or invalid batch claim_token; settlement was rejected.");
+    } else if (target.claim.schema_version === 2) {
+      throw new Error("The fenced batch claim is missing its stored token and cannot be settled safely.");
+    }
+    const nextItems = job.items.map((item) => {
+      if (item.id !== itemId) return item;
+      const patched = applyResultPatch(item, payload.result);
+      return {
+        ...patched,
+        status: (failed ? "failed" : "succeeded") as "failed" | "succeeded",
+        finished_at: nowIso(),
+        claim: null,
+        error: failed ? clip(payload.error, 500) || "Batch item failed." : ""
+      };
+    });
+    let next = saveJob({
+      ...job,
+      status: job.status === "cancelling" || job.status === "pausing" || job.status === "paused" ? job.status : "running",
+      items: nextItems
+    });
+    next = appendEvent(
+      next,
+      failed ? "item_failed" : "item_succeeded",
+      `${failed ? "Failed" : "Completed"} item ${target.index} in '${job.title}' for fenced attempt ${target.claim.attempt || 1}.`
+    );
+    next = finalizeJobIfComplete(next);
     return {
-      ...patched,
-      status: (failed ? "failed" : "succeeded") as "failed" | "succeeded",
-      finished_at: nowIso(),
-      claim: null,
-      error: failed ? clip(payload.error, 500) || "Batch item failed." : ""
+      ok: true,
+      job: toPublicJob(next),
+      item: next.items.find((item) => item.id === itemId) || null
     };
   });
-  let next = saveJob({
-    ...job,
-    status: job.status === "cancelling" || job.status === "pausing" ? job.status : "running",
-    items: nextItems
-  });
-  next = appendEvent(
-    next,
-    failed ? "item_failed" : "item_succeeded",
-    `${failed ? "Failed" : "Completed"} item ${target.index} in '${job.title}'.`
-  );
-  next = finalizeJobIfComplete(next);
-  return {
-    ok: true,
-    job: toPublicJob(next),
-    item: next.items.find((item) => item.id === itemId) || null
-  };
 }
 
 export function completeRevitBatchItem(input: CompleteRevitBatchItemInput): JsonMap {
-  return settleClaim(input.job_id, input.item_id, input.executor_id, false, { result: input.result });
+  return settleClaim(input.job_id, input.item_id, input.executor_id, settlementToken(input.claim_token, input.result), false, { result: input.result });
 }
 
 export function failRevitBatchItem(input: FailRevitBatchItemInput): JsonMap {
-  return settleClaim(input.job_id, input.item_id, input.executor_id, true, { error: input.error, result: input.result });
+  return settleClaim(input.job_id, input.item_id, input.executor_id, settlementToken(input.claim_token, input.result), true, { error: input.error, result: input.result });
 }
