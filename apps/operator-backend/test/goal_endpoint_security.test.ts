@@ -41,10 +41,44 @@ async function availablePort(): Promise<number> {
   });
 }
 
+async function killAndWait(child: ChildProcess, signal: NodeJS.Signals, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return true;
+  return await new Promise<boolean>((resolve, reject) => {
+    let settled = false;
+    const finish = (exited: boolean): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.off("exit", onExit);
+      child.off("error", onError);
+      resolve(exited);
+    };
+    const onExit = (): void => finish(true);
+    const onError = (error: Error): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.off("exit", onExit);
+      child.off("error", onError);
+      reject(error);
+    };
+    child.once("exit", onExit);
+    child.once("error", onError);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    try {
+      const signaled = child.kill(signal);
+      if (!signaled && (child.exitCode !== null || child.signalCode !== null)) finish(true);
+    } catch (error) {
+      onError(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+}
+
 async function stop(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null) return;
-  child.kill();
-  await new Promise<void>(resolve => child.once("exit", () => resolve()));
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  if (await killAndWait(child, "SIGTERM", 2_000)) return;
+  if (await killAndWait(child, "SIGKILL", 2_000)) return;
+  throw new Error(`Spawned backend process ${child.pid ?? "unknown"} did not exit after SIGTERM and SIGKILL.`);
 }
 
 async function waitForServer(base: string, headers: Record<string, string>): Promise<void> {
