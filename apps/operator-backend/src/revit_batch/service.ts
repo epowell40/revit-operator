@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { conditionalActionPathEffect, pathLooksWrite } from "../action_path_mutability.js";
 import { syncTaskFromRevitBatchJob } from "../tasks/service.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
 
@@ -25,6 +26,16 @@ export type RevitBatchJobStatus =
   | "succeeded_with_failures";
 
 type JsonMap = Record<string, unknown>;
+
+type RevitBatchReplayContract = {
+  schema: "operator.revit_batch.replay_effect.v1";
+  authority: "server_route_classification";
+  source: "structured_actions" | "server_known_executor";
+  classification: "read" | "mutating" | "unknown" | "conflicting";
+  replayable: boolean;
+  route_count: number;
+  route_plan_sha256: string;
+};
 
 export type RevitBatchOwner = {
   user_id: string;
@@ -494,7 +505,66 @@ function listJobRecords(limit = 20): RevitBatchJobRecord[] {
     .slice(0, Math.max(1, limit));
 }
 
-function sanitizeItem(raw: unknown, index: number): RevitBatchJobItem | null {
+function classifyStructuredActions(actions: unknown): {
+  classification: RevitBatchReplayContract["classification"];
+  route_count: number;
+  route_plan_sha256: string;
+} {
+  if (!Array.isArray(actions) || actions.length === 0) {
+    return { classification: "unknown", route_count: 0, route_plan_sha256: settlementSha256([]) };
+  }
+  const canonical: JsonMap[] = [];
+  let hasMutation = false;
+  let hasUnknown = false;
+  let hasConflict = false;
+  const actionIds = new Set<string>();
+  for (const action of actions) {
+    const row = asObject(action);
+    const actionId = clip(row.action_id, 200);
+    const method = clip(row.method, 20).toUpperCase();
+    const actionPath = clip(row.path, 2000);
+    if (!actionId || actionIds.has(actionId) || (method !== "GET" && method !== "POST") || !actionPath.toLowerCase().startsWith("/revit/")) {
+      hasUnknown = true;
+      canonical.push({ action_id: actionId, method, path: actionPath });
+      continue;
+    }
+    actionIds.add(actionId);
+    const body = Object.prototype.hasOwnProperty.call(row, "body") ? row.body : undefined;
+    const effect = method === "GET"
+      ? "read"
+      : conditionalActionPathEffect(actionPath, body) ?? (pathLooksWrite(actionPath, body) ? "apply" : "read");
+    const declared = clip(row.request_effect ?? row.effect, 40).toLowerCase();
+    if (declared && (!(["read", "preview", "apply"] as string[]).includes(declared) || declared !== effect)) {
+      hasConflict = true;
+    }
+    if (effect !== "read") hasMutation = true;
+    canonical.push({ action_id: actionId, method, path: actionPath, effect, ...(body === undefined ? {} : { body }) });
+  }
+  return {
+    classification: hasConflict ? "conflicting" : hasUnknown ? "unknown" : hasMutation ? "mutating" : "read",
+    route_count: canonical.length,
+    route_plan_sha256: settlementSha256(canonical)
+  };
+}
+
+function deriveReplayContract(jobType: RevitBatchJobType, item: RevitBatchJobItem): RevitBatchReplayContract {
+  const routes = classifyStructuredActions(item.actions);
+  const serverKnownRead = jobType === REVIT_BATCH_JOB_TYPE_ROOM_VIEW_CAPTURE && routes.route_count === 0;
+  const classification = serverKnownRead ? "read" : routes.classification;
+  return {
+    schema: "operator.revit_batch.replay_effect.v1",
+    authority: "server_route_classification",
+    source: serverKnownRead ? "server_known_executor" : "structured_actions",
+    classification,
+    replayable: classification === "read",
+    route_count: routes.route_count,
+    route_plan_sha256: serverKnownRead
+      ? settlementSha256({ job_type: REVIT_BATCH_JOB_TYPE_ROOM_VIEW_CAPTURE })
+      : routes.route_plan_sha256
+  };
+}
+
+function sanitizeItem(raw: unknown, index: number, jobType: RevitBatchJobType): RevitBatchJobItem | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const source = raw as JsonMap;
   const taskPrompt = clip(source.task_prompt ?? source.taskPrompt, 4000);
@@ -514,6 +584,7 @@ function sanitizeItem(raw: unknown, index: number): RevitBatchJobItem | null {
     ...base
   };
   if (taskPrompt) next.task_prompt = taskPrompt;
+  next.replay_contract = deriveReplayContract(jobType, next);
   return next;
 }
 
@@ -580,15 +651,9 @@ function leaseDurationMs(): number {
 }
 
 function isReadOnlyItem(job: RevitBatchJobRecord, item: RevitBatchJobItem): boolean {
-  const taskText = `${item.task_prompt || ""} ${job.params?.task_prompt || ""}`.trim();
-  if (/\b(?:add|apply|change|connect|create|delete|disconnect|edit|modify|move|place|remove|rename|replace|resize|route|set|update|write)\b/i.test(taskText)) {
-    return false;
-  }
-  if (typeof item.read_only === "boolean") return item.read_only;
-  const operationKind = clip(item.operation_kind ?? item.execution_mode, 80).toLowerCase().replace(/[ -]+/g, "_");
-  if (["read", "readonly", "read_only", "non_mutating"].includes(operationKind)) return true;
-  if (["write", "mutation", "mutating"].includes(operationKind)) return false;
-  return job.job_type === REVIT_BATCH_JOB_TYPE_ROOM_VIEW_CAPTURE;
+  const stored = asObject(item.replay_contract);
+  const derived = deriveReplayContract(job.job_type, item);
+  return derived.replayable && settlementSha256(stored) === settlementSha256(derived);
 }
 
 function maxClaimAttempts(job: RevitBatchJobRecord, item: RevitBatchJobItem): number {
@@ -711,7 +776,7 @@ export function createRevitBatchJob(input: CreateRevitBatchJobInput, access?: Re
   const source = asObject(input.source);
   const approval = asObject(input.approval);
   const previewItems = asArray(input.preview_items).slice(0, 12);
-  const items = asArray(input.items).map((item, index) => sanitizeItem(item, index)).filter((item): item is RevitBatchJobItem => !!item);
+  const items = asArray(input.items).map((item, index) => sanitizeItem(item, index, jobType)).filter((item): item is RevitBatchJobItem => !!item);
   const title = clip(input.title || params.title || defaultTemplates().find((template) => template.job_type === jobType)?.title, 160) || "Revit batch job";
   const id = randomUUID().replace(/-/g, "");
   const pendingCount = items.filter((item) => item.status === "pending").length;
@@ -947,7 +1012,7 @@ function applyResultPatch(item: RevitBatchJobItem, result: unknown): RevitBatchJ
   const source = result as JsonMap;
   const patched: RevitBatchJobItem = { ...item };
   for (const [key, value] of Object.entries(source)) {
-    if (key === "status" || key === "claim" || key === "claim_token" || key === "claimToken") continue;
+    if (key === "status" || key === "claim" || key === "claim_token" || key === "claimToken" || key === "actions" || key === "replay_contract") continue;
     patched[key] = value;
   }
   return patched;
