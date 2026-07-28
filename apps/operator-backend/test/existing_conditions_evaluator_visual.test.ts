@@ -161,7 +161,7 @@ test("rejects fabricated hashes, changed bytes, wrong media, and scope escape", 
   }), /outside_allowed_scope/);
 });
 
-test("legacy evaluator visual CLI fails fast until it supplies the authenticated V3 binding", () => {
+test("evaluator visual CLI requires and emits the authenticated V3 binding", () => {
   const fixture = artifacts();
   const out = path.join(fixture.root, "visual-receipt.json");
   const cli = path.resolve("dist/src/tools/existing_conditions_fixture.js");
@@ -171,9 +171,14 @@ test("legacy evaluator visual CLI fails fast until it supplies the authenticated
     "--post-capture", fixture.capture,
     "--post-pdf", fixture.pdf,
     "--workflow-fingerprint-sha256", "c".repeat(64),
+    "--fixture-id", "fixture-cli",
+    "--scope-id", "scope-cli",
     "--action-id", "cli-action",
     "--attempt-id", "cli-attempt",
     "--capture-nonce", crypto.randomBytes(18).toString("base64url"),
+    "--capture-name", path.basename(fixture.capture),
+    "--candidate-snapshot-sha256", "d".repeat(64),
+    "--change-digest-sha256", "e".repeat(64),
     "--post-apply-completed-at", fixture.postApplyCompletedAt,
     "--status", "pass",
     "--out", out
@@ -184,8 +189,11 @@ test("legacy evaluator visual CLI fails fast until it supplies the authenticated
     OPERATOR_EXISTING_CONDITIONS_EVALUATOR_HMAC_KEY: SIGNING_KEY
   };
   const accepted = spawnSync(process.execPath, baseArgs, { encoding: "utf8", env });
-  assert.notEqual(accepted.status, 0);
-  assert.match(accepted.stderr, /evaluator_visual_fixture_id_invalid/);
+  assert.equal(accepted.status, 0, accepted.stderr);
+  const receipt = JSON.parse(fs.readFileSync(out, "utf8"));
+  assert.equal(receipt.schema_version, 3);
+  assert.equal(receipt.fixture_id, "fixture-cli");
+  assert.equal(receipt.scope_id, "scope-cli");
 
   const outside = artifacts();
   const rejectedArgs = [...baseArgs];
@@ -193,7 +201,7 @@ test("legacy evaluator visual CLI fails fast until it supplies the authenticated
   rejectedArgs[rejectedArgs.indexOf(fixture.pdf)] = outside.pdf;
   const rejected = spawnSync(process.execPath, rejectedArgs, { encoding: "utf8", env });
   assert.notEqual(rejected.status, 0);
-  assert.match(rejected.stderr, /evaluator_visual_fixture_id_invalid/);
+  assert.match(rejected.stderr, /outside_allowed_scope/);
 });
 
 test("rejects validly signed receipts replayed across fixture, workflow, or attempt", () => {

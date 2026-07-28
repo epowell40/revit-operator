@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import {
   createExistingConditionsEvaluatorChangeReceipt,
   validateExistingConditionsEvaluatorChangeReceipt
@@ -53,6 +54,51 @@ function expectedRun(receipt: ReturnType<typeof authenticatedReceipt>) {
     change_digest_sha256: receipt.change_digest_sha256
   };
 }
+
+test("evaluator diff CLI emits an authenticated run-bound receipt", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-evaluator-diff-cli-"));
+  const beforePath = path.join(root, "before.json");
+  const afterPath = path.join(root, "after.json");
+  const packagePath = path.join(root, "package.json");
+  const candidatePath = path.join(root, "candidate.json");
+  const outPath = path.join(root, "receipt.json");
+  fs.writeFileSync(beforePath, JSON.stringify(visible([])));
+  fs.writeFileSync(afterPath, JSON.stringify(visible([])));
+  fs.writeFileSync(packagePath, JSON.stringify(packageContract));
+  fs.writeFileSync(candidatePath, JSON.stringify({ native_readback: true, elements: [], connections: [], open_connector_count: 0 }));
+  const result = spawnSync(process.execPath, [
+    path.resolve("dist/src/tools/existing_conditions_fixture.js"),
+    "evaluator-diff",
+    "--before-visible", beforePath,
+    "--after-visible", afterPath,
+    "--package", packagePath,
+    "--candidate-snapshot", candidatePath,
+    "--fixture-id", "fixture-cli",
+    "--scope-id", "scope-cli",
+    "--workflow-fingerprint-sha256", "a".repeat(64),
+    "--action-id", "action-cli",
+    "--attempt-id", "attempt-cli",
+    "--capture-nonce", crypto.randomBytes(18).toString("base64url"),
+    "--capture-name", "post.png",
+    "--artifact-scope-root", root,
+    "--out", outPath
+  ], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      OPERATOR_EXISTING_CONDITIONS_EVALUATOR_KEY_ID: KEY_ID,
+      OPERATOR_EXISTING_CONDITIONS_EVALUATOR_HMAC_KEY: SIGNING_KEY
+    }
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const receipt = JSON.parse(fs.readFileSync(outPath, "utf8"));
+  assert.equal(receipt.schema_version, 2);
+  assert.equal(receipt.fixture_id, "fixture-cli");
+  assert.equal(validateExistingConditionsEvaluatorChangeReceipt(receipt, {
+    trusted_key_resolver: keyId => keyId === KEY_ID ? SIGNING_KEY : null,
+    expected_run: expectedRun(receipt)
+  }), true);
+});
 
 test("evaluator receipt accepts only in-scope native changes", () => {
   const unchanged = { id: 1, builtInCategory: "OST_Walls", point: { x: 20, y: 20, z: 0 }, typeName: "Wall" };
