@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory)][string]$RepositoryRoot,
-  [Parameter(Mandatory)][string]$OutputRoot
+  [Parameter(Mandatory)][string]$OutputRoot,
+  [string]$ReceiptPath
 )
 $ErrorActionPreference='Stop'
 function Add-TestAuthenticodeCertificateTable([string]$Path){
@@ -16,3 +17,9 @@ function Add-TestAuthenticodeCertificateTable([string]$Path){
   -RepositoryRoot $RepositoryRoot `
   -SignFileAction {param($Path,$Year,$Item)if($Item.role -eq 'certified_executor'){Add-TestAuthenticodeCertificateTable $Path}} `
   -SignatureVerifier {param($Path)[pscustomobject]@{Status='Valid';Thumbprint='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'}}
+
+$bundleRoot=Join-Path ([IO.Path]::GetFullPath($OutputRoot)) 'SafeReadPackage-safe-read-v3-integration'
+$pinsPath=Join-Path $bundleRoot 'package-pins.json'
+$receipt=[ordered]@{schemaVersion=1;edition=[string]$PSVersionTable.PSEdition;version=[string]$PSVersionTable.PSVersion;bundleRoot=$bundleRoot;attestationPinSha256=('sha256:'+(Get-FileHash -LiteralPath $pinsPath -Algorithm SHA256).Hash.ToLowerInvariant())}
+if(-not [string]::IsNullOrWhiteSpace($ReceiptPath)){[IO.File]::WriteAllText([IO.Path]::GetFullPath($ReceiptPath),($receipt|ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))}
+$receipt

@@ -52,11 +52,6 @@ function New-TestBundle([string]$Root,[string]$ReleaseId='safe-read-v3-a'){
       [ordered]@{path='payload/RevitOperator.SafeReadHost.dll';role='host';revitApiBound=$true;sha256=Get-SafeReadSha256 $hostPath;sizeBytes=(Get-Item $hostPath).Length;assembly=$hostAssembly;provenance=$null},
       [ordered]@{path='payload/RevitOperator.SafeReadCertifiedExecution.dll';role='certified_executor';revitApiBound=$true;sha256=Get-SafeReadSha256 $executorPath;sizeBytes=(Get-Item $executorPath).Length;assembly=$executorAssembly;provenance=[ordered]@{proofReceiptSha256=$proofSha;unsignedSha256=('sha256:'+[string]$artifacts[$year].sha256);equivalenceReceiptSha256=Get-SafeReadSha256 $equivalencePath;canonicalPeSha256=('7'*64);verifierProfileId='revit-safe-read-sheet-count-kernel/v1';verifierProfileSha256=('2'*64);verifierBundleSha256=('3'*64)}}
     )
-    if($expected.Framework -eq 'net48'){
-      $aclPath=Join-Path $payloadRoot 'System.IO.FileSystem.AccessControl.dll';[IO.File]::WriteAllText($aclPath,"access-control-$year")
-      $aclFacts=Get-FakeFacts $year 'System.IO.FileSystem.AccessControl';$aclAssembly=[ordered]@{name=$aclFacts.Name;version=$aclFacts.Version;culture=$aclFacts.Culture;publicKeyToken=$aclFacts.PublicKeyToken;targetFramework=$aclFacts.TargetFramework;platform=$aclFacts.Platform;mvid=$aclFacts.Mvid;references=$aclFacts.AssemblyReferences}
-      $payload += [ordered]@{path='payload/System.IO.FileSystem.AccessControl.dll';role='runtime_dependency';revitApiBound=$false;sha256=Get-SafeReadSha256 $aclPath;sizeBytes=(Get-Item $aclPath).Length;assembly=$aclAssembly;provenance=$null}
-    }
     $template=Join-Path $manifestRoot 'RevitOperator.SafeReadHost.addin.template';Copy-Item -LiteralPath (Join-Path $deployRoot '..\..\apps\revit-safe-read-host\addin\RevitOperator.SafeReadHost.addin.template') -Destination $template
     $apiIdentity=New-Identity 'RevitAPI' "$major.0.0.0";$uiIdentity=New-Identity 'RevitAPIUI' "$major.0.0.0";$api=[ordered]@{contentSha256=('sha256:'+('8'*64));mvid=("$major".PadLeft(8,'0')+'-0000-0000-0000-000000000001');identity=$apiIdentity};$apiUi=[ordered]@{contentSha256=('sha256:'+('9'*64));mvid=("$major".PadLeft(8,'0')+'-0000-0000-0000-000000000002');identity=$uiIdentity}
     $executor=$payload[1];$runtime=[ordered]@{schema=[string]$contract.schemas.runtime_attestation;state='active';issued_at_utc='2030-01-01T00:00:00.000Z';expires_at_utc='2030-01-01T00:05:00.000Z';route_id=[string]$contract.route.route_id;route_contract_sha256=[string]$contract.route.route_contract_sha256;policy_sha256=[string]$contract.route.policy_sha256;proof_sha256=$proofSha;executor_id=[string]$contract.identity.executor_id;runtime_tuple=[ordered]@{host_content_sha256=$executor.sha256;host_mvid=$executor.assembly.mvid;revit_api_content_sha256=$api.contentSha256;revit_api_mvid=$api.mvid;revit_version=$year}}
@@ -66,6 +61,7 @@ function New-TestBundle([string]$Root,[string]$ReleaseId='safe-read-v3-a'){
   }
   $release=[ordered]@{schemaVersion='revit-operator.safe-read-package-release.v3';releaseId=$ReleaseId;allowedSignerThumbprints=@($testThumbprint);targets=$targets};$releasePath=Join-Path $Root 'release-manifest.json';Write-JsonFile $releasePath $release
   $pins=[ordered]@{schemaVersion='revit-operator.safe-read-package-pins.v3';releaseId=$ReleaseId;releaseManifestSha256=Get-SafeReadSha256 $releasePath;targets=$pinTargets};$pinsPath=Join-Path $Root 'package-pins.json';Write-JsonFile $pinsPath $pins
+  [void](Protect-SafeReadTreeAcl $Root)
   [pscustomobject]@{Root=$Root;Pin=Get-SafeReadSha256 $pinsPath;ReleaseId=$ReleaseId}
 }
 
@@ -104,19 +100,35 @@ Describe 'SafeRead package v3 security contract' {
 
   It 'invokes only the canonical production proof check and strict PE equivalence seam' {
     $text=Get-Content -LiteralPath $builder -Raw
-    foreach($required in 'production\New-ProductionManifest.ps1',' check --manifest ',' equivalence --unsigned-artifact '){if(-not $text.Contains($required)){throw "Builder omits $required"}}
+    foreach($required in 'production\New-ProductionManifest.ps1',' check --manifest ',' equivalence --unsigned-artifact ','HEAD^{commit}',' archive --format=zip '){if(-not $text.Contains($required)){throw "Builder omits $required"}}
     foreach($forbidden in ' fingerprint ','ManagedCodeInspector','sourceDll','BuildInvoker'){if($text.Contains($forbidden)){throw "Builder retains forbidden trust seam $forbidden"}}
   }
 
+  It 'rejects pre-tampered proof source instead of snapshotting a writable working tree' {
+    $repository=Join-Path $TestDrive 'tampered-source';$proof=Join-Path $repository 'apps\revit-safe-read-proof';$hostSourceDir=Join-Path $repository 'apps\revit-safe-read-host';[IO.Directory]::CreateDirectory($proof)|Out-Null;[IO.Directory]::CreateDirectory($hostSourceDir)|Out-Null
+    [IO.File]::WriteAllText((Join-Path $proof 'marker.txt'),'committed');[IO.File]::WriteAllText((Join-Path $hostSourceDir 'marker.txt'),'committed');& git -C $repository init --quiet;& git -C $repository add -- apps;& git -C $repository -c user.name=SafeRead -c user.email=saferead@example.invalid commit --quiet -m fixture
+    if($LASTEXITCODE -ne 0){throw 'Failed to create the committed source attack fixture.'};[IO.File]::WriteAllText((Join-Path $proof 'marker.txt'),'tampered')
+    $output=Join-Path $TestDrive 'tampered-source-output';[IO.Directory]::CreateDirectory($output)|Out-Null
+    Assert-ThrowsLike {&$builder -InputManifestPath (Join-Path $PSScriptRoot 'fixtures\saferead-package-build-input.v3.json') -OutputRoot $output -RepositoryRoot $repository -SignFileAction {}} '*must match their exact committed Git tree*'
+  }
+
   It 'rejects a targets junction before reading package metadata' {
-    $root=Join-Path $TestDrive 'junction-package';$elsewhere=Join-Path $TestDrive 'junction-target';[IO.Directory]::CreateDirectory($root)|Out-Null;[IO.Directory]::CreateDirectory($elsewhere)|Out-Null;New-Item -ItemType Junction -Path (Join-Path $root 'targets') -Target $elsewhere|Out-Null
+    $root=Join-Path $TestDrive 'junction-package';$elsewhere=Join-Path $TestDrive 'junction-target';[IO.Directory]::CreateDirectory($root)|Out-Null;[void](Protect-SafeReadPathAcl $root -Strict);[IO.Directory]::CreateDirectory($elsewhere)|Out-Null;New-Item -ItemType Junction -Path (Join-Path $root 'targets') -Target $elsewhere|Out-Null
     Assert-ThrowsLike {Assert-SafeReadBundle -BundleRoot $root -AttestationPinSha256 ('sha256:'+('0'*64)) -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*reparse point*'
   }
 
-  It 'rejects a foreign owner record and broad write ACE' {
+  It 'rejects foreign ownership and every untrusted write-capable ACE' {
     Assert-ThrowsLike {Assert-SafeReadAclRecord ([pscustomobject]@{OwnerSid='S-1-5-21-999';Access=@()}) 'foreign'} '*foreign owner*'
     $owner=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    Assert-ThrowsLike {Assert-SafeReadAclRecord ([pscustomobject]@{OwnerSid=$owner;Access=@([pscustomobject]@{Sid='S-1-1-0';Type='Allow';Rights=[int64][Security.AccessControl.FileSystemRights]::Write;IsInherited=$false})}) 'broad'} '*broad principal*'
+    Assert-ThrowsLike {Assert-SafeReadAclRecord ([pscustomobject]@{OwnerSid=$owner;Protected=$true;Access=@([pscustomobject]@{Sid='S-1-5-21-123-456-789-4242';Type='Allow';Rights=[int64][Security.AccessControl.FileSystemRights]::Modify;IsInherited=$false})}) 'arbitrary'} '*untrusted principal*'
+    Assert-ThrowsLike {Assert-SafeReadStrictAclRecord ([pscustomobject]@{OwnerSid=$owner;Protected=$false;Access=@([pscustomobject]@{Sid=$owner;Type='Allow';Rights=[int64][Security.AccessControl.FileSystemRights]::Modify;IsInherited=$true})}) 'inherited'} '*inherits ACLs*'
+  }
+
+  It 'canonicalizes assembly references identically by ordinal full identity' {
+    $references=@((New-Identity 'zeta' '1.0.0.0' 'bbbbbbbbbbbbbbbb'),(New-Identity 'Alpha' '2.0.0.0' 'aaaaaaaaaaaaaaaa'),(New-Identity 'Alpha' '1.0.0.0' 'aaaaaaaaaaaaaaaa'))
+    $actual=@(ConvertTo-SafeReadCanonicalAssemblyReferences $references|ForEach-Object{Get-SafeReadAssemblyIdentityKey $_})
+    $expected=@('Alpha, Version=1.0.0.0, Culture=neutral, PublicKeyToken=aaaaaaaaaaaaaaaa','Alpha, Version=2.0.0.0, Culture=neutral, PublicKeyToken=aaaaaaaaaaaaaaaa','zeta, Version=1.0.0.0, Culture=neutral, PublicKeyToken=bbbbbbbbbbbbbbbb')
+    if(Compare-Object $expected $actual -SyncWindow 0){throw 'Assembly reference canonical order is unstable.'}
   }
 
   It 'hardens installed payload ACLs to owner SYSTEM and Administrators only' {
@@ -127,9 +139,27 @@ Describe 'SafeRead package v3 security contract' {
   It 'installs the attestation parent and files with the host exact ACL contract' {
     $destination=Join-Path $TestDrive 'attestation-install';$addins=Join-Path $TestDrive 'attestation-addins'
     &$installer -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -DestinationRoot $destination -RevitAddinsRoot $addins -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
-    $payload=Join-Path $destination "releases\$($bundle.ReleaseId)\targets\2024\payload";$paths=@($payload,(Join-Path $payload 'safe_read_runtime_attestation.v1.json'),(Join-Path $payload 'safe_read_runtime_attestation.v1.sha256'))
+    $payload=Join-Path $destination "releases\$($bundle.ReleaseId)\targets\2024\payload";$paths=@($destination,(Join-Path $destination 'active-release.json'),$payload,(Join-Path $payload 'safe_read_runtime_attestation.v1.json'),(Join-Path $payload 'safe_read_runtime_attestation.v1.sha256'),(Join-Path $addins '2023'),(Join-Path $addins '2023\RevitOperator.SafeReadHost.addin'),(Join-Path $addins '2024'),(Join-Path $addins '2024\RevitOperator.SafeReadHost.addin'),(Join-Path $addins '2025'),(Join-Path $addins '2025\RevitOperator.SafeReadHost.addin'))
     $allowed=@([Security.Principal.WindowsIdentity]::GetCurrent().User.Value,'S-1-5-18','S-1-5-32-544')|Sort-Object
     foreach($path in $paths){$record=Get-SafeReadAclRecord $path;if(-not $record.Protected){throw "Installed host trust path inherits ACLs: $path"};$principals=@($record.Access|ForEach-Object Sid|Sort-Object -Unique);if((Compare-Object $allowed $principals) -or @($record.Access|Where-Object{$_.Type -cne 'Allow' -or $_.IsInherited}).Count){throw "Installed host trust path differs from the owner/SYSTEM/Administrators contract: $path"}}
+  }
+
+  It 'hardens pre-existing live year parents without broad-root recursion' {
+    $destination=Join-Path $TestDrive 'existing-parent-install';$addins=Join-Path $TestDrive 'existing-parent-addins';[IO.Directory]::CreateDirectory($addins)|Out-Null;[void](Protect-SafeReadPathAcl $addins -Strict)
+    foreach($year in '2023','2024','2025'){$yearPath=Join-Path $addins $year;[IO.Directory]::CreateDirectory($yearPath)|Out-Null;& icacls.exe $yearPath /grant '*S-1-5-32-545:(OI)(CI)(M)'|Out-Null;if($LASTEXITCODE -ne 0){throw 'Failed to create the inherited/foreign live-parent ACL fixture.'}}
+    &$installer -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -DestinationRoot $destination -RevitAddinsRoot $addins -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
+    foreach($year in '2023','2024','2025'){
+      $yearPath=Join-Path $addins $year
+      [void](Assert-SafeReadStrictAclRecord (Get-SafeReadAclRecord $yearPath) $yearPath)
+      [void](Assert-SafeReadStrictTree (Join-Path $yearPath 'RevitOperator.SafeReadHost.addin'))
+    }
+  }
+
+  It 'rejects a foreign Modify ACE before rollback reads active state' {
+    $destination=Join-Path $TestDrive 'tampered-install';$addins=Join-Path $TestDrive 'tampered-addins'
+    &$installer -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -DestinationRoot $destination -RevitAddinsRoot $addins -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
+    $active=Join-Path $destination 'active-release.json';& icacls.exe $active /grant '*S-1-5-32-545:(M)'|Out-Null;if($LASTEXITCODE -ne 0){throw 'Failed to inject the foreign Modify ACE fixture.'}
+    Assert-ThrowsLike {&$installer -RollbackReleaseId $bundle.ReleaseId -DestinationRoot $destination -RevitAddinsRoot $addins -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*untrusted principal*'
   }
 
   It 'rejects dependency version and public key token mismatches' {
@@ -137,9 +167,20 @@ Describe 'SafeRead package v3 security contract' {
     $dependency=[pscustomobject]@{assembly=[pscustomobject]@{name='Third.Party';version='0.9.0.0';culture='neutral';publicKeyToken='aaaaaaaaaaaaaaaa';references=@()}}
     Assert-ThrowsLike {Assert-SafeReadDependencyClosure @($hostPayload,$dependency) 'net48' '2024'} '*dependency identity mismatch*'
     $dependency.assembly.version='2.0.0.0'
-    Assert-SafeReadDependencyClosure @($hostPayload,$dependency) 'net48' '2024'
+    Assert-ThrowsLike {Assert-SafeReadDependencyClosure @($hostPayload,$dependency) 'net48' '2024'} '*dependency identity mismatch*'
     $dependency.assembly.publicKeyToken='bbbbbbbbbbbbbbbb'
     Assert-ThrowsLike {Assert-SafeReadDependencyClosure @($hostPayload,$dependency) 'net48' '2024'} '*dependency identity mismatch*'
+  }
+
+  It 'neither requires nor accepts an unreferenced AccessControl payload' {
+    $receipt=Assert-SafeReadBundle -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
+    if(@($receipt.Targets|ForEach-Object requiredPayload|Where-Object role -eq 'runtime_dependency').Count){throw 'The exact fixture unexpectedly requires a runtime dependency.'}
+    $releasePath=Join-Path $bundle.Root 'release-manifest.json';$release=ConvertTo-SafeReadObject $releasePath;$target=@($release.targets|Where-Object revitYear -eq '2024')[0]
+    $path=Join-Path $bundle.Root 'targets\2024\payload\System.IO.FileSystem.AccessControl.dll';[IO.File]::WriteAllText($path,'unreferenced-access-control')
+    $facts=Get-FakeFacts '2024' 'System.IO.FileSystem.AccessControl';$assembly=[ordered]@{name=$facts.Name;version=$facts.Version;culture=$facts.Culture;publicKeyToken=$facts.PublicKeyToken;targetFramework=$facts.TargetFramework;platform=$facts.Platform;mvid=$facts.Mvid;references=$facts.AssemblyReferences}
+    $target.requiredPayload=@($target.requiredPayload)+@([ordered]@{path='payload/System.IO.FileSystem.AccessControl.dll';role='runtime_dependency';revitApiBound=$false;sha256=Get-SafeReadSha256 $path;sizeBytes=(Get-Item $path).Length;assembly=$assembly;provenance=$null})
+    Write-JsonFile $releasePath $release;Refresh-BundlePin $bundle
+    Assert-ThrowsLike {Assert-SafeReadBundle -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*unreferenced runtime dependency*'
   }
 
   It 'uses equivalence evidence to reject an overlay despite refreshed package hashes' {
@@ -160,5 +201,6 @@ Describe 'SafeRead package v3 security contract' {
     &$installer -BundleRoot $second.Root -AttestationPinSha256 $second.Pin -DestinationRoot $destination -RevitAddinsRoot $addins -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
     &$installer -RollbackReleaseId $bundle.ReleaseId -DestinationRoot $destination -RevitAddinsRoot $addins -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
     $active=ConvertTo-SafeReadObject (Join-Path $destination 'active-release.json');if($active.releaseId -cne $bundle.ReleaseId){throw 'Rollback did not activate the original release.'}
+    foreach($path in @((Join-Path $destination 'active-release.json'),(Join-Path $addins '2023'),(Join-Path $addins '2023\RevitOperator.SafeReadHost.addin'),(Join-Path $addins '2024'),(Join-Path $addins '2024\RevitOperator.SafeReadHost.addin'),(Join-Path $addins '2025'),(Join-Path $addins '2025\RevitOperator.SafeReadHost.addin'))){[void](Assert-SafeReadStrictTree $path)}
   }
 }

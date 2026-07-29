@@ -60,13 +60,33 @@ $bundleRoot=Join-Path $outputParent "SafeReadPackage-$($input.releaseId)"
 if(Test-Path -LiteralPath $bundleRoot){throw "Refusing to overwrite existing SafeRead package: $bundleRoot"}
 $runRoot=Join-Path $outputParent ('.SafeReadPackageRun-{0}.{1}' -f $input.releaseId,[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $runRoot|Out-Null
-[void](Protect-SafeReadPathAcl $runRoot)
+[void](Protect-SafeReadPathAcl $runRoot -Strict)
 $stage=Join-Path $runRoot 'package';New-Item -ItemType Directory -Path $stage|Out-Null
+[void](Protect-SafeReadPathAcl $stage -Strict)
 
 # The package builder owns the proof run. No input field can supply a receipt,
 # artifact, source root, compiler, policy, or reference path.
-$proofRoot=Join-Path $repository 'apps\revit-safe-read-proof'
-[void](Assert-SafeReadSecureTree $proofRoot)
+$trustedRepository=Join-Path $runRoot 'trusted-source'
+New-Item -ItemType Directory -Path $trustedRepository|Out-Null
+[void](Protect-SafeReadPathAcl $trustedRepository -Strict)
+$git=(Get-Command git -ErrorAction Stop).Source
+$sourcePaths=@('apps/revit-safe-read-proof','apps/revit-safe-read-host')
+$dirty=@(Invoke-CheckedCommand 'SafeRead source status' {& $git -C $repository status --porcelain=v1 --untracked-files=all -- @sourcePaths})
+if($dirty.Count){throw "SafeRead source paths must match their exact committed Git tree: $([string]::Join(' | ',@($dirty)))"}
+$commit=@(Invoke-CheckedCommand 'SafeRead source commit resolution' {& $git -C $repository rev-parse --verify 'HEAD^{commit}'})[-1].ToString().Trim()
+if($commit -cnotmatch '^[0-9a-f]{40}$'){throw 'SafeRead source commit identity is invalid.'}
+$proofTree=@(Invoke-CheckedCommand 'SafeRead proof tree resolution' {& $git -C $repository rev-parse "$commit`:apps/revit-safe-read-proof"})[-1].ToString().Trim()
+$hostTree=@(Invoke-CheckedCommand 'SafeRead host tree resolution' {& $git -C $repository rev-parse "$commit`:apps/revit-safe-read-host"})[-1].ToString().Trim()
+if($proofTree -cnotmatch '^[0-9a-f]{40}$' -or $hostTree -cnotmatch '^[0-9a-f]{40}$'){throw 'SafeRead source tree identity is invalid.'}
+$sourceArchive=Join-Path $runRoot 'trusted-source.zip'
+[void](Invoke-CheckedCommand 'SafeRead committed source archive' {& $git -C $repository archive --format=zip --output=$sourceArchive $commit -- @sourcePaths})
+[void](Protect-SafeReadPathAcl $sourceArchive -Strict)
+Expand-Archive -LiteralPath $sourceArchive -DestinationPath $trustedRepository
+[void](Protect-SafeReadTreeAcl $trustedRepository)
+[void](Assert-SafeReadStrictTree $trustedRepository)
+$sourceReceipt=[ordered]@{schemaVersion=1;commit=$commit;proofTree=$proofTree;hostTree=$hostTree;archiveSha256=Get-SafeReadSha256 $sourceArchive}
+$sourceReceiptPath=Join-Path $runRoot 'source.snapshot.receipt.json';[IO.File]::WriteAllText($sourceReceiptPath,(ConvertTo-SafeReadCanonicalJson $sourceReceipt),[Text.UTF8Encoding]::new($false));[void](Protect-SafeReadPathAcl $sourceReceiptPath -Strict)
+$proofRoot=Resolve-SafeReadCanonicalPath (Join-Path $trustedRepository 'apps\revit-safe-read-proof')
 $bootstrap=Resolve-SafeReadCanonicalPath (Join-Path $proofRoot 'bootstrap.ps1')
 $generator=Resolve-SafeReadCanonicalPath (Join-Path $proofRoot 'production\New-ProductionManifest.ps1')
 $pwsh=(Get-Command pwsh -ErrorAction Stop).Source
@@ -82,10 +102,10 @@ $proofOutput=Join-Path $runRoot 'proof-output'
 $proofReceiptPath=Resolve-SafeReadCanonicalPath (Join-Path $proofOutput 'proof.receipt.json')
 $proofReceiptSha=Get-SafeReadSha256 $proofReceiptPath
 
-$templateSource=Resolve-SafeReadCanonicalPath (Join-Path $repository 'apps\revit-safe-read-host\addin\RevitOperator.SafeReadHost.addin.template')
+$templateSource=Resolve-SafeReadCanonicalPath (Join-Path $trustedRepository 'apps\revit-safe-read-host\addin\RevitOperator.SafeReadHost.addin.template')
 [void](Assert-SafeReadManifestXml -Path $templateSource -ExpectedAssembly '{{ASSEMBLY_PATH}}')
-$hostProject=Resolve-SafeReadCanonicalPath (Join-Path $repository 'apps\revit-safe-read-host\src\RevitOperator.SafeReadHost\RevitOperator.SafeReadHost.csproj')
-[void](Assert-SafeReadSecureTree (Split-Path -Parent $hostProject))
+$hostProject=Resolve-SafeReadCanonicalPath (Join-Path $trustedRepository 'apps\revit-safe-read-host\src\RevitOperator.SafeReadHost\RevitOperator.SafeReadHost.csproj')
+[void](Assert-SafeReadStrictTree (Split-Path -Parent $hostProject))
 
 $release=[ordered]@{schemaVersion='revit-operator.safe-read-package-release.v3';releaseId=[string]$input.releaseId;allowedSignerThumbprints=@($allowed|ForEach-Object{$_.ToUpperInvariant()});targets=@()}
 $packagePins=@();$proofHashes=@()
@@ -133,7 +153,7 @@ foreach($year in '2023','2024','2025'){
     elseif($revitRef.Count -or $revitUiRef.Count){throw "Runtime dependency $year/$FileName may not reference Revit API assemblies."}
     if($Role -ceq 'host'){if($revitUiRef.Count -ne 1){throw "Host $year must reference exactly one RevitAPIUI identity."};Assert-IdentityEqual $apiUiFacts.Identity $revitUiRef[0] "Host $year RevitAPIUI"}
     if($Role -ceq 'certified_executor' -and $revitUiRef.Count){throw "Certified executor $year may not reference RevitAPIUI."}
-    $assembly=[ordered]@{name=[string]$facts.Name;version=[string]$facts.Version;culture=[string]$facts.Culture;publicKeyToken=[string]$facts.PublicKeyToken;targetFramework=[string]$facts.TargetFramework;platform=[string]$facts.Platform;mvid=[string]$facts.Mvid;references=@($facts.AssemblyReferences|Sort-Object @{Expression={Get-SafeReadAssemblyIdentityKey $_}})}
+    $assembly=[ordered]@{name=[string]$facts.Name;version=[string]$facts.Version;culture=[string]$facts.Culture;publicKeyToken=[string]$facts.PublicKeyToken;targetFramework=[string]$facts.TargetFramework;platform=[string]$facts.Platform;mvid=[string]$facts.Mvid;references=@(ConvertTo-SafeReadCanonicalAssemblyReferences @($facts.AssemblyReferences))}
     $entry=[ordered]@{path="payload/$FileName";role=$Role;revitApiBound=$RevitBound;sha256=Get-SafeReadSha256 $destination;sizeBytes=(Get-Item -LiteralPath $destination).Length;assembly=$assembly;provenance=$Provenance}
     Set-Variable -Name payloadReceipts -Scope 1 -Value (@($payloadReceipts)+@($entry))
   }
@@ -153,16 +173,6 @@ foreach($year in '2023','2024','2025'){
   $executorEntry.provenance.equivalenceReceiptSha256=Get-SafeReadSha256 (Join-Path $targetProofRoot 'artifact.equivalence.json')
   $executorEntry.provenance.canonicalPeSha256=[string]$equivalence.canonicalPeSha256
 
-  # The net48 compiler resolves the ACL extension surface through framework
-  # facades and therefore does not retain a direct metadata reference, even
-  # though the package asset is required at runtime. Seed that exact dependency
-  # explicitly; normal identity closure below pulls its transitive dependencies.
-  if($expected.Framework -ceq 'net48'){
-    $accessControlSource=Join-Path $dependencySearchRoot 'System.IO.FileSystem.AccessControl.dll'
-    if(-not(Test-Path -LiteralPath $accessControlSource -PathType Leaf)){throw "SafeRead target $year is missing System.IO.FileSystem.AccessControl.dll required by secure local storage."}
-    Add-Payload $accessControlSource 'System.IO.FileSystem.AccessControl.dll' 'runtime_dependency' $false $null
-  }
-
   $processed=@{}
   do{
     $added=$false
@@ -172,7 +182,7 @@ foreach($year in '2023','2024','2025'){
         $key=Get-SafeReadAssemblyIdentityKey $reference
         if(@($payloadReceipts|Where-Object{(Get-SafeReadAssemblyIdentityKey $_.assembly) -ceq $key}).Count){continue}
         if($processed.ContainsKey($key)){continue};$processed[$key]=$true
-        $candidates=@(Get-ChildItem -LiteralPath $dependencySearchRoot -File -Filter "$($reference.name).dll"|ForEach-Object{[pscustomobject]@{Path=$_.FullName;Facts=Get-Facts $_.FullName $year ([pscustomobject]@{role='runtime_dependency'})}}|Where-Object{(Get-SafeReadAssemblyIdentityKey $_.Facts) -ceq $key -or ($reference.publicKeyToken -cne 'null' -and $_.Facts.PublicKeyToken -ceq $reference.publicKeyToken -and $_.Facts.Culture -ceq $reference.culture -and ([version]$_.Facts.Version) -ge ([version]$reference.version))})
+        $candidates=@(Get-ChildItem -LiteralPath $dependencySearchRoot -File -Filter "$($reference.name).dll"|ForEach-Object{[pscustomobject]@{Path=$_.FullName;Facts=Get-Facts $_.FullName $year ([pscustomobject]@{role='runtime_dependency'})}}|Where-Object{(Get-SafeReadAssemblyIdentityKey $_.Facts) -ceq $key})
         if($candidates.Count -ne 1){throw "SafeRead target $year requires exactly one dependency artifact for $key; found $($candidates.Count)."}
         Add-Payload $candidates[0].Path "$($reference.name).dll" 'runtime_dependency' $false $null;$added=$true
       }

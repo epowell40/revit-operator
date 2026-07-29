@@ -112,6 +112,20 @@ function Get-SafeReadAssemblyIdentityKey {
   '{0}, Version={1}, Culture={2}, PublicKeyToken={3}' -f $Identity.name,$Identity.version,$Identity.culture,$Identity.publicKeyToken
 }
 
+function ConvertTo-SafeReadCanonicalAssemblyReferences {
+  [CmdletBinding()]
+  param([AllowEmptyCollection()][object[]]$References)
+  $ordered=[Collections.Generic.SortedDictionary[string,object]]::new([StringComparer]::Ordinal)
+  foreach($reference in @($References)){
+    if($reference -is [string]){throw 'SafeRead assembly references must contain full identities.'}
+    $identity=New-SafeReadAssemblyIdentity ([string]$reference.name) ([string]$reference.version) ([string]$reference.culture) ([string]$reference.publicKeyToken)
+    $key=Get-SafeReadAssemblyIdentityKey $identity
+    if($ordered.ContainsKey($key)){throw "SafeRead assembly references duplicate identity $key."}
+    $ordered.Add($key,$identity)
+  }
+  @($ordered.Values)
+}
+
 function ConvertTo-SafeReadSid {
   param([Parameter(Mandatory)]$Identity)
   try { ([Security.Principal.NTAccount]$Identity).Translate([Security.Principal.SecurityIdentifier]).Value }
@@ -145,12 +159,26 @@ function Assert-SafeReadAclRecord {
   $allowed=Get-SafeReadAllowedSecurityPrincipals
   if($allowed -cnotcontains [string]$Record.OwnerSid){throw "SafeRead path has a foreign owner: $Location owner=$($Record.OwnerSid)"}
   $writeMask=[int64]([Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::Modify -bor [Security.AccessControl.FileSystemRights]::FullControl -bor [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership)
-  $broad=@('S-1-1-0','S-1-5-11','S-1-5-32-545','S-1-5-32-546','S-1-5-7')
   foreach($ace in @($Record.Access)){
-    if($ace.Type -ceq 'Allow' -and (([int64]$ace.Rights -band $writeMask) -ne 0) -and $broad -ccontains [string]$ace.Sid){
-      throw "SafeRead path grants write access to a broad principal: $Location principal=$($ace.Sid)"
+    if($ace.Type -ceq 'Allow' -and (([int64]$ace.Rights -band $writeMask) -ne 0) -and $allowed -cnotcontains [string]$ace.Sid){
+      throw "SafeRead path grants write access to an untrusted principal: $Location principal=$($ace.Sid)"
     }
   }
+}
+
+function Assert-SafeReadStrictAclRecord {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)]$Record,[Parameter(Mandatory)][string]$Location)
+  Assert-SafeReadAclRecord $Record $Location
+  $allowed=Get-SafeReadAllowedSecurityPrincipals
+  if(-not [bool]$Record.Protected){throw "SafeRead strict path inherits ACLs: $Location"}
+  foreach($ace in @($Record.Access)){
+    if($ace.IsInherited -or $ace.Type -cne 'Allow' -or $allowed -cnotcontains [string]$ace.Sid){
+      throw "SafeRead strict path has a foreign, inherited, or non-allow ACE: $Location principal=$($ace.Sid)"
+    }
+  }
+  $actual=@($Record.Access|ForEach-Object Sid|Sort-Object -Unique)
+  if(Compare-Object -ReferenceObject @($allowed|Sort-Object) -DifferenceObject $actual){throw "SafeRead strict path omits an exact trusted principal: $Location"}
 }
 
 function Protect-SafeReadPathAcl {
@@ -158,13 +186,12 @@ function Protect-SafeReadPathAcl {
   param([Parameter(Mandatory)][string]$Path,[switch]$Strict)
   $canonical=Resolve-SafeReadCanonicalPath $Path
   $record=Get-SafeReadAclRecord $canonical
-  Assert-SafeReadAclRecord $record $canonical
   $acl=Get-Acl -LiteralPath $canonical
   if($Strict){
     $allowed=Get-SafeReadAllowedSecurityPrincipals
     $actualPrincipals=@($record.Access|ForEach-Object Sid|Sort-Object -Unique)
     $alreadyStrict=$record.Protected -and @($record.Access|Where-Object{$_.Type -cne 'Allow' -or $_.IsInherited -or $allowed -cnotcontains $_.Sid}).Count -eq 0 -and @($allowed|Where-Object{$actualPrincipals -cnotcontains $_}).Count -eq 0
-    if($alreadyStrict){return $canonical}
+    if($alreadyStrict){Assert-SafeReadStrictAclRecord $record $canonical;return $canonical}
     $currentSid=[Security.Principal.WindowsIdentity]::GetCurrent().User
     $isDirectory=(Get-Item -LiteralPath $canonical -Force).PSIsContainer
     $acl=if($isDirectory){[Security.AccessControl.DirectorySecurity]::new()}else{[Security.AccessControl.FileSecurity]::new()}
@@ -179,29 +206,33 @@ function Protect-SafeReadPathAcl {
     try{Set-Acl -LiteralPath $canonical -AclObject $acl -ErrorAction Stop}catch{throw "SafeRead strict ACL hardening failed for $canonical`: $($_.Exception.Message)"}
     $acl=Get-Acl -LiteralPath $canonical
   }
-  $broad=@('S-1-1-0','S-1-5-11','S-1-5-32-545','S-1-5-32-546','S-1-5-7')
-  $writeMask=[int64]([Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::Modify -bor [Security.AccessControl.FileSystemRights]::FullControl -bor [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership)
-  $changed=$false
-  foreach($rule in @($acl.Access)){
-    $sid=ConvertTo-SafeReadSid $rule.IdentityReference
-    if($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and (([int64]$rule.FileSystemRights -band $writeMask) -ne 0) -and $broad -ccontains $sid){
-      [void]$acl.RemoveAccessRuleSpecific($rule);$changed=$true
-    }
-  }
-  if($changed){Set-Acl -LiteralPath $canonical -AclObject $acl}
-  Assert-SafeReadAclRecord (Get-SafeReadAclRecord $canonical) $canonical
+  $final=Get-SafeReadAclRecord $canonical
+  if($Strict){Assert-SafeReadStrictAclRecord $final $canonical}else{Assert-SafeReadAclRecord $final $canonical}
   $canonical
 }
 
 function Protect-SafeReadTreeAcl {
   [CmdletBinding()]
   param([Parameter(Mandatory)][string]$Path)
-  $root=Assert-SafeReadSecureTree $Path
+  $root=Assert-SafeReadSecureTree $Path -SkipAcl
   $all=@(Get-Item -LiteralPath $root -Force)+@(Get-ChildItem -LiteralPath $root -Force -Recurse|Sort-Object {$_.FullName.Length})
   # Harden parents first so subsequently created/replaced files inherit only the
   # current owner, SYSTEM, and Administrators contract required by the host.
   foreach($item in $all){[void](Protect-SafeReadPathAcl $item.FullName -Strict)}
-  [void](Assert-SafeReadSecureTree $root)
+  [void](Assert-SafeReadStrictTree $root)
+  $root
+}
+
+function Assert-SafeReadStrictTree {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][string]$Path)
+  $root=Assert-SafeReadSecureTree $Path -SkipAcl
+  $pending=New-Object 'System.Collections.Generic.Stack[string]';$pending.Push($root)
+  while($pending.Count -gt 0){
+    $current=$pending.Pop();$item=Get-Item -LiteralPath $current -Force
+    Assert-SafeReadStrictAclRecord (Get-SafeReadAclRecord $current) $current
+    if($item.PSIsContainer){foreach($child in @(Get-ChildItem -LiteralPath $current -Force)){$pending.Push($child.FullName)}}
+  }
   $root
 }
 
@@ -250,7 +281,7 @@ function Get-SafeReadAssemblyFacts {
   # PE machine are read directly from the image so net8 assemblies remain inspectable.
   if ($PSVersionTable.PSEdition -eq 'Desktop') {
     $facts=Invoke-SafeReadDesktopAssemblyInspector $resolved
-    return [pscustomobject]@{Name=$facts.Name;Version=$facts.Version;Culture=$facts.Culture;PublicKeyToken=$facts.PublicKeyToken;TargetFramework=$facts.TargetFramework;Platform=$facts.Platform;Mvid=$facts.Mvid;RevitApiReferenceVersion=$facts.RevitApiReferenceVersion;AssemblyReferences=@($facts.AssemblyReferences)}
+    return [pscustomobject]@{Name=$facts.Name;Version=$facts.Version;Culture=$facts.Culture;PublicKeyToken=$facts.PublicKeyToken;TargetFramework=$facts.TargetFramework;Platform=$facts.Platform;Mvid=$facts.Mvid;RevitApiReferenceVersion=$facts.RevitApiReferenceVersion;AssemblyReferences=@(ConvertTo-SafeReadCanonicalAssemblyReferences @($facts.AssemblyReferences))}
   }
   $stream = [IO.File]::OpenRead($resolved)
   $pe = $null
@@ -289,7 +320,7 @@ function Get-SafeReadAssemblyFacts {
       Platform = [string]$pe.PEHeaders.CoffHeader.Machine
       Mvid = $metadata.GetGuid($module.Mvid).ToString('D').ToLowerInvariant()
       RevitApiReferenceVersion = if ($revitApi.Count -eq 1) { $revitApi[0].version } else { $null }
-      AssemblyReferences = @($references|Sort-Object @{Expression={Get-SafeReadAssemblyIdentityKey $_}})
+      AssemblyReferences = @(ConvertTo-SafeReadCanonicalAssemblyReferences $references)
     }
   } finally {
     if ($pe) { $pe.Dispose() } else { $stream.Dispose() }
@@ -319,15 +350,19 @@ function Invoke-SafeReadDesktopAssemblyInspector {
 `$bytes=[IO.File]::ReadAllBytes(`$p);`$a=[Reflection.Assembly]::ReflectionOnlyLoad(`$bytes);`$text=[Text.Encoding]::UTF8.GetString(`$bytes)
 `$tfms=@([regex]::Matches(`$text,'\.(?:NETFramework|NETStandard|NETCoreApp),Version=v\d+\.\d+(?:\.\d+)?')|ForEach-Object Value|Sort-Object -Unique);if(`$tfms.Count -gt 1){throw 'Assembly declares multiple target frameworks.'}
 `$pe=[BitConverter]::ToInt32(`$bytes,0x3c);if(`$pe -lt 0 -or `$pe+6 -gt `$bytes.Length -or [BitConverter]::ToUInt32(`$bytes,`$pe) -ne 0x00004550){throw 'Invalid PE header.'};`$machine=[BitConverter]::ToUInt16(`$bytes,`$pe+4)
-function Token(`$n){`$b=`$n.GetPublicKeyToken();if(`$null -eq `$b -or `$b.Length -eq 0){return 'null'};return ((`$b|ForEach-Object{`$_.ToString('x2')}) -join '')}
-function Identity(`$n){[ordered]@{name=`$n.Name;version=`$n.Version.ToString();culture=if([string]::IsNullOrWhiteSpace(`$n.CultureName)){'neutral'}else{`$n.CultureName};publicKeyToken=Token `$n}}
-`$assemblyName=`$a.GetName();`$refs=@(`$a.GetReferencedAssemblies()|ForEach-Object{Identity `$_}|Sort-Object name,version,culture,publicKeyToken);`$revit=@(`$refs|Where-Object name -ceq 'RevitAPI')
-[pscustomobject]@{Name=`$assemblyName.Name;Version=`$assemblyName.Version.ToString();Culture=if([string]::IsNullOrWhiteSpace(`$assemblyName.CultureName)){'neutral'}else{`$assemblyName.CultureName};PublicKeyToken=Token `$assemblyName;TargetFramework=if(`$tfms.Count -eq 1){`$tfms[0]}else{`$null};Platform=if(`$machine -eq 0x8664){'Amd64'}elseif(`$machine -eq 0x014c){'I386'}else{'Unsupported'};Mvid=`$a.ManifestModule.ModuleVersionId.ToString('D').ToLowerInvariant();RevitApiReferenceVersion=if(`$revit.Count -eq 1){`$revit[0].version}else{`$null};AssemblyReferences=`$refs}|ConvertTo-Json -Depth 6 -Compress
+`$assemblyName=`$a.GetName();if(`$null -eq `$assemblyName){throw 'Assembly identity is unavailable.'}
+function Key(`$n){'{0}, Version={1}, Culture={2}, PublicKeyToken={3}' -f `$n.name,`$n.version,`$n.culture,`$n.publicKeyToken}
+`$map=[Collections.Generic.SortedDictionary[string,object]]::new([StringComparer]::Ordinal);foreach(`$referenceName in @(`$a.GetReferencedAssemblies())){`$tokenBytes=`$referenceName.GetPublicKeyToken();`$token=if(`$null -eq `$tokenBytes -or `$tokenBytes.Length -eq 0){'null'}else{((`$tokenBytes|ForEach-Object{`$_.ToString('x2')}) -join '')};`$reference=[ordered]@{name=`$referenceName.Name;version=`$referenceName.Version.ToString();culture=if([string]::IsNullOrWhiteSpace(`$referenceName.CultureName)){'neutral'}else{`$referenceName.CultureName};publicKeyToken=`$token};`$key=Key `$reference;if(`$map.ContainsKey(`$key)){throw "Duplicate assembly reference `$key."};`$map.Add(`$key,`$reference)};`$refs=@(`$map.Values);`$revit=@(`$refs|Where-Object name -ceq 'RevitAPI')
+`$assemblyVersion=if(`$null -ne `$assemblyName.Version){`$assemblyName.Version.ToString()}else{'0.0.0.0'}
+`$module=`$a.ManifestModule;if(`$null -eq `$module){throw 'Assembly manifest module is unavailable.'};`$mvid=`$module.ModuleVersionId.ToString('D').ToLowerInvariant()
+`$targetFramework=if(`$tfms.Count -eq 1){[string]`$tfms[0]}else{`$null};`$revitVersion=if(`$revit.Count -eq 1){[string]`$revit[0].version}else{`$null}
+`$assemblyTokenBytes=`$assemblyName.GetPublicKeyToken();`$assemblyToken=if(`$null -eq `$assemblyTokenBytes -or `$assemblyTokenBytes.Length -eq 0){'null'}else{((`$assemblyTokenBytes|ForEach-Object{`$_.ToString('x2')}) -join '')}
+[pscustomobject]@{Name=`$assemblyName.Name;Version=`$assemblyVersion;Culture=if([string]::IsNullOrWhiteSpace(`$assemblyName.CultureName)){'neutral'}else{`$assemblyName.CultureName};PublicKeyToken=`$assemblyToken;TargetFramework=`$targetFramework;Platform=if(`$machine -eq 0x8664){'Amd64'}elseif(`$machine -eq 0x014c){'I386'}else{'Unsupported'};Mvid=`$mvid;RevitApiReferenceVersion=`$revitVersion;AssemblyReferences=`$refs}|ConvertTo-Json -Depth 6 -Compress
 "@
   $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($source))
-  $json=& (Join-Path $PSHOME 'powershell.exe') -NoLogo -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand $encoded 2>$null
-  if($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($json -join ''))){throw "SafeRead isolated metadata inspection failed: $Path"}
-  ($json -join '')|ConvertFrom-Json
+  $output=@(& (Join-Path $PSHOME 'powershell.exe') -NoLogo -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand $encoded 2>&1)
+  if($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($output -join ''))){throw "SafeRead isolated metadata inspection failed: $Path`: $([string]::Join(' | ',@($output)))"}
+  ($output -join '')|ConvertFrom-Json
 }
 
 function Assert-SafeReadUtcInstant {
@@ -381,7 +416,7 @@ function Test-SafeReadDependencyAssemblyCompatibility {
 
 function Assert-SafeReadDependencyClosure {
   param([Parameter(Mandatory)]$Payload,[Parameter(Mandatory)][string]$Framework,[Parameter(Mandatory)][string]$RevitYear)
-  $identities=@{};$names=@{}
+  $identities=@{};$names=@{};$required=@{}
   foreach($item in @($Payload)){
     $identity=New-SafeReadAssemblyIdentity ([string]$item.assembly.name) ([string]$item.assembly.version) ([string]$item.assembly.culture) ([string]$item.assembly.publicKeyToken)
     $key=Get-SafeReadAssemblyIdentityKey $identity
@@ -395,17 +430,16 @@ function Assert-SafeReadDependencyClosure {
       Assert-SafeReadExactProperties $reference @('name','version','culture','publicKeyToken') "SafeRead target $RevitYear dependency reference"
       if(Test-SafeReadRuntimeProvidedAssembly $reference $Framework){continue}
       $key=Get-SafeReadAssemblyIdentityKey $reference
+      $required[$key]=$true
       if(-not $identities.ContainsKey($key)){
-        if($names.ContainsKey([string]$reference.name)){
-        $packagedKey=[string]$names[[string]$reference.name]
-        $packaged=@($Payload | Where-Object { $_.assembly.name -ceq $reference.name })[0].assembly
-          $compatibleStrongName=$reference.publicKeyToken -cne 'null' -and $packaged.publicKeyToken -ceq $reference.publicKeyToken -and $packaged.culture -ceq $reference.culture -and ([version]$packaged.version) -ge ([version]$reference.version)
-          if($compatibleStrongName){continue}
-          throw "SafeRead target $RevitYear dependency identity mismatch for $key; packaged identity is $packagedKey"
-        }
+        if($names.ContainsKey([string]$reference.name)){throw "SafeRead target $RevitYear dependency identity mismatch for $key; packaged identity is $([string]$names[[string]$reference.name])"}
         throw "SafeRead target $RevitYear is missing exact runtime dependency $key required by $($item.assembly.name)"
       }
     }
+  }
+  foreach($item in @($Payload|Where-Object{@($_.PSObject.Properties.Name) -ccontains 'role' -and $_.role -ceq 'runtime_dependency'})){
+    $key=Get-SafeReadAssemblyIdentityKey $item.assembly
+    if(-not $required.ContainsKey($key)){throw "SafeRead target $RevitYear contains unreferenced runtime dependency $key."}
   }
 }
 
@@ -516,10 +550,6 @@ function Assert-SafeReadBundle {
     if ($hostPayload.Count -ne 1 -or $hostPayload[0].path -cne "payload/$script:HostDll" -or -not [bool]$hostPayload[0].revitApiBound) { throw "SafeRead target $year does not contain exactly one SafeRead host payload." }
     $executorPayload = @($payload | Where-Object { $_.role -ceq 'certified_executor' })
     if ($executorPayload.Count -ne 1 -or $executorPayload[0].path -cne "payload/$script:CertifiedExecutorDll" -or -not [bool]$executorPayload[0].revitApiBound) { throw "SafeRead target $year does not contain exactly one certified executor payload." }
-    if($expected.Framework -ceq 'net48'){
-      $accessControlPayload=@($payload|Where-Object{$_.role -ceq 'runtime_dependency' -and $_.path -ceq 'payload/System.IO.FileSystem.AccessControl.dll' -and $_.assembly.name -ceq 'System.IO.FileSystem.AccessControl'})
-      if($accessControlPayload.Count -ne 1){throw "SafeRead target $year must package exactly one System.IO.FileSystem.AccessControl runtime dependency."}
-    }
     foreach($other in @($payload|Where-Object role -cne 'host'|Where-Object role -cne 'certified_executor')){if($other.role -cne 'runtime_dependency' -or [bool]$other.revitApiBound){throw "SafeRead target $year has an unsupported payload role."}}
     $targetRoot = Join-Path $root "targets\$year"
     $expectedPaths = @($payload.path) + @("payload/$script:RuntimeAttestationName","payload/$script:RuntimeAttestationPinName",'proof/proof.receipt.json','proof/artifact.equivalence.json',"manifest/$script:TemplateName")
@@ -601,4 +631,4 @@ function Write-SafeReadAtomicFile {
   if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temporary,$Path,("{0}.previous.{1}" -f $Path,[guid]::NewGuid().ToString('N'))) } else { Move-Item -LiteralPath $temporary -Destination $Path }
 }
 
-Export-ModuleMember -Function Assert-SafeReadAclRecord,Assert-SafeReadBundle,Assert-SafeReadExactProperties,Assert-SafeReadManifestXml,Assert-SafeReadReleaseId,Assert-SafeReadRelativePath,Assert-SafeReadDependencyClosure,Assert-SafeReadSecureTree,ConvertTo-SafeReadCanonicalJson,ConvertTo-SafeReadHashtable,ConvertTo-SafeReadObject,Get-SafeReadAclRecord,Get-SafeReadAssemblyFacts,Get-SafeReadAssemblyIdentityKey,Get-SafeReadExpectedTarget,Get-SafeReadProofArtifact,Get-SafeReadRevitApiFacts,Get-SafeReadSha256,Invoke-SafeReadSignatureVerification,New-SafeReadAssemblyIdentity,New-SafeReadInstalledManifest,Protect-SafeReadPathAcl,Protect-SafeReadTreeAcl,Resolve-SafeReadCanonicalPath,Test-SafeReadDependencyAssemblyCompatibility,Test-SafeReadRuntimeProvidedAssembly,Write-SafeReadAtomicFile
+Export-ModuleMember -Function Assert-SafeReadAclRecord,Assert-SafeReadStrictAclRecord,Assert-SafeReadBundle,Assert-SafeReadExactProperties,Assert-SafeReadManifestXml,Assert-SafeReadReleaseId,Assert-SafeReadRelativePath,Assert-SafeReadDependencyClosure,Assert-SafeReadSecureTree,Assert-SafeReadStrictTree,ConvertTo-SafeReadCanonicalAssemblyReferences,ConvertTo-SafeReadCanonicalJson,ConvertTo-SafeReadHashtable,ConvertTo-SafeReadObject,Get-SafeReadAclRecord,Get-SafeReadAssemblyFacts,Get-SafeReadAssemblyIdentityKey,Get-SafeReadExpectedTarget,Get-SafeReadProofArtifact,Get-SafeReadRevitApiFacts,Get-SafeReadSha256,Invoke-SafeReadSignatureVerification,New-SafeReadAssemblyIdentity,New-SafeReadInstalledManifest,Protect-SafeReadPathAcl,Protect-SafeReadTreeAcl,Resolve-SafeReadCanonicalPath,Test-SafeReadDependencyAssemblyCompatibility,Test-SafeReadRuntimeProvidedAssembly,Write-SafeReadAtomicFile

@@ -30,23 +30,39 @@ function Get-ContainedReleasePath([string]$ReleaseId) {
 
 function Invoke-ManifestWrite([string]$Path,[string]$Content,[int]$Index,[string]$Phase) {
   if($ManifestWriter){& $ManifestWriter $Path $Content $Index $Phase}else{Write-SafeReadAtomicFile -Path $Path -Content $Content}
+  [void](Protect-SafeReadPathAcl $Path -Strict)
+  [void](Assert-SafeReadStrictTree $Path)
 }
 
 function Restore-ActivationFile($Snapshot,[int]$Index,[string]$Phase) {
-  if($Snapshot.Existed){Write-SafeReadAtomicFile -Path $Snapshot.Path -Content $Snapshot.Content}
+  if($Snapshot.Existed){Write-SafeReadAtomicFile -Path $Snapshot.Path -Content $Snapshot.Content;[void](Protect-SafeReadPathAcl $Snapshot.Path -Strict);[void](Assert-SafeReadStrictTree $Snapshot.Path)}
   elseif(Test-Path -LiteralPath $Snapshot.Path){Remove-Item -LiteralPath $Snapshot.Path -Force}
 }
 
+function Get-OrCreateStrictDirectory([string]$Path,[switch]$HardenExisting) {
+  $full=[IO.Path]::GetFullPath($Path)
+  if(Test-Path -LiteralPath $full){
+    if(-not(Test-Path -LiteralPath $full -PathType Container)){throw "SafeRead strict directory path is not a directory: $full"}
+    if($HardenExisting){[void](Protect-SafeReadPathAcl $full -Strict)}else{[void](Assert-SafeReadStrictAclRecord (Get-SafeReadAclRecord $full) $full)}
+  }else{
+    $parent=Resolve-SafeReadCanonicalPath (Split-Path -Parent $full)
+    New-Item -ItemType Directory -Path $full|Out-Null
+    [void](Protect-SafeReadPathAcl $full -Strict)
+    [void](Assert-SafeReadStrictAclRecord (Get-SafeReadAclRecord $full) $full)
+  }
+  Resolve-SafeReadCanonicalPath $full
+}
+
 $destinationFull=[IO.Path]::GetFullPath($DestinationRoot)
-if(-not(Test-Path -LiteralPath $destinationFull)){[void](Resolve-SafeReadCanonicalPath (Split-Path -Parent $destinationFull));New-Item -ItemType Directory -Path $destinationFull | Out-Null}
-$destination=Protect-SafeReadPathAcl $destinationFull
+$destination=Get-OrCreateStrictDirectory $destinationFull
+[void](Assert-SafeReadStrictTree $destination)
 $revitAddinsFull=[IO.Path]::GetFullPath($RevitAddinsRoot)
-if(-not(Test-Path -LiteralPath $revitAddinsFull)){[void](Resolve-SafeReadCanonicalPath (Split-Path -Parent $revitAddinsFull));New-Item -ItemType Directory -Path $revitAddinsFull|Out-Null}
-[void](Protect-SafeReadPathAcl $revitAddinsFull)
+if(-not(Test-Path -LiteralPath $revitAddinsFull)){[void](Resolve-SafeReadCanonicalPath (Split-Path -Parent $revitAddinsFull));New-Item -ItemType Directory -Path $revitAddinsFull|Out-Null;[void](Protect-SafeReadPathAcl $revitAddinsFull -Strict)}
+else{[void](Assert-SafeReadAclRecord (Get-SafeReadAclRecord (Resolve-SafeReadCanonicalPath $revitAddinsFull)) $revitAddinsFull)}
 $script:ReleasesRoot=[IO.Path]::GetFullPath((Join-Path $destination 'releases'));$pinsRoot=Join-Path $destination 'pins';$activationRoot=Join-Path $destination 'activation-staging'
-New-Item -ItemType Directory -Force -Path $script:ReleasesRoot,$pinsRoot,$activationRoot | Out-Null
-$script:ReleasesRoot=Protect-SafeReadPathAcl $script:ReleasesRoot;$pinsRoot=Protect-SafeReadPathAcl $pinsRoot;$activationRoot=Protect-SafeReadPathAcl $activationRoot
+$script:ReleasesRoot=Get-OrCreateStrictDirectory $script:ReleasesRoot;$pinsRoot=Get-OrCreateStrictDirectory $pinsRoot;$activationRoot=Get-OrCreateStrictDirectory $activationRoot
 $activePath=Join-Path $destination 'active-release.json'
+if(Test-Path -LiteralPath $activePath){[void](Assert-SafeReadStrictTree $activePath)}
 
 if($PSCmdlet.ParameterSetName -eq 'Rollback'){
   $releaseRoot=Get-ContainedReleasePath $RollbackReleaseId
@@ -84,20 +100,20 @@ if($PSCmdlet.ParameterSetName -eq 'Rollback'){
 }
 
 # Render and validate all three final manifests before any live activation file changes.
-$activationStage=Join-Path $activationRoot ('{0}.{1}' -f $receipt.ReleaseId,[guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $activationStage | Out-Null
+  $activationStage=Join-Path $activationRoot ('{0}.{1}' -f $receipt.ReleaseId,[guid]::NewGuid().ToString('N'))
+$activationStage=Get-OrCreateStrictDirectory $activationStage
 $prepared=@()
 foreach($target in @($receipt.Targets|Sort-Object revitYear)){
   $year=[string]$target.revitYear
   $template=Join-Path $releaseRoot "targets\$year\manifest\RevitOperator.SafeReadHost.addin.template"
   $assembly=Join-Path $releaseRoot "targets\$year\payload\RevitOperator.SafeReadHost.dll"
   $content=New-SafeReadInstalledManifest -TemplatePath $template -AssemblyPath $assembly
-  $stagedPath=Join-Path $activationStage "$year\RevitOperator.SafeReadHost.addin";New-Item -ItemType Directory -Force -Path (Split-Path -Parent $stagedPath)|Out-Null
-  [IO.File]::WriteAllText($stagedPath,$content,[Text.UTF8Encoding]::new($false));[void](Assert-SafeReadManifestXml -Path $stagedPath -ExpectedAssembly $assembly)
+  $stagedPath=Join-Path $activationStage "$year\RevitOperator.SafeReadHost.addin";[void](Get-OrCreateStrictDirectory (Split-Path -Parent $stagedPath))
+  [IO.File]::WriteAllText($stagedPath,$content,[Text.UTF8Encoding]::new($false));[void](Protect-SafeReadPathAcl $stagedPath -Strict);[void](Assert-SafeReadStrictTree $stagedPath);[void](Assert-SafeReadManifestXml -Path $stagedPath -ExpectedAssembly $assembly)
   $livePath=Join-Path $revitAddinsFull "$year\RevitOperator.SafeReadHost.addin"
   $liveParent=Split-Path -Parent $livePath
-  if(-not(Test-Path -LiteralPath $liveParent)){[void](Resolve-SafeReadCanonicalPath (Split-Path -Parent $liveParent));New-Item -ItemType Directory -Path $liveParent|Out-Null}
-  [void](Protect-SafeReadPathAcl $liveParent)
+  $liveParent=Get-OrCreateStrictDirectory $liveParent -HardenExisting
+  if(Test-Path -LiteralPath $livePath){[void](Assert-SafeReadStrictTree $livePath)}
   $prepared += [pscustomobject]@{Year=$year;Path=$livePath;Content=$content;Assembly=$assembly}
 }
 if($prepared.Count -ne 3){throw 'SafeRead activation staging did not produce all three manifests.'}
@@ -109,8 +125,13 @@ try{
     $entry=$prepared[$index];New-Item -ItemType Directory -Force -Path (Split-Path -Parent $entry.Path)|Out-Null
     Invoke-ManifestWrite $entry.Path $entry.Content $index 'activate'
     [void](Assert-SafeReadManifestXml -Path $entry.Path -ExpectedAssembly $entry.Assembly)
+    $entryParent=Split-Path -Parent $entry.Path;[void](Assert-SafeReadStrictAclRecord (Get-SafeReadAclRecord $entryParent) $entryParent)
   }
   Write-SafeReadAtomicFile -Path $activePath -Content (ConvertTo-SafeReadCanonicalJson ([ordered]@{releaseId=$receipt.ReleaseId;releaseManifestSha256=$receipt.ReleaseManifestSha256}))
+  [void](Protect-SafeReadPathAcl $activePath -Strict)
+  [void](Assert-SafeReadStrictTree $activePath)
+  foreach($entry in $prepared){[void](Assert-SafeReadStrictTree $entry.Path);$entryParent=Split-Path -Parent $entry.Path;[void](Assert-SafeReadStrictAclRecord (Get-SafeReadAclRecord $entryParent) $entryParent)}
+  [void](Assert-SafeReadStrictTree $destination)
 }catch{
   for($index=$snapshots.Count-1;$index -ge 0;$index--){Restore-ActivationFile $snapshots[$index] $index 'rollback'}
   Restore-ActivationFile $activeSnapshot -1 'pointer-rollback'
