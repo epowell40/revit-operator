@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bimtools.com/schemas/revit-safe-read-proof-lock-v1.json",
+  "title": "Revit Safe Read whole-assembly proof lock",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "proofKind",
+    "trustBoundary",
+    "sdk",
+    "framework",
+    "source",
+    "variants",
+    "policy",
+    "expected"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "proofKind": { "const": "revit-safe-read-whole-assembly/v1" },
+    "trustBoundary": {
+      "const": "Trusted local administrator, operating system, installed locked SDK/reference pack, Autodesk Revit, and Revit process; malicious local admin/OS/Revit are excluded."
+    },
+    "sdk": { "$ref": "#/$defs/sdk" },
+    "framework": { "$ref": "#/$defs/framework" },
+    "source": { "$ref": "#/$defs/source" },
+    "variants": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/variant" }
+    },
+    "policy": { "$ref": "#/$defs/policy" },
+    "expected": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/expected" }
+      ]
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "stringSet": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "assemblyFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "identity"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "identity": {
+          "type": "string",
+          "pattern": "^[^,]+, Version=[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+, Culture=[^,]+, PublicKeyToken=(null|[0-9a-f]{16})$"
+        }
+      }
+    },
+    "resourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "logicalName", "isPublic"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "logicalName": { "type": "string", "minLength": 1 },
+        "isPublic": { "type": "boolean" }
+      }
+    },
+    "sdk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "sdkPath",
+        "compilerPath",
+        "compilerSha256",
+        "compilerFileVersion",
+        "codeAnalysisPath",
+        "codeAnalysisSha256",
+        "codeAnalysisCSharpPath",
+        "codeAnalysisCSharpSha256",
+        "languageVersion"
+      ],
+      "properties": {
+        "version": { "const": "9.0.304" },
+        "sdkPath": { "type": "string", "minLength": 1 },
+        "compilerPath": { "type": "string", "minLength": 1 },
+        "compilerSha256": { "$ref": "#/$defs/sha256" },
+        "compilerFileVersion": { "type": "string", "minLength": 1 },
+        "codeAnalysisPath": { "type": "string", "minLength": 1 },
+        "codeAnalysisSha256": { "$ref": "#/$defs/sha256" },
+        "codeAnalysisCSharpPath": { "type": "string", "minLength": 1 },
+        "codeAnalysisCSharpSha256": { "$ref": "#/$defs/sha256" },
+        "languageVersion": { "const": "13.0" }
+      }
+    },
+    "framework": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "targetFramework", "referenceRoot", "inventorySha256", "files"],
+      "properties": {
+        "name": { "const": "Microsoft.NETCore.App.Ref" },
+        "version": { "const": "9.0.8" },
+        "targetFramework": { "const": "net9.0" },
+        "referenceRoot": { "type": "string", "minLength": 1 },
+        "inventorySha256": { "$ref": "#/$defs/sha256" },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/assemblyFile" }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "assemblyName", "files", "resources"],
+      "properties": {
+        "root": { "type": "string", "minLength": 1 },
+        "assemblyName": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/file" }
+        },
+        "resources": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/resourceFile" }
+        }
+      }
+    },
+    "variant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revitYear", "preprocessorSymbols", "revitReferences"],
+      "properties": {
+        "revitYear": { "enum": ["2023", "2024", "2025"] },
+        "preprocessorSymbols": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": { "type": "string", "pattern": "^REVIT20(23|24|25)$" }
+        },
+        "revitReferences": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/assemblyFile" }
+        }
+      }
+    },
+    "roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "httpListenerOwnerType",
+        "httpListenerField",
+        "externalEventOwnerType",
+        "externalEventHandlerType",
+        "externalEventField",
+        "externalEventStateField"
+      ],
+      "properties": {
+        "httpListenerOwnerType": { "type": "string", "minLength": 1 },
+        "httpListenerField": { "type": "string", "minLength": 1 },
+        "externalEventOwnerType": { "type": "string", "minLength": 1 },
+        "externalEventHandlerType": { "type": "string", "minLength": 1 },
+        "externalEventField": { "type": "string", "minLength": 1 },
+        "externalEventStateField": { "type": "string", "minLength": 1 }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowedOperationKinds",
+        "allowedImplicitOperationKinds",
+        "allowedSensitiveSymbols",
+        "allowedAttributeSymbols",
+        "allowedMutableFields",
+        "allowedRouteLiterals",
+        "allowedListenerPrefixes",
+        "serializationRoots",
+        "allowedSerializationLeafTypes",
+        "roles"
+      ],
+      "properties": {
+        "allowedOperationKinds": { "$ref": "#/$defs/stringSet" },
+        "allowedImplicitOperationKinds": { "$ref": "#/$defs/stringSet" },
+        "allowedSensitiveSymbols": { "$ref": "#/$defs/stringSet" },
+        "allowedAttributeSymbols": { "$ref": "#/$defs/stringSet" },
+        "allowedMutableFields": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "allowedRouteLiterals": { "$ref": "#/$defs/stringSet" },
+        "allowedListenerPrefixes": { "$ref": "#/$defs/stringSet" },
+        "serializationRoots": { "$ref": "#/$defs/stringSet" },
+        "allowedSerializationLeafTypes": { "$ref": "#/$defs/stringSet" },
+        "roles": { "$ref": "#/$defs/roles" }
+      }
+    },
+    "inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "sha256", "items"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "items": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "variantExpected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["references", "symbolBindings", "methods", "metadata", "il", "outputSha256"],
+      "properties": {
+        "references": { "$ref": "#/$defs/inventory" },
+        "symbolBindings": { "$ref": "#/$defs/inventory" },
+        "methods": { "$ref": "#/$defs/inventory" },
+        "metadata": { "$ref": "#/$defs/inventory" },
+        "il": { "$ref": "#/$defs/inventory" },
+        "outputSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["syntax", "types", "members", "serializationClosure", "resources", "variants"],
+      "properties": {
+        "syntax": { "$ref": "#/$defs/inventory" },
+        "types": { "$ref": "#/$defs/inventory" },
+        "members": { "$ref": "#/$defs/inventory" },
+        "serializationClosure": { "$ref": "#/$defs/inventory" },
+        "resources": { "$ref": "#/$defs/inventory" },
+        "variants": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["2023", "2024", "2025"],
+          "properties": {
+            "2023": { "$ref": "#/$defs/variantExpected" },
+            "2024": { "$ref": "#/$defs/variantExpected" },
+            "2025": { "$ref": "#/$defs/variantExpected" }
+          }
+        }
+      }
+    }
+  }
+}

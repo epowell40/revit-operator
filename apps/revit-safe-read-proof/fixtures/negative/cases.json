@@ -1,0 +1,156 @@
+[
+  {
+    "name": "fake-autodesk-source",
+    "kind": "appendSource",
+    "payload": "namespace Autodesk.Revit.UI\n{\n    internal sealed class UIApplication\n    {\n        internal UIApplication()\n        {\n        }\n    }\n}\n",
+    "expectedCode": "AUTODESK_SOURCE_SHADOW"
+  },
+  {
+    "name": "extra-route",
+    "kind": "replaceSource",
+    "find": "requestUri.AbsolutePath != \"/v1/read-title\"",
+    "replace": "requestUri.AbsolutePath != \"/v1/read-title\" && requestUri.AbsolutePath != \"/v1/admin\"",
+    "expectedCode": "ROUTE_LITERAL_FORBIDDEN"
+  },
+  {
+    "name": "extra-member",
+    "kind": "replaceSource",
+    "find": "internal void Start()\n    {",
+    "replace": "internal int UnexpectedMember()\n    {\n        return 7;\n    }\n\n    internal void Start()\n    {",
+    "expectedCode": "INVENTORY_MEMBERS"
+  },
+  {
+    "name": "extra-cfg-edge",
+    "kind": "replaceSource",
+    "find": "return \"RevitOperator Safe Read Title\";",
+    "replace": "if (DateTime.MinValue.Ticks == 0)\n        {\n            return \"RevitOperator Safe Read Title\";\n        }\n        return \"unreachable semantic decoy\";",
+    "expectedCode": "INVENTORY_METHODS_2023"
+  },
+  {
+    "name": "event-state",
+    "kind": "replaceSource",
+    "find": "private HttpListenerContext? _pending;",
+    "replace": "private HttpListenerContext? _pending;\n    internal event Action? UnexpectedEvent;",
+    "expectedCode": "EVENT_STATE_FORBIDDEN"
+  },
+  {
+    "name": "serialization-object",
+    "kind": "replaceSource",
+    "find": "public string? Title\n    {",
+    "replace": "public object Dangerous\n    {\n        get\n        {\n            return new object();\n        }\n    }\n\n    public string? Title\n    {",
+    "expectedCode": "SERIALIZATION_UNSAFE_TYPE"
+  },
+  {
+    "name": "local-function",
+    "kind": "replaceSource",
+    "find": "internal void Stop()\n    {\n        _listener.Stop();\n    }",
+    "replace": "internal void Stop()\n    {\n        void Hidden()\n        {\n            _listener.Stop();\n        }\n        Hidden();\n    }",
+    "expectedCode": "DELEGATE_FORBIDDEN"
+  },
+  {
+    "name": "lambda",
+    "kind": "replaceSource",
+    "find": "return \"RevitOperator Safe Read Title\";",
+    "replace": "Func<string> factory = () => \"RevitOperator Safe Read Title\";\n        return factory();",
+    "expectedCode": "DELEGATE_FORBIDDEN"
+  },
+  {
+    "name": "source-interface",
+    "kind": "appendSource",
+    "payload": "namespace RevitSafeReadFixture\n{\n    internal interface InjectedContract\n    {\n        int Read();\n    }\n}\n",
+    "expectedCode": "SOURCE_INTERFACE_FORBIDDEN"
+  },
+  {
+    "name": "virtual-source",
+    "kind": "appendSource",
+    "payload": "namespace RevitSafeReadFixture\n{\n    internal class PolymorphicProbe\n    {\n        internal PolymorphicProbe()\n        {\n        }\n\n        internal virtual int Read()\n        {\n            return 1;\n        }\n    }\n}\n",
+    "expectedCode": "SOURCE_POLYMORPHISM"
+  },
+  {
+    "name": "operator-source",
+    "kind": "appendSource",
+    "payload": "namespace RevitSafeReadFixture\n{\n    internal readonly struct OperatorProbe\n    {\n        private readonly int _value;\n\n        internal OperatorProbe(int value)\n        {\n            _value = value;\n        }\n\n        public static OperatorProbe operator +(OperatorProbe left, OperatorProbe right)\n        {\n            return new OperatorProbe(left._value + right._value);\n        }\n    }\n}\n",
+    "expectedCode": "OPERATOR_FORBIDDEN"
+  },
+  {
+    "name": "pinvoke",
+    "kind": "appendSource",
+    "payload": "namespace RevitSafeReadFixture\n{\n    internal static class NativeProbe\n    {\n        [System.Runtime.InteropServices.DllImport(\"kernel32.dll\")]\n        internal static extern int GetCurrentProcessId();\n    }\n}\n",
+    "expectedCode": "PINVOKE_FORBIDDEN"
+  },
+  {
+    "name": "file-io",
+    "kind": "replaceSource",
+    "find": "return \"RevitOperator Safe Read Title\";",
+    "replace": "return System.IO.File.ReadAllText(\"forbidden.txt\");",
+    "expectedCode": "SENSITIVE_SYMBOL_FORBIDDEN"
+  },
+  {
+    "name": "non-listener-network",
+    "kind": "replaceSource",
+    "find": "return \"RevitOperator Safe Read Title\";",
+    "replace": "return System.Net.Dns.GetHostName();",
+    "expectedCode": "SENSITIVE_SYMBOL_FORBIDDEN"
+  },
+  {
+    "name": "process",
+    "kind": "replaceSource",
+    "find": "return \"RevitOperator Safe Read Title\";",
+    "replace": "return System.Diagnostics.Process.GetCurrentProcess().ProcessName;",
+    "expectedCode": "SENSITIVE_SYMBOL_FORBIDDEN"
+  },
+  {
+    "name": "environment",
+    "kind": "replaceSource",
+    "find": "return \"RevitOperator Safe Read Title\";",
+    "replace": "return Environment.MachineName;",
+    "expectedCode": "SENSITIVE_SYMBOL_FORBIDDEN"
+  },
+  {
+    "name": "threading",
+    "kind": "replaceSource",
+    "find": "return \"RevitOperator Safe Read Title\";",
+    "replace": "return System.Threading.Thread.CurrentThread.Name ?? \"thread\";",
+    "expectedCode": "SENSITIVE_SYMBOL_FORBIDDEN"
+  },
+  {
+    "name": "field-initializer",
+    "kind": "replaceSource",
+    "find": "private HttpListenerContext? _pending;",
+    "replace": "private HttpListenerContext? _pending;\n    private readonly int _injected = 1;",
+    "expectedCode": "INITIALIZER_FORBIDDEN"
+  },
+  {
+    "name": "finalizer",
+    "kind": "replaceSource",
+    "find": "internal ReadTitleHandler()\n    {",
+    "replace": "~ReadTitleHandler()\n    {\n    }\n\n    internal ReadTitleHandler()\n    {",
+    "expectedCode": "FINALIZER_FORBIDDEN"
+  },
+  {
+    "name": "base-chain",
+    "kind": "appendSource",
+    "payload": "namespace RevitSafeReadFixture\n{\n    internal class BaseProbe\n    {\n        internal BaseProbe()\n        {\n        }\n    }\n\n    internal sealed class DerivedProbe : BaseProbe\n    {\n        internal DerivedProbe()\n        {\n        }\n    }\n}\n",
+    "expectedCode": "BASE_CHAIN_FORBIDDEN"
+  },
+  {
+    "name": "warning-suppression-directive",
+    "kind": "prependSource",
+    "payload": "#pragma warning disable\n",
+    "expectedCode": "DIRECTIVE_FORBIDDEN"
+  },
+  {
+    "name": "dynamic",
+    "kind": "replaceSource",
+    "find": "return \"RevitOperator Safe Read Title\";",
+    "replace": "dynamic value = \"RevitOperator Safe Read Title\";\n        return value;",
+    "expectedCode": "DYNAMIC_FORBIDDEN"
+  },
+  {
+    "name": "reflection",
+    "kind": "replaceSource",
+    "find": "return \"RevitOperator Safe Read Title\";",
+    "replace": "return typeof(ReadTitleHandler).FullName ?? \"missing\";",
+    "expectedCode": "REFLECTION_FORBIDDEN"
+  }
+]
