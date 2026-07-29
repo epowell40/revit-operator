@@ -1,26 +1,29 @@
-# SafeRead microhost package scaffold
+# SafeRead package scaffold
 
-This is an isolated package path for a future read-only SafeRead Revit bridge. It is **not a readiness claim**, does not enable the feature, and does not modify the established RevitOperator installer, bridge URL, launcher, ports, or `RevitBridge.addin`.
+This is an isolated release path for the certified SafeRead host. It is **not a readiness claim** and does not start Revit, enable the feature, modify the main RevitOperator payload or `RevitBridge.addin`, or change the bridge URL, launcher, or ports.
 
-The package is deliberately separate:
+The certified identity is fixed to the integrated public core:
 
-- Payload filename: `RevitBridge.SafeRead.Addin.dll`.
-- Revit manifest filename: `RevitBridge.SafeRead.addin`.
-- The AddInId, class, name, and vendor identity come only from the build input manifest; the main RevitOperator AddInId is rejected.
-- Targets are fixed: Revit 2023 and 2024 use `net48`; 2025 uses `net8.0-windows`. The release must contain all three and cannot mix their framework/API metadata.
+- host assembly: `RevitOperator.SafeReadHost.dll`
+- template/install names: `RevitOperator.SafeReadHost.addin.template` and `RevitOperator.SafeReadHost.addin`
+- class: `RevitOperator.SafeReadHost.App`
+- AddInId in every year directory: `AAFAA2C0-43F1-42A0-A6B4-D9A0C5F5CE0E`
+- name/vendor fields: the exact values in `apps/revit-safe-read-host/addin/RevitOperator.SafeReadHost.addin.template`
 
-## Build input and receipt
+The XML verifier disables DTD processing, requires exactly one `Application` AddIn, rejects extra/reordered/duplicate fields, and compares parsed exact values including `VendorDescription`. Installed assembly paths are written through an XML DOM so reserved characters are escaped without changing the parsed value.
 
-Create an input JSON using `safe-read-microhost-input/v1`. Each target supplies `revitYear`, `framework`, `apiVersion`, `sourceDll`, and `identity` (`Name`, `AddInId`, `FullClassName`, `VendorId`, `VendorDescription`). The input also supplies an explicit `allowedSignerThumbprints` allowlist.
+## Build contract
 
-Run `build_saferead_microhost_bundle.ps1` with an existing output directory, `signtool.exe`, and a signing thumbprint. The build copies the source DLL into an immutable target staging tree, signs it there, then calculates final hashes and writes `release-manifest.json`. It writes a small `deployment-attestation.json` bound to that final manifest.
+`build_saferead_package_v2.ps1` consumes `revit-operator.safe-read-package-build-input.v2`. Each of the exact three targets declares `revitYear`, `framework`, `platform: x64`, `revitApiPath`, and an exact `requiredPayload` list. A required payload entry declares `fileName`, `role`, and `revitApiBound`; it may supply `projectPath`/`outputPath` or `sourceDll`. The host role defaults to the real `apps/revit-safe-read-host` project and output layout. This list can add the certified-execution DLL when that core split lands without weakening exact-tree validation.
 
-The SHA-256 of `deployment-attestation.json` is printed by the builder. Store that value in the deployment-owned release channel and supply it as `-AttestationPinSha256` during verification and installation. Do not obtain the pin from an untrusted bundle at install time. A changed manifest, changed attestation, or stale pin fails closed.
+The builder runs each declared project for Revit 2023/2024 as `net48` x64 and Revit 2025 as `net8.0-windows` x64 against that year's actual `RevitAPI.dll`. It inspects PE metadata, target-framework attributes, MVIDs, architecture, and embedded Revit API reference versions. A cross-year DLL or API is rejected. Every DLL is signed before its final size/hash receipt; production uses Authenticode and a signer allowlist, while tests inject sign/signature operations and require no certificate.
 
-## Verify and install
+`deployment-attestation.json` binds the final release manifest and emits only static, backend-shaped runtime tuples. Hashes use lowercase `sha256:<64 hex>` form. The package attestation intentionally excludes dynamic host-instance and document bindings; deployment/runtime code must add those separately. Pin the attestation hash through a deployment-owned channel and pass that external value to verification/installation—never derive the trusted pin from the package being installed.
 
-`verify_saferead_microhost_bundle.ps1` checks the exact release root and target trees: there may be no missing or extra files; file hashes/sizes, release ID, year/framework/API binding, identity, manifest template, Authenticode status, and signer allowlist must all match. Production verification uses `Get-AuthenticodeSignature`; tests inject a verifier and do not require a real certificate.
+## Verify, activate, and roll back
 
-`install_saferead_microhost_bundle.ps1` requires an explicit SafeRead `-DestinationRoot` and explicit `-RevitAddinsRoot`. It copies to a versioned staging directory, re-verifies after the copy and again after promotion, then atomically replaces only `active-release.json`. It creates only `RevitBridge.SafeRead.addin` beneath the supplied Revit add-ins root, leaving an existing `RevitBridge.addin` untouched. `-RollbackReleaseId` re-verifies the earlier installed version using its externally stored pin before atomically reactivating it.
+`verify_saferead_microhost_bundle.ps1` rejects missing/extra files, malformed or traversing paths, release/attestation drift, mixed year/framework/platform/API payloads, incorrect identity/XML, invalid signatures, and non-allowlisted signers.
 
-No command here starts Revit, changes the main operator payload, or proves a loaded add-in. A signed package, Pester pass, or manifest installation alone is not live Revit/UI validation.
+`install_saferead_package_v2.ps1` (also reached by the compatibility `install_saferead_microhost_bundle.ps1` entry point) requires explicit SafeRead destination and Revit add-ins roots. It copies into a versioned stage, re-verifies after copy and promotion, then renders and verifies all three final `.addin` files before changing live activation state. Live manifest writes are recoverable; the active pointer changes only after all three succeed. Any partial-write failure restores the prior three manifests and pointer coherently. Rollback release IDs are regex-validated, resolved beneath the versioned releases root, and revalidated against their stored external attestation pin.
+
+Passing source builds and Pester tests is package evidence only. Loaded-DLL identity and real Revit/UI behavior remain unverified until a separate controlled deployment and GUI test.

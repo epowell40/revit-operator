@@ -1,4 +1,7 @@
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'SafeReadPackageV2.Pester.ps1')
+return
+
 $deployRoot = Split-Path -Parent $PSScriptRoot
 $verify = Join-Path $deployRoot 'verify_saferead_microhost_bundle.ps1'
 $install = Join-Path $deployRoot 'install_saferead_microhost_bundle.ps1'

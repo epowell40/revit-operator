@@ -1,4 +1,6 @@
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'SafeReadPackageV2.psm1')
+return
 
 $script:SafeReadSchema = 'safe-read-microhost-release/v1'
 $script:SafeReadAttestationSchema = 'safe-read-microhost-attestation/v1'
