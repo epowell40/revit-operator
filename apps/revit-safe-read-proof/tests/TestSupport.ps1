@@ -213,38 +213,9 @@ function New-ProofFixtureManifest {
         'NamedType:class global::System.Reflection.AssemblyMetadataAttribute|assembly=System.Runtime, Version=8.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a',
         'NamedType:class global::System.Runtime.Versioning.TargetFrameworkAttribute|assembly=System.Runtime, Version=8.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a'
     )
-    $sensitive = [System.Collections.Generic.List[string]]::new()
-    foreach ($year in @('2023', '2024', '2025')) {
-        $revitDirectory = if ($UseInstalledRevit) { "C:\Program Files\Autodesk\Revit $year" } else { Join-Path $ReferenceRoot $year }
-        $apiIdentity = Get-ProofAssemblyIdentity (Join-Path $revitDirectory 'RevitAPI.dll')
-        foreach ($id in @(
-            "Property:bool global::Autodesk.Revit.DB.APIObject.IsValidObject { get; }|assembly=$apiIdentity",
-            "Method:bool global::Autodesk.Revit.DB.APIObject.IsValidObject.get|assembly=$apiIdentity",
-            "Property:bool global::Autodesk.Revit.DB.Document.IsValidObject { get; }|assembly=$apiIdentity",
-            "Method:bool global::Autodesk.Revit.DB.Document.IsValidObject.get|assembly=$apiIdentity",
-            "Property:bool global::Autodesk.Revit.DB.Document.IsModifiable { get; }|assembly=$apiIdentity",
-            "Method:bool global::Autodesk.Revit.DB.Document.IsModifiable.get|assembly=$apiIdentity",
-            "Property:bool global::Autodesk.Revit.DB.Document.IsModified { get; }|assembly=$apiIdentity",
-            "Method:bool global::Autodesk.Revit.DB.Document.IsModified.get|assembly=$apiIdentity",
-            "Method:global::Autodesk.Revit.DB.FilteredElementCollector global::Autodesk.Revit.DB.FilteredElementCollector.OfClass(global::System.Type type)|assembly=$apiIdentity",
-            "Method:global::Autodesk.Revit.DB.FilteredElementIterator global::Autodesk.Revit.DB.FilteredElementCollector.GetElementIterator()|assembly=$apiIdentity",
-            "Method:global::Autodesk.Revit.DB.FilteredElementCollector.FilteredElementCollector(global::Autodesk.Revit.DB.Document document)|assembly=$apiIdentity",
-            "Method:bool global::Autodesk.Revit.DB.FilteredElementIterator.MoveNext()|assembly=$apiIdentity",
-            "Property:global::Autodesk.Revit.DB.Element global::Autodesk.Revit.DB.FilteredElementIterator.Current { get; }|assembly=$apiIdentity",
-            "Method:global::Autodesk.Revit.DB.Element global::Autodesk.Revit.DB.FilteredElementIterator.Current.get|assembly=$apiIdentity",
-            "Property:bool global::Autodesk.Revit.DB.ViewSheet.IsPlaceholder { get; }|assembly=$apiIdentity",
-            "Method:bool global::Autodesk.Revit.DB.ViewSheet.IsPlaceholder.get|assembly=$apiIdentity",
-            "Method:void global::Autodesk.Revit.DB.APIObject.Dispose()|assembly=$apiIdentity",
-            "NamedType:class global::Autodesk.Revit.DB.ViewSheet|assembly=$apiIdentity"
-        )) { $sensitive.Add($id) }
-    }
-    foreach ($runtimeIdentity in @(
-        'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089',
-        'System.Runtime, Version=8.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a'
-    )) {
-        $sensitive.Add("Method:void global::System.IDisposable.Dispose()|assembly=$runtimeIdentity")
-    }
-    $policy.allowedSensitiveSymbols = $sensitive.ToArray()
+    # Sensitive symbol authority belongs to the verifier-owned immutable profile.
+    # The candidate manifest must remain unable to grant Autodesk.Revit access.
+    $policy.allowedSensitiveSymbols = @()
     $sdkPath = [string]$bootstrapLock.sdkPath
     $dotnetRoot = Split-Path -Parent (Split-Path -Parent $sdkPath)
     $compilerPath = Join-Path $sdkPath $bootstrapLock.compiler.relativePath

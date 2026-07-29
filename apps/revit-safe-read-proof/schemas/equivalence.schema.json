@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bimtools.com/schemas/revit-safe-read-authenticode-equivalence-v1.json",
+  "title": "Revit Safe Read Authenticode PE equivalence receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "status", "equivalent", "proofReceiptSha256", "revitYear",
+    "artifactFileName", "unsignedSha256", "unsignedLength", "candidateSha256",
+    "candidateLength", "canonicalPeSha256", "verifierProfileId",
+    "verifierProfileSha256", "verifierBundleSha256", "allowedDifferences", "issues"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "status": { "enum": ["verified", "rejected"] },
+    "equivalent": { "type": "boolean" },
+    "proofReceiptSha256": { "$ref": "#/$defs/sha256" },
+    "revitYear": { "enum": ["2023", "2024", "2025"] },
+    "artifactFileName": { "type": "string", "minLength": 1 },
+    "unsignedSha256": { "$ref": "#/$defs/sha256" },
+    "unsignedLength": { "type": "integer", "minimum": 1 },
+    "candidateSha256": { "$ref": "#/$defs/sha256" },
+    "candidateLength": { "type": "integer", "minimum": 1 },
+    "canonicalPeSha256": { "type": "string", "pattern": "^$|^[0-9a-f]{64}$" },
+    "verifierProfileId": { "const": "revit-safe-read-sheet-count-kernel/v1" },
+    "verifierProfileSha256": { "$ref": "#/$defs/sha256" },
+    "verifierBundleSha256": { "$ref": "#/$defs/sha256" },
+    "allowedDifferences": { "type": "array", "items": { "type": "string" } },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
+          "message": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

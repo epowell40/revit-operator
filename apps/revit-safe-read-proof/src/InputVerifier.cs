@@ -54,11 +54,30 @@ internal sealed class InputVerifier
         RejectDuplicates(_manifest.Policy.AllowedMutableFields, "POLICY_DUPLICATE", "allowedMutableFields");
         RejectDuplicates(_manifest.Policy.SerializationRoots, "POLICY_DUPLICATE", "serializationRoots");
         RejectDuplicates(_manifest.Policy.SerializationCallsites, "POLICY_DUPLICATE", "serializationCallsites");
+        RejectDuplicates(_manifest.Policy.AllowedSerializationLeafTypes, "POLICY_DUPLICATE", "allowedSerializationLeafTypes");
+        RejectDuplicates(_manifest.Policy.AllowedAttributeSymbols, "POLICY_DUPLICATE", "allowedAttributeSymbols");
         RejectDuplicates(_manifest.Policy.PublicAbi, "POLICY_DUPLICATE", "publicAbi");
-        Check(!string.IsNullOrWhiteSpace(_manifest.Policy.EntryPointType), "ENTRYPOINT_TYPE", "policy.entryPointType is required.");
-        Check(!string.IsNullOrWhiteSpace(_manifest.Policy.EntryPointMethod), "ENTRYPOINT_METHOD", "policy.entryPointMethod is required.");
-        Check(!string.IsNullOrWhiteSpace(_manifest.Policy.ResultType), "RESULT_TYPE", "policy.resultType is required.");
-        Check(_manifest.Policy.PublicAbi.Count > 0, "PUBLIC_ABI_EMPTY", "policy.publicAbi must freeze the complete public ABI.");
+        Check(_manifest.Policy.AllowedSensitiveSymbols.Count == 0, "CANDIDATE_SYMBOL_AUTHORITY", "policy.allowedSensitiveSymbols must be empty; the verifier owns the immutable Revit read-symbol profile.");
+        Check(string.Equals(_manifest.Policy.EntryPointType, CertifiedKernelProfile.EntryPointType, StringComparison.Ordinal), "ENTRYPOINT_TYPE", "policy.entryPointType must equal the verifier-owned certified-kernel entry point.");
+        Check(string.Equals(_manifest.Policy.EntryPointMethod, CertifiedKernelProfile.EntryPointMethod, StringComparison.Ordinal), "ENTRYPOINT_METHOD", "policy.entryPointMethod must equal the verifier-owned certified-kernel entry point.");
+        Check(string.Equals(_manifest.Policy.ResultType, CertifiedKernelProfile.ResultType, StringComparison.Ordinal), "RESULT_TYPE", "policy.resultType must equal the verifier-owned certified result type.");
+        Check(SetEquals(_manifest.Policy.PublicAbi, CertifiedKernelProfile.PublicAbi), "PUBLIC_ABI_PROFILE", "policy.publicAbi must exactly equal the verifier-owned certified ABI.");
+        Check(SetEquals(_manifest.Policy.AllowedOperationKinds, CertifiedKernelProfile.AllowedOperationKinds), "OPERATION_PROFILE", "policy.allowedOperationKinds must exactly equal the verifier-owned kernel profile.");
+        Check(SetEquals(_manifest.Policy.AllowedImplicitOperationKinds, CertifiedKernelProfile.AllowedImplicitOperationKinds), "IMPLICIT_OPERATION_PROFILE", "policy.allowedImplicitOperationKinds must exactly equal the verifier-owned kernel profile.");
+        Check(SetEquals(_manifest.Policy.SerializationRoots, CertifiedKernelProfile.SerializationRoots), "SERIALIZATION_PROFILE", "policy.serializationRoots must exactly equal the verifier-owned result closure.");
+        Check(SetEquals(_manifest.Policy.AllowedSerializationLeafTypes, CertifiedKernelProfile.SerializationLeafTypes), "SERIALIZATION_PROFILE", "policy.allowedSerializationLeafTypes must exactly equal the verifier-owned primitive result leaves.");
+        Check(SetEquals(_manifest.Policy.AllowedAttributeSymbols, CertifiedKernelProfile.AllowedAttributeSymbols), "ATTRIBUTE_PROFILE", "policy.allowedAttributeSymbols must exactly equal the verifier-owned compiler metadata attributes.");
+        Check(_manifest.Policy.AllowedMutableFields.Count == 0 &&
+              _manifest.Policy.AllowedRouteLiterals.Count == 0 &&
+              _manifest.Policy.AllowedListenerPrefixes.Count == 0 &&
+              _manifest.Policy.SerializationCallsites.Count == 0,
+            "KERNEL_BOUNDARY_PROFILE", "Certified kernel policy cannot contain mutable-state, route, listener, or serialization-callsite authority.");
+        Check(string.IsNullOrEmpty(_manifest.Policy.Roles.ExternalEventOwnerType) &&
+              string.IsNullOrEmpty(_manifest.Policy.Roles.ExternalEventHandlerType) &&
+              string.IsNullOrEmpty(_manifest.Policy.Roles.ExternalEventField) &&
+              string.IsNullOrEmpty(_manifest.Policy.Roles.ExternalEventStateField) &&
+              _manifest.Policy.Roles.AllowedInterlockedOwnerTypes.Count == 0,
+            "KERNEL_ROLE_PROFILE", "Certified kernel policy cannot define host, ExternalEvent, or Interlocked roles.");
     }
 
     private void VerifySdk()
@@ -168,7 +187,6 @@ internal sealed class InputVerifier
             RejectReparsePoint(directory, "SOURCE_REPARSE_POINT");
         }
 
-        var declared = new List<string>();
         var seenLogical = new HashSet<string>(StringComparer.Ordinal);
         foreach (var file in _manifest.Source.Files.OrderBy(static file => Canonical.NormalizeRelativePath(file.Path), StringComparer.Ordinal))
         {
@@ -183,7 +201,6 @@ internal sealed class InputVerifier
                 Add("SOURCE_DUPLICATE", "Duplicate source path: " + logical);
                 continue;
             }
-            declared.Add(logical);
             if (!logical.EndsWith(".cs", StringComparison.Ordinal))
             {
                 Add("SOURCE_EXTENSION", "Source path must end with lowercase .cs: " + logical);
@@ -225,7 +242,6 @@ internal sealed class InputVerifier
                 Add("RESOURCE_DUPLICATE", "Source/resource path appears more than once: " + logical);
                 continue;
             }
-            declared.Add(logical);
             if (string.IsNullOrWhiteSpace(resource.LogicalName))
             {
                 Add("RESOURCE_NAME", "Resource logicalName is required: " + logical);
@@ -247,15 +263,9 @@ internal sealed class InputVerifier
             });
         }
 
-        declared = declared.Where(static path => path.EndsWith(".cs", StringComparison.Ordinal)).OrderBy(static path => path, StringComparer.Ordinal).ToList();
-        var actual = Directory.EnumerateFiles(sourceRoot, "*.cs", SearchOption.AllDirectories)
-            .Select(path => Canonical.NormalizeRelativePath(Path.GetRelativePath(sourceRoot, path)))
-            .OrderBy(static value => value, StringComparer.Ordinal)
-            .ToList();
-        if (!declared.SequenceEqual(actual, StringComparer.Ordinal))
-        {
-            Add("SOURCE_EXACT_SET", "C# compile-source set differs from the exact source locks. Non-C# project metadata is intentionally excluded. locked=[" + string.Join(",", declared) + "] actual=[" + string.Join(",", actual) + "]");
-        }
+        // Only the explicitly locked source.files set is compiled. Unlisted project,
+        // legacy, and sibling .cs files are inert and cannot enter the direct-csc
+        // response file. This is necessary for a narrow production proof boundary.
     }
 
     private void VerifyVariants(LockedInputs inputs)
@@ -450,6 +460,10 @@ internal sealed class InputVerifier
             }
         }
     }
+
+    private static bool SetEquals(IEnumerable<string> left, IEnumerable<string> right) =>
+        left.OrderBy(static value => value, StringComparer.Ordinal)
+            .SequenceEqual(right.OrderBy(static value => value, StringComparer.Ordinal), StringComparer.Ordinal);
 
     private void Check(bool condition, string code, string message)
     {

@@ -39,11 +39,13 @@ internal sealed class MethodInspector
     };
 
     private readonly ProofManifest _manifest;
+    private readonly HashSet<string> _allowedSensitiveSymbols;
     private readonly List<ProofIssue> _issues;
 
-    public MethodInspector(ProofManifest manifest, List<ProofIssue> issues)
+    public MethodInspector(ProofManifest manifest, VariantLock variant, List<ProofIssue> issues)
     {
         _manifest = manifest;
+        _allowedSensitiveSymbols = CertifiedKernelProfile.AllowedSensitiveSymbols(variant);
         _issues = issues;
     }
 
@@ -216,7 +218,7 @@ internal sealed class MethodInspector
         if (method.IsVirtual || method.IsAbstract || method.IsOverride)
         {
             var ns = method.ContainingNamespace?.ToDisplayString() ?? string.Empty;
-            var exactRoleException = (_manifest.Policy.AllowedSensitiveSymbols.Contains(Canonical.SymbolId(method), StringComparer.Ordinal) &&
+            var exactRoleException = (_allowedSensitiveSymbols.Contains(Canonical.SymbolId(method)) &&
                                       ns.StartsWith("Autodesk.Revit.", StringComparison.Ordinal)) || IsExactIteratorDisposal(method, containingMethod);
             if (!exactRoleException)
             {
@@ -231,7 +233,7 @@ internal sealed class MethodInspector
                string.Equals(Canonical.QualifiedName(method.ContainingType), "global::System.IDisposable", StringComparison.Ordinal) &&
                string.Equals(method.Name, "Dispose", StringComparison.Ordinal) &&
                method.Parameters.Length == 0 &&
-               _manifest.Policy.AllowedSensitiveSymbols.Contains(Canonical.SymbolId(method), StringComparer.Ordinal);
+               _allowedSensitiveSymbols.Contains(Canonical.SymbolId(method));
     }
 
     private void InspectSensitiveSymbol(ISymbol symbol, IMethodSymbol containingMethod)
@@ -264,7 +266,7 @@ internal sealed class MethodInspector
             Add("NETWORK_SYMBOL_FORBIDDEN", Canonical.SymbolId(containingMethod) + " binds network symbol " + id + ".");
             return;
         }
-        if (!_manifest.Policy.AllowedSensitiveSymbols.Contains(id, StringComparer.Ordinal))
+        if (!_allowedSensitiveSymbols.Contains(id))
         {
             Add("SENSITIVE_SYMBOL_FORBIDDEN", Canonical.SymbolId(containingMethod) + " binds non-allowlisted sensitive symbol " + id + ".");
             return;

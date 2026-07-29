@@ -1,0 +1,34 @@
+{
+  "syntax": { "count": 846, "sha256": "d232bf3bab301d8abe759090229d87fc5ef9a3d3f47ebbdf24e751f9c7e7e8da", "items": [] },
+  "types": { "count": 2, "sha256": "78e24a7bc84d64306a9523206a797cdbcd9e10e5a9d2a1daccc203360a12151f", "items": [] },
+  "members": { "count": 13, "sha256": "ca7c6b2e0c03950ecb2eff57e18ce18f4fb7c4b84e00c2e9f54a20e22b2449cc", "items": [] },
+  "publicAbi": { "count": 9, "sha256": "d7bc7cf2228cf6302381cca290b1104786fd8f4f84304b88b9801964c503f187", "items": [] },
+  "serializationClosure": { "count": 7, "sha256": "bcef4b78d2d231d96c430809a2989aac3c7d67cc8a2234bf9a95b4ff786bf2ac", "items": [] },
+  "resources": { "count": 0, "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "items": [] },
+  "variants": {
+    "2023": {
+      "references": { "count": 236, "sha256": "223d9aea47c4f63ad7ee48f886f9255fbb4d2c80ed892bb04f7005da9e72ecc6", "items": [] },
+      "symbolBindings": { "count": 45, "sha256": "470134f458aa19abe637be88a15017f6996a7c509bb97298872f7db7642b0dd3", "items": [] },
+      "methods": { "count": 365, "sha256": "8d8ce0fd26210e0fa1a5993a34c1449cfa0a29c3d387d9291e7aa37842293c99", "items": [] },
+      "metadata": { "count": 151, "sha256": "3de5ef9857fd0f62f2afa25c8b791fb94e2c99caf72ceec8c96646f1e4fe01a9", "items": [] },
+      "il": { "count": 167, "sha256": "3269c83c4a2e275936f761851449a0239fa0465a78c733bc64b9b29cc8d755fc", "items": [] },
+      "outputSha256": "e3d16b52950ca418199192a1ef717fbb7d59a458168fc80fa30657fd31bd20e2"
+    },
+    "2024": {
+      "references": { "count": 236, "sha256": "6e778f4151f028b206ef50ef28b9bd8c90159f331d4482ddd6d35e28d9963012", "items": [] },
+      "symbolBindings": { "count": 45, "sha256": "1fb0a4ac787b9eeb13c13879db6b224937028fe0b93732f673445b8ed6a22d67", "items": [] },
+      "methods": { "count": 365, "sha256": "9c1e155e1ae06dc0ca4cfba72cee344977bb2a07ddcdbc3a58ce5ce837ffd4d1", "items": [] },
+      "metadata": { "count": 151, "sha256": "f9ec8362624cb38f7d067caf914e7521727e97bdcce3b2e0db952073209c56bd", "items": [] },
+      "il": { "count": 167, "sha256": "3269c83c4a2e275936f761851449a0239fa0465a78c733bc64b9b29cc8d755fc", "items": [] },
+      "outputSha256": "028d9fa45c505e1b8eaa8c60b0413ee53ec2294127279df58af4a74e3075c94e"
+    },
+    "2025": {
+      "references": { "count": 211, "sha256": "d9ad855fb9a30f1ac4ff3f9410656e03cc41eb107ba9a9b061f65730419c1e3f", "items": [] },
+      "symbolBindings": { "count": 45, "sha256": "3006f583fc0e3b9a3a63bc711125ffa4507b11340c62b893f662e13831ba1fd9", "items": [] },
+      "methods": { "count": 365, "sha256": "8b80b228bd6a0189993bafb2519aafdefc0a93d4214c6028c2c5e94a52209c41", "items": [] },
+      "metadata": { "count": 126, "sha256": "0072f776277911aa5a13a17177452b211821155275df565f9d90244998f22944", "items": [] },
+      "il": { "count": 130, "sha256": "15a11bf8b1866d8d688d3b594ca400751de12f901c5ce3f70762eebc3cf20f1e", "items": [] },
+      "outputSha256": "ae17e67beec4e05bc891848351c67d4699e12cf5f18f21eefc2940b1d5c708c1"
+    }
+  }
+}

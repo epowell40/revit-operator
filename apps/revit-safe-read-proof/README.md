@@ -21,6 +21,14 @@ The verifier accepts one whole-assembly manifest. The manifest freezes:
 - the complete public ABI discovered independently from policy, the exact
   `Execute(Document)` entry point, and its independently derived result closure.
 
+The manifest is an input lock, not an authorization policy. Proof profile
+`revit-safe-read-sheet-count-kernel/v1` is compiled into the verifier and owns
+the only accepted entry point, public ABI, primitive result closure, operation
+kinds, and exact Revit read-symbol families. `allowedSensitiveSymbols` must be
+empty. Regenerating source hashes and every observed inventory cannot authorize
+`Document.Save`, `Document.Delete`, transactions, mutating setters, reflection,
+or dynamic invocation.
+
 Anything not frozen is rejected. This includes diagnostics of every severity
 (including suppressed diagnostics), source shadows such as CS0436, duplicate
 assembly identities, Revit type forwarders, unknown operations, unreachable
@@ -54,24 +62,47 @@ dotnet "$temp/tool/RevitSafeReadProof.dll" check `
 
 `check` writes only beneath the caller-provided output directory. A successful
 run emits one deterministic `RevitOperator.SafeReadCertifiedExecution.RevitYEAR.dll`
-per Revit year and a canonical `proof.receipt.json`. Each artifact record binds
-the whole unsigned verifier-emitted SHA-256 plus a managed metadata/IL
-fingerprint that remains stable across Authenticode signing. The receipt schema
-is in `schemas/receipt.schema.json`.
+per Revit year and a canonical `proof.receipt.json`. The receipt binds the whole
+manifest, fixed profile, exact verifier/Roslyn bundle, source set, installed
+Revit API locks, SDK/framework locks, and whole unsigned artifact SHA-256. Its
+schema is in `schemas/receipt.schema.json`.
 
-Packaging can re-inspect an unsigned or Authenticode-signed artifact without
-recompiling it:
+The production manifest is generated without caller-controlled source,
+reference, policy, or expected-inventory seams:
 
 ```powershell
-dotnet RevitSafeReadProof.dll fingerprint `
-  --artifact C:\absolute\RevitOperator.SafeReadCertifiedExecution.dll `
+./production/New-ProductionManifest.ps1 -OutputPath C:\absolute\production.manifest.json
+dotnet RevitSafeReadProof.dll check `
+  --manifest C:\absolute\production.manifest.json `
+  --output-dir C:\absolute\empty-proof-output
+```
+
+It locks the single production `RevitCertifiedExecution.cs` compile source and
+the installed Revit 2023/2024/2025 `RevitAPI.dll` files. Unlisted sibling C# and
+project files are inert because only `source.files` enter the direct compiler
+response.
+
+Packaging must bind an Authenticode candidate to the exact receipted unsigned
+artifact with the canonical full-PE equivalence gate:
+
+```powershell
+dotnet RevitSafeReadProof.dll equivalence `
+  --unsigned-artifact C:\absolute\unsigned\RevitOperator.SafeReadCertifiedExecution.Revit2025.dll `
+  --candidate-artifact C:\absolute\signed\RevitOperator.SafeReadCertifiedExecution.Revit2025.dll `
+  --proof-receipt C:\absolute\unsigned\proof.receipt.json `
+  --revit-year 2025 `
   --output-dir C:\absolute\empty-output
 ```
 
-This writes `artifact.fingerprint.json`. `managedCodeSha256` is SHA-256 of the
-UTF-8 bytes `metadata:<metadata-inventory-sha256>\nil:<il-inventory-sha256>`;
-the PE certificate table is not part of either inventory. The raw artifact
-`sha256` still provides the mandatory pre-sign provenance check.
+This writes `artifact.equivalence.json`. The candidate may differ only in the
+PE checksum, security-directory entry, at most seven required zero alignment
+bytes, and a structurally valid Authenticode `WIN_CERTIFICATE` table ending
+exactly at EOF. Arbitrary overlay bytes and every resource, section, header,
+native, metadata, and IL change fail closed. `canonicalPeSha256` hashes the full
+receipted PE with only the checksum and security-directory entry zeroed.
+
+`fingerprint` remains a diagnostic metadata/IL inventory command. It is not a
+post-sign trust gate and packaging must not use it for provenance.
 
 `inventory` is a deliberately non-certifying authoring command. It applies all
 locks and fail-closed policy checks, then writes the observed exact inventories
@@ -83,11 +114,11 @@ manifest. It never upgrades itself to a successful proof.
 `tests/run.ps1` builds the tool and fake Revit API fixtures via direct
 compiler response files, verifies two positive checks for all three Revit
 targets across CRLF/LF source bytes, inventories the installed real 2023/2024/
-2025 `RevitAPI.dll` references, compares deterministic output and
-receipts, fingerprints all emitted artifacts, rejects malformed artifacts with
-a receipt, and runs 34 adversarial falsifiers. Target/platform, public ABI,
-ambient `Directory.Build.*`, multi-source, and repository-write falsifiers are
-included.
+2025 `RevitAPI.dll` references, compares deterministic output and receipts,
+rejects truncated and valid-PE malformed-IL artifacts, verifies canonical
+Authenticode equivalence, rejects overlay/header tampering, and runs 41
+adversarial falsifiers. Eight mutation/reflection cases regenerate and re-freeze
+their exact observed inventories before check mode proves they still fail.
 
 ```powershell
 ./tests/run.ps1

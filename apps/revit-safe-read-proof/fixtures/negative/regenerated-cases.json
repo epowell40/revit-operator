@@ -1,0 +1,51 @@
+[
+  {
+    "name": "document-save",
+    "find": "return new CertifiedSheetCountResult(true, count, 0);",
+    "replace": "document.Save();\n            return new CertifiedSheetCountResult(true, count, 0);",
+    "expectedCode": "SENSITIVE_SYMBOL_FORBIDDEN",
+    "attemptCandidateAuthorization": true
+  },
+  {
+    "name": "document-delete",
+    "find": "count++;",
+    "replace": "document.Delete(sheet.Id);\n                    count++;",
+    "expectedCode": "SENSITIVE_SYMBOL_FORBIDDEN"
+  },
+  {
+    "name": "transaction",
+    "find": "return new CertifiedSheetCountResult(true, count, 0);",
+    "replace": "using (Transaction transaction = new Transaction(document, \"proof-falsifier\"))\n            {\n                transaction.Start();\n                transaction.RollBack();\n            }\n            return new CertifiedSheetCountResult(true, count, 0);",
+    "expectedCode": "SENSITIVE_SYMBOL_FORBIDDEN"
+  },
+  {
+    "name": "transaction-group",
+    "find": "return new CertifiedSheetCountResult(true, count, 0);",
+    "replace": "using (TransactionGroup transaction = new TransactionGroup(document, \"proof-falsifier\"))\n            {\n                transaction.Start();\n                transaction.RollBack();\n            }\n            return new CertifiedSheetCountResult(true, count, 0);",
+    "expectedCode": "SENSITIVE_SYMBOL_FORBIDDEN"
+  },
+  {
+    "name": "sub-transaction",
+    "find": "return new CertifiedSheetCountResult(true, count, 0);",
+    "replace": "using (SubTransaction transaction = new SubTransaction(document))\n            {\n                transaction.Start();\n                transaction.RollBack();\n            }\n            return new CertifiedSheetCountResult(true, count, 0);",
+    "expectedCode": "SENSITIVE_SYMBOL_FORBIDDEN"
+  },
+  {
+    "name": "mutating-setter",
+    "find": "count++;",
+    "replace": "sheet.Name = \"mutated\";\n                    count++;",
+    "expectedCode": "SENSITIVE_SYMBOL_FORBIDDEN"
+  },
+  {
+    "name": "reflection-invocation",
+    "find": "return new CertifiedSheetCountResult(true, count, 0);",
+    "replace": "string ignored = typeof(CertifiedSheetCountKernel).Assembly.FullName ?? \"missing\";\n            return new CertifiedSheetCountResult(true, count, 0);",
+    "expectedCode": "REFLECTION_FORBIDDEN"
+  },
+  {
+    "name": "dynamic-invocation",
+    "find": "return new CertifiedSheetCountResult(true, count, 0);",
+    "replace": "dynamic target = document;\n            target.Save();\n            return new CertifiedSheetCountResult(true, count, 0);",
+    "expectedCode": "DYNAMIC_FORBIDDEN"
+  }
+]

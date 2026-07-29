@@ -206,6 +206,12 @@ internal sealed class ProofReceipt
     public string Status { get; set; } = string.Empty;
     public bool Certified { get; set; }
     public string ManifestSha256 { get; set; } = string.Empty;
+    public string VerifierProfileId { get; set; } = string.Empty;
+    public string VerifierProfileSha256 { get; set; } = string.Empty;
+    public string VerifierBundleSha256 { get; set; } = string.Empty;
+    public string SourceLockSha256 { get; set; } = string.Empty;
+    public string ApiLockSha256 { get; set; } = string.Empty;
+    public string SdkLockSha256 { get; set; } = string.Empty;
     public string TrustBoundary { get; set; } = string.Empty;
     public List<string> CompilerOptions { get; set; } = new();
     public List<ProofIssue> Issues { get; set; } = new();
@@ -235,6 +241,26 @@ internal sealed class ArtifactFingerprintReceipt
     public List<ProofIssue> Issues { get; set; } = new();
     public InventoryExpectation Metadata { get; set; } = new();
     public InventoryExpectation Il { get; set; } = new();
+}
+
+internal sealed class ArtifactEquivalenceReceipt
+{
+    public int SchemaVersion { get; set; } = 1;
+    public string Status { get; set; } = string.Empty;
+    public bool Equivalent { get; set; }
+    public string ProofReceiptSha256 { get; set; } = string.Empty;
+    public string RevitYear { get; set; } = string.Empty;
+    public string ArtifactFileName { get; set; } = string.Empty;
+    public string UnsignedSha256 { get; set; } = string.Empty;
+    public long UnsignedLength { get; set; }
+    public string CandidateSha256 { get; set; } = string.Empty;
+    public long CandidateLength { get; set; }
+    public string CanonicalPeSha256 { get; set; } = string.Empty;
+    public string VerifierProfileId { get; set; } = string.Empty;
+    public string VerifierProfileSha256 { get; set; } = string.Empty;
+    public string VerifierBundleSha256 { get; set; } = string.Empty;
+    public List<string> AllowedDifferences { get; set; } = new();
+    public List<ProofIssue> Issues { get; set; } = new();
 }
 
 internal static class Constants

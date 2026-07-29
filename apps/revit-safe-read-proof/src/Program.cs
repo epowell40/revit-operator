@@ -35,9 +35,9 @@ internal static class Program
 
     private static int Run(string[] args)
     {
-        if (args.Length == 0 || args[0] is not ("check" or "inventory" or "fingerprint"))
+        if (args.Length == 0 || args[0] is not ("check" or "inventory" or "fingerprint" or "equivalence"))
         {
-            Console.Error.WriteLine("Usage: RevitSafeReadProof <check|inventory> --manifest <absolute path> --output-dir <absolute path> | fingerprint --artifact <absolute path> --output-dir <absolute path>");
+            Console.Error.WriteLine("Usage: RevitSafeReadProof <check|inventory> --manifest <abs> --output-dir <empty abs> | fingerprint --artifact <abs> --output-dir <empty abs> | equivalence --unsigned-artifact <abs> --candidate-artifact <abs> --proof-receipt <abs> --revit-year <2023|2024|2025> --output-dir <empty abs>");
             return 64;
         }
 
@@ -46,6 +46,10 @@ internal static class Program
         if (mode == "fingerprint")
         {
             return RunFingerprint(options);
+        }
+        if (mode == "equivalence")
+        {
+            return RunEquivalence(options);
         }
         if (!options.TryGetValue("--manifest", out var manifestArgument) ||
             !options.TryGetValue("--output-dir", out var outputArgument))
@@ -91,6 +95,12 @@ internal static class Program
             Status = result.Issues.Count == 0 ? (mode == "check" ? "verified" : "observed") : "rejected",
             Certified = mode == "check" && result.Issues.Count == 0,
             ManifestSha256 = Canonical.Sha256(manifestBytes),
+            VerifierProfileId = CertifiedKernelProfile.Id,
+            VerifierProfileSha256 = CertifiedKernelProfile.Sha256(),
+            VerifierBundleSha256 = ProofIdentity.VerifierBundleSha256(),
+            SourceLockSha256 = ProofIdentity.SourceLockSha256(manifest),
+            ApiLockSha256 = ProofIdentity.ApiLockSha256(manifest),
+            SdkLockSha256 = ProofIdentity.SdkLockSha256(manifest),
             TrustBoundary = manifest.TrustBoundary,
             CompilerOptions = Constants.CompilerOptions.ToList(),
             Issues = result.Issues
@@ -212,6 +222,135 @@ internal static class Program
         return 1;
     }
 
+    private static int RunEquivalence(IReadOnlyDictionary<string, string> options)
+    {
+        var required = new[] { "--unsigned-artifact", "--candidate-artifact", "--proof-receipt", "--revit-year", "--output-dir" };
+        if (required.Any(option => !options.ContainsKey(option)) ||
+            !Path.IsPathFullyQualified(options["--unsigned-artifact"]) ||
+            !Path.IsPathFullyQualified(options["--candidate-artifact"]) ||
+            !Path.IsPathFullyQualified(options["--proof-receipt"]) ||
+            !Path.IsPathFullyQualified(options["--output-dir"]) ||
+            options["--revit-year"] is not ("2023" or "2024" or "2025"))
+        {
+            Console.Error.WriteLine("equivalence requires absolute --unsigned-artifact, --candidate-artifact, --proof-receipt, --output-dir and --revit-year 2023|2024|2025.");
+            return 64;
+        }
+
+        var unsignedPath = Path.GetFullPath(options["--unsigned-artifact"]);
+        var candidatePath = Path.GetFullPath(options["--candidate-artifact"]);
+        var proofReceiptPath = Path.GetFullPath(options["--proof-receipt"]);
+        var outputRoot = Path.GetFullPath(options["--output-dir"]);
+        foreach (var path in new[] { unsignedPath, candidatePath, proofReceiptPath })
+        {
+            if (!File.Exists(path))
+            {
+                Console.Error.WriteLine("Required equivalence input does not exist: " + path);
+                return 66;
+            }
+        }
+        if (File.Exists(outputRoot))
+        {
+            Console.Error.WriteLine("Output directory resolves to a file: " + outputRoot);
+            return 73;
+        }
+        Directory.CreateDirectory(outputRoot);
+        if (Directory.EnumerateFileSystemEntries(outputRoot).Any())
+        {
+            Console.Error.WriteLine("Output directory must be empty: " + outputRoot);
+            return 73;
+        }
+
+        var unsignedBytes = File.ReadAllBytes(unsignedPath);
+        var candidateBytes = File.ReadAllBytes(candidatePath);
+        var proofReceiptBytes = File.ReadAllBytes(proofReceiptPath);
+        var issues = new List<ProofIssue>();
+        var lockInfo = ReadReceiptArtifactLock(proofReceiptBytes, options["--revit-year"], issues);
+        var unsignedSha256 = Canonical.Sha256(unsignedBytes);
+        if (!string.Equals(lockInfo.Sha256, unsignedSha256, StringComparison.Ordinal) || lockInfo.Length != unsignedBytes.LongLength)
+        {
+            issues.Add(new ProofIssue("UNSIGNED_RECEIPT_MISMATCH", "Unsigned artifact bytes do not match the selected certified proof-receipt artifact lock."));
+        }
+        if (!string.Equals(lockInfo.FileName, Path.GetFileName(unsignedPath), StringComparison.Ordinal))
+        {
+            issues.Add(new ProofIssue("UNSIGNED_FILENAME_MISMATCH", "Unsigned artifact filename does not match the certified proof receipt."));
+        }
+
+        var peResult = PeAuthenticodeEquivalence.Verify(unsignedBytes, candidateBytes, issues);
+        var receipt = new ArtifactEquivalenceReceipt
+        {
+            Status = issues.Count == 0 ? "verified" : "rejected",
+            Equivalent = issues.Count == 0,
+            ProofReceiptSha256 = Canonical.Sha256(proofReceiptBytes),
+            RevitYear = options["--revit-year"],
+            ArtifactFileName = lockInfo.FileName,
+            UnsignedSha256 = unsignedSha256,
+            UnsignedLength = unsignedBytes.LongLength,
+            CandidateSha256 = Canonical.Sha256(candidateBytes),
+            CandidateLength = candidateBytes.LongLength,
+            CanonicalPeSha256 = peResult.CanonicalPeSha256,
+            VerifierProfileId = CertifiedKernelProfile.Id,
+            VerifierProfileSha256 = CertifiedKernelProfile.Sha256(),
+            VerifierBundleSha256 = ProofIdentity.VerifierBundleSha256(),
+            AllowedDifferences = peResult.AllowedDifferences,
+            Issues = issues.OrderBy(static issue => issue.Code, StringComparer.Ordinal).ThenBy(static issue => issue.Message, StringComparer.Ordinal).ToList(),
+        };
+        WriteJson(Path.Combine(outputRoot, "artifact.equivalence.json"), receipt);
+        if (receipt.Equivalent)
+        {
+            Console.WriteLine("EQUIVALENT " + receipt.CanonicalPeSha256);
+            return 0;
+        }
+        foreach (var issue in receipt.Issues)
+        {
+            Console.Error.WriteLine(issue.Code + ": " + issue.Message);
+        }
+        return 1;
+    }
+
+    private static ReceiptArtifactLock ReadReceiptArtifactLock(byte[] bytes, string revitYear, List<ProofIssue> issues)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions
+            {
+                AllowTrailingCommas = false,
+                CommentHandling = JsonCommentHandling.Disallow,
+            });
+            RejectDuplicateProperties(document.RootElement, "$", new List<string>());
+            var root = document.RootElement;
+            if (!root.TryGetProperty("certified", out var certified) || certified.ValueKind != JsonValueKind.True ||
+                !root.TryGetProperty("status", out var status) || !string.Equals(status.GetString(), "verified", StringComparison.Ordinal) ||
+                !root.TryGetProperty("proofKind", out var kind) || !string.Equals(kind.GetString(), Constants.ProofKind, StringComparison.Ordinal))
+            {
+                issues.Add(new ProofIssue("PROOF_RECEIPT_INVALID", "Proof receipt is not a verified certified-kernel receipt."));
+            }
+            var expectedProfileSha = CertifiedKernelProfile.Sha256();
+            if (!root.TryGetProperty("verifierProfileId", out var profileId) || !string.Equals(profileId.GetString(), CertifiedKernelProfile.Id, StringComparison.Ordinal) ||
+                !root.TryGetProperty("verifierProfileSha256", out var profileSha) || !string.Equals(profileSha.GetString(), expectedProfileSha, StringComparison.Ordinal) ||
+                !root.TryGetProperty("verifierBundleSha256", out var bundleSha) || !string.Equals(bundleSha.GetString(), ProofIdentity.VerifierBundleSha256(), StringComparison.Ordinal))
+            {
+                issues.Add(new ProofIssue("VERIFIER_IDENTITY_MISMATCH", "Proof receipt was not produced by this exact verifier bundle/profile."));
+            }
+            if (!root.TryGetProperty("artifacts", out var artifacts) || artifacts.ValueKind != JsonValueKind.Object ||
+                !artifacts.TryGetProperty(revitYear, out var artifact) || artifact.ValueKind != JsonValueKind.Object)
+            {
+                issues.Add(new ProofIssue("PROOF_ARTIFACT_MISSING", "Proof receipt has no artifact lock for Revit " + revitYear + "."));
+                return new ReceiptArtifactLock();
+            }
+            return new ReceiptArtifactLock
+            {
+                FileName = artifact.TryGetProperty("fileName", out var fileName) ? fileName.GetString() ?? string.Empty : string.Empty,
+                Sha256 = artifact.TryGetProperty("sha256", out var sha256) ? sha256.GetString() ?? string.Empty : string.Empty,
+                Length = artifact.TryGetProperty("length", out var length) && length.TryGetInt64(out var parsedLength) ? parsedLength : -1,
+            };
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidDataException or InvalidOperationException)
+        {
+            issues.Add(new ProofIssue("PROOF_RECEIPT_INVALID", "Proof receipt parsing failed closed: " + exception.GetType().Name + ": " + exception.Message));
+            return new ReceiptArtifactLock();
+        }
+    }
+
     private static ProofManifest DeserializeStrict(byte[] bytes)
     {
         using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions
@@ -262,7 +401,7 @@ internal static class Program
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
         for (var index = 0; index < args.Length; index += 2)
         {
-            if (args[index] is not ("--manifest" or "--artifact" or "--output-dir"))
+            if (args[index] is not ("--manifest" or "--artifact" or "--unsigned-artifact" or "--candidate-artifact" or "--proof-receipt" or "--revit-year" or "--output-dir"))
             {
                 throw new ArgumentException("Unknown option: " + args[index]);
             }
@@ -272,6 +411,13 @@ internal static class Program
             }
         }
         return result;
+    }
+
+    private sealed class ReceiptArtifactLock
+    {
+        public string FileName { get; set; } = string.Empty;
+        public string Sha256 { get; set; } = string.Empty;
+        public long Length { get; set; } = -1;
     }
 
     private static void WriteJson<T>(string path, T value)

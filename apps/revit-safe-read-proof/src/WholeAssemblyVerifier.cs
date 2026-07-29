@@ -71,7 +71,7 @@ internal sealed class WholeAssemblyVerifier
                 ValidatePublicAbi(publicAbi);
             }
 
-            var methods = new MethodInspector(_manifest, _issues).Inspect(compile.Compilation);
+            var methods = new MethodInspector(_manifest, variant, _issues).Inspect(compile.Compilation);
             MetadataInspection metadata;
             try
             {
@@ -196,14 +196,9 @@ internal sealed class WholeAssemblyVerifier
                 Add("POLICY_IMPLICIT_SUBSET", "Implicit OperationKind is not present in the general operation allowlist: " + kind + ".");
             }
         }
-        foreach (var symbol in _manifest.Policy.AllowedSensitiveSymbols)
+        if (_manifest.Policy.AllowedSensitiveSymbols.Count != 0)
         {
-            var approvedFamily = symbol.Contains("global::Autodesk.Revit.", StringComparison.Ordinal) ||
-                                 symbol.Contains("global::System.IDisposable.Dispose()", StringComparison.Ordinal);
-            if (!approvedFamily)
-            {
-                Add("POLICY_SENSITIVE_FAMILY", "Sensitive allowlist entry is outside the exact Autodesk Revit read surface: " + symbol + ".");
-            }
+            Add("CANDIDATE_SYMBOL_AUTHORITY", "Candidate manifests cannot authorize sensitive symbols; the verifier owns the immutable read profile.");
         }
         if (_manifest.Policy.AllowedMutableFields.Count != 0)
         {
