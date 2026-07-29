@@ -6,6 +6,8 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 using RevitBridge.Common;
 using Xunit;
 
@@ -152,6 +154,45 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public async Task TransportReaderStopsOversizedFailureAt64KiBAndAllowsFullSuccessBoundary()
+        {
+            var failureLimit = OperatorNativeHttpAuthorizationVerifier.MaximumFailureResponseUtf8Bytes;
+            using var oversizedFailure = new CountingStream(
+                OperatorNativeHttpAuthorizationVerifier.MaximumSuccessResponseUtf8Bytes);
+
+            var failure = await Assert.ThrowsAsync<OperatorNativeHttpAdmissionException>(() =>
+                OperatorNativeHttpBoundedResponseReader.ReadAsync(
+                    oversizedFailure,
+                    failureLimit,
+                    CancellationToken.None));
+
+            Assert.Equal("CERTIFICATION_DIRECT_RESPONSE_SIZE_INVALID", failure.Code);
+            Assert.Equal(failureLimit + 1L, oversizedFailure.BytesRead);
+            Assert.True(oversizedFailure.BytesRead < OperatorNativeHttpAuthorizationVerifier.MaximumSuccessResponseUtf8Bytes);
+
+            var successLimit = OperatorNativeHttpAuthorizationVerifier.MaximumSuccessResponseUtf8Bytes;
+            using var exactSuccess = new CountingStream(successLimit);
+            var success = await OperatorNativeHttpBoundedResponseReader.ReadAsync(
+                exactSuccess,
+                successLimit,
+                CancellationToken.None);
+
+            Assert.Equal(successLimit, success.Length);
+            Assert.Equal(successLimit, exactSuccess.BytesRead);
+        }
+
+        [Fact]
+        public void TransportReaderRejectsOversizedContentLengthBeforeReading()
+        {
+            var error = Assert.Throws<OperatorNativeHttpAdmissionException>(() =>
+                OperatorNativeHttpBoundedResponseReader.EnsureContentLengthWithinLimit(
+                    OperatorNativeHttpAuthorizationVerifier.MaximumFailureResponseUtf8Bytes + 1L,
+                    OperatorNativeHttpAuthorizationVerifier.MaximumFailureResponseUtf8Bytes));
+
+            Assert.Equal("CERTIFICATION_DIRECT_RESPONSE_SIZE_INVALID", error.Code);
+        }
+
+        [Fact]
         public void FinalRefreshUsesFreshRequestIdAndCannotChangeEffectiveBody()
         {
             var source = Prepare("POST", "/revit/ping", "{\"z\":1,\"a\":2}");
@@ -293,6 +334,10 @@ namespace RevitBridge.Common.Tests
 
             Assert.Contains("api/revit-direct/authorize-execution", client);
             Assert.Contains("body_json = request.BodyJson", client);
+            Assert.Contains("var responseByteLimit = resp.IsSuccessStatusCode", client);
+            Assert.Contains("? OperatorNativeHttpAuthorizationVerifier.MaximumSuccessResponseUtf8Bytes", client);
+            Assert.Contains(": OperatorNativeHttpAuthorizationVerifier.MaximumFailureResponseUtf8Bytes", client);
+            Assert.DoesNotContain("OperatorNativeHttpAuthorizationVerifier.MaximumResponseUtf8Bytes,", client);
             Assert.DoesNotContain("effect_hash =", client);
             Assert.DoesNotContain("policy_hash =", client);
 
@@ -392,6 +437,45 @@ namespace RevitBridge.Common.Tests
                 current = current.Parent;
             }
             throw new DirectoryNotFoundException("Could not locate repository root.");
+        }
+
+        private sealed class CountingStream : Stream
+        {
+            private readonly long _length;
+
+            public CountingStream(long length)
+            {
+                _length = length;
+            }
+
+            public long BytesRead { get; private set; }
+            public override bool CanRead => true;
+            public override bool CanSeek => false;
+            public override bool CanWrite => false;
+            public override long Length => _length;
+            public override long Position { get => BytesRead; set => throw new NotSupportedException(); }
+            public override void Flush() { }
+            public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+            public override void SetLength(long value) => throw new NotSupportedException();
+            public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                if (BytesRead >= _length) return 0;
+                var read = (int)Math.Min(count, _length - BytesRead);
+                BytesRead += read;
+                return read;
+            }
+
+            public override Task<int> ReadAsync(
+                byte[] buffer,
+                int offset,
+                int count,
+                CancellationToken cancellationToken)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return Task.FromResult(Read(buffer, offset, count));
+            }
         }
     }
 }

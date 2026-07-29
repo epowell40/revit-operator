@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -690,5 +691,43 @@ namespace RevitBridge.Common
 
         private static OperatorNativeHttpAdmissionException Protocol(string code, string message)
             => OperatorNativeHttpAdmissionException.Protocol(code, message);
+    }
+
+    public static class OperatorNativeHttpBoundedResponseReader
+    {
+        public static void EnsureContentLengthWithinLimit(long? contentLength, int maximumBytes)
+        {
+            if (maximumBytes <= 0)
+                throw new ArgumentOutOfRangeException(nameof(maximumBytes));
+            if (contentLength.HasValue && (contentLength.Value < 0 || contentLength.Value > maximumBytes))
+                throw SizeInvalid();
+        }
+
+        public static async Task<byte[]> ReadAsync(
+            Stream input,
+            int maximumBytes,
+            CancellationToken cancellationToken)
+        {
+            if (input == null) throw new ArgumentNullException(nameof(input));
+            if (maximumBytes <= 0) throw new ArgumentOutOfRangeException(nameof(maximumBytes));
+
+            using var output = new MemoryStream(Math.Min(maximumBytes, 64 * 1024));
+            var buffer = new byte[Math.Min(4096, maximumBytes)];
+            while (true)
+            {
+                var remaining = maximumBytes - checked((int)output.Length);
+                var maximumRead = Math.Min(buffer.Length, remaining + 1);
+                var read = await input.ReadAsync(buffer, 0, maximumRead, cancellationToken).ConfigureAwait(false);
+                if (read <= 0) break;
+                if (read > remaining) throw SizeInvalid();
+                output.Write(buffer, 0, read);
+            }
+            return output.ToArray();
+        }
+
+        private static OperatorNativeHttpAdmissionException SizeInvalid()
+            => OperatorNativeHttpAdmissionException.Protocol(
+                "CERTIFICATION_DIRECT_RESPONSE_SIZE_INVALID",
+                "Native Revit authorization response exceeds the bounded receipt limit.");
     }
 }

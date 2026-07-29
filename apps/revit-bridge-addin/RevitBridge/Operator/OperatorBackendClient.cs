@@ -615,9 +615,16 @@ namespace RevitBridge.Operator
                     },
                     deadline.Token,
                     HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
-                var responseBytes = await ReadBoundedResponseBytesAsync(
-                    resp.Content,
-                    OperatorNativeHttpAuthorizationVerifier.MaximumResponseUtf8Bytes,
+                var responseByteLimit = resp.IsSuccessStatusCode
+                    ? OperatorNativeHttpAuthorizationVerifier.MaximumSuccessResponseUtf8Bytes
+                    : OperatorNativeHttpAuthorizationVerifier.MaximumFailureResponseUtf8Bytes;
+                OperatorNativeHttpBoundedResponseReader.EnsureContentLengthWithinLimit(
+                    resp.Content.Headers.ContentLength,
+                    responseByteLimit);
+                using var responseStream = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false);
+                var responseBytes = await OperatorNativeHttpBoundedResponseReader.ReadAsync(
+                    responseStream,
+                    responseByteLimit,
                     deadline.Token).ConfigureAwait(false);
                 if (!resp.IsSuccessStatusCode)
                 {
@@ -660,31 +667,6 @@ namespace RevitBridge.Operator
                     "CERTIFICATION_DIRECT_AUTHORIZATION_FAILED",
                     "Native Revit authorization failed before dispatch: " + error.Message);
             }
-        }
-
-        private static async Task<byte[]> ReadBoundedResponseBytesAsync(
-            HttpContent content,
-            int maximumBytes,
-            CancellationToken cancellationToken)
-        {
-            if (content.Headers.ContentLength.HasValue && content.Headers.ContentLength.Value > maximumBytes)
-                throw OperatorNativeHttpAdmissionException.Protocol(
-                    "CERTIFICATION_DIRECT_RESPONSE_SIZE_INVALID",
-                    "Native Revit authorization response exceeds the bounded receipt limit.");
-            using var input = await content.ReadAsStreamAsync().ConfigureAwait(false);
-            using var output = new MemoryStream();
-            var buffer = new byte[4096];
-            while (true)
-            {
-                var read = await input.ReadAsync(buffer, 0, buffer.Length, cancellationToken).ConfigureAwait(false);
-                if (read <= 0) break;
-                if (output.Length + read > maximumBytes)
-                    throw OperatorNativeHttpAdmissionException.Protocol(
-                        "CERTIFICATION_DIRECT_RESPONSE_SIZE_INVALID",
-                        "Native Revit authorization response exceeds the bounded receipt limit.");
-                output.Write(buffer, 0, read);
-            }
-            return output.ToArray();
         }
 
         /// <summary>
