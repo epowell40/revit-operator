@@ -100,6 +100,11 @@ import {
 import { normalizeIncomingToolResults, registerServerPlannedActions } from "./revit_batch/tool_result_normalization.js";
 import { authorizeRevitToolJobExecution, claimNextRevitToolJob, completeRevitToolJob, failRevitToolJob } from "./courier/revit_tool_jobs.js";
 import {
+  authorizeDirectRevitExecution,
+  DIRECT_REVIT_AUTHORIZATION_HTTP_MAX_BYTES,
+  DirectRevitExecutionAuthorizationError
+} from "./capabilities/direct_revit_execution_authorization.js";
+import {
   getOperatorTask,
   listOperatorTasks,
   logTeachSkillUsage,
@@ -666,6 +671,7 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname.startsWith("/api/revit-batch/jobs/") ||
     pathname === "/api/revit-courier/claim-next" ||
     pathname.startsWith("/api/revit-courier/jobs/") ||
+    pathname === "/api/revit-direct/authorize-execution" ||
     pathname === "/api/kb/documents/upload" ||
     pathname === "/api/kb/documents" ||
     pathname.startsWith("/api/kb/documents/") ||
@@ -1261,6 +1267,29 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/api/revit-batch/templates") {
       return writeJson(res, 200, { ok: true, defaults: listRevitBatchTemplates() });
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/revit-direct/authorize-execution") {
+      try {
+        const body = await readJson(req, DIRECT_REVIT_AUTHORIZATION_HTTP_MAX_BYTES);
+        const authorization = authorizeDirectRevitExecution(body);
+        return writeJson(res, 200, { ok: true, authorization });
+      } catch (error) {
+        const directError = error instanceof DirectRevitExecutionAuthorizationError
+          ? error
+          : new DirectRevitExecutionAuthorizationError(
+              "CERTIFICATION_DIRECT_REQUEST_MALFORMED",
+              error instanceof Error ? error.message : "Direct Revit authorization request is invalid.",
+              400,
+              false
+            );
+        return writeJson(res, directError.status, {
+          ok: false,
+          code: directError.code,
+          error: directError.message,
+          retryable: directError.retryable
+        });
+      }
     }
 
     if (req.method === "POST" && url.pathname === "/api/revit-courier/claim-next") {

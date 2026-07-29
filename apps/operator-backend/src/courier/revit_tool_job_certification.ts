@@ -1,17 +1,17 @@
 import { createHash } from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   canonicalJson,
   computeRequestHash,
   normalizeMethod,
   normalizeToolPath,
-  sha256,
   type ExposureChannel,
-  type ToolExposurePolicy,
-  type ToolExposurePolicyRecord
 } from "../capabilities/tool_certification.js";
+import {
+  evaluateTrustedToolExposurePolicy,
+  loadTrustedToolExposurePolicy,
+  TrustedToolExposurePolicyError,
+  type TrustedToolExposurePolicy
+} from "../capabilities/trusted_tool_exposure_policy.js";
 
 export const REVIT_COURIER_V2_JOB_VERSION = "revit-operator.revit-tool-job.v2";
 export const REVIT_COURIER_CERTIFICATION_ENVELOPE_SCHEMA = "revit-operator.revit-tool-certification-envelope.v1";
@@ -21,11 +21,6 @@ export const REVIT_COURIER_CANONICALIZATION = "revit-operator.canonical-json.nfc
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const ID = /^[a-f0-9]{64}$/;
 const ALIAS = /^[a-z][a-z0-9_]*$/;
-const POLICY_FILENAME = "tool_exposure_policy.v1.json";
-const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
-// This is a reviewed deployment anchor. It is never derived from a job or a
-// policy file. A deployed policy may use an independently configured anchor.
-const BUNDLED_POLICY_HASH = "sha256:d6204c2576e83a96586f0b4bc575d7f68c7325e3efb32566ba6204e1aa3d2624";
 const CHANNELS: readonly ExposureChannel[] = ["search", "generic_call", "typed_mcp", "deterministic_workflow"];
 
 export type RevitCourierCertificationEnvelope = {
@@ -376,99 +371,8 @@ export function parseCertifiedCourierJobV2(value: unknown): CertifiedCourierJobV
   return job as unknown as CertifiedCourierJobV2;
 }
 
-function policyPathFromTrustedDeployment(): { policyPath: string; trustedHash: string; trustSource: "bundled" | "deployment" } {
-  const explicitPath = String(process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH ?? "").trim();
-  const explicitHash = String(process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 ?? "").trim();
-  if (explicitPath) {
-    if (path.extname(explicitPath).toLowerCase() !== ".json" || !SHA256.test(explicitHash)) {
-      throw new RevitCourierCertificationError("CERTIFICATION_POLICY_UNAVAILABLE", "Deployment courier certification policy path or trusted hash is invalid.");
-    }
-    return { policyPath: path.resolve(explicitPath), trustedHash: explicitHash, trustSource: "deployment" };
-  }
-  if (explicitHash && !SHA256.test(explicitHash)) {
-    throw new RevitCourierCertificationError("CERTIFICATION_POLICY_UNAVAILABLE", "Deployment courier certification policy hash is invalid.");
-  }
-  return {
-    policyPath: path.resolve(MODULE_DIR, "../../config", POLICY_FILENAME),
-    trustedHash: explicitHash || BUNDLED_POLICY_HASH,
-    trustSource: explicitHash ? "deployment" : "bundled"
-  };
-}
-
-function parsePolicy(value: unknown): ToolExposurePolicy {
-  const policy = asObject(value, "certification policy");
-  exactKeys(policy, ["schema", "hash_algorithm", "evidence_schema", "evidence_source_hash", "records", "policy_hash"], [], "certification policy");
-  if (policy.schema !== "revit-operator.tool-exposure-policy.v1" || policy.hash_algorithm !== "sha256"
-    || policy.evidence_schema !== "revit-operator.tool-certification-evidence.v1") {
-    throw new RevitCourierCertificationError("CERTIFICATION_POLICY_INVALID", "Courier certification policy schema is unsupported.");
-  }
-  requiredHash(policy.evidence_source_hash, "certification policy evidence source hash");
-  const declaredHash = requiredHash(policy.policy_hash, "certification policy hash")!;
-  if (!Array.isArray(policy.records) || policy.records.length === 0) {
-    throw new RevitCourierCertificationError("CERTIFICATION_POLICY_INVALID", "Courier certification policy has no records.");
-  }
-  const identities = new Set<string>();
-  for (const [index, raw] of policy.records.entries()) {
-    const record = asObject(raw, `certification policy record ${index}`);
-    exactKeys(record, [
-      "method", "path", "typed_mcp_aliases", "request_hash", "effect_hash", "evidence_record_hash",
-      "highest_cumulative_level", "observed_levels", "visibility", "channels", "policy_record_hash"
-    ], [], `certification policy record ${index}`);
-    if (normalizeMethod(String(record.method ?? "")) !== record.method || normalizeToolPath(String(record.path ?? "")) !== record.path) {
-      throw new RevitCourierCertificationError("CERTIFICATION_POLICY_INVALID", "Courier certification policy record method/path is noncanonical.");
-    }
-    for (const field of ["request_hash", "effect_hash", "evidence_record_hash", "policy_record_hash"] as const) {
-      requiredHash(record[field], `certification policy record ${index}.${field}`);
-    }
-    if (!Array.isArray(record.typed_mcp_aliases) || record.typed_mcp_aliases.some(alias => typeof alias !== "string" || !ALIAS.test(alias))) {
-      throw new RevitCourierCertificationError("CERTIFICATION_POLICY_INVALID", "Courier certification policy aliases are invalid.");
-    }
-    if (record.typed_mcp_aliases.includes("revit_call_tool")) {
-      throw new RevitCourierCertificationError("CERTIFICATION_POLICY_INVALID", "Courier certification policy cannot bind revit_call_tool as a typed alias.");
-    }
-    const channels = asObject(record.channels, `certification policy record ${index}.channels`);
-    exactKeys(channels, CHANNELS, [], `certification policy record ${index}.channels`);
-    for (const channel of CHANNELS) {
-      const decision = asObject(channels[channel], `certification policy record ${index}.channels.${channel}`);
-      exactKeys(decision, ["exposed", "required_level", "reason_codes"], [], `certification policy record ${index}.channels.${channel}`);
-      if (typeof decision.exposed !== "boolean" || !/^L[0-5]$/.test(String(decision.required_level))
-        || !Array.isArray(decision.reason_codes) || decision.reason_codes.some(reason => typeof reason !== "string")) {
-        throw new RevitCourierCertificationError("CERTIFICATION_POLICY_INVALID", "Courier certification policy channel decision is invalid.");
-      }
-    }
-    const { policy_record_hash: recordHash, ...recordPayload } = record;
-    if (recordHash !== sha256(recordPayload as never)) {
-      throw new RevitCourierCertificationError("CERTIFICATION_POLICY_INVALID", "Courier certification policy record hash is invalid.");
-    }
-    const identity = `${record.method}\n${record.path}\n${record.request_hash}\n${record.effect_hash}`;
-    if (identities.has(identity)) throw new RevitCourierCertificationError("CERTIFICATION_POLICY_INVALID", "Courier certification policy has duplicate exact records.");
-    identities.add(identity);
-  }
-  const { policy_hash: _policyHash, ...payload } = policy;
-  if (declaredHash !== sha256(payload as never)) {
-    throw new RevitCourierCertificationError("CERTIFICATION_POLICY_INVALID", "Courier certification policy hash is invalid.");
-  }
-  return policy as unknown as ToolExposurePolicy;
-}
-
-function loadTrustedCurrentPolicy(): { policy: ToolExposurePolicy; trustSource: "bundled" | "deployment" } {
-  const configured = policyPathFromTrustedDeployment();
-  let raw: string;
-  try { raw = fs.readFileSync(configured.policyPath, "utf8"); } catch {
-    throw new RevitCourierCertificationError("CERTIFICATION_POLICY_UNAVAILABLE", "Current courier certification policy is unavailable.");
-  }
-  let policy: ToolExposurePolicy;
-  try { policy = parsePolicy(JSON.parse(raw.replace(/^\uFEFF/, ""))); } catch (error) {
-    if (error instanceof RevitCourierCertificationError) throw error;
-    throw new RevitCourierCertificationError("CERTIFICATION_POLICY_INVALID", "Current courier certification policy is malformed.");
-  }
-  if (policy.policy_hash !== configured.trustedHash) {
-    throw new RevitCourierCertificationError("CERTIFICATION_POLICY_ROLLBACK_REJECTED", "Current courier certification policy does not match its trusted deployment anchor.");
-  }
-  return { policy, trustSource: configured.trustSource };
-}
-
-function policyAllowsEnvelope(policy: ToolExposurePolicy, trustSource: "bundled" | "deployment", job: CertifiedCourierJobV2): void {
+function policyAllowsEnvelope(trusted: TrustedToolExposurePolicy, job: CertifiedCourierJobV2): void {
+  const { policy, trustSource } = trusted;
   const envelope = job.certification_envelope;
   assertCurrentCertifiedRuntime(envelope);
   if (envelope.policy_hash !== policy.policy_hash || envelope.policy_trust_source !== trustSource) {
@@ -479,29 +383,32 @@ function policyAllowsEnvelope(policy: ToolExposurePolicy, trustSource: "bundled"
     && record.request_hash === envelope.request_hash && record.effect_hash === envelope.effect_hash
   );
   if (matches.length !== 1) {
-    throw new RevitCourierCertificationError("CERTIFICATION_POLICY_DENIED", "Current courier policy no longer contains the exact certified method, path, request, and effect.");
+    throw new RevitCourierCertificationError(
+      "CERTIFICATION_POLICY_DENIED",
+      "Current courier policy no longer contains the exact certified method, path, request, and effect."
+    );
   }
   const record = matches[0]!;
+  // Preserve the courier contract: an immutable record/evidence identity
+  // change is reported before evaluating its potentially changed exposure.
   if (record.policy_record_hash !== envelope.policy_record_hash || record.evidence_record_hash !== envelope.evidence_record_hash) {
     throw new RevitCourierCertificationError("CERTIFICATION_POLICY_CHANGED", "Courier policy record or evidence identity changed after durable publication.");
   }
-  const channelDecision = record.channels[envelope.channel];
-  if (!channelDecision?.exposed || (record.visibility === "workflow_only" && envelope.channel !== "deterministic_workflow")) {
-    throw new RevitCourierCertificationError("CERTIFICATION_POLICY_DENIED", "Current courier policy does not expose this exact channel.");
-  }
-  if (envelope.channel === "generic_call") {
-    if (envelope.alias !== "revit_call_tool") throw new RevitCourierCertificationError("CERTIFICATION_POLICY_DENIED", "Generic courier alias is invalid.");
-    return;
-  }
-  if (envelope.channel === "deterministic_workflow") return;
-  const aliasRecords = policy.records.filter(candidate => candidate.typed_mcp_aliases.includes(envelope.alias));
-  const aliasChannel = envelope.channel === "search" ? "search" : "typed_mcp";
-  const routeBindsAlias = record.typed_mcp_aliases.includes(envelope.alias);
-  const conjunctionAllowed = aliasRecords.length > 0 && aliasRecords.every(candidate =>
-    candidate.visibility !== "workflow_only" && candidate.channels[aliasChannel].exposed
-  );
-  if (!routeBindsAlias || !conjunctionAllowed) {
-    throw new RevitCourierCertificationError("CERTIFICATION_POLICY_DENIED", "Current courier policy no longer exposes the exact bound alias conjunction.");
+  try {
+    evaluateTrustedToolExposurePolicy({
+      policy,
+      method: envelope.method,
+      path: envelope.path,
+      requestHash: envelope.request_hash,
+      effectHash: envelope.effect_hash,
+      channel: envelope.channel,
+      alias: envelope.alias
+    }).record;
+  } catch (error) {
+    if (error instanceof TrustedToolExposurePolicyError) {
+      throw new RevitCourierCertificationError(error.code, error.message.replace("Current certification policy", "Current courier policy"));
+    }
+    throw error;
   }
 }
 
@@ -512,8 +419,16 @@ export function authorizeCertifiedCourierFinalExecution(value: unknown, executor
   if (job.target_executor_id && job.target_executor_id !== executor) {
     throw new RevitCourierCertificationError("CERTIFICATION_EXECUTOR_MISMATCH", "Certified courier job target executor does not match the claiming workstation.");
   }
-  const { policy, trustSource } = loadTrustedCurrentPolicy();
-  policyAllowsEnvelope(policy, trustSource, job);
+  let trusted: TrustedToolExposurePolicy;
+  try {
+    trusted = loadTrustedToolExposurePolicy();
+  } catch (error) {
+    if (error instanceof TrustedToolExposurePolicyError) {
+      throw new RevitCourierCertificationError(error.code, error.message.replace("certification policy", "courier certification policy"));
+    }
+    throw error;
+  }
+  policyAllowsEnvelope(trusted, job);
   const envelope = job.certification_envelope;
   return {
     version: REVIT_COURIER_FINAL_AUTHORIZATION_VERSION,

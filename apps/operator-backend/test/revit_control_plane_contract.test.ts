@@ -206,6 +206,21 @@ test("hosted MCP courier is session-bound, approval-gated, and never auto-replay
   assert.doesNotMatch(codexBrain, /let client:\s*CodexAppServer\s*\|\s*null/);
 });
 
+test("native direct Revit execution requires the authenticated fixed certification endpoint", () => {
+  const index = repoFile(path.join("operator-backend", "src", "index.ts"), path.join("apps", "operator-backend", "src", "index.ts"));
+  const authorization = repoFile(
+    path.join("operator-backend", "src", "capabilities", "direct_revit_execution_authorization.ts"),
+    path.join("apps", "operator-backend", "src", "capabilities", "direct_revit_execution_authorization.ts")
+  );
+  assert.match(index, /pathname === "\/api\/revit-direct\/authorize-execution"/);
+  assert.match(index, /authorizeDirectRevitExecution\(body\)/);
+  assert.match(authorization, /revit-operator\.revit-direct-admission-request\.v1/);
+  assert.match(authorization, /phase:\s*"certification_native_direct_admission"/);
+  assert.match(authorization, /valid_for_ms:\s*DIRECT_REVIT_AUTHORIZATION_VALID_FOR_MS/);
+  assert.match(authorization, /channel:\s*"generic_call"/);
+  assert.doesNotMatch(authorization, /request\.policy_hash|request\.effect_hash|request\.channel|request\.alias/);
+});
+
 test("geometry-aware tag placement excludes only section-box control volumes from annotation obstacles", () => {
   const handler = addinFile(path.join("RevitBridge.Logic", "Handlers", "TagElementsHandler.cs"));
 
