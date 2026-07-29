@@ -2,7 +2,6 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
-using System.Text.Json;
 using RevitOperator.SafeReadCertifiedExecution;
 
 namespace RevitOperator.SafeReadHost.HostKernel
@@ -43,9 +42,9 @@ namespace RevitOperator.SafeReadHost.HostKernel
 
         internal static RuntimeTuple Parse(string json,int revitYear,DateTimeOffset now)
         {
-            using(JsonDocument document=JsonDocument.Parse(json,new JsonDocumentOptions{AllowTrailingCommas=false,CommentHandling=JsonCommentHandling.Disallow,MaxDepth=4}))
+            try
             {
-                JsonElement root=document.RootElement;
+                StrictJsonValue root=StrictJson.Parse(json,65536,4);
                 if(!Exact(root,AttestationKeys)||Text(root,"schema")!=SafeReadContract.RuntimeAttestationSchema||Text(root,"state")!="active"||
                    Text(root,"route_id")!=SafeReadContract.RouteId||Text(root,"executor_id")!=SafeReadContract.ExecutorId||
                    Text(root,"route_contract_sha256")!=SafeReadContract.RouteContractSha256||Text(root,"policy_sha256")!=SafeReadContract.PolicySha256||!Protocol.IsHash(Text(root,"proof_sha256")))
@@ -53,17 +52,18 @@ namespace RevitOperator.SafeReadHost.HostKernel
                 DateTimeOffset issued,expires;
                 if(!ParseUtc(Text(root,"issued_at_utc"),out issued)||!ParseUtc(Text(root,"expires_at_utc"),out expires)||issued>now||expires<=now||expires<=issued)
                     throw new InvalidOperationException("SafeRead runtime attestation is not currently active.");
-                JsonElement runtime;if(!root.TryGetProperty("runtime_tuple",out runtime)||!Exact(runtime,RuntimeKeys))throw new InvalidOperationException("SafeRead runtime tuple is invalid.");
+                StrictJsonValue runtime;if(!root.TryGetObject("runtime_tuple",out runtime)||!Exact(runtime,RuntimeKeys))throw new InvalidOperationException("SafeRead runtime tuple is invalid.");
                 string hostHash=Text(runtime,"host_content_sha256"),hostMvid=Text(runtime,"host_mvid"),apiHash=Text(runtime,"revit_api_content_sha256"),apiMvid=Text(runtime,"revit_api_mvid"),version=Text(runtime,"revit_version");
                 if(!Protocol.IsHash(hostHash)||!Protocol.IsCanonicalGuid(hostMvid)||!Protocol.IsHash(apiHash)||!Protocol.IsCanonicalGuid(apiMvid)||
                    !(version==revitYear.ToString(CultureInfo.InvariantCulture)||version.StartsWith(revitYear.ToString(CultureInfo.InvariantCulture)+".",StringComparison.Ordinal)))
                     throw new InvalidOperationException("SafeRead runtime tuple fields are invalid.");
                 return new RuntimeTuple(hostHash,hostMvid,apiHash,apiMvid,version);
             }
+            catch(FormatException error){throw new InvalidOperationException("SafeRead runtime attestation JSON is invalid.",error);}
         }
 
-        private static bool Exact(JsonElement element,string[] names){if(element.ValueKind!=JsonValueKind.Object)return false;int index=0;foreach(JsonProperty property in element.EnumerateObject()){if(index>=names.Length||property.Name!=names[index])return false;index++;}return index==names.Length;}
-        private static string Text(JsonElement element,string name){JsonElement value;return element.TryGetProperty(name,out value)&&value.ValueKind==JsonValueKind.String?value.GetString()??String.Empty:String.Empty;}
+        private static bool Exact(StrictJsonValue element,string[] names)=>element.HasExactProperties(names);
+        private static string Text(StrictJsonValue element,string name){string value;return element.TryGetString(name,out value)?value:String.Empty;}
         private static bool ParseUtc(string value,out DateTimeOffset parsed){return DateTimeOffset.TryParseExact(value,"yyyy-MM-dd'T'HH:mm:ss.fff'Z'",CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal|DateTimeStyles.AdjustToUniversal,out parsed)&&parsed.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'",CultureInfo.InvariantCulture)==value;}
         private static byte[] ReadRegularFile(string path,int minimum,int maximum){FileInfo file=new FileInfo(path);if(!file.Exists||(file.Attributes&FileAttributes.ReparsePoint)!=0||file.Length<minimum||file.Length>maximum)throw new InvalidOperationException("SafeRead runtime attestation file is unavailable or unsafe.");SecureLocalStorage.VerifyPrivateFile(path);return File.ReadAllBytes(path);}
         private static string HashFile(string path){using(Stream stream=File.OpenRead(path))using(System.Security.Cryptography.SHA256 sha=System.Security.Cryptography.SHA256.Create())return "sha256:"+Protocol.Hex(sha.ComputeHash(stream));}

@@ -58,9 +58,9 @@ namespace RevitOperator.SafeReadHost.Tests
 
             Assert.Equal(1, Count(project, "ProjectReference"));
             Assert.Contains("RevitOperator.SafeReadCertifiedExecution.csproj", project, StringComparison.Ordinal);
-            Assert.Equal(2, Count(project, "PackageReference"));
-            Assert.Contains("System.Text.Json", project, StringComparison.Ordinal);
-            Assert.Contains("System.IO.FileSystem.AccessControl", project, StringComparison.Ordinal);
+            Assert.Equal(0, Count(project, "PackageReference"));
+            Assert.DoesNotContain("System.Text.Json", project, StringComparison.Ordinal);
+            Assert.DoesNotContain("System.IO.FileSystem.AccessControl", project, StringComparison.Ordinal);
             Assert.Contains("<EnableDefaultCompileItems>false</EnableDefaultCompileItems>", project, StringComparison.Ordinal);
             Assert.DoesNotContain("RevitBridge", project, StringComparison.Ordinal);
             Assert.Equal(3, Count(project, "<Reference Include="));

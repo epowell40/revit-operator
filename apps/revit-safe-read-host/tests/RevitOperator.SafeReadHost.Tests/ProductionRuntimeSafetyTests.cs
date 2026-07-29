@@ -81,6 +81,25 @@ namespace RevitOperator.SafeReadHost.Tests
             Assert.Equal("preauthorization_response", result.Failure.Stage);
         }
 
+        [Theory]
+        [InlineData("{\"ok\":true,\"ok\":true,\"authorization\":{}}")]
+        [InlineData("{\"authorization\":{},\"ok\":true}")]
+        [InlineData("{\"ok\":\"true\",\"authorization\":{}}")]
+        [InlineData("{\"ok\":true,\"authorization\":{}} ")]
+        [InlineData("{\"ok\":true,\"authorization\":{\"schema\":\"bad\\x\"}}")]
+        [InlineData("{\"ok\":false,\"code\":true,\"error\":\"denied\",\"retryable\":false,\"request_dispatched\":false,\"outcome_unknown\":false}")]
+        public async Task Complete_malformed_backend_json_is_known_invalid_not_transport_unknown(string body)
+        {
+            using LoopbackBackend server = new LoopbackBackend(new[] { Reply.Json(body) });
+            using SafeReadBackendAuthorizer authorizer = Authorizer(server.Port);
+            BackendAuthorizationResult result = await authorizer.AuthorizeAsync(Bindings(), new byte[32], CancellationToken.None);
+            Assert.NotNull(result.Failure);
+            Assert.False(result.Failure!.Retryable);
+            Assert.True(result.Failure.RequestDispatched);
+            Assert.False(result.Failure.OutcomeUnknown);
+            Assert.Equal("preauthorization_response", result.Failure.Stage);
+        }
+
         [Fact]
         public async Task Pending_raise_failure_is_known_but_claimed_raise_failure_is_unknown()
         {
@@ -220,6 +239,9 @@ namespace RevitOperator.SafeReadHost.Tests
             Assert.Throws<InvalidOperationException>(() => RuntimeDeploymentAttestation.Parse(AttestationJson(now.AddMinutes(-20), now.AddMinutes(-1)), 2025, now));
             Assert.Throws<InvalidOperationException>(() => RuntimeDeploymentAttestation.Parse(manifest.Replace("\"state\":\"active\"", "\"state\":\"revoked\"", StringComparison.Ordinal), 2025, now));
             Assert.Throws<InvalidOperationException>(() => RuntimeDeploymentAttestation.Parse(manifest.Replace("\"runtime_tuple\":", "\"extra\":true,\"runtime_tuple\":", StringComparison.Ordinal), 2025, now));
+            Assert.Throws<InvalidOperationException>(() => RuntimeDeploymentAttestation.Parse(manifest.Replace("\"state\":\"active\"", "\"state\":\"active\",\"state\":\"active\"", StringComparison.Ordinal), 2025, now));
+            Assert.Throws<InvalidOperationException>(() => RuntimeDeploymentAttestation.Parse(manifest.Replace("\"schema\":\"" + SafeReadContract.RuntimeAttestationSchema + "\",\"state\":\"active\"", "\"state\":\"active\",\"schema\":\"" + SafeReadContract.RuntimeAttestationSchema + "\"", StringComparison.Ordinal), 2025, now));
+            Assert.Throws<InvalidOperationException>(() => RuntimeDeploymentAttestation.Parse(manifest.Replace("\"state\":\"active\"", "\"state\":true", StringComparison.Ordinal), 2025, now));
         }
 
         [Fact]

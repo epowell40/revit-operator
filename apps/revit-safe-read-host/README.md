@@ -46,6 +46,14 @@ backend failure envelopes retain their structured retry/dispatch truth.
 Missing/malformed configuration, redirect, unknown JSON field, stale receipt,
 replay, or binding mismatch denies execution.
 
+Production JSON parsing is one purpose-built bounded implementation shared by
+net48 and net8. It accepts only objects, strings, and booleans needed by the
+frozen SafeRead contracts. Duplicate or reordered keys, wrong types, arrays,
+numbers, null, whitespace/trailing content, invalid UTF-8/escapes/surrogates,
+and depth/size overflow fail closed. The host has no `System.Text.Json`
+dependency, avoiding conflicting strong-name identities in the flat Revit
+2023/2024 payload.
+
 Startup also requires `safe_read_runtime_attestation.v1.json` and
 `safe_read_runtime_attestation.v1.sha256` beside the host DLL. The host verifies
 the external pin before parsing the exact backend-format manifest, rejects
@@ -69,6 +77,8 @@ certified executor can run.
 
 ```powershell
 dotnet test .\tests\RevitOperator.SafeReadHost.Tests\RevitOperator.SafeReadHost.Tests.csproj -c Release
+dotnet run --project .\tests\RevitOperator.SafeReadHost.ParserVectors\RevitOperator.SafeReadHost.ParserVectors.csproj -c Release -f net48
+dotnet run --project .\tests\RevitOperator.SafeReadHost.ParserVectors\RevitOperator.SafeReadHost.ParserVectors.csproj -c Release -f net8.0-windows
 dotnet msbuild .\src\RevitOperator.SafeReadCertifiedExecution\RevitOperator.SafeReadCertifiedExecution.csproj -getItem:Compile -p:TargetFramework=net8.0-windows -p:RevitYear=2025
 dotnet build .\src\RevitOperator.SafeReadHost\RevitOperator.SafeReadHost.csproj -c Release -f net48 -p:RevitYear=2023 -p:RevitApiPath="C:\Program Files\Autodesk\Revit 2023"
 dotnet build .\src\RevitOperator.SafeReadHost\RevitOperator.SafeReadHost.csproj -c Release -f net48 -p:RevitYear=2024 -p:RevitApiPath="C:\Program Files\Autodesk\Revit 2024"

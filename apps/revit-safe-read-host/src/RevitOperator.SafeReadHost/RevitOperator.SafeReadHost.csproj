@@ -42,8 +42,6 @@
     <Compile Include="CertifiedSafeReadHttpHost.cs" />
     <Compile Include="HostKernel\**\*.cs" />
     <ProjectReference Include="..\RevitOperator.SafeReadCertifiedExecution\RevitOperator.SafeReadCertifiedExecution.csproj" />
-    <PackageReference Include="System.Text.Json" Version="8.0.5" />
-    <PackageReference Include="System.IO.FileSystem.AccessControl" Version="5.0.0" />
   </ItemGroup>
 
   <Target Name="ValidateRevitSafeReadTarget" BeforeTargets="ResolveReferences">

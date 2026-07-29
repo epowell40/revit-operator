@@ -42,6 +42,14 @@ is dispatched, response loss/reset/cancellation is unknown and cannot be
 automatically retried. A complete structured backend denial is preserved
 without replacing its safe error text or its dispatch flags.
 
+Backend and attestation JSON use the same dependency-free strict parser on all
+supported Revit targets. It has fixed byte/character, nesting, property, key,
+and string bounds and supports only the value types present in the exact
+contracts. It rejects duplicate/noncanonical keys, noncanonical ordering at
+the contract boundary, invalid UTF-8 and Unicode surrogate sequences, and any
+trailing content. Parsing cannot silently normalize a different payload into a
+valid authorization receipt.
+
 Document identity includes an internal monotonic revision and a rotating
 session ID. Revit document-changed, save/save-as, switch, and close events
 advance or clear this binding. Dirty-to-dirty changes therefore invalidate an
