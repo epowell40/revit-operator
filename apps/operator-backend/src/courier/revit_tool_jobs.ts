@@ -1,11 +1,20 @@
 import fs from "node:fs";
 import path from "node:path";
+import {
+  REVIT_COURIER_V2_JOB_VERSION,
+  RevitCourierCertificationError,
+  authorizeCertifiedCourierFinalExecution,
+  isRevitCourierDevelopmentLaboratory,
+  parseCertifiedCourierJobV2,
+  type CertifiedCourierFinalAuthorization,
+  type CertifiedCourierJobV2
+} from "./revit_tool_job_certification.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
 
 export const REVIT_COURIER_JOB_VERSION = "revit-operator.revit-tool-job.v1";
 export const REVIT_COURIER_RESULT_VERSION = "revit-operator.revit-tool-result.v1";
 
-export type RevitToolJob = {
+export type RevitToolJobV1 = {
   version: typeof REVIT_COURIER_JOB_VERSION;
   id: string;
   session_id: string;
@@ -31,6 +40,8 @@ export type RevitToolJob = {
   error?: string | null;
 };
 
+export type RevitToolJob = RevitToolJobV1 | CertifiedCourierJobV2;
+
 type RevitToolResult = {
   version: typeof REVIT_COURIER_RESULT_VERSION;
   id: string;
@@ -41,6 +52,8 @@ type RevitToolResult = {
   error?: string | null;
   code?: string | null;
   retryable?: boolean;
+  phase?: string | null;
+  outcome_unknown?: boolean;
 };
 
 type ClaimInput = {
@@ -49,6 +62,7 @@ type ClaimInput = {
   session_allowed?: (sessionId: string) => boolean;
 };
 type FinishInput = { session_id: string; job_id: string; executor_id: string; result?: unknown; error?: string; retryable?: boolean };
+type AuthorizeInput = { session_id: string; job_id: string; executor_id: string };
 
 function jobsRoot(): string {
   const root = path.join(ensureWorkspaceLayout().artifacts, "revit-courier", "jobs");
@@ -92,7 +106,10 @@ function writeJsonAtomic(filePath: string, value: unknown): void {
 
 function readJob(jobId: string): RevitToolJob | null {
   const job = readJson<RevitToolJob>(jobPath(jobId));
-  if (!job || job.version !== REVIT_COURIER_JOB_VERSION || job.id !== jobId) return null;
+  // Keep an unknown persisted version visible to the claimant so it can be
+  // terminally quarantined. Silently ignoring it would leave an executable
+  // durable record that might be accepted by a future worker.
+  if (!job || job.id !== jobId) return null;
   return job;
 }
 
@@ -118,7 +135,15 @@ function reconcileJobWithResult(job: RevitToolJob, result: RevitToolResult): Rev
   });
 }
 
-function writeTerminal(job: RevitToolJob, terminal: { status: "succeeded" | "failed"; result?: unknown; error?: string; retryable?: boolean; code?: string }): RevitToolJob {
+function writeTerminal(job: RevitToolJob, terminal: {
+  status: "succeeded" | "failed";
+  result?: unknown;
+  error?: string;
+  retryable?: boolean;
+  code?: string;
+  phase?: string;
+  outcome_unknown?: boolean;
+}): RevitToolJob {
   const finishedAt = new Date().toISOString();
   // The durable result is authoritative. Write it before the job summary so a crash can never expose a terminal job without its receipt.
   writeJsonAtomic(resultPath(job.id), {
@@ -130,7 +155,9 @@ function writeTerminal(job: RevitToolJob, terminal: { status: "succeeded" | "fai
     result: terminal.result ?? null,
     error: terminal.error ?? null,
     code: terminal.code ?? null,
-    retryable: terminal.retryable ?? false
+    retryable: terminal.retryable ?? false,
+    phase: terminal.phase ?? null,
+    outcome_unknown: terminal.outcome_unknown === true
   });
   return saveJob({
     ...job,
@@ -138,6 +165,54 @@ function writeTerminal(job: RevitToolJob, terminal: { status: "succeeded" | "fai
     finished_at: finishedAt,
     error: terminal.error ?? null
   });
+}
+
+function writeCertificationTerminal(job: RevitToolJob, error: RevitCourierCertificationError): RevitToolJob {
+  const terminal = readTerminalResult(job);
+  if (terminal) return reconcileJobWithResult(job, terminal);
+  if (fs.existsSync(resultPath(job.id))) {
+    return saveJob({
+      ...job,
+      status: "failed",
+      finished_at: new Date().toISOString(),
+      error: "The durable Revit courier result receipt is invalid or mismatched; the job was quarantined without replay."
+    });
+  }
+  return writeTerminal(job, {
+    status: "failed",
+    error: error.message,
+    code: error.code,
+    retryable: false,
+    phase: "certification_final_execution",
+    outcome_unknown: false,
+    result: {
+      code: error.code,
+      phase: "certification_final_execution",
+      retryable: false,
+      outcome_unknown: false
+    }
+  });
+}
+
+function validCertifiedJobForClaim(job: RevitToolJob): boolean {
+  if (job.version === REVIT_COURIER_JOB_VERSION) return true;
+  if (job.version !== REVIT_COURIER_V2_JOB_VERSION) {
+    writeCertificationTerminal(job, new RevitCourierCertificationError(
+      "CERTIFICATION_JOB_VERSION_UNSUPPORTED",
+      "Revit courier job version is unsupported and was quarantined before workstation execution."
+    ));
+    return false;
+  }
+  try {
+    parseCertifiedCourierJobV2(job);
+    return true;
+  } catch (error) {
+    const certificationError = error instanceof RevitCourierCertificationError
+      ? error
+      : new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", "Certified courier job could not be validated.");
+    writeCertificationTerminal(job, certificationError);
+    return false;
+  }
 }
 
 function leaseDurationMs(): number {
@@ -184,6 +259,14 @@ export function claimNextRevitToolJob(input: ClaimInput): { job: RevitToolJob | 
       });
       continue;
     }
+    if (job.version === REVIT_COURIER_JOB_VERSION && !isRevitCourierDevelopmentLaboratory()) {
+      writeCertificationTerminal(job, new RevitCourierCertificationError(
+        "CERTIFICATION_LEGACY_V1_DENIED",
+        "Legacy v1 Revit courier jobs are denied outside the explicit development laboratory profile."
+      ));
+      continue;
+    }
+    if (!validCertifiedJobForClaim(job)) continue;
     if (job.status === "running") {
       const leaseExpires = Date.parse(job.claim?.lease_expires_at ?? "");
       if (Number.isFinite(leaseExpires) && leaseExpires <= now && !fs.existsSync(resultPath(job.id))) {
@@ -255,4 +338,41 @@ export function failRevitToolJob(input: FinishInput): RevitToolJob {
   const rawCode = typeof resultRecord?.code === "string" ? resultRecord.code.trim() : "";
   const code = /^[a-z0-9._:-]{1,160}$/i.test(rawCode) ? rawCode : undefined;
   return writeTerminal(job, { status: "failed", result: input.result, error, code, retryable: input.retryable === true });
+}
+
+/**
+ * Re-reads a claimed durable v2 job immediately before the workstation calls
+ * Revit. Certification denial writes an authoritative, non-retryable terminal
+ * receipt so a restart or another worker can never re-claim the operation.
+ */
+export function authorizeRevitToolJobExecution(input: AuthorizeInput): { job: RevitToolJob; authorization: CertifiedCourierFinalAuthorization } {
+  const sessionId = safeId(input.session_id, "session_id");
+  const jobId = safeId(input.job_id, "job_id");
+  const executorId = safeId(input.executor_id, "executor_id");
+  const job = readJob(jobId);
+  if (!job) throw new Error("Revit courier job was not found.");
+  if (job.session_id !== sessionId) throw new Error("Revit courier session mismatch.");
+  if (job.claim?.executor_id !== executorId) throw new Error("Revit courier job is not claimed by this executor.");
+  const terminal = readTerminalResult(job);
+  if (terminal) {
+    reconcileJobWithResult(job, terminal);
+    throw new Error("Revit courier job is already terminal and cannot be authorized for execution.");
+  }
+  if (fs.existsSync(resultPath(job.id))) throw new Error("Revit courier result receipt is invalid or mismatched; refusing execution authorization.");
+  if (job.status !== "running") throw new Error("Revit courier job is not running under this executor.");
+  if (job.version !== REVIT_COURIER_V2_JOB_VERSION) {
+    throw new Error("Legacy Revit courier jobs do not have a certified final-execution authorization receipt.");
+  }
+  try {
+    const authorization = authorizeCertifiedCourierFinalExecution(job, executorId);
+    return { job, authorization };
+  } catch (error) {
+    const certificationError = error instanceof RevitCourierCertificationError
+      ? error
+      : new RevitCourierCertificationError("CERTIFICATION_FINAL_EXECUTION_FAILED", "Certified courier final execution authorization failed.");
+    const terminalJob = writeCertificationTerminal(job, certificationError);
+    const terminalError = new Error(`${certificationError.code}: ${certificationError.message}`);
+    (terminalError as Error & { job?: RevitToolJob }).job = terminalJob;
+    throw terminalError;
+  }
 }
