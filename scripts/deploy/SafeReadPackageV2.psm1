@@ -3,6 +3,7 @@ Set-StrictMode -Version Latest
 $script:ReleaseSchema = 'revit-operator.safe-read-package-release.v3'
 $script:PinsSchema = 'revit-operator.safe-read-package-pins.v3'
 $script:RuntimeAttestationSchema = 'revit-operator.safe-read-runtime-attestation.v1'
+$script:AdmissionReceiptSchema = 'revit-operator.safe-read-admission-receipt.v1'
 $script:HostDll = 'RevitOperator.SafeReadHost.dll'
 $script:CertifiedExecutorDll = 'RevitOperator.SafeReadCertifiedExecution.dll'
 $script:RuntimeAttestationName = 'safe_read_runtime_attestation.v1.json'
@@ -498,6 +499,12 @@ function New-SafeReadInstalledManifest {
 function Invoke-SafeReadSignatureVerification {
   [CmdletBinding()]
   param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string[]]$AllowedSignerThumbprints, [scriptblock]$SignatureVerifier)
+  [void](Get-SafeReadSignatureEvidence -Path $Path -AllowedSignerThumbprints $AllowedSignerThumbprints -SignatureVerifier $SignatureVerifier)
+}
+
+function Get-SafeReadSignatureEvidence {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string[]]$AllowedSignerThumbprints, [scriptblock]$SignatureVerifier)
   $result = if ($SignatureVerifier) { & $SignatureVerifier $Path } else {
     $signature = Get-AuthenticodeSignature -LiteralPath $Path
     [pscustomobject]@{ Status=[string]$signature.Status; Thumbprint=if($signature.SignerCertificate){$signature.SignerCertificate.Thumbprint}else{$null} }
@@ -505,6 +512,8 @@ function Invoke-SafeReadSignatureVerification {
   $thumbprint = ([string]$result.Thumbprint).Replace(' ','').ToUpperInvariant()
   $allowed = @($AllowedSignerThumbprints | ForEach-Object { ([string]$_).Replace(' ','').ToUpperInvariant() })
   if ([string]$result.Status -cne 'Valid' -or $allowed -notcontains $thumbprint) { throw "SafeRead payload signature or signer allowlist validation failed: $Path" }
+  if($thumbprint -cnotmatch '^[0-9A-F]{40}$'){throw "SafeRead signer thumbprint is not an exact SHA-1 certificate thumbprint: $Path"}
+  [pscustomobject][ordered]@{status='Valid';thumbprint=$thumbprint}
 }
 
 function Assert-SafeReadBundle {
@@ -630,6 +639,95 @@ function Assert-SafeReadBundle {
   [pscustomobject]@{ ReleaseId=$release.releaseId; ReleaseManifestSha256=Get-SafeReadSha256 $manifestPath; AttestationSha256=Get-SafeReadSha256 $pinsPath; Source=$source; SourceReceipt=$sourceReceipt; Targets=$targets; RuntimeAttestationPins=$pinTargets }
 }
 
+function Get-SafeReadUtf8Sha256 {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][string]$Content)
+  $bytes=[Text.UTF8Encoding]::new($false).GetBytes($Content)
+  $sha=[Security.Cryptography.SHA256]::Create()
+  try{'sha256:'+([BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-','').ToLowerInvariant())}finally{$sha.Dispose()}
+}
+
+function New-SafeReadAdmissionReceipt {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$BundleRoot,
+    [Parameter(Mandatory)][string]$AttestationPinSha256,
+    [Parameter(Mandatory)][string]$ManifestAssemblyRoot,
+    [scriptblock]$SignatureVerifier,
+    [scriptblock]$AssemblyInspector
+  )
+  if(-not[IO.Path]::IsPathRooted($ManifestAssemblyRoot)){throw 'SafeRead admission manifest assembly root must be an absolute path.'}
+  $manifestAssemblyRoot=[IO.Path]::GetFullPath($ManifestAssemblyRoot).TrimEnd([char]92,[char]47)
+  if([string]::IsNullOrWhiteSpace($manifestAssemblyRoot)){throw 'SafeRead admission manifest assembly root is invalid.'}
+  $verified=Assert-SafeReadBundle -BundleRoot $BundleRoot -AttestationPinSha256 $AttestationPinSha256 -SignatureVerifier $SignatureVerifier -AssemblyInspector $AssemblyInspector
+  $root=(Resolve-Path -LiteralPath $BundleRoot).Path
+  $releasePath=Join-Path $root 'release-manifest.json';$pinsPath=Join-Path $root 'package-pins.json'
+  $release=ConvertTo-SafeReadObject $releasePath
+  $allowed=@($release.allowedSignerThumbprints)
+  $firstTarget=@($verified.Targets|Sort-Object revitYear)[0]
+  $firstProofPath=Join-Path $root "targets\$($firstTarget.revitYear)\proof\proof.receipt.json"
+  $commonProof=ConvertTo-SafeReadObject $firstProofPath
+  $proofTargetPaths=@(@('2023','2024','2025')|ForEach-Object{"targets/$_/proof/proof.receipt.json"})
+  $targets=@()
+  foreach($target in @($verified.Targets|Sort-Object revitYear)){
+    $year=[string]$target.revitYear;$targetRoot=Join-Path $root "targets\$year"
+    $host=@($target.requiredPayload|Where-Object role -ceq 'host')[0]
+    $executor=@($target.requiredPayload|Where-Object role -ceq 'certified_executor')[0]
+    $hostPath=Join-Path $targetRoot ($host.path.Replace('/',[IO.Path]::DirectorySeparatorChar))
+    $executorPath=Join-Path $targetRoot ($executor.path.Replace('/',[IO.Path]::DirectorySeparatorChar))
+    $hostSigner=Get-SafeReadSignatureEvidence -Path $hostPath -AllowedSignerThumbprints $allowed -SignatureVerifier $SignatureVerifier
+    $executorSigner=Get-SafeReadSignatureEvidence -Path $executorPath -AllowedSignerThumbprints $allowed -SignatureVerifier $SignatureVerifier
+    $equivalencePath=Join-Path $targetRoot ($target.proof.equivalencePath.Replace('/',[IO.Path]::DirectorySeparatorChar))
+    $equivalence=ConvertTo-SafeReadObject $equivalencePath
+    $runtimePath=Join-Path $targetRoot ($target.runtimeAttestation.path.Replace('/',[IO.Path]::DirectorySeparatorChar))
+    $runtime=ConvertTo-SafeReadObject $runtimePath
+    $assemblyPath=[IO.Path]::GetFullPath((Join-Path $manifestAssemblyRoot "targets\$year\payload\$script:HostDll"))
+    $templatePath=Join-Path $targetRoot ($target.manifest.path.Replace('/',[IO.Path]::DirectorySeparatorChar))
+    $manifestContent=New-SafeReadInstalledManifest -TemplatePath $templatePath -AssemblyPath $assemblyPath
+    $manifestBytes=[Text.UTF8Encoding]::new($false).GetByteCount($manifestContent)
+    $targets += [ordered]@{
+      revitYear=$year
+      framework=[string]$target.framework
+      host=[ordered]@{path=[string]$host.path;sha256=[string]$host.sha256;sizeBytes=[int64]$host.sizeBytes;mvid=[string]$host.assembly.mvid;signerThumbprint=[string]$hostSigner.thumbprint}
+      executor=[ordered]@{path=[string]$executor.path;sha256=[string]$executor.sha256;sizeBytes=[int64]$executor.sizeBytes;mvid=[string]$executor.assembly.mvid;signerThumbprint=[string]$executorSigner.thumbprint;equivalence=[ordered]@{path=[string]$target.proof.equivalencePath;sha256=[string]$target.proof.equivalenceSha256;unsignedSha256=('sha256:'+[string]$equivalence.unsignedSha256);candidateSha256=('sha256:'+[string]$equivalence.candidateSha256);canonicalPeSha256=[string]$equivalence.canonicalPeSha256}}
+      runtimeAttestation=[ordered]@{path=[string]$target.runtimeAttestation.path;sha256=[string]$target.runtimeAttestation.sha256;sizeBytes=[int64]$target.runtimeAttestation.sizeBytes;state=[string]$runtime.state;issuedAtUtc=[string]$runtime.issued_at_utc;expiresAtUtc=[string]$runtime.expires_at_utc;routeId=[string]$runtime.route_id;routeContractSha256=[string]$runtime.route_contract_sha256;policySha256=[string]$runtime.policy_sha256;proofSha256=[string]$runtime.proof_sha256;executorId=[string]$runtime.executor_id;runtimeTuple=[ordered]@{hostContentSha256=[string]$runtime.runtime_tuple.host_content_sha256;hostMvid=[string]$runtime.runtime_tuple.host_mvid;revitApiContentSha256=[string]$runtime.runtime_tuple.revit_api_content_sha256;revitApiMvid=[string]$runtime.runtime_tuple.revit_api_mvid;revitVersion=[string]$runtime.runtime_tuple.revit_version}}
+      renderedManifest=[ordered]@{fileName=$script:InstalledManifestName;sha256=Get-SafeReadUtf8Sha256 $manifestContent;sizeBytes=[int64]$manifestBytes;encoding='utf-8-no-bom';fields=[ordered]@{name=$script:Identity.Name;assembly=$assemblyPath;fullClassName=$script:Identity.FullClassName;addInId=$script:Identity.AddInId;vendorId=$script:Identity.VendorId;vendorDescription=$script:Identity.VendorDescription}}
+    }
+  }
+  [pscustomobject][ordered]@{
+    schema=$script:AdmissionReceiptSchema
+    status='verified'
+    releaseId=[string]$verified.ReleaseId
+    releaseManifest=[ordered]@{path='release-manifest.json';sha256=[string]$verified.ReleaseManifestSha256}
+    packagePins=[ordered]@{path='package-pins.json';externalSha256=[string]$AttestationPinSha256}
+    source=[ordered]@{path=[string]$verified.Source.path;sha256=[string]$verified.Source.sha256;commit=[string]$verified.Source.commit;proofTree=[string]$verified.Source.proofTree;hostTree=[string]$verified.Source.hostTree;archiveSha256=[string]$verified.Source.archiveSha256}
+    proof=[ordered]@{targetPaths=$proofTargetPaths;sha256=[string]$firstTarget.proof.sha256;proofKind=[string]$commonProof.proofKind;manifestSha256=[string]$commonProof.manifestSha256;verifierProfileId=[string]$commonProof.verifierProfileId;verifierProfileSha256=[string]$commonProof.verifierProfileSha256;verifierBundleSha256=[string]$commonProof.verifierBundleSha256;sourceLockSha256=[string]$commonProof.sourceLockSha256;apiLockSha256=[string]$commonProof.apiLockSha256;sdkLockSha256=[string]$commonProof.sdkLockSha256}
+    manifestAssemblyRoot=$manifestAssemblyRoot
+    targets=$targets
+  }
+}
+
+function Assert-SafeReadAdmissionReceipt {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$ReceiptPath,
+    [Parameter(Mandatory)][string]$BundleRoot,
+    [Parameter(Mandatory)][string]$AttestationPinSha256,
+    [Parameter(Mandatory)][string]$ExpectedManifestAssemblyRoot,
+    [scriptblock]$SignatureVerifier,
+    [scriptblock]$AssemblyInspector
+  )
+  $resolved=Resolve-SafeReadCanonicalPath $ReceiptPath
+  $receipt=ConvertTo-SafeReadObject $resolved
+  Assert-SafeReadExactProperties $receipt @('schema','status','releaseId','releaseManifest','packagePins','source','proof','manifestAssemblyRoot','targets') 'SafeRead admission receipt'
+  if($receipt.schema -cne $script:AdmissionReceiptSchema -or $receipt.status -cne 'verified'){throw 'SafeRead admission receipt schema/status is invalid.'}
+  $canonical=ConvertTo-SafeReadCanonicalJson $receipt
+  if([IO.File]::ReadAllText($resolved) -cne $canonical){throw 'SafeRead admission receipt is not exact canonical JSON.'}
+  $expected=New-SafeReadAdmissionReceipt -BundleRoot $BundleRoot -AttestationPinSha256 $AttestationPinSha256 -ManifestAssemblyRoot $ExpectedManifestAssemblyRoot -SignatureVerifier $SignatureVerifier -AssemblyInspector $AssemblyInspector
+  if($canonical -cne (ConvertTo-SafeReadCanonicalJson $expected)){throw 'SafeRead admission receipt does not match the externally verified package and preparation facts.'}
+  $receipt
+}
+
 function Write-SafeReadAtomicFile {
   [CmdletBinding()]
   param([Parameter(Mandatory)][string]$Path,[Parameter(Mandatory)][string]$Content)
@@ -639,4 +737,4 @@ function Write-SafeReadAtomicFile {
   if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temporary,$Path,("{0}.previous.{1}" -f $Path,[guid]::NewGuid().ToString('N'))) } else { Move-Item -LiteralPath $temporary -Destination $Path }
 }
 
-Export-ModuleMember -Function Assert-SafeReadAclRecord,Assert-SafeReadStrictAclRecord,Assert-SafeReadBundle,Assert-SafeReadExactProperties,Assert-SafeReadManifestXml,Assert-SafeReadReleaseId,Assert-SafeReadRelativePath,Assert-SafeReadDependencyClosure,Assert-SafeReadSecureTree,Assert-SafeReadStrictTree,ConvertTo-SafeReadCanonicalAssemblyReferences,ConvertTo-SafeReadCanonicalJson,ConvertTo-SafeReadHashtable,ConvertTo-SafeReadObject,Get-SafeReadAclRecord,Get-SafeReadAssemblyFacts,Get-SafeReadAssemblyIdentityKey,Get-SafeReadExpectedTarget,Get-SafeReadProofArtifact,Get-SafeReadRevitApiFacts,Get-SafeReadSha256,Invoke-SafeReadSignatureVerification,New-SafeReadAssemblyIdentity,New-SafeReadInstalledManifest,Protect-SafeReadPathAcl,Protect-SafeReadTreeAcl,Resolve-SafeReadCanonicalPath,Test-SafeReadDependencyAssemblyCompatibility,Test-SafeReadRuntimeProvidedAssembly,Write-SafeReadAtomicFile
+Export-ModuleMember -Function Assert-SafeReadAclRecord,Assert-SafeReadStrictAclRecord,Assert-SafeReadAdmissionReceipt,Assert-SafeReadBundle,Assert-SafeReadExactProperties,Assert-SafeReadManifestXml,Assert-SafeReadReleaseId,Assert-SafeReadRelativePath,Assert-SafeReadDependencyClosure,Assert-SafeReadSecureTree,Assert-SafeReadStrictTree,ConvertTo-SafeReadCanonicalAssemblyReferences,ConvertTo-SafeReadCanonicalJson,ConvertTo-SafeReadHashtable,ConvertTo-SafeReadObject,Get-SafeReadAclRecord,Get-SafeReadAssemblyFacts,Get-SafeReadAssemblyIdentityKey,Get-SafeReadExpectedTarget,Get-SafeReadProofArtifact,Get-SafeReadRevitApiFacts,Get-SafeReadSha256,Get-SafeReadSignatureEvidence,Get-SafeReadUtf8Sha256,Invoke-SafeReadSignatureVerification,New-SafeReadAdmissionReceipt,New-SafeReadAssemblyIdentity,New-SafeReadInstalledManifest,Protect-SafeReadPathAcl,Protect-SafeReadTreeAcl,Resolve-SafeReadCanonicalPath,Test-SafeReadDependencyAssemblyCompatibility,Test-SafeReadRuntimeProvidedAssembly,Write-SafeReadAtomicFile
