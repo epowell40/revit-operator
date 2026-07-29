@@ -109,8 +109,15 @@ function normalizeRuntimeMode(value: unknown): string {
 }
 
 export function getToolExposureRuntimeDecision(env: NodeJS.ProcessEnv = process.env): ToolExposureRuntimeDecision {
+  const rawRuntimeMode = typeof env.REVIT_OPERATOR_MODE === "string" ? env.REVIT_OPERATOR_MODE : "";
+  const rawRequestedProfile = typeof env.OPERATOR_TOOL_EXPOSURE_PROFILE === "string"
+    ? env.OPERATOR_TOOL_EXPOSURE_PROFILE
+    : "";
   const runtimeMode = normalizeRuntimeMode(env.REVIT_OPERATOR_MODE);
-  const requested = String(env.OPERATOR_TOOL_EXPOSURE_PROFILE ?? "").trim().toLowerCase();
+  const requested = rawRequestedProfile.trim().toLowerCase();
+  // This is the sole certification escape. Keep it bound to the exact raw
+  // deployment values so normalization cannot silently weaken the boundary.
+  const explicitLaboratory = rawRuntimeMode === "development" && rawRequestedProfile === "laboratory";
   if (requested && requested !== "certified" && requested !== "laboratory") {
     return {
       runtimeMode,
@@ -134,15 +141,16 @@ export function getToolExposureRuntimeDecision(env: NodeJS.ProcessEnv = process.
   }
 
   if (runtimeMode === "development") {
-    const laboratory = requested === "laboratory";
     return {
       runtimeMode,
-      mode: laboratory ? "laboratory" : "certified",
-      certified: !laboratory,
-      explicitLaboratory: laboratory,
-      reason: laboratory
+      mode: explicitLaboratory ? "laboratory" : "certified",
+      certified: !explicitLaboratory,
+      explicitLaboratory,
+      reason: explicitLaboratory
         ? "explicit development laboratory escape is active"
-        : "development defaults to certified exposure; set OPERATOR_TOOL_EXPOSURE_PROFILE=laboratory explicitly to escape"
+        : requested === "laboratory"
+          ? "laboratory exposure requires exact raw REVIT_OPERATOR_MODE=development and OPERATOR_TOOL_EXPOSURE_PROFILE=laboratory; failing closed"
+          : "development defaults to certified exposure; set OPERATOR_TOOL_EXPOSURE_PROFILE=laboratory explicitly to escape"
     };
   }
 

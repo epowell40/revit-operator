@@ -80,6 +80,20 @@ test("runtime modes default hosted/production/development closed and expose only
   assert.equal(developmentLab.mode, "laboratory");
   assert.equal(developmentLab.explicitLaboratory, true);
   assert.match(developmentLab.reason, /explicit development laboratory escape/i);
+  for (const env of [
+    { REVIT_OPERATOR_MODE: "Development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" },
+    { REVIT_OPERATOR_MODE: " development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" },
+    { REVIT_OPERATOR_MODE: "development ", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" },
+    { REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: " laboratory" },
+    { REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory " },
+    { REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "LABORATORY" },
+    { REVIT_OPERATOR_MODE: "local", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" }
+  ]) {
+    const decision = getToolExposureRuntimeDecision(env);
+    assert.equal(decision.mode, "certified", `non-exact escape must fail closed: ${JSON.stringify(env)}`);
+    assert.equal(decision.certified, true, `non-exact escape must remain certified: ${JSON.stringify(env)}`);
+    assert.equal(decision.explicitLaboratory, false, `non-exact escape must not be explicit: ${JSON.stringify(env)}`);
+  }
   assert.equal(getToolExposureRuntimeDecision({ REVIT_OPERATOR_MODE: "local" }).mode, "certified");
   assert.equal(getToolExposureRuntimeDecision({ REVIT_OPERATOR_MODE: "local", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" }).mode, "certified");
   assert.equal(getToolExposureRuntimeDecision({ REVIT_OPERATOR_MODE: "self_hosted" }).mode, "certified");

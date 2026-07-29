@@ -90,6 +90,70 @@ async function closeServer(server: http.Server): Promise<void> {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 }
 
+async function listToolsForExposureEnv(exposureEnv: Record<string, string>): Promise<string[]> {
+  const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "revit-operator-mcp-exposure-stdio-"));
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [path.join(process.cwd(), "dist", "server.js")],
+    cwd: process.cwd(),
+    env: {
+      ...env,
+      OPERATOR_API_BASE_URL: "http://127.0.0.1:1",
+      REVIT_BRIDGE_URL: "http://127.0.0.1:1",
+      OPERATOR_TOKEN: "mcp-exposure-stdio-token",
+      OPERATOR_WORKSPACE_ROOT: workspace,
+      OPERATOR_TOOL_EXPOSURE_POLICY_PATH: certifiedPolicyPath,
+      OPERATOR_TOOL_EXPOSURE_POLICY_SHA256: certifiedPolicyHash,
+      ...exposureEnv
+    },
+    stderr: "pipe"
+  });
+  const stderr: string[] = [];
+  transport.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk.toString("utf8")));
+  const client = new Client({ name: "revit-operator-exposure-stdio-smoke", version: "1.0.0" }, { capabilities: {} });
+  try {
+    try {
+      await withTimeout(client.connect(transport), `initializing MCP stdio server for ${JSON.stringify(exposureEnv)}`);
+    } catch (error) {
+      throw new Error(`${String(error)}\nMCP stderr:\n${stderr.join("")}`);
+    }
+    const tools = await withTimeout(client.listTools(), `listing MCP tools for ${JSON.stringify(exposureEnv)}`);
+    return tools.tools.map(tool => tool.name).sort();
+  } finally {
+    try {
+      await withTimeout(client.close(), "closing exposure MCP client", 5_000);
+    } finally {
+      await withTimeout(transport.close(), "closing exposure MCP child transport", 5_000);
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
+  }
+}
+
+test("MCP tools/list opens the legacy catalog only for exact raw development laboratory values", async () => {
+  const negativeCases = [
+    { REVIT_OPERATOR_MODE: "Development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" },
+    { REVIT_OPERATOR_MODE: " development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" },
+    { REVIT_OPERATOR_MODE: "development ", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" },
+    { REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: " laboratory" },
+    { REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory " },
+    { REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "LABORATORY" },
+    { REVIT_OPERATOR_MODE: "local", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" }
+  ];
+  for (const exposureEnv of negativeCases) {
+    const names = await listToolsForExposureEnv(exposureEnv);
+    assert.deepEqual(names, certifiedSafeNonRevitAliases, `non-exact escape must expose only certified-safe aliases: ${JSON.stringify(exposureEnv)}`);
+    assert.equal(names.filter(name => name.startsWith("revit_")).length, 0, `non-exact escape exposed a Revit alias: ${JSON.stringify(exposureEnv)}`);
+  }
+
+  const laboratoryNames = await listToolsForExposureEnv({
+    REVIT_OPERATOR_MODE: "development",
+    OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
+  });
+  assert.equal(laboratoryNames.length, 122, "Exact development laboratory mode must preserve the complete legacy catalog.");
+  assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 106, "Exact development laboratory mode must preserve all Revit aliases.");
+});
+
 test("MCP stdio server registers repaired tools and rejects semantic write controls before backend execution", async (t) => {
   let backendRequests = 0;
   const backend = http.createServer((_req, res) => {
