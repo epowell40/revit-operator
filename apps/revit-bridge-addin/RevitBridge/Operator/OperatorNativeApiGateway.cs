@@ -213,7 +213,7 @@ namespace RevitBridge.Operator
             var s = new NativeApiPolicySnapshot
             {
                 Profile = ParseProfile(Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_PROFILE"), OperatorNativeApiProfile.Broad),
-                Locked = ParseBool(Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_POLICY_LOCKED"), false),
+                Locked = ParseBool(Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_POLICY_LOCKED"), false, true),
                 MaxResults = Clamp(ParseInt(Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_MAX_RESULTS"), 200), 20, 1000),
                 MaxInvocationParams = Clamp(ParseInt(Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_MAX_INVOCATION_PARAMS"), 10), 1, 50),
                 BlockedTypePrefixes = ParseCsv(Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_BLOCKED_TYPE_PREFIXES"), "Autodesk.Revit.ApplicationServices.ControlledApplication"),
@@ -224,15 +224,16 @@ namespace RevitBridge.Operator
             var envRisk = Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_MAX_RISK");
             if (!string.IsNullOrWhiteSpace(envRisk)) s.MaxRisk = ParseRisk(envRisk, s.MaxRisk);
             var envMut = Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_ALLOW_MUTATING");
-            if (!string.IsNullOrWhiteSpace(envMut)) s.AllowMutating = ParseBool(envMut, s.AllowMutating);
+            if (!string.IsNullOrWhiteSpace(envMut)) s.AllowMutating = ParseBool(envMut, s.AllowMutating, false);
             var envFreeze = Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_BLOCK_FREEZE_RISK");
-            if (!string.IsNullOrWhiteSpace(envFreeze)) s.BlockFreezeRisk = ParseBool(envFreeze, s.BlockFreezeRisk);
+            if (!string.IsNullOrWhiteSpace(envFreeze)) s.BlockFreezeRisk = ParseBool(envFreeze, s.BlockFreezeRisk, true);
 
-            // Hosted and production runtimes may receive requests from outside the
-            // workstation trust boundary. Apply this last so no native-policy env var
-            // or runtime POST can widen the reflected API surface in those modes.
+            // Remote and invalid runtime signals cannot retain workstation authority.
+            // Apply this last so no native-policy env var or runtime POST can widen
+            // the reflected API surface after the deployment boundary is resolved.
             var bounded = OperatorNativeApiRuntimeSafety.ApplyAfterConfiguredOverrides(
                 runtimeMode,
+                Environment.GetEnvironmentVariable("OPERATOR_HOSTED_ENABLED"),
                 new OperatorNativeApiRuntimePolicyState
                 {
                     Profile = ProfileToString(s.Profile),
@@ -309,12 +310,12 @@ namespace RevitBridge.Operator
             if (v == "high") return OperatorActionRisk.High;
             return fallback;
         }
-        private static bool ParseBool(string? raw, bool fallback)
+        private static bool ParseBool(string? raw, bool fallback, bool malformedFallback)
         {
-            var v = (raw ?? "").Trim().ToLowerInvariant();
-            if (v == "1" || v == "true" || v == "yes" || v == "on") return true;
-            if (v == "0" || v == "false" || v == "no" || v == "off") return false;
-            return fallback;
+            if (string.IsNullOrWhiteSpace(raw)) return fallback;
+            return OperatorNativeApiRuntimeSafety.TryParseBoolean(raw, out var parsed)
+                ? parsed
+                : malformedFallback;
         }
         private static int ParseInt(string? raw, int fallback) => int.TryParse((raw ?? "").Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : fallback;
         private static int Clamp(int v, int min, int max) => v < min ? min : (v > max ? max : v);

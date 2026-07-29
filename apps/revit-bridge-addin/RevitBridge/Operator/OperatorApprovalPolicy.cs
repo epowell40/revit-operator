@@ -43,6 +43,15 @@ namespace RevitBridge.Operator
         internal const string ProductionPolicyLockReason =
             "Native API policy is locked to the balanced non-mutating profile in production runtime mode; runtime policy changes are rejected.";
 
+        internal const string HostedFlagPolicyLockReason =
+            "Native API policy is locked to the balanced non-mutating profile because hosted runtime is explicitly enabled; runtime policy changes are rejected.";
+
+        internal const string UnsupportedRuntimeModePolicyLockReason =
+            "Native API policy is locked to the balanced non-mutating profile because REVIT_OPERATOR_MODE is unsupported; runtime policy changes are rejected.";
+
+        internal const string InvalidHostedFlagPolicyLockReason =
+            "Native API policy is locked to the balanced non-mutating profile because OPERATOR_HOSTED_ENABLED is invalid; runtime policy changes are rejected.";
+
         internal static string NormalizeRuntimeMode(string? rawMode)
         {
             var mode = (rawMode ?? "").Trim().ToLowerInvariant();
@@ -52,7 +61,7 @@ namespace RevitBridge.Operator
         internal static bool RequiresLockedNonMutatingPolicy(string? rawMode)
         {
             var mode = NormalizeRuntimeMode(rawMode);
-            return mode == "hosted" || mode == "production";
+            return !IsSupportedRuntimeMode(mode) || mode == "hosted" || mode == "production";
         }
 
         internal static string GetPolicyLockReason(string? rawMode)
@@ -60,17 +69,75 @@ namespace RevitBridge.Operator
             var mode = NormalizeRuntimeMode(rawMode);
             if (mode == "hosted") return HostedPolicyLockReason;
             if (mode == "production") return ProductionPolicyLockReason;
+            if (!IsSupportedRuntimeMode(mode)) return UnsupportedRuntimeModePolicyLockReason;
             return "";
+        }
+
+        internal static bool TryParseBoolean(string? raw, out bool value)
+        {
+            var configured = (raw ?? "").Trim().ToLowerInvariant();
+            if (configured == "1" || configured == "true" || configured == "yes" || configured == "on")
+            {
+                value = true;
+                return true;
+            }
+            if (configured == "0" || configured == "false" || configured == "no" || configured == "off")
+            {
+                value = false;
+                return true;
+            }
+
+            value = false;
+            return false;
         }
 
         internal static OperatorNativeApiRuntimePolicyState ApplyAfterConfiguredOverrides(
             string? rawMode,
             OperatorNativeApiRuntimePolicyState configured)
         {
+            return ApplyAfterConfiguredOverrides(rawMode, null, configured);
+        }
+
+        internal static OperatorNativeApiRuntimePolicyState ApplyAfterConfiguredOverrides(
+            string? rawMode,
+            string? rawHostedEnabled,
+            OperatorNativeApiRuntimePolicyState configured)
+        {
             if (configured == null) throw new ArgumentNullException(nameof(configured));
 
             var mode = NormalizeRuntimeMode(rawMode);
-            if (!RequiresLockedNonMutatingPolicy(mode)) return configured;
+            string reason;
+            string source;
+            if (!IsSupportedRuntimeMode(mode))
+            {
+                reason = UnsupportedRuntimeModePolicyLockReason;
+                source = "runtime-mode:unsupported";
+            }
+            else if (!string.IsNullOrWhiteSpace(rawHostedEnabled) &&
+                     !TryParseBoolean(rawHostedEnabled, out _))
+            {
+                reason = InvalidHostedFlagPolicyLockReason;
+                source = "hosted-flag:invalid";
+            }
+            else if (mode == "hosted")
+            {
+                reason = HostedPolicyLockReason;
+                source = "runtime-mode:hosted";
+            }
+            else if (mode == "production")
+            {
+                reason = ProductionPolicyLockReason;
+                source = "runtime-mode:production";
+            }
+            else if (TryParseBoolean(rawHostedEnabled, out var hostedEnabled) && hostedEnabled)
+            {
+                reason = HostedFlagPolicyLockReason;
+                source = "hosted-flag:true";
+            }
+            else
+            {
+                return configured;
+            }
 
             return new OperatorNativeApiRuntimePolicyState
             {
@@ -79,9 +146,18 @@ namespace RevitBridge.Operator
                 AllowMutating = false,
                 BlockFreezeRisk = true,
                 Locked = true,
-                LockReason = GetPolicyLockReason(mode),
-                Source = "runtime-mode:" + mode
+                LockReason = reason,
+                Source = source
             };
+        }
+
+        private static bool IsSupportedRuntimeMode(string mode)
+        {
+            return mode == "local" ||
+                   mode == "development" ||
+                   mode == "self_hosted" ||
+                   mode == "hosted" ||
+                   mode == "production";
         }
     }
 
