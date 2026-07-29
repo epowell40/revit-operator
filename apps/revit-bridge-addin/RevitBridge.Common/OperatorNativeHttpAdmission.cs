@@ -384,7 +384,17 @@ namespace RevitBridge.Common
 
     public static class OperatorNativeHttpAuthorizationVerifier
     {
-        public const int MaximumResponseUtf8Bytes = 64 * 1024;
+        // The backend returns canonical_body_json as a JSON string. Allow for
+        // the strict 2 MiB effective body to be escaped at the conservative
+        // maximum JSON expansion (for example, one byte becoming a six-byte
+        // unicode escape), plus a fixed allowance for the signed receipt.
+        public const int MaximumJsonStringExpansionFactor = 6;
+        public const int MaximumReceiptOverheadUtf8Bytes = 64 * 1024;
+        public const int MaximumSuccessResponseUtf8Bytes =
+            (OperatorNativeHttpRequestFence.MaximumBodyUtf8Bytes * MaximumJsonStringExpansionFactor)
+            + MaximumReceiptOverheadUtf8Bytes;
+        public const int MaximumFailureResponseUtf8Bytes = 64 * 1024;
+        public const int MaximumResponseUtf8Bytes = MaximumSuccessResponseUtf8Bytes;
         private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
         private static readonly Regex Sha256 = new Regex("^sha256:[0-9a-f]{64}$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
         private static readonly JsonDocumentOptions StrictJson = new JsonDocumentOptions
@@ -409,7 +419,7 @@ namespace RevitBridge.Common
             DateTimeOffset nowUtc,
             TimeSpan? authorizationRoundTrip = null)
         {
-            var document = ParseResponse(responseBytes);
+            var document = ParseResponse(responseBytes, MaximumSuccessResponseUtf8Bytes);
             using (document)
             {
                 var root = document.RootElement;
@@ -499,7 +509,7 @@ namespace RevitBridge.Common
         {
             try
             {
-                var document = ParseResponse(responseBytes);
+                var document = ParseResponse(responseBytes, MaximumFailureResponseUtf8Bytes);
                 using (document)
                 {
                     var root = document.RootElement;
@@ -527,10 +537,10 @@ namespace RevitBridge.Common
             }
         }
 
-        private static JsonDocument ParseResponse(byte[]? bytes)
+        private static JsonDocument ParseResponse(byte[]? bytes, int maximumUtf8Bytes)
         {
             var value = bytes ?? Array.Empty<byte>();
-            if (value.Length == 0 || value.Length > MaximumResponseUtf8Bytes)
+            if (value.Length == 0 || value.Length > maximumUtf8Bytes)
                 throw Protocol("CERTIFICATION_DIRECT_RESPONSE_SIZE_INVALID", "Native Revit authorization response is missing or too large.");
             string json;
             try { json = StrictUtf8.GetString(value); }

@@ -95,6 +95,63 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void ReceiptAcceptsNearTwoMiBCanonicalBodyWithExactHashes()
+        {
+            var source = Prepare("POST", "/revit/ping", "{}");
+            const string prefix = "{\"payload\":\"";
+            const string suffix = "\"}";
+            var canonical = prefix
+                + new string('a', OperatorNativeHttpRequestFence.MaximumBodyUtf8Bytes - prefix.Length - suffix.Length)
+                + suffix;
+            Assert.Equal(OperatorNativeHttpRequestFence.MaximumBodyUtf8Bytes, Utf8(canonical).Length);
+
+            var values = AuthorizationValues(source, canonical);
+            var expectedAuthorizationHash = HashAuthorization(values);
+            var authorization = new Dictionary<string, object?>(values, StringComparer.Ordinal)
+            {
+                ["authorization_hash"] = expectedAuthorizationHash
+            };
+            var responseBytes = Utf8(JsonSerializer.Serialize(new Dictionary<string, object?>
+            {
+                ["ok"] = true,
+                ["authorization"] = authorization
+            }));
+
+            Assert.True(responseBytes.Length > OperatorNativeHttpAuthorizationVerifier.MaximumFailureResponseUtf8Bytes);
+            Assert.True(responseBytes.Length <= OperatorNativeHttpAuthorizationVerifier.MaximumSuccessResponseUtf8Bytes);
+            var receipt = OperatorNativeHttpAuthorizationVerifier.VerifySuccess(
+                responseBytes, source, "local", DateTimeOffset.UtcNow, TimeSpan.FromMilliseconds(5));
+
+            Assert.Equal(canonical, receipt.CanonicalBodyJson);
+            Assert.Equal(source.SourceBodySha256, receipt.SourceBodySha256);
+            Assert.Equal(OperatorCourierCertificationEnvelopeVerifier.Sha256Prefixed(canonical), receipt.BodySha256);
+            Assert.Equal(expectedAuthorizationHash, receipt.AuthorizationHash);
+        }
+
+        [Fact]
+        public void OversizedSuccessResponseFailsClosedBeforeDispatch()
+        {
+            var request = Prepare("POST", "/revit/ping", "{}");
+            var response = Enumerable.Repeat(
+                (byte)' ',
+                OperatorNativeHttpAuthorizationVerifier.MaximumSuccessResponseUtf8Bytes + 1).ToArray();
+            var dispatches = 0;
+
+            var error = Assert.Throws<OperatorNativeHttpAdmissionException>(() =>
+            {
+                var receipt = OperatorNativeHttpAuthorizationVerifier.VerifySuccess(
+                    response, request, "local", DateTimeOffset.UtcNow, TimeSpan.Zero);
+                OperatorNativeHttpDispatchFence.RequireFreshOneUse(receipt, request, DateTimeOffset.UtcNow);
+                dispatches++;
+            });
+
+            Assert.Equal("CERTIFICATION_DIRECT_RESPONSE_SIZE_INVALID", error.Code);
+            Assert.False(error.Retryable);
+            Assert.False(error.OutcomeUnknown);
+            Assert.Equal(0, dispatches);
+        }
+
+        [Fact]
         public void FinalRefreshUsesFreshRequestIdAndCannotChangeEffectiveBody()
         {
             var source = Prepare("POST", "/revit/ping", "{\"z\":1,\"a\":2}");
@@ -167,6 +224,13 @@ namespace RevitBridge.Common.Tests
             var malformed = OperatorNativeHttpAuthorizationVerifier.ParseFailure(503, Utf8("{}"));
             Assert.Equal(503, malformed.HttpStatusCode);
             Assert.False(malformed.OutcomeUnknown);
+
+            var oversizedFailure = OperatorNativeHttpAuthorizationVerifier.ParseFailure(
+                503,
+                Enumerable.Repeat(
+                    (byte)' ',
+                    OperatorNativeHttpAuthorizationVerifier.MaximumFailureResponseUtf8Bytes + 1).ToArray());
+            Assert.Equal("CERTIFICATION_DIRECT_RESPONSE_SIZE_INVALID", oversizedFailure.Code);
         }
 
         [Fact]
