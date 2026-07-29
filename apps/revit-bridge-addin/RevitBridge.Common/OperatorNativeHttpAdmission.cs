@@ -420,6 +420,29 @@ namespace RevitBridge.Common
             DateTimeOffset nowUtc,
             TimeSpan? authorizationRoundTrip = null)
         {
+            return VerifySuccess(
+                responseBytes,
+                request,
+                expectedRuntimeMode,
+                nowUtc,
+                authorizationRoundTrip,
+                OperatorNativeToolExposureEmbeddedAuthority.Instance);
+        }
+
+        /// <summary>
+        /// Explicit authority-injection seam for structural unit tests. Native
+        /// production callers use the overload above, which is permanently
+        /// anchored to the policy embedded in RevitBridge.Common.
+        /// </summary>
+        public static OperatorNativeHttpAuthorizationReceipt VerifySuccess(
+            byte[]? responseBytes,
+            OperatorNativeHttpRequest request,
+            string? expectedRuntimeMode,
+            DateTimeOffset nowUtc,
+            TimeSpan? authorizationRoundTrip,
+            IOperatorNativeToolExposureAuthority authority)
+        {
+            if (authority == null) throw new ArgumentNullException(nameof(authority));
             var document = ParseResponse(responseBytes, MaximumSuccessResponseUtf8Bytes);
             using (document)
             {
@@ -481,6 +504,27 @@ namespace RevitBridge.Common
                 var computedHash = ComputeAuthorizationHash(authorization);
                 if (!string.Equals(computedHash, authorizationHash, StringComparison.Ordinal))
                     throw Protocol("CERTIFICATION_DIRECT_AUTHORIZATION_HASH_MISMATCH", "Native Revit authorization hash is invalid.");
+
+                // authorization_hash is deliberately only an unkeyed receipt
+                // mix-up/corruption binding. Authority comes from the compiled
+                // policy below, never from a digest supplied by the backend.
+                var independentlyComputedRequestHash = OperatorNativeToolExposureRequestHash.Compute(
+                    method,
+                    path,
+                    canonicalBodyJson);
+                if (!string.Equals(independentlyComputedRequestHash, requestHash, StringComparison.Ordinal))
+                    throw Protocol(
+                        "CERTIFICATION_DIRECT_REQUEST_HASH_MISMATCH",
+                        "Native Revit authorization request hash does not bind the exact effective request bytes.");
+                authority.RequireAuthorized(new OperatorNativeToolExposureBinding(
+                    method,
+                    path,
+                    canonicalBodyJson,
+                    policyHash,
+                    policyRecordHash,
+                    evidenceRecordHash,
+                    requestHash,
+                    effectHash));
 
                 var elapsed = authorizationRoundTrip ?? TimeSpan.Zero;
                 if (elapsed < TimeSpan.Zero || elapsed >= TimeSpan.FromMilliseconds(OperatorNativeHttpAuthorizationReceipt.ValidForMilliseconds))

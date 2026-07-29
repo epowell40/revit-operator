@@ -16,6 +16,7 @@ namespace RevitBridge.Common.Tests
     public sealed class OperatorNativeHttpAdmissionTests
     {
         private const string RequestId = "0123456789abcdef0123456789abcdef";
+        private static readonly IOperatorNativeToolExposureAuthority StructuralTestAuthority = new StructuralAllowAuthority();
 
         [Theory]
         [InlineData("development", "laboratory", true)]
@@ -122,7 +123,7 @@ namespace RevitBridge.Common.Tests
             Assert.True(responseBytes.Length > OperatorNativeHttpAuthorizationVerifier.MaximumFailureResponseUtf8Bytes);
             Assert.True(responseBytes.Length <= OperatorNativeHttpAuthorizationVerifier.MaximumSuccessResponseUtf8Bytes);
             var receipt = OperatorNativeHttpAuthorizationVerifier.VerifySuccess(
-                responseBytes, source, "local", DateTimeOffset.UtcNow, TimeSpan.FromMilliseconds(5));
+                responseBytes, source, "local", DateTimeOffset.UtcNow, TimeSpan.FromMilliseconds(5), StructuralTestAuthority);
 
             Assert.Equal(canonical, receipt.CanonicalBodyJson);
             Assert.Equal(source.SourceBodySha256, receipt.SourceBodySha256);
@@ -311,6 +312,7 @@ namespace RevitBridge.Common.Tests
             var server = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs"));
             var app = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "App.cs"));
             var client = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorBackendClient.cs"));
+            var backendConfig = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorBackendConfig.cs"));
 
             Assert.Contains("RevitHttpServer(RevitEventService eventService, IOperatorNativeHttpAuthorizer nativeHttpAuthorizer)", server);
             Assert.DoesNotMatch(new Regex(@"RevitHttpServer\(RevitEventService eventService\)"), server);
@@ -340,6 +342,9 @@ namespace RevitBridge.Common.Tests
             Assert.DoesNotContain("OperatorNativeHttpAuthorizationVerifier.MaximumResponseUtf8Bytes,", client);
             Assert.DoesNotContain("effect_hash =", client);
             Assert.DoesNotContain("policy_hash =", client);
+            Assert.Contains("OperatorNativeToolExposureBackendUriPolicy.RequireValidOrigin(url)", backendConfig);
+            Assert.Contains("OperatorNativeToolExposureBackendUriPolicy.RequireValidOrigin(cfg.backend_url!)", backendConfig);
+            Assert.DoesNotContain("Uri.TryCreate", backendConfig);
 
             var registeredRoutes = Regex.Matches(server, "\\{ \\\"(/revit/[^\\\"]+)\\\", new ").Count;
             Assert.True(registeredRoutes > 150, "Route inventory unexpectedly shrank; the global fence must cover the full native catalog.");
@@ -382,7 +387,7 @@ namespace RevitBridge.Common.Tests
                 ["authorization"] = authorization
             });
             return OperatorNativeHttpAuthorizationVerifier.VerifySuccess(
-                Utf8(response), request, "local", DateTimeOffset.UtcNow, roundTrip ?? TimeSpan.FromMilliseconds(5));
+                Utf8(response), request, "local", DateTimeOffset.UtcNow, roundTrip ?? TimeSpan.FromMilliseconds(5), StructuralTestAuthority);
         }
 
         private static Dictionary<string, object?> AuthorizationValues(OperatorNativeHttpRequest request, string canonicalBody)
@@ -403,7 +408,10 @@ namespace RevitBridge.Common.Tests
                 ["policy_hash"] = "sha256:" + new string('1', 64),
                 ["policy_record_hash"] = "sha256:" + new string('2', 64),
                 ["evidence_record_hash"] = "sha256:" + new string('3', 64),
-                ["request_hash"] = "sha256:" + new string('4', 64),
+                ["request_hash"] = OperatorNativeToolExposureRequestHash.Compute(
+                    request.Method,
+                    request.Path,
+                    canonicalBody),
                 ["effect_hash"] = "sha256:" + new string('5', 64),
                 ["channel"] = "generic_call",
                 ["runtime_mode"] = "local",
@@ -475,6 +483,14 @@ namespace RevitBridge.Common.Tests
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 return Task.FromResult(Read(buffer, offset, count));
+            }
+        }
+
+        private sealed class StructuralAllowAuthority : IOperatorNativeToolExposureAuthority
+        {
+            public void RequireAuthorized(OperatorNativeToolExposureBinding binding)
+            {
+                Assert.NotNull(binding);
             }
         }
     }
