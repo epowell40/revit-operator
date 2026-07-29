@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -14,7 +15,7 @@ using RevitBridge.Common;
 
 namespace RevitBridge.Operator
 {
-    internal sealed class OperatorBackendClient
+    internal sealed class OperatorBackendClient : IOperatorNativeHttpAuthorizer
     {
         private const long MaxAttachmentUploadBytes = 40L * 1024L * 1024L;
 
@@ -579,6 +580,111 @@ namespace RevitBridge.Operator
             var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
             EnsureSuccessOrThrow(resp, json, "Backend /api/revit-courier/claim-next");
             return json ?? "";
+        }
+
+        /// <summary>
+        /// Obtains one short-lived, request-bound native HTTP admission receipt
+        /// from the fixed backend endpoint. The caller supplies only the exact
+        /// request identity; channel, policy, evidence, and effect bindings are
+        /// always selected by the backend's current trusted policy.
+        /// </summary>
+        public async Task<OperatorNativeHttpAuthorizationReceipt> AuthorizeAsync(
+            OperatorNativeHttpRequest request,
+            CancellationToken cancellationToken)
+        {
+            if (request == null) throw new ArgumentNullException(nameof(request));
+            var body = JsonSerializer.Serialize(new
+            {
+                schema = "revit-operator.revit-direct-admission-request.v1",
+                request_id = request.RequestId,
+                method = request.Method,
+                path = request.Path,
+                body_present = request.BodyPresent,
+                body_json = request.BodyJson
+            }, OperatorUiProtocol.JsonOptions);
+
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deadline.CancelAfter(TimeSpan.FromSeconds(3));
+            var roundTrip = Stopwatch.StartNew();
+            try
+            {
+                using var resp = await SendWithAuthAsync(
+                    () => new HttpRequestMessage(HttpMethod.Post, "api/revit-direct/authorize-execution")
+                    {
+                        Content = new StringContent(body, Encoding.UTF8, "application/json")
+                    },
+                    deadline.Token,
+                    HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
+                var responseBytes = await ReadBoundedResponseBytesAsync(
+                    resp.Content,
+                    OperatorNativeHttpAuthorizationVerifier.MaximumResponseUtf8Bytes,
+                    deadline.Token).ConfigureAwait(false);
+                if (!resp.IsSuccessStatusCode)
+                {
+                    if (resp.StatusCode == HttpStatusCode.Unauthorized)
+                    {
+                        throw new OperatorNativeHttpAdmissionException(
+                            "CERTIFICATION_DIRECT_BACKEND_AUTH_REJECTED",
+                            "Native Revit authorization backend rejected its configured authentication.",
+                            503,
+                            false,
+                            "unavailable",
+                            true);
+                    }
+                    throw OperatorNativeHttpAuthorizationVerifier.ParseFailure((int)resp.StatusCode, responseBytes);
+                }
+                return OperatorNativeHttpAuthorizationVerifier.VerifySuccess(
+                    responseBytes,
+                    request,
+                    Environment.GetEnvironmentVariable("REVIT_OPERATOR_MODE"),
+                    DateTimeOffset.UtcNow,
+                    roundTrip.Elapsed);
+            }
+            catch (OperatorNativeHttpAdmissionException)
+            {
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                throw OperatorNativeHttpAdmissionException.Unavailable(
+                    "Native Revit authorization did not complete before its bounded pre-dispatch deadline.");
+            }
+            catch (HttpRequestException)
+            {
+                throw OperatorNativeHttpAdmissionException.Unavailable(
+                    "Native Revit authorization backend is unavailable.");
+            }
+            catch (Exception error)
+            {
+                throw OperatorNativeHttpAdmissionException.Protocol(
+                    "CERTIFICATION_DIRECT_AUTHORIZATION_FAILED",
+                    "Native Revit authorization failed before dispatch: " + error.Message);
+            }
+        }
+
+        private static async Task<byte[]> ReadBoundedResponseBytesAsync(
+            HttpContent content,
+            int maximumBytes,
+            CancellationToken cancellationToken)
+        {
+            if (content.Headers.ContentLength.HasValue && content.Headers.ContentLength.Value > maximumBytes)
+                throw OperatorNativeHttpAdmissionException.Protocol(
+                    "CERTIFICATION_DIRECT_RESPONSE_SIZE_INVALID",
+                    "Native Revit authorization response exceeds the bounded receipt limit.");
+            using var input = await content.ReadAsStreamAsync().ConfigureAwait(false);
+            using var output = new MemoryStream();
+            var buffer = new byte[4096];
+            while (true)
+            {
+                var read = await input.ReadAsync(buffer, 0, buffer.Length, cancellationToken).ConfigureAwait(false);
+                if (read <= 0) break;
+                if (output.Length + read > maximumBytes)
+                    throw OperatorNativeHttpAdmissionException.Protocol(
+                        "CERTIFICATION_DIRECT_RESPONSE_SIZE_INVALID",
+                        "Native Revit authorization response exceeds the bounded receipt limit.");
+                output.Write(buffer, 0, read);
+            }
+            return output.ToArray();
         }
 
         /// <summary>

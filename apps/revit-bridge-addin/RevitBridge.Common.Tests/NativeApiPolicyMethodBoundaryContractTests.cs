@@ -30,7 +30,8 @@ namespace RevitBridge.Common.Tests
             var server = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs");
             var runner = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorActionRunner.cs");
 
-            Assert.Contains("nativeApiPolicyHandler.HandleForMethod(null!, body, req.HttpMethod)", server);
+            Assert.Contains("var effectiveMethod = effectiveRequest?.Method ?? req.HttpMethod;", server);
+            Assert.Contains("nativeApiPolicyHandler.HandleForMethod(null!, body, effectiveMethod)", server);
             Assert.Contains("nativeApiPolicyHandler.HandleForMethod(null!, jsonBody, method)", runner);
         }
 

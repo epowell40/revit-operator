@@ -30,14 +30,16 @@ namespace RevitBridge.Server
     {
         private HttpListener _listener;
         private readonly RevitEventService _eventService;
+        private readonly IOperatorNativeHttpAuthorizer _nativeHttpAuthorizer;
         private bool _isRunning;
         private string _activeUrl = "";
-        private const string DefaultUrl = "http://localhost:5000/";
+        private const string DefaultUrl = "http://127.0.0.1:5000/";
         private readonly Dictionary<string, HandlerRequest> _handlers;
 
-        public RevitHttpServer(RevitEventService eventService)
+        public RevitHttpServer(RevitEventService eventService, IOperatorNativeHttpAuthorizer nativeHttpAuthorizer)
         {
-            _eventService = eventService;
+            _eventService = eventService ?? throw new ArgumentNullException(nameof(eventService));
+            _nativeHttpAuthorizer = nativeHttpAuthorizer ?? throw new ArgumentNullException(nameof(nativeHttpAuthorizer));
 
             _handlers = new Dictionary<string, HandlerRequest>(StringComparer.OrdinalIgnoreCase)
             {
@@ -321,14 +323,14 @@ namespace RevitBridge.Server
             var portsRaw = (Environment.GetEnvironmentVariable("OPERATOR_REVIT_BRIDGE_FALLBACK_PORTS") ?? "").Trim();
             if (portsRaw.Length == 0)
             {
-                for (var port = 5010; port <= 5030; port++) AddCandidate(candidates, $"http://localhost:{port}/");
+                for (var port = 5010; port <= 5030; port++) AddCandidate(candidates, $"http://127.0.0.1:{port}/");
                 return candidates;
             }
             foreach (var part in portsRaw.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
             {
                 if (int.TryParse(part.Trim(), out var port) && port > 0 && port <= 65535)
                 {
-                    AddCandidate(candidates, $"http://localhost:{port}/");
+                    AddCandidate(candidates, $"http://127.0.0.1:{port}/");
                 }
             }
 
@@ -337,10 +339,7 @@ namespace RevitBridge.Server
 
         private static string NormalizePrefix(string? value)
         {
-            var raw = (value ?? "").Trim();
-            if (raw.Length == 0) return "";
-            if (!raw.EndsWith("/", StringComparison.Ordinal)) raw += "/";
-            return raw;
+            return OperatorNativeHttpRequestFence.TryNormalizeLoopbackPrefix(value, out var prefix) ? prefix : "";
         }
 
         private static void WriteActiveUrlFile(string url)
@@ -396,6 +395,15 @@ namespace RevitBridge.Server
 
             try
             {
+                if (!OperatorNativeHttpRequestFence.IsLoopbackEndpoint(req.RemoteEndPoint))
+                {
+                    throw new OperatorNativeHttpAdmissionException(
+                        "CERTIFICATION_DIRECT_REMOTE_CLIENT_REJECTED",
+                        "The native Revit bridge accepts loopback clients only.",
+                        403,
+                        false,
+                        "healthy");
+                }
                 correlationId = OperatorCorrelationId.NormalizeOrCreate(req.Headers["X-Operator-Correlation-Id"], correlationId);
                 resp.Headers["X-Operator-Correlation-Id"] = correlationId;
                 var token = req.Headers["X-Operator-Token"];
@@ -411,14 +419,42 @@ namespace RevitBridge.Server
                     return;
                 }
 
-                string path = req.Url.AbsolutePath;
-                string requestBody = "";
-                if (req.HasEntityBody)
+                var laboratoryBypass = OperatorNativeHttpRuntimeProfile.IsExactDevelopmentLaboratory(
+                    Environment.GetEnvironmentVariable("REVIT_OPERATOR_MODE"),
+                    Environment.GetEnvironmentVariable("OPERATOR_TOOL_EXPOSURE_PROFILE"));
+                var rawUrl = req.RawUrl ?? req.Url.AbsolutePath;
+                var queryIndex = rawUrl.IndexOf('?');
+                var rawPath = queryIndex >= 0 ? rawUrl.Substring(0, queryIndex) : rawUrl;
+                var hasQuery = queryIndex >= 0;
+                var bodyBytes = await ReadRequestBodyBytesAsync(req, OperatorNativeHttpRequestFence.MaximumBodyUtf8Bytes);
+
+                OperatorNativeHttpRequest? effectiveRequest = null;
+                string path;
+                string requestBody;
+                if (laboratoryBypass)
                 {
-                    using (var reader = new StreamReader(req.InputStream, req.ContentEncoding))
-                    {
-                        requestBody = await reader.ReadToEndAsync();
-                    }
+                    path = req.Url.AbsolutePath;
+                    requestBody = req.HasEntityBody ? Encoding.UTF8.GetString(bodyBytes) : "";
+                }
+                else
+                {
+                    if (!string.Equals(rawPath, req.Url.AbsolutePath, StringComparison.Ordinal))
+                        throw OperatorNativeHttpAdmissionException.InvalidRequest(
+                            "Certified native Revit requests cannot use encoded or normalized paths.");
+                    var sourceRequest = OperatorNativeHttpRequestFence.Prepare(
+                        req.HttpMethod,
+                        rawPath,
+                        hasQuery,
+                        req.HasEntityBody,
+                        bodyBytes);
+                    var earlyReceipt = await _nativeHttpAuthorizer.AuthorizeAsync(sourceRequest, CancellationToken.None);
+                    var canonicalBody = OperatorNativeHttpDispatchFence.RequireFreshOneUse(
+                        earlyReceipt,
+                        sourceRequest,
+                        DateTimeOffset.UtcNow);
+                    effectiveRequest = OperatorNativeHttpDispatchFence.CreateFreshEffectiveRequest(sourceRequest, canonicalBody);
+                    path = effectiveRequest.Path;
+                    requestBody = effectiveRequest.BodyJson;
                 }
 
                 // Bridge-layer write gate:
@@ -426,12 +462,13 @@ namespace RevitBridge.Server
                 // This is critical when tools are executed indirectly (e.g., via MCP) where the Operator UI
                 // is no longer the only approval gate.
                 // GET is always treated as read-only here.
-                var isGet = string.Equals(req.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase);
+                var effectiveMethod = effectiveRequest?.Method ?? req.HttpMethod;
+                var isGet = string.Equals(effectiveMethod, "GET", StringComparison.OrdinalIgnoreCase);
                 if (!isGet && path != "/revit/ping" && path != "/revit/capabilities")
                 {
                     try
                     {
-                        var risk = GetRequestRisk(req.HttpMethod, path, requestBody);
+                        var risk = GetRequestRisk(effectiveMethod, path, requestBody);
                         var requiresGrant = risk >= OperatorActionRisk.Medium;
                         if (requiresGrant)
                         {
@@ -474,14 +511,20 @@ namespace RevitBridge.Server
                 
                 if (path == "/revit/ping")
                 {
+                    if (effectiveRequest != null)
+                        requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None);
                     responseText = JsonSerializer.Serialize(new { status = "ok", timestamp = DateTime.Now });
                 }
                 else if (path == "/revit/capabilities")
                 {
+                    if (effectiveRequest != null)
+                        requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None);
                     responseText = JsonSerializer.Serialize(RevitBridge.Operator.OperatorCapabilities.Get());
                 }
                 else if (path == "/revit/write-grant-status")
                 {
+                    if (effectiveRequest != null)
+                        requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None);
                     var status = OperatorWriteGrant.ReadStatus();
                     responseText = JsonSerializer.Serialize(new
                     {
@@ -504,7 +547,7 @@ namespace RevitBridge.Server
                         string.Equals(path, "/revit/tool-doc", StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(path, "/revit/tool-examples", StringComparison.OrdinalIgnoreCase);
 
-                    if (string.Equals(req.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase) && isDocEndpoint)
+                    if (laboratoryBypass && string.Equals(req.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase) && isDocEndpoint)
                     {
                         var qMethod = (req.QueryString?["method"] ?? "").Trim();
                         var qPath = (req.QueryString?["path"] ?? "").Trim();
@@ -514,19 +557,34 @@ namespace RevitBridge.Server
                     object result;
                     if (IsDirectDialogComputerUsePath(path) || IsDirectControlPlanePath(path))
                     {
+                        if (effectiveRequest != null)
+                            body = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None);
                         result = handler is NativeApiPolicyHandler nativeApiPolicyHandler
-                            ? await nativeApiPolicyHandler.HandleForMethod(null!, body, req.HttpMethod)
+                            ? await nativeApiPolicyHandler.HandleForMethod(null!, body, effectiveMethod)
                             : await handler.Handle(null!, body);
                     }
                     else
                     {
-                        var risk = GetRequestRisk(req.HttpMethod, path, body);
-                        var deadline = OperatorActionDeadlinePolicy.Resolve(req.HttpMethod, path, risk.ToString());
+                        var risk = GetRequestRisk(effectiveMethod, path, body);
+                        var deadline = OperatorActionDeadlinePolicy.Resolve(effectiveMethod, path, risk.ToString());
                         using var localDeadline = new CancellationTokenSource(deadline.Budget);
                         try
                         {
+                            var capturedEffectiveRequest = effectiveRequest;
+                            var capturedBody = body;
                             result = await _eventService.Run(
-                                app => handler.Handle(app, body).GetAwaiter().GetResult(),
+                                app =>
+                                {
+                                    var dispatchBody = capturedBody;
+                                    if (capturedEffectiveRequest != null)
+                                    {
+                                        dispatchBody = RequireFinalNativeAuthorizationAsync(
+                                            capturedEffectiveRequest,
+                                            capturedBody,
+                                            localDeadline.Token).GetAwaiter().GetResult();
+                                    }
+                                    return handler.Handle(app, dispatchBody).GetAwaiter().GetResult();
+                                },
                                 localDeadline.Token,
                                 correlationId);
                         }
@@ -552,7 +610,23 @@ namespace RevitBridge.Server
                     root = flat.InnerException ?? flat;
                 }
 
-                if (root is OperatorToolUserErrorException uex)
+                if (root is OperatorNativeHttpAdmissionException nativeAdmission)
+                {
+                    statusCode = nativeAdmission.HttpStatusCode;
+                    responseText = JsonSerializer.Serialize(new
+                    {
+                        ok = false,
+                        error = nativeAdmission.Message,
+                        code = nativeAdmission.Code,
+                        retryable = nativeAdmission.Retryable,
+                        phase = nativeAdmission.Phase,
+                        host_health = nativeAdmission.HostHealth,
+                        opens_circuit = nativeAdmission.OpensCircuit,
+                        outcome_unknown = false,
+                        correlation_id = correlationId
+                    });
+                }
+                else if (root is OperatorToolUserErrorException uex)
                 {
                     // This is a user-actionable tool response (e.g., typed confirmation required),
                     // not a transport/server failure. Return 200 so tool callers can read fields
@@ -655,6 +729,40 @@ namespace RevitBridge.Server
             resp.StatusCode = statusCode;
             await resp.OutputStream.WriteAsync(data, 0, data.Length);
             resp.Close();
+        }
+
+        private async Task<string> RequireFinalNativeAuthorizationAsync(
+            OperatorNativeHttpRequest effectiveRequest,
+            string expectedCanonicalBody,
+            CancellationToken cancellationToken)
+        {
+            var finalReceipt = await _nativeHttpAuthorizer.AuthorizeAsync(effectiveRequest, cancellationToken).ConfigureAwait(false);
+            return OperatorNativeHttpDispatchFence.RequireFreshOneUse(
+                finalReceipt,
+                effectiveRequest,
+                DateTimeOffset.UtcNow,
+                expectedCanonicalBody);
+        }
+
+        private static async Task<byte[]> ReadRequestBodyBytesAsync(HttpListenerRequest request, int maximumBytes)
+        {
+            if (!request.HasEntityBody) return Array.Empty<byte>();
+            if (request.ContentLength64 > maximumBytes)
+                throw OperatorNativeHttpAdmissionException.InvalidRequest(
+                    "Certified native Revit request body exceeds the 2 MiB UTF-8 limit.");
+
+            using var output = new MemoryStream();
+            var buffer = new byte[16 * 1024];
+            while (true)
+            {
+                var read = await request.InputStream.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
+                if (read <= 0) break;
+                if (output.Length + read > maximumBytes)
+                    throw OperatorNativeHttpAdmissionException.InvalidRequest(
+                        "Certified native Revit request body exceeds the 2 MiB UTF-8 limit.");
+                output.Write(buffer, 0, read);
+            }
+            return output.ToArray();
         }
 
         private static bool IsDirectControlPlanePath(string path)

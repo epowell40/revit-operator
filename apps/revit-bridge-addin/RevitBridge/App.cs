@@ -35,9 +35,15 @@ namespace RevitBridge
                 WriteStartupLog($"Native mutation transaction checkpoint registration failed: {ex.GetType().FullName}: {ex.Message}");
             }
             
+            // Construct the fixed backend authorizer before exposing any native
+            // HTTP listener. Every certified /revit request fails closed through
+            // this dependency; no server constructor exists without it.
+            var backendAuth = new OperatorAuthSession();
+            var backend = new OperatorBackendClient(OperatorBackendConfig.GetBaseUri(), backendAuth);
+
             // Init Service & Server
             _eventService = new RevitEventService();
-            _server = new RevitHttpServer(_eventService);
+            _server = new RevitHttpServer(_eventService, backend);
             _server.Start();
             WriteStartupLog("HTTP server start requested.");
 
@@ -49,10 +55,8 @@ namespace RevitBridge
             // the add-in; the Sidecar-only UI no longer constructs the legacy pane.
             try
             {
-                var courierAuth = new OperatorAuthSession();
-                var courierBackend = new OperatorBackendClient(OperatorBackendConfig.GetBaseUri(), courierAuth);
                 _revitCourierWorker = new OperatorRevitCourierWorker(
-                    courierBackend,
+                    backend,
                     new OperatorActionRunner(_eventService),
                     getApprovalMode: GetCourierApprovalMode,
                     ensureWriteGrant: OperatorWriteGrant.ReadStatus,
