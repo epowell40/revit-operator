@@ -24,6 +24,67 @@ namespace RevitBridge.Operator
         Apply = 2
     }
 
+    internal sealed class OperatorNativeApiRuntimePolicyState
+    {
+        internal string Profile { get; set; } = "broad";
+        internal OperatorActionRisk MaxRisk { get; set; } = OperatorActionRisk.High;
+        internal bool AllowMutating { get; set; } = true;
+        internal bool BlockFreezeRisk { get; set; } = true;
+        internal bool Locked { get; set; }
+        internal string LockReason { get; set; } = "";
+        internal string Source { get; set; } = "env/default";
+    }
+
+    internal static class OperatorNativeApiRuntimeSafety
+    {
+        internal const string HostedPolicyLockReason =
+            "Native API policy is locked to the balanced non-mutating profile in hosted runtime mode; runtime policy changes are rejected.";
+
+        internal const string ProductionPolicyLockReason =
+            "Native API policy is locked to the balanced non-mutating profile in production runtime mode; runtime policy changes are rejected.";
+
+        internal static string NormalizeRuntimeMode(string? rawMode)
+        {
+            var mode = (rawMode ?? "").Trim().ToLowerInvariant();
+            return string.IsNullOrWhiteSpace(mode) ? "local" : mode;
+        }
+
+        internal static bool RequiresLockedNonMutatingPolicy(string? rawMode)
+        {
+            var mode = NormalizeRuntimeMode(rawMode);
+            return mode == "hosted" || mode == "production";
+        }
+
+        internal static string GetPolicyLockReason(string? rawMode)
+        {
+            var mode = NormalizeRuntimeMode(rawMode);
+            if (mode == "hosted") return HostedPolicyLockReason;
+            if (mode == "production") return ProductionPolicyLockReason;
+            return "";
+        }
+
+        internal static OperatorNativeApiRuntimePolicyState ApplyAfterConfiguredOverrides(
+            string? rawMode,
+            OperatorNativeApiRuntimePolicyState configured)
+        {
+            if (configured == null) throw new ArgumentNullException(nameof(configured));
+
+            var mode = NormalizeRuntimeMode(rawMode);
+            if (!RequiresLockedNonMutatingPolicy(mode)) return configured;
+
+            return new OperatorNativeApiRuntimePolicyState
+            {
+                Profile = "balanced",
+                MaxRisk = OperatorActionRisk.Medium,
+                AllowMutating = false,
+                BlockFreezeRisk = true,
+                Locked = true,
+                LockReason = GetPolicyLockReason(mode),
+                Source = "runtime-mode:" + mode
+            };
+        }
+    }
+
     internal static class OperatorApprovalPolicy
     {
         public static OperatorActionRisk GetRisk(string method, string path)
@@ -167,7 +228,9 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/native-api-search", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/native-api-ops", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/native-api-mutation-ops", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
-                if (string.Equals(p, "/revit/native-api-policy", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
+                // Policy mutation can widen the reflected native Revit API surface. It must
+                // never inherit the approval-free behavior of ordinary medium-risk actions.
+                if (string.Equals(p, "/revit/native-api-policy", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/native-api-call", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
                 if (string.Equals(p, "/revit/self-test", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/state-snapshot", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;

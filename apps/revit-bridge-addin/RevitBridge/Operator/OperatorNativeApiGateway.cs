@@ -91,6 +91,7 @@ namespace RevitBridge.Operator
         public bool AllowMutating { get; set; } = true;
         public bool BlockFreezeRisk { get; set; } = true;
         public bool Locked { get; set; }
+        public string LockReason { get; set; } = "";
         public int MaxResults { get; set; } = 200;
         public int MaxInvocationParams { get; set; } = 10;
         public string Source { get; set; } = "default";
@@ -124,6 +125,7 @@ namespace RevitBridge.Operator
                 allow_mutating = s.AllowMutating,
                 block_freeze_risk = s.BlockFreezeRisk,
                 locked = s.Locked,
+                lock_reason = s.LockReason,
                 source = s.Source,
                 max_results = s.MaxResults,
                 max_invocation_params = s.MaxInvocationParams,
@@ -139,7 +141,10 @@ namespace RevitBridge.Operator
                 if (_state == null) _state = BuildInitial();
                 if (_state.Locked)
                 {
-                    return new { ok = false, error = "Native API policy is locked by enterprise settings.", policy = GetStatus() };
+                    var reason = string.IsNullOrWhiteSpace(_state.LockReason)
+                        ? "Native API policy is locked by enterprise settings."
+                        : _state.LockReason;
+                    return new { ok = false, error = reason, policy = GetStatus() };
                 }
 
                 if (!string.IsNullOrWhiteSpace(profile))
@@ -203,6 +208,8 @@ namespace RevitBridge.Operator
 
         private static NativeApiPolicySnapshot BuildInitial()
         {
+            var runtimeMode = OperatorNativeApiRuntimeSafety.NormalizeRuntimeMode(
+                Environment.GetEnvironmentVariable("REVIT_OPERATOR_MODE"));
             var s = new NativeApiPolicySnapshot
             {
                 Profile = ParseProfile(Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_PROFILE"), OperatorNativeApiProfile.Broad),
@@ -220,6 +227,29 @@ namespace RevitBridge.Operator
             if (!string.IsNullOrWhiteSpace(envMut)) s.AllowMutating = ParseBool(envMut, s.AllowMutating);
             var envFreeze = Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_BLOCK_FREEZE_RISK");
             if (!string.IsNullOrWhiteSpace(envFreeze)) s.BlockFreezeRisk = ParseBool(envFreeze, s.BlockFreezeRisk);
+
+            // Hosted and production runtimes may receive requests from outside the
+            // workstation trust boundary. Apply this last so no native-policy env var
+            // or runtime POST can widen the reflected API surface in those modes.
+            var bounded = OperatorNativeApiRuntimeSafety.ApplyAfterConfiguredOverrides(
+                runtimeMode,
+                new OperatorNativeApiRuntimePolicyState
+                {
+                    Profile = ProfileToString(s.Profile),
+                    MaxRisk = s.MaxRisk,
+                    AllowMutating = s.AllowMutating,
+                    BlockFreezeRisk = s.BlockFreezeRisk,
+                    Locked = s.Locked,
+                    LockReason = s.Locked ? "Native API policy is locked by enterprise settings." : "",
+                    Source = s.Source
+                });
+            s.Profile = ParseProfile(bounded.Profile, s.Profile);
+            s.MaxRisk = bounded.MaxRisk;
+            s.AllowMutating = bounded.AllowMutating;
+            s.BlockFreezeRisk = bounded.BlockFreezeRisk;
+            s.Locked = bounded.Locked;
+            s.LockReason = bounded.LockReason;
+            s.Source = bounded.Source;
             return s;
         }
 
@@ -253,6 +283,7 @@ namespace RevitBridge.Operator
                 AllowMutating = s.AllowMutating,
                 BlockFreezeRisk = s.BlockFreezeRisk,
                 Locked = s.Locked,
+                LockReason = s.LockReason,
                 MaxResults = s.MaxResults,
                 MaxInvocationParams = s.MaxInvocationParams,
                 Source = s.Source,
