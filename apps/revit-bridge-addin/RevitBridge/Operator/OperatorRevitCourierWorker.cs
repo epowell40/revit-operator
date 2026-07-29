@@ -75,39 +75,84 @@ namespace RevitBridge.Operator
                 using var claimDocument = JsonDocument.Parse(string.IsNullOrWhiteSpace(claimJson) ? "{}" : claimJson);
                 if (!claimDocument.RootElement.TryGetProperty("job", out var job) || job.ValueKind != JsonValueKind.Object) return;
 
-                jobId = ReadRequiredString(job, "id", 200);
                 var version = ReadRequiredString(job, "version", 100);
-                if (!string.Equals(version, "revit-operator.revit-tool-job.v1", StringComparison.Ordinal))
-                    throw new InvalidOperationException("Unsupported Revit courier job version.");
-                var jobSessionId = ReadRequiredString(job, "session_id", 200);
-                sessionId = jobSessionId;
-                correlationId = ReadRequiredString(job, "correlation_id", 160);
-                if (!OperatorCorrelationId.IsValid(correlationId) || !string.Equals(correlationId, jobId, StringComparison.Ordinal))
-                    throw new InvalidOperationException("Revit courier job has an invalid or mismatched correlation_id.");
-                var method = ReadRequiredString(job, "method", 10).ToUpperInvariant();
-                var path = ReadRequiredString(job, "path", 300);
-                var expectedDocumentTitle = ReadOptionalString(job, "target_document_title", 500);
-                var expectedDocumentPath = ReadOptionalString(job, "target_document_path", 2000);
-                var expiresText = ReadRequiredString(job, "expires_at", 100);
-                if (!DateTime.TryParse(expiresText, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var expiresAt))
-                    throw new InvalidOperationException("Revit courier job has invalid expires_at.");
-                object? body = null;
-                if (job.TryGetProperty("body", out var bodyElement) && bodyElement.ValueKind != JsonValueKind.Null)
-                    body = bodyElement.Clone();
+                OperatorActionCall? legacyAction = null;
+                OperatorCourierCertificationEnvelopeValidationResult? verifiedV2 = null;
+                string method;
+                string path;
+                string bodyJson;
+                DateTimeOffset expiresAt;
 
-                var action = new OperatorActionCall
+                if (string.Equals(version, "revit-operator.revit-tool-job.v1", StringComparison.Ordinal))
                 {
-                    ActionId = jobId,
-                    CorrelationId = correlationId,
-                    Method = method,
-                    Path = path,
-                    Body = body,
-                    ExpectedDocumentTitle = expectedDocumentTitle,
-                    ExpectedDocumentPath = expectedDocumentPath
-                };
-                var bodyJson = body is JsonElement bodyJsonElement
-                    ? bodyJsonElement.GetRawText()
-                    : body == null ? null : JsonSerializer.Serialize(body);
+                    jobId = ReadRequiredString(job, "id", 200);
+                    sessionId = ReadRequiredString(job, "session_id", 200);
+                    if (!OperatorCourierRuntimeProfile.IsExactDevelopmentLaboratory(
+                        Environment.GetEnvironmentVariable("REVIT_OPERATOR_MODE"),
+                        Environment.GetEnvironmentVariable("OPERATOR_TOOL_EXPOSURE_PROFILE")))
+                    {
+                        throw new OperatorCourierCertificationException(
+                            "CERTIFICATION_FINAL_LEGACY_V1_REJECTED",
+                            "Legacy v1 courier jobs may execute only when REVIT_OPERATOR_MODE=development and OPERATOR_TOOL_EXPOSURE_PROFILE=laboratory.");
+                    }
+
+                    correlationId = ReadRequiredString(job, "correlation_id", 160);
+                    if (!OperatorCorrelationId.IsValid(correlationId) || !string.Equals(correlationId, jobId, StringComparison.Ordinal))
+                        throw new OperatorCourierCertificationException("CERTIFICATION_FINAL_LEGACY_V1_INVALID", "Legacy Revit courier job has an invalid or mismatched correlation_id.");
+                    method = ReadRequiredString(job, "method", 10).ToUpperInvariant();
+                    path = ReadRequiredString(job, "path", 300);
+                    var expectedDocumentTitle = ReadOptionalString(job, "target_document_title", 500);
+                    var expectedDocumentPath = ReadOptionalString(job, "target_document_path", 2000);
+                    var expiresText = ReadRequiredString(job, "expires_at", 100);
+                    if (!DateTimeOffset.TryParse(expiresText, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out expiresAt))
+                        throw new OperatorCourierCertificationException("CERTIFICATION_FINAL_LEGACY_V1_INVALID", "Legacy Revit courier job has invalid expires_at.");
+                    object? body = null;
+                    if (job.TryGetProperty("body", out var bodyElement) && bodyElement.ValueKind != JsonValueKind.Null)
+                        body = bodyElement.Clone();
+                    bodyJson = body is JsonElement bodyJsonElement
+                        ? bodyJsonElement.GetRawText()
+                        : body == null ? "" : JsonSerializer.Serialize(body);
+                    legacyAction = new OperatorActionCall
+                    {
+                        ActionId = jobId,
+                        CorrelationId = correlationId,
+                        Method = method,
+                        Path = path,
+                        Body = body,
+                        ExpectedDocumentTitle = expectedDocumentTitle,
+                        ExpectedDocumentPath = expectedDocumentPath
+                    };
+                }
+                else if (string.Equals(version, OperatorCourierCertificationEnvelope.JobVersion, StringComparison.Ordinal))
+                {
+                    verifiedV2 = OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(job.GetRawText());
+                    if (!verifiedV2.IsValid || verifiedV2.Job == null || verifiedV2.Envelope == null)
+                    {
+                        // Preserve enough untrusted routing identity to post a
+                        // typed terminal receipt when possible. It is never
+                        // used to construct or authorize a Revit action.
+                        TryReadFailureIdentity(job, ref sessionId, ref jobId);
+                        throw new OperatorCourierCertificationException(
+                            verifiedV2.Code,
+                            "Certified v2 Revit courier job was rejected before final execution: " + verifiedV2.Error);
+                    }
+
+                    jobId = verifiedV2.Job.Id;
+                    sessionId = verifiedV2.Job.SessionId;
+                    correlationId = verifiedV2.Job.CorrelationId;
+                    method = verifiedV2.Job.Method;
+                    path = verifiedV2.Job.Path;
+                    bodyJson = verifiedV2.Job.BodyJson;
+                    expiresAt = verifiedV2.Job.ExpiresAtUtc;
+                }
+                else
+                {
+                    TryReadFailureIdentity(job, ref sessionId, ref jobId);
+                    throw new OperatorCourierCertificationException(
+                        "CERTIFICATION_FINAL_JOB_VERSION_INVALID",
+                        "Unsupported Revit courier job version; no Revit action was executed.");
+                }
+
                 var risk = OperatorDryRunTurnPolicy.IsScheduleCellUpdatePreview(method, path, bodyJson)
                     ? OperatorActionRisk.Low
                     : OperatorApprovalPolicy.GetRisk(method, path, bodyJson);
@@ -123,16 +168,66 @@ namespace RevitBridge.Operator
                 }
 
                 using var actionTimeout = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
-                var remaining = expiresAt.ToUniversalTime() - DateTime.UtcNow - TimeSpan.FromSeconds(2);
-                if (remaining <= TimeSpan.Zero) throw new OperatorCourierJobExpiredException("The Revit courier job expired before local execution started.");
+                var remaining = expiresAt.ToUniversalTime() - DateTimeOffset.UtcNow - TimeSpan.FromSeconds(2);
+                if (remaining <= TimeSpan.Zero)
+                {
+                    if (verifiedV2 != null)
+                    {
+                        throw new OperatorCourierCertificationException(
+                            "CERTIFICATION_FINAL_JOB_EXPIRED",
+                            "Certified Revit courier job expired before final execution authorization; no Revit action was executed.");
+                    }
+                    throw new OperatorCourierJobExpiredException("The Revit courier job expired before local execution started.");
+                }
                 var deadline = OperatorActionDeadlinePolicy.Resolve(method, path, risk.ToString()).ConstrainTo(remaining);
                 actionTimeout.CancelAfter(deadline.Budget);
+                Func<CancellationToken, Task<OperatorActionCall>> actionFactory;
+                if (legacyAction != null)
+                {
+                    actionFactory = _ => Task.FromResult(legacyAction);
+                }
+                else
+                {
+                    var claimedV2 = verifiedV2!;
+                    actionFactory = async cancellationToken =>
+                    {
+                        string authorizationJson;
+                        try
+                        {
+                            authorizationJson = await _backendClient.AuthorizeRevitCourierExecutionJsonAsync(
+                                sessionId!,
+                                jobId!,
+                                _executorId,
+                                cancellationToken).ConfigureAwait(false);
+                        }
+                        catch (Exception error) when (!(error is OperatorCourierCertificationException))
+                        {
+                            throw new OperatorCourierCertificationException(
+                                "CERTIFICATION_FINAL_EXECUTION_UNAVAILABLE",
+                                "Fresh certified courier execution authorization was unavailable; no Revit action was executed.",
+                                error);
+                        }
+
+                        var binding = OperatorCourierFinalExecutionAuthorizationBinder.Bind(
+                            authorizationJson,
+                            claimedV2,
+                            _executorId,
+                            DateTimeOffset.UtcNow);
+                        if (!binding.IsValid || binding.Authorization == null)
+                        {
+                            throw new OperatorCourierCertificationException(
+                                binding.Code,
+                                "Certified courier execution authorization was rejected: " + binding.Error);
+                        }
+                        return CreateCertifiedAction(claimedV2, binding.Authorization);
+                    };
+                }
                 var startedAt = DateTime.UtcNow;
                 object? result;
                 try
                 {
                     result = await ExecuteWithBusyRetryAsync(
-                        action,
+                        actionFactory,
                         actionTimeout.Token,
                         sessionId!,
                         jobId,
@@ -237,40 +332,36 @@ namespace RevitBridge.Operator
         }
 
         private async Task<object?> ExecuteWithBusyRetryAsync(
-            OperatorActionCall action,
+            Func<CancellationToken, Task<OperatorActionCall>> actionFactory,
             CancellationToken cancellationToken,
             string sessionId,
             string jobId,
             string correlationId)
         {
-            for (var attempt = 0; ; attempt++)
-            {
-                try
+            return await OperatorCourierBusyRetryExecutor.ExecuteAsync(
+                async token =>
                 {
-                    return await _actionRunner.ExecuteAsync(action, cancellationToken).ConfigureAwait(false);
-                }
-                catch (Exception ex)
+                    // v2 factories obtain a new final-execution receipt for
+                    // every attempt. A busy ExternalEvent therefore cannot
+                    // turn a previous policy decision into a later Revit call.
+                    var action = await actionFactory(token).ConfigureAwait(false);
+                    return await _actionRunner.ExecuteAsync(action, token).ConfigureAwait(false);
+                },
+                cancellationToken,
+                correlationId,
+                ExternalEventBusyRetryDelaysMs,
+                async (failure, attempt, delayMs) =>
                 {
-                    var failure = OperatorCourierFailureClassifier.Classify(ex, correlationId);
-                    var safeBusyRetry = string.Equals(failure.Code, "revit_external_event_busy", StringComparison.OrdinalIgnoreCase)
-                        && failure.Retryable
-                        && !failure.OutcomeUnknown
-                        && attempt < ExternalEventBusyRetryDelaysMs.Length;
-                    if (!safeBusyRetry) throw;
-
-                    var delayMs = ExternalEventBusyRetryDelaysMs[attempt];
                     await LogAsync("courier.action.retry", new
                     {
                         session_id = sessionId,
                         job_id = jobId,
                         correlation_id = correlationId,
                         code = failure.Code,
-                        attempt = attempt + 1,
+                        attempt,
                         delay_ms = delayMs
                     }).ConfigureAwait(false);
-                    await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
-                }
-            }
+                }).ConfigureAwait(false);
         }
 
         private async Task<bool> HoldForOpenHostCircuitAsync()
@@ -380,6 +471,34 @@ namespace RevitBridge.Operator
             return true;
         }
 
+        private static OperatorActionCall CreateCertifiedAction(
+            OperatorCourierCertificationEnvelopeValidationResult claimed,
+            OperatorCourierFinalExecutionAuthorization authorization)
+        {
+            if (claimed == null || !claimed.IsValid || claimed.Job == null)
+                throw new OperatorCourierCertificationException("CERTIFICATION_FINAL_CLAIM_INVALID", "Certified courier claim was unavailable while building the local action.");
+            if (!OperatorCourierFinalExecutionAuthorizationBinder.IsCurrent(authorization, DateTimeOffset.UtcNow))
+                throw new OperatorCourierCertificationException("CERTIFICATION_FINAL_EXECUTION_EXPIRED", "Certified courier execution authorization expired before local action construction.");
+
+            return new OperatorActionCall
+            {
+                ActionId = claimed.Job.Id,
+                CorrelationId = claimed.Job.CorrelationId,
+                // Only the final authorization receipt supplies executable
+                // method/path/body. The legacy/display v2 job body is never
+                // deserialized or attached to this action.
+                Method = authorization.Method,
+                Path = authorization.Path,
+                Body = authorization.BodyPresent && authorization.ParsedBody.HasValue
+                    ? authorization.ParsedBody.Value
+                    : null,
+                ExpectedDocumentTitle = authorization.TargetDocumentTitle ?? "",
+                ExpectedDocumentPath = authorization.TargetDocumentPath ?? "",
+                CourierFinalExecutionAuthorization = authorization,
+                CourierJobExpiresAtUtc = claimed.Job.ExpiresAtUtc
+            };
+        }
+
         private async Task LogAsync(string kind, object payload)
         {
             try
@@ -412,6 +531,20 @@ namespace RevitBridge.Operator
             return text;
         }
 
+        private static void TryReadFailureIdentity(JsonElement job, ref string? sessionId, ref string? jobId)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(jobId)) jobId = ReadRequiredString(job, "id", 200);
+                if (string.IsNullOrWhiteSpace(sessionId)) sessionId = ReadRequiredString(job, "session_id", 200);
+            }
+            catch
+            {
+                // A malformed claim without a bounded identity cannot be
+                // completed remotely, but it still cannot reach Revit.
+            }
+        }
+
         private sealed class OperatorCourierApprovalException : InvalidOperationException, IOperatorRevitFailureMetadata
         {
             public OperatorCourierApprovalException(string message) : base(message) { }
@@ -429,6 +562,22 @@ namespace RevitBridge.Operator
             public string Code => "revit_courier_job_expired_before_execution";
             public bool Retryable => true;
             public string Phase => "courier_claim";
+            public string HostHealth => "healthy";
+            public bool OpensCircuit => false;
+            public bool OutcomeUnknown => false;
+        }
+
+        private sealed class OperatorCourierCertificationException : InvalidOperationException, IOperatorRevitFailureMetadata
+        {
+            public OperatorCourierCertificationException(string code, string message, Exception? inner = null)
+                : base(message, inner)
+            {
+                Code = string.IsNullOrWhiteSpace(code) ? "CERTIFICATION_FINAL_EXECUTION_INVALID" : code;
+            }
+
+            public string Code { get; }
+            public bool Retryable => false;
+            public string Phase => "certification_final_execution";
             public string HostHealth => "healthy";
             public bool OpensCircuit => false;
             public bool OutcomeUnknown => false;

@@ -581,6 +581,33 @@ namespace RevitBridge.Operator
             return json ?? "";
         }
 
+        /// <summary>
+        /// Requests a fresh final-execution receipt for an already claimed v2
+        /// courier job. The URL, authentication, and request shape are fixed;
+        /// no job-provided endpoint, key, policy location, or digest is ever
+        /// used to authorize a workstation action.
+        /// </summary>
+        public async Task<string> AuthorizeRevitCourierExecutionJsonAsync(
+            string sessionId,
+            string jobId,
+            string executorId,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(sessionId)) throw new ArgumentException("sessionId is required.");
+            if (string.IsNullOrWhiteSpace(jobId)) throw new ArgumentException("jobId is required.");
+            if (string.IsNullOrWhiteSpace(executorId)) throw new ArgumentException("executorId is required.");
+            var body = JsonSerializer.Serialize(new { session_id = sessionId, executor_id = executorId }, OperatorUiProtocol.JsonOptions);
+            using var resp = await SendWithAuthAsync(
+                () => new HttpRequestMessage(HttpMethod.Post, $"api/revit-courier/jobs/{Uri.EscapeDataString(jobId)}/authorize-execution")
+                {
+                    Content = new StringContent(body, Encoding.UTF8, "application/json")
+                },
+                cancellationToken).ConfigureAwait(false);
+            var json = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+            EnsureSuccessOrThrow(resp, json, "Backend /api/revit-courier/jobs/:id/authorize-execution");
+            return json ?? "";
+        }
+
         public async Task<string> CompleteRevitCourierJobJsonAsync(string sessionId, string jobId, string executorId, object? result, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(sessionId)) throw new ArgumentException("sessionId is required.");

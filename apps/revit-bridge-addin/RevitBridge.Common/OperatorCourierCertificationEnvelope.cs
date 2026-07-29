@@ -107,6 +107,15 @@ namespace RevitBridge.Common
         public string? TargetExecutorId { get; internal set; }
         public string? TargetDocumentTitle { get; internal set; }
         public string? TargetDocumentPath { get; internal set; }
+        public string Method { get; internal set; } = "";
+        public string Path { get; internal set; } = "";
+        public bool BodyPresent { get; internal set; }
+        /// <summary>
+        /// The exact raw JSON transport string verified against BodySha256. This
+        /// is only used to bind a fresh final-authorization receipt; callers
+        /// must execute a parsed authorization body rather than this job field.
+        /// </summary>
+        public string BodyJson { get; internal set; } = "";
         public DateTimeOffset CreatedAtUtc { get; internal set; }
         public DateTimeOffset ExpiresAtUtc { get; internal set; }
         public string CreatedAtIsoUtc { get; internal set; } = "";
@@ -302,6 +311,10 @@ namespace RevitBridge.Common
                     TargetExecutorId = targetExecutorId,
                     TargetDocumentTitle = targetDocumentTitle,
                     TargetDocumentPath = targetDocumentPath,
+                    Method = jobMethod,
+                    Path = jobPath,
+                    BodyPresent = jobBodyPresent,
+                    BodyJson = bodyJson,
                     CreatedAtUtc = createdAtUtc,
                     ExpiresAtUtc = expiresAtUtc,
                     CreatedAtIsoUtc = createdAtIsoUtc,

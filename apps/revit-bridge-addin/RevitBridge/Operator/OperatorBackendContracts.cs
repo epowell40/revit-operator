@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
+using RevitBridge.Common;
 
 namespace RevitBridge.Operator
 {
@@ -30,6 +32,15 @@ namespace RevitBridge.Operator
 
         [JsonIgnore]
         public string ExpectedDocumentPath { get; set; } = "";
+
+        // Courier v2 metadata is runtime-only. It is never accepted from a
+        // sidecar/chat payload and is attached only after the fixed backend
+        // final-execution authorization endpoint binds it to a verified claim.
+        [JsonIgnore]
+        public OperatorCourierFinalExecutionAuthorization? CourierFinalExecutionAuthorization { get; internal set; }
+
+        [JsonIgnore]
+        public DateTimeOffset? CourierJobExpiresAtUtc { get; internal set; }
     }
 
     public sealed class OperatorChatRequest

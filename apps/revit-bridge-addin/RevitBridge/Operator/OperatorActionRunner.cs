@@ -262,6 +262,11 @@ namespace RevitBridge.Operator
             var correlationId = OperatorCorrelationId.NormalizeOrCreate(action.CorrelationId, action.ActionId);
             action.CorrelationId = correlationId;
 
+            // Courier v2 actions are constructed only after a fresh backend
+            // receipt. Check the binding before every path, including direct
+            // control-plane handlers that bypass the ExternalEvent queue.
+            ValidateCourierFinalExecutionAuthorization(action, method, path, correlationId);
+
             if (!OperatorActionAllowlist.IsAllowed(method, path))
             {
                 throw new InvalidOperationException($"Action not allowlisted: {method} {path}");
@@ -341,6 +346,10 @@ namespace RevitBridge.Operator
                 result = await _eventService.Run(app =>
                 {
                     ValidateExpectedDocument(app, action);
+                    // This is deliberately immediately adjacent to the Revit
+                    // handler. A queued ExternalEvent cannot outlive the
+                    // authorization/job expiry it was admitted under.
+                    ValidateCourierFinalExecutionAuthorization(action, method, path, correlationId);
                     var handlerResult = handler.Handle(app, jsonBody).GetAwaiter().GetResult();
 
                     // Best-effort UI refresh after actions that likely modified the model. This reduces "it worked but I can't see it"
@@ -383,6 +392,56 @@ namespace RevitBridge.Operator
             return result;
         }
 
+        private static void ValidateCourierFinalExecutionAuthorization(
+            OperatorActionCall action,
+            string method,
+            string path,
+            string correlationId)
+        {
+            var authorization = action.CourierFinalExecutionAuthorization;
+            if (authorization == null)
+            {
+                if (action.CourierJobExpiresAtUtc.HasValue)
+                    throw new OperatorCourierFinalExecutionRejectedException("Courier final-execution expiry is present without an authorization receipt.");
+                return;
+            }
+
+            if (!TryGetActionBody(action, out var bodyPresent, out var bodyJson)
+                || !OperatorCourierFinalExecutionAuthorizationBinder.IsBoundToAction(
+                    authorization,
+                    action.CourierJobExpiresAtUtc,
+                    action.ActionId,
+                    correlationId,
+                    method,
+                    path,
+                    action.ExpectedDocumentTitle,
+                    action.ExpectedDocumentPath,
+                    bodyPresent,
+                    bodyJson,
+                    DateTimeOffset.UtcNow))
+            {
+                throw new OperatorCourierFinalExecutionRejectedException("Courier final-execution authorization is expired, malformed, or no longer bound to the queued action.");
+            }
+        }
+
+        private static bool TryGetActionBody(OperatorActionCall action, out bool bodyPresent, out string bodyJson)
+        {
+            bodyPresent = action.Body != null;
+            bodyJson = "";
+            if (!bodyPresent) return true;
+            try
+            {
+                bodyJson = action.Body is JsonElement jsonElement
+                    ? jsonElement.GetRawText()
+                    : JsonSerializer.Serialize(action.Body, OperatorUiProtocol.JsonOptions);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private static void ValidateExpectedDocument(Autodesk.Revit.UI.UIApplication app, OperatorActionCall action)
         {
             var expectedTitle = (action.ExpectedDocumentTitle ?? "").Trim();
@@ -408,6 +467,17 @@ namespace RevitBridge.Operator
             public string Code => "revit_courier_target_document_mismatch";
             public bool Retryable => false;
             public string Phase => "courier_target_validation";
+            public string HostHealth => "healthy";
+            public bool OpensCircuit => false;
+            public bool OutcomeUnknown => false;
+        }
+
+        private sealed class OperatorCourierFinalExecutionRejectedException : InvalidOperationException, IOperatorRevitFailureMetadata
+        {
+            public OperatorCourierFinalExecutionRejectedException(string message) : base(message) { }
+            public string Code => "CERTIFICATION_FINAL_EXECUTION_REJECTED";
+            public bool Retryable => false;
+            public string Phase => "certification_final_execution";
             public string HostHealth => "healthy";
             public bool OpensCircuit => false;
             public bool OutcomeUnknown => false;
