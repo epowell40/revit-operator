@@ -118,6 +118,40 @@ namespace RevitBridge.Common.Tests
         }
 
         [Theory]
+        [InlineData("-9223372036854775808")]
+        [InlineData("-1")]
+        [InlineData("0")]
+        [InlineData("1")]
+        [InlineData("9223372036854775807")]
+        public void Canonicalizer_accepts_the_complete_signed_64_bit_integer_domain(string source)
+        {
+            using (var document = JsonDocument.Parse(source))
+            {
+                Assert.Equal(source, OperatorCourierCertificationEnvelopeVerifier.Canonicalize(document.RootElement));
+            }
+        }
+
+        [Theory]
+        [InlineData("-0")]
+        [InlineData("0.0")]
+        [InlineData("1.0")]
+        [InlineData("1e0")]
+        [InlineData("1e-6")]
+        [InlineData("1e21")]
+        [InlineData("-1E+2")]
+        [InlineData("9223372036854775808")]
+        [InlineData("18446744073709551615")]
+        [InlineData("-9223372036854775809")]
+        public void Canonicalizer_rejects_noncanonical_or_out_of_range_numbers(string source)
+        {
+            using (var document = JsonDocument.Parse(source))
+            {
+                var error = Assert.ThrowsAny<Exception>(() => OperatorCourierCertificationEnvelopeVerifier.Canonicalize(document.RootElement));
+                Assert.Equal("Canonical JSON supports only signed 64-bit integers in canonical decimal form.", error.Message);
+            }
+        }
+
+        [Theory]
         [InlineData("policy_hash")]
         [InlineData("policy_record_hash")]
         [InlineData("evidence_record_hash")]

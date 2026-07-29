@@ -138,6 +138,7 @@ namespace RevitBridge.Common
         private static readonly Regex DigestPattern = new Regex("^[0-9a-f]{64}$", RegexOptions.CultureInvariant);
         private static readonly Regex AliasPattern = new Regex("^[a-z][a-z0-9_]*$", RegexOptions.CultureInvariant);
         private static readonly Regex CanonicalUtcInstantPattern = new Regex("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$", RegexOptions.CultureInvariant);
+        private static readonly Regex CanonicalSignedIntegerPattern = new Regex("^(?:0|-?[1-9][0-9]*)$", RegexOptions.CultureInvariant);
         private static readonly HashSet<string> Channels = new HashSet<string>(StringComparer.Ordinal)
         {
             "search", "generic_call", "typed_mcp", "deterministic_workflow"
@@ -374,8 +375,11 @@ namespace RevitBridge.Common
 
         /// <summary>
         /// Producer-compatible canonical JSON for envelope and idempotency
-        /// values: CRLF/CR folding, NFC, normalized ordinal key sorting, and
-        /// JavaScript-compatible minimal JSON string escaping.
+        /// values: CRLF/CR folding, NFC, normalized ordinal key sorting,
+        /// JavaScript-compatible minimal JSON string escaping, and canonical
+        /// signed 64-bit integers. The signed integer domain is the complete
+        /// numeric domain used by these schemas; fractional and exponent forms
+        /// are rejected rather than claiming generic JavaScript number parity.
         /// </summary>
         public static string Canonicalize(JsonElement value)
         {
@@ -957,24 +961,14 @@ namespace RevitBridge.Common
 
         private static string CanonicalNumber(JsonElement element)
         {
-            if (element.TryGetInt64(out var signed)) return signed.ToString(CultureInfo.InvariantCulture);
-            if (element.TryGetUInt64(out var unsigned)) return unsigned.ToString(CultureInfo.InvariantCulture);
-            if (decimal.TryParse(element.GetRawText(), NumberStyles.Float, CultureInfo.InvariantCulture, out var decimalValue))
-                return decimalValue.ToString("G29", CultureInfo.InvariantCulture);
-            if (!element.TryGetDouble(out var doubleValue) || double.IsNaN(doubleValue) || double.IsInfinity(doubleValue))
-                throw new OperatorCourierCanonicalizationException("Canonical JSON number is invalid.");
-            if (doubleValue == 0d) return "0";
-            return NormalizeExponent(doubleValue.ToString("R", CultureInfo.InvariantCulture));
-        }
-
-        private static string NormalizeExponent(string value)
-        {
-            var exponentAt = value.IndexOf('E');
-            if (exponentAt < 0) exponentAt = value.IndexOf('e');
-            if (exponentAt < 0) return value;
-            var mantissa = value.Substring(0, exponentAt);
-            var exponent = int.Parse(value.Substring(exponentAt + 1), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture);
-            return mantissa + "e" + exponent.ToString(CultureInfo.InvariantCulture);
+            var raw = element.GetRawText();
+            if (!CanonicalSignedIntegerPattern.IsMatch(raw)
+                || !long.TryParse(raw, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var signed))
+            {
+                throw new OperatorCourierCanonicalizationException(
+                    "Canonical JSON supports only signed 64-bit integers in canonical decimal form.");
+            }
+            return signed.ToString(CultureInfo.InvariantCulture);
         }
 
         private static void WriteJsonString(StringBuilder builder, string value)
