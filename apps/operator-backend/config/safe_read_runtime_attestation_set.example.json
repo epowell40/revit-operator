@@ -1,0 +1,25 @@
+{
+  "schema": "revit-operator.safe-read-runtime-attestation-set.v1",
+  "sequence": 1,
+  "issued_at_utc": "2030-01-01T00:00:00.000Z",
+  "entries": [
+    {
+      "runtime_attestation_sha256": "sha256:a34389d7eba7e6750c2b9e9e45cc3149e1f9a4e9ae111aea41f452f26a6da00c",
+      "runtime_tuple": {
+        "host_content_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "host_mvid": "00000000-0000-0000-0000-000000000000",
+        "revit_api_content_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "revit_api_mvid": "00000000-0000-0000-0000-000000000000",
+        "revit_version": "2024"
+      },
+      "attestation_json": "{\"schema\":\"revit-operator.safe-read-runtime-attestation.v1\",\"state\":\"revoked\",\"issued_at_utc\":\"2030-01-01T00:00:00.000Z\",\"expires_at_utc\":\"2030-01-01T00:05:00.000Z\",\"route_id\":\"safe_read.sheet_count.v1\",\"route_contract_sha256\":\"sha256:cc80c231ba289396516164cb0fdbc3c71779ac018e717085f07a544530e68874\",\"policy_sha256\":\"sha256:23692b21a7e728e9c1ce5eec9580dcec4f3ac7f25d3d95059899c680a17aad67\",\"proof_sha256\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"executor_id\":\"revit-operator.safe-read-host.v1\",\"runtime_tuple\":{\"host_content_sha256\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"host_mvid\":\"00000000-0000-0000-0000-000000000000\",\"revit_api_content_sha256\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"revit_api_mvid\":\"00000000-0000-0000-0000-000000000000\",\"revit_version\":\"2024\"}}\n"
+    }
+  ],
+  "signatures": [
+    {
+      "key_id": "example-public-test-key",
+      "algorithm": "ed25519",
+      "signature_base64url": "SOdbSPqTv7nqFfkEGEOvOkPEmOEBFgNXA6mDGBVnLasPedHcO_guneEUwS5lf5CvT-0XE3BZhxh8-ksS40dUBw"
+    }
+  ]
+}

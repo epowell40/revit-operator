@@ -4,6 +4,7 @@ type WorkerInput = {
   databasePath: string;
   manifestPath: string;
   pin: string;
+  env?: NodeJS.ProcessEnv;
   scope: string;
   request: unknown;
   now: string;
@@ -13,7 +14,7 @@ const input = JSON.parse(Buffer.from(process.argv[2]!, "base64url").toString("ut
 const service = new SafeReadCapabilityService({
   databasePath: input.databasePath,
   manifestPath: input.manifestPath,
-  env: { OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SHA256: input.pin },
+  env: input.env ?? { OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SHA256: input.pin },
   now: () => new Date(input.now)
 });
 
