@@ -9,9 +9,35 @@ The portable channel is a transactional, per-user deployment utility embedded in
 - Deployment logs: `%LOCALAPPDATA%\RevitOperator\logs\deployment\`
 - Existing machine configuration: `%LOCALAPPDATA%\RevitOperator\config\` (preserved)
 - Existing user workspace and auth cache: `%LOCALAPPDATA%\RevitOperator\Workspace\` and `config\` (preserved)
-- Revit manifest: `%APPDATA%\Autodesk\Revit\Addins\<year>\RevitBridge.addin`
+- Revit manifests: `%APPDATA%\Autodesk\Revit\Addins\<year>\<profile.manifestFileName>`
 
-The `.addin` file points at a verified versioned release. Updating or rolling back changes that small pointer only after the target payload passes SHA-256 validation. This avoids a mixed set of `RevitBridge`, logic, and common assemblies.
+Each `.addin` file points at a verified versioned release. Updating or rolling back changes the complete per-year manifest set only after the target payload passes SHA-256 validation. This avoids a mixed set of primary bridge, SafeRead host, logic, and common assemblies.
+
+## Manifest schemas and add-in ownership
+
+Schema v1 remains supported and retains its original single-add-in contract: a `revit-addin` component activates `RevitBridge.dll` through `RevitBridge.addin`, class `RevitBridge.App`, and AddInId `B2883307-2852-4740-9833-281048674F77`.
+
+Schema v2 declares generic `revitAddinProfiles` and makes each `revit-addin` component reference one profile with `revitAddinProfileId`. A profile owns only these declarative values:
+
+```json
+{
+  "id": "safe-read",
+  "manifestFileName": "RevitOperator.SafeReadHost.addin",
+  "assemblyPath": "RevitOperator.SafeReadHost.dll",
+  "type": "Application",
+  "name": "Revit Operator Safe Read Host",
+  "fullClassName": "RevitOperator.SafeReadHost.App",
+  "addInId": "AAFAA2C0-43F1-42A0-A6B4-D9A0C5F5CE0E",
+  "vendorId": "BIMT",
+  "vendorDescription": "BIMTools Revit Operator Safe Read Host"
+}
+```
+
+Profile IDs, manifest filenames, and AddInIds must be unique. Paths and basenames are traversal-safe, every represented Revit year must contain exactly one component for every declared profile, and `--revit-version <year>` selects that whole per-year set. Unknown or duplicate JSON properties are rejected.
+
+OperatorDeploy serializes operations through one named deployment mutex. State schema v2 records the exact installer-owned manifest path, assembly path, identity, and manifest hash. Activation snapshots the union of current and target controls, writes and validates the complete target set, proves an obsolete manifest still exactly matches its ownership receipt before removing it, validates its absence, and commits state last. Any failure restores the full snapshot. A foreign or modified control is never overwritten or removed. Schema-v1 state is migrated when the next successful operation establishes v2 ownership.
+
+This deployment schema does not replace the separate SafeRead proof, signature, package, or runtime-attestation gates. Adding a SafeRead profile describes transaction ownership only; it does not authorize a tool, trust an artifact, or expose a route.
 
 ## Commands and exit behavior
 

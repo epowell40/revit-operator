@@ -10,6 +10,8 @@ public static class FileIntegrity
         return Convert.ToHexString(SHA256.HashData(stream));
     }
 
+    public static string Sha256(byte[] contents) => Convert.ToHexString(SHA256.HashData(contents));
+
     public static string ResolveUnder(string root, string relative, int exitCode = ExitCodes.ManifestInvalid)
     {
         var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);

@@ -89,8 +89,8 @@ Options:
   --dry-run                  Verify and plan without changing files
   --force                    Reserved for explicit recovery operations
   --log-path <path>          Override the deployment log path
-  --install-scope user       Portable v1 supports per-user installation
-  --revit-version <year>     Limit installation to one Revit version
+  --install-scope user       Portable channel supports per-user installation
+  --revit-version <year>     Install the complete add-in profile set for one Revit year
   --bundle-only              Validate the release bundle rather than installed state
 """);
 }
