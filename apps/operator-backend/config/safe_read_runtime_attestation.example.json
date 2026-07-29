@@ -1,0 +1,19 @@
+{
+  "schema": "revit-operator.safe-read-runtime-attestation.v1",
+  "state": "active",
+  "issued_at_utc": "2030-01-01T00:00:00.000Z",
+  "expires_at_utc": "2030-01-01T00:05:00.000Z",
+  "host_instance_id": "deployment-host-instance",
+  "executor_id": "deployment-executor",
+  "runtime_tuple": {
+    "host_content_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "host_mvid": "00000000-0000-0000-0000-000000000000",
+    "revit_api_content_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "revit_api_mvid": "00000000-0000-0000-0000-000000000000",
+    "revit_version": "2024"
+  },
+  "document": {
+    "project_fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "document_session_id": "deployment-document-session"
+  }
+}

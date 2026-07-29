@@ -105,6 +105,12 @@ import {
   DirectRevitExecutionAuthorizationError
 } from "./capabilities/direct_revit_execution_authorization.js";
 import {
+  getSafeReadCapabilityService,
+  SAFE_READ_HTTP_MAX_BYTES,
+  SafeReadCapabilityError,
+  safeReadPrincipalScope
+} from "./capabilities/safe_read_capability.js";
+import {
   getOperatorTask,
   listOperatorTasks,
   logTeachSkillUsage,
@@ -672,6 +678,8 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname === "/api/revit-courier/claim-next" ||
     pathname.startsWith("/api/revit-courier/jobs/") ||
     pathname === "/api/revit-direct/authorize-execution" ||
+    pathname === "/api/safe-read/direct/preauthorize" ||
+    pathname === "/api/safe-read/direct/authorize-execution" ||
     pathname === "/api/kb/documents/upload" ||
     pathname === "/api/kb/documents" ||
     pathname.startsWith("/api/kb/documents/") ||
@@ -1289,6 +1297,31 @@ const server = http.createServer(async (req, res) => {
           error: directError.message,
           retryable: directError.retryable
         });
+      }
+    }
+
+    if (req.method === "POST" && (
+      url.pathname === "/api/safe-read/direct/preauthorize"
+      || url.pathname === "/api/safe-read/direct/authorize-execution"
+    )) {
+      try {
+        const body = await readJson(req, SAFE_READ_HTTP_MAX_BYTES);
+        const service = getSafeReadCapabilityService();
+        const principalScope = safeReadPrincipalScope(auth.mode, auth.principal);
+        if (url.pathname === "/api/safe-read/direct/preauthorize") {
+          return writeJson(res, 200, { ok: true, authorization: service.preauthorize(principalScope, body) });
+        }
+        return writeJson(res, 200, { ok: true, receipt: service.authorizeExecution(principalScope, body) });
+      } catch (error) {
+        const safeReadError = error instanceof SafeReadCapabilityError
+          ? error
+          : new SafeReadCapabilityError(
+              "SAFE_READ_REQUEST_MALFORMED",
+              error instanceof Error ? error.message : "SafeRead request is invalid.",
+              400,
+              false
+            );
+        return writeJson(res, safeReadError.status, safeReadError.body());
       }
     }
 
