@@ -7,11 +7,18 @@ param(
   [Parameter(Mandatory)][string]$RevitAddinsRoot,
   [scriptblock]$SignatureVerifier,
   [scriptblock]$AssemblyInspector,
-  [scriptblock]$ManifestWriter
+  [scriptblock]$ManifestWriter,
+  [ValidateRange(1,600000)][int]$ActivationLockTimeoutMilliseconds=120000
 )
 
 $ErrorActionPreference='Stop'
 Import-Module (Join-Path $PSScriptRoot 'SafeReadPackageV2.psm1') -Force
+
+$activationMutex=[Threading.Mutex]::new($false,'Global\RevitOperator.SafeRead.PackageActivation.v3')
+$lockHeld=$false
+try{
+  try{$lockHeld=$activationMutex.WaitOne($ActivationLockTimeoutMilliseconds)}catch [Threading.AbandonedMutexException]{$lockHeld=$true}
+  if(-not $lockHeld){throw 'Timed out waiting for the machine-wide SafeRead package activation lock.'}
 
 function Get-ContainedReleasePath([string]$ReleaseId) {
   Assert-SafeReadReleaseId $ReleaseId
@@ -30,15 +37,21 @@ function Restore-ActivationFile($Snapshot,[int]$Index,[string]$Phase) {
   elseif(Test-Path -LiteralPath $Snapshot.Path){Remove-Item -LiteralPath $Snapshot.Path -Force}
 }
 
-$destination=[IO.Path]::GetFullPath($DestinationRoot);New-Item -ItemType Directory -Force -Path $destination | Out-Null
+$destinationFull=[IO.Path]::GetFullPath($DestinationRoot)
+if(-not(Test-Path -LiteralPath $destinationFull)){[void](Resolve-SafeReadCanonicalPath (Split-Path -Parent $destinationFull));New-Item -ItemType Directory -Path $destinationFull | Out-Null}
+$destination=Protect-SafeReadPathAcl $destinationFull
+$revitAddinsFull=[IO.Path]::GetFullPath($RevitAddinsRoot)
+if(-not(Test-Path -LiteralPath $revitAddinsFull)){[void](Resolve-SafeReadCanonicalPath (Split-Path -Parent $revitAddinsFull));New-Item -ItemType Directory -Path $revitAddinsFull|Out-Null}
+[void](Protect-SafeReadPathAcl $revitAddinsFull)
 $script:ReleasesRoot=[IO.Path]::GetFullPath((Join-Path $destination 'releases'));$pinsRoot=Join-Path $destination 'pins';$activationRoot=Join-Path $destination 'activation-staging'
 New-Item -ItemType Directory -Force -Path $script:ReleasesRoot,$pinsRoot,$activationRoot | Out-Null
+$script:ReleasesRoot=Protect-SafeReadPathAcl $script:ReleasesRoot;$pinsRoot=Protect-SafeReadPathAcl $pinsRoot;$activationRoot=Protect-SafeReadPathAcl $activationRoot
 $activePath=Join-Path $destination 'active-release.json'
 
 if($PSCmdlet.ParameterSetName -eq 'Rollback'){
   $releaseRoot=Get-ContainedReleasePath $RollbackReleaseId
   if(-not(Test-Path -LiteralPath $releaseRoot -PathType Container)){throw "SafeRead rollback release does not exist: $RollbackReleaseId"}
-  $resolved=(Resolve-Path -LiteralPath $releaseRoot).Path
+  $resolved=Assert-SafeReadSecureTree $releaseRoot
   if($resolved -cne $releaseRoot){throw 'SafeRead rollback release resolves outside its canonical version path.'}
   # ResolveLinkTarget is unavailable in Windows PowerShell 5.1. Rollback is
   # safer when it rejects every reparse point instead of trying to follow one.
@@ -46,20 +59,27 @@ if($PSCmdlet.ParameterSetName -eq 'Rollback'){
   if(($releaseDirectory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'SafeRead rollback release may not be a link or reparse point.'}
   $pinPath=Join-Path $pinsRoot "$RollbackReleaseId.json"
   if(-not(Test-Path -LiteralPath $pinPath -PathType Leaf)){throw "SafeRead rollback pin is missing: $RollbackReleaseId"}
+  [void](Assert-SafeReadSecureTree $pinPath)
   $pin=(ConvertTo-SafeReadObject $pinPath).attestationPinSha256
   $receipt=Assert-SafeReadBundle -BundleRoot $releaseRoot -AttestationPinSha256 $pin -SignatureVerifier $SignatureVerifier -AssemblyInspector $AssemblyInspector
 }else{
+  [void](Assert-SafeReadSecureTree $BundleRoot)
   $sourceReceipt=Assert-SafeReadBundle -BundleRoot $BundleRoot -AttestationPinSha256 $AttestationPinSha256 -SignatureVerifier $SignatureVerifier -AssemblyInspector $AssemblyInspector
   $releaseRoot=Get-ContainedReleasePath $sourceReceipt.ReleaseId
   if(Test-Path -LiteralPath $releaseRoot){throw "SafeRead release already installed: $($sourceReceipt.ReleaseId)"}
   $copyStage=Join-Path $script:ReleasesRoot ('.{0}.{1}.staging' -f $sourceReceipt.ReleaseId,[guid]::NewGuid().ToString('N'))
   New-Item -ItemType Directory -Path $copyStage | Out-Null
+  [void](Protect-SafeReadPathAcl $copyStage -Strict)
   try{
     Get-ChildItem -LiteralPath (Resolve-Path -LiteralPath $BundleRoot).Path -Force|ForEach-Object{Copy-Item -LiteralPath $_.FullName -Destination $copyStage -Recurse -Force}
+    [void](Protect-SafeReadTreeAcl $copyStage)
     [void](Assert-SafeReadBundle -BundleRoot $copyStage -AttestationPinSha256 $AttestationPinSha256 -SignatureVerifier $SignatureVerifier -AssemblyInspector $AssemblyInspector)
     Move-Item -LiteralPath $copyStage -Destination $releaseRoot
+    [void](Protect-SafeReadTreeAcl $releaseRoot)
     $receipt=Assert-SafeReadBundle -BundleRoot $releaseRoot -AttestationPinSha256 $AttestationPinSha256 -SignatureVerifier $SignatureVerifier -AssemblyInspector $AssemblyInspector
     [IO.File]::WriteAllText((Join-Path $pinsRoot "$($receipt.ReleaseId).json"),(ConvertTo-SafeReadCanonicalJson ([ordered]@{attestationPinSha256=$AttestationPinSha256})),[Text.UTF8Encoding]::new($false))
+    [void](Protect-SafeReadPathAcl (Join-Path $pinsRoot "$($receipt.ReleaseId).json") -Strict)
+    [void](Assert-SafeReadSecureTree (Join-Path $pinsRoot "$($receipt.ReleaseId).json"))
   }catch{if(Test-Path -LiteralPath $copyStage){Remove-Item -LiteralPath $copyStage -Recurse -Force};throw}
 }
 
@@ -74,7 +94,10 @@ foreach($target in @($receipt.Targets|Sort-Object revitYear)){
   $content=New-SafeReadInstalledManifest -TemplatePath $template -AssemblyPath $assembly
   $stagedPath=Join-Path $activationStage "$year\RevitOperator.SafeReadHost.addin";New-Item -ItemType Directory -Force -Path (Split-Path -Parent $stagedPath)|Out-Null
   [IO.File]::WriteAllText($stagedPath,$content,[Text.UTF8Encoding]::new($false));[void](Assert-SafeReadManifestXml -Path $stagedPath -ExpectedAssembly $assembly)
-  $livePath=Join-Path ([IO.Path]::GetFullPath($RevitAddinsRoot)) "$year\RevitOperator.SafeReadHost.addin"
+  $livePath=Join-Path $revitAddinsFull "$year\RevitOperator.SafeReadHost.addin"
+  $liveParent=Split-Path -Parent $livePath
+  if(-not(Test-Path -LiteralPath $liveParent)){[void](Resolve-SafeReadCanonicalPath (Split-Path -Parent $liveParent));New-Item -ItemType Directory -Path $liveParent|Out-Null}
+  [void](Protect-SafeReadPathAcl $liveParent)
   $prepared += [pscustomobject]@{Year=$year;Path=$livePath;Content=$content;Assembly=$assembly}
 }
 if($prepared.Count -ne 3){throw 'SafeRead activation staging did not produce all three manifests.'}
@@ -94,3 +117,7 @@ try{
   throw
 }
 Write-Host "SafeRead package active release: $($receipt.ReleaseId)"
+}finally{
+  if($lockHeld){try{$activationMutex.ReleaseMutex()}catch{}}
+  $activationMutex.Dispose()
+}
