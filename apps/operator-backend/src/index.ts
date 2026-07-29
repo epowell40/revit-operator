@@ -105,6 +105,15 @@ import {
   DirectRevitExecutionAuthorizationError
 } from "./capabilities/direct_revit_execution_authorization.js";
 import {
+  getSafeReadCapabilityService,
+  SAFE_READ_AUTHORIZE_EXECUTION_ENDPOINT,
+  SAFE_READ_HTTP_MAX_BYTES,
+  SAFE_READ_PREAUTHORIZE_ENDPOINT,
+  SafeReadCapabilityError,
+  safeReadDirectEndpointEnvelope,
+  safeReadPrincipalScope
+} from "./capabilities/safe_read_capability.js";
+import {
   getOperatorTask,
   listOperatorTasks,
   logTeachSkillUsage,
@@ -672,6 +681,8 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname === "/api/revit-courier/claim-next" ||
     pathname.startsWith("/api/revit-courier/jobs/") ||
     pathname === "/api/revit-direct/authorize-execution" ||
+    pathname === SAFE_READ_PREAUTHORIZE_ENDPOINT ||
+    pathname === SAFE_READ_AUTHORIZE_EXECUTION_ENDPOINT ||
     pathname === "/api/kb/documents/upload" ||
     pathname === "/api/kb/documents" ||
     pathname.startsWith("/api/kb/documents/") ||
@@ -1289,6 +1300,28 @@ const server = http.createServer(async (req, res) => {
           error: directError.message,
           retryable: directError.retryable
         });
+      }
+    }
+
+    if (req.method === "POST" && (
+      url.pathname === SAFE_READ_PREAUTHORIZE_ENDPOINT
+      || url.pathname === SAFE_READ_AUTHORIZE_EXECUTION_ENDPOINT
+    )) {
+      try {
+        const body = await readJson(req, SAFE_READ_HTTP_MAX_BYTES);
+        const service = getSafeReadCapabilityService();
+        const principalScope = safeReadPrincipalScope(auth.mode, auth.principal);
+        return writeJson(res, 200, safeReadDirectEndpointEnvelope(service, url.pathname, principalScope, body));
+      } catch (error) {
+        const safeReadError = error instanceof SafeReadCapabilityError
+          ? error
+          : new SafeReadCapabilityError(
+              "SAFE_READ_REQUEST_MALFORMED",
+              error instanceof Error ? error.message : "SafeRead request is invalid.",
+              400,
+              false
+            );
+        return writeJson(res, safeReadError.status, safeReadError.body());
       }
     }
 

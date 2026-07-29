@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "sdkVersion": "9.0.304",
+  "sdkPath": "C:\\Program Files\\dotnet\\sdk\\9.0.304",
+  "compiler": {
+    "relativePath": "Roslyn\\bincore\\csc.dll",
+    "sha256": "4a3ea7a6e6083eba393f5e665d8d3db4e2090e183ad5bd9da56d30a66406a348",
+    "fileVersion": "4.1400.25.35903"
+  },
+  "codeAnalysis": {
+    "relativePath": "Roslyn\\bincore\\Microsoft.CodeAnalysis.dll",
+    "sha256": "22ecd954dfd4a377c983cc59330793cde94f121692b6897c09c34547724e4f19",
+    "fileVersion": "4.1400.25.35903"
+  },
+  "codeAnalysisCSharp": {
+    "relativePath": "Roslyn\\bincore\\Microsoft.CodeAnalysis.CSharp.dll",
+    "sha256": "d32ddb468e7cc01b260a45d47c58349cf5dcdd5640c671d7ebc9a121eb49adfe",
+    "fileVersion": "4.1400.25.35903"
+  },
+  "framework": {
+    "name": "Microsoft.NETCore.App.Ref",
+    "version": "9.0.8",
+    "targetFramework": "net9.0",
+    "relativePath": "packs\\Microsoft.NETCore.App.Ref\\9.0.8\\ref\\net9.0",
+    "dllCount": 164,
+    "inventorySha256": "bd75b84e6779e2200adc93cae5e3d2aa0e2f708b0552eb79c47250ef3d7353a8"
+  },
+  "runtime": {
+    "frameworkName": "Microsoft.NETCore.App",
+    "frameworkVersion": "9.0.8"
+  }
+}

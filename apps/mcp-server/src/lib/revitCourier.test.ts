@@ -122,6 +122,23 @@ function writeSucceededResult(job: { id: string; dir: string }, result: unknown)
   }), "utf8");
 }
 
+test("courier publication rejects the reserved certified namespace before reading context or writing a job", async () => {
+  for (const reservedPath of [
+    "/revit/certified/sheets/count",
+    "/REVIT/CERTIFIED/sheets/count",
+    "/revit/certified/sheets/count?attempt=2",
+    "/revit/certified%2fsheets/count",
+    "/revit/%63ertified/sheets/count",
+    "/revit/certified\\sheets\\count",
+    "/revit/certified"
+  ]) {
+    await assert.rejects(
+      callRevitViaCourier(reservedPath, "POST", { schema: "bypass" }),
+      /cannot be published through the Revit courier/
+    );
+  }
+});
+
 test("cross-runtime v2 envelope and idempotency vectors freeze canonical UTF-8 bytes", () => {
   // The expected literals and hashes were independently verified with
   // PowerShell/.NET SHA256.HashData(Encoding.UTF8.GetBytes(literal)). The

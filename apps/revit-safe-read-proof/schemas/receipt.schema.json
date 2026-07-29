@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bimtools.com/schemas/revit-safe-read-certified-kernel-receipt-v1.json",
+  "title": "Revit Safe Read certified-kernel proof receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "proofKind",
+    "mode",
+    "status",
+    "certified",
+    "manifestSha256",
+    "verifierProfileId",
+    "verifierProfileSha256",
+    "verifierBundleSha256",
+    "sourceLockSha256",
+    "apiLockSha256",
+    "sdkLockSha256",
+    "trustBoundary",
+    "compilerOptions",
+    "issues",
+    "observation",
+    "artifacts"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "proofKind": { "const": "revit-safe-read-certified-kernel/v1" },
+    "mode": { "enum": ["check", "inventory"] },
+    "status": { "enum": ["verified", "observed", "rejected"] },
+    "certified": { "type": "boolean" },
+    "manifestSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "verifierProfileId": { "const": "revit-safe-read-sheet-count-kernel/v1" },
+    "verifierProfileSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "verifierBundleSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "sourceLockSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "apiLockSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "sdkLockSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "trustBoundary": { "type": "string", "minLength": 1 },
+    "compilerOptions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" }
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
+          "message": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "observation": {
+      "$ref": "#/$defs/observation"
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fileName", "sha256", "length", "managedCodeSha256", "assemblyIdentity", "targetFramework", "platform"],
+        "properties": {
+          "fileName": { "type": "string", "minLength": 1 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "length": { "type": "integer", "minimum": 1 }
+          ,"managedCodeSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          ,"assemblyIdentity": { "type": "string", "minLength": 1 }
+          ,"targetFramework": { "enum": [".NETFramework,Version=v4.8", ".NETCoreApp,Version=v8.0"] }
+          ,"platform": { "const": "x64" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "sha256", "items"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "items": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "variant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["references", "symbolBindings", "methods", "metadata", "il", "outputSha256", "managedCodeSha256", "assemblyIdentity", "targetFramework", "platform"],
+      "properties": {
+        "references": { "$ref": "#/$defs/inventory" },
+        "symbolBindings": { "$ref": "#/$defs/inventory" },
+        "methods": { "$ref": "#/$defs/inventory" },
+        "metadata": { "$ref": "#/$defs/inventory" },
+        "il": { "$ref": "#/$defs/inventory" },
+        "outputSha256": { "$ref": "#/$defs/sha256" }
+        ,"managedCodeSha256": { "$ref": "#/$defs/sha256" }
+        ,"assemblyIdentity": { "type": "string", "minLength": 1 }
+        ,"targetFramework": { "enum": [".NETFramework,Version=v4.8", ".NETCoreApp,Version=v8.0"] }
+        ,"platform": { "const": "x64" }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["syntax", "types", "members", "publicAbi", "serializationClosure", "resources", "variants"],
+      "properties": {
+        "syntax": { "$ref": "#/$defs/inventory" },
+        "types": { "$ref": "#/$defs/inventory" },
+        "members": { "$ref": "#/$defs/inventory" },
+        "publicAbi": { "$ref": "#/$defs/inventory" },
+        "serializationClosure": { "$ref": "#/$defs/inventory" },
+        "resources": { "$ref": "#/$defs/inventory" },
+        "variants": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/variant" },
+          "propertyNames": { "enum": ["2023", "2024", "2025"] }
+        }
+      }
+    }
+  }
+}

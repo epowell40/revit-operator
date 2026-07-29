@@ -1,0 +1,35 @@
+{
+  "allowedOperationKinds": [
+    "Argument", "Binary", "Branch", "Conversion", "DefaultValue", "ExpressionStatement",
+    "FieldReference", "FlowCapture", "FlowCaptureReference", "InstanceReference",
+    "Increment", "Invocation", "IsNull", "IsPattern", "IsType", "ConstantPattern", "Literal", "LocalReference",
+    "ObjectCreation", "ParameterReference", "PropertyReference", "Return", "SimpleAssignment",
+    "TypeOf", "Unary", "VariableDeclaration", "VariableDeclarationGroup", "VariableDeclarator"
+  ],
+  "allowedImplicitOperationKinds": [
+    "Argument", "Conversion", "DefaultValue", "ExpressionStatement", "FieldReference",
+    "FlowCapture", "FlowCaptureReference", "InstanceReference", "Invocation", "IsNull", "IsType",
+    "Literal", "LocalReference", "ParameterReference", "PropertyReference", "SimpleAssignment"
+  ],
+  "allowedSensitiveSymbols": [],
+  "allowedAttributeSymbols": [],
+  "allowedMutableFields": [],
+  "allowedRouteLiterals": [],
+  "allowedListenerPrefixes": [],
+  "serializationRoots": [
+    "RevitOperator.SafeReadCertifiedExecution.CertifiedSheetCountResult"
+  ],
+  "serializationCallsites": [],
+  "allowedSerializationLeafTypes": ["bool", "int"],
+  "entryPointType": "global::RevitOperator.SafeReadCertifiedExecution.CertifiedSheetCountKernel",
+  "entryPointMethod": "PLACEHOLDER",
+  "resultType": "RevitOperator.SafeReadCertifiedExecution.CertifiedSheetCountResult",
+  "publicAbi": ["PLACEHOLDER"],
+  "roles": {
+    "externalEventOwnerType": "",
+    "externalEventHandlerType": "",
+    "externalEventField": "",
+    "externalEventStateField": "",
+    "allowedInterlockedOwnerTypes": []
+  }
+}

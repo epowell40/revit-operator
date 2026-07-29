@@ -1,0 +1,155 @@
+[
+  {
+    "name": "fake-autodesk-source",
+    "kind": "appendSource",
+    "payload": "namespace Autodesk.Revit.DB\n{\n    public sealed class Document\n    {\n    }\n}\n",
+    "expectedCode": "AUTODESK_SOURCE_SHADOW"
+  },
+  {
+    "name": "transport-host-source",
+    "kind": "appendSource",
+    "payload": "namespace SafeReadCertifiedExecution\n{\n    internal sealed class TransportHost\n    {\n        internal TransportHost()\n        {\n        }\n    }\n}\n",
+    "expectedCode": "TRANSPORT_SOURCE_FORBIDDEN"
+  },
+  {
+    "name": "extra-member",
+    "kind": "replaceSource",
+    "find": "public static CertifiedSheetCountResult Execute(Document document)\n        {",
+    "replace": "public static int UnexpectedMember()\n        {\n            return 7;\n        }\n\n        public static CertifiedSheetCountResult Execute(Document document)\n        {",
+    "expectedCode": "INVENTORY_MEMBERS"
+  },
+  {
+    "name": "extra-cfg-edge",
+    "kind": "replaceSource",
+    "find": "return new CertifiedSheetCountResult(true, count, 0);",
+    "replace": "if (System.DateTime.MinValue.Ticks == 0)\n            {\n                return new CertifiedSheetCountResult(true, count, 0);\n            }\n            return new CertifiedSheetCountResult(false, 0, 4);",
+    "expectedCode": "INVENTORY_METHODS_2023"
+  },
+  {
+    "name": "event-state",
+    "kind": "replaceSource",
+    "find": "private readonly int _failureCode;",
+    "replace": "private readonly int _failureCode;\n        internal event System.Action? UnexpectedEvent;",
+    "expectedCode": "EVENT_STATE_FORBIDDEN"
+  },
+  {
+    "name": "serialization-object",
+    "kind": "replaceSource",
+    "find": "public bool Succeeded { get { return _succeeded; } }",
+    "replace": "public object Dangerous\n        {\n            get\n            {\n                return new object();\n            }\n        }\n\n        public bool Succeeded { get { return _succeeded; } }",
+    "expectedCode": "SERIALIZATION_UNSAFE_TYPE"
+  },
+  {
+    "name": "local-function",
+    "kind": "replaceSource",
+    "find": "return new CertifiedSheetCountResult(true, count, 0);",
+    "replace": "CertifiedSheetCountResult Hidden()\n            {\n                return new CertifiedSheetCountResult(true, count, 0);\n            }\n            return Hidden();",
+    "expectedCode": "DELEGATE_FORBIDDEN"
+  },
+  {
+    "name": "lambda",
+    "kind": "replaceSource",
+    "find": "return new CertifiedSheetCountResult(true, count, 0);",
+    "replace": "System.Func<CertifiedSheetCountResult> factory = () => new CertifiedSheetCountResult(true, count, 0);\n            return factory();",
+    "expectedCode": "DELEGATE_FORBIDDEN"
+  },
+  {
+    "name": "source-interface",
+    "kind": "appendSource",
+    "payload": "namespace RevitSafeReadFixture\n{\n    internal interface InjectedContract\n    {\n        int Read();\n    }\n}\n",
+    "expectedCode": "SOURCE_INTERFACE_FORBIDDEN"
+  },
+  {
+    "name": "virtual-source",
+    "kind": "appendSource",
+    "payload": "namespace RevitSafeReadFixture\n{\n    internal class PolymorphicProbe\n    {\n        internal PolymorphicProbe()\n        {\n        }\n\n        internal virtual int Read()\n        {\n            return 1;\n        }\n    }\n}\n",
+    "expectedCode": "SOURCE_POLYMORPHISM"
+  },
+  {
+    "name": "operator-source",
+    "kind": "appendSource",
+    "payload": "namespace RevitSafeReadFixture\n{\n    internal readonly struct OperatorProbe\n    {\n        private readonly int _value;\n\n        internal OperatorProbe(int value)\n        {\n            _value = value;\n        }\n\n        public static OperatorProbe operator +(OperatorProbe left, OperatorProbe right)\n        {\n            return new OperatorProbe(left._value + right._value);\n        }\n    }\n}\n",
+    "expectedCode": "OPERATOR_FORBIDDEN"
+  },
+  {
+    "name": "pinvoke",
+    "kind": "appendSource",
+    "payload": "namespace RevitSafeReadFixture\n{\n    internal static class NativeProbe\n    {\n        [System.Runtime.InteropServices.DllImport(\"kernel32.dll\")]\n        internal static extern int GetCurrentProcessId();\n    }\n}\n",
+    "expectedCode": "PINVOKE_FORBIDDEN"
+  },
+  {
+    "name": "file-io",
+    "kind": "replaceSource",
+    "find": "return new CertifiedSheetCountResult(true, count, 0);",
+    "replace": "System.IO.File.ReadAllText(\"forbidden.txt\");\n            return new CertifiedSheetCountResult(true, count, 0);",
+    "expectedCode": "FILE_IO_FORBIDDEN"
+  },
+  {
+    "name": "non-listener-network",
+    "kind": "replaceSource",
+    "find": "return new CertifiedSheetCountResult(true, count, 0);",
+    "replace": "System.Net.Dns.GetHostName();\n            return new CertifiedSheetCountResult(true, count, 0);",
+    "expectedCode": "NETWORK_SYMBOL_FORBIDDEN"
+  },
+  {
+    "name": "process",
+    "kind": "replaceSource",
+    "find": "return new CertifiedSheetCountResult(true, count, 0);",
+    "replace": "System.Diagnostics.Process.GetCurrentProcess();\n            return new CertifiedSheetCountResult(true, count, 0);",
+    "expectedCode": "SENSITIVE_SYMBOL_FORBIDDEN"
+  },
+  {
+    "name": "environment",
+    "kind": "replaceSource",
+    "find": "return new CertifiedSheetCountResult(true, count, 0);",
+    "replace": "string ignored = System.Environment.MachineName;\n            return new CertifiedSheetCountResult(true, count, 0);",
+    "expectedCode": "SENSITIVE_SYMBOL_FORBIDDEN"
+  },
+  {
+    "name": "threading",
+    "kind": "replaceSource",
+    "find": "return new CertifiedSheetCountResult(true, count, 0);",
+    "replace": "System.Threading.Thread thread = System.Threading.Thread.CurrentThread;\n            return new CertifiedSheetCountResult(true, count, 0);",
+    "expectedCode": "SENSITIVE_SYMBOL_FORBIDDEN"
+  },
+  {
+    "name": "field-initializer",
+    "kind": "replaceSource",
+    "find": "private readonly int _failureCode;",
+    "replace": "private readonly int _failureCode;\n        private readonly int _injected = 1;",
+    "expectedCode": "INITIALIZER_FORBIDDEN"
+  },
+  {
+    "name": "finalizer",
+    "kind": "replaceSource",
+    "find": "internal CertifiedSheetCountResult(bool succeeded, int count, int failureCode)",
+    "replace": "~CertifiedSheetCountResult()\n        {\n        }\n\n        internal CertifiedSheetCountResult(bool succeeded, int count, int failureCode)",
+    "expectedCode": "FINALIZER_FORBIDDEN"
+  },
+  {
+    "name": "base-chain",
+    "kind": "appendSource",
+    "payload": "namespace RevitSafeReadFixture\n{\n    internal class BaseProbe\n    {\n        internal BaseProbe()\n        {\n        }\n    }\n\n    internal sealed class DerivedProbe : BaseProbe\n    {\n        internal DerivedProbe()\n        {\n        }\n    }\n}\n",
+    "expectedCode": "BASE_CHAIN_FORBIDDEN"
+  },
+  {
+    "name": "warning-suppression-directive",
+    "kind": "prependSource",
+    "payload": "#pragma warning disable\n",
+    "expectedCode": "DIRECTIVE_FORBIDDEN"
+  },
+  {
+    "name": "dynamic",
+    "kind": "replaceSource",
+    "find": "return new CertifiedSheetCountResult(true, count, 0);",
+    "replace": "dynamic value = new CertifiedSheetCountResult(true, count, 0);\n            return value;",
+    "expectedCode": "DYNAMIC_FORBIDDEN"
+  },
+  {
+    "name": "reflection",
+    "kind": "replaceSource",
+    "find": "return new CertifiedSheetCountResult(true, count, 0);",
+    "replace": "string ignored = typeof(CertifiedSheetCountKernel).FullName ?? \"missing\";\n            return new CertifiedSheetCountResult(true, count, 0);",
+    "expectedCode": "REFLECTION_FORBIDDEN"
+  }
+]

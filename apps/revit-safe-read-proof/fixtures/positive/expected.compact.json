@@ -1,0 +1,34 @@
+{
+  "syntax": { "count": 846, "sha256": "c0e613aae87a4eb46d3bb08822ba97f640365db5069b2eac35601c18a9b3fd3c", "items": [] },
+  "types": { "count": 2, "sha256": "1f72f9cfbe696968f6cdd2add735fb8a5743ab98150636d6e904cf4618e0a1cb", "items": [] },
+  "members": { "count": 13, "sha256": "76a26fc73fd007b07b22f8c6bb7261dd8441c6588e1956a5a8109bea432f1f91", "items": [] },
+  "publicAbi": { "count": 9, "sha256": "d7bc7cf2228cf6302381cca290b1104786fd8f4f84304b88b9801964c503f187", "items": [] },
+  "serializationClosure": { "count": 7, "sha256": "bcef4b78d2d231d96c430809a2989aac3c7d67cc8a2234bf9a95b4ff786bf2ac", "items": [] },
+  "resources": { "count": 0, "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "items": [] },
+  "variants": {
+    "2023": {
+      "references": { "count": 236, "sha256": "015bc7c87701b0970e36d8d67505e703cfeb05c600bc47bd9a6d6aadf3131dfc", "items": [] },
+      "symbolBindings": { "count": 45, "sha256": "6ff67063c91ffc0821300937008764705eccefba5011d49568f15f23abdded87", "items": [] },
+      "methods": { "count": 365, "sha256": "ea4697140050096532cc729b4ece484702038989ba90024b868243aa17670ac3", "items": [] },
+      "metadata": { "count": 152, "sha256": "454af907834e7d0bcd540d858227330838b17e0797f64c3cb256ad2905aaab94", "items": [] },
+      "il": { "count": 167, "sha256": "3269c83c4a2e275936f761851449a0239fa0465a78c733bc64b9b29cc8d755fc", "items": [] },
+      "outputSha256": "992e5dfbd62800a7a4cf33aac4cbcfd4948d23654c8cd385cb878f9836d2137a"
+    },
+    "2024": {
+      "references": { "count": 236, "sha256": "c7ce2f3e907270a6b6b6723ab0902c75ef04d81b7bd5931f8f7d089b54aaa79b", "items": [] },
+      "symbolBindings": { "count": 45, "sha256": "655f0d12e512489b18855fe42631250f3a6dc9b654a986f58108b40c87a471d5", "items": [] },
+      "methods": { "count": 365, "sha256": "9c8b6b1016a7e8349b38f2497bf6011e14794133f8760acdb384cd797e091bd9", "items": [] },
+      "metadata": { "count": 152, "sha256": "c10cff63deeb3d51696e7b237b72b29d0fa3cea67ae8a8c2bf5a50017d7a5366", "items": [] },
+      "il": { "count": 167, "sha256": "3269c83c4a2e275936f761851449a0239fa0465a78c733bc64b9b29cc8d755fc", "items": [] },
+      "outputSha256": "04b6e9efa0486e8e491999326726af9d19b9ef5154e08ac22c7fcaa909b55f91"
+    },
+    "2025": {
+      "references": { "count": 211, "sha256": "a19adf68b37872f246c8125910804ca911bef7402f256b5263dc5ff441d90ca0", "items": [] },
+      "symbolBindings": { "count": 45, "sha256": "a74c70e942e5a165616e10ac9d14838ff1a976aaff2b10aa8da70298f29ce704", "items": [] },
+      "methods": { "count": 365, "sha256": "de543c8313750adfb5763ce16c3d35669ae2de158d39561b38aeca550bf7743c", "items": [] },
+      "metadata": { "count": 127, "sha256": "54b1ec55bc4456ec139cb12a11adf14e4479b495ab31b9a0240ea3a68bf8ac5b", "items": [] },
+      "il": { "count": 130, "sha256": "15a11bf8b1866d8d688d3b594ca400751de12f901c5ce3f70762eebc3cf20f1e", "items": [] },
+      "outputSha256": "b2eda4f772eee78f5ae8e853c7c697786e473915a7c09c046e99b3e1b75b3a53"
+    }
+  }
+}
