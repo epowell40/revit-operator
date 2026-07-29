@@ -13,6 +13,7 @@ export const TOOL_VISIBILITIES = ["candidate", "workflow_only"] as const;
 export type ToolVisibility = typeof TOOL_VISIBILITIES[number];
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
+const GENERIC_MCP_TOOL = "revit_call_tool";
 
 export const CERTIFICATION_REASON_CODES = {
   certified: "CERTIFIED",
@@ -27,6 +28,7 @@ export const CERTIFICATION_REASON_CODES = {
   requestHashMismatch: "CERT_REQUEST_HASH_MISMATCH",
   effectHashMismatch: "CERT_EFFECT_HASH_MISMATCH",
   recordHashMismatch: "CERT_RECORD_HASH_MISMATCH",
+  typedMcpAliasUnknown: "CERT_TYPED_MCP_ALIAS_UNKNOWN",
   channelNotRequested: "CERT_CHANNEL_NOT_REQUESTED",
   workflowOnly: "CERT_WORKFLOW_ONLY",
   levelInsufficient: "CERT_LEVEL_INSUFFICIENT"
@@ -45,6 +47,7 @@ export type CertificationEvidence = {
 export type ToolCertificationRecord = {
   method: string;
   path: string;
+  typed_mcp_aliases: string[];
   request: JsonValue;
   effect: JsonValue;
   requested_channels: ExposureChannel[];
@@ -57,7 +60,7 @@ export type ToolCertificationRecord = {
 
 export type ToolCertificationCandidate = Pick<
   ToolCertificationRecord,
-  "method" | "path" | "request_hash" | "effect_hash"
+  "method" | "path" | "typed_mcp_aliases" | "request_hash" | "effect_hash"
 >;
 
 export type ToolCertificationCandidatesFile = {
@@ -85,6 +88,7 @@ export type ChannelDecision = {
 export type ToolExposurePolicyRecord = {
   method: string;
   path: string;
+  typed_mcp_aliases: string[];
   request_hash: string;
   effect_hash: string;
   evidence_record_hash: string;
@@ -161,6 +165,27 @@ function assertSha256(value: unknown, location: string): asserts value is string
   if (typeof value !== "string" || !/^sha256:[0-9a-f]{64}$/.test(value)) {
     throw new Error(`${location} must be a lowercase sha256 digest`);
   }
+}
+
+function assertTypedMcpAliases(value: unknown, location: string): asserts value is string[] {
+  assertArray(value, location);
+  let previous = "";
+  const seen = new Set<string>();
+  value.forEach((item, index) => {
+    assertString(item, `${location}[${index}]`);
+    if (!/^[a-z][a-z0-9_]*$/.test(item)) {
+      throw new Error(`${location}[${index}] must be a canonical typed MCP tool name`);
+    }
+    if (item === GENERIC_MCP_TOOL) {
+      throw new Error(`${location}[${index}] must not contain the generic MCP dispatcher`);
+    }
+    if (seen.has(item)) throw new Error(`${location} contains duplicate alias: ${item}`);
+    if (previous && ordinalCompare(previous, item) >= 0) {
+      throw new Error(`${location} must use unique ordinal-sorted aliases`);
+    }
+    seen.add(item);
+    previous = item;
+  });
 }
 
 function assertRepositorySource(value: unknown, location: string): asserts value is string {
@@ -307,6 +332,7 @@ function parseCertificationRecord(
   assertExactKeys(value, [
     "method",
     "path",
+    "typed_mcp_aliases",
     "request",
     "effect",
     "requested_channels",
@@ -318,6 +344,7 @@ function parseCertificationRecord(
   ], location);
   assertCanonicalMethod(value.method, `${location}.method`);
   assertCanonicalToolPath(value.path, `${location}.path`);
+  assertTypedMcpAliases(value.typed_mcp_aliases, `${location}.typed_mcp_aliases`);
   assertJsonValue(value.request, `${location}.request`);
   assertJsonValue(value.effect, `${location}.effect`);
   assertUniqueEnumArray(value.requested_channels, EXPOSURE_CHANNELS, `${location}.requested_channels`);
@@ -373,9 +400,10 @@ export function parseToolCertificationCandidates(value: unknown): ToolCertificat
   const candidates = value.candidates.map((candidate, index) => {
     const location = `candidates.candidates[${index}]`;
     assertPlainObject(candidate, location);
-    assertExactKeys(candidate, ["method", "path", "request_hash", "effect_hash"], location);
+    assertExactKeys(candidate, ["method", "path", "typed_mcp_aliases", "request_hash", "effect_hash"], location);
     assertCanonicalMethod(candidate.method, `${location}.method`);
     assertCanonicalToolPath(candidate.path, `${location}.path`);
+    assertTypedMcpAliases(candidate.typed_mcp_aliases, `${location}.typed_mcp_aliases`);
     assertSha256(candidate.request_hash, `${location}.request_hash`);
     assertSha256(candidate.effect_hash, `${location}.effect_hash`);
     const parsed = candidate as unknown as ToolCertificationCandidate;
@@ -395,6 +423,17 @@ function certificationIdentity(
     path: value.path,
     request_hash: value.request_hash,
     effect_hash: value.effect_hash
+  });
+}
+
+function aliasBindingIdentity(
+  value: Pick<ToolCertificationRecord, "method" | "path" | "effect_hash" | "typed_mcp_aliases">
+): string {
+  return canonicalJson({
+    method: value.method,
+    path: value.path,
+    effect_hash: value.effect_hash,
+    typed_mcp_aliases: value.typed_mcp_aliases
   });
 }
 
@@ -423,12 +462,21 @@ export function verifyCertificationCandidates(
   for (const identity of actual) {
     if (!expected.has(identity)) throw new Error(`Unexpected certification candidate identity: ${identity}`);
   }
+  const expectedAliases = new Set(candidates.candidates.map(aliasBindingIdentity));
+  const actualAliases = new Set(evidence.records.map(aliasBindingIdentity));
+  for (const binding of expectedAliases) {
+    if (!actualAliases.has(binding)) throw new Error(`Certification typed MCP alias binding missing or replaced: ${binding}`);
+  }
+  for (const binding of actualAliases) {
+    if (!expectedAliases.has(binding)) throw new Error(`Unexpected certification typed MCP alias binding: ${binding}`);
+  }
 }
 
 function recordHashPayload(record: Omit<ToolCertificationRecord, "record_hash">): JsonValue {
   return {
     method: normalizeMethod(record.method),
     path: normalizeToolPath(record.path),
+    typed_mcp_aliases: [...record.typed_mcp_aliases],
     request: canonicalValue(record.request),
     effect: canonicalValue(record.effect),
     requested_channels: [...record.requested_channels].sort(ordinalCompare),
@@ -456,6 +504,7 @@ export function sealEvidenceRecord(
     ...record,
     method: normalizeMethod(record.method),
     path: normalizeToolPath(record.path),
+    typed_mcp_aliases: [...record.typed_mcp_aliases].sort(ordinalCompare),
     request: canonicalValue(record.request),
     effect: canonicalValue(record.effect),
     request_hash: computeRequestHash(record.method, record.path, record.request),
@@ -567,6 +616,7 @@ export function generateToolExposurePolicy(input: ToolCertificationEvidenceFile 
     const base: Omit<ToolExposurePolicyRecord, "policy_record_hash"> = {
       method,
       path: toolPath,
+      typed_mcp_aliases: [...record.typed_mcp_aliases],
       request_hash: record.request_hash,
       effect_hash: record.effect_hash,
       evidence_record_hash: record.record_hash,
@@ -599,4 +649,64 @@ export function generateToolExposurePolicy(input: ToolCertificationEvidenceFile 
 
 export function renderCanonicalDocument(value: JsonValue): string {
   return `${canonicalJson(value)}\n`;
+}
+
+export type TypedMcpAliasDecision = {
+  alias: string;
+  exposed: boolean;
+  method: string | null;
+  path: string | null;
+  effect_hash: string | null;
+  reason_codes: CertificationReasonCode[];
+  bindings: Array<{
+    method: string;
+    path: string;
+    effect_hash: string;
+    exposed: boolean;
+    reason_codes: CertificationReasonCode[];
+  }>;
+};
+
+export function decideTypedMcpAlias(policy: ToolExposurePolicy, alias: string): TypedMcpAliasDecision {
+  const normalized = normalizeString(alias).trim();
+  if (!normalized || normalized === GENERIC_MCP_TOOL) {
+    return {
+      alias: normalized,
+      exposed: false,
+      method: null,
+      path: null,
+      effect_hash: null,
+      reason_codes: [CERTIFICATION_REASON_CODES.typedMcpAliasUnknown],
+      bindings: []
+    };
+  }
+  const matches = policy.records.filter(record => record.typed_mcp_aliases.includes(normalized));
+  if (matches.length === 0) {
+    return {
+      alias: normalized,
+      exposed: false,
+      method: null,
+      path: null,
+      effect_hash: null,
+      reason_codes: [CERTIFICATION_REASON_CODES.typedMcpAliasUnknown],
+      bindings: []
+    };
+  }
+  const bindings = matches.map(record => ({
+    method: record.method,
+    path: record.path,
+    effect_hash: record.effect_hash,
+    exposed: record.channels.typed_mcp.exposed,
+    reason_codes: [...record.channels.typed_mcp.reason_codes]
+  }));
+  const single = matches.length === 1 ? matches[0]! : null;
+  return {
+    alias: normalized,
+    exposed: bindings.every(binding => binding.exposed),
+    method: single?.method ?? null,
+    path: single?.path ?? null,
+    effect_hash: single?.effect_hash ?? null,
+    reason_codes: [...new Set(bindings.flatMap(binding => binding.reason_codes))].sort(),
+    bindings
+  };
 }

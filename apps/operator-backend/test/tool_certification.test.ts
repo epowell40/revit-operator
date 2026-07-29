@@ -8,14 +8,21 @@ import {
   canonicalJson,
   computeEffectHash,
   computeRequestHash,
+  decideTypedMcpAlias,
   generateToolExposurePolicy,
+  parseToolCertificationCandidates,
   sealEvidenceRecord,
+  sha256NormalizedText,
   type CertificationLevel,
   type EvidenceStatus,
   type ToolCertificationEvidenceFile,
   type ToolCertificationRecord
 } from "../src/capabilities/tool_certification.js";
-import { generatePolicyBytes } from "../src/tools/generate_tool_exposure_policy.js";
+import {
+  generatePolicyBytes,
+  verifyTypedMcpAliasesAgainstRegistry
+} from "../src/tools/generate_tool_exposure_policy.js";
+import { findRepoRoot } from "../src/tools/audit_tool_registry.js";
 
 const backendRoot = process.cwd();
 const evidencePath = path.join(backendRoot, "config", "tool_certification_evidence.v1.json");
@@ -30,6 +37,7 @@ function record(
   return sealEvidenceRecord({
     method: "POST",
     path: "/revit/example",
+    typed_mcp_aliases: ["revit_example"],
     request: { action: "count", nested: { limit: 10 } },
     effect: { resolved_effect: "read" },
     requested_channels: [...EXPOSURE_CHANNELS],
@@ -79,6 +87,57 @@ test("complete cumulative evidence exposes only requested channels at their thre
   assert.match(generated.policy_hash, /^sha256:[0-9a-f]{64}$/);
 });
 
+test("typed MCP alias decisions bind one exact route/effect and fail closed for unknown or generic aliases", () => {
+  const generated = generateToolExposurePolicy(evidenceFile([record(["L0", "L1", "L2", "L3", "L4"])]));
+  assert.deepEqual(decideTypedMcpAlias(generated, "revit_example"), {
+    alias: "revit_example",
+    exposed: true,
+    method: "POST",
+    path: "/revit/example",
+    effect_hash: generated.records[0]!.effect_hash,
+    reason_codes: [CERTIFICATION_REASON_CODES.certified],
+    bindings: [{
+      method: "POST",
+      path: "/revit/example",
+      effect_hash: generated.records[0]!.effect_hash,
+      exposed: true,
+      reason_codes: [CERTIFICATION_REASON_CODES.certified]
+    }]
+  });
+  assert.equal(decideTypedMcpAlias(generated, "unknown_alias").exposed, false);
+  assert.deepEqual(
+    decideTypedMcpAlias(generated, "unknown_alias").reason_codes,
+    [CERTIFICATION_REASON_CODES.typedMcpAliasUnknown]
+  );
+  assert.equal(decideTypedMcpAlias(generated, "revit_call_tool").exposed, false);
+});
+
+test("typed MCP aliases are hash-bound and intentional multi-route aliases use conjunction", () => {
+  const original = record(["L0", "L1", "L2", "L3", "L4"]);
+  const changed = record(["L0", "L1", "L2", "L3", "L4"], "verified", {
+    typed_mcp_aliases: ["revit_example_v2"]
+  });
+  assert.notEqual(original.record_hash, changed.record_hash);
+  assert.notEqual(
+    generateToolExposurePolicy(evidenceFile([original])).policy_hash,
+    generateToolExposurePolicy(evidenceFile([changed])).policy_hash
+  );
+
+  const secondRoute = record(["L0"], "verified", {
+    path: "/revit/other",
+    typed_mcp_aliases: ["revit_example"]
+  });
+  const multiRoute = decideTypedMcpAlias(
+    generateToolExposurePolicy(evidenceFile([original, secondRoute])),
+    "revit_example"
+  );
+  assert.equal(multiRoute.exposed, false);
+  assert.equal(multiRoute.method, null);
+  assert.equal(multiRoute.bindings.length, 2);
+  assert.ok(multiRoute.bindings.some(binding => binding.exposed));
+  assert.ok(multiRoute.bindings.some(binding => !binding.exposed));
+});
+
 test("missing, unknown, gapped, stale, revoked, and mismatched evidence fail closed with stable reasons", () => {
   assert.ok(allDenied(record([])).includes(CERTIFICATION_REASON_CODES.missing));
   assert.ok(allDenied(record(["L0", "L1"], "unknown")).includes(CERTIFICATION_REASON_CODES.unknown));
@@ -126,6 +185,10 @@ test("runtime validation rejects malformed methods, paths, enums, arrays, hashes
   expectRecordReject(value => { value.method = "FETCH"; }, /unsupported|Invalid HTTP method/);
   expectRecordReject(value => { value.path = "/revit/example?unsafe=true"; }, /Invalid exact Revit tool path/);
   expectRecordReject(value => { value.visibility = "canddiate"; }, /visibility has unsupported value/);
+  expectRecordReject(value => { value.typed_mcp_aliases = ["RevitExample"]; }, /canonical typed MCP tool name/);
+  expectRecordReject(value => { value.typed_mcp_aliases = ["revit_call_tool"]; }, /generic MCP dispatcher/);
+  expectRecordReject(value => { value.typed_mcp_aliases = ["revit_z", "revit_a"]; }, /ordinal-sorted aliases/);
+  expectRecordReject(value => { value.typed_mcp_aliases = ["revit_a", "revit_a"]; }, /duplicate alias/);
   expectRecordReject(value => { value.requested_channels = ["search", "future"]; }, /requested_channels\[1\] has unsupported value/);
   expectRecordReject(value => { value.requested_channels = ["search", "search"]; }, /requested_channels contains duplicate value/);
   expectRecordReject(value => { value.evidence.levels = ["L0", "LX"]; }, /levels\[1\] has unsupported value/);
@@ -178,6 +241,31 @@ test("candidate provenance hash and exact identity set detect tamper, removal, a
   );
 });
 
+test("candidate aliases exactly match typed wrapper attribution from the corrected registry audit", () => {
+  const rawCandidates = fs.readFileSync(candidatesPath, "utf8");
+  const candidates = parseToolCertificationCandidates(JSON.parse(rawCandidates));
+  const repoRoot = findRepoRoot(backendRoot);
+  verifyTypedMcpAliasesAgainstRegistry(candidates, repoRoot);
+  assert.equal(candidates.candidates.length, 24);
+  assert.equal(candidates.candidates.flatMap(candidate => candidate.typed_mcp_aliases).length, 19);
+  assert.equal(new Set(candidates.candidates.flatMap(candidate => candidate.typed_mcp_aliases)).size, 18);
+  assert.ok(!candidates.candidates.flatMap(candidate => candidate.typed_mcp_aliases).includes("revit_call_tool"));
+  assert.equal(
+    candidates.candidates.flatMap(candidate => candidate.typed_mcp_aliases).filter(alias => alias === "revit_search_tools").length,
+    2
+  );
+
+  const tampered = structuredClone(candidates);
+  tampered.candidates.find(candidate => candidate.path === "/revit/ping")!.typed_mcp_aliases = ["revit_unknown"];
+  assert.throws(
+    () => verifyTypedMcpAliasesAgainstRegistry(tampered, repoRoot),
+    /do not match exact registry attribution/
+  );
+
+  const candidateHash = sha256NormalizedText(rawCandidates);
+  assert.match(candidateHash, /^sha256:[0-9a-f]{64}$/);
+});
+
 test("seeded audit candidates remain unexposed while L2 is absent", () => {
   const evidenceText = fs.readFileSync(evidencePath, "utf8");
   const candidatesText = fs.readFileSync(candidatesPath, "utf8");
@@ -186,6 +274,7 @@ test("seeded audit candidates remain unexposed while L2 is absent", () => {
   const reads = evidence.records.filter(item => (item.effect as { resolved_effect?: string }).resolved_effect === "read");
   assert.equal(reads.length, 23);
   assert.equal(evidence.records.length, 24);
+  assert.equal(evidence.records.flatMap(item => item.typed_mcp_aliases).length, 19);
   assert.ok(policy.records.every(item => EXPOSURE_CHANNELS.every(channel => !item.channels[channel].exposed)));
   assert.ok(policy.records.every(item => item.channels.search.reason_codes.includes(CERTIFICATION_REASON_CODES.gap)));
 
