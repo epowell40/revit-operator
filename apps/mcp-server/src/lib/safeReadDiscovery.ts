@@ -1,25 +1,25 @@
 import fs from "node:fs";
 import path from "node:path";
 
-/**
- * Standalone SafeRead discovery contract.  The native microhost publishes this
- * file after it has bound a loopback listener.  This package deliberately does
- * not import backend/native types: the discovery record is the only public
- * seam available to the standalone MCP package.
- *
- * The microhost, not MCP, owns the frozen backend preauthorization/capability
- * nonce/final-receipt protocol.  MCP only presents this validated host tuple to
- * the fixed route; see safeReadClient.ts for the integration boundary.
- */
-export const SAFE_READ_INSTANCE_SCHEMA = "revit-operator.safe-read-instance.v1";
-export const SAFE_READ_ATTESTATION_SCHEMA = "revit-operator.safe-read-attestation.v1";
-export const SAFE_READ_SHEETS_COUNT_ROUTE_ID = "revit_count_sheets_certified.v1";
+export const SAFE_READ_INSTANCE_SCHEMA = "revit-operator.safe-read.instance.v1";
+export const SAFE_READ_PRODUCT_ID = "aafaa2c0-43f1-42a0-a6b4-d9a0c5f5ce0e";
+export const SAFE_READ_EXECUTOR_ID = "revit-operator.safe-read-host.v1";
+export const SAFE_READ_SHEETS_COUNT_ROUTE_ID = "safe_read.sheet_count.v1";
 export const SAFE_READ_SHEETS_COUNT_PATH = "/revit/certified/sheets/count";
+export const SAFE_READ_MIN_PORT = 5040;
+export const SAFE_READ_MAX_PORT = 5050;
 
-const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
-const SAFE_ID = /^[A-Za-z0-9._:-]{1,200}$/;
-const OPAQUE_TOKEN = /^[^\u0000-\u001F\u007F]{1,512}$/;
+const BASE64URL_SECRET = /^[A-Za-z0-9_-]{43}$/;
+const REVIT_YEARS = new Set([2023, 2024, 2025]);
+const TOP_LEVEL_KEYS = [
+  "schema", "product_id", "host_instance_id", "executor_id", "pid", "revit_year",
+  "route_id", "route", "endpoint", "startup_token", "runtime_attestation_sha256",
+  "runtime_tuple", "document"
+] as const;
+const RUNTIME_KEYS = ["host_content_sha256", "host_mvid", "revit_api_content_sha256", "revit_api_mvid", "revit_version"] as const;
+const DOCUMENT_KEYS = ["project_fingerprint", "document_session_id"] as const;
 
 export type SafeReadRuntimeTuple = Readonly<{
   host_content_sha256: string;
@@ -29,10 +29,16 @@ export type SafeReadRuntimeTuple = Readonly<{
   revit_version: string;
 }>;
 
+export type SafeReadDocumentBinding = Readonly<{
+  project_fingerprint: string;
+  document_session_id: string;
+}>;
+
 export type SafeReadInstance = Readonly<{
   schema: typeof SAFE_READ_INSTANCE_SCHEMA;
+  product_id: typeof SAFE_READ_PRODUCT_ID;
   host_instance_id: string;
-  executor_id: string;
+  executor_id: typeof SAFE_READ_EXECUTOR_ID;
   pid: number;
   revit_year: number;
   route_id: typeof SAFE_READ_SHEETS_COUNT_ROUTE_ID;
@@ -41,14 +47,7 @@ export type SafeReadInstance = Readonly<{
   startup_token: string;
   runtime_attestation_sha256: string;
   runtime_tuple: SafeReadRuntimeTuple;
-  document: Readonly<{ project_fingerprint: string; document_session_id: string }>;
-  attestation: Readonly<{
-    schema: typeof SAFE_READ_ATTESTATION_SCHEMA;
-    host_instance_id: string;
-    route_id: typeof SAFE_READ_SHEETS_COUNT_ROUTE_ID;
-    document_session_id: string;
-    runtime_attestation_sha256: string;
-  }>;
+  document: SafeReadDocumentBinding;
 }>;
 
 export class SafeReadDiscoveryError extends Error {
@@ -64,13 +63,6 @@ export type SafeReadDiscoveryOptions = Readonly<{
   isPidAlive?: (pid: number) => boolean;
 }>;
 
-function stringField(value: unknown, field: string, pattern?: RegExp): string {
-  if (typeof value !== "string" || !value || (pattern && !pattern.test(value))) {
-    throw new SafeReadDiscoveryError("safe_read_discovery_invalid", `SafeRead discovery ${field} is invalid.`);
-  }
-  return value;
-}
-
 function objectField(value: unknown, field: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new SafeReadDiscoveryError("safe_read_discovery_invalid", `SafeRead discovery ${field} is invalid.`);
@@ -78,82 +70,88 @@ function objectField(value: unknown, field: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function assertLoopbackEndpoint(raw: string): string {
-  let endpoint: URL;
-  try { endpoint = new URL(raw); } catch {
-    throw new SafeReadDiscoveryError("safe_read_discovery_endpoint_invalid", "SafeRead endpoint is not a URL.");
+function exactKeys(record: Record<string, unknown>, expected: readonly string[], field: string): void {
+  const actual = Object.keys(record).sort();
+  const wanted = [...expected].sort();
+  if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) {
+    throw new SafeReadDiscoveryError("safe_read_discovery_invalid", `SafeRead discovery ${field} fields are not exact.`);
   }
-  if (endpoint.protocol !== "http:" || endpoint.username || endpoint.password || endpoint.search || endpoint.hash || endpoint.pathname !== "/") {
-    throw new SafeReadDiscoveryError("safe_read_discovery_endpoint_invalid", "SafeRead endpoint must be an origin-only HTTP loopback URL.");
-  }
-  // Do not resolve names such as localhost: only numeric loopback endpoints
-  // prevent hosts-file/DNS rebinding from changing the selected executor.
-  if (endpoint.hostname !== "127.0.0.1" && endpoint.hostname !== "[::1]") {
-    throw new SafeReadDiscoveryError("safe_read_discovery_endpoint_invalid", "SafeRead endpoint must use a numeric loopback address.");
-  }
-  if (!endpoint.port || !/^\d+$/.test(endpoint.port) || Number(endpoint.port) < 1 || Number(endpoint.port) > 65535) {
-    throw new SafeReadDiscoveryError("safe_read_discovery_endpoint_invalid", "SafeRead endpoint port is invalid.");
-  }
-  return endpoint.origin;
 }
 
-function parseInstance(value: unknown, expectedYear?: number): SafeReadInstance {
+function stringField(value: unknown, field: string, pattern: RegExp): string {
+  if (typeof value !== "string" || !pattern.test(value)) {
+    throw new SafeReadDiscoveryError("safe_read_discovery_invalid", `SafeRead discovery ${field} is invalid.`);
+  }
+  return value;
+}
+
+function exactEndpoint(value: unknown): string {
+  if (typeof value !== "string") throw new SafeReadDiscoveryError("safe_read_discovery_endpoint_invalid", "SafeRead endpoint is invalid.");
+  const match = /^http:\/\/127\.0\.0\.1:(\d{4})\/$/.exec(value);
+  const port = match ? Number(match[1]) : Number.NaN;
+  if (!Number.isInteger(port) || port < SAFE_READ_MIN_PORT || port > SAFE_READ_MAX_PORT) {
+    throw new SafeReadDiscoveryError("safe_read_discovery_endpoint_invalid", "SafeRead endpoint must be an exact bounded IPv4 loopback origin.");
+  }
+  return value.slice(0, -1);
+}
+
+function parseInstance(value: unknown, filename: string, expectedYear?: number): SafeReadInstance {
   const record = objectField(value, "record");
-  if (record.schema !== SAFE_READ_INSTANCE_SCHEMA) {
-    throw new SafeReadDiscoveryError("safe_read_discovery_schema_invalid", "SafeRead discovery schema is not supported.");
+  exactKeys(record, TOP_LEVEL_KEYS, "record");
+  if (record.schema !== SAFE_READ_INSTANCE_SCHEMA || record.product_id !== SAFE_READ_PRODUCT_ID) {
+    throw new SafeReadDiscoveryError("safe_read_discovery_schema_invalid", "SafeRead discovery identity is not supported.");
   }
   const hostInstanceId = stringField(record.host_instance_id, "host_instance_id", GUID);
-  const executorId = stringField(record.executor_id, "executor_id", SAFE_ID);
-  const pid = record.pid;
-  if (!Number.isInteger(pid) || (pid as number) < 1) throw new SafeReadDiscoveryError("safe_read_discovery_pid_invalid", "SafeRead discovery pid is invalid.");
-  const revitYear = record.revit_year;
-  if (!Number.isInteger(revitYear) || (revitYear as number) < 2000 || (revitYear as number) > 3000 || (expectedYear !== undefined && revitYear !== expectedYear)) {
-    throw new SafeReadDiscoveryError("safe_read_discovery_year_invalid", "SafeRead discovery Revit year does not match this MCP host.");
+  if (filename !== `${hostInstanceId}.json`) {
+    throw new SafeReadDiscoveryError("safe_read_discovery_invalid", "SafeRead discovery filename does not match its host instance.");
+  }
+  if (record.executor_id !== SAFE_READ_EXECUTOR_ID) {
+    throw new SafeReadDiscoveryError("safe_read_discovery_invalid", "SafeRead discovery executor is not supported.");
+  }
+  if (!Number.isSafeInteger(record.pid) || (record.pid as number) < 1 || (record.pid as number) > 0x7fffffff) {
+    throw new SafeReadDiscoveryError("safe_read_discovery_pid_invalid", "SafeRead discovery pid is invalid.");
+  }
+  if (!Number.isInteger(record.revit_year) || !REVIT_YEARS.has(record.revit_year as number)
+    || (expectedYear !== undefined && record.revit_year !== expectedYear)) {
+    throw new SafeReadDiscoveryError("safe_read_discovery_year_invalid", "SafeRead discovery Revit year does not match this MCP request.");
   }
   if (record.route_id !== SAFE_READ_SHEETS_COUNT_ROUTE_ID || record.route !== SAFE_READ_SHEETS_COUNT_PATH) {
     throw new SafeReadDiscoveryError("safe_read_discovery_route_invalid", "SafeRead discovery is not bound to the certified sheet-count route.");
   }
-  const runtimeTuple = objectField(record.runtime_tuple, "runtime_tuple");
-  const tuple: SafeReadRuntimeTuple = {
-    host_content_sha256: stringField(runtimeTuple.host_content_sha256, "runtime_tuple.host_content_sha256", SHA256),
-    host_mvid: stringField(runtimeTuple.host_mvid, "runtime_tuple.host_mvid", GUID),
-    revit_api_content_sha256: stringField(runtimeTuple.revit_api_content_sha256, "runtime_tuple.revit_api_content_sha256", SHA256),
-    revit_api_mvid: stringField(runtimeTuple.revit_api_mvid, "runtime_tuple.revit_api_mvid", GUID),
-    revit_version: stringField(runtimeTuple.revit_version, "runtime_tuple.revit_version", SAFE_ID)
-  };
-  const document = objectField(record.document, "document");
-  const documentSessionId = stringField(document.document_session_id, "document.document_session_id", GUID);
-  const projectFingerprint = stringField(document.project_fingerprint, "document.project_fingerprint", SHA256);
-  const runtimeAttestation = stringField(record.runtime_attestation_sha256, "runtime_attestation_sha256", SHA256);
-  const attestation = objectField(record.attestation, "attestation");
-  if (attestation.schema !== SAFE_READ_ATTESTATION_SCHEMA
-    || attestation.host_instance_id !== hostInstanceId
-    || attestation.route_id !== SAFE_READ_SHEETS_COUNT_ROUTE_ID
-    || attestation.document_session_id !== documentSessionId
-    || attestation.runtime_attestation_sha256 !== runtimeAttestation) {
-    throw new SafeReadDiscoveryError("safe_read_discovery_attestation_invalid", "SafeRead discovery attestation does not bind the host, document, and fixed route.");
+  const runtime = objectField(record.runtime_tuple, "runtime_tuple");
+  exactKeys(runtime, RUNTIME_KEYS, "runtime_tuple");
+  const revitYear = record.revit_year as number;
+  const revitVersion = stringField(runtime.revit_version, "runtime_tuple.revit_version", /^\d{4}(?:\.[0-9A-Za-z._-]+)?$/);
+  if (revitVersion !== String(revitYear) && !revitVersion.startsWith(`${revitYear}.`)) {
+    throw new SafeReadDiscoveryError("safe_read_discovery_year_invalid", "SafeRead runtime tuple Revit version does not match its year.");
   }
+  const runtimeTuple: SafeReadRuntimeTuple = Object.freeze({
+    host_content_sha256: stringField(runtime.host_content_sha256, "runtime_tuple.host_content_sha256", SHA256),
+    host_mvid: stringField(runtime.host_mvid, "runtime_tuple.host_mvid", GUID),
+    revit_api_content_sha256: stringField(runtime.revit_api_content_sha256, "runtime_tuple.revit_api_content_sha256", SHA256),
+    revit_api_mvid: stringField(runtime.revit_api_mvid, "runtime_tuple.revit_api_mvid", GUID),
+    revit_version: revitVersion
+  });
+  const rawDocument = objectField(record.document, "document");
+  exactKeys(rawDocument, DOCUMENT_KEYS, "document");
+  const document: SafeReadDocumentBinding = Object.freeze({
+    project_fingerprint: stringField(rawDocument.project_fingerprint, "document.project_fingerprint", SHA256),
+    document_session_id: stringField(rawDocument.document_session_id, "document.document_session_id", GUID)
+  });
   return Object.freeze({
     schema: SAFE_READ_INSTANCE_SCHEMA,
+    product_id: SAFE_READ_PRODUCT_ID,
     host_instance_id: hostInstanceId,
-    executor_id: executorId,
-    pid: pid as number,
-    revit_year: revitYear as number,
+    executor_id: SAFE_READ_EXECUTOR_ID,
+    pid: record.pid as number,
+    revit_year: revitYear,
     route_id: SAFE_READ_SHEETS_COUNT_ROUTE_ID,
     route: SAFE_READ_SHEETS_COUNT_PATH,
-    endpoint: assertLoopbackEndpoint(stringField(record.endpoint, "endpoint")),
-    // This intentionally remains opaque and is never returned in errors/logs.
-    startup_token: stringField(record.startup_token, "startup_token", OPAQUE_TOKEN),
-    runtime_attestation_sha256: runtimeAttestation,
-    runtime_tuple: tuple,
-    document: Object.freeze({ project_fingerprint: projectFingerprint, document_session_id: documentSessionId }),
-    attestation: Object.freeze({
-      schema: SAFE_READ_ATTESTATION_SCHEMA,
-      host_instance_id: hostInstanceId,
-      route_id: SAFE_READ_SHEETS_COUNT_ROUTE_ID,
-      document_session_id: documentSessionId,
-      runtime_attestation_sha256: runtimeAttestation
-    })
+    endpoint: exactEndpoint(record.endpoint),
+    startup_token: stringField(record.startup_token, "startup_token", BASE64URL_SECRET),
+    runtime_attestation_sha256: stringField(record.runtime_attestation_sha256, "runtime_attestation_sha256", SHA256),
+    runtime_tuple: runtimeTuple,
+    document
   });
 }
 
@@ -164,7 +162,12 @@ function defaultInstancesDirectory(): string {
 }
 
 function defaultPidAlive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !!error && typeof error === "object" && (error as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
 export function discoverSafeReadInstance(options: SafeReadDiscoveryOptions = {}): SafeReadInstance {
@@ -177,17 +180,13 @@ export function discoverSafeReadInstance(options: SafeReadDiscoveryOptions = {})
   for (const name of names) {
     if (!name.endsWith(".json")) continue;
     const filePath = path.join(directory, name);
-    let stat: fs.Stats;
-    try { stat = fs.lstatSync(filePath); } catch { continue; }
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 64 * 1024) continue;
-    let parsed: unknown;
-    try { parsed = JSON.parse(fs.readFileSync(filePath, "utf8")); } catch { continue; }
     try {
-      const instance = parseInstance(parsed, options.revitYear);
+      const stat = fs.lstatSync(filePath);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 2 || stat.size > 64 * 1024) continue;
+      const instance = parseInstance(JSON.parse(fs.readFileSync(filePath, "utf8")), name, options.revitYear);
       if ((options.isPidAlive ?? defaultPidAlive)(instance.pid)) candidates.push(instance);
     } catch {
-      // A malformed/stale publication is never partially trusted. Other files
-      // are allowed only when exactly one complete, live record remains.
+      // A stale or malformed publication is never a candidate.
     }
   }
   if (candidates.length === 0) throw new SafeReadDiscoveryError("safe_read_discovery_unavailable", "No live, valid SafeRead instance was discovered.");

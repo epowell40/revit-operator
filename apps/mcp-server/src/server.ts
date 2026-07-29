@@ -9,7 +9,7 @@ import { createRequire } from "module";
 
 xlsx.set_fs(fs);
 import { callRevit } from "./lib/revitClient.js";
-import { countSheetsViaSafeRead } from "./lib/safeReadClient.js";
+import { countSheetsViaSafeRead, safeReadFailurePayload, SafeReadCallError } from "./lib/safeReadClient.js";
 import { getWorkspaceRoot, resolveExistingFileUnderWorkspace, resolveFileUnderWorkspace } from "./lib/workspace.js";
 import { auditLog, summarize } from "./lib/audit.js";
 import {
@@ -1016,11 +1016,14 @@ server.tool("revit_list_sheets", "List or count sheets (sorted by Sheet Number).
 // Development/laboratory-only until evidence promotion adds an exact policy
 // record. The dynamic exposure wrapper keeps this alias absent in certified
 // tools/list; the client independently rechecks policy before host discovery.
-server.tool("revit_count_sheets_certified", "Laboratory-only fixed SafeRead count of sheets through an attested standalone loopback host.", {}, async () => {
+registerAuditedZodTool("revit_count_sheets_certified", "Laboratory-only fixed SafeRead count of sheets through an attested standalone loopback host.", z.object({}).strict(), async () => {
   try {
     const data = await countSheetsViaSafeRead();
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-  } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
+  } catch (e) {
+    const text = e instanceof SafeReadCallError ? JSON.stringify(safeReadFailurePayload(e), null, 2) : String(e);
+    return { isError: true, content: [{ type: "text", text }] };
+  }
 });
 
 server.tool("revit_list_schedules", "List schedules or read one schedule's bounded fields and visible table cells.",

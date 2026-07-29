@@ -318,7 +318,10 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   const connectorRepairTool = tools.tools.find(tool => tool.name === "revit_repair_mep_connectors");
   const dryConnectorRepairTool = tools.tools.find(tool => tool.name === "revit_dry_run_repair_mep_connectors");
   const sheetTool = tools.tools.find(tool => tool.name === "revit_list_sheets");
+  const safeReadTool = tools.tools.find(tool => tool.name === "revit_count_sheets_certified");
   assert.deepEqual((sheetTool?.inputSchema as any)?.properties?.action?.enum, ["list", "count"]);
+  assert.deepEqual((safeReadTool?.inputSchema as any)?.properties, {});
+  assert.equal((safeReadTool?.inputSchema as any)?.additionalProperties, false);
   for (const tool of [connectorRepairTool, dryConnectorRepairTool]) {
     const connectorRepairSchema = JSON.stringify(tool?.inputSchema ?? {});
     assert.doesNotMatch(connectorRepairSchema, /"\$ref"/);
