@@ -317,6 +317,12 @@ function trimText(value: unknown, max = 400): string {
   return text.length <= max ? text : `${text.slice(0, max).trim()}…`;
 }
 
+/** Match the certified courier producer: preserve safe Unicode identities and reject controls before trimming. */
+function trimCourierContextIdentity(value: unknown, max = 200): string {
+  if (typeof value !== "string" || value.length > max || /[\u0000-\u001F\u007F]/.test(value)) return "";
+  return value.trim();
+}
+
 function asStringList(value: unknown, max = 20): string[] {
   return Array.isArray(value)
     ? value.map(item => trimText(item, 300)).filter(Boolean).slice(0, max)
@@ -1259,8 +1265,8 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && url.pathname === "/api/revit-courier/claim-next") {
       const body = await readJson(req, 1_000_000);
-      const sessionId = trimText((body as any)?.session_id ?? (body as any)?.sessionId, 200);
-      const executorId = trimText((body as any)?.executor_id ?? (body as any)?.executorId, 200);
+      const sessionId = trimCourierContextIdentity((body as any)?.session_id ?? (body as any)?.sessionId, 200);
+      const executorId = trimCourierContextIdentity((body as any)?.executor_id ?? (body as any)?.executorId, 200);
       const waitMs = Math.max(0, Math.min(15_000, Number.parseInt(`${(body as any)?.wait_ms ?? 10_000}`, 10) || 0));
       if (!executorId) return writeJson(res, 400, { error: "executor_id is required." });
       if (sessionId && !sessionAccessAllowed(res, sessionId, auth.principal)) return;
@@ -1289,8 +1295,8 @@ const server = http.createServer(async (req, res) => {
       const courierJobActionMatch = url.pathname.match(/^\/api\/revit-courier\/jobs\/([^/]+)\/(authorize-execution|complete|fail)$/);
       if (req.method === "POST" && courierJobActionMatch) {
         const body = await readJson(req, 5_000_000);
-        const sessionId = trimText((body as any)?.session_id ?? (body as any)?.sessionId, 200);
-        const executorId = trimText((body as any)?.executor_id ?? (body as any)?.executorId, 200);
+        const sessionId = trimCourierContextIdentity((body as any)?.session_id ?? (body as any)?.sessionId, 200);
+        const executorId = trimCourierContextIdentity((body as any)?.executor_id ?? (body as any)?.executorId, 200);
         const jobId = decodeURIComponent(courierJobActionMatch[1] || "");
         const action = courierJobActionMatch[2] || "";
         if (!sessionId || !executorId) return writeJson(res, 400, { error: "session_id and executor_id are required." });

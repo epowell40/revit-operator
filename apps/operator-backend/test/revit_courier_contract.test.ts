@@ -86,13 +86,21 @@ function writeCertifiedV2Job(
   root: string,
   policy: ReturnType<typeof writeCertifiedPolicy>,
   overrides: Record<string, unknown> = {},
-  context: Partial<{ session_id: string; message_id: string | null; target_executor_id: string | null; target_document_title: string | null; target_document_path: string | null }> = {}
+  context: Partial<{
+    session_id: string;
+    message_id: string | null;
+    expires_at: string;
+    target_executor_id: string | null;
+    target_document_title: string | null;
+    target_document_path: string | null;
+  }> = {}
 ): string {
   const sessionId = context.session_id ?? "session-a";
   const messageId = context.message_id === undefined ? "message-a" : context.message_id;
   const targetExecutorId = context.target_executor_id === undefined ? "worker-1" : context.target_executor_id;
   const targetDocumentTitle = context.target_document_title === undefined ? "Snowdon" : context.target_document_title;
   const targetDocumentPath = context.target_document_path === undefined ? "C:\\models\\Snowdon.rvt" : context.target_document_path;
+  const expiresAt = new Date(Date.parse(context.expires_at ?? new Date(Date.now() + 60_000).toISOString())).toISOString();
   const rawBody = "{\n  \"z\": \"raw\", \"a\": 1\n}";
   const bodyHash = `sha256:${createHash("sha256").update(rawBody, "utf8").digest("hex")}`;
   const envelopeBase = {
@@ -123,6 +131,7 @@ function writeCertifiedV2Job(
     canonicalization: "revit-operator.canonical-json.nfc-key-sorted.v1",
     session_id: sessionId,
     message_id: messageId,
+    expires_at: expiresAt,
     turn_token_sha256: null,
     target_executor_id: targetExecutorId,
     target_document_title: targetDocumentTitle,
@@ -154,7 +163,7 @@ function writeCertifiedV2Job(
     body_present: true,
     certification_envelope: envelope,
     created_at: new Date().toISOString(),
-    expires_at: new Date(Date.now() + 60_000).toISOString(),
+    expires_at: expiresAt,
     status: "pending",
     claim: null,
     ...overrides
@@ -200,7 +209,7 @@ test("v2 courier claim and final authorization bind the raw body, session, execu
   assert.equal(authorized.authorization.policy_hash, policy.policyHash);
 });
 
-test("v2 final authorization terminalizes known job and claim-lease expiry without an outcome-unknown replay", () => {
+test("v2 final authorization terminalizes known job and claim-lease expiry without an outcome-unknown replay", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-v2-final-expiry-"));
   process.env.OPERATOR_WORKSPACE_ROOT = root;
   process.env.REVIT_OPERATOR_MODE = "local";
@@ -209,13 +218,11 @@ test("v2 final authorization terminalizes known job and claim-lease expiry witho
   process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
   process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
 
-  const jobExpiredId = writeCertifiedV2Job(root, policy);
+  const jobExpiredId = writeCertifiedV2Job(root, policy, {}, {
+    expires_at: new Date(Date.now() + 150).toISOString()
+  });
   assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job?.id, jobExpiredId);
-  const jobExpiredPath = path.join(root, "artifacts", "revit-courier", "jobs", jobExpiredId, "job.json");
-  const jobExpired = JSON.parse(fs.readFileSync(jobExpiredPath, "utf8"));
-  jobExpired.created_at = new Date(Date.now() - 120_000).toISOString();
-  jobExpired.expires_at = new Date(Date.now() - 60_000).toISOString();
-  fs.writeFileSync(jobExpiredPath, JSON.stringify(jobExpired), "utf8");
+  await new Promise(resolve => setTimeout(resolve, 225));
   assert.throws(
     () => authorizeRevitToolJobExecution({ session_id: "session-a", job_id: jobExpiredId, executor_id: "worker-1" }),
     /CERTIFICATION_FINAL_JOB_EXPIRED/
@@ -230,6 +237,7 @@ test("v2 final authorization terminalizes known job and claim-lease expiry witho
   assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job?.id, leaseExpiredId);
   const leaseExpiredPath = path.join(root, "artifacts", "revit-courier", "jobs", leaseExpiredId, "job.json");
   const leaseExpired = JSON.parse(fs.readFileSync(leaseExpiredPath, "utf8"));
+  leaseExpired.claim.claimed_at = new Date(Date.now() - 120_000).toISOString();
   leaseExpired.claim.lease_expires_at = new Date(Date.now() - 1_000).toISOString();
   fs.writeFileSync(leaseExpiredPath, JSON.stringify(leaseExpired), "utf8");
   assert.throws(
@@ -321,7 +329,9 @@ test("v2 claim quarantines every immutable publisher-contract mismatch before a 
     ["compatibility body", job => { job.body = "{}"; }],
     ["raw body", job => { job.body_json = "{}"; }],
     ["envelope hash", job => { job.certification_envelope.alias = "revit_context"; }],
-    ["idempotency", job => { job.idempotency_key = "a".repeat(64); }]
+    ["idempotency", job => { job.idempotency_key = "a".repeat(64); }],
+    ["correlation", job => { job.correlation_id = "b".repeat(64); }],
+    ["expiry identity", job => { job.expires_at = new Date(Date.parse(job.expires_at) + 1_000).toISOString(); }]
   ];
   for (const [label, mutate] of cases) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-v2-mismatch-"));

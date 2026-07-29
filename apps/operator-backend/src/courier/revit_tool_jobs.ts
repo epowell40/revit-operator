@@ -79,7 +79,7 @@ function safeId(value: unknown, field: string, max = 200): string {
 /** Session/executor identities are producer-provided Unicode text, not ASCII ids. */
 function safeContextIdentity(value: unknown, field: string, max = 200): string {
   const text = typeof value === "string" ? value.trim() : "";
-  if (!text || text.length > max || /[\u0000-\u001F\u007F-\u009F]/.test(text)) throw new Error(`${field} is invalid.`);
+  if (!text || text.length > max || /[\u0000-\u001F\u007F]/.test(text)) throw new Error(`${field} is invalid.`);
   return text;
 }
 
@@ -359,7 +359,6 @@ export function authorizeRevitToolJobExecution(input: AuthorizeInput): { job: Re
   const job = readJob(jobId);
   if (!job) throw new Error("Revit courier job was not found.");
   if (job.session_id !== sessionId) throw new Error("Revit courier session mismatch.");
-  if (job.claim?.executor_id !== executorId) throw new Error("Revit courier job is not claimed by this executor.");
   const terminal = readTerminalResult(job);
   if (terminal) {
     reconcileJobWithResult(job, terminal);
@@ -370,6 +369,26 @@ export function authorizeRevitToolJobExecution(input: AuthorizeInput): { job: Re
   if (job.version !== REVIT_COURIER_V2_JOB_VERSION) {
     throw new Error("Legacy Revit courier jobs do not have a certified final-execution authorization receipt.");
   }
+  const terminalize = (error: unknown): never => {
+    const certificationError = error instanceof RevitCourierCertificationError
+      ? error
+      : new RevitCourierCertificationError("CERTIFICATION_FINAL_EXECUTION_FAILED", "Certified courier final execution authorization failed.");
+    const terminalJob = writeCertificationTerminal(job, certificationError);
+    const terminalError = new Error(`${certificationError.code}: ${certificationError.message}`);
+    (terminalError as Error & { job?: RevitToolJob }).job = terminalJob;
+    throw terminalError;
+  };
+  try {
+    // Validate durable v2 shape before consulting the claim. A malformed claim
+    // is a quarantined job, never a generic authorization error that leaves it
+    // eligible for a later workstation.
+    parseCertifiedCourierJobV2(job);
+  } catch (error) {
+    return terminalize(error);
+  }
+  // Caller identity mismatches are not a certification decision. Do not let
+  // an untrusted wrong-workstation request poison another worker's lease.
+  if (job.claim?.executor_id !== executorId) throw new Error("Revit courier job is not claimed by this executor.");
   try {
     // This endpoint is called immediately before the workstation creates its
     // Revit action. These expiry failures are therefore known not to have
@@ -392,12 +411,6 @@ export function authorizeRevitToolJobExecution(input: AuthorizeInput): { job: Re
     const authorization = authorizeCertifiedCourierFinalExecution(job, executorId);
     return { job, authorization };
   } catch (error) {
-    const certificationError = error instanceof RevitCourierCertificationError
-      ? error
-      : new RevitCourierCertificationError("CERTIFICATION_FINAL_EXECUTION_FAILED", "Certified courier final execution authorization failed.");
-    const terminalJob = writeCertificationTerminal(job, certificationError);
-    const terminalError = new Error(`${certificationError.code}: ${certificationError.message}`);
-    (terminalError as Error & { job?: RevitToolJob }).job = terminalJob;
-    throw terminalError;
+    return terminalize(error);
   }
 }

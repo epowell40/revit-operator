@@ -138,7 +138,9 @@ function exactKeys(value: Record<string, unknown>, required: readonly string[], 
 
 function boundedSafeText(value: unknown, location: string, max: number, allowNull = false): string | null {
   if (value === null && allowNull) return null;
-  if (typeof value !== "string" || value.length > max || /[\u0000-\u001F\u007F-\u009F]/.test(value)) {
+  // Match the producer exactly: allow ordinary Unicode, reject C0 controls
+  // (including NUL/CR/LF) and DEL, and enforce UTF-16 code-unit limits.
+  if (typeof value !== "string" || value.length > max || /[\u0000-\u001F\u007F]/.test(value)) {
     throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", `${location} is invalid.`);
   }
   return value;
@@ -168,6 +170,12 @@ function requiredHash(value: unknown, location: string, nullable = false): strin
 
 function canonicalSha256Text(value: string): string {
   return `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
+}
+
+function isCanonicalIsoInstant(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
 }
 
 function hashV2Idempotency(payload: unknown): string {
@@ -294,9 +302,6 @@ export function parseCertifiedCourierJobV2(value: unknown): CertifiedCourierJobV
     throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", "Certified courier path is not canonical.");
   }
   const targetExecutorId = boundedSafeText(job.target_executor_id, "courier target_executor_id", 200, true);
-  if (targetExecutorId !== null && !targetExecutorId) {
-    throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", "Courier target executor is invalid.");
-  }
   const targetTitle = boundedSafeText(job.target_document_title, "courier target_document_title", 500, true);
   const targetPath = boundedSafeText(job.target_document_path, "courier target_document_path", 2000, true);
   if (typeof job.body_present !== "boolean" || typeof job.body_json !== "string") {
@@ -320,13 +325,27 @@ export function parseCertifiedCourierJobV2(value: unknown): CertifiedCourierJobV
   } else if (own(job, "body")) {
     throw new RevitCourierCertificationError("CERTIFICATION_JOB_MISMATCH", "Absent certified courier body must not retain a compatibility body.");
   }
-  const createdAt = Date.parse(String(job.created_at ?? ""));
-  const expiresAt = Date.parse(String(job.expires_at ?? ""));
-  if (!Number.isFinite(createdAt) || !Number.isFinite(expiresAt) || expiresAt <= createdAt) {
+  if (!isCanonicalIsoInstant(job.created_at) || !isCanonicalIsoInstant(job.expires_at)) {
     throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", "Certified courier timestamps are invalid.");
   }
+  const createdAt = Date.parse(job.created_at);
+  const expiresAt = Date.parse(job.expires_at);
+  if (expiresAt < createdAt) throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", "Certified courier timestamps are invalid.");
   if (!["pending", "running", "succeeded", "failed"].includes(String(job.status))) {
     throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", "Certified courier status is invalid.");
+  }
+  if (job.status === "pending") {
+    if (job.claim !== null) {
+      throw new RevitCourierCertificationError("CERTIFICATION_JOB_MISMATCH", "Pending certified courier job must not carry a claim.");
+    }
+  } else if (job.status === "running") {
+    const claim = asObject(job.claim, "certified courier claim");
+    exactKeys(claim, ["executor_id", "claimed_at", "lease_expires_at"], [], "certified courier claim");
+    requiredContextIdentity(claim.executor_id, "certified courier claim executor_id");
+    if (!isCanonicalIsoInstant(claim.claimed_at) || !isCanonicalIsoInstant(claim.lease_expires_at)
+      || Date.parse(claim.lease_expires_at) < Date.parse(claim.claimed_at)) {
+      throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", "Certified courier claim timestamps are invalid.");
+    }
   }
   const envelope = parseEnvelope(job.certification_envelope, job);
   const requestForHash = method === "GET"
@@ -340,6 +359,7 @@ export function parseCertifiedCourierJobV2(value: unknown): CertifiedCourierJobV
     canonicalization: REVIT_COURIER_CANONICALIZATION,
     session_id: sessionId,
     message_id: messageId,
+    expires_at: job.expires_at,
     turn_token_sha256: turnTokenHash,
     target_executor_id: targetExecutorId,
     target_document_title: targetTitle,
