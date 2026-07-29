@@ -38,10 +38,12 @@ import { assertRevitBridgePath } from "./lib/revitPathPolicy.js";
 import {
   filterRegistryEntriesForSearch,
   getToolExposureRuntimeDecision,
+  isMcpToolAliasExposed,
   isCertifiedToolExposureMode,
   isKnownToolExposureRoute,
   isToolRouteExposedForSearch,
-  loadToolExposurePolicy
+  loadToolExposurePolicy,
+  runWithRevitToolAlias
 } from "./lib/toolExposurePolicy.js";
 
 function redirectConsoleToStderr(): void {
@@ -89,29 +91,52 @@ const server = new McpServer({
 ensureWorkspaceLayout();
 
 // Audit logging wrapper for ALL MCP tools.
+function bindDynamicToolExposure(name: string, registeredTool: any): any {
+  if (!name.startsWith("revit_") || !registeredTool || typeof registeredTool !== "object") return registeredTool;
+  let locallyEnabled = registeredTool.enabled !== false;
+  Object.defineProperty(registeredTool, "enabled", {
+    configurable: true,
+    enumerable: true,
+    get: () => locallyEnabled && isMcpToolAliasExposed(name),
+    set: (value: unknown) => { locallyEnabled = value !== false; }
+  });
+  return registeredTool;
+}
+
 const originalTool = server.tool.bind(server);
 (server as any).tool = (name: string, description: string, inputSchema: any, handler: (args: any) => Promise<any>) => {
-  return originalTool(name, description, inputSchema, async (args: any) => {
-    const startedAt = Date.now();
-    auditLog("tool.call", { name, args: summarize(args) as any });
-    try {
-      const result = await handler(args);
-      const durationMs = Date.now() - startedAt;
-      const isError = !!(result && typeof result === "object" && (result as any).isError);
-      let outBytes = 0;
+  const registeredTool = originalTool(name, description, inputSchema, async (args: any) => {
+    return await runWithRevitToolAlias(name, async () => {
+      const startedAt = Date.now();
+      auditLog("tool.call", { name, args: summarize(args) as any });
       try {
-        outBytes = JSON.stringify(result).length;
-      } catch {
-        outBytes = 0;
+        const result = await handler(args);
+        const durationMs = Date.now() - startedAt;
+        const isError = !!(result && typeof result === "object" && (result as any).isError);
+        let outBytes = 0;
+        try {
+          outBytes = JSON.stringify(result).length;
+        } catch {
+          outBytes = 0;
+        }
+        auditLog("tool.result", { name, ok: !isError, duration_ms: durationMs, out_bytes: outBytes });
+        return result;
+      } catch (e) {
+        const durationMs = Date.now() - startedAt;
+        auditLog("tool.result", { name, ok: false, duration_ms: durationMs, error: String(e) });
+        throw e;
       }
-      auditLog("tool.result", { name, ok: !isError, duration_ms: durationMs, out_bytes: outBytes });
-      return result;
-    } catch (e) {
-      const durationMs = Date.now() - startedAt;
-      auditLog("tool.result", { name, ok: false, duration_ms: durationMs, error: String(e) });
-      throw e;
-    }
+    });
   });
+  return bindDynamicToolExposure(name, registeredTool);
+};
+
+const originalRegisterTool = server.registerTool.bind(server) as any;
+(server as any).registerTool = (name: string, config: any, handler: (args: unknown) => Promise<unknown>) => {
+  const registeredTool = originalRegisterTool(name, config, async (args: unknown) =>
+    await runWithRevitToolAlias(name, async () => await handler(args))
+  );
+  return bindDynamicToolExposure(name, registeredTool);
 };
 
 function registerAuditedZodTool(name: string, description: string, inputSchema: any, handler: (args: unknown) => Promise<unknown>): unknown {
@@ -309,7 +334,7 @@ const EXTRA_DISCOVERY_PATHS = new Set<string>([
   "/revit/native-api-call",
   "/revit/native-api-ops"
 ]);
-let cachedToolRegistry: { fetchedAt: number; payload: ToolRegistryPayload | null } = { fetchedAt: 0, payload: null };
+let cachedToolRegistry: { fetchedAt: number; rawPayload: ToolRegistryPayload | null } = { fetchedAt: 0, rawPayload: null };
 
 function normalizeRegistryMethod(v: unknown): RegistryMethod | null {
   const m = String(v ?? "").trim().toUpperCase();
@@ -434,8 +459,11 @@ function compactToolForList(t: RegistryToolEntry, score?: number): Record<string
 
 async function getToolRegistry(forceRefresh = false): Promise<ToolRegistryPayload> {
   const now = Date.now();
-  if (!forceRefresh && cachedToolRegistry.payload && now - cachedToolRegistry.fetchedAt < TOOL_REGISTRY_CACHE_MS) {
-    return cachedToolRegistry.payload;
+  if (!forceRefresh && cachedToolRegistry.rawPayload && now - cachedToolRegistry.fetchedAt < TOOL_REGISTRY_CACHE_MS) {
+    return {
+      ...cachedToolRegistry.rawPayload,
+      tools: filterRegistryEntriesForSearch(cachedToolRegistry.rawPayload.tools ?? [])
+    };
   }
   const raw = await callRevit<unknown>("/revit/tool-registry", "GET", undefined, { channel: "search" });
   const root = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
@@ -445,13 +473,13 @@ async function getToolRegistry(forceRefresh = false): Promise<ToolRegistryPayloa
     const normalized = normalizeRegistryTool(item);
     if (normalized) tools.push(normalized);
   }
-  const payload: ToolRegistryPayload = {
+  const rawPayload: ToolRegistryPayload = {
     version: typeof root.version === "string" ? root.version : "operator.tool_registry.v1",
     generated_at: typeof root.generated_at === "string" ? root.generated_at : undefined,
-    tools: filterRegistryEntriesForSearch(tools)
+    tools
   };
-  cachedToolRegistry = { fetchedAt: now, payload };
-  return payload;
+  cachedToolRegistry = { fetchedAt: now, rawPayload };
+  return { ...rawPayload, tools: filterRegistryEntriesForSearch(tools) };
 }
 
 server.tool("operator_runtime_probe", "Check that the Revit Operator MCP runtime itself is responsive without contacting Revit.", {}, async () => {
@@ -460,7 +488,13 @@ server.tool("operator_runtime_probe", "Check that the Revit Operator MCP runtime
   if (toolExposure.certified) {
     try {
       const loaded = loadToolExposurePolicy();
-      certificationPolicy = { status: "loaded", path: loaded.policyPath, hash: loaded.policy.policy_hash };
+      certificationPolicy = {
+        status: "loaded",
+        path: loaded.policyPath,
+        hash: loaded.policy.policy_hash,
+        trustedHash: loaded.trustedPolicyHash,
+        trustSource: loaded.trustSource
+      };
     } catch (error) {
       certificationPolicy = { status: "fail_closed", error: String(error) };
     }

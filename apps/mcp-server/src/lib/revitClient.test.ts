@@ -4,8 +4,46 @@ import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { callRevit, RevitBridgeCallError } from "./revitClient.js";
-import { ToolExposurePolicyError } from "./toolExposurePolicy.js";
+import { runWithRevitToolAlias, ToolExposurePolicyError } from "./toolExposurePolicy.js";
+
+const sourcePolicyPath = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
+  ? path.resolve(process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH)
+  : path.resolve(process.cwd(), "../operator-backend/config/tool_exposure_policy.v1.json");
+const sourcePolicyHash = (JSON.parse(fs.readFileSync(sourcePolicyPath, "utf8")) as { policy_hash: string }).policy_hash;
+
+function canonicalTestValue(value: unknown): unknown {
+  if (typeof value === "string") return value.replace(/\r\n?/g, "\n").normalize("NFC");
+  if (Array.isArray(value)) return value.map(canonicalTestValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => [key.replace(/\r\n?/g, "\n").normalize("NFC"), item] as const)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, item]) => [key, canonicalTestValue(item)]));
+  }
+  return value;
+}
+
+function canonicalTestDigest(value: unknown): string {
+  return `sha256:${createHash("sha256").update(JSON.stringify(canonicalTestValue(value)), "utf8").digest("hex")}`;
+}
+
+function writePingExposurePolicy(): { policyPath: string; policyHash: string } {
+  const policy = JSON.parse(fs.readFileSync(sourcePolicyPath, "utf8"));
+  const ping = policy.records.find((record: any) => record.method === "GET" && record.path === "/revit/ping");
+  ping.channels.typed_mcp = { exposed: true, required_level: "L4", reason_codes: ["CERTIFIED"] };
+  for (const record of policy.records) {
+    const { policy_record_hash: _oldRecordHash, ...recordPayload } = record;
+    record.policy_record_hash = canonicalTestDigest(recordPayload);
+  }
+  const { policy_hash: _oldPolicyHash, ...policyPayload } = policy;
+  policy.policy_hash = canonicalTestDigest(policyPayload);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-client-policy-"));
+  const policyPath = path.join(root, "tool_exposure_policy.v1.json");
+  fs.writeFileSync(policyPath, `${JSON.stringify(policy, null, 2)}\n`, "utf8");
+  return { policyPath, policyHash: policy.policy_hash };
+}
 
 async function listen(server: http.Server): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
@@ -29,8 +67,9 @@ function setTestEnvironment(url: string, timeoutMs: number): () => void {
     token: process.env.OPERATOR_TOKEN,
     transport: process.env.OPERATOR_REVIT_TRANSPORT,
     runtimeMode: process.env.REVIT_OPERATOR_MODE,
-    exposureMode: process.env.OPERATOR_TOOL_EXPOSURE_MODE,
+    exposureProfile: process.env.OPERATOR_TOOL_EXPOSURE_PROFILE,
     exposurePolicyPath: process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH,
+    exposurePolicyHash: process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256,
   };
   process.env.REVIT_BRIDGE_URL = url;
   process.env.OPERATOR_REVIT_REQUEST_TIMEOUT_MS = String(timeoutMs);
@@ -38,7 +77,7 @@ function setTestEnvironment(url: string, timeoutMs: number): () => void {
   process.env.OPERATOR_TOKEN = "revit-client-test-token";
   process.env.OPERATOR_REVIT_TRANSPORT = "direct";
   process.env.REVIT_OPERATOR_MODE = "development";
-  process.env.OPERATOR_TOOL_EXPOSURE_MODE = "laboratory";
+  process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = "laboratory";
   delete process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH;
   return () => {
     for (const [name, value] of Object.entries({
@@ -48,8 +87,9 @@ function setTestEnvironment(url: string, timeoutMs: number): () => void {
       OPERATOR_TOKEN: previous.token,
       OPERATOR_REVIT_TRANSPORT: previous.transport,
       REVIT_OPERATOR_MODE: previous.runtimeMode,
-      OPERATOR_TOOL_EXPOSURE_MODE: previous.exposureMode,
+      OPERATOR_TOOL_EXPOSURE_PROFILE: previous.exposureProfile,
       OPERATOR_TOOL_EXPOSURE_POLICY_PATH: previous.exposurePolicyPath,
+      OPERATOR_TOOL_EXPOSURE_POLICY_SHA256: previous.exposurePolicyHash,
     })) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
@@ -67,10 +107,11 @@ test("certified admission denies unknown, uncertified, generic schedule, and gra
   const port = await listen(server);
   const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
   process.env.REVIT_OPERATOR_MODE = "hosted";
-  delete process.env.OPERATOR_TOOL_EXPOSURE_MODE;
+  delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
   process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
     ? path.resolve(process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH)
     : path.resolve(process.cwd(), "../operator-backend/config/tool_exposure_policy.v1.json");
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = sourcePolicyHash;
   fs.writeFileSync(path.join(process.env.OPERATOR_WORKSPACE_ROOT!, "write_grant.json"), JSON.stringify({
     token: "cannot-override-certification",
     expires_at_utc: new Date(Date.now() + 60_000).toISOString()
@@ -99,6 +140,39 @@ test("certified admission denies unknown, uncertified, generic schedule, and gra
   } finally {
     restore();
     await close(server);
+  }
+});
+
+test("callRevit admits only the actual bound typed alias before direct dispatch", async () => {
+  let requests = 0;
+  const server = http.createServer((_request, response) => {
+    requests += 1;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ status: "ok" }));
+  });
+  const port = await listen(server);
+  const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
+  const variant = writePingExposurePolicy();
+  process.env.REVIT_OPERATOR_MODE = "hosted";
+  delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = variant.policyPath;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = variant.policyHash;
+  try {
+    await assert.rejects(
+      runWithRevitToolAlias("revit_get_context", async () => await callRevit("/revit/ping")),
+      (error: unknown) => error instanceof ToolExposurePolicyError
+        && error.code === "CERT_TYPED_ALIAS_MISMATCH"
+    );
+    assert.equal(requests, 0);
+    assert.deepEqual(
+      await runWithRevitToolAlias("revit_ping", async () => await callRevit("/revit/ping")),
+      { status: "ok" }
+    );
+    assert.equal(requests, 1);
+  } finally {
+    restore();
+    await close(server);
+    fs.rmSync(path.dirname(variant.policyPath), { recursive: true, force: true });
   }
 });
 

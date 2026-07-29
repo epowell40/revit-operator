@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,6 +78,10 @@ export class ToolExposurePolicyError extends Error {
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const POLICY_FILENAME = "tool_exposure_policy.v1.json";
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+// This is a deployment trust anchor, not a value learned from the policy file.
+// Update it only alongside a reviewed bundled policy artifact.
+const BUNDLED_POLICY_HASH = "sha256:d6204c2576e83a96586f0b4bc575d7f68c7325e3efb32566ba6204e1aa3d2624";
+const invokedMcpAlias = new AsyncLocalStorage<string>();
 
 function normalizeRuntimeMode(value: unknown): string {
   return String(value ?? "local").trim().toLowerCase().replace(/-/g, "_") || "local";
@@ -84,14 +89,14 @@ function normalizeRuntimeMode(value: unknown): string {
 
 export function getToolExposureRuntimeDecision(env: NodeJS.ProcessEnv = process.env): ToolExposureRuntimeDecision {
   const runtimeMode = normalizeRuntimeMode(env.REVIT_OPERATOR_MODE);
-  const requested = String(env.OPERATOR_TOOL_EXPOSURE_MODE ?? "").trim().toLowerCase();
+  const requested = String(env.OPERATOR_TOOL_EXPOSURE_PROFILE ?? "").trim().toLowerCase();
   if (requested && requested !== "certified" && requested !== "laboratory") {
     return {
       runtimeMode,
       mode: "certified",
       certified: true,
       explicitLaboratory: false,
-      reason: `invalid OPERATOR_TOOL_EXPOSURE_MODE=${requested}; failing closed`
+      reason: `invalid OPERATOR_TOOL_EXPOSURE_PROFILE=${requested}; failing closed`
     };
   }
 
@@ -116,22 +121,7 @@ export function getToolExposureRuntimeDecision(env: NodeJS.ProcessEnv = process.
       explicitLaboratory: laboratory,
       reason: laboratory
         ? "explicit development laboratory escape is active"
-        : "development defaults to certified exposure; set OPERATOR_TOOL_EXPOSURE_MODE=laboratory explicitly to escape"
-    };
-  }
-
-  if (runtimeMode === "local" || runtimeMode === "self_hosted") {
-    const certified = requested === "certified";
-    return {
-      runtimeMode,
-      mode: certified ? "certified" : "laboratory",
-      certified,
-      explicitLaboratory: requested === "laboratory",
-      reason: certified
-        ? `${runtimeMode} runtime explicitly selected certified exposure`
-        : requested === "laboratory"
-          ? `${runtimeMode} runtime explicitly selected laboratory exposure`
-          : `${runtimeMode} runtime uses the backward-compatible laboratory default`
+        : "development defaults to certified exposure; set OPERATOR_TOOL_EXPOSURE_PROFILE=laboratory explicitly to escape"
     };
   }
 
@@ -140,7 +130,9 @@ export function getToolExposureRuntimeDecision(env: NodeJS.ProcessEnv = process.
     mode: "certified",
     certified: true,
     explicitLaboratory: false,
-    reason: `unknown runtime mode ${runtimeMode}; failing closed`
+    reason: requested === "laboratory"
+      ? `laboratory exposure requires exact REVIT_OPERATOR_MODE=development; ${runtimeMode} is certified`
+      : `${runtimeMode} runtime uses certified exposure`
   };
 }
 
@@ -172,6 +164,37 @@ function canonicalValue(value: unknown, location = "value"): unknown {
 function digest(value: unknown): string {
   const canonical = JSON.stringify(canonicalValue(value));
   return `sha256:${createHash("sha256").update(canonical, "utf8").digest("hex")}`;
+}
+
+function jsonWireValue(value: unknown, location: string): unknown {
+  let serialized: string | undefined;
+  try {
+    serialized = JSON.stringify(value);
+  } catch (error) {
+    throw new Error(`${location} cannot be serialized as JSON`, { cause: error });
+  }
+  if (serialized === undefined) return undefined;
+  return JSON.parse(serialized) as unknown;
+}
+
+function assertWireValueIsCanonical(value: unknown, location = "request"): void {
+  if (typeof value === "string") {
+    if (value !== normalizeText(value)) {
+      throw new Error(`${location} contains non-canonical text that would hash differently from the dispatched JSON body`);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertWireValueIsCanonical(item, `${location}[${index}]`));
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (key !== normalizeText(key)) {
+      throw new Error(`${location} contains a non-canonical JSON key`);
+    }
+    assertWireValueIsCanonical(item, `${location}.${key}`);
+  }
 }
 
 function assertObject(value: unknown, location: string): asserts value is Record<string, unknown> {
@@ -268,6 +291,34 @@ function configuredPolicyPath(env: NodeJS.ProcessEnv): string | undefined {
   return path.resolve(explicit);
 }
 
+function configuredExpectedPolicyHash(env: NodeJS.ProcessEnv): string | undefined {
+  const expected = String(env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 ?? "").trim();
+  if (!expected) return undefined;
+  if (!SHA256.test(expected)) {
+    throw new ToolExposurePolicyError(
+      "TOOL_EXPOSURE_POLICY_TRUST_ANCHOR_INVALID",
+      "OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 must be a lowercase canonical sha256:<64 hex> policy hash."
+    );
+  }
+  return expected;
+}
+
+function trustedPolicyHash(env: NodeJS.ProcessEnv): { expectedHash: string; source: "bundled" | "deployment" } {
+  const configuredHash = configuredExpectedPolicyHash(env);
+  if (configuredPolicyPath(env)) {
+    if (!configuredHash) {
+      throw new ToolExposurePolicyError(
+        "TOOL_EXPOSURE_POLICY_TRUST_ANCHOR_REQUIRED",
+        "An explicit OPERATOR_TOOL_EXPOSURE_POLICY_PATH requires OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 from a separately trusted deployment source."
+      );
+    }
+    return { expectedHash: configuredHash, source: "deployment" };
+  }
+  return configuredHash
+    ? { expectedHash: configuredHash, source: "deployment" }
+    : { expectedHash: BUNDLED_POLICY_HASH, source: "bundled" };
+}
+
 export function resolveToolExposurePolicyPath(env: NodeJS.ProcessEnv = process.env): string {
   const explicit = configuredPolicyPath(env);
   if (explicit) return explicit;
@@ -279,8 +330,14 @@ export function resolveToolExposurePolicyPath(env: NodeJS.ProcessEnv = process.e
   return existing ?? safeDefaults[0]!;
 }
 
-export function loadToolExposurePolicy(env: NodeJS.ProcessEnv = process.env): { policy: ToolExposurePolicy; policyPath: string } {
+export function loadToolExposurePolicy(env: NodeJS.ProcessEnv = process.env): {
+  policy: ToolExposurePolicy;
+  policyPath: string;
+  trustedPolicyHash: string;
+  trustSource: "bundled" | "deployment";
+} {
   const policyPath = resolveToolExposurePolicyPath(env);
+  const trust = trustedPolicyHash(env);
   let source: string;
   try {
     source = fs.readFileSync(policyPath, "utf8");
@@ -288,8 +345,21 @@ export function loadToolExposurePolicy(env: NodeJS.ProcessEnv = process.env): { 
     throw new ToolExposurePolicyError("TOOL_EXPOSURE_POLICY_UNAVAILABLE", `Certified tool exposure policy is unavailable at ${policyPath}.`, undefined, error);
   }
   try {
-    return { policy: parseToolExposurePolicy(JSON.parse(source.replace(/^\uFEFF/, ""))), policyPath };
+    const policy = parseToolExposurePolicy(JSON.parse(source.replace(/^\uFEFF/, "")));
+    if (policy.policy_hash !== trust.expectedHash) {
+      throw new ToolExposurePolicyError(
+        "TOOL_EXPOSURE_POLICY_ROLLBACK_REJECTED",
+        `Policy hash ${policy.policy_hash} does not match trusted ${trust.source} anchor ${trust.expectedHash}.`
+      );
+    }
+    return {
+      policy,
+      policyPath,
+      trustedPolicyHash: trust.expectedHash,
+      trustSource: trust.source
+    };
   } catch (error) {
+    if (error instanceof ToolExposurePolicyError) throw error;
     throw new ToolExposurePolicyError("TOOL_EXPOSURE_POLICY_INVALID", `Certified tool exposure policy is malformed or hash-mismatched at ${policyPath}: ${String(error)}`, undefined, error);
   }
 }
@@ -306,17 +376,23 @@ function normalizedRequest(method: string, body: unknown): unknown {
   try { return JSON.parse(trimmed); } catch { return body; }
 }
 
-function requestHash(method: string, toolPath: string, body: unknown): string {
-  return digest({ method, path: toolPath, request: normalizedRequest(method, body) });
+function requestHash(method: string, toolPath: string, body: unknown, strictCanonical: boolean): string {
+  const normalized = normalizedRequest(method, body);
+  const wireValue = jsonWireValue(normalized, "request");
+  const request = wireValue === undefined ? {} : wireValue;
+  if (strictCanonical) assertWireValueIsCanonical(request);
+  return digest({ method, path: toolPath, request });
 }
 
 function effectHash(toolPath: string, method: string, body: unknown, workflow?: string): string {
+  const normalized = normalizedRequest(method, body);
+  const wireBody = method === "GET" ? undefined : jsonWireValue(normalized, "request");
   // Schedule listing/detail is a read-only POST contract. Keep this refinement
   // at the certification boundary until the shared route-effect table gains
   // the same entry; defaulting it to write would make a valid read hash fail.
   const routeEffect = method === "POST" && toolPath === "/revit/schedules"
     ? "read"
-    : revitRouteEffect(toolPath, method, body);
+    : revitRouteEffect(toolPath, method, wireBody);
   const effect: Record<string, unknown> = { resolved_effect: routeEffect === "apply" ? "write" : routeEffect };
   if (workflow) effect.workflow = workflow;
   return digest({ effect });
@@ -328,6 +404,7 @@ export function evaluateToolExposure(input: {
   body?: unknown;
   channel?: ToolExposureChannel;
   workflow?: string;
+  alias?: string;
   env?: NodeJS.ProcessEnv;
 }): ToolExposureDecision {
   const env = input.env ?? process.env;
@@ -337,7 +414,7 @@ export function evaluateToolExposure(input: {
   if (!(TOOL_EXPOSURE_CHANNELS as readonly string[]).includes(channel)) {
     throw new ToolExposurePolicyError("TOOL_EXPOSURE_CHANNEL_INVALID", `Unsupported tool exposure channel: ${String(channel)}.`);
   }
-  const reqHash = requestHash(method, input.path, input.body);
+  const reqHash = requestHash(method, input.path, input.body, runtime.certified);
   const effHash = effectHash(input.path, method, input.body, input.workflow);
   if (runtime.mode === "laboratory") {
     return {
@@ -380,8 +457,70 @@ export function evaluateToolExposure(input: {
   }
   const channelDecision = record.channels[channel];
   const workflowOnlyRaw = record.visibility === "workflow_only" && channel !== "deterministic_workflow";
+  if (!channelDecision.exposed || workflowOnlyRaw) {
+    return {
+      allowed: false,
+      mode: runtime.mode,
+      runtimeMode: runtime.runtimeMode,
+      method,
+      path: input.path,
+      channel,
+      requestHash: reqHash,
+      effectHash: effHash,
+      knownRoute: true,
+      reasonCodes: workflowOnlyRaw ? ["CERT_WORKFLOW_ONLY"] : [...channelDecision.reason_codes],
+      policyPath,
+      policyHash: policy.policy_hash,
+      visibility: record.visibility
+    };
+  }
+  const alias = String(input.alias ?? invokedMcpAlias.getStore() ?? "").trim();
+  if (channel === "generic_call" && alias !== "revit_call_tool") {
+    return {
+      allowed: false,
+      mode: runtime.mode,
+      runtimeMode: runtime.runtimeMode,
+      method,
+      path: input.path,
+      channel,
+      requestHash: reqHash,
+      effectHash: effHash,
+      knownRoute: true,
+      reasonCodes: ["CERT_GENERIC_ALIAS_REQUIRED"],
+      policyPath,
+      policyHash: policy.policy_hash,
+      visibility: record.visibility
+    };
+  }
+  if (channel !== "generic_call" && channel !== "deterministic_workflow") {
+    const aliasRecords = alias
+      ? policy.records.filter(candidate => candidate.typed_mcp_aliases.includes(alias))
+      : [];
+    const aliasMatchesRoute = !!alias && record.typed_mcp_aliases.includes(alias);
+    const aliasChannel = channel === "search" ? "search" : "typed_mcp";
+    const conjunctionAllowed = aliasRecords.length > 0 && aliasRecords.every(candidate =>
+      candidate.visibility !== "workflow_only" && candidate.channels[aliasChannel].exposed
+    );
+    if (!aliasMatchesRoute || !conjunctionAllowed) {
+      return {
+        allowed: false,
+        mode: runtime.mode,
+        runtimeMode: runtime.runtimeMode,
+        method,
+        path: input.path,
+        channel,
+        requestHash: reqHash,
+        effectHash: effHash,
+        knownRoute: true,
+        reasonCodes: [!aliasMatchesRoute ? "CERT_TYPED_ALIAS_MISMATCH" : "CERT_TYPED_ALIAS_CONJUNCTION_DENIED"],
+        policyPath,
+        policyHash: policy.policy_hash,
+        visibility: record.visibility
+      };
+    }
+  }
   return {
-    allowed: channelDecision.exposed && !workflowOnlyRaw,
+    allowed: true,
     mode: runtime.mode,
     runtimeMode: runtime.runtimeMode,
     method,
@@ -390,7 +529,7 @@ export function evaluateToolExposure(input: {
     requestHash: reqHash,
     effectHash: effHash,
     knownRoute: true,
-    reasonCodes: workflowOnlyRaw ? ["CERT_WORKFLOW_ONLY"] : [...channelDecision.reason_codes],
+    reasonCodes: [...channelDecision.reason_codes],
     policyPath,
     policyHash: policy.policy_hash,
     visibility: record.visibility
@@ -403,6 +542,7 @@ export function assertToolExposure(input: {
   body?: unknown;
   channel?: ToolExposureChannel;
   workflow?: string;
+  alias?: string;
   env?: NodeJS.ProcessEnv;
 }): ToolExposureDecision {
   const decision = evaluateToolExposure(input);
@@ -412,6 +552,29 @@ export function assertToolExposure(input: {
     `${decision.channel} exposure denied for exact ${decision.method} ${decision.path}; reasons=${decision.reasonCodes.join(",")}; request_hash=${decision.requestHash}; effect_hash=${decision.effectHash}.`,
     decision
   );
+}
+
+export function runWithRevitToolAlias<T>(alias: string, operation: () => T): T {
+  return invokedMcpAlias.run(alias, operation);
+}
+
+export function isMcpToolAliasExposed(alias: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!alias.startsWith("revit_")) return true;
+  if (!isCertifiedToolExposureMode(env)) return true;
+  try {
+    const { policy } = loadToolExposurePolicy(env);
+    if (alias === "revit_call_tool") {
+      return policy.records.some(record =>
+        record.visibility !== "workflow_only" && record.channels.generic_call.exposed
+      );
+    }
+    const records = policy.records.filter(record => record.typed_mcp_aliases.includes(alias));
+    return records.length > 0 && records.every(record =>
+      record.visibility !== "workflow_only" && record.channels.typed_mcp.exposed
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function isCertifiedToolExposureMode(env: NodeJS.ProcessEnv = process.env): boolean {

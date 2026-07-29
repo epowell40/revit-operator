@@ -4,8 +4,45 @@ import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
+const certifiedPolicyPath = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
+  ? path.resolve(process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH)
+  : path.resolve(process.cwd(), "../operator-backend/config/tool_exposure_policy.v1.json");
+const certifiedPolicyHash = (JSON.parse(fs.readFileSync(certifiedPolicyPath, "utf8")) as { policy_hash: string }).policy_hash;
+
+function smokeCanonical(value: unknown): unknown {
+  if (typeof value === "string") return value.replace(/\r\n?/g, "\n").normalize("NFC");
+  if (Array.isArray(value)) return value.map(smokeCanonical);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => [key.replace(/\r\n?/g, "\n").normalize("NFC"), item] as const)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, item]) => [key, smokeCanonical(item)]));
+  }
+  return value;
+}
+
+function smokeDigest(value: unknown): string {
+  return `sha256:${createHash("sha256").update(JSON.stringify(smokeCanonical(value)), "utf8").digest("hex")}`;
+}
+
+function writeSmokePolicyVariant(mutate: (policy: any) => void): { policyPath: string; policyHash: string; root: string } {
+  const policy = JSON.parse(fs.readFileSync(certifiedPolicyPath, "utf8"));
+  mutate(policy);
+  for (const record of policy.records) {
+    const { policy_record_hash: _oldRecordHash, ...recordPayload } = record;
+    record.policy_record_hash = smokeDigest(recordPayload);
+  }
+  const { policy_hash: _oldPolicyHash, ...policyPayload } = policy;
+  policy.policy_hash = smokeDigest(policyPayload);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-stdio-policy-"));
+  const policyPath = path.join(root, "tool_exposure_policy.v1.json");
+  fs.writeFileSync(policyPath, `${JSON.stringify(policy, null, 2)}\n`, "utf8");
+  return { policyPath, policyHash: policy.policy_hash, root };
+}
 
 async function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 8_000): Promise<T> {
   let timeout: NodeJS.Timeout | undefined;
@@ -150,7 +187,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
       OPERATOR_TOKEN: "mcp-stdio-smoke-token",
       OPERATOR_WORKSPACE_ROOT: workspace,
       REVIT_OPERATOR_MODE: "development",
-      OPERATOR_TOOL_EXPOSURE_MODE: "laboratory"
+      OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
     },
     stderr: "pipe"
   });
@@ -325,9 +362,8 @@ test("MCP stdio certified mode keeps diagnostics available and blocks every Revi
       OPERATOR_TOKEN: "mcp-certified-stdio-token",
       OPERATOR_WORKSPACE_ROOT: workspace,
       REVIT_OPERATOR_MODE: "hosted",
-      OPERATOR_TOOL_EXPOSURE_POLICY_PATH: process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
-        ? path.resolve(process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH)
-        : path.resolve(process.cwd(), "../operator-backend/config/tool_exposure_policy.v1.json")
+      OPERATOR_TOOL_EXPOSURE_POLICY_PATH: certifiedPolicyPath,
+      OPERATOR_TOOL_EXPOSURE_POLICY_SHA256: certifiedPolicyHash
     },
     stderr: "pipe"
   });
@@ -353,6 +389,17 @@ test("MCP stdio certified mode keeps diagnostics available and blocks every Revi
   const probeText = (probe as any).content.map((item: any) => item.text ?? "").join("\n");
   assert.match(probeText, /"mode": "certified"/);
   assert.match(probeText, /"status": "loaded"/);
+  assert.match(probeText, new RegExp(certifiedPolicyHash.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(probeText, /"trustSource": "deployment"/);
+
+  const listed = await withTimeout(client.listTools(), "listing certified MCP tools");
+  const listedNames = listed.tools.map(tool => tool.name);
+  assert.equal(listedNames.includes("operator_runtime_probe"), true);
+  assert.deepEqual(
+    listedNames.filter(name => name.startsWith("revit_")),
+    [],
+    "No uncertified Revit schema may be model-visible in tools/list."
+  );
 
   const blockedCalls = [
     { name: "revit_ping", arguments: {} },
@@ -368,4 +415,81 @@ test("MCP stdio certified mode keeps diagnostics available and blocks every Revi
     assert.equal((result as any).isError, true, `${input.name} must fail closed in current certified policy.`);
   }
   assert.equal(bridgeRequests, 0, "No direct, generic, search, or grant-backed call may reach the bridge under the current policy.");
+});
+
+test("MCP stdio tools/list follows trusted aliases and cached registry data is re-filtered after revocation", async (t) => {
+  const policyVariant = writeSmokePolicyVariant(policy => {
+    const registry = policy.records.find((record: any) => record.method === "GET" && record.path === "/revit/tool-registry");
+    registry.channels.typed_mcp = { exposed: true, required_level: "L4", reason_codes: ["CERTIFIED"] };
+    registry.channels.search = { exposed: true, required_level: "L3", reason_codes: ["CERTIFIED"] };
+    const context = policy.records.find((record: any) => record.method === "GET" && record.path === "/revit/context");
+    context.channels.search = { exposed: true, required_level: "L3", reason_codes: ["CERTIFIED"] };
+  });
+  let bridgeRequests = 0;
+  const bridge = http.createServer((_req, res) => {
+    bridgeRequests += 1;
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({
+      version: "operator.tool_registry.v1",
+      tools: [
+        { method: "GET", path: "/revit/context", title: "Context" },
+        { method: "GET", path: "/revit/uncertified", title: "Must stay hidden" }
+      ]
+    }));
+  });
+  const bridgePort = await listen(bridge);
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "revit-operator-mcp-cache-"));
+  const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [path.join(process.cwd(), "dist", "server.js")],
+    cwd: process.cwd(),
+    env: {
+      ...env,
+      REVIT_BRIDGE_URL: `http://127.0.0.1:${bridgePort}`,
+      OPERATOR_TOKEN: "mcp-cache-token",
+      OPERATOR_WORKSPACE_ROOT: workspace,
+      REVIT_OPERATOR_MODE: "hosted",
+      OPERATOR_TOOL_EXPOSURE_POLICY_PATH: policyVariant.policyPath,
+      OPERATOR_TOOL_EXPOSURE_POLICY_SHA256: policyVariant.policyHash
+    },
+    stderr: "pipe"
+  });
+  const client = new Client({ name: "revit-operator-cache-smoke", version: "1.0.0" }, { capabilities: {} });
+  t.after(async () => {
+    try {
+      await withTimeout(client.close(), "closing cache MCP client", 5_000);
+    } finally {
+      await withTimeout(transport.close(), "closing cache MCP child transport", 5_000);
+      await closeServer(bridge);
+      fs.rmSync(workspace, { recursive: true, force: true });
+      fs.rmSync(policyVariant.root, { recursive: true, force: true });
+    }
+  });
+  await withTimeout(client.connect(transport), "initializing cache MCP server");
+
+  const listed = await withTimeout(client.listTools(), "listing trusted MCP aliases");
+  const names = listed.tools.map(tool => tool.name);
+  assert.equal(names.includes("revit_tool_registry"), true);
+  assert.equal(names.includes("revit_get_context"), false);
+
+  const first = await withTimeout(client.callTool({
+    name: "revit_tool_registry",
+    arguments: { limit: 10 }
+  }), "reading certified registry");
+  const firstText = (first as any).content.map((item: any) => item.text ?? "").join("\n");
+  assert.match(firstText, /\/revit\/context/);
+  assert.doesNotMatch(firstText, /\/revit\/uncertified/);
+  assert.equal(bridgeRequests, 1);
+
+  // A rollback/tamper after the raw registry has been cached must fail closed
+  // instead of returning the formerly visible cached entry.
+  fs.copyFileSync(certifiedPolicyPath, policyVariant.policyPath);
+  const revoked = await withTimeout(client.callTool({
+    name: "revit_tool_registry",
+    arguments: { limit: 10 }
+  }), "re-filtering cached registry after policy rollback");
+  assert.equal((revoked as any).isError, true);
+  assert.match((revoked as any).content[0].text, /disabled|TOOL_EXPOSURE_POLICY_ROLLBACK_REJECTED/i);
+  assert.equal(bridgeRequests, 1, "Cached raw registry data should be re-filtered without another bridge dispatch.");
 });
