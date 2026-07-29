@@ -3,13 +3,22 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   generateToolExposurePolicy,
+  parseToolCertificationCandidates,
+  parseToolCertificationEvidence,
   renderCanonicalDocument,
-  type ToolCertificationEvidenceFile
+  sha256NormalizedText,
+  verifyCertificationCandidates
 } from "../capabilities/tool_certification.js";
 
-export function generatePolicyBytes(rawEvidence: string): string {
-  const normalized = rawEvidence.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
-  const evidence = JSON.parse(normalized) as ToolCertificationEvidenceFile;
+function parseJsonDocument(raw: string): unknown {
+  const normalized = raw.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+  return JSON.parse(normalized) as unknown;
+}
+
+export function generatePolicyBytes(rawEvidence: string, rawCandidates: string): string {
+  const evidence = parseToolCertificationEvidence(parseJsonDocument(rawEvidence));
+  const candidates = parseToolCertificationCandidates(parseJsonDocument(rawCandidates));
+  verifyCertificationCandidates(evidence, candidates, sha256NormalizedText(rawCandidates));
   return renderCanonicalDocument(generateToolExposurePolicy(evidence) as unknown as import("../capabilities/tool_certification.js").JsonValue);
 }
 
@@ -22,7 +31,14 @@ function runCli(): void {
   const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
   const inputPath = path.resolve(argument("--input") ?? path.join(backendRoot, "config", "tool_certification_evidence.v1.json"));
   const outputPath = path.resolve(argument("--output") ?? path.join(backendRoot, "config", "tool_exposure_policy.v1.json"));
-  const generated = generatePolicyBytes(fs.readFileSync(inputPath, "utf8"));
+  const rawEvidence = fs.readFileSync(inputPath, "utf8");
+  const evidence = parseToolCertificationEvidence(parseJsonDocument(rawEvidence));
+  const candidatePath = path.resolve(backendRoot, evidence.provenance.source);
+  const relativeCandidatePath = path.relative(backendRoot, candidatePath);
+  if (relativeCandidatePath.startsWith("..") || path.isAbsolute(relativeCandidatePath)) {
+    throw new Error(`Certification provenance escapes backend root: ${evidence.provenance.source}`);
+  }
+  const generated = generatePolicyBytes(rawEvidence, fs.readFileSync(candidatePath, "utf8"));
 
   if (process.argv.includes("--check")) {
     const current = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, "utf8").replace(/\r\n?/g, "\n") : "";

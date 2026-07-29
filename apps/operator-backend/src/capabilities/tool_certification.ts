@@ -6,6 +6,14 @@ export type CertificationLevel = typeof CERTIFICATION_LEVELS[number];
 export const EXPOSURE_CHANNELS = ["search", "generic_call", "typed_mcp", "deterministic_workflow"] as const;
 export type ExposureChannel = typeof EXPOSURE_CHANNELS[number];
 
+export const EVIDENCE_STATUSES = ["verified", "unknown", "stale", "revoked", "mismatched"] as const;
+export type EvidenceStatus = typeof EVIDENCE_STATUSES[number];
+
+export const TOOL_VISIBILITIES = ["candidate", "workflow_only"] as const;
+export type ToolVisibility = typeof TOOL_VISIBILITIES[number];
+
+const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
+
 export const CERTIFICATION_REASON_CODES = {
   certified: "CERTIFIED",
   missing: "CERT_EVIDENCE_MISSING",
@@ -25,13 +33,12 @@ export const CERTIFICATION_REASON_CODES = {
 } as const;
 
 export type CertificationReasonCode = typeof CERTIFICATION_REASON_CODES[keyof typeof CERTIFICATION_REASON_CODES];
-export type EvidenceStatus = "verified" | "unknown" | "stale" | "revoked" | "mismatched";
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
 export type CertificationEvidence = {
-  levels: (CertificationLevel | string)[];
-  state: EvidenceStatus | string;
+  levels: CertificationLevel[];
+  state: EvidenceStatus;
   provenance: string;
 };
 
@@ -41,11 +48,22 @@ export type ToolCertificationRecord = {
   request: JsonValue;
   effect: JsonValue;
   requested_channels: ExposureChannel[];
-  visibility: "candidate" | "workflow_only";
+  visibility: ToolVisibility;
   evidence: CertificationEvidence;
   request_hash: string;
   effect_hash: string;
   record_hash: string;
+};
+
+export type ToolCertificationCandidate = Pick<
+  ToolCertificationRecord,
+  "method" | "path" | "request_hash" | "effect_hash"
+>;
+
+export type ToolCertificationCandidatesFile = {
+  schema: "revit-operator.tool-certification-candidates.v1";
+  hash_algorithm: "sha256";
+  candidates: ToolCertificationCandidate[];
 };
 
 export type ToolCertificationEvidenceFile = {
@@ -72,7 +90,7 @@ export type ToolExposurePolicyRecord = {
   evidence_record_hash: string;
   highest_cumulative_level: CertificationLevel | null;
   observed_levels: CertificationLevel[];
-  visibility: "candidate" | "workflow_only";
+  visibility: ToolVisibility;
   channels: Record<ExposureChannel, ChannelDecision>;
   policy_record_hash: string;
 };
@@ -97,6 +115,88 @@ function normalizeString(value: string): string {
   return value.replace(/\r\n?/g, "\n").normalize("NFC");
 }
 
+function ordinalCompare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function assertPlainObject(value: unknown, location: string): asserts value is Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${location} must be an object`);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new Error(`${location} must be a plain object`);
+  }
+}
+
+function assertExactKeys(value: Record<string, unknown>, expected: readonly string[], location: string): void {
+  const expectedSet = new Set(expected);
+  for (const key of Object.keys(value)) {
+    if (!expectedSet.has(key)) throw new Error(`${location} contains unknown field: ${key}`);
+  }
+  for (const key of expected) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) throw new Error(`${location} is missing field: ${key}`);
+  }
+}
+
+function assertString(value: unknown, location: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) throw new Error(`${location} must be a nonempty string`);
+}
+
+function assertArray(value: unknown, location: string): asserts value is unknown[] {
+  if (!Array.isArray(value)) throw new Error(`${location} must be an array`);
+}
+
+function assertEnum<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  location: string
+): asserts value is T {
+  if (typeof value !== "string" || !(allowed as readonly string[]).includes(value)) {
+    throw new Error(`${location} has unsupported value: ${String(value)}`);
+  }
+}
+
+function assertSha256(value: unknown, location: string): asserts value is string {
+  if (typeof value !== "string" || !/^sha256:[0-9a-f]{64}$/.test(value)) {
+    throw new Error(`${location} must be a lowercase sha256 digest`);
+  }
+}
+
+function assertRepositorySource(value: unknown, location: string): asserts value is string {
+  assertString(value, location);
+  if (
+    value !== normalizeString(value)
+    || value.includes("\\")
+    || value.startsWith("/")
+    || /^[A-Za-z]:/.test(value)
+    || value.split("/").some(part => part === "" || part === "." || part === "..")
+    || !/^config\/[A-Za-z0-9._/-]+\.json$/.test(value)
+  ) {
+    throw new Error(`${location} must be a canonical repository-relative config JSON path`);
+  }
+}
+
+function normalizedObjectEntries(
+  value: Record<string, unknown>,
+  location: string
+): Array<[string, unknown]> {
+  const normalized = new Map<string, { original: string; value: unknown }>();
+  for (const [key, item] of Object.entries(value)) {
+    const normalizedKey = normalizeString(key);
+    const prior = normalized.get(normalizedKey);
+    if (prior) {
+      throw new Error(
+        `${location} contains NFC-normalized key collision: ${JSON.stringify(prior.original)} and ${JSON.stringify(key)}`
+      );
+    }
+    normalized.set(normalizedKey, { original: key, value: item });
+  }
+  return [...normalized.entries()]
+    .sort(([left], [right]) => ordinalCompare(left, right))
+    .map(([key, item]) => [key, item.value]);
+}
+
 function assertJsonValue(value: unknown, location = "value"): asserts value is JsonValue {
   if (value === null || typeof value === "string" || typeof value === "boolean") return;
   if (typeof value === "number") {
@@ -108,7 +208,8 @@ function assertJsonValue(value: unknown, location = "value"): asserts value is J
     return;
   }
   if (typeof value === "object") {
-    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    assertPlainObject(value, location);
+    for (const [key, item] of normalizedObjectEntries(value, location)) {
       if (item === undefined) throw new Error(`${location}.${key} is undefined`);
       assertJsonValue(item, `${location}.${key}`);
     }
@@ -121,11 +222,10 @@ function canonicalValue(value: JsonValue): JsonValue {
   if (typeof value === "string") return normalizeString(value);
   if (Array.isArray(value)) return value.map(canonicalValue);
   if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.keys(value)
-        .sort((left, right) => left.localeCompare(right, "en"))
-        .map(key => [normalizeString(key), canonicalValue(value[key]!)])
-    );
+    return Object.fromEntries(normalizedObjectEntries(value, "value").map(([key, item]) => [
+      key,
+      canonicalValue(item as JsonValue)
+    ]));
   }
   return value;
 }
@@ -141,13 +241,17 @@ export function sha256(value: JsonValue): string {
 
 export function normalizeMethod(method: string): string {
   const normalized = method.trim().toUpperCase();
-  if (!/^[A-Z]+$/.test(normalized)) throw new Error(`Invalid HTTP method: ${method}`);
+  if (!(HTTP_METHODS as readonly string[]).includes(normalized)) throw new Error(`Invalid HTTP method: ${method}`);
   return normalized;
 }
 
 export function normalizeToolPath(toolPath: string): string {
   const normalized = toolPath.trim().replace(/\\/g, "/").replace(/\/{2,}/g, "/");
-  if (!normalized.startsWith("/revit/") || normalized.includes("?") || (normalized.length > 1 && normalized.endsWith("/"))) {
+  if (
+    !/^\/revit\/[A-Za-z0-9][A-Za-z0-9._~/-]*$/.test(normalized)
+    || normalized.endsWith("/")
+    || normalized.split("/").some(part => part === "." || part === "..")
+  ) {
     throw new Error(`Invalid exact Revit tool path: ${toolPath}`);
   }
   return normalized;
@@ -161,13 +265,173 @@ export function computeEffectHash(effect: JsonValue): string {
   return sha256({ effect: canonicalValue(effect) });
 }
 
+function assertCanonicalMethod(value: unknown, location: string): asserts value is string {
+  assertString(value, location);
+  const normalized = normalizeMethod(value);
+  if (normalized !== value) throw new Error(`${location} must use canonical HTTP method spelling`);
+}
+
+function assertCanonicalToolPath(value: unknown, location: string): asserts value is string {
+  assertString(value, location);
+  const normalized = normalizeToolPath(value);
+  if (normalized !== value) throw new Error(`${location} must use a canonical exact Revit tool path`);
+}
+
+function assertUniqueEnumArray<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  location: string,
+  requireCanonicalOrder = false
+): asserts value is T[] {
+  assertArray(value, location);
+  const seen = new Set<T>();
+  let previousIndex = -1;
+  value.forEach((item, index) => {
+    assertEnum(item, allowed, `${location}[${index}]`);
+    if (seen.has(item)) throw new Error(`${location} contains duplicate value: ${item}`);
+    const currentIndex = allowed.indexOf(item);
+    if (requireCanonicalOrder && currentIndex <= previousIndex) {
+      throw new Error(`${location} must follow canonical order`);
+    }
+    previousIndex = currentIndex;
+    seen.add(item);
+  });
+}
+
+function parseCertificationRecord(
+  value: unknown,
+  source: string,
+  location: string
+): ToolCertificationRecord {
+  assertPlainObject(value, location);
+  assertExactKeys(value, [
+    "method",
+    "path",
+    "request",
+    "effect",
+    "requested_channels",
+    "visibility",
+    "evidence",
+    "request_hash",
+    "effect_hash",
+    "record_hash"
+  ], location);
+  assertCanonicalMethod(value.method, `${location}.method`);
+  assertCanonicalToolPath(value.path, `${location}.path`);
+  assertJsonValue(value.request, `${location}.request`);
+  assertJsonValue(value.effect, `${location}.effect`);
+  assertUniqueEnumArray(value.requested_channels, EXPOSURE_CHANNELS, `${location}.requested_channels`);
+  assertEnum(value.visibility, TOOL_VISIBILITIES, `${location}.visibility`);
+  assertPlainObject(value.evidence, `${location}.evidence`);
+  assertExactKeys(value.evidence, ["levels", "state", "provenance"], `${location}.evidence`);
+  assertUniqueEnumArray(value.evidence.levels, CERTIFICATION_LEVELS, `${location}.evidence.levels`, true);
+  assertEnum(value.evidence.state, EVIDENCE_STATUSES, `${location}.evidence.state`);
+  assertRepositorySource(value.evidence.provenance, `${location}.evidence.provenance`);
+  if (value.evidence.provenance !== source) {
+    throw new Error(`${location}.evidence.provenance must match evidence file provenance.source`);
+  }
+  assertSha256(value.request_hash, `${location}.request_hash`);
+  assertSha256(value.effect_hash, `${location}.effect_hash`);
+  assertSha256(value.record_hash, `${location}.record_hash`);
+  return value as unknown as ToolCertificationRecord;
+}
+
+export function parseToolCertificationEvidence(value: unknown): ToolCertificationEvidenceFile {
+  assertPlainObject(value, "evidence");
+  assertExactKeys(value, ["schema", "hash_algorithm", "provenance", "records"], "evidence");
+  assertEnum(value.schema, ["revit-operator.tool-certification-evidence.v1"] as const, "evidence.schema");
+  assertEnum(value.hash_algorithm, ["sha256"] as const, "evidence.hash_algorithm");
+  assertPlainObject(value.provenance, "evidence.provenance");
+  assertExactKeys(value.provenance, ["source", "source_hash"], "evidence.provenance");
+  assertRepositorySource(value.provenance.source, "evidence.provenance.source");
+  assertSha256(value.provenance.source_hash, "evidence.provenance.source_hash");
+  const provenance = {
+    source: value.provenance.source,
+    source_hash: value.provenance.source_hash
+  };
+  assertArray(value.records, "evidence.records");
+  if (value.records.length === 0) throw new Error("evidence.records must not be empty");
+  const records = value.records.map((record, index) =>
+    parseCertificationRecord(record, provenance.source, `evidence.records[${index}]`)
+  );
+  return {
+    schema: value.schema,
+    hash_algorithm: value.hash_algorithm,
+    provenance,
+    records
+  };
+}
+
+export function parseToolCertificationCandidates(value: unknown): ToolCertificationCandidatesFile {
+  assertPlainObject(value, "candidates");
+  assertExactKeys(value, ["schema", "hash_algorithm", "candidates"], "candidates");
+  assertEnum(value.schema, ["revit-operator.tool-certification-candidates.v1"] as const, "candidates.schema");
+  assertEnum(value.hash_algorithm, ["sha256"] as const, "candidates.hash_algorithm");
+  assertArray(value.candidates, "candidates.candidates");
+  if (value.candidates.length === 0) throw new Error("candidates.candidates must not be empty");
+  const identities = new Set<string>();
+  const candidates = value.candidates.map((candidate, index) => {
+    const location = `candidates.candidates[${index}]`;
+    assertPlainObject(candidate, location);
+    assertExactKeys(candidate, ["method", "path", "request_hash", "effect_hash"], location);
+    assertCanonicalMethod(candidate.method, `${location}.method`);
+    assertCanonicalToolPath(candidate.path, `${location}.path`);
+    assertSha256(candidate.request_hash, `${location}.request_hash`);
+    assertSha256(candidate.effect_hash, `${location}.effect_hash`);
+    const parsed = candidate as unknown as ToolCertificationCandidate;
+    const identity = certificationIdentity(parsed);
+    if (identities.has(identity)) throw new Error(`Duplicate candidate identity: ${identity}`);
+    identities.add(identity);
+    return parsed;
+  });
+  return { schema: value.schema, hash_algorithm: value.hash_algorithm, candidates };
+}
+
+function certificationIdentity(
+  value: Pick<ToolCertificationRecord, "method" | "path" | "request_hash" | "effect_hash">
+): string {
+  return canonicalJson({
+    method: value.method,
+    path: value.path,
+    request_hash: value.request_hash,
+    effect_hash: value.effect_hash
+  });
+}
+
+export function sha256NormalizedText(value: string): string {
+  const normalized = value.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+  return `sha256:${createHash("sha256").update(normalized, "utf8").digest("hex")}`;
+}
+
+export function verifyCertificationCandidates(
+  evidence: ToolCertificationEvidenceFile,
+  candidates: ToolCertificationCandidatesFile,
+  candidateSourceHash: string
+): void {
+  assertSha256(candidateSourceHash, "candidate source hash");
+  if (evidence.provenance.source_hash !== candidateSourceHash) {
+    throw new Error("Certification candidate source hash does not match evidence provenance");
+  }
+  const expected = new Set(candidates.candidates.map(certificationIdentity));
+  const actual = new Set(evidence.records.map(certificationIdentity));
+  if (expected.size !== actual.size) {
+    throw new Error(`Certification candidate identity count mismatch: expected ${expected.size}, received ${actual.size}`);
+  }
+  for (const identity of expected) {
+    if (!actual.has(identity)) throw new Error(`Certification candidate identity missing or replaced: ${identity}`);
+  }
+  for (const identity of actual) {
+    if (!expected.has(identity)) throw new Error(`Unexpected certification candidate identity: ${identity}`);
+  }
+}
+
 function recordHashPayload(record: Omit<ToolCertificationRecord, "record_hash">): JsonValue {
   return {
     method: normalizeMethod(record.method),
     path: normalizeToolPath(record.path),
     request: canonicalValue(record.request),
     effect: canonicalValue(record.effect),
-    requested_channels: [...record.requested_channels].sort(),
+    requested_channels: [...record.requested_channels].sort(ordinalCompare),
     visibility: record.visibility,
     evidence: {
       levels: record.evidence.levels.map(normalizeString),
@@ -287,17 +551,14 @@ function policyRecordHashPayload(record: Omit<ToolExposurePolicyRecord, "policy_
   return record as unknown as JsonValue;
 }
 
-export function generateToolExposurePolicy(evidenceFile: ToolCertificationEvidenceFile): ToolExposurePolicy {
-  if (evidenceFile.schema !== "revit-operator.tool-certification-evidence.v1") throw new Error("Unsupported evidence schema");
-  if (evidenceFile.hash_algorithm !== "sha256") throw new Error("Unsupported evidence hash algorithm");
+export function generateToolExposurePolicy(input: ToolCertificationEvidenceFile | unknown): ToolExposurePolicy {
+  const evidenceFile = parseToolCertificationEvidence(input);
 
   const identities = new Set<string>();
   const records = evidenceFile.records.map(record => {
-    const method = normalizeMethod(record.method);
-    const toolPath = normalizeToolPath(record.path);
-    assertJsonValue(record.request, "request");
-    assertJsonValue(record.effect, "effect");
-    const identity = `${method} ${toolPath} ${record.request_hash} ${record.effect_hash}`;
+    const method = record.method;
+    const toolPath = record.path;
+    const identity = certificationIdentity(record);
     if (identities.has(identity)) throw new Error(`Duplicate certification identity: ${identity}`);
     identities.add(identity);
 
@@ -319,8 +580,11 @@ export function generateToolExposurePolicy(evidenceFile: ToolCertificationEviden
     };
     return { ...base, policy_record_hash: sha256(policyRecordHashPayload(base)) };
   }).sort((left, right) => {
-    const keyOrder = `${left.method} ${left.path} ${left.request_hash}`.localeCompare(`${right.method} ${right.path} ${right.request_hash}`, "en");
-    return keyOrder || left.effect_hash.localeCompare(right.effect_hash, "en");
+    const keyOrder = ordinalCompare(
+      `${left.method} ${left.path} ${left.request_hash}`,
+      `${right.method} ${right.path} ${right.request_hash}`
+    );
+    return keyOrder || ordinalCompare(left.effect_hash, right.effect_hash);
   });
 
   const base: Omit<ToolExposurePolicy, "policy_hash"> = {
