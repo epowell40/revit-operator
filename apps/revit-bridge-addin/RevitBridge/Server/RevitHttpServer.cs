@@ -514,7 +514,9 @@ namespace RevitBridge.Server
                     object result;
                     if (IsDirectDialogComputerUsePath(path) || IsDirectControlPlanePath(path))
                     {
-                        result = await handler.Handle(null!, body);
+                        result = handler is NativeApiPolicyHandler nativeApiPolicyHandler
+                            ? await nativeApiPolicyHandler.HandleForMethod(null!, body, req.HttpMethod)
+                            : await handler.Handle(null!, body);
                     }
                     else
                     {

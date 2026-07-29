@@ -322,7 +322,9 @@ namespace RevitBridge.Operator
             // payload repair remain responsive while a model operation is pending.
             if (IsDirectControlPlanePath(path))
             {
-                return await handler.Handle(null!, jsonBody).ConfigureAwait(false);
+                return handler is NativeApiPolicyHandler nativeApiPolicyHandler
+                    ? await nativeApiPolicyHandler.HandleForMethod(null!, jsonBody, method).ConfigureAwait(false)
+                    : await handler.Handle(null!, jsonBody).ConfigureAwait(false);
             }
 
             var dialogComputerUse = App.Instance?.DialogComputerUse;
