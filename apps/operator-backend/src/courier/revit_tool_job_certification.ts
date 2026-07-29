@@ -136,19 +136,25 @@ function exactKeys(value: Record<string, unknown>, required: readonly string[], 
   }
 }
 
-function boundedText(value: unknown, location: string, max: number, allowNull = false): string | null {
+function boundedSafeText(value: unknown, location: string, max: number, allowNull = false): string | null {
   if (value === null && allowNull) return null;
-  if (typeof value !== "string" || value.length > max || value.includes("\u0000") || /[\r\n]/.test(value)) {
+  if (typeof value !== "string" || value.length > max || /[\u0000-\u001F\u007F-\u009F]/.test(value)) {
     throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", `${location} is invalid.`);
   }
   return value;
 }
 
-function requiredId(value: unknown, location: string): string {
-  const text = boundedText(value, location, 200);
+function requiredAsciiId(value: unknown, location: string): string {
+  const text = boundedSafeText(value, location, 200);
   if (!text || !/^[A-Za-z0-9._:-]+$/.test(text)) {
     throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", `${location} is invalid.`);
   }
+  return text;
+}
+
+function requiredContextIdentity(value: unknown, location: string): string {
+  const text = boundedSafeText(value, location, 200);
+  if (!text) throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", `${location} is invalid.`);
   return text;
 }
 
@@ -219,7 +225,7 @@ function parseEnvelope(value: unknown, job: Record<string, unknown>): RevitCouri
   if (!(CHANNELS as readonly string[]).includes(String(envelope.channel))) {
     throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", "Certification envelope has an unsupported exposure channel.");
   }
-  const alias = boundedText(envelope.alias, "certification_envelope.alias", 160);
+  const alias = boundedSafeText(envelope.alias, "certification_envelope.alias", 160);
   if (!alias || !ALIAS.test(alias)) throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", "Certification envelope alias is invalid.");
   if (envelope.channel === "generic_call" && alias !== "revit_call_tool") {
     throw new RevitCourierCertificationError("CERTIFICATION_JOB_MISMATCH", "Generic certified courier job is not bound to revit_call_tool.");
@@ -237,7 +243,7 @@ function parseEnvelope(value: unknown, job: Record<string, unknown>): RevitCouri
       : null;
     if (!workflow) throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", "Certification workflow is invalid.");
   }
-  const runtimeMode = boundedText(envelope.runtime_mode, "certification_envelope.runtime_mode", 80);
+  const runtimeMode = boundedSafeText(envelope.runtime_mode, "certification_envelope.runtime_mode", 80);
   if (!runtimeMode || runtimeMode !== normalizeRuntimeMode(runtimeMode)) {
     throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", "Certification runtime mode is not canonical.");
   }
@@ -272,12 +278,12 @@ export function parseCertifiedCourierJobV2(value: unknown): CertifiedCourierJobV
   if (own(job, "turn_token")) {
     throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", "Certified courier jobs must not persist a raw turn token.");
   }
-  const id = requiredId(job.id, "courier job id");
+  const id = requiredAsciiId(job.id, "courier job id");
   if (!ID.test(id) || job.correlation_id !== id || job.idempotency_key !== id) {
     throw new RevitCourierCertificationError("CERTIFICATION_JOB_MISMATCH", "Certified courier job id, correlation id, and idempotency key must be the same SHA-256 identity.");
   }
-  const sessionId = requiredId(job.session_id, "courier session_id");
-  const messageId = boundedText(job.message_id, "courier message_id", 200, true);
+  const sessionId = requiredContextIdentity(job.session_id, "courier session_id");
+  const messageId = boundedSafeText(job.message_id, "courier message_id", 200, true);
   const turnTokenHash = requiredHash(job.turn_token_sha256, "courier turn_token_sha256", true);
   const method = String(job.method ?? "");
   if ((method !== "GET" && method !== "POST") || normalizeMethod(method) !== method) {
@@ -287,12 +293,12 @@ export function parseCertifiedCourierJobV2(value: unknown): CertifiedCourierJobV
   if (!toolPath.startsWith("/revit/") || normalizeToolPath(toolPath) !== toolPath) {
     throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", "Certified courier path is not canonical.");
   }
-  const targetExecutorId = boundedText(job.target_executor_id, "courier target_executor_id", 200, true);
-  if (targetExecutorId !== null && (!targetExecutorId || !/^[A-Za-z0-9._:-]+$/.test(targetExecutorId))) {
+  const targetExecutorId = boundedSafeText(job.target_executor_id, "courier target_executor_id", 200, true);
+  if (targetExecutorId !== null && !targetExecutorId) {
     throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", "Courier target executor is invalid.");
   }
-  const targetTitle = boundedText(job.target_document_title, "courier target_document_title", 500, true);
-  const targetPath = boundedText(job.target_document_path, "courier target_document_path", 2000, true);
+  const targetTitle = boundedSafeText(job.target_document_title, "courier target_document_title", 500, true);
+  const targetPath = boundedSafeText(job.target_document_path, "courier target_document_path", 2000, true);
   if (typeof job.body_present !== "boolean" || typeof job.body_json !== "string") {
     throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", "Certified courier raw body contract is invalid.");
   }
@@ -482,7 +488,7 @@ function policyAllowsEnvelope(policy: ToolExposurePolicy, trustSource: "bundled"
 /** Revalidates the persisted v2 envelope against the current trusted policy immediately before Revit execution. */
 export function authorizeCertifiedCourierFinalExecution(value: unknown, executorId: string): CertifiedCourierFinalAuthorization {
   const job = parseCertifiedCourierJobV2(value);
-  const executor = requiredId(executorId, "executor_id");
+  const executor = requiredContextIdentity(executorId, "executor_id");
   if (job.target_executor_id && job.target_executor_id !== executor) {
     throw new RevitCourierCertificationError("CERTIFICATION_EXECUTOR_MISMATCH", "Certified courier job target executor does not match the claiming workstation.");
   }

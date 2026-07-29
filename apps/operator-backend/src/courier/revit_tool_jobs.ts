@@ -76,6 +76,13 @@ function safeId(value: unknown, field: string, max = 200): string {
   return text;
 }
 
+/** Session/executor identities are producer-provided Unicode text, not ASCII ids. */
+function safeContextIdentity(value: unknown, field: string, max = 200): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text || text.length > max || /[\u0000-\u001F\u007F-\u009F]/.test(text)) throw new Error(`${field} is invalid.`);
+  return text;
+}
+
 function jobDir(jobId: string): string {
   return path.join(jobsRoot(), safeId(jobId, "job_id"));
 }
@@ -233,8 +240,8 @@ function enumerateJobIds(): string[] {
 export function claimNextRevitToolJob(input: ClaimInput): { job: RevitToolJob | null } {
   const sessionId = input.session_id == null || `${input.session_id}`.trim() === ""
     ? null
-    : safeId(input.session_id, "session_id");
-  const executorId = safeId(input.executor_id, "executor_id");
+    : safeContextIdentity(input.session_id, "session_id");
+  const executorId = safeContextIdentity(input.executor_id, "executor_id");
   const now = Date.now();
   const candidates = enumerateJobIds()
     .map(id => readJob(id))
@@ -305,9 +312,9 @@ export function claimNextRevitToolJob(input: ClaimInput): { job: RevitToolJob | 
 }
 
 function requireClaimedJob(input: FinishInput): RevitToolJob {
-  const sessionId = safeId(input.session_id, "session_id");
+  const sessionId = safeContextIdentity(input.session_id, "session_id");
   const jobId = safeId(input.job_id, "job_id");
-  const executorId = safeId(input.executor_id, "executor_id");
+  const executorId = safeContextIdentity(input.executor_id, "executor_id");
   const job = readJob(jobId);
   if (!job) throw new Error("Revit courier job was not found.");
   if (job.session_id !== sessionId) throw new Error("Revit courier session mismatch.");
@@ -346,9 +353,9 @@ export function failRevitToolJob(input: FinishInput): RevitToolJob {
  * receipt so a restart or another worker can never re-claim the operation.
  */
 export function authorizeRevitToolJobExecution(input: AuthorizeInput): { job: RevitToolJob; authorization: CertifiedCourierFinalAuthorization } {
-  const sessionId = safeId(input.session_id, "session_id");
+  const sessionId = safeContextIdentity(input.session_id, "session_id");
   const jobId = safeId(input.job_id, "job_id");
-  const executorId = safeId(input.executor_id, "executor_id");
+  const executorId = safeContextIdentity(input.executor_id, "executor_id");
   const job = readJob(jobId);
   if (!job) throw new Error("Revit courier job was not found.");
   if (job.session_id !== sessionId) throw new Error("Revit courier session mismatch.");
@@ -364,6 +371,24 @@ export function authorizeRevitToolJobExecution(input: AuthorizeInput): { job: Re
     throw new Error("Legacy Revit courier jobs do not have a certified final-execution authorization receipt.");
   }
   try {
+    // This endpoint is called immediately before the workstation creates its
+    // Revit action. These expiry failures are therefore known not to have
+    // reached Revit and must not be mislabeled as outcome-unknown leases.
+    const now = Date.now();
+    const jobExpiresAt = Date.parse(job.expires_at);
+    if (!Number.isFinite(jobExpiresAt) || jobExpiresAt <= now) {
+      throw new RevitCourierCertificationError(
+        "CERTIFICATION_FINAL_JOB_EXPIRED",
+        "Certified courier job expired before final execution authorization; no Revit call was made."
+      );
+    }
+    const leaseExpiresAt = Date.parse(job.claim?.lease_expires_at ?? "");
+    if (!Number.isFinite(leaseExpiresAt) || leaseExpiresAt <= now) {
+      throw new RevitCourierCertificationError(
+        "CERTIFICATION_FINAL_CLAIM_LEASE_EXPIRED",
+        "Certified courier claim lease expired before final execution authorization; no Revit call was made."
+      );
+    }
     const authorization = authorizeCertifiedCourierFinalExecution(job, executorId);
     return { job, authorization };
   } catch (error) {
