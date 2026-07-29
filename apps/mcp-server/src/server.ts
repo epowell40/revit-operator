@@ -91,13 +91,51 @@ const server = new McpServer({
 ensureWorkspaceLayout();
 
 // Audit logging wrapper for ALL MCP tools.
+//
+// Certified tools/list is fail-closed for every registered alias. The only
+// non-policy exception is this explicit local/diagnostic allowlist. In
+// particular, a naming convention (including the absence of a revit_ prefix)
+// is never sufficient to make a tool model-visible.
+const CERTIFIED_SAFE_NON_REVIT_TOOL_ALIASES = new Set([
+  "audit_lpd",
+  "check_photometrics",
+  "fire_damper_audit",
+  "operator_plan_semantic_mep_route",
+  "operator_runtime_probe",
+  "print_sheets",
+  "read_excel",
+  "read_pdf_text",
+  "read_word",
+  "validate_ies_files",
+  "web_fetch_evidence",
+  "workspace_pdf_merge",
+  "workspace_pdf_reorder",
+  "workspace_rename_file",
+  "write_excel"
+]);
+
+function isRegisteredMcpToolExposed(name: string): boolean {
+  if (!isCertifiedToolExposureMode()) return true;
+  if (CERTIFIED_SAFE_NON_REVIT_TOOL_ALIASES.has(name)) return true;
+  if (name.startsWith("revit_")) return isMcpToolAliasExposed(name);
+  try {
+    const { policy } = loadToolExposurePolicy();
+    const records = policy.records.filter(record => record.typed_mcp_aliases.includes(name));
+    return records.length > 0 && records.every(record =>
+      record.visibility !== "workflow_only" && record.channels.typed_mcp.exposed
+    );
+  } catch {
+    return false;
+  }
+}
+
 function bindDynamicToolExposure(name: string, registeredTool: any): any {
-  if (!name.startsWith("revit_") || !registeredTool || typeof registeredTool !== "object") return registeredTool;
+  if (!registeredTool || typeof registeredTool !== "object") return registeredTool;
   let locallyEnabled = registeredTool.enabled !== false;
   Object.defineProperty(registeredTool, "enabled", {
     configurable: true,
     enumerable: true,
-    get: () => locallyEnabled && isMcpToolAliasExposed(name),
+    get: () => locallyEnabled && isRegisteredMcpToolExposed(name),
     set: (value: unknown) => { locallyEnabled = value !== false; }
   });
   return registeredTool;
@@ -160,6 +198,17 @@ function registerAuditedZodTool(name: string, description: string, inputSchema: 
 registerSemanticMepRouteTool((name, description, inputSchema, handler) =>
   registerAuditedZodTool(name, description, inputSchema, async (args) => await handler(args as any))
 );
+
+// Test-only registration exercises the registerTool interception path. It is
+// deliberately not a certified-safe alias and must remain hidden unless a
+// future policy explicitly binds and exposes it.
+if (process.env.OPERATOR_TEST_REGISTER_UNBOUND_MCP_ALIAS === "1") {
+  (server as any).registerTool(
+    "operator_test_unbound_mcp_alias",
+    { description: "Test-only unbound MCP alias.", inputSchema: {} },
+    async () => ({ content: [{ type: "text", text: "test-only" }] })
+  );
+}
 
 // --- Revit Tools ---
 

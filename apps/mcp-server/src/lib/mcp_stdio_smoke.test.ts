@@ -12,6 +12,23 @@ const certifiedPolicyPath = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
   ? path.resolve(process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH)
   : path.resolve(process.cwd(), "../operator-backend/config/tool_exposure_policy.v1.json");
 const certifiedPolicyHash = (JSON.parse(fs.readFileSync(certifiedPolicyPath, "utf8")) as { policy_hash: string }).policy_hash;
+const certifiedSafeNonRevitAliases = [
+  "audit_lpd",
+  "check_photometrics",
+  "fire_damper_audit",
+  "operator_plan_semantic_mep_route",
+  "operator_runtime_probe",
+  "print_sheets",
+  "read_excel",
+  "read_pdf_text",
+  "read_word",
+  "validate_ies_files",
+  "web_fetch_evidence",
+  "workspace_pdf_merge",
+  "workspace_pdf_reorder",
+  "workspace_rename_file",
+  "write_excel"
+].sort();
 
 function smokeCanonical(value: unknown): unknown {
   if (typeof value === "string") return value.replace(/\r\n?/g, "\n").normalize("NFC");
@@ -214,6 +231,9 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
 
   const tools = await withTimeout(client.listTools(), "listing MCP tools");
   const names = new Set(tools.tools.map((tool) => tool.name));
+  assert.equal(tools.tools.length, 122, "Laboratory mode must preserve the complete legacy catalog.");
+  assert.equal([...names].filter(name => name.startsWith("revit_")).length, 106, "Laboratory mode must preserve all legacy revit_ aliases.");
+  assert.equal(names.has("titleblock_update_text"), true, "Laboratory mode must preserve the legacy non-revit bridge alias.");
   for (const name of [
     "operator_runtime_probe",
     "operator_plan_semantic_mep_route",
@@ -363,7 +383,8 @@ test("MCP stdio certified mode keeps diagnostics available and blocks every Revi
       OPERATOR_WORKSPACE_ROOT: workspace,
       REVIT_OPERATOR_MODE: "hosted",
       OPERATOR_TOOL_EXPOSURE_POLICY_PATH: certifiedPolicyPath,
-      OPERATOR_TOOL_EXPOSURE_POLICY_SHA256: certifiedPolicyHash
+      OPERATOR_TOOL_EXPOSURE_POLICY_SHA256: certifiedPolicyHash,
+      OPERATOR_TEST_REGISTER_UNBOUND_MCP_ALIAS: "1"
     },
     stderr: "pipe"
   });
@@ -393,13 +414,17 @@ test("MCP stdio certified mode keeps diagnostics available and blocks every Revi
   assert.match(probeText, /"trustSource": "deployment"/);
 
   const listed = await withTimeout(client.listTools(), "listing certified MCP tools");
-  const listedNames = listed.tools.map(tool => tool.name);
+  const listedNames = listed.tools.map(tool => tool.name).sort();
   assert.equal(listedNames.includes("operator_runtime_probe"), true);
+  assert.deepEqual(listedNames, certifiedSafeNonRevitAliases, "Certified tools/list must expose exactly the declared safe local/diagnostic aliases.");
+  assert.equal(listedNames.length, 15);
   assert.deepEqual(
     listedNames.filter(name => name.startsWith("revit_")),
     [],
     "No uncertified Revit schema may be model-visible in tools/list."
   );
+  assert.equal(listedNames.includes("titleblock_update_text"), false, "The non-revit bridge alias must not bypass certified visibility.");
+  assert.equal(listedNames.includes("operator_test_unbound_mcp_alias"), false, "An unbound alias registered through registerTool must fail closed.");
 
   const blockedCalls = [
     { name: "revit_ping", arguments: {} },
