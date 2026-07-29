@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>Revit Operator Safe Read Host</Name>
+    <Assembly>{{ASSEMBLY_PATH}}</Assembly>
+    <FullClassName>RevitOperator.SafeReadHost.App</FullClassName>
+    <AddInId>AAFAA2C0-43F1-42A0-A6B4-D9A0C5F5CE0E</AddInId>
+    <VendorId>BIMT</VendorId>
+    <VendorDescription>BIMTools Revit Operator Safe Read Host</VendorDescription>
+  </AddIn>
+</RevitAddIns>

@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net48;net8.0-windows</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>RevitOperator.SafeReadHost</AssemblyName>
+    <RootNamespace>RevitOperator.SafeReadHost</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+    <RevitYear Condition="'$(RevitYear)'=='' and '$(TargetFramework)'=='net48'">2024</RevitYear>
+    <RevitYear Condition="'$(RevitYear)'=='' and '$(TargetFramework)'=='net8.0-windows'">2025</RevitYear>
+    <RevitApiPath Condition="'$(RevitApiPath)'=='' and '$(RevitYear)'!=''">C:\Program Files\Autodesk\Revit $(RevitYear)</RevitApiPath>
+    <OutputPath>bin\Revit$(RevitYear)\$(Configuration)\</OutputPath>
+    <IntermediateOutputPath>obj\Revit$(RevitYear)\$(Configuration)\$(TargetFramework)\</IntermediateOutputPath>
+    <AppendTargetFrameworkToOutputPath>true</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)'=='net8.0-windows'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);MSB3277</MSBuildWarningsAsMessages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="RevitAPI">
+      <HintPath>$(RevitApiPath)\RevitAPI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath>$(RevitApiPath)\RevitAPIUI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="ValidateRevitSafeReadTarget" BeforeTargets="ResolveReferences">
+    <Error Condition="'$(TargetFramework)'=='net48' and '$(RevitYear)'!='2023' and '$(RevitYear)'!='2024'"
+           Text="net48 must be built with RevitYear=2023 or RevitYear=2024." />
+    <Error Condition="'$(TargetFramework)'=='net8.0-windows' and '$(RevitYear)'!='2025'"
+           Text="net8.0-windows must be built with RevitYear=2025." />
+    <Error Condition="!Exists('$(RevitApiPath)\RevitAPI.dll') or !Exists('$(RevitApiPath)\RevitAPIUI.dll')"
+           Text="Revit API assemblies were not found under $(RevitApiPath)." />
+  </Target>
+
+</Project>
