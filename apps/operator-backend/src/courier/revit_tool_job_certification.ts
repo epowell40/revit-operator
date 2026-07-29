@@ -182,8 +182,8 @@ function normalizeRuntimeMode(value: unknown): string {
 }
 
 export function isRevitCourierDevelopmentLaboratory(env: NodeJS.ProcessEnv = process.env): boolean {
-  return normalizeRuntimeMode(env.REVIT_OPERATOR_MODE) === "development"
-    && String(env.OPERATOR_TOOL_EXPOSURE_PROFILE ?? "").trim().toLowerCase() === "laboratory";
+  return env.REVIT_OPERATOR_MODE === "development"
+    && env.OPERATOR_TOOL_EXPOSURE_PROFILE === "laboratory";
 }
 
 function assertCurrentCertifiedRuntime(envelope: RevitCourierCertificationEnvelope): void {

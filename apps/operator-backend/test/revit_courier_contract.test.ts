@@ -171,23 +171,53 @@ function writeCertifiedV2Job(
   return id;
 }
 
-test("legacy v1 courier jobs terminal-deny by default and only claim in the explicit development laboratory", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-v1-certification-"));
-  process.env.OPERATOR_WORKSPACE_ROOT = root;
-  process.env.REVIT_OPERATOR_MODE = "local";
-  delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
-  const deniedId = writeJob(root);
-  assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job, null);
-  const denied = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", deniedId, "result.json"), "utf8"));
-  assert.equal(denied.status, "failed");
-  assert.equal(denied.retryable, false);
-  assert.equal(denied.phase, "certification_final_execution");
-  assert.equal(denied.outcome_unknown, false);
+test("legacy v1 courier escape requires exact ordinal development laboratory environment values", () => {
+  const deniedRuntimes = [
+    { label: "default local", mode: "local", profile: undefined },
+    { label: "local laboratory", mode: "local", profile: "laboratory" },
+    { label: "hosted laboratory", mode: "hosted", profile: "laboratory" },
+    { label: "mode case variant", mode: "Development", profile: "laboratory" },
+    { label: "mode leading whitespace", mode: " development", profile: "laboratory" },
+    { label: "mode trailing whitespace", mode: "development ", profile: "laboratory" },
+    { label: "profile case variant", mode: "development", profile: "Laboratory" },
+    { label: "profile leading whitespace", mode: "development", profile: " laboratory" },
+    { label: "profile trailing whitespace", mode: "development", profile: "laboratory " }
+  ] as const;
 
+  for (const runtime of deniedRuntimes) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-v1-certification-denied-"));
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    process.env.REVIT_OPERATOR_MODE = runtime.mode;
+    if (runtime.profile === undefined) delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+    else process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = runtime.profile;
+
+    const deniedId = writeJob(root);
+    assert.equal(
+      claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job,
+      null,
+      runtime.label
+    );
+    const denied = JSON.parse(fs.readFileSync(
+      path.join(root, "artifacts", "revit-courier", "jobs", deniedId, "result.json"),
+      "utf8"
+    ));
+    assert.equal(denied.status, "failed", runtime.label);
+    assert.equal(denied.code, "CERTIFICATION_LEGACY_V1_DENIED", runtime.label);
+    assert.equal(denied.retryable, false, runtime.label);
+    assert.equal(denied.phase, "certification_final_execution", runtime.label);
+    assert.equal(denied.outcome_unknown, false, runtime.label);
+  }
+
+  const allowedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-v1-certification-allowed-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = allowedRoot;
   process.env.REVIT_OPERATOR_MODE = "development";
   process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = "laboratory";
-  const allowedId = writeJob(root);
-  assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job?.id, allowedId);
+  const allowedId = writeJob(allowedRoot);
+  assert.equal(
+    claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job?.id,
+    allowedId,
+    "exact development laboratory"
+  );
 });
 
 test("v2 courier claim and final authorization bind the raw body, session, executor, target, and current pinned policy", () => {
