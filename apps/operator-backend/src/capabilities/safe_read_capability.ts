@@ -4,7 +4,14 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RequestPrincipal } from "../request_context.js";
+import { isHostedRuntime } from "../runtime_mode.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
+import {
+  hostedAttestationConfigPresent,
+  loadHostedSafeReadAttestation,
+  SafeReadAttestationAuthorityError,
+  type HostedAttestationSelection
+} from "./safe_read_attestation_authority.js";
 import { canonicalJson, sha256, type JsonValue } from "./tool_certification.js";
 
 export const SAFE_READ_ROUTE_ID = "safe_read.sheet_count.v1";
@@ -239,6 +246,12 @@ type CapabilityRow = {
   state: "preauthorized" | "consumed";
 };
 
+type LoadedAttestation = {
+  manifest: RuntimeAttestation;
+  sha256: string;
+  hosted?: HostedAttestationSelection;
+};
+
 function fail(
   code: string,
   message: string,
@@ -380,8 +393,8 @@ function parseUtc(value: unknown, location: string): { source: string; ms: numbe
 }
 
 function parseAttestation(value: unknown): RuntimeAttestation {
-  const manifest = asObject(value, "SafeRead runtime attestation");
   try {
+    const manifest = asObject(value, "SafeRead runtime attestation");
     exactOrderedKeys(manifest, ATTESTATION_KEYS, "SafeRead runtime attestation");
     if (manifest.schema !== SAFE_READ_RUNTIME_ATTESTATION_SCHEMA) throw new Error("schema");
     if (manifest.state !== "active" && manifest.state !== "revoked") throw new Error("state");
@@ -522,6 +535,12 @@ export class SafeReadCapabilityService {
         UNIQUE(principal_scope, client_session_id, request_id, attempt_id)
       );
       CREATE INDEX IF NOT EXISTS idx_safe_read_expiry ON safe_read_capabilities(state, expires_at_ms);
+      CREATE TABLE IF NOT EXISTS safe_read_attestation_high_water (
+        authority_id TEXT PRIMARY KEY,
+        set_sequence INTEGER NOT NULL,
+        set_sha256 TEXT NOT NULL,
+        accepted_at_ms INTEGER NOT NULL
+      );
     `);
   }
 
@@ -529,7 +548,30 @@ export class SafeReadCapabilityService {
     this.db.close();
   }
 
-  private loadAttestation(): { manifest: RuntimeAttestation; sha256: string } {
+  private loadAttestation(request: Pick<SafeReadPreauthorizationRequest, "runtime_attestation_sha256" | "runtime_tuple">): LoadedAttestation {
+    let hostedMode: boolean;
+    try {
+      hostedMode = isHostedRuntime(this.env);
+    } catch {
+      fail("SAFE_READ_ATTESTATION_CONFIG_MIXED", "SafeRead runtime mode configuration is invalid.", 503);
+    }
+    if (hostedMode) {
+      let hosted: HostedAttestationSelection;
+      try {
+        hosted = loadHostedSafeReadAttestation(this.env, request.runtime_attestation_sha256, request.runtime_tuple);
+      } catch (error) {
+        if (error instanceof SafeReadAttestationAuthorityError) {
+          fail(error.code, error.message, error.code === "SAFE_READ_ATTESTATION_SELECTION_FAILED" ? 403 : 503, error.retryable);
+        }
+        fail("SAFE_READ_ATTESTATION_SET_INVALID", "SafeRead hosted attestation authority failed closed.", 503);
+      }
+      const manifest = parseAttestation(hosted.attestation);
+      this.assertAttestationCurrent(manifest);
+      return { manifest, sha256: hosted.attestationSha256, hosted };
+    }
+    if (hostedAttestationConfigPresent(this.env)) {
+      fail("SAFE_READ_ATTESTATION_CONFIG_MIXED", "Attestation-set configuration is allowed only in effective hosted mode.", 503);
+    }
     const pin = String(this.env.OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SHA256 ?? "");
     if (!HASH.test(pin)) {
       fail("SAFE_READ_ATTESTATION_UNAVAILABLE", "SafeRead runtime attestation pin is not configured.", 503, true);
@@ -551,18 +593,46 @@ export class SafeReadCapabilityService {
       fail("SAFE_READ_ATTESTATION_INVALID", "SafeRead runtime attestation is malformed.", 503);
     }
     const manifest = parseAttestation(parsed);
+    this.assertAttestationCurrent(manifest);
+    return { manifest, sha256: actual };
+  }
+
+  private assertAttestationCurrent(manifest: RuntimeAttestation): void {
     const now = this.now().getTime();
     if (manifest.state === "revoked") fail("SAFE_READ_ATTESTATION_REVOKED", "SafeRead runtime attestation is revoked.", 403);
     if (Date.parse(manifest.issued_at_utc) > now || Date.parse(manifest.expires_at_utc) <= now) {
       fail("SAFE_READ_ATTESTATION_STALE", "SafeRead runtime attestation is not currently valid.", 403);
     }
-    return { manifest, sha256: actual };
+  }
+
+  private acceptHostedHighWater(attested: LoadedAttestation, now: number): void {
+    if (!attested.hosted) return;
+    const { authorityId, setSequence, setSha256 } = attested.hosted;
+    const current = this.db.prepare(`
+      SELECT set_sequence, set_sha256 FROM safe_read_attestation_high_water WHERE authority_id=?
+    `).get(authorityId) as { set_sequence: number; set_sha256: string } | undefined;
+    if (current && setSequence < current.set_sequence) {
+      fail("SAFE_READ_ATTESTATION_SET_ROLLBACK", "Hosted attestation set sequence is below the durable high-water mark.", 503);
+    }
+    if (current && setSequence === current.set_sequence && !equalSecret(setSha256, current.set_sha256)) {
+      fail("SAFE_READ_ATTESTATION_SET_EQUIVOCATION", "Hosted attestation set reuses a sequence with different content.", 503);
+    }
+    if (!current) {
+      this.db.prepare(`
+        INSERT INTO safe_read_attestation_high_water(authority_id, set_sequence, set_sha256, accepted_at_ms)
+        VALUES(?,?,?,?)
+      `).run(authorityId, setSequence, setSha256, now);
+    } else if (setSequence > current.set_sequence) {
+      this.db.prepare(`
+        UPDATE safe_read_attestation_high_water SET set_sequence=?, set_sha256=?, accepted_at_ms=? WHERE authority_id=?
+      `).run(setSequence, setSha256, now, authorityId);
+    }
   }
 
   preauthorize(principalScope: string, value: unknown): SafeReadPreauthorizationResponse {
     const scope = exactHash(principalScope, "principal scope");
     const request = parseSafeReadPreauthorizationRequest(value);
-    const attested = this.loadAttestation();
+    const attested = this.loadAttestation(request);
     if (!equalSecret(request.runtime_attestation_sha256, attested.sha256)) {
       fail("SAFE_READ_ATTESTATION_PIN_MISMATCH", "Request does not bind the deployment-pinned runtime attestation.", 403);
     }
@@ -573,7 +643,11 @@ export class SafeReadCapabilityService {
     const bindings = bindingPayload(request, attested.manifest);
     const bindingsJson = canonicalJson(bindings as unknown as JsonValue);
     const bindingsHash = rawSha256(bindingsJson);
+    let transactionOpen = false;
     try {
+      this.db.exec("BEGIN IMMEDIATE");
+      transactionOpen = true;
+      this.acceptHostedHighWater(attested, now);
       this.db.prepare(`
         INSERT INTO safe_read_capabilities(
           principal_scope, client_session_id, request_id, attempt_id, capability_id_hash,
@@ -583,7 +657,13 @@ export class SafeReadCapabilityService {
         scope, request.client_session_id, request.request_id, request.attempt_id, capabilityIdHash(capabilityId),
         request.capability_nonce_sha256, bindingsJson, bindingsHash, now, expires
       );
+      this.db.exec("COMMIT");
+      transactionOpen = false;
     } catch (error) {
+      if (transactionOpen) {
+        try { this.db.exec("ROLLBACK"); } catch { /* transaction already closed */ }
+      }
+      if (error instanceof SafeReadCapabilityError) throw error;
       if (String(error).includes("UNIQUE constraint failed")) {
         fail("SAFE_READ_ATTEMPT_ALREADY_EXISTS", "This principal, session, request, and attempt already has a capability.", 409);
       }
@@ -637,7 +717,7 @@ export class SafeReadCapabilityService {
       ...publicBindings(request),
       capability_nonce_sha256: nonceHash
     } as SafeReadPreauthorizationRequest;
-    const attested = this.loadAttestation();
+    const attested = this.loadAttestation(expectedRequest);
     if (!equalSecret(request.runtime_attestation_sha256, attested.sha256)) {
       fail("SAFE_READ_ATTESTATION_PIN_MISMATCH", "Capability does not bind the current deployment-pinned runtime attestation.", 403);
     }
@@ -655,6 +735,19 @@ export class SafeReadCapabilityService {
     let commitConfirmed = false;
     try {
       this.db.exec("BEGIN IMMEDIATE");
+      // Re-read pins, signer authorization, set contents, and the exact selected tuple
+      // while the capability CAS transaction is held. This is intentionally separate
+      // from the earlier preflight verification.
+      const casAttested = this.loadAttestation(expectedRequest);
+      if (!equalSecret(request.runtime_attestation_sha256, casAttested.sha256)) {
+        fail("SAFE_READ_ATTESTATION_PIN_MISMATCH", "Capability does not bind the final deployment-pinned runtime attestation.", 403);
+      }
+      assertAttestationMatches(casAttested.manifest, expectedRequest);
+      const casExpectedBindings = canonicalJson(bindingPayload(expectedRequest, casAttested.manifest) as unknown as JsonValue);
+      if (!equalSecret(initial.bindings_json, casExpectedBindings) || !equalSecret(initial.bindings_hash, rawSha256(casExpectedBindings))) {
+        fail("SAFE_READ_CAPABILITY_BINDING_MISMATCH", "SafeRead capability does not bind the final immutable execution tuple.", 403);
+      }
+      this.acceptHostedHighWater(casAttested, this.now().getTime());
       const current = rowFrom(this.db.prepare(`
         SELECT principal_scope, capability_id_hash, nonce_sha256, bindings_json, bindings_hash,
                issued_at_ms, expires_at_ms, state
