@@ -19,6 +19,15 @@ const RESULT_VERSION = "revit-operator.revit-tool-result.v1";
 const CERTIFICATION_ENVELOPE_SCHEMA = "revit-operator.revit-tool-certification-envelope.v1";
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const EXPOSURE_CHANNELS: readonly ToolExposureChannel[] = ["search", "generic_call", "typed_mcp", "deterministic_workflow"];
+const UNSAFE_CONTEXT_CONTROL = /[\u0000-\u001F\u007F]/u;
+
+export const REVIT_COURIER_CONTEXT_STRING_LIMITS = Object.freeze({
+  session_id: 200,
+  message_id: 200,
+  target_executor_id: 200,
+  target_document_title: 500,
+  target_document_path: 2_000
+} as const);
 
 type CourierContext = {
   version?: string;
@@ -53,6 +62,7 @@ type CourierJob = {
   idempotency_key?: string;
   method?: string;
   path?: string;
+  created_at?: string;
   expires_at?: string;
   status?: string;
   claim?: unknown;
@@ -101,7 +111,27 @@ function timeoutMs(): number {
   return Number.isFinite(parsed) ? Math.max(5_000, Math.min(15 * 60_000, parsed)) : 90_000;
 }
 
-function readContext(): Required<Pick<CourierContext, "session_id">> & CourierContext {
+function readContextString(
+  value: unknown,
+  field: keyof typeof REVIT_COURIER_CONTEXT_STRING_LIMITS,
+  required = false
+): string | undefined {
+  if (value === undefined || value === null) {
+    if (required) throw new Error(`Revit courier context ${field} is required.`);
+    return undefined;
+  }
+  if (typeof value !== "string") throw new Error(`Revit courier context ${field} must be a string.`);
+  if (required && !value.trim()) throw new Error(`Revit courier context ${field} must not be blank.`);
+  if (value.length > REVIT_COURIER_CONTEXT_STRING_LIMITS[field]) {
+    throw new Error(`Revit courier context ${field} exceeds ${REVIT_COURIER_CONTEXT_STRING_LIMITS[field]} UTF-16 code units.`);
+  }
+  if (UNSAFE_CONTEXT_CONTROL.test(value)) {
+    throw new Error(`Revit courier context ${field} contains a forbidden control character.`);
+  }
+  return required ? value.trim() : value;
+}
+
+function readContext(): Required<Pick<CourierContext, "session_id" | "expires_at">> & CourierContext {
   const contextPath = path.join(getWorkspaceRoot(), "config", "revit-courier-context.json");
   let parsed: CourierContext;
   try {
@@ -109,12 +139,25 @@ function readContext(): Required<Pick<CourierContext, "session_id">> & CourierCo
   } catch {
     throw new Error("Revit courier context is unavailable; the hosted Codex turn is not bound to a workstation session.");
   }
-  const sessionId = typeof parsed.session_id === "string" ? parsed.session_id.trim() : "";
-  const expiresAt = Date.parse(parsed.expires_at ?? "");
-  if (!parsed.active || !sessionId || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+  const sessionId = readContextString(parsed.session_id, "session_id", true)!;
+  const messageId = readContextString(parsed.message_id, "message_id");
+  const targetExecutorId = readContextString(parsed.target_executor_id, "target_executor_id");
+  const targetDocumentTitle = readContextString(parsed.target_document_title, "target_document_title");
+  const targetDocumentPath = readContextString(parsed.target_document_path, "target_document_path");
+  const expiresAt = typeof parsed.expires_at === "string" ? Date.parse(parsed.expires_at) : Number.NaN;
+  if (parsed.active !== true || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
     throw new Error("Revit courier context is inactive or expired; start a fresh Operator turn.");
   }
-  return { ...parsed, session_id: sessionId };
+  const expiresAtIso = new Date(expiresAt).toISOString();
+  return {
+    ...parsed,
+    session_id: sessionId,
+    expires_at: expiresAtIso,
+    ...(messageId === undefined ? { message_id: undefined } : { message_id: messageId }),
+    ...(targetExecutorId === undefined ? { target_executor_id: undefined } : { target_executor_id: targetExecutorId }),
+    ...(targetDocumentTitle === undefined ? { target_document_title: undefined } : { target_document_title: targetDocumentTitle }),
+    ...(targetDocumentPath === undefined ? { target_document_path: undefined } : { target_document_path: targetDocumentPath })
+  };
 }
 
 function writeJsonAtomic(filePath: string, value: unknown): void {
@@ -265,7 +308,7 @@ function legacyIdempotencyKey(context: CourierContext & Required<Pick<CourierCon
 }
 
 function v2IdempotencyKey(
-  context: CourierContext & Required<Pick<CourierContext, "session_id">>,
+  context: CourierContext & Required<Pick<CourierContext, "session_id" | "expires_at">>,
   method: string,
   revitPath: string,
   rawBody: { present: boolean; json: string },
@@ -277,6 +320,7 @@ function v2IdempotencyKey(
       canonicalization: TOOL_EXPOSURE_CANONICALIZATION,
       session_id: context.session_id,
       message_id: context.message_id ?? null,
+      expires_at: context.expires_at,
       turn_token_sha256: context.token ? sha256(context.token) : null,
       target_executor_id: context.target_executor_id ?? null,
       target_document_title: context.target_document_title ?? null,
@@ -301,6 +345,12 @@ function assertNoLegacyJobForCertifiedCall(legacyJobPath: string): void {
   if (existing.version === JOB_VERSION_V1) {
     throw new Error("Certified Revit courier refuses to resume a legacy v1 job without a certification envelope.");
   }
+}
+
+function isCanonicalIsoInstant(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
 }
 
 function publishOrResumeJob(jobPath: string, candidate: CourierJob): CourierJob {
@@ -340,6 +390,10 @@ function publishOrResumeJob(jobPath: string, candidate: CourierJob): CourierJob 
     && existing.body_json === candidate.body_json
     && exactJson(existing.certification_envelope) === exactJson(candidate.certification_envelope)
     && exactJson(existing.body) === exactJson(candidate.body)
+    && existing.expires_at === candidate.expires_at
+    && isCanonicalIsoInstant(existing.created_at)
+    && isCanonicalIsoInstant(existing.expires_at)
+    && Date.parse(existing.created_at) <= Date.parse(existing.expires_at)
   );
   if (!matches || !sameTarget || !v2Equivalent) {
     throw new Error("Revit courier idempotency collision detected; refusing to broaden or replay the call.");
@@ -454,7 +508,7 @@ export async function callRevitViaCourier<T>(
     ...(rawBody ? { body_json: rawBody.json, body_present: rawBody.present } : {}),
     ...(envelope ? { certification_envelope: envelope } : {}),
     created_at: new Date(now).toISOString(),
-    expires_at: new Date(now + durationMs).toISOString(),
+    expires_at: envelope ? context.expires_at : new Date(now + durationMs).toISOString(),
     status: "pending",
     claim: null
   });

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { callRevitViaCourier } from "./revitCourier.js";
+import { callRevitViaCourier, REVIT_COURIER_CONTEXT_STRING_LIMITS } from "./revitCourier.js";
 import { callRevit } from "./revitClient.js";
 import {
   canonicalToolExposureJson,
@@ -111,6 +111,17 @@ async function waitForJobs(root: string, expected: number): Promise<Array<{ id: 
   throw new Error(`Timed out waiting for ${expected} courier test jobs.`);
 }
 
+function writeSucceededResult(job: { id: string; dir: string }, result: unknown): void {
+  fs.writeFileSync(path.join(job.dir, "result.json"), JSON.stringify({
+    version: "revit-operator.revit-tool-result.v1",
+    id: job.id,
+    correlation_id: job.id,
+    status: "succeeded",
+    result,
+    retryable: false
+  }), "utf8");
+}
+
 test("cross-runtime v2 envelope and idempotency vectors freeze canonical UTF-8 bytes", () => {
   // The expected literals and hashes were independently verified with
   // PowerShell/.NET SHA256.HashData(Encoding.UTF8.GetBytes(literal)). The
@@ -152,19 +163,21 @@ test("cross-runtime v2 envelope and idempotency vectors freeze canonical UTF-8 b
     path: "/revit/context",
     method: "GET",
     message_id: "message \"q\" \\ \u2028\u2029",
+    expires_at: "2035-01-02T08:04:05.006Z",
     canonicalization: "revit-operator.canonical-json.nfc-key-sorted.v1",
     certification_envelope_hash: "sha256:8888888888888888888888888888888888888888888888888888888888888888",
     body_sha256: "sha256:6666666666666666666666666666666666666666666666666666666666666666",
     body_present: true,
     target_executor_id: "executor-β"
   };
-  const expectedIdempotency = "{\"body_present\":true,\"body_sha256\":\"sha256:6666666666666666666666666666666666666666666666666666666666666666\",\"canonicalization\":\"revit-operator.canonical-json.nfc-key-sorted.v1\",\"certification_envelope_hash\":\"sha256:8888888888888888888888888888888888888888888888888888888888888888\",\"message_id\":\"message \\\"q\\\" \\\\ \u2028\u2029\",\"method\":\"GET\",\"path\":\"/revit/context\",\"schema\":\"revit-operator.revit-tool-job-idempotency.v2\",\"session_id\":\"session-α\",\"target_document_path\":\"C:\\\\模型\\\\Café\\\\A\\\"B\\\\sheet.rvt\",\"target_document_title\":\"楼层 Café \u2028Sheet\u2029\",\"target_executor_id\":\"executor-β\",\"turn_token_sha256\":\"sha256:7777777777777777777777777777777777777777777777777777777777777777\"}";
+  const expectedIdempotency = "{\"body_present\":true,\"body_sha256\":\"sha256:6666666666666666666666666666666666666666666666666666666666666666\",\"canonicalization\":\"revit-operator.canonical-json.nfc-key-sorted.v1\",\"certification_envelope_hash\":\"sha256:8888888888888888888888888888888888888888888888888888888888888888\",\"expires_at\":\"2035-01-02T08:04:05.006Z\",\"message_id\":\"message \\\"q\\\" \\\\ \u2028\u2029\",\"method\":\"GET\",\"path\":\"/revit/context\",\"schema\":\"revit-operator.revit-tool-job-idempotency.v2\",\"session_id\":\"session-α\",\"target_document_path\":\"C:\\\\模型\\\\Café\\\\A\\\"B\\\\sheet.rvt\",\"target_document_title\":\"楼层 Café \u2028Sheet\u2029\",\"target_executor_id\":\"executor-β\",\"turn_token_sha256\":\"sha256:7777777777777777777777777777777777777777777777777777777777777777\"}";
   const idempotencyCanonical = canonicalToolExposureJson(idempotencyInput);
   assert.equal(idempotencyCanonical, expectedIdempotency);
   assert.equal(idempotencyCanonical.includes("raw-turn-token"), false);
+  assert.equal(idempotencyCanonical.includes("created_at"), false);
   assert.equal(
     createHash("sha256").update(idempotencyCanonical, "utf8").digest("hex"),
-    "0e7ab16c4f9d7c74943d26351aff93945a7cd1d765026b51396a700aec66efe5"
+    "d5a2bb78dfc557264c746e7bd6ca0e1b7eaaa6757bf10fa09edf8d8c2deba213"
   );
 });
 
@@ -236,8 +249,13 @@ test("certified MCP courier persists a deterministic immutable v2 certification 
     const first = startCertifiedPing<{ status: string }>();
     const jobRef = await waitForJob(root);
     const job = JSON.parse(fs.readFileSync(path.join(jobRef.dir, "job.json"), "utf8"));
+    const persistedContext = JSON.parse(fs.readFileSync(path.join(root, "config", "revit-courier-context.json"), "utf8"));
     const envelope = job.certification_envelope;
     assert.equal(job.version, "revit-operator.revit-tool-job.v2");
+    assert.equal(job.id, jobRef.id);
+    assert.equal(job.idempotency_key, jobRef.id);
+    assert.equal(job.correlation_id, jobRef.id);
+    assert.equal(job.expires_at, new Date(persistedContext.expires_at).toISOString());
     assert.equal(job.body_present, false);
     assert.equal(job.body_json, "");
     assert.equal(envelope.schema, "revit-operator.revit-tool-certification-envelope.v1");
@@ -273,6 +291,58 @@ test("certified MCP courier persists a deterministic immutable v2 certification 
       retryable: false
     }), "utf8");
     assert.deepEqual(await Promise.all([first, second]), [{ status: "certified-ok" }, { status: "certified-ok" }]);
+  } finally {
+    restore();
+  }
+});
+
+test("certified v2 normalizes context expiry, keeps duplicate identity stable, and rotates identity when expiry changes", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-expiry-identity-"));
+  const restore = saveEnv();
+  const policy = writePingPolicy("CERTIFIED_EXPIRY_IDENTITY");
+  try {
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+    process.env.OPERATOR_REVIT_TRANSPORT = "courier";
+    process.env.REVIT_OPERATOR_MODE = "hosted";
+    delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
+    writeContext(root, {
+      session_id: "expiry-session",
+      message_id: "expiry-message",
+      expires_at: "2035-01-02T03:04:05.006-05:00"
+    });
+
+    const first = startCertifiedPing<{ ok: boolean }>();
+    const firstJob = await waitForJob(root);
+    const duplicate = startCertifiedPing<{ ok: boolean }>();
+    assert.deepEqual((await waitForJobs(root, 1)).map(job => job.id), [firstJob.id]);
+    const firstReceipt = JSON.parse(fs.readFileSync(path.join(firstJob.dir, "job.json"), "utf8"));
+    assert.equal(firstReceipt.expires_at, "2035-01-02T08:04:05.006Z");
+    assert.equal(firstReceipt.id, firstJob.id);
+    assert.equal(firstReceipt.correlation_id, firstJob.id);
+
+    writeContext(root, {
+      session_id: "expiry-session",
+      message_id: "expiry-message",
+      expires_at: "2035-01-02T03:04:06.006-05:00"
+    });
+    const rotated = startCertifiedPing<{ ok: boolean }>();
+    const jobs = await waitForJobs(root, 2);
+    assert.equal(new Set(jobs.map(job => job.id)).size, 2);
+    const receipts = jobs.map(job => JSON.parse(fs.readFileSync(path.join(job.dir, "job.json"), "utf8")));
+    assert.deepEqual(new Set(receipts.map(job => job.expires_at)), new Set([
+      "2035-01-02T08:04:05.006Z",
+      "2035-01-02T08:04:06.006Z"
+    ]));
+    for (const [index, job] of jobs.entries()) {
+      const receipt = receipts[index]!;
+      assert.equal(receipt.id, job.id);
+      assert.equal(receipt.correlation_id, job.id);
+      writeSucceededResult(job, { ok: true });
+    }
+    assert.deepEqual(await Promise.all([first, duplicate, rotated]), [{ ok: true }, { ok: true }, { ok: true }]);
   } finally {
     restore();
   }
@@ -423,6 +493,95 @@ test("certified MCP courier preserves present raw JSON body bytes, order, escape
   }
 });
 
+test("certified courier context accepts Unicode identity strings within the aligned limits", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-unicode-context-"));
+  const restore = saveEnv();
+  const policy = writePingPolicy("CERTIFIED_UNICODE_CONTEXT");
+  try {
+    assert.deepEqual(REVIT_COURIER_CONTEXT_STRING_LIMITS, {
+      session_id: 200,
+      message_id: 200,
+      target_executor_id: 200,
+      target_document_title: 500,
+      target_document_path: 2_000
+    });
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+    process.env.OPERATOR_REVIT_TRANSPORT = "courier";
+    process.env.REVIT_OPERATOR_MODE = "hosted";
+    delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
+    const identity = {
+      session_id: "会话-α",
+      message_id: "消息-Cafe\u0301-\u2028",
+      target_executor_id: "执行器-β",
+      target_document_title: "楼层 Café \u2029",
+      target_document_path: "C:\\模型\\Café\\图纸.rvt"
+    };
+    writeContext(root, identity);
+    const pending = startCertifiedPing<{ ok: boolean }>();
+    const job = await waitForJob(root);
+    const receipt = JSON.parse(fs.readFileSync(path.join(job.dir, "job.json"), "utf8"));
+    assert.equal(receipt.session_id, identity.session_id);
+    assert.equal(receipt.message_id, identity.message_id);
+    assert.equal(receipt.target_executor_id, identity.target_executor_id);
+    assert.equal(receipt.target_document_title, identity.target_document_title);
+    assert.equal(receipt.target_document_path, identity.target_document_path);
+    assert.equal(receipt.correlation_id, job.id);
+    writeSucceededResult(job, { ok: true });
+    assert.deepEqual(await pending, { ok: true });
+  } finally {
+    restore();
+  }
+});
+
+test("certified courier rejects unsafe or oversized context identity strings and body before publication", async () => {
+  const restore = saveEnv();
+  const policy = writePingPolicy("CERTIFIED_CONTEXT_LIMITS");
+  try {
+    process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+    process.env.OPERATOR_REVIT_TRANSPORT = "courier";
+    process.env.REVIT_OPERATOR_MODE = "hosted";
+    delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
+    const cases: Array<{ field: string; value: string }> = [
+      { field: "session_id", value: `bad\u0000session` },
+      { field: "message_id", value: `bad\rmessage` },
+      { field: "target_executor_id", value: `bad\nexecutor` },
+      { field: "target_document_title", value: `bad\ttitle` },
+      { field: "target_document_path", value: `bad\u007Fpath` },
+      { field: "session_id", value: "s".repeat(201) },
+      { field: "message_id", value: "m".repeat(201) },
+      { field: "target_executor_id", value: "e".repeat(201) },
+      { field: "target_document_title", value: "t".repeat(501) },
+      { field: "target_document_path", value: "p".repeat(2_001) }
+    ];
+    for (const [index, invalid] of cases.entries()) {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), `revit-mcp-courier-invalid-context-${index}-`));
+      process.env.OPERATOR_WORKSPACE_ROOT = root;
+      writeContext(root, {
+        session_id: "valid-session",
+        message_id: "valid-message",
+        [invalid.field]: invalid.value
+      });
+      await assert.rejects(startCertifiedPing(), new RegExp(`context ${invalid.field}`));
+      assert.equal(fs.existsSync(path.join(root, "artifacts", "revit-courier", "jobs")), false);
+    }
+
+    const bodyRoot = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-body-limit-"));
+    process.env.OPERATOR_WORKSPACE_ROOT = bodyRoot;
+    writeContext(bodyRoot, { session_id: "body-limit-session", message_id: "body-limit-message" });
+    const oversizedJsonBody = `\"${"x".repeat(2 * 1024 * 1024)}\"`;
+    assert.ok(Buffer.byteLength(oversizedJsonBody, "utf8") > 2 * 1024 * 1024);
+    await assert.rejects(startCertifiedPing(oversizedJsonBody), /exceeds 2 MiB/);
+    assert.equal(fs.existsSync(path.join(bodyRoot, "artifacts", "revit-courier", "jobs")), false);
+  } finally {
+    restore();
+  }
+});
+
 test("certified MCP courier binds target and raw-body identity into distinct v2 jobs", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-target-body-"));
   const restore = saveEnv();
@@ -500,6 +659,46 @@ test("certified MCP courier fails closed on a tampered existing v2 receipt", asy
       retryable: false
     }), "utf8");
     assert.deepEqual(await first, { ok: true });
+  } finally {
+    restore();
+  }
+});
+
+test("certified retry rejects altered id, correlation, expiry, and timing receipts", async () => {
+  const restore = saveEnv();
+  const policy = writePingPolicy("CERTIFIED_RECEIPT_INTEGRITY");
+  const mutations: Array<{ name: string; apply: (job: any) => void }> = [
+    { name: "id", apply: job => { job.id = "0".repeat(64); } },
+    { name: "correlation", apply: job => { job.correlation_id = "1".repeat(64); } },
+    { name: "expiry", apply: job => { job.expires_at = new Date(Date.parse(job.expires_at) + 1_000).toISOString(); } },
+    { name: "created-at", apply: job => { job.created_at = "not-a-canonical-instant"; } }
+  ];
+  try {
+    process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+    process.env.OPERATOR_REVIT_TRANSPORT = "courier";
+    process.env.REVIT_OPERATOR_MODE = "hosted";
+    delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
+    for (const mutation of mutations) {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), `revit-mcp-courier-receipt-${mutation.name}-`));
+      process.env.OPERATOR_WORKSPACE_ROOT = root;
+      writeContext(root, {
+        session_id: `receipt-${mutation.name}`,
+        message_id: `receipt-${mutation.name}`,
+        expires_at: "2035-01-02T08:04:05.006Z"
+      });
+      const first = startCertifiedPing<{ ok: boolean }>();
+      const job = await waitForJob(root);
+      const jobPath = path.join(job.dir, "job.json");
+      const tampered = JSON.parse(fs.readFileSync(jobPath, "utf8"));
+      mutation.apply(tampered);
+      fs.writeFileSync(jobPath, `${JSON.stringify(tampered, null, 2)}\n`, "utf8");
+      await assert.rejects(startCertifiedPing(), /idempotency collision detected/);
+      assert.deepEqual((await waitForJobs(root, 1)).map(item => item.id), [job.id]);
+      writeSucceededResult(job, { ok: true });
+      assert.deepEqual(await first, { ok: true });
+    }
   } finally {
     restore();
   }
