@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace RevitBridge.Common
 {
@@ -113,6 +115,65 @@ namespace RevitBridge.Common
             "workflow"
         };
 
+        /// <summary>
+        /// A v2 courier receipt is executable only on the exact process it was
+        /// addressed to. Missing targets are intentionally rejected here rather
+        /// than treated as broadcast authorization.
+        /// </summary>
+        public static bool IsTargetExecutorBound(
+            OperatorCourierCertificationEnvelopeValidationResult? claimed,
+            string? expectedExecutorId)
+        {
+            return claimed != null
+                && claimed.IsValid
+                && claimed.Job != null
+                && !string.IsNullOrWhiteSpace(claimed.Job.TargetExecutorId)
+                && !string.IsNullOrWhiteSpace(expectedExecutorId)
+                && string.Equals(claimed.Job.TargetExecutorId, expectedExecutorId, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Checks that a final receipt remains addressed to this process after
+        /// its transport response has been bound to the original v2 claim.
+        /// </summary>
+        public static bool IsBoundToExecutor(
+            OperatorCourierFinalExecutionAuthorization? authorization,
+            string? expectedExecutorId)
+        {
+            return authorization != null
+                && !string.IsNullOrWhiteSpace(expectedExecutorId)
+                && string.Equals(authorization.ExecutorId, expectedExecutorId, StringComparison.Ordinal)
+                && string.Equals(authorization.TargetExecutorId, expectedExecutorId, StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// Executes one authoritative final-refresh operation. Callers provide
+        /// a transport delegate that uses <see cref="Bind"/> against the
+        /// original claim; this common gate makes executor pinning explicit so
+        /// dispatch code has no fallback path around a denied refresh.
+        /// </summary>
+        public static async Task<OperatorCourierFinalExecutionAuthorization> RequireFreshBoundAuthorizationAsync(
+            Func<CancellationToken, Task<OperatorCourierFinalExecutionAuthorization>> refreshAsync,
+            OperatorCourierCertificationEnvelopeValidationResult? claimed,
+            string? expectedExecutorId,
+            CancellationToken cancellationToken)
+        {
+            if (refreshAsync == null) throw new ArgumentNullException(nameof(refreshAsync));
+            if (!IsTargetExecutorBound(claimed, expectedExecutorId))
+            {
+                throw new InvalidOperationException(
+                    "Certified courier job target_executor_id does not exactly match the local executor.");
+            }
+
+            var authorization = await refreshAsync(cancellationToken).ConfigureAwait(false);
+            if (!IsBoundToExecutor(authorization, expectedExecutorId))
+            {
+                throw new InvalidOperationException(
+                    "Fresh courier final-execution authorization is not pinned to the local executor.");
+            }
+            return authorization;
+        }
+
         public static OperatorCourierFinalExecutionAuthorizationValidationResult Bind(
             string? responseJson,
             OperatorCourierCertificationEnvelopeValidationResult? claimed,
@@ -127,6 +188,10 @@ namespace RevitBridge.Common
                 return OperatorCourierFinalExecutionAuthorizationValidationResult.Invalid(
                     "CERTIFICATION_FINAL_EXECUTOR_INVALID",
                     "Courier final execution requires a non-empty local executor identity.");
+            if (!IsTargetExecutorBound(claimed, expectedExecutorId))
+                return OperatorCourierFinalExecutionAuthorizationValidationResult.Invalid(
+                    "CERTIFICATION_FINAL_TARGET_EXECUTOR_MISMATCH",
+                    "Certified courier job target_executor_id does not exactly match the local executor.");
             if (string.IsNullOrWhiteSpace(responseJson))
                 return OperatorCourierFinalExecutionAuthorizationValidationResult.Invalid(
                     "CERTIFICATION_FINAL_RESPONSE_MISSING",

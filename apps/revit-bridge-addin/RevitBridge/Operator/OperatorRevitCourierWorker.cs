@@ -144,6 +144,12 @@ namespace RevitBridge.Operator
                     path = verifiedV2.Job.Path;
                     bodyJson = verifiedV2.Job.BodyJson;
                     expiresAt = verifiedV2.Job.ExpiresAtUtc;
+                    if (!OperatorCourierFinalExecutionAuthorizationBinder.IsTargetExecutorBound(verifiedV2, _executorId))
+                    {
+                        throw new OperatorCourierCertificationException(
+                            "CERTIFICATION_FINAL_TARGET_EXECUTOR_MISMATCH",
+                            "Certified v2 courier job target_executor_id does not exactly match this Revit executor; no Revit action was executed.");
+                    }
                 }
                 else
                 {
@@ -191,35 +197,22 @@ namespace RevitBridge.Operator
                     var claimedV2 = verifiedV2!;
                     actionFactory = async cancellationToken =>
                     {
-                        string authorizationJson;
-                        try
-                        {
-                            authorizationJson = await _backendClient.AuthorizeRevitCourierExecutionJsonAsync(
-                                sessionId!,
-                                jobId!,
-                                _executorId,
-                                cancellationToken).ConfigureAwait(false);
-                        }
-                        catch (Exception error) when (!(error is OperatorCourierCertificationException))
-                        {
-                            throw new OperatorCourierCertificationException(
-                                "CERTIFICATION_FINAL_EXECUTION_UNAVAILABLE",
-                                "Fresh certified courier execution authorization was unavailable; no Revit action was executed.",
-                                error);
-                        }
-
-                        var binding = OperatorCourierFinalExecutionAuthorizationBinder.Bind(
-                            authorizationJson,
+                        var authorization = await RequestFinalExecutionAuthorizationAsync(
                             claimedV2,
-                            _executorId,
-                            DateTimeOffset.UtcNow);
-                        if (!binding.IsValid || binding.Authorization == null)
-                        {
-                            throw new OperatorCourierCertificationException(
-                                binding.Code,
-                                "Certified courier execution authorization was rejected: " + binding.Error);
-                        }
-                        return CreateCertifiedAction(claimedV2, binding.Authorization);
+                            sessionId!,
+                            jobId!,
+                            cancellationToken).ConfigureAwait(false);
+                        var action = CreateCertifiedAction(claimedV2, authorization, _executorId);
+                        // The prequeue receipt only decides whether it is safe
+                        // to schedule the ExternalEvent. This delegate is the
+                        // authoritative second fixed-route check, executed on
+                        // the Revit thread immediately before handler.Handle.
+                        action.CourierFinalExecutionRefreshAsync = token => RequestFinalExecutionAuthorizationAsync(
+                            claimedV2,
+                            sessionId!,
+                            jobId!,
+                            token);
+                        return action;
                     };
                 }
                 var startedAt = DateTime.UtcNow;
@@ -471,12 +464,64 @@ namespace RevitBridge.Operator
             return true;
         }
 
+        private async Task<OperatorCourierFinalExecutionAuthorization> RequestFinalExecutionAuthorizationAsync(
+            OperatorCourierCertificationEnvelopeValidationResult claimed,
+            string sessionId,
+            string jobId,
+            CancellationToken cancellationToken)
+        {
+            if (!OperatorCourierFinalExecutionAuthorizationBinder.IsTargetExecutorBound(claimed, _executorId))
+            {
+                throw new OperatorCourierCertificationException(
+                    "CERTIFICATION_FINAL_TARGET_EXECUTOR_MISMATCH",
+                    "Certified v2 courier job target_executor_id does not exactly match this Revit executor; no Revit action was executed.");
+            }
+
+            string authorizationJson;
+            try
+            {
+                authorizationJson = await _backendClient.AuthorizeRevitCourierExecutionJsonAsync(
+                    sessionId,
+                    jobId,
+                    _executorId,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (!(error is OperatorCourierCertificationException))
+            {
+                throw new OperatorCourierCertificationException(
+                    "CERTIFICATION_FINAL_EXECUTION_UNAVAILABLE",
+                    "Fresh certified courier execution authorization was unavailable; no Revit action was executed.",
+                    error);
+            }
+
+            var binding = OperatorCourierFinalExecutionAuthorizationBinder.Bind(
+                authorizationJson,
+                claimed,
+                _executorId,
+                DateTimeOffset.UtcNow);
+            if (!binding.IsValid || binding.Authorization == null)
+            {
+                throw new OperatorCourierCertificationException(
+                    binding.Code,
+                    "Certified courier execution authorization was rejected: " + binding.Error);
+            }
+            return binding.Authorization;
+        }
+
         private static OperatorActionCall CreateCertifiedAction(
             OperatorCourierCertificationEnvelopeValidationResult claimed,
-            OperatorCourierFinalExecutionAuthorization authorization)
+            OperatorCourierFinalExecutionAuthorization authorization,
+            string localExecutorId)
         {
             if (claimed == null || !claimed.IsValid || claimed.Job == null)
                 throw new OperatorCourierCertificationException("CERTIFICATION_FINAL_CLAIM_INVALID", "Certified courier claim was unavailable while building the local action.");
+            if (!OperatorCourierFinalExecutionAuthorizationBinder.IsTargetExecutorBound(claimed, localExecutorId)
+                || !OperatorCourierFinalExecutionAuthorizationBinder.IsBoundToExecutor(authorization, localExecutorId))
+            {
+                throw new OperatorCourierCertificationException(
+                    "CERTIFICATION_FINAL_TARGET_EXECUTOR_MISMATCH",
+                    "Certified courier final execution authorization is not pinned to this Revit executor.");
+            }
             if (!OperatorCourierFinalExecutionAuthorizationBinder.IsCurrent(authorization, DateTimeOffset.UtcNow))
                 throw new OperatorCourierCertificationException("CERTIFICATION_FINAL_EXECUTION_EXPIRED", "Certified courier execution authorization expired before local action construction.");
 
@@ -495,7 +540,9 @@ namespace RevitBridge.Operator
                 ExpectedDocumentTitle = authorization.TargetDocumentTitle ?? "",
                 ExpectedDocumentPath = authorization.TargetDocumentPath ?? "",
                 CourierFinalExecutionAuthorization = authorization,
-                CourierJobExpiresAtUtc = claimed.Job.ExpiresAtUtc
+                CourierJobExpiresAtUtc = claimed.Job.ExpiresAtUtc,
+                CourierVerifiedClaim = claimed,
+                CourierLocalExecutorId = localExecutorId
             };
         }
 

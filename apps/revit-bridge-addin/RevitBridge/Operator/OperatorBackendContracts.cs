@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Text.Json.Serialization;
 using RevitBridge.Common;
 
@@ -41,6 +43,19 @@ namespace RevitBridge.Operator
 
         [JsonIgnore]
         public DateTimeOffset? CourierJobExpiresAtUtc { get; internal set; }
+
+        // These fields are populated only by the local courier worker after a
+        // v2 claim and prequeue receipt both verify. JsonIgnore is deliberate:
+        // neither a sidecar payload nor a persisted action may inject a final
+        // authorization refresh path, original claim, or executor identity.
+        [JsonIgnore]
+        public OperatorCourierCertificationEnvelopeValidationResult? CourierVerifiedClaim { get; internal set; }
+
+        [JsonIgnore]
+        public string? CourierLocalExecutorId { get; internal set; }
+
+        [JsonIgnore]
+        public Func<CancellationToken, Task<OperatorCourierFinalExecutionAuthorization>>? CourierFinalExecutionRefreshAsync { get; internal set; }
     }
 
     public sealed class OperatorChatRequest

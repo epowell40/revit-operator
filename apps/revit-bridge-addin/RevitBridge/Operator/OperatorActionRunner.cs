@@ -23,6 +23,7 @@ namespace RevitBridge.Operator
 {
     internal sealed class OperatorActionRunner
     {
+        private static readonly TimeSpan CourierFinalExecutionRefreshTimeout = TimeSpan.FromSeconds(5);
         private readonly RevitEventService _eventService;
         private readonly Dictionary<string, HandlerRequest> _handlers;
 
@@ -347,8 +348,10 @@ namespace RevitBridge.Operator
                 {
                     ValidateExpectedDocument(app, action);
                     // This is deliberately immediately adjacent to the Revit
-                    // handler. A queued ExternalEvent cannot outlive the
-                    // authorization/job expiry it was admitted under.
+                    // handler. The prequeue receipt only admits this event;
+                    // a queued ExternalEvent must obtain a new fixed-route
+                    // backend decision before it can reach Revit.
+                    RefreshCourierFinalExecutionAuthorization(action, localDeadline.Token);
                     ValidateCourierFinalExecutionAuthorization(action, method, path, correlationId);
                     var handlerResult = handler.Handle(app, jsonBody).GetAwaiter().GetResult();
 
@@ -406,7 +409,13 @@ namespace RevitBridge.Operator
                 return;
             }
 
-            if (!TryGetActionBody(action, out var bodyPresent, out var bodyJson)
+            if (!OperatorCourierFinalExecutionAuthorizationBinder.IsTargetExecutorBound(
+                    action.CourierVerifiedClaim,
+                    action.CourierLocalExecutorId)
+                || !OperatorCourierFinalExecutionAuthorizationBinder.IsBoundToExecutor(
+                    authorization,
+                    action.CourierLocalExecutorId)
+                || !TryGetActionBody(action, out var bodyPresent, out var bodyJson)
                 || !OperatorCourierFinalExecutionAuthorizationBinder.IsBoundToAction(
                     authorization,
                     action.CourierJobExpiresAtUtc,
@@ -421,6 +430,48 @@ namespace RevitBridge.Operator
                     DateTimeOffset.UtcNow))
             {
                 throw new OperatorCourierFinalExecutionRejectedException("Courier final-execution authorization is expired, malformed, or no longer bound to the queued action.");
+            }
+        }
+
+        private static void RefreshCourierFinalExecutionAuthorization(
+            OperatorActionCall action,
+            CancellationToken queueCancellationToken)
+        {
+            var isV2CourierAction = action.CourierVerifiedClaim != null
+                || !string.IsNullOrWhiteSpace(action.CourierLocalExecutorId)
+                || action.CourierFinalExecutionRefreshAsync != null;
+            if (!isV2CourierAction) return;
+
+            var refresh = action.CourierFinalExecutionRefreshAsync;
+            if (refresh == null)
+            {
+                throw new OperatorCourierFinalExecutionRejectedException(
+                    "Courier v2 action is missing its authoritative final-execution refresh.");
+            }
+
+            try
+            {
+                using var refreshTimeout = CancellationTokenSource.CreateLinkedTokenSource(queueCancellationToken);
+                refreshTimeout.CancelAfter(CourierFinalExecutionRefreshTimeout);
+                var authorization = OperatorCourierFinalExecutionAuthorizationBinder.RequireFreshBoundAuthorizationAsync(
+                    refresh,
+                    action.CourierVerifiedClaim,
+                    action.CourierLocalExecutorId,
+                    refreshTimeout.Token).GetAwaiter().GetResult();
+                action.CourierFinalExecutionAuthorization = authorization;
+            }
+            catch (OperatorCourierFinalExecutionRejectedException)
+            {
+                throw;
+            }
+            catch (Exception error)
+            {
+                // There is intentionally no offline/cached fallback. Network,
+                // backend denial, session revocation, policy mismatch, and the
+                // bounded timeout all mean zero handler invocation.
+                throw new OperatorCourierFinalExecutionRejectedException(
+                    "Courier v2 final-execution refresh was unavailable or rejected; no Revit action was executed.",
+                    error);
             }
         }
 
@@ -475,6 +526,7 @@ namespace RevitBridge.Operator
         private sealed class OperatorCourierFinalExecutionRejectedException : InvalidOperationException, IOperatorRevitFailureMetadata
         {
             public OperatorCourierFinalExecutionRejectedException(string message) : base(message) { }
+            public OperatorCourierFinalExecutionRejectedException(string message, Exception inner) : base(message, inner) { }
             public string Code => "CERTIFICATION_FINAL_EXECUTION_REJECTED";
             public bool Retryable => false;
             public string Phase => "certification_final_execution";

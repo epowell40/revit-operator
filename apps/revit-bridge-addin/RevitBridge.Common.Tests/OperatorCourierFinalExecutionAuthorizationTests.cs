@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text.Json;
 using RevitBridge.Common;
+using RevitBridge.Operator;
 using Xunit;
 
 namespace RevitBridge.Common.Tests
@@ -135,6 +136,165 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void V2_job_top_level_unknown_and_duplicate_keys_are_terminal_before_binding()
+        {
+            var job = CreateValidJob("{\"viewId\":42}");
+
+            var unknown = OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(
+                job.Insert(1, "\"unexpected_execution_hint\":true,"));
+            Assert.False(unknown.IsValid);
+            Assert.Equal("CERT_COURIER_JOB_UNKNOWN_FIELD", unknown.Code);
+
+            var duplicate = OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(
+                job.Insert(1, "\"version\":\"revit-operator.revit-tool-job.v2\","));
+            Assert.False(duplicate.IsValid);
+            Assert.Equal("CERT_COURIER_JOB_DUPLICATE_KEY", duplicate.Code);
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task Target_executor_mismatch_or_missing_blocks_refresh_before_any_dispatch()
+        {
+            var mismatchedClaim = OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(CreateValidJob("{\"viewId\":42}"));
+            var unaddressedClaim = OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(CreateValidJob("{\"viewId\":42}", null));
+            Assert.True(mismatchedClaim.IsValid, mismatchedClaim.Code + ": " + mismatchedClaim.Error);
+            Assert.True(unaddressedClaim.IsValid, unaddressedClaim.Code + ": " + unaddressedClaim.Error);
+            var mismatchedPrequeue = OperatorCourierFinalExecutionAuthorizationBinder.Bind(
+                CreateAuthorizationResponse(CreateValidJob("{\"viewId\":42}")),
+                mismatchedClaim,
+                "executor-b",
+                DateTimeOffset.UtcNow);
+            Assert.Equal("CERTIFICATION_FINAL_TARGET_EXECUTOR_MISMATCH", mismatchedPrequeue.Code);
+            var unaddressedPrequeue = OperatorCourierFinalExecutionAuthorizationBinder.Bind(
+                CreateAuthorizationResponse(CreateValidJob("{\"viewId\":42}", null)),
+                unaddressedClaim,
+                "executor-a",
+                DateTimeOffset.UtcNow);
+            Assert.Equal("CERTIFICATION_FINAL_TARGET_EXECUTOR_MISMATCH", unaddressedPrequeue.Code);
+
+            var refreshCalls = 0;
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                OperatorCourierFinalExecutionAuthorizationBinder.RequireFreshBoundAuthorizationAsync(
+                    _ =>
+                    {
+                        refreshCalls++;
+                        return System.Threading.Tasks.Task.FromException<OperatorCourierFinalExecutionAuthorization>(
+                            new InvalidOperationException("must not contact authorization endpoint"));
+                    },
+                    mismatchedClaim,
+                    "executor-b",
+                    System.Threading.CancellationToken.None));
+            Assert.Equal(0, refreshCalls);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                OperatorCourierFinalExecutionAuthorizationBinder.RequireFreshBoundAuthorizationAsync(
+                    _ =>
+                    {
+                        refreshCalls++;
+                        return System.Threading.Tasks.Task.FromException<OperatorCourierFinalExecutionAuthorization>(
+                            new InvalidOperationException("must not contact authorization endpoint"));
+                    },
+                    unaddressedClaim,
+                    "executor-a",
+                    System.Threading.CancellationToken.None));
+            Assert.Equal(0, refreshCalls);
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task Prequeue_success_then_inline_refresh_denial_invokes_zero_dispatches()
+        {
+            var job = CreateValidJob("{\"viewId\":42}");
+            var claimed = OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(job);
+            var prequeue = OperatorCourierFinalExecutionAuthorizationBinder.Bind(
+                CreateAuthorizationResponse(job), claimed, "executor-a", DateTimeOffset.UtcNow);
+            Assert.True(prequeue.IsValid, prequeue.Code + ": " + prequeue.Error);
+
+            var finalRefreshes = 0;
+            var dispatches = 0;
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            {
+                var refreshed = await OperatorCourierFinalExecutionAuthorizationBinder.RequireFreshBoundAuthorizationAsync(
+                    _ =>
+                    {
+                        finalRefreshes++;
+                        return System.Threading.Tasks.Task.FromException<OperatorCourierFinalExecutionAuthorization>(
+                            new InvalidOperationException("authorization revoked after prequeue"));
+                    },
+                    claimed,
+                    "executor-a",
+                    System.Threading.CancellationToken.None);
+                _ = refreshed;
+                dispatches++;
+            });
+
+            Assert.Equal(1, finalRefreshes);
+            Assert.Equal(0, dispatches);
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task Final_refresh_runs_for_each_busy_attempt_and_revocation_blocks_the_next_dispatch()
+        {
+            var job = CreateValidJob("{\"viewId\":42}");
+            var claimed = OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(job);
+            var prequeue = OperatorCourierFinalExecutionAuthorizationBinder.Bind(
+                CreateAuthorizationResponse(job), claimed, "executor-a", DateTimeOffset.UtcNow);
+            var prequeueAuthorization = Assert.IsType<OperatorCourierFinalExecutionAuthorization>(prequeue.Authorization);
+            var finalRefreshes = 0;
+            var dispatches = 0;
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                OperatorCourierBusyRetryExecutor.ExecuteAsync<object>(
+                    async token =>
+                    {
+                        var refreshed = await OperatorCourierFinalExecutionAuthorizationBinder.RequireFreshBoundAuthorizationAsync(
+                            _ =>
+                            {
+                                finalRefreshes++;
+                                return finalRefreshes == 2
+                                    ? System.Threading.Tasks.Task.FromException<OperatorCourierFinalExecutionAuthorization>(
+                                        new InvalidOperationException("authorization revoked while queued"))
+                                    : System.Threading.Tasks.Task.FromResult(prequeueAuthorization);
+                            },
+                            claimed,
+                            "executor-a",
+                            token);
+                        _ = refreshed;
+                        dispatches++;
+                        throw new BusyExternalEventException();
+                    },
+                    System.Threading.CancellationToken.None,
+                    "job-correlation",
+                    new[] { 0 },
+                    delayAsync: (_, __) => System.Threading.Tasks.Task.CompletedTask));
+
+            Assert.Equal(2, finalRefreshes);
+            Assert.Equal(1, dispatches);
+        }
+
+        [Fact]
+        public void Courier_refresh_claim_and_executor_runtime_fields_never_serialize()
+        {
+            var claimed = OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(CreateValidJob("{\"viewId\":42}"));
+            var action = new OperatorActionCall
+            {
+                ActionId = "job-a",
+                CorrelationId = "job-a",
+                Method = "GET",
+                Path = "/revit/ping",
+                CourierFinalExecutionAuthorization = new OperatorCourierFinalExecutionAuthorization(),
+                CourierVerifiedClaim = claimed,
+                CourierLocalExecutorId = "executor-a",
+                CourierFinalExecutionRefreshAsync = _ => System.Threading.Tasks.Task.FromResult(new OperatorCourierFinalExecutionAuthorization())
+            };
+
+            var json = JsonSerializer.Serialize(action);
+
+            Assert.DoesNotContain("CourierFinalExecutionAuthorization", json, StringComparison.Ordinal);
+            Assert.DoesNotContain("CourierVerifiedClaim", json, StringComparison.Ordinal);
+            Assert.DoesNotContain("CourierLocalExecutorId", json, StringComparison.Ordinal);
+            Assert.DoesNotContain("CourierFinalExecutionRefreshAsync", json, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public async System.Threading.Tasks.Task Busy_retry_reauthorizes_and_revocation_prevents_the_next_dispatch()
         {
             var authorizationAttempts = 0;
@@ -175,7 +335,7 @@ namespace RevitBridge.Common.Tests
             Assert.Equal(expected, OperatorCourierRuntimeProfile.IsExactDevelopmentLaboratory(runtimeMode, exposureProfile));
         }
 
-        private static string CreateValidJob(string bodyJson)
+        private static string CreateValidJob(string bodyJson, string? targetExecutorId = "executor-a")
         {
             var bodyHash = OperatorCourierCertificationEnvelopeVerifier.Sha256Prefixed(bodyJson);
             var envelope = new Dictionary<string, object?>
@@ -215,7 +375,7 @@ namespace RevitBridge.Common.Tests
                 "message-a",
                 expiresAt,
                 Hash6,
-                "executor-a",
+                targetExecutorId,
                 "model-a",
                 "C:\\models\\model-a.rvt",
                 true,
@@ -231,7 +391,7 @@ namespace RevitBridge.Common.Tests
                 ["turn_token_sha256"] = Hash6,
                 ["method"] = "GET",
                 ["path"] = "/revit/ping",
-                ["target_executor_id"] = "executor-a",
+                ["target_executor_id"] = targetExecutorId,
                 ["target_document_title"] = "model-a",
                 ["target_document_path"] = "C:\\models\\model-a.rvt",
                 ["body_present"] = true,

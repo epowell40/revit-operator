@@ -149,6 +149,18 @@ namespace RevitBridge.Common
             "body_present", "body_sha256", "channel", "alias", "workflow", "runtime_mode",
             "exposure_profile", "policy_trust_source", "envelope_hash"
         };
+        // The signed envelope is not sufficient if an unrecognized top-level
+        // job field can later be interpreted by a newer worker. Keep the v2
+        // transport schema closed, including legacy display/status fields that
+        // the current verifier deliberately does not execute.
+        private static readonly HashSet<string> JobKeys = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "version", "id", "session_id", "message_id", "turn_token_sha256", "turn_token",
+            "correlation_id", "idempotency_key", "method", "path",
+            "target_executor_id", "target_document_title", "target_document_path",
+            "body_json", "body_present", "certification_envelope", "created_at",
+            "expires_at", "status", "claim", "body", "finished_at", "error"
+        };
         private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
         private const int SessionIdMaximumLength = 200;
         private const int MessageIdMaximumLength = 200;
@@ -211,6 +223,8 @@ namespace RevitBridge.Common
             {
                 if (job.ValueKind != JsonValueKind.Object)
                     return OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_JOB_MALFORMED", "Courier job must be a JSON object.");
+
+                if (!HasOnlyKnownUniqueJobKeys(job, out var topLevelKeyError)) return topLevelKeyError!;
 
                 if (!TryGetRequiredString(job, "version", out var version, out var error)) return error!;
                 if (!string.Equals(version, OperatorCourierCertificationEnvelope.JobVersion, StringComparison.Ordinal))
@@ -778,6 +792,33 @@ namespace RevitBridge.Common
             if (value.ValueKind == kind) return true;
             error = OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_JOB_FIELD_INVALID", "Courier job " + name + " has an invalid JSON type.");
             return false;
+        }
+
+        private static bool HasOnlyKnownUniqueJobKeys(
+            JsonElement job,
+            out OperatorCourierCertificationEnvelopeValidationResult? error)
+        {
+            error = null;
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in job.EnumerateObject())
+            {
+                var normalizedName = NormalizeText(property.Name);
+                if (!JobKeys.Contains(normalizedName))
+                {
+                    error = OperatorCourierCertificationEnvelopeValidationResult.Invalid(
+                        "CERT_COURIER_JOB_UNKNOWN_FIELD",
+                        "Courier job contains an unknown field: " + normalizedName + ".");
+                    return false;
+                }
+                if (!seen.Add(normalizedName))
+                {
+                    error = OperatorCourierCertificationEnvelopeValidationResult.Invalid(
+                        "CERT_COURIER_JOB_DUPLICATE_KEY",
+                        "Courier job contains duplicate normalized key: " + normalizedName + ".");
+                    return false;
+                }
+            }
+            return true;
         }
 
         private static bool TryGetUniqueElement(
