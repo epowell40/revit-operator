@@ -6,6 +6,8 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import {
+  assertToolExposure,
+  canonicalToolExposureJson,
   evaluateToolExposure,
   filterRegistryEntriesForSearch,
   getToolExposureRuntimeDecision,
@@ -82,6 +84,42 @@ test("runtime modes default hosted/production/development closed and expose only
   assert.equal(getToolExposureRuntimeDecision({ REVIT_OPERATOR_MODE: "local", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" }).mode, "certified");
   assert.equal(getToolExposureRuntimeDecision({ REVIT_OPERATOR_MODE: "self_hosted" }).mode, "certified");
   assert.equal(getToolExposureRuntimeDecision({ REVIT_OPERATOR_MODE: "future" }).mode, "certified");
+});
+
+test("cross-runtime canonical JSON fixture has fixed NFC bytes and SHA-256", () => {
+  const canonical = canonicalToolExposureJson({
+    z: "Cafe\u0301\r\nline",
+    a: { "β": "x", a: 1 }
+  });
+  // This is a protocol vector, generated independently with .NET UTF-8 and
+  // SHA256. Do not replace the literal with a same-helper recomputation.
+  assert.equal(canonical, "{\"a\":{\"a\":1,\"β\":\"x\"},\"z\":\"Café\\nline\"}");
+  assert.equal(
+    `sha256:${createHash("sha256").update(canonical, "utf8").digest("hex")}`,
+    "sha256:aa81e774360d35186e0e5eed2858ca2704f7b0da9e7a146ed34db47f2b576a9c"
+  );
+});
+
+test("assertToolExposure returns the exact certified record provenance and bound alias", () => {
+  const variant = writePolicyVariant(policy => {
+    const ping = policy.records.find((record: any) => record.method === "GET" && record.path === "/revit/ping");
+    ping.channels.typed_mcp = { exposed: true, required_level: "L4", reason_codes: ["CERTIFIED"] };
+  });
+  const decision = assertToolExposure({
+    method: "GET",
+    path: "/revit/ping",
+    channel: "typed_mcp",
+    alias: "revit_ping",
+    env: policyVariantEnv(variant)
+  });
+  const record = JSON.parse(fs.readFileSync(variant.policyPath, "utf8")).records.find((item: any) => item.method === "GET" && item.path === "/revit/ping");
+  assert.equal(decision.allowed, true);
+  assert.equal(decision.policyHash, variant.policyHash);
+  assert.equal(decision.policyRecordHash, record.policy_record_hash);
+  assert.equal(decision.evidenceRecordHash, record.evidence_record_hash);
+  assert.equal(decision.policyTrustSource, "deployment");
+  assert.equal(decision.alias, "revit_ping");
+  assert.equal(decision.workflow, undefined);
 });
 
 test("current policy validates all record hashes and denies all 96 exact channel decisions", () => {

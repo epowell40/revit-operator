@@ -8,6 +8,15 @@ import { revitRouteEffect } from "./revitRouteEffect.js";
 export const TOOL_EXPOSURE_CHANNELS = ["search", "generic_call", "typed_mcp", "deterministic_workflow"] as const;
 export type ToolExposureChannel = typeof TOOL_EXPOSURE_CHANNELS[number];
 export type ToolExposureMode = "certified" | "laboratory";
+/**
+ * Cross-runtime envelope/policy canonicalization: NFC text, CRLF/CR folded
+ * to LF, ordinal key sort, no duplicate normalized keys, and compact JSON.
+ * Strings use JSON's mandatory escapes for quote, backslash, and U+0000..001F
+ * only; all other Unicode scalar values, including U+2028/U+2029, are emitted
+ * as literal UTF-8. C# consumers must not use a serializer configuration that
+ * HTML-escapes or otherwise rewrites those literal Unicode code points.
+ */
+export const TOOL_EXPOSURE_CANONICALIZATION = "revit-operator.canonical-json.nfc-key-sorted.v1";
 
 type ChannelDecision = {
   exposed: boolean;
@@ -60,7 +69,14 @@ export type ToolExposureDecision = {
   reasonCodes: string[];
   policyPath?: string;
   policyHash?: string;
+  policyRecordHash?: string;
+  evidenceRecordHash?: string;
+  policyTrustSource?: "bundled" | "deployment";
   visibility?: ToolExposurePolicyRecord["visibility"];
+  /** The MCP surface that was actually bound at admission, never a caller-supplied display name. */
+  alias?: string;
+  /** Present only for a deterministic workflow admission. */
+  workflow?: string;
 };
 
 export class ToolExposurePolicyError extends Error {
@@ -82,6 +98,11 @@ const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 // Update it only alongside a reviewed bundled policy artifact.
 const BUNDLED_POLICY_HASH = "sha256:d6204c2576e83a96586f0b4bc575d7f68c7325e3efb32566ba6204e1aa3d2624";
 const invokedMcpAlias = new AsyncLocalStorage<string>();
+declare const certifiedCourierAdmissionBrand: unique symbol;
+export type CertifiedCourierAdmission = {
+  readonly [certifiedCourierAdmissionBrand]: true;
+};
+const courierAdmissionDecisions = new WeakMap<object, ToolExposureDecision>();
 
 function normalizeRuntimeMode(value: unknown): string {
   return String(value ?? "local").trim().toLowerCase().replace(/-/g, "_") || "local";
@@ -140,14 +161,14 @@ function normalizeText(value: string): string {
   return value.replace(/\r\n?/g, "\n").normalize("NFC");
 }
 
-function canonicalValue(value: unknown, location = "value"): unknown {
+export function canonicalToolExposureValue(value: unknown, location = "value"): unknown {
   if (value === null || typeof value === "boolean") return value;
   if (typeof value === "string") return normalizeText(value);
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new Error(`${location} contains a non-finite number`);
     return value;
   }
-  if (Array.isArray(value)) return value.map((item, index) => canonicalValue(item, `${location}[${index}]`));
+  if (Array.isArray(value)) return value.map((item, index) => canonicalToolExposureValue(item, `${location}[${index}]`));
   if (!value || typeof value !== "object") throw new Error(`${location} is not canonical JSON data`);
   const entries = Object.entries(value as Record<string, unknown>)
     .map(([key, item]) => [normalizeText(key), item] as const)
@@ -156,13 +177,17 @@ function canonicalValue(value: unknown, location = "value"): unknown {
   for (const [key, item] of entries) {
     if (Object.prototype.hasOwnProperty.call(result, key)) throw new Error(`${location} contains a normalized key collision`);
     if (item === undefined) throw new Error(`${location}.${key} is undefined`);
-    result[key] = canonicalValue(item, `${location}.${key}`);
+    result[key] = canonicalToolExposureValue(item, `${location}.${key}`);
   }
   return result;
 }
 
+export function canonicalToolExposureJson(value: unknown): string {
+  return JSON.stringify(canonicalToolExposureValue(value));
+}
+
 function digest(value: unknown): string {
-  const canonical = JSON.stringify(canonicalValue(value));
+  const canonical = canonicalToolExposureJson(value);
   return `sha256:${createHash("sha256").update(canonical, "utf8").digest("hex")}`;
 }
 
@@ -411,6 +436,8 @@ export function evaluateToolExposure(input: {
   const runtime = getToolExposureRuntimeDecision(env);
   const method = normalizedMethod(input.method);
   const channel = input.channel ?? "typed_mcp";
+  const alias = String(input.alias ?? invokedMcpAlias.getStore() ?? "").trim();
+  const workflow = input.workflow;
   if (!(TOOL_EXPOSURE_CHANNELS as readonly string[]).includes(channel)) {
     throw new ToolExposurePolicyError("TOOL_EXPOSURE_CHANNEL_INVALID", `Unsupported tool exposure channel: ${String(channel)}.`);
   }
@@ -427,11 +454,13 @@ export function evaluateToolExposure(input: {
       requestHash: reqHash,
       effectHash: effHash,
       knownRoute: false,
-      reasonCodes: ["LABORATORY_MODE_ACTIVE"]
+      reasonCodes: ["LABORATORY_MODE_ACTIVE"],
+      ...(alias ? { alias } : {}),
+      ...(workflow === undefined ? {} : { workflow })
     };
   }
 
-  const { policy, policyPath } = loadToolExposurePolicy(env);
+  const { policy, policyPath, trustSource } = loadToolExposurePolicy(env);
   const routeRecords = policy.records.filter(record => record.method === method && record.path === input.path);
   const requestRecords = routeRecords.filter(record => record.request_hash === reqHash);
   const record = requestRecords.find(candidate => candidate.effect_hash === effHash);
@@ -452,7 +481,10 @@ export function evaluateToolExposure(input: {
           ? ["CERT_REQUEST_HASH_MISMATCH"]
           : ["CERT_EFFECT_HASH_MISMATCH"],
       policyPath,
-      policyHash: policy.policy_hash
+      policyHash: policy.policy_hash,
+      policyTrustSource: trustSource,
+      ...(alias ? { alias } : {}),
+      ...(workflow === undefined ? {} : { workflow })
     };
   }
   const channelDecision = record.channels[channel];
@@ -471,10 +503,35 @@ export function evaluateToolExposure(input: {
       reasonCodes: workflowOnlyRaw ? ["CERT_WORKFLOW_ONLY"] : [...channelDecision.reason_codes],
       policyPath,
       policyHash: policy.policy_hash,
-      visibility: record.visibility
+      policyRecordHash: record.policy_record_hash,
+      evidenceRecordHash: record.evidence_record_hash,
+      policyTrustSource: trustSource,
+      visibility: record.visibility,
+      ...(alias ? { alias } : {}),
+      ...(workflow === undefined ? {} : { workflow })
     };
   }
-  const alias = String(input.alias ?? invokedMcpAlias.getStore() ?? "").trim();
+  if (!alias) {
+    return {
+      allowed: false,
+      mode: runtime.mode,
+      runtimeMode: runtime.runtimeMode,
+      method,
+      path: input.path,
+      channel,
+      requestHash: reqHash,
+      effectHash: effHash,
+      knownRoute: true,
+      reasonCodes: ["CERT_MCP_ALIAS_REQUIRED"],
+      policyPath,
+      policyHash: policy.policy_hash,
+      policyRecordHash: record.policy_record_hash,
+      evidenceRecordHash: record.evidence_record_hash,
+      policyTrustSource: trustSource,
+      visibility: record.visibility,
+      ...(workflow === undefined ? {} : { workflow })
+    };
+  }
   if (channel === "generic_call" && alias !== "revit_call_tool") {
     return {
       allowed: false,
@@ -489,7 +546,12 @@ export function evaluateToolExposure(input: {
       reasonCodes: ["CERT_GENERIC_ALIAS_REQUIRED"],
       policyPath,
       policyHash: policy.policy_hash,
-      visibility: record.visibility
+      policyRecordHash: record.policy_record_hash,
+      evidenceRecordHash: record.evidence_record_hash,
+      policyTrustSource: trustSource,
+      visibility: record.visibility,
+      ...(alias ? { alias } : {}),
+      ...(workflow === undefined ? {} : { workflow })
     };
   }
   if (channel !== "generic_call" && channel !== "deterministic_workflow") {
@@ -515,7 +577,12 @@ export function evaluateToolExposure(input: {
         reasonCodes: [!aliasMatchesRoute ? "CERT_TYPED_ALIAS_MISMATCH" : "CERT_TYPED_ALIAS_CONJUNCTION_DENIED"],
         policyPath,
         policyHash: policy.policy_hash,
-        visibility: record.visibility
+        policyRecordHash: record.policy_record_hash,
+        evidenceRecordHash: record.evidence_record_hash,
+        policyTrustSource: trustSource,
+        visibility: record.visibility,
+        ...(alias ? { alias } : {}),
+        ...(workflow === undefined ? {} : { workflow })
       };
     }
   }
@@ -532,7 +599,12 @@ export function evaluateToolExposure(input: {
     reasonCodes: [...channelDecision.reason_codes],
     policyPath,
     policyHash: policy.policy_hash,
-    visibility: record.visibility
+    policyRecordHash: record.policy_record_hash,
+    evidenceRecordHash: record.evidence_record_hash,
+    policyTrustSource: trustSource,
+    visibility: record.visibility,
+    alias,
+    ...(workflow === undefined ? {} : { workflow })
   };
 }
 
@@ -552,6 +624,72 @@ export function assertToolExposure(input: {
     `${decision.channel} exposure denied for exact ${decision.method} ${decision.path}; reasons=${decision.reasonCodes.join(",")}; request_hash=${decision.requestHash}; effect_hash=${decision.effectHash}.`,
     decision
   );
+}
+
+/**
+ * Creates a process-local, non-serializable courier capability from the
+ * active MCP alias. Callers cannot supply an alias here: the AsyncLocalStorage
+ * binding installed by server.tool/registerTool is the authority.
+ */
+export function createCertifiedCourierAdmission(input: {
+  method: string;
+  path: string;
+  body?: unknown;
+  channel?: ToolExposureChannel;
+  workflow?: string;
+  env?: NodeJS.ProcessEnv;
+}): CertifiedCourierAdmission | undefined {
+  const env = input.env ?? process.env;
+  if (!isCertifiedToolExposureMode(env)) return undefined;
+  const alias = String(invokedMcpAlias.getStore() ?? "").trim();
+  if (!alias) {
+    throw new ToolExposurePolicyError(
+      "CERT_MCP_ALIAS_REQUIRED",
+      "Certified courier publication requires an active MCP tool alias binding."
+    );
+  }
+  const decision = assertToolExposure({ ...input, alias, env });
+  const capability = Object.freeze({}) as unknown as CertifiedCourierAdmission;
+  courierAdmissionDecisions.set(capability, decision);
+  return capability;
+}
+
+/**
+ * Intentionally accepts unknown: callers cannot manufacture a valid
+ * capability from a structurally similar JSON DTO because membership in the
+ * module-private WeakMap is required.
+ */
+export function readCertifiedCourierAdmission(capability: unknown): ToolExposureDecision {
+  if (!capability || (typeof capability !== "object" && typeof capability !== "function")) {
+    throw new ToolExposurePolicyError(
+      "CERT_COURIER_ADMISSION_CAPABILITY_REQUIRED",
+      "Certified courier publication requires an in-process admission capability."
+    );
+  }
+  const decision = courierAdmissionDecisions.get(capability as object);
+  if (!decision) {
+    throw new ToolExposurePolicyError(
+      "CERT_COURIER_ADMISSION_CAPABILITY_INVALID",
+      "Certified courier publication rejected an unbranded or stale admission capability."
+    );
+  }
+  // Consume before inspecting the context or returning. A failed replay from a
+  // different execution context cannot leave a usable capability behind.
+  courierAdmissionDecisions.delete(capability as object);
+  const activeAlias = String(invokedMcpAlias.getStore() ?? "").trim();
+  if (!activeAlias) {
+    throw new ToolExposurePolicyError(
+      "CERT_COURIER_ADMISSION_CONTEXT_REQUIRED",
+      "Certified courier publication requires the active MCP alias context that minted the admission capability."
+    );
+  }
+  if (activeAlias !== decision.alias) {
+    throw new ToolExposurePolicyError(
+      "CERT_COURIER_ADMISSION_ALIAS_MISMATCH",
+      "Certified courier publication rejected an admission capability bound to a different MCP alias."
+    );
+  }
+  return decision;
 }
 
 export function runWithRevitToolAlias<T>(alias: string, operation: () => T): T {

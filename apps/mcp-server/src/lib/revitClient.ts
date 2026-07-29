@@ -1,7 +1,11 @@
 import { getOrCreateOperatorToken, getWriteGrantToken } from "./workspace.js";
 import { callRevitViaCourier } from "./revitCourier.js";
 import { revitRouteEffect } from "./revitRouteEffect.js";
-import { assertToolExposure, type ToolExposureChannel } from "./toolExposurePolicy.js";
+import {
+  assertToolExposure,
+  createCertifiedCourierAdmission,
+  type ToolExposureChannel
+} from "./toolExposurePolicy.js";
 
 // Use localhost or environment variable
 export const REVIT_BRIDGE_URL = process.env.REVIT_BRIDGE_URL || "http://localhost:5000";
@@ -183,7 +187,16 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
   });
 
   const transport = (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase();
-  if (transport === "courier") return await callRevitViaCourier<T>(path, method, body);
+  if (transport === "courier") {
+    const certifiedAdmission = createCertifiedCourierAdmission({
+      method: upperMethod,
+      path,
+      body,
+      channel: options.channel ?? "typed_mcp",
+      workflow: options.workflow
+    });
+    return await callRevitViaCourier<T>(path, upperMethod, body, { certifiedAdmission });
+  }
   if (transport !== "direct") throw new Error(`Unsupported OPERATOR_REVIT_TRANSPORT: ${transport}`);
 
   const token = getOrCreateOperatorToken();
