@@ -10,7 +10,8 @@ param(
   [scriptblock]$SignFileAction,
   [scriptblock]$SignatureVerifier,
   [scriptblock]$AssemblyInspector,
-  [Parameter(Mandatory)][scriptblock]$ManagedCodeInspector
+  [string]$ProofToolPath,
+  [scriptblock]$ManagedCodeInspector
 )
 
 $ErrorActionPreference = 'Stop'
@@ -33,6 +34,35 @@ if (-not $SignFileAction -and ([string]::IsNullOrWhiteSpace($SignToolPath) -or [
 if ($SignToolPath -and -not (Test-Path -LiteralPath $SignToolPath -PathType Leaf)) { throw "signtool.exe not found: $SignToolPath" }
 
 $outputParent = (Resolve-Path -LiteralPath $OutputRoot).Path
+$resolvedProofToolPath = $null
+if (-not $ManagedCodeInspector) {
+  if ([string]::IsNullOrWhiteSpace($ProofToolPath)) { throw 'Provide ProofToolPath, or an injected ManagedCodeInspector for tests.' }
+  $resolvedProofToolPath = (Resolve-Path -LiteralPath $ProofToolPath).Path
+  if (-not (Test-Path -LiteralPath $resolvedProofToolPath -PathType Leaf)) { throw "SafeRead proof tool not found: $resolvedProofToolPath" }
+}
+
+function Get-PackagedManagedCodeSha256([string]$ArtifactPath,[string]$Year) {
+  if ($ManagedCodeInspector) { return [string](& $ManagedCodeInspector $ArtifactPath $Year) }
+  $fingerprintRoot = Join-Path $outputParent ('.SafeReadFingerprint-{0}-{1}-{2}' -f $input.releaseId,$Year,[guid]::NewGuid().ToString('N'))
+  $toolOutput = @(& dotnet $resolvedProofToolPath fingerprint --artifact $ArtifactPath --output-dir $fingerprintRoot 2>&1)
+  if ($LASTEXITCODE -ne 0) {
+    throw "SafeRead proof fingerprint failed for Revit $Year with exit $LASTEXITCODE`: $([string]::Join(' | ',@($toolOutput)))"
+  }
+  $fingerprintPath = Join-Path $fingerprintRoot 'artifact.fingerprint.json'
+  $fingerprint = ConvertTo-SafeReadObject $fingerprintPath
+  Assert-SafeReadExactProperties $fingerprint @('schemaVersion','status','sha256','length','managedCodeSha256','assemblyIdentity','issues','metadata','il') "SafeRead fingerprint $Year"
+  Assert-SafeReadExactProperties $fingerprint.metadata @('count','sha256','items') "SafeRead fingerprint metadata $Year"
+  Assert-SafeReadExactProperties $fingerprint.il @('count','sha256','items') "SafeRead fingerprint IL $Year"
+  $rawSha256 = (Get-SafeReadSha256 $ArtifactPath).Substring(7)
+  if ([int]$fingerprint.schemaVersion -ne 1 -or $fingerprint.status -cne 'verified' -or @($fingerprint.issues).Count -ne 0 -or
+      $fingerprint.sha256 -cne $rawSha256 -or [int64]$fingerprint.length -ne (Get-Item -LiteralPath $ArtifactPath).Length -or
+      $fingerprint.managedCodeSha256 -cnotmatch '^[0-9a-f]{64}$' -or $fingerprint.metadata.sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+      $fingerprint.il.sha256 -cnotmatch '^[0-9a-f]{64}$') {
+    throw "SafeRead proof fingerprint receipt is invalid for Revit $Year."
+  }
+  [string]$fingerprint.managedCodeSha256
+}
+
 $bundleRoot = Join-Path $outputParent ("SafeReadPackage-{0}" -f $input.releaseId)
 if (Test-Path -LiteralPath $bundleRoot) { throw "Refusing to overwrite existing SafeRead package: $bundleRoot" }
 $stage = Join-Path $outputParent (".SafeReadPackage-{0}.{1}.staging" -f $input.releaseId,[guid]::NewGuid().ToString('N'))
@@ -80,7 +110,7 @@ try {
     $executorUnsigned='sha256:'+([string]$proof.Artifact.sha256)
     $executorProvenance=[ordered]@{proofReceiptSha256=$proof.ReceiptSha256;unsignedSha256=$executorUnsigned;managedCodeSha256=[string]$proof.Artifact.managedCodeSha256}
     Add-Payload $proof.AssemblyPath 'RevitOperator.SafeReadCertifiedExecution.dll' 'certified_executor' $true $executorProvenance $executors[0]
-    $signedExecutor=Join-Path $payloadRoot 'RevitOperator.SafeReadCertifiedExecution.dll';$signedManaged=[string](& $ManagedCodeInspector $signedExecutor $year)
+    $signedExecutor=Join-Path $payloadRoot 'RevitOperator.SafeReadCertifiedExecution.dll';$signedManaged=Get-PackagedManagedCodeSha256 $signedExecutor $year
     if($signedManaged -cne [string]$proof.Artifact.managedCodeSha256){throw "Signed certified executor managed-code fingerprint changed for Revit $year."}
     $processed=@{};do{$added=$false;foreach($entry in @($payloadReceipts)){foreach($reference in @($entry.assembly.references)){if(Test-SafeReadRuntimeProvidedAssembly $reference $expected.Framework){continue};if(@($payloadReceipts|Where-Object{$_.assembly.name -ceq $reference}).Count){continue};$dependencyPath=Join-Path $dependencySourceRoot "$reference.dll";if(-not(Test-Path -LiteralPath $dependencyPath -PathType Leaf)){throw "SafeRead target $year is missing runtime dependency $reference required by $($entry.assembly.name)."};if($processed.ContainsKey($reference)){continue};$processed[$reference]=$true;Add-Payload $dependencyPath "$reference.dll" 'runtime_dependency' $false $null ([pscustomobject]@{role='runtime_dependency'});$added=$true}}}while($added)
     Assert-SafeReadDependencyClosure $payloadReceipts $expected.Framework $year
