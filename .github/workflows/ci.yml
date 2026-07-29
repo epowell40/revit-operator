@@ -95,12 +95,26 @@ jobs:
           dotnet-version: |
             8.0.119
             9.0.304
-      - name: Install Pester in both PowerShell editions
+      - name: Install Pester for PowerShell 7
         shell: pwsh
-        run: Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+        run: |
+          Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+          Import-Module Pester -MinimumVersion 5.5.0
+      - name: Install Pester for Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+          Import-Module Pester -MinimumVersion 5.5.0
       - name: Host production-source tests
         shell: pwsh
         run: dotnet test apps/revit-safe-read-host/tests/RevitOperator.SafeReadHost.Tests/RevitOperator.SafeReadHost.Tests.csproj -c Release
+      - name: Strict JSON parser vectors on .NET Framework and .NET 8
+        shell: pwsh
+        run: |
+          dotnet run --project apps/revit-safe-read-host/tests/RevitOperator.SafeReadHost.ParserVectors/RevitOperator.SafeReadHost.ParserVectors.csproj -c Release -f net48
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dotnet run --project apps/revit-safe-read-host/tests/RevitOperator.SafeReadHost.ParserVectors/RevitOperator.SafeReadHost.ParserVectors.csproj -c Release -f net8.0-windows
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Proof falsifiers with generated Revit API fixtures
         shell: pwsh
         run: ./apps/revit-safe-read-proof/tests/run.ps1 -Hermetic
@@ -142,6 +156,10 @@ jobs:
         run: |
           dotnet test apps/revit-safe-read-host/tests/RevitOperator.SafeReadHost.Tests/RevitOperator.SafeReadHost.Tests.csproj -c Release
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dotnet run --project apps/revit-safe-read-host/tests/RevitOperator.SafeReadHost.ParserVectors/RevitOperator.SafeReadHost.ParserVectors.csproj -c Release -f net48
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dotnet run --project apps/revit-safe-read-host/tests/RevitOperator.SafeReadHost.ParserVectors/RevitOperator.SafeReadHost.ParserVectors.csproj -c Release -f net8.0-windows
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           dotnet build apps/revit-safe-read-host/src/RevitOperator.SafeReadHost/RevitOperator.SafeReadHost.csproj -c Release -f net48 -p:RevitYear=2023 -p:RevitApiPath='C:\Program Files\Autodesk\Revit 2023'
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           dotnet build apps/revit-safe-read-host/src/RevitOperator.SafeReadHost/RevitOperator.SafeReadHost.csproj -c Release -f net48 -p:RevitYear=2024 -p:RevitApiPath='C:\Program Files\Autodesk\Revit 2024'
@@ -151,15 +169,12 @@ jobs:
       - name: Full installed-Revit proof gate
         shell: pwsh
         run: ./apps/revit-safe-read-proof/tests/run.ps1
-      - name: Real three-year proof package twice
+      - name: Cross-edition real three-year proof package
         shell: pwsh
         run: |
-          $first = Join-Path $env:RUNNER_TEMP ('safe-read-real-package-first-' + [guid]::NewGuid().ToString('N'))
-          $second = Join-Path $env:RUNNER_TEMP ('safe-read-real-package-second-' + [guid]::NewGuid().ToString('N'))
-          New-Item -ItemType Directory -Path $first, $second | Out-Null
-          ./scripts/deploy/tests/Invoke-SafeReadRealPackageFixture.ps1 -RepositoryRoot $PWD -OutputRoot $first
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          ./scripts/deploy/tests/Invoke-SafeReadRealPackageFixture.ps1 -RepositoryRoot $PWD -OutputRoot $second
+          $output = Join-Path $env:RUNNER_TEMP ('safe-read-cross-edition-package-' + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $output | Out-Null
+          ./scripts/deploy/tests/Invoke-SafeReadCrossEditionPackageFixture.ps1 -RepositoryRoot (Get-Location).Path -OutputRoot $output
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
   revit-addin:
