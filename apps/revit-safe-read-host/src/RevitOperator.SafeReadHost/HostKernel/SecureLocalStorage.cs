@@ -38,7 +38,18 @@ namespace RevitOperator.SafeReadHost.HostKernel
             string full = Path.GetFullPath(path);
             string? parent = Path.GetDirectoryName(full);
             if (String.IsNullOrEmpty(parent)) throw new InvalidOperationException("Secure file parent is unavailable.");
-            RejectReparse(parent);
+            VerifyPrivateFile(parent, full);
+        }
+
+        public static void VerifyPrivateFile(string trustedRoot, string path)
+        {
+            string root = CanonicalDirectory(trustedRoot);
+            string full = Path.GetFullPath(path);
+            string? parent = Path.GetDirectoryName(full);
+            if (String.IsNullOrEmpty(parent)) throw new InvalidOperationException("Secure file parent is unavailable.");
+            string canonicalParent = CanonicalDirectory(parent);
+            EnsureContained(root, canonicalParent);
+            RejectReparseChain(root, canonicalParent);
             RejectReparse(full);
             VerifyDirectory(parent);
             VerifyFile(full);

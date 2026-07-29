@@ -15,13 +15,12 @@ namespace RevitOperator.SafeReadHost
             try
             {
                 bool hasPort;int port;if(!PortPolicy.TryReadOverride(Environment.GetEnvironmentVariable("REVIT_OPERATOR_SAFE_READ_PORT"),out hasPort,SafeReadContract.MinimumPort,out port))return Result.Failed;
-                FixedBackendOrigin? origin;if(!FixedBackendOrigin.TryCreate(Environment.GetEnvironmentVariable("REVIT_OPERATOR_SAFE_READ_AUTH_ORIGIN"),out origin)||origin==null)return Result.Failed;
-                BackendCredentials? credentials=BackendCredentials.Create(Environment.GetEnvironmentVariable("REVIT_OPERATOR_SAFE_READ_AUTH_BEARER"),Environment.GetEnvironmentVariable("REVIT_OPERATOR_SAFE_READ_AUTH_TOKEN"));if(credentials==null)return Result.Failed;
                 int revitYear;if(!Int32.TryParse(application.ControlledApplication.VersionNumber,out revitYear)||revitYear<2023||revitYear>2025)return Result.Failed;
                 RuntimeDeploymentAttestation attestation=RuntimeDeploymentAttestation.Load(revitYear);
+                FixedBackendOrigin? origin;BackendCredentials? credentials;if(!AuthorizationTransportBootstrap.TryLoad(Environment.GetEnvironmentVariable("REVIT_OPERATOR_MODE"),Environment.GetEnvironmentVariable("REVIT_OPERATOR_SAFE_READ_AUTH_ORIGIN"),Environment.GetEnvironmentVariable("REVIT_OPERATOR_SAFE_READ_AUTH_BEARER"),Environment.GetEnvironmentVariable("REVIT_OPERATOR_SAFE_READ_AUTH_TOKEN"),Environment.GetEnvironmentVariable(AuthorizationTransportBootstrap.ProxyOriginEnvironment),Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),out origin,out credentials)||origin==null||credentials==null)return Result.Failed;
+                _authorizer=new SafeReadBackendAuthorizer(origin,credentials,new FinalReceiptVerifier());
                 _application=application;_identity=InstanceIdentity.Create();_tracker=new DocumentSessionTracker();_slot=new CertifiedExternalWorkSlot();
                 CertifiedSheetsCountExternalEventHandler handler=new CertifiedSheetsCountExternalEventHandler(_slot,_tracker);_externalEvent=ExternalEvent.Create(handler);
-                _authorizer=new SafeReadBackendAuthorizer(origin,credentials,new FinalReceiptVerifier());
                 _host=new CertifiedSafeReadHttpHost(_identity,_tracker,_slot,_externalEvent,_authorizer,attestation);
                 if(!_host.Start(hasPort,port)||_host.Endpoint==null){Stop();return Result.Failed;}
                 _discovery=new DiscoveryPublisher(_identity,revitYear,_host.Endpoint,attestation);_discovery.Publish(null);

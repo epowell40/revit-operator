@@ -17,11 +17,21 @@ namespace RevitOperator.SafeReadHost.HostKernel
         public Uri Value{get;}
         public static bool TryCreate(string? raw,out FixedBackendOrigin? origin){origin=null;if(String.IsNullOrEmpty(raw)||!String.Equals(raw,raw!.Trim(),StringComparison.Ordinal))return false;Uri? uri;if(!Uri.TryCreate(raw,UriKind.Absolute,out uri)||uri==null||uri.UserInfo.Length!=0||uri.Query.Length!=0||uri.Fragment.Length!=0||(uri.AbsolutePath.Length!=0&&uri.AbsolutePath!="/"))return false;bool https=uri.Scheme==Uri.UriSchemeHttps;bool loopback=uri.Scheme==Uri.UriSchemeHttp&&uri.Host=="127.0.0.1";if(!https&&!loopback)return false;origin=new FixedBackendOrigin(new Uri(uri.GetLeftPart(UriPartial.Authority),UriKind.Absolute));return true;}
     }
-    internal sealed class BackendCredentials
+    internal sealed class BackendCredentials:IDisposable
     {
-        private BackendCredentials(string? bearer,string? token){Bearer=bearer;Token=token;}
-        public string? Bearer{get;}public string? Token{get;}
-        public static BackendCredentials? Create(string? bearer,string? token){bool b=!String.IsNullOrWhiteSpace(bearer),t=!String.IsNullOrWhiteSpace(token);if(b==t)return null;if((b&&bearer!=bearer!.Trim())||(t&&token!=token!.Trim()))return null;return new BackendCredentials(b?bearer:null,t?token:null);}
+        private readonly string? _bearer;private readonly string? _token;private readonly byte[]? _proxySecret;
+        private BackendCredentials(string? bearer,string? token,byte[]? proxySecret){_bearer=bearer;_token=token;_proxySecret=proxySecret;}
+        public static BackendCredentials? Create(string? bearer,string? token){bool b=!String.IsNullOrWhiteSpace(bearer),t=!String.IsNullOrWhiteSpace(token);if(b==t)return null;if((b&&bearer!=bearer!.Trim())||(t&&token!=token!.Trim()))return null;return new BackendCredentials(b?bearer:null,t?token:null,null);}
+        public static BackendCredentials? CreateProxy(byte[] secret){if(secret==null||secret.Length!=32)return null;return new BackendCredentials(null,null,(byte[])secret.Clone());}
+        public void Apply(HttpRequestMessage request)
+        {
+            if(_proxySecret!=null){if(!request.Headers.TryAddWithoutValidation(SafeReadContract.ProxyAuthorizationHeader,Protocol.Base64Url(_proxySecret)))throw new InvalidOperationException("SafeRead proxy authorization header was rejected.");return;}
+            if(_bearer!=null){request.Headers.Authorization=new AuthenticationHeaderValue("Bearer",_bearer);return;}
+            if(_token!=null&&request.Headers.TryAddWithoutValidation("x-operator-token",_token))return;
+            throw new InvalidOperationException("SafeRead authorization credentials are unavailable.");
+        }
+        public void Dispose(){if(_proxySecret!=null)Array.Clear(_proxySecret,0,_proxySecret.Length);}
+        public override string ToString()=>"BackendCredentials(redacted)";
     }
     internal sealed class Preauthorization
     {
@@ -50,12 +60,11 @@ namespace RevitOperator.SafeReadHost.HostKernel
     }
     internal sealed class SafeReadBackendAuthorizer:IDisposable
     {
-        private readonly HttpClient _http;private readonly FinalReceiptVerifier _verifier;private readonly FixedBackendOrigin _origin;
+        private readonly HttpClient _http;private readonly FinalReceiptVerifier _verifier;private readonly FixedBackendOrigin _origin;private readonly BackendCredentials _credentials;
         public SafeReadBackendAuthorizer(FixedBackendOrigin origin,BackendCredentials credentials,FinalReceiptVerifier verifier)
         {
-            _origin=origin;_verifier=verifier;HttpClientHandler handler=new HttpClientHandler{AllowAutoRedirect=false,UseCookies=false,UseProxy=false,AutomaticDecompression=DecompressionMethods.None};_http=new HttpClient(handler){BaseAddress=origin.Value,Timeout=Timeout.InfiniteTimeSpan};
+            _origin=origin;_credentials=credentials;_verifier=verifier;HttpClientHandler handler=new HttpClientHandler{AllowAutoRedirect=false,UseCookies=false,UseProxy=false,AutomaticDecompression=DecompressionMethods.None};_http=new HttpClient(handler){BaseAddress=origin.Value,Timeout=Timeout.InfiniteTimeSpan};
             _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            if(credentials.Bearer!=null)_http.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",credentials.Bearer);else _http.DefaultRequestHeaders.Add("x-operator-token",credentials.Token!);
         }
         public async Task<BackendAuthorizationResult> AuthorizeAsync(AuthorizationBindings bindings,byte[] nonce,CancellationToken cancellation)
         {
@@ -93,7 +102,7 @@ namespace RevitOperator.SafeReadHost.HostKernel
             await ProveConnectable(stage,cancellation).ConfigureAwait(false);
             try
             {
-                using(HttpRequestMessage request=new HttpRequestMessage(HttpMethod.Post,path)){request.Content=new StringContent(body,new UTF8Encoding(false),"application/json");using(HttpResponseMessage response=await _http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,cancellation).ConfigureAwait(false)){if(response.Content.Headers.ContentLength>SafeReadContract.MaximumBackendResponseBytes)throw new BackendAuthorizationFailureException(BackendAuthorizationFailure.Invalid(stage+"_response"));using(Stream stream=await response.Content.ReadAsStreamAsync().ConfigureAwait(false))using(MemoryStream copy=new MemoryStream()){byte[] buffer=new byte[4096];int total=0;while(true){int room=SafeReadContract.MaximumBackendResponseBytes-total;if(room<=0)throw new BackendAuthorizationFailureException(BackendAuthorizationFailure.Invalid(stage+"_response"));int read=await stream.ReadAsync(buffer,0,Math.Min(buffer.Length,room),cancellation).ConfigureAwait(false);if(read<=0)break;total+=read;copy.Write(buffer,0,read);}StrictJsonValue root;try{root=StrictJson.Parse(copy.ToArray(),SafeReadContract.MaximumBackendResponseBytes,8);}catch(FormatException){throw new BackendAuthorizationFailureException(BackendAuthorizationFailure.Invalid(stage+"_response"));}if(response.StatusCode!=HttpStatusCode.OK){BackendAuthorizationFailure? failure=ParseFailure(root,stage+"_response");if(failure!=null)throw new BackendAuthorizationFailureException(failure);throw new BackendAuthorizationFailureException(BackendAuthorizationFailure.Invalid(stage+"_response"));}return root;}}}
+                using(HttpRequestMessage request=new HttpRequestMessage(HttpMethod.Post,path)){_credentials.Apply(request);request.Content=new StringContent(body,new UTF8Encoding(false),"application/json");using(HttpResponseMessage response=await _http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,cancellation).ConfigureAwait(false)){if(response.Content.Headers.ContentLength>SafeReadContract.MaximumBackendResponseBytes)throw new BackendAuthorizationFailureException(BackendAuthorizationFailure.Invalid(stage+"_response"));using(Stream stream=await response.Content.ReadAsStreamAsync().ConfigureAwait(false))using(MemoryStream copy=new MemoryStream()){byte[] buffer=new byte[4096];int total=0;while(true){int room=SafeReadContract.MaximumBackendResponseBytes-total;if(room<=0)throw new BackendAuthorizationFailureException(BackendAuthorizationFailure.Invalid(stage+"_response"));int read=await stream.ReadAsync(buffer,0,Math.Min(buffer.Length,room),cancellation).ConfigureAwait(false);if(read<=0)break;total+=read;copy.Write(buffer,0,read);}StrictJsonValue root;try{root=StrictJson.Parse(copy.ToArray(),SafeReadContract.MaximumBackendResponseBytes,8);}catch(FormatException){throw new BackendAuthorizationFailureException(BackendAuthorizationFailure.Invalid(stage+"_response"));}if(response.StatusCode!=HttpStatusCode.OK){BackendAuthorizationFailure? failure=ParseFailure(root,stage+"_response");if(failure!=null)throw new BackendAuthorizationFailureException(failure);throw new BackendAuthorizationFailureException(BackendAuthorizationFailure.Invalid(stage+"_response"));}return root;}}}
             }
             catch(BackendAuthorizationFailureException){throw;}
             catch(OperationCanceledException){throw new BackendAuthorizationFailureException(BackendAuthorizationFailure.Unknown(stage+"_dispatch"));}
@@ -131,7 +140,7 @@ namespace RevitOperator.SafeReadHost.HostKernel
             return new BackendAuthorizationFailure(error,isRetryable,isDispatched,isUnknown,stage);
         }
         private static bool SafeFailureText(string value){if(String.IsNullOrEmpty(value)||value.Length>512)return false;for(int i=0;i<value.Length;i++)if(value[i]<32||value[i]==127)return false;return true;}
-        public void Dispose()=>_http.Dispose();
+        public void Dispose(){_http.Dispose();_credentials.Dispose();}
     }
 
     internal sealed class BackendAuthorizationCoordinator

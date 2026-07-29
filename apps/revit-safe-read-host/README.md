@@ -36,9 +36,9 @@ The six external headers are
 generates a fresh 32-byte nonce after admission and never publishes it.
 
 The concrete authorization client sends exact snake-case preauthorization and
-final-authorization bodies to one configured origin, unwraps only the exact
-success envelopes, and verifies the nonce-derived HMAC inside the host
-assembly. Each POST first proves that the fixed origin is connectable. A proven
+final-authorization bodies through one startup-selected transport, unwraps
+only the exact success envelopes, and verifies the nonce-derived HMAC inside
+the host assembly. Each POST first proves that the fixed origin is connectable. A proven
 pre-connect failure is a known retryable denial; after POST dispatch, response
 reset, loss, or cancellation is preserved as
 `request_dispatched=true,outcome_unknown=true,retryable=false`. Complete exact
@@ -93,9 +93,26 @@ Revit stubs. The certified project also fails its build unless the evaluated
 `REVIT_OPERATOR_SAFE_READ_PORT` is optional. If present, it must be an exact
 decimal port from `5040` through `5050`; invalid values fail startup.
 
-`REVIT_OPERATOR_SAFE_READ_AUTH_ORIGIN` is read once at startup and must be a
-pathless HTTPS origin, or an HTTP origin on `127.0.0.1`. It does not enable
-authorization by itself. Configure exactly one of
-`REVIT_OPERATOR_SAFE_READ_AUTH_BEARER` or
-`REVIT_OPERATOR_SAFE_READ_AUTH_TOKEN`; both missing or both present fail
-startup. See [THREAT_BOUNDARY.md](THREAT_BOUNDARY.md) for ACL and trust limits.
+Authorization transport is selected once from the exact raw
+`REVIT_OPERATOR_MODE`. Unset, `local`, `self_hosted`, and `development` retain
+the direct-backend transport: `REVIT_OPERATOR_SAFE_READ_AUTH_ORIGIN` must be a
+pathless HTTPS origin, or an HTTP origin on numeric `127.0.0.1`, and exactly one
+of `REVIT_OPERATOR_SAFE_READ_AUTH_BEARER` or
+`REVIT_OPERATOR_SAFE_READ_AUTH_TOKEN` is required.
+
+`hosted` and `production` never use those direct credentials. They accept only
+the fixed Sidecar authorization proxy at `http://127.0.0.1:3907` and fixed POST
+routes `/api/safe-read/direct/preauthorize` and
+`/api/safe-read/direct/authorize-execution`. The host reads exactly 32 raw
+secret bytes from
+`%LOCALAPPDATA%\RevitOperator\SafeRead\proxy\authorization_secret.v1.bin` and
+sends their base64url representation only in
+`X-RevitOperator-SafeRead-Proxy-Secret`. The file must already exist with a
+protected owner/SYSTEM/Administrators ACL and no reparse traversal. A missing,
+malformed, moved, broadly accessible, or replaced secret fails startup. The
+Sidecar must load-or-create this file atomically and preserve the same bytes
+across Sidecar restarts while Revit can still hold the startup copy. The
+optional `REVIT_OPERATOR_SAFE_READ_PROXY_ORIGIN`, when present, must equal the
+fixed origin byte-for-byte. Direct settings in hosted/production, or proxy
+settings in a direct mode, are ambiguous and fail closed; there is no transport
+fallback. See [THREAT_BOUNDARY.md](THREAT_BOUNDARY.md) for ACL and trust limits.
