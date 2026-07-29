@@ -128,11 +128,27 @@ namespace RevitBridge.Handlers
 
         public Task<object> Handle(UIApplication app, string jsonData)
         {
-            if (string.IsNullOrWhiteSpace(jsonData))
+            // IRequestHandler predates method-aware dispatch. Keep its fallback
+            // read-only so an omitted HTTP/action method can never mutate policy.
+            return HandleForMethod(app, jsonData, "GET");
+        }
+
+        public Task<object> HandleForMethod(UIApplication app, string jsonData, string method)
+        {
+            var normalizedMethod = (method ?? "").Trim().ToUpperInvariant();
+            if (normalizedMethod == "GET")
             {
                 return Task.FromResult(OperatorNativeApiPolicy.GetStatus());
             }
-            var p = JsonSerializer.Deserialize<Params>(jsonData, OperatorUiProtocol.JsonOptions) ?? new Params();
+
+            if (normalizedMethod != "POST")
+            {
+                throw new ArgumentException("native-api-policy supports only GET and POST.", nameof(method));
+            }
+
+            var p = string.IsNullOrWhiteSpace(jsonData)
+                ? new Params()
+                : (JsonSerializer.Deserialize<Params>(jsonData, OperatorUiProtocol.JsonOptions) ?? new Params());
             var result = OperatorNativeApiPolicy.SetPolicy(p.profile, p.maxRisk, p.allowMutating, p.blockFreezeRisk, p.maxResults, p.maxInvocationParams);
             return Task.FromResult(result);
         }

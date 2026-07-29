@@ -26,7 +26,7 @@ OPERATOR_TOKEN=
 
 If `OPERATOR_TOKEN` is not set, local scripts can generate a per-session token and share it with the add-in through the local workspace.
 
-The provider-neutral `principal_jwt` contract is also available for a private or self-hosted identity adapter. It uses generic `OPERATOR_JWT_*` settings and `tenant_id` / `user_id` claims; provider-specific verification and hosted product policy remain outside this public package. In `hosted` runtime mode the full shell-capable workbench is always disabled. Outside hosted mode, principal auth may enable it only with an explicit `OPERATOR_WORKBENCH_ENABLED=true` opt-in.
+The provider-neutral `principal_jwt` contract is also available for a private or self-hosted identity adapter. It uses generic `OPERATOR_JWT_*` settings and `tenant_id` / `user_id` claims; provider-specific verification and hosted product policy remain outside this public package. Full shell-capable workbench actions are available only when `REVIT_OPERATOR_MODE` is explicitly `local` or `development` and `OPERATOR_WORKBENCH_ENABLED=true`; authentication mode alone cannot enable them, and hosted, self-hosted, production, or unset runtime modes keep them disabled.
 
 ## Primary Agent Providers
 

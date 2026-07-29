@@ -15,7 +15,6 @@ const READ_ONLY_POST_PATHS = new Set<string>([
   "/revit/tool-search",
   "/revit/tool-doc",
   "/revit/tool-examples",
-  "/revit/native-api-policy",
   "/revit/native-api-catalog",
   "/revit/native-api-search",
   "/revit/self-test",

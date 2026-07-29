@@ -91,6 +91,7 @@ namespace RevitBridge.Operator
         public bool AllowMutating { get; set; } = true;
         public bool BlockFreezeRisk { get; set; } = true;
         public bool Locked { get; set; }
+        public string LockReason { get; set; } = "";
         public int MaxResults { get; set; } = 200;
         public int MaxInvocationParams { get; set; } = 10;
         public string Source { get; set; } = "default";
@@ -124,6 +125,7 @@ namespace RevitBridge.Operator
                 allow_mutating = s.AllowMutating,
                 block_freeze_risk = s.BlockFreezeRisk,
                 locked = s.Locked,
+                lock_reason = s.LockReason,
                 source = s.Source,
                 max_results = s.MaxResults,
                 max_invocation_params = s.MaxInvocationParams,
@@ -139,7 +141,10 @@ namespace RevitBridge.Operator
                 if (_state == null) _state = BuildInitial();
                 if (_state.Locked)
                 {
-                    return new { ok = false, error = "Native API policy is locked by enterprise settings.", policy = GetStatus() };
+                    var reason = string.IsNullOrWhiteSpace(_state.LockReason)
+                        ? "Native API policy is locked by enterprise settings."
+                        : _state.LockReason;
+                    return new { ok = false, error = reason, policy = GetStatus() };
                 }
 
                 if (!string.IsNullOrWhiteSpace(profile))
@@ -203,10 +208,12 @@ namespace RevitBridge.Operator
 
         private static NativeApiPolicySnapshot BuildInitial()
         {
+            var runtimeMode = OperatorNativeApiRuntimeSafety.NormalizeRuntimeMode(
+                Environment.GetEnvironmentVariable("REVIT_OPERATOR_MODE"));
             var s = new NativeApiPolicySnapshot
             {
                 Profile = ParseProfile(Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_PROFILE"), OperatorNativeApiProfile.Broad),
-                Locked = ParseBool(Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_POLICY_LOCKED"), false),
+                Locked = ParseBool(Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_POLICY_LOCKED"), false, true),
                 MaxResults = Clamp(ParseInt(Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_MAX_RESULTS"), 200), 20, 1000),
                 MaxInvocationParams = Clamp(ParseInt(Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_MAX_INVOCATION_PARAMS"), 10), 1, 50),
                 BlockedTypePrefixes = ParseCsv(Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_BLOCKED_TYPE_PREFIXES"), "Autodesk.Revit.ApplicationServices.ControlledApplication"),
@@ -217,9 +224,33 @@ namespace RevitBridge.Operator
             var envRisk = Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_MAX_RISK");
             if (!string.IsNullOrWhiteSpace(envRisk)) s.MaxRisk = ParseRisk(envRisk, s.MaxRisk);
             var envMut = Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_ALLOW_MUTATING");
-            if (!string.IsNullOrWhiteSpace(envMut)) s.AllowMutating = ParseBool(envMut, s.AllowMutating);
+            if (!string.IsNullOrWhiteSpace(envMut)) s.AllowMutating = ParseBool(envMut, s.AllowMutating, false);
             var envFreeze = Environment.GetEnvironmentVariable("OPERATOR_NATIVE_API_BLOCK_FREEZE_RISK");
-            if (!string.IsNullOrWhiteSpace(envFreeze)) s.BlockFreezeRisk = ParseBool(envFreeze, s.BlockFreezeRisk);
+            if (!string.IsNullOrWhiteSpace(envFreeze)) s.BlockFreezeRisk = ParseBool(envFreeze, s.BlockFreezeRisk, true);
+
+            // Remote and invalid runtime signals cannot retain workstation authority.
+            // Apply this last so no native-policy env var or runtime POST can widen
+            // the reflected API surface after the deployment boundary is resolved.
+            var bounded = OperatorNativeApiRuntimeSafety.ApplyAfterConfiguredOverrides(
+                runtimeMode,
+                Environment.GetEnvironmentVariable("OPERATOR_HOSTED_ENABLED"),
+                new OperatorNativeApiRuntimePolicyState
+                {
+                    Profile = ProfileToString(s.Profile),
+                    MaxRisk = s.MaxRisk,
+                    AllowMutating = s.AllowMutating,
+                    BlockFreezeRisk = s.BlockFreezeRisk,
+                    Locked = s.Locked,
+                    LockReason = s.Locked ? "Native API policy is locked by enterprise settings." : "",
+                    Source = s.Source
+                });
+            s.Profile = ParseProfile(bounded.Profile, s.Profile);
+            s.MaxRisk = bounded.MaxRisk;
+            s.AllowMutating = bounded.AllowMutating;
+            s.BlockFreezeRisk = bounded.BlockFreezeRisk;
+            s.Locked = bounded.Locked;
+            s.LockReason = bounded.LockReason;
+            s.Source = bounded.Source;
             return s;
         }
 
@@ -253,6 +284,7 @@ namespace RevitBridge.Operator
                 AllowMutating = s.AllowMutating,
                 BlockFreezeRisk = s.BlockFreezeRisk,
                 Locked = s.Locked,
+                LockReason = s.LockReason,
                 MaxResults = s.MaxResults,
                 MaxInvocationParams = s.MaxInvocationParams,
                 Source = s.Source,
@@ -278,12 +310,12 @@ namespace RevitBridge.Operator
             if (v == "high") return OperatorActionRisk.High;
             return fallback;
         }
-        private static bool ParseBool(string? raw, bool fallback)
+        private static bool ParseBool(string? raw, bool fallback, bool malformedFallback)
         {
-            var v = (raw ?? "").Trim().ToLowerInvariant();
-            if (v == "1" || v == "true" || v == "yes" || v == "on") return true;
-            if (v == "0" || v == "false" || v == "no" || v == "off") return false;
-            return fallback;
+            if (string.IsNullOrWhiteSpace(raw)) return fallback;
+            return OperatorNativeApiRuntimeSafety.TryParseBoolean(raw, out var parsed)
+                ? parsed
+                : malformedFallback;
         }
         private static int ParseInt(string? raw, int fallback) => int.TryParse((raw ?? "").Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : fallback;
         private static int Clamp(int v, int min, int max) => v < min ? min : (v > max ? max : v);

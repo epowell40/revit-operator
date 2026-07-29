@@ -5,14 +5,17 @@ import test from "node:test";
 import { resolveAuthMode } from "../src/auth.js";
 import { deriveImprovementOperatorProfile } from "../src/improvement/job_store.js";
 import { getScopedWorkspaceRoot, type RequestPrincipal } from "../src/request_context.js";
-import { isHostedRuntime, resolveRuntimeMode } from "../src/runtime_mode.js";
-import { workbenchEnabled } from "../src/workbench/workbench_runner.js";
+import { isFullWorkbenchRuntime, isHostedRuntime, resolveRuntimeMode } from "../src/runtime_mode.js";
+import { executeWorkbenchActions, safeRedlineWorkbenchEnabled, workbenchEnabled } from "../src/workbench/workbench_runner.js";
 
 const RUNTIME_ENV_KEYS = [
   "REVIT_OPERATOR_MODE",
   "OPERATOR_HOSTED_ENABLED",
   "OPERATOR_AUTH_MODE",
   "OPERATOR_WORKBENCH_ENABLED",
+  "OPERATOR_WORKBENCH_SAFE_REDLINES_ENABLED",
+  "OPERATOR_CLIENT_ID",
+  "OPERATOR_SESSION_ID",
   "AWS_EXECUTION_ENV",
   "EC2_HOME"
 ] as const;
@@ -26,6 +29,27 @@ function withRuntimeEnv(values: Partial<Record<(typeof RUNTIME_ENV_KEYS)[number]
   Object.assign(process.env, values);
   try {
     fn();
+  } finally {
+    for (const key of RUNTIME_ENV_KEYS) {
+      const value = previous.get(key);
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function withRuntimeEnvAsync(
+  values: Partial<Record<(typeof RUNTIME_ENV_KEYS)[number], string>>,
+  fn: () => Promise<void>
+): Promise<void> {
+  const previous = new Map<string, string | undefined>();
+  for (const key of RUNTIME_ENV_KEYS) {
+    previous.set(key, process.env[key]);
+    delete process.env[key];
+  }
+  Object.assign(process.env, values);
+  try {
+    await fn();
   } finally {
     for (const key of RUNTIME_ENV_KEYS) {
       const value = previous.get(key);
@@ -71,26 +95,90 @@ test("unknown runtime and hosted flag values fail closed", { concurrency: false 
   });
 });
 
-test("local and self-hosted shared-token compatibility remains enabled", { concurrency: false }, () => {
-  for (const mode of ["local", "self_hosted"] as const) {
+test("full workbench requires an explicit local or development opt-in", { concurrency: false }, () => {
+  for (const mode of ["local", "development"] as const) {
     withRuntimeEnv({ REVIT_OPERATOR_MODE: mode }, () => {
       assert.equal(resolveRuntimeMode(), mode);
       assert.equal(resolveAuthMode(), "shared_token");
+      assert.equal(isFullWorkbenchRuntime(), true);
+      assert.equal(workbenchEnabled(), false);
+    });
+    withRuntimeEnv({ REVIT_OPERATOR_MODE: mode, OPERATOR_WORKBENCH_ENABLED: "true" }, () => {
       assert.equal(workbenchEnabled(), true);
     });
   }
 });
 
-test("non-hosted principal auth requires an explicit full-workbench opt-in", { concurrency: false }, () => {
-  withRuntimeEnv({ REVIT_OPERATOR_MODE: "self_hosted", OPERATOR_AUTH_MODE: "principal_jwt" }, () => {
-    assert.equal(workbenchEnabled(), false);
-  });
-  withRuntimeEnv({
-    REVIT_OPERATOR_MODE: "self_hosted",
-    OPERATOR_AUTH_MODE: "principal_jwt",
+test("hosted, production, self-hosted, and unlabeled runtimes cannot opt in to the full workbench", { concurrency: false }, () => {
+  for (const mode of ["hosted", "production", "self_hosted", undefined] as const) {
+    withRuntimeEnv({
+      ...(mode ? { REVIT_OPERATOR_MODE: mode } : {}),
+      OPERATOR_AUTH_MODE: "shared_token",
+      OPERATOR_WORKBENCH_ENABLED: "true",
+      OPERATOR_CLIENT_ID: "trusted-desktop-client",
+      OPERATOR_SESSION_ID: "trusted-local-session"
+    }, () => {
+      assert.equal(isFullWorkbenchRuntime(), false);
+      assert.equal(workbenchEnabled(), false);
+    });
+  }
+});
+
+test("hosted signaling overrides a downgraded local or development label", { concurrency: false }, () => {
+  for (const mode of ["local", "development"] as const) {
+    withRuntimeEnv({
+      REVIT_OPERATOR_MODE: mode,
+      OPERATOR_HOSTED_ENABLED: "true",
+      OPERATOR_AUTH_MODE: "shared_token",
+      OPERATOR_WORKBENCH_ENABLED: "true",
+      OPERATOR_CLIENT_ID: "local-client",
+      OPERATOR_SESSION_ID: "local-session"
+    }, () => {
+      assert.equal(isHostedRuntime(), true);
+      assert.equal(isFullWorkbenchRuntime(), false);
+      assert.equal(workbenchEnabled(), false);
+    });
+  }
+});
+
+test("principal auth cannot widen or narrow an otherwise explicit local workbench decision", { concurrency: false }, () => {
+  for (const authMode of ["shared_token", "principal_jwt"] as const) {
+    withRuntimeEnv({
+      REVIT_OPERATOR_MODE: "local",
+      OPERATOR_AUTH_MODE: authMode,
+      OPERATOR_WORKBENCH_ENABLED: "true"
+    }, () => {
+      assert.equal(workbenchEnabled(), true);
+    });
+  }
+});
+
+test("production keeps restricted non-shell workbench actions available while blocking shell", { concurrency: false }, async () => {
+  await withRuntimeEnvAsync({
+    REVIT_OPERATOR_MODE: "production",
+    OPERATOR_AUTH_MODE: "shared_token",
     OPERATOR_WORKBENCH_ENABLED: "true"
-  }, () => {
-    assert.equal(workbenchEnabled(), true);
+  }, async () => {
+    assert.equal(workbenchEnabled(), false);
+    assert.equal(safeRedlineWorkbenchEnabled(), true);
+
+    let registered = false;
+    const safe = await executeWorkbenchActions([{
+      type: "register_existing_conditions_route_frontier",
+      candidate_json: JSON.stringify({ schema_version: 1, primitive_id: "route-production-safe" }),
+      connector_tool_action_id: "connectors-production-safe"
+    }], {
+      registerExistingConditionsRouteFrontier: async () => {
+        registered = true;
+        return { status: "registered_for_staged_dry_run" };
+      }
+    });
+    assert.equal(registered, true);
+    assert.equal(safe[0]?.ok, true);
+
+    const shell = await executeWorkbenchActions([{ type: "shell", command: "node --version" }]);
+    assert.equal(shell[0]?.ok, false);
+    assert.match(shell[0]?.summary ?? "", /restricted safe-workbench mode/);
   });
 });
 

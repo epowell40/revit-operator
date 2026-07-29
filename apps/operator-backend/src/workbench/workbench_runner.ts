@@ -3,8 +3,7 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import { resolveAuthMode } from "../auth.js";
-import { isHostedRuntime } from "../runtime_mode.js";
+import { isFullWorkbenchRuntime } from "../runtime_mode.js";
 import { ensureWorkspaceLayout, resolveExistingFileUnderWorkspace, resolveFileUnderWorkspace } from "../workspace.js";
 import { analyzeRedlineFile } from "../redline/redline_analyzer.js";
 import { buildRedlineActionUnits } from "../redline/redline_action_units.js";
@@ -441,10 +440,8 @@ function safeListFiles(relDir: string | undefined, recursive: boolean, maxItems:
 }
 
 export function workbenchEnabled(): boolean {
-  if (isHostedRuntime()) return false;
-  const raw = process.env.OPERATOR_WORKBENCH_ENABLED;
-  const principalMode = resolveAuthMode() === "principal_jwt";
-  return parseBool(raw, !principalMode);
+  if (!isFullWorkbenchRuntime()) return false;
+  return parseBool(process.env.OPERATOR_WORKBENCH_ENABLED, false);
 }
 
 export function safeRedlineWorkbenchEnabled(): boolean {
@@ -511,7 +508,7 @@ export async function executeWorkbenchActions(actions: WorkbenchAction[], deps: 
           index: i + 1,
           type: action.type,
           ok: false,
-          summary: `Workbench action '${action.type}' disabled in hosted safe-redline mode.`
+          summary: `Workbench action '${action.type}' disabled in restricted safe-workbench mode.`
         });
         continue;
       }

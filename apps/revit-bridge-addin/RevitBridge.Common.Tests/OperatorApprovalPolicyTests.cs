@@ -94,6 +94,26 @@ namespace RevitBridge.Common.Tests
             Assert.Equal("preview", OperatorApprovalPolicy.GetEffectWireValue("POST", path, body));
         }
 
+        [Fact]
+        public void NativeApiPolicyMutationIsHighRiskAndRequiresSafeModeApproval()
+        {
+            Assert.Equal(
+                OperatorActionRisk.Low,
+                OperatorApprovalPolicy.GetRisk("GET", "/revit/native-api-policy", null));
+
+            var risk = OperatorApprovalPolicy.GetRisk(
+                "POST",
+                "/revit/native-api-policy",
+                "{\"profile\":\"unrestricted\",\"allowMutating\":true}");
+
+            Assert.Equal(OperatorActionRisk.High, risk);
+            Assert.Equal(OperatorActionEffect.Apply, OperatorApprovalPolicy.GetEffect(
+                "POST",
+                "/revit/native-api-policy",
+                "{\"profile\":\"unrestricted\",\"allowMutating\":true}"));
+            Assert.True(OperatorApprovalPolicy.RequiresApproval(OperatorApprovalMode.Safe, risk));
+        }
+
         private static void AssertLow(string method, string path, string body)
         {
             var risk = OperatorApprovalPolicy.GetRisk(method, path, body);
