@@ -17,8 +17,10 @@ export const DIRECT_REVIT_EXECUTION_AUTHORIZATION_VERSION = "revit-operator.revi
 export const DIRECT_REVIT_ADMISSION_REQUEST_SCHEMA = "revit-operator.revit-direct-admission-request.v1";
 export const DIRECT_REVIT_AUTHORIZATION_VALID_FOR_MS = 5_000;
 export const DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES = 2 * 1024 * 1024;
-// body_json is itself JSON-escaped in the authorization request wrapper.
-export const DIRECT_REVIT_AUTHORIZATION_HTTP_MAX_BYTES = (DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES * 2) + 16 * 1024;
+// body_json is itself JSON-escaped in the authorization request wrapper. The
+// native System.Text.Json encoder may represent one source byte as a six-byte
+// \uXXXX escape, so the outer request needs a separate, still-bounded ceiling.
+export const DIRECT_REVIT_AUTHORIZATION_HTTP_MAX_BYTES = (DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES * 6) + 64 * 1024;
 
 const DIRECT_REQUEST_KEYS = ["schema", "request_id", "method", "path", "body_present", "body_json"] as const;
 const REQUEST_ID = /^(?:[0-9a-f]{32}|[0-9a-f]{64})$/;
@@ -32,6 +34,8 @@ export type DirectRevitExecutionAuthorization = {
   method: "GET" | "POST";
   path: string;
   body_present: boolean;
+  source_body_sha256: string;
+  canonical_body_json: string;
   body_sha256: string;
   policy_hash: string;
   policy_record_hash: string;
@@ -141,11 +145,19 @@ export function authorizeDirectRevitExecution(
     malformed("Direct Revit POST authorization requires a present JSON body.");
   }
   let parsedBody: JsonValue = {};
+  let canonicalBodyJson = "";
   if (bodyPresent) {
     try {
       parsedBody = JSON.parse(bodyJson) as JsonValue;
-      // Canonicalization rejects non-JSON runtime values and NFC key collisions.
-      canonicalJson(parsedBody);
+      // Lock the source to the compact JSON compatibility form emitted by the
+      // native client. Besides whitespace drift, this rejects duplicate-member
+      // collapse and numeric lexemes that JSON.parse would silently rewrite.
+      if (JSON.stringify(parsedBody) !== bodyJson) {
+        malformed("Direct Revit authorization body_json must use the compact JSON source compatibility form.");
+      }
+      // The backend is the policy canonicalization authority. This second form
+      // intentionally normalizes strings/keys and ordering before evaluation.
+      canonicalBodyJson = canonicalJson(parsedBody);
     } catch {
       malformed("Direct Revit authorization body_json must contain canonicalizable UTF-8 JSON.");
     }
@@ -181,7 +193,9 @@ export function authorizeDirectRevitExecution(
       method,
       path: toolPath,
       body_present: bodyPresent,
-      body_sha256: bodySha256(bodyJson),
+      source_body_sha256: bodySha256(bodyJson),
+      canonical_body_json: canonicalBodyJson,
+      body_sha256: bodySha256(canonicalBodyJson),
       policy_hash: trusted.policy.policy_hash,
       policy_record_hash: record.policy_record_hash,
       evidence_record_hash: record.evidence_record_hash,

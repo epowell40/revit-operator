@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -7,6 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   authorizeDirectRevitExecution,
+  DIRECT_REVIT_AUTHORIZATION_HTTP_MAX_BYTES,
   DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES,
   DirectRevitExecutionAuthorizationError
 } from "../src/capabilities/direct_revit_execution_authorization.js";
@@ -18,6 +20,10 @@ import { computeRequestHash, sha256 } from "../src/capabilities/tool_certificati
 
 type PolicyFixture = { policyPath: string; policyHash: string; record: Record<string, any> };
 const REQUEST_ID = "0123456789abcdef0123456789abcdef";
+
+function rawSha256(value: string): string {
+  return `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
+}
 
 function directRequest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -120,7 +126,7 @@ test("compiled trusted-policy loader locates and validates the bundled pinned po
 test("direct authorization derives every generic-call binding from one exact exposed policy record", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-direct-allow-"));
   const policy = writePolicy(root, { request: { a: 1, z: "raw" } });
-  const bodyJson = "{\n  \"z\": \"raw\", \"a\": 1\n}";
+  const bodyJson = "{\"z\":\"raw\",\"a\":1}";
   const authorization = authorizeDirectRevitExecution(directRequest({ body_json: bodyJson }), certifiedEnv(policy), new Date("2026-07-29T12:00:00.000Z"));
 
   assert.equal(authorization.phase, "certification_native_direct_admission");
@@ -129,6 +135,9 @@ test("direct authorization derives every generic-call binding from one exact exp
   assert.equal(authorization.method, "POST");
   assert.equal(authorization.path, "/revit/ping");
   assert.equal(authorization.body_present, true);
+  assert.equal(authorization.source_body_sha256, rawSha256(bodyJson));
+  assert.equal(authorization.canonical_body_json, "{\"a\":1,\"z\":\"raw\"}");
+  assert.equal(authorization.body_sha256, rawSha256(authorization.canonical_body_json));
   assert.equal(authorization.policy_hash, policy.policyHash);
   assert.equal(authorization.policy_record_hash, policy.record.policy_record_hash);
   assert.equal(authorization.evidence_record_hash, policy.record.evidence_record_hash);
@@ -140,6 +149,8 @@ test("direct authorization derives every generic-call binding from one exact exp
   assert.equal(authorization.policy_trust_source, "deployment");
   const { authorization_hash: declared, ...payload } = authorization;
   assert.equal(declared, sha256(payload as never));
+  assert.notEqual(declared, sha256({ ...payload, source_body_sha256: rawSha256("{}") } as never));
+  assert.notEqual(declared, sha256({ ...payload, canonical_body_json: "{}" } as never));
 
   const getPolicy = writePolicy(root, { method: "GET", path: "/revit/context", request: {} });
   const getAuthorization = authorizeDirectRevitExecution(directRequest({
@@ -153,6 +164,54 @@ test("direct authorization derives every generic-call binding from one exact exp
   assert.equal(getAuthorization.path, "/revit/context");
   assert.equal(getAuthorization.body_present, false);
   assert.equal(getAuthorization.request_id, "a".repeat(64));
+  assert.equal(getAuthorization.source_body_sha256, rawSha256(""));
+  assert.equal(getAuthorization.canonical_body_json, "");
+  assert.equal(getAuthorization.body_sha256, rawSha256(""));
+});
+
+test("direct authorization rejects source lexical drift before policy evaluation", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-direct-source-form-"));
+  const policy = writePolicy(root, { request: { a: 2 } });
+  const env = certifiedEnv(policy);
+
+  for (const bodyJson of [
+    "{\"a\":1,\"a\":2}",
+    "{ \"a\": 2 }",
+    "{\"a\":2e0}",
+    "{\"a\":-0}",
+    "{\"a\":9007199254740993}"
+  ]) {
+    expectDirectError(
+      () => authorizeDirectRevitExecution(directRequest({ body_json: bodyJson }), env),
+      400,
+      "CERTIFICATION_DIRECT_REQUEST_MALFORMED"
+    );
+  }
+});
+
+test("direct authorization binds distinct compact source and normalized canonical body forms", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-direct-normalization-"));
+  const policy = writePolicy(root, { request: { line: "first\nsecond", value: "é" } });
+  const sourceBodyJson = JSON.stringify({ value: "e\u0301", line: "first\r\nsecond" });
+  const authorization = authorizeDirectRevitExecution(
+    directRequest({ body_json: sourceBodyJson }),
+    certifiedEnv(policy),
+    new Date("2026-07-29T12:00:00.000Z")
+  );
+
+  assert.equal(sourceBodyJson, "{\"value\":\"é\",\"line\":\"first\\r\\nsecond\"}");
+  assert.equal(authorization.source_body_sha256, rawSha256(sourceBodyJson));
+  assert.equal(authorization.canonical_body_json, "{\"line\":\"first\\nsecond\",\"value\":\"é\"}");
+  assert.equal(authorization.body_sha256, rawSha256(authorization.canonical_body_json));
+  assert.notEqual(authorization.source_body_sha256, authorization.body_sha256);
+
+  const resubmitted = authorizeDirectRevitExecution(
+    directRequest({ request_id: "b".repeat(32), body_json: authorization.canonical_body_json }),
+    certifiedEnv(policy)
+  );
+  assert.equal(resubmitted.canonical_body_json, authorization.canonical_body_json);
+  assert.equal(resubmitted.source_body_sha256, authorization.body_sha256);
+  assert.equal(resubmitted.body_sha256, authorization.body_sha256);
 });
 
 test("direct authorization rejects caller trust material, malformed contracts, request mismatches, ambiguity, denial, and laboratory mode", () => {
@@ -200,6 +259,22 @@ test("direct authorization enforces the raw 2 MiB body ceiling and returns struc
   expectDirectError(() => authorizeDirectRevitExecution(directRequest(), certifiedEnv(policy, {
     OPERATOR_TOOL_EXPOSURE_POLICY_PATH: path.join(root, "missing.json")
   })), 503, "CERTIFICATION_POLICY_UNAVAILABLE");
+});
+
+test("escape-heavy near-limit native wrapper fits the bounded HTTP authorization ceiling", () => {
+  const sourceBodyJson = JSON.stringify({ value: "<".repeat(DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES - 32) });
+  const sourceBytes = Buffer.byteLength(sourceBodyJson, "utf8");
+  assert.ok(sourceBytes <= DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES);
+  assert.ok(sourceBytes > DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES - 64);
+
+  // System.Text.Json's default encoder can turn each '<' source byte into the
+  // six-byte outer-wrapper escape \u003C. Preserve the other JSON.stringify
+  // escaping to model the exact double-encoded request shape.
+  const nativeWrapper = JSON.stringify(directRequest({ body_json: sourceBodyJson })).replaceAll("<", "\\u003C");
+  const wrapperBytes = Buffer.byteLength(nativeWrapper, "utf8");
+  assert.ok(wrapperBytes > DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES * 5);
+  assert.ok(wrapperBytes <= DIRECT_REVIT_AUTHORIZATION_HTTP_MAX_BYTES);
+  assert.deepEqual((JSON.parse(nativeWrapper) as any).body_json, sourceBodyJson);
 });
 
 async function availablePort(): Promise<number> {
@@ -305,6 +380,15 @@ test("authenticated HTTP endpoint returns exact structured deny and allow receip
   assert.equal(receipt.authorization.channel, "generic_call");
   assert.equal(receipt.authorization.request_id, REQUEST_ID);
   assert.equal(receipt.authorization.valid_for_ms, 5_000);
+  assert.equal(receipt.authorization.source_body_sha256, rawSha256("{}"));
+  assert.equal(receipt.authorization.canonical_body_json, "{}");
+  assert.equal(receipt.authorization.body_sha256, rawSha256("{}"));
+  assert.deepEqual(Object.keys(receipt.authorization).sort(), [
+    "authorization_hash", "authorized_at", "body_present", "body_sha256", "canonical_body_json",
+    "channel", "effect_hash", "evidence_record_hash", "exposure_profile", "method", "path",
+    "phase", "policy_hash", "policy_record_hash", "policy_trust_source", "request_hash", "request_id",
+    "runtime_mode", "source_body_sha256", "valid_for_ms", "version"
+  ]);
 
   const malformed = await fetch(`${allowed.base}/api/revit-direct/authorize-execution`, {
     method: "POST",
