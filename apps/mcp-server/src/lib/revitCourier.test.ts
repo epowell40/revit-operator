@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { callRevitViaCourier, REVIT_COURIER_CONTEXT_STRING_LIMITS } from "./revitCourier.js";
+import { callRevitViaCourier, RevitCourierError, REVIT_COURIER_CONTEXT_STRING_LIMITS } from "./revitCourier.js";
 import { callRevit } from "./revitClient.js";
 import {
   canonicalToolExposureJson,
@@ -220,6 +220,50 @@ test("MCP courier publishes a correlated job and resolves its durable result", a
   }), "utf8");
   try {
     assert.deepEqual(await pending, { status: "ok" });
+  } finally {
+    restore();
+  }
+});
+
+test("MCP courier preserves structured unknown-outcome metadata when resolving a durable failure receipt", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-result-error-"));
+  const restore = saveEnv();
+  try {
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+    process.env.REVIT_OPERATOR_MODE = "development";
+    process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = "laboratory";
+    writeContext(root, {
+      session_id: "session-result-error",
+      message_id: "message-result-error"
+    });
+
+    const pending = callRevitViaCourier("/revit/ping", "GET");
+    const jobRef = await waitForJob(root);
+    const message = "The workstation execution deadline elapsed; outcome is unknown and the call was not retried automatically.";
+    fs.writeFileSync(path.join(jobRef.dir, "result.json"), JSON.stringify({
+      version: "revit-operator.revit-tool-result.v1",
+      id: jobRef.id,
+      correlation_id: jobRef.id,
+      status: "failed",
+      result: null,
+      error: message,
+      code: "courier_execution_deadline_elapsed_outcome_unknown",
+      retryable: false,
+      outcome_unknown: true
+    }), "utf8");
+
+    await assert.rejects(pending, (error: unknown) => {
+      assert.ok(error instanceof RevitCourierError);
+      assert.equal(error.code, "courier_execution_deadline_elapsed_outcome_unknown");
+      assert.equal(error.retryable, false);
+      assert.equal(error.outcomeUnknown, true);
+      assert.equal(error.outcome_unknown, true);
+      assert.equal(error.jobId, jobRef.id);
+      assert.equal(error.job_id, jobRef.id);
+      assert.equal(error.message, `courier_execution_deadline_elapsed_outcome_unknown: ${message}`);
+      return true;
+    });
   } finally {
     restore();
   }
@@ -845,7 +889,17 @@ test("MCP courier terminalizes an unclaimed timeout before the outer turn stalls
 
   const pending = callRevitViaCourier("/revit/ping", "GET");
   const jobRef = await waitForJob(root);
-  await assert.rejects(pending, /courier_job_timed_out_before_claim/);
+  await assert.rejects(pending, (error: unknown) => {
+    assert.ok(error instanceof RevitCourierError);
+    assert.equal(error.code, "courier_job_timed_out_before_claim");
+    assert.equal(error.retryable, true);
+    assert.equal(error.outcomeUnknown, false);
+    assert.equal(error.outcome_unknown, false);
+    assert.equal(error.jobId, jobRef.id);
+    assert.equal(error.job_id, jobRef.id);
+    assert.match(error.message, /courier_job_timed_out_before_claim/);
+    return true;
+  });
 
   const job = JSON.parse(fs.readFileSync(path.join(jobRef.dir, "job.json"), "utf8"));
   const result = JSON.parse(fs.readFileSync(path.join(jobRef.dir, "result.json"), "utf8"));
@@ -853,5 +907,54 @@ test("MCP courier terminalizes an unclaimed timeout before the outer turn stalls
   assert.equal(result.status, "failed");
   assert.equal(result.code, "courier_job_timed_out_before_claim");
   assert.equal(result.retryable, true);
+  assert.equal(result.outcome_unknown, false);
   restore();
+});
+
+test("MCP courier terminalizes a running deadline with a durable machine-readable unknown outcome", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-running-timeout-"));
+  const restore = saveEnv();
+  try {
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+    process.env.REVIT_OPERATOR_MODE = "development";
+    process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = "laboratory";
+    writeContext(root, {
+      session_id: "session-running-timeout",
+      message_id: "message-running-timeout"
+    });
+
+    const pending = callRevitViaCourier("/revit/ping", "GET");
+    const jobRef = await waitForJob(root);
+    const jobPath = path.join(jobRef.dir, "job.json");
+    const claimed = JSON.parse(fs.readFileSync(jobPath, "utf8"));
+    fs.writeFileSync(jobPath, `${JSON.stringify({
+      ...claimed,
+      status: "running",
+      claim: {
+        session_id: "session-running-timeout",
+        executor_id: "executor-running-timeout"
+      }
+    }, null, 2)}\n`, "utf8");
+
+    await assert.rejects(pending, (error: unknown) => {
+      assert.ok(error instanceof RevitCourierError);
+      assert.equal(error.code, "courier_execution_deadline_elapsed_outcome_unknown");
+      assert.equal(error.retryable, false);
+      assert.equal(error.outcomeUnknown, true);
+      assert.equal(error.outcome_unknown, true);
+      assert.equal(error.jobId, jobRef.id);
+      assert.equal(error.job_id, jobRef.id);
+      assert.match(error.message, /outcome is unknown and the call was not retried automatically/);
+      return true;
+    });
+
+    const result = JSON.parse(fs.readFileSync(path.join(jobRef.dir, "result.json"), "utf8"));
+    assert.equal(result.status, "failed");
+    assert.equal(result.code, "courier_execution_deadline_elapsed_outcome_unknown");
+    assert.equal(result.retryable, false);
+    assert.equal(result.outcome_unknown, true);
+  } finally {
+    restore();
+  }
 });

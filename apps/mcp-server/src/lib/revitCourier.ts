@@ -49,7 +49,35 @@ type CourierResult = {
   error?: string | null;
   code?: string | null;
   retryable?: boolean;
+  outcome_unknown?: boolean;
 };
+
+export class RevitCourierError extends Error {
+  readonly code: string;
+  readonly retryable: boolean;
+  readonly outcome_unknown: boolean;
+  readonly outcomeUnknown: boolean;
+  readonly job_id: string;
+  readonly jobId: string;
+
+  constructor(input: {
+    code: string;
+    message: string;
+    retryable: boolean;
+    outcomeUnknown?: boolean;
+    jobId: string;
+  }) {
+    super(input.message);
+    this.name = "RevitCourierError";
+    this.code = input.code;
+    this.outcome_unknown = input.outcomeUnknown === true;
+    this.outcomeUnknown = this.outcome_unknown;
+    // An unknown execution outcome must never invite an automatic retry.
+    this.retryable = this.outcome_unknown ? false : input.retryable;
+    this.job_id = input.jobId;
+    this.jobId = input.jobId;
+  }
+}
 
 type CourierJob = {
   version?: string;
@@ -404,7 +432,15 @@ function publishOrResumeJob(jobPath: string, candidate: CourierJob): CourierJob 
 function resolveResult<T>(receipt: CourierResult): T {
   if (receipt.status === "succeeded") return receipt.result as T;
   const details = [receipt.code, receipt.error].filter(Boolean).join(": ") || "Revit courier execution failed.";
-  throw new Error(`${details}${receipt.retryable ? " (retryable)" : ""}`);
+  const outcomeUnknown = receipt.outcome_unknown === true;
+  const retryable = outcomeUnknown ? false : receipt.retryable === true;
+  throw new RevitCourierError({
+    code: receipt.code || "courier_execution_failed",
+    message: `${details}${retryable ? " (retryable)" : ""}`,
+    retryable,
+    outcomeUnknown,
+    jobId: receipt.id || "unknown"
+  });
 }
 
 function finalizeTimeout<T>(jobPath: string, resultPath: string, id: string, durationMs: number): T {
@@ -430,6 +466,7 @@ function finalizeTimeout<T>(jobPath: string, resultPath: string, id: string, dur
       ? "The workstation execution deadline elapsed; outcome is unknown and the call was not retried automatically."
       : "The Revit courier job timed out before a workstation claimed it.";
     const retryable = pending;
+    const outcomeUnknown = running;
     writeJsonAtomic(jobPath, {
       ...job,
       status: "failed",
@@ -445,9 +482,16 @@ function finalizeTimeout<T>(jobPath: string, resultPath: string, id: string, dur
       result: null,
       error,
       code,
-      retryable
+      retryable,
+      outcome_unknown: outcomeUnknown
     });
-    throw new Error(`${code}: ${error}${retryable ? " (retryable)" : ""} (job ${id}).`);
+    throw new RevitCourierError({
+      code,
+      message: `${code}: ${error}${retryable ? " (retryable)" : ""} (job ${id}).`,
+      retryable,
+      outcomeUnknown,
+      jobId: id
+    });
   }
 
   throw new Error(`Revit courier timed out after ${durationMs} ms waiting for workstation execution (job ${id}).`);
