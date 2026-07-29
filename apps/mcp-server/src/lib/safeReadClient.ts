@@ -11,6 +11,15 @@ export const SAFE_READ_SHEETS_COUNT_BODY = '{"schema":"revit-operator.safe-read.
 export const SAFE_READ_SHEETS_COUNT_RESPONSE_SCHEMA = "revit-operator.safe-read.sheets-count.response.v1";
 export const SAFE_READ_FAILURE_SCHEMA = "revit-operator.safe-read.failure.v1";
 export const SAFE_READ_RESPONSE_MAX_BYTES = 4096;
+export const SAFE_READ_REQUEST_HEADERS = Object.freeze({
+  startupToken: "X-RevitOperator-SafeRead-Startup-Token",
+  hostInstanceId: "X-RevitOperator-SafeRead-Host-Instance-Id",
+  documentSessionId: "X-RevitOperator-SafeRead-Document-Session-Id",
+  clientSessionId: "X-RevitOperator-SafeRead-Client-Session-Id",
+  requestId: "X-RevitOperator-SafeRead-Request-Id",
+  attemptId: "X-RevitOperator-SafeRead-Attempt-Id"
+} as const);
+export const SAFE_READ_REQUEST_HEADER_NAMES = Object.freeze(Object.values(SAFE_READ_REQUEST_HEADERS));
 
 const CLIENT_SESSION_ID = randomUUID();
 const FAILURE_KEYS = ["schema", "code", "error", "retryable", "request_dispatched", "outcome_unknown", "phase"] as const;
@@ -211,18 +220,18 @@ export async function countSheetsViaSafeRead(options: SafeReadClientOptions = {}
   const timer = setTimeout(() => controller.abort(), timeoutMs(options.timeoutMs));
   let response: Response;
   try {
-    response = await (options.fetch ?? globalThis.fetch)(`${instance.endpoint}${SAFE_READ_SHEETS_COUNT_PATH}`, {
+    response = await (options.fetch ?? globalThis.fetch)(`${instance.endpoint}${SAFE_READ_SHEETS_COUNT_PATH.slice(1)}`, {
       method: "POST",
       redirect: "error",
       signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
-        "X-RevitOperator-SafeRead-Startup-Token": instance.startup_token,
-        "X-RevitOperator-SafeRead-Host-Instance-Id": instance.host_instance_id,
-        "X-RevitOperator-SafeRead-Document-Session-Id": instance.document.document_session_id,
-        "X-RevitOperator-SafeRead-Client-Session-Id": CLIENT_SESSION_ID,
-        "X-RevitOperator-SafeRead-Request-Id": requestId,
-        "X-RevitOperator-SafeRead-Attempt-Id": attemptId
+        [SAFE_READ_REQUEST_HEADERS.startupToken]: instance.startup_token,
+        [SAFE_READ_REQUEST_HEADERS.hostInstanceId]: instance.host_instance_id,
+        [SAFE_READ_REQUEST_HEADERS.documentSessionId]: instance.document.document_session_id,
+        [SAFE_READ_REQUEST_HEADERS.clientSessionId]: CLIENT_SESSION_ID,
+        [SAFE_READ_REQUEST_HEADERS.requestId]: requestId,
+        [SAFE_READ_REQUEST_HEADERS.attemptId]: attemptId
       },
       body: SAFE_READ_SHEETS_COUNT_BODY
     });

@@ -6,6 +6,7 @@ export const SAFE_READ_PRODUCT_ID = "aafaa2c0-43f1-42a0-a6b4-d9a0c5f5ce0e";
 export const SAFE_READ_EXECUTOR_ID = "revit-operator.safe-read-host.v1";
 export const SAFE_READ_SHEETS_COUNT_ROUTE_ID = "safe_read.sheet_count.v1";
 export const SAFE_READ_SHEETS_COUNT_PATH = "/revit/certified/sheets/count";
+export const SAFE_READ_RESERVED_PATH_PREFIX = "/revit/certified";
 export const SAFE_READ_MIN_PORT = 5040;
 export const SAFE_READ_MAX_PORT = 5050;
 
@@ -92,7 +93,30 @@ function exactEndpoint(value: unknown): string {
   if (!Number.isInteger(port) || port < SAFE_READ_MIN_PORT || port > SAFE_READ_MAX_PORT) {
     throw new SafeReadDiscoveryError("safe_read_discovery_endpoint_invalid", "SafeRead endpoint must be an exact bounded IPv4 loopback origin.");
   }
-  return value.slice(0, -1);
+  return value;
+}
+
+/**
+ * The certified namespace is exclusively reachable through the dedicated
+ * SafeRead client. Generic bridge and courier transports must fail closed.
+ */
+export function isSafeReadReservedPath(value: unknown): boolean {
+  let candidate = typeof value === "string" ? value.trim().toLowerCase() : "";
+  for (let pass = 0; pass < 3; pass += 1) {
+    if (candidate === SAFE_READ_RESERVED_PATH_PREFIX
+      || candidate.startsWith(`${SAFE_READ_RESERVED_PATH_PREFIX}/`)
+      || candidate.startsWith(`${SAFE_READ_RESERVED_PATH_PREFIX}\\`)
+      || candidate.startsWith(`${SAFE_READ_RESERVED_PATH_PREFIX}?`)
+      || candidate.startsWith(`${SAFE_READ_RESERVED_PATH_PREFIX}#`)) return true;
+    try {
+      const decoded = decodeURIComponent(candidate);
+      if (decoded === candidate) return false;
+      candidate = decoded;
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
 
 function parseInstance(value: unknown, filename: string, expectedYear?: number): SafeReadInstance {

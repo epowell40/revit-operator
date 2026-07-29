@@ -11,6 +11,7 @@ import {
   type ToolExposureChannel,
   type ToolExposureDecision
 } from "./toolExposurePolicy.js";
+import { isSafeReadReservedPath } from "./safeReadDiscovery.js";
 import { getWorkspaceRoot } from "./workspace.js";
 
 const JOB_VERSION_V1 = "revit-operator.revit-tool-job.v1";
@@ -503,10 +504,13 @@ export async function callRevitViaCourier<T>(
   body?: unknown,
   options: RevitCourierCallOptions = {}
 ): Promise<T> {
-  const context = readContext();
   const normalizedMethod = String(method || "GET").trim().toUpperCase();
   if (normalizedMethod !== "GET" && normalizedMethod !== "POST") throw new Error("Revit courier supports GET or POST only.");
+  if (isSafeReadReservedPath(revitPath)) {
+    throw new Error("Certified SafeRead routes cannot be published through the Revit courier.");
+  }
   if (!revitPath.startsWith("/revit/")) throw new Error("Revit courier path must begin with /revit/.");
+  const context = readContext();
 
   const durationMs = timeoutMs();
   const now = Date.now();

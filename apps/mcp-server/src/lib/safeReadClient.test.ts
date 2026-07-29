@@ -6,6 +6,8 @@ import path from "node:path";
 import {
   countSheetsViaSafeRead,
   SAFE_READ_FAILURE_SCHEMA,
+  SAFE_READ_REQUEST_HEADERS,
+  SAFE_READ_REQUEST_HEADER_NAMES,
   SAFE_READ_RESPONSE_MAX_BYTES,
   SAFE_READ_SHEETS_COUNT_BODY,
   SAFE_READ_SHEETS_COUNT_RESPONSE_SCHEMA,
@@ -13,7 +15,16 @@ import {
   safeReadClientSessionId,
   safeReadFailurePayload
 } from "./safeReadClient.js";
-import { discoverSafeReadInstance, SafeReadDiscoveryError } from "./safeReadDiscovery.js";
+import {
+  discoverSafeReadInstance,
+  SafeReadDiscoveryError,
+  SAFE_READ_EXECUTOR_ID,
+  SAFE_READ_INSTANCE_SCHEMA,
+  SAFE_READ_PRODUCT_ID,
+  SAFE_READ_RESERVED_PATH_PREFIX,
+  SAFE_READ_SHEETS_COUNT_PATH,
+  SAFE_READ_SHEETS_COUNT_ROUTE_ID
+} from "./safeReadDiscovery.js";
 import { runWithRevitToolAlias, ToolExposurePolicyError } from "./toolExposurePolicy.js";
 
 const guid = "4a3dd9c3-8eb0-4abe-a706-e519a2ef4a3d";
@@ -69,12 +80,47 @@ function laboratoryEnv(): () => void {
   };
 }
 
+test("SafeRead cross-runtime golden literals freeze identity, route, body, and the exact six custom headers", () => {
+  assert.deepEqual({
+    instance_schema: SAFE_READ_INSTANCE_SCHEMA,
+    product_id: SAFE_READ_PRODUCT_ID,
+    executor_id: SAFE_READ_EXECUTOR_ID,
+    route_id: SAFE_READ_SHEETS_COUNT_ROUTE_ID,
+    route: SAFE_READ_SHEETS_COUNT_PATH,
+    reserved_path_prefix: SAFE_READ_RESERVED_PATH_PREFIX,
+    body: SAFE_READ_SHEETS_COUNT_BODY,
+    success_schema: SAFE_READ_SHEETS_COUNT_RESPONSE_SCHEMA,
+    failure_schema: SAFE_READ_FAILURE_SCHEMA,
+    headers: SAFE_READ_REQUEST_HEADERS
+  }, {
+    instance_schema: "revit-operator.safe-read.instance.v1",
+    product_id: "aafaa2c0-43f1-42a0-a6b4-d9a0c5f5ce0e",
+    executor_id: "revit-operator.safe-read-host.v1",
+    route_id: "safe_read.sheet_count.v1",
+    route: "/revit/certified/sheets/count",
+    reserved_path_prefix: "/revit/certified",
+    body: '{"schema":"revit-operator.safe-read.sheets-count.request.v1"}',
+    success_schema: "revit-operator.safe-read.sheets-count.response.v1",
+    failure_schema: "revit-operator.safe-read.failure.v1",
+    headers: {
+      startupToken: "X-RevitOperator-SafeRead-Startup-Token",
+      hostInstanceId: "X-RevitOperator-SafeRead-Host-Instance-Id",
+      documentSessionId: "X-RevitOperator-SafeRead-Document-Session-Id",
+      clientSessionId: "X-RevitOperator-SafeRead-Client-Session-Id",
+      requestId: "X-RevitOperator-SafeRead-Request-Id",
+      attemptId: "X-RevitOperator-SafeRead-Attempt-Id"
+    }
+  });
+  assert.equal(SAFE_READ_REQUEST_HEADER_NAMES.length, 6);
+  assert.equal(new Set(SAFE_READ_REQUEST_HEADER_NAMES).size, 6);
+});
+
 test("SafeRead discovery accepts one live exact fixture and rejects stale, malformed, ambiguous, and non-loopback publications", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "safe-read-discovery-"));
   try {
     writeInstance(root, instance());
     const discovered = discoverSafeReadInstance({ instancesDirectory: root, revitYear: 2024, isPidAlive: pid => pid === 4242 });
-    assert.equal(discovered.endpoint, "http://127.0.0.1:5040");
+    assert.equal(discovered.endpoint, "http://127.0.0.1:5040/");
     assert.equal(discovered.document.document_session_id, documentGuid);
 
     for (const [name, value] of [
@@ -87,7 +133,9 @@ test("SafeRead discovery accepts one live exact fixture and rejects stale, malfo
       ["wrong-port-low", instance(5039)],
       ["wrong-port-high", instance(5051)],
       ["non-loopback", instance(5040, { endpoint: "http://localhost:5040/" })],
-      ["userinfo", instance(5040, { endpoint: "http://token@127.0.0.1:5040/" })]
+      ["userinfo", instance(5040, { endpoint: "http://token@127.0.0.1:5040/" })],
+      ["missing-trailing-slash", instance(5040, { endpoint: "http://127.0.0.1:5040" })],
+      ["endpoint-path", instance(5040, { endpoint: "http://127.0.0.1:5040/base/" })]
     ] as const) {
       const isolated = fs.mkdtempSync(path.join(os.tmpdir(), `safe-read-${name}-`));
       try {
@@ -140,15 +188,7 @@ test("laboratory SafeRead alias sends exact bytes, exact headers, stable/per-cal
       assert.equal(call.init.body, SAFE_READ_SHEETS_COUNT_BODY);
       assert.ok(call.init.signal instanceof AbortSignal);
       const headers = call.init.headers as Record<string, string>;
-      assert.deepEqual(Object.keys(headers).sort(), [
-        "Content-Type",
-        "X-RevitOperator-SafeRead-Attempt-Id",
-        "X-RevitOperator-SafeRead-Client-Session-Id",
-        "X-RevitOperator-SafeRead-Document-Session-Id",
-        "X-RevitOperator-SafeRead-Host-Instance-Id",
-        "X-RevitOperator-SafeRead-Request-Id",
-        "X-RevitOperator-SafeRead-Startup-Token"
-      ].sort());
+      assert.deepEqual(Object.keys(headers).sort(), ["Content-Type", ...SAFE_READ_REQUEST_HEADER_NAMES].sort());
       assert.equal(headers["X-RevitOperator-SafeRead-Startup-Token"], startupToken);
       assert.equal(headers["X-RevitOperator-SafeRead-Host-Instance-Id"], guid);
       assert.equal(headers["X-RevitOperator-SafeRead-Document-Session-Id"], documentGuid);
@@ -214,6 +254,39 @@ test("SafeRead preserves exact structured failures and never automatically retri
   } finally { restore(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test("SafeRead preserves a retryable pre-dispatch host rejection without changing its outcome fields", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "safe-read-pre-dispatch-"));
+  const restore = laboratoryEnv();
+  let calls = 0;
+  try {
+    writeInstance(root, instance());
+    await assert.rejects(
+      runWithRevitToolAlias("revit_count_sheets_certified", () => countSheetsViaSafeRead({
+        discovery: { instancesDirectory: root, revitYear: 2024, isPidAlive: () => true },
+        fetch: async () => {
+          calls += 1;
+          return new Response(JSON.stringify({
+            schema: SAFE_READ_FAILURE_SCHEMA,
+            code: "safe_read_busy",
+            error: "The certified host is busy.",
+            retryable: true,
+            request_dispatched: false,
+            outcome_unknown: false,
+            phase: "admission"
+          }), { status: 409 });
+        }
+      })),
+      (error: unknown) => error instanceof SafeReadCallError
+        && error.code === "safe_read_busy"
+        && error.retryable === true
+        && error.request_dispatched === false
+        && error.outcome_unknown === false
+        && error.phase === "admission"
+    );
+    assert.equal(calls, 1);
+  } finally { restore(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("SafeRead MCP failure projection preserves structured outcome fields without credentials", () => {
   const error = new SafeReadCallError(
     "safe_read_transport_outcome_unknown",
@@ -235,14 +308,15 @@ test("SafeRead MCP failure projection preserves structured outcome fields withou
   assert.doesNotMatch(JSON.stringify(safeReadFailurePayload(error)), new RegExp(startupToken));
 });
 
-test("SafeRead classifies definite connect failures separately from transport loss after send", async () => {
+test("SafeRead classifies definite connect failures and connect deadlines separately from transport loss after send", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "safe-read-transport-"));
   const restore = laboratoryEnv();
   try {
     writeInstance(root, instance());
     for (const [cause, expected] of [
-      [Object.assign(new Error("refused"), { code: "ECONNREFUSED" }), { retryable: true, dispatched: false, unknown: false }],
-      [Object.assign(new Error("reset"), { code: "ECONNRESET" }), { retryable: false, dispatched: true, unknown: true }]
+      [Object.assign(new Error("refused"), { code: "ECONNREFUSED" }), { code: "safe_read_unavailable", phase: "transport_connect", retryable: true, dispatched: false, unknown: false }],
+      [Object.assign(new Error("connect deadline"), { code: "UND_ERR_CONNECT_TIMEOUT" }), { code: "safe_read_unavailable", phase: "transport_connect", retryable: true, dispatched: false, unknown: false }],
+      [Object.assign(new Error("reset"), { code: "ECONNRESET" }), { code: "safe_read_transport_outcome_unknown", phase: "transport", retryable: false, dispatched: true, unknown: true }]
     ] as const) {
       await assert.rejects(
         runWithRevitToolAlias("revit_count_sheets_certified", () => countSheetsViaSafeRead({
@@ -250,6 +324,8 @@ test("SafeRead classifies definite connect failures separately from transport lo
           fetch: async () => { throw cause; }
         })),
         (error: unknown) => error instanceof SafeReadCallError
+          && error.code === expected.code
+          && error.phase === expected.phase
           && error.retryable === expected.retryable
           && error.request_dispatched === expected.dispatched
           && error.outcome_unknown === expected.unknown
@@ -268,6 +344,8 @@ test("SafeRead enforces the response byte cap and exact success/failure schemas"
       JSON.stringify({ schema: SAFE_READ_SHEETS_COUNT_RESPONSE_SCHEMA, count: 100001 }),
       JSON.stringify({ schema: SAFE_READ_SHEETS_COUNT_RESPONSE_SCHEMA, count: 1, extra: true }),
       JSON.stringify({ schema: SAFE_READ_FAILURE_SCHEMA, code: "busy", error: "Busy.", retryable: true, request_dispatched: false, outcome_unknown: false }),
+      JSON.stringify({ schema: SAFE_READ_FAILURE_SCHEMA, code: "busy", error: "Busy.", retryable: true, request_dispatched: true, outcome_unknown: true, phase: "dispatch" }),
+      JSON.stringify({ schema: SAFE_READ_FAILURE_SCHEMA, code: "busy", error: "Busy.", retryable: false, request_dispatched: false, outcome_unknown: true, phase: "dispatch" }),
       "x".repeat(SAFE_READ_RESPONSE_MAX_BYTES + 1)
     ];
     for (const body of invalidBodies) {
@@ -282,6 +360,36 @@ test("SafeRead enforces the response byte cap and exact success/failure schemas"
           && error.request_dispatched === true
           && error.outcome_unknown === true
       );
+    }
+  } finally { restore(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("SafeRead denies redirects and declared oversized responses without following or retrying", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "safe-read-response-metadata-"));
+  const restore = laboratoryEnv();
+  try {
+    writeInstance(root, instance());
+    for (const responseFactory of [
+      () => new Response("", { status: 302, headers: { location: "http://127.0.0.1:5041/revit/certified/sheets/count" } }),
+      () => new Response("{}", { status: 200, headers: { "content-length": String(SAFE_READ_RESPONSE_MAX_BYTES + 1) } })
+    ]) {
+      let calls = 0;
+      await assert.rejects(
+        runWithRevitToolAlias("revit_count_sheets_certified", () => countSheetsViaSafeRead({
+          discovery: { instancesDirectory: root, revitYear: 2024, isPidAlive: () => true },
+          fetch: async (_input, init) => {
+            calls += 1;
+            assert.equal(init?.redirect, "error");
+            return responseFactory();
+          }
+        })),
+        (error: unknown) => error instanceof SafeReadCallError
+          && error.code === "safe_read_invalid_response"
+          && error.retryable === false
+          && error.request_dispatched === true
+          && error.outcome_unknown === true
+      );
+      assert.equal(calls, 1);
     }
   } finally { restore(); fs.rmSync(root, { recursive: true, force: true }); }
 });
@@ -301,7 +409,12 @@ test("SafeRead deadline aborts once and remains outcome-unknown without fallback
           init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
         })
       })),
-      (error: unknown) => error instanceof SafeReadCallError && error.retryable === false && error.outcome_unknown === true
+      (error: unknown) => error instanceof SafeReadCallError
+        && error.code === "safe_read_transport_outcome_unknown"
+        && error.retryable === false
+        && error.request_dispatched === true
+        && error.outcome_unknown === true
+        && error.phase === "transport"
     );
     assert.equal(calls, 1);
   } finally { restore(); fs.rmSync(root, { recursive: true, force: true }); }

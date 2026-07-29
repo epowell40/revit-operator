@@ -97,6 +97,39 @@ function setTestEnvironment(url: string, timeoutMs: number): () => void {
   };
 }
 
+test("generic Revit dispatch hard-rejects the reserved certified namespace for direct and courier transport", async () => {
+  let requests = 0;
+  const server = http.createServer((_request, response) => {
+    requests += 1;
+    response.end("{}");
+  });
+  const port = await listen(server);
+  const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
+  try {
+    for (const transport of ["direct", "courier"] as const) {
+      process.env.OPERATOR_REVIT_TRANSPORT = transport;
+      for (const reservedPath of [
+        "/revit/certified/sheets/count",
+        "/REVIT/CERTIFIED/sheets/count",
+        "/revit/certified/sheets/count?attempt=2",
+        "/revit/certified%2fsheets/count",
+        "/revit/%63ertified/sheets/count",
+        "/revit/certified\\sheets\\count",
+        "/revit/certified"
+      ]) {
+        await assert.rejects(
+          callRevit(reservedPath, "POST", { schema: "bypass" }),
+          /reserved for the direct attested SafeRead microhost client/
+        );
+      }
+    }
+    assert.equal(requests, 0);
+  } finally {
+    restore();
+    await close(server);
+  }
+});
+
 test("certified admission denies unknown, uncertified, generic schedule, and grant-backed writes before bridge dispatch", async () => {
   let requests = 0;
   const server = http.createServer((_request, response) => {

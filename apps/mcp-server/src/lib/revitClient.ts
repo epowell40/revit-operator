@@ -1,6 +1,7 @@
 import { getOrCreateOperatorToken, getWriteGrantToken } from "./workspace.js";
 import { callRevitViaCourier } from "./revitCourier.js";
 import { revitRouteEffect } from "./revitRouteEffect.js";
+import { isSafeReadReservedPath } from "./safeReadDiscovery.js";
 import {
   assertToolExposure,
   createCertifiedCourierAdmission,
@@ -175,6 +176,9 @@ export type RevitCallOptions = {
 
 export async function callRevit<T = unknown>(path: string, method: string = "GET", body?: unknown, options: RevitCallOptions = {}): Promise<T> {
   const upperMethod = String(method || "GET").trim().toUpperCase();
+  if (isSafeReadReservedPath(path)) {
+    throw new Error("Certified SafeRead routes are reserved for the direct attested SafeRead microhost client.");
+  }
   // Certification is the final in-process admission boundary shared by direct
   // HTTP and durable courier dispatch. A write grant only matters after this
   // exact request/effect/channel decision has passed.
