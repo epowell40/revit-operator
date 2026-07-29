@@ -4,7 +4,8 @@ param(
   [Parameter(Mandatory)][string]$OutputRoot,
   [Parameter(Mandatory)][string]$SignToolPath,
   [Parameter(Mandatory)][string]$SigningThumbprint,
-  [string]$TimestampUrl = 'http://timestamp.digicert.com'
+  [string]$TimestampUrl = 'http://timestamp.digicert.com',
+  [Parameter(Mandatory)][scriptblock]$ManagedCodeInspector
 )
 
 $ErrorActionPreference = 'Stop'

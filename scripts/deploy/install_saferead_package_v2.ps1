@@ -40,8 +40,10 @@ if($PSCmdlet.ParameterSetName -eq 'Rollback'){
   if(-not(Test-Path -LiteralPath $releaseRoot -PathType Container)){throw "SafeRead rollback release does not exist: $RollbackReleaseId"}
   $resolved=(Resolve-Path -LiteralPath $releaseRoot).Path
   if($resolved -cne $releaseRoot){throw 'SafeRead rollback release resolves outside its canonical version path.'}
-  $releaseDirectory=[IO.DirectoryInfo]::new($releaseRoot);$linkTarget=$releaseDirectory.ResolveLinkTarget($true)
-  if($linkTarget -and -not $linkTarget.FullName.StartsWith(($script:ReleasesRoot.TrimEnd([char]92,[char]47)+[IO.Path]::DirectorySeparatorChar),[StringComparison]::OrdinalIgnoreCase)){throw 'SafeRead rollback release link resolves outside the releases root.'}
+  # ResolveLinkTarget is unavailable in Windows PowerShell 5.1. Rollback is
+  # safer when it rejects every reparse point instead of trying to follow one.
+  $releaseDirectory=[IO.DirectoryInfo]::new($releaseRoot)
+  if(($releaseDirectory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'SafeRead rollback release may not be a link or reparse point.'}
   $pinPath=Join-Path $pinsRoot "$RollbackReleaseId.json"
   if(-not(Test-Path -LiteralPath $pinPath -PathType Leaf)){throw "SafeRead rollback pin is missing: $RollbackReleaseId"}
   $pin=(ConvertTo-SafeReadObject $pinPath).attestationPinSha256
