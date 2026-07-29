@@ -59,6 +59,7 @@ const READ_ONLY_POST_PATHS = new Set<string>([
   "/revit/titleblock-date-candidates",
   "/revit/verify-parameter-on-sheet",
   "/revit/capture-sheet-region",
+  "/revit/certified/sheets/count",
 ]);
 
 function bodyRecord(body: unknown): Record<string, unknown> {

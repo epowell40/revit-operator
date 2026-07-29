@@ -150,8 +150,8 @@ test("MCP tools/list opens the legacy catalog only for exact raw development lab
     REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
   });
-  assert.equal(laboratoryNames.length, 122, "Exact development laboratory mode must preserve the complete legacy catalog.");
-  assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 106, "Exact development laboratory mode must preserve all Revit aliases.");
+  assert.equal(laboratoryNames.length, 123, "Exact development laboratory mode must preserve the complete legacy catalog plus the laboratory SafeRead alias.");
+  assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 107, "Exact development laboratory mode must preserve all Revit aliases plus the laboratory SafeRead alias.");
 });
 
 test("MCP stdio server registers repaired tools and rejects semantic write controls before backend execution", async (t) => {
@@ -295,8 +295,8 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
 
   const tools = await withTimeout(client.listTools(), "listing MCP tools");
   const names = new Set(tools.tools.map((tool) => tool.name));
-  assert.equal(tools.tools.length, 122, "Laboratory mode must preserve the complete legacy catalog.");
-  assert.equal([...names].filter(name => name.startsWith("revit_")).length, 106, "Laboratory mode must preserve all legacy revit_ aliases.");
+  assert.equal(tools.tools.length, 123, "Laboratory mode must preserve the complete legacy catalog plus the SafeRead alias.");
+  assert.equal([...names].filter(name => name.startsWith("revit_")).length, 107, "Laboratory mode must preserve all legacy revit_ aliases plus the SafeRead alias.");
   assert.equal(names.has("titleblock_update_text"), true, "Laboratory mode must preserve the legacy non-revit bridge alias.");
   for (const name of [
     "operator_runtime_probe",
@@ -308,6 +308,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     "revit_repair_mep_connectors",
     "revit_dry_run_repair_mep_connectors",
     "revit_list_schedules",
+    "revit_count_sheets_certified",
     "revit_update_schedule_cell",
     "revit_replace_schedule_values",
     "revit_set_parameters"
