@@ -196,8 +196,8 @@ test("seeded audit candidates remain unexposed while L2 is absent", () => {
 
   const generatedOnce = generatePolicyBytes(evidenceText, candidatesText);
   const generatedAgain = generatePolicyBytes(
-    `\uFEFF${evidenceText.replace(/\n/g, "\r\n")}`,
-    `\uFEFF${candidatesText.replace(/\n/g, "\r\n")}`
+    `\uFEFF${evidenceText.replace(/\r\n?/g, "\n").replace(/\n/g, "\r\n")}`,
+    `\uFEFF${candidatesText.replace(/\r\n?/g, "\n").replace(/\n/g, "\r\n")}`
   );
   assert.equal(generatedOnce, generatedAgain);
   assert.equal(generatedOnce, fs.readFileSync(policyPath, "utf8").replace(/\r\n?/g, "\n"));
