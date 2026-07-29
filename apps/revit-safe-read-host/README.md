@@ -6,11 +6,13 @@ or runtime dependency on the primary bridge, its shared libraries, or its
 handler assembly.
 
 Production is split into two assemblies. `RevitOperator.SafeReadHost` owns
-loopback HTTP, discovery, environment configuration, runtime measurement, and
-outbound backend HTTP. `RevitOperator.SafeReadCertifiedExecution` owns the
-final-receipt verification boundary, sealed one-use token, document session,
-capacity-one ExternalEvent state machine, and sheet-count kernel. The project
-reference is host to certified execution only.
+loopback HTTP, discovery, environment configuration, static-attestation
+validation, backend authorization, receipt verification, replay state,
+document sessions, deadlines, and the capacity-one ExternalEvent state
+machine. `RevitOperator.SafeReadCertifiedExecution` is deliberately much
+smaller: its only compiled source is a synchronous mutation-free sheet-count
+kernel plus a sealed primitive result DTO. It references `RevitAPI` only. The
+project reference is host to certified execution only.
 
 The host owns one loopback-only endpoint:
 
@@ -24,16 +26,26 @@ The request entity is the exact UTF-8 byte sequence:
 {"schema":"revit-operator.safe-read.sheets-count.request.v1"}
 ```
 
-The six external headers are `X-RevitOperator-SafeRead-Token`, `HostInstance`,
-`DocumentSession`, `ClientSession`, `RequestId`, and `AttemptId` (the last five
-use the same `X-RevitOperator-SafeRead-` prefix). There is no external nonce:
-the host generates a fresh 32-byte nonce after admission and never publishes it.
+The six external headers are
+`X-RevitOperator-SafeRead-Startup-Token`,
+`X-RevitOperator-SafeRead-Host-Instance-Id`,
+`X-RevitOperator-SafeRead-Document-Session-Id`,
+`X-RevitOperator-SafeRead-Client-Session-Id`,
+`X-RevitOperator-SafeRead-Request-Id`, and
+`X-RevitOperator-SafeRead-Attempt-Id`. There is no external nonce: the host
+generates a fresh 32-byte nonce after admission and never publishes it.
 
 The concrete authorization client sends exact snake-case preauthorization and
 final-authorization bodies to one configured origin, unwraps only the exact
-success envelopes, and delegates nonce-derived HMAC verification to the
-certified assembly. Missing/malformed configuration, timeout, redirect,
+success envelopes, and verifies the nonce-derived HMAC inside the host
+assembly. Missing/malformed configuration, timeout, redirect,
 unknown JSON field, stale receipt, replay, or binding mismatch denies execution.
+
+Startup also requires `safe_read_runtime_attestation.v1.json` and
+`safe_read_runtime_attestation.v1.sha256` beside the host DLL. The host verifies
+the external pin before parsing the exact backend-format manifest, rejects
+expired/revoked or wrong-route policy state, and remeasures the loaded certified
+executor and Revit API assemblies against its runtime tuple.
 
 Per-instance discovery is published atomically beneath
 `%LOCALAPPDATA%\RevitOperator\SafeRead\instances`. It never reads or writes the

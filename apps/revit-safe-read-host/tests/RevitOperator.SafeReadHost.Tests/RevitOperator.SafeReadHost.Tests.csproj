@@ -26,9 +26,9 @@
     <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\Responses.cs" Link="HostKernel\Responses.cs" />
     <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\DiscoveryWire.cs" Link="HostKernel\DiscoveryWire.cs" />
     <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\BackendAuthorization.cs" Link="HostKernel\BackendAuthorization.cs" />
-    <Compile Include="..\..\src\RevitOperator.SafeReadCertifiedExecution\CertifiedPrimitives.cs" Link="Certified\CertifiedPrimitives.cs" />
-    <Compile Include="..\..\src\RevitOperator.SafeReadCertifiedExecution\FinalReceiptVerification.cs" Link="Certified\FinalReceiptVerification.cs" />
-    <Compile Include="..\..\src\RevitOperator.SafeReadCertifiedExecution\ExternalExecution.cs" Link="Certified\ExternalExecution.cs" />
+    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\AuthorizationReceipts.cs" Link="HostKernel\AuthorizationReceipts.cs" />
+    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\DocumentSession.cs" Link="HostKernel\DocumentSession.cs" />
+    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\ExecutionContracts.cs" Link="HostKernel\ExecutionContracts.cs" />
     <Content Include="..\..\fixtures\**\*.json" Link="fixtures\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

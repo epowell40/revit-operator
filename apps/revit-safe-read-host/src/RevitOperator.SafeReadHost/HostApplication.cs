@@ -3,7 +3,6 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Events;
 using Autodesk.Revit.UI;
 using Autodesk.Revit.UI.Events;
-using RevitOperator.SafeReadCertifiedExecution;
 using RevitOperator.SafeReadHost.HostKernel;
 
 namespace RevitOperator.SafeReadHost
@@ -19,7 +18,7 @@ namespace RevitOperator.SafeReadHost
                 FixedBackendOrigin? origin;if(!FixedBackendOrigin.TryCreate(Environment.GetEnvironmentVariable("REVIT_OPERATOR_SAFE_READ_AUTH_ORIGIN"),out origin)||origin==null)return Result.Failed;
                 BackendCredentials? credentials=BackendCredentials.Create(Environment.GetEnvironmentVariable("REVIT_OPERATOR_SAFE_READ_AUTH_BEARER"),Environment.GetEnvironmentVariable("REVIT_OPERATOR_SAFE_READ_AUTH_TOKEN"));if(credentials==null)return Result.Failed;
                 int revitYear;if(!Int32.TryParse(application.ControlledApplication.VersionNumber,out revitYear)||revitYear<2023||revitYear>2025)return Result.Failed;
-                RuntimeDeploymentAttestation attestation=RuntimeDeploymentAttestation.Create(revitYear);
+                RuntimeDeploymentAttestation attestation=RuntimeDeploymentAttestation.Load(revitYear);
                 _application=application;_identity=InstanceIdentity.Create();_tracker=new DocumentSessionTracker();_slot=new CertifiedExternalWorkSlot();
                 CertifiedSheetsCountExternalEventHandler handler=new CertifiedSheetsCountExternalEventHandler(_slot,_tracker);_externalEvent=ExternalEvent.Create(handler);
                 _authorizer=new SafeReadBackendAuthorizer(origin,credentials,new FinalReceiptVerifier());

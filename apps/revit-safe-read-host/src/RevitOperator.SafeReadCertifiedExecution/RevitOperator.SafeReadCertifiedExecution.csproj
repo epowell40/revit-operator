@@ -14,17 +14,18 @@
     <OutputPath>bin\Revit$(RevitYear)\$(Configuration)\</OutputPath>
     <IntermediateOutputPath>obj\Revit$(RevitYear)\$(Configuration)\$(TargetFramework)\</IntermediateOutputPath>
     <AppendTargetFrameworkToOutputPath>true</AppendTargetFrameworkToOutputPath>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
   <PropertyGroup Condition="'$(TargetFramework)'=='net8.0-windows'">
     <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);MSB3277</MSBuildWarningsAsMessages>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="RevitAPI"><HintPath>$(RevitApiPath)\RevitAPI.dll</HintPath><Private>False</Private></Reference>
-    <Reference Include="RevitAPIUI"><HintPath>$(RevitApiPath)\RevitAPIUI.dll</HintPath><Private>False</Private></Reference>
+    <Compile Include="RevitCertifiedExecution.cs" />
   </ItemGroup>
   <Target Name="ValidateRevitTarget" BeforeTargets="ResolveReferences">
     <Error Condition="'$(TargetFramework)'=='net48' and '$(RevitYear)'!='2023' and '$(RevitYear)'!='2024'" Text="net48 requires RevitYear 2023 or 2024." />
     <Error Condition="'$(TargetFramework)'=='net8.0-windows' and '$(RevitYear)'!='2025'" Text="net8.0-windows requires RevitYear 2025." />
-    <Error Condition="!Exists('$(RevitApiPath)\RevitAPI.dll') or !Exists('$(RevitApiPath)\RevitAPIUI.dll')" Text="Revit API assemblies were not found." />
+    <Error Condition="!Exists('$(RevitApiPath)\RevitAPI.dll')" Text="Revit API assembly was not found." />
   </Target>
 </Project>

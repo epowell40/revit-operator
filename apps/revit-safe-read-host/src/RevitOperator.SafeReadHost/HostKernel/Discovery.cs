@@ -2,13 +2,12 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
-using RevitOperator.SafeReadCertifiedExecution;
 
 namespace RevitOperator.SafeReadHost.HostKernel
 {
     internal sealed class DiscoveryRecord
     {
-        public DiscoveryRecord(InstanceIdentity identity,int pid,int year,string endpoint,RuntimeDeploymentAttestation attestation,DocumentBinding? document){Identity=identity;Pid=pid;Year=year;Endpoint=endpoint.TrimEnd('/');Attestation=attestation;Document=document;}
+        public DiscoveryRecord(InstanceIdentity identity,int pid,int year,string endpoint,RuntimeDeploymentAttestation attestation,DocumentBinding? document){Identity=identity;Pid=pid;Year=year;Endpoint=endpoint.EndsWith("/",StringComparison.Ordinal)?endpoint:endpoint+"/";Attestation=attestation;Document=document;}
         public InstanceIdentity Identity{get;}public int Pid{get;}public int Year{get;}public string Endpoint{get;}public RuntimeDeploymentAttestation Attestation{get;}public DocumentBinding? Document{get;}
     }
     internal static class DiscoveryRecordFormatter

@@ -15,7 +15,7 @@ namespace RevitOperator.SafeReadHost.Tests
             List<string> hostFiles = SourceFiles(Path.Combine(tree, "src", "RevitOperator.SafeReadHost", "HostKernel"));
             hostFiles.Add(Path.Combine(tree, "src", "RevitOperator.SafeReadHost", "HostApplication.cs"));
             hostFiles.Add(Path.Combine(tree, "src", "RevitOperator.SafeReadHost", "CertifiedSafeReadHttpHost.cs"));
-            List<string> certifiedFiles = SourceFiles(Path.Combine(tree, "src", "RevitOperator.SafeReadCertifiedExecution"));
+            List<string> certifiedFiles = new List<string> { Path.Combine(tree, "src", "RevitOperator.SafeReadCertifiedExecution", "RevitCertifiedExecution.cs") };
             Assert.NotEmpty(hostFiles);
             Assert.NotEmpty(certifiedFiles);
 
@@ -33,14 +33,16 @@ namespace RevitOperator.SafeReadHost.Tests
                 Assert.DoesNotContain("SubTransaction", text, StringComparison.Ordinal);
             }
             string certified = string.Join("\n", certifiedFiles.ConvertAll(File.ReadAllText));
-            foreach (string forbidden in new[] { "RevitOperator.SafeReadHost", "RevitBridge", "System.Net", "System.IO", "Environment.", "Json", "HttpClient", "HttpListener" })
+            foreach (string forbidden in new[] { "RevitOperator.SafeReadHost", "RevitBridge", "System.Net", "System.IO", "System.Threading", "System.Security", "Environment.", "Json", "HttpClient", "HttpListener", "Task", "ExternalEvent", "UIApplication" })
                 Assert.DoesNotContain(forbidden, certified, StringComparison.Ordinal);
             Assert.Equal(1, Count(combined, ":IExternalApplication"));
-            Assert.Equal(1, Count(certified, ": IExternalEventHandler"));
-            Assert.Equal(1, Count(certified, "public void Execute(UIApplication"));
+            Assert.Equal(1, Count(combined, ": IExternalEventHandler"));
+            Assert.Equal(1, Count(certified, "public static CertifiedSheetCountResult Execute(Document document)"));
             Assert.Contains("FilteredElementIterator", certified, StringComparison.Ordinal);
             Assert.Contains("GetElementIterator()", certified, StringComparison.Ordinal);
             Assert.Contains("sheet.IsPlaceholder", certified, StringComparison.Ordinal);
+            Assert.Contains("<EnableDefaultCompileItems>false</EnableDefaultCompileItems>", File.ReadAllText(Path.Combine(tree, "src", "RevitOperator.SafeReadCertifiedExecution", "RevitOperator.SafeReadCertifiedExecution.csproj")), StringComparison.Ordinal);
+            Assert.Contains("<Compile Include=\"RevitCertifiedExecution.cs\" />", File.ReadAllText(Path.Combine(tree, "src", "RevitOperator.SafeReadCertifiedExecution", "RevitOperator.SafeReadCertifiedExecution.csproj")), StringComparison.Ordinal);
         }
 
         [Fact]

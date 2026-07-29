@@ -8,7 +8,6 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using RevitOperator.SafeReadCertifiedExecution;
 
 namespace RevitOperator.SafeReadHost.HostKernel
 {
@@ -29,6 +28,24 @@ namespace RevitOperator.SafeReadHost.HostKernel
         public Preauthorization(string capability,string bindings,string issued,string expires){CapabilityId=capability;BindingsHash=bindings;IssuedAtUtc=issued;ExpiresAtUtc=expires;}
         public string CapabilityId{get;}public string BindingsHash{get;}public string IssuedAtUtc{get;}public string ExpiresAtUtc{get;}
     }
+    internal sealed class BackendAuthorizationFailure
+    {
+        public BackendAuthorizationFailure(string error,bool retryable,bool requestDispatched,bool outcomeUnknown){Error=error;Retryable=retryable;RequestDispatched=requestDispatched;OutcomeUnknown=outcomeUnknown;}
+        public string Error{get;}public bool Retryable{get;}public bool RequestDispatched{get;}public bool OutcomeUnknown{get;}
+        public static BackendAuthorizationFailure Unavailable()=>new BackendAuthorizationFailure("Backend final authorization was unavailable or invalid.",true,false,false);
+    }
+    internal sealed class BackendAuthorizationResult
+    {
+        private BackendAuthorizationResult(VerifiedFinalAuthorizationToken? token,BackendAuthorizationFailure? failure){Token=token;Failure=failure;}
+        public VerifiedFinalAuthorizationToken? Token{get;}public BackendAuthorizationFailure? Failure{get;}
+        public static BackendAuthorizationResult Authorized(VerifiedFinalAuthorizationToken token)=>new BackendAuthorizationResult(token,null);
+        public static BackendAuthorizationResult Denied(BackendAuthorizationFailure failure)=>new BackendAuthorizationResult(null,failure);
+    }
+    internal sealed class BackendAuthorizationFailureException:Exception
+    {
+        public BackendAuthorizationFailureException(BackendAuthorizationFailure failure){Failure=failure;}
+        public BackendAuthorizationFailure Failure{get;}
+    }
     internal sealed class SafeReadBackendAuthorizer:IDisposable
     {
         private readonly HttpClient _http;private readonly FinalReceiptVerifier _verifier;private readonly FixedBackendOrigin _origin;
@@ -38,14 +55,19 @@ namespace RevitOperator.SafeReadHost.HostKernel
             _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
             if(credentials.Bearer!=null)_http.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",credentials.Bearer);else _http.DefaultRequestHeaders.Add("x-operator-token",credentials.Token!);
         }
-        public async Task<VerifiedFinalAuthorizationToken?> AuthorizeAsync(AuthorizationBindings bindings,byte[] nonce,CancellationToken cancellation)
+        public async Task<BackendAuthorizationResult> AuthorizeAsync(AuthorizationBindings bindings,byte[] nonce,CancellationToken cancellation)
         {
-            if(bindings==null||nonce==null||nonce.Length!=32)return null;
-            string nonceText=Protocol.Base64Url(nonce);string nonceHash=Protocol.Sha256(nonce);
-            Preauthorization? pre=await PostPreauthorization(bindings,nonceHash,cancellation).ConfigureAwait(false);
-            if(pre==null||!ValidatePreauthorization(pre,DateTimeOffset.UtcNow))return null;
-            FinalAuthorizationReceipt? receipt=await PostFinal(bindings,pre.CapabilityId,nonceText,cancellation).ConfigureAwait(false);
-            return _verifier.Verify(receipt,bindings,pre.CapabilityId,pre.BindingsHash,nonce,DateTimeOffset.UtcNow);
+            if(bindings==null||nonce==null||nonce.Length!=32)return BackendAuthorizationResult.Denied(BackendAuthorizationFailure.Unavailable());
+            try
+            {
+                string nonceText=Protocol.Base64Url(nonce);string nonceHash=Protocol.Sha256(nonce);
+                Preauthorization? pre=await PostPreauthorization(bindings,nonceHash,cancellation).ConfigureAwait(false);
+                if(pre==null||!ValidatePreauthorization(pre,DateTimeOffset.UtcNow))return BackendAuthorizationResult.Denied(BackendAuthorizationFailure.Unavailable());
+                FinalAuthorizationReceipt? receipt=await PostFinal(bindings,pre.CapabilityId,nonceText,cancellation).ConfigureAwait(false);
+                VerifiedFinalAuthorizationToken? token=_verifier.Verify(receipt,bindings,pre.CapabilityId,pre.BindingsHash,nonce,DateTimeOffset.UtcNow);
+                return token==null?BackendAuthorizationResult.Denied(BackendAuthorizationFailure.Unavailable()):BackendAuthorizationResult.Authorized(token);
+            }
+            catch(BackendAuthorizationFailureException failure){return BackendAuthorizationResult.Denied(failure.Failure);}
         }
         private async Task<Preauthorization?> PostPreauthorization(AuthorizationBindings b,string nonceHash,CancellationToken cancellation)
         {
@@ -67,7 +89,7 @@ namespace RevitOperator.SafeReadHost.HostKernel
         {
             try
             {
-                using(HttpRequestMessage request=new HttpRequestMessage(HttpMethod.Post,path)){request.Content=new StringContent(body,new UTF8Encoding(false),"application/json");using(HttpResponseMessage response=await _http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,cancellation).ConfigureAwait(false)){if(response.StatusCode!=HttpStatusCode.OK||response.Content.Headers.ContentLength>SafeReadContract.MaximumBackendResponseBytes)return null;using(Stream stream=await response.Content.ReadAsStreamAsync().ConfigureAwait(false))using(MemoryStream copy=new MemoryStream()){byte[] buffer=new byte[4096];int total=0;while(true){int read=await stream.ReadAsync(buffer,0,Math.Min(buffer.Length,SafeReadContract.MaximumBackendResponseBytes-total),cancellation).ConfigureAwait(false);if(read<=0)break;total+=read;if(total>=SafeReadContract.MaximumBackendResponseBytes)return null;copy.Write(buffer,0,read);}using(JsonDocument doc=JsonDocument.Parse(copy.ToArray(),new JsonDocumentOptions{AllowTrailingCommas=false,CommentHandling=JsonCommentHandling.Disallow,MaxDepth=8}))return doc.RootElement.Clone();}}}
+                using(HttpRequestMessage request=new HttpRequestMessage(HttpMethod.Post,path)){request.Content=new StringContent(body,new UTF8Encoding(false),"application/json");using(HttpResponseMessage response=await _http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,cancellation).ConfigureAwait(false)){if(response.Content.Headers.ContentLength>SafeReadContract.MaximumBackendResponseBytes)return null;using(Stream stream=await response.Content.ReadAsStreamAsync().ConfigureAwait(false))using(MemoryStream copy=new MemoryStream()){byte[] buffer=new byte[4096];int total=0;while(true){int read=await stream.ReadAsync(buffer,0,Math.Min(buffer.Length,SafeReadContract.MaximumBackendResponseBytes-total),cancellation).ConfigureAwait(false);if(read<=0)break;total+=read;if(total>=SafeReadContract.MaximumBackendResponseBytes)return null;copy.Write(buffer,0,read);}using(JsonDocument doc=JsonDocument.Parse(copy.ToArray(),new JsonDocumentOptions{AllowTrailingCommas=false,CommentHandling=JsonCommentHandling.Disallow,MaxDepth=8})){JsonElement root=doc.RootElement.Clone();if(response.StatusCode!=HttpStatusCode.OK){BackendAuthorizationFailure? failure=ParseFailure(root);if(failure!=null)throw new BackendAuthorizationFailureException(failure);return null;}return root;}}}}
             }
             catch(OperationCanceledException) when(cancellation.IsCancellationRequested){throw;}
             catch{return null;}
@@ -84,6 +106,14 @@ namespace RevitOperator.SafeReadHost.HostKernel
         private static bool Eq(JsonElement e,string name,string expected)=>String.Equals(Text(e,name),expected,StringComparison.Ordinal);
         private static string Text(JsonElement e,string name){JsonElement v;return e.TryGetProperty(name,out v)&&v.ValueKind==JsonValueKind.String?v.GetString()??String.Empty:String.Empty;}
         private static bool ParseTime(string value,out DateTimeOffset parsed)=>DateTimeOffset.TryParseExact(value,"yyyy-MM-dd'T'HH:mm:ss.fff'Z'",CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal|DateTimeStyles.AdjustToUniversal,out parsed);
+        private static BackendAuthorizationFailure? ParseFailure(JsonElement root)
+        {
+            if(!Exact(root,"ok","code","error","retryable","request_dispatched","outcome_unknown"))return null;
+            JsonElement ok,retryable,dispatched,unknown;if(!root.TryGetProperty("ok",out ok)||ok.ValueKind!=JsonValueKind.False||!root.TryGetProperty("retryable",out retryable)||(retryable.ValueKind!=JsonValueKind.True&&retryable.ValueKind!=JsonValueKind.False)||!root.TryGetProperty("request_dispatched",out dispatched)||(dispatched.ValueKind!=JsonValueKind.True&&dispatched.ValueKind!=JsonValueKind.False)||!root.TryGetProperty("outcome_unknown",out unknown)||(unknown.ValueKind!=JsonValueKind.True&&unknown.ValueKind!=JsonValueKind.False))return null;
+            string error=Text(root,"error");if(!SafeFailureText(error))return null;bool isUnknown=unknown.GetBoolean(),isDispatched=dispatched.GetBoolean(),isRetryable=retryable.GetBoolean();if(isUnknown){isDispatched=true;isRetryable=false;}
+            return new BackendAuthorizationFailure(error,isRetryable,isDispatched,isUnknown);
+        }
+        private static bool SafeFailureText(string value){if(String.IsNullOrEmpty(value)||value.Length>512)return false;for(int i=0;i<value.Length;i++)if(value[i]<32||value[i]==127)return false;return true;}
         public void Dispose()=>_http.Dispose();
     }
 }
