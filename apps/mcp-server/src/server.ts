@@ -35,6 +35,14 @@ import { fetchWebEvidenceToWorkspace, getWebResearchPolicyFromEnv } from "./lib/
 import { bestLineReplacement, replaceLineRange, similarityScore } from "./lib/textMatch.js";
 import { registerSemanticMepRouteTool } from "./tools/semanticMepRouteTool.js";
 import { assertRevitBridgePath } from "./lib/revitPathPolicy.js";
+import {
+  filterRegistryEntriesForSearch,
+  getToolExposureRuntimeDecision,
+  isCertifiedToolExposureMode,
+  isKnownToolExposureRoute,
+  isToolRouteExposedForSearch,
+  loadToolExposurePolicy
+} from "./lib/toolExposurePolicy.js";
 
 function redirectConsoleToStderr(): void {
   // This server communicates over stdio (JSON-RPC). Writing to stdout (even for logs)
@@ -429,7 +437,7 @@ async function getToolRegistry(forceRefresh = false): Promise<ToolRegistryPayloa
   if (!forceRefresh && cachedToolRegistry.payload && now - cachedToolRegistry.fetchedAt < TOOL_REGISTRY_CACHE_MS) {
     return cachedToolRegistry.payload;
   }
-  const raw = await callRevit<unknown>("/revit/tool-registry");
+  const raw = await callRevit<unknown>("/revit/tool-registry", "GET", undefined, { channel: "search" });
   const root = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const toolsRaw = Array.isArray(root.tools) ? root.tools : [];
   const tools: RegistryToolEntry[] = [];
@@ -440,20 +448,32 @@ async function getToolRegistry(forceRefresh = false): Promise<ToolRegistryPayloa
   const payload: ToolRegistryPayload = {
     version: typeof root.version === "string" ? root.version : "operator.tool_registry.v1",
     generated_at: typeof root.generated_at === "string" ? root.generated_at : undefined,
-    tools
+    tools: filterRegistryEntriesForSearch(tools)
   };
   cachedToolRegistry = { fetchedAt: now, payload };
   return payload;
 }
 
 server.tool("operator_runtime_probe", "Check that the Revit Operator MCP runtime itself is responsive without contacting Revit.", {}, async () => {
+  const toolExposure = getToolExposureRuntimeDecision();
+  let certificationPolicy: Record<string, unknown> | undefined;
+  if (toolExposure.certified) {
+    try {
+      const loaded = loadToolExposurePolicy();
+      certificationPolicy = { status: "loaded", path: loaded.policyPath, hash: loaded.policy.policy_hash };
+    } catch (error) {
+      certificationPolicy = { status: "fail_closed", error: String(error) };
+    }
+  }
   return {
     content: [{
       type: "text",
       text: JSON.stringify({
         status: "ok",
         protocol: "operator.mcp.runtime.v1",
-        revitTransport: (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase()
+        revitTransport: (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase(),
+        toolExposure,
+        certificationPolicy
       }, null, 2)
     }]
   };
@@ -510,6 +530,9 @@ server.tool("revit_tool_doc", "Describe a Revit HTTP tool (request schema + cano
   { method: z.enum(["GET", "POST"]), path: z.string() },
   async (args) => {
     try {
+      if (!isToolRouteExposedForSearch(args.method, String(args.path ?? "").trim())) {
+        throw new Error(`Tool documentation is hidden because search exposure is not certified for ${args.method} ${args.path}.`);
+      }
       const data = await callRevit("/revit/tool-doc", "POST", args);
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
@@ -520,6 +543,9 @@ server.tool("revit_tool_examples", "Get runnable examples for a Revit HTTP tool.
   { method: z.enum(["GET", "POST"]), path: z.string() },
   async (args) => {
     try {
+      if (!isToolRouteExposedForSearch(args.method, String(args.path ?? "").trim())) {
+        throw new Error(`Tool examples are hidden because search exposure is not certified for ${args.method} ${args.path}.`);
+      }
       const data = await callRevit("/revit/tool-examples", "POST", args);
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
@@ -747,15 +773,15 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
           if (group) directBody.group = group;
           if (risk) directBody.risk = risk;
 
-          const direct = await callRevit<Record<string, unknown>>("/revit/tool-search", "POST", directBody);
+          const direct = await callRevit<Record<string, unknown>>("/revit/tool-search", "POST", directBody, { channel: "search" });
           const matchesRaw = Array.isArray((direct as any)?.matches) ? ((direct as any).matches as unknown[]) : [];
-          const matches = matchesRaw.map(item => {
+          const matches = filterRegistryEntriesForSearch(matchesRaw.map(item => {
             const tool = normalizeRegistryTool(item);
             if (!tool) return null;
             const raw = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
             const score = typeof raw.score === "number" ? raw.score : undefined;
             return compactToolForList(tool, score);
-          }).filter(Boolean);
+          }).filter((item): item is Record<string, unknown> => !!item));
 
           if (matches.length > 0 || String((direct as any)?.version ?? "") === "operator.tool_search.v1") {
             return {
@@ -837,23 +863,34 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
 
       let registry: ToolRegistryPayload | null = null;
       let registryLookupError = "";
-      try {
-        registry = await getToolRegistry(!!args.forceRefreshRegistry);
-      } catch (e) {
-        registryLookupError = String(e ?? "");
+      const certifiedMode = isCertifiedToolExposureMode();
+      let known = false;
+      if (certifiedMode) {
+        // In certified mode the signed policy, not live bridge metadata, is the
+        // exact route allowlist. This remains mandatory even when the caller
+        // passes requireKnownPath=false.
+        known = isKnownToolExposureRoute(method, pathInput);
+      } else {
+        try {
+          registry = await getToolRegistry(!!args.forceRefreshRegistry);
+        } catch (e) {
+          registryLookupError = String(e ?? "");
+        }
+        known = (registry?.tools ?? []).some(
+          t => String(t.method ?? "").toUpperCase() === method && String(t.path ?? "") === pathInput
+        ) || EXTRA_DISCOVERY_PATHS.has(pathInput);
       }
-      const known = (registry?.tools ?? []).some(
-        t => String(t.method ?? "").toUpperCase() === method && String(t.path ?? "") === pathInput
-      ) || EXTRA_DISCOVERY_PATHS.has(pathInput);
-      if (!!args.requireKnownPath && !known) {
+      if ((certifiedMode || !!args.requireKnownPath) && !known) {
         if (registryLookupError) {
           throw new Error(`Tool registry lookup failed (${registryLookupError}). Cannot enforce requireKnownPath for ${method} ${pathInput}.`);
         }
         throw new Error(`Unknown tool path for this bridge: ${method} ${pathInput}. Run revit_search_tools first.`);
       }
 
-        const normalizedBody = method === "GET" ? undefined : normalizeRawJsonBody(args.body);
-        const data = method === "GET" ? await callRevit(pathInput, method) : await callRevit(pathInput, method, normalizedBody);
+      const normalizedBody = method === "GET" ? undefined : normalizeRawJsonBody(args.body);
+      const data = method === "GET"
+        ? await callRevit(pathInput, method, undefined, { channel: "generic_call" })
+        : await callRevit(pathInput, method, normalizedBody, { channel: "generic_call" });
       const output =
         data && typeof data === "object" && !Array.isArray(data) ? addWorkspaceLinks(data as Record<string, any>) : data;
       const wrapped = known

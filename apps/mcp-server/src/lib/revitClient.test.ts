@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { callRevit, RevitBridgeCallError } from "./revitClient.js";
+import { ToolExposurePolicyError } from "./toolExposurePolicy.js";
 
 async function listen(server: http.Server): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
@@ -27,12 +28,18 @@ function setTestEnvironment(url: string, timeoutMs: number): () => void {
     workspace: process.env.OPERATOR_WORKSPACE_ROOT,
     token: process.env.OPERATOR_TOKEN,
     transport: process.env.OPERATOR_REVIT_TRANSPORT,
+    runtimeMode: process.env.REVIT_OPERATOR_MODE,
+    exposureMode: process.env.OPERATOR_TOOL_EXPOSURE_MODE,
+    exposurePolicyPath: process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH,
   };
   process.env.REVIT_BRIDGE_URL = url;
   process.env.OPERATOR_REVIT_REQUEST_TIMEOUT_MS = String(timeoutMs);
   process.env.OPERATOR_WORKSPACE_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "revit-client-test-"));
   process.env.OPERATOR_TOKEN = "revit-client-test-token";
   process.env.OPERATOR_REVIT_TRANSPORT = "direct";
+  process.env.REVIT_OPERATOR_MODE = "development";
+  process.env.OPERATOR_TOOL_EXPOSURE_MODE = "laboratory";
+  delete process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH;
   return () => {
     for (const [name, value] of Object.entries({
       REVIT_BRIDGE_URL: previous.url,
@@ -40,12 +47,60 @@ function setTestEnvironment(url: string, timeoutMs: number): () => void {
       OPERATOR_WORKSPACE_ROOT: previous.workspace,
       OPERATOR_TOKEN: previous.token,
       OPERATOR_REVIT_TRANSPORT: previous.transport,
+      REVIT_OPERATOR_MODE: previous.runtimeMode,
+      OPERATOR_TOOL_EXPOSURE_MODE: previous.exposureMode,
+      OPERATOR_TOOL_EXPOSURE_POLICY_PATH: previous.exposurePolicyPath,
     })) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
   };
 }
+
+test("certified admission denies unknown, uncertified, generic schedule, and grant-backed writes before bridge dispatch", async () => {
+  let requests = 0;
+  const server = http.createServer((_request, response) => {
+    requests += 1;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ unexpected: true }));
+  });
+  const port = await listen(server);
+  const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
+  process.env.REVIT_OPERATOR_MODE = "hosted";
+  delete process.env.OPERATOR_TOOL_EXPOSURE_MODE;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
+    ? path.resolve(process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH)
+    : path.resolve(process.cwd(), "../operator-backend/config/tool_exposure_policy.v1.json");
+  fs.writeFileSync(path.join(process.env.OPERATOR_WORKSPACE_ROOT!, "write_grant.json"), JSON.stringify({
+    token: "cannot-override-certification",
+    expires_at_utc: new Date(Date.now() + 60_000).toISOString()
+  }), "utf8");
+  try {
+    const calls = [
+      callRevit("/revit/not-certified", "GET"),
+      callRevit("/revit/ping", "GET"),
+      callRevit("/revit/schedules", "POST", { action: "list", max: 10, query: "" }, { channel: "generic_call" }),
+      callRevit("/revit/update-schedule-cell", "POST", {
+        apply: false,
+        dryRun: true,
+        rowKey: "$fixture.row_key",
+        targetField: "$fixture.target_field",
+        value: "$fixture.value"
+      }, { channel: "generic_call", workflow: "schedule_cell_update_runtime" })
+    ];
+    for (const call of calls) {
+      await assert.rejects(call, (error: unknown) => error instanceof ToolExposurePolicyError);
+    }
+    assert.equal(requests, 0, "certification must run before token/grant creation or bridge fetch");
+
+    process.env.OPERATOR_REVIT_TRANSPORT = "courier";
+    await assert.rejects(callRevit("/revit/ping"), (error: unknown) => error instanceof ToolExposurePolicyError);
+    assert.equal(requests, 0, "courier selection must not bypass certified admission");
+  } finally {
+    restore();
+    await close(server);
+  }
+});
 
 test("callRevit returns JSON from a responsive bridge", async () => {
   const server = http.createServer((_request, response) => {

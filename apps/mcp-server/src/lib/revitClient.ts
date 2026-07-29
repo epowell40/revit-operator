@@ -1,6 +1,7 @@
 import { getOrCreateOperatorToken, getWriteGrantToken } from "./workspace.js";
 import { callRevitViaCourier } from "./revitCourier.js";
 import { revitRouteEffect } from "./revitRouteEffect.js";
+import { assertToolExposure, type ToolExposureChannel } from "./toolExposurePolicy.js";
 
 // Use localhost or environment variable
 export const REVIT_BRIDGE_URL = process.env.REVIT_BRIDGE_URL || "http://localhost:5000";
@@ -163,7 +164,24 @@ function isStructuredPreDispatchRejection(details: RevitBridgeErrorDetails | und
   return booleanField(details, "outcome_unknown") === false && !!phase && PRE_DISPATCH_PHASES.has(phase);
 }
 
-export async function callRevit<T = unknown>(path: string, method: string = "GET", body?: unknown): Promise<T> {
+export type RevitCallOptions = {
+  channel?: ToolExposureChannel;
+  workflow?: string;
+};
+
+export async function callRevit<T = unknown>(path: string, method: string = "GET", body?: unknown, options: RevitCallOptions = {}): Promise<T> {
+  const upperMethod = String(method || "GET").trim().toUpperCase();
+  // Certification is the final in-process admission boundary shared by direct
+  // HTTP and durable courier dispatch. A write grant only matters after this
+  // exact request/effect/channel decision has passed.
+  assertToolExposure({
+    method: upperMethod,
+    path,
+    body,
+    channel: options.channel ?? "typed_mcp",
+    workflow: options.workflow
+  });
+
   const transport = (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase();
   if (transport === "courier") return await callRevitViaCourier<T>(path, method, body);
   if (transport !== "direct") throw new Error(`Unsupported OPERATOR_REVIT_TRANSPORT: ${transport}`);
@@ -175,7 +193,6 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
       : typeof body === "string"
         ? body
         : JSON.stringify(body);
-  const upperMethod = String(method || "GET").trim().toUpperCase();
   const requestEffect = revitRouteEffect(path, upperMethod, body);
   const mutating = requestEffect === "apply";
 

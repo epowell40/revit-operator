@@ -148,7 +148,9 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
       OPERATOR_API_BASE_URL: `http://127.0.0.1:${backendPort}`,
       REVIT_BRIDGE_URL: `http://127.0.0.1:${bridgePort}`,
       OPERATOR_TOKEN: "mcp-stdio-smoke-token",
-      OPERATOR_WORKSPACE_ROOT: workspace
+      OPERATOR_WORKSPACE_ROOT: workspace,
+      REVIT_OPERATOR_MODE: "development",
+      OPERATOR_TOOL_EXPOSURE_MODE: "laboratory"
     },
     stderr: "pipe"
   });
@@ -297,4 +299,73 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     assert.match(text, /Input validation error: Invalid arguments for tool operator_plan_semantic_mep_route/i);
   }
   assert.equal(backendRequests, 0, "Invalid semantic planner controls must be rejected before any backend fetch.");
+});
+
+test("MCP stdio certified mode keeps diagnostics available and blocks every Revit route before bridge dispatch", async (t) => {
+  let bridgeRequests = 0;
+  const bridge = http.createServer((_req, res) => {
+    bridgeRequests += 1;
+    res.statusCode = 500;
+    res.end("certification should have blocked this request");
+  });
+  const bridgePort = await listen(bridge);
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "revit-operator-mcp-certified-stdio-"));
+  fs.writeFileSync(path.join(workspace, "write_grant.json"), JSON.stringify({
+    token: "grant-cannot-override-certification",
+    expires_at_utc: new Date(Date.now() + 60_000).toISOString()
+  }), "utf8");
+  const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [path.join(process.cwd(), "dist", "server.js")],
+    cwd: process.cwd(),
+    env: {
+      ...env,
+      REVIT_BRIDGE_URL: `http://127.0.0.1:${bridgePort}`,
+      OPERATOR_TOKEN: "mcp-certified-stdio-token",
+      OPERATOR_WORKSPACE_ROOT: workspace,
+      REVIT_OPERATOR_MODE: "hosted",
+      OPERATOR_TOOL_EXPOSURE_POLICY_PATH: process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
+        ? path.resolve(process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH)
+        : path.resolve(process.cwd(), "../operator-backend/config/tool_exposure_policy.v1.json")
+    },
+    stderr: "pipe"
+  });
+  const stderr: string[] = [];
+  transport.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk.toString("utf8")));
+  const client = new Client({ name: "revit-operator-certified-stdio-smoke", version: "1.0.0" }, { capabilities: {} });
+  t.after(async () => {
+    try {
+      await withTimeout(client.close(), "closing certified MCP client", 5_000);
+    } finally {
+      await withTimeout(transport.close(), "closing certified MCP child transport", 5_000);
+      await closeServer(bridge);
+    }
+  });
+
+  try {
+    await withTimeout(client.connect(transport), "initializing certified MCP stdio server");
+  } catch (error) {
+    throw new Error(`${String(error)}\nMCP stderr:\n${stderr.join("")}`);
+  }
+
+  const probe = await withTimeout(client.callTool({ name: "operator_runtime_probe", arguments: {} }), "probing certified MCP runtime");
+  const probeText = (probe as any).content.map((item: any) => item.text ?? "").join("\n");
+  assert.match(probeText, /"mode": "certified"/);
+  assert.match(probeText, /"status": "loaded"/);
+
+  const blockedCalls = [
+    { name: "revit_ping", arguments: {} },
+    { name: "revit_call_tool", arguments: { method: "GET", path: "/revit/not-certified", requireKnownPath: false } },
+    { name: "revit_call_tool", arguments: { method: "POST", path: "/revit/schedules", body: { action: "list", max: 10, query: "" }, requireKnownPath: false } },
+    { name: "revit_call_tool", arguments: { method: "POST", path: "/revit/update-schedule-cell", body: { apply: true }, requireKnownPath: false } },
+    { name: "revit_search_tools", arguments: { query: "schedules", method: "POST" } },
+    { name: "revit_tool_doc", arguments: { method: "POST", path: "/revit/schedules" } },
+    { name: "revit_tool_examples", arguments: { method: "POST", path: "/revit/schedules" } }
+  ];
+  for (const input of blockedCalls) {
+    const result = await withTimeout(client.callTool(input as any), `blocking ${input.name}`);
+    assert.equal((result as any).isError, true, `${input.name} must fail closed in current certified policy.`);
+  }
+  assert.equal(bridgeRequests, 0, "No direct, generic, search, or grant-backed call may reach the bridge under the current policy.");
 });
