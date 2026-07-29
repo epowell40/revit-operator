@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 type HttpMethod = "GET" | "POST";
@@ -146,7 +147,7 @@ type Catalog = {
   explicitSchemaPaths: Set<string>;
   reflectedSchemaPaths: Set<string>;
   schemaValidatorPaths: Set<string>;
-  mcpWrappersByPath: Map<string, string[]>;
+  mcpWrappersByKey: Map<ToolKey, string[]>;
   mcpGenericAvailable: boolean;
 };
 
@@ -262,29 +263,205 @@ function parseSchemaPaths(filePath: string): { explicit: Set<string>; reflected:
   return { explicit, reflected };
 }
 
-function parseMcpWrappers(filePath: string): { byPath: Map<string, string[]>; genericAvailable: boolean } {
-  const text = read(filePath);
-  const starts = [...text.matchAll(/server\.tool\(\s*"([^"]+)"/g)];
-  const byPath = new Map<string, string[]>();
-  for (let i = 0; i < starts.length; i++) {
-    const match = starts[i]!;
-    const name = match[1] ?? "";
-    const start = match.index ?? 0;
-    const end = i + 1 < starts.length ? (starts[i + 1]!.index ?? text.length) : text.length;
-    const block = text.slice(start, end);
-    for (const pathMatch of block.matchAll(/callRevit(?:<[^>]+>)?\(\s*"(\/revit\/[^"\s]+)"/g)) {
-      const toolPath = pathMatch[1] ?? "";
-      const names = byPath.get(toolPath) ?? [];
-      names.push(name);
-      byPath.set(toolPath, [...new Set(names)].sort());
+type SourceFunction = { body: string };
+
+function findBalancedEnd(text: string, openIndex: number, open = "(", close = ")"): number {
+  let depth = 0;
+  let quote: "\"" | "'" | "`" | null = null;
+  let lineComment = false;
+  let blockComment = false;
+  for (let index = openIndex; index < text.length; index++) {
+    const character = text[index]!;
+    const next = text[index + 1] ?? "";
+    if (lineComment) {
+      if (character === "\n") lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (character === "*" && next === "/") { blockComment = false; index++; }
+      continue;
+    }
+    if (quote) {
+      if (character === "\\") { index++; continue; }
+      if (character === quote) quote = null;
+      continue;
+    }
+    if (character === "/" && next === "/") { lineComment = true; index++; continue; }
+    if (character === "/" && next === "*") { blockComment = true; index++; continue; }
+    if (character === "\"" || character === "'" || character === "`") { quote = character; continue; }
+    if (character === open) depth++;
+    if (character === close && --depth === 0) return index + 1;
+  }
+  return text.length;
+}
+
+function splitTopLevelArguments(callText: string): string[] {
+  const openIndex = callText.indexOf("(");
+  if (openIndex < 0) return [];
+  const body = callText.slice(openIndex + 1, -1);
+  const result: string[] = [];
+  let start = 0;
+  let round = 0;
+  let square = 0;
+  let curly = 0;
+  let quote: "\"" | "'" | "`" | null = null;
+  for (let index = 0; index < body.length; index++) {
+    const character = body[index]!;
+    if (quote) {
+      if (character === "\\") { index++; continue; }
+      if (character === quote) quote = null;
+      continue;
+    }
+    if (character === "\"" || character === "'" || character === "`") { quote = character; continue; }
+    if (character === "(") round++;
+    else if (character === ")") round--;
+    else if (character === "[") square++;
+    else if (character === "]") square--;
+    else if (character === "{") curly++;
+    else if (character === "}") curly--;
+    else if (character === "," && round === 0 && square === 0 && curly === 0) {
+      result.push(body.slice(start, index).trim());
+      start = index + 1;
     }
   }
-  return { byPath, genericAvailable: /server\.tool\(\s*"revit_call_tool"/.test(text) };
+  result.push(body.slice(start).trim());
+  return result;
+}
+
+function sourceFiles(root: string): string[] {
+  const result: string[] = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const fullPath = path.join(root, entry.name);
+    if (entry.isDirectory()) result.push(...sourceFiles(fullPath));
+    else if (entry.isFile() && entry.name.endsWith(".ts")) result.push(fullPath);
+  }
+  return result.sort((a, b) => a.localeCompare(b));
+}
+
+function sourceFunctions(texts: string[]): Map<string, SourceFunction> {
+  const result = new Map<string, SourceFunction>();
+  for (const text of texts) {
+    for (const match of text.matchAll(/(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g)) {
+      const name = match[1] ?? "";
+      const parametersOpen = text.indexOf("(", match.index ?? 0);
+      const parametersEnd = findBalancedEnd(text, parametersOpen);
+      const bodyOpen = text.indexOf("{", parametersEnd);
+      if (bodyOpen < 0) continue;
+      result.set(name, { body: text.slice(bodyOpen, findBalancedEnd(text, bodyOpen, "{", "}")) });
+    }
+  }
+  return result;
+}
+
+function literalObjectNames(texts: string[]): Map<string, string[]> {
+  const result = new Map<string, string[]>();
+  for (const text of texts) {
+    for (const match of text.matchAll(/(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*=\s*([\[{])/g)) {
+      const variable = match[1] ?? "";
+      const open = (match.index ?? 0) + match[0].lastIndexOf(match[2] ?? "");
+      const close = match[2] === "[" ? "]" : "}";
+      const initializer = text.slice(open, findBalancedEnd(text, open, match[2] ?? "[", close));
+      const names = [...initializer.matchAll(/\bname\s*:\s*["']([^"']+)["']/g)].map(item => item[1] ?? "");
+      if (names.length > 0) result.set(variable, sortedUnique(names));
+    }
+  }
+  return result;
+}
+
+function callRevitKeys(text: string): ToolKey[] {
+  const result: ToolKey[] = [];
+  for (const match of text.matchAll(/\bcallRevit\b/g)) {
+    let cursor = (match.index ?? 0) + match[0].length;
+    while (/\s/.test(text[cursor] ?? "")) cursor++;
+    if (text[cursor] === "<") {
+      let depth = 0;
+      while (cursor < text.length) {
+        if (text[cursor] === "<") depth++;
+        else if (text[cursor] === ">" && --depth === 0) { cursor++; break; }
+        cursor++;
+      }
+      while (/\s/.test(text[cursor] ?? "")) cursor++;
+    }
+    if (text[cursor] !== "(") continue;
+    const args = splitTopLevelArguments(text.slice(cursor, findBalancedEnd(text, cursor)));
+    const toolPath = args[0]?.match(/^["'](\/revit\/[^"'\s]+)["']$/)?.[1] ?? "";
+    const method = args[1]?.match(/^["'](GET|POST)["']$/)?.[1] ?? "GET";
+    const key = toolKey(method, toolPath);
+    if (key) result.push(key);
+  }
+  return [...new Set(result)].sort((a, b) => a.localeCompare(b));
+}
+
+function reachableCallRevitKeys(text: string, functions: Map<string, SourceFunction>, visited = new Set<string>()): ToolKey[] {
+  const result = new Set<ToolKey>(callRevitKeys(text));
+  const calledNames = [...text.matchAll(/\b([A-Za-z_$][\w$]*)\s*\(/g)].map(match => match[1] ?? "");
+  const referencedFunction = text.trim().match(/^([A-Za-z_$][\w$]*)$/)?.[1];
+  if (referencedFunction) calledNames.push(referencedFunction);
+  for (const name of calledNames) {
+    if (visited.has(name)) continue;
+    const target = functions.get(name);
+    if (!target) continue;
+    const nextVisited = new Set(visited);
+    nextVisited.add(name);
+    for (const key of reachableCallRevitKeys(target.body, functions, nextVisited)) result.add(key);
+  }
+  return [...result].sort((a, b) => a.localeCompare(b));
+}
+
+function parseMcpWrappers(mcpRoot: string): { byKey: Map<ToolKey, string[]>; genericAvailable: boolean } {
+  const serverPath = path.join(mcpRoot, "src", "server.ts");
+  const serverText = read(serverPath);
+  const texts = sourceFiles(path.join(mcpRoot, "src")).map(read);
+  const serverFunctions = sourceFunctions([serverText]);
+  const allFunctions = sourceFunctions(texts);
+  const objectNames = literalObjectNames(texts);
+  const byKey = new Map<ToolKey, string[]>();
+  const add = (name: string, keys: Iterable<ToolKey>) => {
+    if (!name) return;
+    for (const key of keys) byKey.set(key, sortedUnique([...(byKey.get(key) ?? []), name]));
+  };
+
+  const registrationPattern = /\b(?:server\s*\.\s*(?:tool|registerTool)|registerAuditedZodTool)\s*\(/g;
+  for (const match of serverText.matchAll(registrationPattern)) {
+    const open = serverText.indexOf("(", match.index ?? 0);
+    const callText = serverText.slice(match.index ?? 0, findBalancedEnd(serverText, open));
+    const args = splitTopLevelArguments(callText);
+    const literalName = args[0]?.match(/^["']([^"']+)["']$/)?.[1];
+    // The generic dispatcher reads the registry as an implementation detail; it is
+    // deliberately represented by generic_call_available, not as a typed wrapper.
+    if (literalName && literalName !== "revit_call_tool") add(literalName, reachableCallRevitKeys(args.at(-1) ?? callText, serverFunctions));
+  }
+
+  // Audited registrations may use imported metadata objects rather than a literal name.
+  for (const match of serverText.matchAll(/\bregisterAuditedZodTool\s*\(\s*([A-Za-z_$][\w$]*)\.name\s*,/g)) {
+    const open = serverText.indexOf("(", match.index ?? 0);
+    const callText = serverText.slice(match.index ?? 0, findBalancedEnd(serverText, open));
+    const keys = reachableCallRevitKeys(splitTopLevelArguments(callText).at(-1) ?? callText, allFunctions);
+    for (const name of objectNames.get(match[1] ?? "") ?? []) add(name, keys);
+  }
+
+  // Resolve literal metadata arrays used by audited dynamic registration loops.
+  for (const match of serverText.matchAll(/\b([A-Za-z_$][\w$]*)\.forEach\s*\(\s*([A-Za-z_$][\w$]*)\s*=>/g)) {
+    const collection = match[1] ?? "";
+    const item = match[2] ?? "";
+    const open = serverText.indexOf("(", match.index ?? 0);
+    const loopText = serverText.slice(match.index ?? 0, findBalancedEnd(serverText, open));
+    if (!new RegExp(`\\bregisterAuditedZodTool\\s*\\(\\s*${item}\\.name\\s*,`).test(loopText)) continue;
+    const keys = reachableCallRevitKeys(loopText, allFunctions);
+    for (const name of objectNames.get(collection) ?? []) add(name, keys);
+  }
+
+  return { byKey, genericAvailable: /server\s*\.\s*tool\s*\(\s*["']revit_call_tool["']/.test(serverText) };
+}
+
+/** SHA-256 over UTF-8 bytes after CRLF and lone CR are normalized to LF. */
+export function canonicalRegistryDigestSha256(source: string): string {
+  return createHash("sha256").update(source.replace(/\r\n?/g, "\n"), "utf8").digest("hex").toUpperCase();
 }
 
 function loadCatalog(layout: Layout): Catalog {
   const addinOperator = path.join(layout.addinRoot, "RevitBridge", "Operator");
-  const mcp = parseMcpWrappers(path.join(layout.mcpRoot, "src", "server.ts"));
+  const mcp = parseMcpWrappers(layout.mcpRoot);
   const schemas = parseSchemaPaths(path.join(addinOperator, "OperatorToolIntrospection.cs"));
   const manifest = parseManifest(path.join(addinOperator, "OperatorToolManifest.cs"));
   return {
@@ -301,7 +478,7 @@ function loadCatalog(layout: Layout): Catalog {
     explicitSchemaPaths: schemas.explicit,
     reflectedSchemaPaths: schemas.reflected,
     schemaValidatorPaths: new Set([...read(path.join(addinOperator, "OperatorActionSchemaValidator.cs")).matchAll(/"(\/revit\/[^"\s]+)"/g)].map(match => match[1] ?? "")),
-    mcpWrappersByPath: mcp.byPath,
+    mcpWrappersByKey: mcp.byKey,
     mcpGenericAvailable: mcp.genericAvailable
   };
 }
@@ -336,7 +513,7 @@ function buildReconciliation(
   addPathReferences("explicit_request_schema", catalog.explicitSchemaPaths);
   addPathReferences("reflected_request_schema", catalog.reflectedSchemaPaths);
   addPathReferences("schema_validator", catalog.schemaValidatorPaths);
-  addPathReferences("typed_mcp_wrapper", catalog.mcpWrappersByPath.keys());
+  addKeyReferences("typed_mcp_wrapper", catalog.mcpWrappersByKey.keys());
   if (live) addKeyReferences("live_advertisement", live.keys());
 
   const byPath = new Map<string, ManifestTool[]>();
@@ -403,7 +580,8 @@ function buildReconciliation(
       explicit_request_schema_paths: catalog.explicitSchemaPaths.size,
       reflected_request_schema_paths: catalog.reflectedSchemaPaths.size,
       schema_validator_paths: catalog.schemaValidatorPaths.size,
-      typed_mcp_paths: catalog.mcpWrappersByPath.size,
+      typed_mcp_paths: new Set([...catalog.mcpWrappersByKey.keys()].map(key => key.slice(key.indexOf(" ") + 1))).size,
+      typed_mcp_keys: catalog.mcpWrappersByKey.size,
       live_advertisements: live?.size ?? 0,
       compare_manifest: compareCatalog?.manifest.size ?? 0
     },
@@ -550,7 +728,7 @@ export function buildRegistryAudit(options: { repoRoot: string; liveCapabilities
       },
       mcp: {
         generic_call_available: surfaceKind === "revit_bridge" && catalog.mcpGenericAvailable,
-        typed_tools: catalog.mcpWrappersByPath.get(manifest.path) ?? []
+        typed_tools: catalog.mcpWrappersByKey.get(manifest.key) ?? []
       },
       live: { advertised: liveAdvertised, metadata_matches_source: liveMatches },
       public_parity: publicParity,

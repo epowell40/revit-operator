@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildRegistryAudit, findRepoRoot, renderAuditCsv, renderAuditMarkdown } from "../src/tools/audit_tool_registry.js";
+import { buildRegistryAudit, canonicalRegistryDigestSha256, findRepoRoot, renderAuditCsv, renderAuditMarkdown } from "../src/tools/audit_tool_registry.js";
 
 test("tool registry audit inventories the complete source catalog without claiming live usefulness", () => {
   const repoRoot = findRepoRoot(process.cwd());
   const audit = buildRegistryAudit({ repoRoot });
-  assert.ok(audit.tools.length > 150);
+  assert.equal(audit.tools.length, 214);
   assert.equal(new Set(audit.tools.map(tool => tool.key)).size, audit.tools.length);
   assert.equal(audit.summary.manifest_entries, audit.tools.length);
   assert.ok(audit.tools.every(tool => tool.evidence.live_safe === null));
@@ -38,6 +38,39 @@ test("tool registry audit inventories the complete source catalog without claimi
   assert.match(markdown, /live_safe=true.*bounded read-only.*useful=true/i);
   assert.match(markdown, /Cross-surface reconciliation/);
   assert.match(markdown, /Shared-handler aliases/);
+});
+
+test("typed MCP wrappers are attributed to the exact method and path", () => {
+  const repoRoot = findRepoRoot(process.cwd());
+  const audit = buildRegistryAudit({ repoRoot });
+  const typed = (key: string) => audit.tools.find(tool => tool.key === key)?.mcp.typed_tools ?? [];
+
+  assert.deepEqual(typed("GET /revit/views"), ["revit_list_views"]);
+  assert.deepEqual(typed("POST /revit/views"), ["revit_query_views"]);
+  assert.deepEqual(typed("GET /revit/native-api-policy"), ["revit_native_api_policy"]);
+  assert.deepEqual(typed("POST /revit/native-api-policy"), ["revit_native_api_set_policy"]);
+  assert.deepEqual(typed("POST /revit/tool-search"), ["revit_search_tools"]);
+  assert.ok(!typed("GET /revit/tool-registry").includes("revit_call_tool"));
+  assert.deepEqual(typed("POST /revit/repair-mep-connectors"), [
+    "revit_dry_run_repair_mep_connectors",
+    "revit_repair_mep_connectors"
+  ]);
+  assert.ok(!typed("POST /revit/repair-mep-connectors").includes("revit_repair_duct_continuity_by_scope"));
+  assert.deepEqual(typed("POST /revit/fire-damper-audit"), ["fire_damper_audit"]);
+  assert.deepEqual(typed("POST /revit/lighting-audit"), ["audit_lpd", "check_photometrics", "validate_ies_files"]);
+  assert.ok(!typed("POST /revit/lighting-audit").includes("revit_run_fire_alarm_layout"));
+});
+
+test("registry digests use canonical LF-normalized UTF-8 bytes", () => {
+  const lf = "{\n  \"tools\": [\n    \"GET /revit/ping\"\n  ]\n}\n";
+  const crlf = lf.replace(/\n/g, "\r\n");
+  const loneCr = lf.replace(/\n/g, "\r");
+  const digest = canonicalRegistryDigestSha256(lf);
+
+  assert.match(digest, /^[A-F0-9]{64}$/);
+  assert.equal(canonicalRegistryDigestSha256(crlf), digest);
+  assert.equal(canonicalRegistryDigestSha256(loneCr), digest);
+  assert.notEqual(canonicalRegistryDigestSha256(lf.replace("ping", "context")), digest);
 });
 
 test("tool registry audit attaches bounded live receipts to the exact method and path", () => {
