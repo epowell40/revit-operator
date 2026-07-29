@@ -30,3 +30,15 @@ function resolveHostedFlag(env: NodeJS.ProcessEnv): boolean {
 export function isHostedRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
   return resolveRuntimeMode(env) === "hosted" || resolveHostedFlag(env);
 }
+
+/**
+ * Full workbench actions include process execution and workspace mutation.
+ * Keep that authority separate from authentication mode and request identity:
+ * only an explicitly local development runtime may even be considered for it.
+ * A hosted flag always wins over a downgraded local/development label.
+ */
+export function isFullWorkbenchRuntime(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (isHostedRuntime(env)) return false;
+  const mode = resolveRuntimeMode(env);
+  return mode === "local" || mode === "development";
+}
