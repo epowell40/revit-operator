@@ -43,7 +43,7 @@ internal sealed class InputVerifier
         Check(string.Equals(_manifest.ProofKind, Constants.ProofKind, StringComparison.Ordinal), "MANIFEST_KIND", "proofKind must be exactly " + Constants.ProofKind + ".");
         Check(string.Equals(_manifest.TrustBoundary, Constants.TrustBoundary, StringComparison.Ordinal), "TRUST_BOUNDARY", "The explicit local-admin/OS/Revit trust boundary is missing or changed.");
         Check(!string.IsNullOrWhiteSpace(_manifest.Source.AssemblyName), "ASSEMBLY_NAME", "source.assemblyName is required.");
-        Check(string.Equals(_manifest.Source.AssemblyName, "SafeReadCertifiedExecution", StringComparison.Ordinal), "EXECUTION_ASSEMBLY_NAME", "source.assemblyName must be exactly SafeReadCertifiedExecution; transport hosts are outside this proof.");
+        Check(string.Equals(_manifest.Source.AssemblyName, Constants.CertifiedAssemblyName, StringComparison.Ordinal), "EXECUTION_ASSEMBLY_NAME", "source.assemblyName must be exactly " + Constants.CertifiedAssemblyName + "; transport hosts are outside this proof.");
         Check(string.Equals(_manifest.Source.TextNormalization, "utf8-lf", StringComparison.Ordinal), "SOURCE_NORMALIZATION", "source.textNormalization must be exactly utf8-lf.");
         Check(IsSimpleAssemblyName(_manifest.Source.AssemblyName), "ASSEMBLY_NAME", "source.assemblyName must contain only ASCII letters, digits, period, underscore, or hyphen.");
         Check(_manifest.Policy.AllowedOperationKinds.Count > 0, "POLICY_EMPTY", "allowedOperationKinds must be explicit and non-empty.");
@@ -54,6 +54,11 @@ internal sealed class InputVerifier
         RejectDuplicates(_manifest.Policy.AllowedMutableFields, "POLICY_DUPLICATE", "allowedMutableFields");
         RejectDuplicates(_manifest.Policy.SerializationRoots, "POLICY_DUPLICATE", "serializationRoots");
         RejectDuplicates(_manifest.Policy.SerializationCallsites, "POLICY_DUPLICATE", "serializationCallsites");
+        RejectDuplicates(_manifest.Policy.PublicAbi, "POLICY_DUPLICATE", "publicAbi");
+        Check(!string.IsNullOrWhiteSpace(_manifest.Policy.EntryPointType), "ENTRYPOINT_TYPE", "policy.entryPointType is required.");
+        Check(!string.IsNullOrWhiteSpace(_manifest.Policy.EntryPointMethod), "ENTRYPOINT_METHOD", "policy.entryPointMethod is required.");
+        Check(!string.IsNullOrWhiteSpace(_manifest.Policy.ResultType), "RESULT_TYPE", "policy.resultType is required.");
+        Check(_manifest.Policy.PublicAbi.Count > 0, "PUBLIC_ABI_EMPTY", "policy.publicAbi must freeze the complete public ABI.");
     }
 
     private void VerifySdk()
@@ -203,6 +208,10 @@ internal sealed class InputVerifier
         }
 
         RejectDuplicates(_manifest.Source.Resources.Select(static resource => resource.LogicalName), "RESOURCE_DUPLICATE_NAME", "resource logical names");
+        if (_manifest.Source.Resources.Count != 0)
+        {
+            Add("CERTIFIED_RESOURCES_FORBIDDEN", "The synchronous certified kernel cannot embed resources.");
+        }
         foreach (var resource in _manifest.Source.Resources.OrderBy(static file => Canonical.NormalizeRelativePath(file.Path), StringComparer.Ordinal))
         {
             var resolved = ResolveRelative(sourceRoot, resource.Path, "RESOURCE_PATH");
@@ -238,14 +247,14 @@ internal sealed class InputVerifier
             });
         }
 
-        declared.Sort(StringComparer.Ordinal);
-        var actual = Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories)
+        declared = declared.Where(static path => path.EndsWith(".cs", StringComparison.Ordinal)).OrderBy(static path => path, StringComparer.Ordinal).ToList();
+        var actual = Directory.EnumerateFiles(sourceRoot, "*.cs", SearchOption.AllDirectories)
             .Select(path => Canonical.NormalizeRelativePath(Path.GetRelativePath(sourceRoot, path)))
             .OrderBy(static value => value, StringComparer.Ordinal)
             .ToList();
         if (!declared.SequenceEqual(actual, StringComparer.Ordinal))
         {
-            Add("SOURCE_EXACT_SET", "Source root file set differs from the exact source/resource locks. locked=[" + string.Join(",", declared) + "] actual=[" + string.Join(",", actual) + "]");
+            Add("SOURCE_EXACT_SET", "C# compile-source set differs from the exact source locks. Non-C# project metadata is intentionally excluded. locked=[" + string.Join(",", declared) + "] actual=[" + string.Join(",", actual) + "]");
         }
     }
 
@@ -282,9 +291,9 @@ internal sealed class InputVerifier
             {
                 Add("PREPROCESSOR_SYMBOLS", "Revit " + variant.RevitYear + " must define exactly " + expectedSymbol + ".");
             }
-            if (variant.RevitReferences.Count != 2)
+            if (variant.RevitReferences.Count != 1)
             {
-                Add("REVIT_REFERENCE_SET", "Revit " + variant.RevitYear + " must lock exactly RevitAPI.dll and RevitAPIUI.dll.");
+                Add("REVIT_REFERENCE_SET", "Revit " + variant.RevitYear + " certified kernel must lock exactly RevitAPI.dll; RevitAPIUI and host transport references are forbidden.");
             }
 
             var paths = new List<string>();
@@ -308,9 +317,9 @@ internal sealed class InputVerifier
                 }
             }
             var revitNames = variant.RevitReferences.Select(static reference => reference.Identity.Split(',')[0]).OrderBy(static value => value, StringComparer.Ordinal).ToArray();
-            if (!new[] { "RevitAPI", "RevitAPIUI" }.SequenceEqual(revitNames, StringComparer.Ordinal))
+            if (!new[] { "RevitAPI" }.SequenceEqual(revitNames, StringComparer.Ordinal))
             {
-                Add("REVIT_API_IDENTITY", "Revit " + variant.RevitYear + " must lock separate exact RevitAPI and RevitAPIUI identities.");
+                Add("REVIT_API_IDENTITY", "Revit " + variant.RevitYear + " must lock exactly the RevitAPI identity.");
             }
             inputs.RevitReferences[variant.RevitYear] = paths;
         }

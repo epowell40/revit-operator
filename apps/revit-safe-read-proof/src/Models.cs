@@ -88,6 +88,10 @@ internal sealed class ProofPolicy
     public List<string> SerializationRoots { get; set; } = new();
     public List<string> SerializationCallsites { get; set; } = new();
     public List<string> AllowedSerializationLeafTypes { get; set; } = new();
+    public string EntryPointType { get; set; } = string.Empty;
+    public string EntryPointMethod { get; set; } = string.Empty;
+    public string ResultType { get; set; } = string.Empty;
+    public List<string> PublicAbi { get; set; } = new();
     public SensitiveRoles Roles { get; set; } = new();
 }
 
@@ -105,6 +109,7 @@ internal sealed class ExpectedInventories
     public InventoryExpectation Syntax { get; set; } = new();
     public InventoryExpectation Types { get; set; } = new();
     public InventoryExpectation Members { get; set; } = new();
+    public InventoryExpectation PublicAbi { get; set; } = new();
     public InventoryExpectation SerializationClosure { get; set; } = new();
     public InventoryExpectation Resources { get; set; } = new();
     public SortedDictionary<string, VariantExpected> Variants { get; set; } = new(StringComparer.Ordinal);
@@ -150,6 +155,10 @@ internal sealed class VariantObservation
     public InventoryExpectation Metadata { get; set; } = new();
     public InventoryExpectation Il { get; set; } = new();
     public string OutputSha256 { get; set; } = string.Empty;
+    public string ManagedCodeSha256 { get; set; } = string.Empty;
+    public string AssemblyIdentity { get; set; } = string.Empty;
+    public string TargetFramework { get; set; } = string.Empty;
+    public string Platform { get; set; } = string.Empty;
 }
 
 internal sealed class ProofObservation
@@ -157,6 +166,7 @@ internal sealed class ProofObservation
     public InventoryExpectation Syntax { get; set; } = new();
     public InventoryExpectation Types { get; set; } = new();
     public InventoryExpectation Members { get; set; } = new();
+    public InventoryExpectation PublicAbi { get; set; } = new();
     public InventoryExpectation SerializationClosure { get; set; } = new();
     public InventoryExpectation Resources { get; set; } = new();
     public SortedDictionary<string, VariantObservation> Variants { get; set; } = new(StringComparer.Ordinal);
@@ -168,6 +178,7 @@ internal sealed class ProofObservation
             Syntax = Syntax,
             Types = Types,
             Members = Members,
+            PublicAbi = PublicAbi,
             SerializationClosure = SerializationClosure,
             Resources = Resources,
         };
@@ -207,11 +218,29 @@ internal sealed class ArtifactReceipt
     public string FileName { get; set; } = string.Empty;
     public string Sha256 { get; set; } = string.Empty;
     public long Length { get; set; }
+    public string ManagedCodeSha256 { get; set; } = string.Empty;
+    public string AssemblyIdentity { get; set; } = string.Empty;
+    public string TargetFramework { get; set; } = string.Empty;
+    public string Platform { get; set; } = string.Empty;
+}
+
+internal sealed class ArtifactFingerprintReceipt
+{
+    public int SchemaVersion { get; set; } = 1;
+    public string Status { get; set; } = string.Empty;
+    public string Sha256 { get; set; } = string.Empty;
+    public long Length { get; set; }
+    public string ManagedCodeSha256 { get; set; } = string.Empty;
+    public string AssemblyIdentity { get; set; } = string.Empty;
+    public List<ProofIssue> Issues { get; set; } = new();
+    public InventoryExpectation Metadata { get; set; } = new();
+    public InventoryExpectation Il { get; set; } = new();
 }
 
 internal static class Constants
 {
-    public const string ProofKind = "revit-safe-read-whole-assembly/v1";
+    public const string ProofKind = "revit-safe-read-certified-kernel/v1";
+    public const string CertifiedAssemblyName = "RevitOperator.SafeReadCertifiedExecution";
     public const string TrustBoundary = "Trusted local administrator, operating system, installed locked SDK/reference pack, Autodesk Revit, and Revit process; malicious local admin/OS/Revit are excluded.";
 
     public static readonly string[] CompilerOptions =

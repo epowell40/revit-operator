@@ -15,6 +15,7 @@ internal sealed class MetadataInspection
 {
     public InventoryExpectation Metadata { get; set; } = new();
     public InventoryExpectation Il { get; set; } = new();
+    public string AssemblyIdentity { get; set; } = string.Empty;
 }
 
 internal sealed class MetadataInspector
@@ -55,7 +56,8 @@ internal sealed class MetadataInspector
         var reader = pe.GetMetadataReader();
         var headers = pe.PEHeaders;
         metadata.Add("PE|machine=" + headers.CoffHeader.Machine + "|timestamp=" + headers.CoffHeader.TimeDateStamp + "|characteristics=" + headers.CoffHeader.Characteristics + "|corflags=" + headers.CorHeader!.Flags + "|entry=" + headers.CorHeader.EntryPointTokenOrRelativeVirtualAddress);
-        metadata.Add("ASSEMBLY|" + Canonical.AssemblyIdentity(reader));
+        var assemblyIdentity = Canonical.AssemblyIdentity(reader);
+        metadata.Add("ASSEMBLY|" + assemblyIdentity);
         var module = reader.GetModuleDefinition();
         metadata.Add("MODULE|name=" + reader.GetString(module.Name) + "|mvid=" + reader.GetGuid(module.Mvid).ToString("D", CultureInfo.InvariantCulture) + "|generation=" + module.Generation);
 
@@ -166,6 +168,7 @@ internal sealed class MetadataInspector
         {
             Metadata = Canonical.Inventory(metadata),
             Il = Canonical.Inventory(il),
+            AssemblyIdentity = assemblyIdentity,
         };
     }
 
@@ -242,9 +245,9 @@ internal sealed class MetadataInspector
             {
                 operand = ReadOperand(reader, opcode.OperandType, bytes, ref offset);
             }
-            catch (InvalidDataException exception)
+            catch (Exception exception) when (exception is InvalidDataException or OverflowException or ArgumentOutOfRangeException or BadImageFormatException)
             {
-                Add("IL_DECODE", Token(method) + " at IL_" + instructionOffset.ToString("X4", CultureInfo.InvariantCulture) + ": " + exception.Message);
+                Add("IL_DECODE", Token(method) + " at IL_" + instructionOffset.ToString("X4", CultureInfo.InvariantCulture) + " operand=" + opcode.OperandType + ": " + exception.Message);
                 break;
             }
             il.Add("IL|method=" + Token(method) + "|offset=" + instructionOffset.ToString("X4", CultureInfo.InvariantCulture) + "|opcode=" + opcode.Name + "|operand=" + operand);
@@ -263,7 +266,7 @@ internal sealed class MetadataInspector
                 return "none";
             case OperandType.ShortInlineI:
                 Ensure(bytes, offset, 1);
-                return ((sbyte)bytes[offset++]).ToString(CultureInfo.InvariantCulture);
+                return unchecked((sbyte)bytes[offset++]).ToString(CultureInfo.InvariantCulture);
             case OperandType.ShortInlineVar:
                 Ensure(bytes, offset, 1);
                 return bytes[offset++].ToString(CultureInfo.InvariantCulture);
@@ -294,13 +297,13 @@ internal sealed class MetadataInspector
                 return @double.ToString("R", CultureInfo.InvariantCulture);
             case OperandType.ShortInlineBrTarget:
                 Ensure(bytes, offset, 1);
-                var shortDelta = (sbyte)bytes[offset++];
-                return "IL_" + (offset + shortDelta).ToString("X4", CultureInfo.InvariantCulture);
+                var shortDelta = unchecked((sbyte)bytes[offset++]);
+                return BranchTarget((long)offset + shortDelta, bytes.Length);
             case OperandType.InlineBrTarget:
                 Ensure(bytes, offset, 4);
                 var delta = BitConverter.ToInt32(bytes, offset);
                 offset += 4;
-                return "IL_" + (offset + delta).ToString("X4", CultureInfo.InvariantCulture);
+                return BranchTarget((long)offset + delta, bytes.Length);
             case OperandType.InlineSwitch:
                 Ensure(bytes, offset, 4);
                 var count = BitConverter.ToInt32(bytes, offset);
@@ -313,14 +316,19 @@ internal sealed class MetadataInspector
                 {
                     throw new InvalidDataException("Invalid InlineSwitch operand length.");
                 }
-                Ensure(bytes, offset, count * 4);
-                var baseOffset = offset + count * 4;
+                var switchBytes = checked((long)count * 4L);
+                if (switchBytes > int.MaxValue || switchBytes > bytes.Length - offset)
+                {
+                    throw new InvalidDataException("Invalid InlineSwitch operand length.");
+                }
+                Ensure(bytes, offset, (int)switchBytes);
+                var baseOffset = checked((long)offset + switchBytes);
                 var targets = new string[count];
                 for (var index = 0; index < count; index++)
                 {
                     var switchDelta = BitConverter.ToInt32(bytes, offset);
                     offset += 4;
-                    targets[index] = "IL_" + (baseOffset + switchDelta).ToString("X4", CultureInfo.InvariantCulture);
+                    targets[index] = BranchTarget(checked(baseOffset + switchDelta), bytes.Length);
                 }
                 return string.Join(",", targets);
             case OperandType.InlineField:
@@ -336,6 +344,15 @@ internal sealed class MetadataInspector
             default:
                 throw new InvalidDataException("Unsupported operand type " + type + ".");
         }
+    }
+
+    private static string BranchTarget(long target, int bodyLength)
+    {
+        if (target < 0 || target > bodyLength)
+        {
+            throw new InvalidDataException("IL branch target is outside the method body: " + target.ToString(CultureInfo.InvariantCulture) + ".");
+        }
+        return "IL_" + target.ToString("X4", CultureInfo.InvariantCulture);
     }
 
     private static string ResolveToken(MetadataReader reader, int token)

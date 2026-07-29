@@ -119,29 +119,50 @@ try {
 $expectedPath = Join-Path $proofRoot 'fixtures\positive\expected.compact.json'
 $positiveSource = Join-Path $TempRoot 'positive-source'
 [System.IO.Directory]::CreateDirectory($positiveSource) | Out-Null
-Copy-Item -LiteralPath (Join-Path $proofRoot 'fixtures\positive\source\MicroHost.cs') -Destination (Join-Path $positiveSource 'Execution.cs')
+Copy-Item -LiteralPath (Join-Path $proofRoot 'fixtures\positive\source\CertifiedKernel.cs') -Destination (Join-Path $positiveSource 'CertifiedKernel.cs')
+$crlfSourceText = (Get-Content -LiteralPath (Join-Path $positiveSource 'CertifiedKernel.cs') -Raw).Replace("`r`n", "`n").Replace("`r", "`n").Replace("`n", "`r`n")
+Write-ProofUtf8 (Join-Path $positiveSource 'CertifiedKernel.cs') $crlfSourceText
 $positiveManifest = Join-Path $TempRoot 'positive.manifest.json'
 New-ProofFixtureManifest -ProofRoot $proofRoot -SourceRoot $positiveSource -ReferenceRoot $referenceRoot -ManifestPath $positiveManifest -ExpectedPath $expectedPath
 
 $positiveOne = Join-Path $TempRoot 'positive-check-one'
 $positiveTwo = Join-Path $TempRoot 'positive-check-two'
 $receiptOne = Invoke-ProofCheck -ToolPath $toolPath -ManifestPath $positiveManifest -OutputPath $positiveOne
-$rawSourceHash = Get-ProofSha256 (Join-Path $positiveSource 'Execution.cs')
-$lfSourceText = (Get-Content -LiteralPath (Join-Path $positiveSource 'Execution.cs') -Raw).Replace("`r`n", "`n").Replace("`r", "`n")
-Write-ProofUtf8 (Join-Path $positiveSource 'Execution.cs') $lfSourceText
-Assert-Proof ($rawSourceHash -ne (Get-ProofSha256 (Join-Path $positiveSource 'Execution.cs'))) 'line-ending determinism falsifier did not change raw source bytes'
+$rawSourceHash = Get-ProofSha256 (Join-Path $positiveSource 'CertifiedKernel.cs')
+$lfSourceText = (Get-Content -LiteralPath (Join-Path $positiveSource 'CertifiedKernel.cs') -Raw).Replace("`r`n", "`n").Replace("`r", "`n")
+Write-ProofUtf8 (Join-Path $positiveSource 'CertifiedKernel.cs') $lfSourceText
+Assert-Proof ($rawSourceHash -ne (Get-ProofSha256 (Join-Path $positiveSource 'CertifiedKernel.cs'))) 'line-ending determinism falsifier did not change raw source bytes'
 $receiptTwo = Invoke-ProofCheck -ToolPath $toolPath -ManifestPath $positiveManifest -OutputPath $positiveTwo
 foreach ($year in @('2023', '2024', '2025')) {
-    $fileName = "SafeReadCertifiedExecution.Revit$year.dll"
+    $fileName = "RevitOperator.SafeReadCertifiedExecution.Revit$year.dll"
     Assert-Proof ((Get-ProofSha256 (Join-Path $positiveOne $fileName)) -eq (Get-ProofSha256 (Join-Path $positiveTwo $fileName))) "deterministic output differs for Revit $year"
+    $artifactReceipt = $receiptOne.artifacts.$year
+    Assert-Proof ([string]$artifactReceipt.fileName -eq $fileName) "artifact receipt filename differs for Revit $year"
+    Assert-Proof ([string]$artifactReceipt.platform -eq 'x64') "artifact receipt platform differs for Revit $year"
+    $expectedTargetFramework = if ($year -in @('2023', '2024')) { '.NETFramework,Version=v4.8' } else { '.NETCoreApp,Version=v8.0' }
+    Assert-Proof ([string]$artifactReceipt.targetFramework -eq $expectedTargetFramework) "artifact receipt target framework differs for Revit $year"
+    Assert-Proof ([string]$artifactReceipt.assemblyIdentity -like 'RevitOperator.SafeReadCertifiedExecution, Version=*') "artifact receipt assembly identity differs for Revit $year"
+    $fingerprintRoot = Join-Path $TempRoot ("fingerprint-$year")
+    $fingerprintOutput = @(& 'C:\Program Files\dotnet\dotnet.exe' $toolPath fingerprint --artifact (Join-Path $positiveOne $fileName) --output-dir $fingerprintRoot 2>&1)
+    Assert-Proof ($LASTEXITCODE -eq 0) ("artifact fingerprint failed for Revit ${year}: " + [string]::Join("`n", @($fingerprintOutput)))
+    $fingerprint = Get-Content -LiteralPath (Join-Path $fingerprintRoot 'artifact.fingerprint.json') -Raw | ConvertFrom-Json
+    Assert-Proof ([string]$fingerprint.managedCodeSha256 -eq [string]$artifactReceipt.managedCodeSha256) "managed-code fingerprint differs for Revit $year"
 }
 Assert-Proof ((Get-ProofSha256 (Join-Path $positiveOne 'proof.receipt.json')) -eq (Get-ProofSha256 (Join-Path $positiveTwo 'proof.receipt.json'))) 'deterministic proof receipts differ'
 Assert-Proof (@($receiptOne.artifacts.psobject.Properties).Count -eq 3) 'positive receipt did not contain exactly three artifacts'
 Assert-Proof (@($receiptTwo.artifacts.psobject.Properties).Count -eq 3) 'second positive receipt did not contain exactly three artifacts'
 
-$installedRevitPaths = @('2023', '2024', '2025') | ForEach-Object {
-    @("C:\Program Files\Autodesk\Revit $_\RevitAPI.dll", "C:\Program Files\Autodesk\Revit $_\RevitAPIUI.dll")
-}
+$malformedArtifact = Join-Path $TempRoot 'malformed-il-artifact.dll'
+$validBytes = [System.IO.File]::ReadAllBytes((Join-Path $positiveOne 'RevitOperator.SafeReadCertifiedExecution.Revit2025.dll'))
+[System.IO.File]::WriteAllBytes($malformedArtifact, $validBytes[0..63])
+$malformedRoot = Join-Path $TempRoot 'malformed-il-fingerprint'
+$malformedOutput = @(& 'C:\Program Files\dotnet\dotnet.exe' $toolPath fingerprint --artifact $malformedArtifact --output-dir $malformedRoot 2>&1)
+Assert-Proof ($LASTEXITCODE -eq 1) ("malformed artifact fingerprint exit was not rejected: " + [string]::Join("`n", @($malformedOutput)))
+$malformedReceipt = Get-Content -LiteralPath (Join-Path $malformedRoot 'artifact.fingerprint.json') -Raw | ConvertFrom-Json
+Assert-Proof ([string]$malformedReceipt.status -eq 'rejected') 'malformed artifact did not emit a rejected fingerprint receipt'
+Assert-Proof (@($malformedReceipt.issues).Count -gt 0) 'malformed artifact receipt omitted deterministic issues'
+
+$installedRevitPaths = @('2023', '2024', '2025') | ForEach-Object { "C:\Program Files\Autodesk\Revit $_\RevitAPI.dll" }
 Assert-Proof (@($installedRevitPaths | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) }).Count -eq 0) 'installed Revit target reference pair is missing'
 $realTargetRoot = Join-Path $TempRoot 'installed-revit-target-inventory'
 [System.IO.Directory]::CreateDirectory($realTargetRoot) | Out-Null
@@ -158,15 +179,15 @@ foreach ($case in $negativeCases) {
     $caseRoot = Join-Path $TempRoot ('negative-' + [string]$case.name)
     $sourceRoot = Join-Path $caseRoot 'source'
     [System.IO.Directory]::CreateDirectory($sourceRoot) | Out-Null
-    $sourcePath = Join-Path $sourceRoot 'Execution.cs'
-    Copy-Item -LiteralPath (Join-Path $proofRoot 'fixtures\positive\source\MicroHost.cs') -Destination $sourcePath
+    $sourcePath = Join-Path $sourceRoot 'CertifiedKernel.cs'
+    Copy-Item -LiteralPath (Join-Path $proofRoot 'fixtures\positive\source\CertifiedKernel.cs') -Destination $sourcePath
     if ([string]$case.kind -eq 'appendSource') {
         Write-ProofUtf8 (Join-Path $sourceRoot 'Injected.cs') ([string]$case.payload)
     } elseif ([string]$case.kind -eq 'prependSource') {
-        $sourceText = Get-Content -LiteralPath $sourcePath -Raw
+        $sourceText = (Get-Content -LiteralPath $sourcePath -Raw).Replace("`r`n", "`n").Replace("`r", "`n")
         Write-ProofUtf8 $sourcePath ([string]$case.payload + $sourceText)
     } elseif ([string]$case.kind -eq 'replaceSource') {
-        $sourceText = Get-Content -LiteralPath $sourcePath -Raw
+        $sourceText = (Get-Content -LiteralPath $sourcePath -Raw).Replace("`r`n", "`n").Replace("`r", "`n")
         $find = [string]$case.find
         Assert-Proof ($sourceText.Contains($find)) "negative mutation anchor was not found for $($case.name)"
         $sourceText = $sourceText.Replace($find, [string]$case.replace)
@@ -175,7 +196,8 @@ foreach ($case in $negativeCases) {
         throw "Unknown negative fixture kind: $($case.kind)"
     }
     $manifestPath = Join-Path $caseRoot 'manifest.json'
-    New-ProofFixtureManifest -ProofRoot $proofRoot -SourceRoot $sourceRoot -ReferenceRoot $referenceRoot -ManifestPath $manifestPath -ExpectedPath $expectedPath
+    $negativeCompileFiles = @(Get-ChildItem -LiteralPath $sourceRoot -Filter '*.cs' -File | Sort-Object Name | ForEach-Object { $_.Name })
+    New-ProofFixtureManifest -ProofRoot $proofRoot -SourceRoot $sourceRoot -ReferenceRoot $referenceRoot -ManifestPath $manifestPath -ExpectedPath $expectedPath -CompileFiles $negativeCompileFiles
     $receipt = Invoke-ProofCheck -ToolPath $toolPath -ManifestPath $manifestPath -OutputPath (Join-Path $caseRoot 'output') -ExpectedExit 1 -ExpectedCode ([string]$case.expectedCode)
     if ([string]$case.name -eq 'fake-autodesk-source') {
         $diagnosticMessages = [string]::Join("`n", @($receipt.issues.message))
@@ -214,13 +236,13 @@ Invoke-ManifestNegative -Name 'anycpu' -ExpectedCode 'VARIANT_PLATFORM' -Mutate 
 $negativePasses++
 Invoke-ManifestNegative -Name 'wrong-tfm' -ExpectedCode 'VARIANT_TFM' -Mutate { param($m) $m.variants[0].targetFramework = 'net9.0' }
 $negativePasses++
-Invoke-ManifestNegative -Name 'missing-revitapiui' -ExpectedCode 'REVIT_REFERENCE_SET' -Mutate { param($m) $m.variants[0].revitReferences = @($m.variants[0].revitReferences[0]) }
+Invoke-ManifestNegative -Name 'missing-revitapi' -ExpectedCode 'REVIT_REFERENCE_SET' -Mutate { param($m) $m.variants[0].revitReferences = @() }
 $negativePasses++
 Invoke-ManifestNegative -Name 'missing-windows-framework' -ExpectedCode 'FRAMEWORK_SET' -Mutate { param($m) $m.variants[2].frameworks = @($m.variants[2].frameworks[0]) }
 $negativePasses++
 Invoke-ManifestNegative -Name 'serialization-root' -ExpectedCode 'SERIALIZATION_ROOT_MISMATCH' -Mutate { param($m) $m.policy.serializationRoots = @('SafeReadCertifiedExecution.ReadTitleRequest') }
 $negativePasses++
-Invoke-ManifestNegative -Name 'serialization-callsite' -ExpectedCode 'SERIALIZATION_CALLSITE_MISMATCH' -Mutate { param($m) $m.policy.serializationCallsites = @('Method:void missing()|assembly=missing') }
+Invoke-ManifestNegative -Name 'serialization-callsite' -ExpectedCode 'POLICY_SERIALIZATION_CALLSITES' -Mutate { param($m) $m.policy.serializationCallsites = @('Method:void missing()|assembly=missing') }
 $negativePasses++
 
 $forwarderRoot = Join-Path $TempRoot 'negative-forwarder'
@@ -261,10 +283,10 @@ $negativePasses++
 $extraFileRoot = Join-Path $TempRoot 'negative-unlocked-file'
 $extraFileSource = Join-Path $extraFileRoot 'source'
 [System.IO.Directory]::CreateDirectory($extraFileSource) | Out-Null
-Copy-Item -LiteralPath (Join-Path $proofRoot 'fixtures\positive\source\MicroHost.cs') -Destination (Join-Path $extraFileSource 'Execution.cs')
+Copy-Item -LiteralPath (Join-Path $proofRoot 'fixtures\positive\source\CertifiedKernel.cs') -Destination (Join-Path $extraFileSource 'CertifiedKernel.cs')
 $extraFileManifest = Join-Path $extraFileRoot 'manifest.json'
 New-ProofFixtureManifest -ProofRoot $proofRoot -SourceRoot $extraFileSource -ReferenceRoot $referenceRoot -ManifestPath $extraFileManifest -ExpectedPath $expectedPath
-Write-ProofUtf8 (Join-Path $extraFileSource 'unlocked.payload') 'ambient payload'
+Write-ProofUtf8 (Join-Path $extraFileSource 'Unlocked.cs') 'internal sealed class AmbientPayload { }'
 Invoke-ProofCheck -ToolPath $toolPath -ManifestPath $extraFileManifest -OutputPath (Join-Path $extraFileRoot 'output') -ExpectedExit 1 -ExpectedCode 'SOURCE_EXACT_SET' | Out-Null
 $negativePasses++
 
@@ -284,4 +306,6 @@ Assert-Proof ([string]::Join("`n", @($gitBefore)) -ceq [string]::Join("`n", @($g
     SerializationBoundaryFalsifiers = 'PASS'
     MultiSourceInventoryFalsifier = 'PASS'
     RepositoryWriteFalsifier = 'PASS'
+    ArtifactFingerprintGate = 'PASS'
+    MalformedArtifactReceiptGate = 'PASS'
 }

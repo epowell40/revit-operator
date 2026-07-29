@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -60,19 +61,27 @@ internal sealed class WholeAssemblyVerifier
                 var declarations = sourceInspector.InspectDeclarations(compile.Compilation);
                 shared.Types = declarations.Types;
                 shared.Members = declarations.Members;
+                var publicAbi = sourceInspector.InspectPublicAbi(compile.Compilation);
+                shared.PublicAbi = publicAbi.Inventory;
                 shared.SerializationClosure = sourceInspector.InspectSerializationClosure(compile.Compilation);
                 observation.Types = shared.Types;
                 observation.Members = shared.Members;
+                observation.PublicAbi = shared.PublicAbi;
                 observation.SerializationClosure = shared.SerializationClosure;
-                ValidateSensitiveRoles(compile.Compilation);
+                ValidatePublicAbi(publicAbi);
             }
 
             var methods = new MethodInspector(_manifest, _issues).Inspect(compile.Compilation);
-            if (shared is not null && ReferenceEquals(shared.Trees, trees))
+            MetadataInspection metadata;
+            try
             {
-                ValidateSerializationCallsites(methods);
+                metadata = new MetadataInspector(_issues).Inspect(compile.EmittedBytes);
             }
-            var metadata = new MetadataInspector(_issues).Inspect(compile.EmittedBytes);
+            catch (Exception exception) when (exception is InvalidDataException or BadImageFormatException or OverflowException or ArgumentOutOfRangeException)
+            {
+                Add("IL_OR_METADATA_DECODE", "Emitted artifact inspection failed closed: " + exception.GetType().Name + ": " + exception.Message);
+                metadata = new MetadataInspection();
+            }
             observation.Variants[variant.RevitYear] = new VariantObservation
             {
                 EmittedBytes = compile.EmittedBytes,
@@ -82,6 +91,10 @@ internal sealed class WholeAssemblyVerifier
                 Metadata = metadata.Metadata,
                 Il = metadata.Il,
                 OutputSha256 = Canonical.Sha256(compile.EmittedBytes),
+                ManagedCodeSha256 = Canonical.Sha256Text("metadata:" + metadata.Metadata.Sha256 + "\nil:" + metadata.Il.Sha256),
+                AssemblyIdentity = metadata.AssemblyIdentity,
+                TargetFramework = TargetFrameworkMoniker(variant),
+                Platform = variant.Platform,
             };
         }
 
@@ -120,6 +133,7 @@ internal sealed class WholeAssemblyVerifier
         CompareInventory("INVENTORY_SYNTAX", _manifest.Expected.Syntax, actual.Syntax);
         CompareInventory("INVENTORY_TYPES", _manifest.Expected.Types, actual.Types);
         CompareInventory("INVENTORY_MEMBERS", _manifest.Expected.Members, actual.Members);
+        CompareInventory("INVENTORY_PUBLIC_ABI", _manifest.Expected.PublicAbi, actual.PublicAbi);
         CompareInventory("INVENTORY_SERIALIZATION", _manifest.Expected.SerializationClosure, actual.SerializationClosure);
         CompareInventory("INVENTORY_RESOURCES", _manifest.Expected.Resources, actual.Resources);
 
@@ -184,24 +198,24 @@ internal sealed class WholeAssemblyVerifier
         }
         foreach (var symbol in _manifest.Policy.AllowedSensitiveSymbols)
         {
-            var approvedFamily = symbol.Contains("global::System.Threading.Interlocked", StringComparison.Ordinal) ||
-                                 symbol.Contains("global::Autodesk.Revit.", StringComparison.Ordinal);
+            var approvedFamily = symbol.Contains("global::Autodesk.Revit.", StringComparison.Ordinal) ||
+                                 symbol.Contains("global::System.IDisposable.Dispose()", StringComparison.Ordinal);
             if (!approvedFamily)
             {
-                Add("POLICY_SENSITIVE_FAMILY", "Sensitive allowlist entry is outside exact Interlocked/ExternalEvent families: " + symbol + ".");
+                Add("POLICY_SENSITIVE_FAMILY", "Sensitive allowlist entry is outside the exact Autodesk Revit read surface: " + symbol + ".");
             }
         }
-        if (_manifest.Policy.AllowedMutableFields.Count == 0)
+        if (_manifest.Policy.AllowedMutableFields.Count != 0)
         {
-            Add("POLICY_MUTABLE_STATE_COUNT", "At least one exact execution handoff field must be allowlisted.");
+            Add("POLICY_MUTABLE_STATE_FORBIDDEN", "The synchronous certified kernel cannot allow mutable state.");
         }
         if (_manifest.Policy.SerializationRoots.Count == 0)
         {
             Add("POLICY_SERIALIZATION_ROOTS", "At least one serialization root is required.");
         }
-        if (_manifest.Policy.SerializationCallsites.Count == 0)
+        if (_manifest.Policy.SerializationCallsites.Count != 0)
         {
-            Add("POLICY_SERIALIZATION_CALLSITES", "At least one exact serialization boundary callsite is required.");
+            Add("POLICY_SERIALIZATION_CALLSITES", "Serialization callsites are host concerns; the certified kernel derives its result root directly from the public entry point.");
         }
         if (_manifest.Policy.AllowedRouteLiterals.Count != 0 || _manifest.Policy.AllowedListenerPrefixes.Count != 0)
         {
@@ -209,71 +223,24 @@ internal sealed class WholeAssemblyVerifier
         }
     }
 
-    private void ValidateSensitiveRoles(CSharpCompilation compilation)
+    private void ValidatePublicAbi(PublicAbiInspection inspection)
     {
-        var types = GetSourceTypes(compilation).ToDictionary(Canonical.QualifiedName, StringComparer.Ordinal);
-        ValidateFieldRole(types, _manifest.Policy.Roles.ExternalEventOwnerType, _manifest.Policy.Roles.ExternalEventField, "global::Autodesk.Revit.UI.ExternalEvent", mustBeReadonly: true, "EXTERNAL_EVENT_FIELD_ROLE");
-        var stateField = ValidateFieldRole(types, _manifest.Policy.Roles.ExternalEventHandlerType, _manifest.Policy.Roles.ExternalEventStateField, "global::SafeReadCertifiedExecution.ReadTitleRequest", mustBeReadonly: false, "EXTERNAL_EVENT_STATE_ROLE");
-        if (stateField is not null && !_manifest.Policy.AllowedMutableFields.Contains(Canonical.SymbolId(stateField), StringComparer.Ordinal))
+        var expected = _manifest.Policy.PublicAbi.OrderBy(static value => value, StringComparer.Ordinal).ToArray();
+        var actual = inspection.Inventory.Items.OrderBy(static value => value, StringComparer.Ordinal).ToArray();
+        if (!expected.SequenceEqual(actual, StringComparer.Ordinal))
         {
-            Add("EXTERNAL_EVENT_STATE_ALLOWLIST", "allowedMutableFields must contain the canonical ExternalEvent handoff field: " + Canonical.SymbolId(stateField) + ".");
-        }
-        if (!types.TryGetValue(_manifest.Policy.Roles.ExternalEventHandlerType, out var handler))
-        {
-            Add("EXTERNAL_EVENT_HANDLER_ROLE", "ExternalEvent handler role type was not found.");
-        }
-        else if (handler.Interfaces.Count() != 1 || Canonical.QualifiedName(handler.Interfaces[0]) != "global::Autodesk.Revit.UI.IExternalEventHandler")
-        {
-            Add("EXTERNAL_EVENT_HANDLER_ROLE", "ExternalEvent handler must implement exactly Autodesk.Revit.UI.IExternalEventHandler.");
-        }
-    }
-
-    private void ValidateSerializationCallsites(MethodInspection methods)
-    {
-        var expectedCalls = _manifest.Policy.SerializationCallsites.OrderBy(static value => value, StringComparer.Ordinal).ToArray();
-        var actualCalls = methods.SerializationCallsites.OrderBy(static value => value, StringComparer.Ordinal).ToArray();
-        if (!expectedCalls.SequenceEqual(actualCalls, StringComparer.Ordinal))
-        {
-            Add("SERIALIZATION_CALLSITE_MISMATCH", "Exact serialization callsites differ. expected=[" + string.Join(",", expectedCalls) + "] actual=[" + string.Join(",", actualCalls) + "].");
+            Add("PUBLIC_ABI_MISMATCH", "Complete discovered public ABI differs from policy. expected=[" + string.Join(",", expected) + "] actual=[" + string.Join(",", actual) + "].");
         }
         var declaredRoots = _manifest.Policy.SerializationRoots.OrderBy(static value => value, StringComparer.Ordinal).ToArray();
-        var derivedRoots = methods.SerializationRoots.OrderBy(static value => value, StringComparer.Ordinal).ToArray();
+        var derivedRoots = string.IsNullOrEmpty(inspection.EntryPointResultType) ? Array.Empty<string>() : new[] { inspection.EntryPointResultType };
         if (!declaredRoots.SequenceEqual(derivedRoots, StringComparer.Ordinal))
         {
             Add("SERIALIZATION_ROOT_MISMATCH", "Declared serialization roots must exactly equal roots derived from boundary callsites. declared=[" + string.Join(",", declaredRoots) + "] derived=[" + string.Join(",", derivedRoots) + "].");
         }
     }
 
-    private IFieldSymbol? ValidateFieldRole(
-        IReadOnlyDictionary<string, INamedTypeSymbol> types,
-        string ownerName,
-        string fieldName,
-        string expectedType,
-        bool mustBeReadonly,
-        string code)
-    {
-        if (!types.TryGetValue(ownerName, out var owner))
-        {
-            Add(code, "Role owner type was not found: " + ownerName + ".");
-            return null;
-        }
-        var fields = owner.GetMembers(fieldName).OfType<IFieldSymbol>().ToList();
-        if (fields.Count != 1)
-        {
-            Add(code, "Role must resolve to exactly one field: " + ownerName + "." + fieldName + ".");
-            return null;
-        }
-        var field = fields[0];
-        if (!string.Equals(Canonical.QualifiedName(field.Type), expectedType, StringComparison.Ordinal))
-        {
-            Add(code, "Role field type differs. expected=" + expectedType + " actual=" + Canonical.QualifiedName(field.Type) + ".");
-        }
-        if (field.IsStatic || field.IsReadOnly != mustBeReadonly)
-        {
-            Add(code, "Role field static/readonly shape differs for " + Canonical.SymbolId(field) + ".");
-        }
-        return field;
-    }
+    private static string TargetFrameworkMoniker(VariantLock variant) =>
+        variant.RevitYear is "2023" or "2024" ? ".NETFramework,Version=v4.8" : ".NETCoreApp,Version=v8.0";
 
     private static string FirstDifference(IReadOnlyList<string> expected, IReadOnlyList<string> actual)
     {

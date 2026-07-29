@@ -35,14 +35,18 @@ internal static class Program
 
     private static int Run(string[] args)
     {
-        if (args.Length == 0 || args[0] is not ("check" or "inventory"))
+        if (args.Length == 0 || args[0] is not ("check" or "inventory" or "fingerprint"))
         {
-            Console.Error.WriteLine("Usage: RevitSafeReadProof <check|inventory> --manifest <absolute path> --output-dir <absolute path>");
+            Console.Error.WriteLine("Usage: RevitSafeReadProof <check|inventory> --manifest <absolute path> --output-dir <absolute path> | fingerprint --artifact <absolute path> --output-dir <absolute path>");
             return 64;
         }
 
         var mode = args[0];
         var options = ParseOptions(args.Skip(1).ToArray());
+        if (mode == "fingerprint")
+        {
+            return RunFingerprint(options);
+        }
         if (!options.TryGetValue("--manifest", out var manifestArgument) ||
             !options.TryGetValue("--output-dir", out var outputArgument))
         {
@@ -108,6 +112,10 @@ internal static class Program
                     FileName = fileName,
                     Sha256 = Canonical.Sha256(pair.Value.EmittedBytes),
                     Length = pair.Value.EmittedBytes.LongLength,
+                    ManagedCodeSha256 = pair.Value.ManagedCodeSha256,
+                    AssemblyIdentity = pair.Value.AssemblyIdentity,
+                    TargetFramework = pair.Value.TargetFramework,
+                    Platform = pair.Value.Platform,
                 });
             }
         }
@@ -132,6 +140,71 @@ internal static class Program
             return 0;
         }
 
+        foreach (var issue in receipt.Issues)
+        {
+            Console.Error.WriteLine(issue.Code + ": " + issue.Message);
+        }
+        return 1;
+    }
+
+    private static int RunFingerprint(IReadOnlyDictionary<string, string> options)
+    {
+        if (!options.TryGetValue("--artifact", out var artifactArgument) ||
+            !options.TryGetValue("--output-dir", out var outputArgument) ||
+            !Path.IsPathFullyQualified(artifactArgument) ||
+            !Path.IsPathFullyQualified(outputArgument))
+        {
+            Console.Error.WriteLine("fingerprint requires absolute --artifact and --output-dir paths.");
+            return 64;
+        }
+        var artifactPath = Path.GetFullPath(artifactArgument);
+        var outputRoot = Path.GetFullPath(outputArgument);
+        if (!File.Exists(artifactPath))
+        {
+            Console.Error.WriteLine("Artifact does not exist: " + artifactPath);
+            return 66;
+        }
+        if (File.Exists(outputRoot))
+        {
+            Console.Error.WriteLine("Output directory resolves to a file: " + outputRoot);
+            return 73;
+        }
+        Directory.CreateDirectory(outputRoot);
+        if (Directory.EnumerateFileSystemEntries(outputRoot).Any())
+        {
+            Console.Error.WriteLine("Output directory must be empty: " + outputRoot);
+            return 73;
+        }
+
+        var bytes = File.ReadAllBytes(artifactPath);
+        var issues = new List<ProofIssue>();
+        MetadataInspection inspection;
+        try
+        {
+            inspection = new MetadataInspector(issues).Inspect(bytes);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or BadImageFormatException or OverflowException or ArgumentOutOfRangeException or IndexOutOfRangeException)
+        {
+            issues.Add(new ProofIssue("ARTIFACT_INSPECTION", "Artifact inspection failed closed: " + exception.GetType().Name + ": " + exception.Message));
+            inspection = new MetadataInspection();
+        }
+        var receipt = new ArtifactFingerprintReceipt
+        {
+            Status = issues.Count == 0 ? "verified" : "rejected",
+            Sha256 = Canonical.Sha256(bytes),
+            Length = bytes.LongLength,
+            ManagedCodeSha256 = Canonical.Sha256Text("metadata:" + inspection.Metadata.Sha256 + "\nil:" + inspection.Il.Sha256),
+            AssemblyIdentity = inspection.AssemblyIdentity,
+            Issues = issues.OrderBy(static issue => issue.Code, StringComparer.Ordinal).ThenBy(static issue => issue.Message, StringComparer.Ordinal).ToList(),
+            Metadata = inspection.Metadata,
+            Il = inspection.Il,
+        };
+        WriteJson(Path.Combine(outputRoot, "artifact.fingerprint.json"), receipt);
+        if (issues.Count == 0)
+        {
+            Console.WriteLine("FINGERPRINTED " + receipt.ManagedCodeSha256);
+            return 0;
+        }
         foreach (var issue in receipt.Issues)
         {
             Console.Error.WriteLine(issue.Code + ": " + issue.Message);
@@ -189,7 +262,7 @@ internal static class Program
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
         for (var index = 0; index < args.Length; index += 2)
         {
-            if (args[index] is not ("--manifest" or "--output-dir"))
+            if (args[index] is not ("--manifest" or "--artifact" or "--output-dir"))
             {
                 throw new ArgumentException("Unknown option: " + args[index]);
             }

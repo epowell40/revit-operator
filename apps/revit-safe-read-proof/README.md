@@ -1,24 +1,25 @@
 # Revit Safe Read Proof Engine
 
 This directory contains a standalone, fail-closed verifier and direct Roslyn
-emitter for the future transport-free `SafeReadCertifiedExecution` assembly.
-It is a proof engine, not the production transport host and not a claim that a
-production execution assembly or host has already been integrated.
+emitter for the synchronous `RevitOperator.SafeReadCertifiedExecution` kernel.
+It certifies only one mutation-free `Execute(Document)` read kernel and its
+sealed primitive result DTO. Authentication, transport, ExternalEvent state,
+timeouts, replay defense, serialization, and the production host are explicitly
+outside this proof boundary.
 
 The verifier accepts one whole-assembly manifest. The manifest freezes:
 
 - the SDK, `csc.dll`, Roslyn binaries, language version, and compiler options;
 - per-variant framework target and x64 platform: .NET Framework 4.8 for Revit
   2023/2024 and `net8.0-windows` for Revit 2025;
-- separate, exact identity and SHA-256 locks for both `RevitAPI.dll` and
-  `RevitAPIUI.dll` for exactly Revit 2023, 2024, and 2025;
-- every source after declared BOM-free UTF-8/LF normalization, plus every raw
-  embedded resource byte;
+- separate, exact identity and SHA-256 locks for `RevitAPI.dll` for exactly
+  Revit 2023, 2024, and 2025; `RevitAPIUI.dll` is outside the kernel boundary;
+- an explicit exact `.cs` compile-source set after BOM-free UTF-8/LF
+  normalization (project files and other non-C# metadata are excluded);
 - exact syntax, declared type/member, symbol-binding, serialization-closure,
   method/CFG/edge/operation/call, metadata, resource, and IL inventories; and
-- the exact `Interlocked` handoff and Revit `ExternalEvent` safe-read roles;
-  serialization roots must exactly equal roots derived from exact boundary
-  callsites.
+- the complete public ABI discovered independently from policy, the exact
+  `Execute(Document)` entry point, and its independently derived result closure.
 
 Anything not frozen is rejected. This includes diagnostics of every severity
 (including suppressed diagnostics), source shadows such as CS0436, duplicate
@@ -52,8 +53,25 @@ dotnet "$temp/tool/RevitSafeReadProof.dll" check `
 ```
 
 `check` writes only beneath the caller-provided output directory. A successful
-run emits one deterministic DLL per Revit year and a canonical
-`proof.receipt.json`. The receipt schema is in `schemas/receipt.schema.json`.
+run emits one deterministic `RevitOperator.SafeReadCertifiedExecution.RevitYEAR.dll`
+per Revit year and a canonical `proof.receipt.json`. Each artifact record binds
+the whole unsigned verifier-emitted SHA-256 plus a managed metadata/IL
+fingerprint that remains stable across Authenticode signing. The receipt schema
+is in `schemas/receipt.schema.json`.
+
+Packaging can re-inspect an unsigned or Authenticode-signed artifact without
+recompiling it:
+
+```powershell
+dotnet RevitSafeReadProof.dll fingerprint `
+  --artifact C:\absolute\RevitOperator.SafeReadCertifiedExecution.dll `
+  --output-dir C:\absolute\empty-output
+```
+
+This writes `artifact.fingerprint.json`. `managedCodeSha256` is SHA-256 of the
+UTF-8 bytes `metadata:<metadata-inventory-sha256>\nil:<il-inventory-sha256>`;
+the PE certificate table is not part of either inventory. The raw artifact
+`sha256` still provides the mandatory pre-sign provenance check.
 
 `inventory` is a deliberately non-certifying authoring command. It applies all
 locks and fail-closed policy checks, then writes the observed exact inventories
@@ -62,11 +80,12 @@ manifest. It never upgrades itself to a successful proof.
 
 ## Tests
 
-`tests/run.ps1` builds the tool and split fake Revit API/UI fixtures via direct
+`tests/run.ps1` builds the tool and fake Revit API fixtures via direct
 compiler response files, verifies two positive checks for all three Revit
 targets across CRLF/LF source bytes, inventories the installed real 2023/2024/
-2025 Revit reference pairs, compares deterministic output and receipts, and
-runs 34 adversarial falsifiers. Target/platform, serialization boundary,
+2025 `RevitAPI.dll` references, compares deterministic output and
+receipts, fingerprints all emitted artifacts, rejects malformed artifacts with
+a receipt, and runs 34 adversarial falsifiers. Target/platform, public ABI,
 ambient `Directory.Build.*`, multi-source, and repository-write falsifiers are
 included.
 

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bimtools.com/schemas/revit-safe-read-artifact-fingerprint-v1.json",
+  "title": "Revit Safe Read managed-code fingerprint",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "status", "sha256", "length", "managedCodeSha256", "assemblyIdentity", "issues", "metadata", "il"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "status": { "enum": ["verified", "rejected"] },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "length": { "type": "integer", "minimum": 1 },
+    "managedCodeSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "assemblyIdentity": { "type": "string" },
+    "issues": { "type": "array", "items": { "type": "object", "required": ["code", "message"] } },
+    "metadata": { "$ref": "#/$defs/inventory" },
+    "il": { "$ref": "#/$defs/inventory" }
+  },
+  "$defs": {
+    "inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["count", "sha256", "items"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "items": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

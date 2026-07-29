@@ -1,95 +1,38 @@
+using System;
+
 namespace Autodesk.Revit.DB
 {
-    public sealed class Document
+    public abstract class APIObject : IDisposable
     {
-        private readonly string _title;
-
-        public Document(string title)
-        {
-            _title = title;
-        }
-
-        public string Title
-        {
-            get
-            {
-                return _title;
-            }
-        }
-    }
-}
-
-namespace FixtureImplementationDetails
-{
-    public enum ExternalEventRequest
-    {
-        Accepted = 0,
-        Pending = 1,
-        Denied = 2,
-        TimedOut = 3,
+        public virtual bool IsValidObject { get { return true; } }
+        public virtual void Dispose() { }
     }
 
-    public interface IExternalEventHandler
+    public abstract class Element : APIObject
     {
-        void Execute(UIApplication application);
-
-        string GetName();
     }
 
-    public sealed class UIApplication
+    public sealed class Document : APIObject
     {
-        private readonly UIDocument _activeUiDocument;
-
-        public UIApplication(UIDocument activeUiDocument)
-        {
-            _activeUiDocument = activeUiDocument;
-        }
-
-        public UIDocument ActiveUIDocument
-        {
-            get
-            {
-                return _activeUiDocument;
-            }
-        }
+        public bool IsModifiable { get { return false; } }
+        public bool IsModified { get { return false; } }
     }
 
-    public sealed class UIDocument
+    public sealed class ViewSheet : Element
     {
-        private readonly Autodesk.Revit.DB.Document _document;
-
-        public UIDocument(Autodesk.Revit.DB.Document document)
-        {
-            _document = document;
-        }
-
-        public Autodesk.Revit.DB.Document Document
-        {
-            get
-            {
-                return _document;
-            }
-        }
+        public bool IsPlaceholder { get { return false; } }
     }
 
-    public sealed class ExternalEvent
+    public sealed class FilteredElementIterator : APIObject
     {
-        private readonly IExternalEventHandler _handler;
+        public Element Current { get { return null!; } }
+        public bool MoveNext() { return false; }
+    }
 
-        private ExternalEvent(IExternalEventHandler handler)
-        {
-            _handler = handler;
-        }
-
-        public static ExternalEvent Create(IExternalEventHandler handler)
-        {
-            return new ExternalEvent(handler);
-        }
-
-        public ExternalEventRequest Raise()
-        {
-            _handler.GetName();
-            return ExternalEventRequest.Accepted;
-        }
+    public sealed class FilteredElementCollector : APIObject
+    {
+        public FilteredElementCollector(Document document) { }
+        public FilteredElementCollector OfClass(Type type) { return this; }
+        public FilteredElementIterator GetElementIterator() { return new FilteredElementIterator(); }
     }
 }

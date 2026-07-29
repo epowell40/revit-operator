@@ -33,3 +33,9 @@ internal sealed class VerificationResult
     public List<ProofIssue> Issues { get; set; } = new();
     public ProofObservation Observation { get; set; } = new();
 }
+
+internal sealed class PublicAbiInspection
+{
+    public InventoryExpectation Inventory { get; set; } = new();
+    public string EntryPointResultType { get; set; } = string.Empty;
+}

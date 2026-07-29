@@ -1,39 +1,35 @@
 {
   "allowedOperationKinds": [
-    "Argument", "Binary", "Conversion", "DefaultValue", "ExpressionStatement",
+    "Argument", "Binary", "Branch", "Conversion", "DefaultValue", "ExpressionStatement",
     "FieldReference", "FlowCapture", "FlowCaptureReference", "InstanceReference",
-    "Invocation", "IsNull", "IsPattern", "ConstantPattern", "Literal", "LocalReference", "ObjectCreation",
-    "ParameterReference", "PropertyReference", "Return", "SimpleAssignment",
-    "VariableDeclaration", "VariableDeclarationGroup", "VariableDeclarator"
+    "Increment", "Invocation", "IsNull", "IsPattern", "IsType", "ConstantPattern", "Literal", "LocalReference",
+    "ObjectCreation", "ParameterReference", "PropertyReference", "Return", "SimpleAssignment",
+    "TypeOf", "Unary", "VariableDeclaration", "VariableDeclarationGroup", "VariableDeclarator"
   ],
   "allowedImplicitOperationKinds": [
     "Argument", "Conversion", "DefaultValue", "ExpressionStatement", "FieldReference",
-    "FlowCapture", "FlowCaptureReference", "InstanceReference", "Invocation", "Literal",
-    "LocalReference", "ParameterReference", "PropertyReference", "SimpleAssignment"
+    "FlowCapture", "FlowCaptureReference", "InstanceReference", "Invocation", "IsNull", "IsType",
+    "Literal", "LocalReference", "ParameterReference", "PropertyReference", "SimpleAssignment"
   ],
   "allowedSensitiveSymbols": [],
   "allowedAttributeSymbols": [],
-  "allowedMutableFields": [
-    "Field:global::SafeReadCertifiedExecution.ReadTitleRequest? global::SafeReadCertifiedExecution.ReadTitleHandler._pending|assembly=SafeReadCertifiedExecution, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null",
-    "Field:global::SafeReadCertifiedExecution.ReadTitleResponse? global::SafeReadCertifiedExecution.ReadTitleRequest._result|assembly=SafeReadCertifiedExecution, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null"
-  ],
+  "allowedMutableFields": [],
   "allowedRouteLiterals": [],
   "allowedListenerPrefixes": [],
   "serializationRoots": [
-    "SafeReadCertifiedExecution.ReadTitleResponse"
+    "RevitOperator.SafeReadCertifiedExecution.CertifiedSheetCountResult"
   ],
-  "serializationCallsites": [
-    "Method:void global::SafeReadCertifiedExecution.ReadTitleRequest.Complete(global::SafeReadCertifiedExecution.ReadTitleResponse response)|assembly=SafeReadCertifiedExecution, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null"
-  ],
-  "allowedSerializationLeafTypes": ["bool", "string"],
+  "serializationCallsites": [],
+  "allowedSerializationLeafTypes": ["bool", "int"],
+  "entryPointType": "global::RevitOperator.SafeReadCertifiedExecution.CertifiedSheetCountKernel",
+  "entryPointMethod": "PLACEHOLDER",
+  "resultType": "RevitOperator.SafeReadCertifiedExecution.CertifiedSheetCountResult",
+  "publicAbi": ["PLACEHOLDER"],
   "roles": {
-    "externalEventOwnerType": "global::SafeReadCertifiedExecution.SafeReadExecutor",
-    "externalEventHandlerType": "global::SafeReadCertifiedExecution.ReadTitleHandler",
-    "externalEventField": "_externalEvent",
-    "externalEventStateField": "_pending",
-    "allowedInterlockedOwnerTypes": [
-      "global::SafeReadCertifiedExecution.ReadTitleHandler",
-      "global::SafeReadCertifiedExecution.ReadTitleRequest"
-    ]
+    "externalEventOwnerType": "",
+    "externalEventHandlerType": "",
+    "externalEventField": "",
+    "externalEventStateField": "",
+    "allowedInterlockedOwnerTypes": []
   }
 }

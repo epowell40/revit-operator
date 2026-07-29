@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://bimtools.com/schemas/revit-safe-read-proof-lock-v1.json",
-  "title": "Revit Safe Read whole-assembly proof lock",
+  "$id": "https://bimtools.com/schemas/revit-safe-read-certified-kernel-lock-v1.json",
+  "title": "Revit Safe Read synchronous certified-kernel proof lock",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -16,7 +16,7 @@
   ],
   "properties": {
     "schemaVersion": { "const": 1 },
-    "proofKind": { "const": "revit-safe-read-whole-assembly/v1" },
+    "proofKind": { "const": "revit-safe-read-certified-kernel/v1" },
     "trustBoundary": {
       "const": "Trusted local administrator, operating system, installed locked SDK/reference pack, Autodesk Revit, and Revit process; malicious local admin/OS/Revit are excluded."
     },
@@ -130,7 +130,7 @@
       "required": ["root", "assemblyName", "textNormalization", "files", "resources"],
       "properties": {
         "root": { "type": "string", "minLength": 1 },
-        "assemblyName": { "const": "SafeReadCertifiedExecution" },
+        "assemblyName": { "const": "RevitOperator.SafeReadCertifiedExecution" },
         "textNormalization": { "const": "utf8-lf" },
         "files": {
           "type": "array",
@@ -165,8 +165,8 @@
         },
         "revitReferences": {
           "type": "array",
-          "minItems": 2,
-          "maxItems": 2,
+          "minItems": 1,
+          "maxItems": 1,
           "items": { "$ref": "#/$defs/assemblyFile" }
         }
       }
@@ -182,10 +182,10 @@
         "allowedInterlockedOwnerTypes"
       ],
       "properties": {
-        "externalEventOwnerType": { "type": "string", "minLength": 1 },
-        "externalEventHandlerType": { "type": "string", "minLength": 1 },
-        "externalEventField": { "type": "string", "minLength": 1 },
-        "externalEventStateField": { "type": "string", "minLength": 1 },
+        "externalEventOwnerType": { "const": "" },
+        "externalEventHandlerType": { "const": "" },
+        "externalEventField": { "const": "" },
+        "externalEventStateField": { "const": "" },
         "allowedInterlockedOwnerTypes": { "$ref": "#/$defs/stringSet" }
       }
     },
@@ -203,6 +203,10 @@
         "serializationRoots",
         "serializationCallsites",
         "allowedSerializationLeafTypes",
+        "entryPointType",
+        "entryPointMethod",
+        "resultType",
+        "publicAbi",
         "roles"
       ],
       "properties": {
@@ -210,16 +214,16 @@
         "allowedImplicitOperationKinds": { "$ref": "#/$defs/stringSet" },
         "allowedSensitiveSymbols": { "$ref": "#/$defs/stringSet" },
         "allowedAttributeSymbols": { "$ref": "#/$defs/stringSet" },
-        "allowedMutableFields": {
-          "type": "array",
-          "minItems": 1,
-          "items": { "type": "string", "minLength": 1 }
-        },
+        "allowedMutableFields": { "type": "array", "maxItems": 0 },
         "allowedRouteLiterals": { "$ref": "#/$defs/stringSet" },
         "allowedListenerPrefixes": { "$ref": "#/$defs/stringSet" },
         "serializationRoots": { "$ref": "#/$defs/stringSet" },
         "serializationCallsites": { "$ref": "#/$defs/stringSet" },
         "allowedSerializationLeafTypes": { "$ref": "#/$defs/stringSet" },
+        "entryPointType": { "type": "string", "minLength": 1 },
+        "entryPointMethod": { "type": "string", "minLength": 1 },
+        "resultType": { "type": "string", "minLength": 1 },
+        "publicAbi": { "$ref": "#/$defs/stringSet" },
         "roles": { "$ref": "#/$defs/roles" }
       }
     },
@@ -252,11 +256,12 @@
     "expected": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["syntax", "types", "members", "serializationClosure", "resources", "variants"],
+      "required": ["syntax", "types", "members", "publicAbi", "serializationClosure", "resources", "variants"],
       "properties": {
         "syntax": { "$ref": "#/$defs/inventory" },
         "types": { "$ref": "#/$defs/inventory" },
         "members": { "$ref": "#/$defs/inventory" },
+        "publicAbi": { "$ref": "#/$defs/inventory" },
         "serializationClosure": { "$ref": "#/$defs/inventory" },
         "resources": { "$ref": "#/$defs/inventory" },
         "variants": {

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://bimtools.com/schemas/revit-safe-read-proof-receipt-v1.json",
-  "title": "Revit Safe Read proof receipt",
+  "$id": "https://bimtools.com/schemas/revit-safe-read-certified-kernel-receipt-v1.json",
+  "title": "Revit Safe Read certified-kernel proof receipt",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -19,7 +19,7 @@
   ],
   "properties": {
     "schemaVersion": { "const": 1 },
-    "proofKind": { "const": "revit-safe-read-whole-assembly/v1" },
+    "proofKind": { "const": "revit-safe-read-certified-kernel/v1" },
     "mode": { "enum": ["check", "inventory"] },
     "status": { "enum": ["verified", "observed", "rejected"] },
     "certified": { "type": "boolean" },
@@ -50,11 +50,15 @@
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["fileName", "sha256", "length"],
+        "required": ["fileName", "sha256", "length", "managedCodeSha256", "assemblyIdentity", "targetFramework", "platform"],
         "properties": {
           "fileName": { "type": "string", "minLength": 1 },
           "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
           "length": { "type": "integer", "minimum": 1 }
+          ,"managedCodeSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          ,"assemblyIdentity": { "type": "string", "minLength": 1 }
+          ,"targetFramework": { "enum": [".NETFramework,Version=v4.8", ".NETCoreApp,Version=v8.0"] }
+          ,"platform": { "const": "x64" }
         }
       }
     }
@@ -80,7 +84,7 @@
     "variant": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["references", "symbolBindings", "methods", "metadata", "il", "outputSha256"],
+      "required": ["references", "symbolBindings", "methods", "metadata", "il", "outputSha256", "managedCodeSha256", "assemblyIdentity", "targetFramework", "platform"],
       "properties": {
         "references": { "$ref": "#/$defs/inventory" },
         "symbolBindings": { "$ref": "#/$defs/inventory" },
@@ -88,16 +92,21 @@
         "metadata": { "$ref": "#/$defs/inventory" },
         "il": { "$ref": "#/$defs/inventory" },
         "outputSha256": { "$ref": "#/$defs/sha256" }
+        ,"managedCodeSha256": { "$ref": "#/$defs/sha256" }
+        ,"assemblyIdentity": { "type": "string", "minLength": 1 }
+        ,"targetFramework": { "enum": [".NETFramework,Version=v4.8", ".NETCoreApp,Version=v8.0"] }
+        ,"platform": { "const": "x64" }
       }
     },
     "observation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["syntax", "types", "members", "serializationClosure", "resources", "variants"],
+      "required": ["syntax", "types", "members", "publicAbi", "serializationClosure", "resources", "variants"],
       "properties": {
         "syntax": { "$ref": "#/$defs/inventory" },
         "types": { "$ref": "#/$defs/inventory" },
         "members": { "$ref": "#/$defs/inventory" },
+        "publicAbi": { "$ref": "#/$defs/inventory" },
         "serializationClosure": { "$ref": "#/$defs/inventory" },
         "resources": { "$ref": "#/$defs/inventory" },
         "variants": {

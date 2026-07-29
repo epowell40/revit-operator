@@ -188,18 +188,6 @@ internal sealed class MethodInspector
         {
             var calledId = Canonical.SymbolId(called);
             methodLines.Add("CALL|" + methodId + "|block=" + blockOrdinal + "|op=" + currentOrdinal + "|" + calledId);
-            if (_manifest.Policy.SerializationCallsites.Contains(calledId, StringComparer.Ordinal) && operation is IInvocationOperation invocation)
-            {
-                serializationCallsites.Add(calledId);
-                if (invocation.Arguments.Length != 1)
-                {
-                    Add("SERIALIZATION_CALLSITE_SHAPE", calledId + " must have exactly one serialized argument.");
-                }
-                else
-                {
-                    serializationRoots.Add(invocation.Arguments[0].Value.Type?.ToDisplayString() ?? string.Empty);
-                }
-            }
         }
 
         foreach (var child in operation.ChildOperations)
@@ -220,18 +208,30 @@ internal sealed class MethodInspector
         }
         if (method.ContainingType?.TypeKind == TypeKind.Interface)
         {
-            Add("INTERFACE_DISPATCH_FORBIDDEN", Canonical.SymbolId(containingMethod) + " dispatches through interface member " + Canonical.SymbolId(method) + ".");
+            if (!IsExactIteratorDisposal(method, containingMethod))
+            {
+                Add("INTERFACE_DISPATCH_FORBIDDEN", Canonical.SymbolId(containingMethod) + " dispatches through interface member " + Canonical.SymbolId(method) + ".");
+            }
         }
         if (method.IsVirtual || method.IsAbstract || method.IsOverride)
         {
             var ns = method.ContainingNamespace?.ToDisplayString() ?? string.Empty;
-            var exactRoleException = _manifest.Policy.AllowedSensitiveSymbols.Contains(Canonical.SymbolId(method), StringComparer.Ordinal) &&
-                                      ns.StartsWith("Autodesk.Revit.", StringComparison.Ordinal);
+            var exactRoleException = (_manifest.Policy.AllowedSensitiveSymbols.Contains(Canonical.SymbolId(method), StringComparer.Ordinal) &&
+                                      ns.StartsWith("Autodesk.Revit.", StringComparison.Ordinal)) || IsExactIteratorDisposal(method, containingMethod);
             if (!exactRoleException)
             {
                 Add("VIRTUAL_DISPATCH_FORBIDDEN", Canonical.SymbolId(containingMethod) + " binds virtual/abstract/override member " + Canonical.SymbolId(method) + ".");
             }
         }
+    }
+
+    private bool IsExactIteratorDisposal(IMethodSymbol method, IMethodSymbol containingMethod)
+    {
+        return string.Equals(Canonical.SymbolId(containingMethod), _manifest.Policy.EntryPointMethod, StringComparison.Ordinal) &&
+               string.Equals(Canonical.QualifiedName(method.ContainingType), "global::System.IDisposable", StringComparison.Ordinal) &&
+               string.Equals(method.Name, "Dispose", StringComparison.Ordinal) &&
+               method.Parameters.Length == 0 &&
+               _manifest.Policy.AllowedSensitiveSymbols.Contains(Canonical.SymbolId(method), StringComparer.Ordinal);
     }
 
     private void InspectSensitiveSymbol(ISymbol symbol, IMethodSymbol containingMethod)
@@ -295,10 +295,9 @@ internal sealed class MethodInspector
         }
         else if (ns.StartsWith("Autodesk.", StringComparison.Ordinal))
         {
-            if (!string.Equals(owner, _manifest.Policy.Roles.ExternalEventOwnerType, StringComparison.Ordinal) &&
-                !string.Equals(owner, _manifest.Policy.Roles.ExternalEventHandlerType, StringComparison.Ordinal))
+            if (!string.Equals(owner, _manifest.Policy.EntryPointType, StringComparison.Ordinal))
             {
-                Add("EXTERNAL_EVENT_ROLE", "Autodesk symbols are allowed only inside exact ExternalEvent owner/handler roles: " + id + ".");
+                Add("AUTODESK_KERNEL_ROLE", "Autodesk symbols are allowed only inside the exact certified entry-point type: " + id + ".");
             }
         }
     }

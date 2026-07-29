@@ -14,6 +14,7 @@ internal sealed class SourceInspection
     public InventoryExpectation Syntax { get; set; } = new();
     public InventoryExpectation Types { get; set; } = new();
     public InventoryExpectation Members { get; set; } = new();
+    public InventoryExpectation PublicAbi { get; set; } = new();
     public InventoryExpectation SerializationClosure { get; set; } = new();
 }
 
@@ -134,6 +135,55 @@ internal sealed class SourceInspector
         }
 
         return (Canonical.Inventory(typeInventory), Canonical.Inventory(memberInventory));
+    }
+
+    public PublicAbiInspection InspectPublicAbi(CSharpCompilation compilation)
+    {
+        var lines = new List<string>();
+        var entryPoints = new List<IMethodSymbol>();
+        foreach (var type in GetSourceTypes(compilation).OrderBy(Canonical.QualifiedName, StringComparer.Ordinal))
+        {
+            if (type.DeclaredAccessibility == Accessibility.Public)
+            {
+                lines.Add("PUBLIC_TYPE|" + Canonical.SymbolId(type));
+            }
+            foreach (var member in type.GetMembers().OrderBy(Canonical.SymbolId, StringComparer.Ordinal))
+            {
+                if (member.DeclaredAccessibility == Accessibility.Public)
+                {
+                    lines.Add("PUBLIC_MEMBER|" + Canonical.SymbolId(member));
+                }
+                if (member is IMethodSymbol method &&
+                    string.Equals(Canonical.SymbolId(method), _manifest.Policy.EntryPointMethod, StringComparison.Ordinal))
+                {
+                    entryPoints.Add(method);
+                }
+            }
+        }
+
+        if (entryPoints.Count != 1)
+        {
+            Add("ENTRYPOINT_DISCOVERY", "The declared entryPointMethod must resolve independently to exactly one source method; actual=" + entryPoints.Count + ".");
+            return new PublicAbiInspection { Inventory = Canonical.Inventory(lines, preserveOrder: false) };
+        }
+        var entryPoint = entryPoints[0];
+        if (!entryPoint.IsStatic || entryPoint.DeclaredAccessibility != Accessibility.Public ||
+            !string.Equals(Canonical.QualifiedName(entryPoint.ContainingType), _manifest.Policy.EntryPointType, StringComparison.Ordinal) ||
+            entryPoint.Parameters.Length != 1 ||
+            !string.Equals(Canonical.QualifiedName(entryPoint.Parameters[0].Type), "global::Autodesk.Revit.DB.Document", StringComparison.Ordinal))
+        {
+            Add("ENTRYPOINT_SHAPE", "Certified entry point must be one public static method on entryPointType with exactly one Autodesk.Revit.DB.Document parameter.");
+        }
+        var resultType = entryPoint.ReturnType.ToDisplayString();
+        if (!string.Equals(resultType, _manifest.Policy.ResultType, StringComparison.Ordinal))
+        {
+            Add("ENTRYPOINT_RESULT", "Entry point result type differs. expected=" + _manifest.Policy.ResultType + " actual=" + resultType + ".");
+        }
+        return new PublicAbiInspection
+        {
+            Inventory = Canonical.Inventory(lines, preserveOrder: false),
+            EntryPointResultType = resultType,
+        };
     }
 
     public InventoryExpectation InspectSerializationClosure(CSharpCompilation compilation)
@@ -283,8 +333,9 @@ internal sealed class SourceInspector
             case FixedStatementSyntax:
                 Add("UNSAFE_FORBIDDEN", Location(path, node) + " uses unsafe syntax " + node.Kind() + ".");
                 break;
-            case TypeOfExpressionSyntax:
-                Add("REFLECTION_FORBIDDEN", Location(path, node) + " uses typeof.");
+            case TypeOfExpressionSyntax typeOf when !string.Equals(typeOf.Type.ToString(), "ViewSheet", StringComparison.Ordinal) &&
+                                                     !string.Equals(typeOf.Type.ToString(), "Autodesk.Revit.DB.ViewSheet", StringComparison.Ordinal):
+                Add("REFLECTION_FORBIDDEN", Location(path, node) + " uses typeof outside the exact ViewSheet collector filter.");
                 break;
             case IdentifierNameSyntax identifier when string.Equals(identifier.Identifier.ValueText, "dynamic", StringComparison.Ordinal):
                 Add("DYNAMIC_FORBIDDEN", Location(path, node) + " uses dynamic.");
@@ -477,10 +528,9 @@ internal sealed class SourceInspector
             Add("NETWORK_SYMBOL_FORBIDDEN", owner + " uses forbidden network type " + Canonical.TypeId(named) + ".");
         }
         if (ns.StartsWith("Autodesk.", StringComparison.Ordinal) &&
-            !owner.Contains(_manifest.Policy.Roles.ExternalEventOwnerType, StringComparison.Ordinal) &&
-            !owner.Contains(_manifest.Policy.Roles.ExternalEventHandlerType, StringComparison.Ordinal))
+            !owner.Contains(_manifest.Policy.EntryPointType, StringComparison.Ordinal))
         {
-            Add("AUTODESK_SIGNATURE_ROLE", owner + " uses an Autodesk type outside the exact ExternalEvent owner/handler roles: " + Canonical.TypeId(named) + ".");
+            Add("AUTODESK_SIGNATURE_ROLE", owner + " uses an Autodesk type outside the exact certified entry-point type: " + Canonical.TypeId(named) + ".");
         }
     }
 
@@ -505,6 +555,11 @@ internal sealed class SourceInspector
 
     private static bool IsMemberInitializer(EqualsValueClauseSyntax node)
     {
+        if (node.Parent is VariableDeclaratorSyntax { Parent.Parent: FieldDeclarationSyntax field } &&
+            field.Modifiers.Any(SyntaxKind.ConstKeyword))
+        {
+            return false;
+        }
         return node.Parent is VariableDeclaratorSyntax { Parent.Parent: FieldDeclarationSyntax or EventFieldDeclarationSyntax } or
                PropertyDeclarationSyntax or
                ParameterSyntax;

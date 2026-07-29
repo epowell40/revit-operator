@@ -6,6 +6,7 @@ using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Emit;
+using System.Text;
 
 namespace RevitSafeReadProof;
 
@@ -31,6 +32,12 @@ internal sealed class DirectCompiler
 
     public CompilationObservation Compile(VariantLock variant, IReadOnlyList<SyntaxTree> trees)
     {
+        var expectedPaths = _inputs.Sources.Select(static source => Canonical.SourcePath(source.LogicalPath)).ToArray();
+        var actualPaths = trees.Select(static tree => tree.FilePath).ToArray();
+        if (!expectedPaths.SequenceEqual(actualPaths, StringComparer.Ordinal))
+        {
+            Add("COMPILE_SOURCE_SET", "Compiler syntax-tree inputs differ from the exact locked source set.");
+        }
         var referencePaths = (_inputs.FrameworkReferences.TryGetValue(variant.RevitYear, out var framework) ? framework : Enumerable.Empty<string>())
             .Concat(_inputs.RevitReferences.TryGetValue(variant.RevitYear, out var revit) ? revit : Enumerable.Empty<string>())
             .ToList();
@@ -92,9 +99,10 @@ internal sealed class DirectCompiler
             nullableContextOptions: NullableContextOptions.Enable,
             reportSuppressedDiagnostics: true);
 
+        var generatedTree = GeneratedVariantAttributes(variant);
         var compilation = CSharpCompilation.Create(
             _manifest.Source.AssemblyName,
-            trees,
+            trees.Concat(new[] { generatedTree }),
             metadataReferences,
             options);
 
@@ -121,6 +129,24 @@ internal sealed class DirectCompiler
             EmittedBytes = first,
             References = Canonical.Inventory(referenceLines, preserveOrder: false),
         };
+    }
+
+    private static SyntaxTree GeneratedVariantAttributes(VariantLock variant)
+    {
+        var moniker = variant.RevitYear is "2023" or "2024" ? ".NETFramework,Version=v4.8" : ".NETCoreApp,Version=v8.0";
+        var source =
+            "[assembly: System.Runtime.Versioning.TargetFrameworkAttribute(\"" + moniker + "\", FrameworkDisplayName = \"\")]\n" +
+            "[assembly: System.Reflection.AssemblyMetadataAttribute(\"RevitSafeRead.RevitYear\", \"" + variant.RevitYear + "\")]\n";
+        var parseOptions = new CSharpParseOptions(
+            languageVersion: LanguageVersion.CSharp13,
+            documentationMode: DocumentationMode.Diagnose,
+            kind: SourceCodeKind.Regular,
+            preprocessorSymbols: variant.PreprocessorSymbols);
+        return CSharpSyntaxTree.ParseText(
+            source,
+            parseOptions,
+            "/__proof__/Revit" + variant.RevitYear + ".AssemblyAttributes.cs",
+            Encoding.UTF8);
     }
 
     private byte[] Emit(CSharpCompilation compilation, string diagnosticCode)

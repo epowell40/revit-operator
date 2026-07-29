@@ -189,36 +189,60 @@ function New-ProofFixtureManifest {
         [Parameter(Mandatory = $true)][string]$ReferenceRoot,
         [Parameter(Mandatory = $true)][string]$ManifestPath,
         [string]$ExpectedPath = '',
+        [string[]]$CompileFiles = @('CertifiedKernel.cs'),
         [switch]$UseInstalledRevit
     )
     $bootstrapLock = Get-Content -LiteralPath (Join-Path $ProofRoot 'bootstrap.lock.json') -Raw | ConvertFrom-Json
     $policy = Get-Content -LiteralPath (Join-Path $ProofRoot 'fixtures\positive\execution-policy.json') -Raw | ConvertFrom-Json
+    $certifiedIdentity = 'RevitOperator.SafeReadCertifiedExecution, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null'
+    $policy.entryPointMethod = "Method:global::RevitOperator.SafeReadCertifiedExecution.CertifiedSheetCountResult global::RevitOperator.SafeReadCertifiedExecution.CertifiedSheetCountKernel.Execute(global::Autodesk.Revit.DB.Document document)|assembly=$certifiedIdentity"
+    $policy.publicAbi = @(
+        "PUBLIC_MEMBER|Method:bool global::RevitOperator.SafeReadCertifiedExecution.CertifiedSheetCountResult.Succeeded.get|assembly=$certifiedIdentity",
+        "PUBLIC_MEMBER|Method:global::RevitOperator.SafeReadCertifiedExecution.CertifiedSheetCountResult global::RevitOperator.SafeReadCertifiedExecution.CertifiedSheetCountKernel.Execute(global::Autodesk.Revit.DB.Document document)|assembly=$certifiedIdentity",
+        "PUBLIC_MEMBER|Method:int global::RevitOperator.SafeReadCertifiedExecution.CertifiedSheetCountResult.Count.get|assembly=$certifiedIdentity",
+        "PUBLIC_MEMBER|Method:int global::RevitOperator.SafeReadCertifiedExecution.CertifiedSheetCountResult.FailureCode.get|assembly=$certifiedIdentity",
+        "PUBLIC_MEMBER|Property:bool global::RevitOperator.SafeReadCertifiedExecution.CertifiedSheetCountResult.Succeeded { get; }|assembly=$certifiedIdentity",
+        "PUBLIC_MEMBER|Property:int global::RevitOperator.SafeReadCertifiedExecution.CertifiedSheetCountResult.Count { get; }|assembly=$certifiedIdentity",
+        "PUBLIC_MEMBER|Property:int global::RevitOperator.SafeReadCertifiedExecution.CertifiedSheetCountResult.FailureCode { get; }|assembly=$certifiedIdentity",
+        "PUBLIC_TYPE|NamedType:class global::RevitOperator.SafeReadCertifiedExecution.CertifiedSheetCountKernel|assembly=$certifiedIdentity",
+        "PUBLIC_TYPE|NamedType:class global::RevitOperator.SafeReadCertifiedExecution.CertifiedSheetCountResult|assembly=$certifiedIdentity"
+    )
+    $policy.allowedAttributeSymbols = @(
+        'NamedType:class global::System.Reflection.AssemblyMetadataAttribute|assembly=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089',
+        'NamedType:class global::System.Runtime.Versioning.TargetFrameworkAttribute|assembly=mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089',
+        'NamedType:class global::System.Reflection.AssemblyMetadataAttribute|assembly=System.Runtime, Version=8.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a',
+        'NamedType:class global::System.Runtime.Versioning.TargetFrameworkAttribute|assembly=System.Runtime, Version=8.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a'
+    )
     $sensitive = [System.Collections.Generic.List[string]]::new()
     foreach ($year in @('2023', '2024', '2025')) {
         $revitDirectory = if ($UseInstalledRevit) { "C:\Program Files\Autodesk\Revit $year" } else { Join-Path $ReferenceRoot $year }
-        $uiIdentity = Get-ProofAssemblyIdentity (Join-Path $revitDirectory 'RevitAPIUI.dll')
         $apiIdentity = Get-ProofAssemblyIdentity (Join-Path $revitDirectory 'RevitAPI.dll')
         foreach ($id in @(
-            "Field:global::Autodesk.Revit.UI.ExternalEventRequest.Accepted|assembly=$uiIdentity",
-            "Method:global::Autodesk.Revit.UI.ExternalEvent global::Autodesk.Revit.UI.ExternalEvent.Create(global::Autodesk.Revit.UI.IExternalEventHandler handler)|assembly=$uiIdentity",
-            "Method:global::Autodesk.Revit.UI.ExternalEventRequest global::Autodesk.Revit.UI.ExternalEvent.Raise()|assembly=$uiIdentity",
-            "Method:global::Autodesk.Revit.DB.Document global::Autodesk.Revit.UI.UIDocument.Document.get|assembly=$uiIdentity",
-            "Method:global::Autodesk.Revit.UI.UIDocument global::Autodesk.Revit.UI.UIApplication.ActiveUIDocument.get|assembly=$uiIdentity",
-            "Method:string global::Autodesk.Revit.DB.Document.Title.get|assembly=$apiIdentity",
-            "Property:global::Autodesk.Revit.DB.Document global::Autodesk.Revit.UI.UIDocument.Document { get; }|assembly=$uiIdentity",
-            "Property:global::Autodesk.Revit.UI.UIDocument global::Autodesk.Revit.UI.UIApplication.ActiveUIDocument { get; }|assembly=$uiIdentity",
-            "Property:string global::Autodesk.Revit.DB.Document.Title { get; }|assembly=$apiIdentity"
+            "Property:bool global::Autodesk.Revit.DB.APIObject.IsValidObject { get; }|assembly=$apiIdentity",
+            "Method:bool global::Autodesk.Revit.DB.APIObject.IsValidObject.get|assembly=$apiIdentity",
+            "Property:bool global::Autodesk.Revit.DB.Document.IsValidObject { get; }|assembly=$apiIdentity",
+            "Method:bool global::Autodesk.Revit.DB.Document.IsValidObject.get|assembly=$apiIdentity",
+            "Property:bool global::Autodesk.Revit.DB.Document.IsModifiable { get; }|assembly=$apiIdentity",
+            "Method:bool global::Autodesk.Revit.DB.Document.IsModifiable.get|assembly=$apiIdentity",
+            "Property:bool global::Autodesk.Revit.DB.Document.IsModified { get; }|assembly=$apiIdentity",
+            "Method:bool global::Autodesk.Revit.DB.Document.IsModified.get|assembly=$apiIdentity",
+            "Method:global::Autodesk.Revit.DB.FilteredElementCollector global::Autodesk.Revit.DB.FilteredElementCollector.OfClass(global::System.Type type)|assembly=$apiIdentity",
+            "Method:global::Autodesk.Revit.DB.FilteredElementIterator global::Autodesk.Revit.DB.FilteredElementCollector.GetElementIterator()|assembly=$apiIdentity",
+            "Method:global::Autodesk.Revit.DB.FilteredElementCollector.FilteredElementCollector(global::Autodesk.Revit.DB.Document document)|assembly=$apiIdentity",
+            "Method:bool global::Autodesk.Revit.DB.FilteredElementIterator.MoveNext()|assembly=$apiIdentity",
+            "Property:global::Autodesk.Revit.DB.Element global::Autodesk.Revit.DB.FilteredElementIterator.Current { get; }|assembly=$apiIdentity",
+            "Method:global::Autodesk.Revit.DB.Element global::Autodesk.Revit.DB.FilteredElementIterator.Current.get|assembly=$apiIdentity",
+            "Property:bool global::Autodesk.Revit.DB.ViewSheet.IsPlaceholder { get; }|assembly=$apiIdentity",
+            "Method:bool global::Autodesk.Revit.DB.ViewSheet.IsPlaceholder.get|assembly=$apiIdentity",
+            "Method:void global::Autodesk.Revit.DB.APIObject.Dispose()|assembly=$apiIdentity",
+            "NamedType:class global::Autodesk.Revit.DB.ViewSheet|assembly=$apiIdentity"
         )) { $sensitive.Add($id) }
     }
-    foreach ($threadIdentity in @(
+    foreach ($runtimeIdentity in @(
         'mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089',
-        'System.Threading, Version=8.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a'
+        'System.Runtime, Version=8.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a'
     )) {
-        foreach ($id in @(
-            "Method:global::SafeReadCertifiedExecution.ReadTitleRequest? global::System.Threading.Interlocked.CompareExchange<global::SafeReadCertifiedExecution.ReadTitleRequest?>(ref global::SafeReadCertifiedExecution.ReadTitleRequest? location1, global::SafeReadCertifiedExecution.ReadTitleRequest? value, global::SafeReadCertifiedExecution.ReadTitleRequest? comparand)|assembly=$threadIdentity",
-            "Method:global::SafeReadCertifiedExecution.ReadTitleRequest? global::System.Threading.Interlocked.Exchange<global::SafeReadCertifiedExecution.ReadTitleRequest?>(ref global::SafeReadCertifiedExecution.ReadTitleRequest? location1, global::SafeReadCertifiedExecution.ReadTitleRequest? value)|assembly=$threadIdentity",
-            "Method:global::SafeReadCertifiedExecution.ReadTitleResponse? global::System.Threading.Interlocked.Exchange<global::SafeReadCertifiedExecution.ReadTitleResponse?>(ref global::SafeReadCertifiedExecution.ReadTitleResponse? location1, global::SafeReadCertifiedExecution.ReadTitleResponse? value)|assembly=$threadIdentity"
-        )) { $sensitive.Add($id) }
+        $sensitive.Add("Method:void global::System.IDisposable.Dispose()|assembly=$runtimeIdentity")
     }
     $policy.allowedSensitiveSymbols = $sensitive.ToArray()
     $sdkPath = [string]$bootstrapLock.sdkPath
@@ -228,7 +252,8 @@ function New-ProofFixtureManifest {
     $codeAnalysisCSharpPath = Join-Path $sdkPath $bootstrapLock.codeAnalysisCSharp.relativePath
 
     $sourceFiles = [System.Collections.Generic.List[object]]::new()
-    foreach ($file in Get-ChildItem -LiteralPath $SourceRoot -File -Recurse | Sort-Object FullName) {
+    foreach ($relativeInput in $CompileFiles) {
+        $file = Get-Item -LiteralPath (Join-Path $SourceRoot $relativeInput)
         $relative = [System.IO.Path]::GetRelativePath($SourceRoot, $file.FullName).Replace('\', '/')
         $sourceFiles.Add([ordered]@{
             path = $relative
@@ -240,7 +265,6 @@ function New-ProofFixtureManifest {
     foreach ($year in @('2023', '2024', '2025')) {
         $revitDirectory = if ($UseInstalledRevit) { "C:\Program Files\Autodesk\Revit $year" } else { Join-Path $ReferenceRoot $year }
         $revitPath = Join-Path $revitDirectory 'RevitAPI.dll'
-        $revitUiPath = Join-Path $revitDirectory 'RevitAPIUI.dll'
         $frameworks = @((Get-ProofFrameworkDefinitions $year) | ForEach-Object { [pscustomobject](New-ProofFrameworkLock $_) })
         $variants.Add([ordered]@{
             revitYear = $year
@@ -248,7 +272,7 @@ function New-ProofFixtureManifest {
             platform = 'x64'
             preprocessorSymbols = @("REVIT$year")
             frameworks = $frameworks
-            revitReferences = @((New-ProofAssemblyLock $revitPath), (New-ProofAssemblyLock $revitUiPath))
+            revitReferences = @((New-ProofAssemblyLock $revitPath))
         })
     }
 
@@ -260,7 +284,7 @@ function New-ProofFixtureManifest {
 
     $manifest = [ordered]@{
         schemaVersion = 1
-        proofKind = 'revit-safe-read-whole-assembly/v1'
+        proofKind = 'revit-safe-read-certified-kernel/v1'
         trustBoundary = 'Trusted local administrator, operating system, installed locked SDK/reference pack, Autodesk Revit, and Revit process; malicious local admin/OS/Revit are excluded.'
         sdk = [ordered]@{
             version = [string]$bootstrapLock.sdkVersion
@@ -276,7 +300,7 @@ function New-ProofFixtureManifest {
         }
         source = [ordered]@{
             root = [System.IO.Path]::GetFullPath($SourceRoot)
-            assemblyName = 'SafeReadCertifiedExecution'
+            assemblyName = 'RevitOperator.SafeReadCertifiedExecution'
             textNormalization = 'utf8-lf'
             files = $sourceFiles
             resources = @()
