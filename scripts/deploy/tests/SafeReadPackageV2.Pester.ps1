@@ -6,6 +6,7 @@ $module=Join-Path $deployRoot 'SafeReadPackageV2.psm1';Import-Module $module -Fo
 $builder=Join-Path $deployRoot 'build_saferead_package_v2.ps1'
 $installer=Join-Path $deployRoot 'install_saferead_package_v2.ps1'
 $verifier=Join-Path $deployRoot 'verify_saferead_microhost_bundle.ps1'
+$admissionPreparer=Join-Path $deployRoot 'prepare_saferead_admission_receipt.ps1'
 $repoRoot=(Resolve-Path (Join-Path $deployRoot '..\..')).Path
 $contract=Get-Content -LiteralPath (Join-Path $repoRoot 'contracts\safe-read\contract.v1.json') -Raw|ConvertFrom-Json
 $testThumbprint='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
@@ -80,6 +81,35 @@ Describe 'SafeRead package v3 security contract' {
     $receipt=Assert-SafeReadBundle -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
     if($receipt.Targets.Count -ne 3){throw 'Expected three targets.'}
     if($receipt.Source.commit -cne ('a'*40) -or $receipt.SourceReceipt.archiveSha256 -cne ('sha256:'+('d'*64))){throw 'Expected exact source snapshot evidence.'}
+  }
+
+  It 'creates and externally verifies one canonical admission receipt without writing live manifests' {
+    $assemblyRoot=Join-Path $TestDrive 'future-release-root';$receiptPath=Join-Path $TestDrive 'admission.receipt.json'
+    $result=&$admissionPreparer -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ManifestAssemblyRoot $assemblyRoot -OutputPath $receiptPath -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
+    if(Test-Path -LiteralPath $assemblyRoot){throw 'Admission preparation wrote the future release or live manifest root.'}
+    $receipt=Assert-SafeReadAdmissionReceipt -ReceiptPath $receiptPath -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ExpectedManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
+    if($result.receiptSha256 -cne (Get-SafeReadSha256 $receiptPath) -or $receipt.releaseManifest.sha256 -cne (Get-SafeReadSha256 (Join-Path $bundle.Root 'release-manifest.json')) -or $receipt.packagePins.externalSha256 -cne $bundle.Pin){throw 'Admission receipt omits its external release/package binding.'}
+    if($receipt.source.commit -cne ('a'*40) -or $receipt.proof.targetPaths.Count -ne 3 -or $receipt.targets.Count -ne 3){throw 'Admission receipt omits source, common proof, or three-year evidence.'}
+    foreach($target in @($receipt.targets)){
+      if($target.host.signerThumbprint -cne $testThumbprint -or $target.executor.signerThumbprint -cne $testThumbprint -or $target.executor.equivalence.candidateSha256 -cne $target.executor.sha256){throw "Admission receipt omits signed/equivalent payload facts for $($target.revitYear)."}
+      if($target.runtimeAttestation.runtimeTuple.revitVersion -cne $target.revitYear -or $target.renderedManifest.fields.assembly -notlike "*targets\$($target.revitYear)\payload\RevitOperator.SafeReadHost.dll"){throw "Admission receipt omits runtime or rendered manifest facts for $($target.revitYear)."}
+    }
+  }
+
+  It 'rejects canonical fabricated admission facts even when the receipt file is rewritten' {
+    $assemblyRoot=Join-Path $TestDrive 'fabrication-root';$receiptPath=Join-Path $TestDrive 'fabricated.receipt.json'
+    $receipt=New-SafeReadAdmissionReceipt -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
+    $receipt.targets[1].host.sha256='sha256:'+('f'*64);Write-JsonFile $receiptPath $receipt
+    Assert-ThrowsLike {Assert-SafeReadAdmissionReceipt -ReceiptPath $receiptPath -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ExpectedManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*does not match the externally verified package*'
+  }
+
+  It 'rejects non-canonical admission bytes and a caller-selected manifest root mismatch' {
+    $assemblyRoot=Join-Path $TestDrive 'canonical-root';$receiptPath=Join-Path $TestDrive 'noncanonical.receipt.json'
+    $receipt=New-SafeReadAdmissionReceipt -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector;Write-JsonFile $receiptPath $receipt
+    [IO.File]::AppendAllText($receiptPath,"`n",[Text.UTF8Encoding]::new($false))
+    Assert-ThrowsLike {Assert-SafeReadAdmissionReceipt -ReceiptPath $receiptPath -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ExpectedManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*not exact canonical JSON*'
+    Write-JsonFile $receiptPath $receipt
+    Assert-ThrowsLike {Assert-SafeReadAdmissionReceipt -ReceiptPath $receiptPath -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ExpectedManifestAssemblyRoot (Join-Path $TestDrive 'other-root') -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*does not match the externally verified package*'
   }
 
   It 'rejects a missing source snapshot receipt' {
