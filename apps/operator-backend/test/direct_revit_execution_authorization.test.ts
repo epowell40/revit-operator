@@ -14,7 +14,8 @@ import {
 } from "../src/capabilities/direct_revit_execution_authorization.js";
 import {
   BUNDLED_TOOL_EXPOSURE_POLICY_HASH,
-  loadTrustedToolExposurePolicy
+  loadTrustedToolExposurePolicy,
+  TrustedToolExposurePolicyError
 } from "../src/capabilities/trusted_tool_exposure_policy.js";
 import { computeRequestHash, sha256 } from "../src/capabilities/tool_certification.js";
 
@@ -116,10 +117,51 @@ test("compiled trusted-policy loader locates and validates the bundled pinned po
   try {
     const trusted = loadTrustedToolExposurePolicy({});
     assert.equal(trusted.policy.policy_hash, BUNDLED_TOOL_EXPOSURE_POLICY_HASH);
+    assert.equal(trusted.policy.records.length, 25);
+    assert.equal(trusted.policy.records.flatMap(record => Object.values(record.channels)).length, 100);
+    assert.equal(trusted.policy.records.flatMap(record => Object.values(record.channels)).some(decision => decision.exposed), false);
+    assert.deepEqual(
+      trusted.policy.records.find(record => record.path === "/revit/certified/sheets/count")?.execution_surface,
+      {
+        executor_id: "revit-operator.safe-read-host.v1",
+        kind: "standalone_executor",
+        route_id: "safe_read.sheet_count.v1",
+        transport: "direct_loopback"
+      }
+    );
     assert.equal(trusted.trustSource, "bundled");
     assert.match(trusted.policyPath.replace(/\\/g, "/"), /apps\/operator-backend\/config\/tool_exposure_policy\.v1\.json$/);
   } finally {
     process.chdir(priorCwd);
+  }
+});
+
+test("trusted backend policy rejects standalone false promotion onto bridge and courier channels", () => {
+  const bundled = loadTrustedToolExposurePolicy({});
+  for (const channel of ["search", "generic_call", "deterministic_workflow"] as const) {
+    const policy = structuredClone(bundled.policy) as any;
+    const safeRead = policy.records.find((record: any) => record.path === "/revit/certified/sheets/count");
+    safeRead.channels[channel] = {
+      exposed: true,
+      required_level: channel === "search" ? "L3" : "L4",
+      reason_codes: ["CERTIFIED"]
+    };
+    const { policy_record_hash: _oldRecordHash, ...recordPayload } = safeRead;
+    safeRead.policy_record_hash = sha256(recordPayload);
+    const { policy_hash: _oldPolicyHash, ...policyPayload } = policy;
+    policy.policy_hash = sha256(policyPayload);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-trusted-standalone-promotion-"));
+    const policyPath = path.join(root, "tool_exposure_policy.v1.json");
+    fs.writeFileSync(policyPath, `${JSON.stringify(policy)}\n`, "utf8");
+    assert.throws(
+      () => loadTrustedToolExposurePolicy({
+        OPERATOR_TOOL_EXPOSURE_POLICY_PATH: policyPath,
+        OPERATOR_TOOL_EXPOSURE_POLICY_SHA256: policy.policy_hash
+      }),
+      (error: unknown) => error instanceof TrustedToolExposurePolicyError
+        && error.code === "CERTIFICATION_POLICY_INVALID"
+        && error.message.includes(`cannot expose the ${channel} channel`)
+    );
   }
 });
 

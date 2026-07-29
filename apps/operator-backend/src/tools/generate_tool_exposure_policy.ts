@@ -12,6 +12,18 @@ import {
 } from "../capabilities/tool_certification.js";
 import { buildRegistryAudit, findRepoRoot } from "./audit_tool_registry.js";
 
+const STANDALONE_EXECUTOR_ATTRIBUTIONS = new Map([
+  [
+    "POST /revit/certified/sheets/count",
+    {
+      executor_id: "revit-operator.safe-read-host.v1",
+      route_id: "safe_read.sheet_count.v1",
+      transport: "direct_loopback",
+      typed_mcp_aliases: ["revit_count_sheets_certified"]
+    }
+  ]
+] as const);
+
 function parseJsonDocument(raw: string): unknown {
   const normalized = raw.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
   return JSON.parse(normalized) as unknown;
@@ -32,6 +44,28 @@ export function verifyTypedMcpAliasesAgainstRegistry(
   for (const candidate of candidates.candidates) {
     const key = routeKey(candidate.method, candidate.path);
     const audited = auditByKey.get(key);
+    if (candidate.execution_surface) {
+      const attribution = STANDALONE_EXECUTOR_ATTRIBUTIONS.get(key as "POST /revit/certified/sheets/count");
+      if (!attribution) {
+        throw new Error(`Certification standalone executor attribution is not recognized: ${key}`);
+      }
+      if (audited) {
+        throw new Error(`Certification standalone executor route must be absent from the generic registry audit: ${key}`);
+      }
+      const received = {
+        executor_id: candidate.execution_surface.executor_id,
+        route_id: candidate.execution_surface.route_id,
+        transport: candidate.execution_surface.transport,
+        typed_mcp_aliases: candidate.typed_mcp_aliases
+      };
+      if (JSON.stringify(received) !== JSON.stringify(attribution)) {
+        throw new Error(
+          `Certification standalone executor attribution does not match the reviewed binding for ${key}: `
+          + `expected ${JSON.stringify(attribution)}, received ${JSON.stringify(received)}`
+        );
+      }
+      continue;
+    }
     if (!audited) throw new Error(`Certification candidate route is absent from registry audit: ${key}`);
     const expected = [...audited.mcp.typed_tools].sort();
     if (JSON.stringify(candidate.typed_mcp_aliases) !== JSON.stringify(expected)) {

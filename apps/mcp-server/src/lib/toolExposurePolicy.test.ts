@@ -136,13 +136,36 @@ test("assertToolExposure returns the exact certified record provenance and bound
   assert.equal(decision.workflow, undefined);
 });
 
-test("current policy validates all record hashes and denies all 96 exact channel decisions", () => {
+test("current policy validates all record hashes and denies all 100 exact channel decisions", () => {
   const { policy, policyPath } = loadToolExposurePolicy(certifiedEnv());
   assert.equal(policyPath, sourcePolicyPath);
-  assert.equal(policy.records.length * 4, 96);
+  assert.equal(policy.records.length * 4, 100);
   const decisions = policy.records.flatMap(record => Object.values(record.channels));
-  assert.equal(decisions.length, 96);
+  assert.equal(decisions.length, 100);
   assert.equal(decisions.every(decision => decision.exposed === false), true);
+  const safeRead = policy.records.find(record => record.path === "/revit/certified/sheets/count");
+  assert.deepEqual(safeRead?.execution_surface, {
+    kind: "standalone_executor",
+    executor_id: "revit-operator.safe-read-host.v1",
+    route_id: "safe_read.sheet_count.v1",
+    transport: "direct_loopback"
+  });
+  assert.equal(isMcpToolAliasExposed("revit_count_sheets_certified", certifiedEnv()), false);
+});
+
+test("standalone policy records cannot be promoted onto bridge, search, or courier channels", () => {
+  for (const channel of ["search", "generic_call", "deterministic_workflow"] as const) {
+    const variant = writePolicyVariant(policy => {
+      const safeRead = policy.records.find((record: any) => record.path === "/revit/certified/sheets/count");
+      safeRead.channels[channel] = { exposed: true, required_level: channel === "search" ? "L3" : "L4", reason_codes: ["CERTIFIED"] };
+    });
+    assert.throws(
+      () => loadToolExposurePolicy(policyVariantEnv(variant)),
+      (error: unknown) => error instanceof ToolExposurePolicyError
+        && error.code === "TOOL_EXPOSURE_POLICY_INVALID"
+        && error.message.includes(`cannot expose the ${channel} channel`)
+    );
+  }
 });
 
 test("exact body-aware policy decisions distinguish known uncertified, request mismatch, effect mismatch, and workflow-only raw access", () => {
@@ -273,7 +296,7 @@ test("compiled package layout resolves and validates its sibling bundled policy"
   const packagedConfig = path.join(root, "operator-backend", "config");
   fs.mkdirSync(packagedLib, { recursive: true });
   fs.mkdirSync(packagedConfig, { recursive: true });
-  for (const file of ["toolExposurePolicy.js", "revitRouteEffect.js"]) {
+  for (const file of ["toolExposurePolicy.js", "revitRouteEffect.js", "safeReadDiscovery.js"]) {
     fs.copyFileSync(path.resolve(process.cwd(), "dist", "lib", file), path.join(packagedLib, file));
   }
   fs.copyFileSync(sourcePolicyPath, path.join(packagedConfig, "tool_exposure_policy.v1.json"));

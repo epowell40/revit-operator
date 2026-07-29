@@ -44,6 +44,13 @@ export type CertificationEvidence = {
   provenance: string;
 };
 
+export type StandaloneExecutorSurface = {
+  kind: "standalone_executor";
+  executor_id: string;
+  route_id: string;
+  transport: "direct_loopback";
+};
+
 export type ToolCertificationRecord = {
   method: string;
   path: string;
@@ -53,6 +60,7 @@ export type ToolCertificationRecord = {
   requested_channels: ExposureChannel[];
   visibility: ToolVisibility;
   evidence: CertificationEvidence;
+  execution_surface?: StandaloneExecutorSurface;
   request_hash: string;
   effect_hash: string;
   record_hash: string;
@@ -70,6 +78,7 @@ export type ToolCertificationCandidate = Pick<
 > & {
   request: JsonValue;
   typed_mcp_request_fixtures: TypedMcpRequestFixture[];
+  execution_surface?: StandaloneExecutorSurface;
 };
 
 export type ToolCertificationCandidatesFile = {
@@ -104,6 +113,7 @@ export type ToolExposurePolicyRecord = {
   highest_cumulative_level: CertificationLevel | null;
   observed_levels: CertificationLevel[];
   visibility: ToolVisibility;
+  execution_surface?: StandaloneExecutorSurface;
   channels: Record<ExposureChannel, ChannelDecision>;
   policy_record_hash: string;
 };
@@ -209,6 +219,22 @@ function assertRepositorySource(value: unknown, location: string): asserts value
   ) {
     throw new Error(`${location} must be a canonical repository-relative config JSON path`);
   }
+}
+
+function parseStandaloneExecutorSurface(value: unknown, location: string): StandaloneExecutorSurface {
+  assertPlainObject(value, location);
+  assertExactKeys(value, ["kind", "executor_id", "route_id", "transport"], location);
+  assertEnum(value.kind, ["standalone_executor"] as const, `${location}.kind`);
+  assertString(value.executor_id, `${location}.executor_id`);
+  assertString(value.route_id, `${location}.route_id`);
+  assertEnum(value.transport, ["direct_loopback"] as const, `${location}.transport`);
+  if (!/^[a-z0-9][a-z0-9._-]*$/.test(value.executor_id)) {
+    throw new Error(`${location}.executor_id must be a canonical executor identifier`);
+  }
+  if (!/^[a-z0-9][a-z0-9._-]*$/.test(value.route_id)) {
+    throw new Error(`${location}.route_id must be a canonical executor route identifier`);
+  }
+  return value as unknown as StandaloneExecutorSurface;
 }
 
 function normalizedObjectEntries(
@@ -338,6 +364,7 @@ function parseCertificationRecord(
   location: string
 ): ToolCertificationRecord {
   assertPlainObject(value, location);
+  const hasExecutionSurface = Object.prototype.hasOwnProperty.call(value, "execution_surface");
   assertExactKeys(value, [
     "method",
     "path",
@@ -347,6 +374,7 @@ function parseCertificationRecord(
     "requested_channels",
     "visibility",
     "evidence",
+    ...(hasExecutionSurface ? ["execution_surface"] : []),
     "request_hash",
     "effect_hash",
     "record_hash"
@@ -365,6 +393,15 @@ function parseCertificationRecord(
   assertRepositorySource(value.evidence.provenance, `${location}.evidence.provenance`);
   if (value.evidence.provenance !== source) {
     throw new Error(`${location}.evidence.provenance must match evidence file provenance.source`);
+  }
+  if (hasExecutionSurface) {
+    parseStandaloneExecutorSurface(value.execution_surface, `${location}.execution_surface`);
+    if (value.visibility !== "candidate") {
+      throw new Error(`${location}.execution_surface requires candidate visibility`);
+    }
+    if (canonicalJson(value.requested_channels) !== canonicalJson(["typed_mcp"])) {
+      throw new Error(`${location}.execution_surface may request only the typed_mcp channel`);
+    }
   }
   assertSha256(value.request_hash, `${location}.request_hash`);
   assertSha256(value.effect_hash, `${location}.effect_hash`);
@@ -409,18 +446,26 @@ export function parseToolCertificationCandidates(value: unknown): ToolCertificat
   const candidates = value.candidates.map((candidate, index) => {
     const location = `candidates.candidates[${index}]`;
     assertPlainObject(candidate, location);
+    const hasExecutionSurface = Object.prototype.hasOwnProperty.call(candidate, "execution_surface");
     assertExactKeys(candidate, [
       "method",
       "path",
       "typed_mcp_aliases",
       "request",
       "typed_mcp_request_fixtures",
+      ...(hasExecutionSurface ? ["execution_surface"] : []),
       "request_hash",
       "effect_hash"
     ], location);
     assertCanonicalMethod(candidate.method, `${location}.method`);
     assertCanonicalToolPath(candidate.path, `${location}.path`);
     assertTypedMcpAliases(candidate.typed_mcp_aliases, `${location}.typed_mcp_aliases`);
+    if (hasExecutionSurface) {
+      parseStandaloneExecutorSurface(candidate.execution_surface, `${location}.execution_surface`);
+      if (candidate.typed_mcp_aliases.length !== 1) {
+        throw new Error(`${location}.execution_surface requires exactly one typed MCP alias`);
+      }
+    }
     assertJsonValue(candidate.request, `${location}.request`);
     const candidateRequest = candidate.request;
     assertArray(candidate.typed_mcp_request_fixtures, `${location}.typed_mcp_request_fixtures`);
@@ -457,24 +502,26 @@ export function parseToolCertificationCandidates(value: unknown): ToolCertificat
 }
 
 function certificationIdentity(
-  value: Pick<ToolCertificationRecord, "method" | "path" | "request_hash" | "effect_hash">
+  value: Pick<ToolCertificationRecord, "method" | "path" | "request_hash" | "effect_hash" | "execution_surface">
 ): string {
   return canonicalJson({
     method: value.method,
     path: value.path,
     request_hash: value.request_hash,
-    effect_hash: value.effect_hash
+    effect_hash: value.effect_hash,
+    ...(value.execution_surface ? { execution_surface: value.execution_surface } : {})
   });
 }
 
 function aliasBindingIdentity(
-  value: Pick<ToolCertificationRecord, "method" | "path" | "effect_hash" | "typed_mcp_aliases">
+  value: Pick<ToolCertificationRecord, "method" | "path" | "effect_hash" | "typed_mcp_aliases" | "execution_surface">
 ): string {
   return canonicalJson({
     method: value.method,
     path: value.path,
     effect_hash: value.effect_hash,
-    typed_mcp_aliases: value.typed_mcp_aliases
+    typed_mcp_aliases: value.typed_mcp_aliases,
+    ...(value.execution_surface ? { execution_surface: value.execution_surface } : {})
   });
 }
 
@@ -529,6 +576,9 @@ function recordHashPayload(record: Omit<ToolCertificationRecord, "record_hash">)
     effect: canonicalValue(record.effect),
     requested_channels: [...record.requested_channels].sort(ordinalCompare),
     visibility: record.visibility,
+    ...(record.execution_surface
+      ? { execution_surface: canonicalValue(record.execution_surface as unknown as JsonValue) }
+      : {}),
     evidence: {
       levels: record.evidence.levels.map(normalizeString),
       state: normalizeString(record.evidence.state),
@@ -671,6 +721,7 @@ export function generateToolExposurePolicy(input: ToolCertificationEvidenceFile 
       highest_cumulative_level: evidence.highest,
       observed_levels: evidence.observed,
       visibility: record.visibility,
+      ...(record.execution_surface ? { execution_surface: record.execution_surface } : {}),
       channels: Object.fromEntries(EXPOSURE_CHANNELS.map(channel => [
         channel,
         decision(channel, record, evidence.highest, blocking)
