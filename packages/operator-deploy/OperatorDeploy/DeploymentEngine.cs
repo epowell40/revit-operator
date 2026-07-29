@@ -4,6 +4,8 @@ using System.Security;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Xml;
+using System.Xml.Linq;
 
 namespace RevitOperator.Deployment;
 
@@ -28,6 +30,8 @@ public sealed class DeploymentEngine
     {
         try
         {
+            using var deploymentLease = _context.TryAcquireDeploymentMutex()
+                ?? throw new DeploymentException(ExitCodes.InstallFailed, "Another OperatorDeploy operation is already in progress. Retry after it completes.");
             Log($"Starting {_options.Operation} (dryRun={_options.DryRun}, scope={_options.InstallScope}).");
             var result = _options.Operation switch
             {
@@ -96,15 +100,21 @@ public sealed class DeploymentEngine
             ReleaseVersion = manifest.ReleaseVersion,
             Details = applicable.Select(c => $"{c.Id} ({c.Kind}, {c.Files.Count} files)").ToList()
         };
-        if (_options.DryRun) return result;
+        var finalReleaseRoot = Path.Combine(_context.ReleasesRoot, manifest.ReleaseVersion);
+        var installedManifest = CopyManifestWithComponents(manifest, applicable);
+        var stateBefore = LoadState(required: false);
+        var currentOwnership = ResolveCurrentOwnership(stateBefore);
+        if (_options.DryRun)
+        {
+            _ = PlanActivation(finalReleaseRoot, installedManifest, applicable, currentOwnership, requireAssembly: false);
+            return result;
+        }
 
         Directory.CreateDirectory(_context.ReleasesRoot);
         Directory.CreateDirectory(_context.DeploymentRoot);
-        var finalReleaseRoot = Path.Combine(_context.ReleasesRoot, manifest.ReleaseVersion);
         var stagingRoot = Path.Combine(_context.ReleasesRoot, $".{manifest.ReleaseVersion}.staging-{Guid.NewGuid():N}");
         var displacedRoot = Path.Combine(_context.ReleasesRoot, $".{manifest.ReleaseVersion}.replaced-{_context.UtcNow():yyyyMMddHHmmss}");
-        var installedManifest = CopyManifestWithComponents(manifest, applicable);
-        var controlSnapshot = CaptureControlFiles(installedManifest);
+        var controlSnapshot = CaptureControlFiles(installedManifest, currentOwnership);
         var movedExisting = false;
 
         try
@@ -135,9 +145,9 @@ public sealed class DeploymentEngine
                 if (existingValidationFailure == null && hasEveryIncomingComponent && !forceReplace)
                 {
                     Directory.Delete(stagingRoot, recursive: true);
-                    ActivateRelease(finalReleaseRoot, existingManifest, applicable);
-                    ValidateActivatedRelease(finalReleaseRoot, existingManifest, existingManifest.Components);
-                    SaveSuccessfulState(manifest.ReleaseVersion);
+                    var activation = ActivateRelease(finalReleaseRoot, existingManifest, applicable, currentOwnership);
+                    ValidateActivatedRelease(finalReleaseRoot, existingManifest, existingManifest.Components, activation);
+                    SaveSuccessfulState(manifest.ReleaseVersion, activation.Ownership);
                     result.Message = "The requested release was already present and valid; activation was refreshed.";
                     return result;
                 }
@@ -161,9 +171,9 @@ public sealed class DeploymentEngine
             }
 
             Directory.Move(stagingRoot, finalReleaseRoot);
-            ActivateRelease(finalReleaseRoot, installedManifest, applicable);
-            ValidateActivatedRelease(finalReleaseRoot, installedManifest, installedManifest.Components);
-            SaveSuccessfulState(manifest.ReleaseVersion);
+            var completedActivation = ActivateRelease(finalReleaseRoot, installedManifest, applicable, currentOwnership);
+            ValidateActivatedRelease(finalReleaseRoot, installedManifest, installedManifest.Components, completedActivation);
+            SaveSuccessfulState(manifest.ReleaseVersion, completedActivation.Ownership);
             if (movedExisting) result.Warnings.Add($"The replaced release was retained for recovery at {displacedRoot}.");
             return result;
         }
@@ -210,6 +220,19 @@ public sealed class DeploymentEngine
         var manifestPathInstalled = Path.Combine(releaseRoot, "manifest.json");
         var manifestInstalled = ReleaseManifest.Load(manifestPathInstalled);
         var result = ValidateInstalledRelease(releaseRoot, manifestInstalled, ApplicableComponents(manifestInstalled).ToList(), includeNetwork: true);
+        if (result.Ok)
+        {
+            try
+            {
+                foreach (var control in ResolveCurrentOwnership(state)) AssertOwnedManifest(control);
+            }
+            catch (DeploymentException ex)
+            {
+                result.Ok = false;
+                result.ExitCode = ex.ExitCode;
+                result.Message = ex.Message;
+            }
+        }
         result.Operation = "validate";
         result.ReleaseVersion = state.CurrentRelease;
         return result;
@@ -223,15 +246,17 @@ public sealed class DeploymentEngine
             VerifyInstalledTree(releaseRoot, manifest, components);
             foreach (var addin in components.Where(c => c.Kind == "revit-addin"))
             {
-                var addinPath = AddinManifestPath(addin.RevitYear!);
+                var expected = BuildAddinControl(releaseRoot, manifest, addin);
+                var addinPath = expected.Ownership.ManifestPath;
                 if (!File.Exists(addinPath)) throw new DeploymentException(ExitCodes.ValidationFailed, $"Revit {addin.RevitYear} add-in manifest is missing: {addinPath}");
-                var expectedDll = Path.Combine(releaseRoot, addin.Id, "RevitBridge.dll");
-                var xml = File.ReadAllText(addinPath);
-                if (!xml.Contains(expectedDll, StringComparison.OrdinalIgnoreCase))
-                    throw new DeploymentException(ExitCodes.ValidationFailed, $"Revit {addin.RevitYear} add-in manifest does not reference the active release DLL.");
-                var conflicts = FindConflictingAddinManifests(addin.RevitYear!, addinPath).ToList();
+                if (!FileIntegrity.Sha256(addinPath).Equals(expected.Ownership.ManifestSha256, StringComparison.OrdinalIgnoreCase))
+                    throw new DeploymentException(ExitCodes.ValidationFailed, $"Revit {addin.RevitYear} add-in manifest does not exactly match the active release identity.");
+                var entries = ReadAddinEntries(addinPath);
+                if (entries.Count != 1 || !EntryMatches(entries[0], expected.Ownership))
+                    throw new DeploymentException(ExitCodes.ValidationFailed, $"Revit {addin.RevitYear} add-in manifest identity or assembly path is invalid.");
+                var conflicts = FindConflictingAddinManifests(addin.RevitYear!, addinPath, expected.Ownership.AddInId).ToList();
                 if (conflicts.Count > 0)
-                    throw new DeploymentException(ExitCodes.ValidationFailed, $"Conflicting Revit Operator .addin manifest(s) were found for Revit {addin.RevitYear}: {string.Join("; ", conflicts)}");
+                    throw new DeploymentException(ExitCodes.ValidationFailed, $"Conflicting Revit add-in manifest(s) were found for Revit {addin.RevitYear} and AddInId {expected.Ownership.AddInId}: {string.Join("; ", conflicts)}");
             }
 
             var desktop = components.FirstOrDefault(c => c.Kind == "operator-desktop");
@@ -279,16 +304,20 @@ public sealed class DeploymentEngine
         var components = ApplicableComponents(manifest).ToList();
         if (components.Any(component => component.Kind == "operator-desktop")) EnsureManagedDesktopLauncherOverride();
         VerifyInstalledTree(releaseRoot, manifest, components);
+        var currentOwnership = ResolveCurrentOwnership(state);
+        _ = PlanActivation(releaseRoot, manifest, components, currentOwnership, requireAssembly: true);
         if (_options.DryRun)
             return new OperationResult { Ok = true, Operation = "rollback", ExitCode = 0, ReleaseVersion = target, Message = $"Rollback target {target} is valid; no files were changed." };
 
-        var snapshot = CaptureControlFiles(manifest);
+        var snapshot = CaptureControlFiles(manifest, currentOwnership);
         try
         {
-            ActivateRelease(releaseRoot, manifest, components);
-            ValidateActivatedRelease(releaseRoot, manifest, components);
+            var activation = ActivateRelease(releaseRoot, manifest, components, currentOwnership);
+            ValidateActivatedRelease(releaseRoot, manifest, components, activation);
             state.CurrentRelease = target;
             state.UpdatedAtUtc = _context.UtcNow().ToString("O");
+            state.SchemaVersion = 2;
+            state.OwnedAddinManifests = activation.Ownership;
             SaveState(state);
         }
         catch (Exception original)
@@ -355,6 +384,13 @@ public sealed class DeploymentEngine
 
     private IEnumerable<ReleaseComponent> ApplicableComponents(ReleaseManifest manifest)
     {
+        if (_options.RevitVersion != null)
+        {
+            if (_options.RevitVersion.Length != 4 || !int.TryParse(_options.RevitVersion, out _))
+                throw new DeploymentException(ExitCodes.InvalidArguments, "--revit-version must be a four-digit year.");
+            if (!manifest.Components.Any(component => component.Kind == "revit-addin" && component.RevitYear == _options.RevitVersion))
+                throw new DeploymentException(ExitCodes.ManifestInvalid, $"The release manifest has no complete Revit {_options.RevitVersion} activation set.");
+        }
         foreach (var component in manifest.Components)
         {
             if (component.Kind == "revit-addin")
@@ -397,6 +433,9 @@ public sealed class DeploymentEngine
             BackendUrl = source.BackendUrl,
             MinimumBackendApiVersion = source.MinimumBackendApiVersion,
             MaximumBackendApiVersion = source.MaximumBackendApiVersion,
+            RevitAddinProfiles = source.RevitAddinProfiles
+                .Where(profile => components.Any(component => component.RevitAddinProfileId != null && component.RevitAddinProfileId.Equals(profile.Id, StringComparison.OrdinalIgnoreCase)))
+                .ToList(),
             Components = components.ToList()
         };
         copy.Validate();
@@ -413,6 +452,15 @@ public sealed class DeploymentEngine
         {
             throw new DeploymentException(ExitCodes.ManifestInvalid,
                 $"Release {incoming.ReleaseVersion} already exists with a different source revision. Build a new release version instead of mixing payloads.");
+        }
+        if (existing.SchemaVersion != incoming.SchemaVersion)
+            throw new DeploymentException(ExitCodes.ManifestInvalid, $"Release {incoming.ReleaseVersion} already exists with manifest schema {existing.SchemaVersion}, not {incoming.SchemaVersion}.");
+        if (existing.SchemaVersion == 2)
+        {
+            var existingProfiles = JsonSerializer.Serialize(existing.RevitAddinProfiles.OrderBy(profile => profile.Id), ReleaseManifest.JsonOptions);
+            var incomingProfiles = JsonSerializer.Serialize(incoming.RevitAddinProfiles.OrderBy(profile => profile.Id), ReleaseManifest.JsonOptions);
+            if (!existingProfiles.Equals(incomingProfiles, StringComparison.Ordinal))
+                throw new DeploymentException(ExitCodes.ManifestInvalid, $"Release {incoming.ReleaseVersion} already exists with different Revit add-in profiles.");
         }
     }
 
@@ -443,26 +491,19 @@ public sealed class DeploymentEngine
         }
     }
 
-    private void ActivateRelease(string releaseRoot, ReleaseManifest manifest, IReadOnlyCollection<ReleaseComponent> components)
+    private ActivationResult ActivateRelease(
+        string releaseRoot,
+        ReleaseManifest manifest,
+        IReadOnlyCollection<ReleaseComponent> components,
+        IReadOnlyCollection<OwnedAddinManifest> currentOwnership)
     {
-        foreach (var addin in components.Where(c => c.Kind == "revit-addin"))
+        var plan = PlanActivation(releaseRoot, manifest, components, currentOwnership, requireAssembly: true);
+
+        foreach (var target in plan.Targets) WriteAtomic(target.Ownership.ManifestPath, target.Xml);
+        foreach (var control in plan.Obsolete)
         {
-            var dll = Path.Combine(releaseRoot, addin.Id, "RevitBridge.dll");
-            if (!File.Exists(dll)) throw new DeploymentException(ExitCodes.ValidationFailed, $"RevitBridge.dll is missing from component {addin.Id}.");
-            var xml = $"""
-<?xml version="1.0" encoding="utf-8"?>
-<RevitAddIns>
-  <AddIn Type="Application">
-    <Name>RevitOperator</Name>
-    <Assembly>{SecurityElement.Escape(dll)}</Assembly>
-    <FullClassName>RevitBridge.App</FullClassName>
-    <AddInId>B2883307-2852-4740-9833-281048674F77</AddInId>
-    <VendorId>com.revitoperator</VendorId>
-    <VendorDescription>Revit Operator</VendorDescription>
-  </AddIn>
-</RevitAddIns>
-""";
-            WriteAtomic(AddinManifestPath(addin.RevitYear!), xml);
+            AssertOwnedManifest(control);
+            File.Delete(control.ManifestPath);
         }
 
         var desktop = components.FirstOrDefault(c => c.Kind == "operator-desktop");
@@ -496,12 +537,42 @@ public sealed class DeploymentEngine
             }
         }
         Log($"Activated release {manifest.ReleaseVersion}.");
+        return new ActivationResult(plan.Retained.Concat(plan.Targets.Select(target => target.Ownership)).ToList(), plan.Obsolete);
     }
 
-    private string AddinManifestPath(string year)
-        => Path.Combine(_context.AppData, "Autodesk", "Revit", "Addins", year, "RevitBridge.addin");
+    private PlannedActivation PlanActivation(
+        string releaseRoot,
+        ReleaseManifest manifest,
+        IReadOnlyCollection<ReleaseComponent> components,
+        IReadOnlyCollection<OwnedAddinManifest> currentOwnership,
+        bool requireAssembly)
+    {
+        var targets = components.Where(component => component.Kind == "revit-addin")
+            .Select(component => BuildAddinControl(releaseRoot, manifest, component, requireAssembly)).ToList();
+        EnsureCompleteActivationSelection(manifest, targets);
+        var targetPaths = targets.Select(target => target.Ownership.ManifestPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var affectedYears = targets.Select(target => target.Ownership.RevitYear).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var obsolete = currentOwnership.Where(control => affectedYears.Contains(control.RevitYear) && !targetPaths.Contains(control.ManifestPath)).ToList();
+        var retained = currentOwnership.Where(control => !affectedYears.Contains(control.RevitYear)).ToList();
 
-    private IEnumerable<string> FindConflictingAddinManifests(string year, string primaryPath)
+        foreach (var control in obsolete) AssertOwnedManifest(control);
+        foreach (var control in currentOwnership.Where(control => targetPaths.Contains(control.ManifestPath) && File.Exists(control.ManifestPath)))
+            AssertOwnedManifest(control);
+        foreach (var target in targets)
+        {
+            EnsureControlPathIsLocal(target.Ownership.ManifestPath);
+            if (!File.Exists(target.Ownership.ManifestPath)) continue;
+            var owned = currentOwnership.FirstOrDefault(control => PathsEqual(control.ManifestPath, target.Ownership.ManifestPath));
+            if (owned == null)
+                throw new DeploymentException(ExitCodes.ValidationFailed, $"Refusing to replace unowned Revit add-in manifest: {target.Ownership.ManifestPath}");
+        }
+        return new PlannedActivation(targets, obsolete, retained);
+    }
+
+    private string AddinManifestPath(string year, string fileName)
+        => Path.Combine(_context.AppData, "Autodesk", "Revit", "Addins", year, fileName);
+
+    private IEnumerable<string> FindConflictingAddinManifests(string year, string primaryPath, string addInId)
     {
         var roots = new[]
         {
@@ -516,7 +587,7 @@ public sealed class DeploymentEngine
                 var matches = false;
                 try
                 {
-                    matches = File.ReadAllText(path).Contains("B2883307-2852-4740-9833-281048674F77", StringComparison.OrdinalIgnoreCase);
+                    matches = ReadAddInIds(path).Any(value => value.Equals(addInId, StringComparison.OrdinalIgnoreCase));
                 }
                 catch { /* An unreadable unrelated manifest is not owned by this installer. */ }
                 if (matches) yield return path;
@@ -524,9 +595,11 @@ public sealed class DeploymentEngine
         }
     }
 
-    private Dictionary<string, byte[]?> CaptureControlFiles(ReleaseManifest manifest)
+    private Dictionary<string, byte[]?> CaptureControlFiles(ReleaseManifest manifest, IReadOnlyCollection<OwnedAddinManifest> currentOwnership)
     {
-        var paths = manifest.Components.Where(c => c.Kind == "revit-addin" && c.RevitYear != null).Select(c => AddinManifestPath(c.RevitYear!)).ToList();
+        var paths = manifest.Components.Where(c => c.Kind == "revit-addin" && c.RevitYear != null)
+            .Select(component => AddinManifestPath(component.RevitYear!, GetAddinProfile(manifest, component).ManifestFileName))
+            .Concat(currentOwnership.Select(control => control.ManifestPath)).ToList();
         paths.Add(_context.StableDesktopLauncherPath);
         if (!string.IsNullOrWhiteSpace(_context.Desktop))
         {
@@ -535,6 +608,155 @@ public sealed class DeploymentEngine
         }
         paths.Add(_context.StatePath);
         return paths.Distinct(StringComparer.OrdinalIgnoreCase).ToDictionary(path => path, path => File.Exists(path) ? File.ReadAllBytes(path) : null, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private AddinControl BuildAddinControl(string releaseRoot, ReleaseManifest manifest, ReleaseComponent component, bool requireAssembly = true)
+    {
+        var profile = GetAddinProfile(manifest, component);
+        var assembly = FileIntegrity.ResolveUnder(Path.Combine(releaseRoot, component.Id), profile.AssemblyPath, ExitCodes.ValidationFailed);
+        if (requireAssembly && !File.Exists(assembly))
+            throw new DeploymentException(ExitCodes.ValidationFailed, $"Add-in assembly '{profile.AssemblyPath}' is missing from component {component.Id}.");
+        var path = AddinManifestPath(component.RevitYear!, profile.ManifestFileName);
+        var xml = BuildAddinXml(profile, assembly);
+        var bytes = new UTF8Encoding(false).GetBytes(xml);
+        return new AddinControl(xml, new OwnedAddinManifest
+        {
+            RevitYear = component.RevitYear!,
+            ProfileId = profile.Id,
+            ManifestPath = Path.GetFullPath(path),
+            ManifestFileName = profile.ManifestFileName,
+            AddInId = Guid.Parse(profile.AddInId).ToString("D").ToUpperInvariant(),
+            FullClassName = profile.FullClassName,
+            AssemblyPath = Path.GetFullPath(assembly),
+            ManifestSha256 = FileIntegrity.Sha256(bytes)
+        });
+    }
+
+    private static RevitAddinProfile GetAddinProfile(ReleaseManifest manifest, ReleaseComponent component)
+    {
+        if (manifest.SchemaVersion == 1) return LegacyAddinProfile;
+        return manifest.RevitAddinProfiles.Single(profile => profile.Id.Equals(component.RevitAddinProfileId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static readonly RevitAddinProfile LegacyAddinProfile = new()
+    {
+        Id = "revit-bridge-legacy",
+        ManifestFileName = "RevitBridge.addin",
+        AssemblyPath = "RevitBridge.dll",
+        Name = "RevitOperator",
+        FullClassName = "RevitBridge.App",
+        AddInId = "B2883307-2852-4740-9833-281048674F77",
+        VendorId = "com.revitoperator",
+        VendorDescription = "Revit Operator"
+    };
+
+    private static string BuildAddinXml(RevitAddinProfile profile, string assembly)
+        => $"""
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="{SecurityElement.Escape(profile.Type)}">
+    <Name>{SecurityElement.Escape(profile.Name)}</Name>
+    <Assembly>{SecurityElement.Escape(assembly)}</Assembly>
+    <FullClassName>{SecurityElement.Escape(profile.FullClassName)}</FullClassName>
+    <AddInId>{Guid.Parse(profile.AddInId).ToString("D").ToUpperInvariant()}</AddInId>
+    <VendorId>{SecurityElement.Escape(profile.VendorId)}</VendorId>
+    <VendorDescription>{SecurityElement.Escape(profile.VendorDescription)}</VendorDescription>
+  </AddIn>
+</RevitAddIns>
+""";
+
+    private static void EnsureCompleteActivationSelection(ReleaseManifest manifest, IReadOnlyCollection<AddinControl> targets)
+    {
+        if (manifest.SchemaVersion != 2 || targets.Count == 0) return;
+        var expected = manifest.RevitAddinProfiles.Select(profile => profile.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var group in targets.GroupBy(target => target.Ownership.RevitYear, StringComparer.OrdinalIgnoreCase))
+        {
+            var actual = group.Select(target => target.Ownership.ProfileId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (group.Count() != expected.Count || !actual.SetEquals(expected))
+                throw new DeploymentException(ExitCodes.ManifestInvalid, $"Revit {group.Key} activation is not a complete add-in profile set.");
+        }
+    }
+
+    private void AssertOwnedManifest(OwnedAddinManifest control)
+    {
+        ValidateOwnershipRecord(control);
+        if (!File.Exists(control.ManifestPath))
+            throw new DeploymentException(ExitCodes.ValidationFailed, $"Installer-owned Revit add-in manifest is missing: {control.ManifestPath}");
+        if (!FileIntegrity.Sha256(control.ManifestPath).Equals(control.ManifestSha256, StringComparison.OrdinalIgnoreCase))
+            throw new DeploymentException(ExitCodes.ValidationFailed, $"Installer-owned Revit add-in manifest was modified and will not be replaced or removed: {control.ManifestPath}");
+        var entries = ReadAddinEntries(control.ManifestPath);
+        if (entries.Count != 1 || !EntryMatches(entries[0], control))
+            throw new DeploymentException(ExitCodes.ValidationFailed, $"Installer-owned Revit add-in manifest identity changed and will not be replaced or removed: {control.ManifestPath}");
+    }
+
+    private void ValidateOwnershipRecord(OwnedAddinManifest control)
+    {
+        if (control.RevitYear.Length != 4 || !int.TryParse(control.RevitYear, out _))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "Installed add-in ownership state contains an invalid Revit year.");
+        ReleaseManifest.EnsureSafeBaseName(control.ProfileId, "installed add-in profile id");
+        ReleaseManifest.EnsureSafeBaseName(control.ManifestFileName, "installed add-in manifest filename");
+        if (!control.ManifestFileName.EndsWith(".addin", StringComparison.OrdinalIgnoreCase))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "Installed add-in ownership state contains a non-.addin manifest filename.");
+        var expectedPath = AddinManifestPath(control.RevitYear, control.ManifestFileName);
+        if (!PathsEqual(expectedPath, control.ManifestPath))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "Installed add-in ownership state contains an unexpected manifest path.");
+        EnsureControlPathIsLocal(control.ManifestPath);
+        if (!Guid.TryParse(control.AddInId, out _) || string.IsNullOrWhiteSpace(control.FullClassName))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "Installed add-in ownership state contains an invalid identity.");
+        var releasesPrefix = Path.GetFullPath(_context.ReleasesRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!Path.GetFullPath(control.AssemblyPath).StartsWith(releasesPrefix, StringComparison.OrdinalIgnoreCase))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "Installed add-in ownership state contains an assembly outside the releases root.");
+        if (control.ManifestSha256.Length != 64 || control.ManifestSha256.Any(character => !Uri.IsHexDigit(character)))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "Installed add-in ownership state contains an invalid manifest hash.");
+    }
+
+    private void EnsureControlPathIsLocal(string path)
+    {
+        var root = Path.GetFullPath(_context.AppData).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var full = Path.GetFullPath(path);
+        if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "Revit add-in control path escapes the per-user application-data root.");
+        var relative = Path.GetRelativePath(root, full);
+        var current = root;
+        foreach (var part in relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+        {
+            current = Path.Combine(current, part);
+            if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                throw new DeploymentException(ExitCodes.ValidationFailed, $"Revit add-in control path contains a link or reparse point: {current}");
+        }
+    }
+
+    private static bool EntryMatches(AddinEntry entry, OwnedAddinManifest control)
+        => entry.AddInId.Equals(Guid.Parse(control.AddInId).ToString("D"), StringComparison.OrdinalIgnoreCase)
+           && entry.FullClassName.Equals(control.FullClassName, StringComparison.Ordinal)
+           && PathsEqual(entry.Assembly, control.AssemblyPath);
+
+    private static List<AddinEntry> ReadAddinEntries(string path)
+    {
+        var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 128 * 1024 };
+        using var stream = File.OpenRead(path);
+        using var reader = XmlReader.Create(stream, settings);
+        var document = XDocument.Load(reader, LoadOptions.None);
+        if (document.Root?.Name.LocalName != "RevitAddIns") throw new InvalidDataException("Revit add-in manifest has an invalid root element.");
+        return document.Root.Elements().Where(element => element.Name.LocalName == "AddIn").Select(element => new AddinEntry(
+            RequiredElement(element, "Assembly"), RequiredElement(element, "FullClassName"), RequiredElement(element, "AddInId"))).ToList();
+
+        static string RequiredElement(XElement parent, string name)
+        {
+            var values = parent.Elements().Where(element => element.Name.LocalName == name).ToList();
+            if (values.Count != 1 || string.IsNullOrWhiteSpace(values[0].Value)) throw new InvalidDataException($"Revit add-in manifest requires exactly one {name} element.");
+            return values[0].Value;
+        }
+    }
+
+    private static List<string> ReadAddInIds(string path)
+    {
+        var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 128 * 1024, ConformanceLevel = ConformanceLevel.Fragment };
+        using var stream = File.OpenRead(path);
+        using var reader = XmlReader.Create(stream, settings);
+        var document = XDocument.Load(reader, LoadOptions.None);
+        return document.Descendants().Where(element => element.Name.LocalName == "AddInId" && !string.IsNullOrWhiteSpace(element.Value))
+            .Select(element => element.Value).ToList();
     }
 
     private static List<Exception> RestoreControlFiles(Dictionary<string, byte[]?> snapshot)
@@ -559,13 +781,57 @@ public sealed class DeploymentEngine
         return failures;
     }
 
-    private void SaveSuccessfulState(string releaseVersion)
+    private List<OwnedAddinManifest> ResolveCurrentOwnership(InstalledState? state)
+    {
+        if (state == null) return new List<OwnedAddinManifest>();
+        var releaseRoot = Path.Combine(_context.ReleasesRoot, state.CurrentRelease);
+        var manifestPath = Path.Combine(releaseRoot, "manifest.json");
+        var manifest = ReleaseManifest.Load(manifestPath);
+        var expectedForCurrentRelease = manifest.Components.Where(component => component.Kind == "revit-addin")
+            .Select(component => BuildAddinControl(releaseRoot, manifest, component).Ownership).ToList();
+        if (state.SchemaVersion == 1) return expectedForCurrentRelease;
+
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var identities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var control in state.OwnedAddinManifests)
+        {
+            ValidateOwnershipRecord(control);
+            if (!paths.Add(Path.GetFullPath(control.ManifestPath)))
+                throw new DeploymentException(ExitCodes.ValidationFailed, $"Installed state repeats add-in manifest path '{control.ManifestPath}'.");
+            if (!identities.Add($"{control.RevitYear}|{Guid.Parse(control.AddInId):D}"))
+                throw new DeploymentException(ExitCodes.ValidationFailed, $"Installed state repeats AddInId '{control.AddInId}' for Revit {control.RevitYear}.");
+        }
+        foreach (var expected in expectedForCurrentRelease)
+        {
+            var actual = state.OwnedAddinManifests.SingleOrDefault(control => PathsEqual(control.ManifestPath, expected.ManifestPath));
+            if (actual == null || !actual.ManifestSha256.Equals(expected.ManifestSha256, StringComparison.OrdinalIgnoreCase) ||
+                !actual.AddInId.Equals(expected.AddInId, StringComparison.OrdinalIgnoreCase) || !PathsEqual(actual.AssemblyPath, expected.AssemblyPath))
+                throw new DeploymentException(ExitCodes.ValidationFailed, $"Installed ownership state does not bind current release control '{expected.ManifestPath}'.");
+        }
+        return state.OwnedAddinManifests.Select(CloneOwnership).ToList();
+    }
+
+    private static OwnedAddinManifest CloneOwnership(OwnedAddinManifest source) => new()
+    {
+        RevitYear = source.RevitYear,
+        ProfileId = source.ProfileId,
+        ManifestPath = source.ManifestPath,
+        ManifestFileName = source.ManifestFileName,
+        AddInId = source.AddInId,
+        FullClassName = source.FullClassName,
+        AssemblyPath = source.AssemblyPath,
+        ManifestSha256 = source.ManifestSha256
+    };
+
+    private void SaveSuccessfulState(string releaseVersion, List<OwnedAddinManifest> ownership)
     {
         var state = LoadState(required: false) ?? new InstalledState();
         state.SuccessfulReleases.RemoveAll(x => x.Equals(releaseVersion, StringComparison.OrdinalIgnoreCase));
         state.SuccessfulReleases.Add(releaseVersion);
         state.CurrentRelease = releaseVersion;
         state.UpdatedAtUtc = _context.UtcNow().ToString("O");
+        state.SchemaVersion = 2;
+        state.OwnedAddinManifests = ownership;
         SaveState(state);
     }
 
@@ -578,8 +844,20 @@ public sealed class DeploymentEngine
         }
         try
         {
-            return JsonSerializer.Deserialize<InstalledState>(File.ReadAllText(_context.StatePath), ReleaseManifest.JsonOptions)
+            var state = JsonSerializer.Deserialize<InstalledState>(File.ReadAllText(_context.StatePath), ReleaseManifest.JsonOptions)
                 ?? throw new InvalidDataException("State was empty.");
+            if (state.SchemaVersion is not (1 or 2)) throw new InvalidDataException($"Unsupported state schemaVersion {state.SchemaVersion}.");
+            if (string.IsNullOrWhiteSpace(state.CurrentRelease)) throw new InvalidDataException("State currentRelease is missing.");
+            if (state.SuccessfulReleases.Count == 0 || !state.SuccessfulReleases.Contains(state.CurrentRelease, StringComparer.OrdinalIgnoreCase))
+                throw new InvalidDataException("State successfulReleases does not contain currentRelease.");
+            ReleaseManifest.EnsureSafeBaseName(state.CurrentRelease, "state currentRelease");
+            var releases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var release in state.SuccessfulReleases)
+            {
+                ReleaseManifest.EnsureSafeBaseName(release, "state successful release");
+                if (!releases.Add(release)) throw new InvalidDataException($"State repeats successful release '{release}'.");
+            }
+            return state;
         }
         catch (Exception ex) { throw new DeploymentException(ExitCodes.ValidationFailed, $"Installed state is invalid: {ex.Message}", ex); }
     }
@@ -605,10 +883,16 @@ public sealed class DeploymentEngine
         }
     }
 
-    private void ValidateActivatedRelease(string releaseRoot, ReleaseManifest manifest, IReadOnlyCollection<ReleaseComponent> components)
+    private void ValidateActivatedRelease(string releaseRoot, ReleaseManifest manifest, IReadOnlyCollection<ReleaseComponent> components, ActivationResult activation)
     {
         var validation = ValidateInstalledRelease(releaseRoot, manifest, components, includeNetwork: false);
         if (!validation.Ok) throw new DeploymentException(ExitCodes.ValidationFailed, validation.Message);
+        foreach (var control in activation.Ownership) AssertOwnedManifest(control);
+        foreach (var control in activation.Obsolete)
+        {
+            if (File.Exists(control.ManifestPath))
+                throw new DeploymentException(ExitCodes.ValidationFailed, $"Obsolete installer-owned Revit add-in manifest is still present: {control.ManifestPath}");
+        }
     }
 
     private static Exception PreserveOriginalFailure(Exception original, IReadOnlyCollection<Exception> recoveryFailures)
@@ -786,4 +1070,9 @@ public sealed class DeploymentEngine
         }
         catch { /* The primary operation result remains authoritative if result-file persistence is unavailable. */ }
     }
+
+    private sealed record AddinControl(string Xml, OwnedAddinManifest Ownership);
+    private sealed record AddinEntry(string Assembly, string FullClassName, string AddInId);
+    private sealed record PlannedActivation(List<AddinControl> Targets, List<OwnedAddinManifest> Obsolete, List<OwnedAddinManifest> Retained);
+    private sealed record ActivationResult(List<OwnedAddinManifest> Ownership, List<OwnedAddinManifest> Obsolete);
 }

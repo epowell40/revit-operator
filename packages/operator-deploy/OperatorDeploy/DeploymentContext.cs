@@ -14,6 +14,7 @@ public sealed class DeploymentContext
     public Func<DateTimeOffset> UtcNow { get; init; } = () => DateTimeOffset.UtcNow;
     public Func<string, string?> GetEnvironmentVariable { get; init; } = Environment.GetEnvironmentVariable;
     public IDesktopShortcutManager DesktopShortcuts { get; init; } = DesktopShortcutManager.CreateDefault();
+    public Func<IDisposable?> TryAcquireDeploymentMutex { get; init; } = DeploymentMutex.TryAcquire;
 
     public string ProductRoot => Path.Combine(LocalAppData, "RevitOperator");
     public string ReleasesRoot => Path.Combine(ProductRoot, "releases");
@@ -27,6 +28,45 @@ public sealed class DeploymentContext
 
     public bool IsRevitInstalled(string year)
         => File.Exists(Path.Combine(ProgramFiles, "Autodesk", $"Revit {year}", "Revit.exe"));
+}
+
+internal static class DeploymentMutex
+{
+    private const string Name = @"Global\BIMTools.RevitOperator.OperatorDeploy.v1";
+
+    public static IDisposable? TryAcquire()
+    {
+        var mutex = new Mutex(initiallyOwned: false, Name);
+        try
+        {
+            var acquired = false;
+            try { acquired = mutex.WaitOne(TimeSpan.Zero); }
+            catch (AbandonedMutexException) { acquired = true; }
+            if (!acquired)
+            {
+                mutex.Dispose();
+                return null;
+            }
+            return new Lease(mutex);
+        }
+        catch
+        {
+            mutex.Dispose();
+            throw;
+        }
+    }
+
+    private sealed class Lease(Mutex mutex) : IDisposable
+    {
+        private Mutex? _mutex = mutex;
+        public void Dispose()
+        {
+            var value = Interlocked.Exchange(ref _mutex, null);
+            if (value == null) return;
+            try { value.ReleaseMutex(); }
+            finally { value.Dispose(); }
+        }
+    }
 }
 
 public sealed class DeploymentOptions
