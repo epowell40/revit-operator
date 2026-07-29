@@ -58,10 +58,19 @@ export type ToolCertificationRecord = {
   record_hash: string;
 };
 
+export type TypedMcpRequestFixture = {
+  alias: string;
+  arguments: JsonValue;
+  request: JsonValue;
+};
+
 export type ToolCertificationCandidate = Pick<
   ToolCertificationRecord,
   "method" | "path" | "typed_mcp_aliases" | "request_hash" | "effect_hash"
->;
+> & {
+  request: JsonValue;
+  typed_mcp_request_fixtures: TypedMcpRequestFixture[];
+};
 
 export type ToolCertificationCandidatesFile = {
   schema: "revit-operator.tool-certification-candidates.v1";
@@ -400,12 +409,44 @@ export function parseToolCertificationCandidates(value: unknown): ToolCertificat
   const candidates = value.candidates.map((candidate, index) => {
     const location = `candidates.candidates[${index}]`;
     assertPlainObject(candidate, location);
-    assertExactKeys(candidate, ["method", "path", "typed_mcp_aliases", "request_hash", "effect_hash"], location);
+    assertExactKeys(candidate, [
+      "method",
+      "path",
+      "typed_mcp_aliases",
+      "request",
+      "typed_mcp_request_fixtures",
+      "request_hash",
+      "effect_hash"
+    ], location);
     assertCanonicalMethod(candidate.method, `${location}.method`);
     assertCanonicalToolPath(candidate.path, `${location}.path`);
     assertTypedMcpAliases(candidate.typed_mcp_aliases, `${location}.typed_mcp_aliases`);
+    assertJsonValue(candidate.request, `${location}.request`);
+    const candidateRequest = candidate.request;
+    assertArray(candidate.typed_mcp_request_fixtures, `${location}.typed_mcp_request_fixtures`);
+    const fixtureAliases: string[] = [];
+    candidate.typed_mcp_request_fixtures.forEach((fixture, fixtureIndex) => {
+      const fixtureLocation = `${location}.typed_mcp_request_fixtures[${fixtureIndex}]`;
+      assertPlainObject(fixture, fixtureLocation);
+      assertExactKeys(fixture, ["alias", "arguments", "request"], fixtureLocation);
+      assertTypedMcpAliases([fixture.alias], `${fixtureLocation}.alias`);
+      assertJsonValue(fixture.arguments, `${fixtureLocation}.arguments`);
+      assertJsonValue(fixture.request, `${fixtureLocation}.request`);
+      if (canonicalJson(fixture.request) !== canonicalJson(candidateRequest)) {
+        throw new Error(`${fixtureLocation}.request must match the candidate exact outbound request`);
+      }
+      fixtureAliases.push(fixture.alias as string);
+    });
+    if (canonicalJson(fixtureAliases) !== canonicalJson(candidate.typed_mcp_aliases)) {
+      throw new Error(
+        `${location}.typed_mcp_request_fixtures must provide one ordinal fixture for every typed MCP alias`
+      );
+    }
     assertSha256(candidate.request_hash, `${location}.request_hash`);
     assertSha256(candidate.effect_hash, `${location}.effect_hash`);
+    if (candidate.request_hash !== computeRequestHash(candidate.method, candidate.path, candidate.request)) {
+      throw new Error(`${location}.request_hash does not match the candidate exact outbound request`);
+    }
     const parsed = candidate as unknown as ToolCertificationCandidate;
     const identity = certificationIdentity(parsed);
     if (identities.has(identity)) throw new Error(`Duplicate candidate identity: ${identity}`);
@@ -461,6 +502,13 @@ export function verifyCertificationCandidates(
   }
   for (const identity of actual) {
     if (!expected.has(identity)) throw new Error(`Unexpected certification candidate identity: ${identity}`);
+  }
+  const candidatesByIdentity = new Map(candidates.candidates.map(candidate => [certificationIdentity(candidate), candidate]));
+  for (const record of evidence.records) {
+    const candidate = candidatesByIdentity.get(certificationIdentity(record));
+    if (!candidate || canonicalJson(candidate.request) !== canonicalJson(record.request)) {
+      throw new Error(`Certification evidence request does not match its exact candidate request: ${record.method} ${record.path}`);
+    }
   }
   const expectedAliases = new Set(candidates.candidates.map(aliasBindingIdentity));
   const actualAliases = new Set(evidence.records.map(aliasBindingIdentity));
