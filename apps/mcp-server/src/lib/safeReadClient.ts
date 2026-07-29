@@ -134,6 +134,14 @@ function abortError(): DOMException {
   return new DOMException("The certified SafeRead request deadline elapsed.", "AbortError");
 }
 
+function cancelBestEffort(cancel: () => Promise<unknown>): void {
+  try {
+    void cancel().catch(() => undefined);
+  } catch {
+    // Cleanup must never delay or replace the bounded public request outcome.
+  }
+}
+
 async function awaitWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) throw abortError();
   return await new Promise<T>((resolve, reject) => {
@@ -153,14 +161,14 @@ async function awaitWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Prom
 async function readBoundedResponse(response: Response, signal: AbortSignal): Promise<string> {
   const declared = response.headers.get("content-length");
   if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > SAFE_READ_RESPONSE_MAX_BYTES)) {
-    await response.body?.cancel("SafeRead response declared an invalid or oversized body.").catch(() => undefined);
+    if (response.body) cancelBestEffort(() => response.body!.cancel("SafeRead response declared an invalid or oversized body."));
     throw new Error("SafeRead response exceeds the byte limit.");
   }
   if (!response.body) throw new SafeReadResponseTransportError("SafeRead response body is unavailable after dispatch.");
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
-  const cancelReader = () => { void reader.cancel(abortError()).catch(() => undefined); };
+  const cancelReader = () => cancelBestEffort(() => reader.cancel(abortError()));
   signal.addEventListener("abort", cancelReader, { once: true });
   try {
     while (true) {
@@ -168,14 +176,14 @@ async function readBoundedResponse(response: Response, signal: AbortSignal): Pro
       try {
         next = await awaitWithAbort(reader.read(), signal);
       } catch (error) {
-        await reader.cancel(error).catch(() => undefined);
+        cancelBestEffort(() => reader.cancel(error));
         throw new SafeReadResponseTransportError("SafeRead response transport ended before the complete body was received.", error);
       }
       if (signal.aborted) throw new SafeReadResponseTransportError("SafeRead response deadline elapsed before the complete body was received.", abortError());
       if (next.done) break;
       total += next.value.byteLength;
       if (total > SAFE_READ_RESPONSE_MAX_BYTES) {
-        await reader.cancel();
+        cancelBestEffort(() => reader.cancel("SafeRead response exceeded the byte limit."));
         throw new Error("SafeRead response exceeds the byte limit.");
       }
       chunks.push(next.value);

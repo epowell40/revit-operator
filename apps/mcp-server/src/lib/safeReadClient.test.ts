@@ -113,6 +113,23 @@ function laboratoryEnv(): () => void {
   };
 }
 
+async function rejectionWithin(promise: Promise<unknown>, maxMs = 250): Promise<unknown> {
+  let timer: NodeJS.Timeout | undefined;
+  const result = await Promise.race([
+    promise.then(
+      value => ({ state: "fulfilled" as const, value }),
+      error => ({ state: "rejected" as const, error })
+    ),
+    new Promise<{ state: "timeout" }>(resolve => {
+      timer = setTimeout(() => resolve({ state: "timeout" }), maxMs);
+    })
+  ]);
+  if (timer) clearTimeout(timer);
+  if (result.state === "timeout") assert.fail(`SafeRead request did not settle within ${maxMs} ms.`);
+  if (result.state === "fulfilled") assert.fail("SafeRead request unexpectedly fulfilled.");
+  return result.error;
+}
+
 test("SafeRead runtime values and computed hashes match the canonical cross-runtime fixture", () => {
   const contract = SAFE_READ_CONTRACT;
   const canonicalBody = JSON.parse(contract.route.canonical_body_json) as unknown;
@@ -650,5 +667,101 @@ test("SafeRead rejects oversized, truncated, and malformed bodies with no retry"
       assert.equal(calls, 1);
     }
     assert.equal(oversizedCancellations, 1);
+  } finally { restore(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("SafeRead declared-oversize response settles when body cancellation never does", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "safe-read-noncooperative-declared-"));
+  const restore = laboratoryEnv();
+  let calls = 0;
+  let cancellations = 0;
+  try {
+    writeInstance(root, instance());
+    const error = await rejectionWithin(
+      runWithRevitToolAlias("revit_count_sheets_certified", () => countSheetsViaSafeRead({
+        discovery: { instancesDirectory: root, revitYear: 2024, isPidAlive: () => true },
+        fetch: async () => {
+          calls += 1;
+          return new Response(new ReadableStream<Uint8Array>({
+            cancel() {
+              cancellations += 1;
+              return new Promise<void>(() => undefined);
+            }
+          }), { status: 200, headers: { "content-length": String(SAFE_READ_RESPONSE_MAX_BYTES + 1) } });
+        }
+      }))
+    );
+    assert.ok(error instanceof SafeReadCallError);
+    assert.equal(error.code, "safe_read_invalid_response");
+    assert.equal(error.retryable, false);
+    assert.equal(error.request_dispatched, true);
+    assert.equal(error.outcome_unknown, true);
+    assert.equal(calls, 1);
+    assert.equal(cancellations, 1);
+  } finally { restore(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("SafeRead streamed-oversize response settles when reader cancellation never does", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "safe-read-noncooperative-streamed-"));
+  const restore = laboratoryEnv();
+  let calls = 0;
+  let cancellations = 0;
+  try {
+    writeInstance(root, instance());
+    const error = await rejectionWithin(
+      runWithRevitToolAlias("revit_count_sheets_certified", () => countSheetsViaSafeRead({
+        discovery: { instancesDirectory: root, revitYear: 2024, isPidAlive: () => true },
+        fetch: async () => {
+          calls += 1;
+          return new Response(new ReadableStream<Uint8Array>({
+            start(controller) { controller.enqueue(new Uint8Array(SAFE_READ_RESPONSE_MAX_BYTES + 1)); },
+            cancel() {
+              cancellations += 1;
+              return new Promise<void>(() => undefined);
+            }
+          }), { status: 200 });
+        }
+      }))
+    );
+    assert.ok(error instanceof SafeReadCallError);
+    assert.equal(error.code, "safe_read_invalid_response");
+    assert.equal(error.retryable, false);
+    assert.equal(error.request_dispatched, true);
+    assert.equal(error.outcome_unknown, true);
+    assert.equal(calls, 1);
+    assert.equal(cancellations, 1);
+  } finally { restore(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("SafeRead stalled response settles at the deadline when reader cancellation never does", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "safe-read-noncooperative-stall-"));
+  const restore = laboratoryEnv();
+  let calls = 0;
+  let cancellations = 0;
+  try {
+    writeInstance(root, instance());
+    const error = await rejectionWithin(
+      runWithRevitToolAlias("revit_count_sheets_certified", () => countSheetsViaSafeRead({
+        discovery: { instancesDirectory: root, revitYear: 2024, isPidAlive: () => true },
+        timeoutMs: 10,
+        fetch: async () => {
+          calls += 1;
+          return new Response(new ReadableStream<Uint8Array>({
+            cancel() {
+              cancellations += 1;
+              return new Promise<void>(() => undefined);
+            }
+          }), { status: 200 });
+        }
+      }))
+    );
+    assert.ok(error instanceof SafeReadCallError);
+    assert.equal(error.code, "safe_read_transport_outcome_unknown");
+    assert.equal(error.retryable, false);
+    assert.equal(error.request_dispatched, true);
+    assert.equal(error.outcome_unknown, true);
+    assert.equal(error.phase, "transport");
+    assert.equal(calls, 1);
+    assert.equal(cancellations, 1);
   } finally { restore(); fs.rmSync(root, { recursive: true, force: true }); }
 });
