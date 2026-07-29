@@ -42,6 +42,7 @@ test("metadata and native discovery bypass the Revit event queue while actions p
   const runner = addinFile(path.join("RevitBridge", "Operator", "OperatorActionRunner.cs"));
   const server = addinFile(path.join("RevitBridge", "Server", "RevitHttpServer.cs"));
   const courier = addinFile(path.join("RevitBridge", "Operator", "OperatorRevitCourierWorker.cs"));
+  const courierBusyRetry = addinFile(path.join("RevitBridge.Common", "OperatorCourierBusyRetryExecutor.cs"));
   for (const route of ["tool-registry", "tool-search", "tool-doc", "tool-examples", "native-api-policy", "native-api-catalog", "native-api-search"]) {
     assert.match(runner, new RegExp(`/revit/${route}`));
     assert.match(server, new RegExp(`/revit/${route}`));
@@ -51,10 +52,11 @@ test("metadata and native discovery bypass the Revit event queue while actions p
   assert.match(server, /X-Operator-Correlation-Id/);
   assert.match(server, /deadline\.CreateTimeoutException\(correlationId\)/);
   assert.match(server, /root is RevitEventQueueException/);
-  assert.match(courier, /ExecuteWithBusyRetryAsync/);
-  assert.match(courier, /failure\.Code, "revit_external_event_busy"/);
-  assert.match(courier, /failure\.Retryable[\s\S]{0,120}!failure\.OutcomeUnknown/);
-  assert.match(courier, /Task\.Delay\(delayMs, cancellationToken\)/);
+  assert.match(courier, /OperatorCourierBusyRetryExecutor\.ExecuteAsync/);
+  assert.match(courierBusyRetry, /failure\.Code, "revit_external_event_busy"/);
+  assert.match(courierBusyRetry, /failure\.Retryable[\s\S]{0,160}!failure\.OutcomeUnknown/);
+  assert.match(courierBusyRetry, /Task\.Delay\(milliseconds, token\)/);
+  assert.match(courierBusyRetry, /await delayAsync\(delayMs, cancellationToken\)/);
 });
 
 test("high-value spatial query contracts reject stale payloads before handler execution", () => {
