@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$TempRoot = ''
+    [string]$TempRoot = '',
+    [switch]$Hermetic
 )
 
 $ErrorActionPreference = 'Stop'
@@ -258,16 +259,18 @@ Assert-Proof ($LASTEXITCODE -eq 1) ("PE header tamper was not rejected: " + [str
 $headerReceipt = Get-Content -LiteralPath (Join-Path $headerRoot 'artifact.equivalence.json') -Raw | ConvertFrom-Json
 Assert-Proof (@($headerReceipt.issues.code) -contains 'PE_CONTENT_CHANGED') 'PE header tamper rejection omitted PE_CONTENT_CHANGED'
 
-$installedRevitPaths = @('2023', '2024', '2025') | ForEach-Object { "C:\Program Files\Autodesk\Revit $_\RevitAPI.dll" }
-Assert-Proof (@($installedRevitPaths | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) }).Count -eq 0) 'installed Revit target reference pair is missing'
-$realTargetRoot = Join-Path $TempRoot 'installed-revit-target-inventory'
-[System.IO.Directory]::CreateDirectory($realTargetRoot) | Out-Null
-$realTargetManifest = Join-Path $realTargetRoot 'manifest.json'
-New-ProofFixtureManifest -ProofRoot $proofRoot -SourceRoot $positiveSource -ReferenceRoot $referenceRoot -ManifestPath $realTargetManifest -UseInstalledRevit
-$realTargetOutput = @(& 'C:\Program Files\dotnet\dotnet.exe' $toolPath inventory --manifest $realTargetManifest --output-dir (Join-Path $realTargetRoot 'output') 2>&1)
-Assert-Proof ($LASTEXITCODE -eq 0) ("installed Revit target inventory failed: " + [string]::Join("`n", @($realTargetOutput)))
-$realTargetReceipt = Get-Content -LiteralPath (Join-Path $realTargetRoot 'output\proof.receipt.json') -Raw | ConvertFrom-Json
-Assert-Proof (@($realTargetReceipt.issues).Count -eq 0) 'installed Revit target inventory contained proof issues'
+if (-not $Hermetic) {
+    $installedRevitPaths = @('2023', '2024', '2025') | ForEach-Object { "C:\Program Files\Autodesk\Revit $_\RevitAPI.dll" }
+    Assert-Proof (@($installedRevitPaths | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) }).Count -eq 0) 'installed Revit target reference pair is missing'
+    $realTargetRoot = Join-Path $TempRoot 'installed-revit-target-inventory'
+    [System.IO.Directory]::CreateDirectory($realTargetRoot) | Out-Null
+    $realTargetManifest = Join-Path $realTargetRoot 'manifest.json'
+    New-ProofFixtureManifest -ProofRoot $proofRoot -SourceRoot $positiveSource -ReferenceRoot $referenceRoot -ManifestPath $realTargetManifest -UseInstalledRevit
+    $realTargetOutput = @(& 'C:\Program Files\dotnet\dotnet.exe' $toolPath inventory --manifest $realTargetManifest --output-dir (Join-Path $realTargetRoot 'output') 2>&1)
+    Assert-Proof ($LASTEXITCODE -eq 0) ("installed Revit target inventory failed: " + [string]::Join("`n", @($realTargetOutput)))
+    $realTargetReceipt = Get-Content -LiteralPath (Join-Path $realTargetRoot 'output\proof.receipt.json') -Raw | ConvertFrom-Json
+    Assert-Proof (@($realTargetReceipt.issues).Count -eq 0) 'installed Revit target inventory contained proof issues'
+}
 
 $negativeCases = Get-Content -LiteralPath (Join-Path $proofRoot 'fixtures\negative\cases.json') -Raw | ConvertFrom-Json
 $negativePasses = 0
@@ -392,7 +395,7 @@ foreach ($year in @('2023', '2024', '2025')) {
 # Regenerate every candidate inventory and feed it back as `expected`; these
 # mutation paths must still fail on verifier-owned policy, never stale hashes.
 $regeneratedCases = Get-Content -LiteralPath (Join-Path $proofRoot 'fixtures\negative\regenerated-cases.json') -Raw | ConvertFrom-Json
-foreach ($case in $regeneratedCases) {
+foreach ($case in @($regeneratedCases | Where-Object { -not $Hermetic })) {
     $caseRoot = Join-Path $TempRoot ('negative-regenerated-' + [string]$case.name)
     $sourceRoot = Join-Path $caseRoot 'source'
     [System.IO.Directory]::CreateDirectory($sourceRoot) | Out-Null
@@ -402,11 +405,12 @@ foreach ($case in $regeneratedCases) {
     Assert-Proof ($sourceText.Contains($find)) "regenerated negative mutation anchor was not found for $($case.name)"
     Write-ProofUtf8 $sourcePath ($sourceText.Replace($find, [string]$case.replace))
     $manifestPath = Join-Path $caseRoot 'manifest.json'
-    New-ProofFixtureManifest -ProofRoot $proofRoot -SourceRoot $sourceRoot -ReferenceRoot $referenceRoot -ManifestPath $manifestPath -UseInstalledRevit
+    New-ProofFixtureManifest -ProofRoot $proofRoot -SourceRoot $sourceRoot -ReferenceRoot $referenceRoot -ManifestPath $manifestPath -UseInstalledRevit:(-not $Hermetic)
     if ($case.psobject.Properties.Name -contains 'attemptCandidateAuthorization' -and [bool]$case.attemptCandidateAuthorization) {
         $manifestObject = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
         $saveSymbols = @('2023', '2024', '2025') | ForEach-Object {
-            $identity = Get-ProofAssemblyIdentity "C:\Program Files\Autodesk\Revit $_\RevitAPI.dll"
+            $revitApiPath = if ($Hermetic) { Join-Path $referenceRoot "$_\RevitAPI.dll" } else { "C:\Program Files\Autodesk\Revit $_\RevitAPI.dll" }
+            $identity = Get-ProofAssemblyIdentity $revitApiPath
             "Method:void global::Autodesk.Revit.DB.Document.Save()|assembly=$identity"
         }
         $manifestObject.policy.allowedSensitiveSymbols = @($saveSymbols)
@@ -439,7 +443,7 @@ Assert-Proof ([string]::Join("`n", @($gitBefore)) -ceq [string]::Join("`n", @($g
     AmbientDirectoryBuildFalsifier = 'PASS'
     LineEndingDeterminismFalsifier = 'PASS'
     TargetLockFalsifiers = 'PASS'
-    InstalledRevitTargetInventory = 'PASS'
+    InstalledRevitTargetInventory = if ($Hermetic) { 'EXPLICITLY_NOT_IN_HERMETIC_LANE' } else { 'PASS' }
     SerializationBoundaryFalsifiers = 'PASS'
     ExplicitLockedSourceSetGate = 'PASS'
     RepositoryWriteFalsifier = 'PASS'
@@ -448,5 +452,5 @@ Assert-Proof ([string]::Join("`n", @($gitBefore)) -ceq [string]::Join("`n", @($g
     ValidPeMalformedIlGate = 'PASS'
     AuthenticodeCanonicalEquivalenceGate = 'PASS'
     AuthenticodeOverlayFalsifier = 'PASS'
-    RegeneratedInventoryAdversaries = @($regeneratedCases).Count
+    RegeneratedInventoryAdversaries = if ($Hermetic) { 'EXPLICITLY_NOT_IN_HERMETIC_LANE' } else { @($regeneratedCases).Count }
 }

@@ -153,6 +153,16 @@ foreach($year in '2023','2024','2025'){
   $executorEntry.provenance.equivalenceReceiptSha256=Get-SafeReadSha256 (Join-Path $targetProofRoot 'artifact.equivalence.json')
   $executorEntry.provenance.canonicalPeSha256=[string]$equivalence.canonicalPeSha256
 
+  # The net48 compiler resolves the ACL extension surface through framework
+  # facades and therefore does not retain a direct metadata reference, even
+  # though the package asset is required at runtime. Seed that exact dependency
+  # explicitly; normal identity closure below pulls its transitive dependencies.
+  if($expected.Framework -ceq 'net48'){
+    $accessControlSource=Join-Path $dependencySearchRoot 'System.IO.FileSystem.AccessControl.dll'
+    if(-not(Test-Path -LiteralPath $accessControlSource -PathType Leaf)){throw "SafeRead target $year is missing System.IO.FileSystem.AccessControl.dll required by secure local storage."}
+    Add-Payload $accessControlSource 'System.IO.FileSystem.AccessControl.dll' 'runtime_dependency' $false $null
+  }
+
   $processed=@{}
   do{
     $added=$false

@@ -27,6 +27,7 @@
     <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostApplication.cs" Link="Production\HostApplication.cs" />
     <Compile Include="..\..\src\RevitOperator.SafeReadHost\CertifiedSafeReadHttpHost.cs" Link="Production\CertifiedSafeReadHttpHost.cs" />
     <Content Include="..\..\fixtures\**\*.json" Link="fixtures\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\..\..\contracts\safe-read\contract.v1.json" Link="fixtures\contract.v1.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -516,6 +516,10 @@ function Assert-SafeReadBundle {
     if ($hostPayload.Count -ne 1 -or $hostPayload[0].path -cne "payload/$script:HostDll" -or -not [bool]$hostPayload[0].revitApiBound) { throw "SafeRead target $year does not contain exactly one SafeRead host payload." }
     $executorPayload = @($payload | Where-Object { $_.role -ceq 'certified_executor' })
     if ($executorPayload.Count -ne 1 -or $executorPayload[0].path -cne "payload/$script:CertifiedExecutorDll" -or -not [bool]$executorPayload[0].revitApiBound) { throw "SafeRead target $year does not contain exactly one certified executor payload." }
+    if($expected.Framework -ceq 'net48'){
+      $accessControlPayload=@($payload|Where-Object{$_.role -ceq 'runtime_dependency' -and $_.path -ceq 'payload/System.IO.FileSystem.AccessControl.dll' -and $_.assembly.name -ceq 'System.IO.FileSystem.AccessControl'})
+      if($accessControlPayload.Count -ne 1){throw "SafeRead target $year must package exactly one System.IO.FileSystem.AccessControl runtime dependency."}
+    }
     foreach($other in @($payload|Where-Object role -cne 'host'|Where-Object role -cne 'certified_executor')){if($other.role -cne 'runtime_dependency' -or [bool]$other.revitApiBound){throw "SafeRead target $year has an unsupported payload role."}}
     $targetRoot = Join-Path $root "targets\$year"
     $expectedPaths = @($payload.path) + @("payload/$script:RuntimeAttestationName","payload/$script:RuntimeAttestationPinName",'proof/proof.receipt.json','proof/artifact.equivalence.json',"manifest/$script:TemplateName")

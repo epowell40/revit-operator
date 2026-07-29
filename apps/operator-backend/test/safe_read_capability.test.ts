@@ -51,6 +51,22 @@ const DOCUMENT_SESSION_ID = "33333333-3333-3333-3333-333333333333";
 const CLIENT_SESSION_ID = "44444444-4444-4444-4444-444444444444";
 const REQUEST_ID = "55555555-5555-5555-5555-555555555555";
 const ATTEMPT_ID = "66666666-6666-6666-6666-666666666666";
+const SAFE_READ_CONTRACT = JSON.parse(fs.readFileSync(
+  path.resolve("..", "..", "contracts", "safe-read", "contract.v1.json"),
+  "utf8"
+)) as {
+  identity: { executor_id: string };
+  route: {
+    route_id: string; method: string; path: string; request_schema: string;
+    canonical_body_json: string; effect: JsonValue; policy: JsonValue;
+    body_sha256: string; request_hash: string; effect_hash: string;
+    route_contract_sha256: string; policy_sha256: string;
+  };
+  schemas: Record<string, string>;
+  keys: Record<string, string[]>;
+  ids: Record<string, string>;
+  backend: Record<string, string>;
+};
 
 type Fixture = ReturnType<typeof fixture>;
 
@@ -176,26 +192,59 @@ test("route is one exact direct-only read contract with no courier or policy/too
   });
 });
 
-test("exported golden contract vectors freeze exact body and server-derived hashes", () => {
+test("exported runtime contract matches the canonical cross-runtime fixture and recomputed hashes", () => {
+  const contract = SAFE_READ_CONTRACT;
+  const canonicalBody = JSON.parse(contract.route.canonical_body_json) as JsonValue;
+  assert.equal(rawSha256(canonicalJson(canonicalBody)), contract.route.body_sha256);
+  assert.equal(rawSha256(canonicalJson({
+    method: contract.route.method,
+    path: contract.route.path,
+    body: canonicalBody
+  })), contract.route.request_hash);
+  assert.equal(rawSha256(canonicalJson(contract.route.effect)), contract.route.effect_hash);
+  assert.equal(rawSha256(canonicalJson({
+    route_id: contract.route.route_id,
+    method: contract.route.method,
+    path: contract.route.path,
+    canonical_body_json: contract.route.canonical_body_json,
+    request_hash: contract.route.request_hash,
+    effect_hash: contract.route.effect_hash
+  })), contract.route.route_contract_sha256);
+  assert.equal(rawSha256(canonicalJson(contract.route.policy)), contract.route.policy_sha256);
   assert.deepEqual(SAFE_READ_GOLDEN_CONTRACT, {
-    route_id: "safe_read.sheet_count.v1",
-    executor_id: "revit-operator.safe-read-host.v1",
-    method: "POST",
-    path: "/revit/certified/sheets/count",
-    body_schema: "revit-operator.safe-read.sheets-count.request.v1",
-    canonical_body_json: "{\"schema\":\"revit-operator.safe-read.sheets-count.request.v1\"}",
-    body_sha256: "sha256:3365135151daf7e1cf9b20c5a3b49a2b5b3b0e42eab9a73a404739a7cdad65d5",
-    request_hash: "sha256:106a5e8cbfce57eb12d94757eb052e660ffc222855ea1b77548b6865d8f769e1",
-    effect_hash: "sha256:82669f8c2d957b0bbce5bfa5f7846ef1b7b0f46d9818aec41fbbc4c03de001dc",
-    route_contract_sha256: "sha256:cc80c231ba289396516164cb0fdbc3c71779ac018e717085f07a544530e68874",
-    policy_sha256: "sha256:23692b21a7e728e9c1ce5eec9580dcec4f3ac7f25d3d95059899c680a17aad67",
-    capability_id_pattern: "src1_ + 32-byte base64url (48 chars)",
-    receipt_id_pattern: "srr1_ + 32-byte base64url (48 chars)",
-    preauthorize_endpoint: "/api/safe-read/direct/preauthorize",
-    authorize_execution_endpoint: "/api/safe-read/direct/authorize-execution",
-    nonce_transport: "host-generated; sha256 in preauthorization body; raw nonce in final body only",
-    receipt_hmac_domain: "safe-read-final-receipt-v1"
+    route_id: contract.route.route_id,
+    executor_id: contract.identity.executor_id,
+    method: contract.route.method,
+    path: contract.route.path,
+    body_schema: contract.route.request_schema,
+    canonical_body_json: contract.route.canonical_body_json,
+    body_sha256: contract.route.body_sha256,
+    request_hash: contract.route.request_hash,
+    effect_hash: contract.route.effect_hash,
+    route_contract_sha256: contract.route.route_contract_sha256,
+    policy_sha256: contract.route.policy_sha256,
+    capability_id_pattern: contract.ids.capability_id_description,
+    receipt_id_pattern: contract.ids.receipt_id_description,
+    preauthorize_endpoint: contract.backend.preauthorize_endpoint,
+    authorize_execution_endpoint: contract.backend.authorize_execution_endpoint,
+    nonce_transport: contract.backend.nonce_transport,
+    receipt_hmac_domain: contract.backend.receipt_hmac_domain
   });
+  assert.deepEqual([
+    SAFE_READ_PREAUTHORIZATION_SCHEMA,
+    SAFE_READ_PREAUTHORIZATION_RESPONSE_SCHEMA,
+    SAFE_READ_FINAL_AUTHORIZATION_SCHEMA,
+    SAFE_READ_FINAL_RECEIPT_SCHEMA,
+    SAFE_READ_RUNTIME_ATTESTATION_SCHEMA
+  ], [
+    contract.schemas.preauthorization_request,
+    contract.schemas.preauthorization_response,
+    contract.schemas.final_authorization_request,
+    contract.schemas.final_authorization_receipt,
+    contract.schemas.runtime_attestation
+  ]);
+  assert.match("src1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", new RegExp(contract.ids.capability_id_regex));
+  assert.match("srr1_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", new RegExp(contract.ids.receipt_id_regex));
   assert.equal(SAFE_READ_BODY_SHA256, SAFE_READ_GOLDEN_CONTRACT.body_sha256);
   assert.equal(SAFE_READ_REQUEST_HASH, SAFE_READ_GOLDEN_CONTRACT.request_hash);
   assert.equal(SAFE_READ_EFFECT_HASH, SAFE_READ_GOLDEN_CONTRACT.effect_hash);

@@ -11,8 +11,6 @@ namespace RevitOperator.SafeReadHost.HostKernel
     {
         private const string ManifestName = "safe_read_runtime_attestation.v1.json";
         private const string PinName = "safe_read_runtime_attestation.v1.sha256";
-        private const string RouteContractSha256 = "sha256:cc80c231ba289396516164cb0fdbc3c71779ac018e717085f07a544530e68874";
-        private const string PolicySha256 = "sha256:23692b21a7e728e9c1ce5eec9580dcec4f3ac7f25d3d95059899c680a17aad67";
         private static readonly string[] AttestationKeys = { "schema", "state", "issued_at_utc", "expires_at_utc", "route_id", "route_contract_sha256", "policy_sha256", "proof_sha256", "executor_id", "runtime_tuple" };
         private static readonly string[] RuntimeKeys = { "host_content_sha256", "host_mvid", "revit_api_content_sha256", "revit_api_mvid", "revit_version" };
 
@@ -50,7 +48,7 @@ namespace RevitOperator.SafeReadHost.HostKernel
                 JsonElement root=document.RootElement;
                 if(!Exact(root,AttestationKeys)||Text(root,"schema")!=SafeReadContract.RuntimeAttestationSchema||Text(root,"state")!="active"||
                    Text(root,"route_id")!=SafeReadContract.RouteId||Text(root,"executor_id")!=SafeReadContract.ExecutorId||
-                   Text(root,"route_contract_sha256")!=RouteContractSha256||Text(root,"policy_sha256")!=PolicySha256||!Protocol.IsHash(Text(root,"proof_sha256")))
+                   Text(root,"route_contract_sha256")!=SafeReadContract.RouteContractSha256||Text(root,"policy_sha256")!=SafeReadContract.PolicySha256||!Protocol.IsHash(Text(root,"proof_sha256")))
                     throw new InvalidOperationException("SafeRead runtime attestation contract is invalid.");
                 DateTimeOffset issued,expires;
                 if(!ParseUtc(Text(root,"issued_at_utc"),out issued)||!ParseUtc(Text(root,"expires_at_utc"),out expires)||issued>now||expires<=now||expires<=issued)

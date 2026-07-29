@@ -12,6 +12,11 @@ namespace RevitOperator.SafeReadHost.HostKernel
         public const string Route = "/revit/certified/sheets/count";
         public const string RequestSchema = "revit-operator.safe-read.sheets-count.request.v1";
         public const string RequestJson = "{\"schema\":\"revit-operator.safe-read.sheets-count.request.v1\"}";
+        public const string BodySha256 = "sha256:3365135151daf7e1cf9b20c5a3b49a2b5b3b0e42eab9a73a404739a7cdad65d5";
+        public const string RequestHash = "sha256:106a5e8cbfce57eb12d94757eb052e660ffc222855ea1b77548b6865d8f769e1";
+        public const string EffectHash = "sha256:82669f8c2d957b0bbce5bfa5f7846ef1b7b0f46d9818aec41fbbc4c03de001dc";
+        public const string RouteContractSha256 = "sha256:cc80c231ba289396516164cb0fdbc3c71779ac018e717085f07a544530e68874";
+        public const string PolicySha256 = "sha256:23692b21a7e728e9c1ce5eec9580dcec4f3ac7f25d3d95059899c680a17aad67";
         public const string ResponseSchema = "revit-operator.safe-read.sheets-count.response.v1";
         public const string FailureSchema = "revit-operator.safe-read.failure.v1";
         public const string ExecutorId = "revit-operator.safe-read-host.v1";

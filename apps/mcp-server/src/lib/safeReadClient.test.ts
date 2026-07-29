@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -20,6 +21,8 @@ import {
   SafeReadDiscoveryError,
   SAFE_READ_EXECUTOR_ID,
   SAFE_READ_INSTANCE_SCHEMA,
+  SAFE_READ_MAX_PORT,
+  SAFE_READ_MIN_PORT,
   SAFE_READ_PRODUCT_ID,
   SAFE_READ_RESERVED_PATH_PREFIX,
   SAFE_READ_SHEETS_COUNT_PATH,
@@ -31,6 +34,36 @@ const guid = "4a3dd9c3-8eb0-4abe-a706-e519a2ef4a3d";
 const documentGuid = "e7ea87e5-e78f-4c9f-8e5f-e89726b00d2c";
 const hash = `sha256:${"a".repeat(64)}`;
 const startupToken = "A".repeat(43);
+const SAFE_READ_CONTRACT = JSON.parse(fs.readFileSync(
+  path.resolve("..", "..", "contracts", "safe-read", "contract.v1.json"),
+  "utf8"
+)) as {
+  identity: { product_id: string; executor_id: string };
+  route: Record<string, unknown> & {
+    route_id: string; method: string; path: string; reserved_path_prefix: string;
+    canonical_body_json: string; body_sha256: string; request_hash: string;
+    effect_hash: string; route_contract_sha256: string; policy_sha256: string;
+    effect: unknown; policy: unknown;
+  };
+  headers: string[];
+  schemas: Record<string, string>;
+  keys: Record<string, string[]>;
+  bounds: Record<string, number>;
+};
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function canonicalSha256(value: unknown): string {
+  return `sha256:${createHash("sha256").update(canonicalJson(value), "utf8").digest("hex")}`;
+}
 
 function instance(port = 5040, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   const base = {
@@ -80,7 +113,21 @@ function laboratoryEnv(): () => void {
   };
 }
 
-test("SafeRead cross-runtime golden literals freeze identity, route, body, and the exact six custom headers", () => {
+test("SafeRead runtime values and computed hashes match the canonical cross-runtime fixture", () => {
+  const contract = SAFE_READ_CONTRACT;
+  const canonicalBody = JSON.parse(contract.route.canonical_body_json) as unknown;
+  assert.equal(canonicalSha256(canonicalBody), contract.route.body_sha256);
+  assert.equal(canonicalSha256({ method: contract.route.method, path: contract.route.path, body: canonicalBody }), contract.route.request_hash);
+  assert.equal(canonicalSha256(contract.route.effect), contract.route.effect_hash);
+  assert.equal(canonicalSha256({
+    route_id: contract.route.route_id,
+    method: contract.route.method,
+    path: contract.route.path,
+    canonical_body_json: contract.route.canonical_body_json,
+    request_hash: contract.route.request_hash,
+    effect_hash: contract.route.effect_hash
+  }), contract.route.route_contract_sha256);
+  assert.equal(canonicalSha256(contract.route.policy), contract.route.policy_sha256);
   assert.deepEqual({
     instance_schema: SAFE_READ_INSTANCE_SCHEMA,
     product_id: SAFE_READ_PRODUCT_ID,
@@ -93,26 +140,31 @@ test("SafeRead cross-runtime golden literals freeze identity, route, body, and t
     failure_schema: SAFE_READ_FAILURE_SCHEMA,
     headers: SAFE_READ_REQUEST_HEADERS
   }, {
-    instance_schema: "revit-operator.safe-read.instance.v1",
-    product_id: "aafaa2c0-43f1-42a0-a6b4-d9a0c5f5ce0e",
-    executor_id: "revit-operator.safe-read-host.v1",
-    route_id: "safe_read.sheet_count.v1",
-    route: "/revit/certified/sheets/count",
-    reserved_path_prefix: "/revit/certified",
-    body: '{"schema":"revit-operator.safe-read.sheets-count.request.v1"}',
-    success_schema: "revit-operator.safe-read.sheets-count.response.v1",
-    failure_schema: "revit-operator.safe-read.failure.v1",
+    instance_schema: contract.schemas.discovery,
+    product_id: contract.identity.product_id,
+    executor_id: contract.identity.executor_id,
+    route_id: contract.route.route_id,
+    route: contract.route.path,
+    reserved_path_prefix: contract.route.reserved_path_prefix,
+    body: contract.route.canonical_body_json,
+    success_schema: contract.schemas.success,
+    failure_schema: contract.schemas.failure,
     headers: {
-      startupToken: "X-RevitOperator-SafeRead-Startup-Token",
-      hostInstanceId: "X-RevitOperator-SafeRead-Host-Instance-Id",
-      documentSessionId: "X-RevitOperator-SafeRead-Document-Session-Id",
-      clientSessionId: "X-RevitOperator-SafeRead-Client-Session-Id",
-      requestId: "X-RevitOperator-SafeRead-Request-Id",
-      attemptId: "X-RevitOperator-SafeRead-Attempt-Id"
+      startupToken: contract.headers[0],
+      hostInstanceId: contract.headers[1],
+      documentSessionId: contract.headers[2],
+      clientSessionId: contract.headers[3],
+      requestId: contract.headers[4],
+      attemptId: contract.headers[5]
     }
   });
-  assert.equal(SAFE_READ_REQUEST_HEADER_NAMES.length, 6);
-  assert.equal(new Set(SAFE_READ_REQUEST_HEADER_NAMES).size, 6);
+  assert.deepEqual(SAFE_READ_REQUEST_HEADER_NAMES, contract.headers);
+  assert.deepEqual([SAFE_READ_MIN_PORT, SAFE_READ_MAX_PORT, SAFE_READ_RESPONSE_MAX_BYTES], [
+    contract.bounds.minimum_port, contract.bounds.maximum_port, contract.bounds.host_response_max_bytes
+  ]);
+  assert.deepEqual(Object.keys(instance()), contract.keys.discovery);
+  assert.deepEqual(Object.keys((instance().runtime_tuple as Record<string, unknown>)), contract.keys.runtime_tuple);
+  assert.deepEqual(Object.keys((instance().document as Record<string, unknown>)), contract.keys.document);
 });
 
 test("SafeRead discovery accepts one live exact fixture and rejects stale, malformed, ambiguous, and non-loopback publications", () => {

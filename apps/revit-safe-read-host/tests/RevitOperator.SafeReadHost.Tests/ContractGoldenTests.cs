@@ -1,6 +1,9 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using RevitOperator.SafeReadHost.HostKernel;
 using Xunit;
@@ -9,11 +12,18 @@ namespace RevitOperator.SafeReadHost.Tests
 {
     public sealed class ContractGoldenTests
     {
+        private static readonly JsonSerializerOptions CanonicalOptions=new JsonSerializerOptions{Encoder=JavaScriptEncoder.UnsafeRelaxedJsonEscaping};
         private static string Fixture(string name)=>File.ReadAllText(Path.Combine(AppContext.BaseDirectory,"fixtures",name)).TrimEnd('\r','\n');
         [Fact] public void External_route_body_and_headers_are_exact()
         {
-            Assert.Equal("POST",SafeReadContract.Method);Assert.Equal("/revit/certified/sheets/count",SafeReadContract.Route);Assert.Equal(SafeReadContract.RequestJson,Fixture("external-request.json"));
-            Assert.Equal(new[]{"X-RevitOperator-SafeRead-Startup-Token","X-RevitOperator-SafeRead-Host-Instance-Id","X-RevitOperator-SafeRead-Document-Session-Id","X-RevitOperator-SafeRead-Client-Session-Id","X-RevitOperator-SafeRead-Request-Id","X-RevitOperator-SafeRead-Attempt-Id"},new[]{SafeReadContract.TokenHeader,SafeReadContract.HostInstanceHeader,SafeReadContract.DocumentSessionHeader,SafeReadContract.ClientSessionHeader,SafeReadContract.RequestIdHeader,SafeReadContract.AttemptIdHeader});
+            using JsonDocument contract=JsonDocument.Parse(Fixture("contract.v1.json"));JsonElement root=contract.RootElement,identity=root.GetProperty("identity"),route=root.GetProperty("route"),schemas=root.GetProperty("schemas"),keys=root.GetProperty("keys"),bounds=root.GetProperty("bounds");
+            Assert.Equal(SafeReadContract.ProductId,identity.GetProperty("product_id").GetString());Assert.Equal(SafeReadContract.ExecutorId,identity.GetProperty("executor_id").GetString());Assert.Equal(SafeReadContract.RouteId,route.GetProperty("route_id").GetString());Assert.Equal(SafeReadContract.Method,route.GetProperty("method").GetString());Assert.Equal(SafeReadContract.Route,route.GetProperty("path").GetString());Assert.Equal(SafeReadContract.RequestSchema,route.GetProperty("request_schema").GetString());Assert.Equal(SafeReadContract.RequestJson,route.GetProperty("canonical_body_json").GetString());Assert.Equal(SafeReadContract.RequestJson,Fixture("external-request.json"));
+            Assert.Equal(new[]{SafeReadContract.BodySha256,SafeReadContract.RequestHash,SafeReadContract.EffectHash,SafeReadContract.RouteContractSha256,SafeReadContract.PolicySha256},new[]{route.GetProperty("body_sha256").GetString(),route.GetProperty("request_hash").GetString(),route.GetProperty("effect_hash").GetString(),route.GetProperty("route_contract_sha256").GetString(),route.GetProperty("policy_sha256").GetString()});
+            using JsonDocument bodyDocument=JsonDocument.Parse(SafeReadContract.RequestJson);JsonElement body=bodyDocument.RootElement;Assert.Equal(SafeReadContract.BodySha256,Hash(body));Assert.Equal(SafeReadContract.RequestHash,HashObject(("method",SafeReadContract.Method),("path",SafeReadContract.Route),("body",body)));Assert.Equal(SafeReadContract.EffectHash,Hash(route.GetProperty("effect")));Assert.Equal(SafeReadContract.RouteContractSha256,HashObject(("route_id",SafeReadContract.RouteId),("method",SafeReadContract.Method),("path",SafeReadContract.Route),("canonical_body_json",SafeReadContract.RequestJson),("request_hash",SafeReadContract.RequestHash),("effect_hash",SafeReadContract.EffectHash)));Assert.Equal(SafeReadContract.PolicySha256,Hash(route.GetProperty("policy")));
+            Assert.Equal(root.GetProperty("headers").EnumerateArray().Select(v=>v.GetString()),new[]{SafeReadContract.TokenHeader,SafeReadContract.HostInstanceHeader,SafeReadContract.DocumentSessionHeader,SafeReadContract.ClientSessionHeader,SafeReadContract.RequestIdHeader,SafeReadContract.AttemptIdHeader});
+            Assert.Equal(new[]{SafeReadContract.DiscoverySchema,SafeReadContract.ResponseSchema,SafeReadContract.FailureSchema,SafeReadContract.RuntimeAttestationSchema,SafeReadContract.PreauthorizationSchema,SafeReadContract.PreauthorizationResponseSchema,SafeReadContract.FinalAuthorizationSchema,SafeReadContract.FinalReceiptSchema},new[]{"discovery","success","failure","runtime_attestation","preauthorization_request","preauthorization_response","final_authorization_request","final_authorization_receipt"}.Select(name=>schemas.GetProperty(name).GetString()));
+            Assert.Equal(new[]{SafeReadContract.MinimumPort,SafeReadContract.MaximumPort,SafeReadContract.MaximumResponseBytes,SafeReadContract.MaximumBackendResponseBytes},new[]{"minimum_port","maximum_port","host_response_max_bytes","backend_response_max_bytes"}.Select(name=>bounds.GetProperty(name).GetInt32()));
+            Assert.Equal(keys.GetProperty("success").EnumerateArray().Select(v=>v.GetString()),Names(ResponsePayload.Success(1).Body));Assert.Equal(keys.GetProperty("failure").EnumerateArray().Select(v=>v.GetString()),Names(ResponsePayload.Failure(CertifiedFailureCode.DeadlineExceeded,CertifiedExecutionPhase.CountSheets,true,true).Body));Assert.Equal(keys.GetProperty("discovery").EnumerateArray().Select(v=>v.GetString()),Names(Fixture("discovery.json")));
             Assert.DoesNotContain("Nonce",String.Join("|",new[]{SafeReadContract.TokenHeader,SafeReadContract.HostInstanceHeader,SafeReadContract.DocumentSessionHeader,SafeReadContract.ClientSessionHeader,SafeReadContract.RequestIdHeader,SafeReadContract.AttemptIdHeader}));
         }
         [Fact] public void Golden_backend_requests_have_exact_order_and_flat_snake_case_contract()
@@ -45,5 +55,9 @@ namespace RevitOperator.SafeReadHost.Tests
             BackendAuthorizationFailure backend=new BackendAuthorizationFailure("Backend authorization result is indeterminate.",true,false,true);using(JsonDocument fail=JsonDocument.Parse(ResponsePayload.AuthorizationFailure(backend).Body)){Assert.Equal(new[]{"schema","code","error","retryable","request_dispatched","outcome_unknown","phase"},fail.RootElement.EnumerateObject().Select(p=>p.Name));Assert.Equal("Backend authorization result is indeterminate.",fail.RootElement.GetProperty("error").GetString());Assert.False(fail.RootElement.GetProperty("retryable").GetBoolean());Assert.True(fail.RootElement.GetProperty("request_dispatched").GetBoolean());Assert.True(fail.RootElement.GetProperty("outcome_unknown").GetBoolean());Assert.Equal("authorization",fail.RootElement.GetProperty("phase").GetString());}
         }
         private static string[] Names(string json){using(JsonDocument doc=JsonDocument.Parse(json))return doc.RootElement.EnumerateObject().Select(p=>p.Name).ToArray();}
+        private static string[] Names(byte[] json)=>Names(Encoding.UTF8.GetString(json));
+        private static string Hash(JsonElement value){using SHA256 sha=SHA256.Create();return "sha256:"+Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(Canonical(value)))).ToLowerInvariant();}
+        private static string HashObject(params (string Name,object Value)[] values){string json="{"+String.Join(",",values.OrderBy(v=>v.Name,StringComparer.Ordinal).Select(v=>JsonSerializer.Serialize(v.Name,CanonicalOptions)+":"+(v.Value is JsonElement e?Canonical(e):JsonSerializer.Serialize(v.Value,CanonicalOptions))))+"}";using SHA256 sha=SHA256.Create();return "sha256:"+Convert.ToHexString(sha.ComputeHash(Encoding.UTF8.GetBytes(json))).ToLowerInvariant();}
+        private static string Canonical(JsonElement value){switch(value.ValueKind){case JsonValueKind.Object:return "{"+String.Join(",",value.EnumerateObject().OrderBy(p=>p.Name,StringComparer.Ordinal).Select(p=>JsonSerializer.Serialize(p.Name,CanonicalOptions)+":"+Canonical(p.Value)))+"}";case JsonValueKind.Array:return "["+String.Join(",",value.EnumerateArray().Select(Canonical))+"]";default:return value.GetRawText();}}
     }
 }

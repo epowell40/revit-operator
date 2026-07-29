@@ -1,3 +1,4 @@
+BeforeAll {
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $deployRoot=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -5,10 +6,20 @@ $module=Join-Path $deployRoot 'SafeReadPackageV2.psm1';Import-Module $module -Fo
 $builder=Join-Path $deployRoot 'build_saferead_package_v2.ps1'
 $installer=Join-Path $deployRoot 'install_saferead_package_v2.ps1'
 $verifier=Join-Path $deployRoot 'verify_saferead_microhost_bundle.ps1'
+$repoRoot=(Resolve-Path (Join-Path $deployRoot '..\..')).Path
+$contract=Get-Content -LiteralPath (Join-Path $repoRoot 'contracts\safe-read\contract.v1.json') -Raw|ConvertFrom-Json
 $testThumbprint='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 $signatureVerifier={param($Path)[pscustomobject]@{Status='Valid';Thumbprint='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'}}
 
 function Write-JsonFile([string]$Path,$Value){[IO.Directory]::CreateDirectory((Split-Path -Parent $Path))|Out-Null;[IO.File]::WriteAllText($Path,(ConvertTo-SafeReadCanonicalJson $Value),[Text.UTF8Encoding]::new($false))}
+function ConvertTo-TestCanonicalValue($Value){
+  if($null -eq $Value){return $null}
+  if($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string] -and $Value -isnot [System.Collections.IDictionary]){return @($Value|ForEach-Object{ConvertTo-TestCanonicalValue $_})}
+  if($Value -is [System.Collections.IDictionary]){$result=[ordered]@{};foreach($name in @($Value.Keys|ForEach-Object{[string]$_}|Sort-Object)){$result[$name]=ConvertTo-TestCanonicalValue $Value[$name]};return $result}
+  if($Value -is [pscustomobject]){$result=[ordered]@{};foreach($property in @($Value.PSObject.Properties|Sort-Object Name)){$result[$property.Name]=ConvertTo-TestCanonicalValue $property.Value};return $result}
+  $Value
+}
+function Get-TestCanonicalHash($Value){$json=(ConvertTo-TestCanonicalValue $Value)|ConvertTo-Json -Depth 16 -Compress;$bytes=[Text.UTF8Encoding]::new($false).GetBytes($json);$sha=[Security.Cryptography.SHA256]::Create();try{'sha256:'+([BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-','').ToLowerInvariant())}finally{$sha.Dispose()}}
 function Assert-ThrowsLike([scriptblock]$Action,[string]$Pattern){$message=$null;try{&$Action}catch{$message=$_.Exception.Message};if($null -eq $message -or $message -notlike $Pattern){throw "Expected failure '$Pattern'; actual '$message'."}}
 function New-Identity([string]$Name,[string]$Version='1.0.0.0',[string]$Token='null'){[pscustomobject][ordered]@{name=$Name;version=$Version;culture='neutral';publicKeyToken=$Token}}
 function Get-YearMajor([string]$Year){switch($Year){'2023'{23}'2024'{24}'2025'{25}}}
@@ -41,9 +52,14 @@ function New-TestBundle([string]$Root,[string]$ReleaseId='safe-read-v3-a'){
       [ordered]@{path='payload/RevitOperator.SafeReadHost.dll';role='host';revitApiBound=$true;sha256=Get-SafeReadSha256 $hostPath;sizeBytes=(Get-Item $hostPath).Length;assembly=$hostAssembly;provenance=$null},
       [ordered]@{path='payload/RevitOperator.SafeReadCertifiedExecution.dll';role='certified_executor';revitApiBound=$true;sha256=Get-SafeReadSha256 $executorPath;sizeBytes=(Get-Item $executorPath).Length;assembly=$executorAssembly;provenance=[ordered]@{proofReceiptSha256=$proofSha;unsignedSha256=('sha256:'+[string]$artifacts[$year].sha256);equivalenceReceiptSha256=Get-SafeReadSha256 $equivalencePath;canonicalPeSha256=('7'*64);verifierProfileId='revit-safe-read-sheet-count-kernel/v1';verifierProfileSha256=('2'*64);verifierBundleSha256=('3'*64)}}
     )
+    if($expected.Framework -eq 'net48'){
+      $aclPath=Join-Path $payloadRoot 'System.IO.FileSystem.AccessControl.dll';[IO.File]::WriteAllText($aclPath,"access-control-$year")
+      $aclFacts=Get-FakeFacts $year 'System.IO.FileSystem.AccessControl';$aclAssembly=[ordered]@{name=$aclFacts.Name;version=$aclFacts.Version;culture=$aclFacts.Culture;publicKeyToken=$aclFacts.PublicKeyToken;targetFramework=$aclFacts.TargetFramework;platform=$aclFacts.Platform;mvid=$aclFacts.Mvid;references=$aclFacts.AssemblyReferences}
+      $payload += [ordered]@{path='payload/System.IO.FileSystem.AccessControl.dll';role='runtime_dependency';revitApiBound=$false;sha256=Get-SafeReadSha256 $aclPath;sizeBytes=(Get-Item $aclPath).Length;assembly=$aclAssembly;provenance=$null}
+    }
     $template=Join-Path $manifestRoot 'RevitOperator.SafeReadHost.addin.template';Copy-Item -LiteralPath (Join-Path $deployRoot '..\..\apps\revit-safe-read-host\addin\RevitOperator.SafeReadHost.addin.template') -Destination $template
     $apiIdentity=New-Identity 'RevitAPI' "$major.0.0.0";$uiIdentity=New-Identity 'RevitAPIUI' "$major.0.0.0";$api=[ordered]@{contentSha256=('sha256:'+('8'*64));mvid=("$major".PadLeft(8,'0')+'-0000-0000-0000-000000000001');identity=$apiIdentity};$apiUi=[ordered]@{contentSha256=('sha256:'+('9'*64));mvid=("$major".PadLeft(8,'0')+'-0000-0000-0000-000000000002');identity=$uiIdentity}
-    $executor=$payload[1];$runtime=[ordered]@{schema='revit-operator.safe-read-runtime-attestation.v1';state='active';issued_at_utc='2030-01-01T00:00:00.000Z';expires_at_utc='2030-01-01T00:05:00.000Z';route_id='safe_read.sheet_count.v1';route_contract_sha256='sha256:cc80c231ba289396516164cb0fdbc3c71779ac018e717085f07a544530e68874';policy_sha256='sha256:23692b21a7e728e9c1ce5eec9580dcec4f3ac7f25d3d95059899c680a17aad67';proof_sha256=$proofSha;executor_id='revit-operator.safe-read-host.v1';runtime_tuple=[ordered]@{host_content_sha256=$executor.sha256;host_mvid=$executor.assembly.mvid;revit_api_content_sha256=$api.contentSha256;revit_api_mvid=$api.mvid;revit_version=$year}}
+    $executor=$payload[1];$runtime=[ordered]@{schema=[string]$contract.schemas.runtime_attestation;state='active';issued_at_utc='2030-01-01T00:00:00.000Z';expires_at_utc='2030-01-01T00:05:00.000Z';route_id=[string]$contract.route.route_id;route_contract_sha256=[string]$contract.route.route_contract_sha256;policy_sha256=[string]$contract.route.policy_sha256;proof_sha256=$proofSha;executor_id=[string]$contract.identity.executor_id;runtime_tuple=[ordered]@{host_content_sha256=$executor.sha256;host_mvid=$executor.assembly.mvid;revit_api_content_sha256=$api.contentSha256;revit_api_mvid=$api.mvid;revit_version=$year}}
     $runtimePath=Join-Path $payloadRoot 'safe_read_runtime_attestation.v1.json';Write-JsonFile $runtimePath $runtime;$runtimePin=Get-SafeReadSha256 $runtimePath;[IO.File]::WriteAllText((Join-Path $payloadRoot 'safe_read_runtime_attestation.v1.sha256'),$runtimePin+"`n",[Text.UTF8Encoding]::new($false))
     $targets += [ordered]@{revitYear=$year;framework=$expected.Framework;platform='x64';revitApi=$api;revitApiUi=$apiUi;requiredPayload=$payload;proof=[ordered]@{path='proof/proof.receipt.json';sha256=$proofSha;sizeBytes=(Get-Item $proofPath).Length;artifactUnsignedSha256=[string]$artifacts[$year].sha256;equivalencePath='proof/artifact.equivalence.json';equivalenceSha256=Get-SafeReadSha256 $equivalencePath};runtimeAttestation=[ordered]@{path='payload/safe_read_runtime_attestation.v1.json';sha256=$runtimePin;sizeBytes=(Get-Item $runtimePath).Length};manifest=[ordered]@{path='manifest/RevitOperator.SafeReadHost.addin.template';sha256=Get-SafeReadSha256 $template;sizeBytes=(Get-Item $template).Length}}
     $pinTargets += [ordered]@{revitYear=$year;runtimeAttestationSha256=$runtimePin}
@@ -55,6 +71,7 @@ function New-TestBundle([string]$Root,[string]$ReleaseId='safe-read-v3-a'){
 
 function Refresh-BundlePin($Bundle){$pins=ConvertTo-SafeReadObject (Join-Path $Bundle.Root 'package-pins.json');$pins.releaseManifestSha256=Get-SafeReadSha256 (Join-Path $Bundle.Root 'release-manifest.json');Write-JsonFile (Join-Path $Bundle.Root 'package-pins.json') $pins;$Bundle.Pin=Get-SafeReadSha256 (Join-Path $Bundle.Root 'package-pins.json')}
 function Rebind-TamperedExecutor($Bundle,[string]$Year){$releasePath=Join-Path $Bundle.Root 'release-manifest.json';$release=ConvertTo-SafeReadObject $releasePath;$target=@($release.targets|Where-Object revitYear -eq $Year)[0];$executor=@($target.requiredPayload|Where-Object role -eq 'certified_executor')[0];$path=Join-Path $Bundle.Root "targets\$Year\payload\RevitOperator.SafeReadCertifiedExecution.dll";$executor.sha256=Get-SafeReadSha256 $path;$executor.sizeBytes=(Get-Item $path).Length;$runtimePath=Join-Path $Bundle.Root "targets\$Year\payload\safe_read_runtime_attestation.v1.json";$runtime=ConvertTo-SafeReadObject $runtimePath;$runtime.runtime_tuple.host_content_sha256=$executor.sha256;Write-JsonFile $runtimePath $runtime;$pin=Get-SafeReadSha256 $runtimePath;[IO.File]::WriteAllText((Join-Path $Bundle.Root "targets\$Year\payload\safe_read_runtime_attestation.v1.sha256"),$pin+"`n",[Text.UTF8Encoding]::new($false));$target.runtimeAttestation.sha256=$pin;$target.runtimeAttestation.sizeBytes=(Get-Item $runtimePath).Length;Write-JsonFile $releasePath $release;$pins=ConvertTo-SafeReadObject (Join-Path $Bundle.Root 'package-pins.json');@($pins.targets|Where-Object revitYear -eq $Year)[0].runtimeAttestationSha256=$pin;Write-JsonFile (Join-Path $Bundle.Root 'package-pins.json') $pins;Refresh-BundlePin $Bundle}
+}
 
 Describe 'SafeRead package v3 security contract' {
   BeforeEach{$bundle=New-TestBundle (Join-Path $TestDrive ([guid]::NewGuid().ToString('N')))}
@@ -62,6 +79,21 @@ Describe 'SafeRead package v3 security contract' {
   It 'accepts an exact three-year package and one identical proof receipt' {
     $receipt=Assert-SafeReadBundle -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
     if($receipt.Targets.Count -ne 3){throw 'Expected three targets.'}
+  }
+
+  It 'matches the canonical cross-runtime contract fixture and recomputes every route hash' {
+    $body=$contract.route.canonical_body_json|ConvertFrom-Json
+    if((Get-TestCanonicalHash $body) -cne [string]$contract.route.body_sha256){throw 'Canonical body hash drifted.'}
+    $request=[ordered]@{method=[string]$contract.route.method;path=[string]$contract.route.path;body=$body}
+    if((Get-TestCanonicalHash $request) -cne [string]$contract.route.request_hash){throw 'Canonical request hash drifted.'}
+    if((Get-TestCanonicalHash $contract.route.effect) -cne [string]$contract.route.effect_hash){throw 'Canonical effect hash drifted.'}
+    $route=[ordered]@{route_id=[string]$contract.route.route_id;method=[string]$contract.route.method;path=[string]$contract.route.path;canonical_body_json=[string]$contract.route.canonical_body_json;request_hash=[string]$contract.route.request_hash;effect_hash=[string]$contract.route.effect_hash}
+    if((Get-TestCanonicalHash $route) -cne [string]$contract.route.route_contract_sha256){throw 'Canonical route contract hash drifted.'}
+    if((Get-TestCanonicalHash $contract.route.policy) -cne [string]$contract.route.policy_sha256){throw 'Canonical policy hash drifted.'}
+    $runtime=ConvertTo-SafeReadObject (Join-Path $bundle.Root 'targets\2024\payload\safe_read_runtime_attestation.v1.json')
+    if((@($runtime.PSObject.Properties.Name) -join ',') -cne (@($contract.keys.runtime_attestation) -join ',')){throw 'Packaged attestation key order drifted.'}
+    if($runtime.schema -cne $contract.schemas.runtime_attestation -or $runtime.route_id -cne $contract.route.route_id -or $runtime.route_contract_sha256 -cne $contract.route.route_contract_sha256 -or $runtime.policy_sha256 -cne $contract.route.policy_sha256 -or $runtime.executor_id -cne $contract.identity.executor_id){throw 'Packaged attestation contract drifted.'}
+    if((@($runtime.runtime_tuple.PSObject.Properties.Name) -join ',') -cne (@($contract.keys.runtime_tuple) -join ',')){throw 'Packaged runtime tuple key order drifted.'}
   }
 
   It 'rejects a caller-authored proof receipt and artifact input before proof execution' {
@@ -90,6 +122,14 @@ Describe 'SafeRead package v3 security contract' {
   It 'hardens installed payload ACLs to owner SYSTEM and Administrators only' {
     $path=Join-Path $TestDrive 'acl';[IO.Directory]::CreateDirectory($path)|Out-Null;[void](Protect-SafeReadPathAcl $path -Strict);$record=Get-SafeReadAclRecord $path;$allowed=@([Security.Principal.WindowsIdentity]::GetCurrent().User.Value,'S-1-5-18','S-1-5-32-544')
     foreach($ace in @($record.Access)){if($allowed -cnotcontains $ace.Sid -or $ace.IsInherited){throw "Unsafe hardened ACL $($ace.Sid)."}}
+  }
+
+  It 'installs the attestation parent and files with the host exact ACL contract' {
+    $destination=Join-Path $TestDrive 'attestation-install';$addins=Join-Path $TestDrive 'attestation-addins'
+    &$installer -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -DestinationRoot $destination -RevitAddinsRoot $addins -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
+    $payload=Join-Path $destination "releases\$($bundle.ReleaseId)\targets\2024\payload";$paths=@($payload,(Join-Path $payload 'safe_read_runtime_attestation.v1.json'),(Join-Path $payload 'safe_read_runtime_attestation.v1.sha256'))
+    $allowed=@([Security.Principal.WindowsIdentity]::GetCurrent().User.Value,'S-1-5-18','S-1-5-32-544')|Sort-Object
+    foreach($path in $paths){$record=Get-SafeReadAclRecord $path;if(-not $record.Protected){throw "Installed host trust path inherits ACLs: $path"};$principals=@($record.Access|ForEach-Object Sid|Sort-Object -Unique);if((Compare-Object $allowed $principals) -or @($record.Access|Where-Object{$_.Type -cne 'Allow' -or $_.IsInherited}).Count){throw "Installed host trust path differs from the owner/SYSTEM/Administrators contract: $path"}}
   }
 
   It 'rejects dependency version and public key token mismatches' {

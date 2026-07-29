@@ -199,6 +199,10 @@ namespace RevitOperator.SafeReadHost.Tests
         {
             SecurityIdentifier owner = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null);
             SecurityIdentifier everyone = new SecurityIdentifier(WellKnownSidType.WorldSid, null);
+            Assert.True(SecureLocalStorage.IsAllowedPrincipal(owner, owner));
+            Assert.True(SecureLocalStorage.IsAllowedPrincipal(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), owner));
+            Assert.True(SecureLocalStorage.IsAllowedPrincipal(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), owner));
+            Assert.False(SecureLocalStorage.IsAllowedPrincipal(everyone, owner));
             Assert.Throws<UnauthorizedAccessException>(() => SecureLocalStorage.ValidateRule(everyone, AccessControlType.Allow, false, owner));
             Assert.Throws<UnauthorizedAccessException>(() => SecureLocalStorage.ValidateRule(owner, AccessControlType.Allow, true, owner));
             SecureLocalStorage.ValidateRule(owner, AccessControlType.Allow, false, owner);

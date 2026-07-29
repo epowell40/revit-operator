@@ -1,0 +1,80 @@
+{
+  "schema": "revit-operator.safe-read-contract.v1",
+  "identity": {
+    "product_id": "aafaa2c0-43f1-42a0-a6b4-d9a0c5f5ce0e",
+    "executor_id": "revit-operator.safe-read-host.v1"
+  },
+  "route": {
+    "route_id": "safe_read.sheet_count.v1",
+    "method": "POST",
+    "path": "/revit/certified/sheets/count",
+    "reserved_path_prefix": "/revit/certified",
+    "request_schema": "revit-operator.safe-read.sheets-count.request.v1",
+    "canonical_body_json": "{\"schema\":\"revit-operator.safe-read.sheets-count.request.v1\"}",
+    "effect": {
+      "effect": "read",
+      "resource": "sheets.count",
+      "mutates": false
+    },
+    "policy": {
+      "policy": "safe-read.direct-only.v1",
+      "courier": "disabled",
+      "capability": "single-use"
+    },
+    "body_sha256": "sha256:3365135151daf7e1cf9b20c5a3b49a2b5b3b0e42eab9a73a404739a7cdad65d5",
+    "request_hash": "sha256:106a5e8cbfce57eb12d94757eb052e660ffc222855ea1b77548b6865d8f769e1",
+    "effect_hash": "sha256:82669f8c2d957b0bbce5bfa5f7846ef1b7b0f46d9818aec41fbbc4c03de001dc",
+    "route_contract_sha256": "sha256:cc80c231ba289396516164cb0fdbc3c71779ac018e717085f07a544530e68874",
+    "policy_sha256": "sha256:23692b21a7e728e9c1ce5eec9580dcec4f3ac7f25d3d95059899c680a17aad67"
+  },
+  "headers": [
+    "X-RevitOperator-SafeRead-Startup-Token",
+    "X-RevitOperator-SafeRead-Host-Instance-Id",
+    "X-RevitOperator-SafeRead-Document-Session-Id",
+    "X-RevitOperator-SafeRead-Client-Session-Id",
+    "X-RevitOperator-SafeRead-Request-Id",
+    "X-RevitOperator-SafeRead-Attempt-Id"
+  ],
+  "schemas": {
+    "discovery": "revit-operator.safe-read.instance.v1",
+    "success": "revit-operator.safe-read.sheets-count.response.v1",
+    "failure": "revit-operator.safe-read.failure.v1",
+    "runtime_attestation": "revit-operator.safe-read-runtime-attestation.v1",
+    "preauthorization_request": "revit-operator.safe-read-preauthorization-request.v1",
+    "preauthorization_response": "revit-operator.safe-read-preauthorization-response.v1",
+    "final_authorization_request": "revit-operator.safe-read-final-authorization-request.v1",
+    "final_authorization_receipt": "revit-operator.safe-read-final-authorization-receipt.v1"
+  },
+  "keys": {
+    "discovery": ["schema", "product_id", "host_instance_id", "executor_id", "pid", "revit_year", "route_id", "route", "endpoint", "startup_token", "runtime_attestation_sha256", "runtime_tuple", "document"],
+    "runtime_tuple": ["host_content_sha256", "host_mvid", "revit_api_content_sha256", "revit_api_mvid", "revit_version"],
+    "document": ["project_fingerprint", "document_session_id"],
+    "success": ["schema", "count"],
+    "failure": ["schema", "code", "error", "retryable", "request_dispatched", "outcome_unknown", "phase"],
+    "runtime_attestation": ["schema", "state", "issued_at_utc", "expires_at_utc", "route_id", "route_contract_sha256", "policy_sha256", "proof_sha256", "executor_id", "runtime_tuple"],
+    "preauthorization_request": ["schema", "route_id", "host_instance_id", "executor_id", "runtime_attestation_sha256", "runtime_tuple", "document", "client_session_id", "request_id", "attempt_id", "capability_nonce_sha256"],
+    "preauthorization_response_envelope": ["ok", "authorization"],
+    "preauthorization_response": ["schema", "capability_id", "bindings_hash", "issued_at_utc", "expires_at_utc"],
+    "final_authorization_request": ["schema", "route_id", "host_instance_id", "executor_id", "runtime_attestation_sha256", "runtime_tuple", "document", "client_session_id", "request_id", "attempt_id", "capability_id", "capability_nonce"],
+    "final_authorization_response_envelope": ["ok", "receipt"],
+    "final_authorization_receipt": ["schema", "route_id", "host_instance_id", "executor_id", "runtime_attestation_sha256", "runtime_tuple", "document", "client_session_id", "request_id", "attempt_id", "capability_id", "bindings_hash", "receipt_id", "issued_at_utc", "expires_at_utc", "hmac_sha256"]
+  },
+  "ids": {
+    "capability_id_regex": "^src1_[A-Za-z0-9_-]{43}$",
+    "receipt_id_regex": "^srr1_[A-Za-z0-9_-]{43}$",
+    "capability_id_description": "src1_ + 32-byte base64url (48 chars)",
+    "receipt_id_description": "srr1_ + 32-byte base64url (48 chars)"
+  },
+  "backend": {
+    "preauthorize_endpoint": "/api/safe-read/direct/preauthorize",
+    "authorize_execution_endpoint": "/api/safe-read/direct/authorize-execution",
+    "nonce_transport": "host-generated; sha256 in preauthorization body; raw nonce in final body only",
+    "receipt_hmac_domain": "safe-read-final-receipt-v1"
+  },
+  "bounds": {
+    "minimum_port": 5040,
+    "maximum_port": 5050,
+    "host_response_max_bytes": 4096,
+    "backend_response_max_bytes": 65536
+  }
+}

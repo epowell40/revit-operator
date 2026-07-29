@@ -12,6 +12,11 @@ on:
         required: false
         default: false
         type: boolean
+      run_safe_read_release:
+        description: "Run installed-Revit 2023/2024/2025 SafeRead proof and package release gate"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   architecture:
@@ -79,6 +84,83 @@ jobs:
           dotnet-version: 8.0.x
       - run: dotnet test packages/operator-deploy/OperatorDeploy.Tests/OperatorDeploy.Tests.csproj -c Release
       - run: dotnet publish packages/operator-deploy/OperatorDeploy/OperatorDeploy.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false
+
+  safe-read-hermetic:
+    name: SafeRead Hermetic Security Gates
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.119
+            9.0.304
+      - name: Install Pester in both PowerShell editions
+        shell: pwsh
+        run: Install-Module Pester -MinimumVersion 5.5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+      - name: Host production-source tests
+        shell: pwsh
+        run: dotnet test apps/revit-safe-read-host/tests/RevitOperator.SafeReadHost.Tests/RevitOperator.SafeReadHost.Tests.csproj -c Release
+      - name: Proof falsifiers with generated Revit API fixtures
+        shell: pwsh
+        run: ./apps/revit-safe-read-proof/tests/run.ps1 -Hermetic
+      - name: Package security tests on PowerShell 7
+        shell: pwsh
+        run: |
+          $result = Invoke-Pester ./scripts/deploy/tests/SafeReadPackageV2.Pester.ps1 -Output Detailed -PassThru
+          if ($result.FailedCount -gt 0) { exit 1 }
+      - name: Package security tests on Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          Import-Module Pester -MinimumVersion 5.5.0
+          $result = Invoke-Pester ./scripts/deploy/tests/SafeReadPackageV2.Pester.ps1 -Output Detailed -PassThru
+          if ($result.FailedCount -gt 0) { exit 1 }
+
+  safe-read-installed-revit-release:
+    name: SafeRead Installed Revit Release Gate
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_safe_read_release == true }}
+    runs-on: [self-hosted, Windows, revit-certified]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require all release prerequisites
+        shell: pwsh
+        run: |
+          $required = @(
+            'C:\Program Files\dotnet\dotnet.exe',
+            'C:\Program Files\Autodesk\Revit 2023\RevitAPI.dll',
+            'C:\Program Files\Autodesk\Revit 2023\RevitAPIUI.dll',
+            'C:\Program Files\Autodesk\Revit 2024\RevitAPI.dll',
+            'C:\Program Files\Autodesk\Revit 2024\RevitAPIUI.dll',
+            'C:\Program Files\Autodesk\Revit 2025\RevitAPI.dll',
+            'C:\Program Files\Autodesk\Revit 2025\RevitAPIUI.dll'
+          )
+          $missing = @($required | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
+          if ($missing.Count) { throw "SafeRead release runner is missing required files: $($missing -join ', ')" }
+          if (-not (Get-Command pwsh -ErrorAction SilentlyContinue)) { throw 'SafeRead release runner requires PowerShell 7.' }
+      - name: Host tests and exact three-year builds
+        shell: pwsh
+        run: |
+          dotnet test apps/revit-safe-read-host/tests/RevitOperator.SafeReadHost.Tests/RevitOperator.SafeReadHost.Tests.csproj -c Release
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dotnet build apps/revit-safe-read-host/src/RevitOperator.SafeReadHost/RevitOperator.SafeReadHost.csproj -c Release -f net48 -p:RevitYear=2023 -p:RevitApiPath='C:\Program Files\Autodesk\Revit 2023'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dotnet build apps/revit-safe-read-host/src/RevitOperator.SafeReadHost/RevitOperator.SafeReadHost.csproj -c Release -f net48 -p:RevitYear=2024 -p:RevitApiPath='C:\Program Files\Autodesk\Revit 2024'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dotnet build apps/revit-safe-read-host/src/RevitOperator.SafeReadHost/RevitOperator.SafeReadHost.csproj -c Release -f net8.0-windows -p:RevitYear=2025 -p:RevitApiPath='C:\Program Files\Autodesk\Revit 2025'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Full installed-Revit proof gate
+        shell: pwsh
+        run: ./apps/revit-safe-read-proof/tests/run.ps1
+      - name: Real three-year proof package twice
+        shell: pwsh
+        run: |
+          $first = Join-Path $env:RUNNER_TEMP ('safe-read-real-package-first-' + [guid]::NewGuid().ToString('N'))
+          $second = Join-Path $env:RUNNER_TEMP ('safe-read-real-package-second-' + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $first, $second | Out-Null
+          ./scripts/deploy/tests/Invoke-SafeReadRealPackageFixture.ps1 -RepositoryRoot $PWD -OutputRoot $first
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          ./scripts/deploy/tests/Invoke-SafeReadRealPackageFixture.ps1 -RepositoryRoot $PWD -OutputRoot $second
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
   revit-addin:
     name: Revit Add-in Build
