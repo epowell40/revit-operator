@@ -83,11 +83,11 @@ namespace RevitOperator.SafeReadHost.HostKernel
                 requestDispatched,
                 false);
 
-        public static CertifiedExecutionResult Unknown(CertifiedExecutionPhase phase) =>
-            new CertifiedExecutionResult(phase, CertifiedExecutionOutcome.Cancelled, CertifiedFailureCode.DeadlineExceeded, null, 0, true, true);
+        public static CertifiedExecutionResult Unknown(CertifiedExecutionPhase phase, CertifiedFailureCode code = CertifiedFailureCode.DeadlineExceeded) =>
+            new CertifiedExecutionResult(phase, CertifiedExecutionOutcome.Cancelled, code, null, 0, true, true);
 
-        public static CertifiedExecutionResult CancelledKnown(CertifiedExecutionPhase phase) =>
-            new CertifiedExecutionResult(phase, CertifiedExecutionOutcome.Cancelled, CertifiedFailureCode.DeadlineExceeded, null, 0, false, false);
+        public static CertifiedExecutionResult CancelledKnown(CertifiedExecutionPhase phase, CertifiedFailureCode code = CertifiedFailureCode.DeadlineExceeded) =>
+            new CertifiedExecutionResult(phase, CertifiedExecutionOutcome.Cancelled, code, null, 0, false, false);
     }
 
     internal sealed class CertifiedExternalWorkItem
@@ -117,11 +117,11 @@ namespace RevitOperator.SafeReadHost.HostKernel
 
         internal bool TryClaim() => Interlocked.CompareExchange(ref _state, 1, 0) == 0;
 
-        internal bool TryCancelPending()
+        internal bool TryCancelPending(CertifiedFailureCode code = CertifiedFailureCode.DeadlineExceeded)
         {
             if (Interlocked.CompareExchange(ref _state, 3, 0) != 0)
                 return false;
-            _completion.TrySetResult(CertifiedExecutionResult.CancelledKnown(Phase));
+            _completion.TrySetResult(CertifiedExecutionResult.CancelledKnown(Phase, code));
             return true;
         }
 
@@ -153,9 +153,9 @@ namespace RevitOperator.SafeReadHost.HostKernel
         internal void Release(CertifiedExternalWorkItem item) =>
             Interlocked.CompareExchange(ref _occupied, null, item);
 
-        public bool TryCancelPending(CertifiedExternalWorkItem item)
+        public bool TryCancelPending(CertifiedExternalWorkItem item, CertifiedFailureCode code = CertifiedFailureCode.DeadlineExceeded)
         {
-            if (!ReferenceEquals(Volatile.Read(ref _occupied), item) || !item.TryCancelPending())
+            if (!ReferenceEquals(Volatile.Read(ref _occupied), item) || !item.TryCancelPending(code))
                 return false;
             Interlocked.CompareExchange(ref _occupied, null, item);
             return true;
@@ -166,15 +166,54 @@ namespace RevitOperator.SafeReadHost.HostKernel
             CertifiedExternalWorkItem? item = Volatile.Read(ref _occupied);
             if (item == null)
                 return;
-            if (item.TryClaim())
-            {
-                item.Complete(CertifiedExecutionResult.Failure(item.Phase, code, true));
-                Release(item);
-            }
-            else if (item.TryCancelPending())
+            if (item.TryCancelPending(code))
             {
                 Interlocked.CompareExchange(ref _occupied, null, item);
             }
+            else if (item.IsClaimed)
+            {
+                item.Complete(CertifiedExecutionResult.Unknown(item.Phase, code));
+                Release(item);
+            }
+        }
+    }
+
+    internal interface ICertifiedExternalEventRaiser
+    {
+        bool TryRaise();
+    }
+
+    internal sealed class CertifiedExternalEventDispatcher
+    {
+        private readonly CertifiedExternalWorkSlot _slot;
+        private readonly ICertifiedExternalEventRaiser _raiser;
+
+        public CertifiedExternalEventDispatcher(CertifiedExternalWorkSlot slot, ICertifiedExternalEventRaiser raiser)
+        {
+            _slot = slot ?? throw new ArgumentNullException(nameof(slot));
+            _raiser = raiser ?? throw new ArgumentNullException(nameof(raiser));
+        }
+
+        public async Task<CertifiedExecutionResult> DispatchAsync(CertifiedExternalWorkItem item, CancellationToken cancellation)
+        {
+            if (!_slot.TryQueue(item))
+                return CertifiedExecutionResult.Failure(item.Phase, CertifiedFailureCode.Busy);
+            if (!_raiser.TryRaise())
+                return _slot.TryCancelPending(item, CertifiedFailureCode.RevitUnavailable)
+                    ? CertifiedExecutionResult.CancelledKnown(item.Phase, CertifiedFailureCode.RevitUnavailable)
+                    : CertifiedExecutionResult.Unknown(item.Phase, CertifiedFailureCode.RevitUnavailable);
+
+            using (CancellationTokenSource eventDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation))
+            {
+                eventDeadline.CancelAfter(SafeReadContract.ExternalEventDeadline);
+                Task completed = await Task.WhenAny(item.Completion, Task.Delay(Timeout.Infinite, eventDeadline.Token)).ConfigureAwait(false);
+                if (completed == item.Completion)
+                    return await item.Completion.ConfigureAwait(false);
+            }
+
+            return _slot.TryCancelPending(item)
+                ? CertifiedExecutionResult.CancelledKnown(item.Phase)
+                : CertifiedExecutionResult.Unknown(item.Phase);
         }
     }
 }

@@ -12,9 +12,10 @@ namespace RevitOperator.SafeReadHost
         private readonly InstanceIdentity _identity;
         private readonly DocumentSessionTracker _tracker;
         private readonly CertifiedExternalWorkSlot _slot;
-        private readonly ExternalEvent _event;
+        private readonly CertifiedExternalEventDispatcher _dispatcher;
         private readonly SafeReadBackendAuthorizer _authorizer;
         private readonly RuntimeDeploymentAttestation _attestation;
+        private readonly BackendAuthorizationCoordinator _authorizationCoordinator = new BackendAuthorizationCoordinator(SafeReadContract.AuthorizationDeadline);
         private readonly SingleFlightGate _gate = new SingleFlightGate();
         private readonly CancellationTokenSource _shutdown = new CancellationTokenSource();
         private HttpListener? _listener;
@@ -24,7 +25,7 @@ namespace RevitOperator.SafeReadHost
             _identity = identity;
             _tracker = tracker;
             _slot = slot;
-            _event = externalEvent;
+            _dispatcher = new CertifiedExternalEventDispatcher(slot, new RevitExternalEventRaiser(externalEvent));
             _authorizer = authorizer;
             _attestation = attestation;
         }
@@ -85,6 +86,8 @@ namespace RevitOperator.SafeReadHost
         {
             bool held = false;
             CertifiedExecutionPhase phase = CertifiedExecutionPhase.None;
+            bool requestDispatched = false;
+            bool outcomeUnknown = false;
             using (CancellationTokenSource deadline = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token))
             {
                 deadline.CancelAfter(SafeReadContract.RequestDeadline);
@@ -105,8 +108,10 @@ namespace RevitOperator.SafeReadHost
                     }
                     held = true;
 
-                    CertifiedExecutionResult captured = await Dispatch(CertifiedExternalWorkItem.Capture(current!), deadline.Token).ConfigureAwait(false);
                     phase = CertifiedExecutionPhase.CaptureBinding;
+                    CertifiedExecutionResult captured = await Dispatch(CertifiedExternalWorkItem.Capture(current!), deadline.Token).ConfigureAwait(false);
+                    requestDispatched = captured.RequestDispatched;
+                    outcomeUnknown = captured.OutcomeUnknown;
                     if (!captured.Succeeded || captured.Binding == null)
                     {
                         await Write(context.Response, ResponsePayload.Failure(captured.FailureCode, captured.Phase, captured.RequestDispatched, captured.OutcomeUnknown)).ConfigureAwait(false);
@@ -116,22 +121,10 @@ namespace RevitOperator.SafeReadHost
                     AuthorizationBindings bindings = new AuthorizationBindings(SafeReadContract.RouteId, _identity.HostInstanceId, SafeReadContract.ExecutorId, _attestation.Sha256, _attestation.RuntimeTuple, captured.Binding.ProjectFingerprint, captured.Binding.DocumentSessionId, facts.ClientSession, facts.RequestId, facts.AttemptId);
                     byte[] nonce = Protocol.NewNonce();
                     BackendAuthorizationResult authorization;
-                    try
-                    {
-                        using (CancellationTokenSource authDeadline = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token))
-                        {
-                            authDeadline.CancelAfter(SafeReadContract.AuthorizationDeadline);
-                            authorization = await _authorizer.AuthorizeAsync(bindings, nonce, authDeadline.Token).ConfigureAwait(false);
-                        }
-                    }
-                    catch (OperationCanceledException) when (!deadline.IsCancellationRequested)
-                    {
-                        await Write(context.Response, ResponsePayload.Failure(CertifiedFailureCode.DeadlineExceeded, CertifiedExecutionPhase.VerifyFinalReceipt, false, false)).ConfigureAwait(false);
-                        return;
-                    }
+                    phase = CertifiedExecutionPhase.VerifyFinalReceipt;
+                    try { authorization = await _authorizationCoordinator.AuthorizeAsync(_authorizer, bindings, nonce, deadline.Token).ConfigureAwait(false); }
                     finally { Array.Clear(nonce, 0, nonce.Length); }
 
-                    phase = CertifiedExecutionPhase.VerifyFinalReceipt;
                     if (authorization.Token == null)
                     {
                         await Write(context.Response, ResponsePayload.AuthorizationFailure(authorization.Failure ?? BackendAuthorizationFailure.Unavailable())).ConfigureAwait(false);
@@ -140,6 +133,8 @@ namespace RevitOperator.SafeReadHost
 
                     phase = CertifiedExecutionPhase.CountSheets;
                     CertifiedExecutionResult counted = await Dispatch(CertifiedExternalWorkItem.Count(captured.Binding, authorization.Token), deadline.Token).ConfigureAwait(false);
+                    requestDispatched = counted.RequestDispatched;
+                    outcomeUnknown = counted.OutcomeUnknown;
                     if (!counted.Succeeded)
                     {
                         await Write(context.Response, ResponsePayload.Failure(counted.FailureCode, counted.Phase, counted.RequestDispatched, counted.OutcomeUnknown)).ConfigureAwait(false);
@@ -150,7 +145,7 @@ namespace RevitOperator.SafeReadHost
                 }
                 catch (OperationCanceledException)
                 {
-                    await TryWrite(context.Response, ResponsePayload.Failure(CertifiedFailureCode.DeadlineExceeded, phase, false, false)).ConfigureAwait(false);
+                    await TryWrite(context.Response, ResponsePayload.Failure(CertifiedFailureCode.DeadlineExceeded, phase, requestDispatched, outcomeUnknown)).ConfigureAwait(false);
                 }
                 catch
                 {
@@ -166,20 +161,7 @@ namespace RevitOperator.SafeReadHost
 
         private async Task<CertifiedExecutionResult> Dispatch(CertifiedExternalWorkItem item, CancellationToken cancellation)
         {
-            if (!_slot.TryQueue(item)) return CertifiedExecutionResult.Failure(item.Phase, CertifiedFailureCode.Busy);
-            if (_event.Raise() != ExternalEventRequest.Accepted)
-            {
-                _slot.TryCancelPending(item);
-                return CertifiedExecutionResult.Failure(item.Phase, CertifiedFailureCode.RevitUnavailable);
-            }
-            using (CancellationTokenSource eventDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation))
-            {
-                eventDeadline.CancelAfter(SafeReadContract.ExternalEventDeadline);
-                Task completed = await Task.WhenAny(item.Completion, Task.Delay(Timeout.Infinite, eventDeadline.Token)).ConfigureAwait(false);
-                if (completed == item.Completion) return await item.Completion.ConfigureAwait(false);
-            }
-            _slot.TryCancelPending(item);
-            return CertifiedExecutionResult.Unknown(item.Phase);
+            return await _dispatcher.DispatchAsync(item, cancellation).ConfigureAwait(false);
         }
 
         private static async Task Write(HttpListenerResponse response, ResponsePayload payload)

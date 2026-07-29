@@ -1,11 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net8.0-windows</TargetFramework>
     <IsPackable>false</IsPackable>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <PlatformTarget>x64</PlatformTarget>
+    <NoWarn>$(NoWarn);0067</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -15,20 +17,15 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+    <PackageReference Include="System.IO.FileSystem.AccessControl" Version="5.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <Compile Include="*.cs" />
     <Compile Include="..\..\src\RevitOperator.SafeReadHost\Kernel\**\*.cs" Link="LegacyKernel\%(RecursiveDir)%(Filename)%(Extension)" />
-    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\SafeReadContract.cs" Link="HostKernel\SafeReadContract.cs" />
-    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\Protocol.cs" Link="HostKernel\Protocol.cs" />
-    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\Admission.cs" Link="HostKernel\Admission.cs" />
-    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\Responses.cs" Link="HostKernel\Responses.cs" />
-    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\DiscoveryWire.cs" Link="HostKernel\DiscoveryWire.cs" />
-    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\BackendAuthorization.cs" Link="HostKernel\BackendAuthorization.cs" />
-    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\AuthorizationReceipts.cs" Link="HostKernel\AuthorizationReceipts.cs" />
-    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\DocumentSession.cs" Link="HostKernel\DocumentSession.cs" />
-    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\ExecutionContracts.cs" Link="HostKernel\ExecutionContracts.cs" />
+    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\**\*.cs" Link="HostKernel\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostApplication.cs" Link="Production\HostApplication.cs" />
+    <Compile Include="..\..\src\RevitOperator.SafeReadHost\CertifiedSafeReadHttpHost.cs" Link="Production\CertifiedSafeReadHttpHost.cs" />
     <Content Include="..\..\fixtures\**\*.json" Link="fixtures\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

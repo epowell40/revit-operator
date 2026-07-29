@@ -9,14 +9,15 @@ final receipt that the host verifies and consumes once. The certified executor
 contains no transport, authorization, cryptography, replay, threading,
 ExternalEvent, document-session, or mutable host state.
 
-Discovery lives under the current user's `%LOCALAPPDATA%` profile and relies on
-the profile directory's Windows ACL. Deployment must preserve an ACL granting
-only the owning user, SYSTEM, and local administrators access; copying the
-instance files to a shared or broadly readable directory is unsupported. The
-publisher writes a same-directory temporary file and atomically replaces the
-record. It never follows or publishes a caller-selected path. The startup token
-must be treated as a same-user bearer secret and must never appear in logs,
-responses, backend requests, or static deployment attestation.
+Discovery lives under the current user's `%LOCALAPPDATA%` profile. The host
+enforces a protected ACL granting only the owning user, SYSTEM, and local
+administrators on the discovery directory, temporary publication, and final
+record, then verifies the ACL after atomic replacement. Reparse points and
+unsafe parents/files fail closed. The same checks protect the static runtime
+manifest and pin before they are read. Copying those files to a shared or
+broadly accessible directory is unsupported. The startup token must be treated
+as a same-user bearer secret and must never appear in logs, responses, backend
+requests, or static deployment attestation.
 
 The backend origin and exactly one credential are read once at startup. HTTPS
 is mandatory except for numeric `127.0.0.1`; redirects, proxies, cookies, and
@@ -28,8 +29,21 @@ each authorization request, so a static artifact cannot authorize another
 process or document by itself.
 
 Cancellation is fail-closed and CAS-owned. A pending item can be cancelled only
-before the Revit handler claims it. Once an ExternalEvent was accepted, a
-deadline response is conservatively marked `request_dispatched=true`,
-`outcome_unknown=true`, and `retryable=false`. A claimed item keeps the
-capacity-one slot occupied until the Revit handler terminates, preventing
-overlapping execution.
+before the Revit handler claims it. A successful pending cancellation has a
+known outcome. A failed cancellation after claim, raise/shutdown race, or
+deadline is conservatively marked `request_dispatched=true`,
+`outcome_unknown=true`, and `retryable=false`. CAS terminal ownership prevents
+the timed-out request from clearing a newer request or enabling overlapping
+execution.
+
+Backend authorization uses the same truth boundary. Failure of a separate
+pre-connect proof is known and may be retried. Once either authorization POST
+is dispatched, response loss/reset/cancellation is unknown and cannot be
+automatically retried. A complete structured backend denial is preserved
+without replacing its safe error text or its dispatch flags.
+
+Document identity includes an internal monotonic revision and a rotating
+session ID. Revit document-changed, save/save-as, switch, and close events
+advance or clear this binding. Dirty-to-dirty changes therefore invalidate an
+in-flight authorization, and the handler verifies the captured binding again
+immediately before calling the certified executor.

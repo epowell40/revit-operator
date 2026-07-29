@@ -24,6 +24,8 @@
     <Compile Include="RevitCertifiedExecution.cs" />
   </ItemGroup>
   <Target Name="ValidateRevitTarget" BeforeTargets="ResolveReferences">
+    <PropertyGroup><CertifiedCompileCount>@(Compile->Count())</CertifiedCompileCount></PropertyGroup>
+    <Error Condition="'$(CertifiedCompileCount)'!='1' or '@(Compile)'!='RevitCertifiedExecution.cs'" Text="Certified execution must compile exactly RevitCertifiedExecution.cs and no other source." />
     <Error Condition="'$(TargetFramework)'=='net48' and '$(RevitYear)'!='2023' and '$(RevitYear)'!='2024'" Text="net48 requires RevitYear 2023 or 2024." />
     <Error Condition="'$(TargetFramework)'=='net8.0-windows' and '$(RevitYear)'!='2025'" Text="net8.0-windows requires RevitYear 2025." />
     <Error Condition="!Exists('$(RevitApiPath)\RevitAPI.dll')" Text="Revit API assembly was not found." />

@@ -38,8 +38,13 @@ generates a fresh 32-byte nonce after admission and never publishes it.
 The concrete authorization client sends exact snake-case preauthorization and
 final-authorization bodies to one configured origin, unwraps only the exact
 success envelopes, and verifies the nonce-derived HMAC inside the host
-assembly. Missing/malformed configuration, timeout, redirect,
-unknown JSON field, stale receipt, replay, or binding mismatch denies execution.
+assembly. Each POST first proves that the fixed origin is connectable. A proven
+pre-connect failure is a known retryable denial; after POST dispatch, response
+reset, loss, or cancellation is preserved as
+`request_dispatched=true,outcome_unknown=true,retryable=false`. Complete exact
+backend failure envelopes retain their structured retry/dispatch truth.
+Missing/malformed configuration, redirect, unknown JSON field, stale receipt,
+replay, or binding mismatch denies execution.
 
 Startup also requires `safe_read_runtime_attestation.v1.json` and
 `safe_read_runtime_attestation.v1.sha256` beside the host DLL. The host verifies
@@ -48,17 +53,32 @@ expired/revoked or wrong-route policy state, and remeasures the loaded certified
 executor and Revit API assemblies against its runtime tuple.
 
 Per-instance discovery is published atomically beneath
-`%LOCALAPPDATA%\RevitOperator\SafeRead\instances`. It never reads or writes the
+`%LOCALAPPDATA%\RevitOperator\SafeRead\instances`. The host applies and then
+re-verifies a protected Windows ACL containing only the owning user, SYSTEM,
+and local administrators; it rejects reparse points and unsafe ACLs before
+using discovery or deployment-attestation files. It never reads or writes the
 primary bridge URL, operator token, or primary add-in manifest.
+
+Every admitted request snapshots a monotonic document revision/session.
+`DocumentChanged` rotates the binding even when a document remains dirty;
+save, save-as, document switch, and close transitions rotate or clear it. The
+production ExternalEvent handler rechecks that binding immediately before the
+certified executor can run.
 
 ## Build and test
 
 ```powershell
 dotnet test .\tests\RevitOperator.SafeReadHost.Tests\RevitOperator.SafeReadHost.Tests.csproj -c Release
+dotnet msbuild .\src\RevitOperator.SafeReadCertifiedExecution\RevitOperator.SafeReadCertifiedExecution.csproj -getItem:Compile -p:TargetFramework=net8.0-windows -p:RevitYear=2025
 dotnet build .\src\RevitOperator.SafeReadHost\RevitOperator.SafeReadHost.csproj -c Release -f net48 -p:RevitYear=2023 -p:RevitApiPath="C:\Program Files\Autodesk\Revit 2023"
 dotnet build .\src\RevitOperator.SafeReadHost\RevitOperator.SafeReadHost.csproj -c Release -f net48 -p:RevitYear=2024 -p:RevitApiPath="C:\Program Files\Autodesk\Revit 2024"
 dotnet build .\src\RevitOperator.SafeReadHost\RevitOperator.SafeReadHost.csproj -c Release -f net8.0-windows -p:RevitYear=2025 -p:RevitApiPath="C:\Program Files\Autodesk\Revit 2025"
 ```
+
+The test project compiles the production `HostKernel`, host orchestrator,
+attestation/discovery path, and Revit execution adapter against deterministic
+Revit stubs. The certified project also fails its build unless the evaluated
+`@(Compile)` set contains exactly `RevitCertifiedExecution.cs`.
 
 `REVIT_OPERATOR_SAFE_READ_PORT` is optional. If present, it must be an exact
 decimal port from `5040` through `5050`; invalid values fail startup.

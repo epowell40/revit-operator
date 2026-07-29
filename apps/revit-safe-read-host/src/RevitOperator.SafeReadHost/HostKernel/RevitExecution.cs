@@ -5,6 +5,13 @@ using RevitOperator.SafeReadCertifiedExecution;
 
 namespace RevitOperator.SafeReadHost.HostKernel
 {
+    internal sealed class RevitExternalEventRaiser : ICertifiedExternalEventRaiser
+    {
+        private readonly ExternalEvent _externalEvent;
+        public RevitExternalEventRaiser(ExternalEvent externalEvent) { _externalEvent = externalEvent; }
+        public bool TryRaise() => _externalEvent.Raise() == ExternalEventRequest.Accepted;
+    }
+
     internal static class RevitDocumentAccess
     {
         public static DocumentBinding? Observe(Document? document, DocumentSessionTracker tracker) => tracker.Observe(CreateFacts(document));
@@ -14,7 +21,7 @@ namespace RevitOperator.SafeReadHost.HostKernel
             DocumentBinding? tracked = tracker.Current;
             if (tracked == null || !ReferenceEquals(tracked.RuntimeIdentity, expected.RuntimeIdentity))
                 return CertifiedFailureCode.DocumentChanged;
-            return DocumentBindingVerifier.Verify(expected, CaptureFacts(application), tracked.DocumentSessionId);
+            return DocumentBindingVerifier.Verify(expected, CaptureFacts(application), tracked);
         }
 
         public static DocumentIdentityFacts? CaptureFacts(UIApplication application)

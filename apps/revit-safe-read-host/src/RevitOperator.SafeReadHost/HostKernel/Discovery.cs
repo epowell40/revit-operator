@@ -17,11 +17,33 @@ namespace RevitOperator.SafeReadHost.HostKernel
             return DiscoveryWire.Format(r.Identity.HostInstanceId,r.Identity.StartupToken,r.Pid,r.Year,r.Endpoint,r.Attestation.Sha256,r.Attestation.RuntimeTuple,r.Document);
         }
     }
+    internal interface ISecureDiscoveryStore
+    {
+        void Publish(string hostInstanceId,string content);
+        void Remove(string hostInstanceId);
+    }
+    internal sealed class LocalSecureDiscoveryStore:ISecureDiscoveryStore
+    {
+        private readonly string _trustedRoot;private readonly string _directory;
+        public LocalSecureDiscoveryStore()
+        {
+            string local=Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);if(String.IsNullOrWhiteSpace(local))throw new InvalidOperationException("LOCALAPPDATA unavailable.");_trustedRoot=local;_directory=Path.Combine(local,"RevitOperator","SafeRead","instances");SecureLocalStorage.EnsurePrivateDirectory(_trustedRoot,_directory);
+        }
+        public void Publish(string hostInstanceId,string content)
+        {
+            SecureLocalStorage.EnsurePrivateDirectory(_trustedRoot,_directory);string target=Path.Combine(_directory,hostInstanceId+".json");string temp=target+"."+Guid.NewGuid().ToString("N")+".tmp";try{File.WriteAllText(temp,content,new UTF8Encoding(false));SecureLocalStorage.SecurePublishedFile(_trustedRoot,temp);if(File.Exists(target))File.Replace(temp,target,null);else File.Move(temp,target);SecureLocalStorage.SecurePublishedFile(_trustedRoot,target);}finally{if(File.Exists(temp))File.Delete(temp);}
+        }
+        public void Remove(string hostInstanceId)
+        {
+            string target=Path.Combine(_directory,hostInstanceId+".json");if(File.Exists(target)){SecureLocalStorage.VerifyPrivateFile(target);File.Delete(target);}
+        }
+    }
     internal sealed class DiscoveryPublisher
     {
-        private readonly string _directory;private readonly InstanceIdentity _identity;private readonly int _year;private readonly string _endpoint;private readonly RuntimeDeploymentAttestation _attestation;private readonly object _sync=new object();private bool _removed;
-        public DiscoveryPublisher(InstanceIdentity identity,int year,string endpoint,RuntimeDeploymentAttestation attestation){_identity=identity;_year=year;_endpoint=endpoint;_attestation=attestation;string local=Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);if(String.IsNullOrWhiteSpace(local))throw new InvalidOperationException("LOCALAPPDATA unavailable.");_directory=Path.Combine(local,"RevitOperator","SafeRead","instances");}
-        public void Publish(DocumentBinding? document){lock(_sync){if(_removed)throw new InvalidOperationException();Directory.CreateDirectory(_directory);string target=Path.Combine(_directory,_identity.HostInstanceId+".json");string temp=target+"."+Guid.NewGuid().ToString("N")+".tmp";try{File.WriteAllText(temp,DiscoveryRecordFormatter.Format(new DiscoveryRecord(_identity,Process.GetCurrentProcess().Id,_year,_endpoint,_attestation,document)),new UTF8Encoding(false));if(File.Exists(target))File.Replace(temp,target,null);else File.Move(temp,target);}finally{if(File.Exists(temp))File.Delete(temp);}}}
-        public void Remove(){lock(_sync){if(_removed)return;string target=Path.Combine(_directory,_identity.HostInstanceId+".json");if(File.Exists(target))File.Delete(target);_removed=true;}}
+        private readonly ISecureDiscoveryStore _store;private readonly InstanceIdentity _identity;private readonly int _year;private readonly string _endpoint;private readonly RuntimeDeploymentAttestation _attestation;private readonly object _sync=new object();private bool _removed;
+        public DiscoveryPublisher(InstanceIdentity identity,int year,string endpoint,RuntimeDeploymentAttestation attestation):this(identity,year,endpoint,attestation,new LocalSecureDiscoveryStore()){}
+        internal DiscoveryPublisher(InstanceIdentity identity,int year,string endpoint,RuntimeDeploymentAttestation attestation,ISecureDiscoveryStore store){_identity=identity;_year=year;_endpoint=endpoint;_attestation=attestation;_store=store??throw new ArgumentNullException(nameof(store));}
+        public void Publish(DocumentBinding? document){lock(_sync){if(_removed)throw new InvalidOperationException();_store.Publish(_identity.HostInstanceId,DiscoveryRecordFormatter.Format(new DiscoveryRecord(_identity,Process.GetCurrentProcess().Id,_year,_endpoint,_attestation,document)));}}
+        public void Remove(){lock(_sync){if(_removed)return;_store.Remove(_identity.HostInstanceId);_removed=true;}}
     }
 }

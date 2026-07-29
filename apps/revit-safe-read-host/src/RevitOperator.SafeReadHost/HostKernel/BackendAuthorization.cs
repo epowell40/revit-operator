@@ -4,6 +4,7 @@ using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -30,9 +31,11 @@ namespace RevitOperator.SafeReadHost.HostKernel
     }
     internal sealed class BackendAuthorizationFailure
     {
-        public BackendAuthorizationFailure(string error,bool retryable,bool requestDispatched,bool outcomeUnknown){Error=error;Retryable=retryable;RequestDispatched=requestDispatched;OutcomeUnknown=outcomeUnknown;}
-        public string Error{get;}public bool Retryable{get;}public bool RequestDispatched{get;}public bool OutcomeUnknown{get;}
-        public static BackendAuthorizationFailure Unavailable()=>new BackendAuthorizationFailure("Backend final authorization was unavailable or invalid.",true,false,false);
+        public BackendAuthorizationFailure(string error,bool retryable,bool requestDispatched,bool outcomeUnknown,string stage="authorization"){Error=error;Retryable=retryable;RequestDispatched=requestDispatched;OutcomeUnknown=outcomeUnknown;Stage=stage;}
+        public string Error{get;}public bool Retryable{get;}public bool RequestDispatched{get;}public bool OutcomeUnknown{get;}public string Stage{get;}
+        public static BackendAuthorizationFailure Unavailable(string stage="preconnect")=>new BackendAuthorizationFailure("Backend final authorization was unavailable or invalid.",true,false,false,stage);
+        public static BackendAuthorizationFailure Invalid(string stage)=>new BackendAuthorizationFailure("Backend authorization returned an invalid response.",false,true,false,stage);
+        public static BackendAuthorizationFailure Unknown(string stage)=>new BackendAuthorizationFailure("Backend authorization response was lost after request dispatch; outcome is unknown.",false,true,true,stage);
     }
     internal sealed class BackendAuthorizationResult
     {
@@ -62,37 +65,52 @@ namespace RevitOperator.SafeReadHost.HostKernel
             {
                 string nonceText=Protocol.Base64Url(nonce);string nonceHash=Protocol.Sha256(nonce);
                 Preauthorization? pre=await PostPreauthorization(bindings,nonceHash,cancellation).ConfigureAwait(false);
-                if(pre==null||!ValidatePreauthorization(pre,DateTimeOffset.UtcNow))return BackendAuthorizationResult.Denied(BackendAuthorizationFailure.Unavailable());
+                if(pre==null||!ValidatePreauthorization(pre,DateTimeOffset.UtcNow))return BackendAuthorizationResult.Denied(BackendAuthorizationFailure.Invalid("preauthorization_response"));
                 FinalAuthorizationReceipt? receipt=await PostFinal(bindings,pre.CapabilityId,nonceText,cancellation).ConfigureAwait(false);
                 VerifiedFinalAuthorizationToken? token=_verifier.Verify(receipt,bindings,pre.CapabilityId,pre.BindingsHash,nonce,DateTimeOffset.UtcNow);
-                return token==null?BackendAuthorizationResult.Denied(BackendAuthorizationFailure.Unavailable()):BackendAuthorizationResult.Authorized(token);
+                return token==null?BackendAuthorizationResult.Denied(BackendAuthorizationFailure.Invalid("final_authorization_response")):BackendAuthorizationResult.Authorized(token);
             }
             catch(BackendAuthorizationFailureException failure){return BackendAuthorizationResult.Denied(failure.Failure);}
+            catch(OperationCanceledException){return BackendAuthorizationResult.Denied(BackendAuthorizationFailure.Unavailable("preconnect"));}
         }
         private async Task<Preauthorization?> PostPreauthorization(AuthorizationBindings b,string nonceHash,CancellationToken cancellation)
         {
             string body=CreatePreauthorizationJson(b,nonceHash);
-            JsonElement? root=await Post(SafeReadContract.PreauthorizationPath,body,cancellation).ConfigureAwait(false);if(root==null)return null;
-            JsonElement envelope=root.Value;if(!Exact(envelope,"ok","authorization")||!True(envelope,"ok")||!envelope.TryGetProperty("authorization",out JsonElement a)||!Exact(a,"schema","capability_id","bindings_hash","issued_at_utc","expires_at_utc")||!Eq(a,"schema",SafeReadContract.PreauthorizationResponseSchema))return null;
+            JsonElement root=await Post(SafeReadContract.PreauthorizationPath,body,"preauthorization",cancellation).ConfigureAwait(false);
+            JsonElement envelope=root;if(!Exact(envelope,"ok","authorization")||!True(envelope,"ok")||!envelope.TryGetProperty("authorization",out JsonElement a)||!Exact(a,"schema","capability_id","bindings_hash","issued_at_utc","expires_at_utc")||!Eq(a,"schema",SafeReadContract.PreauthorizationResponseSchema))return null;
             return new Preauthorization(Text(a,"capability_id"),Text(a,"bindings_hash"),Text(a,"issued_at_utc"),Text(a,"expires_at_utc"));
         }
         private async Task<FinalAuthorizationReceipt?> PostFinal(AuthorizationBindings b,string capability,string nonce,CancellationToken cancellation)
         {
             string body=CreateFinalAuthorizationJson(b,capability,nonce);
-            JsonElement? root=await Post(SafeReadContract.FinalAuthorizationPath,body,cancellation).ConfigureAwait(false);if(root==null)return null;
-            JsonElement envelope=root.Value;if(!Exact(envelope,"ok","receipt")||!True(envelope,"ok")||!envelope.TryGetProperty("receipt",out JsonElement r)||!Exact(r,"schema","route_id","host_instance_id","executor_id","runtime_attestation_sha256","runtime_tuple","document","client_session_id","request_id","attempt_id","capability_id","bindings_hash","receipt_id","issued_at_utc","expires_at_utc","hmac_sha256"))return null;
+            JsonElement root=await Post(SafeReadContract.FinalAuthorizationPath,body,"final_authorization",cancellation).ConfigureAwait(false);
+            JsonElement envelope=root;if(!Exact(envelope,"ok","receipt")||!True(envelope,"ok")||!envelope.TryGetProperty("receipt",out JsonElement r)||!Exact(r,"schema","route_id","host_instance_id","executor_id","runtime_attestation_sha256","runtime_tuple","document","client_session_id","request_id","attempt_id","capability_id","bindings_hash","receipt_id","issued_at_utc","expires_at_utc","hmac_sha256"))return null;
             AuthorizationBindings parsed;if(!TryBindings(r,out parsed)||!Eq(r,"schema",SafeReadContract.FinalReceiptSchema))return null;
             string canonical=CanonicalReceiptPayload(r);
             return new FinalAuthorizationReceipt(Text(r,"schema"),parsed,Text(r,"capability_id"),Text(r,"bindings_hash"),Text(r,"receipt_id"),Text(r,"issued_at_utc"),Text(r,"expires_at_utc"),Text(r,"hmac_sha256"),canonical);
         }
-        private async Task<JsonElement?> Post(string path,string body,CancellationToken cancellation)
+        private async Task<JsonElement> Post(string path,string body,string stage,CancellationToken cancellation)
         {
+            await ProveConnectable(stage,cancellation).ConfigureAwait(false);
             try
             {
-                using(HttpRequestMessage request=new HttpRequestMessage(HttpMethod.Post,path)){request.Content=new StringContent(body,new UTF8Encoding(false),"application/json");using(HttpResponseMessage response=await _http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,cancellation).ConfigureAwait(false)){if(response.Content.Headers.ContentLength>SafeReadContract.MaximumBackendResponseBytes)return null;using(Stream stream=await response.Content.ReadAsStreamAsync().ConfigureAwait(false))using(MemoryStream copy=new MemoryStream()){byte[] buffer=new byte[4096];int total=0;while(true){int read=await stream.ReadAsync(buffer,0,Math.Min(buffer.Length,SafeReadContract.MaximumBackendResponseBytes-total),cancellation).ConfigureAwait(false);if(read<=0)break;total+=read;if(total>=SafeReadContract.MaximumBackendResponseBytes)return null;copy.Write(buffer,0,read);}using(JsonDocument doc=JsonDocument.Parse(copy.ToArray(),new JsonDocumentOptions{AllowTrailingCommas=false,CommentHandling=JsonCommentHandling.Disallow,MaxDepth=8})){JsonElement root=doc.RootElement.Clone();if(response.StatusCode!=HttpStatusCode.OK){BackendAuthorizationFailure? failure=ParseFailure(root);if(failure!=null)throw new BackendAuthorizationFailureException(failure);return null;}return root;}}}}
+                using(HttpRequestMessage request=new HttpRequestMessage(HttpMethod.Post,path)){request.Content=new StringContent(body,new UTF8Encoding(false),"application/json");using(HttpResponseMessage response=await _http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,cancellation).ConfigureAwait(false)){if(response.Content.Headers.ContentLength>SafeReadContract.MaximumBackendResponseBytes)throw new BackendAuthorizationFailureException(BackendAuthorizationFailure.Invalid(stage+"_response"));using(Stream stream=await response.Content.ReadAsStreamAsync().ConfigureAwait(false))using(MemoryStream copy=new MemoryStream()){byte[] buffer=new byte[4096];int total=0;while(true){int room=SafeReadContract.MaximumBackendResponseBytes-total;if(room<=0)throw new BackendAuthorizationFailureException(BackendAuthorizationFailure.Invalid(stage+"_response"));int read=await stream.ReadAsync(buffer,0,Math.Min(buffer.Length,room),cancellation).ConfigureAwait(false);if(read<=0)break;total+=read;copy.Write(buffer,0,read);}JsonElement root;try{using(JsonDocument doc=JsonDocument.Parse(copy.ToArray(),new JsonDocumentOptions{AllowTrailingCommas=false,CommentHandling=JsonCommentHandling.Disallow,MaxDepth=8})){root=doc.RootElement.Clone();}}catch(JsonException){throw new BackendAuthorizationFailureException(BackendAuthorizationFailure.Invalid(stage+"_response"));}if(response.StatusCode!=HttpStatusCode.OK){BackendAuthorizationFailure? failure=ParseFailure(root,stage+"_response");if(failure!=null)throw new BackendAuthorizationFailureException(failure);throw new BackendAuthorizationFailureException(BackendAuthorizationFailure.Invalid(stage+"_response"));}return root;}}}
             }
-            catch(OperationCanceledException) when(cancellation.IsCancellationRequested){throw;}
-            catch{return null;}
+            catch(BackendAuthorizationFailureException){throw;}
+            catch(OperationCanceledException){throw new BackendAuthorizationFailureException(BackendAuthorizationFailure.Unknown(stage+"_dispatch"));}
+            catch{throw new BackendAuthorizationFailureException(BackendAuthorizationFailure.Unknown(stage+"_dispatch"));}
+        }
+        private async Task ProveConnectable(string stage,CancellationToken cancellation)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            using(TcpClient client=new TcpClient(AddressFamily.InterNetwork))
+            {
+                Task connect=client.ConnectAsync(_origin.Value.Host,_origin.Value.Port);
+                Task cancelled=Task.Delay(Timeout.Infinite,cancellation);
+                Task completed=await Task.WhenAny(connect,cancelled).ConfigureAwait(false);
+                if(completed!=connect)throw new BackendAuthorizationFailureException(BackendAuthorizationFailure.Unavailable(stage+"_preconnect"));
+                try{await connect.ConfigureAwait(false);}catch{throw new BackendAuthorizationFailureException(BackendAuthorizationFailure.Unavailable(stage+"_preconnect"));}
+            }
         }
         private static string BindingsJson(AuthorizationBindings b)=>",\"route_id\":"+Protocol.Quote(b.RouteId)+",\"host_instance_id\":"+Protocol.Quote(b.HostInstanceId)+",\"executor_id\":"+Protocol.Quote(b.ExecutorId)+",\"runtime_attestation_sha256\":"+Protocol.Quote(b.RuntimeAttestationSha256)+",\"runtime_tuple\":"+RuntimeJson(b.RuntimeTuple)+",\"document\":{\"project_fingerprint\":"+Protocol.Quote(b.ProjectFingerprint)+",\"document_session_id\":"+Protocol.Quote(b.DocumentSessionId)+"},\"client_session_id\":"+Protocol.Quote(b.ClientSessionId)+",\"request_id\":"+Protocol.Quote(b.RequestId)+",\"attempt_id\":"+Protocol.Quote(b.AttemptId);
         internal static string CreatePreauthorizationJson(AuthorizationBindings b,string nonceHash)=>"{\"schema\":"+Protocol.Quote(SafeReadContract.PreauthorizationSchema)+BindingsJson(b)+",\"capability_nonce_sha256\":"+Protocol.Quote(nonceHash)+"}";
@@ -106,14 +124,28 @@ namespace RevitOperator.SafeReadHost.HostKernel
         private static bool Eq(JsonElement e,string name,string expected)=>String.Equals(Text(e,name),expected,StringComparison.Ordinal);
         private static string Text(JsonElement e,string name){JsonElement v;return e.TryGetProperty(name,out v)&&v.ValueKind==JsonValueKind.String?v.GetString()??String.Empty:String.Empty;}
         private static bool ParseTime(string value,out DateTimeOffset parsed)=>DateTimeOffset.TryParseExact(value,"yyyy-MM-dd'T'HH:mm:ss.fff'Z'",CultureInfo.InvariantCulture,DateTimeStyles.AssumeUniversal|DateTimeStyles.AdjustToUniversal,out parsed);
-        private static BackendAuthorizationFailure? ParseFailure(JsonElement root)
+        private static BackendAuthorizationFailure? ParseFailure(JsonElement root,string stage)
         {
             if(!Exact(root,"ok","code","error","retryable","request_dispatched","outcome_unknown"))return null;
             JsonElement ok,retryable,dispatched,unknown;if(!root.TryGetProperty("ok",out ok)||ok.ValueKind!=JsonValueKind.False||!root.TryGetProperty("retryable",out retryable)||(retryable.ValueKind!=JsonValueKind.True&&retryable.ValueKind!=JsonValueKind.False)||!root.TryGetProperty("request_dispatched",out dispatched)||(dispatched.ValueKind!=JsonValueKind.True&&dispatched.ValueKind!=JsonValueKind.False)||!root.TryGetProperty("outcome_unknown",out unknown)||(unknown.ValueKind!=JsonValueKind.True&&unknown.ValueKind!=JsonValueKind.False))return null;
             string error=Text(root,"error");if(!SafeFailureText(error))return null;bool isUnknown=unknown.GetBoolean(),isDispatched=dispatched.GetBoolean(),isRetryable=retryable.GetBoolean();if(isUnknown){isDispatched=true;isRetryable=false;}
-            return new BackendAuthorizationFailure(error,isRetryable,isDispatched,isUnknown);
+            return new BackendAuthorizationFailure(error,isRetryable,isDispatched,isUnknown,stage);
         }
         private static bool SafeFailureText(string value){if(String.IsNullOrEmpty(value)||value.Length>512)return false;for(int i=0;i<value.Length;i++)if(value[i]<32||value[i]==127)return false;return true;}
         public void Dispose()=>_http.Dispose();
+    }
+
+    internal sealed class BackendAuthorizationCoordinator
+    {
+        private readonly TimeSpan _deadline;
+        public BackendAuthorizationCoordinator(TimeSpan deadline){if(deadline<=TimeSpan.Zero)throw new ArgumentOutOfRangeException(nameof(deadline));_deadline=deadline;}
+        public async Task<BackendAuthorizationResult> AuthorizeAsync(SafeReadBackendAuthorizer authorizer,AuthorizationBindings bindings,byte[] nonce,CancellationToken outerDeadline)
+        {
+            using(CancellationTokenSource authorizationDeadline=CancellationTokenSource.CreateLinkedTokenSource(outerDeadline))
+            {
+                authorizationDeadline.CancelAfter(_deadline);
+                return await authorizer.AuthorizeAsync(bindings,nonce,authorizationDeadline.Token).ConfigureAwait(false);
+            }
+        }
     }
 }

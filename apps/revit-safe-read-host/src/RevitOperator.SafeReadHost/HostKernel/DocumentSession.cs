@@ -24,24 +24,27 @@ namespace RevitOperator.SafeReadHost.HostKernel
 
     internal sealed class DocumentBinding
     {
-        public DocumentBinding(object runtimeIdentity, string projectFingerprint, string documentSessionId, bool isModified)
+        public DocumentBinding(object runtimeIdentity, string projectFingerprint, string documentSessionId, bool isModified, long revision = 1)
         {
             RuntimeIdentity = runtimeIdentity;
             ProjectFingerprint = projectFingerprint;
             DocumentSessionId = documentSessionId;
             IsModified = isModified;
+            Revision = revision;
         }
 
         public object RuntimeIdentity { get; }
         public string ProjectFingerprint { get; }
         public string DocumentSessionId { get; }
         public bool IsModified { get; }
+        public long Revision { get; }
     }
 
     internal sealed class DocumentSessionTracker
     {
         private readonly object _sync = new object();
         private DocumentBinding? _current;
+        private long _nextRevision;
 
         public DocumentBinding? Current { get { lock (_sync) return _current; } }
 
@@ -57,14 +60,47 @@ namespace RevitOperator.SafeReadHost.HostKernel
                 if (_current == null || !ReferenceEquals(_current.RuntimeIdentity, facts.RuntimeIdentity) ||
                     !String.Equals(_current.ProjectFingerprint, facts.ProjectFingerprint, StringComparison.Ordinal))
                 {
-                    _current = new DocumentBinding(facts.RuntimeIdentity, facts.ProjectFingerprint, Guid.NewGuid().ToString("D"), facts.IsModified);
+                    _current = Create(facts);
                 }
                 else if (_current.IsModified != facts.IsModified)
                 {
-                    _current = new DocumentBinding(_current.RuntimeIdentity, _current.ProjectFingerprint, _current.DocumentSessionId, facts.IsModified);
+                    _current = Create(facts);
                 }
                 return _current;
             }
+        }
+
+        public DocumentBinding? MarkChanged(DocumentIdentityFacts? facts)
+        {
+            lock (_sync)
+            {
+                if (facts == null || !facts.IsValid || _current == null || !ReferenceEquals(_current.RuntimeIdentity, facts.RuntimeIdentity))
+                    return null;
+                _current = Create(facts);
+                return _current;
+            }
+        }
+
+        public DocumentBinding? MarkTransition(DocumentIdentityFacts? facts)
+        {
+            lock (_sync)
+            {
+                if (facts == null || !facts.IsValid)
+                {
+                    _current = null;
+                    return null;
+                }
+                if (_current != null && !ReferenceEquals(_current.RuntimeIdentity, facts.RuntimeIdentity))
+                    return _current;
+                _current = Create(facts);
+                return _current;
+            }
+        }
+
+        private DocumentBinding Create(DocumentIdentityFacts facts)
+        {
+            long revision = checked(++_nextRevision);
+            return new DocumentBinding(facts.RuntimeIdentity, facts.ProjectFingerprint, Guid.NewGuid().ToString("D"), facts.IsModified, revision);
         }
 
         public void Clear() { lock (_sync) _current = null; }
@@ -85,13 +121,15 @@ namespace RevitOperator.SafeReadHost.HostKernel
 
     internal static class DocumentBindingVerifier
     {
-        public static CertifiedFailureCode Verify(DocumentBinding expected, DocumentIdentityFacts? actual, string? trackedSession)
+        public static CertifiedFailureCode Verify(DocumentBinding expected, DocumentIdentityFacts? actual, DocumentBinding? tracked)
         {
             if (actual == null || !actual.IsValid)
                 return CertifiedFailureCode.NoActiveDocument;
             if (!ReferenceEquals(expected.RuntimeIdentity, actual.RuntimeIdentity) ||
                 !String.Equals(expected.ProjectFingerprint, actual.ProjectFingerprint, StringComparison.Ordinal) ||
-                !String.Equals(expected.DocumentSessionId, trackedSession, StringComparison.Ordinal) ||
+                tracked == null || !ReferenceEquals(expected.RuntimeIdentity, tracked.RuntimeIdentity) ||
+                !String.Equals(expected.DocumentSessionId, tracked.DocumentSessionId, StringComparison.Ordinal) ||
+                expected.Revision != tracked.Revision ||
                 expected.IsModified != actual.IsModified)
                 return CertifiedFailureCode.DocumentChanged;
             if (actual.IsModifiable)
