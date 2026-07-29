@@ -10,7 +10,7 @@ import {
   type ToolExposurePolicyRecord
 } from "./tool_certification.js";
 
-export const BUNDLED_TOOL_EXPOSURE_POLICY_HASH = "sha256:d6204c2576e83a96586f0b4bc575d7f68c7325e3efb32566ba6204e1aa3d2624";
+export const BUNDLED_TOOL_EXPOSURE_POLICY_HASH = "sha256:57b14a45d427818122cb7df0f2eb697a7883b8aadbc90abed305a74cc1ba8503";
 
 const POLICY_FILENAME = "tool_exposure_policy.v1.json";
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
@@ -18,6 +18,14 @@ const ALIAS = /^[a-z][a-z0-9_]*$/;
 const CHANNELS: readonly ExposureChannel[] = ["search", "generic_call", "typed_mcp", "deterministic_workflow"];
 const LEVELS = ["L0", "L1", "L2", "L3", "L4", "L5"] as const;
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const SAFE_READ_STANDALONE_BINDING = Object.freeze({
+  method: "POST",
+  path: "/revit/certified/sheets/count",
+  alias: "revit_count_sheets_certified",
+  executor_id: "revit-operator.safe-read-host.v1",
+  route_id: "safe_read.sheet_count.v1",
+  transport: "direct_loopback"
+});
 
 export type TrustedToolExposurePolicy = {
   policy: ToolExposurePolicy;
@@ -79,9 +87,11 @@ export function parseTrustedToolExposurePolicy(value: unknown): ToolExposurePoli
   const identities = new Set<string>();
   for (const [index, raw] of policy.records.entries()) {
     const record = asObject(raw, `certification policy record ${index}`);
+    const hasExecutionSurface = own(record, "execution_surface");
     exactKeys(record, [
       "method", "path", "typed_mcp_aliases", "request_hash", "effect_hash", "evidence_record_hash",
-      "highest_cumulative_level", "observed_levels", "visibility", "channels", "policy_record_hash"
+      "highest_cumulative_level", "observed_levels", "visibility", "channels", "policy_record_hash",
+      ...(hasExecutionSurface ? ["execution_surface"] : [])
     ], `certification policy record ${index}`);
     try {
       if (normalizeMethod(String(record.method ?? "")) !== record.method || normalizeToolPath(String(record.path ?? "")) !== record.path) {
@@ -124,6 +134,32 @@ export function parseTrustedToolExposurePolicy(value: unknown): ToolExposurePoli
       if (typeof decision.exposed !== "boolean" || !/^L[0-5]$/.test(String(decision.required_level))
         || !Array.isArray(decision.reason_codes) || decision.reason_codes.some(reason => typeof reason !== "string")) {
         throw new TrustedToolExposurePolicyError("CERTIFICATION_POLICY_INVALID", "Certification policy channel decision is invalid.");
+      }
+    }
+    if (hasExecutionSurface) {
+      const surface = asObject(record.execution_surface, `certification policy record ${index}.execution_surface`);
+      exactKeys(surface, ["kind", "executor_id", "route_id", "transport"], `certification policy record ${index}.execution_surface`);
+      if (surface.kind !== "standalone_executor"
+        || surface.executor_id !== SAFE_READ_STANDALONE_BINDING.executor_id
+        || surface.route_id !== SAFE_READ_STANDALONE_BINDING.route_id
+        || surface.transport !== SAFE_READ_STANDALONE_BINDING.transport
+        || record.method !== SAFE_READ_STANDALONE_BINDING.method
+        || record.path !== SAFE_READ_STANDALONE_BINDING.path
+        || record.visibility !== "candidate"
+        || aliases.length !== 1
+        || aliases[0] !== SAFE_READ_STANDALONE_BINDING.alias) {
+        throw new TrustedToolExposurePolicyError(
+          "CERTIFICATION_POLICY_INVALID",
+          "Certification policy standalone executor attribution is not the reviewed SafeRead binding."
+        );
+      }
+      for (const channel of ["search", "generic_call", "deterministic_workflow"] as const) {
+        if ((channels[channel] as Record<string, unknown>).exposed === true) {
+          throw new TrustedToolExposurePolicyError(
+            "CERTIFICATION_POLICY_INVALID",
+            `Certification policy standalone executor cannot expose the ${channel} channel.`
+          );
+        }
       }
     }
     const { policy_record_hash: recordHash, ...recordPayload } = record;

@@ -4,6 +4,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { revitRouteEffect } from "./revitRouteEffect.js";
+import {
+  SAFE_READ_EXECUTOR_ID,
+  SAFE_READ_SHEETS_COUNT_PATH,
+  SAFE_READ_SHEETS_COUNT_ROUTE_ID
+} from "./safeReadDiscovery.js";
 
 export const TOOL_EXPOSURE_CHANNELS = ["search", "generic_call", "typed_mcp", "deterministic_workflow"] as const;
 export type ToolExposureChannel = typeof TOOL_EXPOSURE_CHANNELS[number];
@@ -24,6 +29,13 @@ type ChannelDecision = {
   reason_codes: string[];
 };
 
+type StandaloneExecutorSurface = {
+  kind: "standalone_executor";
+  executor_id: string;
+  route_id: string;
+  transport: "direct_loopback";
+};
+
 export type ToolExposurePolicyRecord = {
   method: string;
   path: string;
@@ -33,6 +45,7 @@ export type ToolExposurePolicyRecord = {
   highest_cumulative_level: string | null;
   observed_levels: string[];
   visibility: "candidate" | "workflow_only";
+  execution_surface?: StandaloneExecutorSurface;
   typed_mcp_aliases: string[];
   channels: Record<ToolExposureChannel, ChannelDecision>;
   policy_record_hash: string;
@@ -96,7 +109,7 @@ const POLICY_FILENAME = "tool_exposure_policy.v1.json";
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 // This is a deployment trust anchor, not a value learned from the policy file.
 // Update it only alongside a reviewed bundled policy artifact.
-const BUNDLED_POLICY_HASH = "sha256:d6204c2576e83a96586f0b4bc575d7f68c7325e3efb32566ba6204e1aa3d2624";
+const BUNDLED_POLICY_HASH = "sha256:57b14a45d427818122cb7df0f2eb697a7883b8aadbc90abed305a74cc1ba8503";
 const invokedMcpAlias = new AsyncLocalStorage<string>();
 declare const certifiedCourierAdmissionBrand: unique symbol;
 export type CertifiedCourierAdmission = {
@@ -263,13 +276,24 @@ function parseChannelDecision(value: unknown, location: string): ChannelDecision
   return value as unknown as ChannelDecision;
 }
 
+function parseStandaloneExecutorSurface(value: unknown, location: string): StandaloneExecutorSurface {
+  assertObject(value, location);
+  assertExactKeys(value, ["kind", "executor_id", "route_id", "transport"], [], location);
+  if (value.kind !== "standalone_executor") throw new Error(`${location}.kind is invalid`);
+  if (value.executor_id !== SAFE_READ_EXECUTOR_ID) throw new Error(`${location}.executor_id is not a reviewed standalone executor`);
+  if (value.route_id !== SAFE_READ_SHEETS_COUNT_ROUTE_ID) throw new Error(`${location}.route_id is not a reviewed standalone route`);
+  if (value.transport !== "direct_loopback") throw new Error(`${location}.transport is invalid`);
+  return value as unknown as StandaloneExecutorSurface;
+}
+
 function parsePolicyRecord(value: unknown, index: number): ToolExposurePolicyRecord {
   const location = `policy.records[${index}]`;
   assertObject(value, location);
+  const hasExecutionSurface = Object.prototype.hasOwnProperty.call(value, "execution_surface");
   assertExactKeys(value, [
     "method", "path", "request_hash", "effect_hash", "evidence_record_hash", "highest_cumulative_level",
     "observed_levels", "visibility", "typed_mcp_aliases", "channels", "policy_record_hash"
-  ], [], location);
+  ], hasExecutionSurface ? ["execution_surface"] : [], location);
   if (typeof value.method !== "string" || value.method !== value.method.trim().toUpperCase()) throw new Error(`${location}.method must be canonical`);
   if (typeof value.path !== "string" || !/^\/revit\/[A-Za-z0-9][A-Za-z0-9._~/-]*$/.test(value.path) || value.path.endsWith("/")) {
     throw new Error(`${location}.path must be an exact canonical Revit path`);
@@ -291,6 +315,20 @@ function parsePolicyRecord(value: unknown, index: number): ToolExposurePolicyRec
     channel,
     parseChannelDecision(channelsRaw[channel], `${location}.channels.${channel}`)
   ])) as Record<ToolExposureChannel, ChannelDecision>;
+  if (hasExecutionSurface) {
+    parseStandaloneExecutorSurface(value.execution_surface, `${location}.execution_surface`);
+    if (value.method !== "POST" || value.path !== SAFE_READ_SHEETS_COUNT_PATH) {
+      throw new Error(`${location}.execution_surface is not bound to the reviewed standalone route`);
+    }
+    if (value.visibility !== "candidate" || value.typed_mcp_aliases.length !== 1 || value.typed_mcp_aliases[0] !== "revit_count_sheets_certified") {
+      throw new Error(`${location}.execution_surface is not bound to the reviewed typed MCP alias`);
+    }
+    for (const channel of ["search", "generic_call", "deterministic_workflow"] as const) {
+      if (channels[channel].exposed) {
+        throw new Error(`${location}.execution_surface cannot expose the ${channel} channel`);
+      }
+    }
+  }
   const { policy_record_hash: policyRecordHash, ...hashPayload } = value;
   if (digest(hashPayload) !== policyRecordHash) throw new Error(`${location}.policy_record_hash does not match record contents`);
   return { ...value, channels } as unknown as ToolExposurePolicyRecord;

@@ -1013,10 +1013,10 @@ server.tool("revit_list_sheets", "List or count sheets (sorted by Sheet Number).
   }
 );
 
-// Development/laboratory-only until evidence promotion adds an exact policy
-// record. The dynamic exposure wrapper keeps this alias absent in certified
-// tools/list; the client independently rechecks policy before host discovery.
-registerAuditedZodTool("revit_count_sheets_certified", "Laboratory-only fixed SafeRead count of sheets through an attested standalone loopback host.", z.object({}).strict(), async () => {
+// Availability is controlled by the exact tool-exposure policy. The dynamic
+// wrapper keeps this alias absent until its evidence is certified; the client
+// independently rechecks policy before host discovery.
+registerAuditedZodTool("revit_count_sheets_certified", "Count sheets through the availability-controlled, attested SafeRead standalone loopback host.", z.object({}).strict(), async () => {
   try {
     const data = await countSheetsViaSafeRead();
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };

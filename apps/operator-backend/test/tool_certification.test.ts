@@ -47,6 +47,12 @@ const EXACT_ALIAS_FIXTURE_RECEIPT: AliasFixtureReceipt[] = [
   { route: "GET /revit/views", alias: "revit_list_views", arguments: {}, request: {} },
   { route: "GET /revit/write-grant-status", alias: "revit_write_grant_status", arguments: {}, request: {} },
   {
+    route: "POST /revit/certified/sheets/count",
+    alias: "revit_count_sheets_certified",
+    arguments: {},
+    request: { schema: "revit-operator.safe-read.sheets-count.request.v1" }
+  },
+  {
     route: "POST /revit/export-image",
     alias: "revit_capture_view",
     arguments: {},
@@ -208,6 +214,9 @@ function projectedWireRequest(
   }
   if (fixture.alias === "revit_update_schedule_cell") {
     return { ...parsedArguments, apply: false, dryRun: true };
+  }
+  if (fixture.alias === "revit_count_sheets_certified") {
+    return { schema: "revit-operator.safe-read.sheets-count.request.v1" };
   }
   return parsedArguments;
 }
@@ -424,14 +433,14 @@ test("candidate provenance hash and exact identity set detect tamper, removal, a
   );
 });
 
-test("candidate aliases exactly match typed wrapper attribution from the corrected registry audit", () => {
+test("candidate aliases match their reviewed bridge registry or standalone executor attribution", () => {
   const rawCandidates = fs.readFileSync(candidatesPath, "utf8");
   const candidates = parseToolCertificationCandidates(JSON.parse(rawCandidates));
   const repoRoot = findRepoRoot(backendRoot);
   verifyTypedMcpAliasesAgainstRegistry(candidates, repoRoot);
-  assert.equal(candidates.candidates.length, 24);
-  assert.equal(candidates.candidates.flatMap(candidate => candidate.typed_mcp_aliases).length, 19);
-  assert.equal(new Set(candidates.candidates.flatMap(candidate => candidate.typed_mcp_aliases)).size, 18);
+  assert.equal(candidates.candidates.length, 25);
+  assert.equal(candidates.candidates.flatMap(candidate => candidate.typed_mcp_aliases).length, 20);
+  assert.equal(new Set(candidates.candidates.flatMap(candidate => candidate.typed_mcp_aliases)).size, 19);
   assert.ok(!candidates.candidates.flatMap(candidate => candidate.typed_mcp_aliases).includes("revit_call_tool"));
   assert.equal(
     candidates.candidates.flatMap(candidate => candidate.typed_mcp_aliases).filter(alias => alias === "revit_search_tools").length,
@@ -447,6 +456,38 @@ test("candidate aliases exactly match typed wrapper attribution from the correct
 
   const candidateHash = sha256NormalizedText(rawCandidates);
   assert.match(candidateHash, /^sha256:[0-9a-f]{64}$/);
+});
+
+test("standalone executor attribution rejects bridge substitution and false promotion", () => {
+  const parsed = parseToolCertificationCandidates(JSON.parse(fs.readFileSync(candidatesPath, "utf8")));
+  const repoRoot = findRepoRoot(backendRoot);
+  const safeRead = parsed.candidates.find(candidate => candidate.path === "/revit/certified/sheets/count");
+  assert.ok(safeRead?.execution_surface);
+
+  const replacedExecutor = structuredClone(parsed);
+  replacedExecutor.candidates.find(candidate => candidate.path === "/revit/certified/sheets/count")!
+    .execution_surface!.executor_id = "revit-operator.generic-bridge.v1";
+  assert.throws(
+    () => verifyTypedMcpAliasesAgainstRegistry(replacedExecutor, repoRoot),
+    /does not match the reviewed binding/
+  );
+
+  const relabeledAsBridge = structuredClone(parsed);
+  delete relabeledAsBridge.candidates.find(candidate => candidate.path === "/revit/certified/sheets/count")!
+    .execution_surface;
+  assert.throws(
+    () => verifyTypedMcpAliasesAgainstRegistry(relabeledAsBridge, repoRoot),
+    /absent from registry audit/
+  );
+
+  const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8")) as any;
+  const genericPromotion = structuredClone(evidence);
+  genericPromotion.records.find((item: any) => item.path === "/revit/certified/sheets/count")
+    .requested_channels = ["generic_call", "typed_mcp"];
+  assert.throws(
+    () => generatePolicyBytes(JSON.stringify(genericPromotion), fs.readFileSync(candidatesPath, "utf8"), repoRoot),
+    /may request only the typed_mcp channel/
+  );
 });
 
 test("all typed alias bindings record exact wrapper inputs and canonical outbound request bodies", () => {
@@ -466,8 +507,8 @@ test("all typed alias bindings record exact wrapper inputs and canonical outboun
   );
 
   assert.deepEqual(receipts, EXACT_ALIAS_FIXTURE_RECEIPT);
-  assert.equal(receipts.length, 19);
-  assert.equal(new Set(receipts.map(item => item.alias)).size, 18);
+  assert.equal(receipts.length, 20);
+  assert.equal(new Set(receipts.map(item => item.alias)).size, 19);
   for (const fixture of receipts) {
     assert.deepEqual(
       projectedWireRequest(fixture, defaults),
@@ -513,22 +554,37 @@ test("candidate request fixtures fail closed on missing aliases, mismatched requ
   );
 });
 
-test("seeded audit candidates remain unexposed while L2 is absent", () => {
+test("seeded audit and standalone candidates remain unexposed without cumulative evidence", () => {
   const evidenceText = fs.readFileSync(evidencePath, "utf8");
   const candidatesText = fs.readFileSync(candidatesPath, "utf8");
   const evidence = JSON.parse(evidenceText) as ToolCertificationEvidenceFile;
   const policy = generateToolExposurePolicy(evidence);
   const reads = evidence.records.filter(item => (item.effect as { resolved_effect?: string }).resolved_effect === "read");
-  assert.equal(reads.length, 23);
-  assert.equal(evidence.records.length, 24);
-  assert.equal(evidence.records.flatMap(item => item.typed_mcp_aliases).length, 19);
+  assert.equal(reads.length, 24);
+  assert.equal(evidence.records.length, 25);
+  assert.equal(evidence.records.flatMap(item => item.typed_mcp_aliases).length, 20);
   assert.ok(policy.records.every(item => EXPOSURE_CHANNELS.every(channel => !item.channels[channel].exposed)));
-  assert.ok(policy.records.every(item => item.channels.search.reason_codes.includes(CERTIFICATION_REASON_CODES.gap)));
+  assert.ok(policy.records
+    .filter(item => item.path !== "/revit/certified/sheets/count")
+    .every(item => item.channels.search.reason_codes.includes(CERTIFICATION_REASON_CODES.gap)));
 
   const scheduleCell = policy.records.find(item => item.path === "/revit/update-schedule-cell");
   assert.equal(scheduleCell?.visibility, "workflow_only");
   assert.equal(scheduleCell?.channels.deterministic_workflow.exposed, false);
   assert.equal(scheduleCell?.channels.generic_call.exposed, false);
+
+  const safeRead = policy.records.find(item => item.path === "/revit/certified/sheets/count");
+  assert.deepEqual(safeRead?.execution_surface, {
+    kind: "standalone_executor",
+    executor_id: "revit-operator.safe-read-host.v1",
+    route_id: "safe_read.sheet_count.v1",
+    transport: "direct_loopback"
+  });
+  assert.ok(safeRead && EXPOSURE_CHANNELS.every(channel => !safeRead.channels[channel].exposed));
+  assert.deepEqual(safeRead?.channels.typed_mcp.reason_codes, [
+    CERTIFICATION_REASON_CODES.missing,
+    CERTIFICATION_REASON_CODES.unknown
+  ]);
 
   const generatedOnce = generatePolicyBytes(evidenceText, candidatesText);
   const generatedAgain = generatePolicyBytes(
