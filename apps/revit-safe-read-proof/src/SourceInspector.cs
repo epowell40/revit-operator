@@ -57,7 +57,7 @@ internal sealed class SourceInspector
                 Add("SOURCE_BOM", source.LogicalPath + " must use UTF-8 without a BOM.");
                 text = text.Substring(1);
             }
-            var tree = CSharpSyntaxTree.ParseText(text, parseOptions, source.LogicalPath, StrictUtf8);
+            var tree = CSharpSyntaxTree.ParseText(text, parseOptions, Canonical.SourcePath(source.LogicalPath), StrictUtf8);
             trees.Add(tree);
         }
         return trees;
@@ -162,6 +162,13 @@ internal sealed class SourceInspector
     {
         type = UnwrapNullable(type);
         var qualified = Canonical.QualifiedName(type);
+        if (qualified.Contains("Host", StringComparison.OrdinalIgnoreCase) ||
+            qualified.Contains("Transport", StringComparison.OrdinalIgnoreCase) ||
+            qualified.Contains("Server", StringComparison.OrdinalIgnoreCase) ||
+            qualified.Contains("Listener", StringComparison.OrdinalIgnoreCase))
+        {
+            Add("TRANSPORT_SOURCE_FORBIDDEN", "Certified execution assembly declares a transport-host type: " + qualified + ".");
+        }
         if (_manifest.Policy.AllowedSerializationLeafTypes.Contains(qualified, StringComparer.Ordinal))
         {
             lines.Add("LEAF|" + path + "|" + Canonical.TypeId(type));
@@ -334,6 +341,13 @@ internal sealed class SourceInspector
     private void InspectTypePolicy(INamedTypeSymbol type)
     {
         var qualified = Canonical.QualifiedName(type);
+        if (qualified.Contains("Host", StringComparison.OrdinalIgnoreCase) ||
+            qualified.Contains("Transport", StringComparison.OrdinalIgnoreCase) ||
+            qualified.Contains("Server", StringComparison.OrdinalIgnoreCase) ||
+            qualified.Contains("Listener", StringComparison.OrdinalIgnoreCase))
+        {
+            Add("TRANSPORT_SOURCE_FORBIDDEN", "Certified execution assembly declares a transport-host type: " + qualified + ".");
+        }
         if (qualified.StartsWith("global::Autodesk.", StringComparison.Ordinal))
         {
             Add("AUTODESK_SOURCE_SHADOW", "Source declares an Autodesk type: " + qualified + ".");
@@ -452,7 +466,7 @@ internal sealed class SourceInspector
             ns == "System.Runtime.InteropServices" || ns.StartsWith("System.Runtime.InteropServices.", StringComparison.Ordinal) ||
             qualified is "global::System.Environment" or "global::System.Diagnostics.Process" or "global::System.Activator" or "global::System.AppDomain" or "global::System.Type")
         {
-            Add("SENSITIVE_SIGNATURE_TYPE", owner + " uses forbidden reflection/I/O/native/process/environment type " + Canonical.TypeId(named) + ".");
+            Add(ns == "System.IO" || ns.StartsWith("System.IO.", StringComparison.Ordinal) ? "FILE_IO_FORBIDDEN" : "SENSITIVE_SIGNATURE_TYPE", owner + " uses forbidden reflection/I/O/native/process/environment type " + Canonical.TypeId(named) + ".");
         }
         if (ns == "System.Threading" || ns.StartsWith("System.Threading.", StringComparison.Ordinal))
         {
@@ -460,10 +474,7 @@ internal sealed class SourceInspector
         }
         if (ns == "System.Net" || ns.StartsWith("System.Net.", StringComparison.Ordinal))
         {
-            if (!qualified.StartsWith("global::System.Net.HttpListener", StringComparison.Ordinal))
-            {
-                Add("NETWORK_SIGNATURE_TYPE", owner + " uses a non-HttpListener network type " + Canonical.TypeId(named) + ".");
-            }
+            Add("NETWORK_SYMBOL_FORBIDDEN", owner + " uses forbidden network type " + Canonical.TypeId(named) + ".");
         }
         if (ns.StartsWith("Autodesk.", StringComparison.Ordinal) &&
             !owner.Contains(_manifest.Policy.Roles.ExternalEventOwnerType, StringComparison.Ordinal) &&

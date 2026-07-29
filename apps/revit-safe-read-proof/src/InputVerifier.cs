@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
+using System.Text;
 
 namespace RevitSafeReadProof;
 
@@ -31,7 +32,6 @@ internal sealed class InputVerifier
 
         VerifyManifestHeader();
         VerifySdk();
-        VerifyFramework(inputs);
         VerifySource(inputs);
         VerifyVariants(inputs);
         return inputs;
@@ -43,6 +43,8 @@ internal sealed class InputVerifier
         Check(string.Equals(_manifest.ProofKind, Constants.ProofKind, StringComparison.Ordinal), "MANIFEST_KIND", "proofKind must be exactly " + Constants.ProofKind + ".");
         Check(string.Equals(_manifest.TrustBoundary, Constants.TrustBoundary, StringComparison.Ordinal), "TRUST_BOUNDARY", "The explicit local-admin/OS/Revit trust boundary is missing or changed.");
         Check(!string.IsNullOrWhiteSpace(_manifest.Source.AssemblyName), "ASSEMBLY_NAME", "source.assemblyName is required.");
+        Check(string.Equals(_manifest.Source.AssemblyName, "SafeReadCertifiedExecution", StringComparison.Ordinal), "EXECUTION_ASSEMBLY_NAME", "source.assemblyName must be exactly SafeReadCertifiedExecution; transport hosts are outside this proof.");
+        Check(string.Equals(_manifest.Source.TextNormalization, "utf8-lf", StringComparison.Ordinal), "SOURCE_NORMALIZATION", "source.textNormalization must be exactly utf8-lf.");
         Check(IsSimpleAssemblyName(_manifest.Source.AssemblyName), "ASSEMBLY_NAME", "source.assemblyName must contain only ASCII letters, digits, period, underscore, or hyphen.");
         Check(_manifest.Policy.AllowedOperationKinds.Count > 0, "POLICY_EMPTY", "allowedOperationKinds must be explicit and non-empty.");
         Check(_manifest.Policy.AllowedImplicitOperationKinds.Count > 0, "POLICY_EMPTY", "allowedImplicitOperationKinds must be explicit and non-empty.");
@@ -51,6 +53,7 @@ internal sealed class InputVerifier
         RejectDuplicates(_manifest.Policy.AllowedSensitiveSymbols, "POLICY_DUPLICATE", "allowedSensitiveSymbols");
         RejectDuplicates(_manifest.Policy.AllowedMutableFields, "POLICY_DUPLICATE", "allowedMutableFields");
         RejectDuplicates(_manifest.Policy.SerializationRoots, "POLICY_DUPLICATE", "serializationRoots");
+        RejectDuplicates(_manifest.Policy.SerializationCallsites, "POLICY_DUPLICATE", "serializationCallsites");
     }
 
     private void VerifySdk()
@@ -91,16 +94,14 @@ internal sealed class InputVerifier
         }
     }
 
-    private void VerifyFramework(LockedInputs inputs)
+    private List<string> VerifyFrameworkSet(FrameworkLock framework, string expectedTfm, string year)
     {
-        var framework = _manifest.Framework;
-        Check(string.Equals(framework.Name, "Microsoft.NETCore.App.Ref", StringComparison.Ordinal), "FRAMEWORK_NAME", "framework.name must be Microsoft.NETCore.App.Ref.");
-        Check(string.Equals(framework.Version, "9.0.8", StringComparison.Ordinal), "FRAMEWORK_VERSION", "framework.version must be exactly 9.0.8 for proof v1.");
-        Check(string.Equals(framework.TargetFramework, "net9.0", StringComparison.Ordinal), "FRAMEWORK_TFM", "framework.targetFramework must be net9.0.");
+        var paths = new List<string>();
+        Check(string.Equals(framework.TargetFramework, expectedTfm, StringComparison.Ordinal), "FRAMEWORK_TFM", "Revit " + year + " framework target must equal variant targetFramework.");
         if (!Path.IsPathFullyQualified(framework.ReferenceRoot) || !Directory.Exists(framework.ReferenceRoot))
         {
             Add("FRAMEWORK_ROOT", "framework.referenceRoot must be an existing absolute directory.");
-            return;
+            return paths;
         }
 
         RejectDuplicates(framework.Files.Select(static file => Canonical.NormalizeRelativePath(file.Path)), "FRAMEWORK_DUPLICATE", "framework.files paths");
@@ -118,7 +119,7 @@ internal sealed class InputVerifier
             lockedRelative.Add(relative);
             if (VerifyLockedAssembly(resolved, file, "FRAMEWORK_FILE"))
             {
-                inputs.FrameworkReferences.Add(resolved);
+                paths.Add(resolved);
                 inventoryLines.Add(relative + "|sha256=" + file.Sha256 + "|identity=" + file.Identity);
                 if (!identities.Add(file.Identity))
                 {
@@ -127,7 +128,8 @@ internal sealed class InputVerifier
             }
         }
 
-        var actualRelative = Directory.EnumerateFiles(framework.ReferenceRoot, "*.dll", SearchOption.TopDirectoryOnly)
+        var actualRelative = Directory.EnumerateFiles(framework.ReferenceRoot, "*.dll", SearchOption.AllDirectories)
+            .Where(IsManagedAssembly)
             .Select(path => Canonical.NormalizeRelativePath(Path.GetRelativePath(framework.ReferenceRoot, path)))
             .OrderBy(static value => value, StringComparer.Ordinal)
             .ToList();
@@ -138,6 +140,7 @@ internal sealed class InputVerifier
         }
         var inventoryHash = Canonical.Sha256Text(string.Join("\n", inventoryLines));
         Check(string.Equals(inventoryHash, framework.InventorySha256, StringComparison.Ordinal), "FRAMEWORK_INVENTORY", "Framework inventory hash mismatch.");
+        return paths;
     }
 
     private void VerifySource(LockedInputs inputs)
@@ -186,9 +189,17 @@ internal sealed class InputVerifier
                 continue;
             }
             RejectReparsePoint(resolved, "SOURCE_REPARSE_POINT");
-            var bytes = File.ReadAllBytes(resolved);
-            Check(string.Equals(Canonical.Sha256(bytes), file.Sha256, StringComparison.Ordinal), "SOURCE_HASH", "Source SHA-256 mismatch: " + logical);
-            inputs.Sources.Add(new LockedSourceFile { LogicalPath = logical, FullPath = resolved, Bytes = bytes });
+            var rawBytes = File.ReadAllBytes(resolved);
+            try
+            {
+                var bytes = Canonical.NormalizeUtf8Lf(rawBytes);
+                Check(string.Equals(Canonical.Sha256(bytes), file.Sha256, StringComparison.Ordinal), "SOURCE_HASH", "Normalized source SHA-256 mismatch: " + logical);
+                inputs.Sources.Add(new LockedSourceFile { LogicalPath = logical, FullPath = resolved, Bytes = bytes });
+            }
+            catch (Exception exception) when (exception is DecoderFallbackException or InvalidDataException)
+            {
+                Add("SOURCE_ENCODING", logical + " is not BOM-free strict UTF-8: " + exception.Message);
+            }
         }
 
         RejectDuplicates(_manifest.Source.Resources.Select(static resource => resource.LogicalName), "RESOURCE_DUPLICATE_NAME", "resource logical names");
@@ -249,14 +260,31 @@ internal sealed class InputVerifier
 
         foreach (var variant in _manifest.Variants.OrderBy(static variant => variant.RevitYear, StringComparer.Ordinal))
         {
+            var expectedTfm = variant.RevitYear is "2023" or "2024" ? "net48" : "net8.0-windows";
+            Check(string.Equals(variant.TargetFramework, expectedTfm, StringComparison.Ordinal), "VARIANT_TFM", "Revit " + variant.RevitYear + " targetFramework must be exactly " + expectedTfm + ".");
+            Check(string.Equals(variant.Platform, "x64", StringComparison.Ordinal), "VARIANT_PLATFORM", "Every Revit variant platform must be exactly x64.");
+            var expectedFrameworkNames = variant.RevitYear is "2023" or "2024"
+                ? new[] { ".NETFramework" }
+                : new[] { "Microsoft.NETCore.App.Ref", "Microsoft.WindowsDesktop.App.Ref" };
+            var actualFrameworkNames = variant.Frameworks.Select(static framework => framework.Name).OrderBy(static value => value, StringComparer.Ordinal).ToArray();
+            if (!expectedFrameworkNames.OrderBy(static value => value, StringComparer.Ordinal).SequenceEqual(actualFrameworkNames, StringComparer.Ordinal))
+            {
+                Add("FRAMEWORK_SET", "Revit " + variant.RevitYear + " must lock exactly: " + string.Join(",", expectedFrameworkNames) + ".");
+            }
+            var frameworkPaths = new List<string>();
+            foreach (var framework in variant.Frameworks.OrderBy(static value => value.Name, StringComparer.Ordinal))
+            {
+                frameworkPaths.AddRange(VerifyFrameworkSet(framework, expectedTfm, variant.RevitYear));
+            }
+            inputs.FrameworkReferences[variant.RevitYear] = frameworkPaths;
             var expectedSymbol = "REVIT" + variant.RevitYear;
             if (variant.PreprocessorSymbols.Count != 1 || !string.Equals(variant.PreprocessorSymbols[0], expectedSymbol, StringComparison.Ordinal))
             {
                 Add("PREPROCESSOR_SYMBOLS", "Revit " + variant.RevitYear + " must define exactly " + expectedSymbol + ".");
             }
-            if (variant.RevitReferences.Count == 0)
+            if (variant.RevitReferences.Count != 2)
             {
-                Add("REVIT_REFERENCE_EMPTY", "Revit " + variant.RevitYear + " has no locked reference.");
+                Add("REVIT_REFERENCE_SET", "Revit " + variant.RevitYear + " must lock exactly RevitAPI.dll and RevitAPIUI.dll.");
             }
 
             var paths = new List<string>();
@@ -279,9 +307,10 @@ internal sealed class InputVerifier
                     RejectForwarders(resolved, variant.RevitYear);
                 }
             }
-            if (!variant.RevitReferences.Any(static reference => reference.Identity.StartsWith("RevitAPI, Version=", StringComparison.Ordinal)))
+            var revitNames = variant.RevitReferences.Select(static reference => reference.Identity.Split(',')[0]).OrderBy(static value => value, StringComparer.Ordinal).ToArray();
+            if (!new[] { "RevitAPI", "RevitAPIUI" }.SequenceEqual(revitNames, StringComparer.Ordinal))
             {
-                Add("REVIT_API_IDENTITY", "Revit " + variant.RevitYear + " must lock a RevitAPI assembly identity.");
+                Add("REVIT_API_IDENTITY", "Revit " + variant.RevitYear + " must lock separate exact RevitAPI and RevitAPIUI identities.");
             }
             inputs.RevitReferences[variant.RevitYear] = paths;
         }
@@ -306,6 +335,20 @@ internal sealed class InputVerifier
         catch (Exception exception) when (exception is BadImageFormatException or IOException)
         {
             Add("REVIT_METADATA", "Could not inspect Revit reference metadata: " + exception.Message);
+        }
+    }
+
+    private static bool IsManagedAssembly(string path)
+    {
+        try
+        {
+            using var stream = File.OpenRead(path);
+            using var pe = new PEReader(stream);
+            return pe.HasMetadata && pe.GetMetadataReader().IsAssembly;
+        }
+        catch (Exception exception) when (exception is BadImageFormatException or IOException)
+        {
+            return false;
         }
     }
 

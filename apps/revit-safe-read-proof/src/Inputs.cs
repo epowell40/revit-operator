@@ -9,7 +9,7 @@ internal sealed class LockedInputs
     public string SourceRoot { get; set; } = string.Empty;
     public List<LockedSourceFile> Sources { get; set; } = new();
     public List<LockedResourceFile> Resources { get; set; } = new();
-    public List<string> FrameworkReferences { get; set; } = new();
+    public SortedDictionary<string, List<string>> FrameworkReferences { get; set; } = new(StringComparer.Ordinal);
     public SortedDictionary<string, List<string>> RevitReferences { get; set; } = new(StringComparer.Ordinal);
 }
 

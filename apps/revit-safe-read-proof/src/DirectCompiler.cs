@@ -31,7 +31,7 @@ internal sealed class DirectCompiler
 
     public CompilationObservation Compile(VariantLock variant, IReadOnlyList<SyntaxTree> trees)
     {
-        var referencePaths = _inputs.FrameworkReferences
+        var referencePaths = (_inputs.FrameworkReferences.TryGetValue(variant.RevitYear, out var framework) ? framework : Enumerable.Empty<string>())
             .Concat(_inputs.RevitReferences.TryGetValue(variant.RevitYear, out var revit) ? revit : Enumerable.Empty<string>())
             .ToList();
         var duplicatePath = referencePaths
@@ -76,7 +76,7 @@ internal sealed class DirectCompiler
             cryptoKeyFile: null,
             cryptoPublicKey: ImmutableArray<byte>.Empty,
             delaySign: null,
-            platform: Platform.AnyCpu,
+            platform: string.Equals(variant.Platform, "x64", StringComparison.Ordinal) ? Platform.X64 : Platform.AnyCpu,
             generalDiagnosticOption: ReportDiagnostic.Error,
             warningLevel: 9999,
             specificDiagnosticOptions: null,

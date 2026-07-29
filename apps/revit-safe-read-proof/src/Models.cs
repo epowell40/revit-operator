@@ -10,7 +10,6 @@ internal sealed class ProofManifest
     public string ProofKind { get; set; } = string.Empty;
     public string TrustBoundary { get; set; } = string.Empty;
     public SdkLock Sdk { get; set; } = new();
-    public FrameworkLock Framework { get; set; } = new();
     public SourceLock Source { get; set; } = new();
     public List<VariantLock> Variants { get; set; } = new();
     public ProofPolicy Policy { get; set; } = new();
@@ -62,6 +61,7 @@ internal sealed class SourceLock
 {
     public string Root { get; set; } = string.Empty;
     public string AssemblyName { get; set; } = string.Empty;
+    public string TextNormalization { get; set; } = string.Empty;
     public List<FileLock> Files { get; set; } = new();
     public List<ResourceFileLock> Resources { get; set; } = new();
 }
@@ -69,7 +69,10 @@ internal sealed class SourceLock
 internal sealed class VariantLock
 {
     public string RevitYear { get; set; } = string.Empty;
+    public string TargetFramework { get; set; } = string.Empty;
+    public string Platform { get; set; } = string.Empty;
     public List<string> PreprocessorSymbols { get; set; } = new();
+    public List<FrameworkLock> Frameworks { get; set; } = new();
     public List<AssemblyFileLock> RevitReferences { get; set; } = new();
 }
 
@@ -83,18 +86,18 @@ internal sealed class ProofPolicy
     public List<string> AllowedRouteLiterals { get; set; } = new();
     public List<string> AllowedListenerPrefixes { get; set; } = new();
     public List<string> SerializationRoots { get; set; } = new();
+    public List<string> SerializationCallsites { get; set; } = new();
     public List<string> AllowedSerializationLeafTypes { get; set; } = new();
     public SensitiveRoles Roles { get; set; } = new();
 }
 
 internal sealed class SensitiveRoles
 {
-    public string HttpListenerOwnerType { get; set; } = string.Empty;
-    public string HttpListenerField { get; set; } = string.Empty;
     public string ExternalEventOwnerType { get; set; } = string.Empty;
     public string ExternalEventHandlerType { get; set; } = string.Empty;
     public string ExternalEventField { get; set; } = string.Empty;
     public string ExternalEventStateField { get; set; } = string.Empty;
+    public List<string> AllowedInterlockedOwnerTypes { get; set; } = new();
 }
 
 internal sealed class ExpectedInventories
@@ -224,6 +227,7 @@ internal static class Constants
         "/nullable:enable",
         "/langversion:13.0",
         "/target:library",
+        "/platform:x64",
         "/debug-",
         "/utf8output",
     };

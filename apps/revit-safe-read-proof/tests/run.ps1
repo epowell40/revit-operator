@@ -119,21 +119,38 @@ try {
 $expectedPath = Join-Path $proofRoot 'fixtures\positive\expected.compact.json'
 $positiveSource = Join-Path $TempRoot 'positive-source'
 [System.IO.Directory]::CreateDirectory($positiveSource) | Out-Null
-Copy-Item -LiteralPath (Join-Path $proofRoot 'fixtures\positive\source\MicroHost.cs') -Destination $positiveSource
+Copy-Item -LiteralPath (Join-Path $proofRoot 'fixtures\positive\source\MicroHost.cs') -Destination (Join-Path $positiveSource 'Execution.cs')
 $positiveManifest = Join-Path $TempRoot 'positive.manifest.json'
 New-ProofFixtureManifest -ProofRoot $proofRoot -SourceRoot $positiveSource -ReferenceRoot $referenceRoot -ManifestPath $positiveManifest -ExpectedPath $expectedPath
 
 $positiveOne = Join-Path $TempRoot 'positive-check-one'
 $positiveTwo = Join-Path $TempRoot 'positive-check-two'
 $receiptOne = Invoke-ProofCheck -ToolPath $toolPath -ManifestPath $positiveManifest -OutputPath $positiveOne
+$rawSourceHash = Get-ProofSha256 (Join-Path $positiveSource 'Execution.cs')
+$lfSourceText = (Get-Content -LiteralPath (Join-Path $positiveSource 'Execution.cs') -Raw).Replace("`r`n", "`n").Replace("`r", "`n")
+Write-ProofUtf8 (Join-Path $positiveSource 'Execution.cs') $lfSourceText
+Assert-Proof ($rawSourceHash -ne (Get-ProofSha256 (Join-Path $positiveSource 'Execution.cs'))) 'line-ending determinism falsifier did not change raw source bytes'
 $receiptTwo = Invoke-ProofCheck -ToolPath $toolPath -ManifestPath $positiveManifest -OutputPath $positiveTwo
 foreach ($year in @('2023', '2024', '2025')) {
-    $fileName = "RevitSafeReadFixture.Revit$year.dll"
+    $fileName = "SafeReadCertifiedExecution.Revit$year.dll"
     Assert-Proof ((Get-ProofSha256 (Join-Path $positiveOne $fileName)) -eq (Get-ProofSha256 (Join-Path $positiveTwo $fileName))) "deterministic output differs for Revit $year"
 }
 Assert-Proof ((Get-ProofSha256 (Join-Path $positiveOne 'proof.receipt.json')) -eq (Get-ProofSha256 (Join-Path $positiveTwo 'proof.receipt.json'))) 'deterministic proof receipts differ'
 Assert-Proof (@($receiptOne.artifacts.psobject.Properties).Count -eq 3) 'positive receipt did not contain exactly three artifacts'
 Assert-Proof (@($receiptTwo.artifacts.psobject.Properties).Count -eq 3) 'second positive receipt did not contain exactly three artifacts'
+
+$installedRevitPaths = @('2023', '2024', '2025') | ForEach-Object {
+    @("C:\Program Files\Autodesk\Revit $_\RevitAPI.dll", "C:\Program Files\Autodesk\Revit $_\RevitAPIUI.dll")
+}
+Assert-Proof (@($installedRevitPaths | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) }).Count -eq 0) 'installed Revit target reference pair is missing'
+$realTargetRoot = Join-Path $TempRoot 'installed-revit-target-inventory'
+[System.IO.Directory]::CreateDirectory($realTargetRoot) | Out-Null
+$realTargetManifest = Join-Path $realTargetRoot 'manifest.json'
+New-ProofFixtureManifest -ProofRoot $proofRoot -SourceRoot $positiveSource -ReferenceRoot $referenceRoot -ManifestPath $realTargetManifest -UseInstalledRevit
+$realTargetOutput = @(& 'C:\Program Files\dotnet\dotnet.exe' $toolPath inventory --manifest $realTargetManifest --output-dir (Join-Path $realTargetRoot 'output') 2>&1)
+Assert-Proof ($LASTEXITCODE -eq 0) ("installed Revit target inventory failed: " + [string]::Join("`n", @($realTargetOutput)))
+$realTargetReceipt = Get-Content -LiteralPath (Join-Path $realTargetRoot 'output\proof.receipt.json') -Raw | ConvertFrom-Json
+Assert-Proof (@($realTargetReceipt.issues).Count -eq 0) 'installed Revit target inventory contained proof issues'
 
 $negativeCases = Get-Content -LiteralPath (Join-Path $proofRoot 'fixtures\negative\cases.json') -Raw | ConvertFrom-Json
 $negativePasses = 0
@@ -141,7 +158,7 @@ foreach ($case in $negativeCases) {
     $caseRoot = Join-Path $TempRoot ('negative-' + [string]$case.name)
     $sourceRoot = Join-Path $caseRoot 'source'
     [System.IO.Directory]::CreateDirectory($sourceRoot) | Out-Null
-    $sourcePath = Join-Path $sourceRoot 'MicroHost.cs'
+    $sourcePath = Join-Path $sourceRoot 'Execution.cs'
     Copy-Item -LiteralPath (Join-Path $proofRoot 'fixtures\positive\source\MicroHost.cs') -Destination $sourcePath
     if ([string]$case.kind -eq 'appendSource') {
         Write-ProofUtf8 (Join-Path $sourceRoot 'Injected.cs') ([string]$case.payload)
@@ -175,6 +192,35 @@ $duplicateObject = Get-Content -LiteralPath $duplicateManifest -Raw | ConvertFro
 $duplicateObject.variants[0].revitReferences = @($duplicateObject.variants[0].revitReferences[0], $duplicateObject.variants[0].revitReferences[0])
 Write-ProofJson $duplicateManifest $duplicateObject
 Invoke-ProofCheck -ToolPath $toolPath -ManifestPath $duplicateManifest -OutputPath (Join-Path $duplicateRoot 'output') -ExpectedExit 1 -ExpectedCode 'DUPLICATE_REFERENCE_IDENTITY' | Out-Null
+$negativePasses++
+
+function Invoke-ManifestNegative {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][scriptblock]$Mutate,
+        [Parameter(Mandatory = $true)][string]$ExpectedCode
+    )
+    $caseRoot = Join-Path $TempRoot ('negative-manifest-' + $Name)
+    [System.IO.Directory]::CreateDirectory($caseRoot) | Out-Null
+    $manifestPath = Join-Path $caseRoot 'manifest.json'
+    New-ProofFixtureManifest -ProofRoot $proofRoot -SourceRoot $positiveSource -ReferenceRoot $referenceRoot -ManifestPath $manifestPath -ExpectedPath $expectedPath
+    $manifestObject = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    & $Mutate $manifestObject
+    Write-ProofJson $manifestPath $manifestObject
+    Invoke-ProofCheck -ToolPath $toolPath -ManifestPath $manifestPath -OutputPath (Join-Path $caseRoot 'output') -ExpectedExit 1 -ExpectedCode $ExpectedCode | Out-Null
+}
+
+Invoke-ManifestNegative -Name 'anycpu' -ExpectedCode 'VARIANT_PLATFORM' -Mutate { param($m) $m.variants[0].platform = 'AnyCpu' }
+$negativePasses++
+Invoke-ManifestNegative -Name 'wrong-tfm' -ExpectedCode 'VARIANT_TFM' -Mutate { param($m) $m.variants[0].targetFramework = 'net9.0' }
+$negativePasses++
+Invoke-ManifestNegative -Name 'missing-revitapiui' -ExpectedCode 'REVIT_REFERENCE_SET' -Mutate { param($m) $m.variants[0].revitReferences = @($m.variants[0].revitReferences[0]) }
+$negativePasses++
+Invoke-ManifestNegative -Name 'missing-windows-framework' -ExpectedCode 'FRAMEWORK_SET' -Mutate { param($m) $m.variants[2].frameworks = @($m.variants[2].frameworks[0]) }
+$negativePasses++
+Invoke-ManifestNegative -Name 'serialization-root' -ExpectedCode 'SERIALIZATION_ROOT_MISMATCH' -Mutate { param($m) $m.policy.serializationRoots = @('SafeReadCertifiedExecution.ReadTitleRequest') }
+$negativePasses++
+Invoke-ManifestNegative -Name 'serialization-callsite' -ExpectedCode 'SERIALIZATION_CALLSITE_MISMATCH' -Mutate { param($m) $m.policy.serializationCallsites = @('Method:void missing()|assembly=missing') }
 $negativePasses++
 
 $forwarderRoot = Join-Path $TempRoot 'negative-forwarder'
@@ -215,7 +261,7 @@ $negativePasses++
 $extraFileRoot = Join-Path $TempRoot 'negative-unlocked-file'
 $extraFileSource = Join-Path $extraFileRoot 'source'
 [System.IO.Directory]::CreateDirectory($extraFileSource) | Out-Null
-Copy-Item -LiteralPath (Join-Path $proofRoot 'fixtures\positive\source\MicroHost.cs') -Destination $extraFileSource
+Copy-Item -LiteralPath (Join-Path $proofRoot 'fixtures\positive\source\MicroHost.cs') -Destination (Join-Path $extraFileSource 'Execution.cs')
 $extraFileManifest = Join-Path $extraFileRoot 'manifest.json'
 New-ProofFixtureManifest -ProofRoot $proofRoot -SourceRoot $extraFileSource -ReferenceRoot $referenceRoot -ManifestPath $extraFileManifest -ExpectedPath $expectedPath
 Write-ProofUtf8 (Join-Path $extraFileSource 'unlocked.payload') 'ambient payload'
@@ -232,5 +278,10 @@ Assert-Proof ([string]::Join("`n", @($gitBefore)) -ceq [string]::Join("`n", @($g
     RevitArtifactsPerPositiveCheck = 3
     TempRoot = $TempRoot
     AmbientDirectoryBuildFalsifier = 'PASS'
+    LineEndingDeterminismFalsifier = 'PASS'
+    TargetLockFalsifiers = 'PASS'
+    InstalledRevitTargetInventory = 'PASS'
+    SerializationBoundaryFalsifiers = 'PASS'
+    MultiSourceInventoryFalsifier = 'PASS'
     RepositoryWriteFalsifier = 'PASS'
 }

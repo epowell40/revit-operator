@@ -12,6 +12,8 @@ internal sealed class MethodInspection
 {
     public InventoryExpectation Methods { get; set; } = new();
     public InventoryExpectation SymbolBindings { get; set; } = new();
+    public List<string> SerializationCallsites { get; set; } = new();
+    public List<string> SerializationRoots { get; set; } = new();
 }
 
 internal sealed class MethodInspector
@@ -49,6 +51,8 @@ internal sealed class MethodInspector
     {
         var methodLines = new List<string>();
         var bindings = new List<string>();
+        var serializationCallsites = new List<string>();
+        var serializationRoots = new List<string>();
         var sourceMethods = GetSourceTypes(compilation)
             .SelectMany(static type => type.GetMembers().OfType<IMethodSymbol>())
             .OrderBy(Canonical.SymbolId, StringComparer.Ordinal)
@@ -107,12 +111,12 @@ internal sealed class MethodInspector
                 var operationOrdinal = 0;
                 foreach (var operation in block.Operations)
                 {
-                    VisitOperation(operation, method, block.Ordinal, ref operationOrdinal, methodLines, bindings, 0);
+                    VisitOperation(operation, method, block.Ordinal, ref operationOrdinal, methodLines, bindings, serializationCallsites, serializationRoots, 0);
                 }
                 if (block.BranchValue is not null)
                 {
                     methodLines.Add("BRANCH_VALUE|" + methodId + "|block=" + block.Ordinal);
-                    VisitOperation(block.BranchValue, method, block.Ordinal, ref operationOrdinal, methodLines, bindings, 0);
+                    VisitOperation(block.BranchValue, method, block.Ordinal, ref operationOrdinal, methodLines, bindings, serializationCallsites, serializationRoots, 0);
                 }
                 AddSuccessor(methodLines, methodId, block.Ordinal, "fallthrough", block.FallThroughSuccessor);
                 AddSuccessor(methodLines, methodId, block.Ordinal, "conditional", block.ConditionalSuccessor);
@@ -123,6 +127,8 @@ internal sealed class MethodInspector
         {
             Methods = Canonical.Inventory(methodLines),
             SymbolBindings = Canonical.Inventory(bindings),
+            SerializationCallsites = serializationCallsites.Distinct(StringComparer.Ordinal).ToList(),
+            SerializationRoots = serializationRoots.Distinct(StringComparer.Ordinal).ToList(),
         };
     }
 
@@ -133,6 +139,8 @@ internal sealed class MethodInspector
         ref int ordinal,
         List<string> methodLines,
         List<string> bindings,
+        List<string> serializationCallsites,
+        List<string> serializationRoots,
         int depth)
     {
         var currentOrdinal = ordinal++;
@@ -178,12 +186,25 @@ internal sealed class MethodInspector
         var called = CalledSymbol(operation);
         if (called is not null)
         {
-            methodLines.Add("CALL|" + methodId + "|block=" + blockOrdinal + "|op=" + currentOrdinal + "|" + Canonical.SymbolId(called));
+            var calledId = Canonical.SymbolId(called);
+            methodLines.Add("CALL|" + methodId + "|block=" + blockOrdinal + "|op=" + currentOrdinal + "|" + calledId);
+            if (_manifest.Policy.SerializationCallsites.Contains(calledId, StringComparer.Ordinal) && operation is IInvocationOperation invocation)
+            {
+                serializationCallsites.Add(calledId);
+                if (invocation.Arguments.Length != 1)
+                {
+                    Add("SERIALIZATION_CALLSITE_SHAPE", calledId + " must have exactly one serialized argument.");
+                }
+                else
+                {
+                    serializationRoots.Add(invocation.Arguments[0].Value.Type?.ToDisplayString() ?? string.Empty);
+                }
+            }
         }
 
         foreach (var child in operation.ChildOperations)
         {
-            VisitOperation(child, containingMethod, blockOrdinal, ref ordinal, methodLines, bindings, depth + 1);
+            VisitOperation(child, containingMethod, blockOrdinal, ref ordinal, methodLines, bindings, serializationCallsites, serializationRoots, depth + 1);
         }
     }
 
@@ -205,7 +226,7 @@ internal sealed class MethodInspector
         {
             var ns = method.ContainingNamespace?.ToDisplayString() ?? string.Empty;
             var exactRoleException = _manifest.Policy.AllowedSensitiveSymbols.Contains(Canonical.SymbolId(method), StringComparer.Ordinal) &&
-                                     (ns.StartsWith("Autodesk.Revit.", StringComparison.Ordinal) || ns.StartsWith("System.Net", StringComparison.Ordinal));
+                                      ns.StartsWith("Autodesk.Revit.", StringComparison.Ordinal);
             if (!exactRoleException)
             {
                 Add("VIRTUAL_DISPATCH_FORBIDDEN", Canonical.SymbolId(containingMethod) + " binds virtual/abstract/override member " + Canonical.SymbolId(method) + ".");
@@ -233,6 +254,16 @@ internal sealed class MethodInspector
         {
             return;
         }
+        if (ns == "System.IO" || ns.StartsWith("System.IO.", StringComparison.Ordinal))
+        {
+            Add("FILE_IO_FORBIDDEN", Canonical.SymbolId(containingMethod) + " binds file/I/O symbol " + id + ".");
+            return;
+        }
+        if (ns == "System.Net" || ns.StartsWith("System.Net.", StringComparison.Ordinal))
+        {
+            Add("NETWORK_SYMBOL_FORBIDDEN", Canonical.SymbolId(containingMethod) + " binds network symbol " + id + ".");
+            return;
+        }
         if (!_manifest.Policy.AllowedSensitiveSymbols.Contains(id, StringComparer.Ordinal))
         {
             Add("SENSITIVE_SYMBOL_FORBIDDEN", Canonical.SymbolId(containingMethod) + " binds non-allowlisted sensitive symbol " + id + ".");
@@ -253,22 +284,14 @@ internal sealed class MethodInspector
         }
         else if (containingTypeName == "global::System.Threading.Interlocked")
         {
-            if (!string.Equals(owner, _manifest.Policy.Roles.ExternalEventHandlerType, StringComparison.Ordinal))
+            if (!_manifest.Policy.Roles.AllowedInterlockedOwnerTypes.Contains(owner, StringComparer.Ordinal))
             {
-                Add("INTERLOCKED_ROLE", "Interlocked is allowed only inside the exact ExternalEvent handler role: " + id + ".");
+                Add("INTERLOCKED_ROLE", "Interlocked is allowed only inside exact execution-state owner roles: " + id + ".");
             }
         }
         else if (ns.StartsWith("System.Threading", StringComparison.Ordinal))
         {
             Add("THREADING_ROLE", "Only exact Interlocked members are permitted from System.Threading: " + id + ".");
-        }
-        else if (ns.StartsWith("System.Net", StringComparison.Ordinal))
-        {
-            if (!string.Equals(owner, _manifest.Policy.Roles.HttpListenerOwnerType, StringComparison.Ordinal) &&
-                !string.Equals(owner, _manifest.Policy.Roles.ExternalEventHandlerType, StringComparison.Ordinal))
-            {
-                Add("HTTP_LISTENER_ROLE", "HttpListener symbols are allowed only inside exact host/handler roles: " + id + ".");
-            }
         }
         else if (ns.StartsWith("Autodesk.", StringComparison.Ordinal))
         {

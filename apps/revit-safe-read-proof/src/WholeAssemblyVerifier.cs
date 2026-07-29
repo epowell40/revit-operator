@@ -28,7 +28,9 @@ internal sealed class WholeAssemblyVerifier
         observation.Resources = Canonical.Inventory(inputs.Resources.Select(static resource =>
             "RESOURCE|" + resource.LogicalPath + "|name=" + resource.LogicalName + "|public=" + resource.IsPublic + "|sha256=" + Canonical.Sha256(resource.Bytes)), preserveOrder: false);
 
-        if (inputs.Sources.Count != _manifest.Source.Files.Count || inputs.FrameworkReferences.Count != _manifest.Framework.Files.Count)
+        var expectedFrameworkFiles = _manifest.Variants.Sum(static variant => variant.Frameworks.Sum(static framework => framework.Files.Count));
+        var actualFrameworkFiles = inputs.FrameworkReferences.Sum(static pair => pair.Value.Count);
+        if (inputs.Sources.Count != _manifest.Source.Files.Count || actualFrameworkFiles != expectedFrameworkFiles)
         {
             Add("INPUTS_INCOMPLETE", "Locked inputs were incomplete; compilation and certification cannot proceed.");
             return Finish(observation);
@@ -66,6 +68,10 @@ internal sealed class WholeAssemblyVerifier
             }
 
             var methods = new MethodInspector(_manifest, _issues).Inspect(compile.Compilation);
+            if (shared is not null && ReferenceEquals(shared.Trees, trees))
+            {
+                ValidateSerializationCallsites(methods);
+            }
             var metadata = new MetadataInspector(_issues).Inspect(compile.EmittedBytes);
             observation.Variants[variant.RevitYear] = new VariantObservation
             {
@@ -178,33 +184,39 @@ internal sealed class WholeAssemblyVerifier
         }
         foreach (var symbol in _manifest.Policy.AllowedSensitiveSymbols)
         {
-            var approvedFamily = symbol.Contains("global::System.Net.HttpListener", StringComparison.Ordinal) ||
-                                 symbol.Contains("global::System.Threading.Interlocked", StringComparison.Ordinal) ||
+            var approvedFamily = symbol.Contains("global::System.Threading.Interlocked", StringComparison.Ordinal) ||
                                  symbol.Contains("global::Autodesk.Revit.", StringComparison.Ordinal);
             if (!approvedFamily)
             {
-                Add("POLICY_SENSITIVE_FAMILY", "Sensitive allowlist entry is outside exact HttpListener/Interlocked/ExternalEvent families: " + symbol + ".");
+                Add("POLICY_SENSITIVE_FAMILY", "Sensitive allowlist entry is outside exact Interlocked/ExternalEvent families: " + symbol + ".");
             }
         }
-        if (_manifest.Policy.AllowedMutableFields.Count != 1)
+        if (_manifest.Policy.AllowedMutableFields.Count == 0)
         {
-            Add("POLICY_MUTABLE_STATE_COUNT", "Exactly one mutable ExternalEvent handoff field must be allowlisted.");
+            Add("POLICY_MUTABLE_STATE_COUNT", "At least one exact execution handoff field must be allowlisted.");
         }
         if (_manifest.Policy.SerializationRoots.Count == 0)
         {
             Add("POLICY_SERIALIZATION_ROOTS", "At least one serialization root is required.");
+        }
+        if (_manifest.Policy.SerializationCallsites.Count == 0)
+        {
+            Add("POLICY_SERIALIZATION_CALLSITES", "At least one exact serialization boundary callsite is required.");
+        }
+        if (_manifest.Policy.AllowedRouteLiterals.Count != 0 || _manifest.Policy.AllowedListenerPrefixes.Count != 0)
+        {
+            Add("TRANSPORT_POLICY_FORBIDDEN", "Execution proof policy cannot allow routes or listener prefixes.");
         }
     }
 
     private void ValidateSensitiveRoles(CSharpCompilation compilation)
     {
         var types = GetSourceTypes(compilation).ToDictionary(Canonical.QualifiedName, StringComparer.Ordinal);
-        ValidateFieldRole(types, _manifest.Policy.Roles.HttpListenerOwnerType, _manifest.Policy.Roles.HttpListenerField, "global::System.Net.HttpListener", mustBeReadonly: true, "HTTP_LISTENER_FIELD_ROLE");
         ValidateFieldRole(types, _manifest.Policy.Roles.ExternalEventOwnerType, _manifest.Policy.Roles.ExternalEventField, "global::Autodesk.Revit.UI.ExternalEvent", mustBeReadonly: true, "EXTERNAL_EVENT_FIELD_ROLE");
-        var stateField = ValidateFieldRole(types, _manifest.Policy.Roles.ExternalEventHandlerType, _manifest.Policy.Roles.ExternalEventStateField, "global::System.Net.HttpListenerContext", mustBeReadonly: false, "EXTERNAL_EVENT_STATE_ROLE");
-        if (stateField is not null && (_manifest.Policy.AllowedMutableFields.Count != 1 || !string.Equals(_manifest.Policy.AllowedMutableFields[0], Canonical.SymbolId(stateField), StringComparison.Ordinal)))
+        var stateField = ValidateFieldRole(types, _manifest.Policy.Roles.ExternalEventHandlerType, _manifest.Policy.Roles.ExternalEventStateField, "global::SafeReadCertifiedExecution.ReadTitleRequest", mustBeReadonly: false, "EXTERNAL_EVENT_STATE_ROLE");
+        if (stateField is not null && !_manifest.Policy.AllowedMutableFields.Contains(Canonical.SymbolId(stateField), StringComparer.Ordinal))
         {
-            Add("EXTERNAL_EVENT_STATE_ALLOWLIST", "allowedMutableFields must contain exactly the canonical ExternalEvent handoff field: " + Canonical.SymbolId(stateField) + ".");
+            Add("EXTERNAL_EVENT_STATE_ALLOWLIST", "allowedMutableFields must contain the canonical ExternalEvent handoff field: " + Canonical.SymbolId(stateField) + ".");
         }
         if (!types.TryGetValue(_manifest.Policy.Roles.ExternalEventHandlerType, out var handler))
         {
@@ -213,6 +225,22 @@ internal sealed class WholeAssemblyVerifier
         else if (handler.Interfaces.Count() != 1 || Canonical.QualifiedName(handler.Interfaces[0]) != "global::Autodesk.Revit.UI.IExternalEventHandler")
         {
             Add("EXTERNAL_EVENT_HANDLER_ROLE", "ExternalEvent handler must implement exactly Autodesk.Revit.UI.IExternalEventHandler.");
+        }
+    }
+
+    private void ValidateSerializationCallsites(MethodInspection methods)
+    {
+        var expectedCalls = _manifest.Policy.SerializationCallsites.OrderBy(static value => value, StringComparer.Ordinal).ToArray();
+        var actualCalls = methods.SerializationCallsites.OrderBy(static value => value, StringComparer.Ordinal).ToArray();
+        if (!expectedCalls.SequenceEqual(actualCalls, StringComparer.Ordinal))
+        {
+            Add("SERIALIZATION_CALLSITE_MISMATCH", "Exact serialization callsites differ. expected=[" + string.Join(",", expectedCalls) + "] actual=[" + string.Join(",", actualCalls) + "].");
+        }
+        var declaredRoots = _manifest.Policy.SerializationRoots.OrderBy(static value => value, StringComparer.Ordinal).ToArray();
+        var derivedRoots = methods.SerializationRoots.OrderBy(static value => value, StringComparer.Ordinal).ToArray();
+        if (!declaredRoots.SequenceEqual(derivedRoots, StringComparer.Ordinal))
+        {
+            Add("SERIALIZATION_ROOT_MISMATCH", "Declared serialization roots must exactly equal roots derived from boundary callsites. declared=[" + string.Join(",", declaredRoots) + "] derived=[" + string.Join(",", derivedRoots) + "].");
         }
     }
 

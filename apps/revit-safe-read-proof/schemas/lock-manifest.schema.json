@@ -9,7 +9,6 @@
     "proofKind",
     "trustBoundary",
     "sdk",
-    "framework",
     "source",
     "variants",
     "policy",
@@ -22,7 +21,6 @@
       "const": "Trusted local administrator, operating system, installed locked SDK/reference pack, Autodesk Revit, and Revit process; malicious local admin/OS/Revit are excluded."
     },
     "sdk": { "$ref": "#/$defs/sdk" },
-    "framework": { "$ref": "#/$defs/framework" },
     "source": { "$ref": "#/$defs/source" },
     "variants": {
       "type": "array",
@@ -114,9 +112,9 @@
       "additionalProperties": false,
       "required": ["name", "version", "targetFramework", "referenceRoot", "inventorySha256", "files"],
       "properties": {
-        "name": { "const": "Microsoft.NETCore.App.Ref" },
-        "version": { "const": "9.0.8" },
-        "targetFramework": { "const": "net9.0" },
+        "name": { "enum": [".NETFramework", "Microsoft.NETCore.App.Ref", "Microsoft.WindowsDesktop.App.Ref"] },
+        "version": { "type": "string", "minLength": 1 },
+        "targetFramework": { "enum": ["net48", "net8.0-windows"] },
         "referenceRoot": { "type": "string", "minLength": 1 },
         "inventorySha256": { "$ref": "#/$defs/sha256" },
         "files": {
@@ -129,10 +127,11 @@
     "source": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["root", "assemblyName", "files", "resources"],
+      "required": ["root", "assemblyName", "textNormalization", "files", "resources"],
       "properties": {
         "root": { "type": "string", "minLength": 1 },
-        "assemblyName": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+        "assemblyName": { "const": "SafeReadCertifiedExecution" },
+        "textNormalization": { "const": "utf8-lf" },
         "files": {
           "type": "array",
           "minItems": 1,
@@ -147,18 +146,27 @@
     "variant": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["revitYear", "preprocessorSymbols", "revitReferences"],
+      "required": ["revitYear", "targetFramework", "platform", "preprocessorSymbols", "frameworks", "revitReferences"],
       "properties": {
         "revitYear": { "enum": ["2023", "2024", "2025"] },
+        "targetFramework": { "enum": ["net48", "net8.0-windows"] },
+        "platform": { "const": "x64" },
         "preprocessorSymbols": {
           "type": "array",
           "minItems": 1,
           "maxItems": 1,
           "items": { "type": "string", "pattern": "^REVIT20(23|24|25)$" }
         },
-        "revitReferences": {
+        "frameworks": {
           "type": "array",
           "minItems": 1,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/framework" }
+        },
+        "revitReferences": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
           "items": { "$ref": "#/$defs/assemblyFile" }
         }
       }
@@ -167,20 +175,18 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "httpListenerOwnerType",
-        "httpListenerField",
         "externalEventOwnerType",
         "externalEventHandlerType",
         "externalEventField",
-        "externalEventStateField"
+        "externalEventStateField",
+        "allowedInterlockedOwnerTypes"
       ],
       "properties": {
-        "httpListenerOwnerType": { "type": "string", "minLength": 1 },
-        "httpListenerField": { "type": "string", "minLength": 1 },
         "externalEventOwnerType": { "type": "string", "minLength": 1 },
         "externalEventHandlerType": { "type": "string", "minLength": 1 },
         "externalEventField": { "type": "string", "minLength": 1 },
-        "externalEventStateField": { "type": "string", "minLength": 1 }
+        "externalEventStateField": { "type": "string", "minLength": 1 },
+        "allowedInterlockedOwnerTypes": { "$ref": "#/$defs/stringSet" }
       }
     },
     "policy": {
@@ -195,6 +201,7 @@
         "allowedRouteLiterals",
         "allowedListenerPrefixes",
         "serializationRoots",
+        "serializationCallsites",
         "allowedSerializationLeafTypes",
         "roles"
       ],
@@ -206,12 +213,12 @@
         "allowedMutableFields": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 1,
           "items": { "type": "string", "minLength": 1 }
         },
         "allowedRouteLiterals": { "$ref": "#/$defs/stringSet" },
         "allowedListenerPrefixes": { "$ref": "#/$defs/stringSet" },
         "serializationRoots": { "$ref": "#/$defs/stringSet" },
+        "serializationCallsites": { "$ref": "#/$defs/stringSet" },
         "allowedSerializationLeafTypes": { "$ref": "#/$defs/stringSet" },
         "roles": { "$ref": "#/$defs/roles" }
       }

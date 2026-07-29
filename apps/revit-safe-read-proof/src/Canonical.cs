@@ -160,6 +160,22 @@ internal static class Canonical
         return value.Replace('\\', '/');
     }
 
+    public static string SourcePath(string relativePath)
+    {
+        return "/source/" + NormalizeRelativePath(relativePath).TrimStart('/');
+    }
+
+    public static byte[] NormalizeUtf8Lf(byte[] bytes)
+    {
+        var strictUtf8 = new UTF8Encoding(false, true);
+        var text = strictUtf8.GetString(bytes);
+        if (text.Length > 0 && text[0] == '\uFEFF')
+        {
+            throw new InvalidDataException("UTF-8 BOM is forbidden.");
+        }
+        return strictUtf8.GetBytes(text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n'));
+    }
+
     public static string ConstantValue(Optional<object?> constant)
     {
         if (!constant.HasValue)

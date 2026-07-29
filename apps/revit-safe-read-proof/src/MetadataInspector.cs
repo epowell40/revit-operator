@@ -309,7 +309,11 @@ internal sealed class MetadataInspector
                 {
                     throw new InvalidDataException("Invalid switch target count " + count + ".");
                 }
-                Ensure(bytes, offset, checked(count * 4));
+                if (count < 0 || count > (bytes.Length - offset) / 4)
+                {
+                    throw new InvalidDataException("Invalid InlineSwitch operand length.");
+                }
+                Ensure(bytes, offset, count * 4);
                 var baseOffset = offset + count * 4;
                 var targets = new string[count];
                 for (var index = 0; index < count; index++)
@@ -347,7 +351,7 @@ internal sealed class MetadataInspector
 
     private static void Ensure(byte[] bytes, int offset, int count)
     {
-        if (offset < 0 || count < 0 || offset + count > bytes.Length)
+        if (offset < 0 || count < 0 || offset > bytes.Length || count > bytes.Length - offset)
         {
             throw new InvalidDataException("Truncated IL operand.");
         }

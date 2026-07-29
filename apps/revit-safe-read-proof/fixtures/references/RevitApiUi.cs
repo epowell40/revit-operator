@@ -1,25 +1,4 @@
-namespace Autodesk.Revit.DB
-{
-    public sealed class Document
-    {
-        private readonly string _title;
-
-        public Document(string title)
-        {
-            _title = title;
-        }
-
-        public string Title
-        {
-            get
-            {
-                return _title;
-            }
-        }
-    }
-}
-
-namespace FixtureImplementationDetails
+namespace Autodesk.Revit.UI
 {
     public enum ExternalEventRequest
     {
@@ -32,7 +11,6 @@ namespace FixtureImplementationDetails
     public interface IExternalEventHandler
     {
         void Execute(UIApplication application);
-
         string GetName();
     }
 
@@ -47,10 +25,7 @@ namespace FixtureImplementationDetails
 
         public UIDocument ActiveUIDocument
         {
-            get
-            {
-                return _activeUiDocument;
-            }
+            get { return _activeUiDocument; }
         }
     }
 
@@ -65,10 +40,7 @@ namespace FixtureImplementationDetails
 
         public Autodesk.Revit.DB.Document Document
         {
-            get
-            {
-                return _document;
-            }
+            get { return _document; }
         }
     }
 

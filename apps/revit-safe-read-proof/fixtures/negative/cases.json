@@ -6,17 +6,16 @@
     "expectedCode": "AUTODESK_SOURCE_SHADOW"
   },
   {
-    "name": "extra-route",
-    "kind": "replaceSource",
-    "find": "requestUri.AbsolutePath != \"/v1/read-title\"",
-    "replace": "requestUri.AbsolutePath != \"/v1/read-title\" && requestUri.AbsolutePath != \"/v1/admin\"",
-    "expectedCode": "ROUTE_LITERAL_FORBIDDEN"
+    "name": "transport-host-source",
+    "kind": "appendSource",
+    "payload": "namespace SafeReadCertifiedExecution\n{\n    internal sealed class TransportHost\n    {\n        internal TransportHost()\n        {\n        }\n    }\n}\n",
+    "expectedCode": "TRANSPORT_SOURCE_FORBIDDEN"
   },
   {
     "name": "extra-member",
     "kind": "replaceSource",
-    "find": "internal void Start()\n    {",
-    "replace": "internal int UnexpectedMember()\n    {\n        return 7;\n    }\n\n    internal void Start()\n    {",
+    "find": "internal bool TrySubmit(ReadTitleRequest request)\n    {",
+    "replace": "internal int UnexpectedMember()\n    {\n        return 7;\n    }\n\n    internal bool TrySubmit(ReadTitleRequest request)\n    {",
     "expectedCode": "INVENTORY_MEMBERS"
   },
   {
@@ -29,8 +28,8 @@
   {
     "name": "event-state",
     "kind": "replaceSource",
-    "find": "private HttpListenerContext? _pending;",
-    "replace": "private HttpListenerContext? _pending;\n    internal event Action? UnexpectedEvent;",
+    "find": "private ReadTitleRequest? _pending;",
+    "replace": "private ReadTitleRequest? _pending;\n    internal event System.Action? UnexpectedEvent;",
     "expectedCode": "EVENT_STATE_FORBIDDEN"
   },
   {
@@ -43,8 +42,8 @@
   {
     "name": "local-function",
     "kind": "replaceSource",
-    "find": "internal void Stop()\n    {\n        _listener.Stop();\n    }",
-    "replace": "internal void Stop()\n    {\n        void Hidden()\n        {\n            _listener.Stop();\n        }\n        Hidden();\n    }",
+    "find": "return \"RevitOperator Safe Read Title\";",
+    "replace": "string Hidden()\n        {\n            return \"hidden\";\n        }\n        return Hidden();",
     "expectedCode": "DELEGATE_FORBIDDEN"
   },
   {
@@ -83,14 +82,14 @@
     "kind": "replaceSource",
     "find": "return \"RevitOperator Safe Read Title\";",
     "replace": "return System.IO.File.ReadAllText(\"forbidden.txt\");",
-    "expectedCode": "SENSITIVE_SYMBOL_FORBIDDEN"
+    "expectedCode": "FILE_IO_FORBIDDEN"
   },
   {
     "name": "non-listener-network",
     "kind": "replaceSource",
     "find": "return \"RevitOperator Safe Read Title\";",
     "replace": "return System.Net.Dns.GetHostName();",
-    "expectedCode": "SENSITIVE_SYMBOL_FORBIDDEN"
+    "expectedCode": "NETWORK_SYMBOL_FORBIDDEN"
   },
   {
     "name": "process",
@@ -103,7 +102,7 @@
     "name": "environment",
     "kind": "replaceSource",
     "find": "return \"RevitOperator Safe Read Title\";",
-    "replace": "return Environment.MachineName;",
+    "replace": "return System.Environment.MachineName;",
     "expectedCode": "SENSITIVE_SYMBOL_FORBIDDEN"
   },
   {
@@ -116,15 +115,15 @@
   {
     "name": "field-initializer",
     "kind": "replaceSource",
-    "find": "private HttpListenerContext? _pending;",
-    "replace": "private HttpListenerContext? _pending;\n    private readonly int _injected = 1;",
+    "find": "private ReadTitleRequest? _pending;",
+    "replace": "private ReadTitleRequest? _pending;\n    private readonly int _injected = 1;",
     "expectedCode": "INITIALIZER_FORBIDDEN"
   },
   {
     "name": "finalizer",
     "kind": "replaceSource",
-    "find": "internal ReadTitleHandler()\n    {",
-    "replace": "~ReadTitleHandler()\n    {\n    }\n\n    internal ReadTitleHandler()\n    {",
+    "find": "internal ReadTitleHandler()",
+    "replace": "~ReadTitleHandler()\n    {\n    }\n\n    internal ReadTitleHandler()",
     "expectedCode": "FINALIZER_FORBIDDEN"
   },
   {

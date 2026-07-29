@@ -1,0 +1,39 @@
+{
+  "allowedOperationKinds": [
+    "Argument", "Binary", "Conversion", "DefaultValue", "ExpressionStatement",
+    "FieldReference", "FlowCapture", "FlowCaptureReference", "InstanceReference",
+    "Invocation", "IsNull", "IsPattern", "ConstantPattern", "Literal", "LocalReference", "ObjectCreation",
+    "ParameterReference", "PropertyReference", "Return", "SimpleAssignment",
+    "VariableDeclaration", "VariableDeclarationGroup", "VariableDeclarator"
+  ],
+  "allowedImplicitOperationKinds": [
+    "Argument", "Conversion", "DefaultValue", "ExpressionStatement", "FieldReference",
+    "FlowCapture", "FlowCaptureReference", "InstanceReference", "Invocation", "Literal",
+    "LocalReference", "ParameterReference", "PropertyReference", "SimpleAssignment"
+  ],
+  "allowedSensitiveSymbols": [],
+  "allowedAttributeSymbols": [],
+  "allowedMutableFields": [
+    "Field:global::SafeReadCertifiedExecution.ReadTitleRequest? global::SafeReadCertifiedExecution.ReadTitleHandler._pending|assembly=SafeReadCertifiedExecution, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null",
+    "Field:global::SafeReadCertifiedExecution.ReadTitleResponse? global::SafeReadCertifiedExecution.ReadTitleRequest._result|assembly=SafeReadCertifiedExecution, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null"
+  ],
+  "allowedRouteLiterals": [],
+  "allowedListenerPrefixes": [],
+  "serializationRoots": [
+    "SafeReadCertifiedExecution.ReadTitleResponse"
+  ],
+  "serializationCallsites": [
+    "Method:void global::SafeReadCertifiedExecution.ReadTitleRequest.Complete(global::SafeReadCertifiedExecution.ReadTitleResponse response)|assembly=SafeReadCertifiedExecution, Version=0.0.0.0, Culture=neutral, PublicKeyToken=null"
+  ],
+  "allowedSerializationLeafTypes": ["bool", "string"],
+  "roles": {
+    "externalEventOwnerType": "global::SafeReadCertifiedExecution.SafeReadExecutor",
+    "externalEventHandlerType": "global::SafeReadCertifiedExecution.ReadTitleHandler",
+    "externalEventField": "_externalEvent",
+    "externalEventStateField": "_pending",
+    "allowedInterlockedOwnerTypes": [
+      "global::SafeReadCertifiedExecution.ReadTitleHandler",
+      "global::SafeReadCertifiedExecution.ReadTitleRequest"
+    ]
+  }
+}
