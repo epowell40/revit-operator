@@ -8,23 +8,28 @@ import { ensureWorkspaceLayout } from "../workspace.js";
 import { canonicalJson, sha256, type JsonValue } from "./tool_certification.js";
 
 export const SAFE_READ_ROUTE_ID = "safe_read.sheet_count.v1";
+export const SAFE_READ_EXECUTOR_ID = "revit-operator.safe-read-host.v1";
 export const SAFE_READ_METHOD = "POST";
 export const SAFE_READ_PATH = "/revit/certified/sheets/count";
-export const SAFE_READ_BODY_SCHEMA = "revit-operator.safe-read.sheet-count-request.v1";
+export const SAFE_READ_BODY_SCHEMA = "revit-operator.safe-read.sheets-count.request.v1";
 export const SAFE_READ_CANONICAL_BODY_JSON = `{"schema":"${SAFE_READ_BODY_SCHEMA}"}`;
 export const SAFE_READ_PREAUTHORIZATION_SCHEMA = "revit-operator.safe-read-preauthorization-request.v1";
 export const SAFE_READ_PREAUTHORIZATION_RESPONSE_SCHEMA = "revit-operator.safe-read-preauthorization-response.v1";
 export const SAFE_READ_FINAL_AUTHORIZATION_SCHEMA = "revit-operator.safe-read-final-authorization-request.v1";
 export const SAFE_READ_FINAL_RECEIPT_SCHEMA = "revit-operator.safe-read-final-authorization-receipt.v1";
 export const SAFE_READ_RUNTIME_ATTESTATION_SCHEMA = "revit-operator.safe-read-runtime-attestation.v1";
+export const SAFE_READ_PREAUTHORIZE_ENDPOINT = "/api/safe-read/direct/preauthorize";
+export const SAFE_READ_AUTHORIZE_EXECUTION_ENDPOINT = "/api/safe-read/direct/authorize-execution";
 export const SAFE_READ_CAPABILITY_VALID_FOR_MS = 30_000;
 export const SAFE_READ_RECEIPT_VALID_FOR_MS = 2_000;
 export const SAFE_READ_HTTP_MAX_BYTES = 64 * 1024;
 export const SAFE_READ_COURIER_DISABLED = "SAFE_READ_COURIER_DISABLED";
 
 const HASH = /^sha256:[0-9a-f]{64}$/;
-const ID = /^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$/;
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const TOKEN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,30}[A-Za-z0-9])?$/;
 const CAPABILITY_ID = /^src1_[A-Za-z0-9_-]{43}$/;
+const RECEIPT_ID = /^srr1_[A-Za-z0-9_-]{43}$/;
 const NONCE = /^[A-Za-z0-9_-]{43}$/;
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ATTESTATION_FILENAME = "safe_read_runtime_attestation.v1.json";
@@ -40,8 +45,51 @@ const FINAL_KEYS = [
 const RUNTIME_KEYS = ["host_content_sha256", "host_mvid", "revit_api_content_sha256", "revit_api_mvid", "revit_version"] as const;
 const DOCUMENT_KEYS = ["project_fingerprint", "document_session_id"] as const;
 const ATTESTATION_KEYS = [
-  "schema", "state", "issued_at_utc", "expires_at_utc", "host_instance_id", "executor_id", "runtime_tuple", "document"
+  "schema", "state", "issued_at_utc", "expires_at_utc", "route_id", "route_contract_sha256",
+  "policy_sha256", "proof_sha256", "executor_id", "runtime_tuple"
 ] as const;
+
+const SAFE_READ_CANONICAL_BODY = JSON.parse(SAFE_READ_CANONICAL_BODY_JSON) as JsonValue;
+export const SAFE_READ_BODY_SHA256 = sha256(SAFE_READ_CANONICAL_BODY);
+export const SAFE_READ_REQUEST_HASH = sha256({
+  method: SAFE_READ_METHOD,
+  path: SAFE_READ_PATH,
+  body: SAFE_READ_CANONICAL_BODY
+});
+export const SAFE_READ_EFFECT_HASH = sha256({ effect: "read", resource: "sheets.count", mutates: false });
+export const SAFE_READ_ROUTE_CONTRACT_SHA256 = sha256({
+  route_id: SAFE_READ_ROUTE_ID,
+  method: SAFE_READ_METHOD,
+  path: SAFE_READ_PATH,
+  canonical_body_json: SAFE_READ_CANONICAL_BODY_JSON,
+  request_hash: SAFE_READ_REQUEST_HASH,
+  effect_hash: SAFE_READ_EFFECT_HASH
+});
+export const SAFE_READ_POLICY_SHA256 = sha256({
+  policy: "safe-read.direct-only.v1",
+  courier: "disabled",
+  capability: "single-use"
+});
+
+export const SAFE_READ_GOLDEN_CONTRACT = Object.freeze({
+  route_id: SAFE_READ_ROUTE_ID,
+  executor_id: SAFE_READ_EXECUTOR_ID,
+  method: SAFE_READ_METHOD,
+  path: SAFE_READ_PATH,
+  body_schema: SAFE_READ_BODY_SCHEMA,
+  canonical_body_json: SAFE_READ_CANONICAL_BODY_JSON,
+  body_sha256: SAFE_READ_BODY_SHA256,
+  request_hash: SAFE_READ_REQUEST_HASH,
+  effect_hash: SAFE_READ_EFFECT_HASH,
+  route_contract_sha256: SAFE_READ_ROUTE_CONTRACT_SHA256,
+  policy_sha256: SAFE_READ_POLICY_SHA256,
+  capability_id_pattern: "src1_ + 32-byte base64url (48 chars)",
+  receipt_id_pattern: "srr1_ + 32-byte base64url (48 chars)",
+  preauthorize_endpoint: SAFE_READ_PREAUTHORIZE_ENDPOINT,
+  authorize_execution_endpoint: SAFE_READ_AUTHORIZE_EXECUTION_ENDPOINT,
+  nonce_transport: "host-generated; sha256 in preauthorization body; raw nonce in final body only",
+  receipt_hmac_domain: "safe-read-final-receipt-v1"
+});
 
 export type SafeReadRuntimeTuple = {
   host_content_sha256: string;
@@ -84,6 +132,11 @@ export type SafeReadPreauthorizationResponse = {
   expires_at_utc: string;
 };
 
+export type SafeReadPreauthorizationEnvelope = {
+  ok: true;
+  authorization: SafeReadPreauthorizationResponse;
+};
+
 export type SafeReadFinalAuthorizationReceipt = {
   schema: typeof SAFE_READ_FINAL_RECEIPT_SCHEMA;
   route_id: typeof SAFE_READ_ROUTE_ID;
@@ -101,6 +154,11 @@ export type SafeReadFinalAuthorizationReceipt = {
   issued_at_utc: string;
   expires_at_utc: string;
   hmac_sha256: string;
+};
+
+export type SafeReadFinalAuthorizationEnvelope = {
+  ok: true;
+  receipt: SafeReadFinalAuthorizationReceipt;
 };
 
 export type SafeReadFailureBody = {
@@ -162,10 +220,12 @@ type RuntimeAttestation = {
   state: "active" | "revoked";
   issued_at_utc: string;
   expires_at_utc: string;
-  host_instance_id: string;
+  route_id: typeof SAFE_READ_ROUTE_ID;
+  route_contract_sha256: string;
+  policy_sha256: string;
+  proof_sha256: string;
   executor_id: string;
   runtime_tuple: SafeReadRuntimeTuple;
-  document: SafeReadDocumentBinding;
 };
 
 type CapabilityRow = {
@@ -203,9 +263,16 @@ function exactOrderedKeys(value: Record<string, unknown>, keys: readonly string[
   }
 }
 
-function exactId(value: unknown, location: string): string {
-  if (typeof value !== "string" || !ID.test(value)) {
-    fail("SAFE_READ_REQUEST_MALFORMED", `${location} must be a canonical identifier without whitespace.`, 400);
+function exactGuid(value: unknown, location: string): string {
+  if (typeof value !== "string" || !GUID.test(value)) {
+    fail("SAFE_READ_REQUEST_MALFORMED", `${location} must be a lowercase canonical GUID.`, 400);
+  }
+  return value;
+}
+
+function exactToken(value: unknown, location: string): string {
+  if (typeof value !== "string" || !TOKEN.test(value)) {
+    fail("SAFE_READ_REQUEST_MALFORMED", `${location} must be a bounded canonical protocol token.`, 400);
   }
   return value;
 }
@@ -222,10 +289,10 @@ function runtimeTuple(value: unknown): SafeReadRuntimeTuple {
   exactOrderedKeys(tuple, RUNTIME_KEYS, "runtime_tuple");
   return {
     host_content_sha256: exactHash(tuple.host_content_sha256, "runtime_tuple.host_content_sha256"),
-    host_mvid: exactId(tuple.host_mvid, "runtime_tuple.host_mvid"),
+    host_mvid: exactGuid(tuple.host_mvid, "runtime_tuple.host_mvid"),
     revit_api_content_sha256: exactHash(tuple.revit_api_content_sha256, "runtime_tuple.revit_api_content_sha256"),
-    revit_api_mvid: exactId(tuple.revit_api_mvid, "runtime_tuple.revit_api_mvid"),
-    revit_version: exactId(tuple.revit_version, "runtime_tuple.revit_version")
+    revit_api_mvid: exactGuid(tuple.revit_api_mvid, "runtime_tuple.revit_api_mvid"),
+    revit_version: exactToken(tuple.revit_version, "runtime_tuple.revit_version")
   };
 }
 
@@ -234,7 +301,7 @@ function documentBinding(value: unknown): SafeReadDocumentBinding {
   exactOrderedKeys(document, DOCUMENT_KEYS, "document");
   return {
     project_fingerprint: exactHash(document.project_fingerprint, "document.project_fingerprint"),
-    document_session_id: exactId(document.document_session_id, "document.document_session_id")
+    document_session_id: exactGuid(document.document_session_id, "document.document_session_id")
   };
 }
 
@@ -247,14 +314,16 @@ export function parseSafeReadPreauthorizationRequest(value: unknown): SafeReadPr
   return {
     schema: SAFE_READ_PREAUTHORIZATION_SCHEMA,
     route_id: SAFE_READ_ROUTE_ID,
-    host_instance_id: exactId(request.host_instance_id, "host_instance_id"),
-    executor_id: exactId(request.executor_id, "executor_id"),
+    host_instance_id: exactGuid(request.host_instance_id, "host_instance_id"),
+    executor_id: request.executor_id === SAFE_READ_EXECUTOR_ID
+      ? SAFE_READ_EXECUTOR_ID
+      : fail("SAFE_READ_REQUEST_MALFORMED", "executor_id is unsupported.", 400),
     runtime_attestation_sha256: exactHash(request.runtime_attestation_sha256, "runtime_attestation_sha256"),
     runtime_tuple: runtimeTuple(request.runtime_tuple),
     document: documentBinding(request.document),
-    client_session_id: exactId(request.client_session_id, "client_session_id"),
-    request_id: exactId(request.request_id, "request_id"),
-    attempt_id: exactId(request.attempt_id, "attempt_id"),
+    client_session_id: exactGuid(request.client_session_id, "client_session_id"),
+    request_id: exactGuid(request.request_id, "request_id"),
+    attempt_id: exactGuid(request.attempt_id, "attempt_id"),
     capability_nonce_sha256: exactHash(request.capability_nonce_sha256, "capability_nonce_sha256")
   };
 }
@@ -274,14 +343,16 @@ export function parseSafeReadFinalAuthorizationRequest(value: unknown): SafeRead
   return {
     schema: SAFE_READ_FINAL_AUTHORIZATION_SCHEMA,
     route_id: SAFE_READ_ROUTE_ID,
-    host_instance_id: exactId(request.host_instance_id, "host_instance_id"),
-    executor_id: exactId(request.executor_id, "executor_id"),
+    host_instance_id: exactGuid(request.host_instance_id, "host_instance_id"),
+    executor_id: request.executor_id === SAFE_READ_EXECUTOR_ID
+      ? SAFE_READ_EXECUTOR_ID
+      : fail("SAFE_READ_REQUEST_MALFORMED", "executor_id is unsupported.", 400),
     runtime_attestation_sha256: exactHash(request.runtime_attestation_sha256, "runtime_attestation_sha256"),
     runtime_tuple: runtimeTuple(request.runtime_tuple),
     document: documentBinding(request.document),
-    client_session_id: exactId(request.client_session_id, "client_session_id"),
-    request_id: exactId(request.request_id, "request_id"),
-    attempt_id: exactId(request.attempt_id, "attempt_id"),
+    client_session_id: exactGuid(request.client_session_id, "client_session_id"),
+    request_id: exactGuid(request.request_id, "request_id"),
+    attempt_id: exactGuid(request.attempt_id, "attempt_id"),
     capability_id: request.capability_id,
     capability_nonce: request.capability_nonce
   };
@@ -322,10 +393,16 @@ function parseAttestation(value: unknown): RuntimeAttestation {
       state: manifest.state,
       issued_at_utc: issued.source,
       expires_at_utc: expires.source,
-      host_instance_id: exactId(manifest.host_instance_id, "host_instance_id"),
-      executor_id: exactId(manifest.executor_id, "executor_id"),
-      runtime_tuple: runtimeTuple(manifest.runtime_tuple),
-      document: documentBinding(manifest.document)
+      route_id: manifest.route_id === SAFE_READ_ROUTE_ID
+        ? SAFE_READ_ROUTE_ID
+        : fail("SAFE_READ_ATTESTATION_INVALID", "Runtime attestation route_id is unsupported.", 503),
+      route_contract_sha256: exactHash(manifest.route_contract_sha256, "route_contract_sha256"),
+      policy_sha256: exactHash(manifest.policy_sha256, "policy_sha256"),
+      proof_sha256: exactHash(manifest.proof_sha256, "proof_sha256"),
+      executor_id: manifest.executor_id === SAFE_READ_EXECUTOR_ID
+        ? SAFE_READ_EXECUTOR_ID
+        : fail("SAFE_READ_ATTESTATION_INVALID", "Runtime attestation executor_id is unsupported.", 503),
+      runtime_tuple: runtimeTuple(manifest.runtime_tuple)
     };
   } catch (error) {
     if (error instanceof SafeReadCapabilityError && error.code.startsWith("SAFE_READ_ATTESTATION_")) throw error;
@@ -343,16 +420,17 @@ function equalSecret(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function bindingPayload(request: SafeReadPreauthorizationRequest): Record<string, unknown> {
-  const canonicalBody = JSON.parse(SAFE_READ_CANONICAL_BODY_JSON) as JsonValue;
+function bindingPayload(request: SafeReadPreauthorizationRequest, attestation: RuntimeAttestation): Record<string, unknown> {
   return {
     route_id: SAFE_READ_ROUTE_ID,
     method: SAFE_READ_METHOD,
     path: SAFE_READ_PATH,
     canonical_body_json: SAFE_READ_CANONICAL_BODY_JSON,
-    request_hash: sha256({ method: SAFE_READ_METHOD, path: SAFE_READ_PATH, body: canonicalBody }),
-    effect_hash: sha256({ effect: "read", resource: "sheets.count", mutates: false }),
-    policy_hash: sha256({ policy: "safe-read.direct-only.v1", courier: "disabled", capability: "single-use" }),
+    request_hash: SAFE_READ_REQUEST_HASH,
+    effect_hash: SAFE_READ_EFFECT_HASH,
+    route_contract_sha256: attestation.route_contract_sha256,
+    policy_sha256: attestation.policy_sha256,
+    proof_sha256: attestation.proof_sha256,
     host_instance_id: request.host_instance_id,
     executor_id: request.executor_id,
     runtime_attestation_sha256: request.runtime_attestation_sha256,
@@ -383,17 +461,21 @@ function capabilityIdHash(value: string): string {
   return rawSha256(`safe-read-capability-v1\0${value}`);
 }
 
-function receiptHmac(nonce: Buffer, payload: Omit<SafeReadFinalAuthorizationReceipt, "hmac_sha256">): string {
+export function computeSafeReadReceiptHmac(
+  nonce: Buffer,
+  payload: Omit<SafeReadFinalAuthorizationReceipt, "hmac_sha256">
+): string {
   const key = createHmac("sha256", nonce).update("safe-read-final-receipt-v1", "utf8").digest();
   return `sha256:${createHmac("sha256", key).update(canonicalJson(payload as unknown as JsonValue), "utf8").digest("hex")}`;
 }
 
 function assertAttestationMatches(attestation: RuntimeAttestation, request: SafeReadPreauthorizationRequest): void {
-  const matches = attestation.host_instance_id === request.host_instance_id
+  const matches = attestation.route_id === request.route_id
+    && attestation.route_contract_sha256 === SAFE_READ_ROUTE_CONTRACT_SHA256
+    && attestation.policy_sha256 === SAFE_READ_POLICY_SHA256
     && attestation.executor_id === request.executor_id
-    && canonicalJson(attestation.runtime_tuple as unknown as JsonValue) === canonicalJson(request.runtime_tuple as unknown as JsonValue)
-    && canonicalJson(attestation.document as unknown as JsonValue) === canonicalJson(request.document as unknown as JsonValue);
-  if (!matches) fail("SAFE_READ_ATTESTATION_BINDING_MISMATCH", "Runtime attestation does not bind this host, runtime, and document.", 403);
+    && canonicalJson(attestation.runtime_tuple as unknown as JsonValue) === canonicalJson(request.runtime_tuple as unknown as JsonValue);
+  if (!matches) fail("SAFE_READ_ATTESTATION_BINDING_MISMATCH", "Runtime attestation does not bind this route, policy, executor, and runtime.", 403);
 }
 
 function rowFrom(value: Record<string, unknown> | undefined): CapabilityRow | null {
@@ -488,7 +570,7 @@ export class SafeReadCapabilityService {
     const now = this.now().getTime();
     const expires = now + SAFE_READ_CAPABILITY_VALID_FOR_MS;
     const capabilityId = `src1_${this.random(32).toString("base64url")}`;
-    const bindings = bindingPayload(request);
+    const bindings = bindingPayload(request, attested.manifest);
     const bindingsJson = canonicalJson(bindings as unknown as JsonValue);
     const bindingsHash = rawSha256(bindingsJson);
     try {
@@ -545,9 +627,8 @@ export class SafeReadCapabilityService {
     if (!equalSecret(initial.nonce_sha256, nonceHash)) {
       fail("SAFE_READ_CAPABILITY_POSSESSION_FAILED", "SafeRead capability possession proof is invalid.", 403);
     }
-    let bindings: Record<string, unknown>;
     try {
-      bindings = JSON.parse(initial.bindings_json) as Record<string, unknown>;
+      JSON.parse(initial.bindings_json) as Record<string, unknown>;
     } catch {
       fail("SAFE_READ_STORE_UNAVAILABLE", "Stored SafeRead bindings are invalid.", 503, true);
     }
@@ -556,21 +637,22 @@ export class SafeReadCapabilityService {
       ...publicBindings(request),
       capability_nonce_sha256: nonceHash
     } as SafeReadPreauthorizationRequest;
-    const expectedBindings = canonicalJson(bindingPayload(expectedRequest) as unknown as JsonValue);
-    if (!equalSecret(initial.bindings_json, expectedBindings) || !equalSecret(initial.bindings_hash, rawSha256(expectedBindings))) {
-      fail("SAFE_READ_CAPABILITY_BINDING_MISMATCH", "SafeRead capability does not bind this immutable execution tuple.", 403);
-    }
     const attested = this.loadAttestation();
     if (!equalSecret(request.runtime_attestation_sha256, attested.sha256)) {
       fail("SAFE_READ_ATTESTATION_PIN_MISMATCH", "Capability does not bind the current deployment-pinned runtime attestation.", 403);
     }
     assertAttestationMatches(attested.manifest, expectedRequest);
+    const expectedBindings = canonicalJson(bindingPayload(expectedRequest, attested.manifest) as unknown as JsonValue);
+    if (!equalSecret(initial.bindings_json, expectedBindings) || !equalSecret(initial.bindings_hash, rawSha256(expectedBindings))) {
+      fail("SAFE_READ_CAPABILITY_BINDING_MISMATCH", "SafeRead capability does not bind this immutable execution tuple.", 403);
+    }
 
     const now = this.now().getTime();
     if (initial.expires_at_ms <= now) fail("SAFE_READ_CAPABILITY_EXPIRED", "SafeRead capability has expired.", 410);
     if (initial.state !== "preauthorized") fail("SAFE_READ_CAPABILITY_REPLAYED", "SafeRead capability was already consumed.", 409);
 
-    let consumed = false;
+    let casApplied = false;
+    let commitConfirmed = false;
     try {
       this.db.exec("BEGIN IMMEDIATE");
       const current = rowFrom(this.db.prepare(`
@@ -599,14 +681,15 @@ export class SafeReadCapabilityService {
         this.db.exec("ROLLBACK");
         fail("SAFE_READ_CAPABILITY_REPLAYED", "SafeRead capability was not consumable.", 409);
       }
+      casApplied = true;
       this.db.exec("COMMIT");
-      consumed = true;
+      commitConfirmed = true;
     } catch (error) {
-      if (!consumed) {
+      if (!commitConfirmed) {
         try { this.db.exec("ROLLBACK"); } catch { /* transaction already closed */ }
       }
       if (error instanceof SafeReadCapabilityError) throw error;
-      fail("SAFE_READ_STORE_UNAVAILABLE", "SafeRead capability consumption failed.", 503, true, consumed);
+      fail("SAFE_READ_STORE_UNAVAILABLE", "SafeRead capability consumption failed.", 503, !casApplied, casApplied);
     }
 
     try {
@@ -617,11 +700,11 @@ export class SafeReadCapabilityService {
         ...publicBindings(request),
         capability_id: request.capability_id,
         bindings_hash: initial.bindings_hash,
-        receipt_id: `srr1_${this.random(16).toString("base64url")}`,
+        receipt_id: `srr1_${this.random(32).toString("base64url")}`,
         issued_at_utc: new Date(issuedAt).toISOString(),
         expires_at_utc: new Date(issuedAt + SAFE_READ_RECEIPT_VALID_FOR_MS).toISOString()
       };
-      return { ...payload, hmac_sha256: receiptHmac(nonceBytes, payload) };
+      return { ...payload, hmac_sha256: computeSafeReadReceiptHmac(nonceBytes, payload) };
     } catch {
       fail(
         "SAFE_READ_POST_AUTHORIZATION_FAILURE",
@@ -665,4 +748,39 @@ export function safeReadCourierDisabledFailure(): SafeReadFailureBody {
     403,
     false
   ).body();
+}
+
+export function safeReadPreauthorizationEnvelope(
+  authorization: SafeReadPreauthorizationResponse
+): SafeReadPreauthorizationEnvelope {
+  return { ok: true, authorization };
+}
+
+export function safeReadFinalAuthorizationEnvelope(
+  receipt: SafeReadFinalAuthorizationReceipt
+): SafeReadFinalAuthorizationEnvelope {
+  return { ok: true, receipt };
+}
+
+export function safeReadDirectEndpointEnvelope(
+  service: SafeReadCapabilityService,
+  pathname: string,
+  principalScope: string,
+  body: unknown
+): SafeReadPreauthorizationEnvelope | SafeReadFinalAuthorizationEnvelope {
+  if (pathname === SAFE_READ_PREAUTHORIZE_ENDPOINT) {
+    return safeReadPreauthorizationEnvelope(service.preauthorize(principalScope, body));
+  }
+  if (pathname === SAFE_READ_AUTHORIZE_EXECUTION_ENDPOINT) {
+    return safeReadFinalAuthorizationEnvelope(service.authorizeExecution(principalScope, body));
+  }
+  fail("SAFE_READ_REQUEST_MALFORMED", "SafeRead direct endpoint is unsupported.", 404);
+}
+
+export function isSafeReadCapabilityId(value: unknown): value is string {
+  return typeof value === "string" && CAPABILITY_ID.test(value);
+}
+
+export function isSafeReadReceiptId(value: unknown): value is string {
+  return typeof value === "string" && RECEIPT_ID.test(value);
 }
