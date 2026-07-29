@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
+using System.Linq;
 using System.Text.Json;
 using RevitBridge.Common;
 using RevitBridge.Operator;
@@ -295,6 +297,125 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void Every_direct_action_runner_boundary_refreshes_and_revalidates_immediately_before_dispatch()
+        {
+            var source = ReadRepoFile(
+                "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorActionRunner.cs")
+                .Replace("\r\n", "\n");
+            const string finalGate = "RefreshAndValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, cancellationToken);";
+
+            Assert.Contains(
+                "if (string.Equals(path, \"/revit/ping\", StringComparison.OrdinalIgnoreCase))\n" +
+                "            {\n" +
+                "                " + finalGate + "\n" +
+                "                return new { status = \"ok\", timestamp = DateTime.Now };",
+                source);
+            Assert.Contains(
+                "if (string.Equals(path, \"/revit/capabilities\", StringComparison.OrdinalIgnoreCase))\n" +
+                "            {\n" +
+                "                " + finalGate + "\n" +
+                "                return OperatorCapabilities.Get();",
+                source);
+            Assert.Contains(
+                "if (string.Equals(path, \"/revit/write-grant-status\", StringComparison.OrdinalIgnoreCase))\n" +
+                "            {\n" +
+                "                " + finalGate + "\n" +
+                "                var status = OperatorWriteGrant.ReadStatus();",
+                source);
+            Assert.Contains(
+                "if (IsDirectDialogComputerUsePath(path))\n" +
+                "            {\n" +
+                "                " + finalGate + "\n" +
+                "                return await handler.Handle(null!, jsonBody)",
+                source);
+            Assert.Contains(
+                "if (IsDirectControlPlanePath(path))\n" +
+                "            {\n" +
+                "                " + finalGate + "\n" +
+                "                return handler is NativeApiPolicyHandler",
+                source);
+            Assert.Contains("\"/revit/computer-use-act\"", source);
+            Assert.Contains("\"/revit/computer-use-guard\"", source);
+            Assert.Contains("\"/revit/tool-registry\"", source);
+            Assert.Contains("\"/revit/native-api-policy\"", source);
+            Assert.Contains("refreshTimeout.CancelAfter(CourierFinalExecutionRefreshTimeout);", source);
+            Assert.Contains("TimeSpan.FromSeconds(5)", source);
+            Assert.Contains("RefreshCourierFinalExecutionAuthorization(action, cancellationToken);\n" +
+                "            ValidateCourierFinalExecutionAuthorization(action, method, path, correlationId);", source);
+        }
+
+        [Theory]
+        [InlineData("/revit/ping", "revoked")]
+        [InlineData("/revit/ping", "timeout")]
+        [InlineData("/revit/computer-use-act", "revoked")]
+        [InlineData("/revit/computer-use-guard", "timeout")]
+        [InlineData("/revit/tool-registry", "revoked")]
+        [InlineData("/revit/native-api-policy", "timeout")]
+        public async System.Threading.Tasks.Task Direct_final_revocation_or_timeout_produces_zero_return_or_handler_dispatch(
+            string path,
+            string failure)
+        {
+            var job = CreateValidJob("{\"viewId\":42}");
+            var claimed = OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(job);
+            var prequeue = OperatorCourierFinalExecutionAuthorizationBinder.Bind(
+                CreateAuthorizationResponse(job), claimed, "executor-a", DateTimeOffset.UtcNow);
+            Assert.True(prequeue.IsValid, prequeue.Code + ": " + prequeue.Error);
+
+            var finalRefreshes = 0;
+            var dispatches = 0;
+            using var timeout = new System.Threading.CancellationTokenSource();
+            if (string.Equals(failure, "timeout", StringComparison.Ordinal)) timeout.Cancel();
+
+            await Assert.ThrowsAnyAsync<Exception>(() => ExecuteDirectBoundaryForTestAsync(
+                claimed,
+                async token =>
+                {
+                    finalRefreshes++;
+                    if (string.Equals(failure, "timeout", StringComparison.Ordinal))
+                    {
+                        await System.Threading.Tasks.Task.Delay(System.Threading.Timeout.Infinite, token);
+                    }
+                    throw new InvalidOperationException("Final direct authorization was revoked for " + path + ".");
+                },
+                () => dispatches++,
+                timeout.Token));
+
+            Assert.Equal(1, finalRefreshes);
+            Assert.Equal(0, dispatches);
+        }
+
+        [Theory]
+        [InlineData("/revit/ping")]
+        [InlineData("/revit/computer-use-act")]
+        [InlineData("/revit/computer-use-guard")]
+        [InlineData("/revit/tool-registry")]
+        [InlineData("/revit/native-api-policy")]
+        public async System.Threading.Tasks.Task Valid_direct_path_refreshes_exactly_once_at_its_final_boundary(string path)
+        {
+            var job = CreateValidJob("{\"viewId\":42}");
+            var claimed = OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(job);
+            var prequeue = OperatorCourierFinalExecutionAuthorizationBinder.Bind(
+                CreateAuthorizationResponse(job), claimed, "executor-a", DateTimeOffset.UtcNow);
+            var authorization = Assert.IsType<OperatorCourierFinalExecutionAuthorization>(prequeue.Authorization);
+            var finalRefreshes = 0;
+            var dispatches = 0;
+
+            await ExecuteDirectBoundaryForTestAsync(
+                claimed,
+                _ =>
+                {
+                    finalRefreshes++;
+                    return System.Threading.Tasks.Task.FromResult(authorization);
+                },
+                () => dispatches++,
+                System.Threading.CancellationToken.None);
+
+            Assert.False(string.IsNullOrWhiteSpace(path));
+            Assert.Equal(1, finalRefreshes);
+            Assert.Equal(1, dispatches);
+        }
+
+        [Fact]
         public async System.Threading.Tasks.Task Busy_retry_reauthorizes_and_revocation_prevents_the_next_dispatch()
         {
             var authorizationAttempts = 0;
@@ -401,6 +522,32 @@ namespace RevitBridge.Common.Tests
                 ["expires_at"] = expiresAt,
                 ["status"] = "running"
             });
+        }
+
+        private static async System.Threading.Tasks.Task ExecuteDirectBoundaryForTestAsync(
+            OperatorCourierCertificationEnvelopeValidationResult claimed,
+            Func<System.Threading.CancellationToken, System.Threading.Tasks.Task<OperatorCourierFinalExecutionAuthorization>> refreshAsync,
+            Action dispatch,
+            System.Threading.CancellationToken cancellationToken)
+        {
+            await OperatorCourierFinalExecutionAuthorizationBinder.RequireFreshBoundAuthorizationAsync(
+                refreshAsync,
+                claimed,
+                "executor-a",
+                cancellationToken);
+            dispatch();
+        }
+
+        private static string ReadRepoFile(params string[] relativeSegments)
+        {
+            var cursor = new DirectoryInfo(AppContext.BaseDirectory);
+            while (cursor != null)
+            {
+                var candidate = Path.Combine(new[] { cursor.FullName }.Concat(relativeSegments).ToArray());
+                if (File.Exists(candidate)) return File.ReadAllText(candidate);
+                cursor = cursor.Parent;
+            }
+            throw new FileNotFoundException("Could not locate repository source file.", Path.Combine(relativeSegments));
         }
 
         private static string CreateAuthorizationResponse(

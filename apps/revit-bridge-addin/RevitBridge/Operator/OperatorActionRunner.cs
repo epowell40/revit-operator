@@ -277,16 +277,19 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/ping", StringComparison.OrdinalIgnoreCase))
             {
+                RefreshAndValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, cancellationToken);
                 return new { status = "ok", timestamp = DateTime.Now };
             }
 
             if (string.Equals(path, "/revit/capabilities", StringComparison.OrdinalIgnoreCase))
             {
+                RefreshAndValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, cancellationToken);
                 return OperatorCapabilities.Get();
             }
 
             if (string.Equals(path, "/revit/write-grant-status", StringComparison.OrdinalIgnoreCase))
             {
+                RefreshAndValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, cancellationToken);
                 var status = OperatorWriteGrant.ReadStatus();
                 return new
                 {
@@ -320,6 +323,7 @@ namespace RevitBridge.Operator
 
             if (IsDirectDialogComputerUsePath(path))
             {
+                RefreshAndValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, cancellationToken);
                 return await handler.Handle(null!, jsonBody).ConfigureAwait(false);
             }
 
@@ -328,6 +332,7 @@ namespace RevitBridge.Operator
             // payload repair remain responsive while a model operation is pending.
             if (IsDirectControlPlanePath(path))
             {
+                RefreshAndValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, cancellationToken);
                 return handler is NativeApiPolicyHandler nativeApiPolicyHandler
                     ? await nativeApiPolicyHandler.HandleForMethod(null!, jsonBody, method).ConfigureAwait(false)
                     : await handler.Handle(null!, jsonBody).ConfigureAwait(false);
@@ -351,8 +356,12 @@ namespace RevitBridge.Operator
                     // handler. The prequeue receipt only admits this event;
                     // a queued ExternalEvent must obtain a new fixed-route
                     // backend decision before it can reach Revit.
-                    RefreshCourierFinalExecutionAuthorization(action, localDeadline.Token);
-                    ValidateCourierFinalExecutionAuthorization(action, method, path, correlationId);
+                    RefreshAndValidateCourierFinalExecutionAuthorization(
+                        action,
+                        method,
+                        path,
+                        correlationId,
+                        localDeadline.Token);
                     var handlerResult = handler.Handle(app, jsonBody).GetAwaiter().GetResult();
 
                     // Best-effort UI refresh after actions that likely modified the model. This reduces "it worked but I can't see it"
@@ -473,6 +482,17 @@ namespace RevitBridge.Operator
                     "Courier v2 final-execution refresh was unavailable or rejected; no Revit action was executed.",
                     error);
             }
+        }
+
+        private static void RefreshAndValidateCourierFinalExecutionAuthorization(
+            OperatorActionCall action,
+            string method,
+            string path,
+            string correlationId,
+            CancellationToken cancellationToken)
+        {
+            RefreshCourierFinalExecutionAuthorization(action, cancellationToken);
+            ValidateCourierFinalExecutionAuthorization(action, method, path, correlationId);
         }
 
         private static bool TryGetActionBody(OperatorActionCall action, out bool bodyPresent, out string bodyJson)
