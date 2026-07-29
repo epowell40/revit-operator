@@ -27,6 +27,9 @@ namespace RevitOperator.SafeReadHost.HostKernel
         public const string FinalReceiptSchema = "revit-operator.safe-read-final-authorization-receipt.v1";
         public const string PreauthorizationPath = "/api/safe-read/direct/preauthorize";
         public const string FinalAuthorizationPath = "/api/safe-read/direct/authorize-execution";
+        public const string ProxyAuthorizationOrigin = "http://127.0.0.1:3907";
+        public const string ProxyAuthorizationHeader = "X-RevitOperator-SafeRead-Proxy-Secret";
+        public const string ProxyAuthorizationSecretFile = "authorization_secret.v1.bin";
         public const string TokenHeader = "X-RevitOperator-SafeRead-Startup-Token";
         public const string HostInstanceHeader = "X-RevitOperator-SafeRead-Host-Instance-Id";
         public const string DocumentSessionHeader = "X-RevitOperator-SafeRead-Document-Session-Id";

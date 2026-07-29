@@ -19,10 +19,18 @@ broadly accessible directory is unsupported. The startup token must be treated
 as a same-user bearer secret and must never appear in logs, responses, backend
 requests, or static deployment attestation.
 
-The backend origin and exactly one credential are read once at startup. HTTPS
-is mandatory except for numeric `127.0.0.1`; redirects, proxies, cookies, and
-automatic decompression are disabled. Static deployment attestation is a
-deployment-owned, externally pinned exact manifest. It binds route contract,
+The authorization transport is frozen once at startup. Local, self-hosted, and
+development modes may use one direct origin and exactly one direct credential;
+HTTPS is mandatory except for numeric `127.0.0.1`. Hosted and production modes
+instead require the fixed numeric-loopback Sidecar proxy and a fixed 32-byte
+file secret. Direct credential settings are rejected in those modes and proxy
+loss never falls back to the backend. The proxy secret is not accepted from an
+environment variable, manifest, discovery record, command line, or loggable
+configuration object. Its fixed local file and parent must be owned by the
+current user, use protected rules containing only that owner, SYSTEM, and local
+administrators, and contain no reparse traversal. Redirects, system proxies,
+cookies, and automatic decompression are disabled for both transports. Static
+deployment attestation is a deployment-owned, externally pinned exact manifest. It binds route contract,
 policy, proof receipt, executor identity, and the measured certified-executor /
 Revit API tuple. Dynamic host and document identities are carried separately on
 each authorization request, so a static artifact cannot authorize another

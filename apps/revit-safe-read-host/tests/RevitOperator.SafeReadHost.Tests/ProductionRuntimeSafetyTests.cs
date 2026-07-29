@@ -67,6 +67,43 @@ namespace RevitOperator.SafeReadHost.Tests
         }
 
         [Fact]
+        public async Task Proxy_transport_preserves_exact_paths_body_header_and_post_dispatch_unknown_truth()
+        {
+            byte[] secret = new byte[32];
+            for (int i = 0; i < secret.Length; i++) secret[i] = 1;
+            using LoopbackBackend server = new LoopbackBackend(new[] { Reply.Json(PreauthorizationJson()), Reply.ResetAfterBody() });
+            Assert.True(FixedBackendOrigin.TryCreate("http://127.0.0.1:" + server.Port.ToString(CultureInfo.InvariantCulture), out FixedBackendOrigin? origin));
+            using SafeReadBackendAuthorizer authorizer = new SafeReadBackendAuthorizer(origin!, BackendCredentials.CreateProxy(secret)!, new FinalReceiptVerifier());
+            BackendAuthorizationResult result = await authorizer.AuthorizeAsync(Bindings(), new byte[32], CancellationToken.None);
+            AssertUnknown(result, "final_authorization_dispatch");
+            await server.Completion;
+            Assert.Equal(new[] { SafeReadContract.PreauthorizationPath, SafeReadContract.FinalAuthorizationPath }, server.RequestTargets);
+            Assert.All(server.RequestHeaders, headers =>
+            {
+                Assert.Contains(SafeReadContract.ProxyAuthorizationHeader + ": AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE", headers, StringComparison.Ordinal);
+                Assert.DoesNotContain("Authorization: Bearer", headers, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("x-operator-token", headers, StringComparison.OrdinalIgnoreCase);
+            });
+            AuthorizationBindings bindings = Bindings();
+            Assert.Equal(SafeReadBackendAuthorizer.CreatePreauthorizationJson(bindings, Protocol.Sha256(new byte[32])), server.RequestBodies[0]);
+            Assert.Equal(SafeReadBackendAuthorizer.CreateFinalAuthorizationJson(bindings, "src1_" + new string('a', 43), Protocol.Base64Url(new byte[32])), server.RequestBodies[1]);
+        }
+
+        [Fact]
+        public async Task Proxy_loss_before_dispatch_remains_known_and_retryable()
+        {
+            int port = ReserveClosedPort();
+            Assert.True(FixedBackendOrigin.TryCreate("http://127.0.0.1:" + port.ToString(CultureInfo.InvariantCulture), out FixedBackendOrigin? origin));
+            using SafeReadBackendAuthorizer authorizer = new SafeReadBackendAuthorizer(origin!, BackendCredentials.CreateProxy(new byte[32])!, new FinalReceiptVerifier());
+            BackendAuthorizationResult result = await authorizer.AuthorizeAsync(Bindings(), new byte[32], CancellationToken.None);
+            Assert.NotNull(result.Failure);
+            Assert.True(result.Failure!.Retryable);
+            Assert.False(result.Failure.RequestDispatched);
+            Assert.False(result.Failure.OutcomeUnknown);
+            Assert.Contains("preconnect", result.Failure.Stage, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public async Task Structured_backend_failure_survives_production_transport()
         {
             string denial = "{\"ok\":false,\"code\":\"policy_denied\",\"error\":\"Policy denied this exact runtime.\",\"retryable\":false,\"request_dispatched\":true,\"outcome_unknown\":false}";
@@ -370,6 +407,8 @@ namespace RevitOperator.SafeReadHost.Tests
             }
             public int Port { get; }
             public List<string> RequestBodies { get; } = new List<string>();
+            public List<string> RequestHeaders { get; } = new List<string>();
+            public List<string> RequestTargets { get; } = new List<string>();
             public Task Completion { get; }
 
             private async Task Serve(IEnumerable<Reply> replies)
@@ -378,8 +417,10 @@ namespace RevitOperator.SafeReadHost.Tests
                 {
                     using (TcpClient probe = await _listener.AcceptTcpClientAsync(_stop.Token)) { }
                     using TcpClient request = await _listener.AcceptTcpClientAsync(_stop.Token);
-                    string body = await ReadBody(request.GetStream(), _stop.Token);
-                    RequestBodies.Add(body);
+                    CapturedRequest captured = await ReadRequest(request.GetStream(), _stop.Token);
+                    RequestBodies.Add(captured.Body);
+                    RequestHeaders.Add(captured.Headers);
+                    RequestTargets.Add(captured.Target);
                     if (reply.Reset)
                     {
                         request.Client.LingerState = new LingerOption(true, 0);
@@ -399,7 +440,7 @@ namespace RevitOperator.SafeReadHost.Tests
                 }
             }
 
-            private static async Task<string> ReadBody(NetworkStream stream, CancellationToken cancellation)
+            private static async Task<CapturedRequest> ReadRequest(NetworkStream stream, CancellationToken cancellation)
             {
                 List<byte> bytes = new List<byte>();
                 byte[] one = new byte[1];
@@ -413,6 +454,9 @@ namespace RevitOperator.SafeReadHost.Tests
                     if (n >= 4 && bytes[n - 4] == 13 && bytes[n - 3] == 10 && bytes[n - 2] == 13 && bytes[n - 1] == 10) headerEnd = n;
                 }
                 string headers = Encoding.ASCII.GetString(bytes.ToArray());
+                string requestLine = headers.Split(new[] { "\r\n" }, StringSplitOptions.None)[0];
+                string[] requestParts = requestLine.Split(' ');
+                if (requestParts.Length != 3) throw new InvalidDataException("Invalid test request line.");
                 int contentLength = 0;
                 foreach (string line in headers.Split(new[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries))
                     if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase)) contentLength = Int32.Parse(line.Substring(line.IndexOf(':') + 1).Trim(), CultureInfo.InvariantCulture);
@@ -424,7 +468,15 @@ namespace RevitOperator.SafeReadHost.Tests
                     if (read == 0) throw new EndOfStreamException();
                     offset += read;
                 }
-                return Encoding.UTF8.GetString(body);
+                return new CapturedRequest(requestParts[1], headers, Encoding.UTF8.GetString(body));
+            }
+
+            private sealed class CapturedRequest
+            {
+                public CapturedRequest(string target, string headers, string body) { Target = target; Headers = headers; Body = body; }
+                public string Target { get; }
+                public string Headers { get; }
+                public string Body { get; }
             }
 
             public void Dispose()
