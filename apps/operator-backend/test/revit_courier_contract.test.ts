@@ -2,17 +2,27 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { decideCodexStreaming, revitCourierTargetFromContext } from "../src/brains/codex_brain.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
 import { beginRevitCourierTurnContext, endRevitCourierTurnContext } from "../src/courier/revit_courier_context.js";
 import {
   REVIT_COURIER_JOB_VERSION,
+  authorizeRevitToolJobExecution,
   claimNextRevitToolJob,
   completeRevitToolJob,
   failRevitToolJob
 } from "../src/courier/revit_tool_jobs.js";
+import { canonicalJson, computeRequestHash, sha256 } from "../src/capabilities/tool_certification.js";
+
+test.beforeEach(() => {
+  // Existing v1 contract fixtures model the intentionally isolated escape
+  // hatch. Production/local/default execution is certified and must not claim
+  // those fixtures.
+  process.env.REVIT_OPERATOR_MODE = "development";
+  process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = "laboratory";
+});
 
 function writeJob(root: string, overrides: Record<string, unknown> = {}): string {
   const id = randomUUID().replace(/-/g, "");
@@ -35,6 +45,378 @@ function writeJob(root: string, overrides: Record<string, unknown> = {}): string
   }), "utf8");
   return id;
 }
+
+function writeCertifiedPolicy(root: string, options: { exposed?: boolean; policyHashSuffix?: string } = {}): {
+  policyPath: string;
+  policyHash: string;
+  record: Record<string, unknown>;
+} {
+  const recordBase = {
+    method: "POST",
+    path: "/revit/ping",
+    typed_mcp_aliases: ["revit_ping"],
+    request_hash: computeRequestHash("POST", "/revit/ping", { a: 1, z: "raw" }),
+    effect_hash: `sha256:${"2".repeat(64)}`,
+    evidence_record_hash: `sha256:${"3".repeat(64)}`,
+    highest_cumulative_level: "L4",
+    observed_levels: ["L0", "L1", "L2", "L3", "L4"],
+    visibility: "candidate",
+    channels: {
+      search: { exposed: options.exposed !== false, required_level: "L3", reason_codes: [options.exposed === false ? "CERT_EVIDENCE_REVOKED" : "CERTIFIED"] },
+      generic_call: { exposed: options.exposed !== false, required_level: "L4", reason_codes: [options.exposed === false ? "CERT_EVIDENCE_REVOKED" : "CERTIFIED"] },
+      typed_mcp: { exposed: options.exposed !== false, required_level: "L4", reason_codes: [options.exposed === false ? "CERT_EVIDENCE_REVOKED" : "CERTIFIED"] },
+      deterministic_workflow: { exposed: options.exposed !== false, required_level: "L4", reason_codes: [options.exposed === false ? "CERT_EVIDENCE_REVOKED" : "CERTIFIED"] }
+    }
+  };
+  const record = { ...recordBase, policy_record_hash: sha256(recordBase as any) };
+  const policyBase = {
+    schema: "revit-operator.tool-exposure-policy.v1",
+    hash_algorithm: "sha256",
+    evidence_schema: "revit-operator.tool-certification-evidence.v1",
+    evidence_source_hash: `sha256:${"4".repeat(64)}`,
+    records: [record]
+  };
+  const policy = { ...policyBase, policy_hash: sha256(policyBase as any) };
+  const policyPath = path.join(root, `courier-policy-${options.policyHashSuffix ?? "current"}.json`);
+  fs.writeFileSync(policyPath, `${JSON.stringify(policy, null, 2)}\n`, "utf8");
+  return { policyPath, policyHash: policy.policy_hash, record };
+}
+
+function writeCertifiedV2Job(
+  root: string,
+  policy: ReturnType<typeof writeCertifiedPolicy>,
+  overrides: Record<string, unknown> = {},
+  context: Partial<{
+    session_id: string;
+    message_id: string | null;
+    expires_at: string;
+    target_executor_id: string | null;
+    target_document_title: string | null;
+    target_document_path: string | null;
+  }> = {}
+): string {
+  const sessionId = context.session_id ?? "session-a";
+  const messageId = context.message_id === undefined ? "message-a" : context.message_id;
+  const targetExecutorId = context.target_executor_id === undefined ? "worker-1" : context.target_executor_id;
+  const targetDocumentTitle = context.target_document_title === undefined ? "Snowdon" : context.target_document_title;
+  const targetDocumentPath = context.target_document_path === undefined ? "C:\\models\\Snowdon.rvt" : context.target_document_path;
+  const expiresAt = new Date(Date.parse(context.expires_at ?? new Date(Date.now() + 60_000).toISOString())).toISOString();
+  const rawBody = "{\n  \"z\": \"raw\", \"a\": 1\n}";
+  const bodyHash = `sha256:${createHash("sha256").update(rawBody, "utf8").digest("hex")}`;
+  const envelopeBase = {
+    schema: "revit-operator.revit-tool-certification-envelope.v1",
+    version: 1,
+    canonicalization: "revit-operator.canonical-json.nfc-key-sorted.v1",
+    policy_hash: policy.policyHash,
+    policy_record_hash: policy.record.policy_record_hash,
+    evidence_record_hash: policy.record.evidence_record_hash,
+    request_hash: policy.record.request_hash,
+    effect_hash: policy.record.effect_hash,
+    method: "POST",
+    path: "/revit/ping",
+    body_present: true,
+    body_sha256: bodyHash,
+    channel: "typed_mcp",
+    alias: "revit_ping",
+    runtime_mode: "local",
+    exposure_profile: "certified",
+    policy_trust_source: "deployment"
+  };
+  const envelope = {
+    ...envelopeBase,
+    envelope_hash: `sha256:${createHash("sha256").update(canonicalJson(envelopeBase as any), "utf8").digest("hex")}`
+  };
+  const identity = {
+    schema: "revit-operator.revit-tool-job-idempotency.v2",
+    canonicalization: "revit-operator.canonical-json.nfc-key-sorted.v1",
+    session_id: sessionId,
+    message_id: messageId,
+    expires_at: expiresAt,
+    turn_token_sha256: null,
+    target_executor_id: targetExecutorId,
+    target_document_title: targetDocumentTitle,
+    target_document_path: targetDocumentPath,
+    method: "POST",
+    path: "/revit/ping",
+    body_present: true,
+    body_sha256: bodyHash,
+    certification_envelope_hash: envelope.envelope_hash
+  };
+  const id = createHash("sha256").update(canonicalJson(identity as any), "utf8").digest("hex");
+  const dir = path.join(root, "artifacts", "revit-courier", "jobs", id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "job.json"), JSON.stringify({
+    version: "revit-operator.revit-tool-job.v2",
+    id,
+    session_id: sessionId,
+    message_id: messageId,
+    turn_token_sha256: null,
+    correlation_id: id,
+    idempotency_key: id,
+    method: "POST",
+    path: "/revit/ping",
+    target_executor_id: targetExecutorId,
+    target_document_title: targetDocumentTitle,
+    target_document_path: targetDocumentPath,
+    body: rawBody,
+    body_json: rawBody,
+    body_present: true,
+    certification_envelope: envelope,
+    created_at: new Date().toISOString(),
+    expires_at: expiresAt,
+    status: "pending",
+    claim: null,
+    ...overrides
+  }, null, 2), "utf8");
+  return id;
+}
+
+test("legacy v1 courier escape requires exact ordinal development laboratory environment values", () => {
+  const deniedRuntimes = [
+    { label: "default local", mode: "local", profile: undefined },
+    { label: "local laboratory", mode: "local", profile: "laboratory" },
+    { label: "hosted laboratory", mode: "hosted", profile: "laboratory" },
+    { label: "mode case variant", mode: "Development", profile: "laboratory" },
+    { label: "mode leading whitespace", mode: " development", profile: "laboratory" },
+    { label: "mode trailing whitespace", mode: "development ", profile: "laboratory" },
+    { label: "profile case variant", mode: "development", profile: "Laboratory" },
+    { label: "profile leading whitespace", mode: "development", profile: " laboratory" },
+    { label: "profile trailing whitespace", mode: "development", profile: "laboratory " }
+  ] as const;
+
+  for (const runtime of deniedRuntimes) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-v1-certification-denied-"));
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    process.env.REVIT_OPERATOR_MODE = runtime.mode;
+    if (runtime.profile === undefined) delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+    else process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = runtime.profile;
+
+    const deniedId = writeJob(root);
+    assert.equal(
+      claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job,
+      null,
+      runtime.label
+    );
+    const denied = JSON.parse(fs.readFileSync(
+      path.join(root, "artifacts", "revit-courier", "jobs", deniedId, "result.json"),
+      "utf8"
+    ));
+    assert.equal(denied.status, "failed", runtime.label);
+    assert.equal(denied.code, "CERTIFICATION_LEGACY_V1_DENIED", runtime.label);
+    assert.equal(denied.retryable, false, runtime.label);
+    assert.equal(denied.phase, "certification_final_execution", runtime.label);
+    assert.equal(denied.outcome_unknown, false, runtime.label);
+  }
+
+  const allowedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-v1-certification-allowed-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = allowedRoot;
+  process.env.REVIT_OPERATOR_MODE = "development";
+  process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = "laboratory";
+  const allowedId = writeJob(allowedRoot);
+  assert.equal(
+    claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job?.id,
+    allowedId,
+    "exact development laboratory"
+  );
+});
+
+test("v2 courier claim and final authorization bind the raw body, session, executor, target, and current pinned policy", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-v2-authorize-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.REVIT_OPERATOR_MODE = "local";
+  delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+  const policy = writeCertifiedPolicy(root);
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
+  const id = writeCertifiedV2Job(root, policy);
+
+  const claim = claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job;
+  assert.equal(claim?.id, id);
+  const authorized = authorizeRevitToolJobExecution({ session_id: "session-a", job_id: id, executor_id: "worker-1" });
+  assert.equal(authorized.authorization.phase, "certification_final_execution");
+  assert.equal(authorized.authorization.body_json, "{\n  \"z\": \"raw\", \"a\": 1\n}");
+  assert.equal(authorized.authorization.target_document_path, "C:\\models\\Snowdon.rvt");
+  assert.equal(authorized.authorization.policy_hash, policy.policyHash);
+});
+
+test("v2 final authorization terminalizes known job and claim-lease expiry without an outcome-unknown replay", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-v2-final-expiry-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.REVIT_OPERATOR_MODE = "local";
+  delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+  const policy = writeCertifiedPolicy(root);
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
+
+  const jobExpiredId = writeCertifiedV2Job(root, policy, {}, {
+    expires_at: new Date(Date.now() + 150).toISOString()
+  });
+  assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job?.id, jobExpiredId);
+  await new Promise(resolve => setTimeout(resolve, 225));
+  assert.throws(
+    () => authorizeRevitToolJobExecution({ session_id: "session-a", job_id: jobExpiredId, executor_id: "worker-1" }),
+    /CERTIFICATION_FINAL_JOB_EXPIRED/
+  );
+  const jobExpiredReceipt = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", jobExpiredId, "result.json"), "utf8"));
+  assert.equal(jobExpiredReceipt.code, "CERTIFICATION_FINAL_JOB_EXPIRED");
+  assert.equal(jobExpiredReceipt.retryable, false);
+  assert.equal(jobExpiredReceipt.outcome_unknown, false);
+  assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job, null);
+
+  const leaseExpiredId = writeCertifiedV2Job(root, policy, {}, { target_document_path: "C:\\models\\lease-expired.rvt" });
+  assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job?.id, leaseExpiredId);
+  const leaseExpiredPath = path.join(root, "artifacts", "revit-courier", "jobs", leaseExpiredId, "job.json");
+  const leaseExpired = JSON.parse(fs.readFileSync(leaseExpiredPath, "utf8"));
+  leaseExpired.claim.claimed_at = new Date(Date.now() - 120_000).toISOString();
+  leaseExpired.claim.lease_expires_at = new Date(Date.now() - 1_000).toISOString();
+  fs.writeFileSync(leaseExpiredPath, JSON.stringify(leaseExpired), "utf8");
+  assert.throws(
+    () => authorizeRevitToolJobExecution({ session_id: "session-a", job_id: leaseExpiredId, executor_id: "worker-1" }),
+    /CERTIFICATION_FINAL_CLAIM_LEASE_EXPIRED/
+  );
+  const leaseExpiredReceipt = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", leaseExpiredId, "result.json"), "utf8"));
+  assert.equal(leaseExpiredReceipt.code, "CERTIFICATION_FINAL_CLAIM_LEASE_EXPIRED");
+  assert.equal(leaseExpiredReceipt.retryable, false);
+  assert.equal(leaseExpiredReceipt.outcome_unknown, false);
+  assert.notEqual(leaseExpiredReceipt.code, "execution_lease_expired_outcome_unknown");
+  assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job, null);
+});
+
+test("v2 context identity accepts safe Unicode and terminally rejects control-bearing producer values", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-v2-unicode-context-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.REVIT_OPERATOR_MODE = "local";
+  delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+  const policy = writeCertifiedPolicy(root);
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
+  const context = {
+    session_id: "session-α",
+    target_executor_id: "workstation-β",
+    target_document_title: "楼层 Café",
+    target_document_path: "C:\\模型\\Café\\Snowdon.rvt"
+  };
+  const unicodeId = writeCertifiedV2Job(root, policy, {}, context);
+  assert.equal(claimNextRevitToolJob({ session_id: context.session_id, executor_id: context.target_executor_id }).job?.id, unicodeId);
+  assert.equal(
+    authorizeRevitToolJobExecution({ session_id: context.session_id, job_id: unicodeId, executor_id: context.target_executor_id }).authorization.target_document_title,
+    context.target_document_title
+  );
+
+  const unsafeId = writeCertifiedV2Job(root, policy, {}, { target_document_title: "Snowdon\tunsafe" });
+  assert.equal(claimNextRevitToolJob({ executor_id: "worker-1" }).job, null);
+  const unsafeReceipt = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", unsafeId, "result.json"), "utf8"));
+  assert.equal(unsafeReceipt.code, "CERTIFICATION_JOB_MALFORMED");
+  assert.equal(unsafeReceipt.outcome_unknown, false);
+});
+
+test("v2 courier terminalizes malformed envelopes and policy revocation after claim without an outcome-unknown lease", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-v2-revocation-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.REVIT_OPERATOR_MODE = "local";
+  delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+  const policy = writeCertifiedPolicy(root, { policyHashSuffix: "allowed" });
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
+  const id = writeCertifiedV2Job(root, policy);
+  assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job?.id, id);
+
+  const revoked = writeCertifiedPolicy(root, { exposed: false, policyHashSuffix: "revoked" });
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = revoked.policyPath;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = revoked.policyHash;
+  assert.throws(
+    () => authorizeRevitToolJobExecution({ session_id: "session-a", job_id: id, executor_id: "worker-1" }),
+    /CERTIFICATION_POLICY_CHANGED|CERTIFICATION_POLICY_DENIED/
+  );
+  const receipt = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", id, "result.json"), "utf8"));
+  assert.equal(receipt.status, "failed");
+  assert.equal(receipt.phase, "certification_final_execution");
+  assert.equal(receipt.retryable, false);
+  assert.equal(receipt.outcome_unknown, false);
+  assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job, null);
+
+  const malformedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-v2-malformed-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = malformedRoot;
+  const current = writeCertifiedPolicy(malformedRoot);
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = current.policyPath;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = current.policyHash;
+  const malformedId = writeCertifiedV2Job(malformedRoot, current);
+  const jobPath = path.join(malformedRoot, "artifacts", "revit-courier", "jobs", malformedId, "job.json");
+  const malformed = JSON.parse(fs.readFileSync(jobPath, "utf8"));
+  malformed.turn_token = "must-never-persist";
+  fs.writeFileSync(jobPath, JSON.stringify(malformed), "utf8");
+  assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job, null);
+  const malformedReceipt = JSON.parse(fs.readFileSync(path.join(malformedRoot, "artifacts", "revit-courier", "jobs", malformedId, "result.json"), "utf8"));
+  assert.equal(malformedReceipt.phase, "certification_final_execution");
+  assert.equal(malformedReceipt.outcome_unknown, false);
+});
+
+test("v2 claim quarantines every immutable publisher-contract mismatch before a workstation can execute", () => {
+  const cases: Array<[string, (job: any) => void]> = [
+    ["unknown version", job => { job.version = "revit-operator.revit-tool-job.v3"; }],
+    ["unknown field", job => { job.unexpected = true; }],
+    ["raw token", job => { job.turn_token = "never-persist"; }],
+    ["compatibility body", job => { job.body = "{}"; }],
+    ["raw body", job => { job.body_json = "{}"; }],
+    ["envelope hash", job => { job.certification_envelope.alias = "revit_context"; }],
+    ["idempotency", job => { job.idempotency_key = "a".repeat(64); }],
+    ["correlation", job => { job.correlation_id = "b".repeat(64); }],
+    ["expiry identity", job => { job.expires_at = new Date(Date.parse(job.expires_at) + 1_000).toISOString(); }]
+  ];
+  for (const [label, mutate] of cases) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-v2-mismatch-"));
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    process.env.REVIT_OPERATOR_MODE = "local";
+    delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+    const policy = writeCertifiedPolicy(root, { policyHashSuffix: label.replace(/\W/g, "-") });
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
+    const id = writeCertifiedV2Job(root, policy);
+    const jobPath = path.join(root, "artifacts", "revit-courier", "jobs", id, "job.json");
+    const job = JSON.parse(fs.readFileSync(jobPath, "utf8"));
+    mutate(job);
+    fs.writeFileSync(jobPath, JSON.stringify(job), "utf8");
+    assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job, null, label);
+    const receipt = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", id, "result.json"), "utf8"));
+    assert.equal(receipt.status, "failed", label);
+    assert.equal(receipt.phase, "certification_final_execution", label);
+    assert.equal(receipt.retryable, false, label);
+    assert.equal(receipt.outcome_unknown, false, label);
+  }
+});
+
+test("final v2 authorization terminalizes unavailable, malformed, and anchor-mismatched current policies", () => {
+  const cases: Array<[string, (root: string) => { policyPath: string; policyHash: string }]> = [
+    ["unavailable", root => ({ policyPath: path.join(root, "missing-policy.json"), policyHash: `sha256:${"1".repeat(64)}` })],
+    ["malformed", root => {
+      const policyPath = path.join(root, "malformed-policy.json");
+      fs.writeFileSync(policyPath, "{", "utf8");
+      return { policyPath, policyHash: `sha256:${"1".repeat(64)}` };
+    }],
+    ["anchor mismatch", root => {
+      const policy = writeCertifiedPolicy(root, { policyHashSuffix: "anchor-mismatch" });
+      return { policyPath: policy.policyPath, policyHash: `sha256:${"0".repeat(64)}` };
+    }]
+  ];
+  for (const [label, replaceCurrent] of cases) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-v2-policy-"));
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    process.env.REVIT_OPERATOR_MODE = "local";
+    delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+    const published = writeCertifiedPolicy(root, { policyHashSuffix: `${label}-published` });
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = published.policyPath;
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = published.policyHash;
+    const id = writeCertifiedV2Job(root, published);
+    assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job?.id, id, label);
+    const current = replaceCurrent(root);
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = current.policyPath;
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = current.policyHash;
+    assert.throws(() => authorizeRevitToolJobExecution({ session_id: "session-a", job_id: id, executor_id: "worker-1" }), /CERTIFICATION_POLICY_/);
+    const receipt = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", id, "result.json"), "utf8"));
+    assert.equal(receipt.phase, "certification_final_execution", label);
+    assert.equal(receipt.outcome_unknown, false, label);
+  }
+});
 
 test("courier claims only the bound session and writes a durable terminal result", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-store-"));
@@ -140,6 +522,11 @@ test("courier never automatically replays a job whose execution lease expired", 
   assert.equal(receipt.status, "failed");
   assert.equal(receipt.code, "execution_lease_expired_outcome_unknown");
   assert.equal(receipt.retryable, false);
+  assert.equal(receipt.outcome_unknown, true);
+  assert.equal(Object.hasOwn(receipt, "outcomeUnknown"), false);
+  const persistedJob = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", id, "job.json"), "utf8"));
+  assert.equal(persistedJob.status, "failed");
+  assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-3" }).job, null);
 });
 
 test("courier promotes a bounded workstation failure code into the authoritative result receipt", () => {
@@ -152,7 +539,7 @@ test("courier promotes a bounded workstation failure code into the authoritative
     job_id: id,
     executor_id: "worker-1",
     error: "The Revit action deadline elapsed.",
-    retryable: false,
+    retryable: true,
     result: {
       code: "revit_action_deadline_elapsed_outcome_unknown",
       phase: "revit_external_event",
@@ -166,11 +553,71 @@ test("courier promotes a bounded workstation failure code into the authoritative
   const receipt = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", id, "result.json"), "utf8"));
   assert.equal(receipt.code, "revit_action_deadline_elapsed_outcome_unknown");
   assert.equal(receipt.retryable, false);
+  assert.equal(receipt.outcome_unknown, true);
+  assert.equal(Object.hasOwn(receipt, "outcomeUnknown"), false);
   assert.equal(receipt.result.hostHealth, "unavailable");
   assert.equal(receipt.result.outcomeUnknown, true);
   assert.equal(receipt.result.correlationId, id);
   assert.equal(receipt.result.deadlineClass, "bounded_read");
   assert.equal(receipt.result.deadlineMs, 60_000);
+  const persistedJob = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", id, "job.json"), "utf8"));
+  assert.equal(persistedJob.status, "failed");
+  assert.equal(failRevitToolJob({
+    session_id: "session-a",
+    job_id: id,
+    executor_id: "worker-1",
+    error: "must not replace authoritative unknown outcome",
+    retryable: true,
+    result: { outcomeUnknown: false }
+  }).status, "failed");
+  const replayedReceipt = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", id, "result.json"), "utf8"));
+  assert.equal(replayedReceipt.outcome_unknown, true);
+  assert.equal(replayedReceipt.retryable, false);
+});
+
+test("courier does not promote omitted, false, malformed, or nested outcome-unknown metadata", () => {
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ["omitted", { code: "native_failure" }],
+    ["false", { code: "native_failure", outcomeUnknown: false }],
+    ["string", { code: "native_failure", outcomeUnknown: "true" }],
+    ["numeric", { code: "native_failure", outcomeUnknown: 1 }],
+    ["nested", { code: "native_failure", metadata: { outcomeUnknown: true } }]
+  ];
+
+  for (const [label, result] of cases) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), `revit-courier-known-failure-${label}-`));
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    const id = writeJob(root);
+    claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" });
+    failRevitToolJob({
+      session_id: "session-a",
+      job_id: id,
+      executor_id: "worker-1",
+      error: "Known native failure.",
+      retryable: true,
+      result
+    });
+    const receipt = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", id, "result.json"), "utf8"));
+    assert.equal(receipt.status, "failed", label);
+    assert.equal(receipt.code, "native_failure", label);
+    assert.equal(receipt.outcome_unknown, false, label);
+    assert.equal(receipt.retryable, true, label);
+  }
+
+  const successRoot = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-known-success-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = successRoot;
+  const successId = writeJob(successRoot);
+  claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" });
+  completeRevitToolJob({
+    session_id: "session-a",
+    job_id: successId,
+    executor_id: "worker-1",
+    result: { outcomeUnknown: true, metadata: { outcomeUnknown: true } }
+  });
+  const successReceipt = JSON.parse(fs.readFileSync(path.join(successRoot, "artifacts", "revit-courier", "jobs", successId, "result.json"), "utf8"));
+  assert.equal(successReceipt.status, "succeeded");
+  assert.equal(successReceipt.outcome_unknown, false);
+  assert.equal(successReceipt.retryable, false);
 });
 
 test("courier context is explicit, target-pinned, exclusive per workspace, and closed without deleting its receipt", () => {

@@ -1,5 +1,9 @@
+using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Text.Json.Serialization;
+using RevitBridge.Common;
 
 namespace RevitBridge.Operator
 {
@@ -30,6 +34,28 @@ namespace RevitBridge.Operator
 
         [JsonIgnore]
         public string ExpectedDocumentPath { get; set; } = "";
+
+        // Courier v2 metadata is runtime-only. It is never accepted from a
+        // sidecar/chat payload and is attached only after the fixed backend
+        // final-execution authorization endpoint binds it to a verified claim.
+        [JsonIgnore]
+        public OperatorCourierFinalExecutionAuthorization? CourierFinalExecutionAuthorization { get; internal set; }
+
+        [JsonIgnore]
+        public DateTimeOffset? CourierJobExpiresAtUtc { get; internal set; }
+
+        // These fields are populated only by the local courier worker after a
+        // v2 claim and prequeue receipt both verify. JsonIgnore is deliberate:
+        // neither a sidecar payload nor a persisted action may inject a final
+        // authorization refresh path, original claim, or executor identity.
+        [JsonIgnore]
+        public OperatorCourierCertificationEnvelopeValidationResult? CourierVerifiedClaim { get; internal set; }
+
+        [JsonIgnore]
+        public string? CourierLocalExecutorId { get; internal set; }
+
+        [JsonIgnore]
+        public Func<CancellationToken, Task<OperatorCourierFinalExecutionAuthorization>>? CourierFinalExecutionRefreshAsync { get; internal set; }
     }
 
     public sealed class OperatorChatRequest

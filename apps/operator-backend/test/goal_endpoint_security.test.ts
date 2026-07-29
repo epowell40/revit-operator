@@ -15,6 +15,25 @@ import {
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
 import { createLocalGoalEvidenceAuthority } from "../src/goals/authority.js";
 
+const READINESS_DEADLINE_MS = 20_000;
+const READINESS_FETCH_TIMEOUT_MS = 500;
+const STDERR_TAIL_LIMIT = 8_192;
+const childStderrTails = new WeakMap<ChildProcess, string>();
+
+function captureChildDiagnostics(child: ChildProcess): void {
+  childStderrTails.set(child, "");
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk: string) => {
+    const previous = childStderrTails.get(child) ?? "";
+    childStderrTails.set(child, `${previous}${chunk}`.slice(-STDERR_TAIL_LIMIT));
+  });
+}
+
+function childDiagnostics(child: ChildProcess): string {
+  const stderr = childStderrTails.get(child)?.trim();
+  return `exitCode=${String(child.exitCode)} signalCode=${String(child.signalCode)} stderrTail=${stderr || "<empty>"}`;
+}
+
 function signJwt(userId: string, secret: string, tenantId = "tenant-shared", roles = ["user"]): string {
   const now = Math.floor(Date.now() / 1000);
   const headerPart = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" }), "utf8").toString("base64url");
@@ -81,15 +100,46 @@ async function stop(child: ChildProcess): Promise<void> {
   throw new Error(`Spawned backend process ${child.pid ?? "unknown"} did not exit after SIGTERM and SIGKILL.`);
 }
 
-async function waitForServer(base: string, headers: Record<string, string>): Promise<void> {
-  for (let attempt = 0; attempt < 120; attempt += 1) {
+async function waitForServer(base: string, headers: Record<string, string>, child: ChildProcess): Promise<boolean> {
+  const deadline = Date.now() + READINESS_DEADLINE_MS;
+  let lastStatus: number | undefined;
+  let lastError: string | undefined;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`Backend exited before readiness: ${childDiagnostics(child)}`);
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      Math.min(READINESS_FETCH_TIMEOUT_MS, Math.max(1, deadline - Date.now()))
+    );
+    let onExit: (() => void) | undefined;
     try {
-      const response = await fetch(`${base}/health`, { headers });
-      if (response.ok) return;
-    } catch { }
-    await new Promise(resolve => setTimeout(resolve, 25));
+      const exited = new Promise<never>((_resolve, reject) => {
+        onExit = () => reject(new Error(`Backend exited before readiness: ${childDiagnostics(child)}`));
+        child.once("exit", onExit);
+      });
+      const response = await Promise.race([
+        fetch(`${base}/health`, { headers, signal: controller.signal }),
+        exited
+      ]);
+      lastStatus = response.status;
+      if (response.ok) return true;
+    } catch (error) {
+      if (child.exitCode !== null || child.signalCode !== null) {
+        throw new Error(`Backend exited before readiness: ${childDiagnostics(child)}`);
+      }
+      lastError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    } finally {
+      clearTimeout(timeout);
+      if (onExit) child.off("exit", onExit);
+    }
+    await new Promise(resolve => setTimeout(resolve, Math.min(50, Math.max(0, deadline - Date.now()))));
   }
-  throw new Error("Backend did not become ready.");
+  throw new Error(
+    `Backend did not become ready within ${READINESS_DEADLINE_MS}ms ` +
+    `(lastStatus=${String(lastStatus)} lastError=${lastError ?? "<none>"} ${childDiagnostics(child)}).`
+  );
 }
 
 test("generic JWT mode resolves a tenant principal while shared-token no-principal behavior remains intact", () => {
@@ -210,15 +260,16 @@ test("goal endpoints authenticate generic JWT callers and isolate principals, wo
       OPERATOR_WORKSPACE_ROOT: workspace,
       OPERATOR_BRAIN: "rule"
     },
-    stdio: "ignore"
+    stdio: ["ignore", "ignore", "pipe"]
   });
+  captureChildDiagnostics(child);
   t.after(async () => stop(child));
 
   const base = `http://127.0.0.1:${port}`;
   const aliceAuth = `Bearer ${signJwt("alice", secret)}`;
   const bobAuth = `Bearer ${signJwt("bob", secret)}`;
   const headers = (authorization: string) => ({ authorization, "content-type": "application/json" });
-  await waitForServer(base, { authorization: aliceAuth });
+  assert.equal(await waitForServer(base, { authorization: aliceAuth }, child), true, "backend must report ready");
 
   const publicHealth = await fetch(`${base}/health`);
   assert.equal(publicHealth.status, 200);
@@ -357,14 +408,15 @@ test("principal auto-goals bind ownership to the requester so approval authority
       OPERATOR_WORKSPACE_ROOT: workspace,
       OPERATOR_BRAIN: "rule"
     },
-    stdio: "ignore"
+    stdio: ["ignore", "ignore", "pipe"]
   });
+  captureChildDiagnostics(child);
   t.after(async () => stop(child));
 
   const base = `http://127.0.0.1:${port}`;
   const aliceAuth = `Bearer ${signJwt("alice", jwtSecret, "tenant-shared", ["user", "goal_approver"])}`;
   const headers = { authorization: aliceAuth, "content-type": "application/json" };
-  await waitForServer(base, { authorization: aliceAuth });
+  assert.equal(await waitForServer(base, { authorization: aliceAuth }, child), true, "backend must report ready");
 
   const sessionResponse = await fetch(`${base}/session/new`, { method: "POST", headers: { authorization: aliceAuth } });
   assert.equal(sessionResponse.status, 200);
@@ -436,9 +488,10 @@ test("principal-bound session ids cannot be shadowed or claimed by another tenan
         OPERATOR_WORKSPACE_ROOT: workspace,
         OPERATOR_BRAIN: "rule"
       },
-      stdio: "ignore"
+      stdio: ["ignore", "ignore", "pipe"]
     });
-    await waitForServer(`http://127.0.0.1:${port}`, {});
+    captureChildDiagnostics(child);
+    assert.equal(await waitForServer(`http://127.0.0.1:${port}`, {}, child), true, "backend must report ready");
     return child;
   };
 
@@ -481,14 +534,15 @@ test("shared-token local mode retains goal endpoint behavior without a multi-use
       OPERATOR_WORKSPACE_ROOT: fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-goal-local-")),
       OPERATOR_BRAIN: "rule"
     },
-    stdio: "ignore"
+    stdio: ["ignore", "ignore", "pipe"]
   });
+  captureChildDiagnostics(child);
   t.after(async () => stop(child));
 
   const base = `http://127.0.0.1:${port}`;
   const tokenHeaders = { "x-operator-token": token };
   const jsonHeaders = { ...tokenHeaders, "content-type": "application/json" };
-  await waitForServer(base, tokenHeaders);
+  assert.equal(await waitForServer(base, tokenHeaders, child), true, "backend must report ready");
   const sessionResponse = await fetch(`${base}/session/new`, { method: "POST", headers: tokenHeaders });
   assert.equal(sessionResponse.status, 200);
   const sessionId = (await sessionResponse.json() as { session_id: string }).session_id;

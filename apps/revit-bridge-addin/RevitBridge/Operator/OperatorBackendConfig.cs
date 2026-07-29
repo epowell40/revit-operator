@@ -8,15 +8,15 @@ namespace RevitBridge.Operator
         public static Uri GetBaseUri()
         {
             var url = Environment.GetEnvironmentVariable("OPERATOR_BACKEND_URL");
-            if (!string.IsNullOrWhiteSpace(url) && Uri.TryCreate(url.TrimEnd('/') + "/", UriKind.Absolute, out var parsed))
+            if (!string.IsNullOrWhiteSpace(url))
             {
-                return parsed;
+                return OperatorNativeToolExposureBackendUriPolicy.RequireValidOrigin(url);
             }
 
             var cfg = OperatorClientConfig.Load();
-            if (!string.IsNullOrWhiteSpace(cfg.backend_url) && Uri.TryCreate(cfg.backend_url.TrimEnd('/') + "/", UriKind.Absolute, out var fromConfig))
+            if (!string.IsNullOrWhiteSpace(cfg.backend_url))
             {
-                return fromConfig;
+                return OperatorNativeToolExposureBackendUriPolicy.RequireValidOrigin(cfg.backend_url!);
             }
 
             var portRaw = Environment.GetEnvironmentVariable("OPERATOR_BACKEND_PORT");
@@ -26,7 +26,7 @@ namespace RevitBridge.Operator
                 port = p;
             }
 
-            return new Uri($"http://127.0.0.1:{port}/");
+            return OperatorNativeToolExposureBackendUriPolicy.RequireValidOrigin($"http://127.0.0.1:{port}/");
         }
     }
 }

@@ -23,6 +23,7 @@ namespace RevitBridge.Operator
 {
     internal sealed class OperatorActionRunner
     {
+        private static readonly TimeSpan CourierFinalExecutionRefreshTimeout = TimeSpan.FromSeconds(5);
         private readonly RevitEventService _eventService;
         private readonly Dictionary<string, HandlerRequest> _handlers;
 
@@ -262,6 +263,11 @@ namespace RevitBridge.Operator
             var correlationId = OperatorCorrelationId.NormalizeOrCreate(action.CorrelationId, action.ActionId);
             action.CorrelationId = correlationId;
 
+            // Courier v2 actions are constructed only after a fresh backend
+            // receipt. Check the binding before every path, including direct
+            // control-plane handlers that bypass the ExternalEvent queue.
+            ValidateCourierFinalExecutionAuthorization(action, method, path, correlationId);
+
             if (!OperatorActionAllowlist.IsAllowed(method, path))
             {
                 throw new InvalidOperationException($"Action not allowlisted: {method} {path}");
@@ -271,16 +277,19 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/ping", StringComparison.OrdinalIgnoreCase))
             {
+                RefreshAndValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, cancellationToken);
                 return new { status = "ok", timestamp = DateTime.Now };
             }
 
             if (string.Equals(path, "/revit/capabilities", StringComparison.OrdinalIgnoreCase))
             {
+                RefreshAndValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, cancellationToken);
                 return OperatorCapabilities.Get();
             }
 
             if (string.Equals(path, "/revit/write-grant-status", StringComparison.OrdinalIgnoreCase))
             {
+                RefreshAndValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, cancellationToken);
                 var status = OperatorWriteGrant.ReadStatus();
                 return new
                 {
@@ -314,6 +323,7 @@ namespace RevitBridge.Operator
 
             if (IsDirectDialogComputerUsePath(path))
             {
+                RefreshAndValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, cancellationToken);
                 return await handler.Handle(null!, jsonBody).ConfigureAwait(false);
             }
 
@@ -322,6 +332,7 @@ namespace RevitBridge.Operator
             // payload repair remain responsive while a model operation is pending.
             if (IsDirectControlPlanePath(path))
             {
+                RefreshAndValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, cancellationToken);
                 return handler is NativeApiPolicyHandler nativeApiPolicyHandler
                     ? await nativeApiPolicyHandler.HandleForMethod(null!, jsonBody, method).ConfigureAwait(false)
                     : await handler.Handle(null!, jsonBody).ConfigureAwait(false);
@@ -341,6 +352,16 @@ namespace RevitBridge.Operator
                 result = await _eventService.Run(app =>
                 {
                     ValidateExpectedDocument(app, action);
+                    // This is deliberately immediately adjacent to the Revit
+                    // handler. The prequeue receipt only admits this event;
+                    // a queued ExternalEvent must obtain a new fixed-route
+                    // backend decision before it can reach Revit.
+                    RefreshAndValidateCourierFinalExecutionAuthorization(
+                        action,
+                        method,
+                        path,
+                        correlationId,
+                        localDeadline.Token);
                     var handlerResult = handler.Handle(app, jsonBody).GetAwaiter().GetResult();
 
                     // Best-effort UI refresh after actions that likely modified the model. This reduces "it worked but I can't see it"
@@ -383,6 +404,115 @@ namespace RevitBridge.Operator
             return result;
         }
 
+        private static void ValidateCourierFinalExecutionAuthorization(
+            OperatorActionCall action,
+            string method,
+            string path,
+            string correlationId)
+        {
+            var authorization = action.CourierFinalExecutionAuthorization;
+            if (authorization == null)
+            {
+                if (action.CourierJobExpiresAtUtc.HasValue)
+                    throw new OperatorCourierFinalExecutionRejectedException("Courier final-execution expiry is present without an authorization receipt.");
+                return;
+            }
+
+            if (!OperatorCourierFinalExecutionAuthorizationBinder.IsTargetExecutorBound(
+                    action.CourierVerifiedClaim,
+                    action.CourierLocalExecutorId)
+                || !OperatorCourierFinalExecutionAuthorizationBinder.IsBoundToExecutor(
+                    authorization,
+                    action.CourierLocalExecutorId)
+                || !TryGetActionBody(action, out var bodyPresent, out var bodyJson)
+                || !OperatorCourierFinalExecutionAuthorizationBinder.IsBoundToAction(
+                    authorization,
+                    action.CourierJobExpiresAtUtc,
+                    action.ActionId,
+                    correlationId,
+                    method,
+                    path,
+                    action.ExpectedDocumentTitle,
+                    action.ExpectedDocumentPath,
+                    bodyPresent,
+                    bodyJson,
+                    DateTimeOffset.UtcNow))
+            {
+                throw new OperatorCourierFinalExecutionRejectedException("Courier final-execution authorization is expired, malformed, or no longer bound to the queued action.");
+            }
+        }
+
+        private static void RefreshCourierFinalExecutionAuthorization(
+            OperatorActionCall action,
+            CancellationToken queueCancellationToken)
+        {
+            var isV2CourierAction = action.CourierVerifiedClaim != null
+                || !string.IsNullOrWhiteSpace(action.CourierLocalExecutorId)
+                || action.CourierFinalExecutionRefreshAsync != null;
+            if (!isV2CourierAction) return;
+
+            var refresh = action.CourierFinalExecutionRefreshAsync;
+            if (refresh == null)
+            {
+                throw new OperatorCourierFinalExecutionRejectedException(
+                    "Courier v2 action is missing its authoritative final-execution refresh.");
+            }
+
+            try
+            {
+                using var refreshTimeout = CancellationTokenSource.CreateLinkedTokenSource(queueCancellationToken);
+                refreshTimeout.CancelAfter(CourierFinalExecutionRefreshTimeout);
+                var authorization = OperatorCourierFinalExecutionAuthorizationBinder.RequireFreshBoundAuthorizationAsync(
+                    refresh,
+                    action.CourierVerifiedClaim,
+                    action.CourierLocalExecutorId,
+                    refreshTimeout.Token).GetAwaiter().GetResult();
+                action.CourierFinalExecutionAuthorization = authorization;
+            }
+            catch (OperatorCourierFinalExecutionRejectedException)
+            {
+                throw;
+            }
+            catch (Exception error)
+            {
+                // There is intentionally no offline/cached fallback. Network,
+                // backend denial, session revocation, policy mismatch, and the
+                // bounded timeout all mean zero handler invocation.
+                throw new OperatorCourierFinalExecutionRejectedException(
+                    "Courier v2 final-execution refresh was unavailable or rejected; no Revit action was executed.",
+                    error);
+            }
+        }
+
+        private static void RefreshAndValidateCourierFinalExecutionAuthorization(
+            OperatorActionCall action,
+            string method,
+            string path,
+            string correlationId,
+            CancellationToken cancellationToken)
+        {
+            RefreshCourierFinalExecutionAuthorization(action, cancellationToken);
+            ValidateCourierFinalExecutionAuthorization(action, method, path, correlationId);
+        }
+
+        private static bool TryGetActionBody(OperatorActionCall action, out bool bodyPresent, out string bodyJson)
+        {
+            bodyPresent = action.Body != null;
+            bodyJson = "";
+            if (!bodyPresent) return true;
+            try
+            {
+                bodyJson = action.Body is JsonElement jsonElement
+                    ? jsonElement.GetRawText()
+                    : JsonSerializer.Serialize(action.Body, OperatorUiProtocol.JsonOptions);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private static void ValidateExpectedDocument(Autodesk.Revit.UI.UIApplication app, OperatorActionCall action)
         {
             var expectedTitle = (action.ExpectedDocumentTitle ?? "").Trim();
@@ -408,6 +538,18 @@ namespace RevitBridge.Operator
             public string Code => "revit_courier_target_document_mismatch";
             public bool Retryable => false;
             public string Phase => "courier_target_validation";
+            public string HostHealth => "healthy";
+            public bool OpensCircuit => false;
+            public bool OutcomeUnknown => false;
+        }
+
+        private sealed class OperatorCourierFinalExecutionRejectedException : InvalidOperationException, IOperatorRevitFailureMetadata
+        {
+            public OperatorCourierFinalExecutionRejectedException(string message) : base(message) { }
+            public OperatorCourierFinalExecutionRejectedException(string message, Exception inner) : base(message, inner) { }
+            public string Code => "CERTIFICATION_FINAL_EXECUTION_REJECTED";
+            public bool Retryable => false;
+            public string Phase => "certification_final_execution";
             public string HostHealth => "healthy";
             public bool OpensCircuit => false;
             public bool OutcomeUnknown => false;

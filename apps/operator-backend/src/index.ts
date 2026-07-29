@@ -98,7 +98,12 @@ import {
   type RevitBatchAccessContext
 } from "./revit_batch/service.js";
 import { normalizeIncomingToolResults, registerServerPlannedActions } from "./revit_batch/tool_result_normalization.js";
-import { claimNextRevitToolJob, completeRevitToolJob, failRevitToolJob } from "./courier/revit_tool_jobs.js";
+import { authorizeRevitToolJobExecution, claimNextRevitToolJob, completeRevitToolJob, failRevitToolJob } from "./courier/revit_tool_jobs.js";
+import {
+  authorizeDirectRevitExecution,
+  DIRECT_REVIT_AUTHORIZATION_HTTP_MAX_BYTES,
+  DirectRevitExecutionAuthorizationError
+} from "./capabilities/direct_revit_execution_authorization.js";
 import {
   getOperatorTask,
   listOperatorTasks,
@@ -315,6 +320,12 @@ function trimText(value: unknown, max = 400): string {
   const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
   if (!text) return "";
   return text.length <= max ? text : `${text.slice(0, max).trim()}…`;
+}
+
+/** Match the certified courier producer: preserve safe Unicode identities and reject controls before trimming. */
+function trimCourierContextIdentity(value: unknown, max = 200): string {
+  if (typeof value !== "string" || value.length > max || /[\u0000-\u001F\u007F]/.test(value)) return "";
+  return value.trim();
 }
 
 function asStringList(value: unknown, max = 20): string[] {
@@ -660,6 +671,7 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname.startsWith("/api/revit-batch/jobs/") ||
     pathname === "/api/revit-courier/claim-next" ||
     pathname.startsWith("/api/revit-courier/jobs/") ||
+    pathname === "/api/revit-direct/authorize-execution" ||
     pathname === "/api/kb/documents/upload" ||
     pathname === "/api/kb/documents" ||
     pathname.startsWith("/api/kb/documents/") ||
@@ -1257,10 +1269,33 @@ const server = http.createServer(async (req, res) => {
       return writeJson(res, 200, { ok: true, defaults: listRevitBatchTemplates() });
     }
 
+    if (req.method === "POST" && url.pathname === "/api/revit-direct/authorize-execution") {
+      try {
+        const body = await readJson(req, DIRECT_REVIT_AUTHORIZATION_HTTP_MAX_BYTES);
+        const authorization = authorizeDirectRevitExecution(body);
+        return writeJson(res, 200, { ok: true, authorization });
+      } catch (error) {
+        const directError = error instanceof DirectRevitExecutionAuthorizationError
+          ? error
+          : new DirectRevitExecutionAuthorizationError(
+              "CERTIFICATION_DIRECT_REQUEST_MALFORMED",
+              error instanceof Error ? error.message : "Direct Revit authorization request is invalid.",
+              400,
+              false
+            );
+        return writeJson(res, directError.status, {
+          ok: false,
+          code: directError.code,
+          error: directError.message,
+          retryable: directError.retryable
+        });
+      }
+    }
+
     if (req.method === "POST" && url.pathname === "/api/revit-courier/claim-next") {
       const body = await readJson(req, 1_000_000);
-      const sessionId = trimText((body as any)?.session_id ?? (body as any)?.sessionId, 200);
-      const executorId = trimText((body as any)?.executor_id ?? (body as any)?.executorId, 200);
+      const sessionId = trimCourierContextIdentity((body as any)?.session_id ?? (body as any)?.sessionId, 200);
+      const executorId = trimCourierContextIdentity((body as any)?.executor_id ?? (body as any)?.executorId, 200);
       const waitMs = Math.max(0, Math.min(15_000, Number.parseInt(`${(body as any)?.wait_ms ?? 10_000}`, 10) || 0));
       if (!executorId) return writeJson(res, 400, { error: "executor_id is required." });
       if (sessionId && !sessionAccessAllowed(res, sessionId, auth.principal)) return;
@@ -1286,16 +1321,20 @@ const server = http.createServer(async (req, res) => {
     }
 
     {
-      const courierFinishMatch = url.pathname.match(/^\/api\/revit-courier\/jobs\/([^/]+)\/(complete|fail)$/);
-      if (req.method === "POST" && courierFinishMatch) {
+      const courierJobActionMatch = url.pathname.match(/^\/api\/revit-courier\/jobs\/([^/]+)\/(authorize-execution|complete|fail)$/);
+      if (req.method === "POST" && courierJobActionMatch) {
         const body = await readJson(req, 5_000_000);
-        const sessionId = trimText((body as any)?.session_id ?? (body as any)?.sessionId, 200);
-        const executorId = trimText((body as any)?.executor_id ?? (body as any)?.executorId, 200);
-        const jobId = decodeURIComponent(courierFinishMatch[1] || "");
-        const action = courierFinishMatch[2] || "";
+        const sessionId = trimCourierContextIdentity((body as any)?.session_id ?? (body as any)?.sessionId, 200);
+        const executorId = trimCourierContextIdentity((body as any)?.executor_id ?? (body as any)?.executorId, 200);
+        const jobId = decodeURIComponent(courierJobActionMatch[1] || "");
+        const action = courierJobActionMatch[2] || "";
         if (!sessionId || !executorId) return writeJson(res, 400, { error: "session_id and executor_id are required." });
         if (!sessionAccessAllowed(res, sessionId, auth.principal)) return;
         try {
+          if (action === "authorize-execution") {
+            const authorized = authorizeRevitToolJobExecution({ session_id: sessionId, job_id: jobId, executor_id: executorId });
+            return writeJson(res, 200, { ok: true, job: authorized.job, authorization: authorized.authorization });
+          }
           const job = action === "complete"
             ? completeRevitToolJob({ session_id: sessionId, job_id: jobId, executor_id: executorId, result: (body as any)?.result })
             : failRevitToolJob({
@@ -1320,7 +1359,13 @@ const server = http.createServer(async (req, res) => {
           }
           return writeJson(res, 200, { ok: true, job });
         } catch (error) {
-          return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+          const terminalJob = error && typeof error === "object" && "job" in error
+            ? (error as { job?: unknown }).job
+            : undefined;
+          return writeJson(res, 400, {
+            error: error instanceof Error ? error.message : String(error),
+            ...(terminalJob === undefined ? {} : { job: terminalJob })
+          });
         }
       }
     }
