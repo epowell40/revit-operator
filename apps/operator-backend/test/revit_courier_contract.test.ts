@@ -492,6 +492,11 @@ test("courier never automatically replays a job whose execution lease expired", 
   assert.equal(receipt.status, "failed");
   assert.equal(receipt.code, "execution_lease_expired_outcome_unknown");
   assert.equal(receipt.retryable, false);
+  assert.equal(receipt.outcome_unknown, true);
+  assert.equal(Object.hasOwn(receipt, "outcomeUnknown"), false);
+  const persistedJob = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", id, "job.json"), "utf8"));
+  assert.equal(persistedJob.status, "failed");
+  assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-3" }).job, null);
 });
 
 test("courier promotes a bounded workstation failure code into the authoritative result receipt", () => {
@@ -504,7 +509,7 @@ test("courier promotes a bounded workstation failure code into the authoritative
     job_id: id,
     executor_id: "worker-1",
     error: "The Revit action deadline elapsed.",
-    retryable: false,
+    retryable: true,
     result: {
       code: "revit_action_deadline_elapsed_outcome_unknown",
       phase: "revit_external_event",
@@ -518,11 +523,71 @@ test("courier promotes a bounded workstation failure code into the authoritative
   const receipt = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", id, "result.json"), "utf8"));
   assert.equal(receipt.code, "revit_action_deadline_elapsed_outcome_unknown");
   assert.equal(receipt.retryable, false);
+  assert.equal(receipt.outcome_unknown, true);
+  assert.equal(Object.hasOwn(receipt, "outcomeUnknown"), false);
   assert.equal(receipt.result.hostHealth, "unavailable");
   assert.equal(receipt.result.outcomeUnknown, true);
   assert.equal(receipt.result.correlationId, id);
   assert.equal(receipt.result.deadlineClass, "bounded_read");
   assert.equal(receipt.result.deadlineMs, 60_000);
+  const persistedJob = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", id, "job.json"), "utf8"));
+  assert.equal(persistedJob.status, "failed");
+  assert.equal(failRevitToolJob({
+    session_id: "session-a",
+    job_id: id,
+    executor_id: "worker-1",
+    error: "must not replace authoritative unknown outcome",
+    retryable: true,
+    result: { outcomeUnknown: false }
+  }).status, "failed");
+  const replayedReceipt = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", id, "result.json"), "utf8"));
+  assert.equal(replayedReceipt.outcome_unknown, true);
+  assert.equal(replayedReceipt.retryable, false);
+});
+
+test("courier does not promote omitted, false, malformed, or nested outcome-unknown metadata", () => {
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ["omitted", { code: "native_failure" }],
+    ["false", { code: "native_failure", outcomeUnknown: false }],
+    ["string", { code: "native_failure", outcomeUnknown: "true" }],
+    ["numeric", { code: "native_failure", outcomeUnknown: 1 }],
+    ["nested", { code: "native_failure", metadata: { outcomeUnknown: true } }]
+  ];
+
+  for (const [label, result] of cases) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), `revit-courier-known-failure-${label}-`));
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    const id = writeJob(root);
+    claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" });
+    failRevitToolJob({
+      session_id: "session-a",
+      job_id: id,
+      executor_id: "worker-1",
+      error: "Known native failure.",
+      retryable: true,
+      result
+    });
+    const receipt = JSON.parse(fs.readFileSync(path.join(root, "artifacts", "revit-courier", "jobs", id, "result.json"), "utf8"));
+    assert.equal(receipt.status, "failed", label);
+    assert.equal(receipt.code, "native_failure", label);
+    assert.equal(receipt.outcome_unknown, false, label);
+    assert.equal(receipt.retryable, true, label);
+  }
+
+  const successRoot = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-known-success-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = successRoot;
+  const successId = writeJob(successRoot);
+  claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" });
+  completeRevitToolJob({
+    session_id: "session-a",
+    job_id: successId,
+    executor_id: "worker-1",
+    result: { outcomeUnknown: true, metadata: { outcomeUnknown: true } }
+  });
+  const successReceipt = JSON.parse(fs.readFileSync(path.join(successRoot, "artifacts", "revit-courier", "jobs", successId, "result.json"), "utf8"));
+  assert.equal(successReceipt.status, "succeeded");
+  assert.equal(successReceipt.outcome_unknown, false);
+  assert.equal(successReceipt.retryable, false);
 });
 
 test("courier context is explicit, target-pinned, exclusive per workspace, and closed without deleting its receipt", () => {

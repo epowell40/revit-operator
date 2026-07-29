@@ -281,7 +281,8 @@ export function claimNextRevitToolJob(input: ClaimInput): { job: RevitToolJob | 
           status: "failed",
           error: "The workstation execution lease expired; outcome is unknown and the call was not retried automatically.",
           code: "execution_lease_expired_outcome_unknown",
-          retryable: false
+          retryable: false,
+          outcome_unknown: true
         });
       }
       continue;
@@ -344,7 +345,18 @@ export function failRevitToolJob(input: FinishInput): RevitToolJob {
     : null;
   const rawCode = typeof resultRecord?.code === "string" ? resultRecord.code.trim() : "";
   const code = /^[a-z0-9._:-]{1,160}$/i.test(rawCode) ? rawCode : undefined;
-  return writeTerminal(job, { status: "failed", result: input.result, error, code, retryable: input.retryable === true });
+  // The native add-in reports execution ambiguity on the bounded, top-level
+  // result contract. Only the literal boolean can promote durable receipt
+  // truth; nested metadata and truthy/malformed values must not do so.
+  const outcomeUnknown = resultRecord?.outcomeUnknown === true;
+  return writeTerminal(job, {
+    status: "failed",
+    result: input.result,
+    error,
+    code,
+    retryable: outcomeUnknown ? false : input.retryable === true,
+    outcome_unknown: outcomeUnknown
+  });
 }
 
 /**
