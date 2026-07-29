@@ -17,6 +17,7 @@
     <IntermediateOutputPath>obj\Revit$(RevitYear)\$(Configuration)\$(TargetFramework)\</IntermediateOutputPath>
     <AppendTargetFrameworkToOutputPath>true</AppendTargetFrameworkToOutputPath>
     <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(TargetFramework)'=='net8.0-windows'">
@@ -25,6 +26,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Reference Include="System.Net.Http" Condition="'$(TargetFramework)'=='net48'" />
     <Reference Include="RevitAPI">
       <HintPath>$(RevitApiPath)\RevitAPI.dll</HintPath>
       <Private>False</Private>
@@ -33,6 +35,14 @@
       <HintPath>$(RevitApiPath)\RevitAPIUI.dll</HintPath>
       <Private>False</Private>
     </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="HostApplication.cs" />
+    <Compile Include="CertifiedSafeReadHttpHost.cs" />
+    <Compile Include="HostKernel\**\*.cs" />
+    <ProjectReference Include="..\RevitOperator.SafeReadCertifiedExecution\RevitOperator.SafeReadCertifiedExecution.csproj" />
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
   </ItemGroup>
 
   <Target Name="ValidateRevitSafeReadTarget" BeforeTargets="ResolveReferences">

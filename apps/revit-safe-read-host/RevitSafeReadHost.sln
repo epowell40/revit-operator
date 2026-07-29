@@ -4,6 +4,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RevitOperator.SafeReadHost", "src\RevitOperator.SafeReadHost\RevitOperator.SafeReadHost.csproj", "{B1D8283E-08B4-4D7D-B995-B2E68819280F}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RevitOperator.SafeReadCertifiedExecution", "src\RevitOperator.SafeReadCertifiedExecution\RevitOperator.SafeReadCertifiedExecution.csproj", "{88E87D73-E9C8-4D86-87B5-C9F8B714DB2D}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RevitOperator.SafeReadHost.Tests", "tests\RevitOperator.SafeReadHost.Tests\RevitOperator.SafeReadHost.Tests.csproj", "{6FA57785-EA4C-4B65-BB47-FE9380AE0CA3}"
 EndProject
 Global
@@ -16,6 +18,10 @@ Global
 		{B1D8283E-08B4-4D7D-B995-B2E68819280F}.Debug|Any CPU.Build.0 = Debug|x64
 		{B1D8283E-08B4-4D7D-B995-B2E68819280F}.Release|Any CPU.ActiveCfg = Release|x64
 		{B1D8283E-08B4-4D7D-B995-B2E68819280F}.Release|Any CPU.Build.0 = Release|x64
+		{88E87D73-E9C8-4D86-87B5-C9F8B714DB2D}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{88E87D73-E9C8-4D86-87B5-C9F8B714DB2D}.Debug|Any CPU.Build.0 = Debug|x64
+		{88E87D73-E9C8-4D86-87B5-C9F8B714DB2D}.Release|Any CPU.ActiveCfg = Release|x64
+		{88E87D73-E9C8-4D86-87B5-C9F8B714DB2D}.Release|Any CPU.Build.0 = Release|x64
 		{6FA57785-EA4C-4B65-BB47-FE9380AE0CA3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{6FA57785-EA4C-4B65-BB47-FE9380AE0CA3}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{6FA57785-EA4C-4B65-BB47-FE9380AE0CA3}.Release|Any CPU.ActiveCfg = Release|Any CPU

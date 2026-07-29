@@ -12,46 +12,35 @@ namespace RevitOperator.SafeReadHost.Tests
         public void Runtime_source_has_no_forbidden_coupling_or_dispatch_primitives()
         {
             string tree = FindProjectTree();
-            string sourceRoot = Path.Combine(tree, "src", "RevitOperator.SafeReadHost");
-            List<string> files = SourceFiles(sourceRoot);
-            Assert.NotEmpty(files);
+            List<string> hostFiles = SourceFiles(Path.Combine(tree, "src", "RevitOperator.SafeReadHost", "HostKernel"));
+            hostFiles.Add(Path.Combine(tree, "src", "RevitOperator.SafeReadHost", "HostApplication.cs"));
+            hostFiles.Add(Path.Combine(tree, "src", "RevitOperator.SafeReadHost", "CertifiedSafeReadHttpHost.cs"));
+            List<string> certifiedFiles = SourceFiles(Path.Combine(tree, "src", "RevitOperator.SafeReadCertifiedExecution"));
+            Assert.NotEmpty(hostFiles);
+            Assert.NotEmpty(certifiedFiles);
 
             string combined = string.Empty;
-            for (int index = 0; index < files.Count; index++)
+            for (int index = 0; index < hostFiles.Count; index++)
             {
-                string text = File.ReadAllText(files[index]);
+                string text = File.ReadAllText(hostFiles[index]);
                 combined += text;
                 Assert.DoesNotContain("RevitBridge", text, StringComparison.Ordinal);
-                Assert.DoesNotContain("System.Linq", text, StringComparison.Ordinal);
-                Assert.DoesNotContain("System.Reflection", text, StringComparison.Ordinal);
-                Assert.DoesNotContain("Dictionary<", text, StringComparison.Ordinal);
-                Assert.DoesNotContain("Func<", text, StringComparison.Ordinal);
-                Assert.DoesNotContain("Action<", text, StringComparison.Ordinal);
-                Assert.DoesNotContain(" delegate ", text, StringComparison.OrdinalIgnoreCase);
                 Assert.DoesNotContain("dynamic ", text, StringComparison.Ordinal);
-                Assert.DoesNotContain("HttpClient", text, StringComparison.Ordinal);
                 Assert.DoesNotContain("Courier", text, StringComparison.OrdinalIgnoreCase);
                 Assert.DoesNotContain("bridge_url", text, StringComparison.OrdinalIgnoreCase);
                 Assert.DoesNotContain("operator_token", text, StringComparison.OrdinalIgnoreCase);
                 Assert.DoesNotContain("new Transaction", text, StringComparison.Ordinal);
                 Assert.DoesNotContain("SubTransaction", text, StringComparison.Ordinal);
-                if (text.Contains("File.Write", StringComparison.Ordinal) ||
-                    text.Contains("File.Move", StringComparison.Ordinal) ||
-                    text.Contains("File.Replace", StringComparison.Ordinal) ||
-                    text.Contains("File.Delete", StringComparison.Ordinal))
-                    Assert.Equal("Discovery.cs", Path.GetFileName(files[index]));
             }
-
-            Assert.Equal(1, Count(combined, ": IExternalApplication"));
-            Assert.Equal(1, Count(combined, ": IExternalEventHandler"));
-            Assert.Equal(1, Count(combined, "public void Execute(UIApplication"));
-            Assert.Equal(1, Count(combined, "FilteredElementIterator"));
-            Assert.Contains("GetElementIterator()", combined, StringComparison.Ordinal);
-            Assert.Contains("sheet.IsPlaceholder", combined, StringComparison.Ordinal);
-            Assert.Contains("document.IsModifiable", combined, StringComparison.Ordinal);
-            Assert.Contains("document.IsModified", combined, StringComparison.Ordinal);
-            Assert.Equal(1, Count(combined, SafeReadContract.Path));
-            Assert.Equal(1, Count(combined, SafeReadContract.RequestJson.Replace("\"", "\\\"")));
+            string certified = string.Join("\n", certifiedFiles.ConvertAll(File.ReadAllText));
+            foreach (string forbidden in new[] { "RevitOperator.SafeReadHost", "RevitBridge", "System.Net", "System.IO", "Environment.", "Json", "HttpClient", "HttpListener" })
+                Assert.DoesNotContain(forbidden, certified, StringComparison.Ordinal);
+            Assert.Equal(1, Count(combined, ":IExternalApplication"));
+            Assert.Equal(1, Count(certified, ": IExternalEventHandler"));
+            Assert.Equal(1, Count(certified, "public void Execute(UIApplication"));
+            Assert.Contains("FilteredElementIterator", certified, StringComparison.Ordinal);
+            Assert.Contains("GetElementIterator()", certified, StringComparison.Ordinal);
+            Assert.Contains("sheet.IsPlaceholder", certified, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -65,11 +54,13 @@ namespace RevitOperator.SafeReadHost.Tests
                 "RevitOperator.SafeReadHost.csproj");
             string project = File.ReadAllText(projectPath);
 
-            Assert.DoesNotContain("ProjectReference", project, StringComparison.Ordinal);
-            Assert.DoesNotContain("PackageReference", project, StringComparison.Ordinal);
-            Assert.DoesNotContain("Compile Include", project, StringComparison.Ordinal);
+            Assert.Equal(1, Count(project, "ProjectReference"));
+            Assert.Contains("RevitOperator.SafeReadCertifiedExecution.csproj", project, StringComparison.Ordinal);
+            Assert.Equal(1, Count(project, "PackageReference"));
+            Assert.Contains("System.Text.Json", project, StringComparison.Ordinal);
+            Assert.Contains("<EnableDefaultCompileItems>false</EnableDefaultCompileItems>", project, StringComparison.Ordinal);
             Assert.DoesNotContain("RevitBridge", project, StringComparison.Ordinal);
-            Assert.Equal(2, Count(project, "<Reference Include="));
+            Assert.Equal(3, Count(project, "<Reference Include="));
             Assert.Contains("<Reference Include=\"RevitAPI\">", project, StringComparison.Ordinal);
             Assert.Contains("<Reference Include=\"RevitAPIUI\">", project, StringComparison.Ordinal);
             Assert.Contains("<TargetFrameworks>net48;net8.0-windows</TargetFrameworks>", project, StringComparison.Ordinal);

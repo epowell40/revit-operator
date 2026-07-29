@@ -5,6 +5,7 @@
     <IsPackable>false</IsPackable>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,8 +18,18 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\..\src\RevitOperator.SafeReadHost\Kernel\**\*.cs"
-             Link="Kernel\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="*.cs" />
+    <Compile Include="..\..\src\RevitOperator.SafeReadHost\Kernel\**\*.cs" Link="LegacyKernel\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\SafeReadContract.cs" Link="HostKernel\SafeReadContract.cs" />
+    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\Protocol.cs" Link="HostKernel\Protocol.cs" />
+    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\Admission.cs" Link="HostKernel\Admission.cs" />
+    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\Responses.cs" Link="HostKernel\Responses.cs" />
+    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\DiscoveryWire.cs" Link="HostKernel\DiscoveryWire.cs" />
+    <Compile Include="..\..\src\RevitOperator.SafeReadHost\HostKernel\BackendAuthorization.cs" Link="HostKernel\BackendAuthorization.cs" />
+    <Compile Include="..\..\src\RevitOperator.SafeReadCertifiedExecution\CertifiedPrimitives.cs" Link="Certified\CertifiedPrimitives.cs" />
+    <Compile Include="..\..\src\RevitOperator.SafeReadCertifiedExecution\FinalReceiptVerification.cs" Link="Certified\FinalReceiptVerification.cs" />
+    <Compile Include="..\..\src\RevitOperator.SafeReadCertifiedExecution\ExternalExecution.cs" Link="Certified\ExternalExecution.cs" />
+    <Content Include="..\..\fixtures\**\*.json" Link="fixtures\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
