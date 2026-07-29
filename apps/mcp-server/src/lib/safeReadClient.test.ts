@@ -419,3 +419,184 @@ test("SafeRead deadline aborts once and remains outcome-unknown without fallback
     assert.equal(calls, 1);
   } finally { restore(); fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test("SafeRead total deadline includes delayed response headers and makes exactly one call", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "safe-read-delayed-headers-"));
+  const restore = laboratoryEnv();
+  let calls = 0;
+  try {
+    writeInstance(root, instance());
+    await assert.rejects(
+      runWithRevitToolAlias("revit_count_sheets_certified", () => countSheetsViaSafeRead({
+        discovery: { instancesDirectory: root, revitYear: 2024, isPidAlive: () => true },
+        timeoutMs: 10,
+        fetch: async (_input, init) => await new Promise<Response>((_resolve, reject) => {
+          calls += 1;
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted before headers", "AbortError")), { once: true });
+        })
+      })),
+      (error: unknown) => error instanceof SafeReadCallError
+        && error.code === "safe_read_transport_outcome_unknown"
+        && error.retryable === false
+        && error.request_dispatched === true
+        && error.outcome_unknown === true
+        && error.phase === "transport"
+    );
+    assert.equal(calls, 1);
+  } finally { restore(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("SafeRead total deadline cancels a body that stalls after headers", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "safe-read-headers-stall-"));
+  const restore = laboratoryEnv();
+  let calls = 0;
+  let cancellations = 0;
+  try {
+    writeInstance(root, instance());
+    await assert.rejects(
+      runWithRevitToolAlias("revit_count_sheets_certified", () => countSheetsViaSafeRead({
+        discovery: { instancesDirectory: root, revitYear: 2024, isPidAlive: () => true },
+        timeoutMs: 15,
+        fetch: async () => {
+          calls += 1;
+          return new Response(new ReadableStream<Uint8Array>({
+            start(controller) { controller.enqueue(new TextEncoder().encode('{"schema":')); },
+            cancel() { cancellations += 1; }
+          }), { status: 200 });
+        }
+      })),
+      (error: unknown) => error instanceof SafeReadCallError
+        && error.code === "safe_read_transport_outcome_unknown"
+        && error.retryable === false
+        && error.request_dispatched === true
+        && error.outcome_unknown === true
+        && error.phase === "transport"
+    );
+    assert.equal(calls, 1);
+    assert.equal(cancellations, 1);
+  } finally { restore(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("SafeRead total deadline cancels byte-dribble bodies instead of resetting per chunk", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "safe-read-byte-dribble-"));
+  const restore = laboratoryEnv();
+  let calls = 0;
+  let cancellations = 0;
+  let interval: NodeJS.Timeout | undefined;
+  try {
+    writeInstance(root, instance());
+    const body = new TextEncoder().encode(`{"schema":"${SAFE_READ_SHEETS_COUNT_RESPONSE_SCHEMA}","count":7}`);
+    await assert.rejects(
+      runWithRevitToolAlias("revit_count_sheets_certified", () => countSheetsViaSafeRead({
+        discovery: { instancesDirectory: root, revitYear: 2024, isPidAlive: () => true },
+        timeoutMs: 20,
+        fetch: async () => {
+          calls += 1;
+          let offset = 0;
+          return new Response(new ReadableStream<Uint8Array>({
+            start(controller) {
+              interval = setInterval(() => {
+                if (offset >= body.byteLength) {
+                  if (interval) clearInterval(interval);
+                  controller.close();
+                  return;
+                }
+                controller.enqueue(body.slice(offset, offset + 1));
+                offset += 1;
+              }, 4);
+            },
+            cancel() {
+              cancellations += 1;
+              if (interval) clearInterval(interval);
+            }
+          }), { status: 200 });
+        }
+      })),
+      (error: unknown) => error instanceof SafeReadCallError
+        && error.code === "safe_read_transport_outcome_unknown"
+        && error.retryable === false
+        && error.request_dispatched === true
+        && error.outcome_unknown === true
+    );
+    assert.equal(calls, 1);
+    assert.equal(cancellations, 1);
+  } finally {
+    if (interval) clearInterval(interval);
+    restore();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("SafeRead treats an abort mid-body as one dispatched outcome-unknown call", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "safe-read-abort-mid-body-"));
+  const restore = laboratoryEnv();
+  let calls = 0;
+  try {
+    writeInstance(root, instance());
+    await assert.rejects(
+      runWithRevitToolAlias("revit_count_sheets_certified", () => countSheetsViaSafeRead({
+        discovery: { instancesDirectory: root, revitYear: 2024, isPidAlive: () => true },
+        timeoutMs: 100,
+        fetch: async () => {
+          calls += 1;
+          let pulls = 0;
+          return new Response(new ReadableStream<Uint8Array>({
+            pull(controller) {
+              pulls += 1;
+              if (pulls === 1) controller.enqueue(new TextEncoder().encode('{"schema":'));
+              else controller.error(new DOMException("peer aborted", "AbortError"));
+            }
+          }), { status: 200 });
+        }
+      })),
+      (error: unknown) => error instanceof SafeReadCallError
+        && error.code === "safe_read_transport_outcome_unknown"
+        && error.retryable === false
+        && error.request_dispatched === true
+        && error.outcome_unknown === true
+        && error.phase === "transport"
+    );
+    assert.equal(calls, 1);
+  } finally { restore(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("SafeRead rejects oversized, truncated, and malformed bodies with no retry", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "safe-read-body-failures-"));
+  const restore = laboratoryEnv();
+  let oversizedCancellations = 0;
+  try {
+    writeInstance(root, instance());
+    const cases = [
+      {
+        expectedCode: "safe_read_invalid_response",
+        response: () => new Response(new ReadableStream<Uint8Array>({
+          cancel() { oversizedCancellations += 1; }
+        }), { status: 200, headers: { "content-length": String(SAFE_READ_RESPONSE_MAX_BYTES + 1) } })
+      },
+      {
+        expectedCode: "safe_read_transport_outcome_unknown",
+        response: () => new Response("{}", { status: 200, headers: { "content-length": "3" } })
+      },
+      {
+        expectedCode: "safe_read_invalid_response",
+        response: () => new Response("{malformed", { status: 200 })
+      }
+    ] as const;
+    for (const scenario of cases) {
+      let calls = 0;
+      await assert.rejects(
+        runWithRevitToolAlias("revit_count_sheets_certified", () => countSheetsViaSafeRead({
+          discovery: { instancesDirectory: root, revitYear: 2024, isPidAlive: () => true },
+          fetch: async () => { calls += 1; return scenario.response(); }
+        })),
+        (error: unknown) => error instanceof SafeReadCallError
+          && error.code === scenario.expectedCode
+          && error.retryable === false
+          && error.request_dispatched === true
+          && error.outcome_unknown === true
+      );
+      assert.equal(calls, 1);
+    }
+    assert.equal(oversizedCancellations, 1);
+  } finally { restore(); fs.rmSync(root, { recursive: true, force: true }); }
+});

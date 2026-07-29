@@ -29,6 +29,13 @@ const SAFE_FAILURE_CODE = /^[a-z][a-z0-9_]{0,127}$/;
 const SAFE_PHASE = /^[a-z][a-z0-9_]{0,127}$/;
 const CANONICAL_GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+class SafeReadResponseTransportError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, { cause });
+    this.name = "SafeReadResponseTransportError";
+  }
+}
+
 export type SafeReadSheetsCountResponse = Readonly<{
   schema: typeof SAFE_READ_SHEETS_COUNT_RESPONSE_SCHEMA;
   count: number;
@@ -123,18 +130,48 @@ function definitelyPreDispatch(error: unknown): boolean {
   return codes.length > 0 && codes.every(code => known.has(code));
 }
 
-async function readBoundedResponse(response: Response): Promise<string> {
+function abortError(): DOMException {
+  return new DOMException("The certified SafeRead request deadline elapsed.", "AbortError");
+}
+
+async function awaitWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw abortError();
+  return await new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(abortError());
+    };
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      value => { cleanup(); resolve(value); },
+      error => { cleanup(); reject(error); }
+    );
+  });
+}
+
+async function readBoundedResponse(response: Response, signal: AbortSignal): Promise<string> {
   const declared = response.headers.get("content-length");
   if (declared !== null && (!/^\d+$/.test(declared) || Number(declared) > SAFE_READ_RESPONSE_MAX_BYTES)) {
+    await response.body?.cancel("SafeRead response declared an invalid or oversized body.").catch(() => undefined);
     throw new Error("SafeRead response exceeds the byte limit.");
   }
-  if (!response.body) throw new Error("SafeRead response body is unavailable.");
+  if (!response.body) throw new SafeReadResponseTransportError("SafeRead response body is unavailable after dispatch.");
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
+  const cancelReader = () => { void reader.cancel(abortError()).catch(() => undefined); };
+  signal.addEventListener("abort", cancelReader, { once: true });
   try {
     while (true) {
-      const next = await reader.read();
+      let next: Awaited<ReturnType<typeof reader.read>>;
+      try {
+        next = await awaitWithAbort(reader.read(), signal);
+      } catch (error) {
+        await reader.cancel(error).catch(() => undefined);
+        throw new SafeReadResponseTransportError("SafeRead response transport ended before the complete body was received.", error);
+      }
+      if (signal.aborted) throw new SafeReadResponseTransportError("SafeRead response deadline elapsed before the complete body was received.", abortError());
       if (next.done) break;
       total += next.value.byteLength;
       if (total > SAFE_READ_RESPONSE_MAX_BYTES) {
@@ -144,7 +181,11 @@ async function readBoundedResponse(response: Response): Promise<string> {
       chunks.push(next.value);
     }
   } finally {
+    signal.removeEventListener("abort", cancelReader);
     reader.releaseLock();
+  }
+  if (declared !== null && Number(declared) !== total) {
+    throw new SafeReadResponseTransportError("SafeRead response body was truncated after dispatch.");
   }
   const bytes = new Uint8Array(total);
   let offset = 0;
@@ -194,6 +235,20 @@ function invalidResponse(status: number | undefined, cause?: unknown): SafeReadC
   );
 }
 
+function transportOutcomeUnknown(cause?: unknown): SafeReadCallError {
+  return new SafeReadCallError(
+    "safe_read_transport_outcome_unknown",
+    "Certified SafeRead transport ended after dispatch could not be ruled out; do not retry automatically.",
+    false,
+    true,
+    true,
+    "transport",
+    undefined,
+    undefined,
+    cause
+  );
+}
+
 function nextCanonicalId(factory: () => string): string {
   const value = factory();
   if (!CANONICAL_GUID.test(value)) {
@@ -218,59 +273,71 @@ export async function countSheetsViaSafeRead(options: SafeReadClientOptions = {}
   const attemptId = nextCanonicalId(makeId);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs(options.timeoutMs));
-  let response: Response;
   try {
-    response = await (options.fetch ?? globalThis.fetch)(`${instance.endpoint}${SAFE_READ_SHEETS_COUNT_PATH.slice(1)}`, {
-      method: "POST",
-      redirect: "error",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json",
-        [SAFE_READ_REQUEST_HEADERS.startupToken]: instance.startup_token,
-        [SAFE_READ_REQUEST_HEADERS.hostInstanceId]: instance.host_instance_id,
-        [SAFE_READ_REQUEST_HEADERS.documentSessionId]: instance.document.document_session_id,
-        [SAFE_READ_REQUEST_HEADERS.clientSessionId]: CLIENT_SESSION_ID,
-        [SAFE_READ_REQUEST_HEADERS.requestId]: requestId,
-        [SAFE_READ_REQUEST_HEADERS.attemptId]: attemptId
-      },
-      body: SAFE_READ_SHEETS_COUNT_BODY
-    });
-  } catch (error) {
-    const preDispatch = definitelyPreDispatch(error);
+    let response: Response;
+    try {
+      const fetchPromise = (options.fetch ?? globalThis.fetch)(`${instance.endpoint}${SAFE_READ_SHEETS_COUNT_PATH.slice(1)}`, {
+        method: "POST",
+        redirect: "error",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          [SAFE_READ_REQUEST_HEADERS.startupToken]: instance.startup_token,
+          [SAFE_READ_REQUEST_HEADERS.hostInstanceId]: instance.host_instance_id,
+          [SAFE_READ_REQUEST_HEADERS.documentSessionId]: instance.document.document_session_id,
+          [SAFE_READ_REQUEST_HEADERS.clientSessionId]: CLIENT_SESSION_ID,
+          [SAFE_READ_REQUEST_HEADERS.requestId]: requestId,
+          [SAFE_READ_REQUEST_HEADERS.attemptId]: attemptId
+        },
+        body: SAFE_READ_SHEETS_COUNT_BODY
+      });
+      response = await awaitWithAbort(fetchPromise, controller.signal);
+    } catch (error) {
+      const preDispatch = !controller.signal.aborted && definitelyPreDispatch(error);
+      if (!preDispatch) throw transportOutcomeUnknown(error);
+      throw new SafeReadCallError(
+        "safe_read_unavailable",
+        "Certified SafeRead host was unreachable before dispatch.",
+        true,
+        false,
+        false,
+        "transport_connect",
+        undefined,
+        undefined,
+        error
+      );
+    }
+
+    let responseText: string;
+    try {
+      responseText = await readBoundedResponse(response, controller.signal);
+    } catch (error) {
+      if (controller.signal.aborted || error instanceof SafeReadResponseTransportError) throw transportOutcomeUnknown(error);
+      throw invalidResponse(response.status, error);
+    }
+    if (controller.signal.aborted) throw transportOutcomeUnknown(abortError());
+
+    let parsed: unknown;
+    try { parsed = JSON.parse(responseText); } catch (error) { throw invalidResponse(response.status, error); }
+    if (controller.signal.aborted) throw transportOutcomeUnknown(abortError());
+    if (response.status === 200) {
+      const success = parseSuccess(parsed);
+      if (!success) throw invalidResponse(response.status);
+      return success;
+    }
+    const failure = parseFailure(parsed);
+    if (!failure) throw invalidResponse(response.status);
     throw new SafeReadCallError(
-      preDispatch ? "safe_read_unavailable" : "safe_read_transport_outcome_unknown",
-      preDispatch
-        ? "Certified SafeRead host was unreachable before dispatch."
-        : "Certified SafeRead transport ended after dispatch could not be ruled out; do not retry automatically.",
-      preDispatch,
-      !preDispatch,
-      !preDispatch,
-      preDispatch ? "transport_connect" : "transport",
-      undefined,
-      undefined,
-      error
+      failure.code,
+      failure.error,
+      failure.retryable,
+      failure.request_dispatched,
+      failure.outcome_unknown,
+      failure.phase,
+      response.status,
+      failure
     );
   } finally {
     clearTimeout(timer);
   }
-
-  let parsed: unknown;
-  try { parsed = JSON.parse(await readBoundedResponse(response)); } catch (error) { throw invalidResponse(response.status, error); }
-  if (response.status === 200) {
-    const success = parseSuccess(parsed);
-    if (!success) throw invalidResponse(response.status);
-    return success;
-  }
-  const failure = parseFailure(parsed);
-  if (!failure) throw invalidResponse(response.status);
-  throw new SafeReadCallError(
-    failure.code,
-    failure.error,
-    failure.retryable,
-    failure.request_dispatched,
-    failure.outcome_unknown,
-    failure.phase,
-    response.status,
-    failure
-  );
 }
