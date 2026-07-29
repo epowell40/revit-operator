@@ -54,6 +54,12 @@ namespace RevitBridge.Common
         public string Code { get; internal set; } = "CERT_COURIER_ENVELOPE_INVALID";
         public string Error { get; internal set; } = "Courier certification envelope is invalid.";
         public OperatorCourierCertificationEnvelope? Envelope { get; internal set; }
+        /// <summary>
+        /// Transport-bound v2 job facts. These prove only the parsed durable
+        /// receipt; the worker still needs fresh backend authorization before
+        /// making a Revit call.
+        /// </summary>
+        public OperatorCourierVerifiedJob? Job { get; internal set; }
         public JsonElement? ParsedBody { get; internal set; }
         public string? IdempotencyKey { get; internal set; }
 
@@ -69,6 +75,7 @@ namespace RevitBridge.Common
 
         internal static OperatorCourierCertificationEnvelopeValidationResult Valid(
             OperatorCourierCertificationEnvelope envelope,
+            OperatorCourierVerifiedJob job,
             JsonElement? parsedBody,
             string idempotencyKey)
         {
@@ -78,10 +85,32 @@ namespace RevitBridge.Common
                 Code = "CERT_COURIER_ENVELOPE_VALID",
                 Error = "",
                 Envelope = envelope,
+                Job = job,
                 ParsedBody = parsedBody,
                 IdempotencyKey = idempotencyKey
             };
         }
+    }
+
+    /// <summary>
+    /// Verified identity and routing facts from a courier v2 receipt. Expiry is
+    /// a bounded-lifetime transport fact, not a substitute for fresh backend
+    /// authorization at final workstation execution.
+    /// </summary>
+    public sealed class OperatorCourierVerifiedJob
+    {
+        public string Id { get; internal set; } = "";
+        public string CorrelationId { get; internal set; } = "";
+        public string SessionId { get; internal set; } = "";
+        public string? MessageId { get; internal set; }
+        public string? TurnTokenSha256 { get; internal set; }
+        public string? TargetExecutorId { get; internal set; }
+        public string? TargetDocumentTitle { get; internal set; }
+        public string? TargetDocumentPath { get; internal set; }
+        public DateTimeOffset CreatedAtUtc { get; internal set; }
+        public DateTimeOffset ExpiresAtUtc { get; internal set; }
+        public string CreatedAtIsoUtc { get; internal set; } = "";
+        public string ExpiresAtIsoUtc { get; internal set; } = "";
     }
 
     /// <summary>
@@ -92,9 +121,14 @@ namespace RevitBridge.Common
     /// </summary>
     public static class OperatorCourierCertificationEnvelopeVerifier
     {
+        public const int MaximumJobUtf8Bytes = 4 * 1024 * 1024;
+        public const int MaximumBodyJsonUtf8Bytes = 2 * 1024 * 1024;
+        public const int MaximumJsonDepth = 64;
+
         private static readonly Regex Sha256Pattern = new Regex("^sha256:[0-9a-f]{64}$", RegexOptions.CultureInvariant);
         private static readonly Regex DigestPattern = new Regex("^[0-9a-f]{64}$", RegexOptions.CultureInvariant);
         private static readonly Regex AliasPattern = new Regex("^[a-z][a-z0-9_]*$", RegexOptions.CultureInvariant);
+        private static readonly Regex CanonicalUtcInstantPattern = new Regex("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$", RegexOptions.CultureInvariant);
         private static readonly HashSet<string> Channels = new HashSet<string>(StringComparer.Ordinal)
         {
             "search", "generic_call", "typed_mcp", "deterministic_workflow"
@@ -107,6 +141,17 @@ namespace RevitBridge.Common
             "exposure_profile", "policy_trust_source", "envelope_hash"
         };
         private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
+        private const int SessionIdMaximumLength = 200;
+        private const int MessageIdMaximumLength = 200;
+        private const int ExecutorIdMaximumLength = 200;
+        private const int DocumentTitleMaximumLength = 500;
+        private const int DocumentPathMaximumLength = 2_000;
+        private static readonly JsonDocumentOptions StrictJsonDocumentOptions = new JsonDocumentOptions
+        {
+            AllowTrailingCommas = false,
+            CommentHandling = JsonCommentHandling.Disallow,
+            MaxDepth = MaximumJsonDepth
+        };
 
         /// <summary>
         /// Parses a v2 courier job. JSON parsing failures are returned as a
@@ -119,7 +164,19 @@ namespace RevitBridge.Common
 
             try
             {
-                using (var document = JsonDocument.Parse(jobJson!))
+                if (StrictUtf8.GetByteCount(jobJson!) > MaximumJobUtf8Bytes)
+                    return OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_JOB_TOO_LARGE", "Courier job exceeds the 4 MiB UTF-8 transport limit.");
+            }
+            catch (EncoderFallbackException)
+            {
+                return OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_UTF8_INVALID", "Courier job cannot be represented as strict UTF-8.");
+            }
+            if (ExceedsMaximumJsonDepth(jobJson!, MaximumJsonDepth))
+                return OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_JOB_TOO_DEEP", "Courier job exceeds the maximum JSON depth.");
+
+            try
+            {
+                using (var document = JsonDocument.Parse(jobJson!, StrictJsonDocumentOptions))
                 {
                     return VerifyJob(document.RootElement);
                 }
@@ -163,6 +220,8 @@ namespace RevitBridge.Common
 
                 if (!TryGetRequiredBoolean(job, "body_present", out var jobBodyPresent, out error)) return error!;
                 if (!TryGetRequiredRawString(job, "body_json", out var bodyJson, out error)) return error!;
+                if (StrictUtf8.GetByteCount(bodyJson) > MaximumBodyJsonUtf8Bytes)
+                    return OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_BODY_TOO_LARGE", "Courier body_json exceeds the 2 MiB UTF-8 transport limit.");
                 if (!jobBodyPresent && bodyJson.Length != 0)
                     return OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_BODY_PRESENCE_INVALID", "An absent courier body must persist body_json as the exact empty string.");
 
@@ -190,24 +249,37 @@ namespace RevitBridge.Common
                 if (!TryGetRequiredString(job, "idempotency_key", out var idempotencyKey, out error)) return error!;
                 if (!DigestPattern.IsMatch(jobId) || !DigestPattern.IsMatch(idempotencyKey))
                     return OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_IDEMPOTENCY_INVALID", "Courier v2 idempotency identifiers must be lowercase SHA-256 hex digests.");
+                if (!TryGetRequiredString(job, "correlation_id", out var correlationId, out error)) return error!;
+                if (!string.Equals(correlationId, jobId, StringComparison.Ordinal))
+                    return OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_CORRELATION_MISMATCH", "Courier v2 correlation_id must exactly match id.");
+                if (!TryGetCanonicalUtcInstant(job, "created_at", out var createdAtUtc, out var createdAtIsoUtc, out error)) return error!;
+                if (!TryGetCanonicalUtcInstant(job, "expires_at", out var expiresAtUtc, out var expiresAtIsoUtc, out error)) return error!;
+                if (expiresAtUtc <= DateTimeOffset.UtcNow)
+                    return OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_EXPIRY_EXPIRED", "Courier v2 expiry is not in the future.");
+                if (createdAtUtc > expiresAtUtc)
+                    return OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_EXPIRY_INVALID", "Courier v2 expiry must not precede creation.");
 
                 if (!TryGetRequiredRawString(job, "session_id", out var sessionId, out error)) return error!;
-                if (string.IsNullOrWhiteSpace(sessionId))
-                    return OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_SESSION_INVALID", "Courier v2 session_id is required.");
+                if (!ValidateContextString(sessionId, "session_id", SessionIdMaximumLength, true, true, out error)) return error!;
                 if (!TryGetOptionalStringOrNull(job, "message_id", out var messageId, out error)) return error!;
+                if (!ValidateOptionalContextString(messageId, "message_id", MessageIdMaximumLength, out error)) return error!;
                 if (!TryGetOptionalStringOrNull(job, "turn_token_sha256", out var turnTokenSha256, out error)) return error!;
                 if (turnTokenSha256 != null && !Sha256Pattern.IsMatch(turnTokenSha256))
                     return OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_TOKEN_DIGEST_INVALID", "Courier v2 turn_token_sha256 is invalid.");
                 if (HasProperty(job, "turn_token"))
                     return OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_RAW_TOKEN_FORBIDDEN", "Courier v2 jobs must not persist a raw turn token.");
                 if (!TryGetOptionalStringOrNull(job, "target_executor_id", out var targetExecutorId, out error)) return error!;
+                if (!ValidateOptionalContextString(targetExecutorId, "target_executor_id", ExecutorIdMaximumLength, out error)) return error!;
                 if (!TryGetOptionalStringOrNull(job, "target_document_title", out var targetDocumentTitle, out error)) return error!;
+                if (!ValidateOptionalContextString(targetDocumentTitle, "target_document_title", DocumentTitleMaximumLength, out error)) return error!;
                 if (!TryGetOptionalStringOrNull(job, "target_document_path", out var targetDocumentPath, out error)) return error!;
+                if (!ValidateOptionalContextString(targetDocumentPath, "target_document_path", DocumentPathMaximumLength, out error)) return error!;
 
                 var computedIdempotencyKey = ComputeV2IdempotencyKey(
                     envelope,
                     sessionId,
                     messageId,
+                    expiresAtIsoUtc,
                     turnTokenSha256,
                     targetExecutorId,
                     targetDocumentTitle,
@@ -220,15 +292,33 @@ namespace RevitBridge.Common
                     return OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_IDEMPOTENCY_MISMATCH", "Courier v2 idempotency identity does not bind the certified envelope and exact request target.");
                 }
 
+                var verifiedJob = new OperatorCourierVerifiedJob
+                {
+                    Id = jobId,
+                    CorrelationId = correlationId,
+                    SessionId = sessionId,
+                    MessageId = messageId,
+                    TurnTokenSha256 = turnTokenSha256,
+                    TargetExecutorId = targetExecutorId,
+                    TargetDocumentTitle = targetDocumentTitle,
+                    TargetDocumentPath = targetDocumentPath,
+                    CreatedAtUtc = createdAtUtc,
+                    ExpiresAtUtc = expiresAtUtc,
+                    CreatedAtIsoUtc = createdAtIsoUtc,
+                    ExpiresAtIsoUtc = expiresAtIsoUtc
+                };
+
                 // body_json is authoritative. Do not inspect the legacy body
                 // display field at all; it may be reordered, normalized, or
                 // maliciously changed without becoming executable input.
                 JsonElement? parsedBody = null;
                 if (jobBodyPresent)
                 {
+                    if (ExceedsMaximumJsonDepth(bodyJson, MaximumJsonDepth))
+                        return OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_BODY_JSON_TOO_DEEP", "Certified courier body_json exceeds the maximum JSON depth.");
                     try
                     {
-                        using (var bodyDocument = JsonDocument.Parse(bodyJson))
+                        using (var bodyDocument = JsonDocument.Parse(bodyJson, StrictJsonDocumentOptions))
                         {
                             parsedBody = bodyDocument.RootElement.Clone();
                         }
@@ -239,7 +329,7 @@ namespace RevitBridge.Common
                     }
                 }
 
-                return OperatorCourierCertificationEnvelopeValidationResult.Valid(envelope, parsedBody, computedIdempotencyKey);
+                return OperatorCourierCertificationEnvelopeValidationResult.Valid(envelope, verifiedJob, parsedBody, computedIdempotencyKey);
             }
             catch (OperatorCourierCanonicalizationException error)
             {
@@ -275,6 +365,7 @@ namespace RevitBridge.Common
             OperatorCourierCertificationEnvelope envelope,
             string sessionId,
             string? messageId,
+            string expiresAtIsoUtc,
             string? turnTokenSha256,
             string? targetExecutorId,
             string? targetDocumentTitle,
@@ -289,6 +380,7 @@ namespace RevitBridge.Common
                 envelope.Path,
                 sessionId,
                 messageId,
+                expiresAtIsoUtc,
                 turnTokenSha256,
                 targetExecutorId,
                 targetDocumentTitle,
@@ -309,6 +401,7 @@ namespace RevitBridge.Common
             string path,
             string sessionId,
             string? messageId,
+            string expiresAtIsoUtc,
             string? turnTokenSha256,
             string? targetExecutorId,
             string? targetDocumentTitle,
@@ -317,6 +410,7 @@ namespace RevitBridge.Common
             string bodySha256)
         {
             if (string.IsNullOrWhiteSpace(sessionId)) throw new ArgumentException("sessionId is required.", nameof(sessionId));
+            if (!IsCanonicalUtcInstant(expiresAtIsoUtc)) throw new ArgumentException("expiresAtIsoUtc is not a canonical UTC ISO instant.", nameof(expiresAtIsoUtc));
             if (!Sha256Pattern.IsMatch(bodySha256)) throw new ArgumentException("bodySha256 is invalid.", nameof(bodySha256));
             if (!Sha256Pattern.IsMatch(certificationEnvelopeHash)) throw new ArgumentException("certificationEnvelopeHash is invalid.", nameof(certificationEnvelopeHash));
             if (!IsMethod(method) || !IsRevitPath(path)) throw new ArgumentException("method or path is invalid.");
@@ -327,6 +421,7 @@ namespace RevitBridge.Common
                 ["canonicalization"] = OperatorCourierCertificationEnvelope.Canonicalization,
                 ["session_id"] = sessionId,
                 ["message_id"] = messageId,
+                ["expires_at"] = expiresAtIsoUtc,
                 ["turn_token_sha256"] = turnTokenSha256,
                 ["target_executor_id"] = targetExecutorId,
                 ["target_document_title"] = targetDocumentTitle,
@@ -339,7 +434,7 @@ namespace RevitBridge.Common
             };
 
             var json = JsonSerializer.Serialize(values);
-            using (var document = JsonDocument.Parse(json))
+            using (var document = JsonDocument.Parse(json, StrictJsonDocumentOptions))
             {
                 return Sha256Hex(Canonicalize(document.RootElement));
             }
@@ -581,6 +676,82 @@ namespace RevitBridge.Common
             return true;
         }
 
+        private static bool TryGetCanonicalUtcInstant(
+            JsonElement objectValue,
+            string name,
+            out DateTimeOffset value,
+            out string canonicalIsoUtc,
+            out OperatorCourierCertificationEnvelopeValidationResult? error)
+        {
+            value = default;
+            canonicalIsoUtc = "";
+            error = null;
+            if (!TryGetRequiredString(objectValue, name, out var source, out error)) return false;
+            if (!CanonicalUtcInstantPattern.IsMatch(source)
+                || !DateTimeOffset.TryParseExact(
+                    source,
+                    "yyyy-MM-dd'T'HH:mm:ss.fff'Z'",
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out value))
+            {
+                error = OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_EXPIRY_INVALID", "Courier v2 " + name + " must be a canonical UTC ISO instant with millisecond precision.");
+                return false;
+            }
+            canonicalIsoUtc = value.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
+            if (!string.Equals(source, canonicalIsoUtc, StringComparison.Ordinal))
+            {
+                error = OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_EXPIRY_INVALID", "Courier v2 " + name + " is not a canonical UTC ISO instant.");
+                return false;
+            }
+            return true;
+        }
+
+        private static bool IsCanonicalUtcInstant(string? value)
+        {
+            if (value == null || !CanonicalUtcInstantPattern.IsMatch(value)) return false;
+            if (!DateTimeOffset.TryParseExact(
+                value,
+                "yyyy-MM-dd'T'HH:mm:ss.fff'Z'",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var parsed)) return false;
+            return string.Equals(
+                value,
+                parsed.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture),
+                StringComparison.Ordinal);
+        }
+
+        private static bool ValidateOptionalContextString(
+            string? value,
+            string name,
+            int maximumLength,
+            out OperatorCourierCertificationEnvelopeValidationResult? error)
+        {
+            error = null;
+            return value == null || ValidateContextString(value, name, maximumLength, false, false, out error);
+        }
+
+        private static bool ValidateContextString(
+            string value,
+            string name,
+            int maximumLength,
+            bool required,
+            bool requireTrimmed,
+            out OperatorCourierCertificationEnvelopeValidationResult? error)
+        {
+            error = null;
+            if ((required && string.IsNullOrWhiteSpace(value))
+                || value.Length > maximumLength
+                || value.Any(character => character <= 0x1f || character == 0x7f)
+                || (requireTrimmed && !string.Equals(value, value.Trim(), StringComparison.Ordinal)))
+            {
+                error = OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_CONTEXT_INVALID", "Courier v2 " + name + " is invalid.");
+                return false;
+            }
+            return true;
+        }
+
         private static bool TryGetRequiredElement(
             JsonElement objectValue,
             string name,
@@ -632,6 +803,45 @@ namespace RevitBridge.Common
             var builder = new StringBuilder();
             WriteCanonicalValue(builder, envelope, "envelope_hash");
             return builder.ToString();
+        }
+
+        private static bool ExceedsMaximumJsonDepth(string json, int maximumDepth)
+        {
+            var depth = 0;
+            var insideString = false;
+            var escaped = false;
+            foreach (var character in json)
+            {
+                if (insideString)
+                {
+                    if (escaped)
+                    {
+                        escaped = false;
+                        continue;
+                    }
+                    if (character == '\\')
+                    {
+                        escaped = true;
+                        continue;
+                    }
+                    if (character == '"') insideString = false;
+                    continue;
+                }
+
+                if (character == '"')
+                {
+                    insideString = true;
+                    continue;
+                }
+                if (character == '{' || character == '[')
+                {
+                    depth++;
+                    if (depth > maximumDepth) return true;
+                    continue;
+                }
+                if ((character == '}' || character == ']') && depth > 0) depth--;
+            }
+            return false;
         }
 
         private static void WriteCanonicalValue(StringBuilder builder, JsonElement value, string? excludedRootProperty)

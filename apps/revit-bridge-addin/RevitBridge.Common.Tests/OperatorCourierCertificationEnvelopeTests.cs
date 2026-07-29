@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -66,18 +67,19 @@ namespace RevitBridge.Common.Tests
                 ["path"] = "/revit/context",
                 ["method"] = "GET",
                 ["message_id"] = "message \"q\" \\ " + lineSeparator + paragraphSeparator,
+                ["expires_at"] = "2035-01-02T08:04:05.006Z",
                 ["canonicalization"] = OperatorCourierCertificationEnvelope.Canonicalization,
                 ["certification_envelope_hash"] = Hash8,
                 ["body_sha256"] = Hash6,
                 ["body_present"] = true,
                 ["target_executor_id"] = "executor-β"
             };
-            var expectedIdempotency = "{\"body_present\":true,\"body_sha256\":\"" + Hash6 + "\",\"canonicalization\":\"revit-operator.canonical-json.nfc-key-sorted.v1\",\"certification_envelope_hash\":\"" + Hash8 + "\",\"message_id\":\"message \\\"q\\\" \\\\ " + lineSeparator + paragraphSeparator + "\",\"method\":\"GET\",\"path\":\"/revit/context\",\"schema\":\"revit-operator.revit-tool-job-idempotency.v2\",\"session_id\":\"session-α\",\"target_document_path\":\"C:\\\\模型\\\\Café\\\\A\\\"B\\\\sheet.rvt\",\"target_document_title\":\"楼层 Café " + lineSeparator + "Sheet" + paragraphSeparator + "\",\"target_executor_id\":\"executor-β\",\"turn_token_sha256\":\"" + Hash7 + "\"}";
+            var expectedIdempotency = "{\"body_present\":true,\"body_sha256\":\"" + Hash6 + "\",\"canonicalization\":\"revit-operator.canonical-json.nfc-key-sorted.v1\",\"certification_envelope_hash\":\"" + Hash8 + "\",\"expires_at\":\"2035-01-02T08:04:05.006Z\",\"message_id\":\"message \\\"q\\\" \\\\ " + lineSeparator + paragraphSeparator + "\",\"method\":\"GET\",\"path\":\"/revit/context\",\"schema\":\"revit-operator.revit-tool-job-idempotency.v2\",\"session_id\":\"session-α\",\"target_document_path\":\"C:\\\\模型\\\\Café\\\\A\\\"B\\\\sheet.rvt\",\"target_document_title\":\"楼层 Café " + lineSeparator + "Sheet" + paragraphSeparator + "\",\"target_executor_id\":\"executor-β\",\"turn_token_sha256\":\"" + Hash7 + "\"}";
             using (var idempotencyDocument = JsonDocument.Parse(JsonSerializer.Serialize(idempotencyInput)))
             {
                 var canonical = OperatorCourierCertificationEnvelopeVerifier.Canonicalize(idempotencyDocument.RootElement);
                 Assert.Equal(expectedIdempotency, canonical);
-                Assert.Equal("0e7ab16c4f9d7c74943d26351aff93945a7cd1d765026b51396a700aec66efe5", Sha256Hex(canonical));
+                Assert.Equal("d5a2bb78dfc557264c746e7bd6ca0e1b7eaaa6757bf10fa09edf8d8c2deba213", Sha256Hex(canonical));
             }
         }
 
@@ -95,6 +97,13 @@ namespace RevitBridge.Common.Tests
                 Assert.Equal(2, result.ParsedBody!.Value.GetProperty("order")[0].GetInt32());
                 Assert.Equal("typed_mcp", result.Envelope!.Channel);
                 Assert.Equal("certified", result.Envelope.ExposureProfile);
+                Assert.NotNull(result.Job);
+                Assert.Equal(result.Job!.Id, result.Job.CorrelationId);
+                Assert.Equal("session-a", result.Job.SessionId);
+                Assert.Equal("executor-a", result.Job.TargetExecutorId);
+                Assert.Equal("model-a", result.Job.TargetDocumentTitle);
+                Assert.Equal("C:\\models\\model-a.rvt", result.Job.TargetDocumentPath);
+                Assert.True(result.Job.ExpiresAtUtc > DateTimeOffset.UtcNow);
             }
         }
 
@@ -172,6 +181,38 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void V2_job_and_authoritative_body_enforce_utf8_size_and_json_depth_boundaries()
+        {
+            var smallJob = CreateValidJob(bodyPresent: false, bodyJson: "");
+            var smallBytes = new UTF8Encoding(false, true).GetByteCount(smallJob);
+            var atJobLimit = smallJob + new string(' ', OperatorCourierCertificationEnvelopeVerifier.MaximumJobUtf8Bytes - smallBytes);
+            Assert.True(OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(atJobLimit).IsValid);
+            var overJobLimit = atJobLimit + " ";
+            var overJobResult = OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(overJobLimit);
+            Assert.Equal("CERT_COURIER_JOB_TOO_LARGE", overJobResult.Code);
+            Assert.Null(overJobResult.ParsedBody);
+
+            var atBodyLimit = "\"" + new string('a', OperatorCourierCertificationEnvelopeVerifier.MaximumBodyJsonUtf8Bytes - 2) + "\"";
+            Assert.True(OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(CreateValidJob(bodyPresent: true, bodyJson: atBodyLimit)).IsValid);
+            var overBodyLimit = "\"" + new string('a', OperatorCourierCertificationEnvelopeVerifier.MaximumBodyJsonUtf8Bytes - 1) + "\"";
+            var overBodyResult = OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(CreateValidJob(bodyPresent: true, bodyJson: overBodyLimit));
+            Assert.Equal("CERT_COURIER_BODY_TOO_LARGE", overBodyResult.Code);
+            Assert.Null(overBodyResult.ParsedBody);
+
+            var tooDeepJob = new string('[', OperatorCourierCertificationEnvelopeVerifier.MaximumJsonDepth + 1)
+                + new string(']', OperatorCourierCertificationEnvelopeVerifier.MaximumJsonDepth + 1);
+            var tooDeepJobResult = OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(tooDeepJob);
+            Assert.Equal("CERT_COURIER_JOB_TOO_DEEP", tooDeepJobResult.Code);
+            Assert.Null(tooDeepJobResult.ParsedBody);
+
+            var tooDeepBody = new string('[', OperatorCourierCertificationEnvelopeVerifier.MaximumJsonDepth + 1)
+                + "0" + new string(']', OperatorCourierCertificationEnvelopeVerifier.MaximumJsonDepth + 1);
+            var tooDeepBodyResult = OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(CreateValidJob(bodyPresent: true, bodyJson: tooDeepBody));
+            Assert.Equal("CERT_COURIER_BODY_JSON_TOO_DEEP", tooDeepBodyResult.Code);
+            Assert.Null(tooDeepBodyResult.ParsedBody);
+        }
+
+        [Fact]
         public void Malformed_legacy_unknown_missing_and_duplicate_envelopes_are_terminal_no_execute_results()
         {
             Assert.Equal("CERT_COURIER_JOB_MALFORMED", OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson("not-json").Code);
@@ -193,10 +234,65 @@ namespace RevitBridge.Common.Tests
         {
             var valid = CreateValidJob(bodyPresent: false, bodyJson: "");
             var idMismatch = MutateTopLevel(valid, "id", "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"");
-            Assert.Equal("CERT_COURIER_IDEMPOTENCY_MISMATCH", OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(idMismatch).Code);
+            Assert.Equal("CERT_COURIER_CORRELATION_MISMATCH", OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(idMismatch).Code);
 
             var rawToken = valid.Replace("\"turn_token_sha256\":", "\"turn_token\":\"secret\",\"turn_token_sha256\":");
             Assert.Equal("CERT_COURIER_RAW_TOKEN_FORBIDDEN", OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(rawToken).Code);
+        }
+
+        [Theory]
+        [InlineData("id")]
+        [InlineData("correlation_id")]
+        [InlineData("idempotency_key")]
+        [InlineData("created_at")]
+        [InlineData("expires_at")]
+        [InlineData("session_id")]
+        [InlineData("message_id")]
+        [InlineData("turn_token_sha256")]
+        [InlineData("target_executor_id")]
+        [InlineData("target_document_title")]
+        [InlineData("target_document_path")]
+        [InlineData("method")]
+        [InlineData("path")]
+        [InlineData("body_present")]
+        [InlineData("body_json")]
+        public void Every_bound_v2_top_level_field_denies_one_at_a_time_without_exposing_body(string field)
+        {
+            var valid = CreateValidJob(bodyPresent: true, bodyJson: "{\"a\":1}");
+            var replacement = field == "body_present"
+                ? "false"
+                : JsonSerializer.Serialize(field == "id" || field == "correlation_id" || field == "idempotency_key"
+                    ? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    : field == "created_at" ? "not-a-canonical-instant"
+                    : field == "expires_at" ? "2035-01-02T08:04:05.006Z"
+                    : field == "session_id" ? "session-b"
+                    : field == "message_id" ? "message-b"
+                    : field == "turn_token_sha256" ? Hash7
+                    : field == "target_executor_id" ? "executor-b"
+                    : field == "target_document_title" ? "model-b"
+                    : field == "target_document_path" ? "C:\\models\\model-b.rvt"
+                    : field == "method" ? "POST"
+                    : field == "path" ? "/revit/context"
+                    : "{\"b\":2}");
+
+            var result = OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(MutateTopLevel(valid, field, replacement));
+            Assert.False(result.IsValid, field + " unexpectedly validated.");
+            Assert.Null(result.ParsedBody);
+            Assert.Null(result.Job);
+        }
+
+        [Fact]
+        public void V2_expiry_must_be_canonical_utc_future_and_correlation_must_match_id()
+        {
+            var valid = CreateValidJob(bodyPresent: true, bodyJson: "{\"a\":1}");
+            var correlation = MutateTopLevel(valid, "correlation_id", "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"");
+            Assert.Equal("CERT_COURIER_CORRELATION_MISMATCH", OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(correlation).Code);
+
+            var expired = MutateTopLevel(valid, "expires_at", "\"2001-01-02T08:04:05.006Z\"");
+            Assert.Equal("CERT_COURIER_EXPIRY_EXPIRED", OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(expired).Code);
+
+            var nonCanonical = MutateTopLevel(valid, "expires_at", "\"2035-01-02T03:04:05.006-05:00\"");
+            Assert.Equal("CERT_COURIER_EXPIRY_INVALID", OperatorCourierCertificationEnvelopeVerifier.VerifyJobJson(nonCanonical).Code);
         }
 
         private static string CreateValidJob(bool bodyPresent, string bodyJson, string? workflow = null)
@@ -229,12 +325,16 @@ namespace RevitBridge.Common.Tests
                 envelope.Add("envelope_hash", OperatorCourierCertificationEnvelopeVerifier.Sha256Prefixed(OperatorCourierCertificationEnvelopeVerifier.Canonicalize(payloadDocument.RootElement)));
             }
 
+            var createdAtValue = DateTimeOffset.UtcNow;
+            var createdAt = createdAtValue.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
+            var expiresAt = createdAtValue.AddHours(1).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
             var idempotency = OperatorCourierCertificationEnvelopeVerifier.ComputeV2IdempotencyKey(
                 (string)envelope["envelope_hash"]!,
                 "GET",
                 "/revit/ping",
                 "session-a",
                 "message-a",
+                expiresAt,
                 Hash6,
                 "executor-a",
                 "model-a",
@@ -245,6 +345,7 @@ namespace RevitBridge.Common.Tests
             {
                 ["version"] = OperatorCourierCertificationEnvelope.JobVersion,
                 ["id"] = idempotency,
+                ["correlation_id"] = idempotency,
                 ["idempotency_key"] = idempotency,
                 ["session_id"] = "session-a",
                 ["message_id"] = "message-a",
@@ -257,7 +358,9 @@ namespace RevitBridge.Common.Tests
                 ["body_present"] = bodyPresent,
                 ["body_json"] = bodyJson,
                 ["body"] = "untrusted legacy/display body must not be read",
-                ["certification_envelope"] = envelope
+                ["certification_envelope"] = envelope,
+                ["created_at"] = createdAt,
+                ["expires_at"] = expiresAt
             };
             return JsonSerializer.Serialize(job);
         }
