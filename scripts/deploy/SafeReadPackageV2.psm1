@@ -517,17 +517,25 @@ function Assert-SafeReadBundle {
   )
   if ($AttestationPinSha256 -cnotmatch '^sha256:[0-9a-f]{64}$') { throw 'SafeRead attestation pin must be lowercase sha256:<hex>.' }
   $root = Assert-SafeReadSecureTree $BundleRoot
-  $manifestPath = Join-Path $root 'release-manifest.json'; $pinsPath = Join-Path $root 'package-pins.json'
-  foreach ($path in $manifestPath,$pinsPath) { if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "SafeRead bundle is missing $(Split-Path -Leaf $path)." } }
+  $manifestPath = Join-Path $root 'release-manifest.json'; $pinsPath = Join-Path $root 'package-pins.json'; $sourceReceiptPath = Join-Path $root 'source.snapshot.receipt.json'
+  foreach ($path in $manifestPath,$pinsPath,$sourceReceiptPath) { if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "SafeRead bundle is missing $(Split-Path -Leaf $path)." } }
   if ((Get-SafeReadSha256 $pinsPath) -cne $AttestationPinSha256) { throw 'SafeRead package pins external pin does not match this bundle.' }
   $release = ConvertTo-SafeReadObject $manifestPath; $pins = ConvertTo-SafeReadObject $pinsPath
-  Assert-SafeReadExactProperties $release @('schemaVersion','releaseId','allowedSignerThumbprints','targets') 'SafeRead release manifest'
+  Assert-SafeReadExactProperties $release @('schemaVersion','releaseId','allowedSignerThumbprints','source','targets') 'SafeRead release manifest'
   Assert-SafeReadExactProperties $pins @('schemaVersion','releaseId','releaseManifestSha256','targets') 'SafeRead package pins'
   if ($release.schemaVersion -cne $script:ReleaseSchema -or $pins.schemaVersion -cne $script:PinsSchema) { throw 'Unsupported SafeRead package schema.' }
   Assert-SafeReadReleaseId ([string]$release.releaseId)
   if ($pins.releaseId -cne $release.releaseId -or $pins.releaseManifestSha256 -cne (Get-SafeReadSha256 $manifestPath)) { throw 'SafeRead package pins do not bind the exact release.' }
   $rootNames = @(Get-ChildItem -LiteralPath $root -Force | ForEach-Object Name | Sort-Object)
-  if (Compare-Object -ReferenceObject @('package-pins.json','release-manifest.json','targets') -DifferenceObject $rootNames) { throw 'SafeRead bundle root has missing or extra entries.' }
+  if (Compare-Object -ReferenceObject @('package-pins.json','release-manifest.json','source.snapshot.receipt.json','targets') -DifferenceObject $rootNames) { throw 'SafeRead bundle root has missing or extra entries.' }
+  $source = $release.source
+  Assert-SafeReadExactProperties $source @('path','sha256','sizeBytes','commit','proofTree','hostTree','archiveSha256') 'SafeRead release source evidence'
+  if ($source.path -cne 'source.snapshot.receipt.json' -or $source.sha256 -cnotmatch '^sha256:[0-9a-f]{64}$' -or (Get-SafeReadSha256 $sourceReceiptPath) -cne $source.sha256 -or (Get-Item -LiteralPath $sourceReceiptPath).Length -ne [int64]$source.sizeBytes -or [int64]$source.sizeBytes -le 0) { throw 'SafeRead release source receipt hash/size/path mismatch.' }
+  $sourceReceipt = ConvertTo-SafeReadObject $sourceReceiptPath
+  Assert-SafeReadExactProperties $sourceReceipt @('schemaVersion','commit','proofTree','hostTree','archiveSha256') 'SafeRead source snapshot receipt'
+  if ([int]$sourceReceipt.schemaVersion -ne 1 -or $sourceReceipt.commit -cnotmatch '^[0-9a-f]{40}$' -or $sourceReceipt.proofTree -cnotmatch '^[0-9a-f]{40}$' -or $sourceReceipt.hostTree -cnotmatch '^[0-9a-f]{40}$' -or $sourceReceipt.archiveSha256 -cnotmatch '^sha256:[0-9a-f]{64}$') { throw 'SafeRead source snapshot receipt identities are invalid or not lowercase.' }
+  if ([IO.File]::ReadAllText($sourceReceiptPath) -cne (ConvertTo-SafeReadCanonicalJson $sourceReceipt)) { throw 'SafeRead source snapshot receipt is not exact canonical JSON.' }
+  if ($source.commit -cne $sourceReceipt.commit -or $source.proofTree -cne $sourceReceipt.proofTree -or $source.hostTree -cne $sourceReceipt.hostTree -or $source.archiveSha256 -cne $sourceReceipt.archiveSha256) { throw 'SafeRead release source evidence does not match its snapshot receipt.' }
   $targetNames = @(Get-ChildItem -LiteralPath (Join-Path $root 'targets') -Force | ForEach-Object Name | Sort-Object)
   if (Compare-Object -ReferenceObject @('2023','2024','2025') -DifferenceObject $targetNames) { throw 'SafeRead bundle has missing or extra target directories.' }
   $targets = @($release.targets); if ($targets.Count -ne 3) { throw 'SafeRead release must declare exactly three targets.' }
@@ -619,7 +627,7 @@ function Assert-SafeReadBundle {
   }
   if (($seen.Keys | Sort-Object) -join ',' -ne '2023,2024,2025') { throw 'SafeRead release does not contain all supported years.' }
   if(@($preservedProofHashes|Sort-Object -Unique).Count -ne 1){throw 'SafeRead targets do not preserve one exact three-year proof receipt.'}
-  [pscustomobject]@{ ReleaseId=$release.releaseId; ReleaseManifestSha256=Get-SafeReadSha256 $manifestPath; AttestationSha256=Get-SafeReadSha256 $pinsPath; Targets=$targets; RuntimeAttestationPins=$pinTargets }
+  [pscustomobject]@{ ReleaseId=$release.releaseId; ReleaseManifestSha256=Get-SafeReadSha256 $manifestPath; AttestationSha256=Get-SafeReadSha256 $pinsPath; Source=$source; SourceReceipt=$sourceReceipt; Targets=$targets; RuntimeAttestationPins=$pinTargets }
 }
 
 function Write-SafeReadAtomicFile {

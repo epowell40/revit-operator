@@ -86,6 +86,7 @@ Expand-Archive -LiteralPath $sourceArchive -DestinationPath $trustedRepository
 [void](Assert-SafeReadStrictTree $trustedRepository)
 $sourceReceipt=[ordered]@{schemaVersion=1;commit=$commit;proofTree=$proofTree;hostTree=$hostTree;archiveSha256=Get-SafeReadSha256 $sourceArchive}
 $sourceReceiptPath=Join-Path $runRoot 'source.snapshot.receipt.json';[IO.File]::WriteAllText($sourceReceiptPath,(ConvertTo-SafeReadCanonicalJson $sourceReceipt),[Text.UTF8Encoding]::new($false));[void](Protect-SafeReadPathAcl $sourceReceiptPath -Strict)
+$packagedSourceReceiptPath=Join-Path $stage 'source.snapshot.receipt.json';Copy-Item -LiteralPath $sourceReceiptPath -Destination $packagedSourceReceiptPath
 $proofRoot=Resolve-SafeReadCanonicalPath (Join-Path $trustedRepository 'apps\revit-safe-read-proof')
 $bootstrap=Resolve-SafeReadCanonicalPath (Join-Path $proofRoot 'bootstrap.ps1')
 $generator=Resolve-SafeReadCanonicalPath (Join-Path $proofRoot 'production\New-ProductionManifest.ps1')
@@ -107,7 +108,7 @@ $templateSource=Resolve-SafeReadCanonicalPath (Join-Path $trustedRepository 'app
 $hostProject=Resolve-SafeReadCanonicalPath (Join-Path $trustedRepository 'apps\revit-safe-read-host\src\RevitOperator.SafeReadHost\RevitOperator.SafeReadHost.csproj')
 [void](Assert-SafeReadStrictTree (Split-Path -Parent $hostProject))
 
-$release=[ordered]@{schemaVersion='revit-operator.safe-read-package-release.v3';releaseId=[string]$input.releaseId;allowedSignerThumbprints=@($allowed|ForEach-Object{$_.ToUpperInvariant()});targets=@()}
+$release=[ordered]@{schemaVersion='revit-operator.safe-read-package-release.v3';releaseId=[string]$input.releaseId;allowedSignerThumbprints=@($allowed|ForEach-Object{$_.ToUpperInvariant()});source=[ordered]@{path='source.snapshot.receipt.json';sha256=Get-SafeReadSha256 $packagedSourceReceiptPath;sizeBytes=(Get-Item -LiteralPath $packagedSourceReceiptPath).Length;commit=$commit;proofTree=$proofTree;hostTree=$hostTree;archiveSha256=$sourceReceipt.archiveSha256};targets=@()}
 $packagePins=@();$proofHashes=@()
 
 foreach($year in '2023','2024','2025'){

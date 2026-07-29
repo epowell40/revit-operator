@@ -32,8 +32,10 @@ function Get-FakeFacts([string]$Year,[string]$Name){
 }
 $assemblyInspector={param($Path,$Year,$Item)Get-FakeFacts $Year ([IO.Path]::GetFileNameWithoutExtension($Path))}
 
-function New-TestBundle([string]$Root,[string]$ReleaseId='safe-read-v3-a'){
+function New-TestBundle([string]$Root,[string]$ReleaseId='safe-read-v3-a',[switch]$OmitSourceReceipt){
   [IO.Directory]::CreateDirectory($Root)|Out-Null
+  $sourceReceipt=[ordered]@{schemaVersion=1;commit=('a'*40);proofTree=('b'*40);hostTree=('c'*40);archiveSha256=('sha256:'+('d'*64))}
+  $sourceReceiptPath=Join-Path $Root 'source.snapshot.receipt.json';if(-not $OmitSourceReceipt){Write-JsonFile $sourceReceiptPath $sourceReceipt}
   $artifacts=[ordered]@{}
   foreach($year in '2023','2024','2025'){$expected=Get-SafeReadExpectedTarget $year;$artifacts[$year]=[ordered]@{fileName="RevitOperator.SafeReadCertifiedExecution.Revit$year.dll";sha256=($year.Substring(3,1)*64);length=100;managedCodeSha256=('b'*64);assemblyIdentity='RevitOperator.SafeReadCertifiedExecution, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null';targetFramework=$expected.TargetFrameworkAttribute;platform='x64'}}
   $proof=[ordered]@{schemaVersion=1;proofKind='revit-safe-read-certified-kernel/v1';mode='check';status='verified';certified=$true;manifestSha256=('1'*64);verifierProfileId='revit-safe-read-sheet-count-kernel/v1';verifierProfileSha256=('2'*64);verifierBundleSha256=('3'*64);sourceLockSha256=('4'*64);apiLockSha256=('5'*64);sdkLockSha256=('6'*64);trustBoundary='fixture';compilerOptions=@('/deterministic+');issues=@();observation=[ordered]@{};artifacts=$artifacts}
@@ -59,13 +61,15 @@ function New-TestBundle([string]$Root,[string]$ReleaseId='safe-read-v3-a'){
     $targets += [ordered]@{revitYear=$year;framework=$expected.Framework;platform='x64';revitApi=$api;revitApiUi=$apiUi;requiredPayload=$payload;proof=[ordered]@{path='proof/proof.receipt.json';sha256=$proofSha;sizeBytes=(Get-Item $proofPath).Length;artifactUnsignedSha256=[string]$artifacts[$year].sha256;equivalencePath='proof/artifact.equivalence.json';equivalenceSha256=Get-SafeReadSha256 $equivalencePath};runtimeAttestation=[ordered]@{path='payload/safe_read_runtime_attestation.v1.json';sha256=$runtimePin;sizeBytes=(Get-Item $runtimePath).Length};manifest=[ordered]@{path='manifest/RevitOperator.SafeReadHost.addin.template';sha256=Get-SafeReadSha256 $template;sizeBytes=(Get-Item $template).Length}}
     $pinTargets += [ordered]@{revitYear=$year;runtimeAttestationSha256=$runtimePin}
   }
-  $release=[ordered]@{schemaVersion='revit-operator.safe-read-package-release.v3';releaseId=$ReleaseId;allowedSignerThumbprints=@($testThumbprint);targets=$targets};$releasePath=Join-Path $Root 'release-manifest.json';Write-JsonFile $releasePath $release
+  $source=[ordered]@{path='source.snapshot.receipt.json';sha256=if($OmitSourceReceipt){'sha256:'+('e'*64)}else{Get-SafeReadSha256 $sourceReceiptPath};sizeBytes=if($OmitSourceReceipt){1}else{(Get-Item $sourceReceiptPath).Length};commit=$sourceReceipt.commit;proofTree=$sourceReceipt.proofTree;hostTree=$sourceReceipt.hostTree;archiveSha256=$sourceReceipt.archiveSha256}
+  $release=[ordered]@{schemaVersion='revit-operator.safe-read-package-release.v3';releaseId=$ReleaseId;allowedSignerThumbprints=@($testThumbprint);source=$source;targets=$targets};$releasePath=Join-Path $Root 'release-manifest.json';Write-JsonFile $releasePath $release
   $pins=[ordered]@{schemaVersion='revit-operator.safe-read-package-pins.v3';releaseId=$ReleaseId;releaseManifestSha256=Get-SafeReadSha256 $releasePath;targets=$pinTargets};$pinsPath=Join-Path $Root 'package-pins.json';Write-JsonFile $pinsPath $pins
   [void](Protect-SafeReadTreeAcl $Root)
   [pscustomobject]@{Root=$Root;Pin=Get-SafeReadSha256 $pinsPath;ReleaseId=$ReleaseId}
 }
 
 function Refresh-BundlePin($Bundle){$pins=ConvertTo-SafeReadObject (Join-Path $Bundle.Root 'package-pins.json');$pins.releaseManifestSha256=Get-SafeReadSha256 (Join-Path $Bundle.Root 'release-manifest.json');Write-JsonFile (Join-Path $Bundle.Root 'package-pins.json') $pins;$Bundle.Pin=Get-SafeReadSha256 (Join-Path $Bundle.Root 'package-pins.json')}
+function Refresh-SourceEvidence($Bundle,[switch]$CopyIdentities){$receiptPath=Join-Path $Bundle.Root 'source.snapshot.receipt.json';$receipt=ConvertTo-SafeReadObject $receiptPath;$releasePath=Join-Path $Bundle.Root 'release-manifest.json';$release=ConvertTo-SafeReadObject $releasePath;$release.source.sha256=Get-SafeReadSha256 $receiptPath;$release.source.sizeBytes=(Get-Item $receiptPath).Length;if($CopyIdentities){foreach($name in 'commit','proofTree','hostTree','archiveSha256'){$release.source.$name=$receipt.$name}};Write-JsonFile $releasePath $release;Refresh-BundlePin $Bundle}
 function Rebind-TamperedExecutor($Bundle,[string]$Year){$releasePath=Join-Path $Bundle.Root 'release-manifest.json';$release=ConvertTo-SafeReadObject $releasePath;$target=@($release.targets|Where-Object revitYear -eq $Year)[0];$executor=@($target.requiredPayload|Where-Object role -eq 'certified_executor')[0];$path=Join-Path $Bundle.Root "targets\$Year\payload\RevitOperator.SafeReadCertifiedExecution.dll";$executor.sha256=Get-SafeReadSha256 $path;$executor.sizeBytes=(Get-Item $path).Length;$runtimePath=Join-Path $Bundle.Root "targets\$Year\payload\safe_read_runtime_attestation.v1.json";$runtime=ConvertTo-SafeReadObject $runtimePath;$runtime.runtime_tuple.host_content_sha256=$executor.sha256;Write-JsonFile $runtimePath $runtime;$pin=Get-SafeReadSha256 $runtimePath;[IO.File]::WriteAllText((Join-Path $Bundle.Root "targets\$Year\payload\safe_read_runtime_attestation.v1.sha256"),$pin+"`n",[Text.UTF8Encoding]::new($false));$target.runtimeAttestation.sha256=$pin;$target.runtimeAttestation.sizeBytes=(Get-Item $runtimePath).Length;Write-JsonFile $releasePath $release;$pins=ConvertTo-SafeReadObject (Join-Path $Bundle.Root 'package-pins.json');@($pins.targets|Where-Object revitYear -eq $Year)[0].runtimeAttestationSha256=$pin;Write-JsonFile (Join-Path $Bundle.Root 'package-pins.json') $pins;Refresh-BundlePin $Bundle}
 }
 
@@ -75,6 +79,37 @@ Describe 'SafeRead package v3 security contract' {
   It 'accepts an exact three-year package and one identical proof receipt' {
     $receipt=Assert-SafeReadBundle -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
     if($receipt.Targets.Count -ne 3){throw 'Expected three targets.'}
+    if($receipt.Source.commit -cne ('a'*40) -or $receipt.SourceReceipt.archiveSha256 -cne ('sha256:'+('d'*64))){throw 'Expected exact source snapshot evidence.'}
+  }
+
+  It 'rejects a missing source snapshot receipt' {
+    $missing=New-TestBundle (Join-Path $TestDrive 'missing-source') 'safe-read-v3-missing' -OmitSourceReceipt
+    Assert-ThrowsLike {Assert-SafeReadBundle -BundleRoot $missing.Root -AttestationPinSha256 $missing.Pin -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*missing source.snapshot.receipt.json*'
+  }
+
+  It 'rejects extra source receipt fields after every package hash is rebound' {
+    $path=Join-Path $bundle.Root 'source.snapshot.receipt.json';$source=ConvertTo-SafeReadObject $path;$source|Add-Member -NotePropertyName branch -NotePropertyValue 'untrusted';Write-JsonFile $path $source;Refresh-SourceEvidence $bundle
+    Assert-ThrowsLike {Assert-SafeReadBundle -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*extra properties*'
+  }
+
+  It 'rejects non-canonical source receipt bytes after every package hash is rebound' {
+    $path=Join-Path $bundle.Root 'source.snapshot.receipt.json';[IO.File]::AppendAllText($path,"`n",[Text.UTF8Encoding]::new($false));Refresh-SourceEvidence $bundle
+    Assert-ThrowsLike {Assert-SafeReadBundle -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*not exact canonical JSON*'
+  }
+
+  It 'rejects a rebound source receipt that disagrees with duplicated release identity' {
+    $path=Join-Path $bundle.Root 'source.snapshot.receipt.json';$source=ConvertTo-SafeReadObject $path;$source.commit=('e'*40);Write-JsonFile $path $source;Refresh-SourceEvidence $bundle
+    Assert-ThrowsLike {Assert-SafeReadBundle -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*does not match its snapshot receipt*'
+  }
+
+  It 'rejects uppercase source identities after the receipt and release are rebound together' {
+    $path=Join-Path $bundle.Root 'source.snapshot.receipt.json';$source=ConvertTo-SafeReadObject $path;$source.commit=('A'*40);Write-JsonFile $path $source;Refresh-SourceEvidence $bundle -CopyIdentities
+    Assert-ThrowsLike {Assert-SafeReadBundle -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*identities are invalid or not lowercase*'
+  }
+
+  It 'rejects an extra file at package root' {
+    [IO.File]::WriteAllText((Join-Path $bundle.Root 'untrusted.txt'),'extra')
+    Assert-ThrowsLike {Assert-SafeReadBundle -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*missing or extra entries*'
   }
 
   It 'matches the canonical cross-runtime contract fixture and recomputes every route hash' {
@@ -139,7 +174,8 @@ Describe 'SafeRead package v3 security contract' {
   It 'installs the attestation parent and files with the host exact ACL contract' {
     $destination=Join-Path $TestDrive 'attestation-install';$addins=Join-Path $TestDrive 'attestation-addins'
     &$installer -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -DestinationRoot $destination -RevitAddinsRoot $addins -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
-    $payload=Join-Path $destination "releases\$($bundle.ReleaseId)\targets\2024\payload";$paths=@($destination,(Join-Path $destination 'active-release.json'),$payload,(Join-Path $payload 'safe_read_runtime_attestation.v1.json'),(Join-Path $payload 'safe_read_runtime_attestation.v1.sha256'),(Join-Path $addins '2023'),(Join-Path $addins '2023\RevitOperator.SafeReadHost.addin'),(Join-Path $addins '2024'),(Join-Path $addins '2024\RevitOperator.SafeReadHost.addin'),(Join-Path $addins '2025'),(Join-Path $addins '2025\RevitOperator.SafeReadHost.addin'))
+    $installedSource=Join-Path $destination "releases\$($bundle.ReleaseId)\source.snapshot.receipt.json";if((Get-SafeReadSha256 $installedSource) -cne (Get-SafeReadSha256 (Join-Path $bundle.Root 'source.snapshot.receipt.json'))){throw 'Install did not preserve the exact source receipt.'}
+    $payload=Join-Path $destination "releases\$($bundle.ReleaseId)\targets\2024\payload";$paths=@($destination,(Join-Path $destination 'active-release.json'),$installedSource,$payload,(Join-Path $payload 'safe_read_runtime_attestation.v1.json'),(Join-Path $payload 'safe_read_runtime_attestation.v1.sha256'),(Join-Path $addins '2023'),(Join-Path $addins '2023\RevitOperator.SafeReadHost.addin'),(Join-Path $addins '2024'),(Join-Path $addins '2024\RevitOperator.SafeReadHost.addin'),(Join-Path $addins '2025'),(Join-Path $addins '2025\RevitOperator.SafeReadHost.addin'))
     $allowed=@([Security.Principal.WindowsIdentity]::GetCurrent().User.Value,'S-1-5-18','S-1-5-32-544')|Sort-Object
     foreach($path in $paths){$record=Get-SafeReadAclRecord $path;if(-not $record.Protected){throw "Installed host trust path inherits ACLs: $path"};$principals=@($record.Access|ForEach-Object Sid|Sort-Object -Unique);if((Compare-Object $allowed $principals) -or @($record.Access|Where-Object{$_.Type -cne 'Allow' -or $_.IsInherited}).Count){throw "Installed host trust path differs from the owner/SYSTEM/Administrators contract: $path"}}
   }
@@ -202,5 +238,13 @@ Describe 'SafeRead package v3 security contract' {
     &$installer -RollbackReleaseId $bundle.ReleaseId -DestinationRoot $destination -RevitAddinsRoot $addins -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
     $active=ConvertTo-SafeReadObject (Join-Path $destination 'active-release.json');if($active.releaseId -cne $bundle.ReleaseId){throw 'Rollback did not activate the original release.'}
     foreach($path in @((Join-Path $destination 'active-release.json'),(Join-Path $addins '2023'),(Join-Path $addins '2023\RevitOperator.SafeReadHost.addin'),(Join-Path $addins '2024'),(Join-Path $addins '2024\RevitOperator.SafeReadHost.addin'),(Join-Path $addins '2025'),(Join-Path $addins '2025\RevitOperator.SafeReadHost.addin'))){[void](Assert-SafeReadStrictTree $path)}
+  }
+
+  It 'rejects rollback when the installed source snapshot receipt was tampered' {
+    $destination=Join-Path $TestDrive 'source-tamper-install';$addins=Join-Path $TestDrive 'source-tamper-addins';$second=New-TestBundle (Join-Path $TestDrive 'source-tamper-second') 'safe-read-v3-source-tamper-b'
+    &$installer -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -DestinationRoot $destination -RevitAddinsRoot $addins -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
+    &$installer -BundleRoot $second.Root -AttestationPinSha256 $second.Pin -DestinationRoot $destination -RevitAddinsRoot $addins -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
+    [IO.File]::AppendAllText((Join-Path $destination "releases\$($bundle.ReleaseId)\source.snapshot.receipt.json"),'tampered')
+    Assert-ThrowsLike {&$installer -RollbackReleaseId $bundle.ReleaseId -DestinationRoot $destination -RevitAddinsRoot $addins -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*source receipt hash/size/path mismatch*'
   }
 }
