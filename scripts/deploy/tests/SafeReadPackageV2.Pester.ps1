@@ -142,6 +142,59 @@ try{`$bytes=[Text.UTF8Encoding]::new(`$false).GetBytes('destination-winner');`$s
     }
   }
 
+  It 'never pathname-deletes a foreign recreation after closing the private staging handle' {
+    $coordination=Join-Path $TestDrive 'foreign-staging-recreation';[IO.Directory]::CreateDirectory($coordination)|Out-Null
+    $receiptPath=Join-Path $coordination 'admission.receipt.json';[IO.File]::WriteAllText($receiptPath,'destination-winner',[Text.UTF8Encoding]::new($false))
+    $ready=Join-Path $TestDrive 'foreign-staging.ready';$captured=Join-Path $TestDrive 'foreign-staging.path';$closed=Join-Path $TestDrive 'foreign-staging.closed'
+    $childCode=@"
+`$ErrorActionPreference='Stop'
+`$watcher=[IO.FileSystemWatcher]::new($(ConvertTo-TestSingleQuoted $coordination),'.safe-read-admission.*.tmp');`$watcher.NotifyFilter=[IO.NotifyFilters]::FileName;`$watcher.EnableRaisingEvents=`$true
+[IO.File]::WriteAllText($(ConvertTo-TestSingleQuoted $ready),'ready')
+`$created=`$watcher.WaitForChanged([IO.WatcherChangeTypes]::Created,30000)
+if(`$created.TimedOut){exit 2}
+`$staging=[IO.Path]::Combine($(ConvertTo-TestSingleQuoted $coordination),`$created.Name);[IO.File]::WriteAllText($(ConvertTo-TestSingleQuoted $captured),`$staging)
+`$deleted=`$watcher.WaitForChanged([IO.WatcherChangeTypes]::Deleted,30000)
+if(`$deleted.TimedOut){exit 3}
+`$foreign=[Text.UTF8Encoding]::new(`$false).GetBytes('foreign-after-close');`$stream=[IO.File]::Open(`$staging,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{`$stream.Write(`$foreign,0,`$foreign.Length);`$stream.Flush()}finally{`$stream.Dispose()}
+[IO.File]::WriteAllText($(ConvertTo-TestSingleQuoted $closed),'foreign-created-after-close');`$watcher.Dispose()
+"@
+    $process=Start-TestPowerShellProcess $childCode
+    try{
+      Wait-TestPath $ready
+      $bytes=[byte[]]::new(128*1024*1024)
+      Assert-ThrowsLike {Invoke-SafeReadAtomicPublisherForTesting $coordination (Split-Path -Leaf $receiptPath) $bytes} '*Refusing to overwrite an existing SafeRead admission receipt*'
+      if(-not$process.WaitForExit(10000)){throw 'The staging-close observer did not terminate.'};if($process.ExitCode-ne0){throw "The staging-close observer failed with exit $($process.ExitCode)."}
+      Wait-TestPath $captured;Wait-TestPath $closed;$stagingPath=[IO.File]::ReadAllText($captured)
+      Start-Sleep -Milliseconds 100
+      if(-not(Test-Path -LiteralPath $stagingPath -PathType Leaf)-or[IO.File]::ReadAllText($stagingPath)-cne'foreign-after-close'){throw 'Admission cleanup deleted or changed a foreign file that reused the closed staging pathname.'}
+      if((Get-Content -LiteralPath $module -Raw)-match'DeleteFileW'){throw 'Admission publication reintroduced post-close pathname deletion.'}
+    }finally{
+      if(-not$process.HasExited){Stop-Process -Id $process.Id -Force;$process.WaitForExit()};$process.Dispose()
+    }
+  }
+
+  It 'uses typed Win32 file-information layouts without unmanaged pointer arithmetic' {
+    $layout=&$safeReadModule {
+      Initialize-SafeReadAtomicNewFilePublisher
+      $publisher=[SafeRead.AtomicNewFilePublisher]
+      $flags=[Reflection.BindingFlags]::NonPublic
+      $rename=$publisher.GetNestedType('FileRenameInformationHeader',$flags);$disposition=$publisher.GetNestedType('FileDispositionInformation',$flags)
+      [pscustomobject]@{
+        dispositionSize=[Runtime.InteropServices.Marshal]::SizeOf([Activator]::CreateInstance($disposition))
+        renameHeaderSize=[Runtime.InteropServices.Marshal]::SizeOf([Activator]::CreateInstance($rename))
+        flagsOffset=[Runtime.InteropServices.Marshal]::OffsetOf($rename,'ReplaceFlags').ToInt32()
+        rootOffset=[Runtime.InteropServices.Marshal]::OffsetOf($rename,'RootDirectory').ToInt32()
+        lengthOffset=[Runtime.InteropServices.Marshal]::OffsetOf($rename,'FileNameLength').ToInt32()
+        nameOffset=[Runtime.InteropServices.Marshal]::OffsetOf($rename,'FirstFileNameCharacter').ToInt32()
+      }
+    }
+    $expectedRoot=if([IntPtr]::Size-eq8){8}else{4};$expectedLength=$expectedRoot+[IntPtr]::Size;$expectedName=$expectedLength+4
+    if($layout.dispositionSize-ne1-or$layout.flagsOffset-ne0-or$layout.rootOffset-ne$expectedRoot-or$layout.lengthOffset-ne$expectedLength-or$layout.nameOffset-ne$expectedName){throw "SafeRead typed Win32 file-information layout drifted: $($layout|ConvertTo-Json -Compress)"}
+    if($layout.renameHeaderSize-lt($expectedName+2)-or$layout.renameHeaderSize-gt($expectedName+2+[IntPtr]::Size)){throw "SafeRead typed Win32 rename header size is invalid: $($layout.renameHeaderSize)"}
+    $source=Get-Content -LiteralPath $module -Raw
+    foreach($forbidden in 'AllocHGlobal','FreeHGlobal','WriteIntPtr','Marshal.Copy','DeleteFileW'){if($source-match[regex]::Escape($forbidden)){throw "SafeRead admission publication uses forbidden unmanaged pointer/path cleanup primitive: $forbidden"}}
+  }
+
   It 'binds the canonical parent so a synchronized parent replacement is rejected while publishing' {
     $coordination=Join-Path $TestDrive 'parent-race';$moved=Join-Path $TestDrive 'parent-race-moved';[IO.Directory]::CreateDirectory($coordination)|Out-Null
     $receiptPath=Join-Path $coordination 'admission.receipt.json';$ready=Join-Path $TestDrive 'parent-race.ready';$result=Join-Path $TestDrive 'parent-race.result'

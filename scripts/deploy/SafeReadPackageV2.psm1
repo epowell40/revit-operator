@@ -800,6 +800,7 @@ namespace SafeRead
         private const int FileDispositionInfo = 4;
         private const int ERROR_FILE_EXISTS = 80;
         private const int ERROR_ALREADY_EXISTS = 183;
+        private const int MaxRenamePathCharacters = 32767;
         private static readonly IntPtr InvalidHandleValue = new IntPtr(-1);
 
         [StructLayout(LayoutKind.Sequential)]
@@ -817,6 +818,21 @@ namespace SafeRead
             public uint FileIndexLow;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FileDispositionInformation
+        {
+            public byte DeleteFile;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FileRenameInformationHeader
+        {
+            public uint ReplaceFlags;
+            public IntPtr RootDirectory;
+            public uint FileNameLength;
+            public char FirstFileNameCharacter;
+        }
+
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern IntPtr CreateFileW(
             string fileName,
@@ -831,10 +847,6 @@ namespace SafeRead
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool CloseHandle(IntPtr handle);
 
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool DeleteFileW(string fileName);
-
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool GetFileInformationByHandle(IntPtr handle, out ByHandleFileInformation information);
@@ -842,12 +854,20 @@ namespace SafeRead
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern uint GetFinalPathNameByHandleW(IntPtr handle, StringBuilder path, uint pathLength, uint flags);
 
-        [DllImport("kernel32.dll", SetLastError = true)]
+        [DllImport("kernel32.dll", EntryPoint = "SetFileInformationByHandle", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool SetFileInformationByHandle(
+        private static extern bool SetFileDispositionByHandle(
             IntPtr handle,
             int informationClass,
-            IntPtr information,
+            ref FileDispositionInformation information,
+            uint bufferSize);
+
+        [DllImport("kernel32.dll", EntryPoint = "SetFileInformationByHandle", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetFileRenameByHandle(
+            IntPtr handle,
+            int informationClass,
+            [In] byte[] information,
             uint bufferSize);
 
         private static Win32Exception NativeError(string action)
@@ -946,45 +966,28 @@ namespace SafeRead
 
         private static void SetDeleteDisposition(IntPtr handle, bool deleteFile)
         {
-            IntPtr disposition = Marshal.AllocHGlobal(1);
-            try
-            {
-                Marshal.WriteByte(disposition, deleteFile ? (byte)1 : (byte)0);
-                if (!SetFileInformationByHandle(handle, FileDispositionInfo, disposition, 1))
-                    throw NativeError(deleteFile ? "Arming delete-on-close" : "Committing the published admission receipt");
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(disposition);
-            }
+            var disposition = new FileDispositionInformation { DeleteFile = deleteFile ? (byte)1 : (byte)0 };
+            uint size = checked((uint)Marshal.SizeOf(typeof(FileDispositionInformation)));
+            if (!SetFileDispositionByHandle(handle, FileDispositionInfo, ref disposition, size))
+                throw NativeError(deleteFile ? "Arming delete-on-close" : "Committing the published admission receipt");
         }
 
         private static void RenameNoReplace(IntPtr handle, string targetPath)
         {
+            if (targetPath.Length >= MaxRenamePathCharacters) throw new PathTooLongException("SafeRead admission target exceeds the Win32 rename buffer.");
             byte[] fileName = Encoding.Unicode.GetBytes(targetPath);
-            int rootOffset = IntPtr.Size == 8 ? 8 : 4;
-            int lengthOffset = rootOffset + IntPtr.Size;
-            int nameOffset = lengthOffset + 4;
-            int bufferLength = checked(nameOffset + fileName.Length + 2);
-            IntPtr rename = Marshal.AllocHGlobal(bufferLength);
-            try
+            int lengthOffset = Marshal.OffsetOf(typeof(FileRenameInformationHeader), "FileNameLength").ToInt32();
+            int nameOffset = Marshal.OffsetOf(typeof(FileRenameInformationHeader), "FirstFileNameCharacter").ToInt32();
+            int headerSize = Marshal.SizeOf(typeof(FileRenameInformationHeader));
+            byte[] rename = new byte[checked(headerSize + fileName.Length)];
+            Buffer.BlockCopy(BitConverter.GetBytes(checked((uint)fileName.Length)), 0, rename, lengthOffset, sizeof(uint));
+            Buffer.BlockCopy(fileName, 0, rename, nameOffset, fileName.Length);
+            if (!SetFileRenameByHandle(handle, FileRenameInfo, rename, checked((uint)rename.Length)))
             {
-                for (int index = 0; index < bufferLength; index++) Marshal.WriteByte(rename, index, 0);
-                Marshal.WriteInt32(rename, 0, 0);
-                Marshal.WriteIntPtr(rename, rootOffset, IntPtr.Zero);
-                Marshal.WriteInt32(rename, lengthOffset, fileName.Length);
-                Marshal.Copy(fileName, 0, IntPtr.Add(rename, nameOffset), fileName.Length);
-                if (!SetFileInformationByHandle(handle, FileRenameInfo, rename, (uint)bufferLength))
-                {
-                    int error = Marshal.GetLastWin32Error();
-                    if (error == ERROR_FILE_EXISTS || error == ERROR_ALREADY_EXISTS)
-                        throw new IOException("Refusing to overwrite an existing SafeRead admission receipt: " + targetPath);
-                    throw new Win32Exception(error, "Publishing the SafeRead admission receipt failed: " + new Win32Exception(error).Message);
-                }
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(rename);
+                int error = Marshal.GetLastWin32Error();
+                if (error == ERROR_FILE_EXISTS || error == ERROR_ALREADY_EXISTS)
+                    throw new IOException("Refusing to overwrite an existing SafeRead admission receipt: " + targetPath);
+                throw new Win32Exception(error, "Publishing the SafeRead admission receipt failed: " + new Win32Exception(error).Message);
             }
         }
 
@@ -1002,7 +1005,6 @@ namespace SafeRead
             IntPtr directoryHandle = InvalidHandleValue;
             IntPtr fileHandle = InvalidHandleValue;
             string temporaryPath = null;
-            bool stagingCreated = false;
             bool published = false;
             try
             {
@@ -1029,7 +1031,6 @@ namespace SafeRead
                 }
                 if (fileHandle == InvalidHandleValue)
                     throw new IOException("Could not allocate a private SafeRead admission staging file.");
-                stagingCreated = true;
 
                 SetDeleteDisposition(fileHandle, true);
 
@@ -1065,8 +1066,14 @@ namespace SafeRead
             }
             finally
             {
-                if (fileHandle != InvalidHandleValue) CloseHandle(fileHandle);
-                if (stagingCreated && !published && temporaryPath != null) DeleteFileW(temporaryPath);
+                if (fileHandle != InvalidHandleValue)
+                {
+                    // Cleanup remains bound to the exact open file object. Never
+                    // close and then delete by pathname: another principal could
+                    // reuse the private name after close.
+                    if (!published) { try { SetDeleteDisposition(fileHandle, true); } catch { } }
+                    CloseHandle(fileHandle);
+                }
                 if (directoryHandle != InvalidHandleValue) CloseHandle(directoryHandle);
             }
         }
