@@ -1,11 +1,13 @@
 {
   "schema": "revit-operator.safe-read-attestation-trusted-signers.v1",
+  "epoch": "example-authority-v1",
+  "sequence": 1,
   "signers": [
     {
       "key_id": "example-public-test-key",
       "algorithm": "ed25519",
       "state": "revoked",
-      "public_key_spki_base64": "MCowBQYDK2VwAyEAOi6xIMvzbKqf5oAjlTCfzNYLq6TID2dcGJdJgkkw8O0="
+      "public_key_spki_base64": "MCowBQYDK2VwAyEAylg2LkD3DnUal33keYNIHIuEviB11N4cenFI6KQcar4="
     }
   ]
 }
