@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using RevitOperator.Deployment;
 using Xunit;
@@ -9,6 +10,8 @@ public sealed class MultiAddinDeploymentTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "OperatorDeployMultiAddinTests", Guid.NewGuid().ToString("N"));
     private readonly TestDesktopShortcutManager _shortcuts = new();
     private Func<IDisposable?> _mutex = () => new Lease();
+    private Action<string> _checkpoint = _ => { };
+    private readonly HashSet<string> _reparsePoints = new(StringComparer.OrdinalIgnoreCase);
 
     [Fact]
     public void Schema_v2_rejects_duplicate_or_unsafe_profile_identity()
@@ -212,6 +215,154 @@ public sealed class MultiAddinDeploymentTests : IDisposable
     }
 
     [Fact]
+    public void Year_filtered_rollback_is_rejected_without_changing_global_state_or_controls()
+    {
+        Assert.True(Run("update", CreateBundle("1.0.0", Years)).Ok);
+        Assert.True(Run("update", CreateBundle("2.0.0", Years)).Ok);
+        var before = OwnedControlBytes();
+
+        var rollback = Run("rollback", revitVersion: "2024");
+
+        Assert.False(rollback.Ok);
+        Assert.Equal(ExitCodes.InvalidArguments, rollback.ExitCode);
+        Assert.Equal(before, OwnedControlBytes());
+        Assert.Equal("2.0.0", State().CurrentRelease);
+        Assert.True(Run("validate").Ok);
+    }
+
+    [Fact]
+    public void Foreign_control_created_after_durable_preflight_is_preserved_and_quarantines_transaction()
+    {
+        var target = AddinPath("2024", "RevitBridge.addin");
+        var foreign = new byte[] { 0x66, 0x6f, 0x72, 0x65, 0x69, 0x67, 0x6e };
+        _checkpoint = point =>
+        {
+            if (point != "journal-prepared") return;
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.WriteAllBytes(target, foreign);
+            _checkpoint = _ => { };
+        };
+
+        var result = Run("update", CreateBundle("1.0.0", new[] { "2024" }));
+
+        Assert.False(result.Ok);
+        Assert.Equal(foreign, File.ReadAllBytes(target));
+        Assert.False(File.Exists(Context().StatePath));
+        Assert.Single(QuarantinedJournals());
+    }
+
+    [Fact]
+    public void Foreign_control_modified_after_transaction_write_is_never_restored_over()
+    {
+        Assert.True(Run("update", CreateBundle("1.0.0", new[] { "2024" })).Ok);
+        var target = AddinPath("2024", "RevitBridge.addin");
+        var oldState = File.ReadAllBytes(Context().StatePath);
+        byte[]? foreign = null;
+        _checkpoint = point =>
+        {
+            if (point != "after-target:2024:primary") return;
+            File.AppendAllText(target, "<!-- concurrent foreign update -->");
+            foreign = File.ReadAllBytes(target);
+            _checkpoint = _ => { };
+        };
+
+        var result = Run("update", CreateBundle("2.0.0", new[] { "2024" }));
+
+        Assert.False(result.Ok);
+        Assert.NotNull(foreign);
+        Assert.Equal(foreign, File.ReadAllBytes(target));
+        Assert.Equal(oldState, File.ReadAllBytes(Context().StatePath));
+        Assert.Single(QuarantinedJournals());
+    }
+
+    [Fact]
+    public void Reparse_point_in_addin_control_path_is_rejected_before_journal_or_live_write()
+    {
+        var addinsYear = Path.GetDirectoryName(AddinPath("2024", "RevitBridge.addin"))!;
+        Directory.CreateDirectory(addinsYear);
+        var marker = Path.Combine(addinsYear, "foreign.marker");
+        File.WriteAllText(marker, "untouched");
+        _reparsePoints.Add(Path.GetFullPath(addinsYear));
+
+        var result = Run("update", CreateBundle("1.0.0", new[] { "2024" }));
+
+        Assert.False(result.Ok);
+        Assert.Contains("reparse", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("untouched", File.ReadAllText(marker));
+        Assert.False(File.Exists(Context().ActivationJournalPath));
+        Assert.False(File.Exists(Context().StatePath));
+    }
+
+    [Theory]
+    [InlineData("after-target:2024:primary")]
+    [InlineData("after-target:2024:safe-read")]
+    public void Separate_process_crash_after_each_target_write_recovers_exact_previous_controls(string killPoint)
+    {
+        Assert.True(Run("update", CreateBundle("1.0.0", new[] { "2024" })).Ok);
+        var before = OwnedControlBytes();
+
+        var bundle = CreateBundle("2.0.0", new[] { "2024" });
+        Assert.Equal(137, RunCrash("update", bundle, killPoint));
+        Assert.True(File.Exists(Context().ActivationJournalPath));
+        Assert.Equal(0, RunCrash("status", bundle, "no-kill"));
+
+        var recovered = Run("validate");
+        Assert.True(recovered.Ok, recovered.Message);
+        Assert.Equal(before, OwnedControlBytes());
+        Assert.False(File.Exists(Context().ActivationJournalPath));
+    }
+
+    [Fact]
+    public void Separate_process_crash_after_obsolete_delete_recovers_exact_previous_controls()
+    {
+        Assert.True(Run("update", CreateBundle("1.0.0", new[] { "2024" })).Ok);
+        var before = OwnedControlBytes();
+
+        var bundle = CreateBundle("2.0.0", new[] { "2024" }, primaryOnly: true);
+        Assert.Equal(137, RunCrash("update", bundle, "after-obsolete:2024:safe-read"));
+        Assert.True(File.Exists(Context().ActivationJournalPath));
+        Assert.Equal(0, RunCrash("status", bundle, "no-kill"));
+
+        var recovered = Run("validate");
+        Assert.True(recovered.Ok, recovered.Message);
+        Assert.Equal(before, OwnedControlBytes());
+        Assert.False(File.Exists(Context().ActivationJournalPath));
+    }
+
+    [Fact]
+    public void Separate_process_crash_before_state_commit_recovers_exact_previous_controls()
+    {
+        Assert.True(Run("update", CreateBundle("1.0.0", new[] { "2024" })).Ok);
+        var before = OwnedControlBytes();
+
+        var bundle = CreateBundle("2.0.0", new[] { "2024" });
+        Assert.Equal(137, RunCrash("update", bundle, "before-state-commit"));
+        Assert.True(File.Exists(Context().ActivationJournalPath));
+        Assert.Equal(0, RunCrash("status", bundle, "no-kill"));
+
+        var recovered = Run("validate");
+        Assert.True(recovered.Ok, recovered.Message);
+        Assert.Equal(before, OwnedControlBytes());
+        Assert.False(File.Exists(Context().ActivationJournalPath));
+    }
+
+    [Fact]
+    public void Separate_process_crash_after_state_commit_retires_journal_without_rolling_back_commit()
+    {
+        Assert.True(Run("update", CreateBundle("1.0.0", new[] { "2024" })).Ok);
+        var bundle = CreateBundle("2.0.0", new[] { "2024" });
+
+        Assert.Equal(137, RunCrash("update", bundle, "after-state-commit"));
+        Assert.True(File.Exists(Context().ActivationJournalPath));
+        Assert.Equal("2.0.0", State().CurrentRelease);
+
+        Assert.Equal(0, RunCrash("status", bundle, "no-kill"));
+        Assert.False(File.Exists(Context().ActivationJournalPath));
+        Assert.Equal("2.0.0", State().CurrentRelease);
+        Assert.True(Run("validate").Ok);
+    }
+
+    [Fact]
     public void Dry_run_and_busy_mutex_leave_every_control_untouched()
     {
         var bundle = CreateBundle("1.0.0", Years);
@@ -273,13 +424,57 @@ public sealed class MultiAddinDeploymentTests : IDisposable
         UtcNow = () => new DateTimeOffset(2026, 7, 29, 12, 0, 0, TimeSpan.Zero),
         GetEnvironmentVariable = _ => null,
         DesktopShortcuts = _shortcuts,
-        TryAcquireDeploymentMutex = () => _mutex()
+        TryAcquireDeploymentMutex = () => _mutex(),
+        ActivationCheckpoint = point => _checkpoint(point),
+        IsReparsePoint = path => _reparsePoints.Contains(Path.GetFullPath(path)) ||
+            ((File.Exists(path) || Directory.Exists(path)) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
     };
 
     private string AddinPath(string year, string fileName)
         => Path.Combine(Context().AppData, "Autodesk", "Revit", "Addins", year, fileName);
 
     private InstalledState State() => JsonSerializer.Deserialize<InstalledState>(File.ReadAllText(Context().StatePath), ReleaseManifest.JsonOptions)!;
+
+    private Dictionary<string, byte[]> OwnedControlBytes()
+        => State().OwnedAddinManifests.Select(control => control.ManifestPath).Append(Context().StatePath)
+            .ToDictionary(path => path, File.ReadAllBytes, StringComparer.OrdinalIgnoreCase);
+
+    private string[] QuarantinedJournals()
+        => Directory.Exists(Context().DeploymentRoot)
+            ? Directory.GetFiles(Context().DeploymentRoot, "activation-journal.quarantine-*.json")
+            : Array.Empty<string>();
+
+    private int RunCrash(string operation, string bundle, string killPoint)
+    {
+        var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent!.Name;
+        var harness = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "CrashHarness", "bin", configuration, "net8.0-windows", "win-x64", "OperatorDeploy.CrashHarness.dll"));
+        Assert.True(File.Exists(harness), $"Crash harness was not built: {harness}");
+        var context = Context();
+        var input = new
+        {
+            context.LocalAppData,
+            context.AppData,
+            context.Desktop,
+            context.ProgramFiles,
+            context.CommonAppData,
+            Operation = operation,
+            ManifestPath = Path.Combine(bundle, "manifest.json"),
+            KillPoint = killPoint
+        };
+        var encoded = Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(input));
+        var start = new ProcessStartInfo("dotnet")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        start.ArgumentList.Add(harness);
+        start.ArgumentList.Add(encoded);
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("Crash harness did not start.");
+        Assert.True(process.WaitForExit(30_000), "Crash harness did not exit within 30 seconds.");
+        return process.ExitCode;
+    }
 
     private void AssertManifest(string year, string fileName, string addInId, string fullClassName, string assemblyName)
     {

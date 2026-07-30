@@ -182,18 +182,14 @@ public sealed class DeploymentEngineTests : IDisposable
     }
 
     [Fact]
-    public void Restore_is_best_effort_and_preserves_original_activation_failure()
+    public void Shortcut_preparation_failure_does_not_touch_live_controls_or_state()
     {
         var context = Context();
         Assert.True(new DeploymentEngine(context, Options("update", CreateBundle("1.0.0")), TextWriter.Null).Execute().Ok);
         var desktopCommandBefore = File.ReadAllBytes(context.DesktopCommandPath);
+        var stableCommandBefore = File.ReadAllBytes(context.StableDesktopLauncherPath);
         var shortcutBefore = File.ReadAllBytes(context.DesktopShortcutPath);
         var stateBefore = File.ReadAllBytes(context.StatePath);
-        _shortcuts.BeforeInjectedFailure = () =>
-        {
-            File.Delete(context.StableDesktopLauncherPath);
-            Directory.CreateDirectory(context.StableDesktopLauncherPath);
-        };
         _shortcuts.FailAfterWrite = true;
 
         var update = new DeploymentEngine(context, Options("update", CreateBundle("2.0.0")), TextWriter.Null).Execute();
@@ -201,7 +197,8 @@ public sealed class DeploymentEngineTests : IDisposable
         Assert.False(update.Ok);
         Assert.Equal(ExitCodes.InstallFailed, update.ExitCode);
         Assert.Contains("Injected shortcut activation failure", update.Message);
-        Assert.Contains("Recovery also reported 1 failure", update.Message);
+        Assert.DoesNotContain("Recovery also reported", update.Message);
+        Assert.Equal(stableCommandBefore, File.ReadAllBytes(context.StableDesktopLauncherPath));
         Assert.Equal(desktopCommandBefore, File.ReadAllBytes(context.DesktopCommandPath));
         Assert.Equal(shortcutBefore, File.ReadAllBytes(context.DesktopShortcutPath));
         Assert.Equal(stateBefore, File.ReadAllBytes(context.StatePath));
@@ -597,7 +594,6 @@ public sealed class DeploymentEngineTests : IDisposable
         public bool IsSupported => true;
         public bool FailAfterWrite { get; set; }
         public bool IgnoreWrites { get; set; }
-        public Action? BeforeInjectedFailure { get; set; }
 
         public void CreateOrUpdate(string shortcutPath, DesktopShortcutInfo shortcut)
         {
@@ -606,8 +602,6 @@ public sealed class DeploymentEngineTests : IDisposable
             File.WriteAllText(shortcutPath, JsonSerializer.Serialize(shortcut));
             if (!FailAfterWrite) return;
             FailAfterWrite = false;
-            BeforeInjectedFailure?.Invoke();
-            BeforeInjectedFailure = null;
             throw new IOException("Injected shortcut activation failure.");
         }
 

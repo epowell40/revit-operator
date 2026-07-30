@@ -15,6 +15,10 @@ public sealed class DeploymentContext
     public Func<string, string?> GetEnvironmentVariable { get; init; } = Environment.GetEnvironmentVariable;
     public IDesktopShortcutManager DesktopShortcuts { get; init; } = DesktopShortcutManager.CreateDefault();
     public Func<IDisposable?> TryAcquireDeploymentMutex { get; init; } = DeploymentMutex.TryAcquire;
+    public Action<string> ActivationCheckpoint { get; init; } = _ => { };
+    public Func<string, bool> IsReparsePoint { get; init; } = path =>
+        (File.Exists(path) || Directory.Exists(path)) &&
+        (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
 
     public string ProductRoot => Path.Combine(LocalAppData, "RevitOperator");
     public string ReleasesRoot => Path.Combine(ProductRoot, "releases");
@@ -22,6 +26,7 @@ public sealed class DeploymentContext
     public string LogsRoot => Path.Combine(ProductRoot, "logs", "deployment");
     public string ConfigRoot => Path.Combine(ProductRoot, "config");
     public string StatePath => Path.Combine(DeploymentRoot, "state.json");
+    public string ActivationJournalPath => Path.Combine(DeploymentRoot, "activation-journal.v1.json");
     public string StableDesktopLauncherPath => Path.Combine(ProductRoot, "Operator Desktop.cmd");
     public string DesktopCommandPath => Path.Combine(Desktop, "Operator Desktop.cmd");
     public string DesktopShortcutPath => Path.Combine(Desktop, "Operator Desktop.lnk");
