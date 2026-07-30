@@ -488,6 +488,22 @@ test("standalone executor attribution rejects bridge substitution and false prom
     () => generatePolicyBytes(JSON.stringify(genericPromotion), fs.readFileSync(candidatesPath, "utf8"), repoRoot),
     /may request only the typed_mcp channel/
   );
+
+  const rawCandidates = JSON.parse(fs.readFileSync(candidatesPath, "utf8")) as any;
+  delete rawCandidates.candidates.find((candidate: any) => candidate.path === "/revit/certified/sheets/count")
+    .execution_surface;
+  assert.throws(
+    () => parseToolCertificationCandidates(rawCandidates),
+    /SafeRead path and alias require the exact standalone execution_surface/
+  );
+
+  const strippedEvidence = JSON.parse(fs.readFileSync(evidencePath, "utf8")) as any;
+  delete strippedEvidence.records.find((record: any) => record.path === "/revit/certified/sheets/count")
+    .execution_surface;
+  assert.throws(
+    () => generatePolicyBytes(JSON.stringify(strippedEvidence), fs.readFileSync(candidatesPath, "utf8"), repoRoot),
+    /SafeRead path and alias require the exact standalone execution_surface/
+  );
 });
 
 test("all typed alias bindings record exact wrapper inputs and canonical outbound request bodies", () => {

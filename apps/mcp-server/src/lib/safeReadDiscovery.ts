@@ -9,6 +9,7 @@ export const SAFE_READ_SHEETS_COUNT_PATH = "/revit/certified/sheets/count";
 export const SAFE_READ_RESERVED_PATH_PREFIX = "/revit/certified";
 export const SAFE_READ_MIN_PORT = 5040;
 export const SAFE_READ_MAX_PORT = 5050;
+const SAFE_READ_PATH_DECODE_LIMIT = 8;
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
@@ -101,22 +102,44 @@ function exactEndpoint(value: unknown): string {
  * SafeRead client. Generic bridge and courier transports must fail closed.
  */
 export function isSafeReadReservedPath(value: unknown): boolean {
-  let candidate = typeof value === "string" ? value.trim().toLowerCase() : "";
-  for (let pass = 0; pass < 3; pass += 1) {
-    if (candidate === SAFE_READ_RESERVED_PATH_PREFIX
-      || candidate.startsWith(`${SAFE_READ_RESERVED_PATH_PREFIX}/`)
-      || candidate.startsWith(`${SAFE_READ_RESERVED_PATH_PREFIX}\\`)
-      || candidate.startsWith(`${SAFE_READ_RESERVED_PATH_PREFIX}?`)
-      || candidate.startsWith(`${SAFE_READ_RESERVED_PATH_PREFIX}#`)) return true;
+  if (typeof value !== "string") return false;
+  let candidate = value.trim();
+  let converged = false;
+  for (let pass = 0; pass < SAFE_READ_PATH_DECODE_LIMIT; pass += 1) {
+    let decoded: string;
     try {
-      const decoded = decodeURIComponent(candidate);
-      if (decoded === candidate) return false;
-      candidate = decoded;
+      decoded = decodeURIComponent(candidate);
     } catch {
-      return false;
+      throw new SafeReadDiscoveryError("safe_read_reserved_path_invalid", "Revit path contains malformed percent encoding.");
+    }
+    if (decoded === candidate) {
+      converged = true;
+      break;
+    }
+    candidate = decoded;
+  }
+  if (!converged) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(candidate);
+    } catch {
+      throw new SafeReadDiscoveryError("safe_read_reserved_path_invalid", "Revit path contains malformed percent encoding.");
+    }
+    if (decoded !== candidate) {
+      throw new SafeReadDiscoveryError("safe_read_reserved_path_invalid", "Revit path percent decoding did not converge within the safety bound.");
     }
   }
-  return false;
+
+  const transportPath = candidate.replace(/\\/g, "/").replace(/\/+/g, "/");
+  let canonicalPath: string;
+  try {
+    canonicalPath = new URL(transportPath, "http://127.0.0.1/").pathname;
+  } catch {
+    throw new SafeReadDiscoveryError("safe_read_reserved_path_invalid", "Revit path cannot be canonicalized safely.");
+  }
+  canonicalPath = canonicalPath.toLowerCase();
+  return canonicalPath === SAFE_READ_RESERVED_PATH_PREFIX
+    || canonicalPath.startsWith(`${SAFE_READ_RESERVED_PATH_PREFIX}/`);
 }
 
 function parseInstance(value: unknown, filename: string, expectedYear?: number): SafeReadInstance {

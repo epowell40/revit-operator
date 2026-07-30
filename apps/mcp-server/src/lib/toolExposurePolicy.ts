@@ -308,6 +308,11 @@ function parsePolicyRecord(value: unknown, index: number): ToolExposurePolicyRec
   if (value.visibility !== "candidate" && value.visibility !== "workflow_only") throw new Error(`${location}.visibility is invalid`);
   assertCanonicalAliasArray(value.typed_mcp_aliases, `${location}.typed_mcp_aliases`);
   if (value.typed_mcp_aliases.includes("revit_call_tool")) throw new Error(`${location}.typed_mcp_aliases cannot bind the generic revit_call_tool surface`);
+  const referencesSafeRead = value.path === SAFE_READ_SHEETS_COUNT_PATH
+    || value.typed_mcp_aliases.includes("revit_count_sheets_certified");
+  if (referencesSafeRead !== hasExecutionSurface) {
+    throw new Error(`${location} SafeRead path and alias require the exact standalone execution_surface`);
+  }
   assertObject(value.channels, `${location}.channels`);
   const channelsRaw = value.channels;
   assertExactKeys(channelsRaw, TOOL_EXPOSURE_CHANNELS, [], `${location}.channels`);

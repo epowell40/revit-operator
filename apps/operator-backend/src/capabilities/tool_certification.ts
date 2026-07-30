@@ -51,6 +51,15 @@ export type StandaloneExecutorSurface = {
   transport: "direct_loopback";
 };
 
+const SAFE_READ_STANDALONE_BINDING = Object.freeze({
+  method: "POST",
+  path: "/revit/certified/sheets/count",
+  alias: "revit_count_sheets_certified",
+  executor_id: "revit-operator.safe-read-host.v1",
+  route_id: "safe_read.sheet_count.v1",
+  transport: "direct_loopback" as const
+});
+
 export type ToolCertificationRecord = {
   method: string;
   path: string;
@@ -237,6 +246,30 @@ function parseStandaloneExecutorSurface(value: unknown, location: string): Stand
   return value as unknown as StandaloneExecutorSurface;
 }
 
+function assertStandaloneExecutorBinding(
+  value: Record<string, unknown>,
+  aliases: string[],
+  hasExecutionSurface: boolean,
+  location: string
+): void {
+  const referencesSafeRead = value.path === SAFE_READ_STANDALONE_BINDING.path
+    || aliases.includes(SAFE_READ_STANDALONE_BINDING.alias);
+  if (referencesSafeRead !== hasExecutionSurface) {
+    throw new Error(`${location} SafeRead path and alias require the exact standalone execution_surface`);
+  }
+  if (!hasExecutionSurface) return;
+  const surface = parseStandaloneExecutorSurface(value.execution_surface, `${location}.execution_surface`);
+  if (value.method !== SAFE_READ_STANDALONE_BINDING.method
+    || value.path !== SAFE_READ_STANDALONE_BINDING.path
+    || aliases.length !== 1
+    || aliases[0] !== SAFE_READ_STANDALONE_BINDING.alias
+    || surface.executor_id !== SAFE_READ_STANDALONE_BINDING.executor_id
+    || surface.route_id !== SAFE_READ_STANDALONE_BINDING.route_id
+    || surface.transport !== SAFE_READ_STANDALONE_BINDING.transport) {
+    throw new Error(`${location}.execution_surface is not the reviewed SafeRead standalone binding`);
+  }
+}
+
 function normalizedObjectEntries(
   value: Record<string, unknown>,
   location: string
@@ -382,6 +415,7 @@ function parseCertificationRecord(
   assertCanonicalMethod(value.method, `${location}.method`);
   assertCanonicalToolPath(value.path, `${location}.path`);
   assertTypedMcpAliases(value.typed_mcp_aliases, `${location}.typed_mcp_aliases`);
+  assertStandaloneExecutorBinding(value, value.typed_mcp_aliases, hasExecutionSurface, location);
   assertJsonValue(value.request, `${location}.request`);
   assertJsonValue(value.effect, `${location}.effect`);
   assertUniqueEnumArray(value.requested_channels, EXPOSURE_CHANNELS, `${location}.requested_channels`);
@@ -395,7 +429,6 @@ function parseCertificationRecord(
     throw new Error(`${location}.evidence.provenance must match evidence file provenance.source`);
   }
   if (hasExecutionSurface) {
-    parseStandaloneExecutorSurface(value.execution_surface, `${location}.execution_surface`);
     if (value.visibility !== "candidate") {
       throw new Error(`${location}.execution_surface requires candidate visibility`);
     }
@@ -460,8 +493,8 @@ export function parseToolCertificationCandidates(value: unknown): ToolCertificat
     assertCanonicalMethod(candidate.method, `${location}.method`);
     assertCanonicalToolPath(candidate.path, `${location}.path`);
     assertTypedMcpAliases(candidate.typed_mcp_aliases, `${location}.typed_mcp_aliases`);
+    assertStandaloneExecutorBinding(candidate, candidate.typed_mcp_aliases, hasExecutionSurface, location);
     if (hasExecutionSurface) {
-      parseStandaloneExecutorSurface(candidate.execution_surface, `${location}.execution_surface`);
       if (candidate.typed_mcp_aliases.length !== 1) {
         throw new Error(`${location}.execution_surface requires exactly one typed MCP alias`);
       }

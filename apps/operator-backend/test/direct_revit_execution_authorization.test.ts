@@ -163,6 +163,33 @@ test("trusted backend policy rejects standalone false promotion onto bridge and 
         && error.message.includes(`cannot expose the ${channel} channel`)
     );
   }
+
+  const policy = structuredClone(bundled.policy) as any;
+  const safeRead = policy.records.find((record: any) => record.path === "/revit/certified/sheets/count");
+  delete safeRead.execution_surface;
+  for (const channel of ["search", "generic_call", "deterministic_workflow"] as const) {
+    safeRead.channels[channel] = {
+      exposed: true,
+      required_level: channel === "search" ? "L3" : "L4",
+      reason_codes: ["CERTIFIED"]
+    };
+  }
+  const { policy_record_hash: _oldRecordHash, ...recordPayload } = safeRead;
+  safeRead.policy_record_hash = sha256(recordPayload);
+  const { policy_hash: _oldPolicyHash, ...policyPayload } = policy;
+  policy.policy_hash = sha256(policyPayload);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-trusted-standalone-stripped-"));
+  const policyPath = path.join(root, "tool_exposure_policy.v1.json");
+  fs.writeFileSync(policyPath, `${JSON.stringify(policy)}\n`, "utf8");
+  assert.throws(
+    () => loadTrustedToolExposurePolicy({
+      OPERATOR_TOOL_EXPOSURE_POLICY_PATH: policyPath,
+      OPERATOR_TOOL_EXPOSURE_POLICY_SHA256: policy.policy_hash
+    }),
+    (error: unknown) => error instanceof TrustedToolExposurePolicyError
+      && error.code === "CERTIFICATION_POLICY_INVALID"
+      && error.message.includes("require the exact standalone execution_surface")
+  );
 });
 
 test("direct authorization derives every generic-call binding from one exact exposed policy record", () => {
