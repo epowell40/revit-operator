@@ -9,6 +9,19 @@ internal sealed class ActivationJournal
     public string Operation { get; set; } = "";
     public string CreatedAtUtc { get; set; } = "";
     public List<ActivationJournalControl> Controls { get; set; } = new();
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ActivationJournalReleaseRootSwap? ReleaseRootSwap { get; set; }
+}
+
+internal sealed class ActivationJournalReleaseRootSwap
+{
+    public string FinalPath { get; set; } = "";
+    public string StagingPath { get; set; } = "";
+    public string DisplacedPath { get; set; } = "";
+    public string FailedPath { get; set; } = "";
+    public bool BeforeExists { get; set; }
+    public string? BeforeTreeSha256 { get; set; }
+    public string AfterTreeSha256 { get; set; } = "";
 }
 
 internal sealed class ActivationJournalControl

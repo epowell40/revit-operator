@@ -312,6 +312,110 @@ public sealed class MultiAddinDeploymentTests : IDisposable
         Assert.False(File.Exists(Context().ActivationJournalPath));
     }
 
+    [Theory]
+    [InlineData("after-release-root-displacement")]
+    [InlineData("after-release-root-placement")]
+    [InlineData("before-legacy-activation-journal-boundary")]
+    public void Separate_process_crash_during_same_version_root_swap_recovers_exact_previous_active_release(string killPoint)
+    {
+        Assert.True(Run("update", CreateBundle("1.0.0", new[] { "2023" })).Ok);
+        var beforeControls = OwnedControlBytes();
+        var beforeRelease = ReleaseTreeBytes("1.0.0");
+
+        var sameVersionComponentMerge = CreateBundle("1.0.0", new[] { "2024" });
+        Assert.Equal(137, RunCrash("update", sameVersionComponentMerge, killPoint));
+        Assert.True(File.Exists(Context().ActivationJournalPath));
+        Assert.Equal(0, RunCrash("status", sameVersionComponentMerge, "no-kill"));
+
+        var recovered = Run("validate");
+        Assert.True(recovered.Ok, recovered.Message);
+        Assert.Equal(beforeControls, OwnedControlBytes());
+        Assert.Equal(beforeRelease, ReleaseTreeBytes("1.0.0"));
+        Assert.False(File.Exists(AddinPath("2024", "RevitBridge.addin")));
+        Assert.False(File.Exists(Context().ActivationJournalPath));
+        Assert.Empty(Directory.GetDirectories(Context().ReleasesRoot, ".1.0.0.staging-*", SearchOption.TopDirectoryOnly));
+    }
+
+    [Theory]
+    [InlineData("after-release-root-displacement")]
+    [InlineData("after-release-root-placement")]
+    [InlineData("before-legacy-activation-journal-boundary")]
+    public void Injected_fault_during_same_version_root_swap_restores_previous_active_release_before_return(string faultPoint)
+    {
+        Assert.True(Run("update", CreateBundle("1.0.0", new[] { "2023" })).Ok);
+        var beforeControls = OwnedControlBytes();
+        var beforeRelease = ReleaseTreeBytes("1.0.0");
+        _checkpoint = point =>
+        {
+            if (point == faultPoint) throw new IOException($"Injected fault at {point}.");
+        };
+
+        var result = Run("update", CreateBundle("1.0.0", new[] { "2024" }));
+
+        Assert.False(result.Ok);
+        Assert.Equal(beforeControls, OwnedControlBytes());
+        Assert.Equal(beforeRelease, ReleaseTreeBytes("1.0.0"));
+        Assert.False(File.Exists(AddinPath("2024", "RevitBridge.addin")));
+        Assert.False(File.Exists(Context().ActivationJournalPath));
+        Assert.Empty(Directory.GetDirectories(Context().ReleasesRoot, ".1.0.0.staging-*", SearchOption.TopDirectoryOnly));
+        _checkpoint = _ => { };
+        Assert.True(Run("validate").Ok);
+    }
+
+    [Fact]
+    public void Concurrent_change_to_displaced_release_is_preserved_and_quarantines_root_recovery()
+    {
+        Assert.True(Run("update", CreateBundle("1.0.0", new[] { "2023" })).Ok);
+        var sameVersionComponentMerge = CreateBundle("1.0.0", new[] { "2024" });
+        Assert.Equal(137, RunCrash("update", sameVersionComponentMerge, "after-release-root-displacement"));
+        var displaced = Assert.Single(Directory.GetDirectories(Context().ReleasesRoot, ".1.0.0.replaced-*", SearchOption.TopDirectoryOnly));
+        var foreignPath = Directory.GetFiles(displaced, "*.dll", SearchOption.AllDirectories).First();
+        File.AppendAllText(foreignPath, "concurrent-foreign-change");
+        var foreignBytes = File.ReadAllBytes(foreignPath);
+
+        Assert.NotEqual(0, RunCrash("status", sameVersionComponentMerge, "no-kill"));
+
+        Assert.Equal(foreignBytes, File.ReadAllBytes(foreignPath));
+        Assert.False(File.Exists(Context().ActivationJournalPath));
+        Assert.Single(QuarantinedJournals());
+        Assert.False(Directory.Exists(Path.Combine(Context().ReleasesRoot, "1.0.0")));
+    }
+
+    [Fact]
+    public void Reparse_point_in_existing_release_root_blocks_swap_before_journal_or_displacement()
+    {
+        Assert.True(Run("update", CreateBundle("1.0.0", new[] { "2023" })).Ok);
+        var beforeControls = OwnedControlBytes();
+        var beforeRelease = ReleaseTreeBytes("1.0.0");
+        _reparsePoints.Add(Path.Combine(Context().ReleasesRoot, "1.0.0"));
+
+        var result = Run("update", CreateBundle("1.0.0", new[] { "2024" }));
+
+        Assert.False(result.Ok);
+        Assert.Contains("reparse", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(beforeControls, OwnedControlBytes());
+        Assert.Equal(beforeRelease, ReleaseTreeBytes("1.0.0"));
+        Assert.False(File.Exists(Context().ActivationJournalPath));
+        Assert.Empty(Directory.GetDirectories(Context().ReleasesRoot, ".1.0.0.replaced-*", SearchOption.TopDirectoryOnly));
+    }
+
+    [Fact]
+    public void Foreign_file_in_final_release_slot_is_preserved_before_journal_or_activation()
+    {
+        var finalSlot = Path.Combine(Context().ReleasesRoot, "1.0.0");
+        Directory.CreateDirectory(Context().ReleasesRoot);
+        File.WriteAllText(finalSlot, "foreign");
+        var foreignBytes = File.ReadAllBytes(finalSlot);
+
+        var result = Run("update", CreateBundle("1.0.0", new[] { "2023" }));
+
+        Assert.False(result.Ok);
+        Assert.Contains("foreign file", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(foreignBytes, File.ReadAllBytes(finalSlot));
+        Assert.False(File.Exists(Context().ActivationJournalPath));
+        Assert.False(File.Exists(Context().StatePath));
+    }
+
     [Fact]
     public void Separate_process_crash_after_obsolete_delete_recovers_exact_previous_controls()
     {
@@ -438,6 +542,16 @@ public sealed class MultiAddinDeploymentTests : IDisposable
     private Dictionary<string, byte[]> OwnedControlBytes()
         => State().OwnedAddinManifests.Select(control => control.ManifestPath).Append(Context().StatePath)
             .ToDictionary(path => path, File.ReadAllBytes, StringComparer.OrdinalIgnoreCase);
+
+    private Dictionary<string, byte[]> ReleaseTreeBytes(string releaseVersion)
+    {
+        var root = Path.Combine(Context().ReleasesRoot, releaseVersion);
+        return Directory.GetFiles(root, "*", SearchOption.AllDirectories)
+            .ToDictionary(
+                path => Path.GetRelativePath(root, path),
+                File.ReadAllBytes,
+                StringComparer.OrdinalIgnoreCase);
+    }
 
     private string[] QuarantinedJournals()
         => Directory.Exists(Context().DeploymentRoot)
