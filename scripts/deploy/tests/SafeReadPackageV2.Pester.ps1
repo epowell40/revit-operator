@@ -28,6 +28,17 @@ function New-SafeReadAdmissionReceiptForTesting([string]$BundleRoot,[string]$Att
 function Assert-SafeReadAdmissionReceiptForTesting([string]$ReceiptPath,[string]$BundleRoot,[string]$AttestationPinSha256,[string]$ExpectedManifestAssemblyRoot,[scriptblock]$SignatureVerifier,[scriptblock]$AssemblyInspector){
   &$safeReadModule {param($ReceiptPath,$BundleRoot,$AttestationPinSha256,$ExpectedManifestAssemblyRoot,$SignatureVerifier,$AssemblyInspector)Assert-SafeReadAdmissionReceiptCore -ReceiptPath $ReceiptPath -BundleRoot $BundleRoot -AttestationPinSha256 $AttestationPinSha256 -ExpectedManifestAssemblyRoot $ExpectedManifestAssemblyRoot -SignatureVerifier $SignatureVerifier -AssemblyInspector $AssemblyInspector} $ReceiptPath $BundleRoot $AttestationPinSha256 $ExpectedManifestAssemblyRoot $SignatureVerifier $AssemblyInspector
 }
+function Invoke-SafeReadAtomicPublisherForTesting([string]$Directory,[string]$LeafName,[byte[]]$Bytes){
+  &$safeReadModule {param($Directory,$LeafName,$Bytes)Initialize-SafeReadAtomicNewFilePublisher;$identity=[SafeRead.AtomicNewFilePublisher]::CaptureDirectoryIdentity($Directory);[SafeRead.AtomicNewFilePublisher]::Publish($Directory,$identity,$LeafName,$Bytes)} $Directory $LeafName $Bytes
+}
+function ConvertTo-TestSingleQuoted([string]$Value){"'"+$Value.Replace("'","''")+"'"}
+function Start-TestPowerShellProcess([string]$Code){
+  $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($Code))
+  Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',$encoded) -PassThru -WindowStyle Hidden
+}
+function Wait-TestPath([string]$Path,[int]$TimeoutMilliseconds=10000){
+  $stopwatch=[Diagnostics.Stopwatch]::StartNew();while(-not(Test-Path -LiteralPath $Path)){if($stopwatch.ElapsedMilliseconds-ge$TimeoutMilliseconds){throw "Timed out waiting for test synchronization path: $Path"};Start-Sleep -Milliseconds 10}
+}
 function New-Identity([string]$Name,[string]$Version='1.0.0.0',[string]$Token='null'){[pscustomobject][ordered]@{name=$Name;version=$Version;culture='neutral';publicKeyToken=$Token}}
 function Get-YearMajor([string]$Year){switch($Year){'2023'{23}'2024'{24}'2025'{25}}}
 function Get-FakeFacts([string]$Year,[string]$Name){
@@ -93,7 +104,8 @@ Describe 'SafeRead package v3 security contract' {
     $assemblyRoot=Join-Path $TestDrive ('future '+[char]0x00DC+' & release');$receiptPath=Join-Path $TestDrive 'admission.receipt.json'
     $outputFull=Resolve-SafeReadAdmissionOutputPath -OutputPath $receiptPath -CoordinationRoot $TestDrive -BundleRoot $bundle.Root -ManifestAssemblyRoot $assemblyRoot
     $created=New-SafeReadAdmissionReceiptForTesting -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
-    [IO.File]::WriteAllText($outputFull,(ConvertTo-SafeReadCanonicalJson $created),[Text.UTF8Encoding]::new($false))
+    $published=Publish-SafeReadAdmissionReceipt -OutputPath $outputFull -CoordinationRoot $TestDrive -BundleRoot $bundle.Root -ManifestAssemblyRoot $assemblyRoot -Receipt $created
+    if($published -cne $outputFull){throw 'Admission receipt publication returned an unexpected path.'}
     if(Test-Path -LiteralPath $assemblyRoot){throw 'Admission preparation wrote the future release or live manifest root.'}
     $receipt=Assert-SafeReadAdmissionReceiptForTesting -ReceiptPath $receiptPath -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ExpectedManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
     if($receipt.releaseManifest.sha256 -cne (Get-SafeReadSha256 (Join-Path $bundle.Root 'release-manifest.json')) -or $receipt.packagePins.externalSha256 -cne $bundle.Pin){throw 'Admission receipt omits its external release/package binding.'}
@@ -101,6 +113,94 @@ Describe 'SafeRead package v3 security contract' {
     foreach($target in @($receipt.targets)){
       if($target.host.signerThumbprint -cne $testThumbprint -or $target.executor.signerThumbprint -cne $testThumbprint -or $target.executor.equivalence.candidateSha256 -cne $target.executor.sha256){throw "Admission receipt omits signed/equivalent payload facts for $($target.revitYear)."}
       if($target.runtimeAttestation.runtimeTuple.revitVersion -cne $target.revitYear -or $target.renderedManifest.fields.assembly -notlike "*targets\$($target.revitYear)\payload\RevitOperator.SafeReadHost.dll"){throw "Admission receipt omits runtime or rendered manifest facts for $($target.revitYear)."}
+    }
+  }
+
+  It 'atomically loses a synchronized destination-create race without overwriting the winner' {
+    $coordination=Join-Path $TestDrive 'destination-race';[IO.Directory]::CreateDirectory($coordination)|Out-Null
+    $receiptPath=Join-Path $coordination 'admission.receipt.json';$ready=Join-Path $TestDrive 'destination-race.ready';$result=Join-Path $TestDrive 'destination-race.result'
+    $childCode=@"
+`$ErrorActionPreference='Stop'
+`$watcher=[IO.FileSystemWatcher]::new($(ConvertTo-TestSingleQuoted $coordination),'.safe-read-admission.*.tmp');`$watcher.NotifyFilter=[IO.NotifyFilters]::FileName;`$watcher.EnableRaisingEvents=`$true
+[IO.File]::WriteAllText($(ConvertTo-TestSingleQuoted $ready),'ready')
+`$change=`$watcher.WaitForChanged([IO.WatcherChangeTypes]::Created,30000)
+if(`$change.TimedOut){[IO.File]::WriteAllText($(ConvertTo-TestSingleQuoted $result),'TIMED_OUT');exit 2}
+try{`$bytes=[Text.UTF8Encoding]::new(`$false).GetBytes('destination-winner');`$stream=[IO.File]::Open($(ConvertTo-TestSingleQuoted $receiptPath),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{`$stream.Write(`$bytes,0,`$bytes.Length);`$stream.Flush()}finally{`$stream.Dispose()};[IO.File]::WriteAllText($(ConvertTo-TestSingleQuoted $result),'CONTENDER_WON')}catch{[IO.File]::WriteAllText($(ConvertTo-TestSingleQuoted $result),'CONTENDER_FAILED: '+`$_.Exception.Message)}finally{`$watcher.Dispose()}
+"@
+    $process=Start-TestPowerShellProcess $childCode
+    try{
+      Wait-TestPath $ready
+      $bytes=[byte[]]::new(128*1024*1024)
+      Assert-ThrowsLike {Invoke-SafeReadAtomicPublisherForTesting $coordination (Split-Path -Leaf $receiptPath) $bytes} '*Refusing to overwrite an existing SafeRead admission receipt*'
+      if(-not$process.WaitForExit(10000)){throw 'The synchronized destination contender did not terminate.'};Wait-TestPath $result
+      $raceResult=[IO.File]::ReadAllText($result)
+      if($raceResult -cne 'CONTENDER_WON'){throw "The synchronized destination contender did not win: $raceResult"}
+      if([IO.File]::ReadAllText($receiptPath) -cne 'destination-winner'){throw 'SafeRead publication overwrote the synchronized destination winner.'}
+      if(@(Get-ChildItem -LiteralPath $coordination -Force|Where-Object Name -like '.safe-read-admission.*.tmp').Count){throw 'A lost admission publication race stranded its private staging file.'}
+    }finally{
+      if(-not$process.HasExited){Stop-Process -Id $process.Id -Force;$process.WaitForExit()};$process.Dispose()
+    }
+  }
+
+  It 'binds the canonical parent so a synchronized parent replacement is rejected while publishing' {
+    $coordination=Join-Path $TestDrive 'parent-race';$moved=Join-Path $TestDrive 'parent-race-moved';[IO.Directory]::CreateDirectory($coordination)|Out-Null
+    $receiptPath=Join-Path $coordination 'admission.receipt.json';$ready=Join-Path $TestDrive 'parent-race.ready';$result=Join-Path $TestDrive 'parent-race.result'
+    $childCode=@"
+`$ErrorActionPreference='Stop'
+`$watcher=[IO.FileSystemWatcher]::new($(ConvertTo-TestSingleQuoted $coordination),'.safe-read-admission.*.tmp');`$watcher.NotifyFilter=[IO.NotifyFilters]::FileName;`$watcher.EnableRaisingEvents=`$true
+[IO.File]::WriteAllText($(ConvertTo-TestSingleQuoted $ready),'ready')
+`$change=`$watcher.WaitForChanged([IO.WatcherChangeTypes]::Created,30000)
+if(`$change.TimedOut){[IO.File]::WriteAllText($(ConvertTo-TestSingleQuoted $result),'TIMED_OUT');exit 2}
+try{[IO.Directory]::Move($(ConvertTo-TestSingleQuoted $coordination),$(ConvertTo-TestSingleQuoted $moved));[IO.File]::WriteAllText($(ConvertTo-TestSingleQuoted $result),'PARENT_REPLACED')}catch{[IO.File]::WriteAllText($(ConvertTo-TestSingleQuoted $result),'PARENT_BOUND')}finally{`$watcher.Dispose()}
+"@
+    $process=Start-TestPowerShellProcess $childCode
+    try{
+      Wait-TestPath $ready
+      $bytes=[byte[]]::new(128*1024*1024);$bytes[0]=121
+      $published=Invoke-SafeReadAtomicPublisherForTesting $coordination (Split-Path -Leaf $receiptPath) $bytes
+      if(-not$process.WaitForExit(10000)){throw 'The synchronized parent contender did not terminate.'};Wait-TestPath $result
+      $raceResult=[IO.File]::ReadAllText($result)
+      if($raceResult -cne 'PARENT_BOUND'){throw "The canonical admission parent was replaceable during publication: $raceResult"}
+      if($published -cne $receiptPath -or -not(Test-Path -LiteralPath $receiptPath -PathType Leaf) -or (Test-Path -LiteralPath $moved)){throw 'Admission publication escaped its bound canonical parent.'}
+      if((Get-Item -LiteralPath $receiptPath).Length-ne$bytes.Length -or [IO.File]::ReadAllBytes($receiptPath)[0]-ne121){throw 'Bound-parent publication changed the staged bytes.'}
+    }finally{
+      if(-not$process.HasExited){Stop-Process -Id $process.Id -Force;$process.WaitForExit()};$process.Dispose()
+    }
+  }
+
+  It 'rejects an ordinary-directory parent replacement between validation and publication' {
+    $coordination=Join-Path $TestDrive 'replaced-parent';$original=Join-Path $TestDrive 'replaced-parent-original';[IO.Directory]::CreateDirectory($coordination)|Out-Null
+    $identity=&$safeReadModule {param($Directory)Initialize-SafeReadAtomicNewFilePublisher;[SafeRead.AtomicNewFilePublisher]::CaptureDirectoryIdentity($Directory)} $coordination
+    [IO.Directory]::Move($coordination,$original);[IO.Directory]::CreateDirectory($coordination)|Out-Null
+    $bytes=[Text.UTF8Encoding]::new($false).GetBytes('{"status":"verified"}')
+    Assert-ThrowsLike {&$safeReadModule {param($Directory,$Identity,$Bytes)[SafeRead.AtomicNewFilePublisher]::Publish($Directory,$Identity,'admission.receipt.json',$Bytes)} $coordination $identity $bytes} '*coordination root was replaced after validation*'
+    if((Test-Path -LiteralPath (Join-Path $coordination 'admission.receipt.json'))-or(Test-Path -LiteralPath (Join-Path $original 'admission.receipt.json'))){throw 'Parent replacement exposed an admission receipt in either directory identity.'}
+  }
+
+  It 'never exposes the target when publication is interrupted during its private staged write' {
+    $coordination=Join-Path $TestDrive 'interrupted-publication';[IO.Directory]::CreateDirectory($coordination)|Out-Null
+    $receiptPath=Join-Path $coordination 'admission.receipt.json'
+    $childCode=@"
+`$ErrorActionPreference='Stop'
+Import-Module $(ConvertTo-TestSingleQuoted $module) -Force
+`$safeReadModule=Get-Module SafeReadPackageV2
+`$bytes=[byte[]]::new(256*1024*1024)
+&`$safeReadModule {param(`$Directory,`$LeafName,`$Bytes)Initialize-SafeReadAtomicNewFilePublisher;`$identity=[SafeRead.AtomicNewFilePublisher]::CaptureDirectoryIdentity(`$Directory);[SafeRead.AtomicNewFilePublisher]::Publish(`$Directory,`$identity,`$LeafName,`$Bytes)} $(ConvertTo-TestSingleQuoted $coordination) $(ConvertTo-TestSingleQuoted (Split-Path -Leaf $receiptPath)) `$bytes
+"@
+    $watcher=[IO.FileSystemWatcher]::new($coordination,'.safe-read-admission.*.tmp');$watcher.NotifyFilter=[IO.NotifyFilters]::FileName;$watcher.EnableRaisingEvents=$true
+    $process=Start-TestPowerShellProcess $childCode
+    try{
+      $change=$watcher.WaitForChanged([IO.WatcherChangeTypes]::Created,20000)
+      if($change.TimedOut){throw 'The interrupted publication never created its private staging file.'}
+      if($process.HasExited){throw 'The publication completed before the interruption gate could stop it.'}
+      Stop-Process -Id $process.Id -Force;$process.WaitForExit()
+      if(Test-Path -LiteralPath $receiptPath){throw 'An interrupted publication exposed an accepted receipt target.'}
+      foreach($staging in @(Get-ChildItem -LiteralPath $coordination -Force|Where-Object Name -like '.safe-read-admission.*.tmp')){
+        if($staging.Extension -ceq '.json'){throw 'An interrupted private staging file was exposed as an accepted receipt.'}
+      }
+    }finally{
+      if(-not$process.HasExited){Stop-Process -Id $process.Id -Force;$process.WaitForExit()}
+      $process.Dispose();$watcher.Dispose()
     }
   }
 
@@ -160,6 +260,9 @@ Describe 'SafeRead package v3 security contract' {
     Assert-ThrowsLike {Resolve-SafeReadManifestAssemblyRoot ([IO.Path]::GetPathRoot($TestDrive))} '*volume root*'
     $target=Join-Path $TestDrive 'canonical-coordination';[IO.Directory]::CreateDirectory($target)|Out-Null;$junction=Join-Path $TestDrive 'coordination-link';New-Item -ItemType Junction -Path $junction -Target $target|Out-Null
     Assert-ThrowsLike {Resolve-SafeReadAdmissionOutputPath -OutputPath (Join-Path $junction 'receipt.json') -CoordinationRoot $junction -BundleRoot $bundle.Root -ManifestAssemblyRoot $assemblyRoot} '*links or reparse points*'
+    $destinationTarget=Join-Path $TestDrive 'destination-link-target';[IO.Directory]::CreateDirectory($destinationTarget)|Out-Null;$destinationLink=Join-Path $TestDrive 'destination-link.json';New-Item -ItemType Junction -Path $destinationLink -Target $destinationTarget|Out-Null
+    Assert-ThrowsLike {Publish-SafeReadAdmissionReceipt -OutputPath $destinationLink -CoordinationRoot $TestDrive -BundleRoot $bundle.Root -ManifestAssemblyRoot $assemblyRoot -Receipt ([ordered]@{status='verified'})} '*links or reparse points*'
+    if(@(Get-ChildItem -LiteralPath $destinationTarget -Force).Count){throw 'Admission publication followed a reparse destination.'}
     Assert-ThrowsLike {&$admissionPreparer -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ManifestAssemblyRoot $assemblyRoot -CoordinationRoot $TestDrive -OutputPath (Join-Path $TestDrive 'never-written.addin')} '*exact .json extension*'
     if(Test-Path -LiteralPath (Join-Path $TestDrive 'never-written.addin')){throw 'Unsafe admission preparation wrote a live-style addin file.'}
   }

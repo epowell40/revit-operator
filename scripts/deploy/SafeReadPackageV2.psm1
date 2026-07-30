@@ -769,6 +769,330 @@ function Resolve-SafeReadAdmissionOutputPath {
   $output
 }
 
+function Initialize-SafeReadAtomicNewFilePublisher {
+  if(('SafeRead.AtomicNewFilePublisher' -as [type])){return}
+  Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+
+namespace SafeRead
+{
+    public static class AtomicNewFilePublisher
+    {
+        private const uint DELETE = 0x00010000;
+        private const uint FILE_READ_ATTRIBUTES = 0x00000080;
+        private const uint GENERIC_WRITE = 0x40000000;
+        private const uint FILE_SHARE_READ = 0x00000001;
+        private const uint FILE_SHARE_WRITE = 0x00000002;
+        private const uint CREATE_NEW = 1;
+        private const uint OPEN_EXISTING = 3;
+        private const uint FILE_ATTRIBUTE_NORMAL = 0x00000080;
+        private const uint FILE_ATTRIBUTE_TEMPORARY = 0x00000100;
+        private const uint FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400;
+        private const uint FILE_FLAG_WRITE_THROUGH = 0x80000000;
+        private const uint FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+        private const uint FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
+        private const int FileRenameInfo = 3;
+        private const int FileDispositionInfo = 4;
+        private const int ERROR_FILE_EXISTS = 80;
+        private const int ERROR_ALREADY_EXISTS = 183;
+        private static readonly IntPtr InvalidHandleValue = new IntPtr(-1);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ByHandleFileInformation
+        {
+            public uint FileAttributes;
+            public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+            public uint VolumeSerialNumber;
+            public uint FileSizeHigh;
+            public uint FileSizeLow;
+            public uint NumberOfLinks;
+            public uint FileIndexHigh;
+            public uint FileIndexLow;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr CreateFileW(
+            string fileName,
+            uint desiredAccess,
+            uint shareMode,
+            IntPtr securityAttributes,
+            uint creationDisposition,
+            uint flagsAndAttributes,
+            IntPtr templateFile);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool CloseHandle(IntPtr handle);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool DeleteFileW(string fileName);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetFileInformationByHandle(IntPtr handle, out ByHandleFileInformation information);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern uint GetFinalPathNameByHandleW(IntPtr handle, StringBuilder path, uint pathLength, uint flags);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetFileInformationByHandle(
+            IntPtr handle,
+            int informationClass,
+            IntPtr information,
+            uint bufferSize);
+
+        private static Win32Exception NativeError(string action)
+        {
+            int error = Marshal.GetLastWin32Error();
+            return new Win32Exception(error, action + " failed: " + new Win32Exception(error).Message);
+        }
+
+        private static string NormalizePath(string path)
+        {
+            string normalized = path;
+            if (normalized.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+                normalized = @"\\" + normalized.Substring(8);
+            else if (normalized.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase))
+                normalized = normalized.Substring(4);
+            return Path.GetFullPath(normalized).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+
+        private static string GetFinalPath(IntPtr handle)
+        {
+            var buffer = new StringBuilder(512);
+            uint length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity, 0);
+            if (length == 0) throw NativeError("Reading the bound path");
+            if (length >= buffer.Capacity)
+            {
+                buffer = new StringBuilder(checked((int)length + 1));
+                length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity, 0);
+                if (length == 0 || length >= buffer.Capacity) throw NativeError("Reading the bound path");
+            }
+            return NormalizePath(buffer.ToString(0, checked((int)length)));
+        }
+
+        private static IntPtr OpenBoundDirectory(string canonicalDirectory)
+        {
+            IntPtr handle = CreateFileW(
+                canonicalDirectory,
+                FILE_READ_ATTRIBUTES,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                IntPtr.Zero,
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                IntPtr.Zero);
+            if (handle == InvalidHandleValue) throw NativeError("Binding the SafeRead admission coordination root");
+            return handle;
+        }
+
+        private static ByHandleFileInformation ReadIdentity(IntPtr handle, string expectedPath)
+        {
+            ByHandleFileInformation information;
+            if (!GetFileInformationByHandle(handle, out information))
+                throw NativeError("Reading the SafeRead admission coordination root identity");
+            if ((information.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+                throw new IOException("SafeRead admission coordination root may not be a link or reparse point.");
+            if (!String.Equals(GetFinalPath(handle), NormalizePath(expectedPath), StringComparison.OrdinalIgnoreCase))
+                throw new IOException("SafeRead admission coordination root changed identity before publication.");
+            return information;
+        }
+
+        private static bool SameIdentity(ByHandleFileInformation left, ByHandleFileInformation right)
+        {
+            return left.VolumeSerialNumber == right.VolumeSerialNumber &&
+                   left.FileIndexHigh == right.FileIndexHigh &&
+                   left.FileIndexLow == right.FileIndexLow;
+        }
+
+        private static string IdentityToken(ByHandleFileInformation information)
+        {
+            return information.VolumeSerialNumber.ToString("x8") + ":" +
+                   information.FileIndexHigh.ToString("x8") + ":" +
+                   information.FileIndexLow.ToString("x8");
+        }
+
+        public static string CaptureDirectoryIdentity(string canonicalDirectory)
+        {
+            canonicalDirectory = NormalizePath(canonicalDirectory);
+            IntPtr handle = OpenBoundDirectory(canonicalDirectory);
+            try { return IdentityToken(ReadIdentity(handle, canonicalDirectory)); }
+            finally { CloseHandle(handle); }
+        }
+
+        private static void RevalidateBoundDirectory(IntPtr boundHandle, ByHandleFileInformation boundIdentity, string canonicalDirectory)
+        {
+            ReadIdentity(boundHandle, canonicalDirectory);
+            IntPtr currentHandle = OpenBoundDirectory(canonicalDirectory);
+            try
+            {
+                ByHandleFileInformation currentIdentity = ReadIdentity(currentHandle, canonicalDirectory);
+                if (!SameIdentity(boundIdentity, currentIdentity))
+                    throw new IOException("SafeRead admission coordination root was replaced before publication.");
+            }
+            finally
+            {
+                CloseHandle(currentHandle);
+            }
+        }
+
+        private static void SetDeleteDisposition(IntPtr handle, bool deleteFile)
+        {
+            IntPtr disposition = Marshal.AllocHGlobal(1);
+            try
+            {
+                Marshal.WriteByte(disposition, deleteFile ? (byte)1 : (byte)0);
+                if (!SetFileInformationByHandle(handle, FileDispositionInfo, disposition, 1))
+                    throw NativeError(deleteFile ? "Arming delete-on-close" : "Committing the published admission receipt");
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(disposition);
+            }
+        }
+
+        private static void RenameNoReplace(IntPtr handle, string targetPath)
+        {
+            byte[] fileName = Encoding.Unicode.GetBytes(targetPath);
+            int rootOffset = IntPtr.Size == 8 ? 8 : 4;
+            int lengthOffset = rootOffset + IntPtr.Size;
+            int nameOffset = lengthOffset + 4;
+            int bufferLength = checked(nameOffset + fileName.Length + 2);
+            IntPtr rename = Marshal.AllocHGlobal(bufferLength);
+            try
+            {
+                for (int index = 0; index < bufferLength; index++) Marshal.WriteByte(rename, index, 0);
+                Marshal.WriteInt32(rename, 0, 0);
+                Marshal.WriteIntPtr(rename, rootOffset, IntPtr.Zero);
+                Marshal.WriteInt32(rename, lengthOffset, fileName.Length);
+                Marshal.Copy(fileName, 0, IntPtr.Add(rename, nameOffset), fileName.Length);
+                if (!SetFileInformationByHandle(handle, FileRenameInfo, rename, (uint)bufferLength))
+                {
+                    int error = Marshal.GetLastWin32Error();
+                    if (error == ERROR_FILE_EXISTS || error == ERROR_ALREADY_EXISTS)
+                        throw new IOException("Refusing to overwrite an existing SafeRead admission receipt: " + targetPath);
+                    throw new Win32Exception(error, "Publishing the SafeRead admission receipt failed: " + new Win32Exception(error).Message);
+                }
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(rename);
+            }
+        }
+
+        public static string Publish(string canonicalDirectory, string expectedDirectoryIdentity, string targetLeafName, byte[] bytes)
+        {
+            if (bytes == null) throw new ArgumentNullException("bytes");
+            if (String.IsNullOrWhiteSpace(expectedDirectoryIdentity)) throw new ArgumentException("The bound directory identity is required.", "expectedDirectoryIdentity");
+            if (String.IsNullOrWhiteSpace(targetLeafName) ||
+                !String.Equals(Path.GetFileName(targetLeafName), targetLeafName, StringComparison.Ordinal) ||
+                targetLeafName == "." || targetLeafName == "..")
+                throw new ArgumentException("SafeRead admission target must be one exact leaf name.", "targetLeafName");
+
+            canonicalDirectory = NormalizePath(canonicalDirectory);
+            string targetPath = Path.Combine(canonicalDirectory, targetLeafName);
+            IntPtr directoryHandle = InvalidHandleValue;
+            IntPtr fileHandle = InvalidHandleValue;
+            string temporaryPath = null;
+            bool stagingCreated = false;
+            bool published = false;
+            try
+            {
+                directoryHandle = OpenBoundDirectory(canonicalDirectory);
+                ByHandleFileInformation directoryIdentity = ReadIdentity(directoryHandle, canonicalDirectory);
+                if (!String.Equals(IdentityToken(directoryIdentity), expectedDirectoryIdentity, StringComparison.Ordinal))
+                    throw new IOException("SafeRead admission coordination root was replaced after validation.");
+
+                for (int attempt = 0; attempt < 16; attempt++)
+                {
+                    temporaryPath = Path.Combine(canonicalDirectory, ".safe-read-admission." + Guid.NewGuid().ToString("N") + ".tmp");
+                    fileHandle = CreateFileW(
+                        temporaryPath,
+                        GENERIC_WRITE | DELETE | FILE_READ_ATTRIBUTES,
+                        0,
+                        IntPtr.Zero,
+                        CREATE_NEW,
+                        FILE_ATTRIBUTE_NORMAL | FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_WRITE_THROUGH | FILE_FLAG_OPEN_REPARSE_POINT,
+                        IntPtr.Zero);
+                    if (fileHandle != InvalidHandleValue) break;
+                    int error = Marshal.GetLastWin32Error();
+                    if (error != ERROR_FILE_EXISTS && error != ERROR_ALREADY_EXISTS)
+                        throw new Win32Exception(error, "Creating the private SafeRead admission staging file failed: " + new Win32Exception(error).Message);
+                }
+                if (fileHandle == InvalidHandleValue)
+                    throw new IOException("Could not allocate a private SafeRead admission staging file.");
+                stagingCreated = true;
+
+                SetDeleteDisposition(fileHandle, true);
+
+                using (var borrowedHandle = new SafeFileHandle(fileHandle, false))
+                using (var stream = new FileStream(borrowedHandle, FileAccess.Write, 1048576, false))
+                {
+                    stream.Write(bytes, 0, bytes.Length);
+                    stream.Flush(true);
+                }
+
+                RevalidateBoundDirectory(directoryHandle, directoryIdentity, canonicalDirectory);
+                SetDeleteDisposition(fileHandle, false);
+                try
+                {
+                    RenameNoReplace(fileHandle, targetPath);
+                    string publishedPath = GetFinalPath(fileHandle);
+                    if (!String.Equals(publishedPath, NormalizePath(targetPath), StringComparison.OrdinalIgnoreCase))
+                        throw new IOException("SafeRead admission receipt did not publish to the bound canonical destination. Actual: " + publishedPath + "; expected: " + NormalizePath(targetPath));
+                    published = true;
+                }
+                catch (Exception publicationError)
+                {
+                    // The file is still held with no sharing. Re-arm deletion so a
+                    // lost destination race cannot strand a reusable staging file.
+                    try { SetDeleteDisposition(fileHandle, true); }
+                    catch (Exception cleanupError)
+                    {
+                        throw new IOException("SafeRead admission publication and private staging cleanup both failed.", new AggregateException(publicationError, cleanupError));
+                    }
+                    throw;
+                }
+                return targetPath;
+            }
+            finally
+            {
+                if (fileHandle != InvalidHandleValue) CloseHandle(fileHandle);
+                if (stagingCreated && !published && temporaryPath != null) DeleteFileW(temporaryPath);
+                if (directoryHandle != InvalidHandleValue) CloseHandle(directoryHandle);
+            }
+        }
+    }
+}
+'@
+}
+
+function Publish-SafeReadAdmissionReceipt {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$OutputPath,
+    [Parameter(Mandatory)][string]$CoordinationRoot,
+    [Parameter(Mandatory)][string]$BundleRoot,
+    [Parameter(Mandatory)][string]$ManifestAssemblyRoot,
+    [Parameter(Mandatory)]$Receipt
+  )
+  Initialize-SafeReadAtomicNewFilePublisher
+  $directoryIdentity=[SafeRead.AtomicNewFilePublisher]::CaptureDirectoryIdentity($CoordinationRoot)
+  $output=Resolve-SafeReadAdmissionOutputPath -OutputPath $OutputPath -CoordinationRoot $CoordinationRoot -BundleRoot $BundleRoot -ManifestAssemblyRoot $ManifestAssemblyRoot
+  $coordination=Resolve-SafeReadCanonicalPath $CoordinationRoot
+  if((Split-Path -Parent $output) -cne $coordination){throw 'SafeRead admission output parent changed before publication.'}
+  $bytes=[Text.UTF8Encoding]::new($false,$true).GetBytes((ConvertTo-SafeReadCanonicalJson $Receipt))
+  [SafeRead.AtomicNewFilePublisher]::Publish($coordination,$directoryIdentity,(Split-Path -Leaf $output),$bytes)
+}
+
 function New-SafeReadAdmissionReceiptCore {
   [CmdletBinding()]
   param(
@@ -878,4 +1202,4 @@ function Write-SafeReadAtomicFile {
   if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temporary,$Path,("{0}.previous.{1}" -f $Path,[guid]::NewGuid().ToString('N'))) } else { Move-Item -LiteralPath $temporary -Destination $Path }
 }
 
-Export-ModuleMember -Function Assert-SafeReadAclRecord,Assert-SafeReadStrictAclRecord,Assert-SafeReadAdmissionReceipt,Assert-SafeReadBundle,Assert-SafeReadExactProperties,Assert-SafeReadManifestXml,Assert-SafeReadReleaseId,Assert-SafeReadRelativePath,Assert-SafeReadDependencyClosure,Assert-SafeReadSecureTree,Assert-SafeReadStrictTree,ConvertTo-SafeReadCanonicalAssemblyReferences,ConvertTo-SafeReadCanonicalJson,ConvertTo-SafeReadHashtable,ConvertTo-SafeReadObject,Get-SafeReadAclRecord,Get-SafeReadAssemblyFacts,Get-SafeReadAssemblyIdentityKey,Get-SafeReadExpectedTarget,Get-SafeReadProofArtifact,Get-SafeReadRevitApiFacts,Get-SafeReadSha256,Get-SafeReadSignatureEvidence,Get-SafeReadUtf8Sha256,Invoke-SafeReadSignatureVerification,New-SafeReadAdmissionReceipt,New-SafeReadAssemblyIdentity,New-SafeReadInstalledManifest,Protect-SafeReadPathAcl,Protect-SafeReadTreeAcl,Resolve-SafeReadAdmissionOutputPath,Resolve-SafeReadCanonicalPath,Resolve-SafeReadManifestAssemblyRoot,Test-SafeReadDependencyAssemblyCompatibility,Test-SafeReadRuntimeProvidedAssembly,Write-SafeReadAtomicFile
+Export-ModuleMember -Function Assert-SafeReadAclRecord,Assert-SafeReadStrictAclRecord,Assert-SafeReadAdmissionReceipt,Assert-SafeReadBundle,Assert-SafeReadExactProperties,Assert-SafeReadManifestXml,Assert-SafeReadReleaseId,Assert-SafeReadRelativePath,Assert-SafeReadDependencyClosure,Assert-SafeReadSecureTree,Assert-SafeReadStrictTree,ConvertTo-SafeReadCanonicalAssemblyReferences,ConvertTo-SafeReadCanonicalJson,ConvertTo-SafeReadHashtable,ConvertTo-SafeReadObject,Get-SafeReadAclRecord,Get-SafeReadAssemblyFacts,Get-SafeReadAssemblyIdentityKey,Get-SafeReadExpectedTarget,Get-SafeReadProofArtifact,Get-SafeReadRevitApiFacts,Get-SafeReadSha256,Get-SafeReadSignatureEvidence,Get-SafeReadUtf8Sha256,Invoke-SafeReadSignatureVerification,New-SafeReadAdmissionReceipt,New-SafeReadAssemblyIdentity,New-SafeReadInstalledManifest,Protect-SafeReadPathAcl,Protect-SafeReadTreeAcl,Publish-SafeReadAdmissionReceipt,Resolve-SafeReadAdmissionOutputPath,Resolve-SafeReadCanonicalPath,Resolve-SafeReadManifestAssemblyRoot,Test-SafeReadDependencyAssemblyCompatibility,Test-SafeReadRuntimeProvidedAssembly,Write-SafeReadAtomicFile
