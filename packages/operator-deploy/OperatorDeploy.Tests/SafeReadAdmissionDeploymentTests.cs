@@ -10,6 +10,7 @@ namespace OperatorDeploy.Tests;
 public sealed class SafeReadAdmissionDeploymentTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "OperatorDeploySafeReadAdmissionTests", Guid.NewGuid().ToString("N"));
+    private readonly HashSet<string> _reparsePaths = new(StringComparer.OrdinalIgnoreCase);
     private Action<string> _checkpoint = _ => { };
 
     [Fact]
@@ -110,6 +111,56 @@ public sealed class SafeReadAdmissionDeploymentTests : IDisposable
         Assert.Contains("reserved production SafeRead identity", failure.Message, StringComparison.Ordinal);
     }
 
+    public static IEnumerable<object[]> ReservedAddInIdGuidVariants()
+    {
+        var guid = Guid.Parse(SafeReadAdmissionContracts.AddInId);
+        yield return new object[] { guid.ToString("D").ToLowerInvariant() };
+        yield return new object[] { guid.ToString("B").ToUpperInvariant() };
+        yield return new object[] { guid.ToString("N").ToUpperInvariant() };
+        yield return new object[] { guid.ToString("P").ToUpperInvariant() };
+        yield return new object[] { guid.ToString("X").ToUpperInvariant() };
+        yield return new object[] { $"  {guid:D}  " };
+    }
+
+    [Theory]
+    [MemberData(nameof(ReservedAddInIdGuidVariants))]
+    public void Every_parseable_reserved_AddInId_form_collides_and_renders_as_the_canonical_Guid(string addInId)
+    {
+        var manifest = DowngradedManifestWithoutAdmission(CreateAdmittedBundle("guid-form-" + Guid.NewGuid().ToString("N")));
+        var profile = Assert.Single(manifest.RevitAddinProfiles);
+        profile.Id = "generic-profile";
+        profile.ManifestFileName = "Generic.addin";
+        profile.AssemblyPath = "payload/Generic.dll";
+        profile.Type = "Application";
+        profile.Name = "Generic add-in";
+        profile.FullClassName = "Example.Generic.App";
+        profile.AddInId = addInId;
+        profile.VendorId = "TEST";
+        profile.VendorDescription = "Generic test add-in";
+        foreach (var component in manifest.Components.Where(component => component.Kind == "revit-addin"))
+            component.RevitAddinProfileId = profile.Id;
+
+        var xml = DeploymentEngine.BuildAddinXml(profile, Path.Combine(_root, "Generic.dll"));
+        Assert.Contains($"<AddInId>{SafeReadAdmissionContracts.AddInId}</AddInId>", xml, StringComparison.Ordinal);
+        var failure = Assert.Throws<DeploymentException>(() => manifest.Validate());
+        Assert.Equal(ExitCodes.ManifestInvalid, failure.ExitCode);
+        Assert.Contains("reserved production SafeRead identity", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [MemberData(nameof(ReservedAddInIdGuidVariants))]
+    public void Admission_receipt_rendered_AddInId_field_requires_exact_canonical_xml_value(string addInId)
+    {
+        var fixture = CreateAdmittedBundle("receipt-guid-form-" + Guid.NewGuid().ToString("N"));
+        RewriteReceipt(fixture, root =>
+        {
+            root["targets"]!.AsArray()[0]!["renderedManifest"]!["fields"]!["addInId"] = addInId;
+            return root;
+        });
+
+        AssertFailure(Run("update", fixture), ExitCodes.ValidationFailed, "rendered manifest fields drifted");
+    }
+
     [Fact]
     public void Generic_schema_v2_profile_without_a_reserved_marker_remains_compatible()
     {
@@ -205,6 +256,74 @@ public sealed class SafeReadAdmissionDeploymentTests : IDisposable
         Assert.False(File.Exists(Context().StatePath));
     }
 
+    [Theory]
+    [InlineData("product-root")]
+    [InlineData("deployment")]
+    [InlineData("state")]
+    [InlineData("sibling-release")]
+    public void Admission_receipt_is_rejected_everywhere_in_the_managed_product_tree(string location)
+    {
+        var fixture = CreateAdmittedBundle("managed-receipt-" + location);
+        var context = Context();
+        var destination = location switch
+        {
+            "product-root" => Path.Combine(context.ProductRoot, "admission.receipt.v2.json"),
+            "deployment" => Path.Combine(context.DeploymentRoot, "admission.receipt.v2.json"),
+            "state" => context.StatePath,
+            "sibling-release" => Path.Combine(context.ReleasesRoot, "other-release", "admission.receipt.v2.json"),
+            _ => throw new InvalidOperationException($"Unknown receipt location: {location}")
+        };
+        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+        File.Copy(fixture.ReceiptPath, destination);
+        var managedFixture = fixture with { ReceiptPath = destination };
+
+        AssertFailure(
+            Run("update", managedFixture),
+            ExitCodes.InvalidArguments,
+            "complete managed product/install tree");
+    }
+
+    [Fact]
+    public void Admission_receipt_requires_one_canonical_absolute_path()
+    {
+        var fixture = CreateAdmittedBundle("receipt-alias");
+        var alias = Path.Combine(Path.GetDirectoryName(fixture.ReceiptPath)!, ".", Path.GetFileName(fixture.ReceiptPath));
+        var aliasedFixture = fixture with { ReceiptPath = alias };
+
+        AssertFailure(Run("update", aliasedFixture), ExitCodes.InvalidArguments, "canonical absolute path");
+    }
+
+    [Theory]
+    [InlineData("receipt")]
+    [InlineData("parent")]
+    public void Admission_receipt_rejects_a_reparse_leaf_or_parent(string target)
+    {
+        var fixture = CreateAdmittedBundle("receipt-reparse-" + target);
+        _reparsePaths.Add(Path.GetFullPath(target == "receipt" ? fixture.ReceiptPath : Path.GetDirectoryName(fixture.ReceiptPath)!));
+
+        AssertFailure(Run("update", fixture), ExitCodes.ValidationFailed, "reparse point");
+    }
+
+    [Theory]
+    [InlineData("root-file")]
+    [InlineData("sibling-component")]
+    [InlineData("declared-component")]
+    [InlineData("empty-directory")]
+    public void Validate_rejects_every_undeclared_release_entry_and_repair_restores_the_exact_tree(string entry)
+    {
+        var fixture = CreateAdmittedBundle("exact-layout-" + entry);
+        Assert.True(Run("update", fixture).Ok);
+        var releaseRoot = Path.Combine(Context().ReleasesRoot, fixture.ReleaseVersion);
+        var extra = AddUndeclaredReleaseEntry(releaseRoot, entry);
+
+        AssertFailure(Run("validate"), ExitCodes.ValidationFailed, "whole-release layout is not exact");
+        var repair = Run("repair", fixture);
+        Assert.True(repair.Ok, repair.Message);
+        Assert.False(File.Exists(extra));
+        Assert.False(Directory.Exists(extra));
+        Assert.True(Run("validate").Ok);
+    }
+
     [Fact]
     public void Validate_and_repair_recheck_persisted_receipt_component_and_manifest_bytes()
     {
@@ -250,6 +369,118 @@ public sealed class SafeReadAdmissionDeploymentTests : IDisposable
         Assert.True(rollback.Ok, rollback.Message);
         Assert.Equal("1.0.0", State().CurrentRelease);
         Assert.True(Run("validate").Ok);
+    }
+
+    [Theory]
+    [InlineData("root-file")]
+    [InlineData("sibling-component")]
+    public void Rollback_rejects_an_undeclared_entry_in_the_historical_release(string entry)
+    {
+        var first = CreateAdmittedBundle("1.0.0");
+        var second = CreateAdmittedBundle("2.0.0");
+        Assert.True(Run("update", first).Ok);
+        Assert.True(Run("update", second).Ok);
+        AddUndeclaredReleaseEntry(Path.Combine(Context().ReleasesRoot, "1.0.0"), entry);
+
+        AssertFailure(Run("rollback"), ExitCodes.ValidationFailed, "whole-release layout is not exact");
+        Assert.Equal("2.0.0", State().CurrentRelease);
+    }
+
+    [Theory]
+    [InlineData("release-root")]
+    [InlineData("component-directory")]
+    [InlineData("component-file")]
+    public void Installed_validation_rejects_reparse_points_anywhere_in_the_release(string target)
+    {
+        var fixture = CreateAdmittedBundle("installed-reparse-" + target);
+        Assert.True(Run("update", fixture).Ok);
+        var releaseRoot = Path.Combine(Context().ReleasesRoot, fixture.ReleaseVersion);
+        var markedPath = target switch
+        {
+            "release-root" => releaseRoot,
+            "component-directory" => Path.Combine(releaseRoot, "safe-read-2024", "payload"),
+            "component-file" => Path.Combine(releaseRoot, "safe-read-2024", SafeReadAdmissionContracts.HostRelativePath.Replace('/', Path.DirectorySeparatorChar)),
+            _ => throw new InvalidOperationException($"Unknown reparse target: {target}")
+        };
+        _reparsePaths.Add(Path.GetFullPath(markedPath));
+
+        AssertFailure(Run("validate"), ExitCodes.ValidationFailed, "reparse point");
+        _reparsePaths.Clear();
+        Assert.True(Run("validate").Ok);
+    }
+
+    [Fact]
+    public void Activation_rejects_a_final_release_root_that_becomes_a_reparse_point()
+    {
+        var fixture = CreateAdmittedBundle("activation-reparse");
+        var finalRoot = Path.Combine(Context().ReleasesRoot, fixture.ReleaseVersion);
+        _checkpoint = point =>
+        {
+            if (point == "after-release-root-placement") _reparsePaths.Add(Path.GetFullPath(finalRoot));
+        };
+
+        AssertFailure(Run("update", fixture), ExitCodes.ValidationFailed, "reparse point");
+        Assert.False(File.Exists(Context().StatePath));
+        foreach (var year in new[] { "2023", "2024", "2025" }) Assert.False(File.Exists(AddinPath(year)));
+        Assert.Single(Directory.GetFiles(Context().DeploymentRoot, "activation-journal.quarantine-*.json"));
+    }
+
+    [Theory]
+    [InlineData("root-file")]
+    [InlineData("sibling-component")]
+    public void Activation_rejects_an_undeclared_entry_added_after_release_root_placement(string entry)
+    {
+        var fixture = CreateAdmittedBundle("activation-extra-" + entry);
+        var finalRoot = Path.Combine(Context().ReleasesRoot, fixture.ReleaseVersion);
+        _checkpoint = point =>
+        {
+            if (point == "after-release-root-placement") AddUndeclaredReleaseEntry(finalRoot, entry);
+        };
+
+        AssertFailure(Run("update", fixture), ExitCodes.ValidationFailed, "promoted release root does not match");
+        Assert.False(File.Exists(Context().StatePath));
+        foreach (var year in new[] { "2023", "2024", "2025" }) Assert.False(File.Exists(AddinPath(year)));
+        Assert.Single(Directory.GetFiles(Context().DeploymentRoot, "activation-journal.quarantine-*.json"));
+    }
+
+    [Fact]
+    public void No_swap_recovery_rejects_a_release_root_that_becomes_a_reparse_point_and_disables_controls()
+    {
+        var fixture = CreateAdmittedBundle("no-swap-reparse");
+        Assert.True(Run("update", fixture).Ok);
+        var finalRoot = Path.Combine(Context().ReleasesRoot, fixture.ReleaseVersion);
+        _checkpoint = point =>
+        {
+            if (point != "after-target:2024:safe-read") return;
+            _reparsePaths.Add(Path.GetFullPath(finalRoot));
+            throw new InvalidOperationException("simulated no-swap interruption");
+        };
+
+        AssertFailure(Run("update", fixture), ExitCodes.InstallFailed, "quarantined");
+        Assert.False(File.Exists(Context().StatePath));
+        foreach (var year in new[] { "2023", "2024", "2025" }) Assert.False(File.Exists(AddinPath(year)));
+        Assert.Single(Directory.GetFiles(Context().DeploymentRoot, "activation-journal.quarantine-*.json"));
+    }
+
+    [Theory]
+    [InlineData("root-file")]
+    [InlineData("sibling-component")]
+    public void No_swap_recovery_rejects_an_undeclared_entry_and_disables_controls(string entry)
+    {
+        var fixture = CreateAdmittedBundle("no-swap-extra-" + entry);
+        Assert.True(Run("update", fixture).Ok);
+        var finalRoot = Path.Combine(Context().ReleasesRoot, fixture.ReleaseVersion);
+        _checkpoint = point =>
+        {
+            if (point != "after-target:2024:safe-read") return;
+            AddUndeclaredReleaseEntry(finalRoot, entry);
+            throw new InvalidOperationException("simulated no-swap interruption");
+        };
+
+        AssertFailure(Run("update", fixture), ExitCodes.InstallFailed, "quarantined");
+        Assert.False(File.Exists(Context().StatePath));
+        foreach (var year in new[] { "2023", "2024", "2025" }) Assert.False(File.Exists(AddinPath(year)));
+        Assert.Single(Directory.GetFiles(Context().DeploymentRoot, "activation-journal.quarantine-*.json"));
     }
 
     [Theory]
@@ -729,6 +960,25 @@ public sealed class SafeReadAdmissionDeploymentTests : IDisposable
         return manifest;
     }
 
+    private static string AddUndeclaredReleaseEntry(string releaseRoot, string entry)
+    {
+        var extra = entry switch
+        {
+            "root-file" => Path.Combine(releaseRoot, "undeclared-root.txt"),
+            "sibling-component" => Path.Combine(releaseRoot, "foreign-component", "extra.txt"),
+            "declared-component" => Path.Combine(releaseRoot, "safe-read-2024", "payload", "extra.dll"),
+            "empty-directory" => Path.Combine(releaseRoot, "empty-extra"),
+            _ => throw new InvalidOperationException($"Unknown extra entry: {entry}")
+        };
+        if (entry == "empty-directory") Directory.CreateDirectory(extra);
+        else
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(extra)!);
+            File.WriteAllText(extra, "not declared", new UTF8Encoding(false));
+        }
+        return extra;
+    }
+
     private OperationResult Run(
         string operation,
         AdmissionFixture? fixture = null,
@@ -808,6 +1058,13 @@ public sealed class SafeReadAdmissionDeploymentTests : IDisposable
             IsRevitRunning = () => false,
             UtcNow = () => new DateTimeOffset(2026, 7, 29, 12, 0, 0, TimeSpan.Zero),
             GetEnvironmentVariable = _ => null,
+            IsReparsePoint = path =>
+            {
+                var full = Path.GetFullPath(path);
+                if (_reparsePaths.Contains(full)) return true;
+                if (!File.Exists(full) && !Directory.Exists(full)) return false;
+                return (File.GetAttributes(full) & FileAttributes.ReparsePoint) != 0;
+            },
             TryAcquireDeploymentMutex = () => DeploymentMutex.TryAcquireForTestRoot(Path.Combine(_root, "profile", "local")),
             ActivationCheckpoint = point => _checkpoint(point),
             DesktopShortcuts = new NoopDesktopShortcutManager()
