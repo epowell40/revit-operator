@@ -22,6 +22,9 @@ var result = new DeploymentEngine(context, new DeploymentOptions
 {
     Operation = input.Operation,
     ManifestPath = input.ManifestPath,
+    SafeReadAdmissionReceiptPath = input.SafeReadAdmissionReceiptPath,
+    SafeReadAdmissionReceiptSha256 = input.SafeReadAdmissionReceiptSha256,
+    SafeReadPackagePinSha256 = input.SafeReadPackagePinSha256,
     Quiet = true
 }, TextWriter.Null).Execute();
 return result.ExitCode;
@@ -34,4 +37,7 @@ internal sealed record HarnessInput(
     string CommonAppData,
     string Operation,
     string? ManifestPath,
+    string? SafeReadAdmissionReceiptPath,
+    string? SafeReadAdmissionReceiptSha256,
+    string? SafeReadPackagePinSha256,
     string KillPoint);

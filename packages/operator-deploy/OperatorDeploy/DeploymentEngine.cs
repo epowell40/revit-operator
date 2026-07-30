@@ -34,6 +34,10 @@ public sealed class DeploymentEngine
             using var deploymentLease = _context.TryAcquireDeploymentMutex()
                 ?? throw new DeploymentException(ExitCodes.InstallFailed, "Another OperatorDeploy operation is already in progress. Retry after it completes.");
             RecoverPendingActivationJournal();
+            if (_options.HasAnySafeReadAdmissionInput &&
+                _options.Operation is not ("install" or "update" or "repair") &&
+                !(_options.Operation == "validate" && _options.BundleOnly))
+                throw new DeploymentException(ExitCodes.InvalidArguments, "SafeRead admission inputs are valid only for install, update, repair, or validate --bundle-only.");
             Log($"Starting {_options.Operation} (dryRun={_options.DryRun}, scope={_options.InstallScope}).");
             var result = _options.Operation switch
             {
@@ -85,6 +89,13 @@ public sealed class DeploymentEngine
         var manifestPath = Path.GetFullPath(_options.ManifestPath);
         var bundleRoot = Path.GetDirectoryName(manifestPath)!;
         var manifest = ReleaseManifest.Load(manifestPath);
+        var finalReleaseRoot = Path.Combine(_context.ReleasesRoot, manifest.ReleaseVersion);
+        var safeReadAdmission = SafeReadAdmissionVerifier.PrepareExternal(
+            _context,
+            _options,
+            manifestPath,
+            manifest,
+            finalReleaseRoot);
         var minimumWindows = Version.Parse(manifest.MinimumWindowsVersion);
         if (_context.WindowsVersion.CompareTo(minimumWindows) < 0)
             throw new DeploymentException(ExitCodes.Unsupported, $"Windows {_context.WindowsVersion} is older than this release's minimum supported version {minimumWindows}.");
@@ -102,7 +113,6 @@ public sealed class DeploymentEngine
             ReleaseVersion = manifest.ReleaseVersion,
             Details = applicable.Select(c => $"{c.Id} ({c.Kind}, {c.Files.Count} files)").ToList()
         };
-        var finalReleaseRoot = Path.Combine(_context.ReleasesRoot, manifest.ReleaseVersion);
         var installedManifest = CopyManifestWithComponents(manifest, applicable);
         var stateSnapshot = LoadStateSnapshot(required: false);
         var stateBefore = stateSnapshot.State;
@@ -124,8 +134,14 @@ public sealed class DeploymentEngine
 
         try
         {
-            StageRelease(bundleRoot, stagingRoot, installedManifest, applicable);
+            StageRelease(bundleRoot, manifestPath, stagingRoot, installedManifest, applicable, safeReadAdmission);
             VerifyInstalledTree(stagingRoot, installedManifest, applicable);
+            SafeReadAdmissionVerifier.VerifyCandidate(
+                stagingRoot,
+                finalReleaseRoot,
+                installedManifest,
+                safeReadAdmission?.Binding,
+                safeReadAdmission?.ReceiptBytes);
 
             if (Directory.Exists(finalReleaseRoot))
             {
@@ -150,12 +166,18 @@ public sealed class DeploymentEngine
                 if (existingValidationFailure == null && hasEveryIncomingComponent && !forceReplace)
                 {
                     Directory.Delete(stagingRoot, recursive: true);
+                    SafeReadAdmissionVerifier.VerifyCandidate(
+                        finalReleaseRoot,
+                        finalReleaseRoot,
+                        existingManifest,
+                        safeReadAdmission?.Binding,
+                        safeReadAdmission?.ReceiptBytes);
                     var plan = PlanActivation(finalReleaseRoot, existingManifest, applicable, currentOwnership, requireAssembly: true);
                     var auxiliary = PrepareAuxiliaryControls(finalReleaseRoot, applicable);
-                    var journal = BeginActivationJournal(plan, auxiliary, stateSnapshot);
+                    var journal = BeginActivationJournal(plan, auxiliary, stateSnapshot, safeReadAdmission: safeReadAdmission?.Binding);
                     var activation = ActivateRelease(finalReleaseRoot, existingManifest, applicable, plan, auxiliary, journal);
-                    ValidateActivatedRelease(finalReleaseRoot, existingManifest, existingManifest.Components, activation);
-                    SaveSuccessfulState(manifest.ReleaseVersion, activation.Ownership, journal);
+                    ValidateActivatedRelease(finalReleaseRoot, existingManifest, existingManifest.Components, activation, safeReadAdmission?.Binding);
+                    SaveSuccessfulState(manifest.ReleaseVersion, activation.Ownership, safeReadAdmission?.Binding, journal);
                     result.Message = "The requested release was already present and valid; activation was refreshed.";
                     return result;
                 }
@@ -171,8 +193,14 @@ public sealed class DeploymentEngine
                     CopyInstalledComponent(finalReleaseRoot, stagingRoot, component);
                 }
                 installedManifest = CopyManifestWithComponents(manifest, preserved.Concat(applicable));
-                File.WriteAllText(Path.Combine(stagingRoot, "manifest.json"), JsonSerializer.Serialize(installedManifest, ReleaseManifest.JsonOptions));
+                WriteStagedManifest(Path.Combine(stagingRoot, "manifest.json"), manifestPath, installedManifest);
                 VerifyInstalledTree(stagingRoot, installedManifest, installedManifest.Components);
+                SafeReadAdmissionVerifier.VerifyCandidate(
+                    stagingRoot,
+                    finalReleaseRoot,
+                    installedManifest,
+                    safeReadAdmission?.Binding,
+                    safeReadAdmission?.ReceiptBytes);
 
             }
 
@@ -184,7 +212,8 @@ public sealed class DeploymentEngine
                 completedAuxiliary,
                 stateSnapshot,
                 releaseRootSwap,
-                transactionId);
+                transactionId,
+                safeReadAdmission?.Binding);
             _context.ActivationCheckpoint("before-release-root-displacement");
             if (Directory.Exists(finalReleaseRoot))
             {
@@ -195,9 +224,15 @@ public sealed class DeploymentEngine
             _context.ActivationCheckpoint("after-release-root-placement");
             _context.ActivationCheckpoint("before-legacy-activation-journal-boundary");
             AssertReleaseRootMatches(finalReleaseRoot, releaseRootSwap.AfterTreeSha256, "promoted release root");
+            SafeReadAdmissionVerifier.VerifyCandidate(
+                finalReleaseRoot,
+                finalReleaseRoot,
+                installedManifest,
+                safeReadAdmission?.Binding,
+                safeReadAdmission?.ReceiptBytes);
             var completedActivation = ActivateRelease(finalReleaseRoot, installedManifest, applicable, completedPlan, completedAuxiliary, activationJournal);
-            ValidateActivatedRelease(finalReleaseRoot, installedManifest, installedManifest.Components, completedActivation);
-            SaveSuccessfulState(manifest.ReleaseVersion, completedActivation.Ownership, activationJournal);
+            ValidateActivatedRelease(finalReleaseRoot, installedManifest, installedManifest.Components, completedActivation, safeReadAdmission?.Binding);
+            SaveSuccessfulState(manifest.ReleaseVersion, completedActivation.Ownership, safeReadAdmission?.Binding, activationJournal);
             if (releaseRootSwap.BeforeExists) result.Warnings.Add($"The replaced release was retained for recovery at {displacedRoot}.");
             return result;
         }
@@ -226,14 +261,20 @@ public sealed class DeploymentEngine
             var manifest = ReleaseManifest.Load(manifestPath);
             var root = Path.GetDirectoryName(manifestPath)!;
             foreach (var component in ApplicableComponents(manifest)) FileIntegrity.VerifyComponent(root, component);
+            var finalReleaseRoot = Path.Combine(_context.ReleasesRoot, manifest.ReleaseVersion);
+            _ = SafeReadAdmissionVerifier.PrepareExternal(_context, _options, manifestPath, manifest, finalReleaseRoot);
             return new OperationResult { Ok = true, Operation = "validate", ExitCode = 0, ReleaseVersion = manifest.ReleaseVersion, Message = "Release manifest and bundled payload hashes are valid." };
         }
 
+        if (_options.HasAnySafeReadAdmissionInput)
+            throw new DeploymentException(ExitCodes.InvalidArguments, "Installed validation uses the durable pinned admission state; external admission inputs are valid only with --bundle-only.");
         var stateSnapshot = LoadStateSnapshot(required: true);
         var state = stateSnapshot.State!;
         var releaseRoot = Path.Combine(_context.ReleasesRoot, state.CurrentRelease);
         var manifestPathInstalled = Path.Combine(releaseRoot, "manifest.json");
         var manifestInstalled = ReleaseManifest.Load(manifestPathInstalled);
+        var safeReadAdmission = AdmissionForRelease(state, state.CurrentRelease, manifestInstalled);
+        SafeReadAdmissionVerifier.VerifyCandidate(releaseRoot, releaseRoot, manifestInstalled, safeReadAdmission);
         var result = ValidateInstalledRelease(releaseRoot, manifestInstalled, ApplicableComponents(manifestInstalled).ToList(), includeNetwork: true);
         if (result.Ok)
         {
@@ -320,8 +361,10 @@ public sealed class DeploymentEngine
         var releaseRoot = Path.Combine(_context.ReleasesRoot, target);
         var manifest = ReleaseManifest.Load(Path.Combine(releaseRoot, "manifest.json"));
         var components = ApplicableComponents(manifest).ToList();
+        var safeReadAdmission = AdmissionForRelease(state, target, manifest);
         if (components.Any(component => component.Kind == "operator-desktop")) EnsureManagedDesktopLauncherOverride();
         VerifyInstalledTree(releaseRoot, manifest, components);
+        SafeReadAdmissionVerifier.VerifyCandidate(releaseRoot, releaseRoot, manifest, safeReadAdmission);
         var currentOwnership = ResolveCurrentOwnership(state);
         var plan = PlanActivation(releaseRoot, manifest, components, currentOwnership, requireAssembly: true);
         if (_options.DryRun)
@@ -330,12 +373,12 @@ public sealed class DeploymentEngine
         try
         {
             var auxiliary = PrepareAuxiliaryControls(releaseRoot, components);
-            var journal = BeginActivationJournal(plan, auxiliary, stateSnapshot);
+            var journal = BeginActivationJournal(plan, auxiliary, stateSnapshot, safeReadAdmission: safeReadAdmission);
             var activation = ActivateRelease(releaseRoot, manifest, components, plan, auxiliary, journal);
-            ValidateActivatedRelease(releaseRoot, manifest, components, activation);
+            ValidateActivatedRelease(releaseRoot, manifest, components, activation, safeReadAdmission);
             state.CurrentRelease = target;
             state.UpdatedAtUtc = _context.UtcNow().ToString("O");
-            state.SchemaVersion = 2;
+            state.SchemaVersion = 3;
             state.OwnedAddinManifests = activation.Ownership;
             SaveState(state, journal);
         }
@@ -421,7 +464,13 @@ public sealed class DeploymentEngine
         }
     }
 
-    private void StageRelease(string bundleRoot, string stagingRoot, ReleaseManifest manifest, IReadOnlyCollection<ReleaseComponent> components)
+    private void StageRelease(
+        string bundleRoot,
+        string sourceManifestPath,
+        string stagingRoot,
+        ReleaseManifest manifest,
+        IReadOnlyCollection<ReleaseComponent> components,
+        PreparedSafeReadAdmission? safeReadAdmission)
     {
         Directory.CreateDirectory(stagingRoot);
         foreach (var component in components)
@@ -436,8 +485,29 @@ public sealed class DeploymentEngine
                 File.Copy(source, destination, overwrite: false);
             }
         }
-        File.WriteAllText(Path.Combine(stagingRoot, "manifest.json"), JsonSerializer.Serialize(manifest, ReleaseManifest.JsonOptions));
+        WriteStagedManifest(Path.Combine(stagingRoot, "manifest.json"), sourceManifestPath, manifest);
+        if (safeReadAdmission != null)
+        {
+            var receiptPath = FileIntegrity.ResolveUnder(
+                stagingRoot,
+                SafeReadAdmissionContracts.PersistedReceiptRelativePath,
+                ExitCodes.ValidationFailed);
+            Directory.CreateDirectory(Path.GetDirectoryName(receiptPath)!);
+            using var stream = new FileStream(receiptPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            stream.Write(safeReadAdmission.ReceiptBytes);
+            stream.Flush(flushToDisk: true);
+        }
         Log($"Staged release {manifest.ReleaseVersion} at {stagingRoot}.");
+    }
+
+    private static void WriteStagedManifest(string destination, string sourceManifestPath, ReleaseManifest manifest)
+    {
+        if (manifest.SchemaVersion == 3)
+        {
+            File.Copy(sourceManifestPath, destination, overwrite: true);
+            return;
+        }
+        File.WriteAllText(destination, JsonSerializer.Serialize(manifest, ReleaseManifest.JsonOptions));
     }
 
     private static ReleaseManifest CopyManifestWithComponents(ReleaseManifest source, IEnumerable<ReleaseComponent> components)
@@ -452,6 +522,7 @@ public sealed class DeploymentEngine
             BackendUrl = source.BackendUrl,
             MinimumBackendApiVersion = source.MinimumBackendApiVersion,
             MaximumBackendApiVersion = source.MaximumBackendApiVersion,
+            SafeReadAdmission = source.SafeReadAdmission,
             RevitAddinProfiles = source.RevitAddinProfiles
                 .Where(profile => components.Any(component => component.RevitAddinProfileId != null && component.RevitAddinProfileId.Equals(profile.Id, StringComparison.OrdinalIgnoreCase)))
                 .ToList(),
@@ -474,12 +545,19 @@ public sealed class DeploymentEngine
         }
         if (existing.SchemaVersion != incoming.SchemaVersion)
             throw new DeploymentException(ExitCodes.ManifestInvalid, $"Release {incoming.ReleaseVersion} already exists with manifest schema {existing.SchemaVersion}, not {incoming.SchemaVersion}.");
-        if (existing.SchemaVersion == 2)
+        if (existing.SchemaVersion is 2 or 3)
         {
             var existingProfiles = JsonSerializer.Serialize(existing.RevitAddinProfiles.OrderBy(profile => profile.Id), ReleaseManifest.JsonOptions);
             var incomingProfiles = JsonSerializer.Serialize(incoming.RevitAddinProfiles.OrderBy(profile => profile.Id), ReleaseManifest.JsonOptions);
             if (!existingProfiles.Equals(incomingProfiles, StringComparison.Ordinal))
                 throw new DeploymentException(ExitCodes.ManifestInvalid, $"Release {incoming.ReleaseVersion} already exists with different Revit add-in profiles.");
+            if (existing.SchemaVersion == 3)
+            {
+                var existingAdmission = JsonSerializer.Serialize(existing.SafeReadAdmission, ReleaseManifest.JsonOptions);
+                var incomingAdmission = JsonSerializer.Serialize(incoming.SafeReadAdmission, ReleaseManifest.JsonOptions);
+                if (!existingAdmission.Equals(incomingAdmission, StringComparison.Ordinal))
+                    throw new DeploymentException(ExitCodes.ManifestInvalid, $"Release {incoming.ReleaseVersion} already exists with different SafeRead admission layout metadata.");
+            }
         }
     }
 
@@ -686,7 +764,7 @@ public sealed class DeploymentEngine
         VendorDescription = "Revit Operator"
     };
 
-    private static string BuildAddinXml(RevitAddinProfile profile, string assembly)
+    internal static string BuildAddinXml(RevitAddinProfile profile, string assembly)
         => $"""
 <?xml version="1.0" encoding="utf-8"?>
 <RevitAddIns>
@@ -701,9 +779,12 @@ public sealed class DeploymentEngine
 </RevitAddIns>
 """;
 
+    internal static byte[] BuildAddinXmlBytes(RevitAddinProfile profile, string assembly)
+        => new UTF8Encoding(false).GetBytes(BuildAddinXml(profile, assembly));
+
     private static void EnsureCompleteActivationSelection(ReleaseManifest manifest, IReadOnlyCollection<AddinControl> targets)
     {
-        if (manifest.SchemaVersion != 2 || targets.Count == 0) return;
+        if (manifest.SchemaVersion is not (2 or 3) || targets.Count == 0) return;
         var expected = manifest.RevitAddinProfiles.Select(profile => profile.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var group in targets.GroupBy(target => target.Ownership.RevitYear, StringComparer.OrdinalIgnoreCase))
         {
@@ -902,7 +983,8 @@ public sealed class DeploymentEngine
         IReadOnlyCollection<PreparedAuxiliaryControl> auxiliary,
         StateSnapshot stateSnapshot,
         ActivationJournalReleaseRootSwap? releaseRootSwap = null,
-        string? transactionId = null)
+        string? transactionId = null,
+        InstalledSafeReadAdmission? safeReadAdmission = null)
     {
         EnsureNoQuarantinedActivationJournal();
         if (File.Exists(_context.ActivationJournalPath))
@@ -953,7 +1035,8 @@ public sealed class DeploymentEngine
             Operation = _options.Operation,
             CreatedAtUtc = _context.UtcNow().ToString("O"),
             Controls = controls,
-            ReleaseRootSwap = releaseRootSwap
+            ReleaseRootSwap = releaseRootSwap,
+            SafeReadAdmission = safeReadAdmission == null ? null : SafeReadAdmissionVerifier.Clone(safeReadAdmission)
         };
         PersistActivationJournal(journal);
         _context.ActivationCheckpoint("journal-prepared");
@@ -1134,6 +1217,19 @@ public sealed class DeploymentEngine
             throw new DeploymentException(ExitCodes.ValidationFailed, "The interrupted activation journal was quarantined because it is invalid.", ex);
         }
 
+        try
+        {
+            VerifyJournalAdmissionCandidates(journal);
+        }
+        catch (Exception ex)
+        {
+            QuarantineActivationJournal($"Activation journal SafeRead admission is invalid: {ex.Message}");
+            throw new DeploymentException(
+                ExitCodes.ValidationFailed,
+                "The interrupted activation journal was quarantined because its SafeRead admission no longer binds the exact candidate release.",
+                ex);
+        }
+
         var state = journal.Controls.Single(control => control.Kind == "state");
         var releaseRootCommitted = journal.ReleaseRootSwap == null ||
             DirectoryMatchesTree(journal.ReleaseRootSwap.FinalPath, journal.ReleaseRootSwap.AfterTreeSha256);
@@ -1169,6 +1265,44 @@ public sealed class DeploymentEngine
         }
         RetireActivationJournal(journalSha256);
         Log($"Recovered interrupted activation journal {journal.TransactionId}; state was restored last.");
+    }
+
+    private void VerifyJournalAdmissionCandidates(ActivationJournal journal)
+    {
+        var candidateRoots = new List<string>();
+        if (journal.ReleaseRootSwap != null)
+        {
+            var swap = journal.ReleaseRootSwap;
+            foreach (var path in new[] { swap.FinalPath, swap.StagingPath, swap.FailedPath })
+            {
+                if (Directory.Exists(path) &&
+                    ReleaseTreeSha256(path).Equals(swap.AfterTreeSha256, StringComparison.OrdinalIgnoreCase))
+                    candidateRoots.Add(path);
+            }
+            if (candidateRoots.Count == 0)
+                throw new InvalidDataException("The journaled replacement tree is absent or no longer exact.");
+        }
+        else if (journal.SafeReadAdmission != null)
+        {
+            var releaseRoot = Path.Combine(_context.ReleasesRoot, journal.SafeReadAdmission.ReleaseVersion);
+            if (!Directory.Exists(releaseRoot))
+                throw new InvalidDataException("The journaled SafeRead release root is missing.");
+            candidateRoots.Add(releaseRoot);
+        }
+
+        foreach (var candidateRoot in candidateRoots.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var manifestPath = Path.Combine(candidateRoot, "manifest.json");
+            var manifest = ReleaseManifest.Load(manifestPath);
+            var requiresAdmission = manifest.SafeReadAdmission != null;
+            if (requiresAdmission != (journal.SafeReadAdmission != null))
+                throw new InvalidDataException("The activation journal admission presence is detached from the candidate manifest.");
+            SafeReadAdmissionVerifier.VerifyCandidate(
+                candidateRoot,
+                journal.ReleaseRootSwap?.FinalPath ?? candidateRoot,
+                manifest,
+                journal.SafeReadAdmission);
+        }
     }
 
     private void RecoverReleaseRootSwap(ActivationJournalReleaseRootSwap swap)
@@ -1298,6 +1432,13 @@ public sealed class DeploymentEngine
         }
         if (journal.Controls.Count(control => control.Kind == "state" && PathsEqual(control.Path, _context.StatePath)) != 1)
             throw new InvalidDataException("Activation journal requires one exact state control.");
+        if (journal.SafeReadAdmission != null)
+        {
+            SafeReadAdmissionVerifier.ValidateBinding(journal.SafeReadAdmission, journal.SafeReadAdmission.ReleaseVersion);
+            var expectedRoot = Path.Combine(_context.ReleasesRoot, journal.SafeReadAdmission.ReleaseVersion);
+            if (journal.ReleaseRootSwap != null && !PathsEqual(journal.ReleaseRootSwap.FinalPath, expectedRoot))
+                throw new InvalidDataException("Activation journal SafeRead admission is bound to a different final release root.");
+        }
         if (journal.ReleaseRootSwap != null) ValidateReleaseRootSwap(journal);
     }
 
@@ -1467,15 +1608,22 @@ public sealed class DeploymentEngine
         ManifestSha256 = source.ManifestSha256
     };
 
-    private void SaveSuccessfulState(string releaseVersion, List<OwnedAddinManifest> ownership, ActivationJournal journal)
+    private void SaveSuccessfulState(
+        string releaseVersion,
+        List<OwnedAddinManifest> ownership,
+        InstalledSafeReadAdmission? safeReadAdmission,
+        ActivationJournal journal)
     {
         var state = LoadState(required: false) ?? new InstalledState();
         state.SuccessfulReleases.RemoveAll(x => x.Equals(releaseVersion, StringComparison.OrdinalIgnoreCase));
         state.SuccessfulReleases.Add(releaseVersion);
         state.CurrentRelease = releaseVersion;
         state.UpdatedAtUtc = _context.UtcNow().ToString("O");
-        state.SchemaVersion = 2;
+        state.SchemaVersion = 3;
         state.OwnedAddinManifests = ownership;
+        state.SafeReadAdmissions.RemoveAll(admission => admission.ReleaseVersion.Equals(releaseVersion, StringComparison.OrdinalIgnoreCase));
+        if (safeReadAdmission != null)
+            state.SafeReadAdmissions.Add(SafeReadAdmissionVerifier.Clone(safeReadAdmission));
         SaveState(state, journal);
     }
 
@@ -1493,7 +1641,7 @@ public sealed class DeploymentEngine
             var bytes = File.ReadAllBytes(_context.StatePath);
             var state = JsonSerializer.Deserialize<InstalledState>(bytes, ReleaseManifest.JsonOptions)
                 ?? throw new InvalidDataException("State was empty.");
-            if (state.SchemaVersion is not (1 or 2)) throw new InvalidDataException($"Unsupported state schemaVersion {state.SchemaVersion}.");
+            if (state.SchemaVersion is not (1 or 2 or 3)) throw new InvalidDataException($"Unsupported state schemaVersion {state.SchemaVersion}.");
             if (string.IsNullOrWhiteSpace(state.CurrentRelease)) throw new InvalidDataException("State currentRelease is missing.");
             if (state.SuccessfulReleases.Count == 0 || !state.SuccessfulReleases.Contains(state.CurrentRelease, StringComparer.OrdinalIgnoreCase))
                 throw new InvalidDataException("State successfulReleases does not contain currentRelease.");
@@ -1504,6 +1652,15 @@ public sealed class DeploymentEngine
                 ReleaseManifest.EnsureSafeBaseName(release, "state successful release");
                 if (!releases.Add(release)) throw new InvalidDataException($"State repeats successful release '{release}'.");
             }
+            if (state.SchemaVersion is 1 or 2 && state.SafeReadAdmissions.Count != 0)
+                throw new InvalidDataException($"State schemaVersion {state.SchemaVersion} cannot carry SafeRead admission bindings.");
+            var admissionReleases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var admission in state.SafeReadAdmissions)
+            {
+                SafeReadAdmissionVerifier.ValidateBinding(admission, admission.ReleaseVersion);
+                if (!releases.Contains(admission.ReleaseVersion) || !admissionReleases.Add(admission.ReleaseVersion))
+                    throw new InvalidDataException($"State SafeRead admission for release '{admission.ReleaseVersion}' is detached or duplicated.");
+            }
             return new StateSnapshot(state, FileIntegrity.Sha256(bytes));
         }
         catch (Exception ex) { throw new DeploymentException(ExitCodes.ValidationFailed, $"Installed state is invalid: {ex.Message}", ex); }
@@ -1511,6 +1668,13 @@ public sealed class DeploymentEngine
 
     private void SaveState(InstalledState state, ActivationJournal journal)
     {
+        var releaseRoot = Path.Combine(_context.ReleasesRoot, state.CurrentRelease);
+        var manifest = ReleaseManifest.Load(Path.Combine(releaseRoot, "manifest.json"));
+        var stateAdmission = AdmissionForRelease(state, state.CurrentRelease, manifest);
+        var stateAdmissionJson = JsonSerializer.Serialize(stateAdmission, ReleaseManifest.JsonOptions);
+        var journalAdmissionJson = JsonSerializer.Serialize(journal.SafeReadAdmission, ReleaseManifest.JsonOptions);
+        if (!stateAdmissionJson.Equals(journalAdmissionJson, StringComparison.Ordinal))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "Activation journal SafeRead admission does not match the state being committed.");
         var bytes = new UTF8Encoding(false).GetBytes(JsonSerializer.Serialize(state, ReleaseManifest.JsonOptions));
         var stateControl = JournalControl(journal, _context.StatePath);
         stateControl.AfterExists = true;
@@ -1542,8 +1706,14 @@ public sealed class DeploymentEngine
         }
     }
 
-    private void ValidateActivatedRelease(string releaseRoot, ReleaseManifest manifest, IReadOnlyCollection<ReleaseComponent> components, ActivationResult activation)
+    private void ValidateActivatedRelease(
+        string releaseRoot,
+        ReleaseManifest manifest,
+        IReadOnlyCollection<ReleaseComponent> components,
+        ActivationResult activation,
+        InstalledSafeReadAdmission? safeReadAdmission)
     {
+        SafeReadAdmissionVerifier.VerifyCandidate(releaseRoot, releaseRoot, manifest, safeReadAdmission);
         var validation = ValidateInstalledRelease(releaseRoot, manifest, components, includeNetwork: false);
         if (!validation.Ok) throw new DeploymentException(ExitCodes.ValidationFailed, validation.Message);
         foreach (var control in activation.Ownership) AssertOwnedManifest(control);
@@ -1552,6 +1722,27 @@ public sealed class DeploymentEngine
             if (File.Exists(control.ManifestPath))
                 throw new DeploymentException(ExitCodes.ValidationFailed, $"Obsolete installer-owned Revit add-in manifest is still present: {control.ManifestPath}");
         }
+    }
+
+    private static InstalledSafeReadAdmission? AdmissionForRelease(
+        InstalledState state,
+        string releaseVersion,
+        ReleaseManifest manifest)
+    {
+        var matches = state.SafeReadAdmissions
+            .Where(admission => admission.ReleaseVersion.Equals(releaseVersion, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (matches.Count > 1)
+            throw new DeploymentException(ExitCodes.ValidationFailed, $"Installed state repeats SafeRead admission for release '{releaseVersion}'.");
+        if (manifest.SafeReadAdmission == null)
+        {
+            if (matches.Count != 0)
+                throw new DeploymentException(ExitCodes.ValidationFailed, $"Installed SafeRead admission is detached from release '{releaseVersion}'.");
+            return null;
+        }
+        if (matches.Count != 1)
+            throw new DeploymentException(ExitCodes.ValidationFailed, $"Release '{releaseVersion}' requires one durable SafeRead admission binding.");
+        return SafeReadAdmissionVerifier.Clone(matches[0]);
     }
 
     private static Exception PreserveOriginalFailure(Exception original, IReadOnlyCollection<Exception> recoveryFailures)

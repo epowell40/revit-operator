@@ -36,13 +36,49 @@ Schema v2 declares generic `revitAddinProfiles` and makes each `revit-addin` com
 
 Profile IDs, manifest filenames, and AddInIds must be unique. Paths and basenames are traversal-safe, every represented Revit year must contain exactly one component for every declared profile, and `--revit-version <year>` selects that whole per-year set. Unknown or duplicate JSON properties are rejected.
 
-OperatorDeploy serializes operations through one named deployment mutex. State schema v2 records the exact installer-owned manifest path, assembly path, identity, and manifest hash. Before the first live control mutation, activation validates ownership and rejects reparse points, writes a durable journal containing only the exact controls the transaction intends to change, and records their before/after fingerprints. Each write or deletion uses compare-and-swap semantics, the complete target set is validated, and state is committed last. A foreign control created or modified during activation is never overwritten or removed.
+Schema v3 is required for the exact production SafeRead identity shown above. A schema-v3 SafeRead release must also declare one `safe-read-evidence` component, three `revit-addin` components for Revit 2023/2024/2025, and this admission mapping:
 
-On startup, an interrupted transaction is recovered before any command proceeds and only while Revit is closed. Recovery first verifies that every control still matches either its journaled before-image or the transaction's intended after-image, then restores transaction changes with state restored last. If any control has a third-party fingerprint, recovery alters nothing, moves the journal to `activation-journal.quarantine-*.json`, and blocks later deployment operations pending manual inspection. Once state and all controls match the committed after-images, the journal is retired. Schema-v1 state is migrated when the next successful operation establishes v2 ownership.
+```json
+{
+  "safeReadAdmission": {
+    "schema": "revit-operator.operator-deploy-safe-read.v1",
+    "profileId": "safe-read",
+    "packageRoot": "SafeReadPackage-<release>",
+    "evidenceComponentId": "safe-read-evidence",
+    "targets": [
+      { "revitYear": "2023", "componentId": "safe-read-2023" },
+      { "revitYear": "2024", "componentId": "safe-read-2024" },
+      { "revitYear": "2025", "componentId": "safe-read-2025" }
+    ]
+  }
+}
+```
+
+Each target component maps the package's exact `targets/<year>` tree to the final component directory and activates `payload/RevitOperator.SafeReadHost.dll`. Filtering a production SafeRead deployment to one Revit year is rejected: admission and activation cover all three years as one unit. Generic non-SafeRead v1/v2 releases remain compatible.
+
+OperatorDeploy serializes operations through one named deployment mutex. State schema v3 records the exact installer-owned manifest path, assembly path, identity, and manifest hash. Before the first live control mutation, activation validates ownership and rejects reparse points, writes a durable journal containing only the exact controls the transaction intends to change, and records their before/after fingerprints. Each write or deletion uses compare-and-swap semantics, the complete target set is validated, and state is committed last. A foreign control created or modified during activation is never overwritten or removed.
+
+On startup, an interrupted transaction is recovered before any command proceeds and only while Revit is closed. Recovery first verifies that every control still matches either its journaled before-image or the transaction's intended after-image, then restores transaction changes with state restored last. If any control has a third-party fingerprint, recovery alters nothing, moves the journal to `activation-journal.quarantine-*.json`, and blocks later deployment operations pending manual inspection. Once state and all controls match the committed after-images, the journal is retired. Schema-v1/v2 state is migrated when the next successful operation establishes schema-v3 ownership.
 
 Installed state has one global `currentRelease`. Consequently, `rollback --revit-version <year>` is rejected; rollback must switch the complete global release. The year filter remains available for install, update, repair, validation selection, and dry-run planning.
 
-This deployment schema does not replace the separate SafeRead proof, signature, package, or runtime-attestation gates. Adding a SafeRead profile describes transaction ownership only; it does not authorize a tool, trust an artifact, or expose a route.
+### SafeRead admission trust boundary
+
+Production SafeRead install, update, repair, and bundle-only validation require all three external command-line inputs:
+
+```text
+--safe-read-admission-receipt <absolute-external-path>
+--safe-read-admission-receipt-sha256 sha256:<64-lowercase-hex>
+--safe-read-package-pin-sha256 sha256:<64-lowercase-hex>
+```
+
+The receipt and both trust pins must come from deployment coordination outside the package, release, install, and Revit add-ins trees. OperatorDeploy never reads a trusted receipt hash or package pin from the release manifest. The receipt path must be a non-reparse-point file outside those trees.
+
+The receipt schema is `revit-operator.safe-read-admission-receipt.v2`. It binds the exact OperatorDeploy manifest bytes, package root, three target mappings, source/proof/runtime facts, final rendered manifest facts, and the exact final layout hash. Immediately before activation, OperatorDeploy independently re-hashes the final staged tree, checks exact file sets and proof/package records, re-inspects host and executor PE facts, revalidates runtime-attestation bindings, regenerates all three `.addin` manifests, and compares the receipt's final-layout hash.
+
+The admitted receipt bytes are copied to `<release>\.operator-deploy\safe-read-admission.receipt.v2.json`. Their external hash, package pin, manifest hash, layout hash, and per-year identities are persisted in both deployment state and the activation journal. Installed validation, repair, rollback, and crash recovery reverify that binding. A missing external pin, stale or detached receipt, wrong release root/year, copied tree, extra/missing file, manifest drift, payload tamper, or replayed journal fails closed before activation. An interrupted candidate whose admitted tree no longer verifies is quarantined rather than replayed.
+
+This gate consumes the independently produced SafeRead proof and admission receipt. It does not itself authorize a tool, expose a route, or establish publisher authenticity from SHA-256 alone.
 
 ## Commands and exit behavior
 
@@ -56,6 +92,8 @@ OperatorDeploy.exe rollback
 OperatorDeploy.exe status
 OperatorDeploy.exe diagnostics
 ```
+
+Append the three external SafeRead options above to `install`, `update`, `repair`, or `validate --bundle-only` when the manifest contains the production SafeRead identity. Installed `validate` and `rollback` load and reverify the binding already persisted in state.
 
 The utility returns stable nonzero exit codes for invalid arguments, invalid manifests, hash mismatches, blocked Revit processes, permission failures, installation failures, validation failures, missing installed state, and unsupported operations. Each run also writes `last-result.json`.
 

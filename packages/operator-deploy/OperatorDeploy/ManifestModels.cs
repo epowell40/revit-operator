@@ -15,6 +15,7 @@ public sealed class ReleaseManifest
     public string? MinimumBackendApiVersion { get; set; }
     public string? MaximumBackendApiVersion { get; set; }
     public List<RevitAddinProfile> RevitAddinProfiles { get; set; } = new();
+    public SafeReadAdmissionMetadata? SafeReadAdmission { get; set; }
     public List<ReleaseComponent> Components { get; set; } = new();
 
     public static readonly JsonSerializerOptions JsonOptions = new()
@@ -48,7 +49,7 @@ public sealed class ReleaseManifest
 
     public void Validate()
     {
-        if (SchemaVersion is not (1 or 2)) throw new DeploymentException(ExitCodes.ManifestInvalid, $"Unsupported manifest schemaVersion {SchemaVersion}; expected 1 or 2.");
+        if (SchemaVersion is not (1 or 2 or 3)) throw new DeploymentException(ExitCodes.ManifestInvalid, $"Unsupported manifest schemaVersion {SchemaVersion}; expected 1, 2, or 3.");
         EnsureSafeBaseName(ReleaseVersion, "releaseVersion");
         if (!Version.TryParse(MinimumWindowsVersion, out _))
             throw new DeploymentException(ExitCodes.ManifestInvalid, $"minimumWindowsVersion is invalid: '{MinimumWindowsVersion}'.");
@@ -91,7 +92,7 @@ public sealed class ReleaseManifest
             EnsureSafeBaseName(component.Id, "component id");
             if (!ids.Add(component.Id))
                 throw new DeploymentException(ExitCodes.ManifestInvalid, $"Component id is missing or duplicated: '{component.Id}'.");
-            if (component.Kind is not ("revit-addin" or "operator-desktop" or "config-default"))
+            if (component.Kind is not ("revit-addin" or "operator-desktop" or "config-default" or "safe-read-evidence"))
                 throw new DeploymentException(ExitCodes.ManifestInvalid, $"Component '{component.Id}' has unsupported kind '{component.Kind}'.");
             if (component.Kind == "revit-addin" && (component.RevitYear?.Length != 4 || !int.TryParse(component.RevitYear, out _)))
                 throw new DeploymentException(ExitCodes.ManifestInvalid, $"Component '{component.Id}' requires a four-digit revitYear.");
@@ -99,10 +100,10 @@ public sealed class ReleaseManifest
             {
                 if (SchemaVersion == 1 && !string.IsNullOrWhiteSpace(component.RevitAddinProfileId))
                     throw new DeploymentException(ExitCodes.ManifestInvalid, $"Schema-v1 component '{component.Id}' cannot declare revitAddinProfileId.");
-                if (SchemaVersion == 2)
+                if (SchemaVersion is 2 or 3)
                 {
                     if (string.IsNullOrWhiteSpace(component.RevitAddinProfileId) || !profileIds.Contains(component.RevitAddinProfileId))
-                        throw new DeploymentException(ExitCodes.ManifestInvalid, $"Schema-v2 component '{component.Id}' references an unknown revitAddinProfileId.");
+                        throw new DeploymentException(ExitCodes.ManifestInvalid, $"Schema-v{SchemaVersion} component '{component.Id}' references an unknown revitAddinProfileId.");
                     if (!profileReferencesByYear.TryGetValue(component.RevitYear!, out var references))
                         profileReferencesByYear[component.RevitYear!] = references = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     if (!references.Add(component.RevitAddinProfileId))
@@ -128,10 +129,10 @@ public sealed class ReleaseManifest
             }
         }
 
-        if (SchemaVersion == 2)
+        if (SchemaVersion is 2 or 3)
         {
             if (Components.Any(component => component.Kind == "revit-addin") && RevitAddinProfiles.Count == 0)
-                throw new DeploymentException(ExitCodes.ManifestInvalid, "Schema-v2 Revit components require revitAddinProfiles.");
+                throw new DeploymentException(ExitCodes.ManifestInvalid, $"Schema-v{SchemaVersion} Revit components require revitAddinProfiles.");
             foreach (var pair in profileReferencesByYear)
             {
                 if (!pair.Value.SetEquals(profileIds))
@@ -143,8 +144,111 @@ public sealed class ReleaseManifest
             }
             var referenced = profileReferencesByYear.Values.SelectMany(value => value).ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (!referenced.SetEquals(profileIds))
-                throw new DeploymentException(ExitCodes.ManifestInvalid, "Every schema-v2 Revit add-in profile must be referenced by a complete per-year activation set.");
+                throw new DeploymentException(ExitCodes.ManifestInvalid, $"Every schema-v{SchemaVersion} Revit add-in profile must be referenced by a complete per-year activation set.");
         }
+
+        ValidateSafeReadAdmission();
+    }
+
+    private void ValidateSafeReadAdmission()
+    {
+        var protectedProfiles = RevitAddinProfiles.Where(SafeReadAdmissionContracts.IsProtectedProfile).ToList();
+        if (SchemaVersion is 1 or 2)
+        {
+            if (SafeReadAdmission != null)
+                throw new DeploymentException(ExitCodes.ManifestInvalid, $"Schema-v{SchemaVersion} manifests cannot declare safeReadAdmission.");
+            if (protectedProfiles.Count != 0)
+                throw new DeploymentException(
+                    ExitCodes.ManifestInvalid,
+                    "The production SafeRead add-in identity requires manifest schema v3 and externally pinned admission.");
+            if (Components.Any(component => component.Kind == "safe-read-evidence"))
+                throw new DeploymentException(ExitCodes.ManifestInvalid, "safe-read-evidence components require manifest schema v3.");
+            return;
+        }
+
+        if (protectedProfiles.Count == 0)
+        {
+            if (SafeReadAdmission != null || Components.Any(component => component.Kind == "safe-read-evidence"))
+                throw new DeploymentException(ExitCodes.ManifestInvalid, "safeReadAdmission is valid only for the exact production SafeRead add-in identity.");
+            return;
+        }
+        if (protectedProfiles.Count != 1 || SafeReadAdmission == null)
+            throw new DeploymentException(ExitCodes.ManifestInvalid, "Schema-v3 production SafeRead requires one exact safeReadAdmission contract.");
+
+        var admission = SafeReadAdmission;
+        if (!admission.Schema.Equals(SafeReadAdmissionContracts.MetadataSchema, StringComparison.Ordinal))
+            throw new DeploymentException(ExitCodes.ManifestInvalid, $"safeReadAdmission.schema must be '{SafeReadAdmissionContracts.MetadataSchema}'.");
+        EnsureSafeBaseName(admission.ProfileId, "safeReadAdmission profileId");
+        EnsureSafeRelativePath(admission.PackageRoot, "safeReadAdmission packageRoot");
+        EnsureSafeBaseName(admission.EvidenceComponentId, "safeReadAdmission evidenceComponentId");
+        var profile = protectedProfiles.Single();
+        if (!admission.ProfileId.Equals(profile.Id, StringComparison.Ordinal))
+            throw new DeploymentException(ExitCodes.ManifestInvalid, "safeReadAdmission.profileId does not name the exact production SafeRead profile.");
+        if (!profile.AssemblyPath.Replace('\\', '/').Equals(SafeReadAdmissionContracts.HostRelativePath, StringComparison.Ordinal))
+            throw new DeploymentException(ExitCodes.ManifestInvalid, $"Production SafeRead assemblyPath must be '{SafeReadAdmissionContracts.HostRelativePath}'.");
+
+        var evidence = Components.SingleOrDefault(component => component.Id.Equals(admission.EvidenceComponentId, StringComparison.Ordinal));
+        if (evidence == null || evidence.Kind != "safe-read-evidence" || !evidence.Required ||
+            !evidence.PayloadPath.Equals(admission.PackageRoot, StringComparison.Ordinal) ||
+            evidence.RevitYear != null || evidence.RevitAddinProfileId != null)
+            throw new DeploymentException(ExitCodes.ManifestInvalid, "safeReadAdmission evidence component is missing or does not bind the package root exactly.");
+        var requiredEvidenceFiles = new[]
+        {
+            "release-manifest.json",
+            "package-pins.json",
+            "source.snapshot.receipt.json"
+        };
+        foreach (var path in requiredEvidenceFiles)
+        {
+            if (evidence.Files.Count(file => file.Path.Equals(path, StringComparison.Ordinal)) != 1)
+                throw new DeploymentException(ExitCodes.ManifestInvalid, $"safeReadAdmission evidence component must contain exact file '{path}'.");
+        }
+
+        var expectedYears = new HashSet<string>(new[] { "2023", "2024", "2025" }, StringComparer.Ordinal);
+        if (admission.Targets.Count != 3 ||
+            !admission.Targets.Select(target => target.RevitYear).ToHashSet(StringComparer.Ordinal).SetEquals(expectedYears))
+            throw new DeploymentException(ExitCodes.ManifestInvalid, "safeReadAdmission must map exactly Revit 2023, 2024, and 2025.");
+        var targetComponentIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var target in admission.Targets)
+        {
+            EnsureSafeBaseName(target.ComponentId, $"safeReadAdmission target {target.RevitYear} componentId");
+            if (!targetComponentIds.Add(target.ComponentId))
+                throw new DeploymentException(ExitCodes.ManifestInvalid, $"safeReadAdmission repeats componentId '{target.ComponentId}'.");
+            var component = Components.SingleOrDefault(candidate => candidate.Id.Equals(target.ComponentId, StringComparison.Ordinal));
+            if (component == null || component.Kind != "revit-addin" || !component.Required ||
+                !component.InstallWhenRevitMissing || component.RevitYear != target.RevitYear ||
+                !string.Equals(component.RevitAddinProfileId, profile.Id, StringComparison.Ordinal))
+                throw new DeploymentException(ExitCodes.ManifestInvalid, $"safeReadAdmission target {target.RevitYear} does not bind one required production SafeRead component.");
+            var expectedPayloadPath = $"{admission.PackageRoot.TrimEnd('/', '\\')}/targets/{target.RevitYear}";
+            if (!component.PayloadPath.Replace('\\', '/').Equals(expectedPayloadPath.Replace('\\', '/'), StringComparison.Ordinal))
+                throw new DeploymentException(ExitCodes.ManifestInvalid, $"safeReadAdmission target {target.RevitYear} payloadPath is detached from its exact package target.");
+            var requiredTargetFiles = new[]
+            {
+                SafeReadAdmissionContracts.HostRelativePath,
+                SafeReadAdmissionContracts.ExecutorRelativePath,
+                SafeReadAdmissionContracts.RuntimeAttestationRelativePath,
+                SafeReadAdmissionContracts.RuntimeAttestationPinRelativePath,
+                SafeReadAdmissionContracts.ManifestTemplateRelativePath,
+                SafeReadAdmissionContracts.ProofReceiptRelativePath,
+                SafeReadAdmissionContracts.EquivalenceReceiptRelativePath
+            };
+            foreach (var path in requiredTargetFiles)
+            {
+                if (component.Files.Count(file => file.Path.Equals(path, StringComparison.Ordinal)) != 1)
+                    throw new DeploymentException(ExitCodes.ManifestInvalid, $"safeReadAdmission target {target.RevitYear} must contain exact file '{path}'.");
+            }
+        }
+
+        var protectedComponents = Components.Where(component =>
+            component.Kind == "revit-addin" &&
+            string.Equals(component.RevitAddinProfileId, profile.Id, StringComparison.Ordinal)).ToList();
+        if (protectedComponents.Count != 3 ||
+            !protectedComponents.Select(component => component.Id).ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(targetComponentIds))
+            throw new DeploymentException(ExitCodes.ManifestInvalid, "safeReadAdmission target mapping must cover every and only production SafeRead component.");
+        if (Components.Any(component => component.Kind == "revit-addin" && !component.InstallWhenRevitMissing))
+            throw new DeploymentException(
+                ExitCodes.ManifestInvalid,
+                "Schema-v3 SafeRead admission requires one exact workstation-independent component set; every Revit add-in component must set installWhenRevitMissing=true.");
     }
 
     public static void EnsureSafeRelativePath(string value, string label)
@@ -235,6 +339,21 @@ public sealed class ReleaseComponent
     public List<ReleaseFile> Files { get; set; } = new();
 }
 
+public sealed class SafeReadAdmissionMetadata
+{
+    public string Schema { get; set; } = "";
+    public string ProfileId { get; set; } = "";
+    public string PackageRoot { get; set; } = "";
+    public string EvidenceComponentId { get; set; } = "";
+    public List<SafeReadAdmissionTarget> Targets { get; set; } = new();
+}
+
+public sealed class SafeReadAdmissionTarget
+{
+    public string RevitYear { get; set; } = "";
+    public string ComponentId { get; set; } = "";
+}
+
 public sealed class ReleaseFile
 {
     public string Path { get; set; } = "";
@@ -244,11 +363,33 @@ public sealed class ReleaseFile
 
 public sealed class InstalledState
 {
-    public int SchemaVersion { get; set; } = 2;
+    public int SchemaVersion { get; set; } = 3;
     public string CurrentRelease { get; set; } = "";
     public List<string> SuccessfulReleases { get; set; } = new();
     public string UpdatedAtUtc { get; set; } = "";
     public List<OwnedAddinManifest> OwnedAddinManifests { get; set; } = new();
+    public List<InstalledSafeReadAdmission> SafeReadAdmissions { get; set; } = new();
+}
+
+public sealed class InstalledSafeReadAdmission
+{
+    public string Schema { get; set; } = SafeReadAdmissionContracts.InstalledBindingSchema;
+    public string ReleaseVersion { get; set; } = "";
+    public string ReleaseId { get; set; } = "";
+    public string ReceiptRelativePath { get; set; } = SafeReadAdmissionContracts.PersistedReceiptRelativePath;
+    public string ReceiptSha256 { get; set; } = "";
+    public string PackagePinSha256 { get; set; } = "";
+    public string OperatorManifestSha256 { get; set; } = "";
+    public string LayoutSha256 { get; set; } = "";
+    public List<InstalledSafeReadTarget> Targets { get; set; } = new();
+}
+
+public sealed class InstalledSafeReadTarget
+{
+    public string RevitYear { get; set; } = "";
+    public string ComponentId { get; set; } = "";
+    public string AssemblyPath { get; set; } = "";
+    public string ManifestSha256 { get; set; } = "";
 }
 
 public sealed class OwnedAddinManifest

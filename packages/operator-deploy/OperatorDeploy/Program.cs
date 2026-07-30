@@ -27,6 +27,9 @@ static DeploymentOptions Parse(string[] values)
     string? manifest = null;
     string? logPath = null;
     string? revitVersion = null;
+    string? safeReadAdmissionReceiptPath = null;
+    string? safeReadAdmissionReceiptSha256 = null;
+    string? safeReadPackagePinSha256 = null;
     var scope = "user";
     var quiet = false;
     var dryRun = false;
@@ -41,6 +44,9 @@ static DeploymentOptions Parse(string[] values)
             case "--log-path": logPath = RequiredValue(values, ref i, "--log-path"); break;
             case "--install-scope": scope = RequiredValue(values, ref i, "--install-scope").ToLowerInvariant(); break;
             case "--revit-version": revitVersion = RequiredValue(values, ref i, "--revit-version"); break;
+            case "--safe-read-admission-receipt": safeReadAdmissionReceiptPath = RequiredValue(values, ref i, "--safe-read-admission-receipt"); break;
+            case "--safe-read-admission-receipt-sha256": safeReadAdmissionReceiptSha256 = RequiredValue(values, ref i, "--safe-read-admission-receipt-sha256"); break;
+            case "--safe-read-package-pin-sha256": safeReadPackagePinSha256 = RequiredValue(values, ref i, "--safe-read-package-pin-sha256"); break;
             case "--quiet": quiet = true; break;
             case "--dry-run": dryRun = true; break;
             case "--force": force = true; break;
@@ -56,6 +62,9 @@ static DeploymentOptions Parse(string[] values)
         LogPath = logPath,
         RevitVersion = revitVersion,
         InstallScope = scope,
+        SafeReadAdmissionReceiptPath = safeReadAdmissionReceiptPath,
+        SafeReadAdmissionReceiptSha256 = safeReadAdmissionReceiptSha256,
+        SafeReadPackagePinSha256 = safeReadPackagePinSha256,
         Quiet = quiet,
         DryRun = dryRun,
         Force = force,
@@ -92,5 +101,11 @@ Options:
   --install-scope user       Portable channel supports per-user installation
   --revit-version <year>     Install the complete add-in profile set for one Revit year
   --bundle-only              Validate the release bundle rather than installed state
+  --safe-read-admission-receipt <absolute path>
+                             Externally prepared schema-v2 SafeRead admission receipt
+  --safe-read-admission-receipt-sha256 <sha256:...>
+                             Trusted external pin for the exact receipt bytes
+  --safe-read-package-pin-sha256 <sha256:...>
+                             Trusted external pin for package-pins.json
 """);
 }

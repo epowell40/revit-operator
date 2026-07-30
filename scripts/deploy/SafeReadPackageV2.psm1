@@ -3,7 +3,10 @@ Set-StrictMode -Version Latest
 $script:ReleaseSchema = 'revit-operator.safe-read-package-release.v3'
 $script:PinsSchema = 'revit-operator.safe-read-package-pins.v3'
 $script:RuntimeAttestationSchema = 'revit-operator.safe-read-runtime-attestation.v1'
-$script:AdmissionReceiptSchema = 'revit-operator.safe-read-admission-receipt.v1'
+$script:AdmissionReceiptSchemaV1 = 'revit-operator.safe-read-admission-receipt.v1'
+$script:AdmissionReceiptSchemaV2 = 'revit-operator.safe-read-admission-receipt.v2'
+$script:OperatorDeployMetadataSchema = 'revit-operator.operator-deploy-safe-read.v1'
+$script:OperatorDeployLayoutSchema = 'revit-operator.operator-deploy-safe-read-layout.v1'
 $script:HostDll = 'RevitOperator.SafeReadHost.dll'
 $script:CertifiedExecutorDll = 'RevitOperator.SafeReadCertifiedExecution.dll'
 $script:RuntimeAttestationName = 'safe_read_runtime_attestation.v1.json'
@@ -562,10 +565,10 @@ function New-SafeReadInstalledManifest {
   param([Parameter(Mandatory)][string]$TemplatePath, [Parameter(Mandatory)][string]$AssemblyPath)
   $xml = Assert-SafeReadManifestXml -Path $TemplatePath -ExpectedAssembly $script:AssemblyToken
   $xml.SelectSingleNode('/RevitAddIns/AddIn/Assembly').InnerText = $AssemblyPath
-  $settings = [Xml.XmlWriterSettings]::new(); $settings.Encoding = [Text.UTF8Encoding]::new($false); $settings.Indent = $true; $settings.OmitXmlDeclaration = $false
-  $builder = [Text.StringBuilder]::new(); $writer = [Xml.XmlWriter]::Create($builder, $settings)
-  try { $xml.Save($writer) } finally { $writer.Dispose() }
-  $result = $builder.ToString(); [void](Assert-SafeReadManifestXml -Content $result -ExpectedAssembly $AssemblyPath); $result
+  $settings = [Xml.XmlWriterSettings]::new(); $settings.Encoding = [Text.UTF8Encoding]::new($false); $settings.Indent = $true; $settings.OmitXmlDeclaration = $false;$settings.NewLineChars="`r`n";$settings.NewLineHandling=[Xml.NewLineHandling]::Replace
+  $stream=[IO.MemoryStream]::new();$writer = [Xml.XmlWriter]::Create($stream, $settings)
+  try { $xml.Save($writer);$writer.Flush();$bytes=$stream.ToArray() } finally { $writer.Dispose();$stream.Dispose() }
+  $result = [Text.UTF8Encoding]::new($false,$true).GetString($bytes); [void](Assert-SafeReadManifestXml -Content $result -ExpectedAssembly $AssemblyPath); $result
 }
 
 function Invoke-SafeReadSignatureVerification {
@@ -1100,16 +1103,97 @@ function Publish-SafeReadAdmissionReceipt {
   [SafeRead.AtomicNewFilePublisher]::Publish($coordination,$directoryIdentity,(Split-Path -Leaf $output),$bytes)
 }
 
+function Resolve-SafeReadOperatorDeployLayout {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$OperatorDeployManifestPath,
+    [Parameter(Mandatory)][string]$BundleRoot,
+    [Parameter(Mandatory)][string]$ManifestAssemblyRoot
+  )
+  $manifestPath=Resolve-SafeReadCanonicalPath $OperatorDeployManifestPath
+  $manifest=ConvertTo-SafeReadObject $manifestPath
+  foreach($required in 'schemaVersion','releaseVersion','revitAddinProfiles','safeReadAdmission','components'){
+    if(@($manifest.PSObject.Properties|Where-Object Name -ceq $required).Count -ne 1){throw "OperatorDeploy manifest omits exact property '$required'."}
+  }
+  if([int]$manifest.schemaVersion -ne 3){throw 'OperatorDeploy SafeRead admission requires manifest schemaVersion 3.'}
+  if([string]$manifest.releaseVersion -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'){throw 'OperatorDeploy SafeRead releaseVersion is invalid.'}
+  $metadata=$manifest.safeReadAdmission
+  Assert-SafeReadExactProperties $metadata @('schema','profileId','packageRoot','evidenceComponentId','targets') 'OperatorDeploy safeReadAdmission'
+  if([string]$metadata.schema -cne $script:OperatorDeployMetadataSchema){throw 'OperatorDeploy safeReadAdmission schema is invalid.'}
+  foreach($value in [string]$metadata.profileId,[string]$metadata.evidenceComponentId){
+    if($value -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'){throw 'OperatorDeploy SafeRead admission identifier is invalid.'}
+  }
+  Assert-SafeReadRelativePath ([string]$metadata.packageRoot)
+  $manifestRoot=Split-Path -Parent $manifestPath
+  $expectedBundle=Resolve-SafeReadCanonicalPath (Join-Path $manifestRoot ([string]$metadata.packageRoot))
+  $bundle=Resolve-SafeReadCanonicalPath $BundleRoot
+  if($expectedBundle -cne $bundle){throw 'OperatorDeploy safeReadAdmission packageRoot is detached from the verified SafeRead bundle.'}
+
+  $profiles=@($manifest.revitAddinProfiles|Where-Object id -ceq ([string]$metadata.profileId))
+  if($profiles.Count -ne 1){throw 'OperatorDeploy safeReadAdmission must name one exact production profile.'}
+  $profile=$profiles[0]
+  Assert-SafeReadExactProperties $profile @('id','manifestFileName','assemblyPath','type','name','fullClassName','addInId','vendorId','vendorDescription') 'OperatorDeploy SafeRead profile'
+  $expectedProfile=[ordered]@{
+    manifestFileName=$script:InstalledManifestName
+    assemblyPath="payload/$script:HostDll"
+    type='Application'
+    name=$script:Identity.Name
+    fullClassName=$script:Identity.FullClassName
+    addInId=$script:Identity.AddInId
+    vendorId=$script:Identity.VendorId
+    vendorDescription=$script:Identity.VendorDescription
+  }
+  foreach($name in $expectedProfile.Keys){
+    if([string]$profile.$name -cne [string]$expectedProfile[$name]){throw "OperatorDeploy SafeRead profile field '$name' is not exact."}
+  }
+
+  $components=@($manifest.components)
+  $evidence=@($components|Where-Object id -ceq ([string]$metadata.evidenceComponentId))
+  if($evidence.Count -ne 1 -or [string]$evidence[0].kind -cne 'safe-read-evidence' -or -not[bool]$evidence[0].required -or [string]$evidence[0].payloadPath -cne [string]$metadata.packageRoot){
+    throw 'OperatorDeploy SafeRead evidence component is invalid.'
+  }
+  $targetMetadata=@($metadata.targets|Sort-Object revitYear)
+  if($targetMetadata.Count -ne 3 -or (@($targetMetadata.revitYear)-join ',') -cne '2023,2024,2025'){
+    throw 'OperatorDeploy safeReadAdmission must map exactly Revit 2023, 2024, and 2025.'
+  }
+  $finalRoot=Resolve-SafeReadManifestAssemblyRoot $ManifestAssemblyRoot
+  $layoutTargets=@()
+  foreach($mapping in $targetMetadata){
+    Assert-SafeReadExactProperties $mapping @('revitYear','componentId') "OperatorDeploy SafeRead target $($mapping.revitYear)"
+    $year=[string]$mapping.revitYear;$componentId=[string]$mapping.componentId
+    if($componentId -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'){throw "OperatorDeploy SafeRead target $year componentId is invalid."}
+    $component=@($components|Where-Object id -ceq $componentId)
+    if($component.Count -ne 1 -or [string]$component[0].kind -cne 'revit-addin' -or -not[bool]$component[0].required -or [string]$component[0].revitYear -cne $year -or [string]$component[0].revitAddinProfileId -cne [string]$metadata.profileId){
+      throw "OperatorDeploy SafeRead target $year component mapping is invalid."
+    }
+    $expectedPayload=(([string]$metadata.packageRoot).TrimEnd('/','\')+"/targets/$year")
+    if(([string]$component[0].payloadPath).Replace('\','/') -cne $expectedPayload.Replace('\','/')){throw "OperatorDeploy SafeRead target $year payloadPath is detached."}
+    $assemblyRelativePath="$componentId/$([string]$profile.assemblyPath)"
+    $assemblyPath=[IO.Path]::GetFullPath((Join-Path $finalRoot ($assemblyRelativePath.Replace('/',[IO.Path]::DirectorySeparatorChar))))
+    $layoutTargets += [pscustomobject][ordered]@{revitYear=$year;componentId=$componentId;assemblyRelativePath=$assemblyRelativePath;assemblyPath=$assemblyPath;profileAssemblyPath=[string]$profile.assemblyPath}
+  }
+  [pscustomobject][ordered]@{
+    manifestPath=$manifestPath
+    releaseVersion=[string]$manifest.releaseVersion
+    releaseManifestSha256=Get-SafeReadSha256 $manifestPath
+    packageRoot=[string]$metadata.packageRoot
+    evidenceComponentId=[string]$metadata.evidenceComponentId
+    targets=$layoutTargets
+  }
+}
+
 function New-SafeReadAdmissionReceiptCore {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)][string]$BundleRoot,
     [Parameter(Mandatory)][string]$AttestationPinSha256,
     [Parameter(Mandatory)][string]$ManifestAssemblyRoot,
+    [string]$OperatorDeployManifestPath,
     [scriptblock]$SignatureVerifier,
     [scriptblock]$AssemblyInspector
   )
   $manifestAssemblyRoot=Resolve-SafeReadManifestAssemblyRoot $ManifestAssemblyRoot
+  $operatorLayout=if([string]::IsNullOrWhiteSpace($OperatorDeployManifestPath)){$null}else{Resolve-SafeReadOperatorDeployLayout -OperatorDeployManifestPath $OperatorDeployManifestPath -BundleRoot $BundleRoot -ManifestAssemblyRoot $manifestAssemblyRoot}
   $verified=Assert-SafeReadBundle -BundleRoot $BundleRoot -AttestationPinSha256 $AttestationPinSha256 -SignatureVerifier $SignatureVerifier -AssemblyInspector $AssemblyInspector
   $root=(Resolve-Path -LiteralPath $BundleRoot).Path
   $releasePath=Join-Path $root 'release-manifest.json';$pinsPath=Join-Path $root 'package-pins.json'
@@ -1132,7 +1216,7 @@ function New-SafeReadAdmissionReceiptCore {
     $equivalence=ConvertTo-SafeReadObject $equivalencePath
     $runtimePath=Join-Path $targetRoot ($target.runtimeAttestation.path.Replace('/',[IO.Path]::DirectorySeparatorChar))
     $runtime=ConvertTo-SafeReadObject $runtimePath
-    $assemblyPath=[IO.Path]::GetFullPath((Join-Path $manifestAssemblyRoot "targets\$year\payload\$script:HostDll"))
+    $assemblyPath=if($operatorLayout){[string](@($operatorLayout.targets|Where-Object revitYear -ceq $year)[0].assemblyPath)}else{[IO.Path]::GetFullPath((Join-Path $manifestAssemblyRoot "targets\$year\payload\$script:HostDll"))}
     $templatePath=Join-Path $targetRoot ($target.manifest.path.Replace('/',[IO.Path]::DirectorySeparatorChar))
     $manifestContent=New-SafeReadInstalledManifest -TemplatePath $templatePath -AssemblyPath $assemblyPath
     $manifestBytes=[Text.UTF8Encoding]::new($false).GetByteCount($manifestContent)
@@ -1145,8 +1229,8 @@ function New-SafeReadAdmissionReceiptCore {
       renderedManifest=[ordered]@{fileName=$script:InstalledManifestName;sha256=Get-SafeReadUtf8Sha256 $manifestContent;sizeBytes=[int64]$manifestBytes;encoding='utf-8-no-bom';fields=[ordered]@{name=$script:Identity.Name;assembly=$assemblyPath;fullClassName=$script:Identity.FullClassName;addInId=$script:Identity.AddInId;vendorId=$script:Identity.VendorId;vendorDescription=$script:Identity.VendorDescription}}
     }
   }
-  [pscustomobject][ordered]@{
-    schema=$script:AdmissionReceiptSchema
+  $receipt=[ordered]@{
+    schema=if($operatorLayout){$script:AdmissionReceiptSchemaV2}else{$script:AdmissionReceiptSchemaV1}
     status='verified'
     releaseId=[string]$verified.ReleaseId
     releaseManifest=[ordered]@{path='release-manifest.json';sha256=[string]$verified.ReleaseManifestSha256}
@@ -1154,8 +1238,18 @@ function New-SafeReadAdmissionReceiptCore {
     source=[ordered]@{path=[string]$verified.Source.path;sha256=[string]$verified.Source.sha256;commit=[string]$verified.Source.commit;proofTree=[string]$verified.Source.proofTree;hostTree=[string]$verified.Source.hostTree;archiveSha256=[string]$verified.Source.archiveSha256}
     proof=[ordered]@{targetPaths=$proofTargetPaths;sha256=[string]$firstTarget.proof.sha256;proofKind=[string]$commonProof.proofKind;manifestSha256=[string]$commonProof.manifestSha256;verifierProfileId=[string]$commonProof.verifierProfileId;verifierProfileSha256=[string]$commonProof.verifierProfileSha256;verifierBundleSha256=[string]$commonProof.verifierBundleSha256;sourceLockSha256=[string]$commonProof.sourceLockSha256;apiLockSha256=[string]$commonProof.apiLockSha256;sdkLockSha256=[string]$commonProof.sdkLockSha256}
     manifestAssemblyRoot=$manifestAssemblyRoot
-    targets=$targets
   }
+  if($operatorLayout){
+    $layoutTargets=@($operatorLayout.targets|Sort-Object revitYear|ForEach-Object{[ordered]@{revitYear=[string]$_.revitYear;componentId=[string]$_.componentId;assemblyRelativePath=[string]$_.assemblyRelativePath;assemblyPath=[string]$_.assemblyPath}})
+    $layoutLines=@($script:OperatorDeployLayoutSchema,[string]$operatorLayout.releaseVersion,[string]$operatorLayout.releaseManifestSha256,[string]$operatorLayout.packageRoot,[string]$operatorLayout.evidenceComponentId)
+    foreach($layoutTarget in @($operatorLayout.targets|Sort-Object revitYear)){
+      $receiptTarget=@($targets|Where-Object revitYear -ceq ([string]$layoutTarget.revitYear))[0]
+      $layoutLines += "$([string]$layoutTarget.revitYear)|$([string]$layoutTarget.componentId)|$([string]$layoutTarget.profileAssemblyPath)|$([string]$receiptTarget.renderedManifest.sha256)"
+    }
+    $receipt.operatorDeploy=[ordered]@{schema=$script:OperatorDeployLayoutSchema;releaseVersion=[string]$operatorLayout.releaseVersion;releaseManifestSha256=[string]$operatorLayout.releaseManifestSha256;packageRoot=[string]$operatorLayout.packageRoot;evidenceComponentId=[string]$operatorLayout.evidenceComponentId;layoutSha256=Get-SafeReadUtf8Sha256 ($layoutLines -join "`n");targets=$layoutTargets}
+  }
+  $receipt.targets=$targets
+  [pscustomobject]$receipt
 }
 
 function New-SafeReadAdmissionReceipt {
@@ -1163,9 +1257,10 @@ function New-SafeReadAdmissionReceipt {
   param(
     [Parameter(Mandatory)][string]$BundleRoot,
     [Parameter(Mandatory)][string]$AttestationPinSha256,
-    [Parameter(Mandatory)][string]$ManifestAssemblyRoot
+    [Parameter(Mandatory)][string]$ManifestAssemblyRoot,
+    [string]$OperatorDeployManifestPath
   )
-  New-SafeReadAdmissionReceiptCore -BundleRoot $BundleRoot -AttestationPinSha256 $AttestationPinSha256 -ManifestAssemblyRoot $ManifestAssemblyRoot
+  New-SafeReadAdmissionReceiptCore -BundleRoot $BundleRoot -AttestationPinSha256 $AttestationPinSha256 -ManifestAssemblyRoot $ManifestAssemblyRoot -OperatorDeployManifestPath $OperatorDeployManifestPath
 }
 
 function Assert-SafeReadAdmissionReceiptCore {
@@ -1175,16 +1270,19 @@ function Assert-SafeReadAdmissionReceiptCore {
     [Parameter(Mandatory)][string]$BundleRoot,
     [Parameter(Mandatory)][string]$AttestationPinSha256,
     [Parameter(Mandatory)][string]$ExpectedManifestAssemblyRoot,
+    [string]$OperatorDeployManifestPath,
     [scriptblock]$SignatureVerifier,
     [scriptblock]$AssemblyInspector
   )
   $resolved=Resolve-SafeReadCanonicalPath $ReceiptPath
   $receipt=ConvertTo-SafeReadObject $resolved
-  Assert-SafeReadExactProperties $receipt @('schema','status','releaseId','releaseManifest','packagePins','source','proof','manifestAssemblyRoot','targets') 'SafeRead admission receipt'
-  if($receipt.schema -cne $script:AdmissionReceiptSchema -or $receipt.status -cne 'verified'){throw 'SafeRead admission receipt schema/status is invalid.'}
+  $expectedProperties=if([string]::IsNullOrWhiteSpace($OperatorDeployManifestPath)){@('schema','status','releaseId','releaseManifest','packagePins','source','proof','manifestAssemblyRoot','targets')}else{@('schema','status','releaseId','releaseManifest','packagePins','source','proof','manifestAssemblyRoot','operatorDeploy','targets')}
+  Assert-SafeReadExactProperties $receipt $expectedProperties 'SafeRead admission receipt'
+  $expectedSchema=if([string]::IsNullOrWhiteSpace($OperatorDeployManifestPath)){$script:AdmissionReceiptSchemaV1}else{$script:AdmissionReceiptSchemaV2}
+  if($receipt.schema -cne $expectedSchema -or $receipt.status -cne 'verified'){throw 'SafeRead admission receipt schema/status is invalid.'}
   $canonical=ConvertTo-SafeReadCanonicalJson $receipt
   Assert-SafeReadCanonicalJsonBytes $resolved $receipt 'SafeRead admission receipt'
-  $expected=New-SafeReadAdmissionReceiptCore -BundleRoot $BundleRoot -AttestationPinSha256 $AttestationPinSha256 -ManifestAssemblyRoot $ExpectedManifestAssemblyRoot -SignatureVerifier $SignatureVerifier -AssemblyInspector $AssemblyInspector
+  $expected=New-SafeReadAdmissionReceiptCore -BundleRoot $BundleRoot -AttestationPinSha256 $AttestationPinSha256 -ManifestAssemblyRoot $ExpectedManifestAssemblyRoot -OperatorDeployManifestPath $OperatorDeployManifestPath -SignatureVerifier $SignatureVerifier -AssemblyInspector $AssemblyInspector
   if($canonical -cne (ConvertTo-SafeReadCanonicalJson $expected)){throw 'SafeRead admission receipt does not match the externally verified package and preparation facts.'}
   $receipt
 }
@@ -1195,9 +1293,10 @@ function Assert-SafeReadAdmissionReceipt {
     [Parameter(Mandatory)][string]$ReceiptPath,
     [Parameter(Mandatory)][string]$BundleRoot,
     [Parameter(Mandatory)][string]$AttestationPinSha256,
-    [Parameter(Mandatory)][string]$ExpectedManifestAssemblyRoot
+    [Parameter(Mandatory)][string]$ExpectedManifestAssemblyRoot,
+    [string]$OperatorDeployManifestPath
   )
-  Assert-SafeReadAdmissionReceiptCore -ReceiptPath $ReceiptPath -BundleRoot $BundleRoot -AttestationPinSha256 $AttestationPinSha256 -ExpectedManifestAssemblyRoot $ExpectedManifestAssemblyRoot
+  Assert-SafeReadAdmissionReceiptCore -ReceiptPath $ReceiptPath -BundleRoot $BundleRoot -AttestationPinSha256 $AttestationPinSha256 -ExpectedManifestAssemblyRoot $ExpectedManifestAssemblyRoot -OperatorDeployManifestPath $OperatorDeployManifestPath
 }
 
 function Write-SafeReadAtomicFile {

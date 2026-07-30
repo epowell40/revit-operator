@@ -10,6 +10,8 @@ internal sealed class ActivationJournal
     public string CreatedAtUtc { get; set; } = "";
     public List<ActivationJournalControl> Controls { get; set; } = new();
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public InstalledSafeReadAdmission? SafeReadAdmission { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ActivationJournalReleaseRootSwap? ReleaseRootSwap { get; set; }
 }
 
