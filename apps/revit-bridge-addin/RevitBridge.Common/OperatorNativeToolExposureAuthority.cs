@@ -131,16 +131,19 @@ namespace RevitBridge.Common
 
     public sealed class OperatorNativeToolExposureEmbeddedAuthority : IOperatorNativeToolExposureAuthority
     {
-        public const string CompiledPolicyHash = "sha256:d6204c2576e83a96586f0b4bc575d7f68c7325e3efb32566ba6204e1aa3d2624";
+        public const string CompiledPolicyHash = "sha256:57b14a45d427818122cb7df0f2eb697a7883b8aadbc90abed305a74cc1ba8503";
         public const string ResourceName = "RevitBridge.Common.tool_exposure_policy.v1.json";
 
         private static readonly Regex Sha256 = new Regex("^sha256:[0-9a-f]{64}$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
         private static readonly Regex Alias = new Regex("^[a-z][a-z0-9_]*$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
         private static readonly Regex Path = new Regex("^/revit/[a-z0-9][a-z0-9._~/-]*$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
+        private static readonly Regex ExecutorIdentifier = new Regex("^[a-z0-9][a-z0-9._-]*$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
         private static readonly string[] Levels = { "L0", "L1", "L2", "L3", "L4", "L5" };
         private static readonly string[] ChannelNames = { "search", "generic_call", "typed_mcp", "deterministic_workflow" };
         private static readonly HashSet<string> RootKeys = Set("schema", "hash_algorithm", "evidence_schema", "evidence_source_hash", "records", "policy_hash");
         private static readonly HashSet<string> RecordKeys = Set("method", "path", "typed_mcp_aliases", "request_hash", "effect_hash", "evidence_record_hash", "highest_cumulative_level", "observed_levels", "visibility", "channels", "policy_record_hash");
+        private static readonly HashSet<string> StandaloneRecordKeys = Set("method", "path", "typed_mcp_aliases", "request_hash", "effect_hash", "evidence_record_hash", "execution_surface", "highest_cumulative_level", "observed_levels", "visibility", "channels", "policy_record_hash");
+        private static readonly HashSet<string> ExecutionSurfaceKeys = Set("kind", "executor_id", "route_id", "transport");
         private static readonly HashSet<string> DecisionKeys = Set("exposed", "required_level", "reason_codes");
         public static readonly OperatorNativeToolExposureEmbeddedAuthority Instance = Load();
         private readonly IReadOnlyList<Record> _records;
@@ -212,12 +215,14 @@ namespace RevitBridge.Common
                 var identities = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var element in recordsElement.EnumerateArray())
                 {
-                    RequireExactKeys(element, RecordKeys, "policy record");
+                    var hasExecutionSurface = element.EnumerateObject().Any(property => property.Name == "execution_surface");
+                    RequireExactKeys(element, hasExecutionSurface ? StandaloneRecordKeys : RecordKeys, "policy record");
                     var method = RequireOneOf(element, "method", "GET", "POST");
                     var path = RequireString(element, "path");
                     if (!Path.IsMatch(path) || path.EndsWith("/", StringComparison.Ordinal) || path.Contains("//") || HasDotSegment(path))
                         throw new InvalidDataException("Embedded certification policy path is noncanonical.");
                     RequireAliases(element);
+                    if (hasExecutionSurface) RequireExecutionSurface(element);
                     var requestHash = RequireHash(element, "request_hash");
                     var effectHash = RequireHash(element, "effect_hash");
                     var evidenceRecordHash = RequireHash(element, "evidence_record_hash");
@@ -385,6 +390,23 @@ namespace RevitBridge.Common
                     || (index > 0 && string.CompareOrdinal(aliases[index - 1], aliases[index]) >= 0))
                     throw new InvalidDataException("Embedded certification policy aliases are invalid.");
             }
+        }
+
+        private static void RequireExecutionSurface(JsonElement record)
+        {
+            var surface = Unique(record, "execution_surface", JsonValueKind.Object);
+            RequireExactKeys(surface, ExecutionSurfaceKeys, "policy execution surface");
+            RequireString(surface, "kind", "standalone_executor");
+            RequireString(surface, "transport", "direct_loopback");
+            RequireExecutorIdentifier(surface, "executor_id");
+            RequireExecutorIdentifier(surface, "route_id");
+        }
+
+        private static void RequireExecutorIdentifier(JsonElement surface, string name)
+        {
+            var value = RequireString(surface, name);
+            if (!ExecutorIdentifier.IsMatch(value))
+                throw new InvalidDataException("Embedded certification policy execution surface identifier " + name + " is invalid.");
         }
 
         private static void RequireLevels(JsonElement record)
