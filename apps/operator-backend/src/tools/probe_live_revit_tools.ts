@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { findRepoRoot } from "./audit_tool_registry.js";
+import { assertExactDevelopmentLaboratoryNativeTransport } from "../brains/native_revit_transport.js";
 
 type Probe = { name: string; method: "GET" | "POST"; path: string; body?: unknown; validate: (value: unknown) => boolean };
 type Receipt = { name: string; method: string; path: string; duration_ms: number; http_status: number | null; transport_ok: boolean; useful: boolean; error: string | null; response: unknown };
@@ -40,6 +41,7 @@ function hasObjectOrArray(value: unknown, ...keys: string[]): boolean {
 async function invoke(baseUrl: string, token: string, probe: Probe): Promise<Receipt> {
   const started = performance.now();
   try {
+    assertExactDevelopmentLaboratoryNativeTransport(process.env, "Live Revit tool probe raw transport");
     const response = await fetch(`${baseUrl}${probe.path}`, {
       method: probe.method,
       headers: { "content-type": "application/json", "x-operator-token": token },

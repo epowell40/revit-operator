@@ -189,9 +189,13 @@ startxref
 test("bridge headers include active write grant when present", () => {
   const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
   const previousToken = process.env.OPERATOR_TOKEN;
+  const previousMode = process.env.REVIT_OPERATOR_MODE;
+  const previousProfile = process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
   const root = tempDir("write-grant-header");
   process.env.OPERATOR_WORKSPACE_ROOT = root;
   process.env.OPERATOR_TOKEN = "test-operator-token";
+  process.env.REVIT_OPERATOR_MODE = "development";
+  process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = "laboratory";
   fs.writeFileSync(
     path.join(root, "write_grant.json"),
     JSON.stringify({
@@ -210,6 +214,28 @@ test("bridge headers include active write grant when present", () => {
     else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
     if (previousToken === undefined) delete process.env.OPERATOR_TOKEN;
     else process.env.OPERATOR_TOKEN = previousToken;
+    if (previousMode === undefined) delete process.env.REVIT_OPERATOR_MODE;
+    else process.env.REVIT_OPERATOR_MODE = previousMode;
+    if (previousProfile === undefined) delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+    else process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = previousProfile;
+  }
+});
+
+test("raw benchmark Revit headers fail closed outside exact development laboratory", () => {
+  const previousMode = process.env.REVIT_OPERATOR_MODE;
+  const previousProfile = process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+  try {
+    process.env.REVIT_OPERATOR_MODE = "Development";
+    process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = "laboratory";
+    assert.throws(() => buildRevitBridgeHeaders(), /available only when REVIT_OPERATOR_MODE=development/i);
+    process.env.REVIT_OPERATOR_MODE = "development";
+    process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = " laboratory ";
+    assert.throws(() => buildRevitBridgeHeaders(), /available only when REVIT_OPERATOR_MODE=development/i);
+  } finally {
+    if (previousMode === undefined) delete process.env.REVIT_OPERATOR_MODE;
+    else process.env.REVIT_OPERATOR_MODE = previousMode;
+    if (previousProfile === undefined) delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+    else process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = previousProfile;
   }
 });
 

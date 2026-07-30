@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { findActiveToolQuarantine } from "../codex/revit_tool_contract_memory.js";
 import { findRepoRoot } from "./audit_tool_registry.js";
+import { assertExactDevelopmentLaboratoryNativeTransport } from "../brains/native_revit_transport.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -309,6 +310,7 @@ export function renderWriteProbePlanMarkdown(plan: WriteProbePlan): string {
 
 async function loadRegistry(inputPath: string | null): Promise<{ raw: unknown; source: string }> {
   if (inputPath) return { raw: JSON.parse(fs.readFileSync(inputPath, "utf8")), source: path.resolve(inputPath) };
+  assertExactDevelopmentLaboratoryNativeTransport(process.env, "Live Revit write-probe planner raw transport");
   const localAppData = process.env.LOCALAPPDATA;
   if (!localAppData) throw new Error("LOCALAPPDATA is unavailable; pass --registry <tool-registry.json>.");
   const bridgeUrl = fs.readFileSync(path.join(localAppData, "RevitOperator", "bridge_url.txt"), "utf8").trim().replace(/\/+$/, "");

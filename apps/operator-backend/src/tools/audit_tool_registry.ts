@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { assertExactDevelopmentLaboratoryNativeTransport } from "../brains/native_revit_transport.js";
 
 type HttpMethod = "GET" | "POST";
 type ToolKey = `${HttpMethod} ${string}`;
@@ -829,6 +830,7 @@ export function renderAuditMarkdown(audit: ToolRegistryAudit): string {
 }
 
 async function loadLiveCapabilities(): Promise<{ raw: unknown; source: string }> {
+  assertExactDevelopmentLaboratoryNativeTransport(process.env, "Tool registry audit raw Revit transport");
   const localAppData = process.env.LOCALAPPDATA;
   if (!localAppData) throw new Error("LOCALAPPDATA is unavailable; cannot discover the live bridge.");
   const bridgeUrl = read(path.join(localAppData, "RevitOperator", "bridge_url.txt")).trim().replace(/\/+$/, "");

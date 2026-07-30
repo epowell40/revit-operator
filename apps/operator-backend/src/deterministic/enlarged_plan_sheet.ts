@@ -4,6 +4,7 @@ import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ChatResponse 
 import { appendEvent, appendNotification } from "../memory/sqlite_store.js";
 import { getOrCreateOperatorToken } from "../operator_token.js";
 import { getWriteGrantToken } from "../operator_write_grant.js";
+import { assertExactDevelopmentLaboratoryNativeTransport } from "../brains/native_revit_transport.js";
 
 type EnlargedPlanRequest = {
   unitNumber: string;
@@ -87,6 +88,7 @@ function bridgeUrl(): string {
 }
 
 async function bridgeJson(method: "GET" | "POST", pathname: string, body?: unknown): Promise<any> {
+  assertExactDevelopmentLaboratoryNativeTransport(process.env, "Deterministic enlarged-plan raw Revit transport");
   const headers: Record<string, string> = { "x-operator-token": getOrCreateOperatorToken() };
   if (body !== undefined) headers["content-type"] = "application/json";
   const writeGrant = getWriteGrantToken();

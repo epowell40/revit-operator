@@ -1,8 +1,8 @@
 import fs from "node:fs";
-import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureWorkspaceLayout } from "../workspace.js";
+import { sendNativeBridgeRequest } from "../brains/native_revit_transport.js";
 
 type CliArgs = {
   inputPath: string;
@@ -659,58 +659,6 @@ function parseTypeEntries(raw: unknown): ToolTypeEntry[] {
   return out;
 }
 
-function requestJson(
-  urlString: string,
-  method: "GET" | "POST",
-  headers: Record<string, string>,
-  body?: Record<string, unknown>
-): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const url = new URL(urlString);
-    const payload = body ? JSON.stringify(body) : "";
-
-    const req = http.request(
-      {
-        protocol: url.protocol,
-        hostname: url.hostname,
-        port: url.port,
-        path: `${url.pathname}${url.search}`,
-        method,
-        headers: {
-          ...headers,
-          ...(body ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload).toString() } : {}),
-        },
-      },
-      res => {
-        const chunks: Buffer[] = [];
-        res.on("data", chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-        res.on("end", () => {
-          const text = Buffer.concat(chunks).toString("utf8");
-          const statusCode = res.statusCode ?? 0;
-          if (statusCode < 200 || statusCode >= 300) {
-            reject(new Error(`HTTP ${statusCode} for ${url.pathname}: ${text.slice(0, 400)}`));
-            return;
-          }
-          if (!text.trim()) {
-            resolve({});
-            return;
-          }
-          try {
-            resolve(JSON.parse(text));
-          } catch (err) {
-            reject(new Error(`Failed to parse JSON from ${url.pathname}: ${(err as Error).message}`));
-          }
-        });
-      }
-    );
-
-    req.setTimeout(15000, () => req.destroy(new Error(`Timeout requesting ${url.pathname}`)));
-    req.on("error", reject);
-    if (payload) req.write(payload);
-    req.end();
-  });
-}
-
 async function safeBridgeCall(
   bridgeUrl: string,
   token: string,
@@ -719,8 +667,15 @@ async function safeBridgeCall(
   body?: Record<string, unknown>
 ): Promise<{ ok: true; data: unknown } | { ok: false; error: string }> {
   try {
-    const headers: Record<string, string> = token ? { "X-Operator-Token": token } : {};
-    const data = await requestJson(`${bridgeUrl}${endpoint}`, method, headers, body);
+    const response = await sendNativeBridgeRequest(method, endpoint, body, {
+      token,
+      baseUrl: bridgeUrl,
+      timeoutMs: 15_000
+    });
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw new Error(`HTTP ${response.statusCode} for ${endpoint}: ${response.bodyText.slice(0, 400)}`);
+    }
+    const data = response.bodyText.trim() ? JSON.parse(response.bodyText) as unknown : {};
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: (err as Error).message };

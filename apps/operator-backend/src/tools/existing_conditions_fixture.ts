@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { sendNativeBridgeRequest } from "../brains/native_revit_transport.js";
 import {
   normalizeExistingConditionsSnapshot,
   mergeExistingConditionsVisibleElementPayloads,
@@ -592,18 +593,15 @@ function bridgeClient(): BridgeClient {
   if (!token) throw new Error("operator_token_is_empty");
   if (!grant) throw new Error("write_grant_token_is_empty");
   const call = async (method: "GET" | "POST", route: string, body?: unknown, write = false): Promise<unknown> => {
-    const headers: Record<string, string> = { "X-Operator-Token": token };
-    if (write) headers["X-Operator-Write-Grant"] = grant;
-    if (body !== undefined) headers["Content-Type"] = "application/json";
-    const response = await fetch(`${baseUrl}${route}`, {
-      method,
-      headers,
-      ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    const response = await sendNativeBridgeRequest(method, route, body, {
+      token,
+      baseUrl,
+      ...(write ? { writeGrant: grant } : {})
     });
-    const text = await response.text();
+    const text = response.bodyText;
     let parsed: unknown = text;
     try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = text; }
-    if (!response.ok) throw new Error(`${route} returned ${response.status}: ${text.slice(0, 1000)}`);
+    if (response.statusCode < 200 || response.statusCode >= 300) throw new Error(`${route} returned ${response.statusCode}: ${text.slice(0, 1000)}`);
     return parsed;
   };
   return {

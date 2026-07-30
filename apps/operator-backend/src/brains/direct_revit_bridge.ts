@@ -5,6 +5,7 @@ import type { ToolResult } from "../contracts.js";
 import { getOrCreateOperatorToken } from "../operator_token.js";
 import { persistence } from "../persistence/persistence_manager.js";
 import { compactIncomingToolResult } from "../tool_result_compaction.js";
+import { sendNativeBridgeRequest } from "./native_revit_transport.js";
 
 export type DirectBridgeResult = {
   ok: boolean;
@@ -19,8 +20,11 @@ export type DirectBridgeResult = {
 export type BridgeRequestOptions = {
   baseUrl?: string;
   token?: string;
+  writeGrant?: string;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
+  env?: NodeJS.ProcessEnv;
+  receiptPath?: string;
 };
 
 const directBridgeAvailabilityByUrl = new Map<string, { ok: boolean; checked_at_ms: number }>();
@@ -41,24 +45,20 @@ async function requestBridgeJson(
   options: BridgeRequestOptions = {}
 ): Promise<unknown> {
   const token = options.token ?? getOrCreateOperatorToken();
-  const controller = new AbortController();
   const timeoutMs = Math.max(1, options.timeoutMs ?? inferBridgeTimeoutMs());
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const headers: Record<string, string> = { "X-Operator-Token": token };
-    if (body !== undefined) headers["Content-Type"] = "application/json";
-    const res = await (options.fetchImpl ?? fetch)(`${options.baseUrl ?? inferBridgeUrl()}${pathname}`, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: controller.signal
-    });
-    const raw = await res.text();
-    if (!res.ok) throw new Error(raw || `${method} ${pathname} failed with HTTP ${res.status}`);
-    return raw ? (JSON.parse(raw) as unknown) : null;
-  } finally {
-    clearTimeout(timer);
+  const result = await sendNativeBridgeRequest(method, pathname, body, {
+    token,
+    baseUrl: options.baseUrl ?? inferBridgeUrl(),
+    writeGrant: options.writeGrant,
+    timeoutMs,
+    fetchImpl: options.fetchImpl,
+    env: options.env,
+    receiptPath: options.receiptPath
+  });
+  if (result.statusCode < 200 || result.statusCode >= 300) {
+    throw new Error(result.bodyText || `${method} ${pathname} failed with HTTP ${result.statusCode}`);
   }
+  return result.bodyText ? (JSON.parse(result.bodyText) as unknown) : null;
 }
 
 export async function canUseDirectBridgeFastPath(options: BridgeRequestOptions = {}): Promise<boolean> {
